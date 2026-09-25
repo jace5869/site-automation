@@ -1,0 +1,30 @@
+name: Checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ansible:
+    name: Ansible syntax + shell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ansible-core
+        run: pip install ansible-core
+      - name: Syntax-check every playbook (site + vendored ACT)
+        run: |
+          set -e
+          for pb in playbooks/*.yml vendor/act/ansible/playbooks/*.yml; do
+            echo "== $pb"
+            ANSIBLE_ROLES_PATH=roles:vendor/act/ansible/roles ansible-playbook --syntax-check "$pb"
+          done
+      - name: Shell scripts parse
+        run: for f in scripts/*.sh; do bash -n "$f"; done
+      - name: No private keys or obvious secrets committed
+        run: |
+          if git grep -nE -e '-----BEGIN [A-Z ]*PRIVATE KEY-----[A-Za-z0-9+/=]' -e 'AKIA[0-9A-Z]{16}' -- . ':!vendor'; then
+            echo "secret-looking content found"; exit 1; fi
