@@ -155,7 +155,11 @@
         {%-   set value = lookup('ansible.builtin.env', name) -%}
         {%-   if value -%}{%- set _ = keys.update({name: value}) -%}{%- endif -%}
         {%- endfor -%}
-        {{ act_triage_env | combine({'ACT_NO_BANNER': '1'}) | combine(keys) }}
+        {{ act_triage_env | combine({'ACT_NO_BANNER': '1',
+             'ACT_PSEUDONYMIZE': '1' if act_triage_pseudonymize | bool else '0',
+             'ACT_PSEUDO_NAMES': ([inventory_hostname, inventory_hostname_short, ansible_host | default('')]
+                                  + act_triage_pseudo_names) | map('string') | select | unique | join(',')})
+           | combine(keys) }}
       async: "{{ act_triage_timeout | int }}"
       poll: "{{ act_triage_poll | int }}"
       register: _act_run_evidence
@@ -177,7 +181,11 @@
         {%-   set value = lookup('ansible.builtin.env', name) -%}
         {%-   if value -%}{%- set _ = keys.update({name: value}) -%}{%- endif -%}
         {%- endfor -%}
-        {{ act_triage_env | combine({'ACT_NO_BANNER': '1'}) | combine(keys) }}
+        {{ act_triage_env | combine({'ACT_NO_BANNER': '1',
+             'ACT_PSEUDONYMIZE': '1' if act_triage_pseudonymize | bool else '0',
+             'ACT_PSEUDO_NAMES': ([inventory_hostname, inventory_hostname_short, ansible_host | default('')]
+                                  + act_triage_pseudo_names) | map('string') | select | unique | join(',')})
+           | combine(keys) }}
       async: "{{ act_triage_timeout | int }}"
       poll: "{{ act_triage_poll | int }}"
       register: _act_run

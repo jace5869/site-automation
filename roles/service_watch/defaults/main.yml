@@ -1,0 +1,66 @@
+---
+# ---- What to watch -----------------------------------------------------------------------
+# The podman containers on the host, in dependency order (a container's dependencies first).
+#   name: the container name, as `podman ps -a` shows it
+#   url:  optional page to check as well, e.g. https://127.0.0.1/
+#   unit: only if a systemd unit manages the container (`podman inspect NAME | grep
+#         PODMAN_SYSTEMD_UNIT` prints it); then it is started with systemctl, not podman
+watch_containers:
+  - name: stigman
+  - name: nginx
+watch_url_ok_status: [200, 301, 302, 401, 403]   # HTTP codes that count as "answering"
+
+# ---- What happens when one is down -------------------------------------------------------
+# approval:  ACT only diagnoses. Its proposed fix waits for the AAP approval step, then
+#            service_fix_approved.yml applies exactly what was approved.
+# self-heal: ACT may start/restart the watched containers by itself, and nothing else. Any
+#            other fix it wants goes to a person, as in approval mode.
+watch_mode: approval
+watch_verify_retries: 6                  # re-checks after a fix (every watch_verify_delay seconds)
+watch_verify_delay: 5
+
+# ---- Where incidents are recorded (on the host) ------------------------------------------
+# One JSON line per event, plus a syslog line (tag service-watch) that your log forwarding
+# (Splunk, Elastic, rsyslog relay) picks up. AAP's job history keeps its own copy.
+watch_record_file: /var/log/service-watch/incidents.jsonl
+watch_record_syslog: true
+
+# ---- ACT settings --------------------------------------------------------------------------
+# The key comes from the "ACT model key" AAP credential (environment variable GENAI_KEY),
+# never from here. Non-secret settings only, e.g. {GENAI_MODEL: <a model your account offers>}.
+watch_act_env: {}
+watch_act_timeout: 600                   # seconds for one ACT run
+
+# What ACT is told, on top of the act_triage role's standard instructions.
+watch_instructions: |-
+  The watched podman containers on this host, in dependency order (start earlier ones first):
+  {% for c in watch_containers %}{{ c.name }}{{ (' (systemd unit ' ~ c.unit ~ ')') if c.unit | default('') else '' }}{{ ', ' if not loop.last else '.' }}{% endfor %} They run as root (rootful podman).
+  For each finding, find the root cause with read-only commands:
+  `podman ps -a` (every container and its state),
+  `podman inspect NAME` (State: Status, ExitCode, FinishedAt, OOMKilled, Health),
+  `podman logs --tail 80 NAME` (its last output before it stopped),
+  `journalctl -t podman --since -2h --no-pager` (podman events, e.g. who stopped it and when),
+  and the logs of the containers it depends on if those look unhealthy.
+  Say whether it crashed, was stopped on purpose, or failed for another reason (configuration,
+  a dependency, a port, disk space). Quote the lines that show it.
+  Starting it again is the right fix when it stopped or crashed and nothing else is wrong:
+  `podman start NAME`{{ ', or `systemctl start UNIT` for a container that has a systemd unit' if (watch_containers | selectattr('unit', 'defined') | selectattr('unit') | list) else '' }}.
+  If a container it depends on is down, fix that one first. If the cause is something a start
+  cannot fix, say so and give the exact fix for a person to approve.
+  {% if watch_mode == 'self-heal' %}You may start or restart the watched containers yourself and
+  change nothing else: propose any other change, do not make it. Verify a start with
+  `podman inspect NAME` and expect_contains `"Running": true`.{% endif %}
+
+# ---- Derived (do not set) ------------------------------------------------------------------
+_watch_names: "{{ watch_containers | map(attribute='name') | list }}"
+_watch_what: "{{ _watch_names | join(', ') }}"
+# The only changes self-heal may make: start/restart of the watched containers (one or several
+# in one command) and of their systemd units. Each pattern must match the whole command.
+_watch_fix_patterns: >-
+  {%- set p = ['podman (start|restart)( (' ~ (_watch_names | map('regex_escape') | join('|')) ~ '))+'] -%}
+  {%- set units = watch_containers | selectattr('unit', 'defined') | selectattr('unit')
+                  | map(attribute='unit') | map('regex_replace', '\.service$', '') | map('regex_escape') | list -%}
+  {%- if units -%}
+  {%-   set _ = p.append('systemctl (start|restart) (' ~ (units | join('|')) ~ ')(\.service)?') -%}
+  {%- endif -%}
+  {{ p }}

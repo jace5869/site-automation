@@ -1,0 +1,78 @@
+---
+# Are the watched containers up? Sets `service_watch`: {states, pages, healthy, findings}.
+# _watch_retries > 0 waits for them to come up (used after a fix); 0 = look once.
+
+- name: Check | container state
+  ansible.builtin.command:
+    argv: [podman, container, inspect, "{{ item.name }}"]
+  loop: "{{ watch_containers }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _watch_inspect
+  changed_when: false
+  failed_when: false
+  until: >-
+    _watch_inspect.rc == 0
+    and ((_watch_inspect.stdout | from_json)[0].State.Status | default('')) == 'running'
+    and (((_watch_inspect.stdout | from_json)[0].State.Health
+          | default((_watch_inspect.stdout | from_json)[0].State.Healthcheck | default({}))).Status
+         | default('')) != 'unhealthy'
+  retries: "{{ _watch_retries | default(0) | int }}"
+  delay: "{{ watch_verify_delay | int }}"
+
+- name: Check | pages answer
+  ansible.builtin.uri:
+    url: "{{ item.url }}"
+    timeout: 5
+    validate_certs: false
+    status_code: "{{ watch_url_ok_status }}"
+  loop: "{{ watch_containers | selectattr('url', 'defined') | selectattr('url') | list }}"
+  loop_control:
+    label: "{{ item.name }}: {{ item.url }}"
+  register: _watch_http
+  failed_when: false
+  until: (_watch_http.status | default(-1) | int) in watch_url_ok_status
+  retries: "{{ _watch_retries | default(0) | int }}"
+  delay: "{{ watch_verify_delay | int }}"
+
+- name: Check | result
+  ansible.builtin.set_fact:
+    service_watch: >-
+      {%- set f = [] -%}
+      {%- set states = {} -%}
+      {%- set pages = {} -%}
+      {%- for r in _watch_inspect.results -%}
+      {%-   set n = r.item.name -%}
+      {%-   if r.rc != 0 -%}
+      {%-     set _ = states.update({n: 'does not exist'}) -%}
+      {%-     set _ = f.append('container ' ~ n ~ ' does not exist') -%}
+      {%-   else -%}
+      {%-     set st = (r.stdout | from_json)[0].State -%}
+      {%-     set health = (st.Health | default(st.Healthcheck | default({}))).Status | default('') -%}
+      {%-     if st.Status | default('') != 'running' -%}
+      {%-       set d = (st.Status | default('unknown')) ~ ' (exit code ' ~ (st.ExitCode | default('?'))
+                        ~ (', OOM killed' if st.OOMKilled | default(false) else '')
+                        ~ ', stopped at ' ~ (st.FinishedAt | default('?') | string)[:19] ~ ')' -%}
+      {%-       set _ = states.update({n: d}) -%}
+      {%-       set _ = f.append('container ' ~ n ~ ' is ' ~ d) -%}
+      {%-     elif health == 'unhealthy' -%}
+      {%-       set _ = states.update({n: 'running, unhealthy'}) -%}
+      {%-       set _ = f.append('container ' ~ n ~ ' is running but its healthcheck reports unhealthy') -%}
+      {%-     else -%}
+      {%-       set _ = states.update({n: 'running' ~ ((', ' ~ health) if health else '')}) -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- for r in _watch_http.results | default([]) if not r.skipped | default(false) -%}
+      {%-   set code = r.status | default(-1) | int -%}
+      {%-   set p = ('HTTP ' ~ code) if code > 0 else ('no answer: ' ~ (r.msg | default('') | regex_replace('^.*Request failed: ', '') | truncate(100))) -%}
+      {%-   set _ = pages.update({r.item.url: p}) -%}
+      {%-   if code not in watch_url_ok_status -%}
+      {%-     set _ = f.append(r.item.name ~ ' page ' ~ r.item.url ~ ' -> ' ~ p) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ {'states': states, 'pages': pages, 'healthy': f | length == 0, 'findings': f} }}
+
+- name: Check | {{ _watch_what }} on {{ inventory_hostname }}
+  ansible.builtin.debug:
+    msg: "{{ ('UP: ' if service_watch.healthy else 'DOWN: ' ~ (service_watch.findings | join('; ')) ~ ' | ') ~ (service_watch.states | dictsort | map('join', ' ') | join(', ')) }}"

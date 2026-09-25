@@ -1,0 +1,64 @@
+---
+# Record one event for this host: a JSON line in watch_record_file and a syslog line.
+# Input: _watch_event (down_detected, self_healed, recovered, awaiting_approval, still_down,
+# fix_approved, fixed_after_approval, recovered_before_fix, manual_action_needed).
+
+- name: Record | what happened
+  ansible.builtin.set_fact:
+    _watch_record:
+      time: "{{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+      host: "{{ inventory_hostname }}"
+      event: "{{ _watch_event }}"
+      mode: "{{ watch_mode }}"
+      containers: "{{ service_watch.states }}"
+      pages: "{{ service_watch.pages }}"
+      findings: "{{ (service_watch_before | default(service_watch)).findings }}"
+      act_status: "{{ (act_triage_result | default({})).status | default('') }}"
+      act_report: "{{ ((act_triage_result | default({})).summary | default('') or (act_triage_result | default({})).stop_reason | default(''))[:2000] }}"
+      fixes_run: "{{ (act_triage_result | default({})).commands | default([]) | selectattr('approval', 'equalto', 'pre_approved') | map(attribute='command') | list }}"
+      proposed: "{{ _watch_proposed | default([]) }}"
+      approved: "{{ _watch_approved | default([]) }}"
+      aap_job_id: "{{ awx_job_id | default('') }}"
+      aap_workflow_job_id: "{{ awx_workflow_job_id | default('') }}"
+      aap_launched_by: "{{ awx_user_name | default('') }}"
+
+- name: Record | incident log directory
+  ansible.builtin.file:
+    path: "{{ watch_record_file | dirname }}"
+    state: directory
+    mode: "0750"
+
+- name: Record | append to {{ watch_record_file }}
+  ansible.builtin.lineinfile:
+    path: "{{ watch_record_file }}"
+    line: "{{ _watch_record | to_json }}"
+    insertafter: EOF
+    create: true
+    mode: "0640"
+
+- name: Record | written to {{ watch_record_file }}
+  ansible.builtin.debug:
+    var: _watch_record
+
+- name: Record | syslog (tag service-watch)
+  ansible.builtin.command:
+    argv:
+      - logger
+      - --tag
+      - service-watch
+      - --priority
+      - "daemon.{{ 'warning' if _watch_event in ['down_detected', 'awaiting_approval', 'still_down', 'manual_action_needed'] else 'notice' }}"
+      - "{{ _watch_event | upper }}: {{ _watch_texts[_watch_event] | default('') }} (AAP job {{ awx_job_id | default('-') }})"
+  vars:
+    _watch_texts:
+      down_detected: "{{ _watch_record.findings | join('; ') }}"
+      self_healed: "fixed by ACT ({{ _watch_record.fixes_run | join('; ') }}), verified up"
+      recovered: up again without a fix
+      awaiting_approval: "ACT proposes: {{ _watch_record.proposed | join('; ') }}"
+      still_down: "{{ _watch_record.findings | join('; ') }}; no automatic fix worked; see {{ watch_record_file }}"
+      fix_approved: "applying: {{ _watch_record.approved | join('; ') }}"
+      fixed_after_approval: "approved fix applied ({{ _watch_record.fixes_run | join('; ') }}), verified up"
+      recovered_before_fix: was already up again; the approved fix was not needed
+      manual_action_needed: nothing approvable to apply; a person must fix it
+  changed_when: false
+  when: watch_record_syslog | bool

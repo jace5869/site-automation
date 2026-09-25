@@ -1,0 +1,101 @@
+---
+# The approved-fix job (playbooks/service_fix_approved.yml). It runs in the workflow after a
+# person approved. AAP passes it the check job's results (`act_triage`, from set_stats), and
+# for each host ACT may run exactly the command(s) it proposed there (plus, in self-heal mode,
+# a start/restart of the watched containers). Then the containers are re-checked independently.
+
+- name: Apply | the check job's results reached this job
+  ansible.builtin.assert:
+    that: act_triage is defined and act_triage is mapping
+    fail_msg: >-
+      Nothing to apply: no ACT results reached this job. Either it was launched on its own (run it
+      only inside the workflow, after the approval step), or the check job failed before ACT ran
+      on any host (unreachable host, ACT could not start): read the check job's output.
+    quiet: true
+  run_once: true
+
+- name: Apply | skip hosts that had no incident
+  ansible.builtin.meta: end_host
+  when: inventory_hostname not in act_triage
+
+- name: Apply | what was approved for this host
+  ansible.builtin.set_fact:
+    _watch_approved: "{{ (act_triage[inventory_hostname] or {}).get('proposed_commands', []) }}"
+
+- name: Apply | is it still down?
+  ansible.builtin.include_tasks: check.yml
+
+- name: Apply | remember the state before the fix
+  ansible.builtin.set_fact:
+    service_watch_before: "{{ service_watch }}"
+    service_watch_outcome: >-
+      {{ 'recovered_before_fix' if service_watch.healthy
+         else 'manual_action_needed' if _watch_approved | length == 0
+         else 'fix_approved' }}
+
+- name: Apply | record
+  ansible.builtin.include_tasks: record.yml
+  vars:
+    _watch_event: "{{ service_watch_outcome }}"
+
+- name: Apply | ACT applies the approved fix and verifies it
+  ansible.builtin.include_role:
+    name: act_triage
+  vars:
+    act_triage_builtin_checks: false
+    act_triage_always: true
+    act_triage_findings_extra: "{{ service_watch_before.findings }}"
+    act_triage_allow: >-
+      {{ (_watch_approved | map('regex_escape') | list)
+         + (_watch_fix_patterns if watch_mode == 'self-heal' else []) }}
+    act_triage_extra_instructions: |-
+      {{ watch_instructions }}
+      A person APPROVED exactly these fixes: {{ _watch_approved | join(' ; ') }}.
+      Confirm the problem is still there and run the approved command(s) exactly as written.
+      {% if watch_mode == 'self-heal' %}If a watched container is still down after that, start it
+      with `podman start NAME`. {% endif %}Then verify with `podman inspect NAME` (expect_contains
+      `"Running": true`) that the containers are running. Make no other change.
+    act_triage_env: "{{ watch_act_env }}"
+    act_triage_timeout: "{{ watch_act_timeout }}"
+    act_triage_fail_in_role: false
+    act_triage_write_report: false
+  when: service_watch_outcome == 'fix_approved'
+
+- name: Apply | re-check the containers ourselves
+  ansible.builtin.include_tasks: check.yml
+  vars:
+    _watch_retries: "{{ watch_verify_retries }}"
+  when: service_watch_outcome == 'fix_approved'
+
+- name: Apply | outcome
+  ansible.builtin.set_fact:
+    service_watch_outcome: "{{ 'fixed_after_approval' if service_watch.healthy else 'still_down' }}"
+  when: service_watch_outcome == 'fix_approved'
+
+- name: Apply | record the outcome
+  ansible.builtin.include_tasks: record.yml
+  vars:
+    _watch_event: "{{ service_watch_outcome }}"
+  when: service_watch_outcome in ['fixed_after_approval', 'still_down']
+
+- name: Apply | ACT's report
+  ansible.builtin.debug:
+    msg: "{{ (act_triage_result.summary or act_triage_result.stop_reason or 'ACT gave no report').splitlines() }}"
+  when: act_triage_result is defined
+
+- name: Apply | summary
+  ansible.builtin.debug:
+    msg: "{{ _watch_says[service_watch_outcome] }}"
+  vars:
+    _watch_says:
+      recovered_before_fix: "Already up again ({{ _watch_what }}); the approved fix was not needed."
+      manual_action_needed: "Down, and ACT proposed nothing that can be applied automatically. A person must fix it."
+      fixed_after_approval: "Up: the approved fix was applied and the re-check confirms it ({{ _watch_what }})."
+      still_down: "Still DOWN after the approved fix: {{ service_watch.findings | join('; ') }}."
+
+- name: Apply | still down
+  ansible.builtin.fail:
+    msg: >-
+      Still down on {{ inventory_hostname }}: {{ service_watch.findings | join('; ') }}.
+      See ACT's report above and {{ watch_record_file }}.
+  when: service_watch_outcome in ['still_down', 'manual_action_needed']
