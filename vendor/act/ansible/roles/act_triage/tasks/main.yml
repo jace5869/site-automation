@@ -1,0 +1,274 @@
+---
+# Cheap, deterministic checks first; the model is only called when one of them trips (or
+# act_triage_always). ACT then runs --non-interactive: proven reads run, fixes matching
+# act_triage_allow run, anything else is refused and reported as a proposed fix.
+
+- name: Checks | failed systemd units
+  ansible.builtin.command: systemctl --failed --plain --no-legend --no-pager
+  register: _act_failed_units
+  changed_when: false
+  failed_when: false
+  when: act_triage_builtin_checks | bool
+
+- name: Checks | required units are active
+  ansible.builtin.command: "systemctl is-active {{ item }}"
+  loop: "{{ act_triage_units }}"
+  register: _act_units
+  changed_when: false
+  failed_when: false
+  when: act_triage_builtin_checks | bool
+
+- name: Checks | filesystem usage
+  ansible.builtin.command: df -P -x tmpfs -x devtmpfs -x squashfs -x overlay
+  register: _act_df
+  changed_when: false
+  failed_when: false
+  when: act_triage_builtin_checks | bool
+
+- name: Checks | error-priority journal lines
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    journalctl -p err --since {{ act_triage_journal_since | quote }} -q --no-pager | wc -l
+  args:
+    executable: /bin/bash
+  register: _act_journal
+  changed_when: false
+  failed_when: false
+  when: act_triage_builtin_checks | bool and act_triage_journal_error_threshold | int > 0
+
+- name: Checks | collect findings
+  ansible.builtin.set_fact:
+    act_triage_findings: >-
+      {%- set f = [] -%}
+      {%- for line in (_act_failed_units.stdout_lines | default([])) if line | trim -%}
+      {%-   set _ = f.append('systemd unit failed: ' ~ (line.split() | first)) -%}
+      {%- endfor -%}
+      {%- for r in (_act_units.results | default([])) if (r.stdout | default('') | trim) != 'active' -%}
+      {%-   set _ = f.append('required unit ' ~ r.item ~ ' is ' ~ (r.stdout | default('') | trim or 'unknown')) -%}
+      {%- endfor -%}
+      {%- for line in (_act_df.stdout_lines | default([]))[1:] -%}
+      {%-   set c = line.split() -%}
+      {%-   if c | length >= 6 and (c[4] | replace('%', '') | int) >= (act_triage_disk_threshold | int) -%}
+      {%-     set _ = f.append('filesystem ' ~ c[5] ~ ' is ' ~ c[4] ~ ' full') -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- set jerr = (_act_journal.stdout | default('0') | trim | int) -%}
+      {%- if (act_triage_journal_error_threshold | int) > 0 and jerr >= (act_triage_journal_error_threshold | int) -%}
+      {%-   set _ = f.append(jerr ~ ' error-priority journal lines since ' ~ act_triage_journal_since) -%}
+      {%- endif -%}
+      {{ f + (act_triage_findings_extra | list) }}
+
+- name: Checks | decide whether to call ACT
+  ansible.builtin.set_fact:
+    act_triage_needed: "{{ (act_triage_always | bool) or (act_triage_findings | length > 0) }}"
+
+- name: Checks | summary
+  ansible.builtin.debug:
+    msg: "{{ act_triage_findings if act_triage_findings else 'all checks passed' }}"
+
+- name: ACT triage
+  when: act_triage_needed | bool
+  block:
+    - name: ACT | find a Python >= 3.8
+      ansible.builtin.shell: |
+        for p in {{ act_triage_python_candidates | map('quote') | join(' ') }}; do
+          if command -v "$p" >/dev/null 2>&1 &&
+             "$p" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null; then
+            command -v "$p"; exit 0
+          fi
+        done
+        exit 1
+      register: _act_python
+      changed_when: false
+      failed_when: false
+
+    - name: ACT | require Python >= 3.8
+      ansible.builtin.assert:
+        that: _act_python.rc == 0
+        fail_msg: >-
+          ACT needs Python 3.8+ on {{ inventory_hostname }} and none was found (tried
+          {{ act_triage_python_candidates | join(', ') }}). On RHEL 8: dnf install python3.11
+        quiet: true
+
+    - name: ACT | install directory
+      ansible.builtin.file:
+        path: "{{ act_triage_dest_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: ACT | install the act script
+      ansible.builtin.copy:
+        src: "{{ act_triage_script_src }}"
+        dest: "{{ act_triage_dest_dir }}/act"
+        mode: "0755"
+
+    - name: ACT | result file
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .act-result.json
+      register: _act_tmp
+
+    - name: ACT | collect evidence (evidence mode)
+      ansible.builtin.shell: "{{ item }}"
+      args:
+        executable: /bin/bash
+      loop: "{{ act_triage_evidence_commands }}"
+      register: _act_evidence
+      changed_when: false
+      failed_when: false
+      when: act_triage_mode == 'evidence'
+
+    - name: ACT | evidence file (evidence mode)
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .act-evidence.txt
+      register: _act_evfile
+      when: act_triage_mode == 'evidence'
+
+    - name: ACT | write the evidence (evidence mode)
+      ansible.builtin.copy:
+        dest: "{{ _act_evfile.path }}"
+        mode: "0600"
+        content: >-
+          {%- set cap = act_triage_evidence_max_chars | int -%}
+          {%- set parts = [] -%}
+          {%- for r in (_act_evidence.results | default([])) -%}
+          {%-   set out = (r.stdout | default('')) ~ ((_act_nl ~ '[stderr]' ~ _act_nl ~ r.stderr) if r.stderr | default('') else '') -%}
+          {%-   set _ = parts.append('### $ ' ~ r.item ~ '   (exit ' ~ (r.rc | default('?')) ~ ')' ~ _act_nl
+                                     ~ (('[... earlier output trimmed ...]' ~ _act_nl ~ out[-cap:]) if out | length > cap else out)) -%}
+          {%- endfor -%}
+          {%- if act_triage_evidence_text -%}{%- set _ = parts.append(act_triage_evidence_text) -%}{%- endif -%}
+          {{ (parts | join(_act_nl ~ _act_nl))[:act_triage_evidence_total_chars | int] }}
+      when: act_triage_mode == 'evidence'
+
+    - name: ACT | analyze the evidence (evidence mode; ACT runs no commands)
+      ansible.builtin.shell: >-
+        {{ _act_python.stdout_lines | last | quote }} {{ (act_triage_dest_dir ~ '/act') | quote }}
+        --non-interactive --allow-piped-upload --result-file {{ _act_tmp.path | quote }}
+        {{ (act_triage_task if act_triage_task else lookup('ansible.builtin.template', 'task.j2') | trim) | quote }}
+        < {{ _act_evfile.path | quote }}
+      args:
+        executable: /bin/bash
+      environment: >-
+        {%- set keys = {} -%}
+        {%- for name in act_triage_key_env_names -%}
+        {%-   set value = lookup('ansible.builtin.env', name) -%}
+        {%-   if value -%}{%- set _ = keys.update({name: value}) -%}{%- endif -%}
+        {%- endfor -%}
+        {{ act_triage_env | combine({'ACT_NO_BANNER': '1'}) | combine(keys) }}
+      async: "{{ act_triage_timeout | int }}"
+      poll: "{{ act_triage_poll | int }}"
+      register: _act_run_evidence
+      changed_when: false
+      failed_when: false
+      no_log: true            # the environment carries the API key
+      when: act_triage_mode == 'evidence'
+
+    - name: ACT | run {{ 'diagnosis + pre-approved fixes' if act_triage_allow else 'diagnosis only' }}
+      ansible.builtin.command:
+        argv: >-
+          {{ [_act_python.stdout_lines | last, act_triage_dest_dir ~ '/act', '--non-interactive',
+              '--result-file', _act_tmp.path, '--max-steps', act_triage_max_steps | string]
+             + (act_triage_allow | map('string') | map('regex_replace', '^', '--allow=') | list)
+             + [act_triage_task if act_triage_task else lookup('ansible.builtin.template', 'task.j2') | trim] }}
+      environment: >-
+        {%- set keys = {} -%}
+        {%- for name in act_triage_key_env_names -%}
+        {%-   set value = lookup('ansible.builtin.env', name) -%}
+        {%-   if value -%}{%- set _ = keys.update({name: value}) -%}{%- endif -%}
+        {%- endfor -%}
+        {{ act_triage_env | combine({'ACT_NO_BANNER': '1'}) | combine(keys) }}
+      async: "{{ act_triage_timeout | int }}"
+      poll: "{{ act_triage_poll | int }}"
+      register: _act_run
+      changed_when: false
+      failed_when: false
+      no_log: true            # the environment carries the API key
+      when: act_triage_mode != 'evidence'
+
+    - name: ACT | remove the evidence file
+      ansible.builtin.file:
+        path: "{{ _act_evfile.path }}"
+        state: absent
+      when: act_triage_mode == 'evidence'
+
+    - name: ACT | read the result
+      ansible.builtin.slurp:
+        src: "{{ _act_tmp.path }}"
+      register: _act_slurp
+      failed_when: false
+
+    - name: ACT | parse the result
+      ansible.builtin.set_fact:
+        act_triage_result: >-
+          {{ (_act_slurp.content | b64decode | from_json) if (_act_slurp.content | default('') | length > 0
+              and (_act_slurp.content | b64decode | trim | length > 0))
+             else {'schema': 'act.result/1', 'status': 'error',
+                   'exit_code': _act_run.rc | default(_act_run_evidence.rc | default(-1)),
+                   'summary': '', 'changed': false, 'commands': [], 'denied': [], 'files_changed': [],
+                   'stop_reason': 'ACT produced no result (it timed out after ' ~ act_triage_timeout
+                                  ~ 's or could not start); rerun with -v and no_log off to debug'} }}
+
+    - name: ACT | remove the result file from the host
+      ansible.builtin.file:
+        path: "{{ _act_tmp.path }}"
+        state: absent
+      when: not (act_triage_keep_result_on_host | bool)
+
+    - name: ACT | outcome
+      ansible.builtin.debug:
+        msg:
+          status: "{{ act_triage_result.status }}"
+          summary: "{{ act_triage_result.summary or act_triage_result.stop_reason }}"
+          proposed_fixes: "{{ act_triage_result.denied | selectattr('pre_approvable', 'defined')
+                              | selectattr('pre_approvable') | map(attribute='command') | list }}"
+          manual_fixes: "{{ act_triage_result.denied | rejectattr('pre_approvable', 'defined')
+                            | map(attribute='command') | list + (act_triage_result.denied
+                            | selectattr('pre_approvable', 'defined') | rejectattr('pre_approvable')
+                            | map(attribute='command') | list) }}"
+          commands_run: "{{ act_triage_result.commands | length }}"
+      changed_when: act_triage_result.changed | bool
+
+    - name: ACT | publish the outcome for later workflow nodes (set_stats)
+      ansible.builtin.set_stats:
+        data:
+          act_triage: >-
+            {{ {inventory_hostname: {
+                 'status': act_triage_result.status,
+                 'summary': act_triage_result.summary,
+                 'stop_reason': act_triage_result.stop_reason | default(''),
+                 'changed': act_triage_result.changed,
+                 'findings': act_triage_findings,
+                 'proposed_commands': act_triage_result.denied | selectattr('pre_approvable', 'defined')
+                                      | selectattr('pre_approvable') | map(attribute='command') | list,
+                 'manual_fixes': act_triage_result.denied | rejectattr('pre_approvable', 'defined')
+                                 | map(attribute='command') | list
+                                 + (act_triage_result.denied | selectattr('pre_approvable', 'defined')
+                                    | rejectattr('pre_approvable') | map(attribute='command') | list)}} }}
+        per_host: false
+        aggregate: true
+
+    - name: ACT | fail on configured statuses
+      ansible.builtin.fail:
+        msg: "ACT status {{ act_triage_result.status }}: {{ act_triage_result.stop_reason or act_triage_result.summary }}"
+      when: act_triage_fail_in_role | bool and act_triage_result.status in act_triage_fail_on
+
+- name: Report | write the fleet report on the controller
+  when: act_triage_write_report | bool
+  run_once: true
+  delegate_to: localhost
+  become: false
+  block:
+    - name: Report | directory
+      ansible.builtin.file:
+        path: "{{ act_triage_report_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Report | markdown
+      ansible.builtin.template:
+        src: report.md.j2
+        dest: "{{ act_triage_report_dir }}/act-triage-{{ _act_stamp }}.md"
+        mode: "0640"
+      vars:
+        _act_stamp: "{{ now(utc=true).strftime('%Y%m%dT%H%M%SZ') }}"

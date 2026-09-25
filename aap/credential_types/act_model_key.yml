@@ -1,0 +1,15 @@
+# Credential type: "ACT model key"
+inputs:
+  fields:
+    - id: genai_key
+      type: string
+      label: GenAI API key
+      secret: true
+    - id: asksage_key
+      type: string
+      label: AskSage API key
+      secret: true
+injectors:
+  env:
+    GENAI_KEY: "{{ genai_key }}"
+    ASKSAGE_API_KEY: "{{ asksage_key }}"

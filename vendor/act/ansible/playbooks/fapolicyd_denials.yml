@@ -1,0 +1,170 @@
+---
+# fapolicyd denial analysis: what is fapolicyd blocking, and what is the minimal, safe way to
+# allow it (a trust entry or a narrow rule)?  Evidence mode, diagnose only: ACT runs NOTHING
+# on the host. The playbook collects the evidence (audit denials, rules, trust status of each
+# denied file) and ACT analyzes it. Proposed trust entries / rules are security-control
+# changes: route them through your security approval (e.g. the ISSO) before anyone applies them.
+#
+# Denials are read from the audit log, so this needs auditd running and deny rules that audit
+# (`deny_audit`, as in the RHEL default rules). With plain `deny` / `deny_syslog` rules the
+# playbook reports "no denials" even while things are being blocked.
+#
+#   ansible-playbook -i inventory ansible/playbooks/fapolicyd_denials.yml -e target=app_servers
+#   ... -e fapolicyd_since=recent        # last 10 minutes (ausearch keyword), default: today
+- name: fapolicyd denial analysis (ACT, evidence only)
+  hosts: "{{ target | default('all') }}"
+  become: true
+  gather_facts: false
+  vars:
+    act_triage_fail_in_role: false   # fail in post_tasks, after the Teams report
+    fapolicyd_since: today          # ausearch -ts keyword: recent (10 min), today, yesterday, this-week, boot
+    fapolicyd_max_lines: 400        # most recent lines of `ausearch -i` output kept as evidence
+    fapolicyd_max_paths: 10         # distinct denied files examined in detail
+    _nl: "\n"                       # a real newline for templates (portable across ansible-core versions)
+    # role settings for this job: evidence mode, never any allow patterns
+    act_triage_mode: evidence
+    act_triage_builtin_checks: false
+    act_triage_allow: []
+    act_triage_findings_extra: "{{ _fa_findings | default([]) }}"
+    act_triage_evidence_commands:
+      - "rpm -q fapolicyd"
+      - "grep -Ev '^[[:space:]]*(#|$)' /etc/fapolicyd/fapolicyd.conf"
+      - "fapolicyd-cli --list"
+      - "ls -l /etc/fapolicyd/rules.d/ /etc/fapolicyd/trust.d/ 2>&1"
+      - "ausearch -m FANOTIFY -ts {{ fapolicyd_since | quote }} -i 2>&1 | tail -n {{ fapolicyd_max_lines | int }}"
+    act_triage_evidence_text: "{{ _fa_file_evidence | default('') }}"
+    act_triage_extra_instructions: "{{ lookup('ansible.builtin.template', 'templates/fapolicyd_prompt.j2') }}"
+
+  pre_tasks:
+    - name: fapolicyd | is it installed?
+      ansible.builtin.command:
+        argv: [rpm, -q, fapolicyd]
+      register: _fa_rpm
+      changed_when: false
+      failed_when: false
+
+    - name: fapolicyd | not installed on this host
+      ansible.builtin.meta: end_host
+      when: _fa_rpm.rc != 0
+
+    - name: fapolicyd | service state
+      ansible.builtin.command:
+        argv: [systemctl, is-active, fapolicyd]
+      register: _fa_active
+      changed_when: false
+      failed_when: false
+
+    - name: fapolicyd | auditd state (denials are only recorded while it runs)
+      ansible.builtin.command:
+        argv: [systemctl, is-active, auditd]
+      register: _fa_auditd
+      changed_when: false
+      failed_when: false
+
+    - name: fapolicyd | denials since {{ fapolicyd_since }}
+      ansible.builtin.command:
+        argv: [ausearch, -m, FANOTIFY, -ts, "{{ fapolicyd_since }}", -i]
+      register: _fa_denials
+      changed_when: false
+      failed_when: _fa_denials.rc not in [0, 1]     # 1 = "<no matches>": nothing was denied
+
+    - name: fapolicyd | parse the denied files
+      ansible.builtin.set_fact:
+        _fa_count: "{{ _fa_denials.stdout | regex_findall('type=FANOTIFY[^\\n]*resp=deny') | length }}"
+        _fa_paths: >-
+          {{ ((_fa_denials.stdout | regex_findall('(?:^| )name=(/\S+)', multiline=True))
+              | reverse | unique | list)[:fapolicyd_max_paths | int] }}
+        _fa_exes: >-
+          {{ (_fa_denials.stdout | regex_findall('(?:^| )exe=(/\S+)', multiline=True)) | unique | list }}
+
+    # Paths come from audit records, i.e. from whatever tried to run. They are only ever passed
+    # as argv (never through a shell), and only for regular files that exist.
+    - name: fapolicyd | stat each denied file
+      ansible.builtin.stat:
+        path: "{{ item }}"
+        follow: false
+        checksum_algorithm: sha256
+      loop: "{{ _fa_paths }}"
+      register: _fa_stat
+
+    - name: fapolicyd | package owner of each denied file
+      ansible.builtin.command:
+        argv: [rpm, -qf, "{{ item.item }}"]
+      loop: "{{ _fa_stat.results | selectattr('stat.isreg', 'defined') | selectattr('stat.isreg') | list }}"
+      loop_control:
+        label: "{{ item.item }}"
+      register: _fa_owner
+      changed_when: false
+      failed_when: false
+
+    - name: fapolicyd | is each denied file in the trust database?
+      ansible.builtin.command:
+        argv: [grep, -rsF, --, "{{ item.item }}", /etc/fapolicyd/fapolicyd.trust, /etc/fapolicyd/trust.d]
+      loop: "{{ _fa_stat.results | selectattr('stat.isreg', 'defined') | selectattr('stat.isreg') | list }}"
+      loop_control:
+        label: "{{ item.item }}"
+      register: _fa_trust
+      changed_when: false
+      failed_when: false
+
+    - name: fapolicyd | SELinux label and permissions of each denied file
+      ansible.builtin.command:
+        argv: [ls, -lZ, --, "{{ item.item }}"]
+      loop: "{{ _fa_stat.results | selectattr('stat.isreg', 'defined') | selectattr('stat.isreg') | list }}"
+      loop_control:
+        label: "{{ item.item }}"
+      register: _fa_ls
+      changed_when: false
+      failed_when: false
+
+    - name: fapolicyd | findings and per-file evidence
+      ansible.builtin.set_fact:
+        _fa_findings: >-
+          {%- set f = [] -%}
+          {%- if _fa_active.stdout != 'active' -%}
+          {%-   set _ = f.append('fapolicyd is ' ~ (_fa_active.stdout or 'not running')) -%}
+          {%- endif -%}
+          {%- if _fa_auditd.stdout != 'active' -%}
+          {%-   set _ = f.append('auditd is ' ~ (_fa_auditd.stdout or 'not running') ~ ': fapolicyd denials are not being recorded') -%}
+          {%- endif -%}
+          {%- if _fa_count | int > 0 -%}
+          {%-   set _ = f.append('fapolicyd denied ' ~ _fa_count ~ ' access attempt(s) since ' ~ fapolicyd_since
+                                 ~ ' (' ~ (_fa_paths | length) ~ ' distinct file(s), subjects: '
+                                 ~ ((_fa_exes | join(', ')) | truncate(200)) ~ ')') -%}
+          {%- endif -%}
+          {{ f }}
+        _fa_file_evidence: >-
+          {%- set out = ['### Per-file details for the denied files (collected with argv, never a shell)'] -%}
+          {%- for s in _fa_stat.results -%}
+          {%-   set p = s.item -%}
+          {%-   if not s.stat.exists | default(false) -%}
+          {%-     set _ = out.append('- ' ~ p ~ ': does not exist now') -%}
+          {%-   elif not s.stat.isreg | default(false) -%}
+          {%-     set _ = out.append('- ' ~ p ~ ': not a regular file') -%}
+          {%-   else -%}
+          {%-     set own = _fa_owner.results | selectattr('item.item', 'equalto', p) | first -%}
+          {%-     set tr = _fa_trust.results | selectattr('item.item', 'equalto', p) | first -%}
+          {%-     set ls = _fa_ls.results | selectattr('item.item', 'equalto', p) | first -%}
+          {%-     set _ = out.append('- ' ~ p ~ _nl ~ '    sha256: ' ~ s.stat.checksum | default('?')
+                                     ~ _nl ~ '    size: ' ~ s.stat.size | default('?') ~ ' bytes, mode ' ~ s.stat.mode | default('?')
+                                     ~ ', owner ' ~ s.stat.pw_name | default('?')
+                                     ~ _nl ~ '    rpm -qf: ' ~ ((own.stdout if own.rc == 0 else 'not owned by any package') | trim)
+                                     ~ _nl ~ '    trust db: ' ~ ((tr.stdout | truncate(300)) if tr.rc == 0 else 'not in fapolicyd.trust or trust.d')
+                                     ~ _nl ~ '    ls -lZ: ' ~ (ls.stdout | trim)) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out | join(_nl) if _fa_paths else '' }}
+
+    - name: fapolicyd | summary
+      ansible.builtin.debug:
+        msg: "{{ _fa_findings if _fa_findings else 'no fapolicyd denials since ' ~ fapolicyd_since }}"
+
+  roles:
+    - role: act_triage
+    - role: act_report_teams
+
+  post_tasks:
+    - name: Fail hosts whose ACT status is in act_triage_fail_on (after the Teams report)
+      ansible.builtin.fail:
+        msg: "ACT status {{ act_triage_result.status }}: {{ act_triage_result.stop_reason or act_triage_result.summary }}"
+      when: act_triage_result is defined and act_triage_result.status in act_triage_fail_on

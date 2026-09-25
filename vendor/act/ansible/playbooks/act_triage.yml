@@ -1,0 +1,25 @@
+---
+# Health triage with ACT. Cheap checks run everywhere; ACT is called only on hosts where one
+# trips. Diagnose-only by default: ACT's proposed fixes come back in the report and in the
+# `act_triage` set_stats artifact for an AAP approval node + act_apply_approved.yml.
+#
+#   ansible-playbook -i inventory ansible/playbooks/act_triage.yml -e target=web
+#   ... -e '{"act_triage_allow": ["systemctl restart (nginx|httpd)"]}'   # allow specific fixes
+- name: ACT health triage
+  hosts: "{{ target | default('all') }}"
+  become: true            # journal access, and any pre-approved fix, need root
+  gather_facts: false
+  vars:
+    act_triage_fail_in_role: false   # fail in post_tasks, after the Teams report
+    # AAP-survey friendly: a textarea with one allow pattern per line. (Passing the list
+    # act_triage_allow as an extra var directly still works and wins.)
+    act_triage_allow: "{{ (act_triage_allow_lines | default('')).splitlines() | map('trim') | select | list }}"
+  roles:
+    - role: act_triage
+    - role: act_report_teams
+
+  post_tasks:
+    - name: Fail hosts whose ACT status is in act_triage_fail_on (after the Teams report)
+      ansible.builtin.fail:
+        msg: "ACT status {{ act_triage_result.status }}: {{ act_triage_result.stop_reason or act_triage_result.summary }}"
+      when: act_triage_result is defined and act_triage_result.status in act_triage_fail_on

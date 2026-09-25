@@ -1,0 +1,23 @@
+# Managed by Ansible (stigman_stack) - do not edit on the host
+server {
+    listen 443 ssl;
+    server_name {{ stigman_server_name }};
+
+    ssl_certificate     /etc/nginx/tls/fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/key.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    server_tokens off;
+
+    # checklist / XCCDF imports can be large
+    client_max_body_size 1g;
+
+    location / {
+        proxy_pass http://stigman-api:54000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 600s;
+    }
+}

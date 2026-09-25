@@ -1,0 +1,11 @@
+# Credential type: "Teams webhook"
+inputs:
+  fields:
+    - id: webhook_url
+      type: string
+      label: Teams Workflows webhook URL
+      secret: true
+  required: [webhook_url]
+injectors:
+  env:
+    TEAMS_WEBHOOK_URL: "{{ webhook_url }}"

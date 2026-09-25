@@ -1,0 +1,7 @@
+# Optional but recommended: block commits that contain secrets.
+#   pip install pre-commit && pre-commit install
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks

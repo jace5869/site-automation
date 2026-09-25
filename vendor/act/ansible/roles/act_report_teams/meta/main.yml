@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  role_name: act_report_teams
+  author: ACT
+  description: Post an act_triage run summary to a Microsoft Teams channel (Workflows webhook, Adaptive Card).
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

@@ -1,0 +1,30 @@
+# Managed by Ansible (stigman_stack) - do not edit on the host
+[Unit]
+Description=STIG Manager - MySQL
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=stigman-mysql
+Image={{ stigman_images.mysql }}
+Network=stigman.network
+Volume=stigman-mysql-data.volume:/var/lib/mysql
+# Passwords are podman secrets mounted as files; the MySQL image reads *_FILE variables.
+# (They only take effect when the data volume is first initialised.)
+Secret=stigman-mysql-root,type=mount,target=/run/secrets/mysql-root,mode=0400,uid=999
+Secret=stigman-db-password,type=mount,target=/run/secrets/stigman-db,mode=0400,uid=999
+Environment=MYSQL_ROOT_PASSWORD_FILE=/run/secrets/mysql-root
+Environment=MYSQL_DATABASE={{ stigman_db_schema }}
+Environment=MYSQL_USER={{ stigman_db_user }}
+Environment=MYSQL_PASSWORD_FILE=/run/secrets/stigman-db
+Exec=--innodb-buffer-pool-size={{ stigman_mysql_buffer_pool }}
+HealthCmd=mysqladmin ping -h 127.0.0.1 --silent
+HealthInterval=30s
+HealthStartPeriod=60s
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy={{ 'default.target' if stigman_scope == 'user' else 'multi-user.target' }}

@@ -1,0 +1,40 @@
+Health triage on host {{ inventory_hostname }}.
+{% if act_triage_findings %}
+These health checks failed:
+{% for f in act_triage_findings %}
+- {{ f }}
+{% endfor %}
+{% else %}
+No automated check failed; do a general health review (failed units, disk, memory, recent errors).
+{% endif %}
+
+{% if act_triage_mode == 'evidence' %}
+You cannot run any commands in this task. The evidence below was collected from the host by read-only commands; each section starts with the command that produced it. Base every conclusion on that evidence and quote the lines that support it. If the evidence is not enough, say exactly which read-only command's output you would need.
+{% else %}
+Find the root cause of each finding with read-only commands: unit status, recent journal entries, configuration, disk and memory.
+{% endif %}
+{% if act_triage_mode == 'evidence' %}
+Propose fixes for a person to review and apply; nothing will be applied automatically.
+{% elif act_triage_allow %}
+You may apply ONLY fixes that are exactly one of these pre-approved commands (each is a regular expression that must match the whole command):
+{% for a in act_triage_allow %}
+- {{ a }}
+{% endfor %}
+Any other change will be refused and reported for operator approval: propose it once, do not retry it or a variant. After applying an approved fix, verify it with a read-only command.
+{% else %}
+This run is diagnose-only: any change will be refused and reported for operator approval. Propose the exact fix once; do not retry it or a variant.
+{% endif %}
+
+{% if act_triage_mode != 'evidence' %}
+Where you can, express each fix as ONE plain command: no pipes, redirection, quotes, globs or chaining (&&, ;), so it can be applied automatically once an operator approves it. Use a structured edit/write for file changes.
+{% endif %}
+
+Finish with, for each finding:
+ROOT CAUSE: ...
+EVIDENCE: what you observed that shows it
+FIX: the exact command or file change (say whether you applied it)
+CONFIDENCE: high / medium / low
+{% if act_triage_extra_instructions %}
+
+{{ act_triage_extra_instructions }}
+{% endif %}

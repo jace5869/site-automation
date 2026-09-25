@@ -1,0 +1,68 @@
+# ACT triage report
+
+Generated {{ now(utc=true).strftime('%Y-%m-%d %H:%M UTC') }} for {{ ansible_play_hosts_all | length }} host(s).
+
+| Host | Status | Changed | Findings | Proposed fixes |
+|---|---|---|---|---|
+{% for h in ansible_play_hosts_all %}
+{%   set hv = hostvars[h] %}
+{%   set r = hv.act_triage_result | default(none) %}
+{%   if r is none %}
+| {{ h }} | {{ 'healthy' if (hv.act_triage_findings | default([]) | length == 0) else 'not triaged' }} | no | {{ hv.act_triage_findings | default([]) | length }} | 0 |
+{%   else %}
+| {{ h }} | **{{ r.status }}** | {{ 'yes' if r.changed else 'no' }} | {{ hv.act_triage_findings | default([]) | length }} | {{ r.denied | length }} |
+{%   endif %}
+{% endfor %}
+
+{% for h in ansible_play_hosts_all %}
+{%   set hv = hostvars[h] %}
+{%   set r = hv.act_triage_result | default(none) %}
+{%   if r is not none %}
+## {{ h }} — {{ r.status }}
+
+{%     if hv.act_triage_findings | default([]) %}
+**Checks that tripped**
+
+{%       for f in hv.act_triage_findings %}
+- {{ f }}
+{%       endfor %}
+
+{%     endif %}
+**ACT summary**
+
+{{ r.summary or ('_(no summary — ' ~ (r.stop_reason or 'the run ended early') ~ ')_') }}
+
+{%     set approvable = r.denied | selectattr('pre_approvable', 'defined') | selectattr('pre_approvable') | list %}
+{%     set manual = r.denied | reject('in', approvable) | list %}
+{%     if approvable %}
+**Proposed fixes awaiting approval** (approving the workflow applies these via ACT)
+
+{%       for d in approvable %}
+- `{{ d.command }}` ({{ d.risk }}){{ ' — ' ~ d.thought if d.thought else '' }}
+{%       endfor %}
+
+{%     endif %}
+{%     if manual %}
+**Proposed fixes to apply by hand** (not a single plain command, danger tier, or a file change — ACT will not run these unattended)
+
+{%       for d in manual %}
+- `{{ d.command }}` ({{ d.risk }}){{ ' — ' ~ d.thought if d.thought else '' }}
+{%       endfor %}
+
+{%     endif %}
+{%     if r.commands %}
+**Commands ACT ran**
+
+| Command | Approval | Exit |
+|---|---|---|
+{%       for c in r.commands %}
+| `{{ c.command | replace('|', '\\|') }}` | {{ c.approval }} | {{ c.exit_code if c.exit_code is not none else '-' }} |
+{%       endfor %}
+
+{%     endif %}
+{%     if r.stop_reason %}
+_Stopped: {{ r.stop_reason }}_
+
+{%     endif %}
+{%   endif %}
+{% endfor %}

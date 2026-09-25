@@ -1,0 +1,19 @@
+# Managed by Ansible (stigman_stack) - do not edit on the host
+[Unit]
+Description=STIG Manager - nginx (TLS)
+Requires=stigman-api.service
+After=stigman-api.service
+
+[Container]
+ContainerName=stigman-nginx
+Image={{ stigman_images.nginx }}
+Network=stigman.network
+PublishPort={{ stigman_https_port }}:443
+Volume={{ stigman_config_dir }}/nginx/stigman.conf:/etc/nginx/conf.d/default.conf:ro,Z
+Volume={{ stigman_config_dir }}/nginx/tls:/etc/nginx/tls:ro,Z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy={{ 'default.target' if stigman_scope == 'user' else 'multi-user.target' }}
