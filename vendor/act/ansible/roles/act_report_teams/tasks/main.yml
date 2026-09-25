@@ -1,0 +1,63 @@
+---
+# Run at the END of a play that used act_triage. Builds one Adaptive Card for the whole run
+# (on the controller / execution environment) and posts it to a Teams Workflows webhook.
+
+- name: Teams | collect this run's results
+  run_once: true
+  delegate_to: localhost
+  become: false
+  ansible.builtin.set_fact:
+    _teams_rows: >-
+      {%- set rows = [] -%}
+      {%- for h in ansible_play_hosts_all -%}
+      {%-   set hv = hostvars[h] -%}
+      {%-   set r = hv.act_triage_result | default(none) -%}
+      {%-   if r is not none -%}
+      {%-     set denied = r.denied | default([]) -%}
+      {%-     set ok_cmds = denied | selectattr('pre_approvable', 'defined') | selectattr('pre_approvable') | list -%}
+      {%-     set _ = rows.append({
+                'host': h,
+                'status': r.status | default('error'),
+                'changed': r.changed | default(false),
+                'text': (r.summary | default('') or r.stop_reason | default('') or '(no summary)'),
+                'findings': hv.act_triage_findings | default([]),
+                'proposed': ok_cmds | map(attribute='command') | list,
+                'manual': denied | reject('in', ok_cmds) | map(attribute='command') | list}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ rows }}
+
+- name: Teams | count healthy and unreachable hosts
+  run_once: true
+  delegate_to: localhost
+  become: false
+  ansible.builtin.set_fact:
+    _teams_unreachable: >-
+      {{ ansible_play_hosts_all | difference(ansible_play_hosts)
+         | difference(_teams_rows | map(attribute='host') | list) }}
+    _teams_healthy: "{{ ansible_play_hosts | difference(_teams_rows | map(attribute='host') | list) }}"
+
+- name: Teams | post the summary card
+  run_once: true
+  delegate_to: localhost
+  become: false
+  ansible.builtin.uri:
+    url: "{{ act_report_teams_webhook_url }}"
+    method: POST
+    body_format: json
+    body: "{{ lookup('ansible.builtin.template', 'card.json.j2') | from_json }}"
+    status_code: [200, 202]
+    validate_certs: "{{ act_report_teams_validate_certs | bool }}"
+    timeout: 30
+  no_log: true            # the URL carries the webhook's secret signature
+  when:
+    - act_report_teams_webhook_url | length > 0
+    - act_report_teams_when == 'always' or (_teams_rows | length + _teams_unreachable | length) > 0
+
+- name: Teams | not configured
+  run_once: true
+  delegate_to: localhost
+  become: false
+  ansible.builtin.debug:
+    msg: "TEAMS_WEBHOOK_URL is not set; skipping the Teams report (attach the Teams webhook credential)."
+  when: act_report_teams_webhook_url | length == 0

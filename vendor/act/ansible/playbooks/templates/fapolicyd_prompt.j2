@@ -1,0 +1,7 @@
+The evidence shows what fapolicyd (the File Access Policy Daemon) blocked on this host. For EACH distinct blocked access, report:
+BLOCKED: the subject (the program, exe=) and the object (the file, name=), and the permission (execute or open).
+WHY: which rule decided it. On newer releases fan_info in the FANOTIFY record is the number of the deciding rule in `fapolicyd-cli --list`; use it only when it is present. Use subj_trust/obj_trust and the per-file details: is the file owned by an RPM package, is it in the trust database, where does it live?
+LEGITIMATE?: does this look like a real application need, or suspicious? Files in /tmp, /var/tmp, /dev/shm or home directories, unexpected interpreters, or files not owned by any package deserve an explicit warning.
+FIX: the minimal change. Prefer trusting the exact file: `fapolicyd-cli --file add PATH --trust-file NAME`, then `fapolicyd-cli --update`. Propose a rule only when a trust entry is not appropriate, as the complete text of a new file /etc/fapolicyd/rules.d/NN-name.rules followed by `fagenrules --load`. Never suggest permissive mode, stopping or disabling fapolicyd, or broad rules (a whole directory tree, all interpreters, all users).
+RISK: what the change would allow, in one sentence.
+Trust entries and rules are security-control changes: say that they need security/change approval (for example the ISSO) before anyone applies them.

@@ -1,0 +1,6 @@
+# Non-secret settings for the STIG Manager hosts (secrets come from AAP credentials).
+stigman_server_name: stigman.example.mil
+stigman_oidc_provider: https://keycloak.example.mil/realms/stigman
+stigman_client_oidc_provider: https://keycloak.example.mil/realms/stigman
+stigman_classification: U
+stigman_mysql_buffer_pool: 8G

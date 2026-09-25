@@ -1,0 +1,41 @@
+---
+# STIG Manager stack on podman, managed by systemd through Quadlet unit files:
+#   stigman-mysql (MySQL 8.4)  <-  stigman-api (STIG Manager)  <-  stigman-nginx (TLS, port 443)
+# Keycloak is EXTERNAL: the realm already exists and this role never touches it.
+# Needs podman >= 4.4 (Quadlet): RHEL 9.2+ / RHEL 8.8+.
+
+# system = rootful (/etc/containers/systemd, systemctl)          <- production
+# user   = rootless (~/.config/containers/systemd, systemctl --user) <- tests / rootless hosts
+stigman_scope: system
+
+stigman_images:
+  mysql: docker.io/library/mysql:8.4
+  api: docker.io/nuwcdivnpt/stig-manager:1.6.17     # pin a version; bump deliberately
+  nginx: docker.io/library/nginx:stable
+
+stigman_config_dir: /etc/stigman                    # nginx.conf, TLS files, CA bundle
+stigman_https_port: 443                             # host port nginx publishes
+stigman_server_name: "{{ inventory_hostname }}"
+
+# Existing Keycloak realm (server-side URL used by the API; browser-side URL for the web client)
+stigman_oidc_provider: "https://keycloak.example.mil/realms/stigman"
+stigman_client_oidc_provider: "{{ stigman_oidc_provider }}"
+stigman_client_id: stig-manager
+stigman_classification: U                           # banner: U, CUI, C, S, TS, SCI, NONE
+
+stigman_db_schema: stigman
+stigman_db_user: stigman
+stigman_mysql_buffer_pool: 1G                       # STIG Manager docs: >= 8G for real deployments
+
+# How long to wait for the API to answer through nginx after (re)starting
+stigman_ready_retries: 40
+stigman_ready_delay: 6
+
+# ---- Secrets: NEVER set these in a vars file or inventory -----------------------------------
+# They come from AAP credentials (aap/credential_types/*.yml) as environment variables / files
+# on the controller (execution environment). See docs/SECRETS.md.
+stigman_mysql_root_password: "{{ lookup('ansible.builtin.env', 'STIGMAN_MYSQL_ROOT_PASSWORD') }}"
+stigman_db_password: "{{ lookup('ansible.builtin.env', 'STIGMAN_DB_PASSWORD') }}"
+stigman_tls_cert_src: "{{ lookup('ansible.builtin.env', 'TLS_CERT_FILE') }}"
+stigman_tls_key_src: "{{ lookup('ansible.builtin.env', 'TLS_KEY_FILE') }}"
+stigman_tls_ca_src: "{{ lookup('ansible.builtin.env', 'TLS_CA_FILE') }}"

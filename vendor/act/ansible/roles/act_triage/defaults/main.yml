@@ -1,0 +1,59 @@
+---
+# ---- Where ACT comes from and where it goes ---------------------------------------------
+# The act script shipped in this repo (an AAP project sync of ACT-Linux brings it along).
+act_triage_script_src: "{{ role_path }}/../../../act"
+act_triage_dest_dir: /opt/act
+# ACT needs Python >= 3.8. RHEL 8's default python3 is 3.6, so newer ones are tried first.
+act_triage_python_candidates: [python3.13, python3.12, python3.11, python3.10, python3.9, python3.8, python3]
+
+# ---- Model credentials --------------------------------------------------------------------
+# Never put a key in plain vars. In AAP, attach a custom credential that injects the key as
+# an environment variable in the execution environment (see docs/AUTOMATION_GUIDE.md). Every
+# variable named here that is set on the controller/EE is forwarded to ACT on the host, only
+# through the ACT task's environment (no_log).
+act_triage_key_env_names: [GENAI_KEY, GENAI_BETA_KEY, ASKSAGE_API_KEY, ASKSAGE_KEY]
+# Non-secret settings for ACT, e.g. {ACT_PROVIDER: asksage, ASKSAGE_MODEL: gpt-4.1-gov}.
+act_triage_env: {}
+
+# ---- When to call the model (cheap deterministic checks first) ---------------------------
+act_triage_builtin_checks: true          # failed units / required units / disk / journal checks;
+                                         # focused playbooks turn these off and pass their own
+                                         # findings in act_triage_findings_extra
+act_triage_always: false                 # true = run ACT even when every check passes
+act_triage_units: []                     # units that must be active, beyond `systemctl --failed`
+act_triage_disk_threshold: 90            # % used on any real filesystem
+act_triage_journal_since: "-1h"
+act_triage_journal_error_threshold: 50   # err-priority journal lines in that window; 0 = off
+act_triage_findings_extra: []            # findings you computed yourself, e.g. from a URL check
+
+# ---- How ACT works on the host ------------------------------------------------------------
+# loop:     ACT investigates by running commands itself (read-only, plus act_triage_allow fixes).
+# evidence: the ROLE runs act_triage_evidence_commands (and/or you pass act_triage_evidence_text),
+#           and ACT only analyzes that text: it runs nothing. Use it when the useful read commands
+#           are ones ACT will not run unattended (e.g. fapolicyd-cli), or for pure analysis jobs.
+act_triage_mode: loop
+act_triage_evidence_commands: []         # trusted shell commands YOU write; run as the play user
+act_triage_evidence_text: ""             # extra evidence you collected yourself
+act_triage_evidence_max_chars: 20000     # keep the LAST this-many characters of each command
+act_triage_evidence_total_chars: 1500000 # hard cap (ACT refuses piped input over 2 MiB)
+_act_nl: "\n"                          # a real newline for templates (portable across ansible-core versions)
+
+# ---- What ACT may do ----------------------------------------------------------------------
+# Regexes for fix commands ACT may run without a person (see docs/RESULT_FILE.md for the
+# rules). Empty = diagnose only: every change is refused and reported as a proposed fix.
+act_triage_allow: []
+act_triage_task: ""                      # override the whole prompt (templates/task.j2 by default)
+act_triage_extra_instructions: ""
+act_triage_max_steps: 30
+act_triage_timeout: 900                  # seconds for the whole ACT run
+act_triage_poll: 10
+
+# ---- Outcome handling ---------------------------------------------------------------------
+act_triage_fail_on: [error]              # statuses that fail the host (add needs_approval to gate)
+# true = the role fails those hosts itself (standalone use). The bundled playbooks set false and
+# fail them in post_tasks instead, AFTER the Teams report, so a card is posted even when every
+# host errors (e.g. the model endpoint is down).
+act_triage_fail_in_role: true
+act_triage_report_dir: "{{ playbook_dir }}/act-reports"
+act_triage_write_report: true
+act_triage_keep_result_on_host: false

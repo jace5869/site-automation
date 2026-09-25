@@ -1,0 +1,21 @@
+# Credential type: "Container registry login (hosts)"
+# For podman on the MANAGED HOSTS (the built-in "Container Registry" credential type is for
+# pulling execution-environment images on AAP itself, not for the hosts).
+inputs:
+  fields:
+    - id: registry
+      type: string
+      label: Registry (e.g. docker.io, quay.io)
+    - id: username
+      type: string
+      label: Username
+    - id: password
+      type: string
+      label: Password or access token
+      secret: true
+  required: [registry, username, password]
+injectors:
+  env:
+    REGISTRY_HOST: "{{ registry }}"
+    REGISTRY_USERNAME: "{{ username }}"
+    REGISTRY_PASSWORD: "{{ password }}"

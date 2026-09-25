@@ -1,0 +1,12 @@
+---
+# Microsoft Teams "Workflows" webhook URL. It contains a secret signature: keep it in an AAP
+# credential that injects TEAMS_WEBHOOK_URL (see docs/AAP_2.7_RUNBOOK.md), never in vars.
+act_report_teams_webhook_url: "{{ lookup('ansible.builtin.env', 'TEAMS_WEBHOOK_URL') }}"
+# problems: post only if at least one host was triaged or unreachable.  always: post every run.
+act_report_teams_when: problems
+act_report_teams_title: "ACT: {{ awx_job_template_name | default(ansible_play_name) }}"
+# Your AAP address (e.g. https://aap.example.mil). Adds an "Open job in AAP" button.
+act_report_teams_aap_url: ""
+act_report_teams_max_hosts: 12          # hosts listed in detail (Teams caps a message at ~28 KB)
+act_report_teams_summary_chars: 400     # characters of each ACT summary shown
+act_report_teams_validate_certs: true

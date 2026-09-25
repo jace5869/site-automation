@@ -1,0 +1,258 @@
+---
+# Deploy / reconcile the STIG Manager stack. Idempotent: a second run changes nothing.
+# Secrets arrive as environment variables / files from AAP credentials (docs/SECRETS.md) and
+# are handed to podman as secrets over stdin: never on a command line, never in a unit file,
+# never printed (no_log), never shown as a diff.
+
+- name: Stack | paths for this scope
+  ansible.builtin.set_fact:
+    _stigman_quadlet_dir: >-
+      {{ (ansible_user_dir ~ '/.config/containers/systemd') if stigman_scope == 'user'
+         else '/etc/containers/systemd' }}
+
+# ---------------------------------------------------------------- preflight
+- name: Preflight | secrets are present (from the AAP credentials)
+  ansible.builtin.assert:
+    that:
+      - stigman_mysql_root_password | length >= 12
+      - stigman_db_password | length >= 12
+      - stigman_tls_cert_src | length > 0
+      - stigman_tls_key_src | length > 0
+    fail_msg: >-
+      Missing secrets. Attach the "STIG Manager database" and "TLS certificate" credentials to the
+      job template (passwords must be at least 12 characters). See docs/SECRETS.md.
+    quiet: true
+  no_log: true
+
+- name: Preflight | the TLS files exist on the controller
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ [stigman_tls_cert_src, stigman_tls_key_src] + ([stigman_tls_ca_src] if stigman_tls_ca_src else []) }}"
+  loop_control:
+    label: "{{ item | basename }}"
+  delegate_to: localhost
+  become: false
+  register: _stigman_tls_stat
+
+- name: Preflight | certificate and key are readable files
+  ansible.builtin.assert:
+    that: (_stigman_tls_stat.results[:2] | selectattr('stat.exists') | selectattr('stat.size', 'gt', 0) | list | length) == 2
+    fail_msg: The TLS certificate/key files injected by the credential are missing or empty.
+    quiet: true
+
+- name: Preflight | podman version
+  ansible.builtin.command:
+    argv: [podman, version, --format, "{{ '{{' }}.Client.Version{{ '}}' }}"]
+  register: _stigman_podman
+  changed_when: false
+
+- name: Preflight | podman supports Quadlet (4.4 or newer)
+  ansible.builtin.assert:
+    that: _stigman_podman.stdout is version('4.4', '>=')
+    fail_msg: "podman {{ _stigman_podman.stdout }} is too old for Quadlet; RHEL 9.2+/8.8+ ship 4.4 or newer."
+    quiet: true
+
+# ---------------------------------------------------------------- directories
+- name: Files | directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ _stigman_quadlet_dir }}", mode: "0755"}
+    - {path: "{{ stigman_config_dir }}", mode: "0750"}
+    - {path: "{{ stigman_config_dir }}/nginx", mode: "0750"}
+    - {path: "{{ stigman_config_dir }}/nginx/tls", mode: "0750"}
+    - {path: "{{ stigman_config_dir }}/api", mode: "0750"}
+  loop_control:
+    label: "{{ item.path }}"
+
+# ---------------------------------------------------------------- TLS
+- name: TLS | certificate (server certificate + intermediates)
+  ansible.builtin.copy:
+    src: "{{ stigman_tls_cert_src }}"
+    dest: "{{ stigman_config_dir }}/nginx/tls/fullchain.pem"
+    mode: "0644"
+  register: _stigman_cert
+
+- name: TLS | private key
+  ansible.builtin.copy:
+    src: "{{ stigman_tls_key_src }}"
+    dest: "{{ stigman_config_dir }}/nginx/tls/key.pem"
+    mode: "0600"
+  diff: false
+  no_log: true
+  register: _stigman_key
+
+- name: TLS | is there a CA chain?
+  ansible.builtin.set_fact:
+    _stigman_has_ca: >-
+      {{ (_stigman_tls_stat.results | length > 2) and (_stigman_tls_stat.results[2].stat.size | default(0)) > 0 }}
+
+- name: TLS | CA bundle for the API (to trust Keycloak's certificate)
+  ansible.builtin.copy:
+    src: "{{ stigman_tls_ca_src }}"
+    dest: "{{ stigman_config_dir }}/api/ca.pem"
+    mode: "0644"
+  when: _stigman_has_ca | bool
+  register: _stigman_ca
+
+# ---------------------------------------------------------------- registry login (optional)
+- name: Registry | log in (only when the registry credential is attached)
+  ansible.builtin.command:
+    argv: [podman, login, --username, "{{ lookup('ansible.builtin.env', 'REGISTRY_USERNAME') }}",
+           --password-stdin, "{{ lookup('ansible.builtin.env', 'REGISTRY_HOST') }}"]
+    stdin: "{{ lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') }}"
+  changed_when: false
+  no_log: true
+  when: lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') | length > 0
+
+# ---------------------------------------------------------------- podman secrets
+# A label holds the SHA-256 of each value so the role knows whether it changed without reading
+# the secret back. (On the host, root can read podman secrets anyway; protect root.)
+- name: Secrets | current state
+  ansible.builtin.command:
+    argv: [podman, secret, inspect, "{{ item }}", --format, "{{ '{{' }}index .Spec.Labels \"site.sha256\"{{ '}}' }}"]
+  loop: [stigman-mysql-root, stigman-db-password]
+  register: _stigman_secret_state
+  changed_when: false
+  failed_when: false
+
+- name: Secrets | desired state
+  ansible.builtin.set_fact:
+    _stigman_secrets:
+      - name: stigman-mysql-root
+        sha: "{{ stigman_mysql_root_password | hash('sha256') }}"
+        have: "{{ (_stigman_secret_state.results[0].stdout | trim) if _stigman_secret_state.results[0].rc == 0 else '' }}"
+      - name: stigman-db-password
+        sha: "{{ stigman_db_password | hash('sha256') }}"
+        have: "{{ (_stigman_secret_state.results[1].stdout | trim) if _stigman_secret_state.results[1].rc == 0 else '' }}"
+  no_log: true
+
+- name: Secrets | refuse to silently change a deployed database password
+  ansible.builtin.fail:
+    msg: >-
+      The {{ item.name }} value in AAP differs from the one already deployed. Changing it here would
+      only change the secret, not the password inside MySQL, and STIG Manager would lose its database.
+      Rotate it with a password-rotation run (ALTER USER, then update the secret), or re-run with
+      stigman_replace_secrets=true if the database is being re-created.
+  loop: "{{ _stigman_secrets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when:
+    - item.have | length > 0
+    - item.have != item.sha
+    - not (stigman_replace_secrets | default(false) | bool)
+  no_log: false
+
+- name: Secrets | create (first deployment) or replace (when explicitly allowed)
+  ansible.builtin.command:
+    argv: [podman, secret, create, --replace, --label, "site.sha256={{ item.sha }}", "{{ item.name }}", "-"]
+    stdin: "{{ stigman_mysql_root_password if item.name == 'stigman-mysql-root' else stigman_db_password }}"
+    stdin_add_newline: false
+  loop: "{{ _stigman_secrets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.have != item.sha
+  no_log: true
+  register: _stigman_secret_set
+
+# ---------------------------------------------------------------- configuration + units
+- name: Config | nginx
+  ansible.builtin.template:
+    src: nginx-stigman.conf.j2
+    dest: "{{ stigman_config_dir }}/nginx/stigman.conf"
+    mode: "0644"
+  register: _stigman_nginx_conf
+
+- name: Units | Quadlet files
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ _stigman_quadlet_dir }}/{{ item.dest }}"
+    mode: "0644"
+  loop:
+    - {src: stigman.network.j2, dest: stigman.network}
+    - {src: stigman-mysql-data.volume.j2, dest: stigman-mysql-data.volume}
+    - {src: stigman-mysql.container.j2, dest: stigman-mysql.container}
+    - {src: stigman-api.container.j2, dest: stigman-api.container}
+    - {src: stigman-nginx.container.j2, dest: stigman-nginx.container}
+  loop_control:
+    label: "{{ item.dest }}"
+  register: _stigman_units
+
+- name: Units | reload systemd so Quadlet regenerates the services
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+    scope: "{{ stigman_scope }}"
+  when: _stigman_units is changed
+
+- name: Units | which services were already running
+  ansible.builtin.command:
+    argv: "{{ ['systemctl'] + (['--user'] if stigman_scope == 'user' else []) + ['is-active', item] }}"
+  loop: [stigman-mysql.service, stigman-api.service, stigman-nginx.service]
+  register: _stigman_pre
+  changed_when: false
+  failed_when: false
+
+- name: Units | started (dependencies first)
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+    scope: "{{ stigman_scope }}"
+  loop: [stigman-mysql.service, stigman-api.service, stigman-nginx.service]
+
+# Restart only services that were ALREADY running and whose inputs changed. A service started
+# for the first time just above is never restarted: restarting MySQL during its first-time
+# initialisation can leave a half-built database.
+- name: Units | what changed
+  ansible.builtin.set_fact:
+    _stigman_restart:
+      mysql: >-
+        {{ _stigman_pre.results[0].stdout == 'active'
+           and (_stigman_units.results | selectattr('changed') | map(attribute='item.dest')
+                | select('in', ['stigman-mysql.container']) | list | length > 0) }}
+      api: >-
+        {{ _stigman_pre.results[1].stdout == 'active'
+           and ((_stigman_units.results | selectattr('changed') | map(attribute='item.dest')
+                 | select('in', ['stigman-api.container']) | list | length > 0)
+                or _stigman_secret_set is changed or _stigman_ca is changed) }}
+      nginx: >-
+        {{ _stigman_pre.results[2].stdout == 'active'
+           and ((_stigman_units.results | selectattr('changed') | map(attribute='item.dest')
+                 | select('in', ['stigman-nginx.container']) | list | length > 0)
+                or _stigman_nginx_conf is changed or _stigman_cert is changed or _stigman_key is changed) }}
+
+- name: Units | restart what changed (dependencies first)
+  ansible.builtin.systemd_service:
+    name: "stigman-{{ item }}.service"
+    state: restarted
+    scope: "{{ stigman_scope }}"
+  loop: [mysql, api, nginx]
+  when: _stigman_restart[item] | bool
+
+# ---------------------------------------------------------------- verify
+- name: Verify | MySQL is healthy
+  ansible.builtin.command:
+    argv: [podman, healthcheck, run, stigman-mysql]
+  register: _stigman_mysql_health
+  until: _stigman_mysql_health.rc == 0
+  retries: 30
+  delay: 5
+  changed_when: false
+
+- name: Verify | STIG Manager answers through nginx (TLS)
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ stigman_https_port }}/api/op/configuration"
+    validate_certs: false
+    return_content: true
+  register: _stigman_ready
+  until: _stigman_ready.status == 200
+  retries: "{{ stigman_ready_retries }}"
+  delay: "{{ stigman_ready_delay }}"
+
+- name: Verify | summary
+  ansible.builtin.debug:
+    msg: >-
+      STIG Manager {{ (_stigman_ready.json | default({})).version | default('?') }} is up on
+      https://{{ stigman_server_name }}:{{ stigman_https_port }}/ (classification
+      {{ (_stigman_ready.json | default({})).classification | default(stigman_classification) }}).

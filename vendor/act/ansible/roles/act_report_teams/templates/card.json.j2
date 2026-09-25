@@ -1,0 +1,70 @@
+{#- Adaptive Card 1.4 in the envelope Teams Workflows webhooks expect. Every dynamic value is
+    passed through to_json, so quotes/newlines in ACT summaries cannot break the JSON. -#}
+{%- set colors = {'completed': 'Good', 'needs_approval': 'Warning', 'stopped': 'Attention',
+                  'error': 'Attention', 'cancelled': 'Attention'} -%}
+{%- set counts = {} -%}
+{%- for r in _teams_rows -%}{%- set _ = counts.update({r.status: counts.get(r.status, 0) + 1}) -%}{%- endfor -%}
+{%- set shown = _teams_rows | sort(attribute='status') | list -%}
+{%- set cap = act_report_teams_summary_chars | int -%}
+{
+  "type": "message",
+  "attachments": [
+    {
+      "contentType": "application/vnd.microsoft.card.adaptive",
+      "contentUrl": null,
+      "content": {
+        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+        "type": "AdaptiveCard",
+        "version": "1.4",
+        "msteams": {"width": "Full"},
+        "body": [
+          {"type": "TextBlock", "size": "Medium", "weight": "Bolder", "wrap": true,
+           "text": {{ act_report_teams_title | to_json }}},
+          {"type": "TextBlock", "isSubtle": true, "spacing": "None", "wrap": true,
+           "text": {{ ((ansible_play_hosts_all | length) ~ ' host(s) checked - ' ~ now(utc=true).strftime('%Y-%m-%d %H:%M UTC')) | to_json }}},
+          {"type": "FactSet", "facts": [
+            {"title": "Healthy", "value": {{ (_teams_healthy | length) | string | to_json }}},
+            {"title": "Fixed (completed)", "value": {{ (counts.get('completed', 0)) | string | to_json }}},
+            {"title": "Needs approval", "value": {{ (counts.get('needs_approval', 0)) | string | to_json }}},
+            {"title": "Stopped / error", "value": {{ (counts.get('stopped', 0) + counts.get('error', 0) + counts.get('cancelled', 0)) | string | to_json }}},
+            {"title": "Failed / unreachable", "value": {{ (_teams_unreachable | length) | string | to_json }}}
+          ]}
+{%- for r in shown[:act_report_teams_max_hosts | int] %},
+          {"type": "Container", "separator": true, "spacing": "Medium", "items": [
+            {"type": "TextBlock", "weight": "Bolder", "wrap": true, "color": {{ colors.get(r.status, 'Default') | to_json }},
+             "text": {{ (r.host ~ ' - ' ~ r.status ~ (' (changed)' if r.changed else '')) | to_json }}},
+{%-   if r.findings %}
+            {"type": "TextBlock", "isSubtle": true, "spacing": "None", "wrap": true,
+             "text": {{ ('Checks: ' ~ (r.findings | join('; ')))[:300] | to_json }}},
+{%-   endif %}
+            {"type": "TextBlock", "wrap": true,
+             "text": {{ (r.text[:cap] ~ ('...' if r.text | length > cap else '')) | to_json }}}
+{%-   if r.proposed %},
+            {"type": "TextBlock", "wrap": true, "fontType": "Monospace",
+             "text": {{ ('Proposed (approvable): ' ~ (r.proposed | join('  |  ')))[:500] | to_json }}}
+{%-   endif %}
+{%-   if r.manual %},
+            {"type": "TextBlock", "wrap": true, "fontType": "Monospace", "color": "Warning",
+             "text": {{ ('Apply by hand: ' ~ (r.manual | join('  |  ')))[:500] | to_json }}}
+{%-   endif %}
+          ]}
+{%- endfor %}
+{%- if shown | length > act_report_teams_max_hosts | int %},
+          {"type": "TextBlock", "isSubtle": true, "wrap": true,
+           "text": {{ ('... and ' ~ (shown | length - act_report_teams_max_hosts | int) ~ ' more host(s): see the job output.') | to_json }}}
+{%- endif %}
+{%- if _teams_unreachable %},
+          {"type": "TextBlock", "color": "Attention", "wrap": true,
+           "text": {{ ('Failed or unreachable (no ACT result): ' ~ (_teams_unreachable | join(', ')))[:500] | to_json }}}
+{%- endif %}
+        ]
+{%- if act_report_teams_aap_url and awx_job_id is defined %},
+        "actions": [
+          {"type": "Action.OpenUrl", "title": "Open job in AAP",
+           "url": {{ (act_report_teams_aap_url | regex_replace('/+$', '') ~ '/execution/jobs/playbook/' ~ awx_job_id ~ '/output') | to_json }}}
+        ]
+{%- endif %}
+      }
+    }
+  ]
+}

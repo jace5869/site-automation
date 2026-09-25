@@ -1,0 +1,12 @@
+This host runs a podman application stack{{ ' (rootless, owned by ' ~ podman_user ~ ')' if podman_user else '' }}. The containers and their dependencies:
+{% for app in podman_apps %}
+- {{ app.name }}: container `{{ app.container }}`{{ (', systemd unit `' ~ app.unit ~ '`') if app.unit else ', no systemd unit' }}{{ (', depends on ' ~ (app.depends_on | join(', '))) if app.depends_on else '' }}
+{% endfor %}
+
+How to investigate (all read-only): `podman ps -a`, `podman inspect NAME` (State.Status, ExitCode, OOMKilled, Health, RestartCount), `podman logs --since 1h --tail 300 NAME`, `podman healthcheck run NAME`, `df -h`, `free -m`{{ ', and `journalctl -u UNIT -n 200 --no-pager` for containers with a unit' if podman_apps | selectattr('unit') | list else '' }}.
+
+Rules:
+- Check dependencies first. If a dependency (for example the database or the identity provider) is down, the failures of the containers that depend on it are symptoms: fix the dependency, not the symptom.
+- Restart only a container that is actually failing, one at a time, dependencies first. Restart a container that has a systemd unit through `systemctl {{ '--user ' if podman_user else '' }}restart UNIT`, never with `podman restart`. Use `podman restart NAME` only for containers without a unit.
+- Do NOT restart when the cause is configuration, credentials, certificates, a full disk, or data corruption: a restart will not fix those. Report the cause and the exact fix instead.
+- After any restart, verify with `podman inspect NAME` (State.Status must be running, and Health healthy when the container has a healthcheck) before finishing.

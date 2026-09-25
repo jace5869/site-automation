@@ -1,0 +1,15 @@
+---
+# Deploy / reconcile the STIG Manager stack (MySQL 8.4 + STIG Manager + nginx TLS) on podman.
+# Keycloak is external and its realm already exists: this playbook never touches it.
+#
+# AAP job template credentials: Machine (ssh + sudo), "STIG Manager database", "TLS certificate",
+# and optionally "Container registry login (hosts)". Nothing secret goes in variables.
+#
+#   ansible-playbook playbooks/stigman_deploy.yml -l stigman_hosts
+- name: STIG Manager stack
+  hosts: "{{ target | default('stigman_hosts') }}"
+  become: true
+  gather_facts: true
+  gather_subset: [min]
+  roles:
+    - role: stigman_stack

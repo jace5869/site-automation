@@ -1,0 +1,35 @@
+# Managed by Ansible (stigman_stack) - do not edit on the host
+[Unit]
+Description=STIG Manager - API and web client
+Requires=stigman-mysql.service
+After=stigman-mysql.service
+
+[Container]
+ContainerName=stigman-api
+Image={{ stigman_images.api }}
+Network=stigman.network
+# STIG Manager reads its DB password only from the environment: inject it from a podman
+# secret (the value is not stored in the unit file and does not show in `podman inspect`).
+Secret=stigman-db-password,type=env,target=STIGMAN_DB_PASSWORD
+Environment=STIGMAN_DB_HOST=stigman-mysql
+Environment=STIGMAN_DB_PORT=3306
+Environment=STIGMAN_DB_SCHEMA={{ stigman_db_schema }}
+Environment=STIGMAN_DB_USER={{ stigman_db_user }}
+Environment=STIGMAN_API_ADDRESS=0.0.0.0
+Environment=STIGMAN_API_PORT=54000
+Environment=STIGMAN_OIDC_PROVIDER={{ stigman_oidc_provider }}
+Environment=STIGMAN_CLIENT_OIDC_PROVIDER={{ stigman_client_oidc_provider }}
+Environment=STIGMAN_CLIENT_ID={{ stigman_client_id }}
+Environment=STIGMAN_CLASSIFICATION={{ stigman_classification }}
+{% if _stigman_has_ca %}
+# Trust your CA when the API talks to Keycloak over HTTPS
+Volume={{ stigman_config_dir }}/api/ca.pem:/etc/stigman/ca.pem:ro,Z
+Environment=STIGMAN_OIDC_CA_CERTS=/etc/stigman/ca.pem
+{% endif %}
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy={{ 'default.target' if stigman_scope == 'user' else 'multi-user.target' }}

@@ -1,0 +1,17 @@
+# Secrets never live in this repository. These patterns catch the usual accidents.
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+.vault_pass*
+vault-password*
+*.secret
+secrets.yml
+**/secrets/
+.env
+# local state
+*.retry
+.ansible/
+__pycache__/
+act-reports/

@@ -1,0 +1,28 @@
+# Credential type: "TLS certificate"  (files issued by your CA)
+# AAP writes each value to a private temporary file inside the job's execution environment and
+# puts the file's PATH in the environment variable; the playbook copies the files to the host.
+inputs:
+  fields:
+    - id: certificate
+      type: string
+      label: Certificate (PEM; server certificate first, then intermediates)
+      multiline: true
+    - id: private_key
+      type: string
+      label: Private key (PEM)
+      multiline: true
+      secret: true
+    - id: ca_chain
+      type: string
+      label: CA chain (PEM) - also used to trust your Keycloak/other internal services
+      multiline: true
+  required: [certificate, private_key]
+injectors:
+  file:
+    template.cert: "{{ certificate }}"
+    template.key: "{{ private_key }}"
+    template.ca: "{{ ca_chain }}"
+  env:
+    TLS_CERT_FILE: "{{ tower.filename.cert }}"
+    TLS_KEY_FILE: "{{ tower.filename.key }}"
+    TLS_CA_FILE: "{{ tower.filename.ca }}"

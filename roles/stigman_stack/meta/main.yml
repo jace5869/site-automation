@@ -1,0 +1,7 @@
+---
+galaxy_info:
+  role_name: stigman_stack
+  description: STIG Manager (API + MySQL + nginx TLS) on podman with Quadlet; secrets from AAP credentials via podman secrets.
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

@@ -1,0 +1,58 @@
+---
+# Second half of the approval workflow: triage job -> AAP approval node -> this job.
+# AAP passes the triage job's set_stats (`act_triage`) to this node as extra vars. For each
+# host, the commands ACT proposed become the ONLY pre-approved commands (regex-escaped, so
+# each matches exactly), and ACT re-checks the problem, applies them, and verifies.
+# Proposed file changes are never auto-applied (ACT cannot pre-approve edits); they stay in
+# the report for a person.
+#
+# Rootless podman: with the host variable podman_user set (as for podman_app_health.yml), ACT
+# runs as that account so an approved `podman restart` reaches that account's containers.
+- name: Apply ACT fixes an operator approved
+  hosts: "{{ target | default('all') }}"
+  become: true
+  become_user: "{{ podman_user | default('', true) or 'root' }}"
+  gather_facts: false
+  vars:
+    act_triage_fail_in_role: false   # fail in post_tasks, after the Teams report
+    _act_approved: >-
+      {{ ((act_triage | default({})).get(inventory_hostname) or {}).get('proposed_commands', []) }}
+    _podman_uid: ""
+    _podman_home: ""
+    act_triage_dest_dir: "{{ (_podman_home ~ '/.local/share/act') if podman_user | default('') else '/opt/act' }}"
+    act_triage_env: "{{ {'XDG_RUNTIME_DIR': '/run/user/' ~ _podman_uid} if podman_user | default('') else {} }}"
+  environment: "{{ {'XDG_RUNTIME_DIR': '/run/user/' ~ _podman_uid} if (podman_user | default('') and _podman_uid) else {} }}"
+  pre_tasks:
+    - name: Skip hosts with no approved fix
+      ansible.builtin.meta: end_host
+      when: _act_approved | length == 0
+
+    - name: Look up the rootless container owner
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ podman_user }}"
+      when: podman_user | default('') | length > 0
+
+    - name: Owner uid and home
+      ansible.builtin.set_fact:
+        _podman_uid: "{{ ansible_facts.getent_passwd[podman_user][1] }}"
+        _podman_home: "{{ ansible_facts.getent_passwd[podman_user][4] }}"
+      when: podman_user | default('') | length > 0
+  roles:
+    - role: act_triage
+      vars:
+        act_triage_always: true
+        act_triage_builtin_checks: false
+        act_triage_findings_extra: "{{ ['an operator approved these fixes: ' ~ (_act_approved | join(' ; '))] }}"
+        act_triage_allow: "{{ _act_approved | map('regex_escape') | list }}"
+        act_triage_extra_instructions: >-
+          An operator APPROVED exactly these fixes for this host: {{ _act_approved | join(' ; ') }}.
+          First confirm the problem is still present. If it is, run the approved command(s)
+          exactly as written, then verify the result with read-only commands. Make no other change.
+    - role: act_report_teams
+
+  post_tasks:
+    - name: Fail hosts whose ACT status is in act_triage_fail_on (after the Teams report)
+      ansible.builtin.fail:
+        msg: "ACT status {{ act_triage_result.status }}: {{ act_triage_result.stop_reason or act_triage_result.summary }}"
+      when: act_triage_result is defined and act_triage_result.status in act_triage_fail_on

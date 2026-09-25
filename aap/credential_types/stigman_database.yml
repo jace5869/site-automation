@@ -1,0 +1,17 @@
+# Credential type: "STIG Manager database"
+inputs:
+  fields:
+    - id: mysql_root_password
+      type: string
+      label: MySQL root password
+      secret: true
+      help_text: Used only when the database is first created (MYSQL_ROOT_PASSWORD_FILE).
+    - id: stigman_db_password
+      type: string
+      label: STIG Manager database user password
+      secret: true
+  required: [mysql_root_password, stigman_db_password]
+injectors:
+  env:
+    STIGMAN_MYSQL_ROOT_PASSWORD: "{{ mysql_root_password }}"
+    STIGMAN_DB_PASSWORD: "{{ stigman_db_password }}"
