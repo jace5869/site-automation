@@ -64,6 +64,8 @@ The report lands in `act-reports/act-triage-<UTC stamp>.md` next to the playbook
 | `act_triage_journal_error_threshold` | `50` | err-priority journal lines since `act_triage_journal_since` (`-1h`); `0` = off |
 | `act_triage_findings_extra` | `[]` | findings you computed yourself (URL checks, app probes) |
 | `act_triage_env` | `{}` | extra env for ACT: `GENAI_URL`, `GENAI_MODEL`, `ACT_PROVIDER`, … |
+| `act_triage_pseudonymize` | `true` | ACT masks host names, IPs, user names and e-mail addresses before anything reaches the model (0.6.18+) |
+| `act_triage_pseudo_names` | `[]` | extra short server names to mask; the host's inventory name, short name and `ansible_host` are added automatically |
 | `act_triage_max_steps` / `act_triage_timeout` | `30` / `900` | ACT step budget / wall-clock seconds |
 | `act_triage_fail_on` | `[error]` | statuses that fail the host; add `needs_approval` to gate a workflow on it |
 | `act_triage_task` / `act_triage_extra_instructions` | `""` | replace / extend the prompt (`templates/task.j2`) |

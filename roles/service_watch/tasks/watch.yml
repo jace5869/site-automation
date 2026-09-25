@@ -1,0 +1,100 @@
+---
+# The check job (playbooks/service_watch.yml):
+#   all containers up -> done, the model is never called
+#   one is down       -> record it -> ACT finds the root cause (self-heal mode: may start it)
+#                     -> re-check independently -> record the outcome
+#                     -> still down? FAIL on purpose, so the AAP workflow takes its "Run on fail"
+#                        path to the approval step and then service_fix_approved.yml.
+
+- name: Watch | mode
+  ansible.builtin.assert:
+    that: watch_mode in ['self-heal', 'approval']
+    fail_msg: "watch_mode must be self-heal or approval, not {{ watch_mode }}"
+    quiet: true
+
+- name: Watch | check the containers
+  ansible.builtin.include_tasks: check.yml
+
+- name: Watch | remember the state before any fix
+  ansible.builtin.set_fact:
+    service_watch_before: "{{ service_watch }}"
+
+- name: Watch | record the outage
+  ansible.builtin.include_tasks: record.yml
+  vars:
+    _watch_event: down_detected
+  when: not service_watch_before.healthy
+
+- name: Watch | ACT finds the root cause{{ ' and may start the container' if watch_mode == 'self-heal' else '; every fix waits for approval' }}
+  ansible.builtin.include_role:
+    name: act_triage
+  vars:
+    act_triage_builtin_checks: false                   # only these containers, not host-wide noise
+    act_triage_findings_extra: "{{ service_watch_before.findings }}"
+    act_triage_allow: "{{ _watch_fix_patterns if watch_mode == 'self-heal' else [] }}"
+    act_triage_extra_instructions: "{{ watch_instructions }}"
+    act_triage_env: "{{ watch_act_env }}"
+    act_triage_timeout: "{{ watch_act_timeout }}"
+    act_triage_fail_in_role: false                     # this role decides pass/fail below
+    act_triage_write_report: false                     # the incident log is the record
+  when: not service_watch_before.healthy
+
+- name: Watch | what ACT proposes for a person to approve
+  ansible.builtin.set_fact:
+    _watch_proposed: >-
+      {{ (act_triage_result | default({})).denied | default([]) | selectattr('pre_approvable', 'defined')
+         | selectattr('pre_approvable') | map(attribute='command') | list }}
+  when: not service_watch_before.healthy
+
+- name: Watch | re-check the containers ourselves (the model's word is not enough)
+  ansible.builtin.include_tasks: check.yml
+  vars:
+    _watch_retries: "{{ watch_verify_retries if (act_triage_result.changed | default(false)) else 0 }}"
+  when: not service_watch_before.healthy
+
+- name: Watch | outcome
+  ansible.builtin.set_fact:
+    service_watch_outcome: >-
+      {{ 'healthy' if service_watch_before.healthy
+         else ('self_healed' if (act_triage_result.changed | default(false)) else 'recovered') if service_watch.healthy
+         else 'awaiting_approval' if _watch_proposed | length > 0
+         else 'still_down' }}
+
+- name: Watch | record the outcome
+  ansible.builtin.include_tasks: record.yml
+  vars:
+    _watch_event: "{{ service_watch_outcome }}"
+  when: service_watch_outcome != 'healthy'
+
+- name: Watch | ACT's report (root cause, evidence, fix)
+  ansible.builtin.debug:
+    msg: "{{ (act_triage_result.summary or act_triage_result.stop_reason or 'ACT gave no report').splitlines() }}"
+  when: act_triage_result is defined
+
+- name: Watch | summary
+  ansible.builtin.debug:
+    msg: "{{ _watch_says[service_watch_outcome] }}"
+  vars:
+    _watch_says:
+      healthy: "All watched containers are up ({{ _watch_what }}). Nothing to do."
+      self_healed: "Was DOWN ({{ service_watch_before.findings | join('; ') }}). ACT fixed it and the re-check confirms everything is up."
+      recovered: "Was DOWN ({{ service_watch_before.findings | join('; ') }}) and came back without a fix."
+      awaiting_approval: "DOWN: {{ service_watch.findings | join('; ') }}. ACT proposes: {{ _watch_proposed | default([]) | join(' ; ') }}. Waiting for approval."
+      still_down: "Still DOWN: {{ service_watch.findings | join('; ') }}. There is no fix to approve; a person must look at it."
+
+- name: Watch | NEEDS APPROVAL (this failure sends the workflow to the approval step)
+  ansible.builtin.fail:
+    msg: >-
+      NEEDS APPROVAL on {{ inventory_hostname }}: {{ service_watch.findings | join('; ') }}.
+      ACT proposes: {{ _watch_proposed | join(' ; ') }}
+  when: service_watch_outcome == 'awaiting_approval'
+
+- name: Watch | STILL DOWN
+  ansible.builtin.fail:
+    msg: >-
+      STILL DOWN on {{ inventory_hostname }}: {{ service_watch.findings | join('; ') }}, after
+      {{ (_watch_fixes_run | join(' ; ')) or 'no automatic fix' }}. Nothing is waiting for approval:
+      a person must look at it (ACT's report is above).
+  when: service_watch_outcome == 'still_down'
+  vars:
+    _watch_fixes_run: "{{ (act_triage_result | default({})).commands | default([]) | selectattr('approval', 'equalto', 'pre_approved') | map(attribute='command') | list }}"

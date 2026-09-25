@@ -65,12 +65,21 @@ Environment:
                   an allowlist-only fix mode for automation (e.g. Ansible)
   ACT_RESULT_FILE (optional)  write a JSON summary of a one-shot run here on every exit path
                   (also --result-file); schema act.result/1, see docs/RESULT_FILE.md
+  ACT_PSEUDONYMIZE (optional) default 1: replace host names, domain names, IP addresses,
+                  user names and e-mail addresses with placeholders (host-N, domain-N.invalid,
+                  198.18.x.x, user-N) in everything sent to the model, and translate the
+                  model's replies back before anything runs. 0 (or --no-pseudonymize, or
+                  "pseudonymize": false in the config file) sends them as they are. ':pseudo
+                  show' lists the mapping. Best effort: a short host name ACT cannot recognize
+                  (not this host, not in /etc/hosts, not listed) is sent as written
+  ACT_PSEUDO_NAMES (optional) extra host/server names to mask, comma-separated (also
+                  --pseudo-name, or "pseudo_names" in the config file)
   ACT_TOKEN_PARAM (optional)  output-limit field name: max_tokens or max_completion_tokens.
                   Default: auto — newer OpenAI models (gpt-5*, o-series, Ask Sage gpt-5-gov)
                   reject max_tokens with HTTP 400; the swap is detected per endpoint.
 """
 
-ACT_VERSION = "0.6.17"  # bump when delivering; check with: act --version
+ACT_VERSION = "0.6.18"  # bump when delivering; check with: act --version
 
 import argparse
 import codecs
@@ -273,6 +282,9 @@ def save_user_config(path=None):
             for name, record in _PROVIDER_STATE.items()
         },
     }
+    for keep in ("pseudonymize", "pseudo_names"):       # hand-set privacy settings survive :setup
+        if keep in _USER_CONFIG:
+            document[keep] = _USER_CONFIG[keep]
     fd, temporary = tempfile.mkstemp(prefix=".config-", suffix=".json", dir=directory)
     try:
         os.fchmod(fd, 0o600)
@@ -1779,6 +1791,12 @@ _SECRET_CONTENT_CI_RE = re.compile(
 )
 
 
+_URL_CREDENTIAL_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^:@/\s]+):[^@/\s]+@")
+_MYSQL_PASSWORD_RE = re.compile(
+    r"(\b(?:mysql|mariadb|mysqldump|mysqladmin|mariadb-dump|mariadb-admin)\b[^\n|;&]*?\s)"
+    r"-p(?!\s|$)[^\s]+")
+
+
 def _has_secret_content(text):
     return bool(_SECRET_CONTENT_RE.search(text) or _SECRET_CONTENT_CI_RE.search(text))
 
@@ -1814,6 +1832,15 @@ def model_safe_text(text, context="untrusted data"):
     if _SECRET_CONTENT_CI_RE.search(value):
         value = _SECRET_CONTENT_CI_RE.sub("[REDACTED CREDENTIAL]", value)
         redacted = True
+    # Credentials inside a URL (scheme://user:password@host): keep the user and host (the host
+    # is then masked like any other name), drop the password.
+    if _URL_CREDENTIAL_RE.search(value):
+        value = _URL_CREDENTIAL_RE.sub(r"\1:[REDACTED]@", value)
+        redacted = True
+    # MySQL/MariaDB clients take the password glued to -p (mysql -pS3cret), e.g. in `ps` output.
+    if _MYSQL_PASSWORD_RE.search(value):
+        value = _MYSQL_PASSWORD_RE.sub(r"\1-p[REDACTED]", value)
+        redacted = True
     return value, redacted
 
 
@@ -1839,6 +1866,439 @@ def redact_for_model(cmd, output):
                 "above; the contents are NOT sent to the model. Exit code is still reported.]")
     safe, changed = model_safe_text(output, "command output")
     return safe if changed else None
+
+
+# --------------------------------------------------------------------------- #
+# Pseudonymization (0.6.18). Host names, domain names, IP addresses, user names and e-mail
+# addresses are replaced with stable placeholders in a COPY of every model request, and the
+# model's reply is translated back before ACT parses it. So the rest of ACT (risk
+# classification, --allow matching, execution, verification, edits, display, the result
+# file) only ever sees real values, and the model only ever sees placeholders.
+#
+# Detection is best effort. Masked: IPv4/IPv6 addresses, fully-qualified names ending in a
+# common domain suffix (.mil, .gov, .com, .local, ...), e-mail addresses, this host's own
+# names, names in /etc/hosts, names given in ACT_PSEUDO_NAMES / --pseudo-name, and local
+# login accounts. A short host name ACT has no way to recognize is still sent as written.
+# --------------------------------------------------------------------------- #
+def _env_flag(name, default):
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+PSEUDONYMIZE = _env_flag("ACT_PSEUDONYMIZE", _USER_CONFIG.get("pseudonymize", True) is not False)
+
+# Suffixes that make a dotted token a host/domain name. Deliberately short: code and file
+# names (setup.py, log.info, nginx.conf, java.io) must not look like host names.
+_PSEUDO_TLDS = frozenset(("mil", "gov", "edu", "com", "net", "org", "int", "us", "uk", "ca", "au",
+                          "local", "lan", "internal", "intranet", "corp", "home"))
+_PSEUDO_SAFE_VALUE = re.compile(r"\A[A-Za-z0-9._%+@:-]+\Z")   # JSON/shell-inert values only
+_PSEUDO_STOP_NAMES = frozenset(("localhost", "localdomain", "root", "nobody", "user", "users",
+                                "admin", "test", "guest", "default", "public", "service",
+                                "system", "host", "domain", "none", "unknown"))
+_P_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+_P_DNS = _P_LABEL + r"(?:\." + _P_LABEL + r")+"
+_P_EMAIL_RE = re.compile(r"(?<![A-Za-z0-9._%+-])([A-Za-z0-9._%+-]{1,64})@(" + _P_DNS + r")"
+                         r"(?![A-Za-z0-9_-]|\.[A-Za-z0-9])")
+_P_FQDN_RE = re.compile(r"(?<![A-Za-z0-9_.-])(" + _P_DNS + r")(?![A-Za-z0-9_-]|\.[A-Za-z0-9])")
+_P_IPV4_RE = re.compile(r"(?<![\w.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?!\w|\.\d)")
+_P_IPV6_RE = re.compile(r"(?<![0-9A-Za-z:.])((?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}"
+                        r"(?:%[0-9A-Za-z_.-]+)?)(?![0-9A-Za-z:])")
+_P_PLACEHOLDER_CI_RE = re.compile(r"(?i)(?<![A-Za-z0-9_-])(domain-\d+\.invalid|host-\d+|user-\d+)"
+                                  r"(?![A-Za-z0-9_-])")
+_P_PSEUDO_V4_RE = re.compile(r"(?<![\w.])(198\.1[89]|24[0-7]\.\d{1,3})\.(\d{1,3})\.(\d{1,3})(?!\w|\.\d)")
+
+
+def _ipv4_should_mask(octets):
+    a, b = octets[0], octets[1]
+    if a in (0, 127) or a >= 224 or (a == 169 and b == 254):
+        return False                       # unspecified, loopback, multicast/reserved, link-local
+    return True
+
+
+class Pseudonymizer:
+    """Stable, reversible, per-process mapping between real identifiers and placeholders."""
+
+    V6_BASE = int(__import__("ipaddress").IPv6Address("2001:db8::"))
+
+    def __init__(self, enabled=True, extra_names=(), users=None, hosts=None):
+        import ipaddress
+        self._ip = ipaddress
+        self.enabled = bool(enabled)
+        self._lock = threading.RLock()
+        self._fwd = {}        # exact real  -> exact placeholder
+        self._rev = {}        # exact placeholder -> exact real
+        self._index = {}      # (kind, key) -> number, shared by case variants
+        self._next = {"host": 1, "domain": 1, "user": 1}
+        self._v4 = {}         # real /24 "a.b.c" -> pseudo prefix "x.y.z"
+        self._v4_rev = {}
+        self._v6 = {}         # real /64 prefix int -> k
+        self._v6_rev = {}
+        self._rev_re = None
+        self._rev_version = -1
+        self._version = 0
+        self._hosts = set()   # known host names (compared case-insensitively)
+        self._users = set()   # known local accounts (case-sensitive)
+        self._names_re = None
+        self._users_re = None
+        self.add_names(hosts if hosts is not None else self._discover_hosts())
+        self.add_names(extra_names)
+        self.add_users(users if users is not None else self._discover_users())
+
+    # ---- known names --------------------------------------------------------------------
+    @staticmethod
+    def _discover_hosts():
+        names = set()
+        try:
+            names.add(os.uname().nodename)
+        except (AttributeError, OSError):
+            pass
+        try:
+            with open("/etc/hostname", "r", encoding="utf-8", errors="replace") as fh:
+                names.update(fh.read().split())
+        except OSError:
+            pass
+        try:
+            with open("/etc/hosts", "r", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    fields = line.split("#", 1)[0].split()
+                    names.update(fields[1:])
+        except OSError:
+            pass
+        out = set()
+        for n in names:
+            out.add(n)
+            if "." in n:
+                out.add(n.split(".", 1)[0])
+        return out
+
+    @staticmethod
+    def _discover_users():
+        users = set()
+        for env in ("USER", "LOGNAME", "SUDO_USER"):
+            if os.environ.get(env):
+                users.add(os.environ[env])
+        try:
+            users.add(getpass.getuser())
+        except Exception:  # noqa: BLE001 - best effort
+            pass
+        try:
+            with open("/etc/passwd", "r", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    parts = line.split(":")
+                    if len(parts) > 2 and parts[2].isdigit() and 1000 <= int(parts[2]) < 60000:
+                        users.add(parts[0])
+        except OSError:
+            pass
+        return users
+
+    def _usable_name(self, name):
+        name = (name or "").strip().strip(".")
+        if len(name) < 3 or not _PSEUDO_SAFE_VALUE.match(name) or name.isdigit():
+            return ""
+        low = name.lower()
+        if low in _PSEUDO_STOP_NAMES or low.startswith(("localhost", "ip6-", "broadcasthost")):
+            return ""
+        if low.endswith(".invalid") or self._parse_ip(name) is not None:
+            return ""
+        return name
+
+    def add_names(self, names):
+        with self._lock:
+            for raw in names or ():
+                for name in re.split(r"[\s,;]+", str(raw or "")):
+                    name = self._usable_name(name)
+                    if name:
+                        self._hosts.add(name)
+            self._names_re = None
+
+    def add_users(self, users):
+        with self._lock:
+            for user in users or ():
+                user = self._usable_name(user)
+                if user and "." not in user and "@" not in user:
+                    self._users.add(user)
+            self._users_re = None
+
+    # ---- helpers ---------------------------------------------------------------------------
+    def _parse_ip(self, text):
+        try:
+            return self._ip.ip_address(text.split("%", 1)[0])
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _render(kind, n, real):
+        base = {"host": "host-%d", "domain": "domain-%d.invalid", "user": "user-%d"}[kind] % n
+        letters = [c for c in real if c.isalpha()]
+        if letters and all(c.isupper() for c in letters):
+            return base.upper()
+        if letters and not all(c.islower() for c in letters):
+            return base[0].upper() + base[1:]
+        return base
+
+    def _token(self, kind, real, context_lower):
+        """Placeholder for one identifier of `kind`; allocates on first sight."""
+        if real in self._fwd:
+            return self._fwd[real]
+        key = (kind, real if kind == "user" else real.lower())
+        n = self._index.get(key)
+        placeholder = self._render(kind, n, real) if n else None
+        if placeholder is None or (placeholder in self._rev and self._rev[placeholder] != real):
+            while True:                          # never reuse text that is already in play
+                n = self._next[kind]
+                self._next[kind] += 1
+                placeholder = self._render(kind, n, real)
+                probe = placeholder.lower()
+                if (probe not in context_lower and placeholder not in self._rev
+                        and probe not in {h.lower() for h in self._hosts} and probe not in self._users):
+                    break
+            self._index.setdefault(key, n)
+        self._fwd[real] = placeholder
+        self._rev[placeholder] = real
+        self._version += 1
+        return placeholder
+
+    def _mask_dns(self, name, context_lower):
+        labels = name.split(".")
+        if len(labels) == 2:
+            return self._token("domain", name, context_lower)
+        return (self._token("host", labels[0], context_lower) + "."
+                + self._token("domain", ".".join(labels[1:]), context_lower))
+
+    def _mask_ipv4(self, text):
+        if text in self._fwd:
+            return self._fwd[text]
+        octets = [int(x) for x in text.split(".")]
+        prefix = ".".join(str(o) for o in octets[:3])
+        pseudo_prefix = self._v4.get(prefix)
+        if pseudo_prefix is None:
+            k = len(self._v4)
+            if k < 512:
+                pseudo_prefix = "198.%d.%d" % (18 + k // 256, k % 256)
+            else:                               # overflow into reserved 240.0.0.0/5
+                k -= 512
+                pseudo_prefix = "%d.%d.%d" % (240 + k // 65536, (k // 256) % 256, k % 256)
+            self._v4[prefix] = pseudo_prefix
+            self._v4_rev[pseudo_prefix] = prefix
+        placeholder = "%s.%d" % (pseudo_prefix, octets[3])
+        self._fwd[text] = placeholder
+        self._rev[placeholder] = text
+        self._version += 1
+        return placeholder
+
+    def _mask_ipv6(self, text, addr):
+        if text in self._fwd:
+            return self._fwd[text]
+        value = int(addr)
+        prefix, iid = value >> 64, value & ((1 << 64) - 1)
+        k = self._v6.get(prefix)
+        if k is None:
+            k = len(self._v6)
+            self._v6[prefix] = k
+            self._v6_rev[k] = prefix
+        placeholder = str(self._ip.IPv6Address(self.V6_BASE | (k << 64) | iid))
+        self._fwd[text] = placeholder
+        self._rev[placeholder] = text
+        self._version += 1
+        return placeholder
+
+    def _known_names_re(self):
+        if self._names_re is None:
+            names = sorted(self._hosts, key=len, reverse=True)
+            self._names_re = re.compile(
+                r"(?<![A-Za-z0-9_.-])(" + "|".join(re.escape(n) for n in names) + r")(?![A-Za-z0-9_-])",
+                re.I) if names else False
+        return self._names_re
+
+    def _known_users_re(self):
+        if self._users_re is None:
+            users = sorted(self._users, key=len, reverse=True)
+            self._users_re = re.compile(
+                r"(?<![A-Za-z0-9_.-])(" + "|".join(re.escape(u) for u in users) + r")(?![A-Za-z0-9_-])"
+            ) if users else False
+        return self._users_re
+
+    # ---- forward -------------------------------------------------------------------------
+    def mask(self, text):
+        """Replace identifiers in `text` with placeholders (one pass, longest match wins)."""
+        if not self.enabled or not text or not isinstance(text, str):
+            return text
+        with self._lock:
+            spans = []                            # (start, end, kind, matched text, extra)
+            for m in _P_EMAIL_RE.finditer(text):
+                if m.group(2).rsplit(".", 1)[-1].isalpha():
+                    spans.append((m.start(), m.end(), "email", m.group(0), m))
+            for m in _P_FQDN_RE.finditer(text):
+                name = m.group(1)
+                tld = name.rsplit(".", 1)[-1].lower()
+                if tld in _PSEUDO_TLDS and not name.lower().startswith("localhost"):
+                    spans.append((m.start(1), m.end(1), "dns", name, None))
+            names_re = self._known_names_re()
+            if names_re:
+                for m in names_re.finditer(text):
+                    spans.append((m.start(1), m.end(1), "dns" if "." in m.group(1) else "host",
+                                  m.group(1), None))
+            users_re = self._known_users_re()
+            if users_re:
+                for m in users_re.finditer(text):
+                    spans.append((m.start(1), m.end(1), "user", m.group(1), None))
+            for m in _P_IPV4_RE.finditer(text):
+                octets = [int(g) for g in m.groups()]
+                if max(octets) <= 255 and _ipv4_should_mask(octets):
+                    spans.append((m.start(), m.end(), "ipv4", m.group(0), None))
+            for m in _P_IPV6_RE.finditer(text):
+                cand = m.group(1)
+                if cand.count(":") < 2 or cand in ("::", "::1"):
+                    continue
+                addr = self._parse_ip(cand)
+                if (addr is not None and addr.version == 6 and not addr.is_loopback
+                        and not addr.is_unspecified and not addr.is_multicast):
+                    spans.append((m.start(1), m.end(1), "ipv6", cand, addr))
+            if not spans:
+                return text
+            chosen, taken = [], []
+            for span in sorted(spans, key=lambda s: (-(s[1] - s[0]), s[0])):
+                if all(span[1] <= a or span[0] >= b for a, b in taken):
+                    chosen.append(span)
+                    taken.append((span[0], span[1]))
+            context_lower = text.lower()
+            out, pos = [], 0
+            for start, end, kind, value, extra in sorted(chosen):
+                out.append(text[pos:start])
+                if kind == "email":
+                    out.append(self._token("user", extra.group(1), context_lower) + "@"
+                               + self._mask_dns(extra.group(2), context_lower))
+                elif kind == "dns":
+                    out.append(self._mask_dns(value, context_lower))
+                elif kind in ("host", "user"):
+                    out.append(self._token(kind, value, context_lower))
+                elif kind == "ipv4":
+                    out.append(self._mask_ipv4(value))
+                else:
+                    out.append(self._mask_ipv6(value, extra))
+                pos = end
+            out.append(text[pos:])
+            return "".join(out)
+
+    # ---- reverse -------------------------------------------------------------------------
+    def _reverse_re(self):
+        if self._rev_version != self._version:
+            words = sorted((p for p in self._rev if not self._parse_ip(p)), key=len, reverse=True)
+            self._rev_re = re.compile(
+                r"(?<![A-Za-z0-9_-])(" + "|".join(re.escape(w) for w in words) + r")(?![A-Za-z0-9_-])"
+            ) if words else None
+            self._rev_version = self._version
+        return self._rev_re
+
+    def _unmask_v4(self, m):
+        text = m.group(0)
+        if text in self._rev:
+            return self._rev[text]
+        prefix = "%s.%s" % (m.group(1), m.group(2))
+        real = self._v4_rev.get(prefix)
+        return "%s.%s" % (real, m.group(3)) if real else text
+
+    def _unmask_v6(self, m):
+        text = m.group(1)
+        if text in self._rev:
+            return self._rev[text]
+        addr = self._parse_ip(text)
+        if addr is None or addr.version != 6 or (int(addr) >> 96) != (self.V6_BASE >> 96):
+            return text
+        k = (int(addr) >> 64) & 0xFFFFFFFF
+        prefix = self._v6_rev.get(k)
+        if prefix is None:
+            return text
+        return str(self._ip.IPv6Address((prefix << 64) | (int(addr) & ((1 << 64) - 1))))
+
+    def unmask(self, text):
+        """Translate placeholders in a model reply back to the real values."""
+        if not self.enabled or not text or not isinstance(text, str) or not self._rev:
+            return text
+        with self._lock:
+            rx = self._reverse_re()
+            if rx is not None:
+                text = rx.sub(lambda m: self._rev.get(m.group(1), m.group(1)), text)
+            # A placeholder the model re-capitalized ("Host-1 is down"): fall back to its
+            # lower-case variant. Exact-case matches were replaced above, so edits stay exact.
+            text = _P_PLACEHOLDER_CI_RE.sub(
+                lambda m: self._rev.get(m.group(1).lower(), m.group(1)), text)
+            if self._v4_rev:
+                text = _P_PSEUDO_V4_RE.sub(self._unmask_v4, text)
+            if self._v6_rev:
+                text = _P_IPV6_RE.sub(lambda m: self._unmask_v6(m), text)
+            return text
+
+    def mask_message(self, message):
+        """A masked copy of one chat message (string fields only; roles untouched)."""
+        def walk(value, key=None):
+            if isinstance(value, str):
+                return value if key in ("role", "type", "id", "tool_call_id", "name") else self.mask(value)
+            if isinstance(value, list):
+                return [walk(v) for v in value]
+            if isinstance(value, dict):
+                return {k: walk(v, k) for k, v in value.items()}
+            return value
+        return walk(message) if self.enabled else message
+
+    def table(self):
+        """(real, placeholder) pairs seen so far, for :pseudo show."""
+        with self._lock:
+            return sorted(self._fwd.items(), key=lambda kv: (kv[1].lower(), kv[0]))
+
+
+_PSEUDO_NOTE = (
+    "\n\nPRIVACY: host names, domain names, IP addresses, user names and e-mail addresses in "
+    "this conversation are placeholders (host-N, domain-N.invalid, user-N, 198.18.x.x / "
+    "198.19.x.x, 2001:db8:...). Each stands for one real value on this host. Use them exactly "
+    "as written in commands, paths and URLs: ACT translates them back before anything runs. "
+    "Do not ask for the real values.")
+_PSEUDO = None
+
+
+def pseudonymizer():
+    """The process-wide Pseudonymizer (created on first use, after config/flags are read)."""
+    global _PSEUDO
+    if _PSEUDO is None:
+        extra = [os.environ.get("ACT_PSEUDO_NAMES", "")]
+        stored = _USER_CONFIG.get("pseudo_names")
+        if isinstance(stored, list):
+            extra += [str(s) for s in stored]
+        elif isinstance(stored, str):
+            extra.append(stored)
+        extra += _PSEUDO_EXTRA_NAMES
+        _PSEUDO = Pseudonymizer(enabled=PSEUDONYMIZE, extra_names=extra)
+    _PSEUDO.enabled = PSEUDONYMIZE
+    return _PSEUDO
+
+
+_PSEUDO_EXTRA_NAMES = []          # --pseudo-name values
+
+
+def pseudo_outgoing(messages):
+    """Masked copy of a request's messages, with the placeholder note on the system turn."""
+    if not PSEUDONYMIZE:
+        return list(messages)
+    p = pseudonymizer()
+    out = [p.mask_message(m) for m in messages]
+    if out == list(messages):
+        return out                                  # nothing to mask: send it as it is
+    for i, m in enumerate(out):
+        if m.get("role") == "system" and isinstance(m.get("content"), str):
+            out[i] = dict(m, content=m["content"] + _PSEUDO_NOTE)
+            break
+    else:
+        out.insert(0, {"role": "system", "content": _PSEUDO_NOTE.strip()})
+    return out
+
+
+def pseudo_incoming(text):
+    """A model reply with placeholders translated back to real values."""
+    if not PSEUDONYMIZE or not isinstance(text, str):
+        return text
+    return pseudonymizer().unmask(text)
 
 
 # --- file-access detection: dedup re-reads of the same file regardless of method --- #
@@ -1885,6 +2345,26 @@ def _written_paths(cmd):
 # Read tools whose exit status 1 means "valid observation: no match/difference",
 # not failure (grep family, diff/cmp). Exit >= 2 is still a real error for them.
 _BENIGN_NONZERO_TOOLS = {"grep", "egrep", "fgrep", "rg", "zgrep", "diff", "cmp"}
+# systemctl's read verbs report unit state through the exit code: status/is-active exit 3 for
+# "not active", is-failed/is-enabled exit 1 for "not failed"/"disabled", 4 = no such unit.
+# For a DOWN service that is the observation being asked for, not a failed command (0.6.18).
+_SYSTEMCTL_STATE_VERBS = {"status", "is-active", "is-failed", "is-enabled"}
+
+
+def benign_nonzero_exit(canon, rc):
+    """True when a read command's non-zero exit is a valid observation rather than a failure.
+    Callers apply it only to read-only commands, and never to a step that is verifying a change:
+    there a non-zero systemctl state still means the change did not work."""
+    if rc == 0:
+        return False
+    tokens = canon.split()
+    tool = tokens[0].rsplit("/", 1)[-1] if tokens else ""
+    if rc == 1 and tool in _BENIGN_NONZERO_TOOLS:
+        return True
+    if tool == "systemctl" and rc in (1, 3, 4) and not re.search(r"[|;&]", canon):
+        verb = next((t for t in tokens[1:] if not t.startswith("-")), "")
+        return verb in _SYSTEMCTL_STATE_VERBS
+    return False
 
 
 # Signals that a "finish" message is punting back to the user (claiming something
@@ -3453,7 +3933,7 @@ def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_too
     `model` overrides the active MODEL for this one request (used by race mode).
     With `use_tools`, the action protocol is sent as a function schema and a returned tool
     call is rendered back into the same action JSON the text path produces."""
-    send = list(messages)
+    send = pseudo_outgoing(messages)          # the model sees placeholders, never real names
     if prefill and not use_tools:
         send = send + [{"role": "assistant", "content": "{"}]
     payload = {"model": model or MODEL, "messages": send, "temperature": TEMPERATURE}
@@ -3511,7 +3991,7 @@ def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_too
         # randomly killed tasks. Retry it as transient instead.
         if text[:200].lstrip().lower().startswith(("<!doctype", "<html", "<head", "<body")):
             raise TransientError("API returned an HTML page instead of JSON (gateway error)")
-        return (("{" + text) if prefill and not text.startswith("{") else text), None, None, raw
+        return pseudo_incoming(("{" + text) if prefill and not text.startswith("{") else text), None, None, raw
     if isinstance(body, dict) and body.get("error"):
         err = body["error"]
         msg = err.get("message") if isinstance(err, dict) else err
@@ -3522,13 +4002,13 @@ def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_too
     if use_tools:
         tool_reply = _extract_tool_action(body)
         if tool_reply:
-            return tool_reply, body, None, raw
+            return pseudo_incoming(tool_reply), body, None, raw
         # Tools were accepted but the model answered in prose anyway (or the gateway
         # silently dropped the schema). Fall through to the text path for this reply.
     reply = _extract_reply(body)
     if prefill and not use_tools:
         reply = _resolve_prefill_content(reply)
-    return reply, body, None, raw
+    return pseudo_incoming(reply), body, None, raw
 
 
 def _resolve_prefill_content(reply):
@@ -3684,7 +4164,7 @@ def call_ask_backend(messages, timeout=None):
     Uses an interactive shell (bash -ic) so ~/.bashrc is sourced and `ask` is defined."""
     if timeout is None:
         timeout = LLM_TIMEOUT
-    prompt = flatten_messages(messages)
+    prompt = flatten_messages(pseudo_outgoing(messages))
     try:
         proc = subprocess.run(
             ["/bin/bash", "-ic", "ask"], input=prompt,
@@ -3701,7 +4181,7 @@ def call_ask_backend(messages, timeout=None):
         err = "\n".join(l for l in err.splitlines()
                         if "job control" not in l and "terminal process group" not in l)
         raise RuntimeError("ask backend failed (exit {0}): {1}".format(proc.returncode, err[:300]))
-    return proc.stdout or ""
+    return pseudo_incoming(proc.stdout or "")
 
 
 # --------------------------------------------------------------------------- #
@@ -5095,7 +5575,7 @@ def run_turn(session, task, max_steps=100, timeout=120, loop_limit=4):
     hdr = first if extra <= 0 else f"{first}  (+{extra} more lines)"
     print(blue("\n⏺ ") + bold(sanitize_terminal(hdr)))
     emit_event("task_start", task=safe_task, cwd=cwd, step_budget=max_steps,
-               pre_approved=[src for src, _rx in PREAPPROVED])
+               pre_approved=[src for src, _rx in PREAPPROVED], pseudonymize=PSEUDONYMIZE)
     if BACKEND == "ask" and session.turns == 0:
         print(yellow("  (note: --backend ask flattens the conversation and is more loop-prone; "
                      "the api backend holds context better)"))
@@ -5573,9 +6053,8 @@ def run_turn(session, task, max_steps=100, timeout=120, loop_limit=4):
             for idx, (entry, result) in enumerate(zip(prepared, results), 1):
                 plan_item, item, cmd, risk, _, canon, intent, paths = entry
                 rc, output = result
-                benign_nonzero = (rc == 1 and
-                                  canon.split(" ", 1)[0].rsplit("/", 1)[-1]
-                                  in _BENIGN_NONZERO_TOOLS)
+                benign_nonzero = (benign_nonzero_exit(canon, rc)
+                                  and (rc == 1 or not plan_item.get("mutated")))
                 ok = ((rc == 0 or benign_nonzero)
                       and not result.timed_out and not result.cancelled)
                 emit_event("command", command=cmd, risk=risk, step=step,
@@ -6075,9 +6554,8 @@ def run_turn(session, task, max_steps=100, timeout=120, loop_limit=4):
         # grep/diff-style tools use exit 1 to report a valid "no match" observation —
         # booking those as failures burned unproductive strikes and starved steps of
         # evidence (2026-07-17 review: tasks died ~40 steps in).
-        benign_nonzero = (rc == 1 and is_read and not writes
-                          and canon.split(" ", 1)[0].rsplit("/", 1)[-1]
-                          in _BENIGN_NONZERO_TOOLS)
+        benign_nonzero = (is_read and not writes and benign_nonzero_exit(canon, rc)
+                          and (rc == 1 or not plan_step.get("mutated")))
         if (rc == 0 or benign_nonzero) and not result.timed_out and not result.cancelled:
             successful_observations += 1
             # Evidence uses three-way provenance. A successful, approved opaque command can
@@ -6231,11 +6709,11 @@ def run_turn(session, task, max_steps=100, timeout=120, loop_limit=4):
                "exit_code={0} duration={1:.3f}s timed_out={2} cancelled={3} truncated={4}\n{5}".format(
                    rc, result.duration, result.timed_out, result.cancelled, result.truncated, obs_body)
                + evidence_note)
-        if AUTOHEAL and rc != 0:
+        if AUTOHEAL and rc != 0 and not benign_nonzero:
             healed = run_autoheal(cmd, rc, output, timeout=timeout, cwd=cwd)
             if healed:
                 obs += healed
-        if rc != 0 or result.timed_out:
+        if (rc != 0 and not benign_nonzero) or result.timed_out:
             obs += ("\n\nTHIS ACTION DID NOT SUCCEED. Do not repeat it unchanged. Try a "
                     "different action for the current step, or declare a replacement plan "
                     "covering every remaining task goal if this approach is no longer viable. "
@@ -6338,6 +6816,7 @@ REPL_HELP_SECTIONS = (
         (":tools [on|off]", "send the action protocol as a native tool schema"),
         (":planmodel [id|off]", "plan on one model, execute the steps on another"),
         (":race [on|off]", "plan on all models; the active model judges (pick/merge) and runs"),
+        (":pseudo [on|off|show]", "mask names/IPs before sending (default on); show the mapping"),
         (":tokens", "show session token usage"),
         (":theme [name]", "preview or change the color theme"),
     )),
@@ -6564,6 +7043,14 @@ def _main():
                    help="write a structured JSON summary of a one-shot run (status, summary, "
                         "commands, refused actions, files changed) to PATH on every exit "
                         "path; schema act.result/1 (also $ACT_RESULT_FILE)")
+    p.add_argument("--no-pseudonymize", action="store_true",
+                   help="send host names, IP addresses, user names and e-mail addresses to the "
+                        "model as they are (default: replaced with placeholders; also "
+                        "ACT_PSEUDONYMIZE=0, or \"pseudonymize\": false in the config file)")
+    p.add_argument("--pseudo-name", action="append", metavar="NAME", default=[],
+                   help="also mask this host/server name (repeatable; also $ACT_PSEUDO_NAMES, "
+                        "comma-separated). This host's names, /etc/hosts, local accounts, "
+                        "addresses and fully-qualified names are masked automatically")
     p.add_argument("--undo", action="store_true",
                    help="revert the most recent session's file mutations (restore overwritten "
                         "files from backup, delete created files) and exit")
@@ -6572,7 +7059,10 @@ def _main():
     args = p.parse_args()
     global MODEL, API_URL, LLM_TIMEOUT, BACKEND, AUTOHEAL, AUTO, PROVIDER, KEY
     global ALLOW_INSECURE_TLS, NONINTERACTIVE, LOAD_PROJECT_CONTEXT, NDJSON_MODE, AUDIT_PATH
-    global RACE, PLAN_MODEL, TOOLS_MODE, RESULT_PATH, PREAPPROVED, _RESULT_TASK
+    global RACE, PLAN_MODEL, TOOLS_MODE, RESULT_PATH, PREAPPROVED, _RESULT_TASK, PSEUDONYMIZE
+    if args.no_pseudonymize:
+        PSEUDONYMIZE = False
+    _PSEUDO_EXTRA_NAMES.extend(args.pseudo_name)
     if args.result_file:
         RESULT_PATH = args.result_file
     if args.task and not (args.version or args.undo):
@@ -6872,6 +7362,21 @@ def _main():
                 print(grey("  racers: " + ", ".join(racers)))
             else:
                 print(grey(f"  race: off — single model ({provider_label()})"))
+            continue
+        if task == ":pseudo" or task.startswith(":pseudo "):
+            arg = task[7:].strip().lower()
+            if arg in ("on", "off", "1", "0", "true", "false", "yes", "no"):
+                PSEUDONYMIZE = arg in ("on", "1", "true", "yes")
+            rows = pseudonymizer().table() if PSEUDONYMIZE else []
+            print((green("  masking: ON") if PSEUDONYMIZE else yellow("  masking: OFF"))
+                  + grey(" - host names, IP addresses, user names and e-mail addresses are "
+                         + ("replaced with placeholders before anything is sent"
+                            if PSEUDONYMIZE else "sent to the model as they are")))
+            if arg == "show" or (not arg and rows):
+                if not rows:
+                    print(grey("  nothing masked yet in this session"))
+                for real, placeholder in rows:
+                    print(grey("  {0:<28} -> ".format(placeholder)) + sanitize_terminal(real))
             continue
         if task == ":tokens":
             sess = TOKENS_USED.get(PROVIDER, 0)

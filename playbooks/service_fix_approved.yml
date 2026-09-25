@@ -1,0 +1,14 @@
+---
+# Job 2: the step after the approval. service_watch.yml (failed: needs approval) -> AAP approval
+# step -> this job. AAP hands it the check job's results (`act_triage`), and ACT runs exactly the
+# approved command(s) for each host; the containers are then re-checked.
+# It refuses to run on its own (outside the workflow there is nothing approved to apply).
+- name: Service watch - apply the approved fix
+  hosts: "{{ target | default('stigman_hosts') }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Apply what was approved, then verify
+      ansible.builtin.include_role:
+        name: service_watch
+        tasks_from: apply.yml

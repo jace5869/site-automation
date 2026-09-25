@@ -4,3 +4,9 @@ stigman_oidc_provider: https://keycloak.example.mil/realms/stigman
 stigman_client_oidc_provider: https://keycloak.example.mil/realms/stigman
 stigman_classification: U
 stigman_mysql_buffer_pool: 8G
+
+# Service watch (playbooks/service_watch.yml): the containers to watch, dependencies first.
+# Add `url:` to also check a page, and `unit:` if a systemd unit manages the container.
+watch_containers:
+  - name: stigman
+  - name: nginx

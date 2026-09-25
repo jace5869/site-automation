@@ -15,6 +15,14 @@ act_triage_key_env_names: [GENAI_KEY, GENAI_BETA_KEY, ASKSAGE_API_KEY, ASKSAGE_K
 # Non-secret settings for ACT, e.g. {ACT_PROVIDER: asksage, ASKSAGE_MODEL: gpt-4.1-gov}.
 act_triage_env: {}
 
+# ---- Privacy (ACT 0.6.18+) -------------------------------------------------------------------
+# ACT replaces host names, IP addresses, user names and e-mail addresses with placeholders
+# before anything reaches the model, and translates the replies back on the host. The role
+# adds this host's inventory name, short name and ansible_host to the names ACT masks; list
+# any other short server names that may appear in this host's logs here.
+act_triage_pseudonymize: true
+act_triage_pseudo_names: []
+
 # ---- When to call the model (cheap deterministic checks first) ---------------------------
 act_triage_builtin_checks: true          # failed units / required units / disk / journal checks;
                                          # focused playbooks turn these off and pass their own

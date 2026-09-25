@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0 — 2026-09-25
+
+- **Service watch** (`playbooks/service_watch.yml`, `playbooks/service_fix_approved.yml`,
+  `roles/service_watch`): watches podman containers (default `stigman`, `nginx`; optional page
+  URL and systemd unit per container). When one is down: records it, lets ACT (GenAI) find the
+  root cause, and either hands the proposed fix to an AAP approval step (default) or self-heals
+  (ACT may only start/restart the watched containers). The apply job runs exactly the approved
+  command. The playbook re-checks the containers itself after any fix. The check job fails only
+  when a person is needed, so the workflow's "Run on fail" link raises an approval only then.
+  Incidents go to `/var/log/service-watch/incidents.jsonl`, syslog (tag `service-watch`) and AAP
+  job history. Step-by-step guide: `docs/SERVICE_WATCH_DEMO.md`.
+- Vendored ACT-Linux 0.6.18: host names, IP addresses, user names and e-mail addresses are
+  pseudonymized before anything reaches the model; the role passes each host's inventory name.
+
 ## 0.1.0 — 2026-09-25
 
 First release.

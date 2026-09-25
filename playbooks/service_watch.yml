@@ -1,0 +1,22 @@
+---
+# Job 1: watch podman containers (default: stigman and nginx). All up: nothing else happens and
+# the model is not called. One down: record it, let ACT (GenAI) find the root cause, and then
+#   watch_mode=approval   ACT only proposes the fix. The job FAILS on purpose so the AAP workflow
+#                         takes "Run on fail" to its approval step, then service_fix_approved.yml
+#                         applies exactly what was approved.
+#   watch_mode=self-heal  ACT may start/restart the watched containers itself; the playbook
+#                         re-checks them independently.
+# Incidents are recorded on the host (/var/log/service-watch/incidents.jsonl + syslog) and in
+# AAP's job history.
+#
+#   ansible-playbook playbooks/service_watch.yml -l stigman01.example.mil
+#   ansible-playbook playbooks/service_watch.yml -e watch_mode=self-heal
+- name: Service watch
+  hosts: "{{ target | default('stigman_hosts') }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Check, record, and self-heal or hand off for approval
+      ansible.builtin.include_role:
+        name: service_watch
+        tasks_from: watch.yml

@@ -11,6 +11,10 @@ Read [docs/SECRETS.md](docs/SECRETS.md) first.
 
 | Path | What |
 |---|---|
+| `playbooks/service_watch.yml` | watch podman containers (stigman, nginx); when one is down, record it and let ACT (GenAI) find the root cause and propose the fix for approval (or self-heal) |
+| `playbooks/service_fix_approved.yml` | the step after the approval: applies exactly the approved fix, then re-checks |
+| `roles/service_watch/` | the role behind both |
+| `docs/SERVICE_WATCH_DEMO.md` | **step by step: ACT, the playbooks, AAP templates, the workflow, approving a fix** |
 | `playbooks/stigman_deploy.yml` | deploy / reconcile STIG Manager (MySQL 8.4 + STIG Manager + nginx TLS) on podman with Quadlet units |
 | `roles/stigman_stack/` | the role behind it |
 | `aap/credential_types/` | the custom credential types to create in AAP (input + injector YAML) |
@@ -18,6 +22,10 @@ Read [docs/SECRETS.md](docs/SECRETS.md) first.
 | `vendor/act/` | ACT-Linux (the `act` tool and its roles/playbooks), vendored from a release |
 | `scripts/update-act.sh` | refresh `vendor/act` from a newer ACT-Linux release tarball |
 | `docs/SECRETS.md` | where secrets live and the rules playbooks follow |
+
+**Service watch**: AAP + ACT watch the stigman and nginx containers, record an outage, find the
+root cause, and route the fix through an AAP approval step (or self-heal). Start with
+[docs/SERVICE_WATCH_DEMO.md](docs/SERVICE_WATCH_DEMO.md).
 
 Coming next: day-2 operations (MySQL backups, certificate rotation, image updates with rollback,
 password rotation), host baseline and patching, and monitoring wrappers for each host group.
