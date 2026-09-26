@@ -1,0 +1,117 @@
+---
+# TROUBLESHOOT: the commands an experienced admin runs first for a kind of problem, run for you
+# (read-only), each with a line saying what it shows. The matching health checks run too, so
+# you also get plain-words findings. Pick the area; for "service" and "network" say what.
+#
+#   ts_area:    overview | disk | performance | service | network | selinux | fapolicyd |
+#               login | time | logs | mariadb
+#   ts_service: the systemd unit for area=service (e.g. nginx, mariadb, stigman-api)
+#   ts_target:  host:port for area=network (e.g. ldap.example.mil:636)
+#   ts_since:   how far back to read logs (journalctl --since), e.g. -2h, -1d, "2026-09-26 08:00"
+ts_area: overview
+ts_service: ""
+ts_target: ""
+ts_since: "-2h"
+ts_output_lines: 60                       # keep the last this-many lines of each command
+
+# What each area runs. `why` is printed above the command's output. Commands must be read-only.
+ts_areas:
+  overview:
+    checks: [disk, mounts, services, performance, time, logging]
+    commands:
+      - {why: "How long the host has been up, and how busy it is", cmd: "uptime; who -b"}
+      - {why: "Units that failed", cmd: "systemctl --failed --no-pager"}
+      - {why: "Local disk space", cmd: "df -hT -l -x tmpfs -x devtmpfs -x overlay"}
+      - {why: "Memory and swap", cmd: "free -h"}
+      - {why: "Errors in the journal since {{ ts_since }}", cmd: "journalctl -p err --since {{ ts_since | quote }} --no-pager -q | tail -40"}
+      - {why: "Recent reboots and shutdowns", cmd: "last -x reboot shutdown 2>/dev/null | head -8"}
+  disk:
+    checks: [disk, mounts]
+    commands:
+      - {why: "Space per filesystem", cmd: "df -hT -l -x tmpfs -x devtmpfs -x overlay"}
+      - {why: "Inodes per filesystem (many small files)", cmd: "df -ih -l -x tmpfs -x devtmpfs -x overlay"}
+      - why: "Biggest directories on the fullest filesystem"
+        cmd: >-
+          m=$(df -P -l -x tmpfs -x devtmpfs -x overlay | awk 'NR>1 {sub("%","",$5);
+          print $5, $6}' | sort -rn | head -1 | cut -d' ' -f2);
+          echo "fullest: $m";
+          timeout 120 du -xh --max-depth=2 "$m" 2>/dev/null | sort -h | tail -20
+      - {why: "Deleted files still held open (space not freed until the program restarts)", cmd: "lsof -nP +L1 2>/dev/null | awk 'NR==1 || $7 > 10485760' | head -20"}
+      - {why: "Files over 1 GiB", cmd: "timeout 120 find / -xdev -type f -size +1G -printf '%s %p\\n' 2>/dev/null | sort -rn | head -15 | awk '{printf \"%.1f GiB %s\\n\", $1/1073741824, $2}'"}
+      - {why: "Journal size", cmd: "journalctl --disk-usage"}
+  performance:
+    checks: [performance]
+    commands:
+      - {why: "Load averages (1, 5, 15 minutes)", cmd: "uptime; nproc"}
+      - {why: "Top processes right now", cmd: "top -b -n 1 -o %CPU | head -25"}
+      - {why: "CPU, memory, swap and I/O every second for 5 seconds (wa = waiting for disk, si/so = swapping)", cmd: "vmstat -w 1 5"}
+      - {why: "Biggest memory users", cmd: "ps -eo pid,user,pmem,rss,etime,comm --sort=-rss | head -12"}
+      - {why: "Disk latency per device (await, %util)", cmd: "iostat -x 1 2 2>/dev/null | tail -20 || echo 'iostat not installed (sysstat)'"}
+      - {why: "Load history for today (sar)", cmd: "sar -q 2>/dev/null | tail -15 || echo 'no sar history (sysstat not collecting)'"}
+      - {why: "Out-of-memory kills since {{ ts_since }}", cmd: "journalctl -k --since {{ ts_since | quote }} --no-pager -q | grep -iE -A2 'out of memory|oom-kill' | tail -20"}
+  service:
+    checks: [services]
+    commands:
+      - {why: "Status and last log lines of {{ ts_service }}", cmd: "systemctl status {{ ts_service | quote }} --no-pager -l"}
+      - {why: "Why it stopped: result, exit code, restarts", cmd: "systemctl show {{ ts_service | quote }} -p ActiveState,SubState,Result,ExecMainStatus,ExecMainExitTimestamp,NRestarts,UnitFileState"}
+      - {why: "Its log since {{ ts_since }}", cmd: "journalctl -u {{ ts_service | quote }} --since {{ ts_since | quote }} --no-pager -q | tail -60"}
+      - {why: "Units it needs, and whether they are up", cmd: "systemctl list-dependencies {{ ts_service | quote }} --no-pager | head -30"}
+      - {why: "Its unit file (what it runs, as whom)", cmd: "systemctl cat {{ ts_service | quote }} --no-pager | head -60"}
+      - {why: "Ports that are listening, and by whom", cmd: "ss -ltnp | head -30"}
+  network:
+    checks: [network]
+    commands:
+      - {why: "Addresses and link state", cmd: "ip -br addr; ip -br link"}
+      - {why: "Routes (the default route is how other networks are reached)", cmd: "ip route; ip -6 route | head"}
+      - {why: "DNS servers this host asks", cmd: "cat /etc/resolv.conf"}
+      - {why: "What {{ ts_target.split(':')[0] }} resolves to", cmd: "getent ahosts {{ ts_target.split(':')[0] | quote }}"}
+      - why: "Can we open a TCP connection to {{ ts_target }}?"
+        cmd: >-
+          timeout 5 bash -c 'exec 3<>/dev/tcp/{{ ts_target.split(':')[0] }}/{{ ts_target.split(':')[1] | default(443) }}' && echo OPEN || echo 'NO ANSWER (closed, filtered, or no route)'
+      - {why: "Which route and interface that traffic takes", cmd: "ip route get $(getent ahosts {{ ts_target.split(':')[0] | quote }} | awk 'NR==1 {print $1}') 2>&1"}
+      - {why: "Firewall rules on this host", cmd: "firewall-cmd --list-all 2>/dev/null || echo 'firewalld not running'"}
+      - {why: "Connection counts", cmd: "ss -s"}
+  selinux:
+    checks: [selinux]
+    commands:
+      - {why: "SELinux mode and policy", cmd: "sestatus"}
+      - {why: "Denials since {{ ts_since }}", cmd: "ausearch -m AVC,USER_AVC -ts today -i 2>/dev/null | tail -30"}
+      - {why: "Why each denial happened (audit2why)", cmd: "ausearch -m AVC -ts today 2>/dev/null | audit2why 2>/dev/null | head -40"}
+      - {why: "Booleans changed from the policy default", cmd: "semanage boolean -l -C 2>/dev/null"}
+      - {why: "File labels changed locally", cmd: "semanage fcontext -l -C 2>/dev/null | head -30"}
+  fapolicyd:
+    checks: [fapolicyd]
+    commands:
+      - {why: "Status and last log lines", cmd: "systemctl status fapolicyd --no-pager -l"}
+      - {why: "Denials today (which program, which file)", cmd: "ausearch -m FANOTIFY -ts today -i 2>/dev/null | tail -30"}
+      - {why: "Rules in effect", cmd: "fapolicyd-cli --list 2>/dev/null | tail -30"}
+      - {why: "Is fapolicyd enforcing?", cmd: "grep -E '^[[:space:]]*(permissive|trust|integrity)' /etc/fapolicyd/fapolicyd.conf"}
+  login:
+    checks: [accounts]
+    commands:
+      - {why: "SSH log since {{ ts_since }} (failed passwords, refused keys)", cmd: "journalctl -u sshd --since {{ ts_since | quote }} --no-pager -q | tail -40"}
+      - {why: "Accounts locked by too many failed logins (faillock)", cmd: "faillock 2>/dev/null | awk 'NF' | head -40"}
+      - {why: "Recent failed logins", cmd: "lastb -n 15 2>/dev/null"}
+      - {why: "Directory (SSSD/AD/IdM) connection", cmd: "sssctl domain-list 2>/dev/null && for d in $(sssctl domain-list 2>/dev/null); do sssctl domain-status \"$d\" 2>/dev/null; done || echo 'sssd not in use'"}
+      - {why: "Authentication profile", cmd: "authselect current 2>/dev/null"}
+      - {why: "Clock offset (Kerberos/AD fails beyond 5 minutes)", cmd: "chronyc -n tracking 2>/dev/null | head -4"}
+  time:
+    checks: [time]
+    commands:
+      - {why: "chrony's view: offset, stratum, leap status", cmd: "chronyc -n tracking"}
+      - {why: "Time sources (^* = in use, ? = unreachable)", cmd: "chronyc -n sources -v"}
+      - {why: "systemd's view", cmd: "timedatectl"}
+      - {why: "Configured servers", cmd: "grep -E '^(server|pool)' /etc/chrony.conf"}
+  logs:
+    checks: [logging]
+    commands:
+      - {why: "Errors since {{ ts_since }}", cmd: "journalctl -p err --since {{ ts_since | quote }} --no-pager -q | tail -50"}
+      - why: "Who logs the most errors"
+        cmd: >-
+          journalctl -p err --since {{ ts_since | quote }} -q -o json --output-fields=SYSLOG_IDENTIFIER 2>/dev/null
+          | grep -oE '"SYSLOG_IDENTIFIER":"[^"]*"' | cut -d'"' -f4 | sort | uniq -c | sort -rn | head -10
+      - {why: "rsyslog status and its forwarding queue", cmd: "systemctl status rsyslog --no-pager | head -15; ls -la /var/lib/rsyslog 2>/dev/null | tail -10"}
+      - {why: "Journal size and storage", cmd: "journalctl --disk-usage; grep -E '^[^#]*Storage' /etc/systemd/journald.conf"}
+  mariadb:
+    checks: [mariadb]
+    commands: []

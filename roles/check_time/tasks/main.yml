@@ -1,0 +1,70 @@
+---
+# TIME. Asks chrony (RHEL's time service) how it is doing; falls back to timedatectl when
+# chrony is not there.
+
+- name: Time | ask chrony (or timedatectl)
+  ansible.builtin.shell: |
+    set -u
+    if command -v chronyc >/dev/null 2>&1 && out=$(timeout 10 chronyc -n tracking 2>&1); then
+      echo "source chrony"
+      echo "$out" | awk -F' : ' '/^Leap status/ {print "leap " $2} /^System time/ {print "system " $2} /^Reference ID/ {print "ref " $2}'
+      src=$(timeout 10 chronyc -n sources 2>/dev/null)
+      echo "reachable $(echo "$src" | awk '/^[\^=]/ && $5 != "0" {n++} END {print n+0}')"
+      echo "selected $(echo "$src" | grep -cE '^[\^=]\*')"
+    elif command -v chronyc >/dev/null 2>&1; then
+      echo "source chrony-down"
+      echo "chrony_error $out" | head -1
+    else
+      echo "source timedatectl"
+      echo "synced $(timedatectl show -p NTPSynchronized --value 2>/dev/null || echo unknown)"
+    fi
+    exit 0
+  args:
+    executable: /bin/bash
+  register: _time
+  changed_when: false
+  check_mode: false
+
+- name: Time | findings
+  ansible.builtin.set_fact:
+    _time_findings: >-
+      {%- set v = {} -%}
+      {%- for line in _time.stdout_lines if ' ' in line -%}
+      {%-   set _ = v.update({line.split(' ', 1)[0]: line.split(' ', 1)[1] | trim}) -%}
+      {%- endfor -%}
+      {%- set f = [] -%}
+      {%- set look = 'chronyc -n tracking; chronyc -n sources -v; journalctl -u chronyd -n 30 --no-pager' -%}
+      {%- if v.source | default('') == 'chrony' -%}
+      {%-   set words = (v.system | default('0 seconds')).split() -%}
+      {%-   set off = words[0] | float -%}
+      {%-   set way = 'behind' if 'slow' in v.system | default('') else 'ahead of' -%}
+      {%-   if 'Not synchronised' in v.leap | default('') or (v.selected | default('0') | int) == 0 -%}
+      {%-     set _ = f.append({'check': 'time', 'id': 'time:unsynced', 'severity': 'critical',
+                                'summary': 'the clock is NOT synchronized (chrony reaches ' ~ v.reachable | default('0')
+                                           ~ ' time source(s) and uses none); it is ' ~ off ~ 's ' ~ way ~ ' NTP time',
+                                'hint': look}) -%}
+      {%-   elif off >= check_time_offset_warn | float -%}
+      {%-     set _ = f.append({'check': 'time', 'id': 'time:offset', 'severity': 'critical' if off >= check_time_offset_crit | float else 'warning',
+                                'summary': 'the clock is ' ~ off ~ 's ' ~ way ~ ' NTP time',
+                                'hint': look}) -%}
+      {%-   endif -%}
+      {%-   if (v.reachable | default('0') | int) < check_time_min_sources | int -%}
+      {%-     set _ = f.append({'check': 'time', 'id': 'time:sources', 'severity': 'warning',
+                                'summary': 'chrony can reach only ' ~ v.reachable | default('0') ~ ' time source(s) (want at least ' ~ check_time_min_sources ~ ')',
+                                'hint': look ~ '; grep -E "^(server|pool)" /etc/chrony.conf'}) -%}
+      {%-   endif -%}
+      {%- elif v.source | default('') == 'chrony-down' -%}
+      {%-   set _ = f.append({'check': 'time', 'id': 'time:unsynced', 'severity': 'critical',
+                              'summary': 'chrony is installed but not answering (' ~ v.chrony_error | default('?') | truncate(120)
+                                         ~ '): nothing is keeping the clock correct',
+                              'hint': 'systemctl status chronyd --no-pager -l; journalctl -u chronyd -n 30 --no-pager; timedatectl'}) -%}
+      {%- elif v.synced | default('') != 'yes' -%}
+      {%-   set _ = f.append({'check': 'time', 'id': 'time:unsynced', 'severity': 'critical',
+                              'summary': 'the clock is not synchronized (timedatectl: NTPSynchronized=' ~ v.synced | default('?') ~ ')',
+                              'hint': 'timedatectl; timedatectl timesync-status 2>/dev/null'}) -%}
+      {%- endif -%}
+      {{ f }}
+
+- name: Time | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _time_findings }}"

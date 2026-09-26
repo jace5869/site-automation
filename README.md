@@ -1,44 +1,78 @@
 # Site automation
 
-Environment playbooks for the STIG Manager stack, the ServiceNow MariaDB host, the NetApp
-Console host, and AAP itself, plus ACT-based monitoring. Built for Ansible Automation Platform
-2.7; also runs from the Ansible CLI.
+Runbooks for the site's Linux servers, run from Ansible Automation Platform 2.7 (or the Ansible
+CLI): **health checks** (system, compliance, MariaDB, certificates, patching), **troubleshooting**,
+**ServiceNow** tickets and health, **POA&M** status, **patching** with an approval, the **STIG
+Manager** deployment, and ACT (GenAI) monitoring with approved fixes.
+
+**New to Ansible or AAP? Start with [docs/START_HERE.md](docs/START_HERE.md)**, then follow
+[docs/SETUP_AAP.md](docs/SETUP_AAP.md) step by step. The same guide as one printable PDF:
+[docs/pdf/Site-Automation-Ops-Runbooks-Guide.pdf](docs/pdf/Site-Automation-Ops-Runbooks-Guide.pdf).
 
 **Secrets never live in this repository.** They are AAP credentials, injected at run time.
-Read [docs/SECRETS.md](docs/SECRETS.md) first.
+Read [docs/SECRETS.md](docs/SECRETS.md).
+
+Only modules that ship with Ansible are used (no collections to install), so the Minimal
+execution environment runs everything, also on a disconnected network. Tested with ansible-core
+2.16 and 2.21, against Rocky Linux 9 test hosts (containers, MariaDB 10.5) and, read-only, a
+Fedora host with SELinux enforcing and auditd.
+
+## Runbooks
+
+| Job template | Playbook | What |
+|---|---|---|
+| Health check | `playbooks/health_check.yml` | read-only checks, picked per run: disk (with days-until-full), mounts, services, performance, time, network, logging, SELinux, fapolicyd, auditd, accounts, certificates, patching, MariaDB. Findings in plain words, each with a command to look further; fails hosts with findings so a workflow can react |
+| Troubleshoot | `playbooks/troubleshoot.yml` | on demand: the first commands an admin runs for a kind of problem (disk, performance, service, network, SELinux, fapolicyd, login, time, logs, MariaDB), each explained, plus the matching checks |
+| Certificate report | `playbooks/cert_report.yml` | every certificate on every host (files, keystores, TLS endpoints) in one table, soonest expiry first |
+| POA&M status | `playbooks/poam_status.yml` | overdue / due-soon POA&M items from `poam/poam.csv`; optional STIG Manager cross-check for open CAT I/II findings with no POA&M item |
+| ServiceNow tickets | `playbooks/servicenow_tickets.yml` | workflow step: one incident per finding, updated (not duplicated) on later runs, noted or resolved when it clears |
+| ServiceNow health | `playbooks/servicenow_health.yml` | the instance answers its API; MID Servers up and validated |
+| Patch hosts | `playbooks/patch_hosts.yml` | dnf update one host at a time, reboot only if needed and allowed, every service back afterwards; never patches AAP or vendor appliances |
+| Apply approved ACT fix | `playbooks/act_fix_approved.yml` | after an approval: ACT runs exactly the approved commands, then the checks run again |
+| Service watch (+ apply) | `playbooks/service_watch.yml`, `service_fix_approved.yml` | watch the stigman/nginx containers; ACT root cause; approval or self-heal ([docs/SERVICE_WATCH_DEMO.md](docs/SERVICE_WATCH_DEMO.md)) |
+| STIG Manager - deploy | `playbooks/stigman_deploy.yml` | MySQL 8.4 + STIG Manager + nginx (TLS) on podman/Quadlet |
+
+## Documentation
+
+| Doc | For |
+|---|---|
+| [docs/START_HERE.md](docs/START_HERE.md) | what the pieces are (Ansible and AAP in plain words) and how a run works |
+| [docs/SETUP_AAP.md](docs/SETUP_AAP.md) | the setup, step by step: Git, credentials, project, inventory, templates, ServiceNow |
+| [docs/RUNBOOKS.md](docs/RUNBOOKS.md) | every check and finding, and what to do about it |
+| [docs/WORKFLOWS_AND_SCHEDULES.md](docs/WORKFLOWS_AND_SCHEDULES.md) | Daily health, Weekly compliance, Patch with checks, Fix with approval (ACT); schedules |
+| [docs/ADDING_ACT.md](docs/ADDING_ACT.md) | adding ACT later (explain / diagnose / self-heal), and writing your own check |
+| [docs/SECRETS.md](docs/SECRETS.md) | where every secret lives |
+| [docs/SERVICE_WATCH_DEMO.md](docs/SERVICE_WATCH_DEMO.md) | the service-watch demo |
+| [docs/pdf/](docs/pdf/README.md) | **PDFs** of the guides: the runbooks setup guide, the service-watch demo, the ACT guides and leadership briefs |
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `playbooks/service_watch.yml` | watch podman containers (stigman, nginx); when one is down, record it and let ACT (GenAI) find the root cause and propose the fix for approval (or self-heal) |
-| `playbooks/service_fix_approved.yml` | the step after the approval: applies exactly the approved fix, then re-checks |
-| `roles/service_watch/` | the role behind both |
-| `docs/SERVICE_WATCH_DEMO.md` | **step by step: ACT, the playbooks, AAP templates, the workflow, approving a fix** |
-| `playbooks/stigman_deploy.yml` | deploy / reconcile STIG Manager (MySQL 8.4 + STIG Manager + nginx TLS) on podman with Quadlet units |
-| `roles/stigman_stack/` | the role behind it |
+| `playbooks/` | one playbook per job template |
+| `roles/check_*/` | one role per health check; settings in `defaults/main.yml` |
+| `roles/site_findings/` | the findings contract: start, run a check safely, report, publish, pass/fail |
+| `roles/site_act/` | the bridge from any check's findings to ACT |
+| `roles/troubleshoot/`, `roles/servicenow/`, `roles/patch/`, `roles/poam/` | the other runbooks |
+| `roles/service_watch/`, `roles/stigman_stack/` | service watch, STIG Manager deployment |
+| `plugins/filter/` | small filters (CSV reading, dates) - standard library only |
 | `aap/credential_types/` | the custom credential types to create in AAP (input + injector YAML) |
-| `inventories/example/` | placeholder inventory: copy it into your work Git and fill in real hosts |
-| `vendor/act/` | ACT-Linux (the `act` tool and its roles/playbooks), vendored from a release |
-| `scripts/update-act.sh` | refresh `vendor/act` from a newer ACT-Linux release tarball |
-| `docs/SECRETS.md` | where secrets live and the rules playbooks follow |
-
-**Service watch**: AAP + ACT watch the stigman and nginx containers, record an outage, find the
-root cause, and route the fix through an AAP approval step (or self-heal). Start with
-[docs/SERVICE_WATCH_DEMO.md](docs/SERVICE_WATCH_DEMO.md).
-
-Coming next: day-2 operations (MySQL backups, certificate rotation, image updates with rollback,
-password rotation), host baseline and patching, and monitoring wrappers for each host group.
+| `inventories/example/` | placeholder inventory and settings: copy to `inventories/site/` |
+| `poam/` | the POA&M list (CSV) for `poam_status.yml` |
+| `vendor/act/` | ACT-Linux (the `act` tool and its roles), vendored from a release |
+| `scripts/update-act.sh` | refresh `vendor/act` from a newer ACT-Linux release |
 
 ## Using it in AAP
 
-1. Put this repository in your work Git. Create an AAP **project** pointing at it, pinned to a tag.
-2. Create the credential types in `aap/credential_types/` and one credential of each per
-   environment (see its README).
-3. Job template **STIG Manager - deploy**: playbook `playbooks/stigman_deploy.yml`; credentials:
-   Machine, *STIG Manager database*, *TLS certificate* (and *Container registry login (hosts)*
-   if you pull with an account); limit `stigman_hosts`.
-4. Put non-secret settings in the inventory (`group_vars/stigman_hosts.yml` in the example).
+Follow [docs/SETUP_AAP.md](docs/SETUP_AAP.md). In short: put this repository in your work Git
+with your inventory in `inventories/site/`; create the credential types in `aap/credential_types/`
+and the credentials; a project on the repository; an inventory sourced from
+`inventories/site/hosts.yml`; one job template per playbook; then the workflows and schedules in
+[docs/WORKFLOWS_AND_SCHEDULES.md](docs/WORKFLOWS_AND_SCHEDULES.md).
+
+Job template **STIG Manager - deploy**: playbook `playbooks/stigman_deploy.yml`; credentials:
+Machine, *STIG Manager database*, *TLS certificate* (and *Container registry login (hosts)* if
+you pull with an account); limit `stigman_hosts`.
 
 ## The STIG Manager deployment
 

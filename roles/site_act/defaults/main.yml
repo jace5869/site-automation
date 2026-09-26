@@ -1,0 +1,34 @@
+---
+# ACT (GenAI) on top of ANY check playbook. The check roles already did the cheap, certain part:
+# they found WHAT is wrong (site_findings) and know which read-only command shows more (each
+# finding's `hint`). This role hands that to ACT (the act_triage role) to find out WHY, and to
+# propose - or, if you allow it, make - the fix. Turn it on with use_act=true.
+#
+# Pick one level per job template:
+#   explain    The role runs the findings' look commands itself and gives ACT their output.
+#              ACT runs NOTHING. You get a root cause and a suggested fix in words.
+#              Safest start; no approval step needed.                    (ACT evidence mode)
+#   diagnose   ACT investigates by running read-only commands itself and proposes exact fix
+#              commands. Every change is refused and waits for a person: the job fails with
+#              NEEDS APPROVAL, the workflow's approval step asks, and act_fix_approved.yml
+#              applies exactly what was approved.                        (ACT loop mode, no --allow)
+#   self-heal  Like diagnose, but ACT may run the fixes that match site_act_allow by itself
+#              (e.g. restart chronyd). Anything else still waits for approval.
+site_act_level: explain
+
+# self-heal only: regular expressions of fix commands ACT may run without a person. Each must
+# match the WHOLE command. Keep them narrow, e.g.
+#   site_act_allow: ['systemctl restart (chronyd|rsyslog|crond)']
+site_act_allow: []
+
+# Hosts where ACT may only diagnose - never fix by itself, whatever site_act_level says: AAP
+# itself (a fix could stop the job that is running it) and vendor-managed appliances. The apply
+# step (act_fix_approved.yml) skips them too: a person applies the fix there by hand.
+site_act_diagnose_only_groups: [aap_hosts, netapp_console_hosts]
+
+# Non-secret ACT settings, e.g. {GENAI_MODEL: <a model your account offers>}. The API key comes
+# from the "ACT model key" AAP credential (environment variable GENAI_KEY), never from here.
+site_act_env: {}
+site_act_timeout: 600                     # seconds for one ACT run
+site_act_extra_instructions: ""           # anything ACT should know about this site
+site_act_evidence_text: ""                # extra evidence (troubleshoot.yml passes what it collected)

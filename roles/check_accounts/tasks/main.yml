@@ -1,0 +1,96 @@
+---
+# ACCOUNTS. Read-only: /etc/passwd, /etc/shadow (root only, hence become), lastlog, sudoers
+# files, chage -l.
+
+- name: Accounts | UID 0, empty passwords, inactive accounts, NOPASSWD sudo, expiry
+  ansible.builtin.shell: |
+    set -u
+    export LC_ALL=C
+    echo "now $(date +%s)"
+    awk -F: '$3 == 0 && $1 != "root" {print "uid0 " $1}' /etc/passwd
+    awk -F: '$2 == "" {print "emptypw " $1}' /etc/shadow 2>/dev/null
+    # accounts of people: uid >= min, a real shell, not locked
+    people=$(awk -F: -v min={{ check_accounts_min_uid | int }} '$3 >= min && $3 < 60000 && $7 !~ /(nologin|false)$/ {print $1}' /etc/passwd)
+    locked=$(awk -F: '$2 ~ /^[!*]/ {print $1}' /etc/shadow 2>/dev/null)
+    if command -v lastlog >/dev/null 2>&1; then
+      old=$(lastlog -b {{ check_accounts_inactive_days | int }} 2>/dev/null | awk 'NR > 1 {print $1}')
+      for u in $people; do
+        grep -qx "$u" <<< "$locked" && continue
+        grep -qx "$u" <<< "$old" && echo "inactive $u"
+      done
+    else
+      echo "nolastlog yes"
+    fi
+    grep -rhE '^[[:space:]]*[^#[:space:]].*(NOPASSWD|!authenticate)' /etc/sudoers /etc/sudoers.d/ 2>/dev/null |
+      awk '{print "nopasswd " $1}' | sort -u
+    {% for u in check_accounts_expiry_watch %}
+    if id {{ u | quote }} >/dev/null 2>&1; then
+      pw=$(chage -l {{ u | quote }} 2>/dev/null | awk -F': ' '/^Password expires/ {print $2}')
+      ac=$(chage -l {{ u | quote }} 2>/dev/null | awk -F': ' '/^Account expires/ {print $2}')
+      echo "expiry {{ u }} password $(date -d "$pw" +%s 2>/dev/null || echo never)"
+      echo "expiry {{ u }} account $(date -d "$ac" +%s 2>/dev/null || echo never)"
+    else
+      echo "expiry {{ u }} missing"
+    fi
+    {% endfor %}
+    exit 0
+  args:
+    executable: /bin/bash
+  register: _acct
+  changed_when: false
+  check_mode: false
+
+- name: Accounts | findings
+  ansible.builtin.set_fact:
+    _acct_findings: >-
+      {%- set v = {'uid0': [], 'emptypw': [], 'inactive': [], 'nopasswd': [], 'expiry': []} -%}
+      {%- for line in _acct.stdout_lines if ' ' in line -%}
+      {%-   set k, val = line.split(' ', 1) -%}
+      {%-   if k in v and v[k] is sequence and v[k] is not string -%}{%- set _ = v[k].append(val | trim) -%}
+      {%-   else -%}{%- set _ = v.update({k: val | trim}) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- set f = [] -%}
+      {%- if v.uid0 -%}
+      {%-   set _ = f.append({'check': 'accounts', 'id': 'accounts:uid0', 'severity': 'critical',
+                              'summary': 'account(s) other than root have UID 0 (full root power): ' ~ (v.uid0 | join(', ')),
+                              'hint': "awk -F: '$3 == 0' /etc/passwd"}) -%}
+      {%- endif -%}
+      {%- if v.emptypw -%}
+      {%-   set _ = f.append({'check': 'accounts', 'id': 'accounts:emptypw', 'severity': 'critical',
+                              'summary': 'account(s) with an EMPTY password (log in without one): ' ~ (v.emptypw | join(', ')),
+                              'hint': "awk -F: '$2 == \"\" {print $1}' /etc/shadow"}) -%}
+      {%- endif -%}
+      {%- set inactive = v.inactive | difference(check_accounts_ignore_inactive) | sort -%}
+      {%- if inactive -%}
+      {%-   set _ = f.append({'check': 'accounts', 'id': 'accounts:inactive', 'severity': 'warning',
+                              'summary': (inactive | length) ~ ' account(s) not used for ' ~ check_accounts_inactive_days
+                                         ~ '+ days (or never) and not locked: ' ~ (inactive | join(', ')),
+                              'hint': 'lastlog -b ' ~ check_accounts_inactive_days ~ ' -u ' ~ check_accounts_min_uid ~ '-59999'}) -%}
+      {%- endif -%}
+      {%- set nopw = v.nopasswd | difference(check_accounts_nopasswd_allowed) | sort -%}
+      {%- if nopw -%}
+      {%-   set _ = f.append({'check': 'accounts', 'id': 'accounts:nopasswd', 'severity': 'warning',
+                              'summary': 'sudo without a password (NOPASSWD / !authenticate) for: ' ~ (nopw | join(', '))
+                                         ~ ' (allow expected ones with check_accounts_nopasswd_allowed)',
+                              'hint': "grep -rnE 'NOPASSWD|!authenticate' /etc/sudoers /etc/sudoers.d/"}) -%}
+      {%- endif -%}
+      {%- for e in v.expiry -%}
+      {%-   set c = e.split() -%}
+      {%-   if c[1] == 'missing' -%}
+      {%-     set _ = f.append({'check': 'accounts', 'id': 'accounts:expiry:' ~ c[0], 'severity': 'warning',
+                                'summary': 'watched account ' ~ c[0] ~ ' does not exist on this host', 'hint': 'id ' ~ c[0]}) -%}
+      {%-   elif c[2] != 'never' -%}
+      {%-     set days = (((c[2] | int) - (v.now | int)) / 86400) | round(1) -%}
+      {%-     if days <= check_accounts_expiry_warn_days | float -%}
+      {%-       set _ = f.append({'check': 'accounts', 'id': 'accounts:expiry:' ~ c[0] ~ ':' ~ c[1], 'severity': 'critical' if days <= 3 else 'warning',
+                                  'summary': 'the ' ~ c[1] ~ ' of ' ~ c[0] ~ (' EXPIRED ' ~ (days | abs) ~ ' days ago' if days < 0 else ' expires in ' ~ days ~ ' days')
+                                             ~ ' (automation that logs in as ' ~ c[0] ~ ' will stop working)',
+                                  'hint': 'chage -l ' ~ c[0]}) -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ f }}
+
+- name: Accounts | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _acct_findings }}"

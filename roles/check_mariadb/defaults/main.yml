@@ -1,0 +1,34 @@
+---
+# MARIADB health (read-only): running, accepting connections, connection headroom, queries that
+# run too long, replication / Galera state, recent errors in its log, and room on its disk.
+# It runs status queries only - no data is read and nothing is changed.
+
+# Which hosts: members of the mariadb_hosts inventory group (or set this true for a host).
+check_mariadb_enabled: "{{ 'mariadb_hosts' in group_names }}"
+
+# MariaDB in a podman container (e.g. the ServiceNow database): the container NAME. The client
+# inside the container is used (podman exec). Empty = MariaDB is installed on the host itself.
+check_mariadb_container: ""
+# The systemd unit (host installs). Empty = the first of mariadb, mysqld, mysql that exists.
+check_mariadb_service: ""
+
+# How to log in. Without a credential: as root through the local socket - MariaDB's default for
+# a host install on RHEL (no password needed when the job runs with sudo). MariaDB in a
+# CONTAINER usually gives root a password (the official images do), so there attach the
+# "MariaDB monitor" AAP credential: it sets MARIADB_MONITOR_USER / MARIADB_MONITOR_PASSWORD, and
+# the password reaches the client only through the environment (never the command line).
+# Extra client options, e.g. ['--socket=/var/lib/mysql/mysql.sock'] or ['--host=127.0.0.1', '--port=3306']
+check_mariadb_client_args: []
+
+check_mariadb_conn_warn_pct: 80          # connections in use, % of max_connections
+check_mariadb_conn_crit_pct: 95
+check_mariadb_threads_running_warn: 32   # queries executing at this moment
+check_mariadb_long_query_seconds: 300    # a query running longer than this is "long"
+check_mariadb_replica_lag_warn: 300      # seconds a replica is behind its primary
+check_mariadb_replica_lag_crit: 1800
+check_mariadb_galera_size: 0             # expected Galera cluster size (0 = not Galera)
+check_mariadb_restart_warn_minutes: 60   # restarted less than this ago -> warning
+check_mariadb_bufferpool_hit_warn: 95    # % of reads served from memory (only judged after 1M reads)
+check_mariadb_error_since_days: 1        # [ERROR] lines in its log this recent
+check_mariadb_disk_warn_pct: 85          # the filesystem holding the data directory
+check_mariadb_disk_crit_pct: 95

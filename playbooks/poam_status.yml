@@ -1,0 +1,27 @@
+---
+# POA&M STATUS - weekly. Which POA&M items are overdue or due soon, and (optional) which open
+# CAT I / II findings in STIG Manager have no POA&M item. Read-only; runs on the controller.
+#
+#   poam/poam.csv          the POA&M list (see poam/README.md for the columns)
+#   poam_stigman_api       set it (and attach the "STIG Manager API" credential) for the cross-check
+#
+# Fails when something needs attention, so a workflow can send it to [ServiceNow tickets].
+#
+#   ansible-playbook playbooks/poam_status.yml
+#   ansible-playbook playbooks/poam_status.yml -e poam_stigman_api=https://stigman.example.mil/api
+- name: POA&M status
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Read the POA&M and compare
+      ansible.builtin.include_role:
+        name: poam
+
+    - name: Report (fails when items are overdue, due soon, or missing)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml
+      vars:
+        site_syslog: false
+        site_report_name: poam                 # the name its findings (and tickets) carry

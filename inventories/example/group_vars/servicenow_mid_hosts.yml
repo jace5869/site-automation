@@ -1,0 +1,5 @@
+# The ServiceNow MID Server hosts: the MID service must run, and its keystore must not expire.
+check_services_required_extra: [mid]            # the MID Server's systemd unit name on your hosts
+check_certs_keystores:
+  - path: /opt/servicenow/mid/agent/security/agent_keystore
+    # password_env: KEYSTORE_PASSWORD           # only for a PKCS12 keystore ("Keystore password" credential)

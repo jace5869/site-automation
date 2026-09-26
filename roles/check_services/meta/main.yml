@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: check_services
+  description: "Health check: failed systemd units, required services running and enabled, restart loops."
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

@@ -1,0 +1,42 @@
+# Settings for EVERY host (a group's own file - e.g. group_vars/mariadb_hosts.yml - overrides
+# these for its hosts). Each setting is explained in the role's defaults/main.yml; only the ones
+# you are likely to change are here. Non-secret values only.
+
+# ---- Health check thresholds (roles/check_*/defaults/main.yml) ------------------------------
+check_disk_warn_pct: 85
+check_disk_crit_pct: 95
+# check_disk_overrides:
+#   /var/log/audit: {warn: 70, crit: 85}
+
+check_services_required: [sshd, crond, rsyslog, chronyd, auditd]
+
+# What every host must be able to reach (from itself)
+check_network_dns_names: [ldap.example.mil]
+check_network_tcp:
+  - {name: LDAP, host: ldap.example.mil, port: 636}
+  - {name: ServiceNow, host: servicenow.example.mil, port: 443}
+
+# The central log server
+check_logging_remote:
+  - {name: SIEM, host: siem.example.mil, port: 6514}
+
+# fapolicyd and audit forwarding are required on your hosts (STIG)
+check_fapolicyd_required: true
+check_auditd_remote_required: false
+
+# Accounts: the account AAP logs in with may use sudo without a password, and its password
+# expiry matters (automation stops when it expires).
+check_accounts_nopasswd_allowed: [svc_aap]
+check_accounts_expiry_watch: [svc_aap]
+
+check_certs_warn_days: 30
+check_certs_crit_days: 14
+
+# ---- Where findings go ----------------------------------------------------------------------
+site_fail_on: [critical, warning]        # [critical] = warnings are reported but do not fail the job
+servicenow_min_severity: warning
+servicenow_assignment_group: Linux Operations
+
+# ---- ACT (only used with use_act=true; docs/ADDING_ACT.md) ----------------------------------
+site_act_level: explain
+site_act_env: {}                          # e.g. {GENAI_MODEL: <model>}; the key comes from the credential

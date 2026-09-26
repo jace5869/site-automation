@@ -1,0 +1,152 @@
+---
+# DISK: space and inodes of local filesystems, plus a days-until-full forecast.
+# Read-only (check_mode: false lets the read commands run even in a dry run); the only write is
+# the small history file used for the forecast, which a dry run skips.
+
+- name: Disk | space and inodes of local filesystems
+  ansible.builtin.shell: |
+    set -o pipefail
+    echo "now $(date +%s)"
+    timeout {{ check_disk_timeout | int }} df -l -B1 --output=fstype,size,used,avail,pcent,target {{ _x }} | tail -n +2 | sed 's/^/S /'
+    timeout {{ check_disk_timeout | int }} df -l --output=fstype,itotal,iused,iavail,ipcent,target {{ _x }} | tail -n +2 | sed 's/^/I /'
+  args:
+    executable: /bin/bash
+  vars:
+    _x: "{{ check_disk_exclude_types | map('regex_replace', '^', '-x ') | join(' ') }}"
+  register: _disk
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Disk | what df reported, per mount point
+  ansible.builtin.set_fact:
+    _disk_now: "{{ (_disk.stdout_lines | select('match', '^now ') | first | default('now 0')).split()[1] | int }}"
+    _disk_rows: >-
+      {%- set rows = {} -%}
+      {%- for line in _disk.stdout_lines if line.startswith('S ') or line.startswith('I ') -%}
+      {%-   set c = line[2:].split(None, 5) -%}
+      {%-   set ns = namespace(skip=(c | length) != 6) -%}
+      {%-   for p in check_disk_ignore if not ns.skip -%}
+      {%-     if c[5] is search(p) -%}{%- set ns.skip = true -%}{%- endif -%}
+      {%-   endfor -%}
+      {%-   if not ns.skip -%}
+      {%-     set pct = c[4] | replace('%', '') -%}
+      {%-     set pct = (pct | int) if pct is match('^[0-9]+$') else -1 -%}
+      {%-     if line.startswith('S ') and c[5] not in rows -%}
+      {%-       set _ = rows.update({c[5]: {'mount': c[5], 'type': c[0], 'size': c[1] | int, 'used': c[2] | int,
+                                            'avail': c[3] | int, 'pct': pct, 'ipct': -1}}) -%}
+      {%-     elif line.startswith('I ') and c[5] in rows -%}
+      {%-       set _ = rows[c[5]].update({'ipct': pct}) -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ rows.values() | list | sort(attribute='mount') }}
+
+- name: Disk | earlier samples (for the forecast)
+  ansible.builtin.slurp:
+    src: "{{ check_disk_history_file }}"
+  register: _disk_hist_raw
+  failed_when: false
+  when: check_disk_forecast | bool
+
+- name: Disk | the history as data
+  ansible.builtin.set_fact:
+    _disk_hist: >-
+      {{ (_disk_hist_raw.content | b64decode | from_json)
+         if (_disk_hist_raw.content | default('') | b64decode | trim)[:1] == '{' else {} }}
+
+- name: Disk | findings
+  ansible.builtin.set_fact:
+    _disk_findings: >-
+      {%- set f = [] -%}
+      {%- if _disk_rows | length == 0 -%}
+      {%-   set _ = f.append({'check': 'disk', 'id': 'disk:df', 'severity': 'warning',
+                              'summary': 'could not read filesystem usage (df exit ' ~ _disk.rc ~ '): '
+                                         ~ (_disk.stderr | default('') | truncate(200)),
+                              'hint': 'df -hl'}) -%}
+      {%- endif -%}
+      {%- for r in _disk_rows -%}
+      {%-   set lim = check_disk_overrides[r.mount] | default({}) -%}
+      {%-   set warn = lim.warn | default(check_disk_warn_pct) | int -%}
+      {%-   set crit = lim.crit | default(check_disk_crit_pct) | int -%}
+      {%-   set free = (r.avail | filesizeformat(true)) ~ ' free of ' ~ (r.size | filesizeformat(true)) -%}
+      {%-   set look = 'timeout 60 du -xh --max-depth=2 ' ~ (r.mount | quote) ~ ' 2>/dev/null | sort -h | tail -15' -%}
+      {%-   if r.pct >= crit -%}
+      {%-     set _ = f.append({'check': 'disk', 'id': 'disk:' ~ r.mount, 'severity': 'critical',
+                                'summary': r.mount ~ ' is ' ~ r.pct ~ '% full (critical at ' ~ crit ~ '%), ' ~ free, 'hint': look}) -%}
+      {%-   elif r.pct >= warn -%}
+      {%-     set _ = f.append({'check': 'disk', 'id': 'disk:' ~ r.mount, 'severity': 'warning',
+                                'summary': r.mount ~ ' is ' ~ r.pct ~ '% full (warning at ' ~ warn ~ '%), ' ~ free, 'hint': look}) -%}
+      {%-   endif -%}
+      {%-   set ilook = 'timeout 60 du -x --inodes --max-depth=2 ' ~ (r.mount | quote) ~ ' 2>/dev/null | sort -n | tail -15' -%}
+      {%-   if r.ipct >= check_disk_inode_crit_pct | int -%}
+      {%-     set _ = f.append({'check': 'disk', 'id': 'disk-inodes:' ~ r.mount, 'severity': 'critical',
+                                'summary': r.mount ~ ' has used ' ~ r.ipct ~ '% of its inodes (too many files; critical at '
+                                           ~ check_disk_inode_crit_pct ~ '%)', 'hint': ilook}) -%}
+      {%-   elif r.ipct >= check_disk_inode_warn_pct | int -%}
+      {%-     set _ = f.append({'check': 'disk', 'id': 'disk-inodes:' ~ r.mount, 'severity': 'warning',
+                                'summary': r.mount ~ ' has used ' ~ r.ipct ~ '% of its inodes (too many files; warning at '
+                                           ~ check_disk_inode_warn_pct ~ '%)', 'hint': ilook}) -%}
+      {%-   endif -%}
+      {%-   if check_disk_forecast | bool and r.pct < crit -%}
+      {%-     set samples = _disk_hist[r.mount] | default([]) -%}
+      {%-     set ns = namespace(t=0, used=0) -%}
+      {%-     for s in samples | sort(attribute='0') -%}
+      {%-       if ns.t == 0 and ((_disk_now | int) - (s[0] | int)) >= 72000
+                   and ((_disk_now | int) - (s[0] | int)) <= (check_disk_history_keep_days | int) * 86400 -%}
+      {%-         set ns.t = s[0] | int -%}{%- set ns.used = s[1] | int -%}
+      {%-       endif -%}
+      {%-     endfor -%}
+      {%-     if ns.t > 0 and r.used > ns.used -%}
+      {%-       set per_day = (r.used - ns.used) / ((_disk_now | int) - ns.t) * 86400 -%}
+      {%-       set days = (r.avail / per_day) | round(1) -%}
+      {%-       set text = r.mount ~ ' will be full in about ' ~ days ~ ' days at its current growth ('
+                           ~ (per_day | int | filesizeformat(true)) ~ '/day; now ' ~ r.pct ~ '% full)' -%}
+      {%-       if days <= check_disk_forecast_crit_days | float -%}
+      {%-         set _ = f.append({'check': 'disk', 'id': 'disk-forecast:' ~ r.mount, 'severity': 'critical', 'summary': text, 'hint': look}) -%}
+      {%-       elif days <= check_disk_forecast_warn_days | float -%}
+      {%-         set _ = f.append({'check': 'disk', 'id': 'disk-forecast:' ~ r.mount, 'severity': 'warning', 'summary': text, 'hint': look}) -%}
+      {%-       endif -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ f }}
+
+- name: Disk | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _disk_findings }}"
+
+- name: Disk | usage now
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for r in _disk_rows -%}
+      {%-   set _ = out.append(r.mount ~ ': ' ~ r.pct ~ '% used, ' ~ (r.avail | filesizeformat(true)) ~ ' free'
+                               ~ ((', inodes ' ~ r.ipct ~ '%') if r.ipct >= 0 else '')) -%}
+      {%- endfor -%}
+      {{ out }}
+
+# ---- forecast bookkeeping (skipped in check mode) ------------------------------------------
+- name: Disk | history directory
+  ansible.builtin.file:
+    path: "{{ check_disk_history_file | dirname }}"
+    state: directory
+    mode: "0750"
+  when: check_disk_forecast | bool and _disk_rows | length > 0
+
+- name: Disk | add this run's sample to the history (bookkeeping, not a change to the system)
+  ansible.builtin.copy:
+    dest: "{{ check_disk_history_file }}"
+    mode: "0640"
+    content: >-
+      {%- set h = {} -%}
+      {%- for r in _disk_rows -%}
+      {%-   set keep = [] -%}
+      {%-   for s in _disk_hist[r.mount] | default([]) -%}
+      {%-     if ((_disk_now | int) - (s[0] | int)) <= (check_disk_history_keep_days | int) * 86400 -%}{%- set _ = keep.append(s) -%}{%- endif -%}
+      {%-   endfor -%}
+      {%-   set _ = h.update({r.mount: (keep + [[_disk_now | int, r.used]])[-400:]}) -%}
+      {%- endfor -%}
+      {{ h | to_json }}
+  changed_when: false
+  when: check_disk_forecast | bool and _disk_rows | length > 0

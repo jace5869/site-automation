@@ -27,6 +27,10 @@ variables, or surveys.
 | Docker Hub / quay.io login for hosts | **Container registry login (hosts)** (`registry_login.yml`) | env `REGISTRY_*`, used with `podman login --password-stdin` |
 | ACT model key | **ACT model key** (`act_model_key.yml`) | env `GENAI_KEY` / `ASKSAGE_API_KEY` |
 | Teams webhook URL | **Teams webhook** (`teams_webhook.yml`) | env `TEAMS_WEBHOOK_URL` |
+| ServiceNow API account | **ServiceNow API** (`servicenow_api.yml`) | env `SN_HOST`, `SN_USERNAME`, `SN_PASSWORD` (basic auth on the controller; never sent to hosts) |
+| MariaDB monitor account | **MariaDB monitor** (`mariadb_monitor.yml`) | env `MARIADB_MONITOR_USER` / `_PASSWORD`; the password reaches the client only as `MYSQL_PWD` in its environment |
+| STIG Manager API client | **STIG Manager API** (`stigman_api.yml`) | env `STIGMAN_TOKEN_URL`, `STIGMAN_CLIENT_ID`, `STIGMAN_CLIENT_SECRET` (token request is `no_log`) |
+| Java keystore password | **Keystore password** (`keystore_password.yml`) | env `KEYSTORE_PASSWORD`; the inventory names the variable (`password_env`), never the value |
 
 Create one credential of each type **per environment** (dev / test / prod) so a test job can never
 use production secrets.

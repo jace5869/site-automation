@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: poam
+  description: "POA&M status from a CSV: overdue and due-soon items; optional STIG Manager cross-check."
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

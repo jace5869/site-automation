@@ -1,0 +1,86 @@
+---
+# SELINUX. Read-only: getenforce, the config file, semanage (list only), ausearch (read the
+# audit log), getsebool, and `restorecon -n` (dry run: reports, changes nothing).
+
+- name: SELinux | mode, config, permissive domains, denials, booleans, labels
+  ansible.builtin.shell: |
+    set -u
+    echo "mode $(getenforce 2>/dev/null || echo unknown)"
+    echo "config $(awk -F= '/^SELINUX=/ {print $2}' /etc/selinux/config 2>/dev/null)"
+    if command -v semanage >/dev/null 2>&1; then
+      semanage permissive -l 2>/dev/null | awk '/^Customized Permissive Types/ {c=1; next} /^Builtin Permissive Types/ {c=0; next} c && NF {print "permissive " $1}'
+    fi
+    n=$(ausearch -m AVC,USER_AVC,SELINUX_ERR -ts {{ check_selinux_avc_since }} 2>/dev/null | grep -c '^type=\(AVC\|USER_AVC\|SELINUX_ERR\)')
+    echo "avc ${n:-0}"
+    ausearch -m AVC,USER_AVC -ts {{ check_selinux_avc_since }} -i 2>/dev/null |
+      sed -nE 's/.*denied +\{ ([^}]*) \} for .* comm=([^ ]+).* scontext=[^:]*:[^:]*:([^: ]+)[^ ]* tcontext=[^:]*:[^:]*:([^: ]+)[^ ]* tclass=([^ ]+).*/\2 (\3) denied \1 on a \5 labeled \4/p' |
+      sort | uniq -c | sort -rn | head -5 | sed -E 's/^ *([0-9]+) (.*)/avctop \2 x\1/'
+    {% for b in check_selinux_booleans %}
+    echo "bool {{ b }} $(getsebool {{ b | quote }} 2>/dev/null | awk '{print $3}')"
+    {% endfor %}
+    {% for p in check_selinux_relabel_paths %}
+    echo "relabel {{ loop.index0 }} $(timeout 120 restorecon -R -n -v {{ p | quote }} 2>/dev/null | grep -c 'Would relabel')"
+    {% endfor %}
+    exit 0
+  args:
+    executable: /bin/bash
+  register: _se
+  changed_when: false
+  check_mode: false
+
+- name: SELinux | findings
+  ansible.builtin.set_fact:
+    _se_findings: >-
+      {%- set v = {'permissive': [], 'avctop': [], 'bool': {}, 'relabel': {}} -%}
+      {%- for line in _se.stdout_lines if ' ' in line -%}
+      {%-   set k, val = line.split(' ', 1) -%}
+      {%-   if k in ['permissive', 'avctop'] -%}{%- set _ = v[k].append(val) -%}
+      {%-   elif k in ['bool', 'relabel'] -%}{%- set _ = v[k].update({val.split(' ')[0]: (val.split(' ') + [''])[1]}) -%}
+      {%-   else -%}{%- set _ = v.update({k: val | trim}) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- set f = [] -%}
+      {%- set want = check_selinux_expected_mode | lower -%}
+      {%- if v.mode | default('unknown') | lower != want -%}
+      {%-   set _ = f.append({'check': 'selinux', 'id': 'selinux:mode', 'severity': 'critical',
+                              'summary': 'SELinux is ' ~ v.mode | default('unknown') ~ ', it must be ' ~ want,
+                              'hint': 'sestatus; grep ^SELINUX= /etc/selinux/config'}) -%}
+      {%- endif -%}
+      {%- if v.config | default('') and v.config | lower != want -%}
+      {%-   set _ = f.append({'check': 'selinux', 'id': 'selinux:config', 'severity': 'warning',
+                              'summary': '/etc/selinux/config says SELINUX=' ~ v.config ~ ': the host will not be ' ~ want ~ ' after a reboot',
+                              'hint': 'grep ^SELINUX= /etc/selinux/config; sestatus'}) -%}
+      {%- endif -%}
+      {%- if v.permissive -%}
+      {%-   set _ = f.append({'check': 'selinux', 'id': 'selinux:permissive-domains', 'severity': 'warning',
+                              'summary': 'locally added permissive domain(s) - SELinux only logs, never blocks, for: ' ~ (v.permissive | join(', ')),
+                              'hint': 'semanage permissive -l'}) -%}
+      {%- endif -%}
+      {%- if (v.avc | default('0') | int) >= check_selinux_avc_warn | int -%}
+      {%-   set _ = f.append({'check': 'selinux', 'id': 'selinux:avc', 'severity': 'warning',
+                              'summary': v.avc ~ ' SELinux denial(s) since ' ~ check_selinux_avc_since
+                                         ~ ((' - top: ' ~ (v.avctop | join('; '))) if v.avctop else ''),
+                              'hint': 'ausearch -m AVC,USER_AVC -ts ' ~ check_selinux_avc_since ~ ' -i | tail -40; ausearch -m AVC -ts '
+                                      ~ check_selinux_avc_since ~ ' | audit2why 2>/dev/null | head -40'}) -%}
+      {%- endif -%}
+      {%- for b, val in check_selinux_booleans.items() -%}
+      {%-   set have = v.bool[b] | default('') -%}
+      {%-   set val = ('on' if val else 'off') if val is boolean else val | string | lower -%}
+      {%-   if have != val -%}
+      {%-     set _ = f.append({'check': 'selinux', 'id': 'selinux:bool:' ~ b, 'severity': 'warning',
+                                'summary': 'SELinux boolean ' ~ b ~ ' is ' ~ (have or 'missing') ~ ', expected ' ~ val,
+                                'hint': 'getsebool ' ~ b ~ '; semanage boolean -l | grep ' ~ b}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- for p in check_selinux_relabel_paths -%}
+      {%-   set n = v.relabel[loop.index0 | string] | default('0') | int -%}
+      {%-   if n > 0 -%}
+      {%-     set _ = f.append({'check': 'selinux', 'id': 'selinux:labels:' ~ p, 'severity': 'warning',
+                                'summary': n ~ ' file(s) under ' ~ p ~ ' have the wrong SELinux label (a common cause of denials after copying or moving files)',
+                                'hint': 'restorecon -R -n -v ' ~ (p | quote) ~ ' | head -30'}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ f }}
+
+- name: SELinux | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _se_findings }}"

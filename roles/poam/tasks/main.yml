@@ -1,0 +1,151 @@
+---
+# POA&M status. Runs on the controller (localhost): reads the POA&M CSV, and optionally asks the
+# STIG Manager API for open findings. Read-only everywhere. The result is reported like a
+# host's findings under the name "poam", so the ServiceNow step can ticket it.
+
+- name: POA&M | read {{ poam_csv | basename }}
+  ansible.builtin.set_fact:
+    site_findings: []
+    site_checks_run: [poam]
+    _poam_rows: "{{ lookup('ansible.builtin.file', poam_csv) | from_csv }}"
+
+- name: POA&M | the columns this check needs are in the file
+  ansible.builtin.assert:
+    that: _poam_missing | length == 0
+    fail_msg: >-
+      {{ poam_csv }} has no column(s) {{ _poam_missing | join(', ') }}. Its columns are:
+      {{ (_poam_rows[0] | default({})).keys() | join(', ') }}. Rename them in the file, or set
+      poam_columns to your names.
+    quiet: true
+  vars:
+    _poam_missing: >-
+      {{ [poam_columns.id, poam_columns.status, poam_columns.due] | difference((_poam_rows[0] | default({})).keys() | list) }}
+
+- name: POA&M | open items, with days until due
+  ansible.builtin.set_fact:
+    _poam_open: >-
+      {%- set c = poam_columns -%}
+      {%- set out = [] -%}
+      {%- for r in _poam_rows if r[c.status] | default('') not in poam_closed_statuses -%}
+      {%-   set _ = out.append({'id': r[c.id], 'weakness': r[c.weakness] | default(''), 'severity': r[c.severity] | default(''),
+                                'status': r[c.status], 'due': r[c.due] | default(''), 'owner': r[c.owner] | default(''),
+                                'vuln_ids': (r[c.vuln_ids] | default('')) | regex_findall('V-[0-9]+'),
+                                'days': r[c.due] | default('') | days_until(poam_date_formats)}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: POA&M | findings (overdue, due soon, dates that cannot be read)
+  ansible.builtin.set_fact:
+    site_findings: >-
+      {%- set f = [] -%}
+      {%- for p in _poam_open -%}
+      {%-   set who = (' (owner ' ~ p.owner ~ ')') if p.owner else '' -%}
+      {%-   set what = 'POA&M ' ~ p.id ~ ((' [' ~ p.severity ~ ']') if p.severity else '') ~ ': ' ~ p.weakness | truncate(120) -%}
+      {%-   if p.days is none -%}
+      {%-     set _ = f.append({'check': 'poam', 'id': 'poam:date:' ~ p.id, 'severity': 'warning',
+                                'summary': what ~ ' - scheduled completion date "' ~ p.due ~ '" is missing or not a date' ~ who, 'hint': ''}) -%}
+      {%-   elif p.days < 0 -%}
+      {%-     set _ = f.append({'check': 'poam', 'id': 'poam:overdue:' ~ p.id, 'severity': 'critical',
+                                'summary': what ~ ' - OVERDUE by ' ~ (p.days | abs) ~ ' days (due ' ~ p.due ~ ', status ' ~ p.status ~ ')' ~ who, 'hint': ''}) -%}
+      {%-   elif p.days <= poam_due_soon_days | int -%}
+      {%-     set _ = f.append({'check': 'poam', 'id': 'poam:due:' ~ p.id, 'severity': 'warning',
+                                'summary': what ~ ' - due in ' ~ p.days ~ ' days (' ~ p.due ~ ')' ~ who, 'hint': ''}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ f }}
+
+# ---- STIG Manager cross-check (only when poam_stigman_api is set) ---------------------------
+- name: POA&M | STIG Manager
+  when: poam_stigman_api | length > 0
+  block:
+    - name: POA&M | the STIG Manager API credential is attached
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') | length > 0
+          - lookup('ansible.builtin.env', 'STIGMAN_CLIENT_ID') | length > 0
+        fail_msg: Attach the "STIG Manager API" credential (STIGMAN_TOKEN_URL, STIGMAN_CLIENT_ID, STIGMAN_CLIENT_SECRET).
+        quiet: true
+
+    - name: POA&M | get a token (client credentials)
+      ansible.builtin.uri:
+        url: "{{ lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') }}"
+        method: POST
+        body_format: form-urlencoded
+        body: >-
+          {{ {'grant_type': 'client_credentials',
+              'client_id': lookup('ansible.builtin.env', 'STIGMAN_CLIENT_ID'),
+              'client_secret': lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET')}
+             | combine({'scope': poam_stigman_scope} if poam_stigman_scope else {}) }}
+        validate_certs: "{{ poam_validate_certs }}"
+      register: _poam_token
+      no_log: true
+
+    - name: POA&M | collections
+      ansible.builtin.uri:
+        url: "{{ poam_stigman_api | regex_replace('/+$', '') }}/collections"
+        headers:
+          Authorization: "Bearer {{ _poam_token.json.access_token }}"
+        validate_certs: "{{ poam_validate_certs }}"
+      register: _poam_cols
+      no_log: true            # the request carries the token
+
+    - name: POA&M | open findings per collection
+      ansible.builtin.uri:
+        url: >-
+          {{ poam_stigman_api | regex_replace('/+$', '') }}/collections/{{ item.collectionId }}/findings?aggregator=groupId&acceptedOnly=false&projection=stigs
+        headers:
+          Authorization: "Bearer {{ _poam_token.json.access_token }}"
+        validate_certs: "{{ poam_validate_certs }}"
+      loop: >-
+        {{ _poam_cols.json | selectattr('name', 'in', poam_stigman_collections) | list
+           if poam_stigman_collections else _poam_cols.json }}
+      loop_control:
+        label: "{{ item.name }}"
+      register: _poam_found
+      no_log: true
+
+    - name: POA&M | open CAT I / II findings with no POA&M item
+      ansible.builtin.set_fact:
+        _poam_covered: "{{ _poam_open | map(attribute='vuln_ids') | flatten | unique }}"
+        _poam_stigman_open: >-
+          {%- set out = [] -%}
+          {%- for r in _poam_found.results -%}
+          {%-   for x in r.json if x.severity in poam_stigman_severities -%}
+          {%-     set _ = out.append({'collection': r.item.name, 'groupId': x.groupId, 'severity': x.severity,
+                                      'title': x.title | default(''), 'assets': x.assetCount | default(0),
+                                      'stigs': x.stigs | default([]) | map(attribute='benchmarkId') | list}) -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: POA&M | findings from STIG Manager
+      ansible.builtin.set_fact:
+        site_findings: >-
+          {%- set f = [] + site_findings -%}
+          {%- for x in _poam_stigman_open if x.groupId not in _poam_covered -%}
+          {%-   set cat = {'high': 'CAT I', 'medium': 'CAT II', 'low': 'CAT III'}[x.severity] | default(x.severity) -%}
+          {%-   set _ = f.append({'check': 'poam', 'id': 'poam:missing:' ~ x.collection ~ ':' ~ x.groupId, 'severity': 'critical' if x.severity == 'high' else 'warning',
+                                  'summary': 'open ' ~ cat ~ ' finding ' ~ x.groupId ~ ' (' ~ (x.stigs | join(', ')) ~ ': ' ~ x.title | truncate(90)
+                                             ~ ') on ' ~ x.assets ~ ' asset(s) in collection ' ~ x.collection ~ ' has no POA&M item', 'hint': ''}) -%}
+          {%- endfor -%}
+          {{ f }}
+        _poam_maybe_closed: >-
+          {%- set openids = _poam_stigman_open | map(attribute='groupId') | list -%}
+          {%- set out = [] -%}
+          {%- for p in _poam_open if p.vuln_ids and (p.vuln_ids | difference(openids) | length == p.vuln_ids | length) -%}
+          {%-   set _ = out.append(p.id ~ ' (' ~ (p.vuln_ids | join(', ')) ~ ')') -%}
+          {%- endfor -%}
+          {{ out }}
+
+- name: POA&M | open items by due date
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [(_poam_open | length) ~ ' open POA&M item(s) of ' ~ (_poam_rows | length)] -%}
+      {%- for p in _poam_open | rejectattr('days', 'none') | sort(attribute='days') -%}
+      {%-   set _ = out.append(('OVERDUE ' ~ (p.days | abs) ~ 'd' if p.days < 0 else 'due in ' ~ p.days ~ 'd') ~ '  ' ~ p.id ~ '  ' ~ p.severity ~ '  ' ~ p.weakness | truncate(70)) -%}
+      {%- endfor -%}
+      {%- for p in _poam_open if p.days is none -%}{%- set _ = out.append('no date   ' ~ p.id ~ '  ' ~ p.weakness | truncate(70)) -%}{%- endfor -%}
+      {%- if _poam_maybe_closed is defined and _poam_maybe_closed -%}
+      {%-   set _ = out.append('Maybe ready to close (STIG Manager shows none of their findings open): ' ~ (_poam_maybe_closed | join('; '))) -%}
+      {%- endif -%}
+      {{ out }}

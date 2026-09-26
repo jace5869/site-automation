@@ -1,0 +1,110 @@
+---
+# PATCH one host: guards -> remember running services -> dnf update -> reboot if needed and
+# allowed -> the same services must be running again. Check mode (a dry run) shows what would
+# be updated and changes nothing.
+
+- name: Patch | skip hosts in the never-patch groups (patch_never_patch_groups)
+  ansible.builtin.meta: end_host
+  when: group_names | intersect(patch_never_patch_groups) | length > 0
+
+- name: Patch | never patch the machine AAP is running this job from
+  ansible.builtin.assert:
+    that:
+      - ansible_connection | default('ssh') != 'local'
+      - inventory_hostname not in ['localhost', '127.0.0.1', '::1']
+    fail_msg: "Refusing to patch {{ inventory_hostname }}: it is the machine running this job (local connection)."
+    quiet: true
+
+- name: Patch | free space in /var
+  ansible.builtin.command: df -P -m /var
+  register: _patch_df
+  changed_when: false
+  check_mode: false
+
+- name: Patch | enough room for the update
+  ansible.builtin.assert:
+    that: (_patch_df.stdout_lines[-1].split()[3] | int) >= patch_min_free_mb | int
+    fail_msg: >-
+      Only {{ _patch_df.stdout_lines[-1].split()[3] }} MB free in /var (need {{ patch_min_free_mb }} MB):
+      not patching. Free space first (see the health check's disk findings).
+    quiet: true
+
+- name: Patch | services running before the update
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    systemctl list-units --type=service --state=running --no-legend --plain --no-pager
+    | awk '{print $1}' | { grep -vE {{ patch_ignore_services | quote }} || true; } | sort
+  register: _patch_before
+  changed_when: false
+  check_mode: false
+
+- name: Patch | install the updates{{ ' (security only)' if patch_security_only | bool else '' }}
+  ansible.builtin.dnf:
+    name: "{{ patch_packages }}"
+    state: latest
+    update_only: true
+    security: "{{ patch_security_only | bool }}"
+    exclude: "{{ patch_exclude }}"
+  register: _patch_dnf
+
+- name: Patch | what was updated
+  ansible.builtin.debug:
+    msg: >-
+      {{ ((_patch_dnf.results | default([])) | length ~ ' change(s): ' ~ (_patch_dnf.results | default([]) | join('; ') | truncate(3000)))
+         if _patch_dnf.changed else 'nothing to update' }}
+
+- name: Patch | does the host need a reboot now?
+  ansible.builtin.command: needs-restarting -r
+  register: _patch_needs
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Patch | decide
+  ansible.builtin.set_fact:
+    _patch_reboot_needed: "{{ _patch_needs.rc | default(0) == 1 or patch_reboot == 'always' }}"
+    _patch_reboot_allowed: >-
+      {{ patch_reboot != 'never' and group_names | intersect(patch_never_reboot_groups) | length == 0 }}
+
+- name: Patch | reboot
+  ansible.builtin.reboot:
+    msg: "Rebooting after updates (Ansible Automation Platform job {{ awx_job_id | default('-') }})"
+    reboot_timeout: "{{ patch_reboot_timeout | int }}"
+  when: _patch_reboot_needed | bool and _patch_reboot_allowed | bool
+
+- name: Patch | a reboot is needed but not allowed here
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} needs a reboot to finish the updates, but this playbook does not reboot it
+      ({{ 'patch_reboot=never' if patch_reboot == 'never' else 'it is in ' ~ (group_names | intersect(patch_never_reboot_groups) | join(', ')) }}).
+      Reboot it by hand in a maintenance window.
+  when: _patch_reboot_needed | bool and not (_patch_reboot_allowed | bool)
+
+- name: Patch | the services that were running are running again
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    systemctl list-units --type=service --state=running --no-legend --plain --no-pager
+    | awk '{print $1}' | sort
+  register: _patch_after
+  changed_when: false
+  check_mode: false
+  until: _patch_before.stdout_lines | difference(_patch_after.stdout_lines) | length == 0
+  retries: "{{ (patch_service_wait | int / 10) | int }}"
+  delay: 10
+  failed_when: false
+
+- name: Patch | result
+  ansible.builtin.debug:
+    msg:
+      updated: "{{ ('would update (dry run - nothing was installed)' if ansible_check_mode else true) if _patch_dnf.changed else false }}"
+      rebooted: "{{ _patch_reboot_needed | bool and _patch_reboot_allowed | bool and not ansible_check_mode }}"
+      reboot_still_needed: "{{ _patch_reboot_needed | bool and not (_patch_reboot_allowed | bool) }}"
+      services_not_back: "{{ _patch_before.stdout_lines | difference(_patch_after.stdout_lines) }}"
+
+- name: Patch | FAIL - services that ran before the update are not running now
+  ansible.builtin.fail:
+    msg: >-
+      After patching {{ inventory_hostname }}, these services are not running:
+      {{ _patch_before.stdout_lines | difference(_patch_after.stdout_lines) | join(', ') }}.
+      Look with: systemctl status <service>; journalctl -u <service> -b
+  when: _patch_before.stdout_lines | difference(_patch_after.stdout_lines) | length > 0

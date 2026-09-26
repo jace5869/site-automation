@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: servicenow
+  description: Open/update/resolve ServiceNow incidents from check findings, and check ServiceNow API and MID Server health (REST Table API, no collection needed).
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

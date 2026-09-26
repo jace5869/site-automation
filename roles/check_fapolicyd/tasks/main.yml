@@ -1,0 +1,97 @@
+---
+# FAPOLICYD. Read-only: rpm -q, systemctl, the config file, fapolicyd-cli's check options, and
+# the audit log (fapolicyd denials are FANOTIFY audit events).
+
+- name: Fapolicyd | installed, running, enforcing, config, trust database, denials
+  ansible.builtin.shell: |
+    set -u
+    if ! rpm -q fapolicyd >/dev/null 2>&1; then echo "installed no"; exit 0; fi
+    echo "installed yes"
+    echo "active $(systemctl is-active fapolicyd 2>/dev/null)"
+    echo "enabled $(systemctl is-enabled fapolicyd 2>/dev/null)"
+    echo "permissive $(awk -F= '/^[[:space:]]*permissive[[:space:]]*=/ {gsub(/[[:space:]]/, "", $2); print $2}' /etc/fapolicyd/fapolicyd.conf 2>/dev/null)"
+    help=$(fapolicyd-cli --help 2>&1)
+    if grep -q -- --check-config <<< "$help"; then
+      out=$(timeout 60 fapolicyd-cli --check-config 2>&1); echo "config_rc $?"
+      echo "config_msg $(echo "$out" | tail -1)"
+    fi
+    {% if check_fapolicyd_check_trustdb | bool %}
+    if grep -q -- --check-trustdb <<< "$help"; then
+      out=$(timeout 300 fapolicyd-cli --check-trustdb 2>&1); rc=$?
+      echo "trustdb_rc $rc"
+      echo "trustdb_bad $(echo "$out" | grep -ci 'miscompare')"
+      echo "trustdb_msg $(echo "$out" | tail -1)"
+    fi
+    {% endif %}
+    n=$(ausearch -m FANOTIFY -ts {{ check_fapolicyd_denials_since }} 2>/dev/null | grep -c '^type=FANOTIFY')
+    echo "denials ${n:-0}"
+    ausearch -m FANOTIFY -ts {{ check_fapolicyd_denials_since }} -i 2>/dev/null |
+      awk '/^----/ {if (e != "") print e " -> " p; e = ""; p = ""}
+           /type=SYSCALL/ {if (match($0, /exe=[^ ]+/)) e = substr($0, RSTART + 4, RLENGTH - 4)}
+           /type=PATH/ && p == "" {if (match($0, / name=[^ ]+/)) p = substr($0, RSTART + 6, RLENGTH - 6)}
+           END {if (e != "") print e " -> " p}' |
+      sort | uniq -c | sort -rn | head -5 | sed -E 's/^ *([0-9]+) (.*)/denytop \2 x\1/'
+    exit 0
+  args:
+    executable: /bin/bash
+  register: _fa
+  changed_when: false
+  check_mode: false
+
+- name: Fapolicyd | findings
+  ansible.builtin.set_fact:
+    _fa_findings: >-
+      {%- set v = {'denytop': []} -%}
+      {%- for line in _fa.stdout_lines if ' ' in line -%}
+      {%-   set k, val = line.split(' ', 1) -%}
+      {%-   if k == 'denytop' -%}{%- set _ = v.denytop.append(val) -%}{%- else -%}{%- set _ = v.update({k: val | trim}) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- set f = [] -%}
+      {%- set look = 'systemctl status fapolicyd --no-pager -l; journalctl -u fapolicyd -n 30 --no-pager' -%}
+      {%- if v.installed | default('no') == 'no' -%}
+      {%-   if check_fapolicyd_required | bool -%}
+      {%-     set _ = f.append({'check': 'fapolicyd', 'id': 'fapolicyd:missing', 'severity': 'critical',
+                                'summary': 'fapolicyd (application allow-listing) is not installed', 'hint': 'rpm -q fapolicyd'}) -%}
+      {%-   endif -%}
+      {%- else -%}
+      {%-   if v.active | default('') != 'active' -%}
+      {%-     set _ = f.append({'check': 'fapolicyd', 'id': 'fapolicyd:down', 'severity': 'critical',
+                                'summary': 'fapolicyd is ' ~ v.active | default('?') ~ ': programs are not being allow-listed', 'hint': look}) -%}
+      {%-   endif -%}
+      {%-   if v.enabled | default('') not in ['enabled', 'static', 'alias', 'indirect'] -%}
+      {%-     set _ = f.append({'check': 'fapolicyd', 'id': 'fapolicyd:disabled', 'severity': 'warning',
+                                'summary': 'fapolicyd is ' ~ v.enabled | default('?') ~ ' at boot', 'hint': 'systemctl is-enabled fapolicyd'}) -%}
+      {%-   endif -%}
+      {%-   if check_fapolicyd_expect_enforcing | bool and v.permissive | default('0') == '1' -%}
+      {%-     set _ = f.append({'check': 'fapolicyd', 'id': 'fapolicyd:permissive', 'severity': 'warning',
+                                'summary': 'fapolicyd is in permissive mode (permissive = 1): it only logs, it blocks nothing',
+                                'hint': 'grep -E "^[[:space:]]*permissive" /etc/fapolicyd/fapolicyd.conf'}) -%}
+      {%-   endif -%}
+      {%-   if v.config_rc is defined and v.config_rc != '0' -%}
+      {%-     set _ = f.append({'check': 'fapolicyd', 'id': 'fapolicyd:config', 'severity': 'warning',
+                                'summary': 'fapolicyd-cli --check-config reports a problem: ' ~ v.config_msg | default('?') | truncate(200),
+                                'hint': 'fapolicyd-cli --check-config'}) -%}
+      {%-   endif -%}
+      {%-   if v.trustdb_rc is defined and v.active | default('') == 'active' -%}
+      {%-     if (v.trustdb_bad | default('0') | int) > 0 -%}
+      {%-       set _ = f.append({'check': 'fapolicyd', 'id': 'fapolicyd:trustdb', 'severity': 'warning',
+                                  'summary': v.trustdb_bad ~ ' file(s) no longer match the fapolicyd trust database (changed outside RPM?): those programs may be blocked',
+                                  'hint': 'timeout 300 fapolicyd-cli --check-trustdb 2>&1 | head -30'}) -%}
+      {%-     elif v.trustdb_rc != '0' -%}
+      {%-       set _ = f.append({'check': 'fapolicyd', 'id': 'fapolicyd:trustdb', 'severity': 'warning',
+                                  'summary': 'fapolicyd-cli --check-trustdb failed (exit ' ~ v.trustdb_rc ~ '): ' ~ v.trustdb_msg | default('') | truncate(150),
+                                  'hint': 'timeout 300 fapolicyd-cli --check-trustdb 2>&1 | head -30'}) -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%- endif -%}
+      {%- if (v.denials | default('0') | int) >= check_fapolicyd_denials_warn | int -%}
+      {%-   set _ = f.append({'check': 'fapolicyd', 'id': 'fapolicyd:denials', 'severity': 'warning',
+                              'summary': v.denials ~ ' fapolicyd denial(s) since ' ~ check_fapolicyd_denials_since
+                                         ~ ((' - top: ' ~ (v.denytop | join('; '))) if v.denytop else ''),
+                              'hint': 'ausearch -m FANOTIFY -ts ' ~ check_fapolicyd_denials_since ~ ' -i | tail -40'}) -%}
+      {%- endif -%}
+      {{ f }}
+
+- name: Fapolicyd | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _fa_findings }}"

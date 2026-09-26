@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: check_time
+  description: "Health check: clock synchronized by chrony, and its offset."
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

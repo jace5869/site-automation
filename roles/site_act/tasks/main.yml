@@ -1,0 +1,98 @@
+---
+# Hand this host's findings to ACT. Input: site_findings (from the check roles).
+# Output: site_act_result (ACT's status, report and proposed fixes), and - through the
+# act_triage role - the `act_triage` workflow artifact the approval/apply step uses.
+
+- name: ACT | level
+  ansible.builtin.assert:
+    that: site_act_level in ['explain', 'diagnose', 'self-heal']
+    fail_msg: "site_act_level must be explain, diagnose or self-heal, not {{ site_act_level }}"
+    quiet: true
+
+# The level actually used on THIS host. A separate variable on purpose: site_act_level usually
+# arrives as a survey answer (an extra variable), and nothing - not even set_fact - can change an
+# extra variable. Diagnose-only hosts never self-heal, whatever was asked.
+- name: ACT | the level for this host (never self-heal on {{ site_act_diagnose_only_groups | join(', ') }})
+  ansible.builtin.set_fact:
+    _site_act_level: >-
+      {{ 'diagnose' if (site_act_level == 'self-heal' and group_names | intersect(site_act_diagnose_only_groups) | length > 0)
+         else site_act_level }}
+
+- name: ACT | findings as one line each, and the commands that show more
+  ansible.builtin.set_fact:
+    _site_act_lines: >-
+      {%- set out = [] -%}
+      {%- for f in site_findings -%}{%- set _ = out.append('[' ~ f.severity | upper ~ '] ' ~ f.check ~ ': ' ~ f.summary) -%}{%- endfor -%}
+      {{ out }}
+    _site_act_looks: "{{ site_findings | map(attribute='hint') | select | unique | list }}"
+
+- name: ACT | run (level {{ _site_act_level }})
+  ansible.builtin.include_role:
+    name: act_triage
+  vars:
+    act_triage_builtin_checks: false      # the check roles already did this
+    act_triage_always: true
+    act_triage_findings_extra: "{{ _site_act_lines }}"
+    act_triage_mode: "{{ 'evidence' if _site_act_level == 'explain' else 'loop' }}"
+    act_triage_evidence_commands: "{{ _site_act_looks if _site_act_level == 'explain' else [] }}"
+    act_triage_evidence_text: "{{ site_act_evidence_text }}"
+    act_triage_allow: "{{ site_act_allow if _site_act_level == 'self-heal' else [] }}"
+    act_triage_extra_instructions: >-
+      These findings come from automated health checks; each one already says what is wrong. Find
+      WHY (the root cause), confirm it with evidence, and give the exact fix. Several findings may
+      share one cause: say so. {{ site_act_extra_instructions }}
+    act_triage_env: "{{ site_act_env }}"
+    act_triage_timeout: "{{ site_act_timeout }}"
+    act_triage_fail_in_role: false        # the report decides pass/fail
+    act_triage_write_report: false
+
+- name: ACT | result for the report (and the ServiceNow ticket)
+  ansible.builtin.set_fact:
+    site_act_result:
+      level: "{{ _site_act_level }}"
+      status: "{{ act_triage_result.status | default('error') }}"
+      summary: "{{ (act_triage_result.summary | default('') or act_triage_result.stop_reason | default('ACT gave no report')) | truncate(6000) }}"
+      applied: >-
+        {{ act_triage_result.commands | default([]) | selectattr('approval', 'equalto', 'pre_approved')
+           | map(attribute='command') | list }}
+      proposed: >-
+        {{ act_triage_result.denied | default([]) | selectattr('pre_approvable', 'defined') | selectattr('pre_approvable')
+           | map(attribute='command') | list }}
+
+- name: ACT | what ACT says
+  ansible.builtin.debug:
+    msg: "{{ ['ACT ' ~ site_act_result.status ~ ' (' ~ _site_act_level ~ ')'] + site_act_result.summary.splitlines()
+             + (['APPLIED (pre-approved): ' ~ (site_act_result.applied | join(' ; '))] if site_act_result.applied else [])
+             + (['PROPOSED (waits for approval): ' ~ (site_act_result.proposed | join(' ; '))] if site_act_result.proposed else []) }}"
+
+# self-heal: ACT changed something. Do not take the model's word for it - run the checks that
+# had findings again, so the report (and the tickets) show the state AFTER the fix.
+- name: ACT | after a fix, re-run the checks that had findings
+  when: site_act_result.applied | length > 0
+  block:
+    - name: ACT | forget those checks' findings
+      ansible.builtin.set_fact:
+        _site_act_before: "{{ site_findings }}"
+        _site_act_rechecks: "{{ site_findings | map(attribute='check') | unique | list }}"
+        site_findings: "{{ site_findings | rejectattr('check', 'in', site_findings | map(attribute='check') | unique | list) | list }}"
+
+    - name: ACT | re-run them
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: run_check.yml
+      loop: "{{ _site_act_rechecks }}"
+      loop_control:
+        loop_var: _site_check
+
+    - name: ACT | what the fix cleared
+      ansible.builtin.set_fact:
+        site_act_result: >-
+          {{ site_act_result | combine({'cleared': _site_act_before | map(attribute='summary')
+                                         | difference(site_findings | map(attribute='summary')) | list}) }}
+
+    - name: ACT | re-check result
+      ansible.builtin.debug:
+        msg: >-
+          {{ ['Re-checked after ACT applied: ' ~ (site_act_result.applied | join(' ; '))]
+             + (site_act_result.cleared | map('regex_replace', '^', 'cleared: ') | list)
+             + (site_findings | map(attribute='summary') | map('regex_replace', '^', 'still there: ') | list) }}

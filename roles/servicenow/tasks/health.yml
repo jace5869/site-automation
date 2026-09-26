@@ -1,0 +1,84 @@
+---
+# Is ServiceNow itself healthy? Runs on the controller (localhost), read-only:
+#   1. the instance answers the REST API, and how fast
+#   2. every MID Server is Up and validated (a down MID Server silently stops discovery,
+#      orchestration and integrations that go through it)
+# The result is published like a host's findings (host name "servicenow"), so the same workflow
+# steps (tickets, notifications) work with it.
+
+- name: ServiceNow health | connection
+  ansible.builtin.set_fact:
+    _sn_url: >-
+      {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+    site_findings: []
+    site_checks_run: [servicenow]
+
+- name: ServiceNow health | the ServiceNow API credential is attached
+  ansible.builtin.assert:
+    that: _sn_url | length > 0
+    fail_msg: Attach the "ServiceNow API" credential (it sets SN_HOST, SN_USERNAME, SN_PASSWORD).
+    quiet: true
+
+- name: ServiceNow health | the instance answers the API
+  ansible.builtin.uri:
+    url: "{{ _sn_url }}/api/now/table/{{ servicenow_table }}?sysparm_limit=1&sysparm_fields=number"
+    method: GET
+    url_username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    timeout: "{{ servicenow_timeout }}"
+  register: _sn_ping
+  failed_when: false
+
+- name: ServiceNow health | MID Servers
+  ansible.builtin.uri:
+    url: "{{ _sn_url }}/api/now/table/ecc_agent?sysparm_fields=name,status,validated,host_name,version,last_refreshed&sysparm_limit=200"
+    method: GET
+    url_username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    timeout: "{{ servicenow_timeout }}"
+  register: _sn_mid
+  failed_when: false
+  when: servicenow_check_mid | bool and _sn_ping.status | default(0) == 200
+
+- name: ServiceNow health | findings
+  ansible.builtin.set_fact:
+    site_findings: >-
+      {%- set f = [] -%}
+      {%- if _sn_ping.status | default(0) != 200 -%}
+      {%-   set _ = f.append({'check': 'servicenow', 'id': 'servicenow:api', 'severity': 'critical',
+                              'summary': 'the ServiceNow API does not answer (' ~ ((_sn_ping.status | default(0) | string) if _sn_ping.status | default(0) > 0 else 'no connection')
+                                         ~ ': ' ~ _sn_ping.msg | default('') | truncate(150) ~ ')',
+                              'hint': 'curl -sS -o /dev/null -w "HTTP %{http_code} in %{time_total}s" ' ~ _sn_url ~ '/api/now/table/incident?sysparm_limit=1'}) -%}
+      {%- else -%}
+      {%-   if (_sn_ping.elapsed | default(0) | float) > servicenow_slow_seconds | float -%}
+      {%-     set _ = f.append({'check': 'servicenow', 'id': 'servicenow:slow', 'severity': 'warning',
+                                'summary': 'the ServiceNow API took ' ~ _sn_ping.elapsed ~ ' s to answer (warning above ' ~ servicenow_slow_seconds ~ ' s)',
+                                'hint': 'open ' ~ _sn_url ~ '/stats.do (node, semaphores, memory)'}) -%}
+      {%-   endif -%}
+      {%-   if servicenow_check_mid | bool and _sn_mid.status | default(0) != 200 -%}
+      {%-     set _ = f.append({'check': 'servicenow', 'id': 'servicenow:mid-unreadable', 'severity': 'warning',
+                                'summary': 'could not read the MID Server list (HTTP ' ~ _sn_mid.status | default('?') ~ '): the API account needs read access to ecc_agent',
+                                'hint': ''}) -%}
+      {%-   endif -%}
+      {%-   for m in (_sn_mid.json.result | default([])) if m.status | default('') != 'Up' or m.validated | default('') | string | lower != 'true' -%}
+      {%-     set _ = f.append({'check': 'servicenow', 'id': 'servicenow:mid:' ~ m.name, 'severity': 'critical',
+                                'summary': 'MID Server ' ~ m.name ~ ' on ' ~ m.host_name | default('?') ~ ' is ' ~ m.status | default('?')
+                                           ~ (' and NOT validated' if m.validated | default('') | string | lower != 'true' else '')
+                                           ~ ' (last seen ' ~ m.last_refreshed | default('?') ~ ')',
+                                'hint': 'on ' ~ m.host_name | default('the MID host') ~ ': systemctl status mid* --no-pager; tail -50 <mid>/agent/logs/agent0.log.0'}) -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {{ f }}
+
+- name: ServiceNow health | status
+  ansible.builtin.debug:
+    msg: >-
+      API {{ 'answers in ' ~ _sn_ping.elapsed ~ ' s' if _sn_ping.status | default(0) == 200 else 'DOES NOT ANSWER' }};
+      MID Servers: {{ (_sn_mid.json.result | default([]) | map(attribute='name') | zip(_sn_mid.json.result | default([]) | map(attribute='status')) | map('join', ' ') | join(', ')) or 'not checked' }}

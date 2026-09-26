@@ -1,0 +1,7 @@
+---
+# TIME: is the clock synchronized, and by how much is it off? A clock that is off by minutes
+# breaks Kerberos/AD logins (5 minutes), TLS, log correlation and audit evidence.
+
+check_time_offset_warn: 0.5              # seconds
+check_time_offset_crit: 5.0
+check_time_min_sources: 1                # time servers chrony must be able to reach

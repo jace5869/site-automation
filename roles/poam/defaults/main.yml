@@ -1,0 +1,33 @@
+---
+# POA&M STATUS: which Plan of Action & Milestones items are overdue or due soon, and (optional)
+# which open CAT I / CAT II findings in STIG Manager have no POA&M item yet.
+#
+# The POA&M list is a CSV file in your work Git (export from eMASS or your spreadsheet, keep the
+# columns below, save as CSV). POA&M data is sensitive: keep that repository access-controlled.
+poam_csv: "{{ playbook_dir }}/../poam/poam.csv"
+
+# Column names in YOUR file for each field this check needs (change the right-hand side).
+poam_columns:
+  id: POAM ID                           # unique item number
+  weakness: Weakness                    # what is wrong
+  severity: Severity                    # CAT I / CAT II / CAT III, or High / Medium / Low
+  status: Status                        # Ongoing, Completed, Risk Accepted ...
+  due: Scheduled Completion Date        # a date
+  owner: Owner                          # person or office
+  vuln_ids: Vulnerability IDs           # STIG group IDs it covers (V-123456 ...), for the STIG Manager cross-check
+poam_closed_statuses: [Completed, Closed, Risk Accepted, Cancelled]
+poam_due_soon_days: 30
+poam_date_formats: ['%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y', '%d-%b-%Y', '%d %b %Y', '%b %d, %Y']
+
+# ---- STIG Manager cross-check (optional) -----------------------------------------------------
+# Needs a Keycloak client that may use the client-credentials grant, with the scope
+# stig-manager:collection:read, and a grant in the collections to read. Your realm owner creates
+# it - this repository never changes the realm. The "STIG Manager API" AAP credential then sets
+# STIGMAN_TOKEN_URL, STIGMAN_CLIENT_ID and STIGMAN_CLIENT_SECRET.
+poam_stigman_api: ""                     # e.g. https://stigman.example.mil/api ; empty = skip
+poam_stigman_collections: []             # collection names; empty = every collection the client can read
+poam_stigman_severities: [high, medium]  # CAT I and CAT II findings must have a POA&M item
+# Scope to ask for. Empty = the client's default scopes (they must include
+# stig-manager:collection:read or stig-manager:collection).
+poam_stigman_scope: ""
+poam_validate_certs: true

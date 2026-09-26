@@ -1,0 +1,25 @@
+---
+# Run one check role (roles/check_<name>) on this host. If the check itself breaks (a tool is
+# missing, an unexpected error), that becomes a finding and the other checks still run.
+# Input: _site_check (the check name, e.g. disk).
+- name: "Check {{ _site_check }}"
+  block:
+    - name: "Check {{ _site_check }} | run"
+      ansible.builtin.include_role:
+        name: "check_{{ _site_check }}"
+
+    - name: "Check {{ _site_check }} | done"
+      ansible.builtin.set_fact:
+        site_checks_run: "{{ (site_checks_run + [_site_check]) | unique }}"
+  rescue:
+    - name: "Check {{ _site_check }} | the check itself could not run (reported as a finding)"
+      ansible.builtin.set_fact:
+        site_findings: >-
+          {{ site_findings + [{
+               'check': _site_check,
+               'id': _site_check ~ ':check-error',
+               'severity': 'warning',
+               'summary': 'the ' ~ _site_check ~ ' check could not run: '
+                          ~ (ansible_failed_result.msg | default('unknown error') | string | truncate(300)),
+               'hint': ''}] }}
+        site_checks_run: "{{ (site_checks_run + [_site_check]) | unique }}"

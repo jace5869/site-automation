@@ -1,0 +1,4 @@
+POAM ID,Weakness,Severity,Status,Scheduled Completion Date,Owner,Vulnerability IDs
+EXAMPLE-1,Example: SSH allows weak MAC algorithms,CAT II,Ongoing,2026-12-31,Linux team,V-000001
+EXAMPLE-2,Example: audit records are not offloaded,CAT II,Ongoing,2027-03-31,Linux team,"V-000002, V-000003"
+EXAMPLE-3,Example: login banner missing,CAT III,Completed,2026-06-30,Linux team,V-000004

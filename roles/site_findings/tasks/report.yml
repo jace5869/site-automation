@@ -1,0 +1,86 @@
+---
+# End of a check run on this host:
+#   1. print the result in plain words
+#   2. one syslog line per finding
+#   3. publish the result (set_stats) so later workflow steps (tickets, ACT) can use it
+#   4. a fleet summary, once, at the top of the job's end
+#   5. FAIL the host if it has findings (site_fail_on), or if ACT proposed a fix that waits for
+#      approval - this is what an AAP workflow reacts to
+# Steps 3 and 4 come before the failure on purpose: a failed host still publishes its result.
+
+- name: Report | result for this host
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- if site_findings | length == 0 -%}
+      {%-   set _ = out.append('HEALTHY. Checks run: ' ~ (site_checks_run | join(', ') or 'none')) -%}
+      {%- else -%}
+      {%-   set _ = out.append((site_findings | length) ~ ' finding(s). Checks run: ' ~ (site_checks_run | join(', '))) -%}
+      {%-   for f in site_findings | sort(attribute='severity') -%}
+      {%-     set _ = out.append('[' ~ (f.severity | upper) ~ '] ' ~ f.check ~ ': ' ~ f.summary) -%}
+      {%-     if f.hint -%}{%- set _ = out.append('      look: ' ~ f.hint) -%}{%- endif -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {{ out }}
+
+- name: Report | syslog, one line per finding (tag {{ site_syslog_tag }})
+  ansible.builtin.command:
+    argv:
+      - logger
+      - --tag
+      - "{{ site_syslog_tag }}"
+      - --priority
+      - "daemon.{{ 'crit' if item.severity == 'critical' else 'warning' }}"
+      - "{{ item.severity | upper }} {{ item.id }}: {{ item.summary }} (AAP job {{ awx_job_id | default('-') }})"
+  loop: "{{ site_findings }}"
+  loop_control:
+    label: "{{ item.id }}"
+  changed_when: false
+  when: site_syslog | bool
+
+- name: Report | publish the result for later workflow steps (set_stats)
+  ansible.builtin.set_stats:
+    data:
+      site_health: >-
+        {{ {site_report_name | default(inventory_hostname): {
+              'status': 'healthy' if site_findings | length == 0 else 'findings',
+              'checks': site_checks_run,
+              'findings': site_findings,
+              'act': site_act_result | default({}),
+              'time': now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ'),
+              'job': awx_job_id | default('') | string}} }}
+    per_host: false
+    aggregate: true
+
+- name: Report | fleet summary
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- set hosts = ansible_play_hosts | sort -%}
+      {%- set bad = [] -%}
+      {%- for h in hosts if hostvars[h].site_findings | default([]) | length > 0 -%}{%- set _ = bad.append(h) -%}{%- endfor -%}
+      {%- set _ = out.append((hosts | length - bad | length) ~ ' healthy, ' ~ (bad | length) ~ ' with findings'
+                             ~ ((', ' ~ (ansible_play_hosts_all | difference(ansible_play_hosts) | length) ~ ' did not report (unreachable or failed early)')
+                                if ansible_play_hosts_all | difference(ansible_play_hosts) else '')) -%}
+      {%- for h in bad -%}
+      {%-   set fs = hostvars[h].site_findings -%}
+      {%-   set _ = out.append(h ~ ': ' ~ (fs | selectattr('severity', 'equalto', 'critical') | list | length) ~ ' critical, '
+                               ~ (fs | selectattr('severity', 'equalto', 'warning') | list | length) ~ ' warning ('
+                               ~ (fs | map(attribute='check') | unique | join(', ')) ~ ')') -%}
+      {%- endfor -%}
+      {%- for h in ansible_play_hosts_all | difference(ansible_play_hosts) | sort -%}
+      {%-   set _ = out.append(h ~ ': NO REPORT (unreachable, or the job failed on it before the checks ran)') -%}
+      {%- endfor -%}
+      {{ out }}
+  run_once: true
+
+- name: Report | FAIL this host because it has findings (an AAP workflow's "on failure" path starts here)
+  ansible.builtin.fail:
+    msg: >-
+      {{ 'NEEDS APPROVAL - ' if _site_proposed else '' }}{{ inventory_hostname }}:
+      {{ site_findings | length }} finding(s): {{ site_findings | map(attribute='summary') | join('; ') }}
+      {{ ('. ACT proposes: ' ~ (_site_proposed | join(' ; '))) if _site_proposed else '' }}
+  vars:
+    _site_proposed: "{{ (site_act_result | default({})).proposed | default([]) }}"
+    _site_failing: "{{ site_findings | selectattr('severity', 'in', site_fail_on) | list }}"
+  when: _site_failing | length > 0 or _site_proposed | length > 0

@@ -1,0 +1,33 @@
+---
+# TROUBLESHOOT - on demand, when someone reports a problem. Read-only.
+#
+# Pick an area (and the host with the job's Limit). The job runs the commands an experienced
+# admin would run first for that kind of problem, prints each one's output under a line that
+# says what it shows, and runs the matching health checks for plain-words findings.
+#
+#   ts_area     overview | disk | performance | service | network | selinux | fapolicyd |
+#               login | time | logs | mariadb
+#   ts_service  area=service: the unit, e.g. nginx or stigman-api
+#   ts_target   area=network: host:port this host cannot reach, e.g. ldap.example.mil:636
+#   ts_since    how far back to read logs, e.g. -2h (default), -1d, "2026-09-26 08:00"
+#   use_act     true = ACT (GenAI) reads everything collected and explains the root cause
+#               (site_act_level: explain | diagnose | self-heal - see docs/ADDING_ACT.md)
+#
+#   ansible-playbook playbooks/troubleshoot.yml -l web01.example.mil -e ts_area=disk
+#   ansible-playbook playbooks/troubleshoot.yml -l web01.example.mil -e ts_area=service -e ts_service=nginx
+#
+# Findings do not fail this job (you asked for a look, not a verdict) - except when ACT proposes
+# a fix that waits for approval, so a workflow can take it to its approval step.
+- name: Troubleshoot
+  hosts: "{{ target | default('rhel_all') }}"
+  become: true
+  gather_facts: false
+  vars:
+    site_fail_on: []
+  roles:
+    - role: troubleshoot
+  post_tasks:
+    - name: Report the findings
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml

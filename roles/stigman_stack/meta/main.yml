@@ -1,5 +1,6 @@
 ---
 galaxy_info:
+  author: site automation
   role_name: stigman_stack
   description: STIG Manager (API + MySQL + nginx TLS) on podman with Quadlet; secrets from AAP credentials via podman secrets.
   license: MIT

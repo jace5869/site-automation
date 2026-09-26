@@ -1,0 +1,264 @@
+---
+# MARIADB health (included by main.yml on database hosts). Every step is read-only:
+#   1. is it running? (the systemd unit, or the podman container)
+#   2. one status query: server status counters, a few settings, and long-running queries
+#      (who / which database / how long - never the query text, which can contain data)
+#   3. replication status (SHOW ALL SLAVES STATUS)
+#   4. recent [ERROR] lines in its error log, and how full its data disk is
+
+- name: MariaDB | running? which client?
+  ansible.builtin.shell: |
+    set -u
+    {% if check_mariadb_container %}
+    c={{ check_mariadb_container | quote }}
+    if podman container exists "$c" 2>/dev/null; then
+      echo "state $(podman inspect "$c" 2>/dev/null | grep -m1 '"Status"' | cut -d'"' -f4)"
+      echo "health $(podman inspect "$c" 2>/dev/null | grep -A1 -m1 '"Health"' | grep -m1 '"Status"' | cut -d'"' -f4)"
+      echo "client $(podman exec "$c" sh -c 'command -v mariadb || command -v mysql' 2>/dev/null | head -1)"
+    else
+      echo "state missing"
+    fi
+    {% else %}
+    unit={{ check_mariadb_service | quote }}
+    if [ -z "$unit" ]; then
+      for u in mariadb mysqld mysql; do
+        if [ -n "$(systemctl list-unit-files "$u.service" --no-legend 2>/dev/null)" ]; then unit=$u; break; fi
+      done
+    fi
+    echo "unit ${unit:-none}"
+    [ -n "$unit" ] && echo "state $(systemctl is-active "$unit" 2>/dev/null)"
+    echo "client $(command -v mariadb || command -v mysql)"
+    {% endif %}
+    exit 0
+  args:
+    executable: /bin/bash
+  register: _mdb_probe
+  changed_when: false
+  check_mode: false
+
+- name: MariaDB | how to run the client
+  ansible.builtin.set_fact:
+    _mdb_p: >-
+      {%- set v = {} -%}
+      {%- for line in _mdb_probe.stdout_lines if ' ' in line -%}
+      {%-   set _ = v.update({line.split(' ', 1)[0]: line.split(' ', 1)[1] | trim}) -%}
+      {%- endfor -%}
+      {{ v }}
+    _mdb_user: "{{ lookup('ansible.builtin.env', 'MARIADB_MONITOR_USER') }}"
+    _mdb_pw_set: "{{ lookup('ansible.builtin.env', 'MARIADB_MONITOR_PASSWORD') | length > 0 }}"
+    # the password goes to the client only as MYSQL_PWD in its environment, and only when set
+    _mdb_env: >-
+      {{ {'MYSQL_PWD': lookup('ansible.builtin.env', 'MARIADB_MONITOR_PASSWORD')}
+         if lookup('ansible.builtin.env', 'MARIADB_MONITOR_PASSWORD') else {} }}
+
+- name: MariaDB | the client command
+  ansible.builtin.set_fact:
+    _mdb_cmd: >-
+      {{ (['podman', 'exec'] + (['-e', 'MYSQL_PWD'] if _mdb_pw_set | bool else []) + [check_mariadb_container]
+          if check_mariadb_container else [])
+         + [_mdb_p.client | default('mariadb', true)]
+         + (['--user=' ~ _mdb_user] if _mdb_user else [])
+         + check_mariadb_client_args }}
+    _mdb_running: "{{ _mdb_p.state | default('') in ['active', 'running'] }}"
+
+- name: MariaDB | status query
+  ansible.builtin.command:
+    argv: "{{ _mdb_cmd + ['-N', '-B', '-e', _mdb_sql] }}"
+  vars:
+    _mdb_sql: >-
+      SELECT 'S', VARIABLE_NAME, VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME IN
+      ('UPTIME','THREADS_CONNECTED','THREADS_RUNNING','MAX_USED_CONNECTIONS','CONNECTION_ERRORS_MAX_CONNECTIONS',
+      'INNODB_BUFFER_POOL_READS','INNODB_BUFFER_POOL_READ_REQUESTS','WSREP_CLUSTER_SIZE','WSREP_LOCAL_STATE_COMMENT',
+      'WSREP_READY','WSREP_CLUSTER_STATUS')
+      UNION ALL SELECT 'V', VARIABLE_NAME, VARIABLE_VALUE FROM information_schema.GLOBAL_VARIABLES WHERE VARIABLE_NAME IN
+      ('MAX_CONNECTIONS','DATADIR','LOG_ERROR','VERSION','WSREP_ON')
+      UNION ALL SELECT 'L', ID, CONCAT_WS('|', USER, IFNULL(DB, '-'), TIME, IFNULL(STATE, '-'), COMMAND)
+      FROM information_schema.PROCESSLIST WHERE COMMAND NOT IN ('Sleep', 'Daemon', 'Binlog Dump', 'Binlog Dump GTID',
+      'Slave_IO', 'Slave_SQL', 'Slave_worker') AND USER NOT IN ('system user', 'event_scheduler')
+      AND TIME >= {{ check_mariadb_long_query_seconds | int }}
+  environment: "{{ _mdb_env }}"
+  register: _mdb_q
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: _mdb_running | bool
+
+- name: MariaDB | replication status
+  ansible.builtin.command:
+    argv: "{{ _mdb_cmd + ['-E', '-e', 'SHOW ALL SLAVES STATUS'] }}"
+  environment: "{{ _mdb_env }}"
+  register: _mdb_repl
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: _mdb_running | bool and _mdb_q.rc | default(1) == 0
+
+- name: MariaDB | the numbers
+  ansible.builtin.set_fact:
+    _mdb: >-
+      {%- set v = {'S': {}, 'V': {}, 'L': []} -%}
+      {%- for line in (_mdb_q.stdout_lines | default([])) -%}
+      {%-   set c = line.split(None, 2) -%}
+      {%-   if c | length >= 2 and c[0] in ['S', 'V'] -%}{%- set _ = v[c[0]].update({c[1] | upper: (c[2] if c | length > 2 else '') | trim}) -%}
+      {%-   elif c | length >= 3 and c[0] == 'L' -%}{%- set _ = v.L.append('id ' ~ c[1] ~ ': ' ~ c[2].split('|') | join(' / ')) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- set repl = [] -%}
+      {%- set ns = namespace(cur={}) -%}
+      {%- for line in (_mdb_repl.stdout_lines | default([])) + ['*** end ***'] -%}
+      {%-   if line.startswith('***') -%}
+      {%-     if ns.cur -%}{%- set _ = repl.append(ns.cur) -%}{%- endif -%}{%- set ns.cur = {} -%}
+      {%-   elif ':' in line -%}{%- set _ = ns.cur.update({line.split(':', 1)[0] | trim: line.split(':', 1)[1] | trim}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- set _ = v.update({'repl': repl}) -%}
+      {{ v }}
+
+- name: MariaDB | recent errors in its log, and its data disk
+  ansible.builtin.shell: |
+    set -u
+    since=$(date -d '-{{ check_mariadb_error_since_days | int }} days' +%F)
+    log={{ _mdb.V.LOG_ERROR | default('') | quote }}
+    datadir={{ _mdb.V.DATADIR | default('/var/lib/mysql') | quote }}
+    case "$log" in ""|stderr) log="";; /*) ;; *) log="$datadir/${log#./}";; esac
+    {% if check_mariadb_container %}
+    run() { podman exec {{ check_mariadb_container | quote }} "$@"; }
+    if [ -n "$log" ]; then lines=$(run tail -n 5000 "$log" 2>/dev/null)
+    else lines=$(podman logs --since {{ check_mariadb_error_since_days | int * 24 }}h {{ check_mariadb_container | quote }} 2>&1); fi
+    {% else %}
+    run() { "$@"; }
+    if [ -n "$log" ] && [ -r "$log" ]; then lines=$(tail -n 5000 "$log")
+    else lines=$(journalctl -u {{ (_mdb_p.unit | default('mariadb')) | quote }} --since "$since" -q --no-pager -o cat 2>/dev/null); fi
+    {% endif %}
+    errs=$(echo "$lines" | awk -v d="$since" '/\[ERROR\]/ && ($1 >= d || $1 !~ /^[0-9]{4}-/)')
+    echo "errors $(echo "$errs" | grep -c .)"
+    echo "$errs" | tail -3 | cut -c1-220 | sed 's/^/errline /'
+    echo "diskpct $(run df -P "$datadir" 2>/dev/null | awk 'NR==2 {sub("%", "", $5); print $5}')"
+    exit 0
+  args:
+    executable: /bin/bash
+  register: _mdb_log
+  changed_when: false
+  check_mode: false
+  when: _mdb_running | bool and _mdb_q.rc | default(1) == 0
+
+- name: MariaDB | findings
+  ansible.builtin.set_fact:
+    _mdb_findings: >-
+      {%- set f = [] -%}
+      {%- set where = ('container ' ~ check_mariadb_container) if check_mariadb_container else ('service ' ~ _mdb_p.unit | default('?')) -%}
+      {%- set look = ('podman ps -a --filter name=' ~ check_mariadb_container ~ '; podman logs --tail 50 ' ~ check_mariadb_container)
+                     if check_mariadb_container else ('systemctl status ' ~ _mdb_p.unit | default('mariadb') ~ ' --no-pager -l; journalctl -u '
+                                                     ~ _mdb_p.unit | default('mariadb') ~ ' -n 50 --no-pager') -%}
+      {%- set sql = (('podman exec -it ' ~ check_mariadb_container ~ ' ') if check_mariadb_container else '') ~ (_mdb_p.client | default('mariadb', true) | basename)
+                    ~ ((' -u ' ~ _mdb_user ~ ' -p') if _mdb_user else '') -%}
+      {%- if not (_mdb_running | bool) -%}
+      {%-   set _ = f.append({'check': 'mariadb', 'id': 'mariadb:down', 'severity': 'critical',
+                              'summary': 'MariaDB is not running (' ~ where ~ ' is ' ~ (_mdb_p.state | default('') or 'not found') ~ ')', 'hint': look}) -%}
+      {%- elif _mdb_q.rc | default(1) != 0 -%}
+      {%-   set denied = 'Access denied' in _mdb_q.stderr | default('') -%}
+      {%-   set _ = f.append({'check': 'mariadb', 'id': 'mariadb:connect', 'severity': 'critical',
+                              'summary': 'MariaDB is running but the status query failed: ' ~ (_mdb_q.stderr | default('') | trim | truncate(200))
+                                         ~ ((' - log in with a monitoring account: attach the "MariaDB monitor" credential'
+                                             ~ (' (container images usually give root a password, so the root socket login is refused)' if check_mariadb_container else ''))
+                                            if denied and not _mdb_user else ''),
+                              'hint': sql ~ ' -e "SELECT 1"; ' ~ look}) -%}
+      {%- else -%}
+      {%-   set s = _mdb.S -%}{%- set g = _mdb.V -%}
+      {%-   set up = s.UPTIME | default('0') | int -%}
+      {%-   if up < (check_mariadb_restart_warn_minutes | int) * 60 -%}
+      {%-     set _ = f.append({'check': 'mariadb', 'id': 'mariadb:restarted', 'severity': 'warning',
+                                'summary': 'MariaDB restarted ' ~ (up / 60) | round(0) | int ~ ' minutes ago (crash, or a restart nobody planned?)', 'hint': look}) -%}
+      {%-   endif -%}
+      {%-   set maxc = [g.MAX_CONNECTIONS | default('1') | int, 1] | max -%}
+      {%-   set used = s.THREADS_CONNECTED | default('0') | int -%}
+      {%-   set pct = (used / maxc * 100) | round(0) | int -%}
+      {%-   if pct >= check_mariadb_conn_warn_pct | int -%}
+      {%-     set _ = f.append({'check': 'mariadb', 'id': 'mariadb:connections', 'severity': 'critical' if pct >= check_mariadb_conn_crit_pct | int else 'warning',
+                                'summary': used ~ ' of ' ~ maxc ~ ' connections in use (' ~ pct ~ '%); new clients are refused at 100%',
+                                'hint': sql ~ ' -e "SELECT USER, SUBSTRING_INDEX(HOST, \':\', 1) AS client, COUNT(*) FROM information_schema.PROCESSLIST GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 10"'}) -%}
+      {%-   endif -%}
+      {%-   if (s.CONNECTION_ERRORS_MAX_CONNECTIONS | default('0') | int) > 0 -%}
+      {%-     set _ = f.append({'check': 'mariadb', 'id': 'mariadb:refused', 'severity': 'warning',
+                                'summary': s.CONNECTION_ERRORS_MAX_CONNECTIONS ~ ' client connection(s) were REFUSED since the last start because max_connections ('
+                                           ~ maxc ~ ') was reached (peak ' ~ s.MAX_USED_CONNECTIONS | default('?') ~ ')',
+                                'hint': sql ~ ' -e "SHOW GLOBAL STATUS LIKE \'%connections%\'"'}) -%}
+      {%-   endif -%}
+      {%-   if (s.THREADS_RUNNING | default('0') | int) >= check_mariadb_threads_running_warn | int -%}
+      {%-     set _ = f.append({'check': 'mariadb', 'id': 'mariadb:threads-running', 'severity': 'warning',
+                                'summary': s.THREADS_RUNNING ~ ' queries are executing at this moment (a pile-up: locking or a slow query)',
+                                'hint': sql ~ ' -e "SELECT ID, USER, DB, TIME, STATE FROM information_schema.PROCESSLIST WHERE COMMAND <> \'Sleep\' ORDER BY TIME DESC LIMIT 15"'}) -%}
+      {%-   endif -%}
+      {%-   if _mdb.L -%}
+      {%-     set _ = f.append({'check': 'mariadb', 'id': 'mariadb:long-queries', 'severity': 'warning',
+                                'summary': (_mdb.L | length) ~ ' query/queries running longer than ' ~ check_mariadb_long_query_seconds ~ 's (user / db / seconds / state / command): '
+                                           ~ (_mdb.L[:3] | join('; ')),
+                                'hint': sql ~ ' -e "SELECT ID, USER, DB, TIME, STATE FROM information_schema.PROCESSLIST WHERE COMMAND <> \'Sleep\' ORDER BY TIME DESC LIMIT 15"'}) -%}
+      {%-   endif -%}
+      {%-   set reads = s.INNODB_BUFFER_POOL_READ_REQUESTS | default('0') | int -%}
+      {%-   if reads >= 1000000 -%}
+      {%-     set hit = (100 - (s.INNODB_BUFFER_POOL_READS | default('0') | int) / reads * 100) | round(2) -%}
+      {%-     if hit < check_mariadb_bufferpool_hit_warn | float -%}
+      {%-       set _ = f.append({'check': 'mariadb', 'id': 'mariadb:bufferpool', 'severity': 'warning',
+                                  'summary': 'only ' ~ hit ~ '% of reads come from memory (innodb_buffer_pool_size may be too small for the data)',
+                                  'hint': sql ~ ' -e "SHOW GLOBAL VARIABLES LIKE \'innodb_buffer_pool_size\'"'}) -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%-   for r in _mdb.repl -%}
+      {%-     set name = r.Connection_name | default('') or 'default' -%}
+      {%-     set lag = r.Seconds_Behind_Master | default('NULL') -%}
+      {%-     set rlook = sql ~ ' -E -e "SHOW ALL SLAVES STATUS" | grep -E "Connection_name|Running|Behind|Error"' -%}
+      {%-     if r.Slave_IO_Running | default('') != 'Yes' or r.Slave_SQL_Running | default('') != 'Yes' -%}
+      {%-       set _ = f.append({'check': 'mariadb', 'id': 'mariadb:replica:' ~ name, 'severity': 'critical',
+                                  'summary': 'replication (' ~ name ~ ') is broken: IO thread ' ~ r.Slave_IO_Running | default('?') ~ ', SQL thread '
+                                             ~ r.Slave_SQL_Running | default('?') ~ '. ' ~ ((r.Last_IO_Error | default('')) ~ ' ' ~ (r.Last_SQL_Error | default(''))) | trim | truncate(200),
+                                  'hint': rlook}) -%}
+      {%-     elif lag is match('^[0-9]+$') and lag | int >= check_mariadb_replica_lag_warn | int -%}
+      {%-       set _ = f.append({'check': 'mariadb', 'id': 'mariadb:replica-lag:' ~ name, 'severity': 'critical' if lag | int >= check_mariadb_replica_lag_crit | int else 'warning',
+                                  'summary': 'replica (' ~ name ~ ') is ' ~ lag ~ ' seconds behind its primary', 'hint': rlook}) -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%-   if g.WSREP_ON | default('OFF') == 'ON' -%}
+      {%-     set glook = sql ~ ' -e "SHOW GLOBAL STATUS LIKE \'wsrep_%\'" | grep -E "cluster_size|cluster_status|local_state_comment|ready"' -%}
+      {%-     if s.WSREP_READY | default('') != 'ON' or s.WSREP_LOCAL_STATE_COMMENT | default('') != 'Synced' or s.WSREP_CLUSTER_STATUS | default('') != 'Primary' -%}
+      {%-       set _ = f.append({'check': 'mariadb', 'id': 'mariadb:galera', 'severity': 'critical',
+                                  'summary': 'Galera node is not healthy: ready ' ~ s.WSREP_READY | default('?') ~ ', state ' ~ s.WSREP_LOCAL_STATE_COMMENT | default('?')
+                                             ~ ', cluster ' ~ s.WSREP_CLUSTER_STATUS | default('?'), 'hint': glook}) -%}
+      {%-     endif -%}
+      {%-     if check_mariadb_galera_size | int > 0 and (s.WSREP_CLUSTER_SIZE | default('0') | int) < check_mariadb_galera_size | int -%}
+      {%-       set _ = f.append({'check': 'mariadb', 'id': 'mariadb:galera-size', 'severity': 'critical',
+                                  'summary': 'Galera cluster has ' ~ s.WSREP_CLUSTER_SIZE | default('?') ~ ' node(s), expected ' ~ check_mariadb_galera_size, 'hint': glook}) -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%-   set lg = {'errline': []} -%}
+      {%-   for line in (_mdb_log.stdout_lines | default([])) if ' ' in line -%}
+      {%-     set k, val = line.split(' ', 1) -%}
+      {%-     if k == 'errline' -%}{%- set _ = lg.errline.append(val) -%}{%- else -%}{%- set _ = lg.update({k: val | trim}) -%}{%- endif -%}
+      {%-   endfor -%}
+      {%-   if (lg.errors | default('0') | int) > 0 -%}
+      {%-     set _ = f.append({'check': 'mariadb', 'id': 'mariadb:errorlog', 'severity': 'warning',
+                                'summary': lg.errors ~ ' [ERROR] line(s) in the MariaDB log in the last ' ~ check_mariadb_error_since_days ~ ' day(s); latest: '
+                                           ~ (lg.errline[-1] | default('') | truncate(200)),
+                                'hint': (('tail -n 100 ' ~ g.LOG_ERROR ~ ' | grep ERROR') if g.LOG_ERROR | default('') and not check_mariadb_container else look)}) -%}
+      {%-   endif -%}
+      {%-   if (lg.diskpct | default('0') | int) >= check_mariadb_disk_warn_pct | int -%}
+      {%-     set _ = f.append({'check': 'mariadb', 'id': 'mariadb:disk', 'severity': 'critical' if (lg.diskpct | int) >= check_mariadb_disk_crit_pct | int else 'warning',
+                                'summary': 'the MariaDB data directory (' ~ g.DATADIR | default('?') ~ ') is on a filesystem ' ~ lg.diskpct ~ '% full; MariaDB stops writing when it fills',
+                                'hint': 'df -h ' ~ g.DATADIR | default('/var/lib/mysql') ~ '; du -sh ' ~ g.DATADIR | default('/var/lib/mysql') ~ '* 2>/dev/null | sort -h | tail'}) -%}
+      {%-   endif -%}
+      {%- endif -%}
+      {{ f }}
+
+- name: MariaDB | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _mdb_findings }}"
+
+- name: MariaDB | status
+  ansible.builtin.debug:
+    msg: >-
+      {{ _mdb.V.VERSION | default('?') }} ({{ ('container ' ~ check_mariadb_container) if check_mariadb_container else ('service ' ~ _mdb_p.unit | default('?')) }}):
+      up {{ ((_mdb.S.UPTIME | default('0') | int) / 3600) | round(1) }} h,
+      {{ _mdb.S.THREADS_CONNECTED | default('?') }}/{{ _mdb.V.MAX_CONNECTIONS | default('?') }} connections,
+      {{ _mdb.S.THREADS_RUNNING | default('?') }} running, {{ _mdb.L | length }} long queries,
+      replication connections {{ _mdb.repl | length }}{{ ', Galera' if _mdb.V.WSREP_ON | default('OFF') == 'ON' else '' }}
+  when: _mdb_q.rc | default(1) == 0

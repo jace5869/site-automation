@@ -1,0 +1,11 @@
+---
+# MARIADB health - only on database hosts (check_mariadb_enabled, by default: members of the
+# mariadb_hosts group). The checks themselves are in health.yml.
+- name: MariaDB | health (database hosts only)
+  ansible.builtin.include_tasks: health.yml
+  when: check_mariadb_enabled | bool
+
+- name: MariaDB | not a database host
+  ansible.builtin.debug:
+    msg: "skipped: {{ inventory_hostname }} is not in mariadb_hosts (set check_mariadb_enabled: true to check it anyway)"
+  when: not (check_mariadb_enabled | bool)

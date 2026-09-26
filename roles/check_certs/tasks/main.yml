@@ -1,0 +1,129 @@
+---
+# CERTS. One read-only script prints one line per certificate:
+#   CERT|<where>|<subject>|<expiry as seconds since 1970>
+#   ERR|<where>|<what went wrong>
+# It reads only the CERTIFICATE blocks of each file (never a private key) with openssl, asks
+# each TLS endpoint for its certificate with `openssl s_client`, and lists keystores with keytool.
+
+- name: Certs | find and read certificates
+  ansible.builtin.shell: |
+    set -u
+    export LC_ALL=C
+    echo "NOW|$(date +%s)"
+    tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+    one_file() {   # $1 = file, $2 = max certificates (0 = no limit)
+      local f=$1 max=$2 n c end subj
+      [ -r "$f" ] || { echo "ERR|$f|not readable"; return; }
+      n=$(grep -c 'BEGIN CERTIFICATE' "$f" 2>/dev/null)
+      [ "${n:-0}" -gt 0 ] || return
+      [ "$max" -gt 0 ] && [ "$n" -gt "$max" ] && return
+      rm -f "$tmp"/c.*
+      awk -v d="$tmp" '/-----BEGIN CERTIFICATE-----/ {k++; w=1} w {print > (d "/c." k)} /-----END CERTIFICATE-----/ {w=0}' "$f"
+      for c in "$tmp"/c.*; do
+        end=$(openssl x509 -noout -enddate -in "$c" 2>/dev/null | cut -d= -f2-)
+        subj=$(openssl x509 -noout -subject -nameopt RFC2253 -in "$c" 2>/dev/null | sed 's/^subject=//; s/|/ /g')
+        if [ -n "$end" ]; then echo "CERT|$f|$subj|$(date -d "$end" +%s)"; else echo "ERR|$f|a certificate block openssl cannot read"; fi
+      done
+    }
+    explicit=""
+    {% for p in check_certs_files %}
+    found=0
+    while IFS= read -r f; do found=1; explicit="$explicit$f"$'\n'; one_file "$f" 0; done < <(compgen -G {{ p | quote }})
+    [ $found = 1 ] || echo "ERR|{{ p }}|no such file"
+    {% endfor %}
+    {% if check_certs_discover | bool %}
+    find {{ check_certs_discover_dirs | map('quote') | join(' ') }} -maxdepth 2 -type f \( -name '*.crt' -o -name '*.pem' -o -name '*.cer' \) 2>/dev/null |
+      grep -vE {{ check_certs_discover_exclude | quote }} | sort |
+      while IFS= read -r f; do
+        grep -qxF "$f" <<< "$explicit" && continue
+        one_file "$f" {{ check_certs_discover_max_per_file | int }}
+      done
+    {% endif %}
+    {% for e in check_certs_endpoints %}
+    pem=$(timeout 10 openssl s_client -connect {{ (e.host ~ ':' ~ e.port) | quote }} -servername {{ (e.servername | default(e.host)) | quote }} </dev/null 2>/dev/null | openssl x509 2>/dev/null)
+    if [ -n "$pem" ]; then
+      end=$(echo "$pem" | openssl x509 -noout -enddate | cut -d= -f2-)
+      subj=$(echo "$pem" | openssl x509 -noout -subject -nameopt RFC2253 | sed 's/^subject=//; s/|/ /g')
+      echo "CERT|{{ e.name | default(e.host) }} (https://{{ e.host }}:{{ e.port }})|$subj|$(date -d "$end" +%s)"
+    else
+      echo "ERR|{{ e.name | default(e.host) }} (https://{{ e.host }}:{{ e.port }})|no certificate: not answering, or not TLS"
+    fi
+    {% endfor %}
+    {% for k in check_certs_keystores %}
+    if [ -r {{ k.path | quote }} ]; then
+      timeout 30 keytool -list -v -keystore {{ k.path | quote }} {{ ('-storepass:env ' ~ k.password_env) if k.password_env | default('') else '' }} </dev/null 2>/dev/null |
+        awk '/^Alias name:/ {a = substr($0, 13)} /^Owner:/ {o = substr($0, 8)} /until: / {sub(/.*until: /, ""); print a "|" o "|" $0}' |
+        while IFS='|' read -r alias owner until; do
+          echo "CERT|{{ k.path }} (alias $alias)|$owner|$(date -d "$until" +%s 2>/dev/null || echo 0)"
+        done
+    else
+      echo "ERR|{{ k.path }}|keystore not readable"
+    fi
+    {% endfor %}
+    exit 0
+  args:
+    executable: /bin/bash
+  environment: >-
+    {%- set e = {} -%}
+    {%- for k in check_certs_keystores if k.password_env | default('') -%}
+    {%-   set _ = e.update({k.password_env: lookup('ansible.builtin.env', k.password_env)}) -%}
+    {%- endfor -%}
+    {{ e }}
+  register: _certs
+  changed_when: false
+  check_mode: false
+
+- name: Certs | every certificate found, with days left
+  ansible.builtin.set_fact:
+    check_certs_inventory: >-
+      {%- set now = (_certs.stdout_lines | select('match', '^NOW[|]') | first | default('NOW|0')).split('|')[1] | int -%}
+      {%- set out = [] -%}
+      {%- for line in _certs.stdout_lines if line.startswith('CERT|') -%}
+      {%-   set c = line.split('|', 3) -%}
+      {%-   set exp = c[3] | int -%}
+      {%-   set _ = out.append({'host': inventory_hostname, 'where': c[1], 'subject': c[2],
+                                'expires': '%Y-%m-%d' | strftime(exp) if exp > 0 else '?',
+                                'days': (((exp - now) / 86400) | round(0, 'floor') | int) if exp > 0 else -99999}) -%}
+      {%- endfor -%}
+      {{ out | sort(attribute='days') }}
+
+- name: Certs | findings
+  ansible.builtin.set_fact:
+    _certs_findings: >-
+      {%- macro _certs_hint(w) -%}
+      {%-   if ' (https://' in w -%}
+      {%-     set hp = w.split(' (https://')[1][:-1] -%}
+      {{-     'echo | timeout 10 openssl s_client -connect ' ~ hp ~ ' 2>/dev/null | openssl x509 -noout -subject -issuer -dates' -}}
+      {%-   elif ' (alias ' in w -%}
+      {{-     'keytool -list -v -keystore ' ~ (w.split(' (alias ')[0] | quote) ~ ' </dev/null 2>/dev/null | grep -E "Alias name|Owner|until"' -}}
+      {%-   else -%}
+      {{-     'openssl x509 -noout -subject -issuer -dates -in ' ~ (w | quote) -}}
+      {%-   endif -%}
+      {%- endmacro -%}
+      {%- set f = [] -%}
+      {%- for c in check_certs_inventory if c.days <= check_certs_warn_days | int -%}
+      {%-   set when = ('EXPIRED ' ~ (c.days | abs) ~ ' days ago' if c.days < 0 else 'expires in ' ~ c.days ~ ' days') ~ ' (' ~ c.expires ~ ')' -%}
+      {%-   set _ = f.append({'check': 'certs', 'id': 'cert:' ~ c.where ~ ':' ~ c.subject | truncate(80, true, ''),
+                              'severity': 'critical' if c.days <= check_certs_crit_days | int else 'warning',
+                              'summary': 'certificate ' ~ c.subject ~ ' in ' ~ c.where ~ ' ' ~ when,
+                              'hint': _certs_hint(c.where)}) -%}
+      {%- endfor -%}
+      {%- for line in _certs.stdout_lines if line.startswith('ERR|') -%}
+      {%-   set c = line.split('|', 2) -%}
+      {%-   set _ = f.append({'check': 'certs', 'id': 'cert-unreadable:' ~ c[1], 'severity': 'warning',
+                              'summary': 'could not check the certificate in ' ~ c[1] ~ ': ' ~ c[2], 'hint': ''}) -%}
+      {%- endfor -%}
+      {{ f }}
+
+- name: Certs | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _certs_findings }}"
+
+- name: Certs | what was found
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for c in check_certs_inventory -%}
+      {%-   set _ = out.append(c.days ~ ' days  ' ~ c.expires ~ '  ' ~ c.subject | truncate(60) ~ '  (' ~ c.where ~ ')') -%}
+      {%- endfor -%}
+      {{ out or ['no certificates found'] }}

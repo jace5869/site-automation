@@ -1,0 +1,76 @@
+---
+# AUDITD. Read-only: systemctl, `auditctl -s` (status) and `auditctl -l` (list rules), df, and
+# the plugin config file.
+
+- name: Auditd | running, kernel status, rules, log space, forwarding
+  ansible.builtin.shell: |
+    set -u
+    echo "active $(systemctl is-active auditd 2>/dev/null)"
+    if st=$(auditctl -s 2>&1); then
+      echo "$st" | awk '$1 == "enabled" || $1 == "lost" || $1 == "backlog" || $1 == "backlog_limit" {print "k_" $1, $2}'
+      echo "rules $(auditctl -l 2>/dev/null | grep -vc '^No rules')"
+    else
+      echo "status_error $(echo "$st" | head -1)"
+    fi
+    log=$(awk -F= '/^[[:space:]]*log_file[[:space:]]*=/ {gsub(/[[:space:]]/, "", $2); print $2}' /etc/audit/auditd.conf 2>/dev/null)
+    log=${log:-/var/log/audit/audit.log}
+    echo "logdir $(dirname "$log")"
+    echo "logpct $(timeout 10 df -P "$(dirname "$log")" 2>/dev/null | awk 'NR==2 {sub("%", "", $5); print $5}')"
+    echo "remote $(awk -F= '/^[[:space:]]*active[[:space:]]*=/ {gsub(/[[:space:]]/, "", $2); print $2}' /etc/audit/plugins.d/au-remote.conf 2>/dev/null)"
+    exit 0
+  args:
+    executable: /bin/bash
+  register: _au
+  changed_when: false
+  check_mode: false
+
+- name: Auditd | findings
+  ansible.builtin.set_fact:
+    _au_findings: >-
+      {%- set v = {} -%}
+      {%- for line in _au.stdout_lines if ' ' in line -%}
+      {%-   set _ = v.update({line.split(' ', 1)[0]: line.split(' ', 1)[1] | trim}) -%}
+      {%- endfor -%}
+      {%- set f = [] -%}
+      {%- set look = 'systemctl status auditd --no-pager -l; auditctl -s; journalctl -u auditd -n 30 --no-pager' -%}
+      {%- if v.active | default('') != 'active' -%}
+      {%-   set _ = f.append({'check': 'auditd', 'id': 'auditd:down', 'severity': 'critical',
+                              'summary': 'auditd is ' ~ v.active | default('?') ~ ': nothing is being audited', 'hint': look}) -%}
+      {%- elif v.status_error is defined -%}
+      {%-   set _ = f.append({'check': 'auditd', 'id': 'auditd:status', 'severity': 'warning',
+                              'summary': 'could not read the audit status: ' ~ v.status_error | truncate(150), 'hint': look}) -%}
+      {%- else -%}
+      {%-   if v.k_enabled | default('1') == '0' -%}
+      {%-     set _ = f.append({'check': 'auditd', 'id': 'auditd:disabled', 'severity': 'critical',
+                                'summary': 'auditing is DISABLED in the kernel (auditctl -s: enabled 0)', 'hint': 'auditctl -s; cat /proc/cmdline'}) -%}
+      {%-   endif -%}
+      {%-   if (v.rules | default('0') | int) < check_auditd_min_rules | int -%}
+      {%-     set _ = f.append({'check': 'auditd', 'id': 'auditd:rules', 'severity': 'critical',
+                                'summary': 'only ' ~ v.rules | default('0') ~ ' audit rule(s) are loaded (expected at least '
+                                           ~ check_auditd_min_rules ~ '): the STIG audit rules are missing or failed to load',
+                                'hint': 'auditctl -l | head; ls /etc/audit/rules.d/; augenrules --check'}) -%}
+      {%-   endif -%}
+      {%-   if (v.k_lost | default('0') | int) > 0 -%}
+      {%-     set _ = f.append({'check': 'auditd', 'id': 'auditd:lost', 'severity': 'warning',
+                                'summary': v.k_lost ~ ' audit event(s) were LOST since boot (backlog ' ~ v.k_backlog | default('?')
+                                           ~ ' of limit ' ~ v.k_backlog_limit | default('?') ~ ')',
+                                'hint': 'auditctl -s'}) -%}
+      {%-   endif -%}
+      {%- endif -%}
+      {%- if (v.logpct | default('0') | int) >= check_auditd_log_warn_pct | int -%}
+      {%-   set crit = (v.logpct | int) >= check_auditd_log_crit_pct | int -%}
+      {%-   set _ = f.append({'check': 'auditd', 'id': 'auditd:logspace', 'severity': 'critical' if crit else 'warning',
+                              'summary': 'the audit log filesystem (' ~ v.logdir | default('?') ~ ') is ' ~ v.logpct ~ '% full; auditd may stop or halt the host when it fills',
+                              'hint': 'df -h ' ~ v.logdir | default('/var/log/audit') ~ '; ls -la ' ~ v.logdir | default('/var/log/audit')
+                                      ~ '; grep -E "space_left|admin_space_left|disk_full" /etc/audit/auditd.conf'}) -%}
+      {%- endif -%}
+      {%- if check_auditd_remote_required | bool and v.remote | default('') != 'yes' -%}
+      {%-   set _ = f.append({'check': 'auditd', 'id': 'auditd:remote', 'severity': 'warning',
+                              'summary': 'audit records are not forwarded off the host (au-remote plugin is not active)',
+                              'hint': 'cat /etc/audit/plugins.d/au-remote.conf; grep remote_server /etc/audit/audisp-remote.conf'}) -%}
+      {%- endif -%}
+      {{ f }}
+
+- name: Auditd | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _au_findings }}"

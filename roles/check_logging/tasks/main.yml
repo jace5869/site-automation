@@ -1,0 +1,61 @@
+---
+# LOGGING. Read-only: a directory test, a TCP connect to each log server, the size of rsyslog's
+# queue directory, and a count of error messages in the journal (with the top senders).
+
+- name: Logging | journal storage, log servers, rsyslog queue, error rate
+  ansible.builtin.shell: |
+    set -u
+    if [ -d /var/log/journal ]; then echo "persistent yes"; else echo "persistent no"; fi
+    {% for t in check_logging_remote %}
+    if timeout {{ check_logging_timeout | int }} bash -c 'exec 3<>/dev/tcp/$0/$1' {{ t.host | quote }} {{ t.port | int }} 2>/dev/null; then
+      echo "remote{{ loop.index0 }} ok"; else echo "remote{{ loop.index0 }} fail"; fi
+    {% endfor %}
+    echo "queue_mb $(du -sm /var/lib/rsyslog 2>/dev/null | awk '{print $1}')"
+    echo "errors $(journalctl -p err --since {{ check_logging_errors_since | quote }} -q --no-pager 2>/dev/null | wc -l)"
+    journalctl -p err --since {{ check_logging_errors_since | quote }} -q --no-pager -o json --output-fields=SYSLOG_IDENTIFIER 2>/dev/null |
+      grep -oE '"SYSLOG_IDENTIFIER":"[^"]*"' | cut -d'"' -f4 | sort | uniq -c | sort -rn | head -5 |
+      awk '{print "topsender " $2 " (" $1 ")"}'
+    exit 0
+  args:
+    executable: /bin/bash
+  register: _log
+  changed_when: false
+  check_mode: false
+
+- name: Logging | findings
+  ansible.builtin.set_fact:
+    _log_findings: >-
+      {%- set v = {'topsender': []} -%}
+      {%- for line in _log.stdout_lines if ' ' in line -%}
+      {%-   set k, val = line.split(' ', 1) -%}
+      {%-   if k == 'topsender' -%}{%- set _ = v.topsender.append(val) -%}{%- else -%}{%- set _ = v.update({k: val | trim}) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- set f = [] -%}
+      {%- if check_logging_journal_persistent | bool and v.persistent | default('') == 'no' -%}
+      {%-   set _ = f.append({'check': 'logging', 'id': 'log:journal-volatile', 'severity': 'warning',
+                              'summary': 'the journal is kept in memory only (/var/log/journal is missing): logs are lost at every reboot',
+                              'hint': 'journalctl --header | head -5; grep -i ^Storage /etc/systemd/journald.conf'}) -%}
+      {%- endif -%}
+      {%- for t in check_logging_remote -%}
+      {%-   if v['remote' ~ loop.index0] | default('') == 'fail' -%}
+      {%-     set _ = f.append({'check': 'logging', 'id': 'log:remote:' ~ t.host ~ ':' ~ t.port, 'severity': 'critical',
+                                'summary': 'log server ' ~ (t.name | default(t.host)) ~ ' (' ~ t.host ~ ':' ~ t.port ~ ') does not answer: logs are not reaching it',
+                                'hint': 'systemctl status rsyslog --no-pager; ls -la /var/lib/rsyslog; journalctl -u rsyslog -n 30 --no-pager'}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- if (v.queue_mb | default('0') | int) >= check_logging_queue_warn_mb | int -%}
+      {%-   set _ = f.append({'check': 'logging', 'id': 'log:queue', 'severity': 'warning',
+                              'summary': 'rsyslog has ' ~ v.queue_mb ~ ' MB of undelivered messages queued in /var/lib/rsyslog (the log server has been unreachable)',
+                              'hint': 'ls -la /var/lib/rsyslog; journalctl -u rsyslog -n 30 --no-pager'}) -%}
+      {%- endif -%}
+      {%- if (v.errors | default('0') | int) >= check_logging_errors_warn | int -%}
+      {%-   set _ = f.append({'check': 'logging', 'id': 'log:errors', 'severity': 'warning',
+                              'summary': v.errors ~ ' error messages in the journal since ' ~ check_logging_errors_since
+                                         ~ ' (top: ' ~ (v.topsender | join(', ')) ~ ')',
+                              'hint': 'journalctl -p err --since ' ~ check_logging_errors_since ~ ' --no-pager | tail -40'}) -%}
+      {%- endif -%}
+      {{ f }}
+
+- name: Logging | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _log_findings }}"

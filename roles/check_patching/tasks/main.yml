@@ -1,0 +1,91 @@
+---
+# PATCHING. Read-only: dnf only LISTS updates (it may refresh its metadata cache, which changes
+# no package), needs-restarting -r only reports, rpm -qa reads the package database.
+
+- name: Patching | pending updates, security advisories, reboot needed, last update
+  ansible.builtin.shell: |
+    set -u
+    export LC_ALL=C
+    echo "now $(date +%s)"
+    out=$(timeout {{ check_patching_timeout | int }} dnf -q check-update 2>&1); rc=$?
+    echo "check_rc $rc"
+    if [ $rc = 100 ] || [ $rc = 0 ]; then
+      echo "pending $(echo "$out" | awk 'NF == 3 && $2 ~ /[0-9]/ {n++} /^Obsoleting/ {exit} END {print n+0}')"
+      sec=$(timeout {{ check_patching_timeout | int }} dnf -q updateinfo list --security --available 2>/dev/null)
+      echo "security $(echo "$sec" | awk 'NF >= 3 {print $1}' | sort -u | grep -c .)"
+      echo "security_critical $(echo "$sec" | awk '$2 ~ /^Critical/ {print $1}' | sort -u | grep -c .)"
+    else
+      echo "repo_error $(echo "$out" | grep -v '^$' | tail -1)"
+    fi
+    {% if check_patching_reboot_check | bool %}
+    if command -v needs-restarting >/dev/null 2>&1; then
+      needs-restarting -r >/dev/null 2>&1; echo "reboot_rc $?"
+    fi
+    echo "kernel_running $(uname -r)"
+    echo "kernel_newest $(rpm -q --last kernel-core kernel 2>/dev/null | grep -v 'not installed' | head -1 | awk '{print $1}' | sed -E 's/^kernel(-core)?-//')"
+    {% endif %}
+    echo "last_update $(rpm -qa --qf '%{INSTALLTIME}\n' 2>/dev/null | sort -n | tail -1)"
+    exit 0
+  args:
+    executable: /bin/bash
+  register: _patch
+  changed_when: false
+  check_mode: false
+
+- name: Patching | findings
+  ansible.builtin.set_fact:
+    _patch_v: >-
+      {%- set v = {} -%}
+      {%- for line in _patch.stdout_lines if ' ' in line -%}
+      {%-   set _ = v.update({line.split(' ', 1)[0]: line.split(' ', 1)[1] | trim}) -%}
+      {%- endfor -%}
+      {{ v }}
+    _patch_findings: >-
+      {%- set v = {} -%}
+      {%- for line in _patch.stdout_lines if ' ' in line -%}
+      {%-   set _ = v.update({line.split(' ', 1)[0]: line.split(' ', 1)[1] | trim}) -%}
+      {%- endfor -%}
+      {%- set f = [] -%}
+      {%- if v.repo_error is defined -%}
+      {%-   set _ = f.append({'check': 'patching', 'id': 'patch:repos', 'severity': 'warning',
+                              'summary': 'cannot check for updates (dnf exit ' ~ v.check_rc | default('?') ~ '): ' ~ v.repo_error | truncate(200),
+                              'hint': 'dnf repolist -v 2>&1 | tail -20; dnf -q check-update | tail -5'}) -%}
+      {%- else -%}
+      {%-   set crit = v.security_critical | default('0') | int -%}
+      {%-   set sec = v.security | default('0') | int -%}
+      {%-   if crit > 0 and check_patching_critical_is_critical | bool -%}
+      {%-     set _ = f.append({'check': 'patching', 'id': 'patch:security', 'severity': 'critical',
+                                'summary': sec ~ ' security advisories pending, ' ~ crit ~ ' of them rated Critical ('
+                                           ~ v.pending | default('?') ~ ' package updates available)',
+                                'hint': 'dnf updateinfo list --security --available'}) -%}
+      {%-   elif sec >= check_patching_security_warn | int -%}
+      {%-     set _ = f.append({'check': 'patching', 'id': 'patch:security', 'severity': 'warning',
+                                'summary': sec ~ ' security advisories pending (' ~ v.pending | default('?') ~ ' package updates available)',
+                                'hint': 'dnf updateinfo list --security --available'}) -%}
+      {%-   endif -%}
+      {%- endif -%}
+      {%- set newer_kernel = v.kernel_newest | default('') and v.kernel_running | default('') and v.kernel_newest not in v.kernel_running -%}
+      {%- if v.reboot_rc | default('0') == '1' or newer_kernel -%}
+      {%-   set _ = f.append({'check': 'patching', 'id': 'patch:reboot', 'severity': 'warning',
+                              'summary': 'a reboot is needed to finish earlier updates'
+                                         ~ ((' (running kernel ' ~ v.kernel_running ~ ', installed ' ~ v.kernel_newest ~ ')') if newer_kernel else ''),
+                              'hint': 'needs-restarting -r; uname -r; rpm -q --last kernel-core | head -3'}) -%}
+      {%- endif -%}
+      {%- set age = (((v.now | default('0') | int) - (v.last_update | default('0') | int)) / 86400) | int -%}
+      {%- if (v.last_update | default('0') | int) > 0 and age > check_patching_max_age_days | int -%}
+      {%-   set _ = f.append({'check': 'patching', 'id': 'patch:age', 'severity': 'warning',
+                              'summary': 'no package has been updated for ' ~ age ~ ' days (limit ' ~ check_patching_max_age_days ~ ')',
+                              'hint': 'rpm -qa --last | head -10; dnf history list | head -10'}) -%}
+      {%- endif -%}
+      {{ f }}
+
+- name: Patching | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _patch_findings }}"
+
+- name: Patching | status
+  ansible.builtin.debug:
+    msg: >-
+      {{ _patch_v.pending | default('?') }} updates available, {{ _patch_v.security | default('?') }} security advisories
+      ({{ _patch_v.security_critical | default('?') }} critical); running kernel {{ _patch_v.kernel_running | default('?') }};
+      last package update {{ ('%Y-%m-%d' | strftime(_patch_v.last_update | int)) if _patch_v.last_update | default('0') | int > 0 else '?' }}

@@ -1,0 +1,12 @@
+---
+# FAPOLICYD (application allow-listing): running, enforcing, configuration and trust database
+# valid, and recent denials - which is what you see when it blocks a program.
+
+# true = every host in the play must have fapolicyd. false = only check hosts that have it.
+check_fapolicyd_required: false
+check_fapolicyd_expect_enforcing: true   # permissive = 1 means it only logs, never blocks
+# Compare the trust database with the files on disk (can take a minute on big hosts; files
+# changed outside RPM show up here, e.g. after a manual update).
+check_fapolicyd_check_trustdb: true
+check_fapolicyd_denials_since: yesterday # ausearch -ts value
+check_fapolicyd_denials_warn: 1

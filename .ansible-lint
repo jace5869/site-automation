@@ -1,0 +1,20 @@
+---
+# ansible-lint settings for this repository (CI and pre-commit use them).
+profile: production
+exclude_paths:
+  - vendor/          # ACT-Linux, linted in its own repository
+  - .github/
+skip_list:
+  # The check roles share one fact on purpose (site_findings, the findings contract), and their
+  # internal variables start with an underscore; the role-prefix rule does not fit that design.
+  - var-naming[no-role-prefix]
+  # Task names like "Check {{ _site_check }} | run" read better with the name in the middle.
+  - name[template]
+  # No play here uses the free strategy.
+  - run-once[task]
+  # systemctl --failed / list-units have no module equivalent (the systemd module manages one unit).
+  - command-instead-of-module
+  # The check scripts only print what they see and end with `exit 0`; the findings are computed
+  # from the output. pipefail would only turn a harmless SIGPIPE in `cmd | grep -q` into a
+  # wrong answer.
+  - risky-shell-pipe

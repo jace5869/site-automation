@@ -1,0 +1,24 @@
+---
+# SERVICENOW TICKETS - a workflow step that runs AFTER a check job (health check, certificate
+# report, POA&M status ...). It is not run on its own.
+#
+#   [Health check] --always--> [ServiceNow tickets]
+#
+# AAP hands this job the check job's results (site_health, site_health_targets). For every
+# finding at or above servicenow_min_severity it opens an incident - or, if one is already open
+# for the same problem on the same host, adds a work note. A host that never reported gets a
+# ticket too. Tickets whose problem is gone get a note (or are resolved - servicenow_resolve_cleared).
+#
+# Credential: "ServiceNow API" (SN_HOST, SN_USERNAME, SN_PASSWORD). Without it, the job only
+# prints what it would open - try it that way first.
+#
+# It runs on the controller (the execution environment talks to ServiceNow), not on the hosts.
+- name: ServiceNow tickets from check findings
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Open, update and clear tickets
+      ansible.builtin.include_role:
+        name: servicenow
+        tasks_from: tickets.yml
