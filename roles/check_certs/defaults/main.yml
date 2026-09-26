@@ -1,0 +1,29 @@
+---
+# CERTS: certificates that expire soon - as files on the host, inside Java keystores, and as
+# served by TLS endpoints (what a browser or client actually sees).
+
+check_certs_warn_days: 30
+check_certs_crit_days: 14
+
+# Certificate files (PEM) to check. Globs work. Every certificate in a file is checked (a chain
+# file with an expiring intermediate is a problem too).
+check_certs_files: []                    # e.g. [/etc/stigman/*.crt, /etc/pki/tls/certs/server.crt]
+
+# Also look for certificates in the usual places. Files with many certificates are CA bundles
+# (hundreds of roots, noisy) and are skipped unless listed in check_certs_files.
+check_certs_discover: true
+check_certs_discover_dirs: [/etc/pki/tls/certs, /etc/pki/nginx, /etc/nginx, /etc/httpd/conf.d, /etc/stigman]
+check_certs_discover_exclude: 'ca-bundle|ca-certificates|/localhost\.crt$'
+check_certs_discover_max_per_file: 10
+
+# TLS endpoints, checked FROM this host, e.g. the site's own web server:
+#   check_certs_endpoints:
+#     - {name: STIG Manager, host: 127.0.0.1, port: 443, servername: stigman.example.mil}
+check_certs_endpoints: []
+
+# Java keystores (Tomcat, the ServiceNow MID Server ...). A JKS keystore lists without a
+# password; a PKCS12 one needs it - give the NAME of an environment variable that holds it
+# (set by an AAP credential), never the password itself:
+#   check_certs_keystores:
+#     - {path: /opt/servicenow/mid/agent/security/agent_keystore, password_env: KEYSTORE_PASSWORD}
+check_certs_keystores: []

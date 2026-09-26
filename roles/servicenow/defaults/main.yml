@@ -1,0 +1,42 @@
+---
+# SERVICENOW - open, update (and optionally resolve) incidents from check findings, and check
+# that ServiceNow itself (the instance and its MID Servers) is healthy. Uses the REST Table API
+# with ansible.builtin.uri: no extra collection to install.
+#
+# Connection: the "ServiceNow API" AAP credential sets SN_HOST (https://<instance>), SN_USERNAME
+# and SN_PASSWORD in the job's environment. Without it, nothing is sent: the job prints what it
+# WOULD have opened (a safe way to try it out).
+
+# Findings at or above this severity get a ticket: critical | warning
+servicenow_min_severity: warning
+
+servicenow_table: incident
+# Values for new incidents. Names work (the API is asked to accept display values), e.g.
+# servicenow_assignment_group: Linux Operations
+servicenow_assignment_group: ""
+servicenow_caller: ""                    # user name; empty = the API account
+servicenow_category: ""                  # e.g. Software
+servicenow_urgency: {critical: "1", warning: "2"}
+servicenow_impact: {critical: "2", warning: "3"}
+servicenow_set_ci: true                  # set Configuration item = the host name (must exist in the CMDB)
+
+# When a problem that had a ticket is gone, add a work note (and, if you want, resolve it).
+servicenow_note_cleared: true
+servicenow_resolve_cleared: false
+servicenow_resolved_state: "6"           # Resolved
+servicenow_close_code: "Solution provided"   # must be a close code your instance has
+# Add a work note to an open ticket each time its finding is seen again.
+servicenow_note_repeats: true
+
+# Every ticket from these playbooks carries a correlation ID starting with this, so the same
+# problem on the same host always updates the same ticket.
+servicenow_correlation_prefix: site-health
+
+servicenow_validate_certs: true
+servicenow_timeout: 30
+# Fail the job when it opened/updated tickets, so the workflow shows red while problems exist.
+servicenow_fail_when_findings: true
+
+# servicenow_health.yml: also check the MID Servers (needs read access to the ecc_agent table)
+servicenow_check_mid: true
+servicenow_slow_seconds: 5               # the API answering slower than this -> warning

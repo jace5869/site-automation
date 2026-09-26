@@ -1,0 +1,8 @@
+# The ServiceNow database hosts: MariaDB runs in a rootful podman container.
+check_mariadb_container: servicenow-mariadb     # the container name (podman ps)
+check_services_required_extra: []               # e.g. the container's systemd unit if it has one
+check_mariadb_conn_warn_pct: 80
+check_mariadb_long_query_seconds: 300
+# In a container, attach the "MariaDB monitor" AAP credential to the Health check template: the
+# official MariaDB images give root a password, so the root socket login is refused. The DBA
+# creates the account INSIDE this database with host 'localhost' (docs/RUNBOOKS.md has the GRANT).

@@ -1,0 +1,32 @@
+---
+# DISK: how full each LOCAL filesystem is (space and inodes), and - from the history of earlier
+# runs - how many days until it is full. Network filesystems (NFS) are the mounts check's job:
+# a hung NFS server can make `df` hang, so this check never touches them.
+
+check_disk_warn_pct: 85                 # % used -> warning
+check_disk_crit_pct: 95                 # % used -> critical
+check_disk_inode_warn_pct: 85           # inodes: too many small files fill a disk too
+check_disk_inode_crit_pct: 95
+
+# Different limits for particular mount points, e.g. keep the audit log partition emptier:
+#   check_disk_overrides:
+#     /var/log/audit: {warn: 70, crit: 85}
+check_disk_overrides: {}
+
+# Mount points to skip (regular expressions).
+check_disk_ignore:
+  - '^/(proc|sys|dev|run)(/|$)'
+  - '^/etc/(hosts|hostname|resolv\.conf)$'   # bind-mounted files (containers)
+  - '^/var/lib/containers/storage/'
+check_disk_exclude_types: [tmpfs, devtmpfs, squashfs, overlay, iso9660, efivarfs, nsfs]
+
+# Days-until-full forecast. Each run adds a sample (date, bytes used) per mount to a small file
+# on the host; once there is at least a day of history, the growth rate predicts when the
+# filesystem fills. Check mode (a dry run) reads the history but does not add to it.
+check_disk_forecast: true
+check_disk_forecast_warn_days: 14
+check_disk_forecast_crit_days: 3
+check_disk_history_file: /var/lib/site-health/disk-history.json
+check_disk_history_keep_days: 30
+
+check_disk_timeout: 20                  # seconds for df

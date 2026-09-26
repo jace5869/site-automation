@@ -1,0 +1,110 @@
+---
+# PERFORMANCE. One read-only script prints "key value" lines; the findings compare them with
+# the limits in defaults/main.yml.
+
+- name: Performance | sample load, memory, swap, CPU wait, OOM kills
+  ansible.builtin.shell: |
+    set -u
+    echo "cpus $(nproc)"
+    read -r l1 l5 l15 rest < /proc/loadavg; echo "load15 $l15"
+    awk '/^(MemTotal|MemAvailable|SwapTotal|SwapFree):/ {sub(":","",$1); print $1, $2}' /proc/meminfo
+    # vmstat: the first data line is the average since boot, so skip it
+    vmstat 1 {{ (check_performance_sample_seconds | int) + 1 }} 2>/dev/null |
+      awk 'NR==2 {for (i=1;i<=NF;i++) h[$i]=i} NR>3 {wa+=$h["wa"]; st+=(h["st"] ? $h["st"] : 0); n++}
+           END {if (n) printf "iowait %.1f\nsteal %.1f\n", wa/n, st/n}'
+    oom=$(journalctl -k --since {{ check_performance_oom_since | quote }} -q --no-pager 2>/dev/null | grep -ciE 'out of memory: kill|oom-kill|killed process')
+    echo "oom ${oom:-0}"
+    journalctl -k --since {{ check_performance_oom_since | quote }} -q --no-pager 2>/dev/null |
+      grep -oiE 'killed process [0-9]+ \([^)]+\)' | sed -E 's/.*\((.*)\)/\1/' | sort | uniq -c | sort -rn | head -5 |
+      awk '{print "oomvictim " $2 "x" $1}'
+    echo "zombies $(ps -eo stat= | grep -c '^Z')"
+    ps -eo pid=,user=,pcpu=,pmem=,comm= --sort=-pcpu | head -3 | awk '{print "topcpu " $5 "(pid " $1 ", " $3 "% cpu)"}'
+    ps -eo pid=,user=,pcpu=,pmem=,comm= --sort=-pmem | head -3 | awk '{print "topmem " $5 "(pid " $1 ", " $4 "% mem)"}'
+    exit 0
+  args:
+    executable: /bin/bash
+  register: _perf
+  changed_when: false
+  check_mode: false
+
+- name: Performance | the numbers
+  ansible.builtin.set_fact:
+    _perf_v: >-
+      {%- set v = {'oomvictim': [], 'topcpu': [], 'topmem': []} -%}
+      {%- for line in _perf.stdout_lines if ' ' in line -%}
+      {%-   set k, val = line.split(' ', 1) -%}
+      {%-   if k in ['oomvictim', 'topcpu', 'topmem'] -%}{%- set _ = v[k].append(val) -%}
+      {%-   else -%}{%- set _ = v.update({k: val | float}) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ v }}
+
+- name: Performance | findings
+  ansible.builtin.set_fact:
+    _perf_findings: >-
+      {%- set v = _perf_v -%}
+      {%- set f = [] -%}
+      {%- set busy = 'top CPU: ' ~ (v.topcpu | join(', ')) -%}
+      {%- set cpus = [v.cpus | default(1) | float, 1.0] | max -%}
+      {%- set per_cpu = ((v.load15 | default(0) | float) / cpus) | round(2) -%}
+      {%- if per_cpu >= check_performance_load_crit | float or per_cpu >= check_performance_load_warn | float -%}
+      {%-   set sev = 'critical' if per_cpu >= check_performance_load_crit | float else 'warning' -%}
+      {%-   set _ = f.append({'check': 'performance', 'id': 'perf:load', 'severity': sev,
+                              'summary': '15-minute load is ' ~ v.load15 ~ ' on ' ~ cpus | int ~ ' CPUs (' ~ per_cpu
+                                         ~ ' per CPU; ' ~ sev ~ ' at ' ~ (check_performance_load_crit if sev == 'critical' else check_performance_load_warn)
+                                         ~ '); ' ~ busy,
+                              'hint': 'uptime; top -b -n 1 | head -25; ps -eo pid,user,pcpu,pmem,etime,comm --sort=-pcpu | head -15'}) -%}
+      {%- endif -%}
+      {%- if (v.MemTotal | default(0)) > 0 -%}
+      {%-   set avail = ((v.MemAvailable | default(0)) / v.MemTotal * 100) | round(1) -%}
+      {%-   if avail <= check_performance_mem_avail_warn_pct | float -%}
+      {%-     set sev = 'critical' if avail <= check_performance_mem_avail_crit_pct | float else 'warning' -%}
+      {%-     set _ = f.append({'check': 'performance', 'id': 'perf:memory', 'severity': sev,
+                                'summary': 'only ' ~ avail ~ '% of memory is available (' ~ ((v.MemAvailable * 1024) | int | filesizeformat(true))
+                                           ~ ' of ' ~ ((v.MemTotal * 1024) | int | filesizeformat(true)) ~ '); top memory: ' ~ (v.topmem | join(', ')),
+                                'hint': 'free -h; ps -eo pid,user,pmem,rss,comm --sort=-rss | head -15'}) -%}
+      {%-   endif -%}
+      {%- endif -%}
+      {%- if (v.SwapTotal | default(0)) > 0 -%}
+      {%-   set used = ((v.SwapTotal - (v.SwapFree | default(0))) / v.SwapTotal * 100) | round(1) -%}
+      {%-   if used >= check_performance_swap_warn_pct | float -%}
+      {%-     set sev = 'critical' if used >= check_performance_swap_crit_pct | float else 'warning' -%}
+      {%-     set _ = f.append({'check': 'performance', 'id': 'perf:swap', 'severity': sev,
+                                'summary': used ~ '% of swap is in use (the host is short of memory)',
+                                'hint': 'free -h; vmstat 1 5; grep -H VmSwap /proc/[0-9]*/status 2>/dev/null | sort -k2 -rn | head -10'}) -%}
+      {%-   endif -%}
+      {%- endif -%}
+      {%- if (v.iowait | default(0)) >= check_performance_iowait_warn | float -%}
+      {%-   set sev = 'critical' if v.iowait >= check_performance_iowait_crit | float else 'warning' -%}
+      {%-   set _ = f.append({'check': 'performance', 'id': 'perf:iowait', 'severity': sev,
+                              'summary': 'CPUs spend ' ~ v.iowait ~ '% of their time waiting for disk (slow or overloaded storage)',
+                              'hint': "vmstat 1 5; iostat -x 1 3 2>/dev/null | tail -30; ps -eo pid,stat,comm | awk '$2 ~ /D/'"}) -%}
+      {%- endif -%}
+      {%- if (v.steal | default(0)) >= check_performance_steal_warn | float -%}
+      {%-   set _ = f.append({'check': 'performance', 'id': 'perf:steal', 'severity': 'warning',
+                              'summary': 'the hypervisor takes ' ~ v.steal ~ '% of CPU time (steal): this VM is starved for CPU',
+                              'hint': 'vmstat 1 5'}) -%}
+      {%- endif -%}
+      {%- if (v.oom | default(0)) > 0 -%}
+      {%-   set _ = f.append({'check': 'performance', 'id': 'perf:oom', 'severity': 'warning',
+                              'summary': 'the kernel killed processes for lack of memory ' ~ v.oom | int ~ ' time(s) since '
+                                         ~ check_performance_oom_since ~ ' (killed: ' ~ (v.oomvictim | join(', ') or '?') ~ ')',
+                              'hint': 'journalctl -k --since ' ~ check_performance_oom_since ~ ' --no-pager | grep -iE -A3 "out of memory|oom-kill" | tail -40'}) -%}
+      {%- endif -%}
+      {%- if (v.zombies | default(0)) >= check_performance_zombie_warn | float -%}
+      {%-   set _ = f.append({'check': 'performance', 'id': 'perf:zombies', 'severity': 'warning',
+                              'summary': v.zombies | int ~ ' zombie processes (a parent process is not reaping its children)',
+                              'hint': "ps -eo pid,ppid,stat,comm | awk '$3 ~ /^Z/' | head -20"}) -%}
+      {%- endif -%}
+      {{ f }}
+
+- name: Performance | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _perf_findings }}"
+
+- name: Performance | the numbers now
+  ansible.builtin.debug:
+    msg: >-
+      load15 {{ _perf_v.load15 | default('?') }} on {{ _perf_v.cpus | default('?') | int }} CPUs,
+      memory available {{ ((_perf_v.MemAvailable | default(0)) / ([_perf_v.MemTotal | default(1), 1] | max) * 100) | round(1) }}%,
+      iowait {{ _perf_v.iowait | default('?') }}%, steal {{ _perf_v.steal | default('?') }}%,
+      OOM kills {{ _perf_v.oom | default(0) | int }}, zombies {{ _perf_v.zombies | default(0) | int }}

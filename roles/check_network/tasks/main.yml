@@ -1,0 +1,59 @@
+---
+# NETWORK. All read-only: ip route, getent (the same name lookup programs use), and a plain TCP
+# connect with bash's /dev/tcp (nothing is sent).
+
+- name: Network | default route, name lookups, TCP connects
+  ansible.builtin.shell: |
+    set -u
+    if [ -n "$(ip -4 route show default 2>/dev/null)$(ip -6 route show default 2>/dev/null)" ]; then
+      echo "ROUTE ok"; else echo "ROUTE none"; fi
+    {% if check_network_resolve_self | bool %}
+    self=$(hostname -f 2>/dev/null || hostname)
+    if timeout {{ check_network_timeout | int }} getent ahosts "$self" >/dev/null 2>&1; then echo "SELF ok $self"; else echo "SELF fail $self"; fi
+    {% endif %}
+    {% for n in check_network_dns_names %}
+    if timeout {{ check_network_timeout | int }} getent ahosts {{ n | quote }} >/dev/null 2>&1; then echo "DNS ok {{ n }}"; else echo "DNS fail {{ n }}"; fi
+    {% endfor %}
+    {% for t in check_network_tcp %}
+    if timeout {{ check_network_timeout | int }} bash -c 'exec 3<>/dev/tcp/$0/$1' {{ t.host | quote }} {{ t.port | int }} 2>/dev/null; then
+      echo "TCP{{ loop.index0 }} ok"; else echo "TCP{{ loop.index0 }} fail"; fi
+    {% endfor %}
+    exit 0
+  args:
+    executable: /bin/bash
+  register: _net
+  changed_when: false
+  check_mode: false
+
+- name: Network | findings
+  ansible.builtin.set_fact:
+    _net_findings: >-
+      {%- set f = [] -%}
+      {%- for line in _net.stdout_lines -%}
+      {%-   set c = line.split() -%}
+      {%-   if c[0] == 'ROUTE' and c[1] == 'none' and check_network_require_default_route | bool -%}
+      {%-     set _ = f.append({'check': 'network', 'id': 'net:route', 'severity': 'critical',
+                                'summary': 'there is no default route: this host cannot reach other networks',
+                                'hint': 'ip -br addr; ip route; nmcli -t device status'}) -%}
+      {%-   elif c[0] == 'SELF' and c[1] == 'fail' -%}
+      {%-     set _ = f.append({'check': 'network', 'id': 'net:self', 'severity': 'warning',
+                                'summary': "this host's own name " ~ c[2] ~ ' does not resolve',
+                                'hint': 'hostname -f; getent ahosts ' ~ c[2] ~ '; cat /etc/resolv.conf'}) -%}
+      {%-   elif c[0] == 'DNS' and c[1] == 'fail' -%}
+      {%-     set _ = f.append({'check': 'network', 'id': 'net:dns:' ~ c[2], 'severity': 'critical',
+                                'summary': c[2] ~ ' does not resolve (DNS)',
+                                'hint': 'getent ahosts ' ~ c[2] ~ '; cat /etc/resolv.conf; dig +short ' ~ c[2] ~ ' 2>/dev/null'}) -%}
+      {%-   elif c[0].startswith('TCP') and c[1] == 'fail' -%}
+      {%-     set t = check_network_tcp[c[0][3:] | int] -%}
+      {%-     set _ = f.append({'check': 'network', 'id': 'net:tcp:' ~ t.host ~ ':' ~ t.port, 'severity': t.severity | default('critical'),
+                                'summary': (t.name | default(t.host)) ~ ' (' ~ t.host ~ ':' ~ t.port ~ ') does not answer within '
+                                           ~ check_network_timeout ~ 's',
+                                'hint': 'getent ahosts ' ~ t.host ~ "; timeout 5 bash -c 'exec 3<>/dev/tcp/" ~ t.host ~ '/' ~ t.port
+                                        ~ "' && echo open; ip route get $(getent ahosts " ~ t.host ~ " | awk 'NR==1 {print $1}')"}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ f }}
+
+- name: Network | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _net_findings }}"

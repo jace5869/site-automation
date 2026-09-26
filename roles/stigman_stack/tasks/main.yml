@@ -154,6 +154,7 @@
   loop_control:
     label: "{{ item.name }}"
   when: item.have != item.sha
+  changed_when: true                      # runs only when the secret is missing or differs
   no_log: true
   register: _stigman_secret_set
 
@@ -180,7 +181,7 @@
     label: "{{ item.dest }}"
   register: _stigman_units
 
-- name: Units | reload systemd so Quadlet regenerates the services
+- name: Units | reload systemd so Quadlet regenerates the services  # noqa: no-handler (must run before the next task, not at the end)
   ansible.builtin.systemd_service:
     daemon_reload: true
     scope: "{{ stigman_scope }}"

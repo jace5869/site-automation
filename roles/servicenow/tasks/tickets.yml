@@ -1,0 +1,209 @@
+---
+# Open or update one ServiceNow incident per finding; note (or resolve) the ones that cleared.
+# Runs on the controller (localhost). Input - handed over by AAP from the check job before it:
+#   site_health          {host: {status, checks, findings, act, time, job}}
+#   site_health_targets  every host the check job targeted
+# A host that was targeted but never reported (unreachable, sudo failed) gets a ticket too.
+
+- name: ServiceNow | connection (from the ServiceNow API credential)
+  ansible.builtin.set_fact:
+    _sn_url: >-
+      {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+    _sn_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    _sn_now: "{{ now(utc=true).strftime('%Y-%m-%d %H:%M UTC') }}"
+    _sn_levels: "{{ ['critical'] if servicenow_min_severity == 'critical' else ['critical', 'warning'] }}"
+
+- name: ServiceNow | one ticket per finding (and per host that never reported)
+  ansible.builtin.set_fact:
+    _sn_items: >-
+      {%- set items = [] -%}
+      {%- set health = site_health | default({}) -%}
+      {%- for host in health | sort -%}
+      {%-   set h = health[host] -%}
+      {%-   for f in h.findings | default([]) if f.severity in _sn_levels -%}
+      {%-     set _ = items.append({'host': host, 'check': f.check, 'id': f.id, 'severity': f.severity,
+                                    'summary': f.summary, 'hint': f.hint | default(''), 'act': h.act | default({}),
+                                    'job': h.job | default(''), 'time': h.time | default('')}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {%- for host in (site_health_targets | default([])) | difference(health.keys() | list) | sort -%}
+      {%-   set _ = items.append({'host': host, 'check': 'reachability', 'id': 'no-report', 'severity': 'critical',
+                                  'summary': 'the health check got no result from this host (unreachable, login or sudo failed, or the job stopped early)',
+                                  'hint': 'see the AAP job output for this host', 'act': {}, 'job': awx_job_id | default(''), 'time': ''}) -%}
+      {%- endfor -%}
+      {%- for i in items -%}
+      {%-   set _ = i.update({'cid': servicenow_correlation_prefix ~ ':' ~ (i.host | hash('sha1'))[:8] ~ ':' ~ i.check ~ ':' ~ (i.id | hash('sha1'))[:12]}) -%}
+      {%- endfor -%}
+      {{ items }}
+
+# Nothing at all reached this job: the check step before it died before checking any host (a
+# credential, the project sync, the execution environment, a survey answer it rejected), or this
+# job was launched on its own. Fail - a green workflow here would hide a broken schedule.
+- name: ServiceNow | the check step's results reached this job
+  ansible.builtin.assert:
+    that: (site_health | default({})) | length > 0 or (site_health_targets | default([])) | length > 0
+    fail_msg: >-
+      No check results reached this job. The check step before it failed before checking any
+      host (read that job's output: credential, project sync, execution environment, or a survey
+      answer it rejected) - or this job was launched on its own; it only works inside a workflow,
+      after a check.
+    quiet: true
+
+- name: ServiceNow | nothing to report
+  ansible.builtin.debug:
+    msg: "No findings at or above {{ servicenow_min_severity }}."
+  when: _sn_items | length == 0
+
+- name: ServiceNow | NOT CONNECTED - what would be opened (attach the ServiceNow API credential to send it)
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for i in _sn_items -%}{%- set _ = out.append(i.severity | upper ~ ' | ' ~ i.host ~ ' | ' ~ i.summary) -%}{%- endfor -%}
+      {{ out }}
+  when: not _sn_url and _sn_items | length > 0
+
+- name: ServiceNow | talk to the instance
+  when: _sn_url | length > 0
+  block:
+    - name: ServiceNow | is there already an open ticket for this finding?
+      ansible.builtin.uri:
+        url: >-
+          {{ _sn_url }}/api/now/table/{{ servicenow_table }}?sysparm_limit=1&sysparm_fields=sys_id,number&sysparm_query={{
+          ('correlation_id=' ~ item.cid ~ '^active=true') | urlencode }}
+        method: GET
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        validate_certs: "{{ servicenow_validate_certs }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: "{{ _sn_items }}"
+      loop_control:
+        label: "{{ item.host }}: {{ item.id }}"
+      register: _sn_found
+
+    - name: ServiceNow | open new tickets
+      ansible.builtin.uri:
+        url: "{{ _sn_url }}/api/now/table/{{ servicenow_table }}?sysparm_input_display_value=true&sysparm_fields=sys_id,number"
+        method: POST
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        body_format: json
+        body: >-
+          {%- set i = r.item -%}
+          {%- set b = {
+                'short_description': ('[' ~ servicenow_correlation_prefix ~ '] ' ~ i.host ~ ': ' ~ i.summary) | truncate(158),
+                'description': _sn_desc,
+                'urgency': servicenow_urgency[i.severity],
+                'impact': servicenow_impact[i.severity],
+                'correlation_id': i.cid,
+                'correlation_display': servicenow_correlation_prefix} -%}
+          {%- if servicenow_assignment_group -%}{%- set _ = b.update({'assignment_group': servicenow_assignment_group}) -%}{%- endif -%}
+          {%- if servicenow_caller -%}{%- set _ = b.update({'caller_id': servicenow_caller}) -%}{%- endif -%}
+          {%- if servicenow_category -%}{%- set _ = b.update({'category': servicenow_category}) -%}{%- endif -%}
+          {%- if servicenow_set_ci | bool and i.host in groups['all'] -%}{%- set _ = b.update({'cmdb_ci': i.host}) -%}{%- endif -%}
+          {{ b | to_json }}
+        status_code: [200, 201]
+        validate_certs: "{{ servicenow_validate_certs }}"
+        timeout: "{{ servicenow_timeout }}"
+      vars:
+        _sn_desc: >-
+          {%- set i = r.item -%}
+          {%- set nl = _sn_nl -%}
+          {{ 'Found by an automated check (Ansible Automation Platform' ~ ((', job ' ~ i.job) if i.job else '') ~ ', ' ~ (i.time or _sn_now) ~ ').' ~ nl ~ nl
+             ~ 'Host: ' ~ i.host ~ nl ~ 'Check: ' ~ i.check ~ nl ~ 'Severity: ' ~ i.severity ~ nl ~ 'Finding: ' ~ i.summary ~ nl
+             ~ (('Look further with: ' ~ i.hint ~ nl) if i.hint else '')
+             ~ ((nl ~ 'ACT (GenAI) analysis - ' ~ i.act.level | default('') ~ ', ' ~ i.act.status | default('') ~ ':' ~ nl ~ i.act.summary | default('') ~ nl
+                 ~ (('Proposed fix (waits for approval in AAP): ' ~ (i.act.proposed | join(' ; ')) ~ nl) if i.act.proposed | default([]) else ''))
+                if i.act.summary | default('') else '') }}
+        _sn_nl: "\n"
+      loop: "{{ _sn_found.results | selectattr('json.result', 'defined') | rejectattr('json.result') | list }}"
+      loop_control:
+        loop_var: r
+        label: "{{ r.item.host }}: {{ r.item.summary | truncate(80) }}"
+      register: _sn_new
+
+    - name: ServiceNow | add a work note to tickets that are already open
+      ansible.builtin.uri:
+        url: "{{ _sn_url }}/api/now/table/{{ servicenow_table }}/{{ r.json.result[0].sys_id }}"
+        method: PATCH
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        body_format: json
+        body:
+          work_notes: "Still failing at {{ _sn_now }}{{ (' (AAP job ' ~ r.item.job ~ ')') if r.item.job else '' }}: {{ r.item.summary }}"
+        validate_certs: "{{ servicenow_validate_certs }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: "{{ _sn_found.results | selectattr('json.result', 'defined') | selectattr('json.result') | list }}"
+      loop_control:
+        loop_var: r
+        label: "{{ r.json.result[0].number }} ({{ r.item.host }})"
+      when: servicenow_note_repeats | bool
+
+    - name: ServiceNow | open tickets of these hosts (to find problems that cleared)
+      ansible.builtin.uri:
+        url: >-
+          {{ _sn_url }}/api/now/table/{{ servicenow_table }}?sysparm_fields=sys_id,number,correlation_id&sysparm_limit=200&sysparm_query={{
+          ('correlation_idSTARTSWITH' ~ servicenow_correlation_prefix ~ ':' ~ (item | hash('sha1'))[:8] ~ ':^active=true') | urlencode }}
+        method: GET
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        validate_certs: "{{ servicenow_validate_certs }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: "{{ (site_health | default({})).keys() | list | sort }}"
+      register: _sn_open
+      when: servicenow_note_cleared | bool or servicenow_resolve_cleared | bool
+
+    - name: ServiceNow | problems that cleared (their check ran again and passed)
+      ansible.builtin.set_fact:
+        _sn_cleared: >-
+          {%- set out = [] -%}
+          {%- set current = _sn_items | map(attribute='cid') | list -%}
+          {%- for r in _sn_open.results | default([]) if r.json is defined -%}
+          {%-   set ran = (site_health[r.item].checks | default([])) + ['reachability'] -%}
+          {%-   for t in r.json.result if t.correlation_id not in current and t.correlation_id.split(':')[2] in ran -%}
+          {%-     set _ = out.append({'host': r.item, 'sys_id': t.sys_id, 'number': t.number}) -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: ServiceNow | note (or resolve) the tickets whose problem cleared
+      ansible.builtin.uri:
+        url: "{{ _sn_url }}/api/now/table/{{ servicenow_table }}/{{ item.sys_id }}"
+        method: PATCH
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        body_format: json
+        body: >-
+          {{ {'work_notes': 'The automated check passes again at ' ~ _sn_now ~ '.'}
+             | combine({'state': servicenow_resolved_state, 'close_code': servicenow_close_code,
+                        'close_notes': 'Resolved automatically: the check that opened this ticket passes again.'}
+                       if servicenow_resolve_cleared | bool else {}) | to_json }}
+        validate_certs: "{{ servicenow_validate_certs }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: "{{ _sn_cleared }}"
+      loop_control:
+        label: "{{ item.number }} ({{ item.host }})"
+
+    - name: ServiceNow | summary
+      ansible.builtin.debug:
+        msg: >-
+          {{ ['opened: ' ~ ((_sn_new.results | default([]) | selectattr('json', 'defined') | map(attribute='json.result.number') | join(', ')) or 'none'),
+              'updated: ' ~ ((_sn_found.results | selectattr('json.result', 'defined') | selectattr('json.result')
+                              | map(attribute='json.result') | map('first') | map(attribute='number') | join(', ')) or 'none'),
+              ('resolved' if servicenow_resolve_cleared | bool else 'noted as cleared') ~ ': '
+                ~ ((_sn_cleared | map(attribute='number') | join(', ')) or 'none')] }}
+
+- name: ServiceNow | fail while problems exist (the workflow shows red; the tickets carry the detail)
+  ansible.builtin.fail:
+    msg: "{{ _sn_items | length }} finding(s) on {{ _sn_items | map(attribute='host') | unique | join(', ') }} - see the tickets"
+  when: servicenow_fail_when_findings | bool and _sn_items | length > 0

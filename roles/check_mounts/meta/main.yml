@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: check_mounts
+  description: "Health check: fstab entries not mounted, filesystems gone read-only, hung network mounts."
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

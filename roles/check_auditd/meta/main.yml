@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: check_auditd
+  description: "Health check: auditd running, rules loaded, events lost, audit log space, remote forwarding."
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

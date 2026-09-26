@@ -1,0 +1,13 @@
+---
+# ACCOUNTS: the account problems auditors and attackers both look for, plus the one that
+# quietly breaks automation - a service account password about to expire.
+
+check_accounts_min_uid: 1000             # people's accounts start here
+check_accounts_inactive_days: 35         # the STIG wants unused accounts disabled after 35 days
+# Accounts that may stay unused (break-glass, service accounts that never log in interactively)
+check_accounts_ignore_inactive: []
+# sudoers entries allowed to use NOPASSWD, e.g. the account AAP connects as: [svc_aap, "%wheel"]
+check_accounts_nopasswd_allowed: []
+# Accounts whose password/account expiry matters - above all the account AAP logs in with.
+check_accounts_expiry_watch: []          # e.g. [svc_aap]
+check_accounts_expiry_warn_days: 14

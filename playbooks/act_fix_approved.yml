@@ -1,0 +1,96 @@
+---
+# APPLY THE APPROVED FIX - the step AFTER a person approved in an AAP workflow.
+#
+#   Health check / Troubleshoot (use_act=true, site_act_level=diagnose)
+#     -> fails with NEEDS APPROVAL -> Approval step (a person reads ACT's proposal and approves)
+#     -> THIS job
+#
+# AAP hands this job the first job's results: `act_triage` (the fixes ACT proposed, per host)
+# and `site_health` (the findings and which checks found them). For each host, ACT may run
+# EXACTLY the proposed commands - nothing else - and verify them. Then the same checks run again,
+# independently of ACT, and the job fails if the problem is still there.
+#
+# It refuses to run on its own: outside the workflow there is nothing approved to apply.
+- name: Apply the fixes a person approved
+  hosts: "{{ target | default('rhel_all') }}"
+  become: true
+  gather_facts: false
+  vars:
+    _approved: "{{ ((act_triage | default({})).get(inventory_hostname) or {}).get('proposed_commands', []) }}"
+    _checks_before: "{{ ((site_health | default({})).get(inventory_hostname) or {}).get('checks', []) }}"
+    _no_apply: "{{ site_act_diagnose_only_groups | default(['aap_hosts', 'netapp_console_hosts']) }}"
+  pre_tasks:
+    - name: The first job's results reached this job
+      ansible.builtin.assert:
+        that: act_triage is defined and act_triage is mapping
+        fail_msg: >-
+          Nothing to apply: no ACT results reached this job. Run it only inside the workflow, after
+          the approval step, behind a check job that ran with use_act=true and site_act_level=diagnose.
+        quiet: true
+      run_once: true
+
+    - name: Skip hosts with nothing approved
+      ansible.builtin.meta: end_host
+      when: _approved | length == 0
+
+    # AAP itself and vendor-managed appliances are diagnose-only: a person applies the fix by
+    # hand there (an automated change on the AAP host could stop the job making it).
+    - name: Diagnose-only hosts get the fix by hand, not from this job
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} is in {{ group_names | intersect(_no_apply) | join(', ') }} (diagnose only).
+          Apply by hand if you agree: {{ _approved | join(' ; ') }}
+      when: group_names | intersect(_no_apply) | length > 0
+
+    - name: Skip diagnose-only hosts
+      ansible.builtin.meta: end_host
+      when: group_names | intersect(_no_apply) | length > 0
+
+  tasks:
+    - name: ACT runs exactly the approved fix and verifies it
+      ansible.builtin.include_role:
+        name: act_triage
+      vars:
+        act_triage_builtin_checks: false
+        act_triage_always: true
+        act_triage_findings_extra: >-
+          {{ ((site_health | default({})).get(inventory_hostname) or {}).get('findings', []) | map(attribute='summary') | list }}
+        act_triage_allow: "{{ _approved | map('regex_escape') | list }}"
+        act_triage_extra_instructions: >-
+          A person APPROVED exactly these fixes for this host: {{ _approved | join(' ; ') }}.
+          First confirm the problem is still there. If it is, run the approved command(s) exactly as
+          written, then verify the result with read-only commands. Make no other change.
+        act_triage_env: "{{ site_act_env | default({}) }}"
+        act_triage_timeout: "{{ site_act_timeout | default(600) }}"
+        act_triage_fail_in_role: false
+        act_triage_write_report: false
+
+    - name: What ACT did
+      ansible.builtin.debug:
+        msg: >-
+          {{ ['ACT ' ~ act_triage_result.status]
+             + (act_triage_result.summary or act_triage_result.stop_reason or '').splitlines()
+             + ['RAN: ' ~ (act_triage_result.commands | selectattr('approval', 'equalto', 'pre_approved')
+                           | map(attribute='command') | join(' ; ') or 'nothing')] }}
+
+    # Verification that does not depend on the model: run the same checks again.
+    - name: Start the re-check
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: start.yml
+      vars:
+        site_health_targets_override: "{{ ansible_play_hosts }}"   # only the hosts that had an approved fix
+
+    - name: Re-run the checks that found the problem
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: run_check.yml
+      loop: "{{ _checks_before }}"
+      loop_control:
+        loop_var: _site_check
+
+  post_tasks:
+    - name: Report the re-check (fails if the problem is still there)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml

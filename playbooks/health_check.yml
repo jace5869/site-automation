@@ -1,0 +1,91 @@
+---
+# HEALTH CHECK - read-only checks on Linux hosts.
+#
+# What it does, per host:
+#   1. runs the checks you pick (a list of names, or the shortcuts daily / weekly / all)
+#   2. prints what is wrong in plain words, with a command to look further
+#   3. FAILS the host if something is wrong (so an AAP workflow can open a ticket, ask ACT ...)
+# It changes nothing on the host (the only write is the small disk-history file), and every
+# check also works in Check mode (a dry run).
+#
+#   ansible-playbook playbooks/health_check.yml                          # the daily set, rhel_all
+#   ansible-playbook playbooks/health_check.yml -e target=snowdb01.example.mil -e health_checks=mariadb
+#   ansible-playbook playbooks/health_check.yml -e '{"health_checks": ["disk", "services"]}'
+#
+# The checks (roles/check_<name>):
+#   disk         space + inodes of local filesystems, days-until-full forecast
+#   mounts       fstab vs mounted, filesystems gone read-only, hung (stale) NFS mounts
+#   services     failed systemd units, required services running and enabled, restart loops
+#   performance  load, memory, swap, I/O wait, CPU steal, OOM kills, zombie processes
+#   time         clock synchronized (chrony), offset
+#   network      default route, DNS names resolve, TCP ports reachable (LDAP, SIEM, ...)
+#   logging      journal kept on disk, remote log server reachable, rsyslog queue, error rate
+#   selinux      enforcing, config matches, custom permissive domains, AVC denials, booleans
+#   fapolicyd    running, enforcing, config/trust database OK, denials
+#   auditd       running, rules loaded, events lost, audit log space, remote forwarding
+#   accounts     extra UID 0, empty passwords, inactive accounts, NOPASSWD sudo, expiring passwords
+#   certs        certificate files, keystores and TLS endpoints that expire soon
+#   patching     pending (security) updates, reboot needed, days since the last update
+#   mariadb      MariaDB health (only on hosts in mariadb_hosts, or with check_mariadb_enabled)
+#
+# Shortcuts: daily = disk mounts services performance time network logging mariadb
+#            weekly = selinux fapolicyd auditd accounts certs patching
+#            all = both
+#
+# Add ACT (optional, later): -e use_act=true. ACT (GenAI) then looks at each host that has
+# findings, gives the root cause, and proposes fixes for approval. See docs/ADDING_ACT.md.
+- name: Health check
+  hosts: "{{ target | default('rhel_all') }}"
+  become: true
+  gather_facts: false
+  vars:
+    health_checks: [daily]
+    _health_sets:
+      daily: [disk, mounts, services, performance, time, network, logging, mariadb]
+      weekly: [selinux, fapolicyd, auditd, accounts, certs, patching]
+      all: [disk, mounts, services, performance, time, network, logging, mariadb,
+            selinux, fapolicyd, auditd, accounts, certs, patching]
+    # A survey's multiple-choice answer can arrive as a list or as lines of text: accept both.
+    _health_asked: >-
+      {{ (health_checks.splitlines() if health_checks is string else health_checks)
+         | map('trim') | select | list }}
+    _health_run: >-
+      {%- set out = [] -%}
+      {%- for c in _health_asked -%}
+      {%-   for x in _health_sets[c] | default([c]) if x not in out -%}{%- set _ = out.append(x) -%}{%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+  pre_tasks:
+    - name: Only known checks
+      ansible.builtin.assert:
+        that: _health_run | difference(_health_sets.all) | length == 0
+        fail_msg: >-
+          Unknown check(s): {{ _health_run | difference(_health_sets.all) | join(', ') }}.
+          Known: {{ _health_sets.all | join(', ') }} (or daily, weekly, all).
+        quiet: true
+      run_once: true
+
+    - name: Start
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: start.yml
+
+  tasks:
+    - name: Run the checks
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: run_check.yml
+      loop: "{{ _health_run }}"
+      loop_control:
+        loop_var: _site_check
+
+    - name: ACT looks at the findings (only with use_act=true)
+      ansible.builtin.include_role:
+        name: site_act
+      when: use_act | default(false) | bool and site_findings | length > 0
+
+  post_tasks:
+    - name: Report (and fail the hosts that have findings)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml

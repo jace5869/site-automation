@@ -1,0 +1,18 @@
+---
+extends: default
+rules:
+  # Jinja expressions that build findings are long; wrapping them would make them harder to read.
+  line-length:
+    max: 220
+    level: warning
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: false
+  braces:
+    max-spaces-inside: 1
+  document-start: disable
+  truthy:
+    allowed-values: ["true", "false", "yes", "no"]
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: true

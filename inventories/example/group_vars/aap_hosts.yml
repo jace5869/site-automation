@@ -1,0 +1,6 @@
+# AAP itself. Checked like every host. ACT never fixes anything here (site_act_diagnose_only_groups);
+# patch_hosts.yml skips it (it is in no_patch) and would never reboot it (patch_never_reboot_groups).
+check_disk_overrides:
+  /var: {warn: 80, crit: 90}                    # AAP's job output and container images live here
+check_certs_endpoints:
+  - {name: AAP web UI, host: 127.0.0.1, port: 443, servername: aap01.example.mil}

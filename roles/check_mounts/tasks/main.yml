@@ -1,0 +1,87 @@
+---
+# MOUNTS. One read-only script prints one line per problem it sees:
+#   NOTMOUNTED <target> <fstype>         in /etc/fstab (and not noauto) but not mounted
+#   READONLY   <target> <fstype>         a local filesystem mounted read-only that fstab mounts rw
+#   HUNG       <target> <source>         a network mount that did not answer within the timeout
+#   NETUSE     <pct> <target> <source>   how full a network mount is
+# findmnt -r prints spaces in paths as \x20, so every field is one word.
+
+- name: Mounts | compare fstab with what is mounted, and test each network mount
+  ansible.builtin.shell: |
+    set -u
+    # fstab entries that should be mounted
+    findmnt --fstab -n -r -o TARGET,FSTYPE,OPTIONS 2>/dev/null | while read -r tgt fs opts; do
+      case "$fs" in swap|none) continue;; esac
+      case ",$opts," in *,noauto,*) continue;; esac
+      [ "${tgt:0:1}" = "/" ] || continue
+      t=$(printf '%b' "$tgt")
+      if ! findmnt -n -M "$t" >/dev/null 2>&1; then
+        echo "NOTMOUNTED $tgt $fs"
+      elif [[ ",$opts," != *,ro,* ]] && [[ "$(findmnt -n -r -o OPTIONS -M "$t")" =~ ^ro(,|$) ]]; then
+        echo "READONLY $tgt $fs"
+      fi
+    done
+    # local filesystems that are read-only although nothing in fstab asks for it
+    findmnt -n -r -o TARGET,FSTYPE,OPTIONS -t {{ check_mounts_local_types | join(',') }} 2>/dev/null |
+    while read -r tgt fs opts; do
+      case "$opts" in ro|ro,*) ;; *) continue;; esac
+      t=$(printf '%b' "$tgt")
+      if ! findmnt --fstab -n -M "$t" >/dev/null 2>&1; then
+        case "$t" in /|/boot|/boot/efi|/usr|/var|/var/*|/home|/tmp|/opt|/srv) echo "READONLY $tgt $fs";; esac
+      fi
+    done
+    # network mounts: does each answer? how full is it?
+    findmnt -n -r -o TARGET,SOURCE -t {{ check_mounts_network_types | join(',') }} 2>/dev/null |
+    while read -r tgt src; do
+      t=$(printf '%b' "$tgt")
+      if ! timeout -k 2 {{ check_mounts_timeout | int }} stat -f -c %T "$t" >/dev/null 2>&1; then
+        echo "HUNG $tgt $src"
+        continue
+      fi
+      pct=$(timeout -k 2 {{ check_mounts_timeout | int }} df -P "$t" 2>/dev/null | awk 'NR==2 {sub("%","",$5); print $5}')
+      [ -n "$pct" ] && echo "NETUSE $pct $tgt $src"
+    done
+    exit 0
+  args:
+    executable: /bin/bash
+  register: _mounts
+  changed_when: false
+  check_mode: false
+
+- name: Mounts | findings
+  ansible.builtin.set_fact:
+    _mounts_findings: >-
+      {%- set f = [] -%}
+      {%- for line in _mounts.stdout_lines -%}
+      {%-   set c = line.split() -%}
+      {%-   set tgt = (c[1] if c[0] != 'NETUSE' else c[2]) | replace('\\x20', ' ') -%}
+      {%-   set ns = namespace(skip=false) -%}
+      {%-   for p in check_mounts_ignore -%}{%- if tgt is search(p) -%}{%- set ns.skip = true -%}{%- endif -%}{%- endfor -%}
+      {%-   if ns.skip -%}
+      {%-   elif c[0] == 'NOTMOUNTED' -%}
+      {%-     set _ = f.append({'check': 'mounts', 'id': 'mount-missing:' ~ tgt, 'severity': 'critical',
+                                'summary': tgt ~ ' (' ~ c[2] ~ ') is in /etc/fstab but is not mounted',
+                                'hint': 'findmnt --fstab ' ~ (tgt | quote) ~ '; journalctl -b --no-pager -g '
+                                        ~ (tgt | basename | quote) ~ ' | tail -20; mount -fav'}) -%}
+      {%-   elif c[0] == 'READONLY' -%}
+      {%-     set _ = f.append({'check': 'mounts', 'id': 'mount-readonly:' ~ tgt, 'severity': 'critical',
+                                'summary': tgt ~ ' (' ~ c[2] ~ ') is mounted READ-ONLY; the kernel does this after disk or filesystem errors',
+                                'hint': 'findmnt ' ~ (tgt | quote) ~ '; journalctl -k -p warning --since -24h --no-pager | tail -30'}) -%}
+      {%-   elif c[0] == 'HUNG' -%}
+      {%-     set _ = f.append({'check': 'mounts', 'id': 'mount-hung:' ~ tgt, 'severity': 'critical',
+                                'summary': 'network mount ' ~ tgt ~ ' (' ~ c[2] ~ ') does not answer within '
+                                           ~ check_mounts_timeout ~ 's (server down, network, or a stale handle)',
+                                'hint': 'timeout 5 stat -f ' ~ (tgt | quote) ~ '; nfsstat -m 2>/dev/null | head -20; journalctl -k --since -2h --no-pager | grep -iE "nfs|rpc|cifs" | tail -20'}) -%}
+      {%-   elif c[0] == 'NETUSE' and (c[1] | int) >= check_mounts_warn_pct | int -%}
+      {%-     set crit = (c[1] | int) >= check_mounts_crit_pct | int -%}
+      {%-     set _ = f.append({'check': 'mounts', 'id': 'mount-full:' ~ tgt, 'severity': 'critical' if crit else 'warning',
+                                'summary': 'network mount ' ~ tgt ~ ' (' ~ c[3] ~ ') is ' ~ c[1] ~ '% full ('
+                                           ~ ('critical at ' ~ check_mounts_crit_pct if crit else 'warning at ' ~ check_mounts_warn_pct) ~ '%)',
+                                'hint': 'timeout 10 df -h ' ~ (tgt | quote)}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ f }}
+
+- name: Mounts | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _mounts_findings }}"

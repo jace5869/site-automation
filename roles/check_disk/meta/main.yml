@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: check_disk
+  description: "Health check: local filesystem space and inodes, with a days-until-full forecast."
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

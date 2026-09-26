@@ -1,0 +1,10 @@
+---
+# PATCHING (readiness, read-only): pending security updates, a reboot still needed after the
+# last updates, and how long ago the host was last updated. Installs nothing - patching itself
+# is playbooks/patch_hosts.yml.
+
+check_patching_max_age_days: 35          # last package update older than this -> warning
+check_patching_security_warn: 1          # this many pending security advisories -> warning
+check_patching_critical_is_critical: true  # a pending Critical-severity advisory -> critical
+check_patching_timeout: 300              # seconds for dnf to talk to the repositories
+check_patching_reboot_check: true

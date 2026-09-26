@@ -1,0 +1,26 @@
+---
+# SERVICENOW HEALTH - does the instance answer its API (and how fast), and is every MID Server
+# Up and validated? Read-only. Runs on the controller.
+#
+# Credential: "ServiceNow API". The account needs read access to the incident table and, for the
+# MID Server check, to ecc_agent (e.g. the mid_server role).
+#
+# For the MID Server HOSTS (the Linux service, its certificates), use the health check with
+# check_services_required_extra and check_certs_keystores in the inventory - see docs/RUNBOOKS.md.
+- name: ServiceNow health
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Check the instance and its MID Servers
+      ansible.builtin.include_role:
+        name: servicenow
+        tasks_from: health.yml
+
+    - name: Report (fails when something is wrong)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml
+      vars:
+        site_syslog: false
+        site_report_name: servicenow         # the name its findings (and tickets) carry

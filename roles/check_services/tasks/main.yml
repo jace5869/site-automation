@@ -1,0 +1,79 @@
+---
+# SERVICES. Two read-only systemctl calls: the list of failed units, and the state of every
+# required unit in one `systemctl show` (one block of Key=Value lines per unit).
+
+- name: Services | failed units
+  ansible.builtin.command: systemctl --failed --plain --no-legend --no-pager
+  register: _svc_failed
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Services | state of the required services
+  ansible.builtin.command:
+    argv: >-
+      {%- set a = ['systemctl', 'show', '--no-pager', '-p', 'Id,LoadState,ActiveState,SubState,UnitFileState,NRestarts,Result'] -%}
+      {%- for u in (check_services_required + check_services_required_extra) | unique -%}
+      {%-   set _ = a.append(u if '.' in u else u ~ '.service') -%}
+      {%- endfor -%}
+      {{ a }}
+  register: _svc_show
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: (check_services_required + check_services_required_extra) | length > 0
+
+- name: Services | findings
+  ansible.builtin.set_fact:
+    _svc_findings: >-
+      {%- set f = [] -%}
+      {%- for line in _svc_failed.stdout_lines if line | trim -%}
+      {%-   set unit = line.split() | first -%}
+      {%-   set ns = namespace(skip=false) -%}
+      {%-   for p in check_services_ignore_failed -%}{%- if unit is search(p) -%}{%- set ns.skip = true -%}{%- endif -%}{%- endfor -%}
+      {%-   if not ns.skip -%}
+      {%-     set _ = f.append({'check': 'services', 'id': 'unit-failed:' ~ unit, 'severity': 'critical',
+                                'summary': 'systemd unit ' ~ unit ~ ' has FAILED',
+                                'hint': 'systemctl status ' ~ unit ~ ' --no-pager -l; journalctl -u ' ~ unit ~ ' -n 50 --no-pager'}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- set failed = f | map(attribute='id') | list -%}
+      {%- set units = [] -%}
+      {%- set ns = namespace(cur={}) -%}
+      {%- for kv in (_svc_show.stdout_lines | default([])) + [''] -%}
+      {%-   if kv | trim == '' -%}
+      {%-     if ns.cur -%}{%- set _ = units.append(ns.cur) -%}{%- endif -%}
+      {%-     set ns.cur = {} -%}
+      {%-   elif '=' in kv -%}
+      {%-     set _ = ns.cur.update({kv.split('=', 1)[0]: kv.split('=', 1)[1]}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- for u in units -%}
+      {%-   set unit = u.Id | default('?') -%}
+      {%-   set look = 'systemctl status ' ~ unit ~ ' --no-pager -l; journalctl -u ' ~ unit ~ ' -n 50 --no-pager' -%}
+      {%-   if u.LoadState | default('') == 'not-found' -%}
+      {%-     set _ = f.append({'check': 'services', 'id': 'unit-missing:' ~ unit, 'severity': 'warning',
+                                'summary': 'required service ' ~ unit ~ ' is not installed on this host',
+                                'hint': 'systemctl list-unit-files ' ~ unit}) -%}
+      {%-   elif u.ActiveState | default('') != 'active' and ('unit-failed:' ~ unit) not in failed -%}
+      {%-     set _ = f.append({'check': 'services', 'id': 'unit-down:' ~ unit, 'severity': 'critical',
+                                'summary': 'required service ' ~ unit ~ ' is ' ~ u.ActiveState | default('?') ~ ' (' ~ u.SubState | default('?')
+                                           ~ ((', result ' ~ u.Result) if u.Result | default('success') != 'success' else '') ~ ')',
+                                'hint': look}) -%}
+      {%-   endif -%}
+      {%-   if u.LoadState | default('') == 'loaded' and u.UnitFileState | default('') == 'disabled' -%}
+      {%-     set _ = f.append({'check': 'services', 'id': 'unit-disabled:' ~ unit, 'severity': 'warning',
+                                'summary': 'required service ' ~ unit ~ ' is disabled: it will not start after a reboot',
+                                'hint': 'systemctl is-enabled ' ~ unit}) -%}
+      {%-   endif -%}
+      {%-   if (u.NRestarts | default('0') | int) > check_services_restart_warn | int -%}
+      {%-     set _ = f.append({'check': 'services', 'id': 'unit-flapping:' ~ unit, 'severity': 'warning',
+                                'summary': unit ~ ' has restarted ' ~ u.NRestarts ~ ' times (a restart loop: it keeps crashing)',
+                                'hint': look}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ f }}
+
+- name: Services | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _svc_findings }}"

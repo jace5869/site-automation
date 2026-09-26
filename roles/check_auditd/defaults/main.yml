@@ -1,0 +1,8 @@
+---
+# AUDITD: the audit system records who did what (the STIG depends on it). Running, enabled in
+# the kernel, rules loaded, no events lost, room for its log, and (optionally) forwarding.
+
+check_auditd_min_rules: 5                # fewer loaded rules than this = the STIG rules are missing
+check_auditd_log_warn_pct: 75            # the audit log's filesystem
+check_auditd_log_crit_pct: 90
+check_auditd_remote_required: false      # true = au-remote (audisp-remote) must be active

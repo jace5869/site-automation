@@ -1,0 +1,20 @@
+---
+# Shared by every check playbook. A "finding" is one thing that is wrong on one host:
+#
+#   check:    the check that found it (disk, services, mariadb, ...)
+#   id:       a stable name for this problem on this host, e.g. disk:/var. ServiceNow uses it to
+#             update the same ticket instead of opening a new one every run.
+#   severity: critical | warning
+#   summary:  one line a person understands ("/var is 96% full (critical at 95%)")
+#   hint:     a read-only command that shows more. A person can paste it into a shell; ACT (when
+#             you add it later) runs it to collect evidence.
+#
+# Check roles only ADD findings. This role starts the list, reports it, and decides pass/fail.
+
+# Which severities make the job FAIL. A failed job is what sends an AAP workflow down its
+# "on failure" path (open tickets, ask ACT, wait for approval). [] = report only, never fail.
+site_fail_on: [critical, warning]
+
+# One syslog line per finding (tag below), so your log server / SIEM sees them too.
+site_syslog: true
+site_syslog_tag: site-health

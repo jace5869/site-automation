@@ -1,0 +1,15 @@
+---
+# PERFORMANCE: is the host overloaded right now, or was something killed for lack of memory?
+
+check_performance_load_warn: 1.5         # 15-minute load average PER CPU (1.0 = every CPU busy)
+check_performance_load_crit: 3.0
+check_performance_mem_avail_warn_pct: 10 # memory still available for programs, % of total
+check_performance_mem_avail_crit_pct: 5
+check_performance_swap_warn_pct: 50      # swap in use, % of swap
+check_performance_swap_crit_pct: 80
+check_performance_iowait_warn: 20        # % of CPU time waiting for disk (average over the sample)
+check_performance_iowait_crit: 40
+check_performance_steal_warn: 10         # % of CPU taken by the hypervisor (VM starved)
+check_performance_sample_seconds: 5      # how long vmstat samples
+check_performance_oom_since: "-24h"      # look for out-of-memory kills this far back
+check_performance_zombie_warn: 20

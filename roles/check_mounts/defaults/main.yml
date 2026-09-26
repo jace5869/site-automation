@@ -1,0 +1,13 @@
+---
+# MOUNTS: filesystems that should be mounted but are not, local filesystems that went
+# read-only (the kernel does that after disk errors), and network mounts (NFS/CIFS) that hang.
+# Diagnose only: this check never mounts, unmounts or remounts anything.
+
+check_mounts_network_types: [nfs, nfs4, cifs, smb3]
+check_mounts_local_types: [xfs, ext4, ext3, btrfs, vfat]
+check_mounts_timeout: 5                 # seconds before a network mount counts as hung
+# Network mounts: how full (same idea as the disk check)
+check_mounts_warn_pct: 85
+check_mounts_crit_pct: 95
+# fstab mount points that are allowed to be unmounted (regular expressions)
+check_mounts_ignore: []

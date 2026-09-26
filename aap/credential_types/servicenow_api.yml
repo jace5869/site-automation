@@ -1,0 +1,23 @@
+# Credential type: "ServiceNow API"
+# Used by playbooks/servicenow_tickets.yml and playbooks/servicenow_health.yml (REST Table API).
+# The same variable names as the certified servicenow.itsm collection, so this credential also
+# works if you move to that collection later.
+inputs:
+  fields:
+    - id: instance
+      type: string
+      label: Instance URL
+      help_text: e.g. https://servicenow.example.mil
+    - id: username
+      type: string
+      label: API user name
+    - id: password
+      type: string
+      label: API password
+      secret: true
+  required: [instance, username, password]
+injectors:
+  env:
+    SN_HOST: "{{ instance }}"
+    SN_USERNAME: "{{ username }}"
+    SN_PASSWORD: "{{ password }}"

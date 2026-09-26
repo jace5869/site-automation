@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.3.0 — 2026-09-26
+
+Operations runbooks: health checks, troubleshooting, ServiceNow, POA&M, patching, and a modular
+way to add ACT to any of them. Built-in modules only (Minimal execution environment); tested with
+ansible-core 2.16 and 2.21.
+
+- **Health check** (`playbooks/health_check.yml`, `roles/check_*`): 14 read-only checks, picked per
+  run or by the `daily` / `weekly` / `all` shortcuts - disk (space, inodes, days-until-full
+  forecast), mounts (fstab vs mounted, read-only remounts, hung NFS/CIFS), services (failed units,
+  required/enabled, restart loops), performance (load, memory, swap, iowait, steal, OOM kills,
+  zombies), time (chrony), network (route, DNS, TCP reachability), logging (persistent journal,
+  log server, rsyslog queue, error rate), SELinux (mode, config, permissive domains, AVCs,
+  booleans, labels), fapolicyd (running, enforcing, config, trust DB, denials), auditd (running,
+  rules, lost events, log space, forwarding), accounts (UID 0, empty passwords, inactive,
+  NOPASSWD, expiring service-account passwords), certs (files, chains, Java keystores, TLS
+  endpoints), patching (security advisories, reboot needed, patch age), MariaDB health
+  (running, connections, long queries without query text, replication, Galera, error log, data
+  disk; host or container; root socket or a least-privilege monitor account). Every check gives
+  the same answer in Check mode.
+- **Findings contract** (`roles/site_findings`): check / id / severity / summary / hint. A check
+  that breaks becomes a finding; the report and set_stats artifacts are published before the job
+  fails, and hosts that never reported are tracked.
+- **Troubleshoot** (`playbooks/troubleshoot.yml`): per problem area, the commands an admin runs
+  first, each explained, plus the matching checks.
+- **Certificate report** (`playbooks/cert_report.yml`): one fleet table, soonest expiry first.
+- **ServiceNow** (`playbooks/servicenow_tickets.yml`, `servicenow_health.yml`, `roles/servicenow`):
+  REST Table API with `uri`; one incident per finding (correlation ID), work notes on repeats,
+  tickets for hosts that never reported, cleared problems noted or resolved, ACT's analysis in the
+  description; dry run without the credential. Instance API and MID Server health.
+- **POA&M status** (`playbooks/poam_status.yml`, `roles/poam`, `poam/`): overdue / due-soon items
+  from a CSV (eMASS export); optional STIG Manager cross-check (client-credentials token; the
+  realm owner creates the client) for open CAT I/II findings with no POA&M item.
+- **Patch hosts** (`playbooks/patch_hosts.yml`, `roles/patch`): serial, stops at the first
+  failure, free-space guard, reboot only when needed and never for `aap_hosts`, every running
+  service must come back; skips `no_patch`; refuses the local machine.
+- **ACT, modular** (`roles/site_act`, `playbooks/act_fix_approved.yml`): `use_act=true` on any
+  check playbook; levels explain (evidence only, ACT runs nothing) / diagnose (proposals wait
+  for approval) / self-heal (only `site_act_allow`, then the checks run again). Diagnose-only
+  for `aap_hosts` and `netapp_console_hosts`.
+- **Docs**: START_HERE, SETUP_AAP (step by step), RUNBOOKS, WORKFLOWS_AND_SCHEDULES, ADDING_ACT;
+  new credential types (ServiceNow API, MariaDB monitor, STIG Manager API, Keystore password);
+  example inventory with groups and settings for every runbook.
+- **PDFs in `docs/pdf/`**: the runbooks setup guide (rendered from the docs, with diagrams), the
+  service-watch demo, the ACT triage guide and AAP 2.7 runbook, and the two leadership briefs.
+- CI: syntax check with ansible-core 2.16 as well as the latest, filter unit tests, YAML checks;
+  `.ansible-lint` (production profile passes) and `.yamllint`.
+
 ## 0.2.0 — 2026-09-25
 
 - **Service watch** (`playbooks/service_watch.yml`, `playbooks/service_fix_approved.yml`,

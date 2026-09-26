@@ -1,0 +1,13 @@
+---
+# SELINUX: enforcing (the STIG requires it), the config file agrees (so a reboot does not
+# change it), no locally added permissive domains, and recent denials (AVCs) - which is what
+# you see when SELinux blocks an application.
+
+check_selinux_expected_mode: enforcing
+check_selinux_avc_since: yesterday       # ausearch -ts: recent (10 min), today, yesterday, this-week
+check_selinux_avc_warn: 1                # this many denials or more -> warning
+# Booleans that must have a value, e.g. {httpd_can_network_connect: "on"}
+check_selinux_booleans: {}
+# Paths whose file labels are compared with the policy (a dry-run restorecon). Mislabeled files
+# are a common cause of denials after files are copied or moved. Keep it to small trees.
+check_selinux_relabel_paths: []          # e.g. [/etc/nginx, /var/www, /etc/stigman]

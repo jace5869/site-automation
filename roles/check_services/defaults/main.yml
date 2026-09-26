@@ -1,0 +1,13 @@
+---
+# SERVICES: systemd units that failed, services that must be running (and start at boot), and
+# services stuck restarting over and over.
+
+# Must be running on every host. A host where one is not installed gets a warning (set
+# check_services_required in the inventory to change the list for a group of hosts).
+check_services_required: [sshd, crond, rsyslog, chronyd, auditd]
+# More for a group of hosts, e.g. in group_vars/mariadb_hosts.yml: [mariadb]
+check_services_required_extra: []
+# Failed units to ignore (regular expressions), e.g. a known-broken vendor unit.
+check_services_ignore_failed: []
+# More restarts than this since the unit started = a restart loop
+check_services_restart_warn: 3

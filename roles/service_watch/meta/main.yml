@@ -1,5 +1,6 @@
 ---
 galaxy_info:
+  author: site automation
   role_name: service_watch
   description: Watch one systemd service; when it is down, record it and let ACT (GenAI) self-heal it or hand the fix to an AAP approval step.
   license: MIT

@@ -1,0 +1,22 @@
+---
+# PATCH - install updates, reboot when they need it, and prove each host came back healthy.
+#
+# Meant for the "Patch with checks" workflow:
+#   [Health check: pre] -> [Approval] -> [THIS] -> [Health check: post] -> [ServiceNow tickets]
+#
+# - One host at a time (patch_serial), and the rollout STOPS at the first host that fails.
+# - Every service that was running before the update must be running after it.
+# - Hosts in no_patch are skipped; hosts in aap_hosts are patched but never rebooted by it.
+# - Refuses to patch the machine the job runs from.
+# - Check mode (a dry run) lists what would be updated and changes nothing: run it that way first.
+#
+#   ansible-playbook playbooks/patch_hosts.yml --check -l web01.example.mil
+#   ansible-playbook playbooks/patch_hosts.yml -l web01.example.mil -e patch_security_only=true
+- name: Patch hosts
+  hosts: "{{ target | default('patch_hosts') }}"
+  become: true
+  gather_facts: false
+  serial: "{{ patch_serial | default(1) }}"
+  max_fail_percentage: 0
+  roles:
+    - role: patch

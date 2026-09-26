@@ -1,0 +1,16 @@
+---
+# Start of a check run on this host: no findings yet.
+- name: Findings | start with an empty list
+  ansible.builtin.set_fact:
+    site_findings: []
+    site_checks_run: []
+
+# Once per run: which hosts were targeted. The ServiceNow step compares this with the hosts that
+# reported, so a host that never reported (unreachable, sudo failed) is not mistaken for healthy.
+- name: Findings | remember the targeted hosts for later workflow steps
+  ansible.builtin.set_stats:
+    data:
+      site_health_targets: "{{ site_health_targets_override | default(ansible_play_hosts_all) }}"
+    per_host: false
+    aggregate: false
+  run_once: true

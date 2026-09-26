@@ -1,0 +1,81 @@
+---
+# TROUBLESHOOT one area on the target host(s): run the area's read-only commands, print each
+# with what it shows, run the area's health checks, and (use_act=true) let ACT explain it.
+
+- name: Troubleshoot | what to look at
+  ansible.builtin.assert:
+    that:
+      - ts_area in ts_areas
+      - ts_area != 'service' or ts_service | length > 0
+      - "ts_area != 'network' or ts_target is match('^[^: ]+(:[0-9]+)?$')"
+    fail_msg: >-
+      Area must be one of {{ ts_areas.keys() | join(', ') }}; area=service needs ts_service (a unit
+      name), area=network needs ts_target (host:port). Got area={{ ts_area }}, service={{ ts_service }},
+      target={{ ts_target }}.
+    quiet: true
+  run_once: true
+
+- name: Troubleshoot | point the checks at the service / target you named
+  ansible.builtin.set_fact:
+    check_services_required_extra: >-
+      {{ (check_services_required_extra | default([])) + ([ts_service] if ts_area == 'service' else []) }}
+    check_network_tcp: >-
+      {{ (check_network_tcp | default([]))
+         + ([{'name': ts_target, 'host': ts_target.split(':')[0], 'port': (ts_target.split(':') + ['443'])[1] | int}]
+            if ts_area == 'network' else []) }}
+
+- name: Troubleshoot | area mariadb checks this host even if it is not in mariadb_hosts
+  ansible.builtin.set_fact:
+    check_mariadb_enabled: true
+  when: ts_area == 'mariadb'
+
+- name: Troubleshoot | run the {{ ts_area }} commands (read-only)
+  ansible.builtin.shell: "timeout 120 bash -c {{ item.cmd | quote }}"
+  args:
+    executable: /bin/bash
+  loop: "{{ ts_areas[ts_area].commands }}"
+  loop_control:
+    label: "{{ item.why }}"
+  register: _ts_out
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Troubleshoot | what each command shows
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['### ' ~ r.item.why, '$ ' ~ r.item.cmd]
+         + (r.stdout_lines[-(ts_output_lines | int):] if r.stdout_lines else ['(no output)'])
+         + ((['[stderr]'] + r.stderr_lines[-10:]) if r.stderr_lines | default([]) else [])
+         + (['(timed out after 120 s)'] if r.rc | default(0) == 124 else []) }}
+  loop: "{{ _ts_out.results }}"
+  loop_control:
+    loop_var: r
+    label: "{{ r.item.why }}"
+
+- name: Troubleshoot | start the matching health checks
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: start.yml
+
+- name: Troubleshoot | run the matching health checks
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: run_check.yml
+  loop: "{{ ts_areas[ts_area].checks }}"
+  loop_control:
+    loop_var: _site_check
+
+- name: Troubleshoot | ACT explains what it sees (use_act=true)
+  ansible.builtin.include_role:
+    name: site_act
+  vars:
+    site_act_evidence_text: >-
+      {%- set parts = [] -%}
+      {%- for r in _ts_out.results -%}
+      {%-   set _ = parts.append('### $ ' ~ r.item.cmd ~ '   (' ~ r.item.why ~ ')' ~ _ts_nl ~ (r.stdout | default('') | truncate(8000, true, ''))) -%}
+      {%- endfor -%}
+      {{ ('The person asked about: ' ~ ts_area ~ ((' ' ~ ts_service) if ts_service else '') ~ ((' ' ~ ts_target) if ts_target else '')
+          ~ _ts_nl ~ _ts_nl ~ (parts | join(_ts_nl ~ _ts_nl)))[:200000] }}
+    _ts_nl: "\n"
+  when: use_act | default(false) | bool

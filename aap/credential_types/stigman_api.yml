@@ -1,0 +1,23 @@
+# Credential type: "STIG Manager API"
+# Optional, for the STIG Manager cross-check in playbooks/poam_status.yml. The client is created
+# by your Keycloak realm owner (client-credentials grant, scope stig-manager:collection:read, and
+# a grant in the collections to read) - this repository never changes the realm.
+inputs:
+  fields:
+    - id: token_url
+      type: string
+      label: Token URL
+      help_text: https://keycloak.example.mil/realms/<realm>/protocol/openid-connect/token
+    - id: client_id
+      type: string
+      label: Client ID
+    - id: client_secret
+      type: string
+      label: Client secret
+      secret: true
+  required: [token_url, client_id, client_secret]
+injectors:
+  env:
+    STIGMAN_TOKEN_URL: "{{ token_url }}"
+    STIGMAN_CLIENT_ID: "{{ client_id }}"
+    STIGMAN_CLIENT_SECRET: "{{ client_secret }}"

@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: check_fapolicyd
+  description: "Health check: fapolicyd running, enforcing, config and trust database valid, denials."
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []
