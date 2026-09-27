@@ -1,0 +1,8 @@
+# Keep Linux line endings (LF) in this repository, also when files are edited or committed on
+# Windows. The playbooks run shell scripts on RHEL, and those break with Windows (CRLF) line
+# endings. VS Code and Notepad handle LF files fine.
+* text=auto eol=lf
+*.pdf binary
+*.png binary
+*.zip binary
+*.gz binary

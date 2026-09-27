@@ -49,20 +49,59 @@ skips them: it prints the approved command for a person to run by hand.
 ### 1. The ACT model key credential
 
 Create the credential type `ACT model key` (`aap/credential_types/act_model_key.yml`) and one
-credential with your GenAI key ([SETUP_AAP.md](SETUP_AAP.md), steps 2-3). Attach it to the
-**Health check** and **Troubleshoot** templates, next to `Linux ssh (sudo)`. This is the only place
-the key lives.
+credential with your key: the GenAI key for GenAI.mil, or the AskSage key for Ask Sage
+([SETUP_AAP.md](SETUP_AAP.md), steps 2-3). For the GenAI beta proxy, also create
+`ACT GenAI beta key` (`act_genai_beta_key.yml`). Attach the credential(s) to the **Health check**,
+**Troubleshoot** and **Apply approved ACT fix** templates, next to `Linux ssh (sudo)`. This is the
+only place a key lives.
 
-Non-secret ACT settings go in the inventory:
+### 2. Pick the model provider
+
+ACT can talk to three providers. Pick one with **`site_act_provider`**:
+
+| `site_act_provider` | Provider | Key (credential) | Also set |
+|---|---|---|---|
+| `genai` (default) | GenAI.mil | *ACT model key*, **GenAI API key** field | nothing (optional: `site_act_model`) |
+| `asksage` | Ask Sage | *ACT model key*, **AskSage API key** field | `site_act_url`: your organization's Ask Sage API URL. The default is `https://api.genai.army.mil/server/openai/v1/chat/completions` |
+| `genai-beta` | GenAI.mil beta proxy (preview models) | *ACT GenAI beta key* (`aap/credential_types/act_genai_beta_key.yml`) | nothing |
+
+The four settings:
+
+| Setting | What | Default |
+|---|---|---|
+| `site_act_provider` | `genai`, `asksage` or `genai-beta` | `genai` |
+| `site_act_model` | the model id at that provider (ask your provider which ones your account has) | the provider's default |
+| `site_act_url` | the provider's API URL | the provider's default |
+| `site_act_ca` | a CA bundle file **on the hosts**, if the provider's certificate comes from a CA the hosts do not trust yet (for example a DoD CA not in `/etc/pki/ca-trust`) | the host's normal trust store |
+
+**Where to set them:**
+
+- **For everyone**: inventory variables (**Inventories → your inventory → Edit → Variables**), or
+  `group_vars/all.yml` if your inventory is in Git:
+  ```yaml
+  site_act_provider: asksage
+  site_act_model: gpt-4.1-gov
+  site_act_url: https://<your ask sage host>/server/openai/v1/chat/completions
+  ```
+- **Per launch**: the survey questions in step 3 (a survey answer beats the inventory).
+
+These settings apply to every runbook that uses ACT, including *Service watch* and *Apply approved
+ACT fix*. If the key for the chosen provider is missing, ACT does not run: the job says
+`ACT did not run: this job has no API key for provider asksage. Attach ...`, and the findings
+are still reported.
+
+**Network:** ACT runs **on each host**, not in AAP. So each host must be able to reach the
+provider's URL over HTTPS. If they go through a proxy, add it:
+`site_act_env: {HTTPS_PROXY: "http://proxy.yoursite.mil:8080"}`.
+
+Anything else ACT should know about your site goes in the inventory too:
 
 ```yaml
-# inventories/site/group_vars/all.yml
-site_act_env: {GENAI_MODEL: <a model your account offers>}
 site_act_extra_instructions: >-
   RHEL 9 servers under DISA STIG. fapolicyd and SELinux are enforcing. Never suggest disabling them.
 ```
 
-### 2. Two survey questions
+### 3. Survey questions
 
 On **Health check** and **Troubleshoot** → **Survey** → **Create survey question**:
 
@@ -70,14 +109,18 @@ On **Health check** and **Troubleshoot** → **Survey** → **Create survey ques
 |---|---|---|---|---|
 | Ask ACT (GenAI) about the findings? | `use_act` | Multiple Choice (single select) | `no`, `yes` | `no` |
 | What may ACT do? | `site_act_level` | Multiple Choice (single select) | `explain`, `diagnose`, `self-heal` | `explain` |
+| Which model provider? (optional) | `site_act_provider` | Multiple Choice (single select) | `genai`, `asksage`, `genai-beta` | the one in your inventory |
+| Which model? (optional, blank = default) | `site_act_model` | Text, not required | | blank |
 
-### 3. Try `explain` by hand
+Leave out the last two if everyone uses the same provider. The inventory setting then applies.
+
+### 4. Try `explain` by hand
 
 Launch **Troubleshoot** on a host with a known problem: `ts_area` = `service`, `ts_service` = the
 unit, `use_act` = `yes`, `site_act_level` = `explain`. In the output, read **`ACT | what ACT
 says`**. With ACT on, the host's ServiceNow ticket includes this analysis too.
 
-### 4. `diagnose` with the approval workflow
+### 5. `diagnose` with the approval workflow
 
 Build *Fix with approval (ACT)* ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#4-fix-with-approval-act)).
 What happens:
@@ -92,7 +135,7 @@ What happens:
 5. The same checks run again, without ACT, and the job is green only if the problem is gone. The
    tickets step notes the ticket as cleared.
 
-### 5. `self-heal` for the fixes you trust
+### 6. `self-heal` for the fixes you trust
 
 ```yaml
 # inventories/site/group_vars/all.yml

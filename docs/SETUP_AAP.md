@@ -18,35 +18,39 @@ You need:
 
 ## Step 1. Put the repository in your work Git, with your inventory
 
+> **Already have your inventory in AAP?** Then you do not need `inventories/site/`. Push the
+> repository without it (skip items 1-3 below), skip step 5, and follow
+> [USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md) for the groups and settings to add.
+
 **What.** Copy this repository into your work Git, and create your real inventory in it.
-(Already pushed an earlier release at work? Copy the new release's files over your copy,
-keep your `inventories/site/`, and commit. Then skip to step 2.)
+(Already pushed an earlier release at work? Update it with `scripts/update-from-release.ps1` in
+VS Code, as in [HOW_IT_FITS_TOGETHER.md](HOW_IT_FITS_TOGETHER.md), "Updating the repository at
+work". Then skip to step 2.)
 
 **Why.** AAP reads playbooks from Git, never from your laptop. The inventory lives in the same
 repository, so host lists and thresholds are versioned and reviewed like code. Every change has
 a who, a when and a why.
 
-1. Unpack the release tarball and go into it. Create your inventory from the example:
-   ```bash
-   cp -r inventories/example inventories/site
-   ```
+1. Extract the release zip (right-click → **Extract All**). In the extracted folder, copy the
+   folder `inventories\example` and name the copy `inventories\site`.
 2. Edit `inventories/site/hosts.yml`. Replace the example host names with yours and keep the
    group names: the playbooks use them. A host can be in several groups.
 3. Edit `inventories/site/group_vars/all.yml`. These settings apply to every host: the LDAP
    and SIEM servers each host must reach, the account AAP logs in as (`svc_aap`), and the
    thresholds. Each setting is explained in `roles/check_<name>/defaults/main.yml`.
-4. Push it to your work Git:
-   ```bash
-   git init -b main && git add -A && git commit -m "site-automation 0.3.0 + our inventory"
-   git remote add origin https://gitlab.example.mil/ops/site-automation.git
-   git push -u origin main
-   ```
-5. Note the two values AAP needs in step 4. AAP does not read them from your copy; you type
-   them in once:
-   ```bash
-   git remote get-url origin     # the Source control URL
-   git branch --show-current     # the branch, e.g. main
-   ```
+4. Put it in your work Git, with VS Code:
+   - Create an empty repository on your Git server (for example `site-automation`) and copy its
+     clone URL.
+   - In VS Code: **Source Control → Clone Repository** → paste the URL → pick a folder, such as
+     `C:\git\site-automation`.
+   - Copy everything from the extracted release folder into that folder.
+   - In **Source Control**: type a message, click **Commit** (answer *Yes* to "stage all
+     changes"), then **Sync Changes** / **Publish Branch**.
+
+   The same from a command line: `git add -A`, `git commit -m "site-automation 0.3.1"`, then `git push`.
+5. Note the two values AAP needs in step 4: the **clone URL** (the one you pasted above) and
+   the **branch** (shown at the bottom left of VS Code, usually `main`). AAP does not read them
+   from your copy; you type them in once.
 
 **You should see** the files in your Git server's web page, including `inventories/site/`.
 
@@ -73,7 +77,8 @@ For each file in `aap/credential_types/` that you need now:
 | `mariadb_monitor.yml` | MariaDB monitor | the MariaDB check on a containerized database (root login refused there); optional on host installs |
 | `keystore_password.yml` | Keystore password | optional: certs check on a PKCS12 keystore |
 | `stigman_api.yml` | STIG Manager API | optional: POA&M cross-check with STIG Manager |
-| `act_model_key.yml` | ACT model key | later, for ACT ([ADDING_ACT.md](ADDING_ACT.md)) |
+| `act_model_key.yml` | ACT model key | later, for ACT ([ADDING_ACT.md](ADDING_ACT.md)): GenAI.mil and Ask Sage keys |
+| `act_genai_beta_key.yml` | ACT GenAI beta key | only for ACT with the GenAI.mil beta provider |
 
 **You should see** each new type in the Credential Types list.
 
@@ -117,6 +122,9 @@ name. Nobody, including you, can read the secret back, and it is never in Git or
 it fails, open the sync job: it is almost always the URL, the branch name, or the credential.
 
 ## Step 5. Inventory (filled from the repository)
+
+*(Skip this step if your inventory is already in AAP: see
+[USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md).)*
 
 **What.** Create the `Linux servers` inventory and fill it from `inventories/site/hosts.yml`.
 

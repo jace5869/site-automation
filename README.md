@@ -37,7 +37,9 @@ Fedora host with SELinux enforcing and auditd.
 | Doc | For |
 |---|---|
 | [docs/START_HERE.md](docs/START_HERE.md) | what the pieces are (Ansible and AAP in plain words) and how a run works |
+| [docs/HOW_IT_FITS_TOGETHER.md](docs/HOW_IT_FITS_TOGETHER.md) | how code, inventory, variables, credentials and surveys fit; a setting's way from YAML to a host; updating the repository at work safely |
 | [docs/SETUP_AAP.md](docs/SETUP_AAP.md) | the setup, step by step: Git, credentials, project, inventory, templates, ServiceNow |
+| [docs/USING_YOUR_AAP_INVENTORY.md](docs/USING_YOUR_AAP_INVENTORY.md) | your inventory is already in AAP: the groups to add and which variables go on which group |
 | [docs/RUNBOOKS.md](docs/RUNBOOKS.md) | every check and finding, and what to do about it |
 | [docs/WORKFLOWS_AND_SCHEDULES.md](docs/WORKFLOWS_AND_SCHEDULES.md) | Daily health, Weekly compliance, Patch with checks, Fix with approval (ACT); schedules |
 | [docs/ADDING_ACT.md](docs/ADDING_ACT.md) | adding ACT later (explain / diagnose / self-heal), and writing your own check |
@@ -61,6 +63,8 @@ Fedora host with SELinux enforcing and auditd.
 | `poam/` | the POA&M list (CSV) for `poam_status.yml` |
 | `vendor/act/` | ACT-Linux (the `act` tool and its roles), vendored from a release |
 | `scripts/update-act.sh` | refresh `vendor/act` from a newer ACT-Linux release |
+| `scripts/update-from-release.ps1` | Windows (VS Code): update YOUR copy from a new site-automation release - preview first; your own files (`poam/poam.csv`, `.site-local` paths, git-ignored files) are never touched |
+| `scripts/update-from-release.sh` | the same on Linux |
 
 ## Using it in AAP
 

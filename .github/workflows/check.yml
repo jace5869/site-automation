@@ -44,3 +44,15 @@ jobs:
         run: |
           if git grep -nE -e '-----BEGIN [A-Z ]*PRIVATE KEY-----[A-Za-z0-9+/=]' -e 'AKIA[0-9A-Z]{16}' -- . ':!vendor'; then
             echo "secret-looking content found"; exit 1; fi
+
+  windows-update-script:
+    name: update-from-release.ps1 on Windows (PowerShell 5.1 and 7)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Windows PowerShell 5.1
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/test_update_from_release.ps1
+      - name: PowerShell 7
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test_update_from_release.ps1

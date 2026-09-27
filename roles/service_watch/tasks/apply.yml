@@ -38,6 +38,12 @@
   vars:
     _watch_event: "{{ service_watch_outcome }}"
 
+- name: Apply | ACT provider, model and key (site_act_provider, the same setting as every runbook)
+  ansible.builtin.include_role:
+    name: site_act
+    tasks_from: env.yml
+  when: service_watch_outcome == 'fix_approved'
+
 - name: Apply | ACT applies the approved fix and verifies it
   ansible.builtin.include_role:
     name: act_triage
@@ -55,7 +61,7 @@
       {% if watch_mode == 'self-heal' %}If a watched container is still down after that, start it
       with `podman start NAME`. {% endif %}Then verify with `podman inspect NAME` (expect_contains
       `"Running": true`) that the containers are running. Make no other change.
-    act_triage_env: "{{ watch_act_env }}"
+    act_triage_env: "{{ _site_act_env_all | combine(watch_act_env) }}"
     act_triage_timeout: "{{ watch_act_timeout }}"
     act_triage_fail_in_role: false
     act_triage_write_report: false

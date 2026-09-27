@@ -10,7 +10,8 @@ into **Injector configuration**. Then create one credential of each type per env
 | `stigman_database.yml` | STIG Manager database | `playbooks/stigman_deploy.yml` (and later backups) |
 | `tls_certificate.yml` | TLS certificate | `playbooks/stigman_deploy.yml` (nginx), certificate rotation |
 | `registry_login.yml` | Container registry login (hosts) | image pulls on hosts (Docker Hub rate limits, private repos) |
-| `act_model_key.yml` | ACT model key | every ACT playbook, and any runbook run with `use_act=true` |
+| `act_model_key.yml` | ACT model key | every ACT playbook, and any runbook run with `use_act=true` (GenAI.mil and Ask Sage keys) |
+| `act_genai_beta_key.yml` | ACT GenAI beta key | the same, with `site_act_provider: genai-beta` |
 | `teams_webhook.yml` | Teams webhook | every playbook's Teams report |
 | `servicenow_api.yml` | ServiceNow API | `servicenow_tickets.yml`, `servicenow_health.yml` |
 | `mariadb_monitor.yml` | MariaDB monitor | `health_check.yml` (mariadb check) - needed for MariaDB in a container; optional on host installs (root via socket) |
