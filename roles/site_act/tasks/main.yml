@@ -18,6 +18,9 @@
       {{ 'diagnose' if (site_act_level == 'self-heal' and group_names | intersect(site_act_diagnose_only_groups) | length > 0)
          else site_act_level }}
 
+- name: ACT | provider, model and key
+  ansible.builtin.include_tasks: env.yml
+
 - name: ACT | findings as one line each, and the commands that show more
   ansible.builtin.set_fact:
     _site_act_lines: >-
@@ -26,7 +29,18 @@
       {{ out }}
     _site_act_looks: "{{ site_findings | map(attribute='hint') | select | unique | list }}"
 
-- name: ACT | run (level {{ _site_act_level }})
+- name: ACT | no API key for {{ site_act_provider }} - ACT is skipped (the findings are still reported)
+  ansible.builtin.set_fact:
+    site_act_result:
+      level: "{{ _site_act_level }}"
+      status: error
+      summary: "ACT did not run: this job has no API key for provider {{ site_act_provider }}. Attach {{ _site_act_key_hint }} to the job template."
+      applied: []
+      proposed: []
+  when: not (_site_act_key_ok | bool)
+
+- name: ACT | run (level {{ _site_act_level }}, provider {{ site_act_provider }})
+  when: _site_act_key_ok | bool
   ansible.builtin.include_role:
     name: act_triage
   vars:
@@ -41,12 +55,13 @@
       These findings come from automated health checks; each one already says what is wrong. Find
       WHY (the root cause), confirm it with evidence, and give the exact fix. Several findings may
       share one cause: say so. {{ site_act_extra_instructions }}
-    act_triage_env: "{{ site_act_env }}"
+    act_triage_env: "{{ _site_act_env_all }}"
     act_triage_timeout: "{{ site_act_timeout }}"
     act_triage_fail_in_role: false        # the report decides pass/fail
     act_triage_write_report: false
 
 - name: ACT | result for the report (and the ServiceNow ticket)
+  when: _site_act_key_ok | bool
   ansible.builtin.set_fact:
     site_act_result:
       level: "{{ _site_act_level }}"
@@ -61,7 +76,7 @@
 
 - name: ACT | what ACT says
   ansible.builtin.debug:
-    msg: "{{ ['ACT ' ~ site_act_result.status ~ ' (' ~ _site_act_level ~ ')'] + site_act_result.summary.splitlines()
+    msg: "{{ ['ACT ' ~ site_act_result.status ~ ' (' ~ _site_act_level ~ ', ' ~ site_act_provider ~ ')'] + site_act_result.summary.splitlines()
              + (['APPLIED (pre-approved): ' ~ (site_act_result.applied | join(' ; '))] if site_act_result.applied else [])
              + (['PROPOSED (waits for approval): ' ~ (site_act_result.proposed | join(' ; '))] if site_act_result.proposed else []) }}"
 

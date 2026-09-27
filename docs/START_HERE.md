@@ -1,5 +1,10 @@
 # Start here: what this is and how the pieces fit
 
+> **Confused by all the moving pieces?** Read [HOW_IT_FITS_TOGETHER.md](HOW_IT_FITS_TOGETHER.md)
+> (or its PDF in `docs/pdf/`). It shows what the code, the inventory, the credentials and the
+> survey each do, how a setting travels from a YAML file to a host, and how to update the
+> repository safely.
+
 This repository holds **runbooks**: jobs that check Linux servers and help troubleshoot them. You
 run them from **Ansible Automation Platform (AAP)**, by hand or on a schedule. This page explains
 the few ideas you need. [SETUP_AAP.md](SETUP_AAP.md) then walks you through the setup, one
@@ -115,11 +120,13 @@ The report, the ServiceNow tickets and ACT only ever read findings. That is why:
 | `inventories/example/` | a sample inventory and settings. Copy it to `inventories/site/` |
 | `aap/credential_types/` | the credential types to create in AAP |
 | `poam/poam.csv` | your POA&M list (for the POA&M runbook) |
-| `docs/` | this guide, [SETUP_AAP.md](SETUP_AAP.md), [RUNBOOKS.md](RUNBOOKS.md), [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md), [ADDING_ACT.md](ADDING_ACT.md) |
+| `docs/` | this guide, [SETUP_AAP.md](SETUP_AAP.md), [USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md), [RUNBOOKS.md](RUNBOOKS.md), [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md), [ADDING_ACT.md](ADDING_ACT.md); PDFs in `docs/pdf/` |
 
 ## The order to do things in
 
 1. **Set up and run one health check by hand** ([SETUP_AAP.md](SETUP_AAP.md), steps 1 to 8).
+   Your inventory is already in AAP? Use [USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md)
+   for the inventory part.
    Read its output. Adjust thresholds in the inventory until the findings are the ones you care
    about.
 2. **Add the other job templates** (step 9) and try each once.

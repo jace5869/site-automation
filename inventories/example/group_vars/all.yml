@@ -39,4 +39,6 @@ servicenow_assignment_group: Linux Operations
 
 # ---- ACT (only used with use_act=true; docs/ADDING_ACT.md) ----------------------------------
 site_act_level: explain
-site_act_env: {}                          # e.g. {GENAI_MODEL: <model>}; the key comes from the credential
+site_act_provider: genai                  # genai | asksage | genai-beta (the key comes from a credential)
+site_act_model: ""                        # empty = the provider's default model
+# site_act_url: https://<your ask sage host>/server/openai/v1/chat/completions   # asksage: your instance

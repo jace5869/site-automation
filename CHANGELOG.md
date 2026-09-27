@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.1 — 2026-09-27
+
+- **ACT provider in one setting**: `site_act_provider` (`genai` default, `asksage`, `genai-beta`),
+  with `site_act_model`, `site_act_url` and `site_act_ca`, turned into ACT's environment for every
+  runbook that uses ACT: health check, troubleshoot, apply approved fix and service watch. A
+  missing key for the chosen provider is reported plainly and ACT is skipped; the findings are
+  still reported. New credential type *ACT GenAI beta key*.
+- **docs/HOW_IT_FITS_TOGETHER.md** (+ PDF): the teaching guide - the four kinds of pieces (code,
+  settings, secrets, run-time choices), YAML in two minutes, which files you edit (only
+  `poam/poam.csv`), one setting traced from its default to a host (precedence), one inventory with
+  many groups and a host in several, modularity, surveys, and updating the work repository.
+  Appendix: every role's settings.
+- **scripts/update-from-release.ps1** (Windows / VS Code, PowerShell 5.1 and 7, Constrained
+  Language Mode safe) and **scripts/update-from-release.sh** (Linux): update a work copy from a
+  release safely - refuses a copy with uncommitted changes, previews NEW / CHANGED / DELETE
+  (ignoring Windows vs Linux line endings), never touches `poam/poam.csv`, `inventories/site/`,
+  `.site-local` and the paths it lists, or git-ignored files. Tested on a Windows CI runner.
+- **.gitattributes**: Linux line endings (LF) in Git even when committed from Windows (the
+  playbooks' shell commands break with CRLF).
+- Releases now also come as a **.zip** (right-click > Extract All on Windows).
+- **docs/USING_YOUR_AAP_INVENTORY.md**: for an inventory already in AAP. The groups to create
+  (including the safety groups), which variables go on the inventory, which group or host, and
+  which repository files not to touch. Linked from SETUP_AAP and START_HERE, and in the PDF.
+
 ## 0.3.0 — 2026-09-26
 
 Operations runbooks: health checks, troubleshooting, ServiceNow, POA&M, patching, and a modular

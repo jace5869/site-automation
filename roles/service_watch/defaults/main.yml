@@ -26,8 +26,9 @@ watch_record_file: /var/log/service-watch/incidents.jsonl
 watch_record_syslog: true
 
 # ---- ACT settings --------------------------------------------------------------------------
-# The key comes from the "ACT model key" AAP credential (environment variable GENAI_KEY),
-# never from here. Non-secret settings only, e.g. {GENAI_MODEL: <a model your account offers>}.
+# Which provider and model: site_act_provider / site_act_model / site_act_url / site_act_ca, the
+# same settings every runbook uses (roles/site_act/defaults/main.yml). The key comes from the
+# "ACT model key" AAP credential, never from here. Extra ACT settings for service watch only:
 watch_act_env: {}
 watch_act_timeout: 600                   # seconds for one ACT run
 

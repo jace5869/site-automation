@@ -25,6 +25,12 @@
     _watch_event: down_detected
   when: not service_watch_before.healthy
 
+- name: Watch | ACT provider, model and key (site_act_provider, the same setting as every runbook)
+  ansible.builtin.include_role:
+    name: site_act
+    tasks_from: env.yml
+  when: not service_watch_before.healthy
+
 - name: Watch | ACT finds the root cause{{ ' and may start the container' if watch_mode == 'self-heal' else '; every fix waits for approval' }}
   ansible.builtin.include_role:
     name: act_triage
@@ -33,7 +39,7 @@
     act_triage_findings_extra: "{{ service_watch_before.findings }}"
     act_triage_allow: "{{ _watch_fix_patterns if watch_mode == 'self-heal' else [] }}"
     act_triage_extra_instructions: "{{ watch_instructions }}"
-    act_triage_env: "{{ watch_act_env }}"
+    act_triage_env: "{{ _site_act_env_all | combine(watch_act_env) }}"
     act_triage_timeout: "{{ watch_act_timeout }}"
     act_triage_fail_in_role: false                     # this role decides pass/fail below
     act_triage_write_report: false                     # the incident log is the record

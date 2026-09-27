@@ -1,0 +1,14 @@
+# Credential type: "ACT GenAI beta key"
+# Only for ACT with site_act_provider=genai-beta (the GenAI.mil beta proxy). A separate type, so
+# an "ACT model key" type that is already in use does not have to change (AAP refuses to change
+# the fields of a credential type that credentials use). Attach it next to "ACT model key".
+inputs:
+  fields:
+    - id: genai_beta_key
+      type: string
+      label: GenAI beta API key
+      secret: true
+  required: [genai_beta_key]
+injectors:
+  env:
+    GENAI_BETA_KEY: "{{ genai_beta_key }}"

@@ -47,6 +47,16 @@
       when: group_names | intersect(_no_apply) | length > 0
 
   tasks:
+    - name: ACT provider, model and key (site_act_provider ... - the same settings as the check job)
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: env.yml
+
+    - name: No API key for the provider - nothing can be applied
+      ansible.builtin.fail:
+        msg: "This job has no API key for ACT provider {{ _site_act_env_all.ACT_PROVIDER }}. Attach {{ _site_act_key_hint }}."
+      when: not (_site_act_key_ok | bool)
+
     - name: ACT runs exactly the approved fix and verifies it
       ansible.builtin.include_role:
         name: act_triage
@@ -60,7 +70,7 @@
           A person APPROVED exactly these fixes for this host: {{ _approved | join(' ; ') }}.
           First confirm the problem is still there. If it is, run the approved command(s) exactly as
           written, then verify the result with read-only commands. Make no other change.
-        act_triage_env: "{{ site_act_env | default({}) }}"
+        act_triage_env: "{{ _site_act_env_all }}"
         act_triage_timeout: "{{ site_act_timeout | default(600) }}"
         act_triage_fail_in_role: false
         act_triage_write_report: false
