@@ -12,7 +12,7 @@
 #
 # It refuses to run on its own: outside the workflow there is nothing approved to apply.
 - name: Apply the fixes a person approved
-  hosts: "{{ target | default('rhel_all') }}"
+  hosts: "{{ target | default('all') }}"
   become: true
   gather_facts: false
   vars:

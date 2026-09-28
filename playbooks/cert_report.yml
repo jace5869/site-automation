@@ -7,7 +7,7 @@
 #   ansible-playbook playbooks/cert_report.yml
 #   ansible-playbook playbooks/cert_report.yml -e check_certs_warn_days=60
 - name: Certificate report
-  hosts: "{{ target | default('rhel_all') }}"
+  hosts: "{{ target | default('all') }}"
   become: true
   gather_facts: false
   tasks:

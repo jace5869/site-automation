@@ -4,7 +4,7 @@
 # approved command(s) for each host; the containers are then re-checked.
 # It refuses to run on its own (outside the workflow there is nothing approved to apply).
 - name: Service watch - apply the approved fix
-  hosts: "{{ target | default('stigman_hosts') }}"
+  hosts: "{{ target | default('stigman') }}"
   become: true
   gather_facts: false
   tasks:

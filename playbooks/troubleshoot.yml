@@ -19,7 +19,7 @@
 # Findings do not fail this job (you asked for a look, not a verdict) - except when ACT proposes
 # a fix that waits for approval, so a workflow can take it to its approval step.
 - name: Troubleshoot
-  hosts: "{{ target | default('rhel_all') }}"
+  hosts: "{{ target | default('all') }}"
   become: true
   gather_facts: false
   vars:

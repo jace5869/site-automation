@@ -109,12 +109,12 @@ Two things that trip people up:
 
   | Variable | Set it in | Why |
   |---|---|---|
-  | `target` (which group a playbook runs on) | the template's **Variables** box | it picks the hosts *before* any inventory setting is read |
+  | `target` (which hosts a playbook runs on; empty = every host, and `stigman` for service watch) | the template's **Variables** box | it picks the hosts *before* any inventory setting is read |
   | `health_checks` | the Health check **survey** | the playbook's own value beats the inventory |
   | `ts_area`, `ts_service`, `ts_target`, `ts_since` | the Troubleshoot **survey** | chosen per problem |
   | `use_act`, `site_act_level` | a **survey** (or the inventory, as a fixed default) | chosen per run |
-  | everything named `check_*`, `patch_*`, `site_act_provider/model/url` | the **inventory** (inventory, group or host Variables) | facts about your site and hosts |
-  | `servicenow_*`, `poam_*` | the **inventory's own Variables** box (not a group's) | those jobs run on AAP itself, which is in no group, so it only gets inventory-level settings |
+  | everything named `check_*`, `patch_*`, `site_act_*` | your settings files (`playbooks/group_vars/`), or a group's or host's Variables | facts about your site and hosts. The ACT provider and models are already in `all.yml`: change them there |
+  | `servicenow_*`, `poam_*` | `playbooks/group_vars/all.yml` (the placeholders are there), or the **inventory's own Variables** box, not both (the file wins). Not a group's box | those jobs run on AAP itself, which is in no group, so it only gets `all.yml` and inventory-level settings |
 
 ## The inventory: one inventory, many groups, and a host in several groups
 
@@ -136,22 +136,22 @@ Three kinds of groups work well together, and you already have the first kind:
 |---|---|---|
 | What a host **is** | your `db_servers`, `stigman`, `mid_servers`, `aap`, `netapp` | settings that belong to that kind of host (the MariaDB container name, the MID keystore path) |
 | What automation **may do** to it | `patch_hosts`, `no_patch`, `aap_hosts`, `netapp_console_hosts` | safety: what gets patched, what ACT may only diagnose |
-| **Everything** | `rhel_all` | where checks run by default |
+| **Everything** | `all` (built in: you never create it) | where the checks run when a template has no `target` |
 
 **Should you make more groups?** Yes: a few more **groups**, in your **one** inventory. You have two
 ways to connect your groups to the names the runbooks use. Both work, so pick one:
 
 - **Way A: add the runbook names as groups, with your groups inside.** A few clicks, and the
-  guides match what you see. For example, create `rhel_all` and put all your groups inside it;
-  create `mariadb_hosts` and put `db_servers` inside it.
+  guides match what you see. For example, create `mariadb_hosts` and put `db_servers` inside
+  it.
 - **Way B: tell the runbooks your names.** No new groups. In the inventory **Variables**:
   ```yaml
   site_act_diagnose_only_groups: [aap, netapp]   # ACT never fixes these
   patch_never_reboot_groups: [aap]               # patching never reboots these
   patch_never_patch_groups: [aap, netapp]        # patching skips these
   ```
-  Then put `target: <your group>` in the Variables box of each template (Health check:
-  `target: linux_servers`; Patch hosts: the group you patch). On your database group set
+  Then put `target: <the group you patch>` in the Variables box of Patch hosts. (The checks run on
+  every host unless a template sets `target`, for example `target: linux_servers`.) On your database group set
   `check_mariadb_enabled: true`.
 
 ## Is it modular? Yes, in three ways

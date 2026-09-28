@@ -77,7 +77,7 @@ and the credentials; a project on the repository; an inventory sourced from
 
 Job template **STIG Manager - deploy**: playbook `playbooks/stigman_deploy.yml`; credentials:
 Machine, *STIG Manager database*, *TLS certificate* (and *Container registry login (hosts)* if
-you pull with an account); limit `stigman_hosts`.
+you pull with an account). It runs on the group `stigman` (or set `target`).
 
 ## The STIG Manager deployment
 
