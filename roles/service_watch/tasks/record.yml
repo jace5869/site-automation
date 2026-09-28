@@ -15,7 +15,10 @@
       findings: "{{ (service_watch_before | default(service_watch)).findings }}"
       act_status: "{{ (act_triage_result | default({})).status | default('') }}"
       act_report: "{{ ((act_triage_result | default({})).summary | default('') or (act_triage_result | default({})).stop_reason | default(''))[:2000] }}"
-      fixes_run: "{{ (act_triage_result | default({})).commands | default([]) | selectattr('approval', 'equalto', 'pre_approved') | map(attribute='command') | list }}"
+      fixes_run: >-
+        {{ ((act_triage_result | default({})).commands | default([]) | selectattr('approval', 'equalto', 'pre_approved')
+            | map(attribute='command') | list) + (_watch_fixes_run | default([])) }}
+      units: "{{ _watch_units }}"
       proposed: "{{ _watch_proposed | default([]) }}"
       approved: "{{ _watch_approved | default([]) }}"
       aap_job_id: "{{ awx_job_id | default('') }}"
@@ -52,9 +55,9 @@
   vars:
     _watch_texts:
       down_detected: "{{ _watch_record.findings | join('; ') }}"
-      self_healed: "fixed by ACT ({{ _watch_record.fixes_run | join('; ') }}), verified up"
+      self_healed: "fixed ({{ _watch_record.fixes_run | join('; ') or 'by ACT' }}), verified up"
       recovered: up again without a fix
-      awaiting_approval: "ACT proposes: {{ _watch_record.proposed | join('; ') }}"
+      awaiting_approval: "fix to approve ({{ _watch_fix_source | default('ACT') }}): {{ _watch_record.proposed | join('; ') }}"
       still_down: "{{ _watch_record.findings | join('; ') }}; no automatic fix worked; see {{ watch_record_file }}"
       fix_approved: "applying: {{ _watch_record.approved | join('; ') }}"
       fixed_after_approval: "approved fix applied ({{ _watch_record.fixes_run | join('; ') }}), verified up"

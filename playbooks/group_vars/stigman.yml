@@ -1,6 +1,12 @@
 # YOUR SETTINGS FOR THE STIG MANAGER HOSTS (AAP group stigman).
-# The service watch and STIG Manager deploy templates need target: stigman in their Variables box.
-watch_containers:                        # service watch: the container names (sudo podman ps)
+# Service watch and STIG Manager deploy run on this group by themselves (no target needed).
+# Service watch: the containers to watch, dependencies first. A container name (sudo podman ps -a)
+# or a service name without .service: how each one is run (systemd unit or plain podman) is found
+# by itself. Add `unit: NAME.service` under one only if the job output shows the wrong unit.
+watch_containers:
+  - name: mysql
+  - name: kcmysql
+  - name: keycloak
   - name: stigman
   - name: nginx
 check_certs_endpoints:                   # the certificate browsers see
