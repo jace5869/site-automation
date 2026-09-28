@@ -1,10 +1,12 @@
 ---
 # The check job (playbooks/service_watch.yml):
 #   all containers up -> done, the model is never called
-#   one is down       -> record it -> ACT finds the root cause (self-heal mode: may start it)
-#                     -> re-check independently -> record the outcome
-#                     -> still down? FAIL on purpose, so the AAP workflow takes its "Run on fail"
-#                        path to the approval step and then service_fix_approved.yml.
+#   one is down       -> record it -> ACT finds the root cause (self-heal mode: may start it,
+#                        through its systemd unit when one runs it)
+#                     -> re-check independently (self-heal: still down -> the standard fix)
+#                     -> still down? FAIL on purpose with the fix to approve, so the AAP workflow
+#                        takes its "Run on fail" path to the approval step and then
+#                        service_fix_approved.yml, which runs exactly that fix.
 
 - name: Watch | mode
   ansible.builtin.assert:
@@ -45,26 +47,124 @@
     act_triage_write_report: false                     # the incident log is the record
   when: not service_watch_before.healthy
 
-- name: Watch | what ACT proposes for a person to approve
-  ansible.builtin.set_fact:
-    _watch_proposed: >-
-      {{ (act_triage_result | default({})).denied | default([]) | selectattr('pre_approvable', 'defined')
-         | selectattr('pre_approvable') | map(attribute='command') | list }}
-  when: not service_watch_before.healthy
-
 - name: Watch | re-check the containers ourselves (the model's word is not enough)
   ansible.builtin.include_tasks: check.yml
   vars:
     _watch_retries: "{{ watch_verify_retries if (act_triage_result.changed | default(false)) else 0 }}"
   when: not service_watch_before.healthy
 
+- name: Watch | self-heal - still down after ACT, so the standard fix
+  ansible.builtin.include_tasks: run_fixes.yml
+  vars:
+    _watch_run_cmds: "{{ service_watch.fixes }}"
+  when:
+    - watch_mode == 'self-heal'
+    - not service_watch_before.healthy
+    - not service_watch.healthy
+    - service_watch.fixes | length > 0
+
+- name: Watch | re-check after the standard fix
+  ansible.builtin.include_tasks: check.yml
+  vars:
+    _watch_retries: "{{ watch_verify_retries }}"
+  when: _watch_ran is defined and _watch_ran.stdout_lines is defined
+
+# ACT's proposals, made right: a `podman start/restart/run` of a container that a systemd unit
+# runs becomes `systemctl start/restart UNIT`. ACT proposed nothing (or could not run)? Then the
+# standard fix is proposed, and the approver is told it is not from ACT.
+- name: Watch | the fix for a person to approve
+  ansible.builtin.set_fact:
+    _watch_proposed: >-
+      {%- set out = [] -%}
+      {%- for c in _watch_proposed_act -%}
+      {%-   set w = c.split() -%}
+      {%-   set w = w[1:] if (w and w[0] == 'sudo') else w -%}
+      {%-   set w = w[:1] + w[2:] if (w | length > 2 and w[0] == 'podman' and w[1] == 'container') else w -%}
+      {%-   set run_name = [] -%}
+      {%-   if w | length > 2 and w[0] == 'podman' and w[1] == 'run' -%}
+      {%-     for x in w -%}
+      {%-       if x.startswith('--name=') -%}{%- set _ = run_name.append(x[7:]) -%}{%- endif -%}
+      {%-       if loop.index0 > 0 and w[loop.index0 - 1] == '--name' -%}{%- set _ = run_name.append(x) -%}{%- endif -%}
+      {%-     endfor -%}
+      {%-   endif -%}
+      {%-   if run_name and _watch_units.get(run_name[0], '') -%}
+      {%-     set _ = out.append('systemctl start ' ~ _watch_units[run_name[0]]) -%}
+      {%-   elif w | length > 2 and w[0] == 'podman' and w[1] in ['start', 'restart']
+                 and (w[2:] | select('match', '^-') | list | length == 0) -%}
+      {%-     set plain = [] -%}
+      {%-     for x in w[2:] -%}
+      {%-       if _watch_units.get(x, '') -%}
+      {%-         set _ = out.append('systemctl ' ~ w[1] ~ ' ' ~ _watch_units[x]) -%}
+      {%-       else -%}
+      {%-         set _ = plain.append(x) -%}
+      {%-       endif -%}
+      {%-     endfor -%}
+      {%-     if plain -%}{%- set _ = out.append('podman ' ~ w[1] ~ ' ' ~ (plain | join(' '))) -%}{%- endif -%}
+      {%-   else -%}
+      {%-     set _ = out.append(c) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- set final = out | unique | list -%}
+      {%- set words = final | map('regex_findall', '[^ ]+') | flatten -%}
+      {%- for n, cmds in _watch_standard_by.items() -%}
+      {%-   set m = service_watch.managers[n] -%}
+      {%-   set own = [m.unit, m.unit | regex_replace('[.]service$', ''), m.container, n] | select | list -%}
+      {%-   if not (own | intersect(words)) -%}
+      {%-     set _ = final.extend(cmds) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {#- dependency order (watch_containers order); commands that start nothing watched go first -#}
+      {%- set keyed = [] -%}
+      {%- for c in final -%}
+      {%-   set w = c | regex_findall('[^ ]+') -%}
+      {%-   set idx = [] -%}
+      {%-   for n in _watch_names -%}
+      {%-     set m = service_watch.managers[n] -%}
+      {%-     if [m.unit, m.unit | regex_replace('[.]service$', ''), m.container, n] | select | intersect(w) -%}
+      {%-       set _ = idx.append(loop.index0) -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%-   set _ = keyed.append({'i': (idx | min) if idx else -1, 'c': c}) -%}
+      {%- endfor -%}
+      {{ keyed | sort(attribute='i') | map(attribute='c') | list }}
+    _watch_fix_source: >-
+      {%- set words = _watch_proposed_act | map('regex_findall', '[^ ]+') | flatten -%}
+      {%- set added = [] -%}
+      {%- for n in _watch_standard_by -%}
+      {%-   set m = service_watch.managers[n] -%}
+      {%-   if not ([m.unit, m.unit | regex_replace('[.]service$', ''), m.container, n] | select | intersect(words)) -%}
+      {%-     set _ = added.append(n) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ ('ACT' ~ ((' + the standard fix for ' ~ (added | join(', ')) ~ ', which ACT did not cover') if added else ''))
+         if _watch_proposed_act | length > 0
+         else 'the standard fix (ACT proposed nothing)' if added else '' }}
+  vars:
+    # self-heal already ran the standard fix and it did not work: do not offer it again
+    _watch_standard_by: "{{ {} if (_watch_fixes_run | default([])) else service_watch.fix_by }}"
+    _watch_proposed_act: >-
+      {{ (act_triage_result | default({})).denied | default([]) | selectattr('pre_approvable', 'defined')
+         | selectattr('pre_approvable') | map(attribute='command') | list }}
+  when: not service_watch_before.healthy
+
 - name: Watch | outcome
   ansible.builtin.set_fact:
     service_watch_outcome: >-
       {{ 'healthy' if service_watch_before.healthy
-         else ('self_healed' if (act_triage_result.changed | default(false)) else 'recovered') if service_watch.healthy
+         else ('self_healed' if ((act_triage_result.changed | default(false)) or (_watch_fixes_run | default([]) | length > 0))
+               else 'recovered') if service_watch.healthy
          else 'awaiting_approval' if _watch_proposed | length > 0
          else 'still_down' }}
+
+- name: Watch | hand the fix to the approval step and the apply job (set_stats)
+  ansible.builtin.set_stats:
+    data:
+      service_watch_fix: >-
+        {{ {inventory_hostname: {'commands': _watch_proposed, 'source': _watch_fix_source,
+                                 'findings': service_watch.findings}} }}
+    per_host: false
+    aggregate: true
+  when: service_watch_outcome == 'awaiting_approval'
 
 - name: Watch | record the outcome
   ansible.builtin.include_tasks: record.yml
@@ -83,24 +183,28 @@
   vars:
     _watch_says:
       healthy: "All watched containers are up ({{ _watch_what }}). Nothing to do."
-      self_healed: "Was DOWN ({{ service_watch_before.findings | join('; ') }}). ACT fixed it and the re-check confirms everything is up."
+      self_healed: "Was DOWN ({{ service_watch_before.findings | join('; ') }}). Fixed ({{ ((_watch_fixes_run | default([])) and ('standard fix: ' ~ (_watch_fixes_run | join(' ; ')))) or 'by ACT' }}) and the re-check confirms everything is up."
       recovered: "Was DOWN ({{ service_watch_before.findings | join('; ') }}) and came back without a fix."
-      awaiting_approval: "DOWN: {{ service_watch.findings | join('; ') }}. ACT proposes: {{ _watch_proposed | default([]) | join(' ; ') }}. Waiting for approval."
+      awaiting_approval: "DOWN: {{ service_watch.findings | join('; ') }}. Fix to approve ({{ _watch_fix_source | default('') }}): {{ _watch_proposed | default([]) | join(' ; ') }}. Waiting for approval."
       still_down: "Still DOWN: {{ service_watch.findings | join('; ') }}. There is no fix to approve; a person must look at it."
 
 - name: Watch | NEEDS APPROVAL (this failure sends the workflow to the approval step)
   ansible.builtin.fail:
     msg: >-
       NEEDS APPROVAL on {{ inventory_hostname }}: {{ service_watch.findings | join('; ') }}.
-      ACT proposes: {{ _watch_proposed | join(' ; ') }}
+      Fix to approve ({{ _watch_fix_source }}): {{ _watch_proposed | join(' ; ') }}
   when: service_watch_outcome == 'awaiting_approval'
 
 - name: Watch | STILL DOWN
   ansible.builtin.fail:
     msg: >-
       STILL DOWN on {{ inventory_hostname }}: {{ service_watch.findings | join('; ') }}, after
-      {{ (_watch_fixes_run | join(' ; ')) or 'no automatic fix' }}. Nothing is waiting for approval:
+      {{ (_watch_all_run | join(' ; ')) or 'no automatic fix' }}. Nothing is waiting for approval:
       a person must look at it (ACT's report is above).
+      {{ ('Not coming back by a start: ' ~ (service_watch.no_fix | join(', ')) ~ ' (removed, and no systemd unit runs it).')
+         if service_watch.no_fix else '' }}
   when: service_watch_outcome == 'still_down'
   vars:
-    _watch_fixes_run: "{{ (act_triage_result | default({})).commands | default([]) | selectattr('approval', 'equalto', 'pre_approved') | map(attribute='command') | list }}"
+    _watch_all_run: >-
+      {{ ((act_triage_result | default({})).commands | default([]) | selectattr('approval', 'equalto', 'pre_approved')
+          | map(attribute='command') | list) + (_watch_fixes_run | default([])) }}

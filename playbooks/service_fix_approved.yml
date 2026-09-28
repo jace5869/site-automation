@@ -1,8 +1,9 @@
 ---
 # Job 2: the step after the approval. service_watch.yml (failed: needs approval) -> AAP approval
-# step -> this job. AAP hands it the check job's results (`act_triage`), and ACT runs exactly the
-# approved command(s) for each host; the containers are then re-checked.
-# It refuses to run on its own (outside the workflow there is nothing approved to apply).
+# step -> this job. AAP hands it the check job's results (`service_watch_fix`), and the playbook
+# runs exactly the approved command(s) for each host - no model involved - then re-checks the
+# containers. It refuses to run on its own (outside the workflow there is nothing approved).
+# Do not tick "Prompt on launch" for Variables on its job template.
 - name: Service watch - apply the approved fix
   hosts: "{{ target | default('stigman') }}"
   become: true

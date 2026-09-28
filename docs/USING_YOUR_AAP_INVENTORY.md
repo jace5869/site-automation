@@ -206,9 +206,9 @@ check_disk_overrides:
 check_certs_endpoints:                  # the certificate browsers actually see
   - {name: STIG Manager, host: 127.0.0.1, port: 443, servername: stigman.yoursite.mil}   # CHANGE
 check_certs_files: [/etc/stigman/*.crt, /etc/stigman/*.pem]                          # CHANGE: where your cert files are
-watch_containers:                       # service watch: the container names from `sudo podman ps`
-  - name: stigman
-  - name: nginx
+watch_containers:                       # service watch, dependencies first: container names
+  - name: stigman                       # (sudo podman ps -a) or service names without .service;
+  - name: nginx                         # how each is run (systemd unit or podman) is found by itself
 ```
 
 If STIG Manager runs as systemd units (`systemctl list-units | grep -i stig` shows them), also

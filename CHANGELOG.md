@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.3.4 — 2026-09-28
+
+- **Service watch knows how each container is run.** For every watched container it finds the
+  systemd unit that runs it: the container's `PODMAN_SYSTEMD_UNIT` label, a Quadlet `.container`
+  file (`ContainerName=`, or the default name `systemd-NAME`), or a unit `NAME.service` /
+  `container-NAME.service` whose ExecStart runs podman (so a host `nginx.service` that is not the
+  container is ignored). `unit:` still overrides. A container a unit runs is started with
+  `systemctl start UNIT` (restart when the unit is active, `reset-failed` first after a start
+  limit), never `podman start`; a stopped Quadlet unit's missing container is reported as
+  "not running: unit X is inactive", not as a container that must be recreated. Containers may be
+  listed by service name (`stigman`, or `stigman.service`).
+- **The fix to approve is made right**: ACT's `podman start/restart/run` of a unit-run container
+  becomes the `systemctl` command; down containers ACT's fix does not cover get the standard fix;
+  ACT proposing nothing (or not running: no key, no network) proposes the standard fix, labelled as
+  such; commands in dependency order. Handed to the apply job as `service_watch_fix` (set_stats).
+- **The apply job runs exactly the approved commands itself**, in order, stopping at the first that
+  fails, then re-checks - no model, no key, no rewording between approval and fix. It no longer
+  needs the ACT credential. Results from an older check job (`act_triage`) still work.
+- **Self-heal**: still down after ACT, the playbook runs the standard fix itself and re-checks.
+- ACT is told how each container is run and the only right way to start it, and to read
+  `systemctl status` / `journalctl -u` for unit-run containers.
+- `playbooks/group_vars/stigman.yml` (shipped copy): the STIG Manager stack's five services, and no
+  longer says `target: stigman` is needed. Your copy is yours: edit it the same way.
+- Docs: SERVICE_WATCH_DEMO updated; PDFs rebuilt.
+
 ## 0.3.3 — 2026-09-28
 
 - **No `target` needed for the usual runs.** With an empty Variables box, Health check,

@@ -57,7 +57,9 @@ hosts.
        'Health triage on host stigman01. These health checks failed:
         - container nginx is exited (exit code 0, stopped at 2026-09-25T09:06:02) ...'
    ```
-   In self-heal mode it also gets `--allow='podman (start|restart)( (stigman|nginx))+'`.
+   In self-heal mode it may also start or restart the watched containers, and only the right way:
+   `--allow='systemctl (start|restart|reset-failed) (stigman)(\.service)?'` for a container a
+   systemd unit runs, `--allow='podman (start|restart)( (nginx))+'` for a plain one.
 5. ACT asks GenAI what to look at and runs **read-only** commands: `podman ps -a`,
    `podman inspect nginx`, `podman logs --tail 80 nginx`, `journalctl -t podman ...`. It works out
    whether the container crashed, was stopped on purpose, or failed for another reason.
@@ -68,8 +70,9 @@ hosts.
 ### What ACT can and cannot do
 
 - Read-only commands (state, logs, disk space, open ports): yes, on its own.
-- Approval mode: no changes at all. It only proposes, e.g. `podman start nginx`.
-- Self-heal mode: `podman start` or `podman restart` of `stigman` / `nginx`, nothing else.
+- Approval mode: no changes at all. It only proposes, e.g. `systemctl start stigman.service`.
+- Self-heal mode: start or restart of the watched containers, nothing else: `systemctl start`
+  of the unit for a container a systemd unit runs, `podman start` for a plain one.
 - Destructive commands (deleting, formatting, rebooting, changing users, firewall, SELinux): never
   on its own, whatever it is allowed.
 - Everything ACT runs is listed in the job output and in the incident record.
@@ -106,10 +109,17 @@ same problem.
 
 ### Check the container names (same host)
 
-1. `sudo podman ps -a --format '{{.Names}}'` must list `stigman` and `nginx`.
-2. `sudo podman inspect nginx | grep PODMAN_SYSTEMD_UNIT` (and the same for `stigman`). If it
-   prints a unit name, systemd manages that container: add `unit:` to it in Part 5, step 4, and
-   stop it with `sudo systemctl stop <unit>` in the test instead of `podman stop`.
+1. `sudo podman ps -a --format '{{.Names}}'` lists the containers, and
+   `systemctl list-units --type=service | grep -i -E 'stig|nginx|keycloak|mysql'` the services.
+2. You list them in Part 5, step 4, by container name or by service name (`stigman` for
+   `stigman.service`). **The watch finds out by itself how each one is run**: the container's
+   `PODMAN_SYSTEMD_UNIT` label, a Quadlet file in `/etc/containers/systemd/` (`stigman.container`),
+   or a unit `NAME.service` / `container-NAME.service` that runs podman. A container a unit runs
+   is started with `systemctl start <unit>`, never `podman start`: while the unit is stopped,
+   Quadlet has usually removed the container, so there is nothing for podman to start. The job
+   output shows what it found (task `Check | how the containers are run`).
+3. In the test, stop a container the way it really stops: `sudo systemctl stop stigman.service`
+   for a unit, `sudo podman stop nginx` for a plain container.
 
 ## Part 3. The playbooks
 
@@ -134,19 +144,26 @@ What it does, in order:
 3. One down: records it, runs ACT (Part 2), checks again.
 4. Approval mode: ACT's report is printed (task `Watch | ACT's report`), the record says
    `awaiting_approval`, and the job **fails on purpose** with
-   `NEEDS APPROVAL ... ACT proposes: podman start nginx`. That failure is what sends the workflow
-   to the approval step.
+   `NEEDS APPROVAL ... Fix to approve (ACT): systemctl start stigman.service`. That failure is
+   what sends the workflow to the approval step. The fix is made right before it is shown: a
+   `podman start` ACT proposes for a container a unit runs becomes `systemctl start <unit>`;
+   a down container ACT's fix does not cover gets the standard fix added; and when ACT proposes
+   nothing (or cannot run: no key, no network), the standard fix is proposed, labelled
+   `the standard fix (ACT proposed nothing)`. The commands are in dependency order.
 5. Self-heal mode: if ACT's start worked and the re-check confirms it, the record says
-   `self_healed` and the job ends **green**.
+   `self_healed` and the job ends **green**. Still down after ACT: the playbook runs the standard
+   fix itself (`systemctl start <unit>` / `podman start <name>`) and checks again.
 6. Still down and nothing to propose: fails with `STILL DOWN: ...` (a person must look).
 
 **Job 2, `playbooks/service_fix_approved.yml`** (same shape, `tasks_from: apply.yml`):
 
-1. Receives Job 1's result from AAP, including the exact proposed command. It refuses to run
-   without it, so launching it on its own changes nothing.
+1. Receives Job 1's result from AAP (`service_watch_fix`): the exact commands that were shown
+   for approval. It refuses to run without it, so launching it on its own changes nothing.
 2. If the container already came back, it changes nothing.
-3. Otherwise it runs ACT allowed to run **only the approved command**, then checks again.
-4. Up: green. Still down: red.
+3. Otherwise it runs **exactly the approved commands itself**, in order, and stops at the first
+   one that fails. No model, no key: nothing can be reworded between approval and fix. Each
+   command's output and exit code is in the job output (task `Fix | output`).
+4. Checks again. Up: green. Still down: red.
 
 **Where incidents are recorded** (one line per event):
 
@@ -239,7 +256,9 @@ job output, Git or the inventory.
 **Automation Execution → Templates → Create template → Create job template**, twice.
 Both use: **Job type** Run, **Inventory** `Linux servers`, **Project** `site-automation`,
 **Execution environment** `ee-minimal`, **Limit** empty with **Prompt on launch**
-ticked, **Credentials** `Linux ssh (sudo)` and `ACT model key`.
+ticked, **Credentials** `Linux ssh (sudo)`, plus `ACT model key` on *Service watch - check* (the
+apply job does not call the model). Do not tick **Prompt on launch** for **Variables** on the apply
+template: it runs the commands it is handed.
 
 | Name | Playbook |
 |---|---|
@@ -323,15 +342,20 @@ open the workflow template → **User Access** (or **Team Access**) → **Add ro
 6. See the record on the host: `sudo tail -n 4 /var/log/service-watch/incidents.jsonl` (or
    `sudo journalctl -t service-watch -n 4`).
 7. Repeat with `sudo podman stop stigman`. ACT should report that stigman stopped (it may also
-   note that nginx can no longer reach it) and propose `podman start stigman`.
+   note that nginx can no longer reach it) and propose `systemctl start stigman.service` (or
+   `podman start stigman`, if no unit runs it).
 8. Optional: stop one again and run the workflow with `self-heal`. The check box goes green on its
    own; the record says `self_healed`.
 
-Tested so far: all of these steps against rootless test containers named `stigman` and `nginx`,
-with a scripted stand-in for GenAI. This test is the first run with the real GenAI and your AAP.
+Tested so far (0.3.4): every step on a RHEL 9 test machine running systemd and rootful podman,
+with Quadlet units (with `ContainerName=`, and the default name `systemd-NAME`), a hand-written
+unit that runs `podman run`, a plain container, and an `nginx.service` that is not the container
+(correctly ignored); ACT was a scripted stand-in. Not tested yet: your STIG Manager host, the real
+GenAI / Ask Sage, and AAP handing the check job's result through the approval step. This test is
+the first run with those.
 In step 5, the apply job's task `Apply | what was approved for this host` must list the
-command. If the apply job instead says `Nothing to apply: no ACT results reached this job`, see
-Part 9.
+command. If the apply job instead says `Nothing to apply: no results from the check job reached
+this job`, see Part 9.
 
 ## Part 9. If something goes wrong
 
@@ -343,5 +367,6 @@ Part 9.
 | No approval step appears | the link from the check box must be **Run on fail** |
 | Check job says `STILL DOWN` | nothing to approve: deny, fix it by hand |
 | `container nginx does not exist` | the name is different: fix `watch_containers` (Part 5, step 4) |
-| The container comes back by itself before the check runs | systemd restarts it: stop it with `sudo systemctl stop <unit>` and add `unit:` |
-| Apply job: `Nothing to apply: no ACT results reached this job` | launched on its own (use the workflow), or Job 1 failed before ACT ran (read its output). If Job 1 did say `NEEDS APPROVAL`, AAP did not pass its result along: start the container by hand for now and report it |
+| The container comes back by itself before the check runs | systemd restarts it: stop it with `sudo systemctl stop <unit>` |
+| `Check \| how the containers are run` names the wrong unit, or none | set it by hand: `unit: stigman.service` under that container in `watch_containers` |
+| Apply job: `Nothing to apply: no results from the check job reached this job` | launched on its own (use the workflow), or Job 1 failed before ACT ran (read its output). If Job 1 did say `NEEDS APPROVAL`, AAP did not pass its result along: start the container by hand for now and report it |

@@ -1,0 +1,31 @@
+---
+# Run fix commands on the host, in order, and stop at the first one that fails. No model is
+# involved: these are the approved commands (apply job) or the standard fix (self-heal).
+# Input: _watch_run_cmds (list of commands). Output: _watch_ran (the shell result) and
+# _watch_fixes_run (the commands that ran). Skipped in check mode (a dry run changes nothing).
+
+- name: Fix | run {{ _watch_run_cmds | join(' ; ') }}
+  ansible.builtin.shell:
+    cmd: |
+      set -u
+      {% for c in _watch_run_cmds %}
+      printf '### $ %s\n' {{ c | quote }}
+      bash -c {{ c | quote }} 2>&1
+      rc=$?
+      printf '### exit %s\n' "$rc"
+      [ "$rc" -eq 0 ] || exit "$rc"
+      {% endfor %}
+    executable: /bin/bash
+  register: _watch_ran
+  failed_when: false
+
+- name: Fix | what ran
+  ansible.builtin.set_fact:
+    _watch_fixes_run: >-
+      {{ (_watch_fixes_run | default([]))
+         + (_watch_ran.stdout_lines | default([]) | select('match', '^### [$] ')
+            | map('regex_replace', '^### [$] ', '') | list) }}
+
+- name: Fix | output (exit code {{ _watch_ran.rc | default('-') }})
+  ansible.builtin.debug:
+    msg: "{{ _watch_ran.stdout_lines | default(['(not run: check mode)']) }}"
