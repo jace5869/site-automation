@@ -28,7 +28,7 @@ Fedora host with SELinux enforcing and auditd.
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | workflow step: one incident per finding, updated (not duplicated) on later runs, noted or resolved when it clears |
 | ServiceNow health | `playbooks/servicenow_health.yml` | the instance answers its API; MID Servers up and validated |
 | Patch hosts | `playbooks/patch_hosts.yml` | dnf update one host at a time, reboot only if needed and allowed, every service back afterwards; never patches AAP or vendor appliances |
-| Apply approved ACT fix | `playbooks/act_fix_approved.yml` | after an approval: ACT runs exactly the approved commands, then the checks run again |
+| Apply approved ACT fix | `playbooks/act_fix_approved.yml` | after an approval: runs exactly the approved commands (no model), then the checks run again; as *Check* a dry run |
 | Service watch (+ apply) | `playbooks/service_watch.yml`, `service_fix_approved.yml` | watch the stigman/nginx containers; ACT root cause; approval or self-heal ([docs/SERVICE_WATCH_DEMO.md](docs/SERVICE_WATCH_DEMO.md)) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | MySQL 8.4 + STIG Manager + nginx (TLS) on podman/Quadlet |
 

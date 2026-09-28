@@ -4,6 +4,7 @@
 # shown for approval, per host; set_stats in watch.yml) - or, from an older check job, ACT's
 # `act_triage` proposals. For each host it runs EXACTLY those commands, in order, stopping at the
 # first that fails - no model, no key, no guessing - and then re-checks the containers itself.
+# Run as Check (dry run), it shows what it would run and changes nothing.
 
 - name: Apply | the check job's results reached this job
   ansible.builtin.assert:
@@ -42,6 +43,21 @@
       {{ 'recovered_before_fix' if service_watch.healthy
          else 'manual_action_needed' if _watch_approved | length == 0
          else 'fix_approved' }}
+
+# DRY RUN: the job runs as Check (Job type "Check", e.g. on the workflow's node) - show what
+# would run and change nothing. A rehearsal of the whole approve-and-fix path.
+- name: Apply | DRY RUN (Check mode) - what would run, nothing is changed
+  ansible.builtin.debug:
+    msg: >-
+      DRY RUN on {{ inventory_hostname }}:
+      {{ ('approved, and would run: ' ~ (_watch_approved | join(' ; '))) if service_watch_outcome == 'fix_approved'
+         else 'already up again, would run nothing' if service_watch_outcome == 'recovered_before_fix'
+         else 'nothing was approved that could run' }}. Nothing was changed (Check mode).
+  when: ansible_check_mode
+
+- name: Apply | stop here in a dry run
+  ansible.builtin.meta: end_host
+  when: ansible_check_mode
 
 - name: Apply | record
   ansible.builtin.include_tasks: record.yml

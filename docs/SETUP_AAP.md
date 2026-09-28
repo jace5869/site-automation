@@ -319,7 +319,9 @@ Only inside the approval workflow ([ADDING_ACT.md](ADDING_ACT.md)). Create it wh
 | Field | Value |
 |---|---|
 | Playbook | `playbooks/act_fix_approved.yml` |
-| Credentials | `Linux ssh (sudo)`, `ACT model key` |
+| Credentials | `Linux ssh (sudo)` (no ACT key: it runs the approved commands itself) |
+| Job type | Run, with **Prompt on launch** ticked, so a workflow can run it as *Check* (a dry run that only shows what it would run) |
+| Variables | leave **Prompt on launch** unticked |
 | Survey | none |
 
 ### Try each one

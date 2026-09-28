@@ -6,11 +6,16 @@
 #     -> THIS job
 #
 # AAP hands this job the first job's results: `act_triage` (the fixes ACT proposed, per host)
-# and `site_health` (the findings and which checks found them). For each host, ACT may run
-# EXACTLY the proposed commands - nothing else - and verify them. Then the same checks run again,
-# independently of ACT, and the job fails if the problem is still there.
+# and `site_health` (the findings and which checks found them). For each host, the playbook runs
+# EXACTLY the approved commands itself, in order, and stops at the first one that fails - no
+# model and no key involved, so nothing can be reworded between approval and fix. Then the same
+# checks run again and the job fails if the problem is still there.
+#
+# DRY RUN: run this job as Check (Job type "Check", e.g. on the workflow's node): it shows what
+# it would run for each host and changes nothing. A rehearsal of the whole approve-and-fix path.
 #
 # It refuses to run on its own: outside the workflow there is nothing approved to apply.
+# Do not tick "Prompt on launch" for Variables on its job template.
 - name: Apply the fixes a person approved
   hosts: "{{ target | default('all') }}"
   become: true
@@ -46,42 +51,34 @@
       ansible.builtin.meta: end_host
       when: group_names | intersect(_no_apply) | length > 0
 
-  tasks:
-    - name: ACT provider, model and key (site_act_provider ... - the same settings as the check job)
-      ansible.builtin.include_role:
-        name: site_act
-        tasks_from: env.yml
-
-    - name: No API key for the provider - nothing can be applied
-      ansible.builtin.fail:
-        msg: "This job has no API key for ACT provider {{ _site_act_env_all.ACT_PROVIDER }}. Attach {{ _site_act_key_hint }}."
-      when: not (_site_act_key_ok | bool)
-
-    - name: ACT runs exactly the approved fix and verifies it
-      ansible.builtin.include_role:
-        name: act_triage
-      vars:
-        act_triage_builtin_checks: false
-        act_triage_always: true
-        act_triage_findings_extra: >-
-          {{ ((site_health | default({})).get(inventory_hostname) or {}).get('findings', []) | map(attribute='summary') | list }}
-        act_triage_allow: "{{ _approved | map('regex_escape') | list }}"
-        act_triage_extra_instructions: >-
-          A person APPROVED exactly these fixes for this host: {{ _approved | join(' ; ') }}.
-          First confirm the problem is still there. If it is, run the approved command(s) exactly as
-          written, then verify the result with read-only commands. Make no other change.
-        act_triage_env: "{{ _site_act_env_all }}"
-        act_triage_timeout: "{{ site_act_timeout | default(600) }}"
-        act_triage_fail_in_role: false
-        act_triage_write_report: false
-
-    - name: What ACT did
+    - name: DRY RUN (Check mode) - what would run, nothing is changed
       ansible.builtin.debug:
-        msg: >-
-          {{ ['ACT ' ~ act_triage_result.status]
-             + (act_triage_result.summary or act_triage_result.stop_reason or '').splitlines()
-             + ['RAN: ' ~ (act_triage_result.commands | selectattr('approval', 'equalto', 'pre_approved')
-                           | map(attribute='command') | join(' ; ') or 'nothing')] }}
+        msg: "DRY RUN on {{ inventory_hostname }}: approved, and would run: {{ _approved | join(' ; ') }}. Nothing was changed (Check mode)."
+      when: ansible_check_mode
+
+    - name: Stop here in a dry run
+      ansible.builtin.meta: end_host
+      when: ansible_check_mode
+
+  tasks:
+    - name: Run exactly the approved fix, in order (stops at the first command that fails)
+      ansible.builtin.shell:
+        cmd: |
+          set -u
+          {% for c in _approved %}
+          printf '### $ %s\n' {{ c | quote }}
+          bash -c {{ c | quote }} 2>&1
+          rc=$?
+          printf '### exit %s\n' "$rc"
+          [ "$rc" -eq 0 ] || exit "$rc"
+          {% endfor %}
+        executable: /bin/bash
+      register: _fix_ran
+      failed_when: false
+
+    - name: Output of the approved fix (exit code {{ _fix_ran.rc | default('-') }})
+      ansible.builtin.debug:
+        msg: "{{ _fix_ran.stdout_lines | default([]) + (['A command FAILED: the ones after it did not run.'] if (_fix_ran.rc | default(0) | int) != 0 else []) }}"
 
     # Verification that does not depend on the model: run the same checks again.
     - name: Start the re-check
