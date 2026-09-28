@@ -117,7 +117,7 @@ same problem.
 
 ```yaml
 - name: Service watch
-  hosts: "{{ target | default('stigman_hosts') }}"
+  hosts: "{{ target | default('stigman') }}"
   become: true
   gather_facts: false
   tasks:
@@ -222,7 +222,7 @@ job output, Git or the inventory.
 
 1. **Automation Execution → Infrastructure → Inventories → Create inventory → Create inventory**.
    **Name** `Linux servers`. Click **Create inventory**.
-2. **Groups** tab → **Create group** → **Name** `stigman_hosts`. In **Variables** paste:
+2. **Groups** tab → **Create group** → **Name** `stigman`. In **Variables** paste:
    ```yaml
    watch_containers:
      - name: stigman
@@ -231,14 +231,14 @@ job output, Git or the inventory.
    Optional per container: `url:` to also check a page (for example `url: https://127.0.0.1/`
    under nginx), and `unit:` if systemd manages it (Part 2, "Check the container names").
    List them dependencies first: stigman before nginx.
-3. **Hosts** tab → **Create host** → the STIG Manager host's name. Then open the `stigman_hosts`
+3. **Hosts** tab → **Create host** → the STIG Manager host's name. Then open the `stigman`
    group → **Hosts** tab → **Add existing host** → select it.
 
 ### Step 5. Job templates
 
 **Automation Execution → Templates → Create template → Create job template**, twice.
 Both use: **Job type** Run, **Inventory** `Linux servers`, **Project** `site-automation`,
-**Execution environment** `ee-minimal`, **Limit** `stigman_hosts` with **Prompt on launch**
+**Execution environment** `ee-minimal`, **Limit** empty with **Prompt on launch**
 ticked, **Credentials** `Linux ssh (sudo)` and `ACT model key`.
 
 | Name | Playbook |
@@ -250,7 +250,7 @@ ticked, **Credentials** `Linux ssh (sudo)` and `ACT model key`.
 
 1. **Automation Execution → Templates → Create template → Create workflow job template**.
 2. **Name** `Service watch - approve or self-heal`; **Inventory** `Linux servers`; **Limit**
-   `stigman_hosts` with **Prompt on launch** ticked. Leave **Variables** empty.
+   empty with **Prompt on launch** ticked. Leave **Variables** empty.
 3. Click **Create workflow job template**. The workflow visualizer opens.
 4. Click **Add step** → **Node type** *Job Template* → **Service watch - check** → **Finish**.
 5. Hover over that box → **Add step and link** → **Node type** *Approval*:

@@ -8,7 +8,7 @@
 # It changes nothing on the host (the only write is the small disk-history file), and every
 # check also works in Check mode (a dry run).
 #
-#   ansible-playbook playbooks/health_check.yml                          # the daily set, rhel_all
+#   ansible-playbook playbooks/health_check.yml                          # the daily set, every host
 #   ansible-playbook playbooks/health_check.yml -e target=snowdb01.example.mil -e health_checks=mariadb
 #   ansible-playbook playbooks/health_check.yml -e '{"health_checks": ["disk", "services"]}'
 #
@@ -35,7 +35,7 @@
 # Add ACT (optional, later): -e use_act=true. ACT (GenAI) then looks at each host that has
 # findings, gives the root cause, and proposes fixes for approval. See docs/ADDING_ACT.md.
 - name: Health check
-  hosts: "{{ target | default('rhel_all') }}"
+  hosts: "{{ target | default('all') }}"
   become: true
   gather_facts: false
   vars:

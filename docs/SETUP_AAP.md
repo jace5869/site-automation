@@ -142,7 +142,7 @@ hand.
    - Tick **Overwrite**, **Overwrite variables** and **Update on launch**.
 3. Click **Create source**, then **Launch inventory update**. The rocket icon also starts it.
 
-**You should see**, under **Groups**, `rhel_all`, `mariadb_hosts`, `patch_hosts`... Under
+**You should see**, under **Groups**, `stigman`, `mariadb_hosts`, `patch_hosts`... Under
 **Hosts** you should see your servers. Open a group: its **Variables** are the ones from
 `group_vars/<group>.yml`.
 

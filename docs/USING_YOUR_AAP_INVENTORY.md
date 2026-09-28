@@ -8,7 +8,8 @@ paste are below.
 
 The runbooks need two things from your inventory:
 
-1. **Groups with the names they look for**: `rhel_all`, `aap_hosts`, `patch_hosts`... (steps 1-2).
+1. **Groups**: which hosts are which (steps 1-2). The safety lists in
+   `playbooks/group_vars/all.yml` already use your group names (`aap`, `sat`, `netapp`...).
 2. **Settings (variables)**: your LDAP server, your SIEM, the account AAP logs in as, the
    ServiceNow assignment group... (steps 3-5).
 
@@ -55,14 +56,27 @@ check_mariadb_container: snow-mariadb
 with the settings for it. The same name as the AAP group, `.yml` at the end.
 
 **One thing the files cannot do: choose which hosts a template runs on.** That is decided
-before any setting is read. So put one line in the **Variables** box of these job templates in AAP:
+before any setting is read. Each playbook therefore has a built-in choice, and the job
+template's own **Variables** box (the *Extra variables* on its Details page, not the inventory's)
+can change it with one `target:` line:
 
-| Job templates | Variables box |
-|---|---|
-| Health check, Troubleshoot, Certificate report, Apply approved ACT fix, Patch hosts | `target: "rhel8_all:rhel9_all"` (both RHEL groups; network devices are never touched) |
-| Service watch, Service watch - apply approved fix, STIG Manager - deploy | `target: stigman` |
+| Job templates | Variables box empty: runs on | To run on something else |
+|---|---|---|
+| Health check, Troubleshoot, Certificate report, Apply approved ACT fix | **every host** in the template's inventory (the built-in group `all`) | one run: the **Limit** at launch (tick **Prompt on launch** next to Limit). Always: `target: "rhel8_all:rhel9_all"` |
+| Service watch, Service watch - apply approved fix, STIG Manager - deploy | the group `stigman` | `target: <group>` |
+| Patch hosts | the group `patch_hosts` only (no such group: it patches nothing) | **always set it**, for example `target: "rhel8_all:rhel9_all"`, and pick the hosts with the Limit at launch |
 
-For Patch hosts, narrow it further with the **Limit** at launch, for example one site's group.
+`target` and the Limit take group names, host names, or several joined with `:`.
+`stigman:mariadb` means either group, `rhel9_all:&sn_prod` only hosts in both, and
+`rhel9_all:!sn_dev` all of `rhel9_all` except `sn_dev`. Put a space after `target:`, quote
+a value that has a `:` in it, and use the group name exactly as the inventory's **Groups** tab
+shows it (`rhel9_all`, not `rhel9`).
+
+**Is every host in this inventory a Linux server?** If some are not (firewalls, switches,
+appliances), an empty Variables box tries them too: they show as failed, and in a workflow that
+opens ServiceNow tickets each of them gets a ticket (a host that never reports is ticketed), on
+every run. Then put `target: "rhel8_all:rhel9_all"` on those templates **before** you schedule
+anything.
 
 **These files are yours.** The update script adds a settings file you do not have yet, and never
 changes one you already have. A new release can therefore never overwrite your settings.
@@ -113,13 +127,12 @@ A host can be in many groups. Creating these groups leaves your existing groups 
 
 | Create group | Put in it | Why | Needed? |
 |---|---|---|---|
-| `rhel_all` | every Linux server (add your existing groups as its children) | Health check, Troubleshoot, Certificate report and Apply approved ACT fix run here unless you give a Limit | **yes** (or see "Keep your own names" below) |
 | `aap_hosts` | the AAP server(s) | **safety**: ACT never fixes anything here by itself, and patching never reboots it | **yes** |
 | `netapp_console_hosts` | the NetApp Console host | **safety**: ACT only diagnoses here (vendor-managed) | **yes**, if you have one |
 | `no_patch` | the groups `aap_hosts` and `netapp_console_hosts` (as children) | **safety**: *Patch hosts* skips these even when a job targets them | **yes** |
 | `patch_hosts` | the servers monthly patching may touch | *Patch hosts* only patches these | only for patching |
 | `mariadb_hosts` | the ServiceNow database host(s) | the MariaDB check runs only here | only for the MariaDB check |
-| `stigman_hosts` | the STIG Manager host(s) | service watch and STIG Manager deploy run here | only for those |
+| `stigman` | the STIG Manager host(s) | service watch and STIG Manager deploy run here | only for those |
 
 **The clicks:**
 
@@ -138,8 +151,9 @@ patch_never_reboot_groups: [aap]               # patching never reboots these
 patch_never_patch_groups: [aap, netapp]        # patching skips these
 ```
 
-For the default target, put `target: linux_servers` (your all-Linux group) in the **Variables** of
-the Health check, Troubleshoot, Certificate report and Apply approved ACT fix templates.
+The checks run on every host of the inventory. To keep them to your Linux servers, put
+`target: linux_servers` (your all-Linux group) in the **Variables** of the Health check,
+Troubleshoot, Certificate report and Apply approved ACT fix templates.
 
 ## Step 3. Settings for every host (inventory variables)
 
@@ -165,10 +179,11 @@ check_fapolicyd_required: true                             # false if some hosts
 servicenow_assignment_group: Linux Operations              # CHANGE: a group that exists in ServiceNow
 servicenow_min_severity: warning                           # or critical: tickets for critical only
 
-# ---- ACT (only used when you turn ACT on; docs/ADDING_ACT.md) ----
-site_act_provider: genai                                   # genai | asksage | genai-beta
-site_act_model: ""                                         # empty = the provider's default model
 ```
+
+The ACT provider and models are **not** set here: they are already in
+`playbooks/group_vars/all.yml`, and that file beats this box, so a value here would be ignored.
+Change them in the file ([ADDING_ACT.md](ADDING_ACT.md), step 2).
 
 Not sure about a value yet? Leave the line out. The check then uses its default, or checks
 nothing for it (no `check_network_tcp` means no TCP checks).
@@ -185,7 +200,7 @@ check_disk_overrides:
   /var: {warn: 80, crit: 90}           # AAP keeps job output and container images under /var
 ```
 
-**The STIG Manager host(s)**, for example on `stigman_hosts`:
+**The STIG Manager host(s)**, on `stigman`:
 
 ```yaml
 check_certs_endpoints:                  # the certificate browsers actually see
@@ -249,8 +264,9 @@ between them. Everything else (project, playbook, credentials, survey) is as in
 2. In **`Report | result for this host`**, look for your own values. A network finding names
    *your* LDAP server; an accounts finding names *your* service account. If a value is not
    there, the variable did not reach the host: check its spelling, and which group or host it is on.
-3. `skipping: no hosts matched` means the Limit, or the default group (`rhel_all`), matches no
-   host. Create `rhel_all` (step 2), or set `target` (see "Keep your own names" in step 2).
+3. `skipping: no hosts matched` (a green job that did nothing) means the Limit or `target`
+   names a group or host this inventory does not have. Check the spelling against the
+   inventory's **Groups** tab, and that the template uses the right **Inventory**.
 4. `skipped: <host> is not in mariadb_hosts` means the MariaDB check needs that host in
    `mariadb_hosts`.
 5. Findings you do not care about: change the setting for that group or host (steps 4-5), not

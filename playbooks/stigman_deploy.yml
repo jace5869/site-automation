@@ -5,9 +5,9 @@
 # AAP job template credentials: Machine (ssh + sudo), "STIG Manager database", "TLS certificate",
 # and optionally "Container registry login (hosts)". Nothing secret goes in variables.
 #
-#   ansible-playbook playbooks/stigman_deploy.yml -l stigman_hosts
+#   ansible-playbook playbooks/stigman_deploy.yml -l stigman01.example.mil
 - name: STIG Manager stack
-  hosts: "{{ target | default('stigman_hosts') }}"
+  hosts: "{{ target | default('stigman') }}"
   become: true
   gather_facts: true
   gather_subset: [min]

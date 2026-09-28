@@ -29,15 +29,15 @@ runbook that changes servers, and it waits for an approval first.
 ## The ideas behind Ansible, in plain words
 
 - **Host**: a server Ansible connects to, over SSH, the way you would.
-- **Inventory**: the list of hosts, sorted into **groups** such as `rhel_all` (every Linux
-  server) or `mariadb_hosts`. A group can also carry **settings (variables)**, for example "on
+- **Inventory**: the list of hosts, sorted into **groups** such as `stigman` (the STIG Manager
+  servers) or `mariadb`. The built-in group `all` holds every host. A group can also carry **settings (variables)**, for example "on
   the database hosts, the MariaDB container is called servicenow-mariadb".
 - **Task**: one step, such as "run `df` and read the result". A **module** is the tool a task
   uses (`command`, `shell`, `uri`, `set_fact`...).
 - **Role**: a folder of tasks that does one job, plus its settings. `roles/check_disk/` is
   "check the disks". Its settings, with their defaults, are in `roles/check_disk/defaults/main.yml`.
 - **Playbook**: the file you run. It says which hosts, and which roles or tasks to run on them.
-  `playbooks/health_check.yml` says "on `rhel_all`, run the checks I was given".
+  `playbooks/health_check.yml` says "on every host, run the checks I was given".
 - **become**: run as root through sudo. The checks need it to read root-only information (the
   audit log, /etc/shadow).
 - **Check mode**: a dry run. Ansible shows what it would change and changes nothing. Every

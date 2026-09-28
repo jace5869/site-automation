@@ -12,7 +12,7 @@
 #   ansible-playbook playbooks/service_watch.yml -l stigman01.example.mil
 #   ansible-playbook playbooks/service_watch.yml -e watch_mode=self-heal
 - name: Service watch
-  hosts: "{{ target | default('stigman_hosts') }}"
+  hosts: "{{ target | default('stigman') }}"
   become: true
   gather_facts: false
   tasks:

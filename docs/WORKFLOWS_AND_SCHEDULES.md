@@ -100,7 +100,7 @@ the artifacts overwrite each other.
 - **Always check after.** The post-check runs whatever happened in patching, so a half-patched
   host is still reported.
 
-**Launch** with **Limit** `patch_hosts`, or one group at a time (`stigman_hosts` this week,
+**Launch** with **Limit** `patch_hosts`, or one group at a time (`stigman` this week,
 `servicenow_mid_hosts` next week). **Schedule:** monthly, in your maintenance window, for
 example the second Wednesday at 20:00. The approval then waits for the on-call person.
 

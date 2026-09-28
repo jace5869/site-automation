@@ -77,8 +77,8 @@ The four settings:
 
 **Where to set them:**
 
-- **For everyone**: `playbooks/group_vars/all.yml` (already set up like this; or the inventory's
-  Variables box in AAP):
+- **For everyone**: `playbooks/group_vars/all.yml`, already set up like this. Not the inventory's
+  Variables box in AAP: this file beats it, so a value there would be ignored.
   ```yaml
   site_act_provider: genai                 # the default provider
   site_act_models:                         # the model follows the provider you pick
@@ -88,7 +88,14 @@ The four settings:
     asksage: https://<your ask sage host>/server/openai/v1/chat/completions
   ```
   To make Ask Sage the default, change the first line to `site_act_provider: asksage`.
-- **Per launch**: the survey questions in step 3 (a survey answer beats the inventory).
+- **For one group**: the group's settings file (`playbooks/group_vars/<group>.yml`), or the
+  group's **Variables** box in AAP. For example `site_act_provider: asksage` there, and only that
+  group's hosts use Ask Sage (with its model from `site_act_models`).
+- **For one template**: its **Variables** box (*Extra variables*), for example
+  `site_act_provider: asksage`. It beats everything above, for every run of that template.
+- **Per launch**: the survey questions in step 3 (a survey answer beats everything too).
+
+The API **key** is never a variable: it comes from the *ACT model key* credential on the template.
 
 These settings apply to every runbook that uses ACT, including *Service watch* and *Apply approved
 ACT fix*. If the key for the chosen provider is missing, ACT does not run: the job says

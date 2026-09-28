@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.3 — 2026-09-28
+
+- **No `target` needed for the usual runs.** With an empty Variables box, Health check,
+  Troubleshoot, Certificate report and Apply approved ACT fix run on **every host** of the
+  template's inventory (the built-in group `all`, was `rhel_all`), and Service watch, its apply
+  step and STIG Manager deploy on the group **`stigman`** (was `stigman_hosts`). Narrow a run with
+  the Limit; `target:` in a template's Variables still overrides. Patch hosts is unchanged: it only
+  patches the group `patch_hosts`, or the `target` you set, never everything by default.
+- The example inventory's STIG Manager group is now `stigman` too.
+- Docs: where the ACT provider and model go (the settings file `all.yml` beats the inventory's
+  Variables box; a group's box or file, or a template's Variables, override it); `target` and
+  Limit patterns (`a:b`, `a:&b`, `a:!b`); "no hosts matched" explained; PDFs rebuilt.
+
 ## 0.3.2 — 2026-09-28
 
 - **Your settings files**, `playbooks/group_vars/`: one per AAP group of the site inventory (`all`,
