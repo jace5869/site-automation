@@ -12,6 +12,65 @@ The runbooks need two things from your inventory:
 2. **Settings (variables)**: your LDAP server, your SIEM, the account AAP logs in as, the
    ServiceNow assignment group... (steps 3-5).
 
+## The easy way: your settings files, already named after your groups
+
+The repository has one settings file per AAP group, in `playbooks/group_vars/`. **The file name is
+the group name**: `mariadb.yml` applies to the hosts in AAP group `mariadb`, and `all.yml` to every
+host. Ansible reads these files by itself on every run, and the hosts and groups stay in AAP. The
+files are:
+
+| File | For AAP group | What is in it |
+|---|---|---|
+| `all.yml` | every host (and the ServiceNow / POA&M jobs) | safety lists (`aap`, `sat`, `idm`, `netapp`); ACT provider and models; placeholders for LDAP/log server, service account, ServiceNow assignment group |
+| `stigman.yml` | `stigman` | the containers service watch watches (`stigman`, `nginx`); the web certificate |
+| `mariadb.yml` | `mariadb` | placeholders: turn the check on, and the container's name |
+| `aap.yml`, `sat.yml`, `idm.yml`, `logstash.yml` | the same names | disk limits, certificates, services that must run |
+| `netapp.yml` | `netapp` | nothing yet (it is protected by `all.yml`) |
+| `rhel8_all.yml` | `rhel8_all` | a placeholder for Python 3.9 (only with a newer AAP) |
+
+**To change a setting:**
+
+1. Open the file in VS Code (for example `playbooks\group_vars\mariadb.yml`).
+2. A line that starts with `#` is **off**. To turn a placeholder on, delete the `# ` in front of it
+   (and in front of the lines that belong to it), and replace `CHANGE-ME` with your value. Keep the
+   indentation exactly as shown: spaces, never tabs.
+3. **Commit** and **Sync Changes**. AAP uses it on the next run: the project syncs itself when
+   **Update revision on launch** is ticked.
+
+Example: MariaDB runs in a container called `snow-mariadb`. In `mariadb.yml`, change
+
+```yaml
+# check_mariadb_enabled: true
+# check_mariadb_container: CHANGE-ME
+```
+
+into
+
+```yaml
+check_mariadb_enabled: true
+check_mariadb_container: snow-mariadb
+```
+
+**A group that has no file yet** (for example `sn_prod`): create `playbooks/group_vars/sn_prod.yml`
+with the settings for it. The same name as the AAP group, `.yml` at the end.
+
+**One thing the files cannot do: choose which hosts a template runs on.** That is decided
+before any setting is read. So put one line in the **Variables** box of these job templates in AAP:
+
+| Job templates | Variables box |
+|---|---|
+| Health check, Troubleshoot, Certificate report, Apply approved ACT fix, Patch hosts | `target: "rhel8_all:rhel9_all"` (both RHEL groups; network devices are never touched) |
+| Service watch, Service watch - apply approved fix, STIG Manager - deploy | `target: stigman` |
+
+For Patch hosts, narrow it further with the **Limit** at launch, for example one site's group.
+
+**These files are yours.** The update script adds a settings file you do not have yet, and never
+changes one you already have. A new release can therefore never overwrite your settings.
+
+**Or put the same lines in AAP instead.** Everything below explains the AAP Variables boxes, which
+take exactly the same lines. **Keep each setting in one place.** If the same setting is in both
+an AAP group and a file here, **the file here wins**.
+
 ## How variables work in AAP (two minutes)
 
 A variable is a setting with a name, such as `check_disk_warn_pct: 85`. Where you type it

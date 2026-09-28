@@ -1,0 +1,5 @@
+# YOUR SETTINGS FOR THE IDM SERVERS (AAP group idm). ACT never fixes anything here (all.yml).
+check_services_required_extra: [ipa]     # the IdM services, as one unit (systemctl status ipa)
+check_certs_endpoints:                   # IdM's certificates expiring breaks every login
+  - {name: IdM web UI, host: 127.0.0.1, port: 443}
+  - {name: IdM LDAPS, host: 127.0.0.1, port: 636}

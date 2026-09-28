@@ -10,7 +10,9 @@
 # ~/git/site-automation is your clone of the work repository, with nothing uncommitted. The
 # preview changes nothing. --apply makes your copy
 # match the release, except for your own files, which are never changed or deleted:
-#   poam/poam.csv, inventories/site/, .site-local, and every path listed in .site-local
+#   poam/poam.csv, playbooks/group_vars/ + host_vars/ (your settings), inventories/site/,
+#   .site-local, and every path listed in .site-local. A file of yours you do not have yet (a new
+#   settings file) is added once, then never changed again.
 # .site-local (in your copy) = one path per line for anything else that is yours, e.g.
 #   roles/check_tmp/
 #   playbooks/my_report.yml
@@ -36,7 +38,7 @@ case "$branch" in
   main|master) echo "Note: you are on '$branch'. That is fine: nothing reaches AAP until you push." ;;
 esac
 
-protect=(.git/ .site-local poam/poam.csv inventories/site/)
+protect=(.git/ .site-local poam/poam.csv inventories/site/ playbooks/group_vars/ playbooks/host_vars/)
 if [ -f .site-local ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     line=${line%%#*}; line=$(echo "$line" | xargs)
@@ -54,12 +56,25 @@ echo "Your clone:  $target (branch $branch)"
 echo "Yours, never changed: ${protect[*]:1}"
 echo
 
+# files of yours that the release ships and you do not have yet: added once, never changed after
+seed=()
+for p in "${protect[@]:1}"; do
+  p=${p%/}
+  if [ -d "$release/$p" ]; then
+    while IFS= read -r f; do [ -e "$f" ] || seed+=("$f"); done < <(cd "$release" && find "$p" -type f)
+  elif [ -f "$release/$p" ] && [ ! -e "$p" ]; then
+    seed+=("$p")
+  fi
+done
+
 if [ "$mode" = preview ]; then
   echo "PREVIEW - nothing is changed. What --apply would do:"
   rsync "${opts[@]}" --dry-run --itemize-changes "$release"/ ./ |
     awk '/^\*deleting/ {print "  DELETE   " $2; next}
          /^>f\+\+\+/   {print "  NEW      " $2; next}
          /^>f/         {print "  CHANGED  " $2; next}' | sort -k2
+  for f in "${seed[@]}"; do echo "  YOURS    $f"; done
+  [ ${#seed[@]} -eq 0 ] || echo "YOURS = settings files you do not have yet: added once, then yours - never changed again."
   echo
   echo "DELETE = files that are not in the release. If one of them is yours, add its path to"
   echo "$target/.site-local (and commit that) before you apply. CHANGED on one of our files that"
@@ -68,6 +83,7 @@ if [ "$mode" = preview ]; then
   echo "Looks right? Run the same command with --apply."
 else
   rsync "${opts[@]}" "$release"/ ./
+  for f in "${seed[@]}"; do mkdir -p "$(dirname "$f")"; cp -p "$release/$f" "$f"; done
   echo "Applied. Now review it with git:"
   echo
   git status --short | head -60

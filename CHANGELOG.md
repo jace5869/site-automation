@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.2 — 2026-09-28
+
+- **Your settings files**, `playbooks/group_vars/`: one per AAP group of the site inventory (`all`,
+  `stigman`, `mariadb`, `aap`, `sat`, `idm`, `logstash`, `netapp`, `rhel8_all`). Known values are
+  set (safety lists, ACT provider and models, certificates, services); unknown ones are
+  commented-out `CHANGE-ME` placeholders, so nothing fires until they are filled in. Ansible reads
+  them on every run; the hosts and groups stay in AAP. A value here wins over the same value in an
+  AAP group's Variables box.
+- **The update scripts treat them as yours**: a settings file you do not have yet is added once
+  (`YOURS` in the preview), one you have is never changed.
+- **ACT model per provider**: `site_act_models` (and `site_act_urls`), so the model follows the
+  provider you pick - defaults `genai: gemini-3.8-flash`, `asksage: gpt-5.6-sol-gov`.
+  `site_act_model` still overrides for one run.
+- Docs: USING_YOUR_AAP_INVENTORY starts with the settings files; HOW_IT_FITS_TOGETHER and
+  ADDING_ACT updated; PDFs rebuilt.
+
 ## 0.3.1 — 2026-09-27
 
 - **ACT provider in one setting**: `site_act_provider` (`genai` default, `asksage`, `genai-beta`),

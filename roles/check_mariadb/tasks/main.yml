@@ -7,5 +7,7 @@
 
 - name: MariaDB | not a database host
   ansible.builtin.debug:
-    msg: "skipped: {{ inventory_hostname }} is not in mariadb_hosts (set check_mariadb_enabled: true to check it anyway)"
+    msg: >-
+      skipped: the MariaDB check is off for {{ inventory_hostname }}. Turn it on for a group with
+      check_mariadb_enabled: true (for your mariadb group: playbooks/group_vars/mariadb.yml).
   when: not (check_mariadb_enabled | bool)

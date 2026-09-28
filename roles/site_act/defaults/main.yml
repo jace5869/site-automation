@@ -30,14 +30,23 @@ site_act_diagnose_only_groups: [aap_hosts, netapp_console_hosts]
 #   site_act_provider  genai       GenAI.mil (the default)
 #                      asksage     Ask Sage (set site_act_url to your organization's instance)
 #                      genai-beta  the GenAI.mil beta proxy (preview models)
-#   site_act_model     the model id at that provider; empty = ACT's default for the provider
-#   site_act_url       the provider's API URL; empty = ACT's default for the provider
+#   site_act_models    the model to use FOR EACH provider, e.g.
+#                        {genai: gemini-3.8-flash, asksage: gpt-5.6-sol-gov}
+#                      so the model follows whichever provider is picked. A provider not listed
+#                      uses ACT's own default model.
+#   site_act_urls      the API URL for each provider, e.g. {asksage: https://<host>/server/openai/v1/chat/completions};
+#                      a provider not listed uses ACT's default URL
+#   site_act_model     one model for this run, whatever the provider (e.g. a survey answer);
+#                      empty = site_act_models
+#   site_act_url       one URL for this run; empty = site_act_urls
 #   site_act_ca        a CA bundle file ON THE HOSTS for the provider's TLS certificate (internal/DoD
 #                      CA); empty = the host's system trust store
 # The API KEY never goes here: it comes from an AAP credential - "ACT model key" (GenAI and Ask
 # Sage keys) or "ACT GenAI beta key". ACT runs ON EACH HOST, so the hosts must be able to reach
 # the provider's URL (a proxy or firewall rule may be needed).
 site_act_provider: genai
+site_act_models: {}
+site_act_urls: {}
 site_act_model: ""
 site_act_url: ""
 site_act_ca: ""

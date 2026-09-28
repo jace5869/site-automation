@@ -1,0 +1,8 @@
+# YOUR SETTINGS FOR THE SATELLITE HOSTS (AAP group sat). ACT never fixes anything here, and
+# patching skips these hosts: Satellite is upgraded with satellite-maintain (all.yml).
+check_disk_overrides:
+  /var: {warn: 80, crit: 90}             # Satellite keeps its content (Pulp) under /var
+check_certs_endpoints:
+  - {name: Satellite web UI, host: 127.0.0.1, port: 443}
+# Services that must run. Check the names first: satellite-maintain service list
+# check_services_required_extra: [foreman, httpd, postgresql, pulpcore-api, pulpcore-content]

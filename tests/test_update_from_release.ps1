@@ -31,6 +31,9 @@ Set-Content -LiteralPath (Join-Path $work 'poam/poam.csv') -Value "POAM ID,Statu
 New-Item -ItemType Directory -Path (Join-Path $work 'roles/check_tmp/tasks') -Force | Out-Null
 Set-Content -LiteralPath (Join-Path $work 'roles/check_tmp/tasks/main.yml') -Value '- debug: msg=mine'
 Set-Content -LiteralPath (Join-Path $work '.site-local') -Value 'roles/check_tmp/   # our own check'
+# settings files: one the site edited, one it does not have yet
+Add-Content -LiteralPath (Join-Path $work 'playbooks/group_vars/all.yml') -Value 'site_test_marker: MY-SETTING'
+Remove-Item -LiteralPath (Join-Path $work 'playbooks/group_vars/netapp.yml')
 & git -C $work add -A 2>$null
 & git -C $work commit -q -m 'the site copy' 2>$null
 Set-Content -LiteralPath (Join-Path $work '.vault_pass') -Value 'local secret (git-ignored)'
@@ -44,6 +47,8 @@ Check ($out -match 'DELETE\s+docs/OLD_NOTES\.md') 'preview: file not in the rele
 Check (-not ($out -match '(NEW|CHANGED|DELETE)\s+poam/poam\.csv')) 'preview: poam.csv not listed'
 Check (-not ($out -match '(NEW|CHANGED|DELETE)\s+roles/check_tmp')) 'preview: own role (.site-local) not listed'
 Check (-not ($out -match '(NEW|CHANGED|DELETE)\s+\.vault_pass')) 'preview: git-ignored file not listed'
+Check ($out -match 'YOURS\s+playbooks/group_vars/netapp\.yml') 'preview: missing settings file is added once (YOURS)'
+Check (-not ($out -match '(NEW|CHANGED|DELETE|YOURS)\s+playbooks/group_vars/all\.yml')) 'preview: edited settings file not touched'
 Check ((Get-Content -LiteralPath (Join-Path $work 'README.md') -Raw) -match 'OLD-README-MARKER') 'preview changed nothing'
 
 # ---- apply ---------------------------------------------------------------------------------------
@@ -55,6 +60,8 @@ Check (-not (Test-Path -LiteralPath (Join-Path $work 'docs/OLD_NOTES.md'))) 'rem
 Check ((Get-Content -LiteralPath (Join-Path $work 'poam/poam.csv') -Raw) -match 'REAL-1') 'poam.csv kept'
 Check (Test-Path -LiteralPath (Join-Path $work 'roles/check_tmp/tasks/main.yml')) 'own role kept'
 Check (Test-Path -LiteralPath (Join-Path $work '.vault_pass')) 'git-ignored file kept'
+Check (Test-Path -LiteralPath (Join-Path $work 'playbooks/group_vars/netapp.yml')) 'missing settings file added'
+Check ((Get-Content -LiteralPath (Join-Path $work 'playbooks/group_vars/all.yml') -Raw) -match 'MY-SETTING') 'edited settings file kept'
 
 # ---- a second preview finds nothing, and a dirty copy is refused ----------------------------------
 & git -C $work add -A 2>$null

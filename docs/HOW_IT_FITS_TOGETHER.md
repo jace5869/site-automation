@@ -10,7 +10,7 @@ jobs**. Once you know which job a piece does, you know where to look, and what y
 | Piece | What it holds | Where it lives | Who changes it | Example |
 |---|---|---|---|---|
 | **Code** | *what to do*, step by step | Git (this repository), seen by AAP as the **project** | nobody, except to install a new release | `roles/check_disk/tasks/main.yml` |
-| **Settings** (variables) | *the numbers and names that are different at your site*, or for some hosts | the AAP **inventory**: its **Variables** boxes | you | `check_disk_warn_pct: 80` |
+| **Settings** (variables) | *the numbers and names that are different at your site*, or for some hosts | your settings files in `playbooks/group_vars/` (one per AAP group), or the AAP **inventory**'s **Variables** boxes | you | `check_disk_warn_pct: 80` |
 | **Secrets** | passwords, keys, tokens | AAP **credentials** | you, once | the ServiceNow API password |
 | **Choices for this run** | which hosts, which checks, dry run or real | the **launch** dialog: Limit, **survey** | whoever clicks Launch | `health_checks: weekly` |
 
@@ -24,10 +24,10 @@ When a job starts, AAP puts the four together **for each host**:
 
 The code then reads from that host's combined set of variables. That is the whole machine.
 
-**The one rule that keeps upgrades painless:** never edit a file that came with a release.
-The only exception is `poam/poam.csv`, which is your data. Everything you want different, you
-set in AAP: settings in the inventory, secrets in credentials, choices in surveys. A new release
-then replaces our files, and your settings are untouched.
+**The one rule that keeps upgrades painless:** never edit a file that came with a release,
+except **your** files: your settings in `playbooks/group_vars/` and your POA&M list
+`poam/poam.csv`. Everything else you want different goes in AAP: secrets in credentials, choices in
+surveys. A new release then replaces our files, and your settings are untouched.
 
 ## Reading YAML in two minutes
 
@@ -56,6 +56,7 @@ check_disk_overrides:                  # a table inside a table
 
 | Path | What it is | Edit it? |
 |---|---|---|
+| `playbooks/group_vars/*.yml` | **your settings**, one file per AAP group (`mariadb.yml` = group `mariadb`, `all.yml` = every host). Placeholders start with `#` | **yes**: this is where you change settings |
 | `playbooks/*.yml` | the files AAP runs, one per job template. Each says *which hosts* and *which roles* | **no** |
 | `roles/<role>/defaults/main.yml` | **every setting of that role**, with its default value and a comment saying what it does. The menu of what you can change | **no**: read it, then set values in AAP |
 | `roles/<role>/tasks/*.yml` | the steps. They read the settings | **no** |
@@ -68,6 +69,10 @@ check_disk_overrides:                  # a table inside a table
 | `tests/`, `.github/`, `.ansible-lint`, `.yamllint` | automatic checks of the code | **no** |
 | `poam/poam.csv` | **your** POA&M list | **yes** |
 
+Two places can hold the same setting: your group file in `playbooks/group_vars/`, and AAP's
+Variables box for that group. **Keep each setting in one place.** If both have it, the file wins.
+The file is also the easier place: you edit it in VS Code, and Git remembers every change.
+
 The appendix of this guide prints every `defaults/main.yml`: every setting there is, in one place.
 
 ## Follow one setting from its default to a host
@@ -78,10 +83,11 @@ Take `check_disk_warn_pct`: warn when a filesystem is this many percent full.
    nothing else set, every host warns at 85%.
 2. **The code reads it.** `roles/check_disk/tasks/main.yml` compares each filesystem with
    `check_disk_warn_pct`. You never change this part.
-3. **Change it for every host.** **Inventories → your inventory → Edit inventory → Variables**:
-   `check_disk_warn_pct: 80`. Now every host warns at 80%.
-4. **Change it for a group.** Open your database group → **Edit group → Variables**:
-   `check_disk_warn_pct: 90`. Hosts in that group warn at 90%; all others still at 80%.
+3. **Change it for every host.** Add `check_disk_warn_pct: 80` to `playbooks/group_vars/all.yml`
+   (or to **Inventories → your inventory → Edit inventory → Variables**). Now every host warns at 80%.
+4. **Change it for a group.** Add `check_disk_warn_pct: 90` to the group's file, for example
+   `playbooks/group_vars/mariadb.yml` (or the group's **Edit group → Variables** in AAP). Hosts in
+   that group warn at 90%; all others still at 80%.
 5. **Change it for one host.** Open the host → **Edit host → Variables**:
    `check_disk_warn_pct: 95`. Only that host warns at 95%.
 6. **For one run.** A survey answer, or the template's own Variables box, beats all of the
@@ -218,6 +224,8 @@ Never put a password in a survey or a Variables box. Secrets go in **credentials
 Think of your work repository as **our files + your few files**. A new release replaces our files
 and never touches yours. Your files are:
 
+- `playbooks/group_vars/` and `playbooks/host_vars/` (your settings files). A new release may
+  add a settings file you do not have yet; it never changes one you have;
 - `poam/poam.csv` (your POA&M list);
 - `inventories/site/`, only if you ever keep an inventory in Git (you keep yours in AAP);
 - anything you added yourself, such as your own check role. List those paths in a file called
@@ -241,7 +249,8 @@ from your Git server by itself.
    & "$rel\scripts\update-from-release.ps1" -Clone "C:\git\site-automation"
    ```
    `-Clone` is your repository folder: the one VS Code has open. The script lists every file as
-   `NEW`, `CHANGED` or `DELETE`. **Read the DELETE lines.** If one is yours, add its path to
+   `NEW`, `CHANGED`, `DELETE`, or `YOURS` (a settings file you do not have yet: added once, then
+   yours). **Read the DELETE lines.** If one is yours, add its path to
    `.site-local`, commit that, and preview again.
 4. **Apply.** The same command, with `-Apply` at the end:
    ```powershell
@@ -300,8 +309,8 @@ inventory part.
 |---|---|
 | add a server | AAP inventory → **Hosts** (and into its groups) |
 | say what a server is (database, STIG Manager, MID...) | AAP inventory → **Groups** |
-| change a threshold or name for every host | inventory → **Edit inventory → Variables** |
-| ...for some hosts | the group → **Edit group → Variables** |
+| change a threshold or name for every host | `playbooks/group_vars/all.yml` (or inventory → **Edit inventory → Variables**) |
+| ...for some hosts | the group's file, `playbooks/group_vars/<group>.yml` (or the group → **Edit group → Variables**) |
 | ...for one host | the host → **Edit host → Variables** |
 | store a password or key | **Credentials** |
 | let people choose at launch | the template's **Survey** |

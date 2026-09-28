@@ -1,0 +1,4 @@
+# YOUR SETTINGS FOR THE RHEL 8 HOSTS (AAP group rhel8_all).
+# Only needed if AAP's Ansible is 2.17 or newer: it cannot use RHEL 8's built-in Python 3.6. Install
+# python39 on these hosts (from Satellite), then delete the "# " below. ACT also needs Python 3.8+.
+# ansible_python_interpreter: /usr/bin/python3.9

@@ -1,0 +1,2 @@
+# YOUR SETTINGS FOR THE LOGSTASH HOSTS (AAP group logstash).
+check_services_required_extra: [logstash]

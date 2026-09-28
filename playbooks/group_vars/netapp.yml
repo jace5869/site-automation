@@ -1,0 +1,3 @@
+# YOUR SETTINGS FOR THE NETAPP HOSTS (AAP group netapp).
+# Nothing is needed yet: all.yml already makes these hosts diagnose-only for ACT and skipped by
+# patching (vendor-managed). They are checked like any other RHEL host.
