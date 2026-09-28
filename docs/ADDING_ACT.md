@@ -51,9 +51,10 @@ skips them: it prints the approved command for a person to run by hand.
 Create the credential type `ACT model key` (`aap/credential_types/act_model_key.yml`) and one
 credential with your key: the GenAI key for GenAI.mil, or the AskSage key for Ask Sage
 ([SETUP_AAP.md](SETUP_AAP.md), steps 2-3). For the GenAI beta proxy, also create
-`ACT GenAI beta key` (`act_genai_beta_key.yml`). Attach the credential(s) to the **Health check**,
-**Troubleshoot** and **Apply approved ACT fix** templates, next to `Linux ssh (sudo)`. This is the
-only place a key lives.
+`ACT GenAI beta key` (`act_genai_beta_key.yml`). Attach the credential(s) to the **Health check**
+and **Troubleshoot** templates (and *Service watch - check*), next to `Linux ssh (sudo)`. This is
+the only place a key lives. The apply steps do not call the model: they run the approved commands
+themselves, so they need no key.
 
 ### 2. Pick the model provider
 
@@ -251,6 +252,8 @@ the host when there are findings or a fix waits for approval.
 - `diagnose`: only commands ACT can prove are read-only run on their own. Everything else is
   refused and becomes a proposal.
 - `self-heal`: in addition, only commands matching `site_act_allow`.
-- Apply step: only the approved commands, character for character.
+- Apply step: no model at all. The playbook runs only the approved commands, character for
+  character, in order, and stops at the first one that fails. Run as *Check*, it only shows what
+  it would run (a dry run: see WORKFLOWS_AND_SCHEDULES.md, "Rehearse it").
 - Every run is recorded in the AAP job output. The ticket carries ACT's analysis. For the
   service-watch style incident log, see [SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md).

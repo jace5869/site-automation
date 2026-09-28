@@ -130,7 +130,23 @@ For later, when you add ACT. See [ADDING_ACT.md](ADDING_ACT.md) for the three le
 
 The approver reads, in the health check job, `ACT | what ACT says` (root cause, evidence, the fix)
 and the red `NEEDS APPROVAL ... ACT proposes: <command>` line. **That exact command** is all the
-apply step can run. The tickets carry ACT's analysis too.
+apply step can run: it runs it itself (no model, no key), stops at the first command that fails,
+and runs the same checks again. The tickets carry ACT's analysis too.
+
+### Rehearse it: see ACT's fixes, change nothing
+
+Two ways to test with ACT's ideas without anything being changed:
+
+- **One job, no workflow.** Launch **Health check** (or **Troubleshoot**) with `use_act` = `yes`
+  and `site_act_level` = `diagnose`. ACT investigates with read-only commands and proposes fixes;
+  every change is refused. The job ends red with `NEEDS APPROVAL ... ACT proposes: <commands>`:
+  that list is what would run. Nothing on the host changed.
+- **The whole workflow, as a dry run.** On the **Apply approved ACT fix** template (and *Service
+  watch - apply approved fix*) tick **Prompt on launch** next to **Job type**. In the workflow
+  visualizer click the apply box → **Edit** (pencil) → **Job type** `Check` → **Save**. Now run
+  the workflow and approve: the apply job prints
+  `DRY RUN on <host>: approved, and would run: <commands>. Nothing was changed (Check mode).`
+  and ends green. When you trust it, set that node's **Job type** back to `Run`.
 
 ## Schedules
 

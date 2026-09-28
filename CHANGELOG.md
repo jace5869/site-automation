@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.5 — 2026-09-28
+
+- **Apply approved ACT fix runs the approved commands itself**, like service watch since 0.3.4:
+  exactly the commands in the NEEDS APPROVAL line, in order, stopping at the first that fails,
+  then the same checks again. No model and no key in the apply step (a revoked key or a vague
+  model answer can no longer break it); the template needs only `Linux ssh (sudo)`.
+- **Dry run of the whole approve-and-fix path**: run either apply step as *Check* (tick Prompt on
+  launch for Job type, set the workflow node to Check). It prints `DRY RUN on <host>: approved,
+  and would run: ...` and changes nothing.
+- Docs: "Rehearse it" (WORKFLOWS_AND_SCHEDULES, SERVICE_WATCH_DEMO), ADDING_ACT and SETUP_AAP
+  (apply templates need no ACT key); PDFs rebuilt.
+
 ## 0.3.4 — 2026-09-28
 
 - **Service watch knows how each container is run.** For every watched container it finds the

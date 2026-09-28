@@ -303,10 +303,19 @@ open the workflow template → **User Access** (or **Team Access**) → **Add ro
 2. Open the **Service watch - check** job and read:
    - the task `Watch | ACT's report (root cause, evidence, fix)`: why it is down, the log lines
      that show it, the fix, and ACT's confidence;
-   - the red line `NEEDS APPROVAL ... ACT proposes: <command>`: this is **exactly** what will run.
+   - the red line `NEEDS APPROVAL ... Fix to approve (...): <command>`: this is **exactly** what
+     will run.
 3. Go to **Automation Execution → Administration → Workflow Approvals** (or open the workflow
    job and click the paused box).
 4. Select the request and click **Approve** or **Deny**.
+
+### Rehearse first: approve without changing anything
+
+On *Service watch - apply approved fix* tick **Prompt on launch** next to **Job type**. In the
+workflow visualizer click the apply box → **Edit** → **Job type** `Check` → **Save**. Approve as
+usual: the apply job prints `DRY RUN on <host>: approved, and would run: systemctl start
+stigman.service. Nothing was changed (Check mode).` and ends green. Set the node back to `Run`
+when you trust it.
 
 ### What happens next
 
