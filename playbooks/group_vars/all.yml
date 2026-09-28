@@ -1,0 +1,47 @@
+# YOUR SETTINGS FOR EVERY HOST - and for the jobs that run on AAP itself (ServiceNow tickets,
+# ServiceNow health, POA&M status).
+#
+# To change a setting: edit this file in VS Code, Commit, Sync Changes. AAP uses it on the next
+# run (the project syncs itself when "Update revision on launch" is ticked).
+# A line starting with "#" is OFF. To turn a placeholder on: delete the "# " in front of it (and in
+# front of the lines that belong to it) and replace CHANGE-ME with your value. Keep the
+# indentation exactly as shown: spaces, never tabs.
+#
+# The files in this folder are YOURS: the update script adds them the first time and never
+# changes them again. File name = AAP group name (mariadb.yml -> the hosts in group "mariadb").
+# What each setting does: roles/<role>/defaults/main.yml. Keep each setting in ONE place - here,
+# or in AAP's Variables boxes (docs/USING_YOUR_AAP_INVENTORY.md) - not both.
+
+# ---- Safety: hosts automation must be careful with (your AAP group names) ------------------
+# ACT may only diagnose these; it never fixes anything on them by itself.
+site_act_diagnose_only_groups: [aap, sat, idm, netapp, aap_hosts, netapp_console_hosts]
+# Patching skips these completely (Satellite is upgraded with satellite-maintain, not dnf).
+patch_never_patch_groups: [aap, sat, netapp, no_patch]
+# Patching never reboots these.
+patch_never_reboot_groups: [aap, sat, netapp, aap_hosts]
+
+# ---- ACT: which provider, and the model for each ----------------------------------------------
+site_act_provider: genai                 # the default provider: genai | asksage | genai-beta
+site_act_models:                         # the model follows whichever provider is picked
+  genai: gemini-3.8-flash
+  asksage: gpt-5.6-sol-gov
+# Ask Sage URL (empty = ACT's default, https://api.genai.army.mil/server/openai/v1/chat/completions):
+# site_act_urls:
+#   asksage: https://CHANGE-ME/server/openai/v1/chat/completions
+
+# ---- What every host must be able to reach ------------------------------------------------
+# check_network_tcp:
+#   - {name: IdM LDAPS, host: CHANGE-ME.yoursite.mil, port: 636}
+# check_logging_remote:
+#   - {name: logstash, host: CHANGE-ME.yoursite.mil, port: 514}
+
+# ---- The account AAP logs in as -------------------------------------------------------------
+# check_accounts_nopasswd_allowed: [CHANGE-ME-service-account]
+# check_accounts_expiry_watch: [CHANGE-ME-service-account]
+
+# ---- ServiceNow tickets -----------------------------------------------------------------------
+# servicenow_assignment_group: CHANGE-ME           # a group that exists in ServiceNow
+# servicenow_min_severity: warning                 # or critical: tickets for critical findings only
+
+# ---- POA&M: STIG Manager cross-check (optional) -------------------------------------------------
+# poam_stigman_api: https://CHANGE-ME/api

@@ -1,0 +1,8 @@
+# YOUR SETTINGS FOR THE STIG MANAGER HOSTS (AAP group stigman).
+# The service watch and STIG Manager deploy templates need target: stigman in their Variables box.
+watch_containers:                        # service watch: the container names (sudo podman ps)
+  - name: stigman
+  - name: nginx
+check_certs_endpoints:                   # the certificate browsers see
+  - {name: STIG Manager, host: 127.0.0.1, port: 443}
+# check_certs_files: [/etc/CHANGE-ME/*.crt]   # also check the certificate files, if you like

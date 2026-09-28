@@ -52,6 +52,7 @@ Fedora host with SELinux enforcing and auditd.
 | Path | What |
 |---|---|
 | `playbooks/` | one playbook per job template |
+| `playbooks/group_vars/` | **your settings**, one file per AAP group (`all.yml` = every host); yours - updates never overwrite them |
 | `roles/check_*/` | one role per health check; settings in `defaults/main.yml` |
 | `roles/site_findings/` | the findings contract: start, run a check safely, report, publish, pass/fail |
 | `roles/site_act/` | the bridge from any check's findings to ACT |

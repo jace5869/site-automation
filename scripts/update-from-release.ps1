@@ -16,8 +16,10 @@ Run it from the NEW release that you extracted (your old copy may not have this 
 
 -Clone is your repository folder (the one VS Code has open). The preview changes nothing. -Apply
 makes your folder match the release, except for YOUR files, which are never changed or deleted:
-  poam\poam.csv, inventories\site\, .site-local, every path listed in .site-local (one per
-  line, e.g. roles/check_tmp/), and every file your .gitignore covers (local secrets, reports).
+  poam\poam.csv, playbooks\group_vars\ and host_vars\ (your settings), inventories\site\,
+  .site-local, every path listed in .site-local (one per line, e.g. roles/check_tmp/), and every
+  file your .gitignore covers (local secrets, reports). A file of yours that you do not have yet
+  (e.g. a new settings file) is added once, then never changed again.
 
 Blocked by the execution policy ("running scripts is disabled" / "not digitally signed")? Run it
 once like this instead (add -Apply to apply):
@@ -89,7 +91,7 @@ if ($status) {
 $branch = (& git -C $Clone branch --show-current)
 
 # ---- what is yours -----------------------------------------------------------------------------
-$protect = @('.site-local', 'poam/poam.csv', 'inventories/site/')
+$protect = @('.site-local', 'poam/poam.csv', 'inventories/site/', 'playbooks/group_vars/', 'playbooks/host_vars/')
 $siteLocal = Join-Path $Clone '.site-local'
 if (Test-Path -LiteralPath $siteLocal) {
     foreach ($line in (Get-Content -LiteralPath $siteLocal)) {
@@ -114,8 +116,14 @@ $inRelease = @{}
 foreach ($f in (Get-Files $release)) {
     $rel = Get-Rel $release $f.FullName
     $inRelease[$rel.ToLower()] = $true
-    if (Test-Yours $rel) { continue }
     $dst = Join-Path $Clone $rel
+    if (Test-Yours $rel) {
+        # yours: added once if you do not have it yet, never changed after that
+        if (-not (Test-Path -LiteralPath $dst)) {
+            $plan += @{ Action = 'YOURS'; Path = $rel; Src = $f.FullName; Dst = $dst }
+        }
+        continue
+    }
     if (-not (Test-Path -LiteralPath $dst)) {
         $plan += @{ Action = 'NEW'; Path = $rel; Src = $f.FullName; Dst = $dst }
     } elseif (-not (Test-Same $f.FullName $dst)) {
@@ -148,7 +156,9 @@ if (-not $Apply) {
     $nNew = @($plan | Where-Object { $_.Action -eq 'NEW' }).Count
     $nChg = @($plan | Where-Object { $_.Action -eq 'CHANGED' }).Count
     $nDel = @($plan | Where-Object { $_.Action -eq 'DELETE' }).Count
+    $nYours = @($plan | Where-Object { $_.Action -eq 'YOURS' }).Count
     Write-Host ('{0} new, {1} changed, {2} to delete.' -f $nNew, $nChg, $nDel)
+    if ($nYours) { Write-Host ('YOURS = {0} settings file(s) you do not have yet: added once, then yours - never changed again.' -f $nYours) }
     Write-Host 'DELETE = files that are not in the release. If one of them is yours, add its path to'
     Write-Host '.site-local (one per line), commit that, and preview again. CHANGED on one of our files'
     Write-Host 'that you edited = move your change into AAP variables first; the release replaces it.'

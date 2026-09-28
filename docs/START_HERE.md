@@ -113,6 +113,7 @@ The report, the ServiceNow tickets and ACT only ever read findings. That is why:
 | Path | What |
 |---|---|
 | `playbooks/` | the files AAP runs (one per job template) |
+| `playbooks/group_vars/` | **your settings**, one file per AAP group: edit these ([USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md)) |
 | `roles/check_*/` | one folder per check. Its settings are in `defaults/main.yml` |
 | `roles/site_findings/` | starts, reports and publishes findings, and decides pass/fail |
 | `roles/servicenow/`, `roles/troubleshoot/`, `roles/patch/`, `roles/poam/` | the other runbooks |

@@ -70,19 +70,24 @@ The four settings:
 | Setting | What | Default |
 |---|---|---|
 | `site_act_provider` | `genai`, `asksage` or `genai-beta` | `genai` |
-| `site_act_model` | the model id at that provider (ask your provider which ones your account has) | the provider's default |
-| `site_act_url` | the provider's API URL | the provider's default |
+| `site_act_models` | the model **for each provider**, so the model follows the provider you pick, e.g. `{genai: gemini-3.8-flash, asksage: gpt-5.6-sol-gov}` | ACT's default for the provider |
+| `site_act_urls` | the API URL for each provider, e.g. `{asksage: https://<host>/server/openai/v1/chat/completions}` | ACT's default for the provider |
+| `site_act_model`, `site_act_url` | one model / URL for this run, whatever the provider (a survey answer) | empty: use the two above |
 | `site_act_ca` | a CA bundle file **on the hosts**, if the provider's certificate comes from a CA the hosts do not trust yet (for example a DoD CA not in `/etc/pki/ca-trust`) | the host's normal trust store |
 
 **Where to set them:**
 
-- **For everyone**: inventory variables (**Inventories → your inventory → Edit → Variables**), or
-  `group_vars/all.yml` if your inventory is in Git:
+- **For everyone**: `playbooks/group_vars/all.yml` (already set up like this; or the inventory's
+  Variables box in AAP):
   ```yaml
-  site_act_provider: asksage
-  site_act_model: gpt-4.1-gov
-  site_act_url: https://<your ask sage host>/server/openai/v1/chat/completions
+  site_act_provider: genai                 # the default provider
+  site_act_models:                         # the model follows the provider you pick
+    genai: gemini-3.8-flash
+    asksage: gpt-5.6-sol-gov
+  site_act_urls:                           # only if your Ask Sage is not ACT's default URL
+    asksage: https://<your ask sage host>/server/openai/v1/chat/completions
   ```
+  To make Ask Sage the default, change the first line to `site_act_provider: asksage`.
 - **Per launch**: the survey questions in step 3 (a survey answer beats the inventory).
 
 These settings apply to every runbook that uses ACT, including *Service watch* and *Apply approved
@@ -110,7 +115,7 @@ On **Health check** and **Troubleshoot** → **Survey** → **Create survey ques
 | Ask ACT (GenAI) about the findings? | `use_act` | Multiple Choice (single select) | `no`, `yes` | `no` |
 | What may ACT do? | `site_act_level` | Multiple Choice (single select) | `explain`, `diagnose`, `self-heal` | `explain` |
 | Which model provider? (optional) | `site_act_provider` | Multiple Choice (single select) | `genai`, `asksage`, `genai-beta` | the one in your inventory |
-| Which model? (optional, blank = default) | `site_act_model` | Text, not required | | blank |
+| Which model? (optional, blank = the provider's model from `site_act_models`) | `site_act_model` | Text, not required | | blank |
 
 Leave out the last two if everyone uses the same provider. The inventory setting then applies.
 

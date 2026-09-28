@@ -8,7 +8,7 @@
     if [ -n "$(ip -4 route show default 2>/dev/null)$(ip -6 route show default 2>/dev/null)" ]; then
       echo "ROUTE ok"; else echo "ROUTE none"; fi
     {% if check_network_resolve_self | bool %}
-    self=$(hostname -f 2>/dev/null || hostname)
+    self=$(hostname -f 2>/dev/null || hostname 2>/dev/null || cat /proc/sys/kernel/hostname 2>/dev/null)
     if timeout {{ check_network_timeout | int }} getent ahosts "$self" >/dev/null 2>&1; then echo "SELF ok $self"; else echo "SELF fail $self"; fi
     {% endif %}
     {% for n in check_network_dns_names %}
@@ -36,9 +36,10 @@
                                 'summary': 'there is no default route: this host cannot reach other networks',
                                 'hint': 'ip -br addr; ip route; nmcli -t device status'}) -%}
       {%-   elif c[0] == 'SELF' and c[1] == 'fail' -%}
+      {%-     set me = c[2] if c | length > 2 else '(its name is not set)' -%}
       {%-     set _ = f.append({'check': 'network', 'id': 'net:self', 'severity': 'warning',
-                                'summary': "this host's own name " ~ c[2] ~ ' does not resolve',
-                                'hint': 'hostname -f; getent ahosts ' ~ c[2] ~ '; cat /etc/resolv.conf'}) -%}
+                                'summary': "this host's own name " ~ me ~ ' does not resolve',
+                                'hint': 'hostnamectl; getent ahosts $(hostname -f); cat /etc/resolv.conf'}) -%}
       {%-   elif c[0] == 'DNS' and c[1] == 'fail' -%}
       {%-     set _ = f.append({'check': 'network', 'id': 'net:dns:' ~ c[2], 'severity': 'critical',
                                 'summary': c[2] ~ ' does not resolve (DNS)',
