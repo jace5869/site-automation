@@ -34,9 +34,15 @@ $facts.gateways = $gw
 $facts.dns_servers = $dns
 if ($gw.Count -eq 0) { Add-Finding 'network:gateway' 'warning' 'no default gateway on any network adapter' 'ipconfig /all; Get-NetRoute -DestinationPrefix 0.0.0.0/0' }
 if ($dns.Count -eq 0) { Add-Finding 'network:dns-servers' 'critical' 'no DNS server is configured on any network adapter' 'ipconfig /all' }
+# A command that cannot even load (a module blocked by the PowerShell policy) is not a network
+# problem: it is reported as "could not test", not as "unreachable".
+function Test-CannotRun($Err) { return ([string]$Err.FullyQualifiedErrorId -match 'CommandNotFound|CouldNotAutoload') }
 foreach ($n in @(Get-Setting 'dns_names' @())) {
     try { $null = Resolve-DnsName -Name ([string]$n) -DnsOnly -QuickTimeout -ErrorAction Stop }
-    catch { Add-Finding "network:dns:$n" 'critical' "the name $n does not resolve ($($_.Exception.Message))" "Resolve-DnsName $n; ipconfig /all" }
+    catch {
+        if (Test-CannotRun $_) { Add-Finding "network:dns:$n" 'warning' "could not test whether $n resolves: $($_.Exception.Message)" 'Resolve-DnsName; nslookup' }
+        else { Add-Finding "network:dns:$n" 'critical' "the name $n does not resolve ($($_.Exception.Message))" "Resolve-DnsName $n; ipconfig /all" }
+    }
 }
 # The computer account's trust with the domain ("the trust relationship ... failed" at logon).
 if ($cs.PartOfDomain -and [int]$cs.DomainRole -lt 4 -and (Get-Setting 'secure_channel' $true)) {
@@ -70,8 +76,17 @@ foreach ($t in @(Get-Setting 'tcp' @())) {
         finally { $c.Close() }
     }
     else {
-        $ok = [bool](Test-NetConnection -ComputerName $h -Port $p -InformationLevel Quiet -WarningAction SilentlyContinue)
-        if (-not $ok) { $err = 'no answer' }
+        try {
+            $ok = [bool](Test-NetConnection -ComputerName $h -Port $p -InformationLevel Quiet -WarningAction SilentlyContinue -ErrorAction Stop)
+            if (-not $ok) { $err = 'no answer' }
+        }
+        catch {
+            if (Test-CannotRun $_) {
+                Add-Finding "network:tcp:${h}:$p" 'warning' "could not test $nm ($h port $p): $($_.Exception.Message)" "Test-NetConnection $h -Port $p"
+                continue
+            }
+            $err = $_.Exception.Message
+        }
     }
     if (-not $ok) { Add-Finding "network:tcp:${h}:$p" 'critical' "cannot reach $nm ($h port $p): $err" "Test-NetConnection $h -Port $p; Get-NetRoute; Resolve-DnsName $h" }
 }

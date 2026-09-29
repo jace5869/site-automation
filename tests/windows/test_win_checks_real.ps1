@@ -52,7 +52,8 @@ $count++
 $defaults = Get-Content -Raw -LiteralPath (Join-Path $root 'roles\win_check_audit\defaults\main.yml')
 $entries = @([regex]::Matches($defaults, 'name: ([^,]+), guid: ([0-9A-F]{8}-69AE-11D9-BED3-505054503030)') | ForEach-Object { @{ name = $_.Groups[1].Value.Trim(); guid = $_.Groups[2].Value } })
 $list = (& auditpol.exe /list /subcategory:* /v 2>&1 | Out-String).ToUpper()
-$missing = @($entries | Where-Object { -not $list.Contains(($_.name + ',{' + $_.guid + '}').ToUpper()) } | ForEach-Object { $_.name + ' ' + $_.guid })
+# auditpol /list /v prints columns: "  Credential Validation      {0CCE923F-...}"
+$missing = @($entries | Where-Object { $list -notmatch ('(?m)^\s*' + [regex]::Escape($_.name.ToUpper()) + '\s+\{' + $_.guid + '\}') } | ForEach-Object { $_.name + ' ' + $_.guid })
 if ($entries.Count -eq 0 -or $missing.Count) { $fail++; Write-Host "FAIL - audit subcategories not known to this Windows (name + GUID): $($missing -join '; ') (checked $($entries.Count))" }
 else { Write-Host "ok   - all $($entries.Count) audit subcategories (name + GUID) exist on this Windows" }
 if ($fail) { Write-Host "$fail of $count test(s) failed"; exit 1 }

@@ -15,9 +15,10 @@ port=${PATCH_SIM_PORT:-15986}
 cleanup() { [ -f "$work/port.pid" ] && kill "$(cat "$work/port.pid")" 2>/dev/null; rm -rf "$work"; }
 trap cleanup EXIT
 mkdir -p "$work/bin"
+pshome=$(dirname "$(readlink -f "$pwsh")")
 cat > "$work/bin/powershell" <<SHIM
 #!/bin/bash
-export PSModulePath="$here/Modules:\${PSModulePath:-}"
+export PSModulePath="$here/Modules:$pshome/Modules:\${PSModulePath:-}"
 exec "$pwsh" "\$@"
 SHIM
 chmod +x "$work/bin/powershell"; ln -s powershell "$work/bin/PowerShell"

@@ -99,8 +99,9 @@ jobs:
         run: |
           $pw = 'Sa-' + [guid]::NewGuid().ToString('N').Substring(0, 20) + '!'
           "::add-mask::$pw"
-          net user satest $pw /add | Out-Null
-          net localgroup Administrators satest /add | Out-Null
+          $sec = ConvertTo-SecureString -String $pw -AsPlainText -Force
+          New-LocalUser -Name satest -Password $sec -PasswordNeverExpires | Out-Null
+          Add-LocalGroupMember -Group Administrators -Member satest
           New-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System -Name LocalAccountTokenFilterPolicy -Value 1 -PropertyType DWord -Force | Out-Null
           Enable-PSRemoting -Force -SkipNetworkProfileCheck | Out-Null
           Set-Item -Path WSMan:\localhost\Service\Auth\Basic -Value $true
