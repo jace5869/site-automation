@@ -49,5 +49,4 @@ function Invoke-CimMethod {
         }
     }
 }
-function Test-Path { param([string] $Path) return $false }
 Export-ModuleMember -Function Get-CimInstance, Invoke-CimMethod

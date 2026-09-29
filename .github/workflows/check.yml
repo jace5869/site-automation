@@ -116,6 +116,8 @@ jobs:
         env:
           WSLENV: SATEST_PW
         run: |
+          # the health check fails ON PURPOSE when it finds something: no exit-on-error here
+          set +e +o pipefail
           set -u
           python3 -m venv /tmp/v && /tmp/v/bin/pip -q install ansible-core pywinrm
           rm -rf ~/sa && cp -r . ~/sa && cd ~/sa
@@ -133,6 +135,12 @@ jobs:
           INV
           export ANSIBLE_NOCOLOR=1 ANSIBLE_ROLES_PATH=roles
           fail=0
+          # WinRM takes a moment after it is enabled: wait until a logon works
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            /tmp/v/bin/ansible -i /tmp/inv.yml winrunner -m ansible.builtin.raw -a 'hostname' >/tmp/0.out 2>&1 && break
+            echo "WinRM not ready yet (attempt $i)"; sleep 10
+          done
+          cat /tmp/0.out
           /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_connection_test.yml | tee /tmp/1.out || fail=1
           /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_health_check.yml -e health_checks=all -e win_check_disk_warn_pct=1 | tee /tmp/2.out
           grep -q 'Checks run: disk, services, performance, time, network, eventlog, security, audit, accounts, certs, patching' /tmp/2.out || { echo 'FAIL: not every check ran'; fail=1; }
