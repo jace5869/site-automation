@@ -42,9 +42,11 @@ site_act_models:                         # the model follows whichever provider 
 # check_accounts_nopasswd_allowed: [CHANGE-ME-service-account]
 # check_accounts_expiry_watch: [CHANGE-ME-service-account]
 
-# ---- ServiceNow tickets -----------------------------------------------------------------------
+# ---- ServiceNow tickets (set up and test: docs/SERVICENOW_SETUP.md) ----------------------------
 # servicenow_assignment_group: CHANGE-ME           # a group that exists in ServiceNow
 # servicenow_min_severity: warning                 # or critical: tickets for critical findings only
+# servicenow_caller: CHANGE-ME                     # optional; empty = the API account is the caller
+# servicenow_ca_path: "{{ playbook_dir }}/files/ca/servicenow-ca.pem"   # if the EE does not trust the instance's CA
 
 # ---- POA&M: STIG Manager cross-check (optional) -------------------------------------------------
 # poam_stigman_api: https://CHANGE-ME/api

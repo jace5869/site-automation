@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.4.1 — 2026-09-29
+
+- **ServiceNow - test ticket** (`playbooks/servicenow_test_ticket.yml`): proves the ServiceNow
+  setup before the tickets step goes live. It logs in, checks that the assignment group and the
+  caller exist, opens a low-priority test incident (`[site-automation test] ... safe to close`),
+  reads it back (with a link), adds a work note and resolves it. It uses the same API calls and
+  settings as the tickets step. Each step prints PASS, WARN or FAIL, and a failure says what
+  usually causes it (certificate, DNS, firewall or proxy, HTTP 401 / 403 / 404, the `itil` role, a
+  group name that does not match). As *Check* (a dry run) it only logs in and reads.
+  `servicenow_test_resolve: false` leaves the ticket open to look at.
+- **`docs/SERVICENOW_SETUP.md`** (and a chapter in the setup PDF): ServiceNow step by step. It
+  covers the API account to ask for (with a request you can copy), the instance URL and every API
+  call the playbooks make, and the network path from the AAP execution nodes (firewall, proxy,
+  DoD CA). Then the credential, your settings, the test ticket, how to check the ticket in
+  ServiceNow, and a table of what each failure means.
+- **`servicenow_ca_path`**: a CA bundle (PEM) for the instance's certificate, for every ServiceNow
+  call (tickets, health, test ticket), when the execution environment does not trust its CA.
+- **Workflows**: `docs/WORKFLOWS_AND_SCHEDULES.md` now explains how ACT fits a workflow. There is
+  no ACT box: ACT runs inside the check job (`use_act`, `site_act_level`). "On fail" is the check
+  job's own result (findings, `NEEDS APPROVAL`, a host it could not check), and `site_act` goes
+  into a playbook, never into the workflow.
+- **ACT 0.6.19** (vendored: `vendor/act`, `vendor/act-windows`), for both Linux and Windows:
+  - **Both endpoint formats.** ACT now speaks the OpenAI one (`.../v1/chat/completions`) and
+    the Anthropic Messages API (`.../v1/messages`). A model the gateway refuses on one is tried on
+    the other, and ACT remembers which one works.
+  - **Every HTTP 400 shows the server's reason.** It no longer prints only `Response status code
+    does not indicate success`. A refusal that names a field (`temperature`, `max_tokens`,
+    `tool_choice` ...) drops just that field.
+  - **`:probe`** tests a model on both endpoints.
+  - **In AAP:** `site_act_env` can pass `ACT_API_FORMAT` or `GENAI_ANTHROPIC_URL`
+    (`docs/ADDING_ACT.md`).
+- CI runs the test ticket against a fake ServiceNow (`tests/servicenow/`), with the current
+  ansible-core and 2.16: a good account, a wrong password, a read-only account, an unknown group,
+  a dry run, and an instance that refuses to resolve.
+
 ## 0.4.0 — 2026-09-29
 
 - **No automatic restarts unless you say so** (`automatic_restarts: true`, default false), for

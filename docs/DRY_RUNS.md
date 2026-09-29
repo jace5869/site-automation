@@ -34,6 +34,7 @@ line-by-line changes it would make to files, for example in STIG Manager's confi
 | POA&M status | as usual: reads the CSV and asks STIG Manager |
 | ServiceNow tickets | asks ServiceNow what is already open, then prints `would open: ...`, `would add a note to: ...`, `would resolve: ...`. **Nothing is sent** |
 | ServiceNow health | as usual: only reads |
+| ServiceNow - test ticket | logs in and checks the assignment group and caller (it only reads), then prints the incident it would open, note and resolve. **Nothing is created** |
 | Patch hosts (Linux) | lists the packages dnf would update. Installs nothing, restarts nothing |
 | Apply approved ACT fix | `DRY RUN on <host>: approved, and would run: <commands>`. Runs nothing |
 | Service watch - check | checks the containers and shows what it would propose. Writes no incident, does not call ACT |

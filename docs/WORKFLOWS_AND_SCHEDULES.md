@@ -61,6 +61,55 @@ Approvals**, and in the workflow job's view.
 | Service watch - check | a container is down (NEEDS APPROVAL) | the fix to approve | an approval (**on fail**) |
 | ServiceNow tickets | problems exist (it opened or updated tickets) | - | - (the end) |
 
+## Adding ACT to a workflow: what "on fail" means, and where `site_act` goes
+
+**You do not add `site_act` to the workflow.** There is no ACT template and no ACT box. ACT runs
+**inside the check job**. The check playbooks (Health check, Troubleshoot, Service watch, the
+Windows ones) already include `roles/site_act`, and it runs when that job's answers say
+`use_act` = `yes`, at the level in `site_act_level`. In the workflow you only give the check box
+those two answers.
+
+**"On fail" is the check job's own result.** Nothing extra is checked. The check playbook decides
+by itself, against its thresholds (the role defaults and your `group_vars`: disk full %,
+certificate days, ...). The check box ends **red** when:
+
+- it found a problem at or above `site_fail_on` (default: `critical` and `warning`), or
+- ACT (`diagnose`) proposed a fix that waits for a person: `NEEDS APPROVAL ... ACT proposes:
+  <commands>`, or
+- a host could not be checked (unreachable, login or sudo failed).
+
+A **Run on fail** link from the check box therefore leads to the approval. **Run on success**
+means the check box ended green; **Run always**, either way.
+
+```text
+[Health check]  --Run on fail-->  [Approval]  --Run on success-->  [Apply approved ACT fix]  --Run always-->  [ServiceNow tickets]
+ use_act = yes
+ site_act_level = diagnose
+      |--Run always-->  [ServiceNow tickets]
+```
+
+1. **Health check** box: answers `use_act` = `yes`, `site_act_level` = `diagnose`. This needs
+   those two survey questions on the template ([ADDING_ACT.md](ADDING_ACT.md), step 3).
+2. **Approval** box, **Run on fail** from 1.
+3. **Apply approved ACT fix** box (`playbooks/act_fix_approved.yml`), **Run on success** from 2.
+   It needs no answers: AAP hands it ACT's proposed commands from the health check job, and it
+   runs exactly those.
+4. **ServiceNow tickets** boxes, **Run always**, from 1 and from 3.
+
+The approver opens the health check job and reads `ACT | what ACT says` and the red `NEEDS
+APPROVAL` line. If there is no such line (the job is red because of findings ACT had no fix for,
+or an unreachable host), there is nothing to approve: **Deny**. Approving does no harm either: the
+apply step skips every host with nothing approved.
+
+**Without approvals:** `site_act_level` = `self-heal` with the fixes you allow in `site_act_allow`.
+ACT applies those itself, inside the check job, and the checks run again. Then the workflow is
+simply `[Health check] --Run always--> [ServiceNow tickets]`.
+
+**A playbook of your own** gets ACT in the **playbook**, not in the workflow: it includes
+`site_findings` (start, your check), then `site_act`, then `site_findings` report. See
+[ADDING_ACT.md](ADDING_ACT.md), "Use ACT in a playbook of your own". Its job template then gets
+the same two survey questions, and it fits the same workflow.
+
 ## Linux workflows
 
 ### 1. Daily health

@@ -266,6 +266,23 @@ by text, so the same problem always updates the same ticket. Without the Service
 it only prints what it would open. If no check results reach it at all (the check step died before
 checking any host), it fails, so a broken schedule shows red instead of green.
 
+## ServiceNow - test ticket (`playbooks/servicenow_test_ticket.yml`)
+
+Proves the ServiceNow setup end to end, with the same calls and settings as the tickets step. Six
+steps, each PASS, WARN or FAIL with what usually causes a failure:
+
+| Step | What it does | FAIL usually means |
+|---|---|---|
+| 1 connection | logs in and reads one incident | certificate (CA), DNS, firewall or proxy; HTTP 401 = user or password; 403 = no `itil` role; 404 = a path after the host name in the Instance URL |
+| 2 settings | `servicenow_assignment_group` and `servicenow_caller` exist | the name differs from ServiceNow's |
+| 3 open | opens a low-priority incident: `[site-automation test] ... safe to close` | the account may not create incidents (`itil`), or ServiceNow refused a value (it says which) |
+| 4 read back | reads it back: number, state, group, caller; prints a link | the account may not read it; WARN if the group did not stick |
+| 5 work note | adds a work note | the account may not update incidents |
+| 6 resolve | resolves it (`servicenow_test_resolve: false` leaves it open) | WARN only: your instance needs another resolved state or close code (`servicenow_resolved_state`, `servicenow_close_code`) |
+
+As *Check* (a dry run) steps 1 and 2 run, and 3 to 6 are only printed. Set up, run and verify it:
+[SERVICENOW_SETUP.md](SERVICENOW_SETUP.md).
+
 ## ServiceNow health (`playbooks/servicenow_health.yml`)
 
 From the controller: does the instance answer its REST API, and how fast

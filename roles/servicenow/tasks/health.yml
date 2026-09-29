@@ -29,6 +29,7 @@
     force_basic_auth: true
     headers: {Accept: application/json}
     validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout }}"
   register: _sn_ping
   failed_when: false
@@ -43,6 +44,7 @@
     force_basic_auth: true
     headers: {Accept: application/json}
     validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout }}"
   register: _sn_mid
   failed_when: false

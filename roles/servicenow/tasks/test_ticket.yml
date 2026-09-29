@@ -1,0 +1,358 @@
+---
+# ServiceNow test ticket: prove, one step at a time, that AAP can open, update and resolve an
+# incident with the "ServiceNow API" credential. It makes the same REST calls as the tickets step,
+# with the same settings (servicenow_assignment_group, _caller, _category, _table ...). Runs on the
+# controller. Every step prints PASS, WARN or FAIL and, for a failure, what usually causes it.
+#
+#   1 connection  the instance answers and the account logs in and reads the incident table
+#   2 settings    servicenow_assignment_group and servicenow_caller exist (when set)
+#   3 open        a low-priority test incident                        (dry run: only printed)
+#   4 read back   the new incident by its sys_id: number, state, group, link
+#   5 work note   a work note on it (the tickets step does this for repeat findings)
+#   6 resolve     resolve it (servicenow_test_resolve, default true)
+#
+# Step by step setup, and how to verify the ticket in ServiceNow: docs/SERVICENOW_SETUP.md.
+
+- name: ServiceNow test | connection details (from the ServiceNow API credential)
+  ansible.builtin.set_fact:
+    _snt_url: >-
+      {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+    _snt_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') | trim }}"
+    _snt_job: "{{ awx_job_id | default('manual') }}"
+    _snt_now: "{{ now(utc=true).strftime('%Y-%m-%d %H:%M UTC') }}"
+    _snt_results: []
+    # What an HTTP status usually means for these calls (status -1: no HTTP answer at all).
+    _snt_why:
+      "-1": >-
+        no HTTP answer. The message above says why: "certificate verify failed" = the execution
+        environment does not trust the instance's CA (servicenow_ca_path); "Name or service not
+        known" = DNS; "timed out" / "Connection refused" = a firewall or a proxy is needed
+        (docs/SERVICENOW_SETUP.md, step 3)
+      "400": "ServiceNow refused a value in the request - its reason is above (often a field name or a choice value your instance does not have)"
+      "401": >-
+        the user name or password is wrong, the account is locked or inactive, "Password needs
+        reset" is ticked, or the account may not use basic authentication
+      "403": >-
+        the account logged in but is not allowed to do this: it needs the itil role (read,
+        create and update incidents) or an ACL that grants it
+      "404": >-
+        wrong address: the credential's Instance URL must be only https://<instance> (nothing
+        after the host name), and servicenow_table must exist
+      "429": "rate limited by the instance - wait a minute and run it again"
+      "5xx": "ServiceNow itself failed (or a proxy in between) - try again, then ask the ServiceNow admins"
+
+- name: ServiceNow test | 1/6 connection - the ServiceNow API credential is attached
+  ansible.builtin.assert:
+    that: _snt_url | length > 0 and _snt_user | length > 0
+    fail_msg: >-
+      FAIL: no ServiceNow connection details. Attach the "ServiceNow API" credential to this
+      template (it sets SN_HOST, SN_USERNAME and SN_PASSWORD): docs/SERVICENOW_SETUP.md, step 5.
+    quiet: true
+
+- name: ServiceNow test | 1/6 connection - log in and read one incident
+  ansible.builtin.uri:
+    url: "{{ _snt_url }}/api/now/table/{{ servicenow_table }}?sysparm_limit=1&sysparm_fields=number"
+    method: GET
+    url_username: "{{ _snt_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  register: _snt_login
+  failed_when: false
+  check_mode: false             # only reads: a dry run tests the login too
+
+- name: ServiceNow test | 1/6 connection - result
+  ansible.builtin.set_fact:
+    _snt_results: "{{ _snt_results + [_snt_step] }}"
+  vars:
+    _code: "{{ _snt_login.status | default(-1) | int }}"
+    _step_ok: "{{ _code | int == 200 }}"
+    _snt_step:
+      step: 1 connection
+      result: "{{ 'PASS' if _step_ok | bool else 'FAIL' }}"
+      detail: >-
+        {{ ('the instance answers and ' ~ _snt_user ~ ' logged in and read the ' ~ servicenow_table
+            ~ ' table (' ~ _snt_login.elapsed | default('?') ~ ' s)')
+           if _step_ok | bool else
+           ('HTTP ' ~ _code ~ ' from ' ~ _snt_url ~ ': '
+            ~ ((((_snt_login.json.error.message | default('')) ~ ((': ' ~ _snt_login.json.error.detail) if (_snt_login.json.error.detail | default('')) else '')) or (_snt_login.msg | default(''))) | truncate(240))
+            ~ ' -> ' ~ _snt_why[_code | string] | default(_snt_why['5xx'] if _code | int >= 500 else 'see the message')) }}
+
+- name: ServiceNow test | 1/6 connection - FAIL stops the test here
+  ansible.builtin.fail:
+    msg: "FAIL 1 connection: {{ _snt_results[-1].detail }}"
+  when: _snt_results[-1].result == 'FAIL'
+
+- name: ServiceNow test | 1/6 connection - PASS
+  ansible.builtin.debug:
+    msg: "PASS 1 connection: {{ _snt_results[-1].detail }}"
+
+- name: ServiceNow test | 2/6 settings - the assignment group exists
+  ansible.builtin.uri:
+    url: >-
+      {{ _snt_url }}/api/now/table/sys_user_group?sysparm_limit=1&sysparm_fields=sys_id,name,active&sysparm_query={{
+      ('name=' ~ servicenow_assignment_group) | urlencode }}
+    method: GET
+    url_username: "{{ _snt_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  register: _snt_group
+  failed_when: false
+  check_mode: false
+  when: servicenow_assignment_group | length > 0
+
+- name: ServiceNow test | 2/6 settings - the caller exists
+  ansible.builtin.uri:
+    url: >-
+      {{ _snt_url }}/api/now/table/sys_user?sysparm_limit=1&sysparm_fields=sys_id,user_name,active&sysparm_query={{
+      ('user_name=' ~ servicenow_caller) | urlencode }}
+    method: GET
+    url_username: "{{ _snt_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  register: _snt_caller
+  failed_when: false
+  check_mode: false
+  when: servicenow_caller | length > 0
+
+- name: ServiceNow test | 2/6 settings - result
+  ansible.builtin.set_fact:
+    _snt_results: "{{ _snt_results + [_snt_step] }}"
+  vars:
+    _notes: >-
+      {%- set out = [] -%}
+      {%- for label, name, r in [('assignment group', servicenow_assignment_group, _snt_group),
+                                  ('caller', servicenow_caller, _snt_caller)] -%}
+      {%-   if not name and label == 'caller' -%}
+      {%-     set _ = out.append(('PASS', 'caller not set: the tickets show the API account as the caller')) -%}
+      {%-   elif not name -%}
+      {%-     set _ = out.append(('WARN', 'assignment group not set (servicenow_assignment_group is empty): tickets land without a group')) -%}
+      {%-   elif r.status | default(-1) != 200 -%}
+      {%-     set _ = out.append(('WARN', 'could not look up the ' ~ label ~ ' "' ~ name ~ '" (HTTP ' ~ r.status | default(-1)
+                                            ~ '; the account may not read ' ~ ('sys_user_group' if label == 'assignment group' else 'sys_user') ~ ') - check it on the ticket in step 4')) -%}
+      {%-   elif r.json.result | default([]) | length == 0 -%}
+      {%-     set _ = out.append(('FAIL', label ~ ' "' ~ name ~ '" does not exist in ServiceNow - use the exact name shown in ServiceNow')) -%}
+      {%-   elif not (r.json.result[0].active | default('true') | bool) -%}
+      {%-     set _ = out.append(('WARN', label ~ ' "' ~ name ~ '" exists but is inactive')) -%}
+      {%-   else -%}
+      {%-     set _ = out.append(('PASS', label ~ ' "' ~ name ~ '" exists')) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+    _snt_step:
+      step: 2 settings
+      result: >-
+        {{ 'FAIL' if _notes | selectattr('0', 'equalto', 'FAIL') | list | length > 0
+           else ('WARN' if _notes | selectattr('0', 'equalto', 'WARN') | list | length > 0 else 'PASS') }}
+      detail: "{{ _notes | map('last') | join('; ') }}"
+
+- name: ServiceNow test | 2/6 settings - {{ _snt_results[-1].result }}
+  ansible.builtin.debug:
+    msg: "{{ _snt_results[-1].result }} 2 settings: {{ _snt_results[-1].detail }}"
+
+- name: ServiceNow test | the test incident
+  ansible.builtin.set_fact:
+    _snt_body: >-
+      {%- set b = {
+            'short_description': '[site-automation test] test ticket from AAP job ' ~ _snt_job ~ ' - safe to close',
+            'description': 'A test incident opened by the site-automation "ServiceNow - test ticket" job template (AAP job '
+                           ~ _snt_job ~ ', ' ~ _snt_now ~ ') to prove that AAP can open, update and resolve incidents. '
+                           ~ 'No action is needed. It is resolved by the same job unless servicenow_test_resolve is false.',
+            'urgency': '3', 'impact': '3',
+            'correlation_id': servicenow_correlation_prefix ~ '-test:' ~ _snt_job,
+            'correlation_display': servicenow_correlation_prefix ~ '-test'} -%}
+      {%- if servicenow_assignment_group -%}{%- set _ = b.update({'assignment_group': servicenow_assignment_group}) -%}{%- endif -%}
+      {%- if servicenow_caller -%}{%- set _ = b.update({'caller_id': servicenow_caller}) -%}{%- endif -%}
+      {%- if servicenow_category -%}{%- set _ = b.update({'category': servicenow_category}) -%}{%- endif -%}
+      {{ b }}
+
+- name: ServiceNow test | DRY RUN - what it would open, note and resolve (nothing is sent)
+  ansible.builtin.debug:
+    msg:
+      - "DRY RUN (Check mode): steps 1-2 ran (they only read). Steps 3-6 would:"
+      - "3 open: POST {{ _snt_url }}/api/now/table/{{ servicenow_table }} {{ _snt_body | to_json }}"
+      - "4 read back: GET {{ _snt_url }}/api/now/table/{{ servicenow_table }}/<sys_id>"
+      - "5 work note: PATCH .../{{ servicenow_table }}/<sys_id> work_notes"
+      - "6 resolve: {{ ('PATCH state ' ~ servicenow_resolved_state ~ ', close_code ' ~ servicenow_close_code) if servicenow_test_resolve | bool else 'skipped (servicenow_test_resolve is false)' }}"
+  when: ansible_check_mode
+
+- name: ServiceNow test | 3-6 open, read back, note, resolve
+  when: not ansible_check_mode
+  block:
+    - name: ServiceNow test | 3/6 open - create the test incident
+      ansible.builtin.uri:
+        url: "{{ _snt_url }}/api/now/table/{{ servicenow_table }}?sysparm_input_display_value=true&sysparm_fields=sys_id,number"
+        method: POST
+        url_username: "{{ _snt_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        body_format: json
+        body: "{{ _snt_body }}"
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      register: _snt_new
+      failed_when: false
+
+    - name: ServiceNow test | 3/6 open - result
+      ansible.builtin.set_fact:
+        _snt_results: "{{ _snt_results + [_snt_step] }}"
+        _snt_sys_id: "{{ _snt_new.json.result.sys_id | default('') if _step_ok | bool else '' }}"
+        _snt_number: "{{ _snt_new.json.result.number | default('') if _step_ok | bool else '' }}"
+      vars:
+        _code: "{{ _snt_new.status | default(-1) | int }}"
+        _step_ok: "{{ _code | int in [200, 201] and (_snt_new.json.result.sys_id | default('')) | length > 0 }}"
+        _snt_step:
+          step: 3 open
+          result: "{{ 'PASS' if _step_ok | bool else 'FAIL' }}"
+          detail: >-
+            {{ ('opened ' ~ _snt_new.json.result.number | default('?') ~ ' (sys_id ' ~ _snt_new.json.result.sys_id | default('?') ~ ')')
+               if _step_ok | bool else
+               ('HTTP ' ~ _code ~ ': ' ~ ((((_snt_new.json.error.message | default('')) ~ ((': ' ~ _snt_new.json.error.detail) if (_snt_new.json.error.detail | default('')) else '')) or (_snt_new.msg | default(''))) | truncate(240))
+                ~ ' -> ' ~ _snt_why[_code | string] | default(_snt_why['5xx'] if _code | int >= 500 else 'see the message')) }}
+
+    - name: ServiceNow test | 3/6 open - FAIL stops the test here
+      ansible.builtin.fail:
+        msg: "FAIL 3 open: {{ _snt_results[-1].detail }}"
+      when: _snt_results[-1].result == 'FAIL'
+
+    - name: ServiceNow test | 3/6 open - PASS
+      ansible.builtin.debug:
+        msg: "PASS 3 open: {{ _snt_results[-1].detail }}"
+
+    - name: ServiceNow test | 4/6 read back - the incident as ServiceNow shows it
+      ansible.builtin.uri:
+        url: >-
+          {{ _snt_url }}/api/now/table/{{ servicenow_table }}/{{ _snt_sys_id }}?sysparm_display_value=true&sysparm_exclude_reference_link=true&sysparm_fields=number,state,priority,short_description,assignment_group,caller_id,category,correlation_id,sys_created_on
+        method: GET
+        url_username: "{{ _snt_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      register: _snt_read
+      failed_when: false
+
+    - name: ServiceNow test | 4/6 read back - result
+      ansible.builtin.set_fact:
+        _snt_results: "{{ _snt_results + [_snt_step] }}"
+      vars:
+        _r: "{{ _snt_read.json.result | default({}) }}"
+        _step_ok: "{{ _snt_read.status | default(-1) | int == 200 and _r.number | default('') == _snt_number }}"
+        _group_lost: "{{ servicenow_assignment_group | length > 0 and (_r.assignment_group | default('')) | length == 0 }}"
+        _snt_step:
+          step: 4 read back
+          result: "{{ ('WARN' if _group_lost | bool else 'PASS') if _step_ok | bool else 'FAIL' }}"
+          detail: >-
+            {{ (_r.number ~ ': state ' ~ _r.state | default('?') ~ ', priority ' ~ _r.priority | default('?')
+                ~ ', assignment group ' ~ (_r.assignment_group | default('') or '(none)')
+                ~ ', caller ' ~ (_r.caller_id | default('') or '(none)')
+                ~ ', created ' ~ _r.sys_created_on | default('?')
+                ~ ((' - the assignment group "' ~ servicenow_assignment_group ~ '" did not stick: check the exact name') if _group_lost | bool else ''))
+               if _step_ok | bool else
+               ('could not read ' ~ _snt_number ~ ' back (HTTP ' ~ _snt_read.status | default(-1) ~ '): the account may create but not read it') }}
+
+    - name: ServiceNow test | 4/6 read back - {{ _snt_results[-1].result }}
+      ansible.builtin.debug:
+        msg:
+          - "{{ _snt_results[-1].result }} 4 read back: {{ _snt_results[-1].detail }}"
+          - "Open it in ServiceNow: {{ _snt_url }}/nav_to.do?uri=incident.do?sys_id={{ _snt_sys_id }}"
+
+    - name: ServiceNow test | 5/6 work note
+      ansible.builtin.uri:
+        url: "{{ _snt_url }}/api/now/table/{{ servicenow_table }}/{{ _snt_sys_id }}?sysparm_fields=number"
+        method: PATCH
+        url_username: "{{ _snt_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        body_format: json
+        body:
+          work_notes: "Test work note from AAP job {{ _snt_job }} at {{ _snt_now }}. The tickets step adds notes like this when a finding is seen again."
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      register: _snt_note
+      failed_when: false
+
+    - name: ServiceNow test | 5/6 work note - result
+      ansible.builtin.set_fact:
+        _snt_results: "{{ _snt_results + [_snt_step] }}"
+      vars:
+        _code: "{{ _snt_note.status | default(-1) | int }}"
+        _snt_step:
+          step: 5 work note
+          result: "{{ 'PASS' if _code | int == 200 else 'FAIL' }}"
+          detail: >-
+            {{ ('added a work note to ' ~ _snt_number ~ ' (see its Activity stream)') if _code | int == 200 else
+               ('HTTP ' ~ _code ~ ': ' ~ ((((_snt_note.json.error.message | default('')) ~ ((': ' ~ _snt_note.json.error.detail) if (_snt_note.json.error.detail | default('')) else '')) or (_snt_note.msg | default(''))) | truncate(240))
+                ~ ' -> ' ~ _snt_why[_code | string] | default(_snt_why['5xx'] if _code | int >= 500 else 'see the message')) }}
+
+    - name: ServiceNow test | 5/6 work note - {{ _snt_results[-1].result }}
+      ansible.builtin.debug:
+        msg: "{{ _snt_results[-1].result }} 5 work note: {{ _snt_results[-1].detail }}"
+
+    - name: ServiceNow test | 6/6 resolve
+      ansible.builtin.uri:
+        url: "{{ _snt_url }}/api/now/table/{{ servicenow_table }}/{{ _snt_sys_id }}?sysparm_fields=number,state"
+        method: PATCH
+        url_username: "{{ _snt_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        body_format: json
+        body:
+          state: "{{ servicenow_resolved_state }}"
+          close_code: "{{ servicenow_close_code }}"
+          close_notes: "Test ticket from AAP job {{ _snt_job }}: resolved automatically by the same job."
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      register: _snt_resolve
+      failed_when: false
+      when: servicenow_test_resolve | bool
+
+    - name: ServiceNow test | 6/6 resolve - result
+      ansible.builtin.set_fact:
+        _snt_results: "{{ _snt_results + [_snt_step] }}"
+      vars:
+        _code: "{{ _snt_resolve.status | default(-1) | int }}"
+        _snt_step:
+          step: 6 resolve
+          result: "{{ 'SKIP' if not servicenow_test_resolve | bool else ('PASS' if _code | int == 200 else 'WARN') }}"
+          detail: >-
+            {{ ('left open (servicenow_test_resolve is false): close ' ~ _snt_number ~ ' by hand') if not servicenow_test_resolve | bool else
+               (('resolved ' ~ _snt_number ~ ' (state ' ~ _snt_resolve.json.result.state | default(servicenow_resolved_state) ~ ')') if _code | int == 200 else
+                ('could not resolve ' ~ _snt_number ~ ' (HTTP ' ~ _code ~ ': '
+                 ~ ((((_snt_resolve.json.error.message | default('')) ~ ((': ' ~ _snt_resolve.json.error.detail) if (_snt_resolve.json.error.detail | default('')) else '')) or (_snt_resolve.msg | default(''))) | truncate(240))
+                 ~ '). Only needed for servicenow_resolve_cleared: check servicenow_resolved_state / servicenow_close_code against your instance, and close the ticket by hand')) }}
+
+    - name: ServiceNow test | 6/6 resolve - {{ _snt_results[-1].result }}
+      ansible.builtin.debug:
+        msg: "{{ _snt_results[-1].result }} 6 resolve: {{ _snt_results[-1].detail }}"
+
+- name: ServiceNow test | summary
+  ansible.builtin.debug:
+    msg: "{{ ['ServiceNow test at ' ~ _snt_url ~ ' as ' ~ _snt_user ~ (' (DRY RUN: steps 3-6 not sent)' if ansible_check_mode else '') ~ ':']
+             + (_snt_results | map(attribute='result') | zip(_snt_results | map(attribute='step'), _snt_results | map(attribute='detail'))
+                | map('join', ' | ') | list) }}"
+
+- name: ServiceNow test | FAIL when a step failed (WARN does not fail the job)
+  ansible.builtin.fail:
+    msg: "{{ _snt_results | selectattr('result', 'equalto', 'FAIL') | map(attribute='step') | join(', ') }} failed - see the lines above"
+  when: _snt_results | selectattr('result', 'equalto', 'FAIL') | list | length > 0
