@@ -79,6 +79,7 @@
         validate_certs: "{{ poam_validate_certs }}"
       register: _poam_token
       no_log: true
+      check_mode: false         # asks for a token only: a dry run still reads STIG Manager
 
     - name: POA&M | collections
       ansible.builtin.uri:
@@ -88,6 +89,7 @@
         validate_certs: "{{ poam_validate_certs }}"
       register: _poam_cols
       no_log: true            # the request carries the token
+      check_mode: false
 
     - name: POA&M | open findings per collection
       ansible.builtin.uri:
@@ -103,6 +105,7 @@
         label: "{{ item.name }}"
       register: _poam_found
       no_log: true
+      check_mode: false
 
     - name: POA&M | open CAT I / II findings with no POA&M item
       ansible.builtin.set_fact:

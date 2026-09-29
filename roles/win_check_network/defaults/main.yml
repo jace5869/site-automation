@@ -1,0 +1,17 @@
+---
+# WINDOWS NETWORK, from the server itself:
+#   - a default gateway and DNS servers are configured;
+#   - the names you list resolve, the TCP services you list answer;
+#   - domain members: the computer's trust with the domain works (nltest /sc_query). A broken
+#     trust is the classic "the trust relationship between this workstation and the primary
+#     domain failed" at logon.
+
+# Names every Windows server must resolve, e.g. [dc01.yoursite.mil, ldap.yoursite.mil]
+win_check_network_dns_names: []
+# Services every Windows server must reach, e.g.
+#   win_check_network_tcp:
+#     - {name: LDAPS, host: dc01.yoursite.mil, port: 636}
+#     - {name: SIEM, host: siem.yoursite.mil, port: 9997}
+win_check_network_tcp: []
+win_check_network_secure_channel: true
+win_check_network_timeout_ms: 3000

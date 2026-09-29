@@ -1,0 +1,142 @@
+---
+# ACT FOR WINDOWS: install (or update, or remove) act.ps1 in win_act_dir on this server, locked
+# down to Administrators and SYSTEM. See defaults/main.yml. Check mode says what it would do.
+
+- name: ACT | the version in the repository (SHA256)
+  ansible.builtin.stat:
+    path: "{{ win_act_source }}"
+    checksum_algorithm: sha256
+  register: _win_act_src
+  delegate_to: localhost
+  run_once: true
+  become: false
+
+- name: ACT | it is there
+  ansible.builtin.assert:
+    that: _win_act_src.stat.exists
+    fail_msg: "{{ win_act_source }} is missing from the repository (vendor/act-windows/act.ps1)."
+    quiet: true
+  run_once: true
+
+- name: ACT | remove it (win_act_state = absent)
+  when: win_act_state == 'absent'
+  block:
+    - name: ACT | remove {{ win_act_dir }}
+      ansible.builtin.script: win_act_remove.ps1
+      environment:
+        SITE_CHECK_CONFIG: "{{ {'dir': win_act_dir} | to_json }}"
+      register: _win_act_rm
+
+    - name: ACT | removed
+      ansible.builtin.debug:
+        msg: "{{ 'Removed ' ~ win_act_dir if (_win_act_rm.stdout_lines | default([]) | site_result).removed | default(false) else win_act_dir ~ ' was not there.' }}"
+
+- name: ACT | install or update
+  when: win_act_state == 'present'
+  block:
+    - name: ACT | what is on the server now
+      ansible.builtin.script: win_act_state.ps1
+      environment:
+        SITE_CHECK_CONFIG: "{{ {'dir': win_act_dir, 'sha256': _win_act_src.stat.checksum | upper} | to_json }}"
+      register: _win_act_now_raw
+      changed_when: false
+      check_mode: false
+
+    - name: ACT | read it
+      ansible.builtin.set_fact:
+        _win_act_now: "{{ _win_act_now_raw.stdout_lines | default([]) | site_result }}"
+
+    - name: ACT | the check answered
+      ansible.builtin.assert:
+        that: "'ok' in _win_act_now"
+        fail_msg: "Could not read {{ win_act_dir }} on {{ inventory_hostname }}: {{ _win_act_now_raw.stderr | default('no output') | truncate(400) }}"
+        quiet: true
+
+    - name: ACT | already installed, current and locked down
+      ansible.builtin.debug:
+        msg: "{{ win_act_dir }}\\act.ps1 is current (SHA256 {{ _win_act_now.sha256 }}), not blocked, and only Administrators and SYSTEM have rights on it."
+      when: _win_act_now.ok | bool
+
+    - name: ACT | would install / fix (dry run)
+      ansible.builtin.debug:
+        msg: "DRY RUN (Check mode): would install ACT in {{ win_act_dir }} because {{ _win_act_now.problems | join('; ') }}. Nothing was changed."
+      when: not _win_act_now.ok | bool and ansible_check_mode
+
+- name: ACT | prepare the installer on the controller (once, when a server needs it)
+  when:
+    - win_act_state == 'present'
+    - not ansible_check_mode
+    - _win_act_needed | length > 0
+  vars:
+    _win_act_needed: >-
+      {{ ansible_play_hosts | map('extract', hostvars) | selectattr('_win_act_now', 'defined')
+         | rejectattr('_win_act_now.ok') | list }}
+  block:
+    - name: ACT | read act.ps1 on the controller
+      ansible.builtin.slurp:
+        src: "{{ win_act_source }}"
+      register: _win_act_b64_raw
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: ACT | a temporary file for the installer, on the controller
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .win_act_install.ps1
+      register: _win_act_tmp
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+    - name: ACT | build the installer (act.ps1 inside it)
+      ansible.builtin.template:
+        src: win_act_install.ps1.j2
+        dest: "{{ _win_act_tmp.path }}"
+        mode: "0600"
+      vars:
+        _win_act_b64: "{{ _win_act_b64_raw.content }}"
+      delegate_to: localhost
+      run_once: true
+      become: false
+
+- name: ACT | install
+  when:
+    - win_act_state == 'present'
+    - not ansible_check_mode
+    - not _win_act_now.ok | bool
+  block:
+    - name: ACT | why
+      ansible.builtin.debug:
+        msg: "Installing because {{ _win_act_now.problems | join('; ') }}."
+
+    - name: ACT | install into {{ win_act_dir }}
+      ansible.builtin.script: "{{ _win_act_tmp.path }}"
+      environment:
+        SITE_CHECK_CONFIG: "{{ {'dir': win_act_dir, 'sha256': _win_act_src.stat.checksum | upper} | to_json }}"
+      register: _win_act_inst
+
+    - name: ACT | check it again
+      ansible.builtin.script: win_act_state.ps1
+      environment:
+        SITE_CHECK_CONFIG: "{{ {'dir': win_act_dir, 'sha256': _win_act_src.stat.checksum | upper} | to_json }}"
+      register: _win_act_after_raw
+      changed_when: false
+
+    - name: ACT | installed, current and locked down
+      ansible.builtin.assert:
+        that: (_win_act_after_raw.stdout_lines | default([]) | site_result).ok | default(false)
+        fail_msg: >-
+          ACT is not right in {{ win_act_dir }} after installing:
+          {{ (_win_act_after_raw.stdout_lines | default([]) | site_result).problems | default(['no result']) | join('; ') }}
+          {{ _win_act_inst.stderr | default('') | truncate(300) }}
+        success_msg: "Installed {{ win_act_dir }}\\act.ps1 (SHA256 {{ _win_act_src.stat.checksum | upper }}), unblocked; only Administrators and SYSTEM have rights on it."
+
+- name: ACT | remove the temporary installer from the controller
+  ansible.builtin.file:
+    path: "{{ _win_act_tmp.path }}"
+    state: absent
+  delegate_to: localhost
+  run_once: true
+  become: false
+  when: _win_act_tmp.path is defined

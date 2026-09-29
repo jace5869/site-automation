@@ -82,6 +82,7 @@
       loop_control:
         label: "{{ item.host }}: {{ item.id }}"
       register: _sn_found
+      check_mode: false         # only reads: a dry run still finds out what exists
 
     - name: ServiceNow | open new tickets
       ansible.builtin.uri:
@@ -159,6 +160,7 @@
         timeout: "{{ servicenow_timeout }}"
       loop: "{{ (site_health | default({})).keys() | list | sort }}"
       register: _sn_open
+      check_mode: false         # only reads
       when: servicenow_note_cleared | bool or servicenow_resolve_cleared | bool
 
     - name: ServiceNow | problems that cleared (their check ran again and passed)
@@ -194,7 +196,21 @@
       loop_control:
         label: "{{ item.number }} ({{ item.host }})"
 
+    - name: ServiceNow | DRY RUN - what it would do (nothing was sent to ServiceNow)
+      ansible.builtin.debug:
+        msg: >-
+          {{ ['DRY RUN (Check mode): nothing was created or changed in ServiceNow.',
+              'would open: ' ~ ((_sn_found.results | selectattr('json.result', 'defined') | rejectattr('json.result')
+                                 | map(attribute='item') | map(attribute='host') | zip(_sn_found.results | selectattr('json.result', 'defined')
+                                 | rejectattr('json.result') | map(attribute='item') | map(attribute='summary')) | map('join', ': ') | join(' | ')) or 'none'),
+              'would add a note to: ' ~ ((_sn_found.results | selectattr('json.result', 'defined') | selectattr('json.result')
+                                         | map(attribute='json.result') | map('first') | map(attribute='number') | join(', ')) or 'none'),
+              ('would resolve' if servicenow_resolve_cleared | bool else 'would note as cleared') ~ ': '
+                ~ ((_sn_cleared | map(attribute='number') | join(', ')) or 'none')] }}
+      when: ansible_check_mode
+
     - name: ServiceNow | summary
+      when: not ansible_check_mode
       ansible.builtin.debug:
         msg: >-
           {{ ['opened: ' ~ ((_sn_new.results | default([]) | selectattr('json', 'defined') | map(attribute='json.result.number') | join(', ')) or 'none'),

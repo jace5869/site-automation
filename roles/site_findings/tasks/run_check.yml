@@ -1,12 +1,13 @@
 ---
-# Run one check role (roles/check_<name>) on this host. If the check itself breaks (a tool is
-# missing, an unexpected error), that becomes a finding and the other checks still run.
+# Run one check role on this host: roles/check_<name> on Linux, roles/win_check_<name> on Windows.
+# If the check itself breaks (a tool is missing, an unexpected error), that becomes a finding and
+# the other checks still run.
 # Input: _site_check (the check name, e.g. disk).
 - name: "Check {{ _site_check }}"
   block:
     - name: "Check {{ _site_check }} | run"
       ansible.builtin.include_role:
-        name: "check_{{ _site_check }}"
+        name: "{{ site_check_role_prefix }}{{ _site_check }}"
 
     - name: "Check {{ _site_check }} | done"
       ansible.builtin.set_fact:

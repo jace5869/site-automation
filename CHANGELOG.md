@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.4.0 — 2026-09-29
+
+- **No automatic restarts unless you say so** (`automatic_restarts: true`, default false), for
+  Linux and Windows patching alike. **This changes Linux patching**: until now `patch_hosts.yml`
+  rebooted hosts that needed it (`patch_reboot: when_needed`); now it installs the updates and
+  lists the hosts that still need a reboot, unless `automatic_restarts` is true. The patch
+  templates' survey question is now `automatic_restarts` (`no` / `yes`).
+- **Dry runs everywhere** (Job type *Check*), explained in `docs/DRY_RUNS.md` (and a chapter in the
+  setup PDF): what each template does in one, the five places to set it, examples. ServiceNow
+  tickets now does a real dry run: it reads what is open and prints what it would open, note and
+  resolve, sending nothing. POA&M status and ServiceNow health read as usual in a dry run. Patch
+  hosts says "DRY RUN ... would make N change(s): <packages>". STIG Manager - deploy now works as a
+  dry run (it reads what it needs, lists what would change, verifies nothing).
+- **Workflows**: `docs/WORKFLOWS_AND_SCHEDULES.md` now shows how to build any workflow, click by
+  click, and 17 ready-made ones for Linux, Windows and both: daily health, weekly compliance,
+  patch with checks, patch with a dry run first, fix with approval (ACT), security posture,
+  certificate watch, MariaDB watch, investigate a host, STIG Manager deploy with checks, service
+  watch, the Windows ones, and "everything, every morning".
+
+- **Windows servers.** Health checks, troubleshooting and a certificate report for Windows, over
+  WinRM, the same way as for Linux: the same findings, report, ServiceNow tickets, POA&M and
+  workflows. Each check is a PowerShell script (`roles/win_check_<name>/files`) run with the
+  built-in `script` module, so no Ansible collection is needed (the execution environment needs
+  `pywinrm`). The scripts run in Windows PowerShell 5.1 and PowerShell 7, and are written and
+  tested for Constrained Language Mode too (whether Ansible itself runs on a WDAC / AppLocker
+  server depends on the ansible-core version and the policy; the connection test shows it).
+  - `playbooks/win_health_check.yml`: disk, services, performance, time, network (including the
+    domain trust), eventlog (daily); security, audit, accounts, certs, patching (weekly). One
+    Application event log entry per finding.
+  - `playbooks/win_troubleshoot.yml`: overview, disk, performance, service, network, login, time,
+    logs, updates, security.
+  - `playbooks/win_cert_report.yml`: every certificate in the machine stores, with where it is used
+    (https bindings, the WinRM listener AAP connects through, Remote Desktop).
+  - `playbooks/win_connection_test.yml`: checks the execution environment (pywinrm, NTLM, Kerberos)
+    and each server (PowerShell, language mode, local administrator).
+- **Windows patching through Software Center** (`playbooks/win_patch.yml`, `roles/win_patch`):
+  asks the ConfigMgr client to install every update deployed to the server (like "Install all"),
+  waits and reports each update's state, restarts only with `automatic_restarts: true` and only
+  when needed (shutdown.exe; AAP watches the WinRM port and checks the boot time changed), then
+  proves every automatic service that ran before runs again. A second round after a restart
+  catches updates the first one revealed. One server at a time, stops at the first failure; stops plainly outside a ConfigMgr
+  maintenance window; Check mode lists and changes nothing. No collection needed.
+- **ACT for Windows on the servers** (`playbooks/win_act_install.yml`, `roles/win_act`,
+  `vendor/act-windows` 0.6.18): installed in `C:\ProgramData\act`, taken over and locked down to
+  Administrators and SYSTEM (ordinary users may create files there), SHA256-checked against the
+  repository and unblocked (no "downloaded from the internet" mark) every run;
+  `win_act_state: absent` removes it.
+- New filter `site_result`: the result line of a Windows script.
+- **Linux and Windows do not mix**: the Linux playbooks skip Windows hosts and the Windows ones
+  skip Linux hosts (`roles/site_findings/tasks/os_guard.yml`); skipped hosts get no "did not
+  report" ticket.
+- `docs/WINDOWS.md` (and a chapter in the setup PDF); `inventories/example-windows/`.
+- Tests: the Windows checks with made-up server data (every finding path, normal and
+  constrained), on Linux and on Windows under PowerShell 5.1 and 7; each check for real on a
+  Windows runner; Ansible to Windows over WinRM end to end; and simulated patch runs (a stand-in
+  ConfigMgr client, restart, second round, maintenance window, dry run, no client).
+
 ## 0.3.5 — 2026-09-28
 
 - **Apply approved ACT fix runs the approved commands itself**, like service watch since 0.3.4:

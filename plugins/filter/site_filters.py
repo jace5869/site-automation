@@ -9,9 +9,15 @@ from_csv        the text of a CSV file -> a list of dictionaries, one per row, k
 days_until      a date written in any of the given formats -> whole days from today (negative =
                 in the past), or None when it is not a date in any of those formats.
                     {{ '10/31/2026' | days_until(['%Y-%m-%d', '%m/%d/%Y']) }}
+
+site_result     the result a Windows script printed (the JSON after its last
+                '###SITE-JSON### ' line), from a registered result's stdout_lines;
+                {} (or the given default) when there is none.
+                    {{ _out.stdout_lines | default([]) | site_result }}
 """
 import csv
 import datetime
+import json
 import io
 
 
@@ -42,6 +48,28 @@ def days_until(value, formats=("%Y-%m-%d",)):
     return None
 
 
+def site_result(lines, default=None):
+    """The result a Windows script printed: the JSON after the LAST '###SITE-JSON### ' line.
+
+    `lines` is a registered result's stdout_lines (a string is split into lines). Anything else
+    the script printed is ignored. No such line, or not JSON: `default` ({} if not given).
+    """
+    if default is None:
+        default = {}
+    if isinstance(lines, str):
+        lines = lines.splitlines()
+    marker = "###SITE-JSON### "
+    for line in reversed(list(lines or [])):
+        line = str(line)
+        if line.startswith(marker):
+            try:
+                value = json.loads(line[len(marker):])
+            except ValueError:
+                return default
+            return default if value is None else value
+    return default
+
+
 class FilterModule(object):
     def filters(self):
-        return {"from_csv": from_csv, "days_until": days_until}
+        return {"from_csv": from_csv, "days_until": days_until, "site_result": site_result}

@@ -1,0 +1,15 @@
+---
+# WINDOWS SECURITY BASELINE (a few high-value STIG items; not a full STIG scan: that is your SCAP / vulnerability scanner)
+
+# Antivirus: auto = check Microsoft Defender when it is the active antivirus (skipped when it is
+# passive or off because another product protects the server); defender = always; none = never.
+win_check_security_av: auto
+win_check_security_av_signature_max_days: 7
+# Services of your endpoint protection that must run, e.g. Trellix / McAfee: [masvc, mfemms]
+win_check_security_av_services: []
+
+win_check_security_firewall_profiles: [Domain, Private, Public]   # must be on
+win_check_security_smb1: true           # SMBv1 must be off
+win_check_security_rdp_nla: true        # Remote Desktop must require Network Level Authentication
+win_check_security_uac: true            # User Account Control must be on
+win_check_security_legacy_tls: true     # TLS 1.0 / 1.1 must be off for incoming connections

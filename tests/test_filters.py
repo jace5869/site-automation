@@ -35,5 +35,18 @@ class DaysUntil(unittest.TestCase):
         self.assertIsNone(f.days_until("", ["%Y-%m-%d"]))
 
 
+
+class SiteResult(unittest.TestCase):
+    def test_last_marker_line_wins(self):
+        lines = ["noise", '###SITE-JSON### {"a": 1}', "more", '###SITE-JSON### {"a": 2}']
+        self.assertEqual(f.site_result(lines), {"a": 2})
+
+    def test_string_and_defaults(self):
+        self.assertEqual(f.site_result('x\n###SITE-JSON### {"b": [1]}\n'), {"b": [1]})
+        self.assertEqual(f.site_result([]), {})
+        self.assertEqual(f.site_result(["###SITE-JSON### null"], {"x": 0}), {"x": 0})
+        self.assertEqual(f.site_result(["###SITE-JSON### {not json"], {"x": 0}), {"x": 0})
+        self.assertEqual(f.site_result(None), {})
+
 if __name__ == "__main__":
     unittest.main()

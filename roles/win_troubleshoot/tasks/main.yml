@@ -1,0 +1,68 @@
+---
+# WINDOWS TROUBLESHOOT one area on the target server(s): run the area's read-only PowerShell
+# commands, print each with what it shows, and run the area's health checks.
+
+- name: Troubleshoot | what to look at
+  ansible.builtin.assert:
+    that:
+      - ts_area in win_ts_areas
+      - ts_area != 'service' or ts_service | length > 0
+      - "ts_area != 'network' or ts_target is match('^[^: ]+(:[0-9]+)?$')"
+    fail_msg: >-
+      Area must be one of {{ win_ts_areas.keys() | join(', ') }}; area=service needs ts_service (a
+      service name, e.g. W3SVC), area=network needs ts_target (host:port). Got area={{ ts_area }},
+      service={{ ts_service }}, target={{ ts_target }}.
+    quiet: true
+  run_once: true
+
+- name: Troubleshoot | point the checks at the service / target you named
+  ansible.builtin.set_fact:
+    win_check_services_required_extra: >-
+      {{ (win_check_services_required_extra | default([])) + ([ts_service] if ts_area == 'service' else []) }}
+    win_check_network_tcp: >-
+      {{ (win_check_network_tcp | default([]))
+         + ([{'name': ts_target, 'host': ts_target.split(':')[0], 'port': (ts_target.split(':') + ['443'])[1] | int}]
+            if ts_area == 'network' else []) }}
+
+- name: Troubleshoot | run the {{ ts_area }} commands (read-only)
+  ansible.builtin.script: win_troubleshoot.ps1
+  environment:
+    SITE_CHECK_CONFIG: "{{ {'commands': win_ts_areas[ts_area].commands, 'max_lines': ts_output_lines | int} | to_json }}"
+  register: _ts_out
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Troubleshoot | the commands ran
+  ansible.builtin.assert:
+    that: _ts_line | length > 0
+    fail_msg: >-
+      The troubleshoot script gave no result (exit code {{ _ts_out.rc | default('?') }}):
+      {{ (_ts_out.stderr | default('') | trim or _ts_out.msg | default('') or 'no output') | truncate(400) }}
+    quiet: true
+  vars:
+    _ts_line: "{{ _ts_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+
+- name: Troubleshoot | what each command shows
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['### ' ~ s.why, 'PS> ' ~ s.cmd]
+         + (s.lines if s.lines | default([]) else ['(no output)'])
+         + (['[error] ' ~ s.error] if s.error | default('') else []) }}
+  loop: "{{ ((_ts_out.stdout_lines | select('match', '^###SITE-JSON### ') | list | last)[16:] | from_json).sections }}"
+  loop_control:
+    loop_var: s
+    label: "{{ s.why }}"
+
+- name: Troubleshoot | start the matching health checks
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: start.yml
+
+- name: Troubleshoot | run the matching health checks
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: run_check.yml
+  loop: "{{ win_ts_areas[ts_area].checks }}"
+  loop_control:
+    loop_var: _site_check

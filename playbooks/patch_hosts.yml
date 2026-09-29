@@ -1,5 +1,7 @@
 ---
 # PATCH - install updates, reboot when they need it, and prove each host came back healthy.
+# NO AUTOMATIC RESTARTS unless automatic_restarts is true (template Variables or survey): without it
+# the updates are installed and the job says which hosts still need a reboot.
 #
 # Meant for the "Patch with checks" workflow:
 #   [Health check: pre] -> [Approval] -> [THIS] -> [Health check: post] -> [ServiceNow tickets]
@@ -12,11 +14,17 @@
 #
 #   ansible-playbook playbooks/patch_hosts.yml --check -l web01.example.mil
 #   ansible-playbook playbooks/patch_hosts.yml -l web01.example.mil -e patch_security_only=true
+#   ansible-playbook playbooks/patch_hosts.yml -l web01.example.mil -e automatic_restarts=true
 - name: Patch hosts
   hosts: "{{ target | default('patch_hosts') }}"
   become: true
   gather_facts: false
   serial: "{{ patch_serial | default(1) }}"
   max_fail_percentage: 0
+  pre_tasks:
+    - name: Linux hosts only (this playbook never touches a Windows server)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
   roles:
     - role: patch

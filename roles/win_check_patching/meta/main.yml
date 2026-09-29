@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: win_check_patching
+  description: "Windows health check: pending restart after updates, days since the last update."
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Windows
+      versions: [all]
+dependencies: []

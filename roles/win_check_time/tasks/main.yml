@@ -1,0 +1,20 @@
+---
+# Runs files/win_time.ps1 on the server (ansible.builtin.script: no collection needed) with the
+# settings from defaults/main.yml, then adds its findings to this host's list.
+- name: Windows time | check
+  ansible.builtin.script: win_time.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'offset_warn_sec': win_check_time_offset_warn_sec, 'offset_crit_sec': win_check_time_offset_crit_sec,
+          'max_hours_since_sync': win_check_time_max_hours_since_sync} | to_json }}
+  register: _win_check_out
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Windows time | findings
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: win_result.yml
+  vars:
+    _win_check: time

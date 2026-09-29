@@ -1,0 +1,59 @@
+---
+# Restart the server and wait until it is back. Proof it really restarted: a new boot time.
+# (ansible.windows' win_reboot is not used, so no collection is needed.)
+- name: Patch | restart the server in {{ win_patch_restart_delay_sec }} s
+  ansible.builtin.script: win_patch.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'action': 'restart', 'delay_sec': win_patch_restart_delay_sec | int,
+          'message': 'site-automation: restart after installing updates (AAP job ' ~ (awx_job_id | default('-') | string) ~ ')'} | to_json }}
+  register: _wp_rs_raw
+
+- name: Patch | restart answered
+  ansible.builtin.include_tasks: answered.yml
+  vars: {_wp_step: the restart, _wp_raw_any: "{{ _wp_rs_raw }}", _wp_key: boot_before}
+
+- name: Patch | boot time before the restart
+  ansible.builtin.set_fact:
+    _wp_boot_before: "{{ (_wp_rs_raw.stdout_lines | default([]) | site_result).boot_before | default('') }}"
+    _wp_up: false
+    _wp_boot_after: ""
+
+- name: Patch | the server goes down (WinRM port {{ win_patch_winrm_port }} closes)
+  ansible.builtin.wait_for:
+    host: "{{ win_patch_winrm_host }}"
+    port: "{{ win_patch_winrm_port | int }}"
+    state: stopped
+    timeout: "{{ (win_patch_restart_delay_sec | int) + 900 }}"
+  delegate_to: localhost
+
+- name: Patch | the server comes back (WinRM port {{ win_patch_winrm_port }} answers)
+  ansible.builtin.wait_for:
+    host: "{{ win_patch_winrm_host }}"
+    port: "{{ win_patch_winrm_port | int }}"
+    state: started
+    delay: "{{ win_patch_restart_settle_sec | int }}"
+    timeout: "{{ (win_patch_restart_timeout_min | int) * 60 }}"
+  delegate_to: localhost
+
+# The port answers a little before WinRM accepts logons: try a few times.
+- name: Patch | log on again
+  ansible.builtin.include_tasks: reconnect.yml
+  loop: "{{ range(1, 11) | list }}"
+  loop_control:
+    loop_var: _wp_try
+
+- name: Patch | the server restarted and is back
+  ansible.builtin.assert:
+    that:
+      - _wp_up | bool
+      - _wp_boot_after != _wp_boot_before
+    fail_msg: >-
+      {{ inventory_hostname }} {{ 'did not accept a logon after the restart' if not _wp_up | bool
+      else 'answers, but did not restart (boot time still ' ~ _wp_boot_before ~ ')' }}. Look at it on the console.
+    quiet: true
+
+- name: Patch | restarted
+  ansible.builtin.set_fact:
+    _wp_restarted: true
+    _wp_log: "{{ _wp_log + ['Restarted: was up since ' ~ _wp_boot_before ~ ', up again since ' ~ _wp_boot_after ~ '.'] }}"

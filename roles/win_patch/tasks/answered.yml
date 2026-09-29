@@ -1,0 +1,12 @@
+---
+# Stop with PowerShell's own error when a win_patch.ps1 step printed no result.
+# Input: _wp_step (what it was doing), _wp_raw_any (the registered script result), _wp_key (a
+# field the result must have).
+- name: "Patch | {{ _wp_step }}: the script answered"
+  ansible.builtin.assert:
+    that: _wp_key in (_wp_raw_any.stdout_lines | default([]) | site_result)
+    fail_msg: >-
+      {{ inventory_hostname }}: {{ _wp_step }} gave no result (exit code {{ _wp_raw_any.rc | default('?') }}):
+      {{ (((_wp_raw_any.stderr | default('') | regex_findall('<S S="Error">(.*?)</S>') | join(' ')) or (_wp_raw_any.stderr | default('')) or (_wp_raw_any.msg | default('')) or 'no output')
+          | regex_replace('_x001B_\\[[0-9;]*m', '') | regex_replace('_x000[AD]_', ' ') | regex_replace('\\s+', ' ') | trim) | truncate(500) }}
+    quiet: true

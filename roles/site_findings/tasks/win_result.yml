@@ -1,0 +1,30 @@
+---
+# Windows checks: read what a check script printed and add its findings to this host's list.
+# Input: _win_check (the check name) and _win_check_out (the registered result of the script).
+# Every check script prints one line: ###SITE-JSON### {"findings": [...], "facts": {...}}
+# Its facts are kept in win_facts.<check> (e.g. win_facts.certs.inventory for the cert report).
+- name: "Windows {{ _win_check }} | the script answered"
+  ansible.builtin.assert:
+    that: _win_line | length > 0
+    fail_msg: >-
+      The {{ _win_check }} script gave no result (exit code {{ _win_check_out.rc | default('?') }}):
+      {{ (_win_err or _win_check_out.msg | default('') or 'no output') | truncate(400) }}
+    quiet: true
+  vars:
+    _win_line: "{{ _win_check_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+    # PowerShell errors can arrive as CLIXML: keep only the error text
+    _win_err: >-
+      {{ ((_win_check_out.stderr | default('') | regex_findall('<S S="Error">(.*?)</S>') | join(' '))
+          or (_win_check_out.stderr | default('')))
+         | regex_replace('_x001B_\\[[0-9;]*m', '') | regex_replace('_x000[AD]_', ' ')
+         | regex_replace('\\s+', ' ') | trim }}
+
+- name: "Windows {{ _win_check }} | findings"
+  ansible.builtin.set_fact:
+    site_findings: >-
+      {{ site_findings + (_win_result.findings | default([])
+                          | map('combine', {'check': _win_check}) | list) }}
+    win_facts: "{{ win_facts | default({}) | combine({_win_check: _win_result.facts | default({})}) }}"
+  vars:
+    _win_result: >-
+      {{ (_win_check_out.stdout_lines | select('match', '^###SITE-JSON### ') | list | last)[16:] | from_json }}

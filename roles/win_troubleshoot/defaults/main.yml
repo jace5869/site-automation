@@ -1,0 +1,106 @@
+---
+# WINDOWS TROUBLESHOOT: the PowerShell commands an experienced Windows admin runs first for a
+# kind of problem, run for you (read-only), each with a line saying what it shows. The matching
+# health checks run too, so you also get plain-words findings.
+#
+#   ts_area:    overview | disk | performance | service | network | login | time | logs |
+#               updates | security
+#   ts_service: the service name for area=service (e.g. W3SVC, Spooler, MSSQLSERVER)
+#   ts_target:  host:port for area=network (e.g. dc01.example.mil:636)
+#   ts_hours:   how many hours back to read the event logs (default 2)
+ts_area: overview
+ts_service: ""
+ts_target: ""
+ts_hours: 2
+ts_output_lines: 60                     # keep the last this-many lines of each command
+
+# Values used inside the commands below (quoted for PowerShell)
+_ts_svc: "{{ ts_service | replace(\"'\", \"''\") }}"
+_ts_host: "{{ ts_target.split(':')[0] | replace(\"'\", \"''\") }}"
+_ts_port: "{{ (ts_target.split(':') + ['443'])[1] | int }}"
+_ts_since: "(Get-Date).AddHours(-{{ ts_hours | int }})"
+
+# What each area runs. `why` is printed above the command's output. Commands must be read-only.
+win_ts_areas:
+  overview:
+    checks: [disk, services, performance, time, eventlog]
+    commands:
+      - {why: "Windows version and last restart", cmd: "Get-CimInstance Win32_OperatingSystem | Format-List Caption, Version, CSName, LastBootUpTime"}
+      - {why: "Automatic services that are not running", cmd: "Get-CimInstance Win32_Service -Filter \"StartMode='Auto' AND State<>'Running'\" | Format-Table Name, State, ExitCode, DisplayName -AutoSize"}
+      - {why: "Disk space", cmd: "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Format-Table DeviceID, VolumeName, @{n='SizeGB'; e={[int]($_.Size / 1GB)}}, @{n='FreeGB'; e={[int]($_.FreeSpace / 1GB)}} -AutoSize"}
+      - {why: "Largest processes (memory)", cmd: "Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 10 Name, Id, @{n='MemMB'; e={[int]($_.WorkingSet64 / 1MB)}}, CPU | Format-Table -AutoSize"}
+      - {why: "Errors in System and Application, last {{ ts_hours }} hours", cmd: "Get-WinEvent -FilterHashtable @{LogName='System','Application'; Level=1,2; StartTime={{ _ts_since }}} -MaxEvents 30 -ErrorAction SilentlyContinue | Format-Table TimeCreated, LogName, ProviderName, Id -AutoSize"}
+      - {why: "Recent restarts and shutdowns (1074 who, 6008 unexpected, 41 power)", cmd: "Get-WinEvent -FilterHashtable @{LogName='System'; Id=1074,6005,6006,6008,41} -MaxEvents 10 -ErrorAction SilentlyContinue | Format-Table TimeCreated, Id, Message -Wrap"}
+  disk:
+    checks: [disk]
+    commands:
+      - {why: "Volumes", cmd: "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Format-Table DeviceID, VolumeName, @{n='SizeGB'; e={[int]($_.Size / 1GB)}}, @{n='FreeGB'; e={[int]($_.FreeSpace / 1GB)}} -AutoSize"}
+      - {why: "Largest folders at the top of C: (can take a minute)", cmd: "Get-ChildItem C:\\ -Directory -Force -ErrorAction SilentlyContinue | ForEach-Object { $s = (Get-ChildItem $_.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum; '{0,10:F1} GB  {1}' -f ($s / 1GB), $_.FullName } | Sort-Object -Descending | Select-Object -First 12"}
+      - {why: "Windows temp and the Windows Update download cache", cmd: "'C:\\Windows\\Temp', 'C:\\Windows\\SoftwareDistribution\\Download' | ForEach-Object { $s = (Get-ChildItem $_ -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum; '{0,10:F1} GB  {1}' -f ($s / 1GB), $_ }"}
+      - {why: "Shadow copy storage", cmd: "vssadmin list shadowstorage"}
+      - {why: "Can the component store (WinSxS) be cleaned up? (takes 1-3 minutes)", cmd: "Dism.exe /Online /Cleanup-Image /AnalyzeComponentStore"}
+  performance:
+    checks: [performance]
+    commands:
+      - {why: "CPU now, three samples", cmd: "1..3 | ForEach-Object { (Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter \"Name='_Total'\").PercentProcessorTime; Start-Sleep -Seconds 1 }"}
+      - {why: "Busiest processes by CPU right now (% of one core)", cmd: "Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | Where-Object { $_.Name -ne '_Total' -and $_.Name -ne 'Idle' } | Sort-Object PercentProcessorTime -Descending | Select-Object -First 10 Name, IDProcess, PercentProcessorTime | Format-Table -AutoSize"}
+      - {why: "Largest processes by memory", cmd: "Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 10 Name, Id, @{n='MemMB'; e={[int]($_.WorkingSet64 / 1MB)}}, Handles | Format-Table -AutoSize"}
+      - {why: "Memory and page file", cmd: "Get-CimInstance Win32_OperatingSystem | Format-List @{n='TotalGB'; e={[int]($_.TotalVisibleMemorySize / 1MB)}}, @{n='FreeGB'; e={[int]($_.FreePhysicalMemory / 1MB)}}; Get-CimInstance Win32_PageFileUsage | Format-Table Name, AllocatedBaseSize, CurrentUsage, PeakUsage -AutoSize"}
+      - {why: "Most handles (a leak shows here)", cmd: "Get-Process | Sort-Object Handles -Descending | Select-Object -First 5 Name, Id, Handles | Format-Table -AutoSize"}
+  service:
+    checks: [services]
+    commands:
+      - {why: "The service", cmd: "Get-CimInstance Win32_Service -Filter \"Name='{{ _ts_svc }}'\" | Format-List Name, DisplayName, State, StartMode, ExitCode, ServiceSpecificExitCode, ProcessId, StartName, PathName"}
+      - {why: "What it depends on, and their state", cmd: "Get-Service -Name '{{ _ts_svc }}' -RequiredServices | Format-Table Name, Status, StartType -AutoSize"}
+      - {why: "Its recovery settings (what Windows does when it fails)", cmd: "sc.exe qfailure '{{ _ts_svc }}'"}
+      - {why: "Service Control Manager events about it, last {{ ts_hours }} hours", cmd: "$d = (Get-Service -Name '{{ _ts_svc }}').DisplayName; Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Service Control Manager'; StartTime={{ _ts_since }}} -ErrorAction SilentlyContinue | Where-Object { $_.Message -like \"*$d*\" } | Select-Object -First 15 | Format-Table TimeCreated, Id, Message -Wrap"}
+      - {why: "Application log errors from it, last {{ ts_hours }} hours", cmd: "Get-WinEvent -FilterHashtable @{LogName='Application'; Level=1,2; StartTime={{ _ts_since }}} -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -like '*{{ _ts_svc }}*' } | Select-Object -First 15 | Format-Table TimeCreated, ProviderName, Id, Message -Wrap"}
+  network:
+    checks: [network]
+    commands:
+      - {why: "Addresses, gateway and DNS servers", cmd: "ipconfig /all"}
+      - {why: "Default routes", cmd: "Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction SilentlyContinue | Format-Table ifIndex, InterfaceAlias, NextHop, RouteMetric -AutoSize"}
+      - {why: "Does the name resolve?", cmd: "Resolve-DnsName -Name '{{ _ts_host }}' -ErrorAction Continue | Format-Table -AutoSize"}
+      - {why: "Can this server reach {{ ts_target }}?", cmd: "Test-NetConnection -ComputerName '{{ _ts_host }}' -Port {{ _ts_port }} -InformationLevel Detailed"}
+      - {why: "Windows Firewall profiles", cmd: "Get-NetFirewallProfile | Format-Table Name, Enabled, DefaultInboundAction, DefaultOutboundAction -AutoSize"}
+      - {why: "TCP connections by state", cmd: "Get-NetTCPConnection -ErrorAction SilentlyContinue | Group-Object State | Format-Table Count, Name -AutoSize"}
+      - {why: "Trust with the domain", cmd: "nltest.exe /sc_query:$((Get-CimInstance Win32_ComputerSystem).Domain)"}
+  login:
+    checks: [accounts, time]
+    commands:
+      - {why: "Failed logons (4625) in the last {{ ts_hours }} hours: account, from where", cmd: "Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4625; StartTime={{ _ts_since }}} -MaxEvents 1000 -ErrorAction SilentlyContinue | ForEach-Object { '{0}\\{1} from {2} ({3})' -f $_.Properties[6].Value, $_.Properties[5].Value, $_.Properties[19].Value, $_.Properties[8].Value } | Group-Object | Sort-Object Count -Descending | Select-Object -First 15 Count, Name | Format-Table -AutoSize"}
+      - {why: "Account lockouts (4740)", cmd: "Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4740; StartTime={{ _ts_since }}} -MaxEvents 20 -ErrorAction SilentlyContinue | ForEach-Object { '{0}  {1} locked out, caller {2}' -f $_.TimeCreated, $_.Properties[0].Value, $_.Properties[1].Value }"}
+      - {why: "Trust with the domain (logons with domain accounts need it)", cmd: "nltest.exe /sc_query:$((Get-CimInstance Win32_ComputerSystem).Domain)"}
+      - {why: "Clock (Kerberos fails when it is 5 minutes off)", cmd: "w32tm.exe /query /status"}
+      - {why: "Who may log on through Remote Desktop", cmd: "Get-LocalGroupMember -SID 'S-1-5-32-555' -ErrorAction SilentlyContinue | Format-Table Name, ObjectClass -AutoSize"}
+  time:
+    checks: [time]
+    commands:
+      - {why: "Time status", cmd: "w32tm.exe /query /status /verbose"}
+      - {why: "Where the time comes from (configuration)", cmd: "w32tm.exe /query /configuration"}
+      - {why: "Peers", cmd: "w32tm.exe /query /peers"}
+      - {why: "Offset from the time source, three samples", cmd: "$s = ((w32tm.exe /query /source) -split ',')[0].Trim(); w32tm.exe /stripchart /computer:$s /samples:3 /dataonly"}
+      - {why: "Time service events", cmd: "Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-Time-Service'} -MaxEvents 15 -ErrorAction SilentlyContinue | Format-Table TimeCreated, Id, Message -Wrap"}
+  logs:
+    checks: [eventlog]
+    commands:
+      - {why: "Errors and warnings in System by source, last {{ ts_hours }} hours", cmd: "Get-WinEvent -FilterHashtable @{LogName='System'; Level=1,2,3; StartTime={{ _ts_since }}} -ErrorAction SilentlyContinue | Group-Object ProviderName | Sort-Object Count -Descending | Select-Object -First 15 Count, Name | Format-Table -AutoSize"}
+      - {why: "Errors and warnings in Application by source", cmd: "Get-WinEvent -FilterHashtable @{LogName='Application'; Level=1,2,3; StartTime={{ _ts_since }}} -ErrorAction SilentlyContinue | Group-Object ProviderName | Sort-Object Count -Descending | Select-Object -First 15 Count, Name | Format-Table -AutoSize"}
+      - {why: "The last 20 errors, with their message", cmd: "Get-WinEvent -FilterHashtable @{LogName='System','Application'; Level=1,2; StartTime={{ _ts_since }}} -MaxEvents 20 -ErrorAction SilentlyContinue | Format-List TimeCreated, LogName, ProviderName, Id, Message"}
+      - {why: "Event log sizes and whether they are full", cmd: "Get-WinEvent -ListLog System, Application, Security | Format-Table LogName, @{n='MaxMB'; e={[int]($_.MaximumSizeInBytes / 1MB)}}, RecordCount, LogMode, IsLogFull -AutoSize"}
+  updates:
+    checks: [patching]
+    commands:
+      - {why: "The last 15 installed updates", cmd: "Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 15 HotFixID, Description, InstalledOn, InstalledBy | Format-Table -AutoSize"}
+      - {why: "Is a restart pending?", cmd: "'CBS RebootPending: ' + (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\RebootPending'); 'WU RebootRequired: ' + (Test-Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update\\RebootRequired')"}
+      - {why: "Windows Update client events (19 installed, 20 failed, 43 started)", cmd: "Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-WindowsUpdateClient'} -MaxEvents 20 -ErrorAction SilentlyContinue | Format-Table TimeCreated, Id, Message -Wrap"}
+      - {why: "Where updates come from (WSUS settings)", cmd: "Get-ItemProperty 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate' -ErrorAction SilentlyContinue | Format-List WUServer, WUStatusServer, TargetGroup"}
+      - {why: "Servicing log, last lines (update failures show here)", cmd: "Get-Content C:\\Windows\\Logs\\CBS\\CBS.log -Tail 40 -ErrorAction SilentlyContinue"}
+  security:
+    checks: [security, accounts]
+    commands:
+      - {why: "Microsoft Defender status", cmd: "Get-MpComputerStatus -ErrorAction SilentlyContinue | Format-List AMRunningMode, AMServiceEnabled, RealTimeProtectionEnabled, AntivirusSignatureAge, AntivirusSignatureLastUpdated, QuickScanAge, FullScanAge"}
+      - {why: "Recent threat detections", cmd: "Get-MpThreatDetection -ErrorAction SilentlyContinue | Select-Object -First 10 InitialDetectionTime, ThreatID, ActionSuccess, Resources | Format-List"}
+      - {why: "Windows Firewall profiles", cmd: "Get-NetFirewallProfile | Format-Table Name, Enabled, DefaultInboundAction -AutoSize"}
+      - {why: "Local Administrators", cmd: "Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction SilentlyContinue | Format-Table Name, ObjectClass, PrincipalSource -AutoSize"}
+      - {why: "Accounts created, added to groups, services installed, logs cleared - last {{ ts_hours }} hours", cmd: "Get-WinEvent -FilterHashtable @{LogName='Security'; Id=4720,4732,4728,1102; StartTime={{ _ts_since }}} -MaxEvents 20 -ErrorAction SilentlyContinue | Format-Table TimeCreated, Id, Message -Wrap; Get-WinEvent -FilterHashtable @{LogName='System'; Id=7045; StartTime={{ _ts_since }}} -MaxEvents 10 -ErrorAction SilentlyContinue | Format-Table TimeCreated, Message -Wrap"}

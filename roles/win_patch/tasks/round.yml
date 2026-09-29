@@ -1,0 +1,152 @@
+---
+# One round: (scan) -> list -> install -> wait -> restart if needed and allowed.
+# Input: _wp_round (1, 2, ...). Everything is skipped once _wp_done is set.
+- name: "Patch | round {{ _wp_round }}"
+  when: not _wp_done | bool
+  block:
+    # The assignments evaluation (108) can itself start required updates whose deadline passed,
+    # so a dry run (check mode) only rescans (113).
+    - name: "Patch | round {{ _wp_round }} | ask the client to rescan{{ ' and re-evaluate' if not ansible_check_mode else '' }}"
+      ansible.builtin.script: win_patch.ps1
+      environment:
+        SITE_CHECK_CONFIG: "{{ {'action': 'scan', 'evaluate': not ansible_check_mode} | to_json }}"
+      changed_when: false
+      check_mode: false
+      when: win_patch_scan_first | bool or (_wp_round | int) > 1
+
+    - name: "Patch | round {{ _wp_round }} | let the scan settle ({{ win_patch_scan_wait_sec }} s)"
+      ansible.builtin.pause:
+        seconds: "{{ win_patch_scan_wait_sec | int }}"
+      when: win_patch_scan_first | bool or (_wp_round | int) > 1
+
+    - name: "Patch | round {{ _wp_round }} | what Software Center has for this server"
+      ansible.builtin.script: win_patch.ps1
+      environment:
+        SITE_CHECK_CONFIG: '{"action": "list"}'
+      register: _wp_list_raw
+      changed_when: false
+      check_mode: false
+
+    - name: "Patch | round {{ _wp_round }} | the list answered"
+      ansible.builtin.include_tasks: answered.yml
+      vars: {_wp_step: listing the updates, _wp_raw_any: "{{ _wp_list_raw }}", _wp_key: count}
+
+    - name: "Patch | round {{ _wp_round }} | the list"
+      ansible.builtin.set_fact:
+        _wp_list: "{{ _wp_list_raw.stdout_lines | default([]) | site_result }}"
+
+    - name: "Patch | round {{ _wp_round }} | {{ _wp_list.count }} update(s)"
+      ansible.builtin.debug:
+        msg: "{{ _wp_list.updates | map(attribute='name') | zip(_wp_list.updates | map(attribute='state_text')) | map('join', '  -  ') | list or ['none'] }}"
+
+    - name: "Patch | round {{ _wp_round }} | nothing (more) to install"
+      ansible.builtin.set_fact:
+        _wp_done: true
+      when: (_wp_list.waiting | int) + (_wp_list.errors | int) + (_wp_list.in_progress | int) + (_wp_list.blocked | int) == 0
+            and (_wp_list.restart | int) == 0 and not _wp_list.restart_pending
+
+    - name: "Patch | round {{ _wp_round }} | DRY RUN - would install, nothing is changed"
+      ansible.builtin.set_fact:
+        _wp_log: "{{ _wp_log + ['DRY RUN (Check mode): would install ' ~ (_wp_list.updates | map(attribute='name') | join('; ') or 'nothing')] }}"
+        _wp_done: true
+      when: ansible_check_mode and not _wp_done | bool
+
+    - name: "Patch | round {{ _wp_round }} | install and wait"
+      when: not _wp_done | bool
+      block:
+        - name: "Patch | round {{ _wp_round }} | start installing (like Install all in Software Center)"
+          ansible.builtin.script: win_patch.ps1
+          environment:
+            SITE_CHECK_CONFIG: '{"action": "install"}'
+          register: _wp_inst_raw
+
+        - name: "Patch | round {{ _wp_round }} | install answered"
+          ansible.builtin.include_tasks: answered.yml
+          vars: {_wp_step: starting the install, _wp_raw_any: "{{ _wp_inst_raw }}", _wp_key: started}
+
+        - name: "Patch | round {{ _wp_round }} | started"
+          ansible.builtin.set_fact:
+            _wp_inst: "{{ _wp_inst_raw.stdout_lines | default([]) | site_result }}"
+
+        - name: "Patch | round {{ _wp_round }} | the client accepted the request"
+          ansible.builtin.assert:
+            that: _wp_inst.started | int == 0 or _wp_inst.return_value | int == 0
+            fail_msg: "The ConfigMgr client refused the install request (InstallUpdates returned {{ _wp_inst.return_value }})."
+            quiet: true
+
+        - name: "Patch | round {{ _wp_round }} | wait until every update is installed, failed or waiting for a restart"
+          ansible.builtin.script: win_patch.ps1
+          environment:
+            SITE_CHECK_CONFIG: '{"action": "list"}'
+          register: _wp_poll_raw
+          until: (_wp_p.waiting | int) + (_wp_p.in_progress | int) == 0 or (_wp_p.blocked | int) > 0
+          vars:
+            _wp_p: "{{ _wp_poll_raw.stdout_lines | default([]) | site_result({'waiting': 1, 'in_progress': 1, 'blocked': 0}) }}"
+          retries: "{{ ((win_patch_timeout_min | int) * 60 / (win_patch_poll_sec | int)) | int }}"
+          delay: "{{ win_patch_poll_sec | int }}"
+          changed_when: false
+          failed_when: false
+
+        - name: "Patch | round {{ _wp_round }} | progress answered"
+          ansible.builtin.include_tasks: answered.yml
+          vars: {_wp_step: reading the progress, _wp_raw_any: "{{ _wp_poll_raw }}", _wp_key: updates}
+
+        - name: "Patch | round {{ _wp_round }} | where it ended"
+          ansible.builtin.set_fact:
+            _wp_end: "{{ _wp_poll_raw.stdout_lines | default([]) | site_result }}"
+            _wp_installed_any: true
+            _wp_log: "{{ _wp_log + ['Round ' ~ _wp_round ~ ': asked to install ' ~ (_wp_inst.names | join('; ') or 'nothing new (already under way)')] }}"
+
+        - name: "Patch | round {{ _wp_round }} | states"
+          ansible.builtin.debug:
+            msg: "{{ _wp_end.updates | map(attribute='name') | zip(_wp_end.updates | map(attribute='state_text')) | map('join', '  -  ') | list or ['all installed'] }}"
+
+        - name: "Patch | round {{ _wp_round }} | FAIL - ConfigMgr waits for a maintenance window (or a user)"
+          ansible.builtin.fail:
+            msg: >-
+              {{ inventory_hostname }}: ConfigMgr will not install these now:
+              {{ _wp_end.updates | selectattr('state', 'in', [14, 15, 16, 17, 18, 19, 22]) | map(attribute='name') | join('; ') }}
+              ({{ _wp_end.updates | selectattr('state', 'in', [14, 15, 16, 17, 18, 19, 22]) | map(attribute='state_text') | unique | join(', ') }}).
+              Run this job inside the server's maintenance window, or ask the ConfigMgr admin for one
+              that covers this time.
+          when: _wp_end.blocked | int > 0
+
+        - name: "Patch | round {{ _wp_round }} | FAIL - updates that failed"
+          ansible.builtin.fail:
+            msg: >-
+              {{ inventory_hostname }}: these updates failed:
+              {% for u in _wp_end.updates | selectattr('state', 'equalto', 13) %}{{ u.name }} (error {{ u.error }}){{ '; ' if not loop.last else '' }}{% endfor %}.
+              Look: C:\Windows\CCM\Logs\UpdatesDeployment.log and WUAHandler.log on the server.
+          when: _wp_end.errors | int > 0
+
+        - name: "Patch | round {{ _wp_round }} | FAIL - still installing after {{ win_patch_timeout_min }} minutes"
+          ansible.builtin.fail:
+            msg: >-
+              {{ inventory_hostname }}: still not done after {{ win_patch_timeout_min }} minutes:
+              {{ _wp_end.updates | selectattr('state', 'in', [0, 1, 2, 3, 4, 5, 6, 7, 11, 20, 21, 23]) | map(attribute='name') | join('; ') }}.
+              Look in Software Center on the server, or C:\Windows\CCM\Logs\UpdatesHandler.log.
+          when: (_wp_end.waiting | int) + (_wp_end.in_progress | int) > 0
+
+    - name: "Patch | round {{ _wp_round }} | restart needed?"
+      ansible.builtin.set_fact:
+        _wp_need_restart: >-
+          {{ (not _wp_done | bool)
+             and (((_wp_end | default({})).restart | default(0) | int) > 0 or ((_wp_end | default({})).restart_pending | default([]) | length > 0)
+                  or ((_wp_list.restart | int) > 0 or (_wp_list.restart_pending | length > 0))) }}
+        _wp_restart_allowed: >-
+          {{ automatic_restarts | bool and group_names | intersect(win_patch_never_reboot_groups) | length == 0 }}
+
+    - name: "Patch | round {{ _wp_round }} | restart"
+      ansible.builtin.include_tasks: restart.yml
+      when: _wp_need_restart | bool and _wp_restart_allowed | bool
+
+    - name: "Patch | round {{ _wp_round }} | a restart is needed but not allowed here: stop"
+      ansible.builtin.set_fact:
+        _wp_restart_withheld: true
+        _wp_done: true
+      when: _wp_need_restart | bool and not _wp_restart_allowed | bool
+
+    - name: "Patch | round {{ _wp_round }} | no restart needed: done"
+      ansible.builtin.set_fact:
+        _wp_done: true
+      when: not _wp_need_restart | bool

@@ -18,3 +18,16 @@ site_fail_on: [critical, warning]
 # One syslog line per finding (tag below), so your log server / SIEM sees them too.
 site_syslog: true
 site_syslog_tag: site-health
+
+# Windows: one Application event log entry per finding instead of syslog (source below).
+site_eventlog_source: site-health
+
+# ---- Linux or Windows (set by the playbook; do not set) -----------------------------------------
+# Linux playbooks run the roles check_<name>, the Windows ones (win_*.yml) the roles win_check_<name>.
+site_os: linux
+site_check_role_prefix: "{{ 'win_check_' if site_os == 'windows' else 'check_' }}"
+# How a host is recognized as Windows: its connection, or its shell (Windows OpenSSH).
+site_windows_connections: [winrm, psrp, ansible.builtin.winrm, ansible.builtin.psrp]
+_site_host_is_windows: >-
+  {{ (ansible_connection | default('ssh')) in site_windows_connections
+     or (ansible_shell_type | default('sh')) in ['powershell', 'cmd'] }}

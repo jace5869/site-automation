@@ -1,0 +1,36 @@
+---
+# WINDOWS TROUBLESHOOT - on demand, when someone reports a problem on a Windows server. Read-only.
+#
+# Pick an area (and the server with the job's Limit). The job runs the PowerShell commands an
+# experienced Windows admin would run first for that kind of problem, prints each one's output
+# under a line that says what it shows, and runs the matching health checks for plain-words
+# findings. Same idea as troubleshoot.yml for Linux.
+#
+#   ts_area     overview | disk | performance | service | network | login | time | logs |
+#               updates | security
+#   ts_service  area=service: the service name, e.g. W3SVC or MSSQLSERVER
+#   ts_target   area=network: host:port this server cannot reach, e.g. dc01.example.mil:636
+#   ts_hours    how many hours back to read the event logs (default 2)
+#
+#   ansible-playbook playbooks/win_troubleshoot.yml -l web01.example.mil -e ts_area=disk
+#   ansible-playbook playbooks/win_troubleshoot.yml -l web01.example.mil -e ts_area=service -e ts_service=W3SVC
+#
+# Findings do not fail this job: you asked for a look, not a verdict.
+- name: Windows troubleshoot
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  vars:
+    site_os: windows
+    site_fail_on: []
+  pre_tasks:
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  roles:
+    - role: win_troubleshoot
+  post_tasks:
+    - name: Report the findings
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml

@@ -1,0 +1,22 @@
+---
+# Runs files/win_security.ps1 on the server (ansible.builtin.script: no collection needed) with the
+# settings from defaults/main.yml, then adds its findings to this host's list.
+- name: Windows security | check
+  ansible.builtin.script: win_security.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'av': win_check_security_av, 'av_signature_max_days': win_check_security_av_signature_max_days,
+          'av_services': win_check_security_av_services, 'firewall_profiles': win_check_security_firewall_profiles,
+          'smb1': win_check_security_smb1, 'rdp_nla': win_check_security_rdp_nla, 'uac': win_check_security_uac,
+          'legacy_tls': win_check_security_legacy_tls} | to_json }}
+  register: _win_check_out
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Windows security | findings
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: win_result.yml
+  vars:
+    _win_check: security

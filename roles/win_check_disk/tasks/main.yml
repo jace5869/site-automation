@@ -1,0 +1,21 @@
+---
+# Runs files/win_disk.ps1 on the server (ansible.builtin.script: no collection needed) with the
+# settings from defaults/main.yml, then adds its findings to this host's list.
+- name: Windows disk | check
+  ansible.builtin.script: win_disk.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'warn_pct': win_check_disk_warn_pct, 'crit_pct': win_check_disk_crit_pct,
+          'min_free_gb': win_check_disk_min_free_gb, 'ignore': win_check_disk_ignore,
+          'overrides': win_check_disk_overrides | dict2items(key_name='drive', value_name='limits')} | to_json }}
+  register: _win_check_out
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Windows disk | findings
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: win_result.yml
+  vars:
+    _win_check: disk

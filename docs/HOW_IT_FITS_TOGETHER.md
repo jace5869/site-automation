@@ -214,7 +214,7 @@ Never put a password in a survey or a Variables box. Secrets go in **credentials
 | Troubleshoot | `ts_area`, `ts_service`, `ts_target`, `ts_since` | area; unit name; host:port; how far back |
 | Certificate report | `check_certs_warn_days` | days (default 30) |
 | POA&M status | `poam_stigman_api` | STIG Manager API URL, or blank |
-| Patch hosts | `patch_security_only`, `patch_reboot` | `false`/`true`; `when_needed`/`never` |
+| Patch hosts, Windows patch | `patch_security_only` (Linux), `automatic_restarts` | `false`/`true`; `no`/`yes` (default `no`: no automatic restarts) |
 | (with ACT) Health check, Troubleshoot | `use_act`, `site_act_level`, `site_act_provider`, `site_act_model` | `no`/`yes`; `explain`/`diagnose`/`self-heal`; `genai`/`asksage`/`genai-beta`; a model id |
 
 ## Updating the repository at work, without overwriting the wrong things

@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+# stand-in for shutdown.exe /r: the WinRM port goes down, the "server" comes back later with a new
+# boot time; updates waiting for a restart are then installed, and a new one appears (round 2)
+import json, os, subprocess, sys, time, datetime
+st = os.environ['FAKECCM_STATE']
+s = json.load(open(st))
+s['restarts'] = s.get('restarts', 0) + 1
+s['boot'] = (datetime.datetime.now()).strftime('%Y-%m-%dT%H:%M:%S')
+s['updates'] = [u for u in s['updates'] if int(u['EvaluationState']) != 8]
+for u in s.get('after_restart', []):
+    s['updates'].append(u)
+s['after_restart'] = []
+for sv in s['services']:
+    if sv.get('slow'):
+        sv['state'] = 'Stopped'
+json.dump(s, open(st, 'w'), indent=1)
+pid = open(os.environ['FAKECCM_PORTPID']).read().strip()
+subprocess.run(['kill', pid])
+subprocess.Popen(['bash', '-c', 'sleep 6; ' + os.environ['FAKECCM_PORTCMD']], start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

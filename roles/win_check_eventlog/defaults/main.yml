@@ -1,0 +1,10 @@
+---
+# WINDOWS EVENT LOG, the last win_check_eventlog_hours:
+#   - unexpected shutdown or power loss (41, 6008), a crash / blue screen (1001)  -> critical
+#   - disk and file system errors (disk, Ntfs, storage drivers)                    -> critical
+#   - the Security log was cleared (1102)                                           -> critical
+#   - many errors in System + Application (the finding names the top sources)       -> warning
+#   - a System / Application / Security log that is full and not overwriting        -> critical
+
+win_check_eventlog_hours: 24
+win_check_eventlog_error_warn: 50

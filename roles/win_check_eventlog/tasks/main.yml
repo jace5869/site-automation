@@ -1,0 +1,19 @@
+---
+# Runs files/win_eventlog.ps1 on the server (ansible.builtin.script: no collection needed) with the
+# settings from defaults/main.yml, then adds its findings to this host's list.
+- name: Windows eventlog | check
+  ansible.builtin.script: win_eventlog.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'hours': win_check_eventlog_hours, 'error_warn': win_check_eventlog_error_warn} | to_json }}
+  register: _win_check_out
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Windows eventlog | findings
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: win_result.yml
+  vars:
+    _win_check: eventlog

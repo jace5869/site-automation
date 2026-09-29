@@ -1,0 +1,12 @@
+---
+# WINDOWS DISK: how full each local fixed volume (C:, D:, ...) is.
+
+win_check_disk_warn_pct: 85             # % used -> warning
+win_check_disk_crit_pct: 95             # % used -> critical
+win_check_disk_min_free_gb: 0           # also warn below this many GiB free (0 = off): big volumes
+
+# Different limits for particular volumes, e.g. a database volume kept full on purpose:
+#   win_check_disk_overrides:
+#     'D:': {warn: 92, crit: 98}
+win_check_disk_overrides: {}
+win_check_disk_ignore: []               # volumes not to check, e.g. ['E:']

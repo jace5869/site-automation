@@ -56,6 +56,11 @@
       {%- endfor -%}
       {{ out }}
   pre_tasks:
+    - name: Linux hosts only (Windows servers have their own templates, playbooks/win_*.yml)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
     - name: Only known checks
       ansible.builtin.assert:
         that: _health_run | difference(_health_sets.all) | length == 0
