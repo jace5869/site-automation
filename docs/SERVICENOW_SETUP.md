@@ -196,7 +196,12 @@ DRY RUN (Check mode): steps 1-2 ran (they only read). Steps 3-6 would:
 
 Nothing was created in ServiceNow.
 
-**The real run.** **Launch** → **Job type** `Run`. At the end it prints a summary like this:
+**The real run.** Low priority does not mean silent: ServiceNow may still send its usual emails,
+to the assignment group for the new incident and to the caller when it is resolved. Warn the
+group first, or point the test at a test group (`servicenow_assignment_group: <test group>` in
+the template's **Variables**), or at a test instance if you have one.
+
+**Launch** → **Job type** `Run`. At the end it prints a summary like this:
 
 ```text
 ServiceNow test at https://yourinstance.servicenowservices.com as svc_aap_sn:
@@ -227,8 +232,9 @@ template's **Variables**.
    - **Short description**: `[site-automation test] test ticket from AAP job <number> - safe to close`;
    - **Assignment group**: yours (step 6);
    - **Caller**: your `servicenow_caller`, or the API account;
-   - **Urgency** 3 and **Impact** 3, so **Priority** 5 - Planning. The test never pages anyone.
-   The real tickets use `servicenow_urgency` and `servicenow_impact`;
+   - **Urgency** 3 and **Impact** 3, so normally **Priority** 5 - Planning, the lowest (your
+     instance's priority table decides). The real tickets use `servicenow_urgency` and
+     `servicenow_impact`;
    - **Activity**: the work note `Test work note from AAP job ...`;
    - **State**: Resolved, with the close notes `Test ticket from AAP job ...: resolved
      automatically by the same job` (unless you set `servicenow_test_resolve: false`).
