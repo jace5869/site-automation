@@ -27,6 +27,7 @@ Fedora host with SELinux enforcing and auditd.
 | POA&M status | `playbooks/poam_status.yml` | overdue / due-soon POA&M items from `poam/poam.csv`; optional STIG Manager cross-check for open CAT I/II findings with no POA&M item |
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | workflow step: one incident per finding, updated (not duplicated) on later runs, noted or resolved when it clears |
 | ServiceNow health | `playbooks/servicenow_health.yml` | the instance answers its API; MID Servers up and validated |
+| ServiceNow - test ticket | `playbooks/servicenow_test_ticket.yml` | proves the setup: logs in, checks the assignment group, opens a test incident, reads it back, adds a work note, resolves it; PASS / WARN / FAIL per step with the likely cause ([docs/SERVICENOW_SETUP.md](docs/SERVICENOW_SETUP.md)) |
 | Patch hosts | `playbooks/patch_hosts.yml` | dnf update one host at a time; **no automatic reboot** unless `automatic_restarts: true`; every service back afterwards; never patches AAP or vendor appliances |
 | Apply approved ACT fix | `playbooks/act_fix_approved.yml` | after an approval: runs exactly the approved commands (no model), then the checks run again; as *Check* a dry run |
 | Service watch (+ apply) | `playbooks/service_watch.yml`, `service_fix_approved.yml` | watch the stigman/nginx containers; ACT root cause; approval or self-heal ([docs/SERVICE_WATCH_DEMO.md](docs/SERVICE_WATCH_DEMO.md)) |
@@ -42,6 +43,7 @@ Fedora host with SELinux enforcing and auditd.
 | [docs/START_HERE.md](docs/START_HERE.md) | what the pieces are (Ansible and AAP in plain words) and how a run works |
 | [docs/HOW_IT_FITS_TOGETHER.md](docs/HOW_IT_FITS_TOGETHER.md) | how code, inventory, variables, credentials and surveys fit; a setting's way from YAML to a host; updating the repository at work safely |
 | [docs/SETUP_AAP.md](docs/SETUP_AAP.md) | the setup, step by step: Git, credentials, project, inventory, templates, ServiceNow |
+| [docs/SERVICENOW_SETUP.md](docs/SERVICENOW_SETUP.md) | ServiceNow, step by step: the API account to ask for, the instance URL and API calls, firewall / proxy / DoD CA, the credential, a test ticket, and how to verify it in ServiceNow |
 | [docs/USING_YOUR_AAP_INVENTORY.md](docs/USING_YOUR_AAP_INVENTORY.md) | your inventory is already in AAP: the groups to add and which variables go on which group |
 | [docs/RUNBOOKS.md](docs/RUNBOOKS.md) | every check and finding, and what to do about it |
 | [docs/WORKFLOWS_AND_SCHEDULES.md](docs/WORKFLOWS_AND_SCHEDULES.md) | how to build any workflow, and 17 ready-made ones for Linux, Windows and both (health, compliance, patching with a dry run first, ACT fixes, certificates, MariaDB, investigations, STIG Manager); schedules |
@@ -106,6 +108,6 @@ Manager's demo Keycloak standing in for your realm. The rootful path is the same
 ## Updating ACT
 
 ```bash
-scripts/update-act.sh ACT-Linux-0.6.18.tar.gz   # a release tarball, or a path to an ACT-Linux checkout
-git diff --stat && git commit -am "vendor ACT-Linux 0.6.18"
+scripts/update-act.sh ACT-Linux-0.6.19.tar.gz   # a release tarball, or a path to an ACT-Linux checkout
+git diff --stat && git commit -am "vendor ACT-Linux 0.6.19"
 ```

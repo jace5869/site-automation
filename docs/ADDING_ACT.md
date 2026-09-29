@@ -107,6 +107,21 @@ are still reported.
 provider's URL over HTTPS. If they go through a proxy, add it:
 `site_act_env: {HTTPS_PROXY: "http://proxy.yoursite.mil:8080"}`.
 
+**Models served only on `/v1/messages`** (ACT 0.6.19). Some gateways offer a model, for example
+a Claude model, only through the Anthropic endpoint (`.../v1/messages`), and answer HTTP 400 for
+it on `.../v1/chat/completions`. ACT handles that by itself:
+- **The first request:** it goes to the URL as configured. If the gateway refuses the model, ACT
+  tries the other endpoint and uses the one that answers.
+- **Every request:** a refusal is shown with the gateway's own reason.
+- **Nothing to set:** keep the provider URL ending in `/chat/completions`. ACT derives the other
+  endpoint by swapping the ending.
+- **If the Anthropic endpoint is elsewhere:** `site_act_env: {GENAI_ANTHROPIC_URL: "https://<host>/.../v1/messages"}`
+  (`ASKSAGE_ANTHROPIC_URL`, `GENAI_BETA_ANTHROPIC_URL` for the other providers).
+- **To skip the one refused request per run** when every model you use is served only on
+  `/v1/messages`: `site_act_env: {ACT_API_FORMAT: anthropic}`.
+
+To see which endpoint each model works on, run `act` by hand once and type `:probe all`.
+
 Anything else ACT should know about your site goes in the inventory too:
 
 ```yaml

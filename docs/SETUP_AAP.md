@@ -275,6 +275,21 @@ Weekly. Runs on the controller and reads `poam/poam.csv` from the project.
 | Limit | empty, and **no** Prompt on launch (it runs on the controller) |
 | Survey: `poam_stigman_api` | *Text*, not required. "STIG Manager API URL (blank = skip the cross-check)" |
 
+### ServiceNow - test ticket
+
+Run once before the tickets step, and again after a password or certificate change. It opens a
+test incident, reads it back, adds a work note and resolves it, with PASS / WARN / FAIL for each
+step ([SERVICENOW_SETUP.md](SERVICENOW_SETUP.md)). Runs on the controller.
+
+| Field | Value |
+|---|---|
+| Playbook | `playbooks/servicenow_test_ticket.yml` |
+| Credentials | `ServiceNow API` |
+| Job type | Run, with **Prompt on launch** ticked, so you can pick *Check* (a dry run: it only logs in and reads) |
+| Privilege escalation | not needed |
+| Limit | empty, and **no** Prompt on launch (it runs on the controller) |
+| Survey | none |
+
 ### ServiceNow tickets
 
 Only useful as a workflow step after a check. Runs on the controller.
@@ -335,24 +350,32 @@ With a Limit of one host:
 
 ## Step 10. ServiceNow
 
-**What.** An API account, its credential, and a first test.
+**What.** An API account, its credential, and a test ticket that proves it works.
 
 **Why.** The tickets step and the ServiceNow health check use ServiceNow's REST Table API with a
 user name and password. No plugin or collection is installed.
+
+**The whole setup, step by step, is in [SERVICENOW_SETUP.md](SERVICENOW_SETUP.md)**: the account to
+ask for (with a request you can copy), the instance URL and every API call, the network path
+(firewall, proxy, the DoD CA), the credential, the settings, the test ticket, and how to check the
+ticket in ServiceNow. In short:
 
 1. Ask the ServiceNow admins for an **integration account** (web service access only) with:
    - `itil` (or a role that can create and update incidents);
    - `mid_server` (read the MID Server list), if you want the MID Server check.
 2. Create the **ServiceNow API** credential (step 3) with the instance URL, for example
    `https://servicenow.example.mil`, and the account.
-3. In `inventories/site/group_vars/all.yml`, set who gets the tickets:
+3. In your settings file (`playbooks/group_vars/all.yml`, or `inventories/site/group_vars/all.yml`
+   if your inventory comes from Git), set who gets the tickets:
    ```yaml
    servicenow_assignment_group: Linux Operations   # a group that exists in ServiceNow
    servicenow_min_severity: warning                # or critical: tickets for critical findings only
    ```
-4. Launch **ServiceNow health** once. It proves the account works: `API answers in N s`,
-   then the MID Servers and their status.
-5. Build the *Daily health* workflow ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)).
+4. Create **ServiceNow - test ticket** (step 9) and launch it, first as *Check*, then as *Run*.
+   **You should see** six steps that say PASS, and a link to the test incident. It is resolved
+   by the same job.
+5. Launch **ServiceNow health** once: `API answers in N s`, then the MID Servers and their status.
+6. Build the *Daily health* workflow ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)).
    Its tickets step then runs after every check.
 
 Try it safely first: launch the workflow **without** the ServiceNow API credential on the

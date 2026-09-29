@@ -39,6 +39,14 @@
       GENAI_BETA_URL         GenAI beta chat endpoint (default api-beta.genai.mil/v1/chat/completions)
       GENAI_BETA_KEY         optional GenAI beta bearer-token override (plain Bearer, like GENAI_KEY)
       GENAI_BETA_MODEL       default GenAI beta model (default gemini-2.5-pro); run :models for the live list
+      ACT_API_FORMAT         endpoint format for every provider: auto (default), openai, or anthropic.
+                             openai = POST .../v1/chat/completions; anthropic = POST .../v1/messages
+                             (Anthropic Messages API). auto tries the model's likely format first
+                             (Claude models: anthropic), switches when the server refuses the model,
+                             and remembers per model what worked. :probe tests a model on both.
+      GENAI_ANTHROPIC_URL    Anthropic Messages URL for genai (default: the GENAI_URL with
+                             /chat/completions swapped for /messages). Also GENAI_BETA_ANTHROPIC_URL,
+                             ASKSAGE_ANTHROPIC_URL.
       GENAI_TIMEOUT          per-request timeout seconds (default 120)
       GENAI_RETRIES          transient API retries with backoff+jitter (default 3)
       ACT_DEBUG              1 = write the scrubbed request body and raw API response to stderr (2> debug.txt)
@@ -138,7 +146,8 @@ param(
     [switch] $Test
 )
 
-$script:ActVersion = '0.6.18'
+$script:ActVersion = '0.6.19'
+$script:ActScriptPath = $PSCommandPath
 
 # ---- Admin-embedded API keys (optional) -----------------------------------
 # Limited-deployment convenience: paste a key between the quotes and every launch of this
@@ -202,8 +211,19 @@ $script:JsonModeSupport = @{}
 # front them, e.g. Ask Sage's gpt-5-gov) reject max_tokens with an HTTP 400 that names
 # max_completion_tokens as the replacement; older models and most proxies reject the reverse.
 # Learned per endpoint from that 400, like JSON mode; ACT_TOKEN_PARAM forces one.
-$script:TokenParam = @{}          # provider|url -> field name in use
+$script:TokenParam = @{}          # provider|url|model -> field name in use
 $script:TokenParamForced = ''
+# Endpoint format (0.6.19): 'openai' = POST .../chat/completions, 'anthropic' = POST
+# .../messages (Anthropic Messages API). ACT_API_FORMAT forces one for every provider;
+# otherwise each provider's "format" setting (auto by default) applies, and in auto mode the
+# format that works is learned per model (provider record .Formats) - see Get-ModelFormat.
+$script:ApiFormatForced = ''
+# Request features a model's endpoint refused, keyed provider|url|model like the caches
+# above, so one model's refusal never turns a feature off for another model.
+$script:TemperatureSupport = @{}
+$script:ToolChoiceSupport = @{}
+$script:PrefillSupport = @{}
+$script:ToolsSupport = @{}
 $script:InsecureTlsNotified = $false
 $script:InsecureTlsInstalled = $false
 $script:NonInteractive = $NonInteractive.IsPresent
@@ -388,6 +408,83 @@ function Get-StoredProviderValue {
     return '' + $fieldProperty.Value
 }
 
+function Get-StoredApiFormat {
+    # A provider's stored endpoint format: auto (default), openai, or anthropic.
+    param($Config, [string] $ProviderName)
+    $f = (Get-StoredProviderValue $Config $ProviderName 'format' 'auto').Trim().ToLower()
+    if ($f -in @('openai', 'anthropic')) { return $f }
+    return 'auto'
+}
+
+function Get-StoredModelFormats {
+    # The per-model endpoint formats learned earlier (providers.<name>.formats), as a hashtable.
+    param($Config, [string] $ProviderName)
+    $out = @{}
+    if ($null -eq $Config -or $null -eq $Config.providers) { return $out }
+    $record = Get-Prop $Config.providers $ProviderName
+    $formats = Get-Prop $record 'formats'
+    if ($null -eq $formats) { return $out }
+    foreach ($prop in $formats.PSObject.Properties) {
+        $v = ('' + $prop.Value).Trim().ToLower()
+        if ($v -in @('openai', 'anthropic')) { $out[$prop.Name] = $v }
+    }
+    return $out
+}
+
+function Write-ActConfigDocument {
+    # Atomically replace the config file with $Document (temp file + Replace/Move).
+    param($Document, [string] $Path)
+    $directory = Split-Path -LiteralPath $Path
+    if ([string]::IsNullOrWhiteSpace($directory)) { $directory = '.' }
+    New-Item -ItemType Directory -Path $directory -Force -ErrorAction Stop | Out-Null
+    $temporary = Join-Path $directory ('.config-' + [Guid]::NewGuid().ToString('N') + '.json')
+    try {
+        $utf8 = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($temporary, ($Document | ConvertTo-Json -Depth 8), $utf8)
+        if (Test-Path -LiteralPath $Path) {
+            # [NullString]::Value, not $null: PowerShell hands $null to a .NET string
+            # parameter as '', and File.Replace rejects an empty backup path - which made
+            # every re-save of an existing config fail before 0.6.19.
+            [System.IO.File]::Replace($temporary, $Path, [NullString]::Value)
+        } else {
+            [System.IO.File]::Move($temporary, $Path)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $temporary) {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Save-ActModelFormats {
+    # Record the active provider's learned per-model formats in the EXISTING config file,
+    # touching nothing else: keys that came from environment variables must never be written
+    # to disk as a side effect of a task. No config file (automation, env-only setups) = the
+    # formats stay in this session. Best effort; returns $true when written.
+    param([string] $Path = '')
+    try {
+        if ([string]::IsNullOrWhiteSpace($Path)) { $Path = $script:UserConfigPath }
+        if ([string]::IsNullOrWhiteSpace($Path)) { $Path = Get-ActConfigPath }
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+        $config = Read-ActUserConfig $Path
+        if ($null -eq $config -or -not $script:Providers.ContainsKey($script:Provider)) { return $false }
+        if ($null -eq (Get-Prop $config 'providers')) {
+            $config | Add-Member -NotePropertyName 'providers' -NotePropertyValue (New-Object PSObject) -Force
+        }
+        $record = Get-Prop $config.providers $script:Provider
+        if ($null -eq $record) {
+            $record = New-Object PSObject
+            $config.providers | Add-Member -NotePropertyName $script:Provider -NotePropertyValue $record -Force
+        }
+        $formats = [ordered]@{}
+        $learned = $script:Providers[$script:Provider].Formats
+        if ($null -ne $learned) { foreach ($m in @($learned.Keys | Sort-Object)) { $formats[$m] = $learned[$m] } }
+        $record | Add-Member -NotePropertyName 'formats' -NotePropertyValue $formats -Force
+        Write-ActConfigDocument $config $Path
+        return $true
+    } catch { return $false }
+}
+
 function Save-ActUserConfig {
     param([string] $Path = '')
     if ([string]::IsNullOrWhiteSpace($Path)) { $Path = Get-ActConfigPath }
@@ -399,6 +496,13 @@ function Save-ActUserConfig {
             url = '' + $p.Url
             model = '' + $p.Model
         }
+        if (-not [string]::IsNullOrWhiteSpace($p.AnthropicUrl)) { $providerConfig[$name]['anthropic_url'] = '' + $p.AnthropicUrl }
+        if ($p.Format -in @('openai', 'anthropic')) { $providerConfig[$name]['format'] = '' + $p.Format }
+        if ($null -ne $p.Formats -and $p.Formats.Count -gt 0) {
+            $formats = [ordered]@{}
+            foreach ($m in @($p.Formats.Keys | Sort-Object)) { $formats[$m] = $p.Formats[$m] }
+            $providerConfig[$name]['formats'] = $formats
+        }
     }
     $document = [ordered]@{
         version = 1
@@ -408,23 +512,7 @@ function Save-ActUserConfig {
     # Hand-set privacy settings survive :setup.
     if ($null -ne $script:PseudoConfigEnabled) { $document['pseudonymize'] = [bool]$script:PseudoConfigEnabled }
     if ($null -ne $script:PseudoConfigNames) { $document['pseudo_names'] = $script:PseudoConfigNames }
-    $directory = Split-Path -LiteralPath $Path
-    if ([string]::IsNullOrWhiteSpace($directory)) { $directory = '.' }
-    New-Item -ItemType Directory -Path $directory -Force -ErrorAction Stop | Out-Null
-    $temporary = Join-Path $directory ('.config-' + [Guid]::NewGuid().ToString('N') + '.json')
-    try {
-        $utf8 = New-Object System.Text.UTF8Encoding($false)
-        [System.IO.File]::WriteAllText($temporary, ($document | ConvertTo-Json -Depth 8), $utf8)
-        if (Test-Path -LiteralPath $Path) {
-            [System.IO.File]::Replace($temporary, $Path, $null)
-        } else {
-            [System.IO.File]::Move($temporary, $Path)
-        }
-    } finally {
-        if (Test-Path -LiteralPath $temporary) {
-            Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
-        }
-    }
+    Write-ActConfigDocument $document $Path
     $script:UserConfigPath = $Path
     return $Path
 }
@@ -594,6 +682,10 @@ function Initialize-ActConfig {
     $storedGenAiBetaKey = Unprotect-ActConfigSecret (Get-StoredProviderValue $userConfig 'genai-beta' 'key_protected' '')
     if ([string]::IsNullOrEmpty($storedGenAiBetaKey)) { $storedGenAiBetaKey = $script:EmbeddedGenAiBetaKey }
     $genAiBetaKey = Get-EnvOrDefault 'GENAI_BETA_KEY' $storedGenAiBetaKey
+    # Endpoint format (0.6.19). ACT_API_FORMAT=openai|anthropic forces one everywhere; auto
+    # (the default) lets each provider's stored "format" decide, and learns per model.
+    $af = (Get-EnvOrDefault 'ACT_API_FORMAT' '').Trim().ToLower()
+    $script:ApiFormatForced = if ($af -in @('openai', 'anthropic')) { $af } else { '' }
     $script:Providers = @{
         genai = @{
             Name    = 'GenAI proxy'
@@ -603,6 +695,9 @@ function Initialize-ActConfig {
             Models  = @('gemini-3.1-pro-preview', 'gemini-3.5-flash')
             KeyEnv  = 'GENAI_KEY'
             Limited = $false
+            AnthropicUrl = (Get-EnvOrDefault 'GENAI_ANTHROPIC_URL' (Get-StoredProviderValue $userConfig 'genai' 'anthropic_url' ''))
+            Format  = (Get-StoredApiFormat $userConfig 'genai')
+            Formats = (Get-StoredModelFormats $userConfig 'genai')
         }
         asksage = @{
             Name    = 'AskSage'
@@ -617,6 +712,9 @@ function Initialize-ActConfig {
             )
             KeyEnv  = 'ASKSAGE_KEY'
             Limited = $false
+            AnthropicUrl = (Get-EnvOrDefault 'ASKSAGE_ANTHROPIC_URL' (Get-StoredProviderValue $userConfig 'asksage' 'anthropic_url' ''))
+            Format  = (Get-StoredApiFormat $userConfig 'asksage')
+            Formats = (Get-StoredModelFormats $userConfig 'asksage')
         }
         'genai-beta' = @{
             Name    = 'GenAI Beta'
@@ -626,6 +724,9 @@ function Initialize-ActConfig {
             Models  = @('gemini-2.5-pro')
             KeyEnv  = 'GENAI_BETA_KEY'
             Limited = $false
+            AnthropicUrl = (Get-EnvOrDefault 'GENAI_BETA_ANTHROPIC_URL' (Get-StoredProviderValue $userConfig 'genai-beta' 'anthropic_url' ''))
+            Format  = (Get-StoredApiFormat $userConfig 'genai-beta')
+            Formats = (Get-StoredModelFormats $userConfig 'genai-beta')
         }
     }
     $script:Provider = ''
@@ -665,7 +766,9 @@ function Get-ProviderHeaders {
     # x-api-key OR Authorization: Bearer, depending on which surface the URL targets - so for
     # asksage we send ALL THREE and the key works regardless. GenAI uses plain Bearer only.
     # NOTE: these header VALUES are secrets and are never printed or logged anywhere.
-    param([string] $ProviderKey, [string] $Key, [switch] $Post)
+    # The Anthropic Messages format (-Anthropic) authenticates with x-api-key plus an
+    # anthropic-version header; gateways differ on which they read, so Bearer is sent too.
+    param([string] $ProviderKey, [string] $Key, [switch] $Post, [switch] $Anthropic)
     $h = @{
         'Authorization' = "Bearer $Key"
         'Accept'        = 'application/json'
@@ -674,6 +777,10 @@ function Get-ProviderHeaders {
     if ($ProviderKey -eq 'asksage') {
         $h['x-access-tokens'] = $Key
         $h['x-api-key']       = $Key
+    }
+    if ($Anthropic) {
+        $h['x-api-key']         = $Key
+        $h['anthropic-version'] = '2023-06-01'
     }
     return $h
 }
@@ -695,14 +802,316 @@ function Set-ActiveProvider {
     $script:GenAiUrl = $p.Url
     $script:GenAiKey = $p.Key
     $script:GenAiModel = $p.Model
-    # Remember response_format compatibility per endpoint. Switching providers no longer
-    # repeats a request shape already rejected by that exact gateway.
-    $jsonKey = $script:Provider + '|' + $script:GenAiUrl
-    $script:UseJsonMode = $script:JsonModeConfigured -and
-                          (-not $script:JsonModeSupport.ContainsKey($jsonKey) -or
-                           $script:JsonModeSupport[$jsonKey])
+    # JSON mode as configured; a gateway's refusal is remembered per provider|url|model in
+    # JsonModeSupport, so switching back never repeats a request shape it already refused.
+    $script:UseJsonMode = $script:JsonModeConfigured
     $script:PrefillRejected = $false
     return $true
+}
+
+# ---------------------------------------------------------------------------
+# Endpoint formats (0.6.19): OpenAI chat/completions and the Anthropic Messages API
+# ---------------------------------------------------------------------------
+# Gateways often serve some models on .../v1/chat/completions and others (Claude) only on
+# .../v1/messages, with a different request and reply shape. Every call site builds its
+# request with New-ChatRequestBody and reads the reply through ConvertFrom-AnthropicResponse,
+# which turns an Anthropic reply into the OpenAI shape the rest of ACT already parses.
+
+function Get-ChatUrl {
+    # The OpenAI chat/completions URL for a configured URL (a .../messages URL is swapped).
+    param([string] $Url)
+    $u = ('' + $Url).Trim()
+    if ($u -match '/messages/?$') { return ($u -replace '/messages/?$', '/chat/completions') }
+    return $u
+}
+
+function Get-AnthropicUrl {
+    # The Anthropic Messages URL: the provider's anthropic_url when set, otherwise derived
+    # from its URL by swapping the ending (.../chat/completions -> .../messages).
+    param([string] $Url, [string] $Override = '')
+    if (-not [string]::IsNullOrWhiteSpace($Override)) { return $Override.Trim() }
+    $u = ('' + $Url).Trim()
+    if ($u -match '/chat/completions/?$') { return ($u -replace '/chat/completions/?$', '/messages') }
+    if ($u -match '/messages/?$') { return $u }
+    return ($u.TrimEnd('/') + '/messages')
+}
+
+function Get-FormatUrl {
+    # Where the active provider takes a request in the given format.
+    param([string] $Format)
+    $override = ''
+    if ($script:Providers.ContainsKey($script:Provider)) { $override = '' + $script:Providers[$script:Provider].AnthropicUrl }
+    if ($Format -eq 'anthropic') { return (Get-AnthropicUrl $script:GenAiUrl $override) }
+    return (Get-ChatUrl $script:GenAiUrl)
+}
+
+function Get-FormatLabel {
+    param([string] $Format)
+    if ($Format -eq 'anthropic') { return 'Anthropic' }
+    return 'OpenAI'
+}
+
+function Get-OtherFormat {
+    param([string] $Format)
+    if ($Format -eq 'anthropic') { return 'openai' }
+    return 'anthropic'
+}
+
+function Get-ApiFormatSetting {
+    # The active provider's format setting: ACT_API_FORMAT, else the provider's own, else auto.
+    if (-not [string]::IsNullOrEmpty($script:ApiFormatForced)) { return $script:ApiFormatForced }
+    if ($script:Providers.ContainsKey($script:Provider)) {
+        $f = '' + $script:Providers[$script:Provider].Format
+        if ($f -in @('openai', 'anthropic')) { return $f }
+    }
+    return 'auto'
+}
+
+function Get-PreferredFormat {
+    # Auto mode's first try for a model nobody has learned yet: the format the configured URL
+    # names - exactly the request ACT sent before 0.6.19. Deliberately not guessed from the
+    # model name: AskSage serves its google-/aws-bedrock-claude-* models on chat/completions,
+    # and a model served only on /messages costs one refused request before auto mode switches
+    # and remembers it (:setup's probe learns it up front).
+    param([string] $Model)
+    if (('' + $script:GenAiUrl) -match '/messages/?$') { return 'anthropic' }
+    return 'openai'
+}
+
+function Get-ModelFormat {
+    # @{ Format; Auto }: the format to use for this model on the active provider. Auto means
+    # ACT may switch to the other format when this one refuses the model.
+    param([string] $Model)
+    $setting = Get-ApiFormatSetting
+    if ($setting -ne 'auto') { return @{ Format = $setting; Auto = $false } }
+    if ($script:Providers.ContainsKey($script:Provider)) {
+        $learned = $script:Providers[$script:Provider].Formats
+        if ($null -ne $learned -and $learned.ContainsKey($Model)) { return @{ Format = '' + $learned[$Model]; Auto = $true } }
+    }
+    return @{ Format = (Get-PreferredFormat $Model); Auto = $true }
+}
+
+function Set-LearnedModelFormat {
+    # Remember which format a model works with, for this session and (when a config file
+    # already exists) in it. Only a change is written.
+    param([string] $Model, [string] $Format)
+    if ([string]::IsNullOrWhiteSpace($Model) -or -not $script:Providers.ContainsKey($script:Provider)) { return }
+    $p = $script:Providers[$script:Provider]
+    if ($null -eq $p.Formats) { $p.Formats = @{} }
+    if ($p.Formats.ContainsKey($Model) -and $p.Formats[$Model] -eq $Format) { return }
+    $p.Formats[$Model] = $Format
+    [void](Save-ActModelFormats)
+}
+
+function Get-FeatureKey {
+    # Cache key for what an endpoint accepts: provider|url|model.
+    param([string] $Format, [string] $Model)
+    return ($script:Provider + '|' + (Get-FormatUrl $Format) + '|' + $Model)
+}
+
+function Get-RequestFeatures {
+    # The optional request features to send for this format/model, minus what its endpoint
+    # already refused. Tools replace JSON mode and the prefill (several gateways reject the
+    # pairs); the Anthropic format has no JSON mode and always sends max_tokens.
+    param([string] $Format, [string] $Key, [bool] $PrefillWanted)
+    $tools = $script:ToolsMode -and (-not $script:ToolsRejected) -and ($script:ToolsSupport[$Key] -ne $false)
+    $json = ($Format -eq 'openai') -and $script:UseJsonMode -and (-not $tools) -and ($script:JsonModeSupport[$Key] -ne $false)
+    $tokenParam = 'max_tokens'
+    if ($Format -eq 'openai') { $tokenParam = Get-TokenParam $Key }
+    return @{
+        Tools       = $tools
+        ToolChoice  = $tools -and ($script:ToolChoiceSupport[$Key] -ne $false)
+        Json        = $json
+        Prefill     = $PrefillWanted -and (-not $tools) -and ($script:PrefillSupport[$Key] -ne $false)
+        Temperature = ($script:TemperatureSupport[$Key] -ne $false)
+        TokenParam  = $tokenParam
+        MaxTokens   = $script:MaxTokens
+    }
+}
+
+function Disable-RequestFeature {
+    # Remember that this endpoint refused a feature, so later requests leave it out.
+    param([string] $Feature, [string] $Key)
+    switch ($Feature) {
+        'tools'       { $script:ToolsSupport[$Key] = $false }
+        'tool_choice' { $script:ToolChoiceSupport[$Key] = $false }
+        'json'        { $script:JsonModeSupport[$Key] = $false }
+        'prefill'     { $script:PrefillSupport[$Key] = $false }
+        'temperature' { $script:TemperatureSupport[$Key] = $false }
+    }
+}
+
+function Get-FeatureLabel {
+    param([string] $Feature)
+    switch ($Feature) {
+        'tools'       { return 'tool calling' }
+        'tool_choice' { return 'tool_choice' }
+        'json'        { return 'JSON mode' }
+        'prefill'     { return 'the "{" prefill' }
+        'temperature' { return 'temperature' }
+    }
+    return $Feature
+}
+
+function Get-RejectedFeature {
+    # Which optional feature an HTTP 400/422 reason names, among those this request sent.
+    # '' = the reason names none of them (e.g. "invalid model name") - the caller then tries
+    # the other endpoint format, or drops features blindly as before 0.6.19.
+    param([string] $Text, [hashtable] $Features, [string] $Format)
+    $t = '' + $Text
+    if ($Features.Temperature -and $t -match '(?i)temperature') { return 'temperature' }
+    if ($Features.ToolChoice -and $t -match '(?i)tool_choice') { return 'tool_choice' }
+    if ($Features.Tools -and $t -match '(?i)\btools?\b|\bfunctions?\b|tool_use') { return 'tools' }
+    if ($Features.Json -and $t -match '(?i)response_format|json_object|json_schema|json mode') { return 'json' }
+    if ($Features.Prefill -and $t -match '(?i)prefill|final assistant|assistant message|last message|must end with|conversation must') { return 'prefill' }
+    return ''
+}
+
+function Get-ApiErrorReason {
+    # The server's own explanation of a failed request, from the error body (OpenAI and
+    # Anthropic both use {"error":{"message":...}}; proxies use message/detail/response),
+    # scrubbed of secrets and kept short enough for one console line.
+    param([string] $BodyText, [string] $Message = '')
+    $reason = ''
+    $b = ('' + $BodyText).Trim()
+    if ($b) {
+        try {
+            $o = $b | ConvertFrom-Json -ErrorAction Stop
+            $e = Get-Prop $o 'error'
+            if ($e -is [string]) { $reason = $e }
+            elseif ($null -ne $e) { $reason = '' + (Get-Prop $e 'message') }
+            if (-not $reason) {
+                foreach ($k in @('message', 'detail', 'response')) {
+                    $v = Get-Prop $o $k
+                    if ($v -is [string] -and $v) { $reason = $v; break }
+                }
+            }
+        } catch { }
+        if (-not $reason) { $reason = ($b -replace '<[^>]+>', ' ') }
+    }
+    if (-not $reason) { $reason = '' + $Message }
+    $reason = Protect-Secrets ((('' + $reason) -replace '\s+', ' ').Trim())
+    if ($reason.Length -gt 300) { $reason = $reason.Substring(0, 300) + ' ...' }
+    return $reason
+}
+
+function Get-MessageRoleContent {
+    # role/content of a conversation entry (hashtable or PSCustomObject).
+    param($Message)
+    if ($Message -is [System.Collections.IDictionary]) { return @(('' + $Message['role']), $Message['content']) }
+    return @(('' + (Get-Prop $Message 'role')), (Get-Prop $Message 'content'))
+}
+
+function ConvertTo-AnthropicBody {
+    # The Anthropic Messages request for a conversation: system turns joined into the
+    # top-level "system" field, only user/assistant turns (consecutive ones merged, the first
+    # one a user turn, none empty), max_tokens always, never response_format, tools as
+    # {name, description, input_schema}. The prefill is a final assistant "{" as usual.
+    param([object[]] $Messages, [string] $Model, [hashtable] $Features)
+    $system = @()
+    $turns = @()
+    foreach ($m in @($Messages)) {
+        $rc = Get-MessageRoleContent $m
+        $role = $rc[0]
+        $text = '' + $rc[1]
+        if ($role -eq 'system') {
+            if (-not [string]::IsNullOrWhiteSpace($text)) { $system += $text }
+            continue
+        }
+        if ($role -ne 'assistant') { $role = 'user' }
+        if ([string]::IsNullOrWhiteSpace($text)) { $text = '(empty)' }
+        if ($turns.Count -gt 0 -and $turns[$turns.Count - 1]['role'] -eq $role) {
+            $turns[$turns.Count - 1]['content'] = $turns[$turns.Count - 1]['content'] + "`n`n" + $text
+        } else {
+            $turns += , @{ role = $role; content = $text }
+        }
+    }
+    if ($turns.Count -eq 0 -or $turns[0]['role'] -ne 'user') { $turns = @(, @{ role = 'user'; content = '(start)' }) + $turns }
+    if ($Features.Prefill -and $turns[$turns.Count - 1]['role'] -ne 'assistant') {
+        $turns += , @{ role = 'assistant'; content = '{' }
+    }
+    $last = $turns[$turns.Count - 1]
+    if ($last['role'] -eq 'assistant') {
+        # the API refuses a final assistant turn that ends in whitespace
+        $trimmed = ('' + $last['content']).TrimEnd()
+        if (-not $trimmed) { $trimmed = '(empty)' }
+        $last['content'] = $trimmed
+    }
+    $body = [ordered]@{ model = $Model; max_tokens = $Features.MaxTokens; messages = $turns }
+    if ($system.Count -gt 0) { $body['system'] = ($system -join "`n`n") }
+    if ($Features.Temperature) { $body['temperature'] = 0.2 }
+    if ($Features.Tools) {
+        $tools = @()
+        foreach ($t in @(Get-ActionToolSchema)) {
+            $tools += , @{ name = $t.function.name; description = $t.function.description; input_schema = $t.function.parameters }
+        }
+        $body['tools'] = $tools
+        if ($Features.ToolChoice) { $body['tool_choice'] = @{ type = 'any' } }
+    }
+    return $body
+}
+
+function ConvertTo-OpenAiBody {
+    # The OpenAI chat/completions request (the shape every ACT release before 0.6.19 sent).
+    param([object[]] $Messages, [string] $Model, [hashtable] $Features)
+    $send = @($Messages)
+    if ($Features.Prefill) { $send = @($send + @(@{ role = 'assistant'; content = '{' })) }
+    $payload = @{ model = $Model; messages = $send }
+    if ($Features.Temperature) { $payload['temperature'] = 0.2 }
+    $payload[$Features.TokenParam] = $Features.MaxTokens
+    if ($Features.Tools) {
+        # response_format is redundant with a tool schema and several gateways reject
+        # the pair outright, so tools replace JSON mode rather than joining it.
+        $payload['tools'] = Get-ActionToolSchema
+        if ($Features.ToolChoice) { $payload['tool_choice'] = 'required' }
+    } elseif ($Features.Json) {
+        $payload['response_format'] = @{ type = 'json_object' }
+    }
+    return $payload
+}
+
+function New-ChatRequestBody {
+    # The JSON request body for one model call in the given format.
+    param([string] $Format, [object[]] $Messages, [string] $Model, [hashtable] $Features)
+    if ($Format -eq 'anthropic') { $b = ConvertTo-AnthropicBody $Messages $Model $Features }
+    else { $b = ConvertTo-OpenAiBody $Messages $Model $Features }
+    return ($b | ConvertTo-Json -Depth 12)
+}
+
+function ConvertFrom-AnthropicResponse {
+    # Turn an Anthropic Messages reply ({content:[{type:text}|{type:tool_use}], stop_reason})
+    # into the OpenAI shape ({choices:[{message:{content, tool_calls}}]}) that every parser in
+    # ACT reads. OpenAI-shaped replies and error objects pass through untouched. Built as a
+    # hashtable and round-tripped through JSON: Constrained Language Mode refuses
+    # [PSCustomObject] casts, and the parsers expect PSCustomObjects.
+    param($Response)
+    if ($null -eq $Response) { return $Response }
+    if ($null -ne (Get-Prop $Response 'choices')) { return $Response }
+    $content = Get-Prop $Response 'content'
+    if ($null -eq $content -or $content -is [string]) { return $Response }
+    $texts = @()
+    $calls = @()
+    foreach ($block in @($content)) {
+        $type = '' + (Get-Prop $block 'type')
+        if ($type -eq 'text') { $texts += ('' + (Get-Prop $block 'text')) }
+        elseif ($type -eq 'tool_use') {
+            $toolInput = Get-Prop $block 'input'
+            $argsJson = '{}'
+            if ($null -ne $toolInput) { $argsJson = ConvertTo-Json -InputObject $toolInput -Depth 20 -Compress }
+            $calls += , @{ id = ('' + (Get-Prop $block 'id')); type = 'function'
+                           function = @{ name = ('' + (Get-Prop $block 'name')); arguments = $argsJson } }
+        }
+    }
+    $message = @{ role = 'assistant'; content = ($texts -join '') }
+    if ($calls.Count -gt 0) { $message['tool_calls'] = $calls }
+    $out = @{ choices = @(, @{ index = 0; message = $message; finish_reason = ('' + (Get-Prop $Response 'stop_reason')) }) }
+    $usage = Get-Prop $Response 'usage'
+    if ($null -ne $usage) {
+        $total = 0
+        try { $total = [int](Get-Prop $usage 'input_tokens') + [int](Get-Prop $usage 'output_tokens') } catch { }
+        $out['usage'] = @{ total_tokens = $total }
+    }
+    return (ConvertTo-Json -InputObject $out -Depth 20 -Compress | ConvertFrom-Json)
 }
 
 function ConvertTo-ModelIdList {
@@ -761,6 +1170,7 @@ function Get-ProviderModels {
     if ([string]::IsNullOrEmpty($p.Key) -or [string]::IsNullOrEmpty($p.Url)) { return @() }
     try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 } catch { }
     $ids = @()
+    $murl = ''
     try {
         if ($ProviderKey -eq 'asksage') {
             $murl = $p.Url -replace '/server/.*$', '/server/get-models'
@@ -768,14 +1178,26 @@ function Get-ProviderModels {
             $headers = Get-ProviderHeaders $ProviderKey $p.Key -Post
             $resp = Invoke-RestMethod -Uri $murl -Method Post -Headers $headers -Body '{}' -TimeoutSec $TimeoutSec -ErrorAction Stop
         } else {
-            $murl = $p.Url -replace '/chat/completions.*$', '/models'
-            if ($murl -eq $p.Url) { $murl = ($p.Url.TrimEnd('/')) + '/models' }
+            $chat = Get-ChatUrl $p.Url
+            $murl = $chat -replace '/chat/completions.*$', '/models'
+            if ($murl -eq $chat) { $murl = ($chat.TrimEnd('/')) + '/models' }
             $headers = Get-ProviderHeaders $ProviderKey $p.Key
             $resp = Invoke-RestMethod -Uri $murl -Method Get -Headers $headers -TimeoutSec $TimeoutSec -ErrorAction Stop
         }
         $ids = ConvertTo-ModelIdList $resp
     } catch {
-        return @()
+        $ids = @()
+    }
+    if ($ids.Count -eq 0) {
+        # The Anthropic side of the gateway may list models when the OpenAI side does not.
+        try {
+            $aurl = (Get-AnthropicUrl $p.Url ('' + $p.AnthropicUrl)) -replace '/messages/?$', '/models'
+            if ($aurl -ne $murl -and $aurl -match '/models$') {
+                $headers = Get-ProviderHeaders $ProviderKey $p.Key -Anthropic
+                $resp = Invoke-RestMethod -Uri $aurl -Method Get -Headers $headers -TimeoutSec $TimeoutSec -ErrorAction Stop
+                $ids = ConvertTo-ModelIdList $resp
+            }
+        } catch { $ids = @() }
     }
     return $ids
 }
@@ -844,9 +1266,6 @@ function Invoke-RaceChat {
     Write-Themed dim ('  (racing ' + $models.Count + ' models: ' + ($models -join ', ') + ')')
     try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 } catch { }
     $prefill = $script:UsePrefill -and (-not $script:PrefillRejected)
-    $raceToolsKey = $script:Provider + '|' + $script:GenAiUrl
-    $raceUseTools = $script:ToolsMode -and (-not $script:ToolsRejected) -and
-                    ($script:ToolsSupport[$raceToolsKey] -ne $false)
     $client = $null
     $replies = @{}
     $dropped = [ordered]@{}
@@ -854,25 +1273,20 @@ function Invoke-RaceChat {
     try {
         $client = New-Object System.Net.Http.HttpClient
         $client.Timeout = [TimeSpan]::FromSeconds([Math]::Max(5, $script:GenAiTimeout))
-        $headers = Get-ProviderHeaders $script:Provider $script:GenAiKey
         $taskMap = @{}
+        $racerFeatures = @{}
         try { $maskedMessages = ConvertTo-PseudoMessages $Messages }  # every racer sees placeholders only
         catch { return $null }   # the single-model path then reports the masking error and sends nothing
         foreach ($m in $models) {
-            $sendMessages = $maskedMessages
-            if ($prefill -and -not $raceUseTools) { $sendMessages = @($maskedMessages + @(@{ role = 'assistant'; content = '{' })) }
-            $payload = @{
-                model       = $m
-                messages    = $sendMessages
-                temperature = 0.2
-            }
-            $payload[(Get-TokenParam $raceToolsKey)] = $script:MaxTokens
-            if ($raceUseTools) {
-                $payload['tools'] = Get-ActionToolSchema
-                $payload['tool_choice'] = 'required'
-            } elseif ($script:UseJsonMode) { $payload['response_format'] = @{ type = 'json_object' } }
-            $body = $payload | ConvertTo-Json -Depth 10
-            $req = New-Object System.Net.Http.HttpRequestMessage ([System.Net.Http.HttpMethod]::Post, $script:GenAiUrl)
+            # Each racer goes to its own model's endpoint format, in one shot (no fallback
+            # ladder: a refused racer is simply dropped, with the server's reason).
+            $racerFormat = (Get-ModelFormat $m).Format
+            $racerKey = Get-FeatureKey $racerFormat $m
+            $f = Get-RequestFeatures $racerFormat $racerKey $prefill
+            $racerFeatures[$m] = $f
+            $body = New-ChatRequestBody $racerFormat $maskedMessages $m $f
+            $headers = Get-ProviderHeaders $script:Provider $script:GenAiKey -Anthropic:($racerFormat -eq 'anthropic')
+            $req = New-Object System.Net.Http.HttpRequestMessage ([System.Net.Http.HttpMethod]::Post, (Get-FormatUrl $racerFormat))
             foreach ($hk in @($headers.Keys)) {
                 if ($hk -ne 'Content-Type') { [void]$req.Headers.TryAddWithoutValidation($hk, [string]$headers[$hk]) }
             }
@@ -913,19 +1327,26 @@ function Invoke-RaceChat {
                 }
                 $resp = $done.Result
                 if ($null -eq $resp) { $dropped[$racer] = 'request failed'; continue }
-                if (-not $resp.IsSuccessStatusCode) { $dropped[$racer] = 'HTTP ' + [int]$resp.StatusCode; continue }
+                if (-not $resp.IsSuccessStatusCode) {
+                    $why = ''
+                    try { $why = Get-ApiErrorReason ($resp.Content.ReadAsStringAsync().Result) '' } catch { }
+                    if ($why.Length -gt 50) { $why = $why.Substring(0, 50) }
+                    $dropped[$racer] = ('HTTP ' + [int]$resp.StatusCode + ' ' + $why).Trim()
+                    continue
+                }
                 $text = $resp.Content.ReadAsStringAsync().Result
-                $parsed = $text | ConvertFrom-Json
+                $parsed = ConvertFrom-AnthropicResponse ($text | ConvertFrom-Json)
+                $f = $racerFeatures[$racer]
                 $reply = $null
-                if ($raceUseTools) { $reply = ConvertFrom-ToolCall $parsed }
+                if ($f.Tools) { $reply = ConvertFrom-ToolCall $parsed }
                 if ([string]::IsNullOrWhiteSpace($reply) -and
                     $null -ne $parsed.choices -and @($parsed.choices).Count -gt 0) {
                     $reply = '' + $parsed.choices[0].message.content
                 } elseif ([string]::IsNullOrWhiteSpace($reply) -and $null -ne $parsed.message) {
                     $reply = '' + $parsed.message
                 }
-                if (-not [string]::IsNullOrWhiteSpace($reply) -and -not $raceUseTools) {
-                    $reply = Resolve-PrefillContent $reply $prefill
+                if (-not [string]::IsNullOrWhiteSpace($reply) -and -not $f.Tools) {
+                    $reply = Resolve-PrefillContent $reply $f.Prefill
                 }
                 if (-not (Test-RaceReplyUsable $reply)) { $dropped[$racer] = 'no usable action'; continue }
                 $restored = Restore-PseudoReply $reply
@@ -1385,81 +1806,132 @@ function Invoke-GenAIChat {
         } catch { }
     }
 
-    # Provider-aware auth: asksage gets Authorization + x-access-tokens + x-api-key so the key
-    # works against any Ask Sage surface; genai gets Bearer only. Values are never logged.
-    $headers = Get-ProviderHeaders $script:Provider $script:GenAiKey -Post
-
-    # Up to three attempts. The request may include response_format (JSON mode) and an
-    # assistant prefill ("{"). If the proxy rejects the request (HTTP 400/422), drop JSON mode
-    # first, then prefill, and retry - so a picky endpoint still gets a clean request.
-    $prefill = ($script:UsePrefill -or $ForcePrefill) -and (-not $script:PrefillRejected)
-    $toolsKey = $script:Provider + '|' + $script:GenAiUrl
-    $useTools = $script:ToolsMode -and (-not $script:ToolsRejected) -and
-                ($script:ToolsSupport[$toolsKey] -ne $false)
+    # The request goes to the model's endpoint format (Get-ModelFormat): OpenAI
+    # chat/completions or the Anthropic Messages API. Optional features - tool calling,
+    # tool_choice, JSON mode, the "{" prefill, temperature - are sent unless this model's
+    # endpoint refused them before. On HTTP 400/422 the server's reason decides what happens:
+    #   - it names the output-limit field or a feature we sent -> retry without it (remembered)
+    #   - it names nothing we sent (e.g. "invalid model name"), in auto format mode -> retry
+    #     the same request on the other endpoint format, once; the one that works is learned
+    #   - otherwise drop features one by one (tools, JSON mode, prefill, temperature)
+    # A request that still fails prints the server's reason for every format tried.
+    $model = $script:GenAiModel
+    $formatInfo = Get-ModelFormat $model
+    $format = $formatInfo.Format
+    $firstFormat = $format
+    $switched = $false
+    $firstFormatCode = 0          # HTTP status that made ACT leave the first format
+    $attemptsInFormat = 0
+    $reasons = [ordered]@{}
+    $prefillWanted = ($script:UsePrefill -or $ForcePrefill) -and (-not $script:PrefillRejected)
     try { $maskedMessages = ConvertTo-PseudoMessages $Messages }   # the model sees placeholders only
     catch {
         Write-Themed danger ('Could not mask names and addresses, so nothing was sent to the model: ' + $_.Exception.Message +
                              '  (ACT_PSEUDONYMIZE=0 or -NoPseudonymize sends without masking.)')
         return $null
     }
-    for ($attempt = 0; $attempt -lt 4; $attempt++) {
-        $sendMessages = $maskedMessages
-        if ($prefill -and -not $useTools) { $sendMessages = @($maskedMessages + @(@{ role = 'assistant'; content = '{' })) }
-        $payload = @{
-            model       = $script:GenAiModel
-            messages    = $sendMessages
-            temperature = 0.2
-        }
-        $payload[(Get-TokenParam $toolsKey)] = $script:MaxTokens
-        if ($useTools) {
-            # response_format is redundant with a tool schema and several gateways reject
-            # the pair outright, so tools replace JSON mode rather than joining it.
-            $payload['tools'] = Get-ActionToolSchema
-            $payload['tool_choice'] = 'required'
-        } elseif ($script:UseJsonMode) {
-            $payload['response_format'] = @{ type = 'json_object' }
-        }
-        $body = $payload | ConvertTo-Json -Depth 10
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        $url = Get-FormatUrl $format
+        $featureKey = Get-FeatureKey $format $model
+        $features = Get-RequestFeatures $format $featureKey $prefillWanted
+        # Provider-aware auth: asksage gets Authorization + x-access-tokens + x-api-key so the
+        # key works against any Ask Sage surface; the Anthropic format adds x-api-key and
+        # anthropic-version; genai otherwise gets Bearer only. Values are never logged.
+        $headers = Get-ProviderHeaders $script:Provider $script:GenAiKey -Post -Anthropic:($format -eq 'anthropic')
+        $body = New-ChatRequestBody $format $maskedMessages $model $features
         if ($script:Debug) {
-            Write-DebugLine ('POST ' + $script:GenAiUrl + '  (provider=' + $script:Provider + ', model=' + $script:GenAiModel + ')')
+            Write-DebugLine ('POST ' + $url + '  (provider=' + $script:Provider + ', model=' + $model + ', format=' + $format + ')')
             Write-DebugLine ('request-body: ' + $body)
         }
 
+        $attemptsInFormat++
         try {
-            $resp = Invoke-ProviderRequestWithRetry -Uri $script:GenAiUrl -Headers $headers -Body $body -TimeoutSec $script:GenAiTimeout
+            $resp = Invoke-ProviderRequestWithRetry -Uri $url -Headers $headers -Body $body -TimeoutSec $script:GenAiTimeout
         } catch {
             $msg = $_.Exception.Message
             $code = $null
             try { if ($null -ne $_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } } catch { }
             $bodyText = ''
             try { if ($null -ne $_.ErrorDetails) { $bodyText = '' + $_.ErrorDetails.Message } } catch { }
-            if (($code -eq 400 -or $code -eq 422) -and (Test-TokenParamRejected $toolsKey ($bodyText + ' ' + $msg))) {
-                Write-Themed dim ('  (endpoint rejected the output-limit field; retrying with ' + (Get-TokenParam $toolsKey) + ')')
-                continue
+            $reason = Get-ApiErrorReason $bodyText $msg
+            if ($script:Debug) { Write-DebugLine ('HTTP ' + $code + ' from ' + $url + ': ' + $reason) }
+            $label = Get-FormatLabel $format
+            if ($null -ne $code -and ($code -eq 404 -or $code -eq 405) -and $formatInfo.Auto) {
+                # No such endpoint on this gateway: try the other format once.
+                $reasons[$format] = "HTTP $code $reason"
+                if (-not $switched) {
+                    $switched = $true
+                    $firstFormatCode = $code
+                    $format = Get-OtherFormat $format
+                    $attemptsInFormat = 0
+                    Write-Themed dim ('  (no ' + $label + ' endpoint at ' + $url + ' (HTTP ' + $code + '); trying the ' + (Get-FormatLabel $format) + ' endpoint)')
+                    continue
+                }
+                if ($format -ne $firstFormat -and ($firstFormatCode -eq 400 -or $firstFormatCode -eq 422)) {
+                    $format = $firstFormat
+                    $attemptsInFormat = 1
+                    $featureKey = Get-FeatureKey $format $model
+                    $features = Get-RequestFeatures $format $featureKey $prefillWanted
+                    $blind = @('tools', 'json', 'prefill', 'temperature') | Where-Object {
+                        ($_ -eq 'tools' -and $features.Tools) -or ($_ -eq 'json' -and $features.Json) -or
+                        ($_ -eq 'prefill' -and $features.Prefill) -or ($_ -eq 'temperature' -and $features.Temperature) } | Select-Object -First 1
+                    if ($blind) {
+                        Disable-RequestFeature $blind $featureKey
+                        Write-Themed dim ('  (back to the ' + (Get-FormatLabel $format) + ' endpoint; retrying without ' + (Get-FeatureLabel $blind) + ')')
+                        continue
+                    }
+                }
+                Show-ModelRequestFailure $model $code $reason $reasons
+                return $null
             }
-            if (($code -eq 400 -or $code -eq 422) -and $useTools) {
-                $useTools = $false
-                $script:ToolsSupport[$toolsKey] = $false
-                Write-Themed dim '  (endpoint rejected tool calling; retrying with JSON mode)'
-                continue
-            }
-            if (($code -eq 400 -or $code -eq 422) -and $script:UseJsonMode) {
-                $script:UseJsonMode = $false
-                $jsonKey = $script:Provider + '|' + $script:GenAiUrl
-                $script:JsonModeSupport[$jsonKey] = $false
-                Write-Themed dim '  (endpoint rejected JSON mode; retrying without response_format)'
-                continue
-            }
-            if (($code -eq 400 -or $code -eq 422) -and $prefill) {
-                $prefill = $false
-                $script:PrefillRejected = $true
-                Write-Themed dim '  (endpoint rejected assistant prefill; disabling it for this session)'
-                continue
+            if ($code -eq 400 -or $code -eq 422) {
+                $detail = $bodyText + ' ' + $msg
+                if ($format -eq 'openai' -and (Test-TokenParamRejected $featureKey $detail)) {
+                    Write-Themed dim ('  (endpoint rejected the output-limit field; retrying with ' + (Get-TokenParam $featureKey) + ')')
+                    continue
+                }
+                $refused = Get-RejectedFeature $detail $features $format
+                if ($refused) {
+                    Disable-RequestFeature $refused $featureKey
+                    Write-Themed dim ('  (endpoint refused ' + (Get-FeatureLabel $refused) + ' for ' + $model + '; retrying without it)')
+                    continue
+                }
+                if ($formatInfo.Auto -and -not $switched) {
+                    $reasons[$format] = "HTTP $code $reason"
+                    $switched = $true
+                    $firstFormatCode = $code
+                    $format = Get-OtherFormat $format
+                    $attemptsInFormat = 0
+                    Write-Themed dim ('  (' + $model + ' was refused on the ' + $label + ' endpoint: ' + $reason + ')')
+                    Write-Themed dim ('  (trying the ' + (Get-FormatLabel $format) + ' endpoint)')
+                    continue
+                }
+                if ($switched -and $format -ne $firstFormat -and $attemptsInFormat -eq 1 -and
+                        ($firstFormatCode -eq 400 -or $firstFormatCode -eq 422)) {
+                    # The other format refused even the full request for a reason we cannot
+                    # act on: it is not this model's endpoint. Go back and shed features there.
+                    $reasons[$format] = "HTTP $code $reason"
+                    $format = $firstFormat
+                    $attemptsInFormat = 1
+                    $featureKey = Get-FeatureKey $format $model
+                    $features = Get-RequestFeatures $format $featureKey $prefillWanted
+                }
+                $blind = @('tools', 'json', 'prefill', 'temperature') | Where-Object {
+                    ($_ -eq 'tools' -and $features.Tools) -or ($_ -eq 'json' -and $features.Json) -or
+                    ($_ -eq 'prefill' -and $features.Prefill) -or ($_ -eq 'temperature' -and $features.Temperature) } | Select-Object -First 1
+                if ($blind) {
+                    Disable-RequestFeature $blind $featureKey
+                    Write-Themed dim ('  (' + (Get-FormatLabel $format) + ' endpoint refused the request; retrying without ' + (Get-FeatureLabel $blind) + ')')
+                    continue
+                }
+                $reasons[$format] = "HTTP $code $reason"
+                Show-ModelRequestFailure $model $code $reason $reasons
+                return $null
             }
             $limitHit = ($code -eq 429) -or (($bodyText + ' ' + $msg) -match '(?i)quota|rate.?limit|usage limit|token limit|exceeded|insufficient_quota|too many requests')
             if ($limitHit) {
                 if ($script:Providers.ContainsKey($script:Provider)) { $script:Providers[$script:Provider].Limited = $true }
-                Write-Themed danger ("The '" + $script:Provider + "' provider hit a rate/usage limit (model " + $script:GenAiModel + ").")
+                Write-Themed danger ("The '" + $script:Provider + "' provider hit a rate/usage limit (model " + $model + ").")
                 $alt = ''
                 foreach ($k in ($script:Providers.Keys | Sort-Object)) {
                     if ($k -eq $script:Provider) { continue }
@@ -1475,8 +1947,9 @@ function Invoke-GenAIChat {
             }
             if ($code -eq 401) {
                 Write-Themed danger ("The '" + $script:Provider + "' provider returned 401 Unauthorized. Check its API key with :setup.")
+                if ($reason) { Write-Themed dim ('  server says: ' + $reason) }
             } elseif ($null -ne $code) {
-                Write-Themed danger ("Request to '" + $script:Provider + "' failed (HTTP $code): $msg")
+                Write-Themed danger ("Request to '" + $script:Provider + "' (model " + $model + ") failed (HTTP $code): " + $reason)
             } elseif ($msg -match 'timed out|timeout') {
                 Write-Themed danger ("Request to '" + $script:Provider + "' timed out after $($script:GenAiTimeout)s. Raise GENAI_TIMEOUT or check connectivity.")
             } else {
@@ -1485,11 +1958,11 @@ function Invoke-GenAIChat {
             return $null
         }
 
-        if (-not $useTools -and $script:UseJsonMode) {
+        $resp = ConvertFrom-AnthropicResponse $resp
+        if ($features.Json) {
             # Only record json-mode support when it was actually sent: with tools active,
             # response_format is never on the wire, so a success proves nothing about it.
-            $jsonKey = $script:Provider + '|' + $script:GenAiUrl
-            $script:JsonModeSupport[$jsonKey] = $true
+            $script:JsonModeSupport[$featureKey] = $true
         }
 
         $content = $null
@@ -1498,10 +1971,11 @@ function Invoke-GenAIChat {
             try { $rawDump = $resp | ConvertTo-Json -Depth 12 -Compress } catch { $rawDump = '' + ($resp | Out-String) }
             Write-DebugLine ('raw-response: ' + $rawDump)
         }
-        if ($useTools) {
+        if ($features.Tools) {
             $toolContent = ConvertFrom-ToolCall $resp
             if (-not [string]::IsNullOrWhiteSpace($toolContent)) {
-                $script:ToolsSupport[$toolsKey] = $true
+                $script:ToolsSupport[$featureKey] = $true
+                if ($formatInfo.Auto) { Set-LearnedModelFormat $model $format }
                 return (Restore-PseudoReply $toolContent)
             }
             # The endpoint ACCEPTED the tool schema and ignored it: a 200 carrying prose
@@ -1516,9 +1990,9 @@ function Invoke-GenAIChat {
             # which accepts the field and answers in prose (ACT-Linux 0.6.13).
             #
             # Drop to the text ladder for this endpoint and retry NOW.
-            $useTools = $false
-            $script:ToolsSupport[$toolsKey] = $false
-            Write-Themed dim '  (endpoint ignored the tool schema; using JSON mode instead)'
+            $script:ToolsSupport[$featureKey] = $false
+            if ($format -eq 'anthropic') { Write-Themed dim '  (endpoint ignored the tool schema; asking for plain JSON replies instead)' }
+            else { Write-Themed dim '  (endpoint ignored the tool schema; using JSON mode instead)' }
             continue
         }
         if ($null -ne $resp.choices -and $resp.choices.Count -gt 0) {
@@ -1542,7 +2016,7 @@ function Invoke-GenAIChat {
             if ($errText.Length -gt 300) { $errText = $errText.Substring(0, 300) + ' ...' }
             if ($errText -match '(?i)token is invalid|invalid.?token|unauthoriz|invalid api key|forbidden|access denied|authentication|not authorized') {
                 Write-Themed danger ("The '" + $script:Provider + "' provider rejected the request (auth): " + $errText)
-                Write-Themed dim    ("  The API key looks invalid for this endpoint. Fix it with :setup, or switch with :provider. (endpoint: " + (Get-UrlHost $script:GenAiUrl) + ")")
+                Write-Themed dim    ("  The API key looks invalid for this endpoint. Fix it with :setup, or switch with :provider. (endpoint: " + (Get-UrlHost $url) + ")")
             } elseif ($errText -match '(?i)quota|rate.?limit|usage limit|token limit|exceeded|too many requests') {
                 if ($script:Providers.ContainsKey($script:Provider)) { $script:Providers[$script:Provider].Limited = $true }
                 Write-Themed danger ("The '" + $script:Provider + "' provider reports a rate/usage limit: " + $errText)
@@ -1552,13 +2026,30 @@ function Invoke-GenAIChat {
             }
             return $null
         }
+        if ($formatInfo.Auto) { Set-LearnedModelFormat $model $format }
         # If we prefilled "{", the model may continue after it - but many endpoints ignore the
         # prefill and return a full object or a fenced block. Re-attach the brace only when it
         # actually produces valid JSON, so we never corrupt an already-good reply.
-        $content = Resolve-PrefillContent $content $prefill
+        $content = Resolve-PrefillContent $content $features.Prefill
         return (Restore-PseudoReply $content)
     }
+    Write-Themed danger ("Request to '" + $script:Provider + "' (model " + $model + ") gave up after " + $attempt + ' attempts.')
+    if ($reasons.Count -gt 0) { Show-ModelRequestFailure $model $null '' $reasons }
     return $null
+}
+
+function Show-ModelRequestFailure {
+    # The final word on a refused model request: the server's reason, per format tried.
+    param([string] $Model, $Code, [string] $Reason, $Reasons)
+    if ($null -ne $Code) {
+        Write-Themed danger ("Request to '" + $script:Provider + "' (model " + $Model + ") failed (HTTP " + $Code + "): " + $Reason)
+    }
+    if ($null -ne $Reasons -and $Reasons.Count -gt 1) {
+        foreach ($f in @($Reasons.Keys)) {
+            Write-Themed dim ('  ' + (Get-FormatLabel $f) + ' endpoint (' + (Get-FormatUrl $f) + '): ' + $Reasons[$f])
+        }
+    }
+    Write-Themed dim ('  Run :probe to test ' + $Model + ' on both endpoints, :models to list what this key can use.')
 }
 
 # ---------------------------------------------------------------------------
@@ -6774,6 +7265,175 @@ function Read-SecretValue {
     }
 }
 
+function Invoke-ProbeRequest {
+    # One :probe request. Never throws: @{ Ok; Code; Reason; Detail }.
+    param([string] $Format, [string] $Model, [object[]] $Messages, [hashtable] $Features)
+    $url = Get-FormatUrl $Format
+    $headers = Get-ProviderHeaders $script:Provider $script:GenAiKey -Post -Anthropic:($Format -eq 'anthropic')
+    $body = New-ChatRequestBody $Format $Messages $Model $Features
+    $timeout = $script:GenAiTimeout
+    if ($timeout -gt 60) { $timeout = 60 }
+    try {
+        $resp = ConvertFrom-AnthropicResponse (Invoke-ProviderRequestWithRetry -Uri $url -Headers $headers -Body $body -TimeoutSec $timeout)
+    } catch {
+        $msg = '' + $_.Exception.Message
+        $code = $null
+        try { if ($null -ne $_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode } } catch { }
+        $bodyText = ''
+        try { if ($null -ne $_.ErrorDetails) { $bodyText = '' + $_.ErrorDetails.Message } } catch { }
+        return @{ Ok = $false; Code = $code; Reason = (Get-ApiErrorReason $bodyText $msg); Detail = ($bodyText + ' ' + $msg) }
+    }
+    if ($null -eq $resp -or $null -eq (Get-Prop $resp 'choices')) {
+        # a 200 that carries an error object instead of a completion
+        $text = ''
+        try { $text = ConvertTo-Json -InputObject $resp -Depth 6 -Compress } catch { }
+        $reason = Get-ApiErrorReason $text ''
+        return @{ Ok = $false; Code = 200; Reason = $reason; Detail = $reason }
+    }
+    return @{ Ok = $true; Code = 200; Reason = ''; Detail = '' }
+}
+
+function Format-ProbeStatus {
+    param([hashtable] $Result)
+    if ($Result.Ok) { return 'OK' }
+    if ($null -eq $Result.Code) { return ('failed: ' + $Result.Reason) }
+    return ('HTTP ' + $Result.Code + ': ' + $Result.Reason)
+}
+
+function Test-ModelFormat {
+    # Probe one model on one endpoint format: a minimal request ("basic"), then - when that
+    # works - ACT's real request shape ("full": system prompt, temperature, tools, JSON mode,
+    # max tokens), shedding whatever the server says it refuses. What was refused is
+    # remembered for the session, like any request.
+    param([string] $Model, [string] $Format, [object[]] $FullMessages)
+    $key = Get-FeatureKey $Format $Model
+    # Start fresh, so the report shows what the server refuses now, not what was learned.
+    foreach ($cache in @($script:ToolsSupport, $script:ToolChoiceSupport, $script:JsonModeSupport,
+                         $script:PrefillSupport, $script:TemperatureSupport, $script:TokenParam)) {
+        if ($null -ne $cache -and $cache.ContainsKey($key)) { [void]$cache.Remove($key) }
+    }
+    $tokenParam = 'max_tokens'
+    if ($Format -eq 'openai') { $tokenParam = Get-TokenParam $key }
+    $basicFeatures = @{ Tools = $false; ToolChoice = $false; Json = $false; Prefill = $false
+                        Temperature = $false; TokenParam = $tokenParam; MaxTokens = 64 }
+    $basicMessages = @(@{ role = 'user'; content = 'Reply with the single word OK.' })
+    $r = Invoke-ProbeRequest $Format $Model $basicMessages $basicFeatures
+    if (-not $r.Ok -and $Format -eq 'openai' -and ($r.Code -eq 400 -or $r.Code -eq 422) -and (Test-TokenParamRejected $key $r.Detail)) {
+        $basicFeatures.TokenParam = Get-TokenParam $key
+        $r = Invoke-ProbeRequest $Format $Model $basicMessages $basicFeatures
+    }
+    $out = @{ BasicOk = $r.Ok; Basic = (Format-ProbeStatus $r); FullOk = $false; Full = ''; Changes = @() }
+    if (-not $r.Ok) { return $out }
+    for ($i = 0; $i -lt 6; $i++) {
+        $f = Get-RequestFeatures $Format $key $script:UsePrefill
+        $r = Invoke-ProbeRequest $Format $Model $FullMessages $f
+        if ($r.Ok) { $out.FullOk = $true; break }
+        if ($r.Code -ne 400 -and $r.Code -ne 422) { break }
+        if ($Format -eq 'openai' -and (Test-TokenParamRejected $key $r.Detail)) {
+            $out.Changes += ('uses ' + (Get-TokenParam $key))
+            continue
+        }
+        $refused = Get-RejectedFeature $r.Detail $f $Format
+        if (-not $refused) { break }
+        Disable-RequestFeature $refused $key
+        $out.Changes += ('without ' + (Get-FeatureLabel $refused))
+    }
+    if ($out.FullOk) {
+        $out.Full = 'OK'
+        if ($out.Changes.Count -gt 0) { $out.Full = 'OK (' + ($out.Changes -join ', ') + ')' }
+    } else {
+        $out.Full = Format-ProbeStatus $r
+    }
+    return $out
+}
+
+function Invoke-ModelProbe {
+    # :probe [model|all] - test models on BOTH endpoint formats and remember, per model, the
+    # one that works. Prints the server's reason for every refusal.
+    param([string] $Target = '', [switch] $Yes)
+    if ([string]::IsNullOrEmpty($script:GenAiKey)) {
+        Write-Themed warning ("No API key for the '" + $script:Provider + "' provider - run :setup first.")
+        return
+    }
+    $t = ('' + $Target).Trim()
+    if ($t -eq 'all') {
+        Write-Themed dim ('  fetching ' + $script:Provider + ' models...')
+        $models = @(Select-ChatModels (Get-ProviderModels $script:Provider))
+        if ($models.Count -eq 0) {
+            $models = @($script:Providers[$script:Provider].Models)
+            Write-Themed warning '  Could not fetch the live model list; testing the built-in list.'
+        }
+        if (-not $Yes) {
+            $answer = Read-Host ('  Test ' + $models.Count + ' models on both endpoints (up to about 4 small requests each)? [y/N]')
+            if (('' + $answer).Trim().ToLower() -notin @('y', 'yes')) { return }
+        }
+    } elseif ($t) {
+        $models = @($t)
+    } else {
+        $models = @($script:GenAiModel)
+    }
+    # The full request carries ACT's real system prompt; a short stand-in keeps the probe
+    # usable where that prompt cannot be built (it is the request shape being tested).
+    $systemPrompt = 'You are the planning engine inside act. Reply with exactly one JSON action.'
+    try { $systemPrompt = Build-SystemPrompt } catch { }
+    try {
+        $fullMessages = ConvertTo-PseudoMessages @(
+            @{ role = 'system'; content = $systemPrompt },
+            @{ role = 'user'; content = 'Connectivity check from act :probe - there is nothing to plan or run. Reply with the finish action and the message OK.' })
+    } catch {
+        Write-Themed danger ('Could not mask names and addresses, so nothing was sent: ' + $_.Exception.Message)
+        return
+    }
+    Write-Themed accent ('Testing ' + $models.Count + ' model(s) on ' + $script:Provider + ':')
+    Write-Themed dim ('  OpenAI endpoint:    ' + (Get-FormatUrl 'openai'))
+    Write-Themed dim ('  Anthropic endpoint: ' + (Get-FormatUrl 'anthropic'))
+    $summary = [ordered]@{}
+    foreach ($m in $models) {
+        Write-Host ''
+        Write-Host ('  ' + $m)
+        $results = @{}
+        foreach ($fmt in @('openai', 'anthropic')) {
+            $r = Test-ModelFormat $m $fmt $fullMessages
+            $results[$fmt] = $r
+            $line = '    ' + (Get-FormatLabel $fmt).PadRight(10) + ' basic ' + $r.Basic
+            if ($r.BasicOk) { $line += '   full ' + $r.Full }
+            if ($r.FullOk) { Write-Themed success $line } else { Write-Themed dim $line }
+        }
+        $preferred = Get-PreferredFormat $m
+        $choice = ''
+        $how = ''
+        foreach ($level in @('FullOk', 'BasicOk')) {
+            $ok = @(@('openai', 'anthropic') | Where-Object { $results[$_][$level] })
+            if ($ok.Count -eq 1) { $choice = $ok[0] }
+            elseif ($ok.Count -gt 1) {
+                $choice = $preferred
+                $other = Get-OtherFormat $preferred
+                if ($results[$other].Changes.Count -lt $results[$preferred].Changes.Count) { $choice = $other }
+            }
+            if ($choice) { if ($level -eq 'BasicOk') { $how = ' (only the basic request worked)' }; break }
+        }
+        if ($choice) {
+            Set-LearnedModelFormat $m $choice
+            Write-Themed accent ('    -> ' + (Get-FormatLabel $choice) + ' endpoint' + $how)
+            $summary[$m] = (Get-FormatLabel $choice) + $how
+        } else {
+            Write-Themed warning '    -> neither endpoint accepted this model (the reasons are above)'
+            $summary[$m] = 'neither endpoint'
+        }
+    }
+    if ($models.Count -gt 1) {
+        Write-Host ''
+        Write-Themed accent 'Summary:'
+        foreach ($m in @($summary.Keys)) { Write-Host ('  ' + $m + ' -> ' + $summary[$m]) }
+    }
+    $setting = Get-ApiFormatSetting
+    if ($setting -ne 'auto') {
+        Write-Themed dim ('  Note: the endpoint format is set to ' + $setting + ', so every model uses it. Choose auto in :setup (or unset ACT_API_FORMAT) to use these results.')
+    } elseif (-not [string]::IsNullOrWhiteSpace($script:UserConfigPath) -and (Test-Path -LiteralPath $script:UserConfigPath -PathType Leaf)) {
+        Write-Themed dim ('  The endpoint for each model is remembered in ' + $script:UserConfigPath + '.')
+    }
+}
+
 function Invoke-Setup {
     param([switch] $Initial)
     $prov = $null
@@ -6794,6 +7454,23 @@ function Invoke-Setup {
     $m = Read-Host ('  model [' + $script:GenAiModel + '] (Enter to keep, or type a model id)')
     if (-not [string]::IsNullOrWhiteSpace($m)) { $script:GenAiModel = $m.Trim() }
 
+    # The Anthropic Messages endpoint (0.6.19): derived from the URL unless set here.
+    if ($null -ne $prov) {
+        $derived = Get-AnthropicUrl $script:GenAiUrl ''
+        $current = Get-AnthropicUrl $script:GenAiUrl ('' + $prov.AnthropicUrl)
+        $a = Read-Host ('  Anthropic URL [' + $current + '] (Enter to keep)')
+        if (-not [string]::IsNullOrWhiteSpace($a)) {
+            $a = $a.Trim()
+            if ($a -eq $derived) { $prov.AnthropicUrl = '' } else { $prov.AnthropicUrl = $a }
+        }
+        $currentFormat = '' + $prov.Format
+        if ($currentFormat -notin @('openai', 'anthropic')) { $currentFormat = 'auto' }
+        $fm = Read-Host ('  endpoint format [' + $currentFormat + '] (auto = try both and remember per model; openai; anthropic)')
+        $fm = ('' + $fm).Trim().ToLower()
+        if ($fm -in @('auto', 'openai', 'anthropic')) { $prov.Format = $fm }
+        elseif ($fm) { Write-Themed warning ("  '" + $fm + "' is not auto, openai or anthropic; kept " + $currentFormat + '.') }
+    }
+
     # Write the edited values back into the active provider record.
     if ($null -ne $prov) {
         $prov.Key = $script:GenAiKey
@@ -6801,10 +7478,7 @@ function Invoke-Setup {
         $prov.Model = $script:GenAiModel
         $prov.Limited = $false
     }
-    $jsonKey = $script:Provider + '|' + $script:GenAiUrl
-    $script:UseJsonMode = $script:JsonModeConfigured -and
-                          (-not $script:JsonModeSupport.ContainsKey($jsonKey) -or
-                           $script:JsonModeSupport[$jsonKey])
+    $script:UseJsonMode = $script:JsonModeConfigured
 
     # Persist setup locally without requiring setx or a shell environment variable. API
     # keys are protected with Windows DPAPI for the current user before JSON is written.
@@ -6823,6 +7497,12 @@ function Invoke-Setup {
         if ([string]::IsNullOrWhiteSpace($script:UserConfigPath)) {
             Write-Themed accent '  Setup complete for this session.'
         }
+        # Try the model on both endpoints now, so a refusal shows up here with the server's
+        # reason rather than in the middle of the first task.
+        Write-Host ''
+        Invoke-ModelProbe ''
+        $all = Read-Host '  Test every model in the list on both endpoints too? [y/N]'
+        if (('' + $all).Trim().ToLower() -in @('y', 'yes')) { Invoke-ModelProbe 'all' -Yes }
     }
 }
 
@@ -6944,10 +7624,12 @@ function Show-SessionStatus {
     if ($script:Providers.ContainsKey($script:Provider) -and $script:Providers[$script:Provider].Limited) { $limTxt = '  [LIMIT HIT]' }
     $raceTxt = if ($script:Race) { 'on' } else { 'off' }
     $planTxt = if ([string]::IsNullOrWhiteSpace($script:PlanModel)) { 'off' } else { $script:PlanModel }
+    $modelFormat = (Get-ModelFormat $script:GenAiModel).Format
     $toolsTxt = if (-not $script:ToolsMode) { 'off' }
-                elseif ($script:ToolsSupport[$script:Provider + '|' + $script:GenAiUrl] -eq $false) { 'on (endpoint declined - using JSON mode)' }
+                elseif ($script:ToolsSupport[(Get-FeatureKey $modelFormat $script:GenAiModel)] -eq $false) { 'on (endpoint declined - using JSON mode)' }
                 else { 'on' }
-    Write-Themed dim ("provider: $($script:Provider)$limTxt   model: $($script:GenAiModel)   auto-approve: $autoTxt   tools: $toolsTxt   plan-model: $planTxt   race: $raceTxt   theme: $($script:ThemeName)")
+    $formatTxt = (Get-ApiFormatSetting) + ' (' + $modelFormat + ')'
+    Write-Themed dim ("provider: $($script:Provider)$limTxt   model: $($script:GenAiModel)   format: $formatTxt   auto-approve: $autoTxt   tools: $toolsTxt   plan-model: $planTxt   race: $raceTxt   theme: $($script:ThemeName)")
     Write-Themed dim ("privilege: $(Get-PrivilegeStatus)   language mode: $lm   ansi: $($script:UseAnsi)")
     if ($script:AuditReady) { Write-Themed dim ("audit: " + $script:AuditPath) }
     else { Write-Themed danger 'audit: NOT AVAILABLE (execution will be refused)' }
@@ -6979,6 +7661,7 @@ function Get-ReplHelpSections {
             [PSCustomObject]@{ Command = ':setup'; Description = 'set and persist the API key, URL, and model (also :key)' }
             [PSCustomObject]@{ Command = ':provider [n]'; Description = 'list or switch providers' }
             [PSCustomObject]@{ Command = ':models'; Description = 'fetch the active provider live model list' }
+            [PSCustomObject]@{ Command = ':probe'; Description = 'test a model on both endpoints (OpenAI and Anthropic): :probe [model|all]' }
             [PSCustomObject]@{ Command = ':model'; Description = 'pick a model from the active provider' }
             [PSCustomObject]@{ Command = ':tools [on|off]'; Description = 'send the action protocol as a native tool schema' }
             [PSCustomObject]@{ Command = ':planmodel [id|off]'; Description = 'plan on one model, execute the steps on another' }
@@ -7166,12 +7849,14 @@ function Invoke-ReplCommand {
             }
             return $true
         }
+        ':probe' { Invoke-ModelProbe $arg; return $true }
         ':tools' {
             $a = $arg.Trim().ToLower()
             if ($a -in @('on', '1', 'true', 'yes')) { $script:ToolsMode = $true }
             elseif ($a -in @('off', '0', 'false', 'no')) { $script:ToolsMode = $false }
             else { $script:ToolsMode = -not $script:ToolsMode }
             $script:ToolsSupport = @{}      # re-probe the endpoint after a deliberate change
+            $script:ToolChoiceSupport = @{}
             $script:ToolsRejected = $false
             $script:TokenParam = @{}
             if ($script:ToolsMode) {
@@ -8813,7 +9498,7 @@ function Invoke-SelfTest {
         Assert-True ($ignored -match 'finish') 'asksage: a silently ignored tool schema falls back to JSON mode in the same call'
         Assert-Equal 2 $script:ToolProbeBodies.Count 'asksage: the fallback costs one extra request, not a dead task'
         Assert-True ($script:ToolProbeBodies[1] -notmatch '"tool_choice"') 'asksage: the retry drops the schema'
-        Assert-False ($script:ToolsSupport[$script:Provider + '|' + $script:GenAiUrl]) 'asksage: the endpoint is remembered as NOT supporting tools, which restores the prefill'
+        Assert-True ($script:ToolsSupport[(Get-FeatureKey (Get-ModelFormat $script:GenAiModel).Format $script:GenAiModel)] -eq $false) 'asksage: the endpoint is remembered as NOT supporting tools, which restores the prefill'
         $script:ToolProbeBodies = @()
         $again = Invoke-GenAIChat @(@{ role = 'user'; content = 'x' })
         Assert-True ($again -match 'finish') 'asksage: the remembered endpoint still answers'
@@ -9400,12 +10085,17 @@ function Invoke-SelfTest {
     Assert-Equal 'https://a/server/openai/v1/chat/completions' $script:GenAiUrl 'provider: url applied'
     Assert-True $script:UseJsonMode 'provider: json mode reset to configured on switch'
     Assert-True (-not $script:PrefillRejected) 'provider: prefill flag reset on switch'
-    $script:JsonModeSupport['asksage|https://a/server/openai/v1/chat/completions'] = $false
+    # A refused response_format is remembered per provider|url|model (0.6.19), so it survives
+    # provider switches and never turns JSON mode off for a different model.
+    $script:MaxTokens = 4096; $script:ToolsMode = $false
+    $script:JsonModeSupport['asksage|https://a/server/openai/v1/chat/completions|gpt-4.1-mini'] = $false
     [void](Set-ActiveProvider 'genai'); [void](Set-ActiveProvider 'asksage')
-    Assert-True (-not $script:UseJsonMode) 'provider: rejected response_format is cached per endpoint'
-    [void]$script:JsonModeSupport.Remove('asksage|https://a/server/openai/v1/chat/completions')
+    Assert-Equal 'asksage|https://a/server/openai/v1/chat/completions|gpt-4.1-mini' (Get-FeatureKey 'openai' 'gpt-4.1-mini') 'provider: feature cache key is provider|url|model'
+    Assert-False (Get-RequestFeatures 'openai' (Get-FeatureKey 'openai' 'gpt-4.1-mini') $false).Json 'provider: rejected response_format is cached per endpoint and model'
+    Assert-True (Get-RequestFeatures 'openai' (Get-FeatureKey 'openai' 'gpt-4o') $false).Json 'provider: another model on the same endpoint keeps JSON mode'
+    [void]$script:JsonModeSupport.Remove('asksage|https://a/server/openai/v1/chat/completions|gpt-4.1-mini')
     [void](Set-ActiveProvider 'asksage')
-    Assert-True $script:UseJsonMode 'provider: an uncached endpoint retries configured JSON mode'
+    Assert-True (Get-RequestFeatures 'openai' (Get-FeatureKey 'openai' 'gpt-4.1-mini') $false).Json 'provider: an uncached endpoint retries configured JSON mode'
     $script:GenAiModel='gpt-4o'
     [void](Set-ActiveProvider 'genai'); [void](Set-ActiveProvider 'asksage')
     Assert-Equal 'gpt-4o' $script:GenAiModel 'provider: remembers model across switches'
@@ -9764,6 +10454,198 @@ function Invoke-SelfTest {
     } finally {
         $script:PseudoEnabled = $savedPseudoEnabled
         $script:PseudoFwd = $savedPseudoFwd
+    }
+
+    Write-Host '== Endpoint formats: OpenAI + Anthropic (0.6.19) ==' -ForegroundColor Cyan
+    # URLs: the Anthropic endpoint is the chat URL with its ending swapped, unless set.
+    Assert-Equal 'https://gw/v1/messages' (Get-AnthropicUrl 'https://gw/v1/chat/completions' '') 'formats: anthropic url derived by swapping the ending'
+    Assert-Equal 'https://gw/v1/messages' (Get-AnthropicUrl 'https://gw/v1/messages' '') 'formats: a messages url is used as is'
+    Assert-Equal 'https://gw/x/messages' (Get-AnthropicUrl 'https://gw/v1/chat/completions' 'https://gw/x/messages') 'formats: an explicit anthropic url wins'
+    Assert-Equal 'https://gw/v1/chat/completions' (Get-ChatUrl 'https://gw/v1/messages') 'formats: a messages url gives the chat url back'
+    # The Anthropic request shape.
+    $af = @{ Tools = $true; ToolChoice = $true; Json = $false; Prefill = $false; Temperature = $true; TokenParam = 'max_tokens'; MaxTokens = 4096 }
+    $ab = ConvertTo-AnthropicBody @(
+        @{ role = 'system'; content = 'S1' }, @{ role = 'system'; content = 'S2' },
+        @{ role = 'user'; content = 'u1' }, @{ role = 'user'; content = 'u2' },
+        @{ role = 'assistant'; content = '' }, @{ role = 'user'; content = 'u3' }) 'claude-x' $af
+    Assert-Equal "S1`n`nS2" $ab['system'] 'anthropic body: system turns joined into the system field'
+    Assert-Equal 'user,assistant,user' ((@($ab['messages']) | ForEach-Object { $_['role'] }) -join ',') 'anthropic body: only user/assistant turns, consecutive ones merged'
+    Assert-Equal "u1`n`nu2" $ab['messages'][0]['content'] 'anthropic body: merged user turns keep both texts'
+    Assert-Equal '(empty)' $ab['messages'][1]['content'] 'anthropic body: empty content is never sent'
+    Assert-Equal 4096 $ab['max_tokens'] 'anthropic body: max_tokens is always sent'
+    Assert-False $ab.Contains('response_format') 'anthropic body: never response_format'
+    Assert-Equal 'any' $ab['tool_choice']['type'] 'anthropic body: tool_choice is {type:any}'
+    $at0 = @($ab['tools'])[0]
+    Assert-True ($at0.ContainsKey('input_schema') -and $at0.ContainsKey('name') -and -not $at0.ContainsKey('function')) 'anthropic body: tools are {name, description, input_schema}'
+    $ab2 = ConvertTo-AnthropicBody @(@{ role = 'assistant'; content = 'hi ' }, @{ role = 'user'; content = 'go' }) 'claude-x' @{ Tools = $false; ToolChoice = $false; Json = $false; Prefill = $true; Temperature = $false; TokenParam = 'max_tokens'; MaxTokens = 100 }
+    Assert-Equal 'user' $ab2['messages'][0]['role'] 'anthropic body: the first turn is always a user turn'
+    Assert-Equal '{' $ab2['messages'][@($ab2['messages']).Count - 1]['content'] 'anthropic body: the prefill is a final assistant "{"'
+    Assert-False $ab2.Contains('temperature') 'anthropic body: temperature left out when refused'
+    $ob = ConvertTo-OpenAiBody @(@{ role = 'user'; content = 'x' }) 'gpt-4.1' @{ Tools = $true; ToolChoice = $true; Json = $false; Prefill = $false; Temperature = $true; TokenParam = 'max_tokens'; MaxTokens = 4096 }
+    Assert-Equal 'required' $ob['tool_choice'] 'openai body: unchanged shape (tool_choice required)'
+    Assert-Equal 4096 $ob['max_tokens'] 'openai body: unchanged shape (max_tokens)'
+    # Anthropic replies read as OpenAI ones.
+    $ar = ConvertFrom-AnthropicResponse ('{"type":"message","content":[{"type":"text","text":"Let me."},{"type":"tool_use","id":"t1","name":"plan","input":{"requires_host":false,"thought":"x"}}],"stop_reason":"tool_use","usage":{"input_tokens":3,"output_tokens":4}}' | ConvertFrom-Json)
+    Assert-Equal 'plan' $ar.choices[0].message.tool_calls[0].function.name 'anthropic reply: tool_use becomes a tool call'
+    Assert-True ((ConvertFrom-ToolCall $ar) -match '"action":"plan"') 'anthropic reply: the tool call parses into the plan action'
+    Assert-Equal 7 $ar.usage.total_tokens 'anthropic reply: usage summed'
+    $ar2 = ConvertFrom-AnthropicResponse ('{"content":[{"type":"text","text":"{\"action\":\"finish\"}"}],"stop_reason":"end_turn"}' | ConvertFrom-Json)
+    Assert-Equal '{"action":"finish"}' $ar2.choices[0].message.content 'anthropic reply: text blocks become the content'
+    $ar3 = ConvertFrom-AnthropicResponse ('{"type":"error","error":{"message":"nope"}}' | ConvertFrom-Json)
+    Assert-Equal 'nope' $ar3.error.message 'anthropic reply: an error object passes through'
+    # Reading a 400.
+    Assert-Equal 'bad temp' (Get-ApiErrorReason '{"error":{"message":"bad temp"}}' 'generic') 'reason: OpenAI error body'
+    Assert-Equal 'model: x not found' (Get-ApiErrorReason '{"type":"error","error":{"type":"invalid_request_error","message":"model: x not found"}}' '') 'reason: Anthropic error body'
+    Assert-Equal 'Response status code does not indicate success: 400 (Bad Request).' (Get-ApiErrorReason '' 'Response status code does not indicate success: 400 (Bad Request).') 'reason: no body falls back to the message'
+    $on = @{ Tools = $true; ToolChoice = $true; Json = $false; Prefill = $false; Temperature = $true }
+    Assert-Equal 'temperature' (Get-RejectedFeature "Unsupported value: 'temperature' does not support 0.2 with this model." $on 'openai') 'classify: temperature'
+    Assert-Equal 'tool_choice' (Get-RejectedFeature "tool_choice 'required' is not supported" $on 'openai') 'classify: tool_choice'
+    Assert-Equal '' (Get-RejectedFeature 'Invalid model name passed in model=claude-x' $on 'openai') 'classify: a model refusal names no feature'
+    Assert-Equal '' (Get-RejectedFeature "Unsupported value: 'temperature'" @{ Temperature = $false } 'openai') 'classify: a feature already off does not count'
+
+    # The new request/reply code must run under Constrained Language Mode (no [PSCustomObject]
+    # casts, no non-core types): exercised in a child shell that switches to CLM first.
+    if (-not [string]::IsNullOrWhiteSpace($script:ActScriptPath)) {
+        $clmFile = Join-Path ([System.IO.Path]::GetTempPath()) ('act-clm-' + [Guid]::NewGuid().ToString('N') + '.ps1')
+        Set-Content -LiteralPath $clmFile -Encoding UTF8 -Value @'
+$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'
+$env:ACT_SOURCE_ONLY = '1'
+. $args[0] 2>$null
+$f = @{ Tools = $true; ToolChoice = $true; Json = $false; Prefill = $true; Temperature = $true; TokenParam = 'max_tokens'; MaxTokens = 100 }
+$b = New-ChatRequestBody 'anthropic' @(@{ role = 'system'; content = 's' }, @{ role = 'user'; content = 'u' }) 'm' $f
+$o = New-ChatRequestBody 'openai' @(@{ role = 'user'; content = 'u' }) 'm' $f
+$r = ConvertFrom-AnthropicResponse ('{"content":[{"type":"text","text":"x"},{"type":"tool_use","id":"t","name":"finish","input":{"message":"ok"}}],"usage":{"input_tokens":1,"output_tokens":2}}' | ConvertFrom-Json)
+$why = Get-ApiErrorReason '{"error":{"message":"bad"}}' ''
+$k = Get-RejectedFeature 'temperature not supported' $f 'openai'
+'CLM-RESULT ' + $ExecutionContext.SessionState.LanguageMode + ' ' + ($b -match '"input_schema"') + ' ' + ($o -match '"tool_choice"') + ' ' + ((ConvertFrom-ToolCall $r) -match '"action":"finish"') + ' ' + $why + ' ' + $k
+'@
+        try {
+            $shell = (Get-Process -Id $PID).Path
+            $clmOut = @(& $shell -NoProfile -ExecutionPolicy Bypass -File $clmFile $script:ActScriptPath 2>$null | ForEach-Object { '' + $_ })
+            $clmLine = '' + (@($clmOut | Where-Object { $_ -like 'CLM-RESULT *' }) | Select-Object -Last 1)
+            Assert-Equal 'CLM-RESULT ConstrainedLanguage True True True bad temperature' $clmLine 'formats: request building and reply parsing run under Constrained Language Mode'
+        } finally { Remove-Item -LiteralPath $clmFile -Force -ErrorAction SilentlyContinue }
+    }
+
+    # The request ladder against a fake gateway: gpt-4.1 on chat only, claude-x/sonnet-x on
+    # messages only, gpt-5 refuses temperature, dead refused everywhere.
+    $savedF = @{ Providers = $script:Providers; Provider = $script:Provider; Key = $script:GenAiKey; Url = $script:GenAiUrl
+                 Model = $script:GenAiModel; ToolsMode = $script:ToolsMode; UseJson = $script:UseJsonMode; Prefill = $script:UsePrefill
+                 MaxTokens = $script:MaxTokens; Cfg = $script:UserConfigPath; Pseudo = $script:PseudoEnabled; Forced = $script:ApiFormatForced }
+    $originalFormatRequest = ${function:Invoke-ProviderRequestWithRetry}
+    $fmtCfg = Join-Path ([System.IO.Path]::GetTempPath()) ('act-fmt-' + [Guid]::NewGuid().ToString('N') + '.json')
+    try {
+        $script:Providers = @{ genai = @{ Name = 'GW'; Url = 'https://gw/v1/chat/completions'; Key = 'k'; Model = 'gpt-4.1'; Models = @('gpt-4.1', 'claude-x')
+                                          KeyEnv = 'GENAI_KEY'; Limited = $false; AnthropicUrl = ''; Format = 'auto'; Formats = @{} } }
+        $script:Provider = ''
+        [void](Set-ActiveProvider 'genai')
+        $script:ToolsMode = $true; $script:ToolsRejected = $false; $script:JsonModeConfigured = $true; $script:UseJsonMode = $true
+        $script:UsePrefill = $true; $script:PrefillRejected = $false; $script:MaxTokens = 4096; $script:PseudoEnabled = $false
+        $script:ApiFormatForced = ''
+        $script:ToolsSupport = @{}; $script:JsonModeSupport = @{}; $script:TokenParam = @{}
+        $script:TemperatureSupport = @{}; $script:ToolChoiceSupport = @{}; $script:PrefillSupport = @{}
+        $script:UserConfigPath = $fmtCfg          # does not exist yet: nothing is written
+        $script:FmtCalls = New-Object System.Collections.ArrayList
+        Set-Item -Path function:script:Invoke-ProviderRequestWithRetry -Value {
+            param([string] $Uri, [hashtable] $Headers, [string] $Body, [int] $TimeoutSec)
+            $b = $Body | ConvertFrom-Json
+            [void]$script:FmtCalls.Add(@{ Uri = $Uri; Model = ('' + $b.model); Body = $Body; Headers = @($Headers.Keys) })
+            function Throw-FakeHttp([int] $Code, [string] $Text) {
+                $ex = New-Object System.Exception ('Response status code does not indicate success: ' + $Code + ' (Bad Request).')
+                $ex | Add-Member -NotePropertyName Response -NotePropertyValue ([PSCustomObject]@{ StatusCode = $Code })
+                $er = New-Object System.Management.Automation.ErrorRecord ($ex, 'HttpError', ([System.Management.Automation.ErrorCategory]::InvalidOperation), $null)
+                $er.ErrorDetails = New-Object System.Management.Automation.ErrorDetails ($Text)
+                throw $er
+            }
+            $finish = '{"thought":"t","message":"ok from ' + $b.model + '"}'
+            if ($Uri -like '*/chat/completions') {
+                if ($b.model -in @('claude-x', 'sonnet-x')) { Throw-FakeHttp 400 ('{"error":{"message":"Invalid model name passed in model=' + $b.model + '"}}') }
+                if ($b.model -eq 'dead') { Throw-FakeHttp 400 '{"error":{"message":"dead is not enabled for this key"}}' }
+                if ($b.model -eq 'gpt-5' -and $Body -match '"temperature"') { Throw-FakeHttp 400 ('{"error":{"message":"Unsupported value: ''temperature'' does not support 0.2 with this model. Only the default (1) value is supported.","param":"temperature"}}') }
+                return ('{"choices":[{"message":{"content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"finish","arguments":' + (ConvertTo-Json -InputObject $finish -Compress) + '}}]},"finish_reason":"tool_calls"}]}' | ConvertFrom-Json)
+            }
+            if ($Uri -like '*/messages') {
+                if ($b.model -notin @('claude-x', 'sonnet-x')) { Throw-FakeHttp 400 ('{"type":"error","error":{"type":"invalid_request_error","message":"model: ' + $b.model + ' not found"}}') }
+                if ($null -ne $b.response_format -or $null -eq $b.max_tokens -or $Headers.Keys -notcontains 'anthropic-version') { Throw-FakeHttp 400 '{"type":"error","error":{"message":"bad anthropic request"}}' }
+                return ('{"type":"message","content":[{"type":"tool_use","id":"t1","name":"finish","input":' + $finish + '}],"stop_reason":"tool_use"}' | ConvertFrom-Json)
+            }
+            Throw-FakeHttp 404 '{"error":{"message":"no route"}}'
+        }
+        # gpt-4.1: the OpenAI endpoint, exactly one request, learned.
+        $script:GenAiModel = 'gpt-4.1'
+        $r = Invoke-GenAIChat @(@{ role = 'user'; content = 'x' }) 6>$null
+        Assert-True ($r -match 'ok from gpt-4.1') 'ladder: gpt-4.1 answers on the OpenAI endpoint'
+        Assert-Equal 1 $script:FmtCalls.Count 'ladder: gpt-4.1 costs one request'
+        Assert-Equal 'openai' $script:Providers['genai'].Formats['gpt-4.1'] 'ladder: gpt-4.1 learned as openai'
+        # claude-x: no guessing from the name (AskSage serves *-claude-* on chat/completions):
+        # sent as before 0.6.19, refused, then the Anthropic endpoint - and learned.
+        $script:FmtCalls.Clear(); $script:GenAiModel = 'claude-x'
+        Assert-Equal 'openai' (Get-PreferredFormat 'google-claude-45-sonnet') 'ladder: an unlearned model is sent in the configured URL''s format'
+        $r = Invoke-GenAIChat @(@{ role = 'user'; content = 'x' }) 6>$null
+        Assert-True ($r -match 'ok from claude-x') 'ladder: claude-x answers on the Anthropic endpoint'
+        Assert-Equal 2 $script:FmtCalls.Count 'ladder: a model served only on /messages costs one refused request'
+        Assert-True ($script:FmtCalls[1].Uri -like '*/v1/messages') 'ladder: the Anthropic endpoint is the swapped url'
+        # sonnet-x: not named like Claude, refused on chat/completions -> switches, learns.
+        $script:FmtCalls.Clear(); $script:GenAiModel = 'sonnet-x'
+        $r = Invoke-GenAIChat @(@{ role = 'user'; content = 'x' }) 6>$null
+        Assert-True ($r -match 'ok from sonnet-x') 'ladder: a model refused on chat/completions is tried on /messages'
+        Assert-Equal 2 $script:FmtCalls.Count 'ladder: the switch costs one extra request'
+        Assert-Equal 'anthropic' $script:Providers['genai'].Formats['sonnet-x'] 'ladder: the working format is learned'
+        $script:FmtCalls.Clear()
+        $r = Invoke-GenAIChat @(@{ role = 'user'; content = 'x' }) 6>$null
+        Assert-Equal 1 $script:FmtCalls.Count 'ladder: a learned format is used directly next time'
+        # gpt-5: refuses temperature -> dropped for gpt-5 only.
+        $script:FmtCalls.Clear(); $script:GenAiModel = 'gpt-5'
+        $r = Invoke-GenAIChat @(@{ role = 'user'; content = 'x' }) 6>$null
+        Assert-True ($r -match 'ok from gpt-5') 'ladder: gpt-5 answers once temperature is dropped'
+        Assert-Equal 2 $script:FmtCalls.Count 'ladder: the named feature is dropped, nothing else'
+        Assert-True ($script:FmtCalls[1].Body -notmatch '"temperature"' -and $script:FmtCalls[1].Body -match '"tools"') 'ladder: the retry keeps tools and drops only temperature'
+        Assert-Equal 'openai' $script:Providers['genai'].Formats['gpt-5'] 'ladder: a feature refusal does not switch the format'
+        Assert-True ((Get-RequestFeatures 'openai' (Get-FeatureKey 'openai' 'gpt-4.1') $false).Temperature) 'ladder: gpt-4.1 keeps temperature'
+        # dead: refused on both -> no reply, both reasons shown.
+        $script:FmtCalls.Clear(); $script:GenAiModel = 'dead'
+        $shown = (& { Invoke-GenAIChat @(@{ role = 'user'; content = 'x' }) } 6>&1 | Out-String)
+        Assert-True ($shown -match 'not enabled for this key' -and $shown -match 'model: dead not found') 'ladder: a model refused everywhere shows both reasons'
+        Assert-True ($shown -match 'OpenAI endpoint' -and $shown -match 'Anthropic endpoint' -and $shown -match ':probe') 'ladder: the failure names both endpoints and :probe'
+        Assert-True ($script:FmtCalls.Count -le 10) 'ladder: bounded number of requests'
+        Assert-False $script:Providers['genai'].Formats.ContainsKey('dead') 'ladder: nothing learned for a model that never worked'
+        # A forced format never switches.
+        $script:FmtCalls.Clear(); $script:ApiFormatForced = 'openai'; $script:GenAiModel = 'claude-x'
+        $r = Invoke-GenAIChat @(@{ role = 'user'; content = 'x' }) 6>$null
+        Assert-True ($null -eq $r) 'forced: claude-x fails on the forced OpenAI endpoint'
+        Assert-Equal 0 @($script:FmtCalls | Where-Object { $_.Uri -like '*/messages' }).Count 'forced: ACT_API_FORMAT=openai never calls /messages'
+        $script:ApiFormatForced = ''
+        # :probe tests both formats and learns the working one.
+        $script:Providers['genai'].Formats = @{}; $script:FmtCalls.Clear()
+        $shown = (& { Invoke-ModelProbe 'sonnet-x' -Yes } 6>&1 | Out-String)
+        Assert-True ($shown -match '-> Anthropic endpoint') 'probe: picks the Anthropic endpoint for sonnet-x'
+        Assert-True ($shown -match 'Invalid model name passed in model=sonnet-x') 'probe: shows the OpenAI refusal reason'
+        Assert-Equal 'anthropic' $script:Providers['genai'].Formats['sonnet-x'] 'probe: the choice is remembered'
+        $shown = (& { Invoke-ModelProbe 'gpt-5' -Yes } 6>&1 | Out-String)
+        Assert-True ($shown -match 'OK \(without temperature\)') 'probe: reports the feature it had to drop'
+        # Persisting a learned format touches only formats in an existing config file.
+        Set-Content -LiteralPath $fmtCfg -Value '{"version":1,"provider":"genai","providers":{"genai":{"key_protected":"BLOB","url":"https://gw/v1/chat/completions","model":"gpt-4.1"}}}' -Encoding UTF8
+        Assert-True $(Write-ActConfigDocument ([ordered]@{ version = 1 }) ($fmtCfg + '.2'); Test-Path -LiteralPath ($fmtCfg + '.2')) 'config: a new file is written'
+        Write-ActConfigDocument ([ordered]@{ version = 2 }) ($fmtCfg + '.2')
+        Assert-Equal 2 ((Get-Content -Raw -LiteralPath ($fmtCfg + '.2') | ConvertFrom-Json).version) 'config: an existing file is replaced (re-running :setup saves)'
+        Remove-Item -LiteralPath ($fmtCfg + '.2') -Force -ErrorAction SilentlyContinue
+        $script:Providers['genai'].Formats = @{}
+        Set-LearnedModelFormat 'claude-x' 'anthropic'
+        $saved = Get-Content -Raw -LiteralPath $fmtCfg | ConvertFrom-Json
+        Assert-Equal 'anthropic' $saved.providers.genai.formats.'claude-x' 'persist: the learned format is written to the config file'
+        Assert-Equal 'BLOB' $saved.providers.genai.key_protected 'persist: the stored key is left exactly as it was'
+        Assert-Equal 'k' $script:Providers['genai'].Key 'persist: the in-memory key is untouched'
+        Assert-True ($null -eq $saved.providers.genai.PSObject.Properties['key']) 'persist: no plain key is ever written'
+    } finally {
+        Set-Item -Path function:script:Invoke-ProviderRequestWithRetry -Value $originalFormatRequest
+        Remove-Item -LiteralPath $fmtCfg -Force -ErrorAction SilentlyContinue
+        $script:Providers = $savedF.Providers; $script:Provider = $savedF.Provider; $script:GenAiKey = $savedF.Key
+        $script:GenAiUrl = $savedF.Url; $script:GenAiModel = $savedF.Model; $script:ToolsMode = $savedF.ToolsMode
+        $script:UseJsonMode = $savedF.UseJson; $script:UsePrefill = $savedF.Prefill; $script:MaxTokens = $savedF.MaxTokens
+        $script:UserConfigPath = $savedF.Cfg; $script:PseudoEnabled = $savedF.Pseudo; $script:ApiFormatForced = $savedF.Forced
+        $script:ToolsSupport = @{}; $script:JsonModeSupport = @{}; $script:TokenParam = @{}
+        $script:TemperatureSupport = @{}; $script:ToolChoiceSupport = @{}; $script:PrefillSupport = @{}
+        Remove-Variable -Scope Script -Name FmtCalls -ErrorAction SilentlyContinue
     }
 
     Write-Host ''

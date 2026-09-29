@@ -31,6 +31,10 @@ jobs:
           done
       - name: Filter plugins (unit tests)
         run: python tests/test_filters.py
+      - name: ServiceNow test ticket against a fake ServiceNow (current ansible-core and 2.16)
+        run: |
+          bash tests/servicenow/run_servicenow_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_servicenow_test.sh
       - name: Credential types and inventory are valid YAML
         run: |
           python - <<'PY'

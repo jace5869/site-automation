@@ -77,9 +77,17 @@ Environment:
   ACT_TOKEN_PARAM (optional)  output-limit field name: max_tokens or max_completion_tokens.
                   Default: auto — newer OpenAI models (gpt-5*, o-series, Ask Sage gpt-5-gov)
                   reject max_tokens with HTTP 400; the swap is detected per endpoint.
+  ACT_API_FORMAT  (optional)  auto (default), openai or anthropic, for every provider. ACT
+                  speaks two request formats: OpenAI chat/completions (the provider URL) and
+                  the Anthropic Messages API (the same URL ending in /messages). auto tries
+                  the model's usual format first and switches when the endpoint refuses the
+                  model, then remembers the choice per model (':probe' tests both)
+  GENAI_ANTHROPIC_URL / GENAI_BETA_ANTHROPIC_URL / ASKSAGE_ANTHROPIC_URL (optional)
+                  the provider's Anthropic Messages URL. Default: its URL with
+                  /chat/completions replaced by /messages
 """
 
-ACT_VERSION = "0.6.18"  # bump when delivering; check with: act --version
+ACT_VERSION = "0.6.19"  # bump when delivering; check with: act --version
 
 import argparse
 import codecs
@@ -140,6 +148,16 @@ def stored_provider_value(config, provider, field, default=""):
     record = providers.get(provider, {}) if isinstance(providers, dict) else {}
     value = record.get(field, default) if isinstance(record, dict) else default
     return value if isinstance(value, str) else default
+
+
+def stored_provider_formats(config, provider):
+    """The learned model -> request format map ("openai" / "anthropic") for a provider."""
+    providers = config.get("providers", {}) if isinstance(config, dict) else {}
+    record = providers.get(provider, {}) if isinstance(providers, dict) else {}
+    value = record.get("formats") if isinstance(record, dict) else None
+    if not isinstance(value, dict):
+        return {}
+    return {str(k): v for k, v in value.items() if v in ("openai", "anthropic")}
 
 
 def env_or_stored(name, config, provider, field, default=""):
@@ -249,6 +267,19 @@ _PROVIDER_STATE = {
                    "model": GENAI_BETA_MODEL,
                    "models": ["gemini-2.5-pro"]},
 }
+# Request format per provider (0.6.19). Every provider can be reached two ways: the OpenAI
+# chat/completions URL above, and the Anthropic Messages API (normally the same URL ending in
+# /messages). Some gateways serve a model on only one of them - a Claude model refused with
+# HTTP 400 on chat/completions is served on /messages. "format" is auto/openai/anthropic;
+# "formats" remembers which format each model answered on; "anthropic_url" is only stored
+# when it differs from the derived one.
+for _name, _env in (("genai", "GENAI_ANTHROPIC_URL"), ("asksage", "ASKSAGE_ANTHROPIC_URL"),
+                     ("genai-beta", "GENAI_BETA_ANTHROPIC_URL")):
+    _PROVIDER_STATE[_name]["anthropic_url"] = env_or_stored(
+        _env, _USER_CONFIG, _name, "anthropic_url", "").strip().rstrip("/")
+    _fmt = stored_provider_value(_USER_CONFIG, _name, "format", "auto").strip().lower()
+    _PROVIDER_STATE[_name]["format"] = _fmt if _fmt in ("auto", "openai", "anthropic") else "auto"
+    _PROVIDER_STATE[_name]["formats"] = stored_provider_formats(_USER_CONFIG, _name)
 if not isinstance(PROVIDER, str) or PROVIDER.lower() not in _PROVIDER_STATE:
     PROVIDER = "genai"
 else:
@@ -259,9 +290,25 @@ def _providers():
     return _PROVIDER_STATE
 
 
-def save_user_config(path=None):
-    """Atomically persist provider setup with user-only directory/file permissions."""
-    path = path or act_config_path()
+def _provider_record(record):
+    """One provider's persisted fields. The format fields are written only when they carry
+    something, so a plain OpenAI-only setup file looks exactly as it did before 0.6.19."""
+    out = {
+        "key": str(record.get("key", "")),
+        "url": str(record.get("url", "")),
+        "model": str(record.get("model", "")),
+    }
+    if record.get("anthropic_url"):
+        out["anthropic_url"] = str(record["anthropic_url"])
+    if record.get("format", "auto") != "auto":
+        out["format"] = str(record["format"])
+    if record.get("formats"):
+        out["formats"] = dict(sorted(record["formats"].items()))
+    return out
+
+
+def _write_config_document(path, document):
+    """Atomically write the setup file with user-only directory/file permissions."""
     directory = os.path.dirname(os.path.abspath(path))
     directory_existed = os.path.isdir(directory)
     os.makedirs(directory, mode=0o700, exist_ok=True)
@@ -270,21 +317,6 @@ def save_user_config(path=None):
             os.chmod(directory, 0o700)
         except OSError:
             pass
-    document = {
-        "version": 1,
-        "provider": PROVIDER,
-        "providers": {
-            name: {
-                "key": str(record.get("key", "")),
-                "url": str(record.get("url", "")),
-                "model": str(record.get("model", "")),
-            }
-            for name, record in _PROVIDER_STATE.items()
-        },
-    }
-    for keep in ("pseudonymize", "pseudo_names"):       # hand-set privacy settings survive :setup
-        if keep in _USER_CONFIG:
-            document[keep] = _USER_CONFIG[keep]
     fd, temporary = tempfile.mkstemp(prefix=".config-", suffix=".json", dir=directory)
     try:
         os.fchmod(fd, 0o600)
@@ -307,6 +339,50 @@ def save_user_config(path=None):
     return path
 
 
+def save_user_config(path=None):
+    """Atomically persist provider setup with user-only directory/file permissions."""
+    path = path or act_config_path()
+    document = {
+        "version": 1,
+        "provider": PROVIDER,
+        "providers": {name: _provider_record(record) for name, record in _PROVIDER_STATE.items()},
+    }
+    for keep in ("pseudonymize", "pseudo_names"):       # hand-set privacy settings survive :setup
+        if keep in _USER_CONFIG:
+            document[keep] = _USER_CONFIG[keep]
+    return _write_config_document(path, document)
+
+
+def save_model_formats(name=None, path=None):
+    """Record a provider's learned model -> format map in the setup file WITHOUT re-saving
+    anything else: the key in memory may have come from an environment variable, and a
+    runtime discovery must never write that to disk. Only an existing setup file is
+    updated (automation runs without one stay file-free). Best effort; returns True when
+    written."""
+    name = name or PROVIDER
+    path = path or act_config_path()
+    if not os.path.isfile(path):
+        return False
+    document = load_user_config(path)
+    if not document:
+        return False
+    providers = document.get("providers")
+    if not isinstance(providers, dict):
+        providers = document["providers"] = {}
+    record = providers.get(name)
+    if not isinstance(record, dict):
+        record = providers[name] = {}
+    formats = dict(sorted((_PROVIDER_STATE.get(name) or {}).get("formats", {}).items()))
+    if record.get("formats") == formats:
+        return False
+    record["formats"] = formats
+    try:
+        _write_config_document(path, document)
+    except OSError:
+        return False
+    return True
+
+
 # Models offered by the interactive picker (--pick-model / the ':model' session command).
 # Any string still works via --model or the picker's "custom" option; these are just the
 # curated shortcuts. Order = menu order. For Ask Sage, ':models' fetches the live list.
@@ -321,8 +397,15 @@ TEMPERATURE = _env_float("ACT_TEMPERATURE", 0.2, 0.0, 2.0)
 # response mode is on by default because every agent turn must be one object;
 # gateways that reject response_format are already retried without it.
 JSON_MODE = os.environ.get("ACT_JSON_MODE", "1").lower() not in ("", "0", "false", "no")
-_JSON_MODE_SUPPORT = {}                            # (provider, URL) -> response_format support
-_TOOLS_SUPPORT = {}                                # (provider, URL) -> tool-calling support
+# The request-shape caches below are keyed (provider, endpoint URL, model): one model's
+# rejection must never switch a feature off for another model on the same gateway (a Claude
+# model refusing tool_choice says nothing about gpt-4.1). See _support_key().
+_JSON_MODE_SUPPORT = {}                            # key -> response_format support
+_TOOLS_SUPPORT = {}                                # key -> tool-calling support
+_TEMPERATURE_SUPPORT = {}                          # key -> temperature accepted (reasoning
+                                                   # models only take the default)
+_TOOL_CHOICE_SUPPORT = {}                          # key -> tool_choice accepted
+_PREFILL_SUPPORT = {}                              # key -> trailing '{' assistant turn accepted
 # Output-limit parameter. OpenAI's newer models (gpt-5*, o-series, and the gateways that
 # front them, e.g. Ask Sage's gpt-5-gov) reject `max_tokens` with an HTTP 400 that names
 # `max_completion_tokens` as the replacement; older models and most proxies reject the
@@ -331,7 +414,7 @@ _TOKEN_PARAM_CHOICES = ("max_tokens", "max_completion_tokens")
 _TOKEN_PARAM_FORCED = os.environ.get("ACT_TOKEN_PARAM", "").strip().lower()
 if _TOKEN_PARAM_FORCED not in _TOKEN_PARAM_CHOICES:
     _TOKEN_PARAM_FORCED = ""
-_TOKEN_PARAM = {}                                  # (provider, URL) -> field name in use
+_TOKEN_PARAM = {}                                  # key -> field name in use
 _TOKEN_PARAM_REJECT_RE = re.compile(r"max_completion_tokens|max_tokens", re.I)
 
 
@@ -352,6 +435,165 @@ def token_param_rejected(support_key, detail):
     current = token_param_for(support_key)
     _TOKEN_PARAM[support_key] = "max_completion_tokens" if current == "max_tokens" else "max_tokens"
     return True
+
+
+# ---- Request formats (0.6.19) ----
+# "openai"    POST <url>            chat/completions body (every release before 0.6.19)
+# "anthropic" POST <anthropic url>  Anthropic Messages body: top-level system, max_tokens
+#                                   always, no response_format, tools with input_schema
+_API_FORMATS = ("openai", "anthropic")
+_FORMAT_LABEL = {"openai": "OpenAI", "anthropic": "Anthropic"}
+ANTHROPIC_VERSION = "2023-06-01"
+_FORMAT_ENV = os.environ.get("ACT_API_FORMAT", "").strip().lower()
+if _FORMAT_ENV and _FORMAT_ENV not in ("auto",) + _API_FORMATS:
+    _CONFIG_ERRORS.append("ACT_API_FORMAT must be auto, openai or anthropic (got {0!r})".format(
+        _FORMAT_ENV))
+    _FORMAT_ENV = ""
+_CHAT_SUFFIX_RE = re.compile(r"/chat/completions/?$")
+_MESSAGES_SUFFIX_RE = re.compile(r"/messages/?$")
+
+
+def chat_url(url):
+    """The OpenAI chat/completions URL for a provider URL (a /messages URL is swapped back)."""
+    url = (url or "").rstrip("/")
+    return _MESSAGES_SUFFIX_RE.sub("/chat/completions", url) if _MESSAGES_SUFFIX_RE.search(url) \
+        else url
+
+
+def derived_anthropic_url(url):
+    """The Anthropic Messages URL a provider URL implies: .../chat/completions -> .../messages."""
+    url = (url or "").rstrip("/")
+    if _CHAT_SUFFIX_RE.search(url):
+        return _CHAT_SUFFIX_RE.sub("/messages", url)
+    if _MESSAGES_SUFFIX_RE.search(url):
+        return url
+    return url + "/messages" if url else ""
+
+
+def anthropic_url(name=None):
+    p = _PROVIDER_STATE.get(name or PROVIDER) or {}
+    url = API_URL if (name or PROVIDER) == PROVIDER else p.get("url", "")
+    return p.get("anthropic_url") or derived_anthropic_url(url)
+
+
+def format_url(fmt, name=None):
+    """The endpoint a request in `fmt` goes to for the (active) provider."""
+    if fmt == "anthropic":
+        return anthropic_url(name)
+    p = _PROVIDER_STATE.get(name or PROVIDER) or {}
+    return chat_url(API_URL if (name or PROVIDER) == PROVIDER else p.get("url", ""))
+
+
+def provider_format(name=None):
+    """auto / openai / anthropic for a provider; ACT_API_FORMAT wins over the setup file."""
+    if _FORMAT_ENV:
+        return _FORMAT_ENV
+    fmt = str((_PROVIDER_STATE.get(name or PROVIDER) or {}).get("format") or "auto").lower()
+    return fmt if fmt in ("auto",) + _API_FORMATS else "auto"
+
+
+def preferred_format(model=None):
+    """The format to try first for a model nothing has been learned about: the one the
+    configured URL names - exactly the request ACT sent before 0.6.19. Deliberately not
+    guessed from the model name: AskSage serves its google-/aws-bedrock-claude-* models on
+    chat/completions, and a model that is only served on /messages costs one refused request
+    before auto mode switches and remembers it (:setup's probe learns it up front)."""
+    if _MESSAGES_SUFFIX_RE.search(API_URL or ""):
+        return "anthropic"
+    return "openai"
+
+
+def model_format(model=None):
+    """(format, forced) for a request on the active provider: a forced format never switches;
+    otherwise the format this model last answered on, else the preferred one."""
+    forced = provider_format()
+    if forced != "auto":
+        return forced, True
+    learned = (_PROVIDER_STATE.get(PROVIDER) or {}).get("formats", {}).get(model or MODEL)
+    if learned in _API_FORMATS:
+        return learned, False
+    return preferred_format(model), False
+
+
+def learn_model_format(model, fmt, persist=True):
+    """Remember that `model` answers in `fmt` (session), and record it in an existing setup
+    file. Only changes are written."""
+    formats = _PROVIDER_STATE.setdefault(PROVIDER, {}).setdefault("formats", {})
+    if formats.get(model) == fmt:
+        return False
+    formats[model] = fmt
+    if persist:
+        save_model_formats(PROVIDER)
+    return True
+
+
+def _other_format(fmt):
+    return "anthropic" if fmt == "openai" else "openai"
+
+
+def _support_key(fmt=None, model=None):
+    """Cache key for request-shape learning: (provider, endpoint URL, model)."""
+    model = model or MODEL
+    if fmt is None:
+        fmt = model_format(model)[0]
+    return (PROVIDER, format_url(fmt), model)
+
+
+# Which optional field an HTTP 400/422 names. Order matters: the first on-feature named wins.
+_REJECT_PATTERNS = (
+    ("token_param", re.compile(r"max_completion_tokens|max_tokens", re.I)),
+    ("temperature", re.compile(r"temperature", re.I)),
+    ("tool_choice", re.compile(r"tool_choice", re.I)),
+    ("tools", re.compile(r"\btools?\b|function|tool_use", re.I)),
+    ("json", re.compile(r"response_format|json_object|json_schema|json mode", re.I)),
+    ("prefill", re.compile(r"prefill|final assistant|assistant message|last message|"
+                           r"must end with|conversation must", re.I)),
+)
+_FIELD_LABEL = {"token_param": "max_tokens", "temperature": "temperature",
+                "tool_choice": "tool_choice", "tools": "tools", "json": "JSON mode",
+                "prefill": "the '{' prefill"}
+
+
+def rejected_field(detail, on):
+    """The first optional request field the error text names that is ON for this request
+    (`on` = set of field names), or None when it names none of them (e.g. "invalid model")."""
+    for field, pattern in _REJECT_PATTERNS:
+        if field in on and pattern.search(detail or ""):
+            return field
+    return None
+
+
+def api_error_reason(raw, limit=300):
+    """The server's own explanation from an error body, secrets scrubbed, one line."""
+    text = raw if isinstance(raw, str) else ""
+    reason = ""
+    try:
+        body = json.loads(text) if text.strip() else None
+    except ValueError:
+        body = None
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            reason = err.get("message") or err.get("msg") or json.dumps(err)
+        elif isinstance(err, str) and err:
+            reason = err
+        else:
+            for k in ("message", "detail", "response", "msg"):
+                v = body.get(k)
+                if isinstance(v, str) and v:
+                    reason = v
+                    break
+                if v not in (None, "", [], {}):
+                    reason = json.dumps(v)
+                    break
+    if not reason:
+        reason = text
+    reason = re.sub(r"\s+", " ", str(reason)).strip()
+    for secret in _secret_values():
+        reason = reason.replace(secret, "[REDACTED]")
+    if len(reason) > limit:
+        reason = reason[:limit] + " ..."
+    return sanitize_terminal(reason) if reason else "(no reason given)"
 # '{' prefill is ON by default (0.6.8): combined with JSON mode it is the strongest lever
 # against prose replies from weak models, and endpoints that reject a trailing assistant
 # turn are detected (HTTP 400/422) and the prefill is dropped automatically.
@@ -3927,30 +4169,129 @@ def _extract_reply(body):
     return ""
 
 
-def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_tools=False):
+def anthropic_payload(send, model, use_tools, prefill, temperature=True, tool_choice=True):
+    """An OpenAI-style conversation (already pseudonymized) as an Anthropic Messages body.
+
+    The Messages API takes the system prompt as a top-level field, only user/assistant turns
+    (strictly alternating, the first from the user, none empty), requires max_tokens, has no
+    response_format, and describes tools with input_schema instead of a function wrapper."""
+    msgs = list(send)
+    if prefill and not use_tools:
+        msgs.append({"role": "assistant", "content": "{"})
+    system, turns = [], []
+    for m in msgs:
+        content = m.get("content")
+        if not isinstance(content, str):
+            content = "" if content is None else json.dumps(content)
+        if m.get("role") == "system":
+            if content.strip():
+                system.append(content)
+            continue
+        role = "assistant" if m.get("role") == "assistant" else "user"
+        if not content.strip():
+            content = "(empty)"
+        if turns and turns[-1]["role"] == role:
+            turns[-1]["content"] += "\n\n" + content
+        else:
+            turns.append({"role": role, "content": content})
+    if not turns or turns[0]["role"] != "user":
+        turns.insert(0, {"role": "user", "content": "(start)"})
+    if turns[-1]["role"] == "assistant":           # a final assistant turn may not end in space
+        turns[-1]["content"] = turns[-1]["content"].rstrip() or "{"
+    payload = {"model": model, "max_tokens": MAX_TOKENS, "messages": turns}
+    if system:
+        payload["system"] = "\n\n".join(system)
+    if temperature:
+        payload["temperature"] = TEMPERATURE
+    if use_tools:
+        payload["tools"] = [{"name": t["function"]["name"],
+                             "description": t["function"]["description"],
+                             "input_schema": t["function"]["parameters"]}
+                            for t in action_tool_schema()]
+        if tool_choice:
+            payload["tool_choice"] = {"type": "any"}
+    return payload
+
+
+def normalize_anthropic_response(body):
+    """An Anthropic Messages reply in the OpenAI chat shape, so every parser downstream
+    (tool calls, reply text, usage, the empty-reply recovery) works unchanged. Error
+    objects and bodies that already carry `choices` pass through untouched."""
+    if not isinstance(body, dict) or "choices" in body or body.get("error") \
+            or body.get("type") == "error":
+        return body
+    blocks = body.get("content")
+    if not isinstance(blocks, list):
+        return body
+    text = "".join(b.get("text", "") for b in blocks
+                   if isinstance(b, dict) and b.get("type", "text") == "text"
+                   and isinstance(b.get("text"), str))
+    calls = [{"id": b.get("id", ""), "type": "function",
+              "function": {"name": b.get("name", ""),
+                           "arguments": json.dumps(b.get("input") if b.get("input") is not None
+                                                   else {})}}
+             for b in blocks if isinstance(b, dict) and b.get("type") == "tool_use"]
+    message = {"role": "assistant", "content": text}
+    if calls:
+        message["tool_calls"] = calls
+    out = {"choices": [{"index": 0, "message": message,
+                        "finish_reason": body.get("stop_reason")}]}
+    usage = body.get("usage")
+    if isinstance(usage, dict):
+        used_in = int(usage.get("input_tokens") or 0)
+        used_out = int(usage.get("output_tokens") or 0)
+        out["usage"] = {"prompt_tokens": used_in, "completion_tokens": used_out,
+                        "total_tokens": used_in + used_out}
+    return out
+
+
+def build_model_request(send, model, fmt, use_json_mode, prefill, use_tools, key=None):
+    """(url, headers, payload) for one request in `fmt`. `send` is already pseudonymized.
+    Optional fields this model/endpoint refused before (temperature, tool_choice) are left
+    out; the output-limit field is the one learned for this endpoint."""
+    key = key or _support_key(fmt, model)
+    temperature = _TEMPERATURE_SUPPORT.get(key) is not False
+    tool_choice = _TOOL_CHOICE_SUPPORT.get(key) is not False
+    if fmt == "anthropic":
+        payload = anthropic_payload(send, model, use_tools, prefill, temperature, tool_choice)
+    else:
+        if prefill and not use_tools:
+            send = send + [{"role": "assistant", "content": "{"}]
+        payload = {"model": model, "messages": send}
+        if temperature:
+            payload["temperature"] = TEMPERATURE
+        if MAX_TOKENS:
+            payload[token_param_for(key)] = MAX_TOKENS
+        if use_tools:
+            # response_format is redundant with a tool schema and several gateways reject the
+            # pair outright, so tools replace JSON mode rather than joining it.
+            payload["tools"] = action_tool_schema()
+            if tool_choice:
+                payload["tool_choice"] = "required"
+        elif use_json_mode:
+            payload["response_format"] = {"type": "json_object"}
+    headers = _auth_headers(PROVIDER, KEY, {"Content-Type": "application/json"}, fmt=fmt)
+    return format_url(fmt), headers, payload
+
+
+def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_tools=False,
+                  fmt=None):
     """Single POST. Returns (reply_text, body, http_error_code|None, raw). On prefill, the
     assistant turn is seeded with '{' and that brace is prepended to the reply before returning.
     `model` overrides the active MODEL for this one request (used by race mode).
     With `use_tools`, the action protocol is sent as a function schema and a returned tool
-    call is rendered back into the same action JSON the text path produces."""
+    call is rendered back into the same action JSON the text path produces. `fmt` picks the
+    request format (default: the model's, see model_format); an Anthropic reply is
+    normalized to the OpenAI shape. HTTP 400/404/405/422 come back as error codes so the
+    caller can change the request or the endpoint."""
+    model = model or MODEL
+    if fmt is None:
+        fmt = model_format(model)[0]
     send = pseudo_outgoing(messages)          # the model sees placeholders, never real names
-    if prefill and not use_tools:
-        send = send + [{"role": "assistant", "content": "{"}]
-    payload = {"model": model or MODEL, "messages": send, "temperature": TEMPERATURE}
-    if MAX_TOKENS:
-        payload[token_param_for((PROVIDER, API_URL))] = MAX_TOKENS
-    if use_tools:
-        # response_format is redundant with a tool schema and several gateways reject the
-        # pair outright, so tools replace JSON mode rather than joining it.
-        payload["tools"] = action_tool_schema()
-        payload["tool_choice"] = "required"
-    elif use_json_mode:
-        payload["response_format"] = {"type": "json_object"}
+    url, headers, payload = build_model_request(send, model, fmt, use_json_mode, prefill,
+                                                use_tools)
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        API_URL, data=data, method="POST",
-        headers=_auth_headers(PROVIDER, KEY, {"Content-Type": "application/json"}),
-    )
+    req = urllib.request.Request(url, data=data, method="POST", headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
             raw = _read_limited(resp, MAX_API_RESPONSE_BYTES, "API response").decode(
@@ -3960,8 +4301,8 @@ def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_too
             "utf-8", "replace")
         if DEBUG:
             safe_detail, _ = model_safe_text(detail[:1500], "API error")
-            sys.stderr.write(grey("\n[debug] HTTP {0} from {1}\n{2}\n".format(
-                e.code, API_URL, sanitize_terminal(safe_detail))))
+            sys.stderr.write(grey("\n[debug] HTTP {0} from {1} (model {2}, {3} format)\n{4}\n".format(
+                e.code, url, sanitize_terminal(model), fmt, sanitize_terminal(safe_detail))))
         if _TOKEN_LIMIT_RE.search(detail or ""):
             # Only an explicit budget/quota message is terminal exhaustion.
             raise TokenLimitError(f"{_providers()[PROVIDER]['name']} token/rate limit: {detail[:200]}")
@@ -3970,8 +4311,8 @@ def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_too
             # to abort the whole task (exit 3); now it retries with backoff like any
             # other transient error. (2026-07-17 review: "fails randomly".)
             raise TransientError(f"HTTP 429 (rate limited) from API")
-        if e.code in (400, 422):
-            return None, None, e.code, detail        # caller may drop json-mode/prefill and retry
+        if e.code in (400, 404, 405, 422):
+            return None, None, e.code, detail        # caller may change the request or endpoint
         if e.code in (408, 425, 500, 502, 503, 504):
             raise TransientError(f"HTTP {e.code} from API")
         raise RuntimeError(f"HTTP {e.code} from API: {detail[:500]}")
@@ -3980,8 +4321,8 @@ def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_too
         raise TransientError(f"network error reaching API: {reason}")
     if DEBUG:
         safe_raw, _ = model_safe_text(raw[:1500], "API response")
-        sys.stderr.write(grey("\n[debug] {0}:{1} raw ({2}B, json_mode={3} prefill={4}):\n{5}\n".format(
-            PROVIDER, MODEL, len(raw), use_json_mode, prefill, sanitize_terminal(safe_raw))))
+        sys.stderr.write(grey("\n[debug] {0}:{1} raw ({2}B, {3} format, json_mode={4} prefill={5}):\n{6}\n".format(
+            PROVIDER, model, len(raw), fmt, use_json_mode, prefill, sanitize_terminal(safe_raw))))
     try:
         body = json.loads(raw)
     except ValueError:
@@ -3992,6 +4333,8 @@ def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_too
         if text[:200].lstrip().lower().startswith(("<!doctype", "<html", "<head", "<body")):
             raise TransientError("API returned an HTML page instead of JSON (gateway error)")
         return pseudo_incoming(("{" + text) if prefill and not text.startswith("{") else text), None, None, raw
+    if fmt == "anthropic":
+        body = normalize_anthropic_response(body)
     if isinstance(body, dict) and body.get("error"):
         err = body["error"]
         msg = err.get("message") if isinstance(err, dict) else err
@@ -4042,15 +4385,77 @@ def _model_time_left(deadline, budget):
     return max(0.05, remaining)
 
 
+def _request_features(fmt, model, prefill_on):
+    """(key, use_json_mode, use_tools, prefill) for one model/format, honouring what that
+    model/endpoint refused before. JSON mode exists only in the OpenAI format."""
+    key = _support_key(fmt, model)
+    use_json_mode = JSON_MODE and fmt == "openai" and _JSON_MODE_SUPPORT.get(key) is not False
+    use_tools = TOOLS_MODE and _TOOLS_SUPPORT.get(key) is not False
+    prefill = bool(prefill_on) and _PREFILL_SUPPORT.get(key) is not False
+    return key, use_json_mode, use_tools, prefill
+
+
+def _fields_on(fmt, key, use_json_mode, use_tools, prefill):
+    """The optional request fields actually on the wire for this request."""
+    on = set()
+    if fmt == "openai" and not _TOKEN_PARAM_FORCED and key not in _TOKEN_PARAM:
+        on.add("token_param")
+    if _TEMPERATURE_SUPPORT.get(key) is not False:
+        on.add("temperature")
+    if use_tools:
+        on.add("tools")
+        if _TOOL_CHOICE_SUPPORT.get(key) is not False:
+            on.add("tool_choice")
+    else:
+        if use_json_mode and fmt == "openai":
+            on.add("json")
+        if prefill:
+            on.add("prefill")
+    return on
+
+
+def _drop_field(field, key):
+    """Remember that this model/endpoint refuses an optional field."""
+    cache = {"temperature": _TEMPERATURE_SUPPORT, "tool_choice": _TOOL_CHOICE_SUPPORT,
+             "tools": _TOOLS_SUPPORT, "json": _JSON_MODE_SUPPORT,
+             "prefill": _PREFILL_SUPPORT}.get(field)
+    if cache is not None:
+        cache[key] = False
+
+
+def _ladder_note(text):
+    if not NDJSON_MODE:
+        sys.stderr.write(grey("\n  (" + sanitize_terminal(text) + ")\n"))
+        sys.stderr.flush()
+
+
+def request_failure_message(model, err, detail, reasons):
+    """The error a refused request ends with: the server's own reason, and when both
+    endpoints were tried, what each one said."""
+    lines = ["Request to '{0}' (model {1}) failed (HTTP {2}): {3}".format(
+        PROVIDER, sanitize_terminal(model), err, api_error_reason(detail))]
+    if len(reasons) > 1:
+        for fmt in _API_FORMATS:
+            if fmt in reasons:
+                lines.append("  {0} endpoint ({1}): {2}".format(
+                    _FORMAT_LABEL[fmt], sanitize_terminal(format_url(fmt)), reasons[fmt]))
+    lines.append("  Run :probe to test this model on both endpoints.")
+    return "\n".join(lines)
+
+
 def call_llm(messages, timeout=None):
     if timeout is None:
         timeout = LLM_TIMEOUT
     budget = max(0.05, float(timeout))
     deadline = time.monotonic() + budget
-    support_key = (PROVIDER, API_URL)
-    use_json_mode = JSON_MODE and _JSON_MODE_SUPPORT.get(support_key) is not False
-    use_tools = TOOLS_MODE and _TOOLS_SUPPORT.get(support_key) is not False
-    prefill = PREFILL
+    model = MODEL
+    fmt, forced = model_format(model)
+    first_fmt = fmt
+    switched = False          # tried the other format already (at most one switch per call)
+    other_attempts = 0        # requests sent in the other format
+    reasons = {}              # format -> "HTTP n reason", for the failure report
+    missing = set()           # formats whose endpoint answered 404/405 (does not exist)
+    key, use_json_mode, use_tools, prefill = _request_features(fmt, model, PREFILL)
     # Empty-content recovery strategies, tried in order when a 200 comes back with no text.
     # Different backends need different nudges: reasoning models (gpt-5-gov) respond to a '{'
     # prefill; the Gemini-Enterprise proxy often returns empty to a trailing assistant turn and
@@ -4058,35 +4463,91 @@ def call_llm(messages, timeout=None):
     tried_prefill = False
     tried_nudge = False
     extra_msgs = []          # appended, per-call, without mutating the caller's list
-    for _ in range(5):
+    body = raw = None
+
+    def blind_drop():
+        """No field named: drop the next optional one (tools, JSON mode, prefill, temperature)."""
+        on = _fields_on(fmt, key, use_json_mode, use_tools, prefill)
+        for field in ("tools", "json", "prefill", "temperature"):
+            if field in on:
+                _drop_field(field, key)
+                _ladder_note("retrying {0} without {1}".format(model, _FIELD_LABEL[field]))
+                return True
+        return False
+
+    # The loop reads each refusal instead of guessing: a 400 naming an optional field drops
+    # just that field (remembered per model); one naming none of them - typically "invalid
+    # model" - means this endpoint does not serve the model, so the other request format is
+    # tried once. Only when neither helps are the optional fields dropped blindly.
+    for _ in range(12):
         request_timeout = _model_time_left(deadline, budget)
+        if switched and fmt != first_fmt:
+            other_attempts += 1
         reply, body, err, raw = _one_llm_call(
             messages + extra_msgs, request_timeout, use_json_mode, prefill,
-            use_tools=use_tools)
-        if err in (400, 422):
-            if token_param_rejected(support_key, raw):   # wrong output-limit field → swap, retry
-                if DEBUG:
-                    sys.stderr.write(grey("  [debug] endpoint rejected the output-limit field; "
-                                          "retrying with {0}\n".format(token_param_for(support_key))))
+            model=model, use_tools=use_tools, fmt=fmt)
+        if err is not None:
+            detail = raw or ""
+            reasons[fmt] = "HTTP {0} {1}".format(err, api_error_reason(detail))
+            other = _other_format(fmt)
+            if err in (404, 405):
+                # This endpoint does not exist on the gateway.
+                missing.add(fmt)
+                if not forced and not switched:
+                    switched = True
+                    _ladder_note("no {0} endpoint at {1} (HTTP {2}); trying the {3} endpoint".format(
+                        _FORMAT_LABEL[fmt], format_url(fmt), err, _FORMAT_LABEL[other]))
+                    fmt = other
+                    key, use_json_mode, use_tools, prefill = _request_features(fmt, model, PREFILL)
+                    continue
+                if not forced and fmt != first_fmt and first_fmt not in missing:
+                    # The other endpoint is missing: back to the first one, which refused the
+                    # full request for an unnamed reason, and drop optional fields there.
+                    fmt = first_fmt
+                    key, use_json_mode, use_tools, prefill = _request_features(fmt, model, PREFILL)
+                    if blind_drop():
+                        key, use_json_mode, use_tools, prefill = _request_features(
+                            fmt, model, prefill)
+                        continue
+                raise RuntimeError(request_failure_message(model, err, detail, reasons))
+            on = _fields_on(fmt, key, use_json_mode, use_tools, prefill)
+            field = rejected_field(detail, on)
+            if field == "token_param":
+                if token_param_rejected(key, detail):    # wrong output-limit field → swap, retry
+                    _ladder_note("the endpoint refused {0} for {1}; retrying with {2}".format(
+                        "max_completion_tokens" if token_param_for(key) == "max_tokens"
+                        else "max_tokens", model, token_param_for(key)))
+                    continue
+                field = rejected_field(detail, on - {"token_param"})
+            if field:
+                _drop_field(field, key)
+                _ladder_note("the endpoint refused {0} for {1}; retrying without it".format(
+                    _FIELD_LABEL[field], model))
+                key, use_json_mode, use_tools, prefill = _request_features(fmt, model, prefill)
                 continue
-            if use_tools:                            # endpoint rejects tools → drop, retry
-                use_tools = False
-                _TOOLS_SUPPORT[support_key] = False  # avoid the same failed probe every turn
-                if DEBUG:
-                    sys.stderr.write(grey("  [debug] endpoint rejected tools; retrying without them\n"))
+            if not forced and not switched:
+                switched = True
+                _ladder_note("model {0} was refused on the {1} endpoint; trying the {2} endpoint".format(
+                    model, _FORMAT_LABEL[fmt], _FORMAT_LABEL[other]))
+                fmt = other
+                key, use_json_mode, use_tools, prefill = _request_features(fmt, model, PREFILL)
                 continue
-            if use_json_mode:                        # endpoint rejects JSON mode → drop, retry
-                use_json_mode = False
-                _JSON_MODE_SUPPORT[support_key] = False  # avoid the same failed probe every turn
-                if DEBUG:
-                    sys.stderr.write(grey("  [debug] endpoint rejected json_mode; retrying without it\n"))
+            if switched and fmt != first_fmt and other_attempts == 1 and first_fmt not in missing:
+                # The other endpoint refused even the full request for an unnamed reason:
+                # it does not serve this model either. Back to the first endpoint, which is
+                # then asked without optional fields (it already refused the full request).
+                _ladder_note("the {0} endpoint refused it too; back to the {1} endpoint without "
+                             "optional fields".format(_FORMAT_LABEL[fmt], _FORMAT_LABEL[other]))
+                fmt = first_fmt
+                key, use_json_mode, use_tools, prefill = _request_features(fmt, model, PREFILL)
+            if blind_drop():
+                key, use_json_mode, use_tools, prefill = _request_features(fmt, model, prefill)
                 continue
-            if prefill:                              # endpoint rejects prefill → drop, retry
-                prefill = False
-                if DEBUG:
-                    sys.stderr.write(grey("  [debug] endpoint rejected prefill; retrying without it\n"))
-                continue
-            raise RuntimeError(f"HTTP {err} from API: {raw[:400]}")
+            raise RuntimeError(request_failure_message(model, err, detail, reasons))
+        if not forced:
+            if learn_model_format(model, fmt) and switched:
+                _ladder_note("model {0} answers on the {1} endpoint; remembered".format(
+                    model, _FORMAT_LABEL[fmt]))
         if reply and reply.strip():
             if use_tools and not _extract_tool_action(body):
                 # The endpoint ACCEPTED `tools` and ignored them: a 200 carrying prose
@@ -4103,22 +4564,23 @@ def call_llm(messages, timeout=None):
                 #
                 # Drop to the text ladder for this endpoint and retry inside THIS call.
                 use_tools = False
-                _TOOLS_SUPPORT[support_key] = False
+                _TOOLS_SUPPORT[key] = False
+                key, use_json_mode, use_tools, prefill = _request_features(fmt, model, prefill)
                 if not NDJSON_MODE:
                     sys.stderr.write(grey(
                         "\n  (endpoint ignored the tool schema; using JSON mode instead)\n"))
                     sys.stderr.flush()
                 continue
             if use_tools:
-                _TOOLS_SUPPORT[support_key] = True
+                _TOOLS_SUPPORT[key] = True
             elif use_json_mode:
                 # Only record json-mode support when it was actually sent: with tools
                 # active, response_format is never on the wire, so a success proves
                 # nothing about it.
-                _JSON_MODE_SUPPORT[support_key] = True
+                _JSON_MODE_SUPPORT[key] = True
             return reply
         # 200 OK but empty text. Try recovery strategies before giving up.
-        if not tried_prefill and not prefill:
+        if not tried_prefill and not prefill and _PREFILL_SUPPORT.get(key) is not False:
             tried_prefill = True
             prefill = True                           # reasoning models: force JSON via '{' prefill
             if DEBUG:
@@ -4218,17 +4680,21 @@ _TOKEN_LIMIT_RE = re.compile(r"(token|quota|credit).{0,40}(limit|exceed|exhaust|
                              r"depleted|out of)|monthly.{0,20}token", re.I)
 
 
-def _auth_headers(name, key, base=None):
+def _auth_headers(name, key, base=None, fmt="openai"):
     """Auth headers for a provider. AskSage's OpenAI/Anthropic/Gemini surfaces accept the API key
     via Authorization: Bearer, x-access-tokens, OR x-api-key — we send all three so a key works
-    regardless of which surface the URL points at. GenAI uses a plain Bearer token."""
+    regardless of which surface the URL points at. GenAI uses a plain Bearer token. The
+    Anthropic format adds x-api-key and anthropic-version (Bearer stays: gateways vary)."""
     h = dict(base or {})
+    if fmt == "anthropic":
+        h["anthropic-version"] = ANTHROPIC_VERSION
     if not key:
         return h
     h["Authorization"] = "Bearer " + key
+    if name == "asksage" or fmt == "anthropic":
+        h["x-api-key"] = key
     if name == "asksage":
         h["x-access-tokens"] = key
-        h["x-api-key"] = key
     return h
 
 
@@ -4240,11 +4706,26 @@ def get_provider_models(name, timeout=6):
     url, key = p.get("url", ""), p.get("key", "")
     if not url or not key:
         return []
+    url = chat_url(url)
     murl = re.sub(r"/chat/completions.*$", "/models", url)
     if murl == url:
         murl = url.rstrip("/") + "/models"
-    req = urllib.request.Request(murl, method="GET",
-                                 headers=_auth_headers(name, key, {"Accept": "application/json"}))
+    ids = _fetch_model_ids(murl, _auth_headers(name, key, {"Accept": "application/json"}), timeout)
+    if ids:
+        return ids
+    # The Anthropic side of the gateway may list models where the OpenAI side does not.
+    aurl = p.get("anthropic_url") or derived_anthropic_url(url)
+    amurl = _MESSAGES_SUFFIX_RE.sub("/models", aurl) if _MESSAGES_SUFFIX_RE.search(aurl) \
+        else aurl.rstrip("/") + "/models"
+    if not aurl or amurl == murl:
+        return []
+    return _fetch_model_ids(amurl, _auth_headers(name, key, {"Accept": "application/json"},
+                                                 fmt="anthropic"), timeout)
+
+
+def _fetch_model_ids(murl, headers, timeout):
+    """GET a /models list; [] on any failure (KeyboardInterrupt still propagates)."""
+    req = urllib.request.Request(murl, method="GET", headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as r:
             body = json.loads(_read_limited(r, MAX_API_RESPONSE_BYTES,
@@ -4396,9 +4877,6 @@ def race_llm(messages, timeout=None, cancel=None, grace=None):
         return [], {}, 0.0
     if timeout is None:
         timeout = LLM_TIMEOUT
-    support_key = (PROVIDER, API_URL)
-    use_json_mode = JSON_MODE and _JSON_MODE_SUPPORT.get(support_key) is not False
-    use_tools = TOOLS_MODE and _TOOLS_SUPPORT.get(support_key) is not False
     started = time.monotonic()
     # Daemon threads, not a ThreadPoolExecutor: concurrent.futures joins its workers at
     # interpreter exit, so a one-shot task would linger until the SLOWEST racer finished
@@ -4409,10 +4887,14 @@ def race_llm(messages, timeout=None, cancel=None, grace=None):
     def one(mid):
         reply, why = None, ""
         try:
-            reply, _body, err, _raw = _one_llm_call(
-                messages, timeout, use_json_mode, PREFILL, model=mid, use_tools=use_tools)
+            # Each racer is sent in its own model's format (single shot, no ladder).
+            fmt = model_format(mid)[0]
+            _key, use_json_mode, use_tools, prefill = _request_features(fmt, mid, PREFILL)
+            reply, _body, err, raw = _one_llm_call(
+                messages, timeout, use_json_mode, prefill, model=mid, use_tools=use_tools,
+                fmt=fmt)
             if err is not None:
-                reply, why = None, "HTTP {0}".format(err)
+                reply, why = None, "HTTP {0} {1}".format(err, api_error_reason(raw, 50))
         except Exception as e:  # noqa: BLE001 — a failing racer must never kill the turn
             why = re.sub(r"\s+from API\b.*$", "", sanitize_terminal(e).strip(), flags=re.S)
             reply, why = None, why[:60] or type(e).__name__
@@ -5021,6 +5503,23 @@ def invoke_setup(initial=False):
     model = read_tty("  model [{0}] (Enter to keep) > ".format(st["model"]))
     if model:
         st["model"] = model.strip()
+    derived = derived_anthropic_url(st["url"])
+    anth = read_tty("  Anthropic URL [{0}] (Enter to keep) > ".format(
+        st.get("anthropic_url") or derived))
+    if anth:
+        anth = anth.strip().rstrip("/")
+        if not re.match(r"(?i)https?://", anth):
+            print(yellow("  not a URL (must start with https://); kept " + sanitize_terminal(
+                st.get("anthropic_url") or derived)))
+        else:
+            st["anthropic_url"] = "" if anth == derived else anth
+    fmt = read_tty("  endpoint format [{0}] (auto / openai / anthropic) > ".format(
+        st.get("format", "auto"))).strip().lower()
+    if fmt in ("auto",) + _API_FORMATS:
+        st["format"] = fmt
+    elif fmt:
+        print(yellow("  unknown format '{0}'; kept {1}".format(sanitize_terminal(fmt),
+                                                             st.get("format", "auto"))))
     set_provider(PROVIDER)
     if not KEY:
         print(yellow("  No key saved; run :setup again and provide one before making API calls."))
@@ -5031,7 +5530,192 @@ def invoke_setup(initial=False):
     except OSError as exc:
         print(yellow("  Setup is active for this session, but could not save the config: "
                      + sanitize_terminal(exc)))
+    # Show straight away which endpoint serves the model, with the server's reasons.
+    try:
+        probe_models([MODEL])
+        more = read_tty("  Test every model in the list on both endpoints? [y/N] > ")
+        if more.strip().lower() in ("y", "yes"):
+            probe_models(probe_model_list())
+    except (EOFError, KeyboardInterrupt):
+        print(grey("\n  (endpoint test skipped)"))
     return True
+
+
+# ---- :probe (0.6.19) ----
+_PROBE_BASIC_PROMPT = "Reply with the single word OK."
+_PROBE_FULL_PROMPT = ("Connectivity check from ACT: reply with the finish action and the message "
+                      "OK. Do not plan and do not run anything.")
+
+
+def probe_model_list():
+    """Every chat model the active provider lists (live when it answers)."""
+    return [m for m in refresh_provider_models(PROVIDER, force=True)
+            if not _NON_CHAT_MODEL_RE.search(m)]
+
+
+def _probe_post(url, headers, payload, timeout):
+    """One probe request -> (ok, status, raw). A 200 that carries an error object (some
+    gateways answer {"response": "Token is invalid", "status": 400}) is not OK."""
+    try:
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
+                                     method="POST", headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as r:
+            status = getattr(r, "status", None) or 200
+            raw = _read_limited(r, MAX_API_RESPONSE_BYTES, "API response").decode(
+                "utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        return False, e.code, _read_limited(e, MAX_API_RESPONSE_BYTES,
+                                            "API error response").decode("utf-8", "replace")
+    except KeyboardInterrupt:
+        raise
+    except Exception as e:  # noqa: BLE001 — report it as this endpoint's result
+        return False, None, "could not connect: {0}".format(getattr(e, "reason", None) or e)
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        return False, status, raw
+    if not isinstance(body, dict) or body.get("error") or body.get("type") == "error":
+        return False, status, raw
+    code = body.get("status")
+    if isinstance(code, int) and code >= 400:
+        return False, status, raw
+    if not ("choices" in body or "content" in body):
+        return False, status, raw
+    return True, status, raw
+
+
+def _probe_text(status, raw):
+    if status is None:
+        return sanitize_terminal(raw)
+    return "HTTP {0}: {1}".format(status, api_error_reason(raw, 160))
+
+
+def _probe_basic(fmt, model, timeout):
+    """The smallest possible request: does this endpoint serve the model at all?"""
+    key = _support_key(fmt, model)
+    send = pseudo_outgoing([{"role": "user", "content": _PROBE_BASIC_PROMPT}])
+    headers = _auth_headers(PROVIDER, KEY, {"Content-Type": "application/json"}, fmt=fmt)
+    for _ in range(2):
+        if fmt == "anthropic":
+            payload = {"model": model, "max_tokens": 64, "messages": send}
+        else:
+            payload = {"model": model, "messages": send, token_param_for(key): 64}
+        ok, status, raw = _probe_post(format_url(fmt), headers, payload, timeout)
+        if ok:
+            return True, "OK"
+        if fmt == "openai" and status in (400, 422) and token_param_rejected(key, raw):
+            continue
+        return False, _probe_text(status, raw)
+    return False, "HTTP 400"
+
+
+def _probe_full(fmt, model, timeout):
+    """ACT's real request shape (system prompt, temperature, tools/JSON mode, max tokens).
+    Refused optional fields are dropped one at a time and remembered, like a real turn."""
+    key, use_json_mode, use_tools, prefill = _request_features(fmt, model, PREFILL)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": _PROBE_FULL_PROMPT}]
+    dropped = []
+    for _ in range(6):
+        url, headers, payload = build_model_request(pseudo_outgoing(messages), model, fmt,
+                                                    use_json_mode, prefill, use_tools, key=key)
+        ok, status, raw = _probe_post(url, headers, payload, timeout)
+        if ok:
+            if use_tools:
+                _TOOLS_SUPPORT[key] = True
+            return True, dropped
+        if status in (400, 422):
+            on = _fields_on(fmt, key, use_json_mode, use_tools, prefill)
+            field = rejected_field(raw, on)
+            if field == "token_param":
+                if token_param_rejected(key, raw):
+                    dropped.append("max_tokens (uses " + token_param_for(key) + ")")
+                    continue
+                field = rejected_field(raw, on - {"token_param"})
+            if field:
+                _drop_field(field, key)
+                dropped.append(_FIELD_LABEL[field])
+                key, use_json_mode, use_tools, prefill = _request_features(fmt, model, prefill)
+                continue
+        return False, _probe_text(status, raw)
+    return False, "still refused after dropping " + ", ".join(dropped)
+
+
+def _forget_request_shape(model):
+    """A probe tests from scratch: forget what this model's endpoints refused before."""
+    for fmt in _API_FORMATS:
+        key = _support_key(fmt, model)
+        for cache in (_JSON_MODE_SUPPORT, _TOOLS_SUPPORT, _TEMPERATURE_SUPPORT,
+                      _TOOL_CHOICE_SUPPORT, _PREFILL_SUPPORT, _TOKEN_PARAM):
+            cache.pop(key, None)
+
+
+def probe_models(models, out=None):
+    """:probe — test each model on BOTH endpoints: a basic request (is the model served
+    there at all?) and ACT's full request (does it accept everything ACT sends?), printing
+    the server's reason for every refusal. The working format is remembered per model (and
+    written to an existing setup file). Returns {model: format or None}."""
+    out = out or sys.stdout
+    timeout = min(LLM_TIMEOUT, 60)
+    forced = provider_format()
+    models = [m for m in models if m]
+    out.write(blue("Testing {0} model(s) on {1}, both endpoints:".format(
+        len(models), _providers()[PROVIDER]["name"])) + "\n")
+    for fmt in _API_FORMATS:
+        out.write(grey("  {0:<19}{1}".format(_FORMAT_LABEL[fmt] + " endpoint",
+                                             sanitize_terminal(format_url(fmt)))) + "\n")
+    out.flush()
+    chosen = {}
+    for model in models:
+        _forget_request_shape(model)
+        out.write(bold(sanitize_terminal(model)) + "\n")
+        results = {}
+        for fmt in _API_FORMATS:
+            try:
+                ok, text = _probe_basic(fmt, model, timeout)
+            except Exception as e:  # noqa: BLE001 — e.g. a masking error: nothing was sent
+                ok, text = False, "not sent: " + sanitize_terminal(e)[:160]
+            line = "  {0:<11}basic {1}".format(_FORMAT_LABEL[fmt], green(text) if ok else red(text))
+            full = None
+            if ok:
+                try:
+                    full = _probe_full(fmt, model, timeout)
+                except Exception as e:  # noqa: BLE001
+                    full = (False, "not sent: " + sanitize_terminal(e)[:160])
+                if full[0]:
+                    line += "   full " + green("OK" + (" without " + ", ".join(full[1])
+                                                     if full[1] else ""))
+                else:
+                    line += "   full " + red(full[1])
+            results[fmt] = (ok, full)
+            out.write(line + "\n")
+            out.flush()
+        pref = preferred_format(model)
+        order = lambda f: (0 if f == pref else 1)                  # noqa: E731
+        full_ok = sorted((f for f in _API_FORMATS if results[f][1] and results[f][1][0]),
+                         key=lambda f: (len(results[f][1][1]), order(f)))
+        basic_ok = sorted((f for f in _API_FORMATS if results[f][0]), key=order)
+        pick = (full_ok or basic_ok or [None])[0]
+        chosen[model] = pick
+        if pick:
+            _PROVIDER_STATE[PROVIDER].setdefault("formats", {})[model] = pick
+            note = "" if full_ok else " (only the basic request worked; ACT's full request did not)"
+            out.write(green("  -> {0} endpoint".format(_FORMAT_LABEL[pick])) + grey(note) + "\n")
+        else:
+            out.write(red("  -> neither endpoint accepted this model — see the reasons above")
+                      + "\n")
+    if forced != "auto":
+        out.write(yellow("  note: the endpoint format is set to {0} (ACT_API_FORMAT or :setup), "
+                         "so requests stay on the {1} endpoint".format(
+                             forced, _FORMAT_LABEL[forced])) + "\n")
+    if len(models) > 1:
+        out.write(blue("Summary: ") + ", ".join(
+            "{0} -> {1}".format(sanitize_terminal(m), _FORMAT_LABEL[f] if f else "neither")
+            for m, f in chosen.items()) + "\n")
+    if any(chosen.values()) and save_model_formats(PROVIDER):
+        out.write(grey("  (remembered in " + sanitize_terminal(act_config_path()) + ")") + "\n")
+    out.flush()
+    return chosen
 
 
 def review_command(cmd, risk, reasons):
@@ -6813,6 +7497,7 @@ REPL_HELP_SECTIONS = (
         (":model", "pick the provider and model"),
         (":provider [n]", "show or switch providers"),
         (":models", "fetch the active provider's live model list"),
+        (":probe [id|all]", "test a model on both endpoints (OpenAI + Anthropic); keep the one that works"),
         (":tools [on|off]", "send the action protocol as a native tool schema"),
         (":planmodel [id|off]", "plan on one model, execute the steps on another"),
         (":race [on|off]", "plan on all models; the active model judges (pick/merge) and runs"),
@@ -6851,8 +7536,14 @@ def print_session_status(session, stream=None):
     stream.write(grey("  tool schema       ")
                  + (yellow("ON") if TOOLS_MODE else grey("off"))
                  + (grey(" (endpoint rejected tools — using JSON mode)")
-                    if TOOLS_MODE and _TOOLS_SUPPORT.get((PROVIDER, API_URL)) is False
+                    if TOOLS_MODE and _TOOLS_SUPPORT.get(_support_key()) is False
                     else "") + "\n")
+    fmt, forced = model_format(MODEL)
+    stream.write(grey("  endpoint format   ") + provider_format()
+                 + grey(" ({0}: {1} endpoint{2})".format(
+                     sanitize_terminal(MODEL), _FORMAT_LABEL[fmt],
+                     "" if forced or MODEL in (_PROVIDER_STATE.get(PROVIDER) or {}).get(
+                         "formats", {}) else ", not tested yet")) + "\n")
     stream.write(grey("  plan model        ")
                  + (yellow(PLAN_MODEL) + grey(" (steps run on " + MODEL + ")")
                     if PLAN_MODEL else grey("off — one model plans and executes")) + "\n")
@@ -7307,6 +7998,25 @@ def _main():
                 print(grey(f"  {PROVIDER}: live list unavailable (no key/endpoint or unsupported). "
                            "Known: ") + ", ".join(_providers()[PROVIDER]["models"]))
             continue
+        if task == ":probe" or task.startswith(":probe "):
+            arg = task[7:].strip()
+            if not KEY:
+                print(yellow("  no API key for {0} — run :setup first".format(PROVIDER)))
+                continue
+            try:
+                if arg.lower() == "all":
+                    models = probe_model_list()
+                    ans = read_tty("  Test {0} models on both endpoints (about {1} small "
+                                   "requests)? [y/N] > ".format(len(models), 4 * len(models)))
+                    if ans.strip().lower() not in ("y", "yes"):
+                        print(grey("  (probe cancelled)"))
+                        continue
+                else:
+                    models = [arg or MODEL]
+                probe_models(models)
+            except (EOFError, KeyboardInterrupt):
+                print(grey("\n  (probe cancelled)"))
+            continue
         if task == ":provider" or task.startswith(":provider "):
             arg = task[10:].strip().lower() if task.startswith(":provider ") else ""
             names = list(_providers())
@@ -7327,6 +8037,7 @@ def _main():
             arg = task[7:].strip().lower()
             TOOLS_MODE = (arg in ("on", "1", "true", "yes")) if arg else (not TOOLS_MODE)
             _TOOLS_SUPPORT.clear()      # re-probe the endpoint after a deliberate change
+            _TOOL_CHOICE_SUPPORT.clear()
             _TOKEN_PARAM.clear()
             if TOOLS_MODE:
                 print(grey("  tools: ON — the endpoint enforces the action schema "

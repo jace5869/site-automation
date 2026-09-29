@@ -1,0 +1,26 @@
+---
+# SERVICENOW - TEST TICKET. Run this once, before the tickets step, to prove that AAP can reach
+# ServiceNow and open, update and resolve an incident. Runs on the controller, not on the hosts.
+#
+#   1 connection  the instance answers; the API account logs in and reads the incident table
+#   2 settings    servicenow_assignment_group / servicenow_caller exist (when set)
+#   3 open        a low-priority test incident ("[site-automation test] ... safe to close")
+#   4 read back   the incident as ServiceNow stored it, with a link to open it
+#   5 work note   a work note on it
+#   6 resolve     resolve it (servicenow_test_resolve: false leaves it open to look at)
+#
+# Every step prints PASS / WARN / FAIL, and for a failure what usually causes it. The job is red
+# only when a step FAILs.
+#
+# Credential: "ServiceNow API" (SN_HOST, SN_USERNAME, SN_PASSWORD).
+# Dry run (Job type Check): steps 1-2 run for real (they only read); 3-6 are only printed.
+# Setup, step by step, and how to verify the ticket in ServiceNow: docs/SERVICENOW_SETUP.md.
+- name: ServiceNow test ticket
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Open, read back, note and resolve a test incident
+      ansible.builtin.include_role:
+        name: servicenow
+        tasks_from: test_ticket.yml

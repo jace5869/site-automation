@@ -33,6 +33,11 @@ servicenow_note_repeats: true
 servicenow_correlation_prefix: site-health
 
 servicenow_validate_certs: true
+# A CA bundle (PEM) for the instance's TLS certificate, when the execution environment does not
+# trust its CA (e.g. a DoD root CA): a path on the controller, such as a file you add to the
+# project: servicenow_ca_path: "{{ playbook_dir }}/files/ca/servicenow-ca.pem". Empty = the
+# execution environment's normal trust store. Prefer this over servicenow_validate_certs: false.
+servicenow_ca_path: ""
 servicenow_timeout: 30
 # Fail the job when it opened/updated tickets, so the workflow shows red while problems exist.
 servicenow_fail_when_findings: true
@@ -40,3 +45,6 @@ servicenow_fail_when_findings: true
 # servicenow_health.yml: also check the MID Servers (needs read access to the ecc_agent table)
 servicenow_check_mid: true
 servicenow_slow_seconds: 5               # the API answering slower than this -> warning
+
+# servicenow_test_ticket.yml: resolve the test incident at the end (false = leave it open to look at)
+servicenow_test_resolve: true
