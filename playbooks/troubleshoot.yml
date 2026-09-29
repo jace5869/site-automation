@@ -24,6 +24,11 @@
   gather_facts: false
   vars:
     site_fail_on: []
+  pre_tasks:
+    - name: Linux hosts only (Windows servers have their own templates, playbooks/win_*.yml)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
   roles:
     - role: troubleshoot
   post_tasks:

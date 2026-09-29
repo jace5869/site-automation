@@ -1,0 +1,37 @@
+---
+# WINDOWS PATCH - install what Software Center has for each server (the software updates your
+# ConfigMgr admins deployed to it), the same as clicking "Install all" in Software Center. Then
+# restart when the updates need it (only with automatic_restarts: true), and prove the server came back: every automatic service that
+# ran before runs again. Nothing is downloaded from outside: ConfigMgr decides what is offered.
+#
+# NO AUTOMATIC RESTARTS unless automatic_restarts is true (template Variables or survey): without it
+# the updates are installed and the job says which servers still need a restart.
+#
+# Meant for the "Windows patch with checks" workflow:
+#   [Windows health check: pre] -> [Approval] -> [THIS] -> [Windows health check: post] -> [ServiceNow tickets]
+#
+# - One server at a time (win_patch_serial), and the rollout STOPS at the first server that fails.
+# - Servers in win_patch_never_patch_groups are skipped; in win_patch_never_reboot_groups they are
+#   patched but never restarted by it.
+# - ConfigMgr maintenance windows apply: outside one, it says so and stops (nothing is forced).
+# - Check mode (Job type Check, a dry run) lists what would be installed and changes nothing.
+#
+#   ansible-playbook playbooks/win_patch.yml -i <windows inventory> --check -l web01.example.mil
+#   ansible-playbook playbooks/win_patch.yml -i <windows inventory> -l web01.example.mil
+#
+# It only patches the group win_patch_hosts unless you give a target: set `target:` in the job
+# template's Variables (e.g. target: all), then pick the servers with the Limit at launch.
+- name: Windows patch (Software Center)
+  hosts: "{{ target | default('win_patch_hosts') }}"
+  gather_facts: false
+  serial: "{{ win_patch_serial | default(1) }}"
+  max_fail_percentage: 0
+  vars:
+    site_os: windows
+  pre_tasks:
+    - name: Windows hosts only (this playbook never touches a Linux server)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  roles:
+    - role: win_patch

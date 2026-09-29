@@ -32,6 +32,7 @@
     timeout: "{{ servicenow_timeout }}"
   register: _sn_ping
   failed_when: false
+  check_mode: false             # only reads
 
 - name: ServiceNow health | MID Servers
   ansible.builtin.uri:
@@ -45,6 +46,7 @@
     timeout: "{{ servicenow_timeout }}"
   register: _sn_mid
   failed_when: false
+  check_mode: false             # only reads
   when: servicenow_check_mid | bool and _sn_ping.status | default(0) == 200
 
 - name: ServiceNow health | findings

@@ -1,0 +1,26 @@
+---
+# ACT FOR WINDOWS - install (or update) ACT on the Windows servers, in C:\ProgramData\act by default
+# (win_act_dir). The folder is locked down to Administrators and SYSTEM, and act.ps1 must match
+# the version in this repository (vendor/act-windows) and must not be blocked - checked every run,
+# fixed if not.
+# Run it again after an update of this repository to update ACT everywhere.
+#
+# On a server, an administrator then starts it with:
+#   powershell -ExecutionPolicy Bypass -File C:\ProgramData\act\act.ps1
+# and, the first time, types :setup to enter their own GenAI / Ask Sage key (it is stored in
+# their own profile, not on the server for everyone).
+#
+#   ansible-playbook playbooks/win_act_install.yml -i <windows inventory> --check     (what would change)
+#   ansible-playbook playbooks/win_act_install.yml -i <windows inventory> -e win_act_state=absent   (remove)
+- name: ACT for Windows - install
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  vars:
+    site_os: windows
+  pre_tasks:
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  roles:
+    - role: win_act

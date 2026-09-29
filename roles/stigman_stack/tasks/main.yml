@@ -45,6 +45,7 @@
     argv: [podman, version, --format, "{{ '{{' }}.Client.Version{{ '}}' }}"]
   register: _stigman_podman
   changed_when: false
+  check_mode: false                       # only reads: a dry run needs the answer too
 
 - name: Preflight | podman supports Quadlet (4.4 or newer)
   ansible.builtin.assert:
@@ -117,6 +118,7 @@
   register: _stigman_secret_state
   changed_when: false
   failed_when: false
+  check_mode: false                       # only reads the label
 
 - name: Secrets | desired state
   ansible.builtin.set_fact:
@@ -194,6 +196,7 @@
   register: _stigman_pre
   changed_when: false
   failed_when: false
+  check_mode: false                       # only reads
 
 - name: Units | started (dependencies first)
   ansible.builtin.systemd_service:
@@ -201,6 +204,8 @@
     state: started
     scope: "{{ stigman_scope }}"
   loop: [stigman-mysql.service, stigman-api.service, stigman-nginx.service]
+  # a dry run of a FIRST deployment has no units yet (their files were not written): "would start"
+  ignore_errors: "{{ ansible_check_mode }}"
 
 # Restart only services that were ALREADY running and whose inputs changed. A service started
 # for the first time just above is never restarted: restarting MySQL during its first-time
@@ -232,6 +237,13 @@
   when: _stigman_restart[item] | bool
 
 # ---------------------------------------------------------------- verify
+- name: Verify | DRY RUN - nothing was changed or started, so there is nothing to verify
+  ansible.builtin.debug:
+    msg: >-
+      DRY RUN (Check mode): the tasks above marked "changed" are what a real run would change
+      (tick Show changes, or --diff, to see the file changes). Nothing was changed or restarted.
+  when: ansible_check_mode
+
 - name: Verify | MySQL is healthy
   ansible.builtin.command:
     argv: [podman, healthcheck, run, stigman-mysql]
@@ -240,6 +252,7 @@
   retries: 30
   delay: 5
   changed_when: false
+  when: not ansible_check_mode
 
 - name: Verify | STIG Manager answers through nginx (TLS)
   ansible.builtin.uri:
@@ -250,8 +263,10 @@
   until: _stigman_ready.status == 200
   retries: "{{ stigman_ready_retries }}"
   delay: "{{ stigman_ready_delay }}"
+  when: not ansible_check_mode
 
 - name: Verify | summary
+  when: not ansible_check_mode
   ansible.builtin.debug:
     msg: >-
       STIG Manager {{ (_stigman_ready.json | default({})).version | default('?') }} is up on

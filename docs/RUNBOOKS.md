@@ -281,14 +281,18 @@ packages never updated here). Then:
 
 1. **One host at a time** (`patch_serial`). The rollout **stops at the first host that fails**.
 2. Refuses with less than `patch_min_free_mb` free in `/var`.
-3. Reboots only if `needs-restarting -r` says so (`patch_reboot: when_needed`), and **never**
-   hosts in `patch_never_reboot_groups` (`aap_hosts`). Those get a "reboot by hand" message.
+3. **No automatic restarts** unless `automatic_restarts: true` (the survey or the template's
+   Variables). Without it, a host that needs a reboot is listed ("reboot it by hand, or run again
+   with automatic_restarts: true"). With it, the job reboots only when `needs-restarting -r` says
+   so (`patch_reboot: when_needed`), and **never** hosts in `patch_never_reboot_groups`
+   (`aap_hosts`).
 4. After the update (and reboot), **every service that was running before must be running
    again**. If one is not, the host fails and the rollout stops.
 5. Skips hosts in `no_patch` (vendor appliances, and AAP itself in the example inventory), and
    refuses to patch the machine running the job.
 
-Run it as **Job type: Check** first: it lists what would be updated and changes nothing.
+Run it as **Job type: Check** first: it lists what would be updated and changes nothing
+([DRY_RUNS.md](DRY_RUNS.md)).
 
 ## Apply approved ACT fix (`playbooks/act_fix_approved.yml`)
 

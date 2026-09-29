@@ -1,0 +1,16 @@
+---
+# WINDOWS CERTIFICATES: every certificate in the machine stores below, and which of them are in
+# use (https bindings of IIS / WSUS / ..., the WinRM HTTPS listener AAP connects through, Remote
+# Desktop). Expiring soon -> warning / critical. Expired: critical when in use, or when it expired
+# less than win_check_certs_expired_report_days ago (older leftovers are only listed in the
+# certificate report).
+
+win_check_certs_warn_days: 30
+win_check_certs_crit_days: 7
+win_check_certs_expired_report_days: 30
+win_check_certs_stores: ['Cert:\LocalMachine\My', 'Cert:\LocalMachine\WebHosting', 'Cert:\LocalMachine\Remote Desktop']
+win_check_certs_ignore_subjects: []     # wildcards, e.g. ['CN=localhost*']
+# TLS services whose certificate a client actually gets, e.g.
+#   win_check_certs_endpoints:
+#     - {name: IIS, host: 127.0.0.1, port: 443, servername: web01.yoursite.mil}
+win_check_certs_endpoints: []

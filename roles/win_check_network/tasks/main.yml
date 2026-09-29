@@ -1,0 +1,20 @@
+---
+# Runs files/win_network.ps1 on the server (ansible.builtin.script: no collection needed) with the
+# settings from defaults/main.yml, then adds its findings to this host's list.
+- name: Windows network | check
+  ansible.builtin.script: win_network.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'dns_names': win_check_network_dns_names, 'tcp': win_check_network_tcp,
+          'secure_channel': win_check_network_secure_channel, 'timeout_ms': win_check_network_timeout_ms} | to_json }}
+  register: _win_check_out
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Windows network | findings
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: win_result.yml
+  vars:
+    _win_check: network

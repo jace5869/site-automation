@@ -20,7 +20,7 @@ click at a time.
 | **POA&M status** | Which POA&M items are overdue or due soon? Which open CAT I/II findings have no POA&M item? | Weekly |
 | **ServiceNow tickets** | Opens or updates a ticket for each problem a check found. Notes the ones that cleared | After every check (as a workflow step) |
 | **ServiceNow health** | Is ServiceNow answering? Are the MID Servers up? | Hourly |
-| **Patch hosts** | Installs updates, reboots if needed, and proves every service came back | Monthly, after an approval |
+| **Patch hosts** | Installs updates, and proves every service came back. Reboots only with `automatic_restarts: yes` | Monthly, after an approval |
 | **Apply approved ACT fix** | Applies exactly the fix a person approved | Only inside a workflow, after an approval |
 
 Every check is **read-only**. It looks and reports, and changes nothing. Patching is the only

@@ -1,0 +1,28 @@
+---
+# WINDOWS AUDIT: the audit policy records what the STIG asks for, the event logs are big enough,
+# and the log forwarding agent runs. One finding lists every missing audit setting.
+
+# Advanced audit policy subcategories (checked by GUID, so any Windows language works).
+# need: Success | Failure | Success and Failure
+win_check_audit_subcategories:
+  - {name: Credential Validation, guid: 0CCE923F-69AE-11D9-BED3-505054503030, need: Success and Failure}
+  - {name: Security Group Management, guid: 0CCE9237-69AE-11D9-BED3-505054503030, need: Success}
+  - {name: User Account Management, guid: 0CCE9235-69AE-11D9-BED3-505054503030, need: Success and Failure}
+  - {name: Process Creation, guid: 0CCE922B-69AE-11D9-BED3-505054503030, need: Success}
+  - {name: Account Lockout, guid: 0CCE9217-69AE-11D9-BED3-505054503030, need: Failure}
+  - {name: Logoff, guid: 0CCE9216-69AE-11D9-BED3-505054503030, need: Success}
+  - {name: Logon, guid: 0CCE9215-69AE-11D9-BED3-505054503030, need: Success and Failure}
+  - {name: Special Logon, guid: 0CCE921B-69AE-11D9-BED3-505054503030, need: Success}
+  - {name: Removable Storage, guid: 0CCE9245-69AE-11D9-BED3-505054503030, need: Success and Failure}
+  - {name: Audit Policy Change, guid: 0CCE922F-69AE-11D9-BED3-505054503030, need: Success and Failure}
+  - {name: Authentication Policy Change, guid: 0CCE9230-69AE-11D9-BED3-505054503030, need: Success}
+  - {name: Sensitive Privilege Use, guid: 0CCE9228-69AE-11D9-BED3-505054503030, need: Success and Failure}
+  - {name: Security State Change, guid: 0CCE9210-69AE-11D9-BED3-505054503030, need: Success}
+  - {name: Security System Extension, guid: 0CCE9211-69AE-11D9-BED3-505054503030, need: Success}
+  - {name: System Integrity, guid: 0CCE9212-69AE-11D9-BED3-505054503030, need: Success and Failure}
+
+win_check_audit_security_log_min_kb: 196608       # STIG
+win_check_audit_application_log_min_kb: 32768
+win_check_audit_system_log_min_kb: 32768
+# Log forwarding agents that must run, e.g. [SplunkForwarder] or [nxlog]
+win_check_audit_forwarder_services: []

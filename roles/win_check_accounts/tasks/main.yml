@@ -1,0 +1,23 @@
+---
+# Runs files/win_accounts.ps1 on the server (ansible.builtin.script: no collection needed) with the
+# settings from defaults/main.yml, then adds its findings to this host's list.
+- name: Windows accounts | check
+  ansible.builtin.script: win_accounts.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'password_max_age_days': win_check_accounts_password_max_age_days,
+          'inactive_days': win_check_accounts_inactive_days,
+          'password_never_expires_allowed': win_check_accounts_password_never_expires_allowed,
+          'inactive_allowed': win_check_accounts_inactive_allowed,
+          'admins_allowed': win_check_accounts_admins_allowed} | to_json }}
+  register: _win_check_out
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Windows accounts | findings
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: win_result.yml
+  vars:
+    _win_check: accounts

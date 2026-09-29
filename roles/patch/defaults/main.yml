@@ -7,7 +7,12 @@ patch_packages: ['*']                    # what to update ('*' = everything that
 patch_security_only: false               # true = only updates that fix security advisories
 patch_exclude: []                        # never update these here, e.g. ['mariadb*', 'kernel*']
 
-# Reboot: when_needed (needs-restarting says so) | never | always
+# NO AUTOMATIC RESTARTS unless you say so: this playbook reboots a host only when
+# automatic_restarts is true (set it in the job template's Variables, or answer the survey), and
+# then only as patch_reboot says. With automatic_restarts false (the default) it installs the
+# updates and tells you which hosts still need a reboot; a person reboots them.
+automatic_restarts: false
+# Reboot (only with automatic_restarts: true): when_needed (needs-restarting says so) | never | always
 patch_reboot: when_needed
 patch_reboot_timeout: 1800               # seconds to wait for the host to come back
 # Hosts in these groups are patched but NEVER rebooted by this playbook (reboot them by hand,

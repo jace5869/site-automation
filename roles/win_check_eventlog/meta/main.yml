@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: win_check_eventlog
+  description: "Windows health check: unexpected shutdowns, crashes, disk errors, error volume, full logs."
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Windows
+      versions: [all]
+dependencies: []

@@ -1,0 +1,102 @@
+---
+# WINDOWS PATCH (Software Center / ConfigMgr client) on this server. See defaults/main.yml.
+
+- name: Patch | skip servers in the never-patch groups ({{ win_patch_never_patch_groups | join(', ') }})
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }} is in {{ group_names | intersect(win_patch_never_patch_groups) | join(', ') }}: not patched by automation."
+  when: group_names | intersect(win_patch_never_patch_groups) | length > 0
+
+- name: Patch | skipped
+  ansible.builtin.meta: end_host
+  when: group_names | intersect(win_patch_never_patch_groups) | length > 0
+
+- name: Patch | is the ConfigMgr client (Software Center) there?
+  ansible.builtin.script: win_patch.ps1
+  environment:
+    SITE_CHECK_CONFIG: '{"action": "preflight"}'
+  register: _wp_raw
+  changed_when: false
+  check_mode: false
+
+- name: Patch | preflight answered
+  ansible.builtin.include_tasks: answered.yml
+  vars: {_wp_step: the preflight, _wp_raw_any: "{{ _wp_raw }}", _wp_key: client}
+
+- name: Patch | what the server says
+  ansible.builtin.set_fact:
+    _wp_pre: "{{ _wp_raw.stdout_lines | default([]) | site_result }}"
+    _wp_done: false
+    _wp_log: []
+    _wp_installed_any: false
+    _wp_restarted: false
+    _wp_restart_withheld: false
+
+- name: Patch | the ConfigMgr client must be installed and running
+  ansible.builtin.assert:
+    that:
+      - _wp_pre.client | bool
+      - _wp_pre.ccmexec == 'Running'
+    fail_msg: >-
+      {{ inventory_hostname }} has no working ConfigMgr client (Software Center): the SMS Agent
+      Host service (CcmExec) is {{ _wp_pre.ccmexec }}{{ (', ' ~ _wp_pre.client_error) if _wp_pre.client_error else '' }}.
+      This playbook installs what Software Center offers; without the client there is nothing to install.
+    quiet: true
+
+- name: Patch | before
+  ansible.builtin.debug:
+    msg:
+      - "ConfigMgr client running; PowerShell {{ _wp_pre.language_mode }}; up since {{ _wp_pre.boot }}"
+      - "{{ ('A restart was ALREADY pending before patching: ' ~ (_wp_pre.restart_pending | join(', '))) if _wp_pre.restart_pending else 'No restart pending.' }}"
+      - "{{ _wp_pre.running_services | length }} automatic services are running; they must all run again afterwards."
+
+- name: Patch | installing needs full PowerShell
+  ansible.builtin.assert:
+    that: _wp_pre.language_mode == 'FullLanguage' or ansible_check_mode
+    fail_msg: >-
+      PowerShell runs in {{ _wp_pre.language_mode }} on {{ inventory_hostname }} (WDAC / AppLocker):
+      the ConfigMgr install call needs FullLanguage. Install from Software Center by hand, or allow
+      the site-automation scripts in the policy.
+    quiet: true
+
+- name: Patch | rounds (a restart can reveal more updates)
+  ansible.builtin.include_tasks: round.yml
+  loop: "{{ range(1, (win_patch_max_rounds | int) + 1) | list }}"
+  loop_control:
+    loop_var: _wp_round
+
+- name: Patch | the automatic services that ran before run again
+  ansible.builtin.script: win_patch.ps1
+  environment:
+    SITE_CHECK_CONFIG: "{{ {'action': 'services', 'expected': _wp_pre.running_services, 'ignore': win_patch_services_ignore} | to_json }}"
+  register: _wp_svc_raw
+  until: "(_wp_svc_raw.stdout_lines | default([]) | site_result({'missing': ['?']})).missing | length == 0"
+  retries: "{{ ((win_patch_services_grace_min | int) * 60 / (win_patch_poll_sec | int)) | int if _wp_restarted else 2 }}"
+  delay: "{{ win_patch_poll_sec | int }}"
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: _wp_installed_any | bool and not ansible_check_mode
+
+- name: Patch | services check result
+  ansible.builtin.set_fact:
+    _wp_missing: "{{ (_wp_svc_raw.stdout_lines | default([]) | site_result({'missing': []})).missing if _wp_svc_raw is not skipped else [] }}"
+
+- name: Patch | result
+  ansible.builtin.debug:
+    msg: >-
+      {{ _wp_log
+         + (['Restarted: yes (the server came back).'] if _wp_restarted else [])
+         + (['A RESTART IS NEEDED to finish the updates, and it was not done: '
+             ~ ('automatic restarts are off (automatic_restarts is false). Restart it by hand in a maintenance window, or run again with automatic_restarts: true.'
+                if not automatic_restarts | bool else 'the server is in ' ~ (group_names | intersect(win_patch_never_reboot_groups) | join(', ')) ~ ' (win_patch_never_reboot_groups). Restart it by hand.')]
+            if _wp_restart_withheld else [])
+         + (['Services that ran before and are NOT running now: ' ~ (_wp_missing | join(', '))] if _wp_missing else [])
+         + (['Nothing to install.'] if not _wp_log else []) }}
+
+- name: Patch | FAIL - services that ran before the update are not running now
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }}: {{ _wp_missing | join(', ') }} ran before patching and do not run now
+      ({{ win_patch_services_grace_min }} minutes after the restart). The rollout stops here.
+      Look: Get-Service {{ _wp_missing | first }}; the System log (Service Control Manager).
+  when: _wp_missing | length > 0

@@ -1,0 +1,51 @@
+---
+# WINDOWS CERTIFICATE REPORT - weekly. Every certificate in the machine stores of every Windows
+# server (and your TLS endpoints), in ONE table sorted by expiry date, with where each one is
+# used (https binding, WinRM listener, Remote Desktop). Read-only. Fails when one expires within
+# win_check_certs_warn_days (or one in use has expired), so a workflow can open tickets.
+#
+#   ansible-playbook playbooks/win_cert_report.yml -i <windows inventory>
+- name: Windows certificate report
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  vars:
+    site_os: windows
+  pre_tasks:
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+  tasks:
+    - name: Start
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: start.yml
+
+    - name: Find and read the certificates
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: run_check.yml
+      vars:
+        _site_check: certs
+
+    - name: All certificates on all servers, soonest expiry first
+      ansible.builtin.debug:
+        msg: >-
+          {%- set rows = [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   for c in hostvars[h].check_certs_inventory | default([]) -%}{%- set _ = rows.append(c) -%}{%- endfor -%}
+          {%- endfor -%}
+          {%- set out = ['DAYS  EXPIRES     HOST  |  SUBJECT  |  WHERE'] -%}
+          {%- for c in rows | sort(attribute='days') -%}
+          {%-   set flag = ' <-- EXPIRED' if c.days < 0 else (' <-- ' ~ c.days ~ ' days' if c.days <= win_check_certs_warn_days | default(30) | int else '') -%}
+          {%-   set _ = out.append(c.days ~ '  ' ~ c.expires ~ '  ' ~ c.host ~ '  |  ' ~ c.subject | truncate(70) ~ '  |  ' ~ c.where ~ flag) -%}
+          {%- endfor -%}
+          {{ out if rows else ['no certificates found in the machine stores'] }}
+      run_once: true
+
+  post_tasks:
+    - name: Report (fails the hosts with certificates that expire soon)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml

@@ -1,0 +1,21 @@
+---
+# Runs files/win_performance.ps1 on the server (ansible.builtin.script: no collection needed) with the
+# settings from defaults/main.yml, then adds its findings to this host's list.
+- name: Windows performance | check
+  ansible.builtin.script: win_performance.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'cpu_warn_pct': win_check_performance_cpu_warn_pct, 'cpu_crit_pct': win_check_performance_cpu_crit_pct,
+          'mem_warn_pct': win_check_performance_mem_warn_pct, 'mem_crit_pct': win_check_performance_mem_crit_pct,
+          'pagefile_warn_pct': win_check_performance_pagefile_warn_pct} | to_json }}
+  register: _win_check_out
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Windows performance | findings
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: win_result.yml
+  vars:
+    _win_check: performance

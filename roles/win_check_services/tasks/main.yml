@@ -1,0 +1,21 @@
+---
+# Runs files/win_services.ps1 on the server (ansible.builtin.script: no collection needed) with the
+# settings from defaults/main.yml, then adds its findings to this host's list.
+- name: Windows services | check
+  ansible.builtin.script: win_services.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'required': win_check_services_required, 'required_extra': win_check_services_required_extra,
+          'ignore': win_check_services_ignore, 'crash_hours': win_check_services_crash_hours,
+          'crash_warn': win_check_services_crash_warn} | to_json }}
+  register: _win_check_out
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Windows services | findings
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: win_result.yml
+  vars:
+    _win_check: services

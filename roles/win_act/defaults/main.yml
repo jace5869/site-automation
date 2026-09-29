@@ -1,0 +1,13 @@
+---
+# ACT FOR WINDOWS on the servers (vendor/act-windows/act.ps1, the PowerShell port of ACT).
+#
+# Installed into win_act_dir. That folder gets its own owner and permissions - Administrators and
+# SYSTEM only, nothing inherited - because ordinary users may create folders and files in
+# C:\ProgramData (and C:\temp): a non-admin could otherwise place or swap act.ps1 before an
+# administrator runs it. Every run checks the installed file's SHA256 against the repository's, and
+# that it is not blocked (marked as downloaded from the internet); either is fixed.
+win_act_dir: 'C:\ProgramData\act'
+win_act_state: present                   # present | absent (removes win_act_dir)
+
+# The ACT script this repository ships (vendor/act-windows, version in its VERSION file)
+win_act_source: "{{ role_path }}/../../vendor/act-windows/act.ps1"

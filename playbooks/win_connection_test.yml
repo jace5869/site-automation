@@ -1,0 +1,90 @@
+---
+# WINDOWS CONNECTION TEST - run this first, before any other Windows template. Read-only.
+#
+# First it looks INSIDE the execution environment (on AAP, once): are the Python libraries for
+# WinRM there (pywinrm; requests-ntlm for NTLM; requests-kerberos + a Kerberos client for
+# Kerberos)? Then it connects to each Windows server and reports PowerShell version, language
+# mode, the account and whether it is a local administrator (the checks need that).
+#
+#   ansible-playbook playbooks/win_connection_test.yml -i <windows inventory> -l web01.example.mil
+- name: Windows connection test - the servers
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  vars:
+    site_os: windows
+  pre_tasks:
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  tasks:
+    - name: Python libraries for WinRM in this execution environment
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -c
+          - |
+            import importlib.util as u
+            for m, why in [('winrm', 'pywinrm: needed for ansible_connection=winrm'),
+                           ('requests_ntlm', 'NTLM transport (ansible_winrm_transport: ntlm)'),
+                           ('requests_kerberos', 'Kerberos transport (ansible_winrm_transport: kerberos)'),
+                           ('requests_credssp', 'CredSSP transport (optional)'),
+                           ('pypsrp', 'only for ansible_connection=psrp')]:
+                print(('YES  ' if u.find_spec(m) else 'no   ') + m.ljust(18) + why)
+      register: _ee_py
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      run_once: true
+      delegate_to: localhost
+
+    - name: Kerberos client tools (only needed for Kerberos)
+      ansible.builtin.shell: "command -v kinit klist || echo 'no Kerberos client (kinit) in this execution environment'"
+      register: _ee_krb
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      run_once: true
+      delegate_to: localhost
+
+    - name: What the execution environment has
+      ansible.builtin.debug:
+        msg: "{{ _ee_py.stdout_lines | default([_ee_py.stderr | default('could not run python')]) + _ee_krb.stdout_lines | default([]) }}"
+      run_once: true
+
+    - name: pywinrm is required for WinRM
+      ansible.builtin.assert:
+        that: "'YES  winrm' in _ee_py.stdout | default('')"
+        fail_msg: >-
+          This execution environment has no pywinrm, so it cannot talk WinRM. Use an execution
+          environment that has it (AAP's "Default execution environment" does), or add pywinrm
+          (and requests-ntlm or requests-kerberos) to your own. See docs/WINDOWS.md, step 2.
+        quiet: true
+      run_once: true
+
+    - name: Connect and look around
+      ansible.builtin.script: win_connection_test.ps1
+      register: _wt
+      changed_when: false
+      check_mode: false
+
+    - name: What the server says
+      ansible.builtin.set_fact:
+        _wt_r: >-
+          {{ ((_wt.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('###SITE-JSON### {}'))[16:]
+              | from_json) or {} }}
+
+    - name: Result
+      ansible.builtin.debug:
+        msg:
+          - "Connected: {{ _wt_r.computer | default('?') }} ({{ _wt_r.os | default('?') }}, build {{ _wt_r.build | default('?') }}), domain {{ _wt_r.domain | default('?') }}"
+          - "PowerShell {{ _wt_r.powershell | default('?') }}, {{ _wt_r.language_mode | default('?') }}"
+          - "Logged on as {{ _wt_r.user | default('?') }}; local administrator: {{ 'yes' if _wt_r.local_admin | default(false) else 'NO' }}"
+          - "{{ 'OK: the Windows runbooks can run here.' if _wt_r.local_admin | default(false) else 'The account is not a local administrator: most checks need that. Use an account in the local Administrators group (usually through a domain group).' }}"
+          - "{{ 'Note: PowerShell runs in ' ~ _wt_r.language_mode ~ ' here (WDAC / AppLocker). This test got through, so Ansible can run scripts on this server; the checks are written for that mode (TLS endpoints and the missing-updates search are skipped in it).' if _wt_r.language_mode | default('FullLanguage') != 'FullLanguage' else '' }}"
+
+    - name: The account must be a local administrator
+      ansible.builtin.assert:
+        that: _wt_r.local_admin | default(false) | bool
+        fail_msg: "{{ _wt_r.user | default('?') }} is not a local administrator on {{ inventory_hostname }}."
+        quiet: true

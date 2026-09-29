@@ -25,6 +25,11 @@
     _checks_before: "{{ ((site_health | default({})).get(inventory_hostname) or {}).get('checks', []) }}"
     _no_apply: "{{ site_act_diagnose_only_groups | default(['aap_hosts', 'netapp_console_hosts']) }}"
   pre_tasks:
+    - name: Linux hosts only (Windows servers have their own templates, playbooks/win_*.yml)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
     - name: The first job's results reached this job
       ansible.builtin.assert:
         that: act_triage is defined and act_triage is mapping

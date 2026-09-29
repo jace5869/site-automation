@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: win_check_disk
+  description: "Windows health check: free space on every local fixed volume."
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Windows
+      versions: [all]
+dependencies: []

@@ -1,0 +1,23 @@
+---
+# One logon attempt after the restart (restart.yml loops over this). Input: _wp_try.
+- name: Patch | logon attempt {{ _wp_try }}
+  when: not _wp_up | bool
+  block:
+    - name: Patch | wait a moment before attempt {{ _wp_try }}
+      ansible.builtin.pause:
+        seconds: "{{ win_patch_reconnect_pause_sec | int }}"
+      when: (_wp_try | int) > 1
+
+    - name: Patch | boot time and client state (attempt {{ _wp_try }})
+      ansible.builtin.script: win_patch.ps1
+      environment:
+        SITE_CHECK_CONFIG: '{"action": "boot"}'
+      register: _wp_boot_raw
+      changed_when: false
+      ignore_unreachable: true
+
+    - name: Patch | logged on
+      ansible.builtin.set_fact:
+        _wp_up: true
+        _wp_boot_after: "{{ (_wp_boot_raw.stdout_lines | default([]) | site_result).boot | default('') }}"
+      when: _wp_boot_raw is reachable and _wp_boot_raw is succeeded

@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: win_patch
+  description: "Windows patching through the ConfigMgr client (Software Center): install, restart if needed, prove every service is back."
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Windows
+      versions: [all]
+dependencies: []

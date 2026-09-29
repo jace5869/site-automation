@@ -36,7 +36,18 @@
   loop_control:
     label: "{{ item.id }}"
   changed_when: false
-  when: site_syslog | bool
+  when: site_syslog | bool and site_os != 'windows'
+
+- name: Report | Windows Application event log, one entry per finding (source {{ site_eventlog_source }})
+  ansible.builtin.script: win_eventlog.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'source': site_eventlog_source, 'job': awx_job_id | default('-') | string,
+          'findings': site_findings} | to_json }}
+  register: _site_eventlog
+  changed_when: false
+  failed_when: false
+  when: site_syslog | bool and site_os == 'windows' and site_findings | length > 0
 
 - name: Report | publish the result for later workflow steps (set_stats)
   ansible.builtin.set_stats:

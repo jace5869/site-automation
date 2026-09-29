@@ -1,0 +1,41 @@
+---
+# WINDOWS SERVICES
+#   - every required service must be running (critical);
+#   - an automatic service that stopped WITH AN ERROR (exit code not 0) is a warning. Automatic
+#     services that stop cleanly by design (trigger-start, delayed) are not reported;
+#   - a service that crashed several times recently (System log events 7031 / 7034).
+
+# Must be running on every Windows server. Add your own per group with ..._required_extra, e.g.
+# for IIS servers: win_check_services_required_extra: [W3SVC, WAS]
+win_check_services_required: [EventLog, RpcSs, Dnscache, W32Time, WinRM, mpssvc]
+win_check_services_required_extra: []
+
+# Automatic services never to report (wildcards allowed: * and ?)
+win_check_services_ignore:
+  - gupdate
+  - gupdatem
+  - edgeupdate
+  - edgeupdatem
+  - MicrosoftEdgeElevationService
+  - GoogleUpdater*
+  - MapsBroker
+  - RemoteRegistry
+  - sppsvc
+  - TrustedInstaller
+  - BITS
+  - wuauserv
+  - UsoSvc
+  - WaaSMedicSvc
+  - DoSvc
+  - CDPSvc
+  - CDPUserSvc_*
+  - OneSyncSvc_*
+  - clr_optimization_*
+  - ShellHWDetection
+  - tiledatamodelsvc
+  - WbioSrvc
+  - dmwappushservice
+  - SysMain
+
+win_check_services_crash_hours: 24      # look back this far for unexpected stops
+win_check_services_crash_warn: 3        # this many unexpected stops of one service -> warning

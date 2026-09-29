@@ -7,10 +7,21 @@
 
 # Once per run: which hosts were targeted. The ServiceNow step compares this with the hosts that
 # reported, so a host that never reported (unreachable, sudo failed) is not mistaken for healthy.
+# Hosts of the other OS (skipped by os_guard.yml) are not counted: they get no ticket.
 - name: Findings | remember the targeted hosts for later workflow steps
   ansible.builtin.set_stats:
     data:
-      site_health_targets: "{{ site_health_targets_override | default(ansible_play_hosts_all) }}"
+      site_health_targets: >-
+        {{ site_health_targets_override | default(ansible_play_hosts_all | reject('in', _site_other_os) | list) }}
     per_host: false
     aggregate: false
   run_once: true
+  vars:
+    _site_other_os: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts_all -%}
+      {%-   set win = (hostvars[h].ansible_connection | default('ssh')) in site_windows_connections
+                      or (hostvars[h].ansible_shell_type | default('sh')) in ['powershell', 'cmd'] -%}
+      {%-   if win != (site_os == 'windows') -%}{%- set _ = out.append(h) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}

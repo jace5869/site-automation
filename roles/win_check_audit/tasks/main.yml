@@ -1,0 +1,22 @@
+---
+# Runs files/win_audit.ps1 on the server (ansible.builtin.script: no collection needed) with the
+# settings from defaults/main.yml, then adds its findings to this host's list.
+- name: Windows audit | check
+  ansible.builtin.script: win_audit.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'subcategories': win_check_audit_subcategories, 'security_log_min_kb': win_check_audit_security_log_min_kb,
+          'application_log_min_kb': win_check_audit_application_log_min_kb,
+          'system_log_min_kb': win_check_audit_system_log_min_kb,
+          'forwarder_services': win_check_audit_forwarder_services} | to_json }}
+  register: _win_check_out
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Windows audit | findings
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: win_result.yml
+  vars:
+    _win_check: audit

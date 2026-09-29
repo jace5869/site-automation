@@ -47,10 +47,11 @@
     exclude: "{{ patch_exclude }}"
   register: _patch_dnf
 
-- name: Patch | what was updated
+- name: "Patch | what was updated{{ ' (dry run - what WOULD be updated)' if ansible_check_mode else '' }}"
   ansible.builtin.debug:
     msg: >-
-      {{ ((_patch_dnf.results | default([])) | length ~ ' change(s): ' ~ (_patch_dnf.results | default([]) | join('; ') | truncate(3000)))
+      {{ (('DRY RUN (Check mode), nothing was installed - would make ' if ansible_check_mode else '')
+          ~ (_patch_dnf.results | default([])) | length ~ ' change(s): ' ~ (_patch_dnf.results | default([]) | join('; ') | truncate(3000)))
          if _patch_dnf.changed else 'nothing to update' }}
 
 - name: Patch | does the host need a reboot now?
@@ -64,7 +65,8 @@
   ansible.builtin.set_fact:
     _patch_reboot_needed: "{{ _patch_needs.rc | default(0) == 1 or patch_reboot == 'always' }}"
     _patch_reboot_allowed: >-
-      {{ patch_reboot != 'never' and group_names | intersect(patch_never_reboot_groups) | length == 0 }}
+      {{ automatic_restarts | bool and patch_reboot != 'never'
+         and group_names | intersect(patch_never_reboot_groups) | length == 0 }}
 
 - name: Patch | reboot
   ansible.builtin.reboot:
@@ -76,8 +78,10 @@
   ansible.builtin.debug:
     msg: >-
       {{ inventory_hostname }} needs a reboot to finish the updates, but this playbook does not reboot it
-      ({{ 'patch_reboot=never' if patch_reboot == 'never' else 'it is in ' ~ (group_names | intersect(patch_never_reboot_groups) | join(', ')) }}).
-      Reboot it by hand in a maintenance window.
+      ({{ 'automatic restarts are off: automatic_restarts is false' if not automatic_restarts | bool
+          else 'patch_reboot=never' if patch_reboot == 'never'
+          else 'it is in ' ~ (group_names | intersect(patch_never_reboot_groups) | join(', ')) }}).
+      Reboot it by hand in a maintenance window{{ ', or run again with automatic_restarts: true' if not automatic_restarts | bool else '' }}.
   when: _patch_reboot_needed | bool and not (_patch_reboot_allowed | bool)
 
 - name: Patch | the services that were running are running again

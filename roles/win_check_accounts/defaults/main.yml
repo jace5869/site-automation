@@ -1,0 +1,15 @@
+---
+# WINDOWS ACCOUNTS (local accounts; domain controllers have none and are skipped)
+#   - the built-in Guest account is disabled                               -> critical if not
+#   - enabled local accounts: password never expires, password too old,
+#     no logon for a long time                                             -> warning
+#   - members of the local Administrators group that you did not allow     -> warning
+# Names below allow wildcards (* and ?), e.g. 'YOURDOMAIN\Domain Admins', '*\svc_aap'.
+
+win_check_accounts_password_max_age_days: 60
+win_check_accounts_inactive_days: 35
+win_check_accounts_password_never_expires_allowed: []
+win_check_accounts_inactive_allowed: []
+# Empty = list the members in the job output only. Set it to report anyone else, e.g.
+#   win_check_accounts_admins_allowed: ['*\Administrator', 'YOURDOMAIN\Domain Admins', 'YOURDOMAIN\svc_aap']
+win_check_accounts_admins_allowed: []

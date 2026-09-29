@@ -310,7 +310,7 @@ updated and changes nothing.
 | Credentials | `Linux ssh (sudo)` |
 | Job type | Run, with **Prompt on launch** ticked, so you can pick *Check* (a dry run) |
 | Survey: `patch_security_only` | "Security updates only?" Choices `false`, `true`. Default `false` |
-| Survey: `patch_reboot` | "Reboot when the updates need it?" Choices `when_needed`, `never`. Default `when_needed` |
+| Survey: `automatic_restarts` | "Reboot hosts automatically when the updates need it?" Choices `no`, `yes`. Default `no` (no automatic restarts: the job lists the hosts that need a reboot) |
 
 ### Apply approved ACT fix
 

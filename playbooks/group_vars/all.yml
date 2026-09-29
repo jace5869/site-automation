@@ -20,6 +20,9 @@ patch_never_patch_groups: [aap, sat, netapp, no_patch]
 # Patching never reboots these.
 patch_never_reboot_groups: [aap, sat, netapp, aap_hosts]
 
+# ---- Patching (Linux and Windows): NO automatic restarts unless this is true --------------------
+# automatic_restarts: false
+
 # ---- ACT: which provider, and the model for each ----------------------------------------------
 site_act_provider: genai                 # the default provider: genai | asksage | genai-beta
 site_act_models:                         # the model follows whichever provider is picked

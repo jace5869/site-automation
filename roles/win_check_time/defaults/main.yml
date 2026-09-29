@@ -1,0 +1,8 @@
+---
+# WINDOWS TIME: the Windows Time service runs, syncs with a real source (not the local clock),
+# synced recently, and how far off the clock is from its source. Kerberos (domain logons) fails
+# when a clock is 5 minutes off.
+
+win_check_time_offset_warn_sec: 1
+win_check_time_offset_crit_sec: 5
+win_check_time_max_hours_since_sync: 24

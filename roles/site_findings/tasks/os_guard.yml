@@ -1,0 +1,15 @@
+---
+# Linux playbooks skip Windows hosts, and the Windows playbooks (win_*.yml) skip Linux hosts: a
+# template pointed at the wrong inventory, or an inventory with both, changes nothing and opens no
+# tickets for the hosts of the other OS. Include it first in pre_tasks.
+- name: "Skip {{ 'Linux' if site_os == 'windows' else 'Windows' }} hosts ({{ 'win_*' if site_os != 'windows' else 'Linux' }} templates are for those)"
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} is a {{ 'Windows' if _site_host_is_windows | bool else 'Linux' }} host: skipped by this
+      {{ 'Windows' if site_os == 'windows' else 'Linux' }} playbook.
+      {{ 'Use the Linux templates for it.' if site_os == 'windows' else 'Use the Windows templates (playbooks/win_*.yml) for it.' }}
+  when: (_site_host_is_windows | bool) != (site_os == 'windows')
+
+- name: Skip it
+  ansible.builtin.meta: end_host
+  when: (_site_host_is_windows | bool) != (site_os == 'windows')

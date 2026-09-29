@@ -1,0 +1,10 @@
+---
+# WINDOWS PATCHING (read-only; installing updates is a later runbook)
+#   - a restart is pending for installed updates (Windows Update, component servicing, ConfigMgr)
+#   - days since the last update was installed (Get-HotFix)
+#   - optional: ask Windows Update which updates are missing (slower; needs full PowerShell)
+
+win_check_patching_warn_days: 35
+win_check_patching_crit_days: 60
+win_check_patching_reboot_pending: true
+win_check_patching_search_pending: false

@@ -35,11 +35,25 @@ jobs:
         run: |
           python - <<'PY'
           import glob, yaml
-          for f in glob.glob('aap/credential_types/*.yml') + glob.glob('inventories/example/**/*.yml', recursive=True):
+          for f in glob.glob('aap/credential_types/*.yml') + glob.glob('inventories/example/**/*.yml', recursive=True) + glob.glob('inventories/example-windows/*.yml'):
               yaml.safe_load(open(f)); print('ok', f)
           PY
       - name: Shell scripts parse
         run: for f in scripts/*.sh; do bash -n "$f"; done
+      - name: PowerShell scripts parse
+        shell: pwsh
+        run: |
+          $bad = 0
+          foreach ($f in Get-ChildItem -Recurse -Filter *.ps1 -Path roles, playbooks, scripts, tests) {
+            $t = $null; $e = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$t, [ref]$e)
+            foreach ($x in $e) { "$($f.Name):$($x.Extent.StartLineNumber): $($x.Message)"; $bad++ }
+          }
+          if ($bad) { exit 1 }
+      - name: Windows checks with test data (PowerShell 7 on Linux, normal and constrained)
+        run: pwsh -NoProfile -File tests/windows/test_win_checks.ps1
+      - name: Windows patching, simulated (stand-in ConfigMgr client and restart)
+        run: bash tests/windows/patch_sim/run_patch_sim.sh
       - name: No private keys or obvious secrets committed
         run: |
           if git grep -nE -e '-----BEGIN [A-Z ]*PRIVATE KEY-----[A-Za-z0-9+/=]' -e 'AKIA[0-9A-Z]{16}' -- . ':!vendor'; then
@@ -56,3 +70,79 @@ jobs:
       - name: PowerShell 7
         shell: pwsh
         run: pwsh -NoProfile -File tests/test_update_from_release.ps1
+
+  windows-checks:
+    name: Windows checks on Windows (PowerShell 5.1 and 7; test data and for real)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: With test data - Windows PowerShell 5.1
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows/test_win_checks.ps1
+      - name: With test data - PowerShell 7
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/windows/test_win_checks.ps1
+      - name: For real on this runner - Windows PowerShell 5.1
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows/test_win_checks_real.ps1
+      - name: For real on this runner - PowerShell 7
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/windows/test_win_checks_real.ps1
+
+  windows-ansible:
+    name: Ansible to Windows over WinRM (end to end, from WSL to this runner)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: WinRM on this runner, with a local administrator account for the test
+        shell: powershell
+        run: |
+          $pw = 'Sa-' + [guid]::NewGuid().ToString('N').Substring(0, 20) + '!'
+          "::add-mask::$pw"
+          net user satest $pw /add | Out-Null
+          net localgroup Administrators satest /add | Out-Null
+          New-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System -Name LocalAccountTokenFilterPolicy -Value 1 -PropertyType DWord -Force | Out-Null
+          Enable-PSRemoting -Force -SkipNetworkProfileCheck | Out-Null
+          Set-Item -Path WSMan:\localhost\Service\Auth\Basic -Value $true
+          Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $true
+          "SATEST_PW=$pw" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - uses: Vampire/setup-wsl@v3
+        with:
+          distribution: Ubuntu-22.04
+          additional-packages: python3-venv python3-pip
+      - name: Ansible (in WSL) runs the Windows playbooks against this runner
+        shell: wsl-bash {0}
+        env:
+          WSLENV: SATEST_PW
+        run: |
+          set -u
+          python3 -m venv /tmp/v && /tmp/v/bin/pip -q install ansible-core pywinrm
+          rm -rf ~/sa && cp -r . ~/sa && cd ~/sa
+          cat > /tmp/inv.yml <<'INV'
+          all:
+            hosts:
+              winrunner:
+                ansible_host: 127.0.0.1
+                ansible_connection: winrm
+                ansible_port: 5985
+                ansible_winrm_scheme: http
+                ansible_winrm_transport: basic
+                ansible_user: satest
+                ansible_password: "{{ lookup('env', 'SATEST_PW') }}"
+          INV
+          export ANSIBLE_NOCOLOR=1 ANSIBLE_ROLES_PATH=roles
+          fail=0
+          /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_connection_test.yml | tee /tmp/1.out || fail=1
+          /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_health_check.yml -e health_checks=all -e win_check_disk_warn_pct=1 | tee /tmp/2.out
+          grep -q 'Checks run: disk, services, performance, time, network, eventlog, security, audit, accounts, certs, patching' /tmp/2.out || { echo 'FAIL: not every check ran'; fail=1; }
+          if grep -q 'could not run' /tmp/2.out; then echo 'FAIL: a check could not run'; fail=1; fi
+          /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_troubleshoot.yml -e ts_area=overview | tee /tmp/3.out || fail=1
+          /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_cert_report.yml | tee /tmp/4.out
+          grep -q 'DAYS  EXPIRES' /tmp/4.out || { echo 'FAIL: no certificate table'; fail=1; }
+          exit $fail
+      - name: The findings reached the Windows Application event log
+        shell: powershell
+        run: |
+          $n = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'site-health' } -MaxEvents 50 -ErrorAction SilentlyContinue).Count
+          "site-health events in the Application log: $n"
+          if ($n -lt 1) { exit 1 }

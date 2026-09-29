@@ -1,0 +1,26 @@
+---
+# Runs files/win_certs.ps1 on the server (ansible.builtin.script: no collection needed) with the
+# settings from defaults/main.yml, then adds its findings to this host's list.
+- name: Windows certs | check
+  ansible.builtin.script: win_certs.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'warn_days': win_check_certs_warn_days, 'crit_days': win_check_certs_crit_days,
+          'expired_report_days': win_check_certs_expired_report_days, 'stores': win_check_certs_stores,
+          'ignore_subjects': win_check_certs_ignore_subjects, 'endpoints': win_check_certs_endpoints} | to_json }}
+  register: _win_check_out
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Windows certs | findings
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: win_result.yml
+  vars:
+    _win_check: certs
+
+- name: Windows certs | the list for the certificate report
+  ansible.builtin.set_fact:
+    check_certs_inventory: >-
+      {{ (win_facts.certs.inventory | default([])) | map('combine', {'host': inventory_hostname}) | list }}

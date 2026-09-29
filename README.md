@@ -27,10 +27,13 @@ Fedora host with SELinux enforcing and auditd.
 | POA&M status | `playbooks/poam_status.yml` | overdue / due-soon POA&M items from `poam/poam.csv`; optional STIG Manager cross-check for open CAT I/II findings with no POA&M item |
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | workflow step: one incident per finding, updated (not duplicated) on later runs, noted or resolved when it clears |
 | ServiceNow health | `playbooks/servicenow_health.yml` | the instance answers its API; MID Servers up and validated |
-| Patch hosts | `playbooks/patch_hosts.yml` | dnf update one host at a time, reboot only if needed and allowed, every service back afterwards; never patches AAP or vendor appliances |
+| Patch hosts | `playbooks/patch_hosts.yml` | dnf update one host at a time; **no automatic reboot** unless `automatic_restarts: true`; every service back afterwards; never patches AAP or vendor appliances |
 | Apply approved ACT fix | `playbooks/act_fix_approved.yml` | after an approval: runs exactly the approved commands (no model), then the checks run again; as *Check* a dry run |
 | Service watch (+ apply) | `playbooks/service_watch.yml`, `service_fix_approved.yml` | watch the stigman/nginx containers; ACT root cause; approval or self-heal ([docs/SERVICE_WATCH_DEMO.md](docs/SERVICE_WATCH_DEMO.md)) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | MySQL 8.4 + STIG Manager + nginx (TLS) on podman/Quadlet |
+| **Windows** health check, troubleshoot, certificate report, connection test | `playbooks/win_*.yml` | the same for Windows servers over WinRM: disk, services, performance, time, network, event log, security, audit policy, accounts, certificates, patching ([docs/WINDOWS.md](docs/WINDOWS.md)) |
+| Windows patch | `playbooks/win_patch.yml` | install what Software Center (ConfigMgr) offers, one server at a time; **no automatic restart** unless `automatic_restarts: true`; every service back afterwards; maintenance windows respected |
+| ACT for Windows - install | `playbooks/win_act_install.yml` | ACT on the Windows servers in `C:\ProgramData\act`: locked down to Administrators and SYSTEM, unblocked, SHA256-checked every run |
 
 ## Documentation
 
@@ -41,8 +44,10 @@ Fedora host with SELinux enforcing and auditd.
 | [docs/SETUP_AAP.md](docs/SETUP_AAP.md) | the setup, step by step: Git, credentials, project, inventory, templates, ServiceNow |
 | [docs/USING_YOUR_AAP_INVENTORY.md](docs/USING_YOUR_AAP_INVENTORY.md) | your inventory is already in AAP: the groups to add and which variables go on which group |
 | [docs/RUNBOOKS.md](docs/RUNBOOKS.md) | every check and finding, and what to do about it |
-| [docs/WORKFLOWS_AND_SCHEDULES.md](docs/WORKFLOWS_AND_SCHEDULES.md) | Daily health, Weekly compliance, Patch with checks, Fix with approval (ACT); schedules |
+| [docs/WORKFLOWS_AND_SCHEDULES.md](docs/WORKFLOWS_AND_SCHEDULES.md) | how to build any workflow, and 17 ready-made ones for Linux, Windows and both (health, compliance, patching with a dry run first, ACT fixes, certificates, MariaDB, investigations, STIG Manager); schedules |
 | [docs/ADDING_ACT.md](docs/ADDING_ACT.md) | adding ACT later (explain / diagnose / self-heal), and writing your own check |
+| [docs/WINDOWS.md](docs/WINDOWS.md) | Windows servers: WinRM, credential, inventory, templates, settings, patching, ACT |
+| [docs/DRY_RUNS.md](docs/DRY_RUNS.md) | dry runs (Job type Check): what each template does in one, where to set it, examples |
 | [docs/SECRETS.md](docs/SECRETS.md) | where every secret lives |
 | [docs/SERVICE_WATCH_DEMO.md](docs/SERVICE_WATCH_DEMO.md) | the service-watch demo |
 | [docs/pdf/](docs/pdf/README.md) | **PDFs** of the guides: the runbooks setup guide, the service-watch demo, the ACT guides and leadership briefs |
@@ -54,6 +59,7 @@ Fedora host with SELinux enforcing and auditd.
 | `playbooks/` | one playbook per job template |
 | `playbooks/group_vars/` | **your settings**, one file per AAP group (`all.yml` = every host); yours - updates never overwrite them |
 | `roles/check_*/` | one role per health check; settings in `defaults/main.yml` |
+| `roles/win_check_*/`, `roles/win_troubleshoot/` | the Windows checks (a PowerShell script each, in `files/`) and Windows troubleshooting |
 | `roles/site_findings/` | the findings contract: start, run a check safely, report, publish, pass/fail |
 | `roles/site_act/` | the bridge from any check's findings to ACT |
 | `roles/troubleshoot/`, `roles/servicenow/`, `roles/patch/`, `roles/poam/` | the other runbooks |
