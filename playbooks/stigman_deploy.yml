@@ -6,6 +6,17 @@
 # and optionally "Container registry login (hosts)". Nothing secret goes in variables.
 #
 #   ansible-playbook playbooks/stigman_deploy.yml -l stigman01.example.mil
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('stigman') }}"
+
 - name: STIG Manager stack
   hosts: "{{ target | default('stigman') }}"
   become: true

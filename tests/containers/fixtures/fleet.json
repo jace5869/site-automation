@@ -1,0 +1,191 @@
+{
+ "_comment": "Health check: root and two users with a container called web, a stopped Quadlet whose container is gone, unhealthy (podman 3 and 4 shapes), recent and old crashes, restart loop, OOM, generated units, users without linger or without /run/user/UID.",
+ "users": {
+  "alice": {
+   "uid": 1001,
+   "home": "home/alice",
+   "linger": 1,
+   "runtime": 1,
+   "storage": 1,
+   "subuid": 1
+  },
+  "bob": {
+   "uid": 1002,
+   "home": "home/bob",
+   "linger": 1,
+   "runtime": 1,
+   "storage": 1,
+   "subuid": 1
+  },
+  "dave": {
+   "uid": 1004,
+   "home": "home/dave",
+   "linger": 0,
+   "runtime": 0,
+   "storage": 1,
+   "subuid": 1
+  },
+  "eve": {
+   "uid": 1005,
+   "home": "home/eve",
+   "linger": 0,
+   "runtime": 1,
+   "storage": 1,
+   "conmon": 1
+  },
+  "frank": {
+   "uid": 1006,
+   "home": "home/frank",
+   "linger": 0,
+   "runtime": 0,
+   "storage": 0,
+   "subuid": 1
+  },
+  "gina": {
+   "uid": 1007,
+   "home": "home/gina",
+   "linger": 0,
+   "runtime": 0,
+   "storage": 1,
+   "subuid": 1
+  }
+ },
+ "owners": {
+  "root": {
+   "containers": [
+    {
+     "name": "web",
+     "state": "running",
+     "policy": "always",
+     "health": "healthy",
+     "podman": 4
+    },
+    {
+     "name": "job",
+     "state": "exited",
+     "exit": 0,
+     "exited_ago": 7200
+    },
+    {
+     "name": "oldcrash",
+     "state": "exited",
+     "exit": 1,
+     "exited_ago": 259200
+    },
+    {
+     "name": "crash",
+     "state": "exited",
+     "exit": 2,
+     "exited_ago": 3600
+    },
+    {
+     "name": "app",
+     "state": "exited",
+     "exit": 0,
+     "exited_ago": 600
+    },
+    {
+     "name": "loop",
+     "state": "running",
+     "restarts": 5
+    },
+    {
+     "name": "big",
+     "state": "exited",
+     "exit": 137,
+     "exited_ago": 1800,
+     "oom": true
+    },
+    {
+     "name": "sick",
+     "state": "running",
+     "health": "unhealthy",
+     "podman": 4
+    },
+    {
+     "name": "systemd-db",
+     "state": "running",
+     "unit": "db.service"
+    }
+   ],
+   "units": {
+    "db.service": {
+     "LoadState": "loaded",
+     "ActiveState": "active",
+     "SubState": "running",
+     "UnitFileState": "generated",
+     "WantedBy": "multi-user.target",
+     "creates": "systemd-db"
+    },
+    "container-app.service": {
+     "LoadState": "loaded",
+     "ActiveState": "inactive",
+     "SubState": "dead",
+     "UnitFileState": "enabled",
+     "WantedBy": "multi-user.target",
+     "ExecStart": "{ path=/usr/bin/podman ; argv[]=/usr/bin/podman start app ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+     "creates": "app"
+    },
+    "myweb.service": {
+     "LoadState": "loaded",
+     "ActiveState": "failed",
+     "SubState": "failed",
+     "Result": "exit-code",
+     "UnitFileState": "disabled",
+     "WantedBy": "multi-user.target",
+     "ExecStart": "{ path=/usr/bin/podman ; argv[]=/usr/bin/podman run --cidfile=/run/myweb.service.ctr-id --rm --sdnotify=conmon -d --name web2 registry.example.com/web2:1 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+     "creates": "web2"
+    }
+   }
+  },
+  "alice": {
+   "containers": [
+    {
+     "name": "tool",
+     "state": "exited",
+     "exit": 0,
+     "exited_ago": 100
+    }
+   ],
+   "units": {
+    "web.service": {
+     "LoadState": "loaded",
+     "ActiveState": "failed",
+     "SubState": "failed",
+     "Result": "exit-code",
+     "UnitFileState": "generated",
+     "WantedBy": "default.target",
+     "creates": "web"
+    }
+   }
+  },
+  "bob": {
+   "containers": [
+    {
+     "name": "web",
+     "state": "running",
+     "health": "unhealthy",
+     "podman": 3,
+     "policy": "always"
+    }
+   ],
+   "units": {}
+  },
+  "eve": {
+   "containers": [
+    {
+     "name": "svc",
+     "state": "running",
+     "policy": "always"
+    }
+   ],
+   "units": {}
+  }
+ },
+ "files": {
+  "etc/containers/systemd/db.container": "[Container]\nImage=registry.example.com/db:1\n\n[Install]\nWantedBy=multi-user.target\n",
+  "etc/systemd/system/myweb.service": "[Service]\nEnvironment=PODMAN_SYSTEMD_UNIT=%n\nExecStart=/usr/bin/podman run --rm -d --name web2 registry.example.com/web2:1\n",
+  "home/alice/.config/containers/systemd/web.container": "[Unit]\nDescription=web\n\n[Container]\nContainerName=web\nImage=registry.example.com/web:1\n\n[Install]\nWantedBy=default.target\n",
+  "home/dave/.config/containers/systemd/svc.container": "[Container]\nImage=registry.example.com/svc:1\n\n[Install]\nWantedBy=default.target\n"
+ }
+}

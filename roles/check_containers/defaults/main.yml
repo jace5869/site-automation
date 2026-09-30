@@ -1,0 +1,17 @@
+---
+# CONTAINERS: the podman containers on the host - root's (rootful) and every user's (rootless) -
+# found by themselves (roles/podman_discover: which ones exist, which systemd unit runs each one,
+# which should be running). Read-only. Which containers and users are looked at, and which are
+# left out: the podman_discover_* settings.
+
+# Containers that MUST exist and run on these hosts: a container name, or OWNER/NAME for one
+# owner (root/web, alice/web). A name alone matches that container of any owner. Also matches a
+# Quadlet file name without .container, e.g. [stigman-mysql, stigman-api, alice/web].
+check_containers_required: []
+
+# A container that stopped with an error (exit code not 0) this many hours ago or less is reported
+# (containers:crashed). Older crashes are history and are not reported.
+check_containers_recent_hours: 24
+
+# More restarts than this (podman's restart count, or its systemd unit's) = a restart loop.
+check_containers_restart_warn: 3

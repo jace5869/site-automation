@@ -1,8 +1,11 @@
 # YOUR SETTINGS FOR THE STIG MANAGER HOSTS (AAP group stigman).
 # Service watch and STIG Manager deploy run on this group by themselves (no target needed).
-# Service watch: the containers to watch, dependencies first. A container name (sudo podman ps -a)
-# or a service name without .service: how each one is run (systemd unit or plain podman) is found
-# by itself. Add `unit: NAME.service` under one only if the job output shows the wrong unit.
+# Service watch finds the containers that should be running by itself (root's and each user's).
+# This list is watched in any case, first and in this order (dependencies first), and a container
+# in it that is missing is reported. A container name (sudo podman ps -a) or a service name
+# without .service: how each one is run (systemd unit or plain podman) is found by itself. Add
+# `unit: NAME.service` under one only if the job output shows the wrong unit, and `user: NAME`
+# for a container of a user (rootless podman).
 watch_containers:
   - name: mysql
   - name: kcmysql

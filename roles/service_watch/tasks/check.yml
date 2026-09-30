@@ -1,50 +1,98 @@
 ---
 # Are the watched containers up, and how is each one run? Sets `service_watch`:
 #   states, pages, healthy, findings;
-#   managers: per container its systemd unit ('' = plain podman) and the unit's state;
+#   managers: per container (keyed OWNER/NAME) its owner, systemd unit ('' = plain podman) and the
+#             unit's state; watched: the same, in dependency order;
 #   fixes:    the standard fix for what is down, in dependency order (systemctl for a container a
-#             unit runs, podman otherwise); no_fix: down containers a start cannot bring back.
+#             unit runs, podman otherwise; as the container's owner); fix_by: the same per container;
+#   no_fix:   down containers a start cannot bring back; down_users: down containers of users.
 # _watch_retries > 0 waits for them to come up (used after a fix); 0 = look once.
+# Which containers: found once per job (watch_discover: roles/podman_discover) plus watch_containers.
+
+- name: Check | find the containers on this host (watch_discover)
+  ansible.builtin.include_role:
+    name: podman_discover
+  when:
+    - watch_discover | bool
+    - _watch_list is not defined
+
+- name: Check | the containers to watch (watch_containers first, then the ones found)
+  ansible.builtin.set_fact:
+    _watch_list: >-
+      {{ watch_containers | watch_targets(site_containers | default([]), watch_discover | bool,
+                                          (site_podman | default({})).skipped | default([])) }}
+  when: _watch_list is not defined
 
 # How each watched container is run, and which container to look at. Read-only, so it also
 # runs in check mode. Prints key=value lines: how, unit, source, container (the container's real
-# name: a unit may run it under another name, e.g. Quadlet's systemd-NAME), and the unit's
-# LoadState / ActiveState / SubState / Result from `systemctl show`.
+# name: a unit may run it under another name, e.g. Quadlet's systemd-NAME), uid, and the unit's
+# LoadState / ActiveState / SubState / Result from `systemctl show` (`systemctl --user show`, as
+# the owner, for a user's container). error= when a user's containers cannot be looked at.
 - name: Check | how each container is run (its systemd unit, or plain podman)
   ansible.builtin.shell:
     cmd: |
       name={{ item.name | quote }}
+      cname={{ item.container | quote }}
       unit={{ item.unit | default('') | quote }}
-      how=config
-      src=
-      cname=$name
-      case "$name" in *.service) unit=${unit:-$name}; name=${name%.service}; cname=$name ;; esac
+      how={{ (item.how | default('', true) or ('config' if item.unit | default('') else '')) | quote }}
+      src={{ item.source | default('') | quote }}
+      owner={{ item.owner | quote }}
+      whole_user={{ 'yes' if item.whole_user | default(false) else 'no' }}
+      cd /
+      unset DBUS_SESSION_BUS_ADDRESS
+      if [ "$owner" = root ]; then
+        uid=0
+        as_owner() { "$@"; }
+        sc() { systemctl "$@"; }
+        quadlets() {
+          for d in {{ watch_quadlet_dirs | map('quote') | join(' ') }}; do
+            [ -d "$d" ] && find "$d" -path "$d/users" -prune -o -type f -name '*.container' -print 2>/dev/null
+          done
+        }
+      else
+        uid=$(id -u "$owner" 2>/dev/null)
+        if [ -z "$uid" ]; then echo "error=there is no user $owner on this host"; exit 0; fi
+        if [ ! -d {{ _watch_run_user_dir | default('/run/user') | quote }}"/$uid" ]; then
+          echo "uid=$uid"
+          echo "error=there is no /run/user/$uid: the systemd of user $owner is not running (linger is off and $owner is not logged in), so none of the containers of $owner run"
+          echo "no_runtime=1"
+          exit 0
+        fi
+        if [ "$whole_user" = yes ]; then echo "uid=$uid"; echo "whole_user_ok=1"; exit 0; fi
+        home=$(getent passwd "$owner" | cut -d: -f6)
+        as_owner() { runuser -u "$owner" -- env "XDG_RUNTIME_DIR=/run/user/$uid" "$@"; }
+        sc() { as_owner systemctl --user "$@"; }
+        quadlets() {
+          as_owner find "$home/.config/containers/systemd" -type f -name '*.container' 2>/dev/null
+          find {{ _watch_users_quadlet_dir | default('/etc/containers/systemd/users') | quote }}"/$uid" -type f -name '*.container' 2>/dev/null
+          find {{ _watch_users_quadlet_dir | default('/etc/containers/systemd/users') | quote }} -maxdepth 1 -type f -name '*.container' 2>/dev/null
+        }
+      fi
+      echo "uid=$uid"
+      case "$name" in *.service) unit=${unit:-$name}; name=${name%.service}; cname=${name} ;; esac
       if [ -z "$unit" ] && [ {{ watch_find_units | bool | ternary('yes', 'no') }} = yes ]; then
-        label=$(podman container inspect --format '{% raw %}{{ index .Config.Labels "PODMAN_SYSTEMD_UNIT" }}{% endraw %}' "$name" 2>/dev/null)
+        label=$(as_owner podman container inspect --format '{% raw %}{{ index .Config.Labels "PODMAN_SYSTEMD_UNIT" }}{% endraw %}' "$cname" 2>/dev/null)
         if [ -n "$label" ] && [ "$label" != "<no value>" ]; then
           unit=$label
           how=label
         fi
         if [ -z "$unit" ]; then
-          for d in {{ watch_quadlet_dirs | map('quote') | join(' ') }}; do
-            [ -d "$d" ] || continue
-            for f in $(find "$d" -type f -name '*.container' 2>/dev/null | sort); do
-              cn=$(sed -n 's/^[[:space:]]*ContainerName[[:space:]]*=[[:space:]]*//p' "$f" | tail -n 1 | tr -d '[:space:]')
-              stem=$(basename "$f" .container)
-              [ -n "$cn" ] || cn=systemd-$stem
-              if [ "$cn" = "$name" ] || [ "$stem" = "$name" ]; then
-                unit=$stem.service
-                how=quadlet
-                src=$f
-                cname=$cn
-                break 2
-              fi
-            done
+          for f in $(quadlets | sort); do
+            cn=$(as_owner sed -n 's/^[[:space:]]*ContainerName[[:space:]]*=[[:space:]]*//p' "$f" | tail -n 1 | tr -d '[:space:]')
+            stem=$(basename "$f" .container)
+            [ -n "$cn" ] || cn=systemd-$stem
+            if [ "$cn" = "$name" ] || [ "$stem" = "$name" ]; then
+              unit=$stem.service
+              how=quadlet
+              src=$f
+              cname=$cn
+              break
+            fi
           done
         fi
         if [ -z "$unit" ]; then
           for c in "$name.service" "container-$name.service"; do
-            if systemctl show -p ExecStart "$c" 2>/dev/null | grep -q podman; then
+            if sc show -p ExecStart "$c" 2>/dev/null | grep -q podman; then
               unit=$c
               how=unit-name
               break
@@ -58,20 +106,20 @@
         exit 0
       fi
       case "$unit" in *.service) ;; *) unit=$unit.service ;; esac
-      if ! podman container exists "$cname" 2>/dev/null; then
-        c=$(podman ps -a --filter "label=PODMAN_SYSTEMD_UNIT=$unit" --format '{% raw %}{{.Names}}{% endraw %}' 2>/dev/null | head -n 1)
-        [ -n "$c" ] || c=$(systemctl show -p ExecStart "$unit" 2>/dev/null | sed -n 's/.*--name[= ]\([^ ;%]*\).*/\1/p' | head -n 1)
+      if ! as_owner podman container exists "$cname" 2>/dev/null; then
+        c=$(as_owner podman ps -a --filter "label=PODMAN_SYSTEMD_UNIT=$unit" --format '{% raw %}{{.Names}}{% endraw %}' 2>/dev/null | head -n 1)
+        [ -n "$c" ] || c=$(sc show -p ExecStart "$unit" 2>/dev/null | sed -n 's/.*--name[= ]\([^ ;%]*\).*/\1/p' | head -n 1)
         [ -n "$c" ] && cname=$c
       fi
       echo "how=$how"
       echo "unit=$unit"
       echo "source=$src"
       echo "container=$cname"
-      systemctl show -p LoadState -p ActiveState -p SubState -p Result -p SourcePath "$unit" 2>/dev/null
+      sc show -p LoadState -p ActiveState -p SubState -p Result -p SourcePath "$unit" 2>/dev/null
     executable: /bin/bash
-  loop: "{{ watch_containers }}"
+  loop: "{{ _watch_list }}"
   loop_control:
-    label: "{{ item.name }}"
+    label: "{{ item.key }}"
   register: _watch_units_found
   changed_when: false
   failed_when: false
@@ -79,12 +127,18 @@
 
 - name: Check | container state
   ansible.builtin.command:
-    argv: [podman, container, inspect, "{{ _cname }}"]
+    argv: >-
+      {{ ([] if item.item.owner == 'root'
+          else ['runuser', '-u', item.item.owner, '--', 'env', 'XDG_RUNTIME_DIR=/run/user/' ~ (_kv.uid | default(item.item.uid))])
+         + ['podman', 'container', 'inspect', _cname] }}
+    chdir: /
   loop: "{{ _watch_units_found.results }}"
   loop_control:
-    label: "{{ _cname }}"
+    label: "{{ item.item.key }}"
   vars:
-    _cname: "{{ (item.stdout_lines | default([]) | select('match', '^container=') | first | default('container=' ~ item.item.name))[10:] }}"
+    _kv: "{{ dict(item.stdout_lines | default([]) | select('search', '=') | map('split', '=', 1) | list) }}"
+    _cname: "{{ _kv.container | default(item.item.container) }}"
+  when: (_kv.error | default('')) | length == 0 and not (item.item.whole_user | default(false))
   register: _watch_inspect
   changed_when: false
   failed_when: false
@@ -104,9 +158,9 @@
     timeout: 5
     validate_certs: false
     status_code: "{{ watch_url_ok_status }}"
-  loop: "{{ watch_containers | selectattr('url', 'defined') | selectattr('url') | list }}"
+  loop: "{{ _watch_list | selectattr('url', 'defined') | selectattr('url') | list }}"
   loop_control:
-    label: "{{ item.name }}: {{ item.url }}"
+    label: "{{ item.key }}: {{ item.url }}"
   register: _watch_http
   failed_when: false
   until: (_watch_http.status | default(-1) | int) in watch_url_ok_status
@@ -120,38 +174,60 @@
       {%- set states = {} -%}
       {%- set pages = {} -%}
       {%- set managers = {} -%}
+      {%- set watched = [] -%}
       {%- set fixes = [] -%}
       {%- set fix_by = {} -%}
       {%- set nofix = [] -%}
+      {%- set down_users = [] -%}
       {%- set how_says = {'config': 'set in watch_containers', 'label': 'its PODMAN_SYSTEMD_UNIT label',
-                          'quadlet': 'Quadlet file ', 'unit-name': 'a unit that runs podman'} -%}
+                          'quadlet': 'Quadlet file ', 'unit-name': 'a unit that runs podman',
+                          'unit-file': 'a unit file that runs podman'} -%}
       {%- for u in _watch_units_found.results -%}
+      {%-   set e = u.item -%}
       {%-   set kv = {} -%}
       {%-   for line in u.stdout_lines | default([]) if '=' in line -%}
       {%-     set _ = kv.update({line.split('=', 1)[0]: line.split('=', 1)[1]}) -%}
       {%-   endfor -%}
-      {%-   set unit = kv.unit | default('') if kv.LoadState | default('') not in ['not-found', ''] else '' -%}
+      {%-   set quadlet_unloaded = kv.how | default('') == 'quadlet' and kv.LoadState | default('') == 'not-found' -%}
+      {%-   set unit = kv.unit | default('') if (kv.LoadState | default('') not in ['not-found', ''] or quadlet_unloaded) else '' -%}
+      {%-   set uid = kv.uid | default(e.uid) -%}
+      {%-   set cn = kv.container | default(e.container) -%}
       {%-   set st = (kv.ActiveState | default('unknown')) ~ ' (' ~ (kv.SubState | default('?')) ~ ')'
                      ~ ((', result ' ~ kv.Result) if kv.Result | default('success') not in ['success', ''] else '') -%}
-      {%-   set _ = managers.update({u.item.name: {
-                'unit': unit, 'how': kv.how | default('none') if unit else 'none',
+      {%-   set _ = managers.update({e.key: {
+                'key': e.key, 'owner': e.owner, 'uid': uid, 'run_as': e.owner | podman_run_as(uid),
+                'name': e.name, 'container': cn, 'whole_user': e.whole_user | default(false),
+                'label': ('the containers of user ' ~ e.owner ~ ' (' ~ e.wants | default(0) ~ ' should start at boot)')
+                         if e.whole_user | default(false) else
+                         e.name ~ ((' (container ' ~ cn ~ ')') if cn != e.name else '')
+                         ~ ' (' ~ ('root' if e.owner == 'root' else 'user ' ~ e.owner) ~ ')',
+                'unit': unit, 'unit_unloaded': quadlet_unloaded, 'how': kv.how | default('none') if unit else 'none',
                 'how_text': how_says.get(kv.how | default(''), '') ~ (kv.source | default('') if kv.how | default('') == 'quadlet' else ''),
                 'source': kv.SourcePath | default(kv.source | default('')),
                 'active': kv.ActiveState | default('') if unit else '', 'result': kv.Result | default('') if unit else '',
-                'state': st if unit else '', 'container': kv.container | default(u.item.name)}}) -%}
+                'state': st if unit else '', 'error': kv.error | default(''), 'no_runtime': kv.no_runtime | default('') == '1'}}) -%}
+      {%-   set _ = watched.append(managers[e.key]) -%}
       {%- endfor -%}
       {%- for r in _watch_inspect.results -%}
-      {%-   set n = r.item.item.name -%}
-      {%-   set m = managers.get(n, {'unit': '', 'active': '', 'result': '', 'state': '', 'container': n}) -%}
-      {%-   set cn = m.container | default(n) -%}
-      {%-   set n = n if cn == n else n ~ ' (container ' ~ cn ~ ')' -%}
-      {%-   set by = (' Its systemd unit ' ~ m.unit ~ ' is ' ~ m.state ~ '.') if m.unit else '' -%}
+      {%-   set k = r.item.item.key -%}
+      {%-   set m = managers[k] -%}
+      {%-   set n = m.label -%}
+      {%-   set sc = m.run_as ~ ('systemctl --user ' if m.owner != 'root' else 'systemctl ') -%}
+      {%-   set by = (' Its systemd ' ~ ('user ' if m.owner != 'root' else '') ~ 'unit ' ~ m.unit ~ ' is ' ~ m.state
+                      ~ (' - systemd has not loaded it (daemon-reload needed?)' if m.unit_unloaded else '') ~ '.') if m.unit else '' -%}
       {%-   set down = true -%}
       {%-   set unhealthy = false -%}
-      {%-   if r.rc != 0 -%}
+      {%-   if m.error -%}
+      {%-     set _ = states.update({n: 'not checked: ' ~ m.error}) -%}
+      {%-     set _ = f.append(('' if m.whole_user else 'container ') ~ n ~ ' cannot be checked: ' ~ m.error) -%}
+      {%-   elif m.whole_user -%}
+      {%-     set down = false -%}
+      {%-     set _ = states.update({n: 'their systemd runs now (the next run looks at each container)'}) -%}
+      {%-   elif r.rc | default(1) != 0 -%}
       {%-     if m.unit -%}
       {%-       set _ = states.update({n: 'not running (unit ' ~ m.unit ~ ' ' ~ m.state ~ ')'}) -%}
-      {%-       set _ = f.append('container ' ~ n ~ ' is not running: its systemd unit ' ~ m.unit ~ ' is ' ~ m.state
+      {%-       set _ = f.append('container ' ~ n ~ ' is not running: its systemd ' ~ ('user ' if m.owner != 'root' else '') ~ 'unit '
+                                 ~ m.unit ~ ' is ' ~ m.state ~ (' - systemd has not loaded it' if m.unit_unloaded else '')
                                  ~ ' (a container a unit runs usually exists only while the unit runs)') -%}
       {%-     else -%}
       {%-       set _ = states.update({n: 'does not exist'}) -%}
@@ -176,18 +252,27 @@
       {%-     endif -%}
       {%-   endif -%}
       {%-   if down -%}
-      {%-     if m.unit and m.result == 'start-limit-hit' -%}
-      {%-       set fx = ['systemctl reset-failed ' ~ m.unit, 'systemctl start ' ~ m.unit] -%}
+      {%-     if m.error and m.no_runtime -%}
+      {%-       set fx = ['loginctl enable-linger ' ~ m.owner] -%}
+      {%-     elif m.error -%}
+      {%-       set fx = [] -%}
+      {%-       set _ = nofix.append(n) -%}
+      {%-     elif m.unit and m.unit_unloaded -%}
+      {%-       set fx = [sc ~ 'daemon-reload', sc ~ 'start ' ~ m.unit] -%}
+      {%-     elif m.unit and m.result == 'start-limit-hit' -%}
+      {%-       set fx = [sc ~ 'reset-failed ' ~ m.unit, sc ~ 'start ' ~ m.unit] -%}
       {%-     elif m.unit -%}
-      {%-       set fx = [('systemctl restart ' if (unhealthy or m.active in ['active', 'activating', 'reloading']) else 'systemctl start ') ~ m.unit] -%}
-      {%-     elif r.rc == 0 -%}
-      {%-       set fx = [('podman restart ' if unhealthy else 'podman start ') ~ cn] -%}
+      {%-       set fx = [sc ~ ('restart ' if (unhealthy or m.active in ['active', 'activating', 'reloading']) else 'start ') ~ m.unit] -%}
+      {%-     elif r.rc | default(1) == 0 -%}
+      {%-       set fx = [m.run_as ~ ('podman restart ' if unhealthy else 'podman start ') ~ m.container] -%}
       {%-     else -%}
       {%-       set fx = [] -%}
       {%-       set _ = nofix.append(n) -%}
       {%-     endif -%}
-      {%-     set _ = fixes.extend(fx) -%}
-      {%-     if fx -%}{%- set _ = fix_by.update({r.item.item.name: fx}) -%}{%- endif -%}
+      {#-     fixes: what self-heal may run itself - starts only, never loginctl (that waits for a person) -#}
+      {%-     set _ = fixes.extend(fx if not (m.error and m.no_runtime) else []) -%}
+      {%-     if fx -%}{%- set _ = fix_by.update({k: fx}) -%}{%- endif -%}
+      {%-     if m.owner != 'root' and not m.error -%}{%- set _ = down_users.append(k) -%}{%- endif -%}
       {%-   endif -%}
       {%- endfor -%}
       {%- for r in _watch_http.results | default([]) if not r.skipped | default(false) -%}
@@ -199,15 +284,28 @@
       {%-   endif -%}
       {%- endfor -%}
       {{ {'states': states, 'pages': pages, 'healthy': f | length == 0, 'findings': f,
-          'managers': managers, 'fixes': fixes, 'fix_by': fix_by, 'no_fix': nofix} }}
+          'managers': managers, 'watched': watched, 'fixes': fixes, 'fix_by': fix_by, 'no_fix': nofix,
+          'down_users': down_users} }}
 
 - name: Check | how the containers are run
   ansible.builtin.debug:
     msg: >-
       {%- set out = [] -%}
-      {%- for n, m in service_watch.managers.items() -%}
-      {%-   set _ = out.append(n ~ ': ' ~ (('systemd unit ' ~ m.unit ~ ', ' ~ m.state ~ ' - found by ' ~ m.how_text)
+      {%- for m in service_watch.watched -%}
+      {%-   set _ = out.append(m.label ~ ': ' ~ (('cannot be checked: ' ~ m.error) if m.error
+                               else ('systemd ' ~ ('user ' if m.owner != 'root' else '') ~ 'unit ' ~ m.unit ~ ', ' ~ m.state ~ ' - found by ' ~ m.how_text)
                                if m.unit else 'plain podman (no systemd unit runs it)')) -%}
+      {%- endfor -%}
+      {%- if not out -%}
+      {%-   set _ = out.append('Nothing to watch on ' ~ inventory_hostname ~ ': '
+                               ~ ('no container that should run was found (podman not installed, or none has a unit enabled at boot or a restart policy)'
+                                  if watch_discover | bool else 'watch_discover is off')
+                               ~ ' and watch_containers is empty.') -%}
+      {%- endif -%}
+      {%- for u in (site_podman | default({})).skipped | default([]) if watch_discover | bool -%}
+      {%-   set _ = out.append('Not looked at: user ' ~ u.user ~ ' - ' ~ u.reason
+                             ~ ((' (' ~ u.wants ~ ' unit(s) should start at boot: watched as "the containers of user ' ~ u.user ~ '")')
+                                if (u.wants | default(0) | int) > 0 and not u.ignored | default(false) else '')) -%}
       {%- endfor -%}
       {{ out }}
 

@@ -39,10 +39,11 @@ The check runs on a host when **any** of these is true:
 - you set `check_mariadb_enabled: true` for the host or its group.
 
 The **Database health** template does not need this: every server it runs on is checked. It runs
-on the groups `mariadb_hosts`, `mysql_hosts` and `database_hosts`. A **Limit** only narrows that
-list; it cannot add a server that is in none of them. For a server outside those groups (or if your
-group is called `mariadb` or `mysql`), put `target: <group or host>` in the template's **Variables**
-box, or add the server to one of the three groups.
+on the groups `mariadb_hosts`, `mysql_hosts`, `database_hosts`, `mariadb` and `mysql` (since
+0.6.0; before that only the first three). A **Limit** only narrows that list; it cannot add a
+server that is in none of them. For a server outside those groups, put `target: <group or host>`
+in the template's **Variables** box, or add the server to one of those groups. If `target` matches
+no host, the job stops with a message that lists the groups your inventory does have.
 On every other host, in the Health check, the job prints `skipped: the MariaDB/MySQL check is off
 for <host>` and moves on. That is normal; it is not an error.
 
@@ -232,5 +233,5 @@ command line. Nothing here has been run against **your** database: step 3 is the
 | `status query failed: ... Access denied ...` and `attach the "MariaDB monitor" credential` | container root has a password | section 4 |
 | `... is not running (container ... is missing)` but it is running | the name is wrong, or the containers belong to another user | compare with the `podman ps -a` output; `check_mariadb_container_user` |
 | The check runs on the wrong host, or not at all after a rename | a settings file only applies to the group named like the file | section 3 |
-| **Database health** says `skipping: no hosts matched` | the server is in none of `mariadb_hosts`, `mysql_hosts`, `database_hosts` (a Limit cannot add it) | section 1: `target` in the template's Variables, or add it to one of those groups |
+| **Database health** says `skipping: no hosts matched` (0.5.0), or `target '...' matches no host` | the server is in none of `mariadb_hosts`, `mysql_hosts`, `database_hosts`, `mariadb`, `mysql` (a Limit cannot add it) | section 1: `target` in the template's Variables, or add it to one of those groups |
 | Your setting has no effect | another place wins | [VARIABLES.md](VARIABLES.md#3-who-wins-when-the-same-setting-is-in-two-places) |

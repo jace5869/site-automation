@@ -21,6 +21,17 @@
 #
 # It only patches the group win_patch_hosts unless you give a target: set `target:` in the job
 # template's Variables (e.g. target: all), then pick the servers with the Limit at launch.
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('win_patch_hosts') }}"
+
 - name: Windows patch (Software Center)
   hosts: "{{ target | default('win_patch_hosts') }}"
   gather_facts: false

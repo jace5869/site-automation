@@ -1,0 +1,32 @@
+---
+# Test harness: run ONLY the check_containers role against the local machine (fake podman,
+# systemctl, runuser ... on PATH, see fakes.py) and print what it found. Not a shipped playbook.
+- name: Check_containers with a fake podman
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Start
+      ansible.builtin.include_role: {name: site_findings, tasks_from: start.yml}
+    - name: Run the check
+      ansible.builtin.include_role: {name: check_containers}
+    - name: Findings
+      ansible.builtin.debug:
+        msg: "FINDINGS {{ site_findings | map(attribute='id') | sort | join(',') }}"
+    - name: Summaries
+      ansible.builtin.debug:
+        msg: "SUMMARY {{ item.id }} | {{ item.severity }} | {{ item.summary }}"
+      loop: "{{ site_findings }}"
+      loop_control: {label: "{{ item.id }}"}
+    - name: Hints
+      ansible.builtin.debug:
+        msg: "HINT {{ item.id }} | {{ item.hint | default('') }}"
+      loop: "{{ site_findings }}"
+      loop_control: {label: "{{ item.id }}"}
+    - name: Discovered
+      ansible.builtin.debug:
+        msg: >-
+          DISCOVERED {{ site_containers | default([]) | map(attribute='key') | sort | join(',') }}
+          SHOULDRUN {{ site_containers | default([]) | selectattr('should_run') | map(attribute='key') | sort | join(',') }}
+          USERS {{ (site_podman | default({})).users | default([]) | map(attribute='name') | sort | join(',') }}
+          SKIPPED {{ (site_podman | default({})).skipped | default([]) | map(attribute='user') | sort | join(',') }}
+          INSTALLED {{ (site_podman | default({})).installed | default('') }}

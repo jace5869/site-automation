@@ -1,18 +1,31 @@
 ---
-# Job 1: watch podman containers (default: stigman and nginx). All up: nothing else happens and
-# the model is not called. One down: record it, let ACT (GenAI) find the root cause, and then
+# Job 1: watch the podman containers that should be running - found by themselves, root's and
+# each user's (rootless), plus any in watch_containers. All up: nothing else happens and the model
+# is not called. One down: record it, let ACT (GenAI) find the root cause, and then
 #   watch_mode=approval   ACT only proposes the fix. The job FAILS on purpose so the AAP workflow
 #                         takes "Run on fail" to its approval step, then service_fix_approved.yml
 #                         runs exactly what was approved.
 #   watch_mode=self-heal  ACT may start/restart the watched containers itself; the playbook
 #                         re-checks them independently, and runs the standard fix if still down.
 # Each container's systemd unit is found automatically (Quadlet, podman generate systemd, a unit
-# of your own): such a container is started with systemctl, never podman start.
+# of your own): such a container is started with systemctl, never podman start. A user's
+# container is started as that user (runuser -u USER -- env XDG_RUNTIME_DIR=/run/user/UID ...).
 # Incidents are recorded on the host (/var/log/service-watch/incidents.jsonl + syslog) and in
 # AAP's job history.
 #
 #   ansible-playbook playbooks/service_watch.yml -l stigman01.example.mil
 #   ansible-playbook playbooks/service_watch.yml -e watch_mode=self-heal
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('stigman') }}"
+
 - name: Service watch
   hosts: "{{ target | default('stigman') }}"
   become: true

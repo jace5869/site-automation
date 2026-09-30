@@ -15,7 +15,7 @@ rc=$?
 fails=0
 # rc 2 = the host failed (findings). Anything else non-zero means the playbook itself broke.
 if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then echo "FAIL - playbook exit $rc"; tail -30 "$out"; fails=$((fails + 1)); fi
-if ! grep -q "Checks run: disk, mounts, services, performance, time, network, logging, mariadb, selinux, fapolicyd, auditd, accounts, certs, patching" "$out"; then
+if ! grep -q "Checks run: disk, mounts, services, performance, time, network, logging, mariadb, containers, selinux, fapolicyd, auditd, accounts, certs, patching" "$out"; then
     echo "FAIL - not every check ran"; grep "Checks run" "$out"; fails=$((fails + 1))
 fi
 # A check that broke: reported as <check>:check-error. (Without sudo some checks cannot read root files:
@@ -26,4 +26,4 @@ if [ -n "$bad" ]; then echo "FAIL - a check could not run:"; echo "$bad"; fails=
 if grep -q "The task includes an option with an undefined variable\|is undefined\|TemplateSyntaxError" "$out"; then
     echo "FAIL - an undefined variable or template error"; grep -m3 "undefined\|TemplateSyntax" "$out"; fails=$((fails + 1))
 fi
-if [ "$fails" -eq 0 ]; then echo "ok   - all 14 Linux check roles ran (exit $rc)"; else exit 1; fi
+if [ "$fails" -eq 0 ]; then echo "ok   - all 15 Linux check roles ran (exit $rc)"; else exit 1; fi

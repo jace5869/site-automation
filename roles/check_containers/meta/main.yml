@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: check_containers
+  description: "Health check: podman containers, rootful and rootless, found by themselves - down, unhealthy, crashed, restart loops, OOM kills, users without linger."
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

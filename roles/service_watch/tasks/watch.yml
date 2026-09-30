@@ -14,6 +14,23 @@
     fail_msg: "watch_mode must be self-heal or approval, not {{ watch_mode }}"
     quiet: true
 
+# The mode actually used on THIS host. A separate variable on purpose: watch_mode is usually a
+# survey answer (an extra variable), and nothing - not even set_fact - can change an extra
+# variable. AAP and the diagnose-only groups never self-heal ('aap', 'aap_hosts' written out: an
+# extra variable can override _watch_no_heal, not a literal).
+- name: Watch | the mode for this host (never self-heal on AAP or the diagnose-only groups)
+  ansible.builtin.set_fact:
+    _watch_mode: >-
+      {{ 'approval' if (watch_mode == 'self-heal' and group_names | intersect(_watch_no_heal + ['aap', 'aap_hosts']) | length > 0)
+         else watch_mode }}
+
+- name: Watch | self-heal is off on this host
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} is in {{ group_names | intersect(_watch_no_heal + ['aap', 'aap_hosts']) | join(', ') }}
+      (diagnose only): self-heal is off here; a fix waits for approval and is applied by hand.
+  when: watch_mode != _watch_mode
+
 - name: Watch | check the containers
   ansible.builtin.include_tasks: check.yml
 
@@ -33,19 +50,32 @@
     tasks_from: env.yml
   when: not service_watch_before.healthy
 
-- name: Watch | ACT finds the root cause{{ ' and may start the container' if watch_mode == 'self-heal' else '; every fix waits for approval' }}
-  ansible.builtin.include_role:
-    name: act_triage
-  vars:
-    act_triage_builtin_checks: false                   # only these containers, not host-wide noise
-    act_triage_findings_extra: "{{ service_watch_before.findings }}"
-    act_triage_allow: "{{ _watch_fix_patterns if watch_mode == 'self-heal' else [] }}"
-    act_triage_extra_instructions: "{{ watch_instructions }}"
-    act_triage_env: "{{ _site_act_env_all | combine(watch_act_env) }}"
-    act_triage_timeout: "{{ watch_act_timeout }}"
-    act_triage_fail_in_role: false                     # this role decides pass/fail below
-    act_triage_write_report: false                     # the incident log is the record
+- name: Watch | ACT
   when: not service_watch_before.healthy
+  block:
+    # ACT cannot read a user's (rootless) containers itself: the playbook does, for it
+    - name: Watch | evidence for the down containers of users (ACT reads it with cat)
+      ansible.builtin.include_tasks: evidence.yml
+      when: service_watch_before.down_users | default([]) | length > 0
+
+    - name: Watch | ACT finds the root cause{{ ' and may start the container' if _watch_mode == 'self-heal' else '; every fix waits for approval' }}
+      ansible.builtin.include_role:
+        name: act_triage
+      vars:
+        act_triage_builtin_checks: false                   # only these containers, not host-wide noise
+        act_triage_findings_extra: "{{ service_watch_before.findings }}"
+        act_triage_allow: "{{ _watch_fix_patterns if _watch_mode == 'self-heal' else [] }}"
+        act_triage_extra_instructions: "{{ watch_instructions }}"
+        act_triage_env: "{{ _site_act_env_all | combine(watch_act_env) }}"
+        act_triage_timeout: "{{ watch_act_timeout }}"
+        act_triage_fail_in_role: false                     # this role decides pass/fail below
+        act_triage_write_report: false                     # the incident log is the record
+  always:
+    - name: Watch | remove the evidence file
+      ansible.builtin.file:
+        path: "{{ _watch_evidence_file }}"
+        state: absent
+      when: _watch_evidence_file | default('') | length > 0
 
 - name: Watch | re-check the containers ourselves (the model's word is not enough)
   ansible.builtin.include_tasks: check.yml
@@ -58,7 +88,8 @@
   vars:
     _watch_run_cmds: "{{ service_watch.fixes }}"
   when:
-    - watch_mode == 'self-heal'
+    - _watch_mode == 'self-heal'
+    - group_names | intersect(['aap', 'aap_hosts']) | length == 0
     - not service_watch_before.healthy
     - not service_watch.healthy
     - service_watch.fixes | length > 0
@@ -69,82 +100,34 @@
     _watch_retries: "{{ watch_verify_retries }}"
   when: _watch_ran is defined and _watch_ran.stdout_lines is defined
 
-# ACT's proposals, made right: a `podman start/restart/run` of a container that a systemd unit
-# runs becomes `systemctl start/restart UNIT`. ACT proposed nothing (or could not run)? Then the
-# standard fix is proposed, and the approver is told it is not from ACT.
+# ACT's proposals, made right for each container's OWNER: a `podman start/restart/run` of a
+# container that a systemd unit runs becomes `systemctl start/restart UNIT` (for a user's container:
+# runuser -u USER -- env XDG_RUNTIME_DIR=/run/user/UID systemctl --user ...), and the standard fix is
+# added for every down container no proposal covers (ACT proposed nothing, or could not run: the
+# approver is told it is not from ACT). In dependency order. (plugins/filter: watch_fix_commands)
 - name: Watch | the fix for a person to approve
   ansible.builtin.set_fact:
-    _watch_proposed: >-
-      {%- set out = [] -%}
-      {%- for c in _watch_proposed_act -%}
-      {%-   set w = c.split() -%}
-      {%-   set w = w[1:] if (w and w[0] == 'sudo') else w -%}
-      {%-   set w = w[:1] + w[2:] if (w | length > 2 and w[0] == 'podman' and w[1] == 'container') else w -%}
-      {%-   set run_name = [] -%}
-      {%-   if w | length > 2 and w[0] == 'podman' and w[1] == 'run' -%}
-      {%-     for x in w -%}
-      {%-       if x.startswith('--name=') -%}{%- set _ = run_name.append(x[7:]) -%}{%- endif -%}
-      {%-       if loop.index0 > 0 and w[loop.index0 - 1] == '--name' -%}{%- set _ = run_name.append(x) -%}{%- endif -%}
-      {%-     endfor -%}
-      {%-   endif -%}
-      {%-   if run_name and _watch_units.get(run_name[0], '') -%}
-      {%-     set _ = out.append('systemctl start ' ~ _watch_units[run_name[0]]) -%}
-      {%-   elif w | length > 2 and w[0] == 'podman' and w[1] in ['start', 'restart']
-                 and (w[2:] | select('match', '^-') | list | length == 0) -%}
-      {%-     set plain = [] -%}
-      {%-     for x in w[2:] -%}
-      {%-       if _watch_units.get(x, '') -%}
-      {%-         set _ = out.append('systemctl ' ~ w[1] ~ ' ' ~ _watch_units[x]) -%}
-      {%-       else -%}
-      {%-         set _ = plain.append(x) -%}
-      {%-       endif -%}
-      {%-     endfor -%}
-      {%-     if plain -%}{%- set _ = out.append('podman ' ~ w[1] ~ ' ' ~ (plain | join(' '))) -%}{%- endif -%}
-      {%-   else -%}
-      {%-     set _ = out.append(c) -%}
-      {%-   endif -%}
-      {%- endfor -%}
-      {%- set final = out | unique | list -%}
-      {%- set words = final | map('regex_findall', '[^ ]+') | flatten -%}
-      {%- for n, cmds in _watch_standard_by.items() -%}
-      {%-   set m = service_watch.managers[n] -%}
-      {%-   set own = [m.unit, m.unit | regex_replace('[.]service$', ''), m.container, n] | select | list -%}
-      {%-   if not (own | intersect(words)) -%}
-      {%-     set _ = final.extend(cmds) -%}
-      {%-   endif -%}
-      {%- endfor -%}
-      {#- dependency order (watch_containers order); commands that start nothing watched go first -#}
-      {%- set keyed = [] -%}
-      {%- for c in final -%}
-      {%-   set w = c | regex_findall('[^ ]+') -%}
-      {%-   set idx = [] -%}
-      {%-   for n in _watch_names -%}
-      {%-     set m = service_watch.managers[n] -%}
-      {%-     if [m.unit, m.unit | regex_replace('[.]service$', ''), m.container, n] | select | intersect(w) -%}
-      {%-       set _ = idx.append(loop.index0) -%}
-      {%-     endif -%}
-      {%-   endfor -%}
-      {%-   set _ = keyed.append({'i': (idx | min) if idx else -1, 'c': c}) -%}
-      {%- endfor -%}
-      {{ keyed | sort(attribute='i') | map(attribute='c') | list }}
+    _watch_proposed: "{{ _watch_plan.commands }}"
     _watch_fix_source: >-
-      {%- set words = _watch_proposed_act | map('regex_findall', '[^ ]+') | flatten -%}
-      {%- set added = [] -%}
-      {%- for n in _watch_standard_by -%}
-      {%-   set m = service_watch.managers[n] -%}
-      {%-   if not ([m.unit, m.unit | regex_replace('[.]service$', ''), m.container, n] | select | intersect(words)) -%}
-      {%-     set _ = added.append(n) -%}
-      {%-   endif -%}
-      {%- endfor -%}
-      {{ ('ACT' ~ ((' + the standard fix for ' ~ (added | join(', ')) ~ ', which ACT did not cover') if added else ''))
+      {%- set added = _watch_plan.added | map('extract', service_watch.managers) | map(attribute='label') | list -%}
+      {{ ('ACT' ~ ((' + the standard fix for ' ~ (added | join(', ')) ~ ', which ACT did not cover') if added else '')
+          ~ (('; left out: ' ~ (_watch_plan.dropped | join(', '))) if _watch_plan.dropped else ''))
          if _watch_proposed_act | length > 0
          else 'the standard fix (ACT proposed nothing)' if added else '' }}
   vars:
-    # self-heal already ran the standard fix and it did not work: do not offer it again
-    _watch_standard_by: "{{ {} if (_watch_fixes_run | default([])) else service_watch.fix_by }}"
+    # self-heal already ran a standard fix and it did not work: do not offer it again (a fix
+    # self-heal may not run itself, e.g. loginctl enable-linger, is still offered)
+    _watch_standard_by: >-
+      {%- set out = {} -%}
+      {%- for k, cmds in service_watch.fix_by.items() if cmds | difference(_watch_fixes_run | default([])) | length > 0 -%}
+      {%-   set _ = out.update({k: cmds}) -%}
+      {%- endfor -%}
+      {{ out }}
     _watch_proposed_act: >-
       {{ (act_triage_result | default({})).denied | default([]) | selectattr('pre_approvable', 'defined')
          | selectattr('pre_approvable') | map(attribute='command') | list }}
+    _watch_plan: >-
+      {{ _watch_proposed_act | watch_fix_commands(service_watch.watched, _watch_standard_by, site_containers | default([])) }}
   when: not service_watch_before.healthy
 
 - name: Watch | outcome
@@ -182,7 +165,7 @@
     msg: "{{ _watch_says[service_watch_outcome] }}"
   vars:
     _watch_says:
-      healthy: "All watched containers are up ({{ _watch_what }}). Nothing to do."
+      healthy: "{{ ('All watched containers are up (' ~ _watch_what ~ '). Nothing to do.') if service_watch.watched else ('Nothing to watch: ' ~ _watch_what ~ '.') }}"
       self_healed: "Was DOWN ({{ service_watch_before.findings | join('; ') }}). Fixed ({{ ((_watch_fixes_run | default([])) and ('standard fix: ' ~ (_watch_fixes_run | join(' ; ')))) or 'by ACT' }}) and the re-check confirms everything is up."
       recovered: "Was DOWN ({{ service_watch_before.findings | join('; ') }}) and came back without a fix."
       awaiting_approval: "DOWN: {{ service_watch.findings | join('; ') }}. Fix to approve ({{ _watch_fix_source | default('') }}): {{ _watch_proposed | default([]) | join(' ; ') }}. Waiting for approval."

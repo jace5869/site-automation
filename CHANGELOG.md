@@ -1,5 +1,106 @@
 # Changelog
 
+## 0.6.0 — 2026-09-30
+
+Podman containers are found by themselves - root's (rootful) and every user's (rootless) - by a
+new Health check `containers` and by Service watch.
+
+**Upgrading from 0.5.0 - read this first**
+- **Service watch now watches every container that should be running**, not only a fixed list.
+  `watch_containers` is now empty by default and `watch_discover: true` is on: on each host the
+  watch finds the containers that should run (a systemd unit that starts them at boot - a Quadlet
+  file with `[Install]`, or an enabled unit - or a restart policy `always` / `unless-stopped`),
+  root's and each user's, and watches them together with your `watch_containers` list (your list
+  first, in its order; one of yours that is missing is still reported). Your
+  `playbooks/group_vars/stigman.yml` keeps its list (the update scripts never change it), so those
+  containers stay watched, in that order. **To go back to only your list**, set
+  `watch_discover: false` (in `playbooks/group_vars/stigman.yml` or the group's Variables box).
+  To leave some containers out: `podman_discover_ignore: ['test-.*', 'alice/.*']`.
+- **`daily` (and `all`) now include the new check `containers`.** On hosts with podman, expect new
+  findings - and, in a workflow, tickets - for containers that should run but do not, unhealthy
+  containers, recent crashes, restart loops, OOM kills, and users whose containers stop at logout
+  (linger off). Hosts without podman are skipped with no finding.
+- **Survey choices are not updated for you.** In AAP, add `containers` to the Health check
+  survey's `health_checks` choices (docs/SETUP_AAP.md, step 6) if you want to run it on its own.
+- **Service watch names each container with its owner**, e.g. `nginx (root)`, `web (user alice)`,
+  in NEEDS APPROVAL, the job output and the incident record. In
+  `/var/log/service-watch/incidents.jsonl` the `units` keys are now `OWNER/NAME` (`root/nginx`)
+  and the `containers` keys `NAME (root)` / `NAME (user alice)`: adjust a Splunk / Elastic parser
+  that reads them.
+- With discovery finding nothing and `watch_containers` empty (no podman, or no container that
+  should run), Service watch passes and says `Nothing to watch`.
+- **Service watch never self-heals the AAP server**, now that it can find AAP's own containers
+  (AAP 2.5 and later run in podman): on hosts in `aap` / `aap_hosts` (always) and the
+  `site_act_diagnose_only_groups`, self-heal is switched off whatever the survey says, and the
+  apply job runs nothing there - it prints the approved command for a person to run by hand (as
+  *Apply approved ACT fix* already does).
+
+**No more green jobs that did nothing**
+- Patch hosts, Windows patch, Service watch (and its apply job), STIG Manager deploy and Database
+  health start with a **target check**: when `target` (or the Limit) leaves no host, the job
+  stops red with a message that names the groups and hosts your inventory does have, instead of
+  Ansible's quiet `skipping: no hosts matched` and a green job. `target` is a group or host
+  **inside** the inventory, not the inventory's name - the message says so.
+- **Database health** also runs on the groups `mariadb` and `mysql` by default (as the database
+  check already did), besides `mariadb_hosts`, `mysql_hosts` and `database_hosts`.
+- docs/SETUP_AAP.md: the Patch hosts card now shows the required `target` line.
+
+**New: Health check `containers`** (roles `check_containers` and `podman_discover`, docs/RUNBOOKS.md)
+- Finds root's containers and each user's: users with a podman process, with linger on, or in
+  `/etc/subuid` with container storage in their home (any UID, service accounts included), plus
+  `podman_discover_users`. A user's containers are read as that user
+  (`runuser -u USER -- env XDG_RUNTIME_DIR=/run/user/UID podman ...`, which works on RHEL 8 and 9),
+  and only when `/run/user/UID` exists, so the check never creates anything.
+- Reads Quadlet files (root's, `~/.config/containers/systemd`, `/etc/containers/systemd/users`)
+  and unit files that run podman, so a container whose unit stopped (Quadlet and
+  `podman generate systemd --new` remove it) is found although `podman ps -a` no longer lists it.
+- Findings, each naming the owner, with a `look:` command that runs as that owner:
+  `containers:down` and `containers:unhealthy` (critical); `containers:crashed` (stopped with an
+  error in the last `check_containers_recent_hours`, 24), `containers:restarting` (more than
+  `check_containers_restart_warn`, 3), `containers:oom`, `containers:no-linger` (a user with
+  containers or units that should start at boot, but linger off or no `/run/user/UID`; container
+  storage alone - an admin who once ran podman - is only listed as not checked),
+  `containers:query` (warning). `check_containers_required` lists containers that must exist and run.
+- podman 3 (`State.Healthcheck`) and podman 4/5 (`State.Health`) are both read. The job prints a
+  table of every container it found (owner, state, unit, should it run).
+- Settings: `podman_discover_enabled`, `podman_discover_rootless`, `podman_discover_users`,
+  `podman_discover_ignore` (whole-name regular expressions, matched against `NAME` and
+  `OWNER/NAME`), `podman_discover_quadlet_dirs`, `podman_discover_timeout`.
+
+**Service watch**
+- Rootless containers: checked as their owner, and fixed as their owner:
+  `runuser -u USER -- env XDG_RUNTIME_DIR=/run/user/UID systemctl --user start UNIT` (or
+  `... podman start NAME` for a plain one). Everything is keyed by owner and name, so root and a
+  user (or two users) can each have a container called `nginx`. A static entry can name its owner:
+  `watch_containers: [{name: web, user: alice}]`.
+- ACT's proposals are rewritten for the owner (`sudo -u alice podman start web` or
+  `systemctl --user -M alice@ start web.service` becomes the `runuser` form that works on RHEL 8),
+  and a root `podman start X` of a container root does not have is left out (it could only fail).
+- ACT refuses to run commands as another user in a job, so it cannot read a user's containers
+  itself. The playbook now collects that evidence for it (the container's state, its last log
+  lines, `systemctl --user status`, the user's journal), read-only, into a file only root can read;
+  ACT is told to read it with `cat`, and the file is deleted after ACT has run.
+- Self-heal: the commands ACT may run by itself now include each user's own start/restart commands.
+- A user whose systemd is not running (no `/run/user/UID`: linger off, not logged in) - a
+  `watch_containers` entry of theirs, or a user discovery found with units that should start at
+  boot (`the containers of user carol`) - gets the fix `loginctl enable-linger USER` to approve.
+  Self-heal never runs it itself; it is offered for approval even after self-heal ran the starts.
+  Every run lists the users it could not look at.
+- The apply-time guard accepts the `runuser ... systemctl --user start` form and still refuses
+  `runuser -u USER -- reboot` and `... systemctl --user poweroff` (tests added).
+
+**Tests**
+- `tests/containers/run_containers_test.sh`: the containers check and Service watch against a fake
+  podman / systemctl / runuser (root and two users with a container of the same name, a stopped
+  Quadlet, podman 3 and 4 shapes, recent and old exits, OOM, restart loops, users without linger
+  or without `/run/user/UID`, no podman; the watched set, owner-keyed fixes, evidence, self-heal,
+  the apply job and its dry run, no self-heal and no apply on an AAP host, linger to approve), on
+  ansible-core latest and 2.16, in CI. The runner refuses to
+  start unless every tool it may call resolves to the fake.
+- Unit tests for the new filters (`tests/test_filters.py`).
+- Tried for real in nested UBI 9 (podman 5.8) and UBI 8 (podman 4.9, systemd 239) containers
+  running systemd: rootful and rootless Quadlet units, a lingering and a non-lingering user.
+
 ## 0.5.0 — 2026-09-30
 
 Safety, settings and documentation release, from a review of the code and the guides.
