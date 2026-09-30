@@ -2,7 +2,7 @@
 galaxy_info:
   author: site automation
   role_name: service_watch
-  description: Watch one systemd service; when it is down, record it and let ACT (GenAI) self-heal it or hand the fix to an AAP approval step.
+  description: Watch the podman containers that should be running (found by themselves, rootful and rootless); when one is down, record it and let ACT (GenAI) self-heal it or hand the fix to an AAP approval step.
   license: MIT
   min_ansible_version: "2.14"
 dependencies: []

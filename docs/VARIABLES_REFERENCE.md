@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [patch](#patch), [poam](#poam), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
+**Contents:** [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
 
 ## check_accounts
 
@@ -58,6 +58,18 @@ File: `roles/check_certs/defaults/main.yml`
 | `check_certs_discover_max_per_file` | `10` |  |
 | `check_certs_endpoints` | `[]` | TLS endpoints, checked FROM this host, e.g. the site's own web server: check_certs_endpoints: - {name: STIG Manager, host: 127.0.0.1, port: 443, servername: stigman.example.mil} |
 | `check_certs_keystores` | `[]` | Java keystores (Tomcat, the ServiceNow MID Server ...). A JKS keystore lists without a password; a PKCS12 one needs it - give the NAME of an environment variable that holds it (set by an AAP credential), never the password itself: check_certs_keystores: - {path: /opt/servicenow/mid/agent/security/agent_keystore, passw… (all of it: the role file) |
+
+## check_containers
+
+File: `roles/check_containers/defaults/main.yml`
+
+> CONTAINERS: the podman containers on the host - root's (rootful) and every user's (rootless) - found by themselves (roles/podman_discover: which ones exist, which systemd unit runs each one, which should be running). Read-only. Which containers and users are looked at, and which are left out: the podman_discover_* settings.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `check_containers_required` | `[]` | Containers that MUST exist and run on these hosts: a container name, or OWNER/NAME for one owner (root/web, alice/web). A name alone matches that container of any owner. Also matches a Quadlet file name without .container, e.g. [stigman-mysql, stigman-api, alice/web]. |
+| `check_containers_recent_hours` | `24` | A container that stopped with an error (exit code not 0) this many hours ago or less is reported (containers:crashed). Older crashes are history and are not reported. |
+| `check_containers_restart_warn` | `3` | More restarts than this (podman's restart count, or its systemd unit's) = a restart loop. |
 
 ## check_disk
 
@@ -280,13 +292,29 @@ File: `roles/poam/defaults/main.yml`
 | `poam_stigman_scope` | (empty) | Scope to ask for. Empty = the client's default scopes (they must include stig-manager:collection:read or stig-manager:collection). |
 | `poam_validate_certs` | `true` |  |
 
+## podman_discover
+
+File: `roles/podman_discover/defaults/main.yml`
+
+> PODMAN DISCOVERY (read-only): every podman container on the host, root's (rootful) and each user's (rootless), with how it is run (a systemd unit or plain podman) and whether it should be running. Used by the Health check `containers` and by Service watch. It changes nothing.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `podman_discover_enabled` | `true` | false = do not look for containers at all (the containers check then says "skipped", and Service watch watches only its watch_containers list). |
+| `podman_discover_rootless` | `true` | Also look at the containers of users (rootless podman). A user is looked at when a podman process (conmon) runs as them, when they have "linger" on (/var/lib/systemd/linger/NAME), or when they are in /etc/subuid AND have container storage (~/.local/share/containers/storage). Their containers are read AS that user (run… (all of it: the role file) |
+| `podman_discover_users` | `[]` | More users to look at (names), e.g. an application account the rules above miss. |
+| `podman_discover_ignore` | `[]` | Containers to leave out, as regular expressions that must match the WHOLE container name or OWNER/NAME, e.g. ['test-.*'] (every container whose name starts with test-, any owner), ['alice/.*'] (all of alice's containers), ['root/web'] (root's web only). |
+| `podman_discover_quadlet_dirs` | `[/etc/containers/systemd, /usr/share/containers/systemd]` | Where root's Quadlet files are (*.container). A user's are always read from ~/.config/containers/systemd, /etc/containers/systemd/users/UID and /etc/containers/systemd/users. |
+| `podman_discover_timeout` | `60` | Seconds one podman or systemctl call may take before it is given up (reported as a finding). |
+
 ## service_watch
 
 File: `roles/service_watch/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `watch_containers` | `- name: stigman - name: nginx` | ---- What to watch ----------------------------------------------------------------------- The podman containers on the host, in dependency order (a container's dependencies first). name: the container name, as `podman ps -a` shows it url: optional page to check as well, e.g. https://127.0.0.1/ unit: optional: the sys… (all of it: the role file) |
+| `watch_discover` | `true` | ---- What to watch ----------------------------------------------------------------------- With watch_discover on (the default), service watch finds the containers itself: every podman container on the host that SHOULD be running - root's (rootful) and each user's (rootless) - as the Health check `containers` finds th… (all of it: the role file) |
+| `watch_containers` | `[]` | Containers to watch in any case, in dependency order (a container's dependencies first). They are watched before the discovered ones, and one that is missing is reported as down. name: the container name, as `podman ps -a` shows it (or its Quadlet / service name) user: optional: the user that owns it (rootless podman)… (all of it: the role file) |
 | `watch_url_ok_status` | `[200, 301, 302, 401, 403]` | HTTP codes that count as "answering" |
 | `watch_find_units` | `true` | ---- How each container is run (found by itself) ------------------------------------------- A container that a systemd unit runs (a Quadlet .container file, `podman generate systemd`, or a unit you wrote) must be started with systemctl, never with `podman start`: the unit owns it, and while the unit is stopped the co… (all of it: the role file) |
 | `watch_quadlet_dirs` | `[/etc/containers/systemd, /usr/share/containers/systemd]` |  |
@@ -298,12 +326,12 @@ File: `roles/service_watch/defaults/main.yml`
 | `watch_act_env` | `{}` | ---- ACT settings -------------------------------------------------------------------------- Which provider and model: site_act_provider / site_act_model / site_act_url / site_act_ca, the same settings every runbook uses (roles/site_act/defaults/main.yml). The key comes from the "ACT model key" AAP credential, never f… (all of it: the role file) |
 | `watch_act_timeout` | `600` | seconds for one ACT run |
 | `watch_instructions` | (worked out by the role; see its file) | What ACT is told, on top of the act_triage role's standard instructions. |
-| `_watch_names` | `"{{ watch_containers \| map(attribute='name') \| list }}"` | ---- Derived (do not set) ------------------------------------------------------------------ |
+| `_watch_no_heal` | `"{{ ((site_act_diagnose_only_groups \| default(['aap', 'aap_hosts', 'sat', 'idm', 'netapp'…` | ---- Derived (do not set) ------------------------------------------------------------------ Hosts that never self-heal and whose approved fix is applied by hand (as in act_fix_approved.yml): AAP (aap, aap_hosts - always: a restart there could stop the job that runs it) and the diagnose-only groups of the ACT settings… (all of it: the role file) |
 | `_watch_nl` | `"\n"` | a real newline for templates |
-| `_watch_what` | `"{{ _watch_names \| join(', ') }}"` |  |
-| `_watch_units` | (worked out by the role; see its file) | name -> unit ('' = plain podman), from the last check |
+| `_watch_what` | (worked out by the role; see its file) | the watched containers, as "name (root)" / "name (user alice)" |
+| `_watch_units` | (worked out by the role; see its file) | OWNER/NAME -> unit ('' = plain podman), from the last check |
 | `_watch_how_text` | (worked out by the role; see its file) |  |
-| `_watch_fix_patterns` | (worked out by the role; see its file) | The only changes self-heal may make: start/restart of the watched containers - through their systemd unit when one runs them, with podman otherwise. Each pattern must match the whole command. |
+| `_watch_fix_patterns` | `"{{ ((service_watch \| default({})).watched \| default(_watch_list \| default([]))) \| watch_…` | The only changes self-heal may make: start/restart of the watched containers - through their systemd unit when one runs them, with podman otherwise, as each container's owner. Each pattern must match the whole command. |
 
 ## servicenow
 

@@ -249,7 +249,7 @@ from your Git server by itself.
    discard anything listed there first. Then **... → Pull**, to get whatever is newest on the
    server.
 2. **Extract the new release somewhere else.** Right-click `site-automation-<version>.zip` → **Extract
-   All** → for example `Downloads\site-automation-<version>` (`<version>` is the number in the file name, for example `0.5.0`). **Not** into your repository folder.
+   All** → for example `Downloads\site-automation-<version>` (`<version>` is the number in the file name, for example `0.6.0`). **Not** into your repository folder.
 3. **Preview.** It changes nothing. **Terminal → New Terminal** (it is PowerShell), then:
    ```powershell
    $rel = "$HOME\Downloads\site-automation-<version>"          # where you extracted the release

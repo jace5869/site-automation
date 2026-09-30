@@ -1,8 +1,9 @@
 # Service watch: step by step
 
-**What it does.** AAP checks the `stigman` and `nginx` containers. When one is down, ACT (using
-GenAI) finds out why and the incident is recorded. Then, depending on the mode you pick when you
-launch it:
+**What it does.** AAP checks every podman container on the host that should be running - root's
+(rootful podman) and each user's (rootless podman) - and finds them by itself, plus any you list
+(`watch_containers`). When one is down, ACT (using GenAI) finds out why and the incident is
+recorded. Then, depending on the mode you pick when you launch it:
 
 - **approval** (the default): ACT reports the root cause and proposes the fix, AAP waits for a
   person to approve it, then applies exactly that fix and checks the container is back;
@@ -38,15 +39,17 @@ cause and proposed fix, approve it, and watch the container come back.
 | `scripts/update-act.sh` | Replaces `vendor/act/` with a newer ACT release later. | No |
 | `aap/credential_types/act_model_key.yml` | The credential type you paste into AAP (Part 5). | No |
 
-The only setting is the list of containers (Part 5, step 4). Nothing is installed by hand on the
-hosts.
+There is nothing to set: the containers are found by themselves (Part 2, "Which containers are
+watched"). You can add containers, leave some out, or go back to a fixed list (Part 5, step 4).
+Nothing is installed by hand on the hosts.
 
 ## Part 2. The ACT script
 
 ### What happens on the host during a run
 
-1. The playbook checks each container with `podman container inspect`. If all are running, the
-   run ends here: ACT is not used and nothing is sent to GenAI.
+1. The playbook finds the containers that should be running (root's and each user's) and checks
+   each one with `podman container inspect`, as its owner. If all are running, the run ends here:
+   ACT is not used and nothing is sent to GenAI.
 2. If one is down, the playbook finds Python 3.8 or newer on the host.
 3. It copies the ACT script to `/opt/act/act` (only when the file changed).
 4. It runs ACT once, as root, with the GenAI key in ACT's environment (never on the command line,
@@ -59,20 +62,33 @@ hosts.
    ```
    In self-heal mode it may also start or restart the watched containers, and only the right way:
    `--allow='systemctl (start|restart|reset-failed) (stigman)(\.service)?'` for a container a
-   systemd unit runs, `--allow='podman (start|restart)( (nginx))+'` for a plain one.
+   systemd unit runs, `--allow='podman (start|restart)( (nginx))+'` for a plain one, and for a
+   user's container the same, run as that user:
+   `--allow='runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user (start|restart|reset-failed) (web)(\.service)?'`.
 5. ACT asks GenAI what to look at and runs **read-only** commands: `podman ps -a`,
    `podman inspect nginx`, `podman logs --tail 80 nginx`, `journalctl -t podman ...`. It works out
    whether the container crashed, was stopped on purpose, or failed for another reason.
+   **A user's container** (rootless): ACT refuses to run any command as another user in a job
+   (`runuser -u ...`, `sudo -u ...`), so it cannot look at it itself. The playbook does it for
+   ACT before step 4, read-only and as that user: the container's state, its last 60 log lines,
+   `systemctl --user status` of its unit and the user's journal. It puts them in a file only root
+   can read, ACT reads it with `cat`, and the playbook deletes it afterwards.
 6. It writes its report (root cause, evidence, fix, confidence) and the fix it wants to run to a
    result file. The playbook reads it and deletes it.
 7. The playbook checks the containers again itself. It does not take ACT's word for it.
 
 ### What ACT can and cannot do
 
+- **Never on the AAP server itself** (groups `aap`, `aap_hosts`, and the diagnose-only groups of
+  `site_act_diagnose_only_groups`): there, self-heal is switched off whatever the survey says,
+  and the apply job runs nothing - it prints the approved command for a person to run by hand. A
+  restart there could stop the very job that is running (AAP 2.5 and later run in containers).
+
 - Read-only commands (state, logs, disk space, open ports): yes, on its own.
 - Approval mode: no changes at all. It only proposes, e.g. `systemctl start stigman.service`.
 - Self-heal mode: start or restart of the watched containers, nothing else: `systemctl start`
-  of the unit for a container a systemd unit runs, `podman start` for a plain one.
+  of the unit for a container a systemd unit runs, `podman start` for a plain one; for a user's
+  container the same command run as that user (`runuser -u USER -- env XDG_RUNTIME_DIR=/run/user/UID ...`).
 - Destructive commands (deleting, formatting, rebooting, changing users, firewall, SELinux): never
   on its own, whatever it is allowed.
 - Everything ACT runs is listed in the job output and in the incident record.
@@ -107,19 +123,58 @@ This proves the host can reach GenAI and the key works, before AAP is involved.
 If step 4 cannot connect, fix that first (firewall or proxy to `api.genai.mil`); AAP will hit the
 same problem.
 
-### Check the container names (same host)
+### Which containers are watched (same host)
 
-1. `sudo podman ps -a --format '{{.Names}}'` lists the containers, and
-   `systemctl list-units --type=service | grep -i -E 'stig|nginx|keycloak|mysql'` the services.
-2. You list them in Part 5, step 4, by container name or by service name (`stigman` for
-   `stigman.service`). **The watch finds out by itself how each one is run**: the container's
-   `PODMAN_SYSTEMD_UNIT` label, a Quadlet file in `/etc/containers/systemd/` (`stigman.container`),
-   or a unit `NAME.service` / `container-NAME.service` that runs podman. A container a unit runs
-   is started with `systemctl start <unit>`, never `podman start`: while the unit is stopped,
-   Quadlet has usually removed the container, so there is nothing for podman to start. The job
-   output shows what it found (task `Check | how the containers are run`).
-3. In the test, stop a container the way it really stops: `sudo systemctl stop stigman.service`
-   for a unit, `sudo podman stop nginx` for a plain container.
+**The watch finds them by itself** (`watch_discover: true`, the default): every container that
+**should be running**, whoever owns it:
+
+- **Root's containers** (rootful podman, `sudo podman ps -a`).
+- **Each user's containers** (rootless podman: only that user sees them). A user is looked at when
+  a podman process runs as them, when they have *linger* on (`ls /var/lib/systemd/linger/`), or
+  when they are in `/etc/subuid` and have container storage in their home. Their containers are
+  read **as that user**, and only when `/run/user/<uid>` exists (otherwise podman would have to
+  create it, and a check must not change anything).
+- "Should be running" means: a systemd unit runs it and starts it at boot (a Quadlet file with an
+  `[Install]` section, or an enabled unit), or its restart policy is `always` / `unless-stopped`.
+  A container that exited with code 0 and has neither was stopped on purpose, and is not watched.
+
+Each container is named with its owner in everything the watch prints: `nginx (root)`,
+`web (user alice)`. Root and a user (or two users) can each have a container called `nginx`;
+they are different containers and each gets its own fix.
+
+A user who has units that should start at boot but whose systemd is not running (no
+`/run/user/<uid>`: linger is off and nobody is logged in as them) cannot be looked at; none of
+their containers run. The watch reports them as one entry, `the containers of user carol (1
+should start at boot)`, with the fix `loginctl enable-linger carol` for a person to approve
+(self-heal never runs it: it changes how the user's session works, it does not just start a
+container). Every run also lists the users it could not look at (`Not looked at: user ...`).
+
+**The watch finds out by itself how each one is run**: the container's `PODMAN_SYSTEMD_UNIT`
+label, a Quadlet file (`/etc/containers/systemd/stigman.container` for root,
+`~/.config/containers/systemd/` for a user), or a unit `NAME.service` / `container-NAME.service`
+that runs podman. A container a unit runs is started with `systemctl start <unit>`, never
+`podman start`: while the unit is stopped, Quadlet has usually removed the container, so there is
+nothing for podman to start. **A user's container is started as that user**:
+
+```text
+runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user start web.service
+runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 podman start web
+```
+
+(`runuser` runs one command as that user; `XDG_RUNTIME_DIR` tells podman and systemd where that
+user's session is. This form works on RHEL 8 and RHEL 9.)
+
+To see what it finds, before AAP is involved:
+
+1. `sudo podman ps -a --format '{{.Names}}'` lists root's containers;
+   `ls /var/lib/systemd/linger/` the users whose containers keep running when they log out;
+   `sudo runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/$(id -u alice) podman ps -a` one user's.
+2. Run the **Health check** with only `containers` (`health_checks: containers`): its output has a
+   table of every container it found, with its owner, state, unit and whether it should run.
+3. The watch job prints the same in the task `Check | how the containers are run`.
+4. In the test, stop a container the way it really stops: `sudo systemctl stop stigman.service`
+   for a unit, `sudo podman stop nginx` for a plain container, and for a user's unit
+   `sudo runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user stop web.service`.
 
 ## Part 3. The playbooks
 
@@ -139,7 +194,7 @@ same problem.
 
 What it does, in order:
 
-1. Checks that `stigman` and `nginx` are running (and their pages answer, if you gave URLs).
+1. Checks that every watched container is running (and their pages answer, if you gave URLs).
 2. All up: ends, green.
 3. One down: records it, runs ACT (Part 2), checks again.
 4. Approval mode: ACT's report is printed (task `Watch | ACT's report`), the record says
@@ -147,9 +202,15 @@ What it does, in order:
    `NEEDS APPROVAL ... Fix to approve (ACT): systemctl start stigman.service`. That failure is
    what sends the workflow to the approval step. The fix is made right before it is shown: a
    `podman start` ACT proposes for a container a unit runs becomes `systemctl start <unit>`;
-   a down container ACT's fix does not cover gets the standard fix added; and when ACT proposes
-   nothing (or cannot run: no key, no network), the standard fix is proposed, labelled
-   `the standard fix (ACT proposed nothing)`. The commands are in dependency order.
+   a command for a user's container is written the one way that works (`runuser -u alice -- env
+   XDG_RUNTIME_DIR=/run/user/1001 systemctl --user start web.service`), whichever way ACT wrote it
+   (`sudo -u alice ...`, `systemctl --user -M alice@ ...`); a down container ACT's fix does not
+   cover gets the standard fix added; and when ACT proposes nothing (or cannot run: no key, no
+   network), the standard fix is proposed, labelled `the standard fix (ACT proposed nothing)`. The
+   commands are in dependency order. Example with a user's container down:
+   `NEEDS APPROVAL on stigman01: container web (user alice) is not running: its systemd user unit
+   web.service is failed ... Fix to approve (the standard fix (ACT proposed nothing)): runuser -u
+   alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user start web.service`.
 5. Self-heal mode: if ACT's start worked and the re-check confirms it, the record says
    `self_healed` and the job ends **green**. Still down after ACT: the playbook runs the standard
    fix itself (`systemctl start <unit>` / `podman start <name>`) and checks again.
@@ -239,15 +300,22 @@ job output, Git or the inventory.
 
 1. **Automation Execution → Infrastructure → Inventories → Create inventory → Create inventory**.
    **Name** `Linux servers`. Click **Create inventory**.
-2. **Groups** tab → **Create group** → **Name** `stigman`. In **Variables** paste:
+2. **Groups** tab → **Create group** → **Name** `stigman`. **Variables**: nothing is needed - the
+   containers are found by themselves (Part 2, "Which containers are watched"). Optional, in the
+   group's **Variables** (or in `playbooks/group_vars/stigman.yml`, where the release already lists
+   the STIG Manager containers):
    ```yaml
-   watch_containers:
+   watch_containers:            # watched in any case, in this order (dependencies first)
      - name: stigman
+       url: https://127.0.0.1/  # also check that this page answers
      - name: nginx
+     - name: web                # a container of a user (rootless podman)
+       user: alice
+   podman_discover_ignore: ['test-.*', 'alice/scratch']   # never watch these (a name, or OWNER/NAME)
    ```
-   Optional per container: `url:` to also check a page (for example `url: https://127.0.0.1/`
-   under nginx), and `unit:` if systemd manages it (Part 2, "Check the container names").
-   List them dependencies first: stigman before nginx.
+   `unit:` under a container sets its systemd unit by hand, if the job output shows the wrong one.
+   The containers in `watch_containers` are watched first, in their order, then the ones found.
+   **To watch only your list** (the behaviour before 0.6.0), add `watch_discover: false`.
 3. **Hosts** tab → **Create host** → the STIG Manager host's name. Then open the `stigman`
    group → **Hosts** tab → **Add existing host** → select it.
 
@@ -338,7 +406,8 @@ when you trust it.
 ## Part 8. The test: stop a container, approve the fix
 
 1. In AAP, launch **Service watch - check**. Expected: `All watched containers are up
-   (stigman, nginx). Nothing to do.`
+   (stigman (root), nginx (root)). Nothing to do.` - every container found is listed, with its
+   owner.
 2. On the host: `sudo podman stop nginx` (or `sudo systemctl stop <unit>` if systemd manages it).
    Check with `sudo podman ps -a`: nginx shows `Exited`.
 3. In AAP, launch the workflow **Service watch - approve or self-heal**, answer `approval`.
@@ -360,7 +429,17 @@ when you trust it.
    `podman start stigman`, if no unit runs it).
 8. Optional: stop one again and run the workflow with `self-heal`. The check box goes green on its
    own; the record says `self_healed`.
+9. Optional, a user's container (rootless): stop it as that user, e.g.
+   `sudo runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user stop web.service`,
+   and run the workflow with `approval`. The fix to approve is
+   `runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user start web.service`, and
+   ACT's report quotes the evidence the playbook collected for it.
 
+Release 0.6.0 (finding the containers, rootless containers) was tested in nested UBI 9 (podman
+5.8) and UBI 8 (podman 4.9, systemd 239) containers running systemd: root's Quadlet unit and plain
+containers, a user with linger and a Quadlet user unit stopped by hand, a user without linger:
+check job, approval fix (dry run and real) and self-heal; ACT was a scripted stand-in, and AAP was
+not involved.
 Last tested by hand at release 0.3.4 (check `CHANGELOG.md` for what changed since): every step on a RHEL 9 test machine running systemd and rootful podman,
 with Quadlet units (with `ContainerName=`, and the default name `systemd-NAME`), a hand-written
 unit that runs `podman run`, a plain container, and an `nginx.service` that is not the container
@@ -381,6 +460,11 @@ this job`, see Part 9.
 | No approval step appears | the link from the check box must be **Run on fail** |
 | Check job says `STILL DOWN` | nothing to approve: deny, fix it by hand |
 | `container nginx does not exist` | the name is different: fix `watch_containers` (Part 5, step 4) |
+| `container web (user alice) cannot be checked: there is no /run/user/1001` | that user's systemd is not running (linger is off and nobody is logged in as them), so none of their containers run. The fix proposed is `loginctl enable-linger alice` (their containers then start at boot and keep running after logout) |
+| A container is watched that you do not want watched | leave it out: `podman_discover_ignore: ['its-name']` (or `['alice/.*']` for all of one user's) |
+| You want the old behaviour: only your list | `watch_discover: false` (then only `watch_containers` is watched) |
+| `... is in aap (diagnose only): self-heal is off here` | the host is the AAP server (or in a diagnose-only group): fixes wait for approval, and the apply job prints them for you to run by hand |
+| `the containers of user carol (...) cannot be checked` | carol has units that should start at boot, but her systemd is not running. Approve `loginctl enable-linger carol` (or run it by hand); if her containers should not run, leave her out: `podman_discover_ignore: ['carol/.*']` |
 | The container comes back by itself before the check runs | systemd restarts it: stop it with `sudo systemctl stop <unit>` |
 | `Check \| how the containers are run` names the wrong unit, or none | set it by hand: `unit: stigman.service` under that container in `watch_containers` |
 | Apply job: `Nothing to apply: no results from the check job reached this job` | launched on its own (use the workflow), or Job 1 failed before ACT ran (read its output). If Job 1 did say `NEEDS APPROVAL`, AAP did not pass its result along: start the container by hand for now and report it |

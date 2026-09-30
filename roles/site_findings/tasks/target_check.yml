@@ -1,0 +1,44 @@
+---
+# Before a playbook's main play: fail clearly when `target` (and the Limit, if one is set) leave no
+# host to run on. Without this, Ansible only prints "Could not match supplied host pattern" and
+# "skipping: no hosts matched" and the job is GREEN although it did nothing.
+# Runs once, on the controller (set_fact and assert never log in to a host).
+# Input: _target_pattern (the main play's hosts pattern).
+- name: Target | which hosts {{ _target_pattern }} means in this inventory
+  ansible.builtin.set_fact:
+    _target_in_inventory: "{{ query('ansible.builtin.inventory_hostnames', _target_pattern) }}"
+    _target_in_limit: >-
+      {{ query('ansible.builtin.inventory_hostnames', _target_pattern)
+         | intersect(query('ansible.builtin.inventory_hostnames', ansible_limit))
+         if (ansible_limit | default('')) else query('ansible.builtin.inventory_hostnames', _target_pattern) }}
+  run_once: true
+
+- name: Target | {{ _target_pattern }} is a group or host in this inventory
+  ansible.builtin.assert:
+    that: _target_in_inventory | length > 0
+    fail_msg: >-
+      target '{{ _target_pattern }}' matches no host in this job's inventory, so the job would do
+      nothing. target is the name of a GROUP or a HOST inside the inventory - not the name of the
+      inventory itself. Groups in this inventory:
+      {{ (groups.keys() | difference(['all', 'ungrouped']) | sort | join(', ')) or '(none - every host is ungrouped)' }}.
+      Hosts: {{ groups['all'] | sort | join(', ') | truncate(400) }}.
+      Fix: in the job template's Variables box set target to one of those groups or hosts, or
+      target: all for every host in this inventory.
+    quiet: true
+  run_once: true
+
+- name: Target | the Limit leaves some of them
+  ansible.builtin.assert:
+    that: _target_in_limit | length > 0
+    fail_msg: >-
+      target '{{ _target_pattern }}' is {{ _target_in_inventory | length }} host(s)
+      ({{ _target_in_inventory | sort | join(', ') | truncate(300) }}), but the Limit
+      '{{ ansible_limit | default('') }}' leaves none of them. A Limit only narrows the target; it
+      cannot add hosts. Clear the Limit, or pick hosts that are in the target.
+    quiet: true
+  run_once: true
+
+- name: Target | runs on
+  ansible.builtin.debug:
+    msg: "{{ _target_in_limit | length }} host(s): {{ _target_in_limit | sort | join(', ') | truncate(400) }}"
+  run_once: true

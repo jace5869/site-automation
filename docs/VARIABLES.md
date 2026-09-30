@@ -44,7 +44,8 @@ Setting names start with the thing they belong to:
 | `site_` (other) | reporting and settings | `site_fail_on` |
 | `patch_`, `win_patch_`, `automatic_restarts` | patching | `patch_never_patch_groups` |
 | `servicenow_` | ServiceNow tickets | `servicenow_assignment_group` |
-| `watch_` | service watch | `watch_containers` |
+| `watch_` | service watch | `watch_containers`, `watch_discover` |
+| `podman_discover_` | finding the podman containers (the `containers` check and service watch share it) | `podman_discover_ignore` |
 | `poam_` | POA&M | `poam_stigman_api` |
 | `stigman_` | STIG Manager deployment | `stigman_scope` |
 
@@ -142,6 +143,11 @@ check_disk_overrides:
 ```yaml
 # a host's Variables box: its MariaDB containers belong to a rootless account
 check_mariadb_container_user: svc_podman
+```
+
+```yaml
+# a group's Variables box: never check or watch the test containers, or anything of one user
+podman_discover_ignore: ['test-.*', 'devuser/.*']
 ```
 
 Connection settings (`ansible_host`, `ansible_user`, `ansible_python_interpreter`,

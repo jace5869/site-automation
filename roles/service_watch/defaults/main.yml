@@ -1,12 +1,20 @@
 ---
 # ---- What to watch -----------------------------------------------------------------------
-# The podman containers on the host, in dependency order (a container's dependencies first).
-#   name: the container name, as `podman ps -a` shows it
+# With watch_discover on (the default), service watch finds the containers itself: every podman
+# container on the host that SHOULD be running - root's (rootful) and each user's (rootless) - as
+# the Health check `containers` finds them (roles/podman_discover: a systemd unit that starts it at
+# boot - a Quadlet file with an [Install] section, or an enabled unit - or a restart policy of
+# always / unless-stopped). The podman_discover_* settings (which users, which containers to
+# leave out) apply here too. false = watch only the watch_containers list below.
+watch_discover: true
+# Containers to watch in any case, in dependency order (a container's dependencies first). They
+# are watched before the discovered ones, and one that is missing is reported as down.
+#   name: the container name, as `podman ps -a` shows it (or its Quadlet / service name)
+#   user: optional: the user that owns it (rootless podman). Without it: root's container.
 #   url:  optional page to check as well, e.g. https://127.0.0.1/
 #   unit: optional: the systemd unit that runs the container. Normally found by itself (below).
-watch_containers:
-  - name: stigman
-  - name: nginx
+# e.g. [{name: mysql}, {name: stigman, url: "https://127.0.0.1/"}, {name: web, user: alice}]
+watch_containers: []
 watch_url_ok_status: [200, 301, 302, 401, 403]   # HTTP codes that count as "answering"
 
 # ---- How each container is run (found by itself) -------------------------------------------
@@ -17,6 +25,8 @@ watch_url_ok_status: [200, 301, 302, 401, 403]   # HTTP codes that count as "ans
 # PODMAN_SYSTEMD_UNIT label; a Quadlet file in watch_quadlet_dirs that names it (ContainerName=,
 # or the default name systemd-<file name>); a unit NAME.service or container-NAME.service that
 # runs podman. No unit: it is a plain podman container, started with `podman start NAME`.
+# A user's container (rootless) is looked at AS that user, and its unit is a user unit:
+# `runuser -u USER -- env XDG_RUNTIME_DIR=/run/user/UID systemctl --user start UNIT`.
 watch_find_units: true
 watch_quadlet_dirs: [/etc/containers/systemd, /usr/share/containers/systemd]
 
@@ -24,7 +34,9 @@ watch_quadlet_dirs: [/etc/containers/systemd, /usr/share/containers/systemd]
 # approval:  ACT only diagnoses. Its proposed fix waits for the AAP approval step, then
 #            service_fix_approved.yml runs exactly the approved command(s) - no model involved.
 #            When ACT proposes nothing (or cannot run), the standard fix is proposed instead:
-#            `systemctl start UNIT` for a container a unit runs, `podman start NAME` otherwise.
+#            `systemctl start UNIT` for a container a unit runs, `podman start NAME` otherwise -
+#            for a user's container the same, run as that user:
+#            `runuser -u USER -- env XDG_RUNTIME_DIR=/run/user/UID systemctl --user start UNIT`.
 # self-heal: ACT may start/restart the watched containers (through their units) by itself, and
 #            nothing else. Still down after that: the playbook runs the standard fix itself.
 #            Any other fix goes to a person, as in approval mode.
@@ -48,12 +60,14 @@ watch_act_timeout: 600                   # seconds for one ACT run
 # What ACT is told, on top of the act_triage role's standard instructions.
 watch_instructions: |-
   The watched podman containers on this host, in dependency order (start earlier ones first).
-  They run as root (rootful podman). How each one is run, and the ONLY right way to start it:
+  Each one belongs to root (rootful podman) or to a user (rootless podman: only that user sees it,
+  and every podman or systemctl command for it runs as that user). Who owns each one, how it is
+  run, and the ONLY right way to start it:
   {{ _watch_how_text }}
   A container that a systemd unit runs must never be started with `podman start` or `podman run`:
   the unit owns it, and while the unit is stopped the container usually does not exist at all
   (Quadlet removes it), so "no such container" is normal then, not the problem.
-  For each finding, find the root cause with read-only commands:
+  For each finding, find the root cause with read-only commands. For a container of root:
   `systemctl status UNIT --no-pager` and `journalctl -u UNIT --since -2h --no-pager` (for a
   container a unit runs: why the unit stopped or failed),
   `podman ps -a` (every container and its state),
@@ -61,54 +75,56 @@ watch_instructions: |-
   `podman logs --tail 80 NAME` (its last output before it stopped),
   `journalctl -t podman --since -2h --no-pager` (podman events, e.g. who stopped it and when),
   and the logs of the containers it depends on if those look unhealthy.
-  Say whether it crashed, was stopped on purpose, or failed for another reason (configuration,
+  {% if _watch_evidence_file | default('') %}For a container of a USER: commands run as another user (runuser -u ..., sudo -u ...)
+  are refused in this job, so do not try them. Their evidence was collected for you (podman
+  inspect State, podman logs, systemctl --user status and the user's journal): read it with
+  `cat {{ _watch_evidence_file }}`. `journalctl _UID=<uid> --since -2h --no-pager` also works.
+  {% endif %}Say whether it crashed, was stopped on purpose, or failed for another reason (configuration,
   a dependency, a port, disk space). Quote the lines that show it.
   Starting it again the right way (above) is the fix when it stopped or crashed and nothing else
   is wrong. If a container it depends on is down, fix that one first. If the cause is something
   a start cannot fix, say so and give the exact fix for a person to approve.
-  {% if watch_mode == 'self-heal' %}You may start or restart the watched containers yourself, the
-  right way (above), and change nothing else: propose any other change, do not make it. Verify
-  with `podman inspect NAME` and expect_contains `"Running": true`.{% endif %}
+  {% if _watch_mode | default(watch_mode) == 'self-heal' %}You may start or restart the watched containers yourself, with exactly the commands
+  above, and change nothing else: propose any other change, do not make it. Verify a container of
+  root with `podman inspect NAME` and expect_contains `"Running": true`; the playbook re-checks
+  every container itself afterwards.{% endif %}
 
 # ---- Derived (do not set) ------------------------------------------------------------------
-_watch_names: "{{ watch_containers | map(attribute='name') | list }}"
+# Hosts that never self-heal and whose approved fix is applied by hand (as in act_fix_approved.yml):
+# AAP (aap, aap_hosts - always: a restart there could stop the job that runs it) and the
+# diagnose-only groups of the ACT settings. This role does not load roles/site_act/defaults: the
+# fallback IS that default (tests/test_protection.py checks it).
+_watch_no_heal: "{{ ((site_act_diagnose_only_groups | default(['aap', 'aap_hosts', 'sat', 'idm', 'netapp', 'netapp_console_hosts'])) + ['aap', 'aap_hosts']) | unique }}"
 _watch_nl: "\n"                         # a real newline for templates
-_watch_what: "{{ _watch_names | join(', ') }}"
-# name -> unit ('' = plain podman), from the last check
+# the watched containers, as "name (root)" / "name (user alice)"
+_watch_what: >-
+  {{ ((service_watch | default({})).watched | default(_watch_list | default([]))) | map(attribute='label') | join(', ')
+     or 'no container (none found that should run, and watch_containers is empty)' }}
+# OWNER/NAME -> unit ('' = plain podman), from the last check
 _watch_units: >-
   {%- set u = {} -%}
-  {%- for n, m in ((service_watch | default({})).managers | default({})).items() -%}
-  {%-   set _ = u.update({n: m.unit, m.container | default(n): m.unit}) -%}
+  {%- for k, m in ((service_watch | default({})).managers | default({})).items() -%}
+  {%-   set _ = u.update({k: m.unit}) -%}
   {%- endfor -%}
   {{ u }}
 _watch_how_text: >-
   {%- set lines = [] -%}
-  {%- for c in watch_containers -%}
-  {%-   set m = ((service_watch | default({})).managers | default({})).get(c.name, {}) -%}
-  {%-   if m.unit | default('') -%}
-  {%-     set _ = lines.append('- ' ~ c.name ~ ((' (container ' ~ m.container ~ ')') if m.container | default(c.name) != c.name else '')
-                               ~ ': run by the systemd unit ' ~ m.unit ~ ' ('
-                               ~ m.how_text ~ '; now ' ~ m.state ~ '). Start: `systemctl start ' ~ m.unit
-                               ~ '`, restart: `systemctl restart ' ~ m.unit ~ '`.') -%}
+  {%- for m in (service_watch | default({})).watched | default([]) -%}
+  {%-   set sc = m.run_as ~ ('systemctl --user ' if m.owner != 'root' else 'systemctl ') -%}
+  {%-   if m.error -%}
+  {%-     set _ = lines.append('- ' ~ m.label ~ ': cannot be checked: ' ~ m.error
+                               ~ ((' Fix: `loginctl enable-linger ' ~ m.owner ~ '`.') if m.no_runtime else '')) -%}
+  {%-   elif m.unit -%}
+  {%-     set _ = lines.append('- ' ~ m.label ~ ': run by the systemd ' ~ ('user ' if m.owner != 'root' else '') ~ 'unit ' ~ m.unit ~ ' ('
+                               ~ m.how_text ~ '; now ' ~ m.state ~ '). Start: `' ~ sc ~ 'start ' ~ m.unit
+                               ~ '`, restart: `' ~ sc ~ 'restart ' ~ m.unit ~ '`.') -%}
   {%-   else -%}
-  {%-     set cn = m.container | default(c.name) -%}
-  {%-     set _ = lines.append('- ' ~ cn ~ ': a plain podman container, no systemd unit runs it. Start: `podman start '
-                               ~ cn ~ '`, restart: `podman restart ' ~ cn ~ '`.') -%}
+  {%-     set _ = lines.append('- ' ~ m.label ~ ': a plain podman container, no systemd unit runs it. Start: `'
+                               ~ m.run_as ~ 'podman start ' ~ m.container ~ '`, restart: `' ~ m.run_as ~ 'podman restart ' ~ m.container ~ '`.') -%}
   {%-   endif -%}
   {%- endfor -%}
   {{ lines | join(_watch_nl) }}
 # The only changes self-heal may make: start/restart of the watched containers - through their
-# systemd unit when one runs them, with podman otherwise. Each pattern must match the whole command.
-_watch_fix_patterns: >-
-  {%- set ms = (service_watch | default({})).managers | default({}) -%}
-  {%- set plain = _watch_names | map('extract', ms) | rejectattr('unit') | map(attribute='container') | list
-                  if ms else _watch_names -%}
-  {%- set units = _watch_units.values() | select | map('regex_replace', '\\.service$', '') | unique | map('regex_escape') | list -%}
-  {%- set p = [] -%}
-  {%- if plain -%}
-  {%-   set _ = p.append('podman (start|restart)( (' ~ (plain | map('regex_escape') | join('|')) ~ '))+') -%}
-  {%- endif -%}
-  {%- if units -%}
-  {%-   set _ = p.append('systemctl (start|restart|reset-failed) (' ~ (units | join('|')) ~ ')(\\.service)?') -%}
-  {%- endif -%}
-  {{ p }}
+# systemd unit when one runs them, with podman otherwise, as each container's owner. Each pattern
+# must match the whole command.
+_watch_fix_patterns: "{{ ((service_watch | default({})).watched | default(_watch_list | default([]))) | watch_allow_patterns }}"

@@ -1,0 +1,245 @@
+---
+# Find the podman containers on this host. Read-only: nothing here changes the host, so it runs in
+# Check mode (a dry run) too. Sets two facts:
+#
+# site_podman:      {enabled, installed, version, now (the host's clock, seconds since 1970),
+#                    rootless (the setting), users: the users whose containers were read
+#                    [{name, uid, home, linger}], skipped: users that were NOT read
+#                    [{user, uid, reason, linger, storage, wants (units that should start at
+#                    boot), ignored}], errors: what could not be read
+#                    [{owner, what, command, message}]}
+# site_containers:  one entry per container (or per container a unit should run but that does
+#                   not exist right now), each:
+#   owner, uid           root, or the user it belongs to (rootless)
+#   run_as               '' for root; 'runuser -u USER -- env XDG_RUNTIME_DIR=/run/user/UID ' for a
+#                        user: put it in front of podman / systemctl --user to run them as the owner
+#   key                  OWNER/NAME (root and a user can each have a container called nginx)
+#   name, id, image      id is '' for a container that does not exist (see state missing)
+#   state, running       podman's state (running, exited, created, paused ...) or missing
+#   exit_code, exited_at exited_at: when it last stopped, seconds since 1970 (0 = never)
+#   oom_killed, health   health: '' (no healthcheck), healthy, unhealthy or starting
+#   restart_policy, restart_count
+#   unit, unit_scope     the systemd unit that runs it ('' = plain podman); system or user
+#   unit_load, unit_active, unit_sub, unit_result, unit_file_state, unit_restarts   (systemctl show)
+#   how                  how the unit was found: label (PODMAN_SYSTEMD_UNIT), quadlet, unit-file
+#                        (a unit file that runs podman), unit-name (NAME.service / container-NAME.service)
+#   quadlet_file         its Quadlet .container file, if any
+#   should_run, why      should it be running, and why (see below)
+#   ignored              matches podman_discover_ignore
+# should_run: a unit runs it and the unit starts at boot (the Quadlet file has an [Install] section,
+# or the unit is enabled), or its restart policy is always / unless-stopped. Anything else that is
+# stopped - e.g. exited with code 0, no unit, no restart policy - was stopped on purpose.
+#
+# How: one script finds podman and the users to look at; then, per owner (root, then each user
+# AS that user), `podman ps -a --format json`, ONE `podman container inspect` of all containers,
+# the Quadlet files and unit files that run podman, and ONE `systemctl show` of those units.
+# The output is parsed on the controller (plugins/filter/site_filters.py, podman_discovery).
+
+- name: Podman | discovery is off (podman_discover_enabled)
+  ansible.builtin.set_fact:
+    site_podman: {enabled: false, installed: false, version: '', now: 0, rootless: false, users: [], skipped: [], errors: []}
+    site_containers: []
+  when: not (podman_discover_enabled | bool)
+
+- name: Podman | installed? which users run containers?
+  when: podman_discover_enabled | bool
+  block:
+    - name: Podman | installed? which users run containers?
+      ansible.builtin.shell:
+        cmd: |
+          cd /
+          pd=$(command -v {{ _pd_podman | default('podman') | quote }} 2>/dev/null)
+          if [ -z "$pd" ]; then echo "podman none"; exit 0; fi
+          echo "podman $pd"
+          echo "version $(timeout {{ podman_discover_timeout | int }} podman --version 2>/dev/null | awk '{print $NF}')"
+          now={{ _pd_now | default('') | string | quote }}
+          echo "now ${now:-$(date +%s)}"
+          {% if podman_discover_rootless | bool %}
+          subuid={{ _pd_subuid_file | default('/etc/subuid') | quote }}
+          linger={{ _pd_linger_dir | default('/var/lib/systemd/linger') | quote }}
+          rund={{ _pd_run_user_dir | default('/run/user') | quote }}
+          usersd={{ _pd_users_quadlet_dir | default('/etc/containers/systemd/users') | quote }}
+          extra={{ (podman_discover_users | map('string') | join(' ')) | quote }}
+          pw() { getent passwd "$1" | head -n 1; }
+          conmon=" $(ps -eo uid=,comm= 2>/dev/null | awk '$2 == "conmon" && $1 != 0 { print $1 }' | sort -u | tr '\n' ' ')"
+          seen=" "
+          for who in $( { printf '%s\n' $conmon $extra; ls -1 "$linger" 2>/dev/null;
+                          sed -n 's/^\([^#:][^:]*\):.*/\1/p' "$subuid" 2>/dev/null; } | sort -u ); do
+            line=$(pw "$who")
+            if [ -z "$line" ]; then echo "nouser $who"; continue; fi
+            name=$(printf '%s' "$line" | cut -d: -f1)
+            uid=$(printf '%s' "$line" | cut -d: -f3)
+            home=$(printf '%s' "$line" | cut -d: -f6)
+            [ "$uid" = 0 ] && continue
+            case "$seen" in *" $name "*) continue ;; esac
+            seen="$seen$name "
+            l=0; [ -e "$linger/$name" ] && l=1
+            r=0; [ -d "$rund/$uid" ] && r=1
+            s=0; [ -d "$home/.local/share/containers/storage" ] && s=1
+            c=0; case "$conmon" in *" $uid "*) c=1 ;; esac
+            x=0; case " $extra " in *" $name "*|*" $uid "*) x=1 ;; esac
+            sub=0; grep -q -E "^($name|$uid):" "$subuid" 2>/dev/null && sub=1
+            # what should start for them at boot, read here (as root) for users that are not checked:
+            # Quadlet files with an [Install] section, and enabled user units
+            w=0
+            for f in $(find "$home/.config/containers/systemd" "$usersd/$uid" -type f -name '*.container' 2>/dev/null) \
+                     $(find "$usersd" -maxdepth 1 -type f -name '*.container' 2>/dev/null); do
+              grep -q '^[[:space:]]*\[Install\]' "$f" 2>/dev/null && w=$((w + 1))
+            done
+            w=$((w + $(find "$home/.config/systemd/user" -mindepth 2 -maxdepth 2 -path '*.wants/*' -name '*.service' 2>/dev/null | wc -l)))
+            echo "user $name $uid linger=$l runtime=$r storage=$s conmon=$c subuid=$sub extra=$x wants=$w home=$home"
+          done
+          {% endif %}
+          exit 0
+        executable: /bin/bash
+      register: _pd_host
+      changed_when: false
+      # the script ends with exit 0; anything else (sudo missing, no python ...) is an error, not "no podman"
+      failed_when: _pd_host.rc | default(1) != 0 or (_pd_host.stdout_lines | default([]) | length == 0)
+      check_mode: false
+
+    - name: Podman | what was found
+      ansible.builtin.set_fact:
+        _pd_info: >-
+          {%- set v = {'podman': '', 'version': '', 'now': 0, 'users': [], 'nouser': []} -%}
+          {%- for line in _pd_host.stdout_lines | default([]) -%}
+          {%-   set w = line.split(' ') -%}
+          {%-   if w[0] == 'podman' -%}{%- set _ = v.update({'podman': '' if w[1:2] == ['none'] else w[1:] | join(' ')}) -%}
+          {%-   elif w[0] == 'version' -%}{%- set _ = v.update({'version': w[1:] | join(' ')}) -%}
+          {%-   elif w[0] == 'now' -%}{%- set _ = v.update({'now': w[1] | default(0) | int}) -%}
+          {%-   elif w[0] == 'nouser' -%}{%- set _ = v.nouser.append(w[1] | default('')) -%}
+          {%-   elif w[0] == 'user' and w | length >= 11 -%}
+          {%-     set u = {'name': w[1], 'uid': w[2] | int} -%}
+          {%-     for kv in w[3:10] -%}{%- set _ = u.update({kv.split('=')[0]: (kv.split('=')[1] | default('0')) | int}) -%}{%- endfor -%}
+          {%-     set _ = u.update({'home': (w[10:] | join(' '))[5:]}) -%}
+          {%-     set _ = v.users.append(u) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ v }}
+
+    - name: Podman | the owners whose containers are read (root, and each user whose /run/user/UID exists)
+      ansible.builtin.set_fact:
+        _pd_owners: >-
+          {%- set out = [{'name': 'root', 'uid': 0, 'home': '/root', 'linger': 0}] if _pd_info.podman else [] -%}
+          {%- for u in _pd_info.users | sort(attribute='name') if _pd_info.podman
+                and (u.conmon or u.linger or u.extra or (u.subuid and u.storage)) and u.runtime -%}
+          {%-   set _ = out.append({'name': u.name, 'uid': u.uid, 'home': u.home, 'linger': u.linger}) -%}
+          {%- endfor -%}
+          {{ out }}
+        _pd_skipped: >-
+          {%- set out = [] -%}
+          {%- for u in _pd_info.users | sort(attribute='name') if _pd_info.podman
+                and (u.conmon or u.linger or u.extra or (u.subuid and u.storage)) and not u.runtime -%}
+          {#-   left out when podman_discover_ignore leaves out all of the user's containers ('carol/.*') -#}
+          {%-   set ns = namespace(ignored=false) -%}
+          {%-   for p in podman_discover_ignore | default([]) if p -%}
+          {%-     if (u.name ~ '/-') is search('^(?:' ~ p ~ ')$') -%}{%- set ns.ignored = true -%}{%- endif -%}
+          {%-   endfor -%}
+          {%-   set _ = out.append({'user': u.name, 'uid': u.uid, 'linger': u.linger, 'storage': u.storage, 'wants': u.wants, 'ignored': ns.ignored,
+                                    'reason': 'no /run/user/' ~ u.uid ~ ' (the user is not logged in'
+                                              ~ (' and linger is off' if not u.linger else '')
+                                              ~ '): not read, because podman would have to create it'}) -%}
+          {%- endfor -%}
+          {%- for n in _pd_info.nouser if n in (podman_discover_users | map('string') | list) -%}
+          {%-   set _ = out.append({'user': n, 'uid': -1, 'linger': 0, 'storage': 0, 'wants': 0, 'ignored': false, 'reason': 'no such user'}) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    # One script per owner. For a user every command runs AS that user (runuser ... env
+    # XDG_RUNTIME_DIR=/run/user/UID), the same form the findings print, which works on RHEL 8 too.
+    - name: Podman | containers, Quadlet files and units of each owner
+      ansible.builtin.shell:
+        cmd: |
+          cd /
+          unset DBUS_SESSION_BUS_ADDRESS
+          T="timeout {{ podman_discover_timeout | int }}"
+          {% if _pd_owner.name == 'root' %}
+          as_owner() { $T "$@"; }
+          sysctl() { $T systemctl "$@"; }
+          quadlets() {
+            for d in {{ podman_discover_quadlet_dirs | map('quote') | join(' ') }}; do
+              [ -d "$d" ] && find "$d" -path "$d/users" -prune -o -type f -name '*.container' -print 2>/dev/null
+            done
+          }
+          unitfiles() {
+            grep -l -s -E '^Environment=.*PODMAN_SYSTEMD_UNIT|^ExecStart=.*podman' {{ _pd_system_unit_dir | default('/etc/systemd/system') | quote }}/*.service
+          }
+          {% else %}
+          as_owner() { $T runuser -u {{ _pd_owner.name | quote }} -- env XDG_RUNTIME_DIR=/run/user/{{ _pd_owner.uid | int }} "$@"; }
+          sysctl() { as_owner systemctl --user "$@"; }
+          usersd={{ _pd_users_quadlet_dir | default('/etc/containers/systemd/users') | quote }}
+          quadlets() {
+            as_owner find {{ (_pd_owner.home ~ '/.config/containers/systemd') | quote }} -type f -name '*.container' 2>/dev/null
+            find "$usersd/{{ _pd_owner.uid | int }}" -type f -name '*.container' 2>/dev/null
+            find "$usersd" -maxdepth 1 -type f -name '*.container' 2>/dev/null
+          }
+          unitfiles() {
+            as_owner find {{ (_pd_owner.home ~ '/.config/systemd/user') | quote }} -maxdepth 1 -type f -name '*.service' 2>/dev/null |
+              while read -r f; do as_owner grep -l -s -E '^Environment=.*PODMAN_SYSTEMD_UNIT|^ExecStart=.*podman' "$f"; done
+          }
+          {% endif %}
+          sec() { printf '\n@@@ %s\n' "$*"; }
+          out=$(as_owner podman ps -a --format json 2>/dev/null); rc=$?
+          sec ps $rc
+          if [ $rc -ne 0 ]; then
+            as_owner podman ps -a --format json 2>&1 >/dev/null | tail -n 5
+            exit 0
+          fi
+          printf '%s\n' "$out"
+          lst=$(as_owner podman ps -a --no-trunc --format '{% raw %}{{.ID}}|{{.Names}}|{{index .Labels "PODMAN_SYSTEMD_UNIT"}}{% endraw %}' 2>/dev/null)
+          sec list $?
+          printf '%s\n' "$lst"
+          ids=$(printf '%s\n' "$lst" | cut -d'|' -f1 | grep -v '^$')
+          if [ -n "$ids" ]; then
+            out=$(as_owner podman container inspect $ids 2>/dev/null); rc=$?
+            sec inspect $rc
+            printf '%s\n' "$out"
+          fi
+          units=""
+          while IFS='|' read -r id name label; do
+            [ -n "$id" ] || continue
+            if [ -n "$label" ] && [ "$label" != "<no value>" ]; then units="$units $label"
+            else units="$units $name.service container-$name.service"; fi
+          done <<< "$lst"
+          for f in $(quadlets | sort -u); do
+            sec quadlet "$f"
+            as_owner grep -E '^[[:space:]]*(\[[A-Za-z]+\]|(ContainerName|ServiceName|Image|WantedBy|RequiredBy|UpheldBy)[[:space:]]*=)' "$f"
+            sn=$(as_owner sed -n 's/^[[:space:]]*ServiceName[[:space:]]*=[[:space:]]*//p' "$f" | tail -n 1 | tr -d '[:space:]')
+            units="$units $(basename "$f" .container).service ${sn:+${sn%.service}.service}"
+          done
+          for f in $(unitfiles | sort -u); do
+            sec unitfile "$f"
+            units="$units $(basename "$f")"
+          done
+          units=$(printf '%s\n' $units | sort -u | tr '\n' ' ')
+          if [ -n "${units// /}" ]; then
+            out=$(sysctl show -p Id,LoadState,ActiveState,SubState,Result,UnitFileState,NRestarts,ExecStart,WantedBy,RequiredBy,UpheldBy $units 2>&1); rc=$?
+            sec show $rc
+            printf '%s\n' "$out"
+          fi
+          sec end
+          exit 0
+        executable: /bin/bash
+      loop: "{{ _pd_owners if (podman_discover_rootless | bool) else _pd_owners[:1] }}"
+      loop_control:
+        loop_var: _pd_owner
+        label: "{{ _pd_owner.name }}"
+      register: _pd_query
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Podman | the containers
+      ansible.builtin.set_fact:
+        site_containers: "{{ _pd_parsed.containers }}"
+        site_podman:
+          enabled: true
+          installed: "{{ _pd_info.podman | length > 0 }}"
+          version: "{{ _pd_info.version }}"
+          now: "{{ _pd_info.now | int }}"
+          rootless: "{{ podman_discover_rootless | bool }}"
+          users: "{{ _pd_owners[1:] if (podman_discover_rootless | bool) else [] }}"
+          skipped: "{{ _pd_skipped }}"
+          errors: "{{ _pd_parsed.errors }}"
+      vars:
+        _pd_parsed: "{{ (_pd_query.results | default([])) | podman_discovery(ignore=podman_discover_ignore) }}"

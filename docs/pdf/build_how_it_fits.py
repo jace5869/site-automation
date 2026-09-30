@@ -15,7 +15,8 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else "Site-Automation-How-It-Fits-Togethe
 SRC = "docs/HOW_IT_FITS_TOGETHER.md"
 ROLES = ["check_disk", "check_mounts", "check_services", "check_performance", "check_time",
          "check_network", "check_logging", "check_selinux", "check_fapolicyd", "check_auditd",
-         "check_accounts", "check_certs", "check_patching", "check_mariadb", "site_findings",
+         "check_accounts", "check_certs", "check_patching", "check_mariadb", "check_containers",
+         "podman_discover", "site_findings",
          "site_act", "servicenow", "poam", "patch", "troubleshoot", "service_watch", "stigman_stack"]
 CUT = {"troubleshoot": "ts_areas:", "service_watch": "# ---- Derived"}   # print the file up to here
 

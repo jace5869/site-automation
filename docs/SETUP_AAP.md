@@ -180,8 +180,13 @@ which credentials. Its survey asks which checks to run.
    - **Answer type** *Multiple Choice (multiple select)*
    - **Choices**, one per line: `daily`, `weekly`, `all`, `disk`, `mounts`, `services`,
      `performance`, `time`, `network`, `logging`, `selinux`, `fapolicyd`, `auditd`,
-     `accounts`, `certs`, `patching`, `mariadb`, `mysql`, `database`
+     `accounts`, `certs`, `patching`, `mariadb`, `mysql`, `database`, `containers`
    - **Default answer** `daily`. Tick **Required**. Click **Create question**.
+
+   **Made this survey with an earlier release?** AAP never updates a survey for you: open the
+   **Health check** template → **Survey** tab → click the `health_checks` question → **Edit** →
+   add `containers` on a new line under **Choices** → **Save**. (`daily` and `all` already include
+   the containers check without that; the choice is for running it on its own.)
 5. Turn the survey **on** (the switch at the top of the Survey tab).
 
 **You should see** the template in the Templates list with a rocket icon.
@@ -279,7 +284,7 @@ credential.
 | Credentials | `Linux ssh (sudo)` and `MariaDB monitor` (the read-only database account) |
 | Privilege escalation | ticked |
 | Job type | Run, with **Prompt on launch** ticked, so you can pick *Check* first |
-| Limit | empty, **Prompt on launch** ticked. The job runs on the groups `mariadb_hosts`, `mysql_hosts` and `database_hosts`; a Limit narrows that to one host or group. A Limit cannot add a server outside those groups: for that (or if your group is called `mariadb` or `mysql`), put `target: <group or host>` in the template's **Variables** |
+| Limit | empty, **Prompt on launch** ticked. The job runs on the groups `mariadb_hosts`, `mysql_hosts`, `database_hosts`, `mariadb` and `mysql`; a Limit narrows that to one host or group. A Limit cannot add a server outside those groups: for that, put `target: <group or host>` in the template's **Variables** |
 | Survey | none. (Optional: a *Multiple Choice* `use_act`, choices `no` and `yes`, to add ACT's explanation; then also attach the *ACT model key* credential, [ADDING_ACT.md](ADDING_ACT.md)) |
 
 Steps: create the template as in step 6, then launch it twice.
@@ -293,6 +298,18 @@ Steps: create the template as in step 6, then launch it twice.
 
 If a host prints `mariadb:connect` with `Access denied`, the credential is missing or the account
 lacks a privilege: [MARIADB.md](MARIADB.md#4-the-login-the-mariadb-monitor-credential).
+
+### Service watch
+
+Two templates and a workflow: the steps are in [SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md)
+(Parts 5 and 6). The one field to decide here is which hosts it watches.
+
+| Field | Value |
+|---|---|
+| Playbooks | `playbooks/service_watch.yml` (*Service watch - check*) and `playbooks/service_fix_approved.yml` (*Service watch - apply approved fix*) |
+| Credentials | `Linux ssh (sudo)`, plus `ACT model key` on the check template |
+| Variables | optional: `target: <group or host>`. Without it the jobs run on the group `stigman` - a **group inside the template's inventory**, not an inventory called stigman (if there is no such group, the job stops and lists the groups the inventory has). To watch the containers of other servers, put that group (or `all`) here, on **both** templates. Which containers are watched on each host is found by itself: every container that should be running, root's and each user's ([SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md), "Which containers are watched") |
+| Survey | on the workflow: `watch_mode` (`approval` / `self-heal`) |
 
 ### Certificate report
 
@@ -365,6 +382,7 @@ updated and changes nothing.
 | Playbook | `playbooks/patch_hosts.yml` |
 | Credentials | `Linux ssh (sudo)` |
 | Job type | Run, with **Prompt on launch** ticked, so you can pick *Check* (a dry run) |
+| Variables | **required**: `target: <group>`, the name of a **group (or host) inside the inventory** - not the inventory's own name. For example `target: stigman`, or `target: all` when the template's inventory holds only the servers to patch. Without it the job looks for a group called `patch_hosts`, and stops with a message that lists the groups your inventory does have |
 | Survey: `patch_security_only` | "Security updates only?" Choices `false`, `true`. Default `false` |
 | Survey: `automatic_restarts` | "Reboot hosts automatically when the updates need it?" Choices `no`, `yes`. Default `no` (no automatic restarts: the job lists the hosts that need a reboot) |
 

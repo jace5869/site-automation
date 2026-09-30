@@ -1,0 +1,11 @@
+{
+ "_comment": "podman installed, no containers, no users",
+ "users": {},
+ "owners": {
+  "root": {
+   "containers": [],
+   "units": {}
+  }
+ },
+ "files": {}
+}

@@ -33,6 +33,20 @@
   ansible.builtin.meta: end_host
   when: not _watch_in_incident
 
+# AAP (always) and the diagnose-only groups: a person applies the fix there by hand, as in
+# act_fix_approved.yml. ['aap', 'aap_hosts'] written out: an extra variable cannot remove a literal.
+- name: Apply | diagnose-only hosts get the fix by hand, not from this job
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} is in {{ group_names | intersect(_watch_no_heal + ['aap', 'aap_hosts']) | join(', ') }}
+      (diagnose only: a restart there could stop the job that runs it). Nothing was run. Apply by
+      hand if you agree: {{ _watch_approved | join(' ; ') or '(nothing was approved)' }}
+  when: group_names | intersect(_watch_no_heal + ['aap', 'aap_hosts']) | length > 0
+
+- name: Apply | skip diagnose-only hosts
+  ansible.builtin.meta: end_host
+  when: group_names | intersect(_watch_no_heal + ['aap', 'aap_hosts']) | length > 0
+
 - name: Apply | is it still down?
   ansible.builtin.include_tasks: check.yml
 

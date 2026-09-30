@@ -9,7 +9,7 @@ printed with a finding is always the first thing to run.
 
 Runs the checks you pick on each host: a list of names, or the shortcuts:
 
-- `daily` = disk, mounts, services, performance, time, network, logging, mariadb (the database check: MariaDB or MySQL; `mysql` and `database` also pick it)
+- `daily` = disk, mounts, services, performance, time, network, logging, mariadb (the database check: MariaDB or MySQL; `mysql` and `database` also pick it), containers (podman containers, rootful and rootless)
 - `weekly` = selinux, fapolicyd, auditd, accounts, certs, patching
 - `all` = both
 
@@ -208,6 +208,73 @@ GRANT SELECT ON performance_schema.* TO 'aap_monitor'@'localhost';       -- MySQ
 `PROCESS` shows other sessions (for long queries). Replication status needs `REPLICATION CLIENT`
 (MySQL) or, on MariaDB 10.5.9 and newer, `REPLICA MONITOR`: **`REPLICATION CLIENT` alone is not
 enough there.** The password reaches the client only through its environment, never its command line.
+
+<a id="containers"></a>
+
+### containers: podman containers, root's and every user's
+
+Finds the podman containers on the host by itself - you list nothing - and checks each one.
+Hosts without podman are skipped (`skipped: podman is not installed`, no finding). It is
+read-only: it runs `podman ps`, one `podman container inspect` and `systemctl show`, and nothing
+that starts, stops or creates anything.
+
+**Which containers.** Root's (rootful podman) and each user's (rootless podman: only that user
+can see them). A user is looked at when a podman process runs as them, when they have *linger* on
+(a file in `/var/lib/systemd/linger/`), or when they are in `/etc/subuid` and have container
+storage in their home (`~/.local/share/containers/storage`). A user's containers are read **as
+that user** (`runuser -u USER -- env XDG_RUNTIME_DIR=/run/user/UID podman ...`), and only when
+`/run/user/UID` exists: otherwise podman would create it, and a check must not change anything.
+Such a user is listed as `not checked` instead (and reported, below).
+
+**Which should be running.** A container should be running when a systemd unit runs it and
+starts it at boot (a Quadlet `.container` file with an `[Install]` section, or an enabled unit
+from `podman generate systemd` or written by hand), or when its restart policy is `always` or
+`unless-stopped`. A container that has neither and stopped with exit code 0 was stopped on
+purpose: no finding. A Quadlet or `--new` unit removes its container while the unit is stopped,
+so the check also reads the Quadlet files and unit files: a container that should run but does
+not exist at all is found too (state `missing`).
+
+The output has a table of what was found:
+
+```text
+OWNER        NAME                       STATE              UNIT                           SHOULD RUN
+root         systemd-db                 running            db.service (active)            yes
+root         web                        running            -                              yes
+alice        web                        missing            web.service (failed)           yes
+bob          web                        exited (3)         -                              no
+not checked: carol - no /run/user/1003 (the user is not logged in and linger is off): ...
+```
+
+Every finding names the owner, and its `look:` command runs as that owner (paste it as root):
+
+| Finding | Means | Usually |
+|---|---|---|
+| `container X (owner O) should be running (...) but it does not exist / it exited with code N` (critical) | a container that should run is down, or its systemd unit failed | read the `look:` output (the unit's status, the container's log, the journal). Start it the right way: `systemctl start UNIT` for a unit (as a user: `runuser -u O -- env XDG_RUNTIME_DIR=/run/user/UID systemctl --user start UNIT`), `podman start X` for a plain container. Service watch does this for you, with approval |
+| `required container X ... does not exist` / `is not running` (critical) | a container in `check_containers_required` is missing or stopped | create or start it; fix its name in the setting |
+| `container X (owner O) is running but its healthcheck reports unhealthy` (critical) | its own healthcheck fails | `podman inspect X` shows the last healthcheck output (`State.Health.Log`); the container's log |
+| `container X (owner O) stopped with an error: it exited with code N, 2.5 hours ago` (warning) | a container that is not meant to run all the time stopped with an error in the last `check_containers_recent_hours` (24) hours | its log. Older crashes are not reported |
+| `container X (owner O) has restarted N times - a restart loop` (warning) | more restarts than `check_containers_restart_warn` (3), counted by podman or by its systemd unit | its log shows why it keeps stopping |
+| `container X (owner O) was killed by the out-of-memory killer` (warning) | the kernel killed it for memory | more memory on the host, or a higher memory limit on the container |
+| `user U (uid N) has containers that should run (...) but linger is off` (warning) | the user's containers stop when they log out and do not start at boot | `loginctl enable-linger U` (as root) |
+| `user U (uid N) has podman containers ... and N unit(s) that should start at boot, but they could not be checked: no /run/user/N` (warning) | the user has units that should start at boot (a Quadlet with `[Install]`, an enabled unit) but is not logged in and has no linger: none of their containers run now. A user with only container storage (an admin who once ran podman) is listed under `not checked:` and gets no finding | if they should run: `loginctl enable-linger U`. If not, leave them out: `podman_discover_ignore: ['U/.*']` |
+| `the containers of O could not be read: podman ps failed ...` (warning) | podman (or systemctl) failed for that owner: a blind spot | run the `look:` command to see the error (storage problems, `podman system migrate` needed after an upgrade ...) |
+
+**Settings** (roles `podman_discover` and `check_containers`; [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md)):
+
+| Setting | Default | What it does |
+|---|---|---|
+| `podman_discover_enabled` | `true` | `false` = do not look for containers (the check says `skipped`) |
+| `podman_discover_rootless` | `true` | also look at users' containers |
+| `podman_discover_users` | `[]` | more users to look at, e.g. `[appsvc]` when the rules above miss one |
+| `podman_discover_ignore` | `[]` | containers to leave out: regular expressions that must match the **whole** name or `OWNER/NAME`, e.g. `['test-.*', 'alice/.*', 'root/scratch']` |
+| `check_containers_required` | `[]` | containers that must exist and run: a name (any owner) or `OWNER/NAME`, e.g. `[stigman-api, alice/web]` |
+| `check_containers_recent_hours` | `24` | how recent a crash must be to be reported |
+| `check_containers_restart_warn` | `3` | restarts above this = a restart loop |
+
+**To verify it** on one host: run the Health check with `health_checks: containers` and a Limit of
+that host; compare the table with `sudo podman ps -a` and, for a user,
+`sudo runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/$(id -u alice) podman ps -a`. Service watch
+uses the same way of finding containers ([SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md)).
 
 ## Troubleshoot (`playbooks/troubleshoot.yml`)
 

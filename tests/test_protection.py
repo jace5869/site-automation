@@ -43,7 +43,7 @@ for p in sorted(list((root / "playbooks").glob("*.yml")) + list((root / "roles")
         found += 1
         rel = p.relative_to(root)
         check(yaml.safe_load(m.group(2)) == role_default[m.group(1)], f"{rel}: the fallback for {m.group(1)} equals the role default")
-check(found >= 3, f"found the hard-coded fallbacks ({found}: act_fix_approved.yml, win_patch x2)")
+check(found >= 4, f"found the hard-coded fallbacks ({found}: act_fix_approved.yml, win_patch x2, service_watch)")
 
 fix = (root / "playbooks/act_fix_approved.yml").read_text()
 check(re.search(r"_no_apply.*\['aap', ?'aap_hosts'\]", fix, re.S) is not None, "act_fix_approved.yml: never applies fixes on AAP hosts")
@@ -60,6 +60,16 @@ check(re.search(r"ansible.builtin.reboot:(.|\n)*?when: .*intersect\(\['aap', 'aa
 act = (root / "roles/site_act/tasks/main.yml").read_text()
 check("_site_always_diagnose_only" in act, "roles/site_act/tasks: uses the always-diagnose-only list")
 
+watch = (root / "roles/service_watch/tasks/watch.yml").read_text()
+check(re.search(r"_watch_mode: >-\n\s+\{\{ 'approval' if \(watch_mode == 'self-heal' and group_names \| intersect\(_watch_no_heal \+ \['aap', 'aap_hosts'\]\)", watch) is not None,
+      "service watch: self-heal is forced off on AAP and the diagnose-only groups (literal AAP groups)")
+check(len(re.findall(r"(?<!_)watch_mode == 'self-heal'", watch)) == 1
+      and "act_triage_allow: \"{{ _watch_fix_patterns if _watch_mode == 'self-heal'" in watch
+      and re.search(r"- _watch_mode == 'self-heal'\n\s+- group_names \| intersect\(\['aap', 'aap_hosts'\]\) \| length == 0", watch) is not None,
+      "service watch: ACT's allow list and the standard self-heal fix use the per-host mode (and never run on AAP)")
+apply = (root / "roles/service_watch/tasks/apply.yml").read_text()
+check(re.search(r"meta: end_host\n\s+when: group_names \| intersect\(_watch_no_heal \+ \['aap', 'aap_hosts'\]\) \| length > 0", apply) is not None,
+      "service watch apply: skips AAP and the diagnose-only hosts (literal AAP groups)")
 for f in ("playbooks/act_fix_approved.yml", "roles/service_watch/tasks/run_fixes.yml"):
     check("apply_guard.yml" in (root / f).read_text(), f"{f}: runs approved commands only through the apply-time guard")
 check("_apply_refuse" in load("roles/site_findings/vars/main.yml"), "the guard pattern lives in one place (roles/site_findings/vars)")

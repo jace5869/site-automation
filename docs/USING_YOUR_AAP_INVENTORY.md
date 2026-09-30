@@ -75,9 +75,9 @@ can change it with one `target:` line:
 | Job templates | Variables box empty: runs on | To run on something else |
 |---|---|---|
 | Health check, Troubleshoot, Certificate report, Apply approved ACT fix | **every host** in the template's inventory (the built-in group `all`) | one run: the **Limit** at launch (tick **Prompt on launch** next to Limit). Always: `target: "rhel8_all:rhel9_all"` |
-| Database health - MariaDB / MySQL | the groups `mariadb_hosts`, `mysql_hosts`, `database_hosts` | `target: <group or host>` (a Limit only narrows those three groups; it cannot add a server outside them) |
+| Database health - MariaDB / MySQL | the groups `mariadb_hosts`, `mysql_hosts`, `database_hosts`, `mariadb`, `mysql` | `target: <group or host>` (a Limit only narrows those groups; it cannot add a server outside them) |
 | Service watch, Service watch - apply approved fix, STIG Manager - deploy | the group `stigman` | `target: <group>` |
-| Patch hosts | the group `patch_hosts` only (no such group: it patches nothing) | **always set it**, for example `target: "rhel8_all:rhel9_all"`, and pick the hosts with the Limit at launch |
+| Patch hosts | the group `patch_hosts` only (no such group: the job stops and lists your groups) | **always set it**, for example `target: "rhel8_all:rhel9_all"`, and pick the hosts with the Limit at launch. `target` is a group or host **inside** the inventory, never the inventory's own name |
 
 `target` and the Limit take group names, host names, or several joined with `:`.
 `stigman:mariadb` means either group, `rhel9_all:&sn_prod` only hosts in both, and
@@ -232,9 +232,9 @@ check_disk_overrides:
 check_certs_endpoints:                  # the certificate browsers actually see
   - {name: STIG Manager, host: 127.0.0.1, port: 443, servername: stigman.yoursite.mil}   # CHANGE
 check_certs_files: [/etc/stigman/*.crt, /etc/stigman/*.pem]                          # CHANGE: where your cert files are
-watch_containers:                       # service watch, dependencies first: container names
-  - name: stigman                       # (sudo podman ps -a) or service names without .service;
-  - name: nginx                         # how each is run (systemd unit or podman) is found by itself
+watch_containers:                       # optional since 0.6.0: service watch finds the containers
+  - name: stigman                       # that should run by itself; this list is watched first,
+  - name: nginx                         # in this order (dependencies first), and a missing one is reported
 ```
 
 If STIG Manager runs as systemd units (`systemctl list-units | grep -i stig` shows them), also

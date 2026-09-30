@@ -1,0 +1,201 @@
+---
+# CONTAINERS. Finds the podman containers itself (roles/podman_discover: root's and each user's,
+# how each one is run, whether it should be running) and reports:
+#   containers:down        critical  should be running but is not (or its systemd unit failed);
+#                                    a check_containers_required container that is missing or stopped
+#   containers:unhealthy   critical  running, but its healthcheck says unhealthy
+#   containers:crashed     warning   stopped with an error in the last check_containers_recent_hours
+#   containers:restarting  warning   restarted more than check_containers_restart_warn times
+#   containers:oom         warning   killed by the kernel's out-of-memory killer
+#   containers:no-linger   warning   a user's containers stop at logout and do not start at boot
+#                                    (linger is off), or a user with units that should start at boot
+#                                    could not be checked (no /run/user/UID)
+#   containers:query       warning   a user's (or root's) containers could not be read
+# Every summary names the owner, and every hint is a read-only command to run as root that shows
+# more, for THAT owner (a user's podman needs runuser ... env XDG_RUNTIME_DIR=...).
+
+- name: Containers | find them (podman_discover)
+  ansible.builtin.include_role:
+    name: podman_discover
+
+- name: Containers | skipped
+  ansible.builtin.debug:
+    msg: >-
+      skipped: {{ 'container discovery is off (podman_discover_enabled: false)' if not site_podman.enabled
+                  else 'podman is not installed' }}{{ (' - but check_containers_required lists '
+                  ~ (check_containers_required | join(', '))) if check_containers_required | length > 0 else '' }}
+  when: not (site_podman.enabled | bool and site_podman.installed | bool)
+
+- name: Containers | podman is missing although containers are required
+  ansible.builtin.set_fact:
+    site_findings: >-
+      {{ site_findings | default([]) + [{'check': 'containers', 'id': 'containers:no-podman', 'severity': 'critical',
+         'summary': 'podman is not installed, but check_containers_required lists ' ~ (check_containers_required | join(', ')),
+         'hint': 'command -v podman; rpm -q podman'}] }}
+  when:
+    - site_podman.enabled | bool
+    - not (site_podman.installed | bool)
+    - check_containers_required | length > 0
+
+- name: Containers | what was found
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = ['podman ' ~ site_podman.version ~ '; owners read: root'
+                     ~ ((', ' ~ (site_podman.users | map(attribute='name') | join(', '))) if site_podman.users else '')
+                     ~ ('' if site_podman.rootless else ' (rootless containers not looked at: podman_discover_rootless is false)')] -%}
+      {%- set fmt = '%-12s %-26s %-18s %-30s %s' -%}
+      {%- set _ = out.append(fmt | format('OWNER', 'NAME', 'STATE', 'UNIT', 'SHOULD RUN')) -%}
+      {%- for c in site_containers -%}
+      {%-   set st = c.state ~ ((' ' ~ c.health) if c.health else '') ~ ((' (' ~ c.exit_code ~ ')') if c.state in ['exited', 'stopped'] else '') -%}
+      {%-   set un = (c.unit ~ ' (' ~ (c.unit_active or '?') ~ ')') if c.unit else '-' -%}
+      {%-   set _ = out.append(fmt | format(c.owner, c.name, st, un, 'ignored' if c.ignored else ('yes' if c.should_run else 'no'))) -%}
+      {%- endfor -%}
+      {%- if not site_containers -%}{%- set _ = out.append('(no containers)') -%}{%- endif -%}
+      {%- for u in site_podman.skipped -%}
+      {%-   set _ = out.append('not checked: ' ~ u.user ~ ' - ' ~ u.reason) -%}
+      {%- endfor -%}
+      {{ out }}
+  when: site_podman.enabled | bool and site_podman.installed | bool
+
+- name: Containers | findings
+  ansible.builtin.set_fact:
+    _ctr_findings: >-
+      {%- set f = [] -%}
+      {%- set now = site_podman.now | int -%}
+      {%- set window = (check_containers_recent_hours | float * 3600) | int -%}
+      {%- set limit = check_containers_restart_warn | int -%}
+      {%- set down_keys = [] -%}
+      {%- for c in site_containers if not c.ignored -%}
+      {%-   set who = c.name ~ ' (owner ' ~ c.owner ~ ')' -%}
+      {%-   set sc = c.run_as ~ ('systemctl --user' if c.owner != 'root' else 'systemctl') -%}
+      {%-   set journal = ('journalctl _UID=' ~ c.uid ~ ' --since -2h -n 80 --no-pager') if c.owner != 'root'
+                          else ('journalctl -u ' ~ c.unit ~ ' -n 50 --no-pager') if c.unit else '' -%}
+      {%-   set look = ([c.run_as ~ 'podman logs --tail 50 ' ~ c.name] if c.id else [])
+                       + ([sc ~ ' status ' ~ c.unit ~ ' --no-pager -l'] if c.unit else [])
+                       + ([journal] if journal else []) -%}
+      {%-   set look = look if look else [c.run_as ~ 'podman ps -a'] -%}
+      {%-   set age = now - (c.exited_at | int) -%}
+      {%-   set ago = '' if (c.exited_at | int) <= 0 or now <= 0
+                      else 'less than a minute ago' if age < 60
+                      else (((age // 60) | int) ~ ' minutes ago') if age < 3600
+                      else (((age / 3600) | round(1)) ~ ' hours ago') if age < 172800
+                      else (((age / 86400) | round(1)) ~ ' days ago') -%}
+      {%-   set unit_says = ('its systemd ' ~ ('user ' if c.owner != 'root' else '') ~ 'unit ' ~ c.unit ~ ' is '
+                            ~ (c.unit_active or 'unknown') ~ ((' (' ~ c.unit_sub ~ ')') if c.unit_sub else '')
+                            ~ ((', result ' ~ c.unit_result) if c.unit_result not in ['', 'success'] else '')
+                            ~ ('; systemd has no such unit loaded' if c.unit_load == 'not-found' else '')) if c.unit else '' -%}
+      {%-   set stopped = ('it does not exist' if c.state == 'missing'
+                          else ('it exited with code ' ~ c.exit_code ~ ((', ' ~ ago) if ago else '')
+                                ~ (' (killed by the out-of-memory killer)' if c.oom_killed else ''))
+                                if c.state in ['exited', 'stopped']
+                          else ('it is ' ~ c.state)) -%}
+      {%-   set is_down = c.should_run and (not c.running or c.unit_active == 'failed') -%}
+      {%-   if is_down -%}
+      {%-     set _ = down_keys.append(c.key) -%}
+      {%-     set _ = f.append({'check': 'containers', 'id': 'containers:down:' ~ c.key, 'severity': 'critical',
+                                'summary': 'container ' ~ who ~ ' should be running (' ~ c.why ~ ') but '
+                                           ~ (stopped if not c.running else 'its unit failed while the container still runs')
+                                           ~ (('; ' ~ unit_says) if unit_says else ''),
+                                'hint': look | join('; ')}) -%}
+      {%-   elif c.running and c.health == 'unhealthy' -%}
+      {%-     set _ = f.append({'check': 'containers', 'id': 'containers:unhealthy:' ~ c.key, 'severity': 'critical',
+                                'summary': 'container ' ~ who ~ ' is running but its healthcheck reports unhealthy'
+                                           ~ (('; ' ~ unit_says) if unit_says else ''),
+                                'hint': ([c.run_as ~ 'podman inspect ' ~ c.name] + look) | join('; ')}) -%}
+      {%-   elif not c.running and c.state in ['exited', 'stopped'] and (c.exit_code | int) != 0
+                 and (c.exited_at | int) > 0 and age <= window -%}
+      {%-     set _ = f.append({'check': 'containers', 'id': 'containers:crashed:' ~ c.key, 'severity': 'warning',
+                                'summary': 'container ' ~ who ~ ' stopped with an error: ' ~ stopped
+                                           ~ ' (not reported as down: ' ~ c.why ~ ')',
+                                'hint': look | join('; ')}) -%}
+      {%-   elif not c.running and c.unit and c.unit_active == 'failed' -%}
+      {%-     set _ = f.append({'check': 'containers', 'id': 'containers:crashed:' ~ c.key, 'severity': 'warning',
+                                'summary': 'container ' ~ who ~ ': ' ~ unit_says ~ ' (not reported as down: ' ~ c.why ~ ')',
+                                'hint': look | join('; ')}) -%}
+      {%-   endif -%}
+      {%-   set restarts = [c.restart_count | int, c.unit_restarts | int] | max -%}
+      {%-   if restarts > limit or c.state == 'restarting' -%}
+      {%-     set _ = f.append({'check': 'containers', 'id': 'containers:restarting:' ~ c.key, 'severity': 'warning',
+                                'summary': 'container ' ~ who ~ ' has restarted ' ~ restarts ~ ' times'
+                                           ~ ((' (its unit ' ~ c.unit ~ ': ' ~ c.unit_restarts ~ ')') if (c.unit_restarts | int) > 0 else '')
+                                           ~ ' - a restart loop: it keeps stopping',
+                                'hint': look | join('; ')}) -%}
+      {%-   endif -%}
+      {%-   if c.oom_killed and not is_down and (c.running or (c.exited_at | int) <= 0 or age <= window) -%}
+      {%-     set _ = f.append({'check': 'containers', 'id': 'containers:oom:' ~ c.key, 'severity': 'warning',
+                                'summary': 'container ' ~ who ~ ' was killed by the out-of-memory killer'
+                                           ~ ((' ' ~ ago) if ago and not c.running else '') ~ ': it needs more memory, or its memory limit is too low',
+                                'hint': ([c.run_as ~ 'podman inspect ' ~ c.name] + look) | join('; ')}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {#- required containers: missing, or none of them running -#}
+      {%- for r in check_containers_required | map('string') -%}
+      {%-   set ro = r.split('/', 1)[0] if '/' in r else '' -%}
+      {%-   set rn = r.split('/', 1)[1] if '/' in r else r -%}
+      {%-   set m = [] -%}
+      {%-   for c in site_containers if (not ro or c.owner == ro)
+             and rn in [c.name, c.unit | regex_replace('[.]service$', ''), c.quadlet_file | basename | regex_replace('[.]container$', '')] -%}
+      {%-     set _ = m.append(c) -%}
+      {%-   endfor -%}
+      {%-   set ro_uid = site_podman.users | selectattr('name', 'equalto', ro) | map(attribute='uid') | first | default('UID') -%}
+      {%-   if m | length == 0 -%}
+      {%-     set _ = f.append({'check': 'containers', 'id': 'containers:down:' ~ r, 'severity': 'critical',
+                                'summary': 'required container ' ~ rn ~ ' (' ~ (('owner ' ~ ro) if ro else 'any owner')
+                                           ~ ') does not exist on this host (check_containers_required)',
+                                'hint': ((ro | podman_run_as(ro_uid)) if ro else '') ~ 'podman ps -a'}) -%}
+      {%-   elif m | selectattr('running') | list | length == 0 -%}
+      {%-     for c in m if c.key not in down_keys -%}
+      {%-       set _ = f.append({'check': 'containers', 'id': 'containers:down:' ~ c.key, 'severity': 'critical',
+                                  'summary': 'required container ' ~ c.name ~ ' (owner ' ~ c.owner ~ ') is not running: it is ' ~ c.state
+                                             ~ ((' (exit code ' ~ c.exit_code ~ ')') if c.state in ['exited', 'stopped'] else '')
+                                             ~ ' (check_containers_required)',
+                                  'hint': (c.run_as ~ 'podman ps -a') ~ (('; ' ~ c.run_as ~ 'podman logs --tail 50 ' ~ c.name) if c.id else '')}) -%}
+      {%-     endfor -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {#- rootless users: linger off, or not checked at all -#}
+      {%- for u in site_podman.users if not u.linger -%}
+      {%-   set want = site_containers | selectattr('owner', 'equalto', u.name) | rejectattr('ignored') | selectattr('should_run')
+                       | map(attribute='name') | list -%}
+      {%-   if want -%}
+      {%-     set _ = f.append({'check': 'containers', 'id': 'containers:no-linger:' ~ u.name, 'severity': 'warning',
+                                'summary': 'user ' ~ u.name ~ ' (uid ' ~ u.uid ~ ') has containers that should run (' ~ (want | join(', '))
+                                           ~ ') but linger is off: they stop when ' ~ u.name ~ ' logs out and do not start at boot. Fix: loginctl enable-linger ' ~ u.name,
+                                'hint': 'loginctl show-user ' ~ u.name ~ ' -p Linger; ls /var/lib/systemd/linger/'}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {#- a user that could not be checked is a finding only when something of theirs should start at boot
+          (a Quadlet with [Install], an enabled unit): container storage alone (an admin who once ran
+          podman) is only listed under "not checked" above -#}
+      {%- for u in site_podman.skipped if u.uid | int >= 0 -%}
+      {%-   if not u.ignored | default(false) and (u.wants | default(0) | int) > 0 -%}
+      {%-     set _ = f.append({'check': 'containers', 'id': 'containers:no-linger:' ~ u.user, 'severity': 'warning',
+                                'summary': 'user ' ~ u.user ~ ' (uid ' ~ u.uid ~ ') has podman containers'
+                                           ~ (' (container storage in their home)' if u.storage else '')
+                                           ~ ((' and ' ~ u.wants ~ ' unit(s) that should start at boot') if (u.wants | int) > 0 else '')
+                                           ~ ', but they could not be checked: ' ~ u.reason
+                                           ~ ('. Their containers are not running now. Fix, if they should run: loginctl enable-linger ' ~ u.user
+                                              if not u.linger else ''),
+                                'hint': 'ls -ld /run/user/' ~ u.uid ~ '; ls /var/lib/systemd/linger/; loginctl show-user ' ~ u.user}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- for u in site_podman.skipped if u.uid | int < 0 -%}
+      {%-   set _ = f.append({'check': 'containers', 'id': 'containers:query:' ~ u.user, 'severity': 'warning',
+                              'summary': 'podman_discover_users names ' ~ u.user ~ ', but there is no such user on this host',
+                              'hint': 'getent passwd ' ~ u.user}) -%}
+      {%- endfor -%}
+      {#- what could not be read: one finding per owner -#}
+      {%- for owner in site_podman.errors | map(attribute='owner') | unique -%}
+      {%-   set es = site_podman.errors | selectattr('owner', 'equalto', owner) | list -%}
+      {%-   set _ = f.append({'check': 'containers', 'id': 'containers:query:' ~ owner, 'severity': 'warning',
+                              'summary': 'the containers of ' ~ owner ~ ' could not be read: '
+                                         ~ (es | map(attribute='what') | join(', ')) ~ ' failed: ' ~ (es | map(attribute='message') | join(' / ') | truncate(300)),
+                              'hint': es | map(attribute='command') | unique | join('; ')}) -%}
+      {%- endfor -%}
+      {{ f }}
+  when: site_podman.enabled | bool and site_podman.installed | bool
+
+- name: Containers | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _ctr_findings }}"
+  when: site_podman.enabled | bool and site_podman.installed | bool

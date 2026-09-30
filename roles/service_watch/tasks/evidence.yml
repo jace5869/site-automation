@@ -1,0 +1,50 @@
+---
+# Evidence for the down containers of USERS (rootless podman). ACT cannot read them itself: in a
+# job it refuses every command run as another user (runuser -u ... / sudo -u ...). So the playbook
+# reads them here - as root, read-only, as each owner - and gives ACT one file to read (cat FILE):
+# the container's podman state, its last log lines, its unit's status and the user's journal.
+# Output: _watch_evidence_file (the file, readable by root only; '' = nothing collected).
+# watch.yml removes the file after ACT has run.
+
+- name: Evidence | the down containers of users, read as each user (read-only)
+  ansible.builtin.shell:
+    cmd: |
+      cd /
+      unset DBUS_SESSION_BUS_ADDRESS
+      p={{ _watch_m.run_as | quote }}
+      c={{ _watch_m.container | quote }}
+      u={{ _watch_m.unit | quote }}
+      run() { printf '### $ %s\n' "$*"; timeout 60 "$@" 2>&1 | tail -c 8000; echo; }
+      echo "===== container {{ _watch_m.label }}: {{ service_watch.states[_watch_m.label] | default('down') }} ====="
+      run $p podman inspect --format '{% raw %}{{json .State}}{% endraw %}' "$c"
+      run $p podman logs --tail 60 "$c"
+      [ -n "$u" ] && run $p systemctl --user status "$u" --no-pager -l
+      run journalctl _UID={{ _watch_m.uid | int }} --since -2h -n 100 --no-pager
+      exit 0
+    executable: /bin/bash
+  loop: "{{ service_watch.down_users | map('extract', service_watch.managers) | list }}"
+  loop_control:
+    loop_var: _watch_m
+    label: "{{ _watch_m.key }}"
+  register: _watch_ev
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Evidence | a file for ACT (readable by root only)
+  ansible.builtin.tempfile:
+    state: file
+    suffix: .service-watch-evidence.txt
+  register: _watch_ev_tmp
+  when: _watch_ev.results | default([]) | length > 0
+
+- name: Evidence | write it
+  ansible.builtin.copy:
+    dest: "{{ _watch_ev_tmp.path }}"
+    mode: "0600"
+    content: "{{ (_watch_ev.results | map(attribute='stdout') | join(_watch_nl ~ _watch_nl))[:60000] }}"
+  when: _watch_ev_tmp.path is defined
+
+- name: Evidence | the file ACT is told to read
+  ansible.builtin.set_fact:
+    _watch_evidence_file: "{{ _watch_ev_tmp.path | default('') }}"

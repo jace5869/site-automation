@@ -1,0 +1,30 @@
+---
+# PODMAN DISCOVERY (read-only): every podman container on the host, root's (rootful) and each
+# user's (rootless), with how it is run (a systemd unit or plain podman) and whether it should be
+# running. Used by the Health check `containers` and by Service watch. It changes nothing.
+
+# false = do not look for containers at all (the containers check then says "skipped", and
+# Service watch watches only its watch_containers list).
+podman_discover_enabled: true
+
+# Also look at the containers of users (rootless podman). A user is looked at when a podman
+# process (conmon) runs as them, when they have "linger" on (/var/lib/systemd/linger/NAME), or
+# when they are in /etc/subuid AND have container storage (~/.local/share/containers/storage).
+# Their containers are read AS that user (runuser), and only when /run/user/UID exists - otherwise
+# podman would create it (a change), so such a user is listed as "not checked" instead.
+podman_discover_rootless: true
+
+# More users to look at (names), e.g. an application account the rules above miss.
+podman_discover_users: []
+
+# Containers to leave out, as regular expressions that must match the WHOLE container name or
+# OWNER/NAME, e.g. ['test-.*'] (every container whose name starts with test-, any owner),
+# ['alice/.*'] (all of alice's containers), ['root/web'] (root's web only).
+podman_discover_ignore: []
+
+# Where root's Quadlet files are (*.container). A user's are always read from
+# ~/.config/containers/systemd, /etc/containers/systemd/users/UID and /etc/containers/systemd/users.
+podman_discover_quadlet_dirs: [/etc/containers/systemd, /usr/share/containers/systemd]
+
+# Seconds one podman or systemctl call may take before it is given up (reported as a finding).
+podman_discover_timeout: 60

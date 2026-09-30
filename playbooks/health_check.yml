@@ -30,8 +30,11 @@
 #                hosts in mariadb_hosts / mysql_hosts / database_hosts (or the groups mariadb, mysql),
 #                or that name a container. "mysql" and "database" are other names for the same
 #                check. Only the database? Run playbooks/database_health.yml. docs/MARIADB.md
+#   containers   podman containers, root's and every user's (rootless), found by themselves: down,
+#                unhealthy, crashed, restart loops, OOM kills, users without linger. Hosts without
+#                podman are skipped. docs/RUNBOOKS.md
 #
-# Shortcuts: daily = disk mounts services performance time network logging mariadb
+# Shortcuts: daily = disk mounts services performance time network logging mariadb containers
 #            weekly = selinux fapolicyd auditd accounts certs patching
 #            all = both
 #
@@ -45,9 +48,9 @@
     health_checks: [daily]
     _health_alias: {mysql: mariadb, database: mariadb}
     _health_sets:
-      daily: [disk, mounts, services, performance, time, network, logging, mariadb]
+      daily: [disk, mounts, services, performance, time, network, logging, mariadb, containers]
       weekly: [selinux, fapolicyd, auditd, accounts, certs, patching]
-      all: [disk, mounts, services, performance, time, network, logging, mariadb,
+      all: [disk, mounts, services, performance, time, network, logging, mariadb, containers,
             selinux, fapolicyd, auditd, accounts, certs, patching]
     # A survey's multiple-choice answer can arrive as a list or as lines of text: accept both.
     _health_asked: >-

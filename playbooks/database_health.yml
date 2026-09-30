@@ -11,8 +11,8 @@
 #   - restarts nobody planned, errors in its log, the disk under its data directory
 # It changes nothing: status queries only, no data is read, the password never appears on a command line.
 #
-# Which servers: by default the members of the inventory groups mariadb_hosts, mysql_hosts and
-# database_hosts. To check a server outside those groups, name it with -e target= (a job's Limit can only
+# Which servers: by default the members of the inventory groups mariadb_hosts, mysql_hosts,
+# database_hosts, mariadb and mysql. To check a server outside those groups, name it with -e target= (a job's Limit can only
 # narrow the hosts down, never add one); every server this playbook runs on is checked (its own database,
 # or the containers you name for it).
 # Podman containers, rootless containers, the credential and the monitoring account: docs/MARIADB.md.
@@ -26,8 +26,19 @@
 # summary, and a host with findings FAILS (so a workflow can open a ticket).
 # In AAP: a job template on this playbook with the credentials "MariaDB monitor" (the read-only
 # database account) and, for tickets, the workflow of docs/WORKFLOWS_AND_SCHEDULES.md.
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('mariadb_hosts,mysql_hosts,database_hosts,mariadb,mysql') }}"
+
 - name: Database health - MariaDB / MySQL (host or podman container)
-  hosts: "{{ target | default('mariadb_hosts,mysql_hosts,database_hosts') }}"
+  hosts: "{{ target | default('mariadb_hosts,mysql_hosts,database_hosts,mariadb,mysql') }}"
   become: true
   gather_facts: false
   vars:

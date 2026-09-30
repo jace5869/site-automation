@@ -9,7 +9,7 @@
       time: "{{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') }}"
       host: "{{ inventory_hostname }}"
       event: "{{ _watch_event }}"
-      mode: "{{ watch_mode }}"
+      mode: "{{ _watch_mode | default(watch_mode) }}"
       containers: "{{ service_watch.states }}"
       pages: "{{ service_watch.pages }}"
       findings: "{{ (service_watch_before | default(service_watch)).findings }}"

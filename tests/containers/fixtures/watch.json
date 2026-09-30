@@ -1,0 +1,97 @@
+{
+ "_comment": "Service watch: root, alice and bob each have a container called nginx; alice's is a Quadlet user unit that is down, bob's is plain (restart policy always) and exited; root's cache is down; carol has no /run/user/UID.",
+ "users": {
+  "alice": {
+   "uid": 1001,
+   "home": "home/alice",
+   "linger": 1,
+   "runtime": 1,
+   "storage": 1,
+   "subuid": 1
+  },
+  "bob": {
+   "uid": 1002,
+   "home": "home/bob",
+   "linger": 1,
+   "runtime": 1,
+   "storage": 1,
+   "subuid": 1
+  },
+  "carol": {
+   "uid": 1003,
+   "home": "home/carol",
+   "linger": 0,
+   "runtime": 0,
+   "storage": 1,
+   "subuid": 1
+  }
+ },
+ "owners": {
+  "root": {
+   "containers": [
+    {
+     "name": "systemd-db",
+     "state": "running",
+     "unit": "db.service"
+    },
+    {
+     "name": "cache",
+     "state": "exited",
+     "exit": 1,
+     "exited_ago": 300,
+     "policy": "always"
+    },
+    {
+     "name": "nginx",
+     "state": "running",
+     "policy": "always"
+    },
+    {
+     "name": "scratch",
+     "state": "exited",
+     "exit": 0,
+     "exited_ago": 50
+    }
+   ],
+   "units": {
+    "db.service": {
+     "LoadState": "loaded",
+     "ActiveState": "active",
+     "SubState": "running",
+     "UnitFileState": "generated",
+     "creates": "systemd-db"
+    }
+   }
+  },
+  "alice": {
+   "containers": [],
+   "units": {
+    "nginx.service": {
+     "LoadState": "loaded",
+     "ActiveState": "failed",
+     "SubState": "failed",
+     "Result": "exit-code",
+     "UnitFileState": "generated",
+     "WantedBy": "default.target",
+     "creates": "nginx"
+    }
+   }
+  },
+  "bob": {
+   "containers": [
+    {
+     "name": "nginx",
+     "state": "exited",
+     "exit": 137,
+     "exited_ago": 120,
+     "policy": "always"
+    }
+   ],
+   "units": {}
+  }
+ },
+ "files": {
+  "etc/containers/systemd/db.container": "[Container]\nImage=registry.example.com/db:1\n\n[Install]\nWantedBy=multi-user.target\n",
+  "home/alice/.config/containers/systemd/nginx.container": "[Container]\nContainerName=nginx\nImage=registry.example.com/nginx:1\n\n[Install]\nWantedBy=default.target\n"
+ }
+}
