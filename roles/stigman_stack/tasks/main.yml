@@ -110,7 +110,11 @@
 
 # ---------------------------------------------------------------- podman secrets
 # A label holds the SHA-256 of each value so the role knows whether it changed without reading
-# the secret back. (On the host, root can read podman secrets anyway; protect root.)
+# the secret back. The hash is plain (unsalted) SHA-256: anyone who can read the label can also
+# read the secret itself (both need root on the host), so a salt would add nothing - but it also
+# means a WEAK password could be guessed from the label. Use long random values (the AAP
+# credential help says so). Changing the hash scheme would make every deployed database look
+# 'changed', so it stays as it is.
 - name: Secrets | current state
   ansible.builtin.command:
     argv: [podman, secret, inspect, "{{ item }}", --format, "{{ '{{' }}index .Spec.Labels \"site.sha256\"{{ '}}' }}"]

@@ -1,0 +1,16 @@
+# YOUR SETTINGS FOR THE MYSQL HOSTS (AAP group "mysql"; the example inventory calls it "mysql_hosts" -
+# the database check accepts mariadb_hosts, mysql_hosts, database_hosts, mariadb and mysql, and any host
+# you give a container name). A settings file applies to the group with the same name as the file: if your
+# MySQL hosts are in a group with another name, copy this file to playbooks/group_vars/<that group>.yml.
+# The check is the same one as for MariaDB (MariaDB / MySQL 5.7 / 8.0 / 8.4 are told apart by themselves).
+# Full guide (containers, rootless containers, the credential, the monitoring account): docs/MARIADB.md.
+#
+# MySQL in podman containers: run  sudo podman ps -a  on a host, note the container NAME(S), then delete
+# the "# " in front of the lines you need and replace CHANGE-ME. Attach the "MariaDB monitor" credential
+# (the read-only DB account) to the Health check, Database health and Troubleshoot job templates.
+# check_mariadb_enabled: true
+# check_mariadb_container: CHANGE-ME                  # one container ...
+# check_mariadb_containers: [CHANGE-ME, CHANGE-ME-2]  # ... or several on the same host
+# check_mariadb_container_discover: true              # ... or find every mysql/mariadb/percona container
+# check_mariadb_container_user: CHANGE-ME             # rootless: the account that owns the containers
+# check_mariadb_group_size: 3                         # Group Replication: members expected ONLINE

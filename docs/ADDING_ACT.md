@@ -26,7 +26,7 @@ with ACT automatically.
 - **`roles/site_act`** is the only place that talks to ACT. Every runbook uses it the same way.
   Turning ACT on is a variable, not a code change.
 - Host names, IP addresses and user names are **pseudonymized** before anything reaches the
-  model (ACT 0.6.18). Its replies are translated back on the host.
+  model (ACT 0.6.18 and newer). Its replies are translated back on the host.
 
 ## The three levels
 
@@ -41,8 +41,9 @@ while. Use `self-heal` only for fixes you would let a junior admin do unasked: s
 service, restart a hung one.
 
 **Never fixed automatically, at any level:** hosts in `site_act_diagnose_only_groups` (default:
-`aap_hosts`, `netapp_console_hosts`). There `self-heal` becomes `diagnose`, and the apply step
-skips them: it prints the approved command for a person to run by hand.
+`aap`, `aap_hosts`, `sat`, `idm`, `netapp`, `netapp_console_hosts`; `aap` and `aap_hosts` are always
+kept, whatever list you write). There `self-heal` becomes `diagnose`, and the apply step skips
+them: it prints the approved command for a person to run by hand.
 
 ## Turn it on
 
@@ -66,7 +67,7 @@ ACT can talk to three providers. Pick one with **`site_act_provider`**:
 | `asksage` | Ask Sage | *ACT model key*, **AskSage API key** field | `site_act_url`: your organization's Ask Sage API URL. The default is `https://api.genai.army.mil/server/openai/v1/chat/completions` |
 | `genai-beta` | GenAI.mil beta proxy (preview models) | *ACT GenAI beta key* (`aap/credential_types/act_genai_beta_key.yml`) | nothing |
 
-The four settings:
+The settings:
 
 | Setting | What | Default |
 |---|---|---|
@@ -78,8 +79,9 @@ The four settings:
 
 **Where to set them:**
 
-- **For everyone**: `playbooks/group_vars/all.yml`, already set up like this. Not the inventory's
-  Variables box in AAP: this file beats it, so a value there would be ignored.
+- **For everyone**: `playbooks/group_vars/all.yml` in this project (the file has these lines ready
+  as comments). A setting there beats the *inventory's* Variables box in AAP, so put it in one of
+  the two places, not both. Which place wins in every case: [VARIABLES.md](VARIABLES.md).
   ```yaml
   site_act_provider: genai                 # the default provider
   site_act_models:                         # the model follows the provider you pick
@@ -107,22 +109,12 @@ are still reported.
 provider's URL over HTTPS. If they go through a proxy, add it:
 `site_act_env: {HTTPS_PROXY: "http://proxy.yoursite.mil:8080"}`.
 
-**Models served only on `/v1/messages`** (ACT 0.6.19). Some gateways offer a model, for example
-a Claude model, only through the Anthropic endpoint (`.../v1/messages`), and answer HTTP 400 for
-it on `.../v1/chat/completions`. ACT handles that by itself:
-- **The first request:** it goes to the URL as configured. If the gateway refuses the model, ACT
-  tries the other endpoint and uses the one that answers.
-- **Every request:** a refusal is shown with the gateway's own reason.
-- **Nothing to set:** keep the provider URL ending in `/chat/completions`. ACT derives the other
-  endpoint by swapping the ending.
-- **If the Anthropic endpoint is elsewhere:** `site_act_env: {GENAI_ANTHROPIC_URL: "https://<host>/.../v1/messages"}`
-  (`ASKSAGE_ANTHROPIC_URL`, `GENAI_BETA_ANTHROPIC_URL` for the other providers).
-- **To skip the one refused request per run** when every model you use is served only on
-  `/v1/messages`: `site_act_env: {ACT_API_FORMAT: anthropic}`.
+**Models served only on `/v1/messages`** (ACT 0.6.19 and newer). Some gateways offer a model
+only through the Anthropic endpoint and answer HTTP 400 for it on `.../v1/chat/completions`. ACT
+tries the other endpoint by itself, with nothing to set. To test your models and set the
+switches on purpose, follow [Both endpoint formats and `:probe`](#both-endpoint-formats-and-probe-act-0619-and-newer) below.
 
-To see which endpoint each model works on, run `act` by hand once and type `:probe all`.
-
-Anything else ACT should know about your site goes in the inventory too:
+Anything else ACT should know about your site goes in the same places (for example `playbooks/group_vars/all.yml`):
 
 ```yaml
 site_act_extra_instructions: >-
@@ -137,10 +129,10 @@ On **Health check** and **Troubleshoot** → **Survey** → **Create survey ques
 |---|---|---|---|---|
 | Ask ACT (GenAI) about the findings? | `use_act` | Multiple Choice (single select) | `no`, `yes` | `no` |
 | What may ACT do? | `site_act_level` | Multiple Choice (single select) | `explain`, `diagnose`, `self-heal` | `explain` |
-| Which model provider? (optional) | `site_act_provider` | Multiple Choice (single select) | `genai`, `asksage`, `genai-beta` | the one in your inventory |
+| Which model provider? (optional) | `site_act_provider` | Multiple Choice (single select) | `genai`, `asksage`, `genai-beta` | the one in your settings |
 | Which model? (optional, blank = the provider's model from `site_act_models`) | `site_act_model` | Text, not required | | blank |
 
-Leave out the last two if everyone uses the same provider. The inventory setting then applies.
+Leave out the last two if everyone uses the same provider. Your setting (section 2) then applies.
 
 ### 4. Try `explain` by hand
 
@@ -150,7 +142,7 @@ says`**. With ACT on, the host's ServiceNow ticket includes this analysis too.
 
 ### 5. `diagnose` with the approval workflow
 
-Build *Fix with approval (ACT)* ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#4-fix-with-approval-act)).
+Build *Fix with approval (ACT)* ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#5-fix-with-approval-act)).
 What happens:
 
 1. The health check finds, for example, `required service chronyd.service is inactive`.
@@ -158,15 +150,17 @@ What happens:
    chronyd`. The command is refused, so the job fails: `NEEDS APPROVAL - ... ACT proposes:
    systemctl start chronyd`.
 3. The workflow stops at the approval step. The approver reads ACT's report and approves.
-4. **Apply approved ACT fix** lets ACT run **exactly** `systemctl start chronyd` (the approved
-   text, escaped, is the only pattern allowed), and ACT verifies it.
+4. **Apply approved ACT fix** runs **exactly** `systemctl start chronyd` itself: no model and no
+   key, so nothing can be reworded between the approval and the fix. A last check refuses a few
+   commands even after approval (reboot, `mkfs`, `usermod` ...; see
+   [APPROVED_COMMANDS.md](APPROVED_COMMANDS.md)).
 5. The same checks run again, without ACT, and the job is green only if the problem is gone. The
    tickets step notes the ticket as cleared.
 
 ### 6. `self-heal` for the fixes you trust
 
 ```yaml
-# inventories/site/group_vars/all.yml
+# playbooks/group_vars/all.yml  (or the settings file of one group)
 site_act_allow:
   - 'systemctl (start|restart) (chronyd|rsyslog|crond)'
 ```
@@ -175,6 +169,108 @@ Each entry is a regular expression that must match the **whole** command. Keep t
 the services, never `.*`. Then pick `site_act_level` = `self-heal`. After ACT applies an allowed
 fix, the checks with findings run again. The report shows `cleared: ...` or `still there: ...`
 and reflects the state **after** the fix.
+
+## Both endpoint formats and `:probe` (ACT 0.6.19 and newer)
+
+**What this is for.** A model gateway can offer a model on two web addresses: the *OpenAI* one
+(the provider URL, ending in `/v1/chat/completions`) and the *Anthropic* one (ending in
+`/v1/messages`). Some models answer on only one of them. If ACT prints
+`HTTP 400 ... bad request` for a model that the gateway lists, this is the usual cause. ACT can now
+speak both, and `:probe` tests which one each model needs.
+
+**Two facts that shape the steps:**
+
+- `:probe` is a command you type at the ACT prompt. **It cannot run inside an AAP job** (jobs
+  are not interactive). So you run it **once, by hand, on one lab host**, and then put the result
+  into settings the jobs read.
+- In a job, ACT already works out the format by itself (one refused request, then it switches),
+  so the jobs may need no change at all. The settings below only save that one wasted request per
+  run, or point at an Anthropic address that is not the default.
+
+**Not verified against a real gateway.** These steps were written from ACT's own documentation and
+tests. Nobody has run them against your gateway yet; treat the first run as the test.
+
+### Step 1: check which ACT the project carries
+
+`vendor/act/VERSION` must say `0.6.19` or newer. This release carries **0.6.21**, a hardening
+release: it sends the key only to an `https://` provider URL (an `http://` URL is refused unless
+`site_act_env: {ACT_ALLOW_HTTP: "1"}`), and more dangerous commands always need a person (see
+[APPROVED_COMMANDS.md](APPROVED_COMMANDS.md)). If it is older, update it first: README section
+"Updating ACT" (`scripts/update-act.sh`).
+
+### Step 2: put ACT on one lab Linux host
+
+Any host that can reach the gateway will do; it does not have to be one of your managed hosts. Copy
+the file `vendor/act/act` there (WinSCP, or `scp` in PowerShell), then on the host:
+
+```bash
+chmod 700 act
+```
+
+### Step 3: give it your key without writing the key anywhere
+
+Type this on the host. It asks for the key without showing it, and keeps it only in that terminal
+session (use `GENAI_BETA_KEY` or `ASKSAGE_KEY` for the other providers):
+
+```bash
+read -rs GENAI_KEY; export GENAI_KEY
+```
+
+Paste the key, press Enter, and do not `echo` it. If the provider URL is not ACT's default, also
+`export GENAI_URL='https://<your gateway>/v1/chat/completions'`.
+
+### Step 4: run `:probe`
+
+```bash
+./act
+```
+
+At the ACT prompt:
+
+```
+:probe all
+```
+
+`:probe all` tries every model the key lists, on both endpoints, with a small request and then
+ACT's full request. For each it shows what worked and, for a refusal, **the gateway's own reason**.
+`:probe <model name>` tests just one. Write down, for each model, which endpoint worked
+(`openai` or `anthropic`). Leave ACT with an empty line (or Ctrl-D).
+
+The result is remembered for the session. If a setup file already exists for your user on that host
+(`~/.config/act/config.json`), ACT also saves the format there (only the format table, never the
+key).
+
+**Windows.** ACT for Windows (`vendor/act-windows/act.ps1`) has the same `:probe` command. Run it
+the same way on a lab Windows host, in PowerShell, and enter the key with `:setup`. Its result
+goes into the Windows jobs' settings as above. (Not run by hand for this page.)
+
+### Step 5: tell the jobs
+
+A job does not read the lab host's file (it runs as another account, on another host), so put the
+result in settings, in the same places as the other ACT settings (section 2):
+
+| Your probe result | Setting in `playbooks/group_vars/all.yml` (or a group file) |
+|---|---|
+| All the models you use work on the OpenAI endpoint | nothing to set |
+| Some models work only on the Anthropic endpoint | nothing to set (ACT learns it during the run); optional, to skip the one refused request per run when **every** model you use is Anthropic-only: `site_act_env: {ACT_API_FORMAT: anthropic}` |
+| The Anthropic endpoint is at a different address than the OpenAI one with `/messages` in place of `/chat/completions` | `site_act_env: {GENAI_ANTHROPIC_URL: "https://<host>/.../v1/messages"}` (`ASKSAGE_ANTHROPIC_URL` or `GENAI_BETA_ANTHROPIC_URL` for the other providers) |
+| A model you want is listed for the key but works on neither | it is not available to your key; ask the gateway's owner. Choose another model in `site_act_models` |
+
+`ACT_API_FORMAT: anthropic` applies to **every** model ACT uses in the job. If you use both kinds,
+leave it out.
+
+### How to verify
+
+1. **The probe result:** in step 4 every model you plan to use shows one endpoint that worked.
+2. **A job:** launch **Troubleshoot** with `use_act` = `yes`, `site_act_level` = `explain`, and the
+   model in `site_act_model` (or set through `site_act_models`) on a host with a known finding. In
+   the output, task `ACT | what ACT says` holds an analysis, not an `HTTP 400` message.
+3. **The old symptom is gone:** search the job output for `400`. A line saying ACT switched to the
+   other endpoint is fine; a final `HTTP 400` for the model is not (then the probe said neither
+   endpoint works: step 5, last row).
+
+If a step fails, the message after `HTTP 400` is the gateway's reason: copy it exactly when you ask
+its owner for help, but remove the key and host names first.
 
 ## Write your own check (it works with the report, tickets and ACT automatically)
 
@@ -234,8 +330,8 @@ evidence.
 - `id`: stable across runs, with no numbers that change (`disk:/var`, not `disk:/var:96`).
   Otherwise every run opens a new ticket.
 - `hint`: **read-only**, runs in under a minute (`timeout 60 ...`), and shows the cause, not
-  just the symptom. ACT runs it as root in `explain` mode, so never put a command that changes
-  something there.
+  just the symptom. It runs as root when ACT is on (Ansible runs it in `explain` mode and hands
+  ACT the output), so never put a command that changes something there.
 - `severity`: `critical` = act now (outage, security); `warning` = act soon.
 
 ## Use ACT in a playbook of your own

@@ -1,0 +1,12 @@
+# MySQL servers (example). The database check finds MySQL 5.7 / 8.0 / 8.4 by itself; you only say WHERE it runs.
+# MySQL in a podman container: name it (sudo podman ps -a on the host shows the name) ...
+# check_mariadb_container: mysql-app
+# check_mariadb_containers: [mysql-app, mysql-reports]   # ... or several on one host
+# check_mariadb_container_discover: true                 # ... or find every mysql/mariadb/percona container
+# check_mariadb_container_user: appsvc                   # rootless: the account that owns the containers
+# MySQL Group Replication: warn when fewer members than this are ONLINE
+# check_mariadb_group_size: 3
+# Attach the "MariaDB monitor" AAP credential to the job template (it serves MySQL too). The account
+# needs: GRANT PROCESS, REPLICATION CLIENT ON *.*; and, for Group Replication, SELECT ON performance_schema.*
+# (MariaDB 10.5.9+: PROCESS, REPLICA MONITOR instead of REPLICATION CLIENT)
+# Full guide: docs/MARIADB.md

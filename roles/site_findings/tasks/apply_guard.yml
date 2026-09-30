@@ -1,0 +1,11 @@
+---
+# Refuse fix commands that could destroy the host or restart it, even when a person approved them.
+# Input: _guard_cmds (list of commands). The pattern is _apply_refuse in ../vars/main.yml.
+- name: Apply guard | refuse reboots, shutdowns, disk/account changes and recursive deletes of system directories
+  ansible.builtin.assert:
+    that: _guard_cmds | select('search', _apply_refuse) | list | length == 0
+    fail_msg: >-
+      Refused on {{ inventory_hostname }}: {{ _guard_cmds | select('search', _apply_refuse) | list | join(' ; ') }}.
+      Reboots, shutdowns, disk and account changes and recursive deletes of system directories are never
+      run from this job, even when approved. Run them by hand if you mean them. Nothing was run on this host.
+    quiet: true

@@ -42,7 +42,7 @@
       ACT_API_FORMAT         endpoint format for every provider: auto (default), openai, or anthropic.
                              openai = POST .../v1/chat/completions; anthropic = POST .../v1/messages
                              (Anthropic Messages API). auto tries the model's likely format first
-                             (Claude models: anthropic), switches when the server refuses the model,
+                             (the format the URL names), switches when the server refuses the model,
                              and remembers per model what worked. :probe tests a model on both.
       GENAI_ANTHROPIC_URL    Anthropic Messages URL for genai (default: the GENAI_URL with
                              /chat/completions swapped for /messages). Also GENAI_BETA_ANTHROPIC_URL,
@@ -52,7 +52,18 @@
       ACT_DEBUG              1 = write the scrubbed request body and raw API response to stderr (2> debug.txt)
       GENAI_SKIP_CERT_CHECK  last resort: with ACT_ALLOW_INSECURE_TLS=1, bypass TLS validation ONLY for the provider host(s); install the CA instead
       ACT_ALLOW_INSECURE_TLS required acknowledgment flag for GENAI_SKIP_CERT_CHECK (both must be 1)
-      ACT_AUTO               set to 1 for permissive auto mode; only catastrophic destructive actions ask
+      ACT_AUTO               set to 1 for hands-off auto mode: ordinary commands run unasked; anything
+                             classified danger, or matching the catastrophic set, still asks (denied
+                             when non-interactive)
+      ACT_ALLOW_HTTP_KEY     1/true/yes/on = allow sending the API key to a plain-http URL (default:
+                             the key only travels over https, or to this machine); ACT_ALLOW_HTTP is
+                             the same switch. Redirects are never followed with the key.
+      ACT_STDIN_WAIT         seconds to wait for piped stdin when non-interactive (default 5, 1-600)
+      ACT_MAX_TOKENS         output-token limit sent with each request (default 4096, 256-128000)
+      ACT_FEWSHOT            default 1: include worked examples in the system prompt; 0 = omit
+      ACT_PROSE_ANSWERS      default 1: accept a plain-prose final answer; 0 = strict JSON-only finish
+      ACT_GLYPHS             default 1: Unicode markers in the transcript; 0 = plain ASCII
+      ACT_SWOOSH             default 1: end-of-session animation; 0 = off
       ACT_MAX_STEPS          max ReAct steps per task (default 100)
       ACT_MAX_OUTPUT         max chars of a single command's output kept overall (default 100000)
       ACT_COMMAND_TIMEOUT    per-command timeout seconds (default 1800)
@@ -64,6 +75,7 @@
       ACT_THEME              color theme: claude bumblebee matrix crt ocean nord amber solarized magenta slate default mono
       ACT_SPINNER            1 = show a static thinking indicator; 0 = disable it
       ACT_NO_BANNER          set to 1 to suppress the startup banner
+      ACT_BANNER_ORG         organization name shown in front of the banner line
       ACT_MODEL_DISCOVERY    1 (default) = query the provider's live model list at startup when a
                              key is set (once per session); 0 disables the startup query
       ACT_TOOLS              default 1: send the action protocol as a native tool/function
@@ -109,7 +121,7 @@
       .\act.ps1                      interactive session (REPL)
       .\act.ps1 "your task here"     one-shot: run the task then exit
       Get-Content x.log | .\act.ps1  read-only analysis of piped input
-      .\act.ps1 -Auto "..."          permissive auto: only catastrophic destructive actions prompt
+      .\act.ps1 -Auto "..."          hands-off auto: danger-tier and catastrophic actions still prompt
       .\act.ps1 -NonInteractive "..." never prompt; fail with a documented nonzero exit code
       .\act.ps1 -NonInteractive -Allow 'Restart-Service -Name W3SVC' -ResultFile r.json "..."
                                      automation: pre-approve one fix, write a JSON result
@@ -146,7 +158,7 @@ param(
     [switch] $Test
 )
 
-$script:ActVersion = '0.6.19'
+$script:ActVersion = '0.6.21'
 $script:ActScriptPath = $PSCommandPath
 
 # ---- Admin-embedded API keys (optional) -----------------------------------
@@ -282,8 +294,11 @@ function Initialize-AuditLog {
         if ([string]::IsNullOrWhiteSpace($dir)) { $dir = '.' }
         New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null
         if (-not (Test-Path -LiteralPath $configured)) {
-            $utf8 = New-Object System.Text.UTF8Encoding($false)
-            [System.IO.File]::WriteAllText($configured, '', $utf8)
+            # Append mode: a second ACT process starting at the same moment must not truncate
+            # an event the first one already wrote.
+            $seed = New-Object System.IO.FileStream($configured, [System.IO.FileMode]::Append,
+                        [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+            $seed.Dispose()
         }
         $script:AuditPath = $configured
         $script:AuditReady = $true
@@ -330,14 +345,32 @@ function Write-AuditEvent {
         foreach ($key in $Fields.Keys) { $record[$key] = $Fields[$key] }
         $line = ($record | ConvertTo-Json -Depth 8 -Compress) + [Environment]::NewLine
         $utf8 = New-Object System.Text.UTF8Encoding($false)
-        $fs = New-Object System.IO.FileStream(
-            $script:AuditPath, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write,
-            [System.IO.FileShare]::Read)
-        try {
-            $bytes = $utf8.GetBytes($line)
-            $fs.Write($bytes, 0, $bytes.Length)
-            $fs.Flush($true)
-        } finally { $fs.Dispose() }
+        $bytes = $utf8.GetBytes($line)
+        # A short retry: several ACT processes (an AAP fan-out, a scheduled task next to an
+        # interactive session) share one audit log. A sharing violation is transient, so it must
+        # not turn into "audit not ready" and refuse the run. Writers share Read only: a .NET
+        # Append stream writes at the end-of-file it saw when it opened (not an atomic append),
+        # so two writers open at once could overwrite each other's record; the retry serializes
+        # them instead. Readers (Get-Content -Wait, log shippers) are unaffected.
+        $written = $false
+        $lastError = $null
+        for ($try = 0; $try -lt 20 -and -not $written; $try++) {
+            $fs = $null
+            try {
+                $fs = New-Object System.IO.FileStream(
+                    $script:AuditPath, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write,
+                    [System.IO.FileShare]::Read)
+                $fs.Write($bytes, 0, $bytes.Length)
+                $fs.Flush($true)
+                $written = $true
+            } catch [System.IO.IOException] {
+                $lastError = $_
+                Start-Sleep -Milliseconds (10 + (Get-Random -Minimum 0 -Maximum 40))
+            } finally {
+                if ($null -ne $fs) { $fs.Dispose() }
+            }
+        }
+        if (-not $written) { throw $lastError }
         return $true
     } catch {
         $script:AuditReady = $false
@@ -384,7 +417,12 @@ function Unprotect-ActConfigSecret {
         $plain = [System.Security.Cryptography.ProtectedData]::Unprotect(
             $bytes, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
         return [System.Text.Encoding]::UTF8.GetString($plain)
-    } catch { return '' }
+    } catch {
+        # DPAPI keys are per user and per machine: a config copied elsewhere cannot be read.
+        # Say so instead of silently falling back to another key.
+        try { Write-Host 'ACT: a saved API key in the config file could not be decrypted (it was saved by another user or on another machine). Run :setup to save it again.' -ForegroundColor Yellow } catch { }
+        return ''
+    }
 }
 
 function Read-ActUserConfig {
@@ -931,13 +969,41 @@ function Get-RequestFeatures {
 
 function Disable-RequestFeature {
     # Remember that this endpoint refused a feature, so later requests leave it out.
-    param([string] $Feature, [string] $Key)
+    # -Blind: the server's error named nothing we sent, so this is a guess. A guess is only
+    # remembered for a few requests (Update-BlindShed), so an unrelated 400 (quota text, content
+    # filter) cannot permanently degrade a model for the rest of the session.
+    param([string] $Feature, [string] $Key, [switch] $Blind)
+    if ($Blind) {
+        if ($null -eq $script:BlindShed) { $script:BlindShed = @{} }
+        $script:BlindShed[$Feature + '|' + $Key] = 5
+    } elseif ($null -ne $script:BlindShed) {
+        # The server has now named the feature: a pending guess must not expire and re-enable it.
+        $script:BlindShed.Remove($Feature + '|' + $Key)
+    }
     switch ($Feature) {
         'tools'       { $script:ToolsSupport[$Key] = $false }
         'tool_choice' { $script:ToolChoiceSupport[$Key] = $false }
         'json'        { $script:JsonModeSupport[$Key] = $false }
         'prefill'     { $script:PrefillSupport[$Key] = $false }
         'temperature' { $script:TemperatureSupport[$Key] = $false }
+    }
+}
+
+function Update-BlindShed {
+    # Called once per model request: counts down guessed feature drops and re-enables them.
+    if ($null -eq $script:BlindShed -or $script:BlindShed.Count -eq 0) { return }
+    foreach ($k in @($script:BlindShed.Keys)) {
+        $script:BlindShed[$k] = [int]$script:BlindShed[$k] - 1
+        if ($script:BlindShed[$k] -gt 0) { continue }
+        $script:BlindShed.Remove($k)
+        $parts = $k.Split('|', 2)
+        switch ($parts[0]) {
+            'tools'       { $script:ToolsSupport.Remove($parts[1]) }
+            'tool_choice' { $script:ToolChoiceSupport.Remove($parts[1]) }
+            'json'        { $script:JsonModeSupport.Remove($parts[1]) }
+            'prefill'     { $script:PrefillSupport.Remove($parts[1]) }
+            'temperature' { $script:TemperatureSupport.Remove($parts[1]) }
+        }
     }
 }
 
@@ -1078,6 +1144,24 @@ function New-ChatRequestBody {
     return ($b | ConvertTo-Json -Depth 12)
 }
 
+$script:TokensUsed = 0
+$script:TokensReported = $false
+function Add-TokenUsage {
+    # Sum the provider-reported usage of every reply (chat and race) for the result file.
+    # Race replies are collected one at a time on the main thread, so no lock is needed;
+    # nothing here runs on a worker thread.
+    param($Response)
+    try {
+        $usage = Get-Prop $Response 'usage'
+        if ($null -eq $usage) { return }
+        $n = 0
+        $total = Get-Prop $usage 'total_tokens'
+        if ($null -ne $total) { $n = [int]$total }
+        else { $n = [int](Get-Prop $usage 'prompt_tokens') + [int](Get-Prop $usage 'completion_tokens') }
+        if ($n -gt 0) { $script:TokensUsed += $n; $script:TokensReported = $true }
+    } catch { }
+}
+
 function ConvertFrom-AnthropicResponse {
     # Turn an Anthropic Messages reply ({content:[{type:text}|{type:tool_use}], stop_reason})
     # into the OpenAI shape ({choices:[{message:{content, tool_calls}}]}) that every parser in
@@ -1159,6 +1243,80 @@ function Select-ChatModels {
     return $out
 }
 
+function Set-ActSecurityProtocol {
+    # TLS 1.2, as in every earlier release. Not Tls13: .NET 4.8 on Windows 5.1 knows the flag even
+    # where Schannel has no TLS 1.3 (Server 2016/2019), and asking for it there can fail the
+    # handshake. PowerShell 7 ignores this setting (its web cmdlets negotiate with the OS).
+    try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 } catch { }
+}
+
+function Test-KeySafeUrl {
+    # The API key goes in request headers, so it may only travel over https. Plain http is allowed
+    # only to the local machine (a test gateway), or with the explicit ACT_ALLOW_HTTP_KEY=1.
+    param([string] $Url)
+    if ([string]::IsNullOrWhiteSpace($Url)) { return $true }    # nothing to send to; the request fails by itself
+    try {
+        $u = [Uri]$Url
+        if ($u.Scheme -eq 'https') { return $true }
+        if ($u.Scheme -eq 'http' -and ($u.IsLoopback -or $u.Host -eq 'localhost')) { return $true }
+    } catch { return $false }
+    foreach ($name in @('ACT_ALLOW_HTTP', 'ACT_ALLOW_HTTP_KEY')) {
+        if ((Get-EnvOrDefault $name '0').Trim().ToLower() -in @('1', 'true', 'yes', 'on')) { return $true }
+    }
+    return $false
+}
+
+function Initialize-InsecureTls {
+    # TLS certificate validation bypass. This is a last-resort dev/test aid and is deliberately
+    # hard to enable: it requires BOTH GENAI_SKIP_CERT_CHECK=1 AND ACT_ALLOW_INSECURE_TLS=1, so
+    # a single stray env var cannot weaken TLS. When enabled, the bypass is SCOPED to only the
+    # configured provider host(s) - every other TLS connection in the process still validates.
+    # Windows PowerShell 5.1 (.NET Framework) honours ServicePointManager's callback; PowerShell 7
+    # (.NET) ignores it, so there the scope list is applied per request (-SkipCertificateCheck,
+    # or the HttpClientHandler validator for the race client). Installed once, used by every path.
+    # The right fix on a hardened host is to install the CA into the trust store, not this.
+    if ($script:InsecureTlsChecked) { return }
+    $script:InsecureTlsChecked = $true
+    $script:InsecureTlsHosts = @()
+    $skipTls = (Get-EnvOrDefault 'GENAI_SKIP_CERT_CHECK' '0') -eq '1'
+    $ackTls  = (Get-EnvOrDefault 'ACT_ALLOW_INSECURE_TLS' '0') -eq '1'
+    if ($skipTls -and -not $ackTls) {
+        Write-Themed warning 'GENAI_SKIP_CERT_CHECK=1 is IGNORED unless ACT_ALLOW_INSECURE_TLS=1 is ALSO set. Install the CA into the trust store instead.'
+        return
+    }
+    if (-not ($skipTls -and $ackTls) -or -not $script:FullLang) { return }
+    $allowedHosts = @()
+    foreach ($k in $script:Providers.Keys) {
+        try { $h = ([Uri]$script:Providers[$k].Url).Host; if (-not [string]::IsNullOrEmpty($h)) { $allowedHosts += $h.ToLower() } } catch { }
+    }
+    $script:InsecureTlsHosts = @($allowedHosts | Select-Object -Unique)
+    if ($PSVersionTable.PSEdition -ne 'Core') {
+        try {
+            $cb = {
+                param($senderObj, $cert, $chain, $errors)
+                if ($errors -eq [System.Net.Security.SslPolicyErrors]::None) { return $true }
+                $reqHost = ''
+                try { if ($senderObj -is [System.Net.HttpWebRequest]) { $reqHost = ('' + $senderObj.RequestUri.Host).ToLower() } } catch { }
+                if (-not [string]::IsNullOrEmpty($reqHost) -and ($allowedHosts -contains $reqHost)) { return $true }
+                return $false
+            }.GetNewClosure()
+            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $cb
+        } catch { $script:InsecureTlsHosts = @() ; return }
+    }
+    Write-Themed warning ('TLS validation bypass ENABLED, scoped to: ' + ($script:InsecureTlsHosts -join ', ') + '. All other hosts still validate. Install the CA instead.')
+}
+
+function Get-TlsRequestArgs {
+    # Extra Invoke-RestMethod arguments for this URL: the PowerShell 7 per-request bypass when the
+    # host is in the scope list, and never a redirect (a redirect would carry the key elsewhere).
+    param([string] $Uri)
+    $extra = @{ MaximumRedirection = 0 }
+    if ($PSVersionTable.PSEdition -eq 'Core' -and @($script:InsecureTlsHosts).Count -gt 0) {
+        try { if ($script:InsecureTlsHosts -contains ([Uri]$Uri).Host.ToLower()) { $extra['SkipCertificateCheck'] = $true } } catch { }
+    }
+    return $extra
+}
+
 function Get-ProviderModels {
     # Fetch the live model list. Uses a SHORT timeout and returns @() on ANY failure (network,
     # TLS, 401, timeout, Ctrl-C) so callers fall back to the curated list - never throws or hangs.
@@ -1168,7 +1326,9 @@ function Get-ProviderModels {
     if ($null -eq $script:Providers -or -not $script:Providers.ContainsKey($ProviderKey)) { return @() }
     $p = $script:Providers[$ProviderKey]
     if ([string]::IsNullOrEmpty($p.Key) -or [string]::IsNullOrEmpty($p.Url)) { return @() }
-    try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 } catch { }
+    if (-not (Test-KeySafeUrl $p.Url)) { return @() }
+    Set-ActSecurityProtocol
+    Initialize-InsecureTls
     $ids = @()
     $murl = ''
     try {
@@ -1176,13 +1336,15 @@ function Get-ProviderModels {
             $murl = $p.Url -replace '/server/.*$', '/server/get-models'
             if ($murl -eq $p.Url) { $murl = ($p.Url.TrimEnd('/')) + '/get-models' }
             $headers = Get-ProviderHeaders $ProviderKey $p.Key -Post
-            $resp = Invoke-RestMethod -Uri $murl -Method Post -Headers $headers -Body '{}' -TimeoutSec $TimeoutSec -ErrorAction Stop
+            $tlsArgs = Get-TlsRequestArgs $murl
+            $resp = Invoke-RestMethod -Uri $murl -Method Post -Headers $headers -Body '{}' -TimeoutSec $TimeoutSec -ErrorAction Stop @tlsArgs
         } else {
             $chat = Get-ChatUrl $p.Url
             $murl = $chat -replace '/chat/completions.*$', '/models'
             if ($murl -eq $chat) { $murl = ($chat.TrimEnd('/')) + '/models' }
             $headers = Get-ProviderHeaders $ProviderKey $p.Key
-            $resp = Invoke-RestMethod -Uri $murl -Method Get -Headers $headers -TimeoutSec $TimeoutSec -ErrorAction Stop
+            $tlsArgs = Get-TlsRequestArgs $murl
+            $resp = Invoke-RestMethod -Uri $murl -Method Get -Headers $headers -TimeoutSec $TimeoutSec -ErrorAction Stop @tlsArgs
         }
         $ids = ConvertTo-ModelIdList $resp
     } catch {
@@ -1192,9 +1354,10 @@ function Get-ProviderModels {
         # The Anthropic side of the gateway may list models when the OpenAI side does not.
         try {
             $aurl = (Get-AnthropicUrl $p.Url ('' + $p.AnthropicUrl)) -replace '/messages/?$', '/models'
-            if ($aurl -ne $murl -and $aurl -match '/models$') {
+            if ($aurl -ne $murl -and $aurl -match '/models$' -and (Test-KeySafeUrl $aurl)) {
                 $headers = Get-ProviderHeaders $ProviderKey $p.Key -Anthropic
-                $resp = Invoke-RestMethod -Uri $aurl -Method Get -Headers $headers -TimeoutSec $TimeoutSec -ErrorAction Stop
+                $tlsArgs = Get-TlsRequestArgs $aurl
+                $resp = Invoke-RestMethod -Uri $aurl -Method Get -Headers $headers -TimeoutSec $TimeoutSec -ErrorAction Stop @tlsArgs
                 $ids = ConvertTo-ModelIdList $resp
             }
         } catch { $ids = @() }
@@ -1264,14 +1427,25 @@ function Invoke-RaceChat {
     if ($models.Count -lt 2) { return $null }
     try { Add-Type -AssemblyName System.Net.Http -ErrorAction Stop } catch { return $null }
     Write-Themed dim ('  (racing ' + $models.Count + ' models: ' + ($models -join ', ') + ')')
-    try { [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12 } catch { }
+    if (-not (Test-KeySafeUrl $script:GenAiUrl)) { return $null }
+    Set-ActSecurityProtocol
+    Initialize-InsecureTls
     $prefill = $script:UsePrefill -and (-not $script:PrefillRejected)
     $client = $null
     $replies = @{}
     $dropped = [ordered]@{}
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
-        $client = New-Object System.Net.Http.HttpClient
+        $handler = New-Object System.Net.Http.HttpClientHandler
+        $handler.AllowAutoRedirect = $false      # a redirect would carry the key to another host
+        if ($PSVersionTable.PSEdition -eq 'Core' -and @($script:InsecureTlsHosts).Count -gt 0) {
+            try {
+                if ($script:InsecureTlsHosts -contains ([Uri]$script:GenAiUrl).Host.ToLower()) {
+                    $handler.ServerCertificateCustomValidationCallback = [System.Net.Http.HttpClientHandler]::DangerousAcceptAnyServerCertificateValidator
+                }
+            } catch { }
+        }
+        $client = New-Object System.Net.Http.HttpClient $handler
         $client.Timeout = [TimeSpan]::FromSeconds([Math]::Max(5, $script:GenAiTimeout))
         $taskMap = @{}
         $racerFeatures = @{}
@@ -1336,6 +1510,7 @@ function Invoke-RaceChat {
                 }
                 $text = $resp.Content.ReadAsStringAsync().Result
                 $parsed = ConvertFrom-AnthropicResponse ($text | ConvertFrom-Json)
+                Add-TokenUsage $parsed
                 $f = $racerFeatures[$racer]
                 $reply = $null
                 if ($f.Tools) { $reply = ConvertFrom-ToolCall $parsed }
@@ -1644,8 +1819,36 @@ function Initialize-Theme {
     }
 }
 
+function ConvertTo-SafeTerminalText {
+    # Untrusted text (model output, host command output, provider model names) must not be able to
+    # drive the terminal: an escape sequence or a carriage return could redraw the approval prompt
+    # so that it shows a harmless line while another command runs. Strips ANSI/VT sequences (CSI,
+    # OSC, DCS/APC/PM strings), C0/C1 control characters (backspace, lone CR, DEL, ...), and the
+    # invisible bidirectional/zero-width characters that reorder or hide text. Keeps tab and newline.
+    # -Mark shows each removed character as <U+XXXX> instead of silently dropping it (used where the
+    # operator is asked to approve a command, so hidden characters are visible).
+    param([string] $Text, [switch] $Mark)
+    if ([string]::IsNullOrEmpty($Text)) { return '' }
+    $s = $Text
+    $s = [regex]::Replace($s, '\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)', '')
+    $s = [regex]::Replace($s, '\x1b[P_^X][^\x1b]*(?:\x1b\\)', '')
+    $s = [regex]::Replace($s, '\x1b(?:\[[0-?]*[ -/]*[@-~]|[@-_])', '')
+    $s = $s.Replace("`r`n", "`n")
+    $bad = '[\x00-\x08\x0b-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\ufeff]'
+    if (-not [regex]::IsMatch($s, $bad)) { return $s }
+    if (-not $Mark) { return [regex]::Replace($s, $bad, '') }
+    # No StringBuilder: Write-Step runs this on every displayed command, also under
+    # Constrained Language Mode, where New-Object of a non-core type is refused.
+    $parts = foreach ($ch in $s.ToCharArray()) {
+        if ([regex]::IsMatch([string]$ch, $bad)) { '<U+' + ([int]$ch).ToString('X4') + '>' }
+        else { [string]$ch }
+    }
+    return (@($parts) -join '')
+}
+
 function Write-Themed {
-    param([string] $Role, [string] $Text, [switch] $NoNewline)
+    param([string] $Role, [string] $Text, [switch] $NoNewline, [switch] $Mark)
+    $Text = ConvertTo-SafeTerminalText $Text -Mark:$Mark
     if (-not $script:UseColor) {
         if ($NoNewline) { Write-Host $Text -NoNewline } else { Write-Host $Text }
         return
@@ -1671,7 +1874,7 @@ function Write-Step {
     # A Claude Code-style line: an accent marker followed by the text in the given role.
     param([string] $Marker, [string] $Text, [string] $Role = 'command', [string] $MarkerRole = 'accent')
     Write-Themed $MarkerRole ("  " + $Marker + " ") -NoNewline
-    Write-Themed $Role $Text
+    Write-Themed $Role $Text -Mark
 }
 
 function Show-Banner {
@@ -1686,7 +1889,13 @@ function Show-Banner {
     )
     Write-Host ''
     foreach ($l in $lines) { Write-Themed banner $l }
-    Write-Themed dim ("U.S. AFRICOM  -  Ask GenAI  -  act.ps1 v" + $script:ActVersion)
+    # ACT_BANNER_ORG (optional) puts your organization in front of the banner line.
+    $org = ''
+    if ($env:ACT_BANNER_ORG) { $org = (ConvertTo-SafeTerminalText ([string]$env:ACT_BANNER_ORG)).Trim() }
+    if ($org.Length -gt 60) { $org = $org.Substring(0, 60) }
+    $prefix = ''
+    if ($org) { $prefix = $org + '  -  ' }
+    Write-Themed dim ($prefix + "Ask GenAI  -  act.ps1 v" + $script:ActVersion)
     Write-Host ''
 }
 
@@ -1731,7 +1940,11 @@ function Test-TokenParamRejected {
     # and never overrides an explicit ACT_TOKEN_PARAM.
     param([string] $Key, [string] $Detail)
     if (-not [string]::IsNullOrEmpty($script:TokenParamForced)) { return $false }
-    if (('' + $Detail) -notmatch '(?i)max_completion_tokens|max_tokens') { return $false }
+    $tokenName = '(max_completion_tokens|max_tokens)'
+    $complaint = '(unsupported|not supported|unknown|unrecognized|not permitted|not allowed|deprecated|instead|extra inputs|unexpected)'
+    if (('' + $Detail) -notmatch ('(?is)' + $complaint + '.{0,120}' + $tokenName + '|' + $tokenName + '.{0,120}' + $complaint)) { return $false }
+    # A value complaint ("max_tokens is too large", "must be at most 4096") is not a name complaint.
+    if (('' + $Detail) -match '(?i)too (large|big|high|many)|exceeds?\b|greater than|less than or equal|at most|maximum (value|allowed)|context length') { return $false }
     if ($script:TokenParam.ContainsKey($Key)) { return $false }
     $current = Get-TokenParam $Key
     $script:TokenParam[$Key] = if ($current -eq 'max_tokens') { 'max_completion_tokens' } else { 'max_tokens' }
@@ -1740,12 +1953,19 @@ function Test-TokenParamRejected {
 
 function Invoke-ProviderRequestWithRetry {
     param([string] $Uri, [hashtable] $Headers, [string] $Body, [int] $TimeoutSec)
+    # Every keyed POST passes here (chat, the Anthropic Messages URL override, :probe), so the
+    # https-only rule for the API key is enforced here too, not only for the provider URL.
+    if (-not (Test-KeySafeUrl $Uri)) {
+        throw ('Refusing to send the API key over a non-https URL (' + $Uri + '). Use an https URL, or set ACT_ALLOW_HTTP_KEY=1 to override on a trusted network.')
+    }
     for ($retry = 0; $retry -le $script:ApiRetries; $retry++) {
         try {
             $requestArgs = @{
                 Uri = $Uri; Method = 'Post'; Headers = $Headers; Body = $Body
                 TimeoutSec = $TimeoutSec; ErrorAction = 'Stop'
             }
+            $tlsArgs = Get-TlsRequestArgs $Uri
+            foreach ($tk in @($tlsArgs.Keys)) { $requestArgs[$tk] = $tlsArgs[$tk] }
             return Invoke-RestMethod @requestArgs
         } catch {
             $code = $null
@@ -1755,6 +1975,15 @@ function Invoke-ProviderRequestWithRetry {
                          ($null -eq $code -and $msg -match '(?i)timeout|timed out|connection|reset|temporar|unreachable|name resolution|DNS')
             if (-not $transient -or $retry -ge $script:ApiRetries) { throw }
             $delayMs = Get-RetryDelayMs $retry
+            $retryAfter = 0
+            try {
+                $rh = $_.Exception.Response.Headers
+                $ra = $null
+                if ($null -ne $rh.RetryAfter) { if ($null -ne $rh.RetryAfter.Delta) { $ra = [int]$rh.RetryAfter.Delta.TotalSeconds } }
+                else { $ra = [int]('' + $rh['Retry-After']) }
+                if ($null -ne $ra) { $retryAfter = $ra }
+            } catch { }
+            if ($retryAfter -gt 0) { $delayMs = [Math]::Max($delayMs, [Math]::Min(30000, $retryAfter * 1000)) }
             $codeText = if ($null -ne $code) { " HTTP $code" } else { '' }
             Write-Themed dim ("  (transient provider failure$codeText; retry $($retry + 1)/$($script:ApiRetries) in $delayMs ms)")
             Start-Sleep -Milliseconds $delayMs
@@ -1770,41 +1999,13 @@ function Invoke-GenAIChat {
         return $null
     }
 
-    try {
-        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-    } catch { }
-
-    # TLS certificate validation bypass. This is a last-resort dev/test aid and is deliberately
-    # hard to enable: it requires BOTH GENAI_SKIP_CERT_CHECK=1 AND ACT_ALLOW_INSECURE_TLS=1, so
-    # a single stray env var cannot weaken TLS. When enabled, the bypass is SCOPED to only the
-    # configured provider host(s) - every other TLS connection in the process still validates.
-    # The right fix on a hardened host is to install the CA into the trust store, not this.
-    $skipTls = (Get-EnvOrDefault 'GENAI_SKIP_CERT_CHECK' '0') -eq '1'
-    $ackTls  = (Get-EnvOrDefault 'ACT_ALLOW_INSECURE_TLS' '0') -eq '1'
-    if ($skipTls -and -not $ackTls) {
-        if (-not $script:InsecureTlsNotified) {
-            Write-Themed warning 'GENAI_SKIP_CERT_CHECK=1 is IGNORED unless ACT_ALLOW_INSECURE_TLS=1 is ALSO set. Install the CA into the trust store instead.'
-            $script:InsecureTlsNotified = $true
-        }
-    } elseif ($skipTls -and $ackTls -and $script:FullLang -and -not $script:InsecureTlsInstalled) {
-        $allowedHosts = @()
-        foreach ($k in $script:Providers.Keys) {
-            try { $h = ([Uri]$script:Providers[$k].Url).Host; if (-not [string]::IsNullOrEmpty($h)) { $allowedHosts += $h.ToLower() } } catch { }
-        }
-        try {
-            $cb = {
-                param($senderObj, $cert, $chain, $errors)
-                if ($errors -eq [System.Net.Security.SslPolicyErrors]::None) { return $true }
-                $reqHost = ''
-                try { if ($senderObj -is [System.Net.HttpWebRequest]) { $reqHost = ('' + $senderObj.RequestUri.Host).ToLower() } } catch { }
-                if (-not [string]::IsNullOrEmpty($reqHost) -and ($allowedHosts -contains $reqHost)) { return $true }
-                return $false
-            }.GetNewClosure()
-            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = $cb
-            Write-Themed warning ('TLS validation bypass ENABLED, scoped to: ' + ($allowedHosts -join ', ') + '. All other hosts still validate. Install the CA instead.')
-            $script:InsecureTlsInstalled = $true
-        } catch { }
+    if (-not (Test-KeySafeUrl $script:GenAiUrl)) {
+        Write-Themed danger ("Refusing to send the API key over a non-https URL (" + $script:GenAiUrl + "). Use an https URL, or set ACT_ALLOW_HTTP_KEY=1 to override on a trusted network.")
+        return $null
     }
+    Set-ActSecurityProtocol
+    Initialize-InsecureTls
+    Update-BlindShed
 
     # The request goes to the model's endpoint format (Get-ModelFormat): OpenAI
     # chat/completions or the Anthropic Messages API. Optional features - tool calling,
@@ -1876,7 +2077,7 @@ function Invoke-GenAIChat {
                         ($_ -eq 'tools' -and $features.Tools) -or ($_ -eq 'json' -and $features.Json) -or
                         ($_ -eq 'prefill' -and $features.Prefill) -or ($_ -eq 'temperature' -and $features.Temperature) } | Select-Object -First 1
                     if ($blind) {
-                        Disable-RequestFeature $blind $featureKey
+                        Disable-RequestFeature $blind $featureKey -Blind
                         Write-Themed dim ('  (back to the ' + (Get-FormatLabel $format) + ' endpoint; retrying without ' + (Get-FeatureLabel $blind) + ')')
                         continue
                     }
@@ -1920,7 +2121,7 @@ function Invoke-GenAIChat {
                     ($_ -eq 'tools' -and $features.Tools) -or ($_ -eq 'json' -and $features.Json) -or
                     ($_ -eq 'prefill' -and $features.Prefill) -or ($_ -eq 'temperature' -and $features.Temperature) } | Select-Object -First 1
                 if ($blind) {
-                    Disable-RequestFeature $blind $featureKey
+                    Disable-RequestFeature $blind $featureKey -Blind
                     Write-Themed dim ('  (' + (Get-FormatLabel $format) + ' endpoint refused the request; retrying without ' + (Get-FeatureLabel $blind) + ')')
                     continue
                 }
@@ -1945,6 +2146,10 @@ function Invoke-GenAIChat {
                 }
                 return $null
             }
+            if (($null -ne $code -and $code -ge 300 -and $code -lt 400) -or ($msg -match '(?i)maximum.*redirect|redirect.*exceeded')) {
+                Write-Themed danger ("Request to '" + $script:Provider + "' failed: redirect refused (API key is never forwarded). Set the endpoint to its final https URL with :setup.")
+                return $null
+            }
             if ($code -eq 401) {
                 Write-Themed danger ("The '" + $script:Provider + "' provider returned 401 Unauthorized. Check its API key with :setup.")
                 if ($reason) { Write-Themed dim ('  server says: ' + $reason) }
@@ -1959,6 +2164,7 @@ function Invoke-GenAIChat {
         }
 
         $resp = ConvertFrom-AnthropicResponse $resp
+        Add-TokenUsage $resp
         if ($features.Json) {
             # Only record json-mode support when it was actually sent: with tools active,
             # response_format is never on the wire, so a success proves nothing about it.
@@ -2493,10 +2699,10 @@ function Initialize-RiskTables {
         @{ p = '\breg\b\s+delete\b';                                  r = 'reg delete (registry deletion)' },
         @{ p = '\bRemove-ItemProperty\b.*HK(LM|CR|CC):';             r = 'removing a registry value under a system hive' },
         @{ p = '\bRemove-ADUser\b|\bRemove-ADComputer\b|\bRemove-ADGroup\b|\bRemove-ADOrganizationalUnit\b'; r = 'destructive Active Directory object removal' },
-        @{ p = '\bnet\b\s+user\s+\S+\s+/delete';                      r = 'net user /delete' },
+        @{ p = '\bnet\b\s+user\s+\S+\s+/del(ete)?\b';                 r = 'net user /delete' },
         @{ p = '\bRemove-LocalUser\b';                                r = 'Remove-LocalUser' },
         @{ p = '\bRemove-LocalGroupMember\b.*Administrators';        r = 'removing a local administrator' },
-        @{ p = '\bnet\b\s+localgroup\s+administrators\b.*/delete';   r = 'removing a local administrator' },
+        @{ p = '\bnet\b\s+localgroup\s+administrators\b.*/del(ete)?\b'; r = 'removing a local administrator' },
         @{ p = '\bSet-ADAccountPassword\b';                           r = 'Set-ADAccountPassword (password reset)' },
         @{ p = '\bRemove-GPO\b';                                      r = 'Remove-GPO' },
         @{ p = '\bdism\b.*/(Remove|Disable-Feature)';                r = 'DISM remove/disable feature' },
@@ -2545,7 +2751,7 @@ function Initialize-RiskTables {
         # -- Credential / privilege escalation ---------------------------------
         @{ p = '(?i)\bSet-LocalUser\b[^\n]*-Password\b';             r = 'Set-LocalUser -Password (credential reset)' },
         @{ p = '(?i)\bnet\s+user\s+\S+\s+(?!/)[^\s/]\S*\s*$';        r = 'net user password reset' },
-        @{ p = '(?i)\b(Add-LocalGroupMember|net\s+localgroup)\b[^\n]*\bAdministrators\b'; r = 'adding a local administrator (privilege escalation)' },
+        @{ p = '(?i)\bAdd-LocalGroupMember\b[^\n]*\bAdministrators\b|\bnet\s+localgroup\b[^\n]*\bAdministrators\b[^\n]*\s/add\b'; r = 'adding a local administrator (privilege escalation)' },
         @{ p = '(?i)\bSet-ADAccountPassword\b|\bNew-LocalUser\b';    r = 'account credential change' },
         # -- Firewall / Defender / anti-forensics -------------------------------
         @{ p = '(?i)\bnetsh\b[^\n]*\badvfirewall\b[^\n]*\b(reset|add\s+rule)\b'; r = 'firewall rule change via netsh' },
@@ -2554,20 +2760,42 @@ function Initialize-RiskTables {
         @{ p = '(?i)\bSet-MpPreference\b[^\n]*-Disable';            r = 'disabling a Defender protection' },
         @{ p = '(?i)\b(Disable-BitLocker|manage-bde\b[^\n]*-off)\b'; r = 'disabling BitLocker' },
         @{ p = '(?i)\b(Clear-EventLog|wevtutil\b[^\n]*\bcl)\b';      r = 'clearing event logs (anti-forensics)' },
+        @{ p = '(?i)\breg(\.exe)?\s+delete\b';                        r = 'reg delete (registry deletion)' },
+        @{ p = '(?i)\bsc(\.exe)?\s+delete\b';                         r = 'sc delete (service removal)' },
+        @{ p = '(?i)\b(Uninstall-WindowsFeature|Remove-WindowsFeature|Uninstall-WindowsCapability)\b'; r = 'Windows feature removal' },
+        @{ p = '(?i)(\btakeown\b|\bicacls\b(?=[^\n]*[\s''"]/(grant|deny|remove|setowner|reset|setintegritylevel|restore|inheritance|substitute)\b))[^\n]*(C:\\Windows|\\System32|%SystemRoot%|\$env:(windir|SystemRoot)|C:\\Program Files)'; r = 'ownership / ACL change on a system path' },
+        @{ p = '(?i)\brobocopy\b(?!(?:[^\n;|&"'']|"[^"\n]*"|''[^''\n]*'')*\s/L\b)[^\n]*[\s''"]/(mir|purge)\b'; r = 'robocopy mirror/purge (deletes files at the destination)' },
         # HKCU/HKU registry deletion (the HKLM/HKCR/HKCC set is elsewhere in this table).
         @{ p = '(?i)\bRemove-Item(Property)?\b[^\n]*\bHK(CU|U):';    r = 'removing a registry key/value under a user hive' }
+    )
+
+    # Native-tool danger forms added in 0.6.20. Matched only for commands that are NOT an
+    # AST-proven read, on the quote-free text (Get-RiskTier), so a read whose search text merely
+    # names them (Select-String -Pattern 'vssadmin delete shadows') is not newly gated.
+    $script:NativeDangerPatterns = @(
+        @{ p = '(?i)\bvssadmin(\.exe)?\s+(delete\s+shadows|resize\s+shadowstorage)\b|\bwmic\b[^\n]*\bshadowcopy\b[^\n]*\bdelete\b'; r = 'shadow copy deletion (destroys restore points)' },
+        @{ p = '(?i)(^|[\n;&|({]\s*|\bcmd(\.exe)?\s+/[ck]\s+)format(\.com)?\s+[a-z]:';  r = 'format (formats a volume)' },
+        @{ p = '(?i)\bschtasks(\.exe)?\b[^\n]*\s/delete\b';            r = 'schtasks /delete (scheduled task removal)' }
     )
 
     # Auto mode uses this narrow catastrophic set as its confirmation boundary. The
     # broader DANGER table remains useful advisory labeling, but does not automatically
     # turn every high-impact, remote, or opaque command into an approval prompt.
     $script:AutoConfirmPatterns = @(
-        @{ p = '(?i)\b(Format-Volume|Clear-Disk|Initialize-Disk|Remove-Partition)\b|\bdiskpart\b|\bcipher\b[^\n]*\s/w\b|\bsdelete\b'; r = 'disk, partition, or volume destruction' },
-        @{ p = '(?i)\b(Remove-Item|ri|rm|del|erase)\b[^\n]*(-Recurse\b|\s-r\b)|\b(rd|rmdir|del)\b[^\n]*\s/s\b'; r = 'recursive deletion' },
-        @{ p = '(?i)\b(Get-ChildItem|gci|ls|dir|Get-Item)\b[^\n]*-Recurse\b[^\n]*\|\s*(Remove-Item|ri|rm|del|erase)\b'; r = 'recursive pipeline deletion' },
-        @{ p = '(?i)\[(System\.)?IO\.Directory\]::Delete\([^\n]*,\s*\$?true\s*\)'; r = 'recursive .NET directory deletion' },
+        @{ p = '(?i)\b(Format-Volume|Clear-Disk|Initialize-Disk|Remove-Partition)\b|\bdiskpart\b|\bcipher\b[^\n]*\s/w\b|\bsdelete\b|(^|[\n;&|({]\s*|\bcmd(\.exe)?\s+/[ck]\s+)format(\.com)?\s+[a-z]:'; r = 'disk, partition, or volume destruction' },
+        @{ p = '(?i)\bvssadmin(\.exe)?\s+(delete\s+shadows|resize\s+shadowstorage)\b|\bwmic\b[^\n]*\bshadowcopy\b[^\n]*\bdelete\b'; r = 'shadow copy deletion (destroys restore points)' },
+        # PowerShell accepts any unambiguous parameter prefix, so -Rec / -Recu / -re all mean -Recurse.
+        @{ p = '(?i)\b(Remove-Item|ri|rm|del|erase)\b[^\n]*\s-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?\b|\b(rd|rmdir|del)\b[^\n]*\s/s\b'; r = 'recursive deletion' },
+        @{ p = '(?i)\b(Get-ChildItem|gci|ls|dir|Get-Item|Get-ChildItem)\b[^\n]*\|\s*(Remove-Item|ri|rm|del|erase)\b'; r = 'pipeline deletion (bulk delete from a listing)' },
+        @{ p = '(?i)\[(System\.)?IO\.Directory\]::Delete\([^\n]*,\s*(\$?true|1)\s*\)|\.Delete\(\s*\$?true\s*\)'; r = 'recursive .NET directory deletion' },
+        @{ p = '(?i)\brobocopy\b(?!(?:[^\n;|&"'']|"[^"\n]*"|''[^''\n]*'')*\s/L\b)[^\n]*[\s''"]/(mir|purge)\b'; r = 'robocopy mirror/purge (deletes files at the destination)' },
+        @{ p = '(?i)\breg(\.exe)?\s+delete\b|\bRemove-ItemProperty\b[^\n]*\bHK(LM|CR|CC):|\bRemove-Item\b[^\n]*\bHK(LM|CR|CC):'; r = 'registry deletion under a machine hive' },
+        @{ p = '(?i)\b(Clear-EventLog|wevtutil\b[^\n]*\bcl\b|Remove-EventLog)\b'; r = 'clearing event logs (anti-forensics)' },
+        @{ p = '(?i)\bSet-MpPreference\b[^\n]*-Disable|\b(Disable-BitLocker|manage-bde\b[^\n]*-off)\b|\bnet\s+stop\s+(windefend|mpssvc|wscsvc|eventlog)\b|\bsc(\.exe)?\s+(stop|delete|config)\s+(windefend|mpssvc|wscsvc|eventlog)\b'; r = 'disabling a security protection' },
+        @{ p = '(?i)\bsc(\.exe)?\s+delete\b|\b(Uninstall-WindowsFeature|Remove-WindowsFeature|Uninstall-WindowsCapability)\b'; r = 'service or Windows feature removal' },
+        @{ p = '(?i)(\btakeown\b|\bicacls\b(?=[^\n]*[\s''"]/(grant|deny|remove|setowner|reset|setintegritylevel|restore|inheritance|substitute)\b))[^\n]*(C:\\Windows|\\System32|%SystemRoot%|\$env:(windir|SystemRoot)|C:\\Program Files)'; r = 'ownership / ACL change on a system path' },
         @{ p = '(?i)\b(Stop-Computer|Restart-Computer)\b|\bshutdown\b'; r = 'power state change' },
-        @{ p = '(?i)\b(Remove-ADUser|Remove-ADComputer|Remove-ADGroup|Remove-ADOrganizationalUnit|Remove-LocalUser|Remove-GPO)\b|\bnet\s+user\s+\S+\s+/delete\b'; r = 'account, directory, or policy object deletion' },
+        @{ p = '(?i)\b(Remove-ADUser|Remove-ADComputer|Remove-ADGroup|Remove-ADOrganizationalUnit|Remove-LocalUser|Remove-GPO)\b|\bnet\s+user\s+\S+\s+/del(ete)?\b'; r = 'account, directory, or policy object deletion' },
         @{ p = '(?i)\bterraform\b[^\n]*\bdestroy\b|\bpulumi\b[^\n]*\bdestroy\b'; r = 'infrastructure destruction' },
         @{ p = '(?i)\bkubectl\b[^\n]*\bdelete\b[^\n]*\b(namespace|ns|node|persistentvolume|pv|persistentvolumeclaim|pvc|customresourcedefinition|crd)\b'; r = 'destructive cluster resource deletion' },
         @{ p = '(?i)\baws\b[^\n]*(\bs3\b[^\n]*\brm\b[^\n]*--recursive|\bs3\s+rb\b|\bterminate-instances\b|\bdelete-(db|cluster|bucket|volume|snapshot|stack|key|secret)[a-z-]*\b)'; r = 'destructive cloud deletion' },
@@ -2675,7 +2903,7 @@ function Get-SegmentTier {
     # Recursive delete is DANGER regardless of path (and is also in the narrower auto-mode
     # catastrophic confirmation set).
     # Covers Remove-Item and its PowerShell aliases (ri/rm/del/erase) with -Recurse or -r.
-    if (($s -match '(?i)\b(Remove-Item|ri|rm|del|erase)\b') -and ($s -match '(?i)(-Recurse\b|\s-r\b)')) {
+    if (($s -match '(?i)\b(Remove-Item|ri|rm|del|erase)\b') -and ($s -match '(?i)\s-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?\b')) {
         return @{ Tier = 'danger'; Reason = 'recursive delete (Remove-Item -Recurse)' }
     }
 
@@ -2854,7 +3082,11 @@ function Test-SystemRiskPath {
         if ($pNorm.Equals($root, [System.StringComparison]::OrdinalIgnoreCase) -or
             $pNorm.StartsWith($root + '\', [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
     }
-    return ($pNorm -match '(?i)(^|\\)System32(\\|$)')
+    if ($pNorm -match '(?i)(^|\\)System32(\\|$)') { return $true }
+    # Persistence locations outside the system roots: startup folders, PowerShell profile scripts,
+    # scheduled-task definitions and the hosts file all run code (or redirect traffic) later.
+    # Also: SSH trust (.ssh, authorized_keys, ProgramData\ssh) and user registry hive files.
+    return ($pNorm -match '(?i)\\Start Menu\\Programs\\Startup(\\|$)|\\(Windows)?PowerShell\\([^\\]+\\)?[^\\]*profile[^\\]*\.ps1$|\\System32\\(Tasks|drivers\\etc)(\\|$)|\\ProgramData\\Microsoft\\Windows\\Start Menu(\\|$)|(^|\\)\.ssh(\\|$)|\\authorized_keys2?$|\\ProgramData\\ssh(\\|$)|\\(NTUSER\.DAT|UsrClass\.dat)[^\\]*$')
 }
 
 function Get-CommandAstLiteralArguments {
@@ -3075,14 +3307,38 @@ function Test-ReadOnlyDisplayCommand {
     } catch { return $false }
 }
 
+function Get-UnquotedCommandText {
+    # PowerShell strips quotes and backtick escapes before a native command sees its arguments,
+    # so reg 'delete', sc.exe "delete" and net `user run exactly like the bare verbs. The
+    # danger/catastrophic patterns are therefore also matched against this quote-free text.
+    param([string] $Command)
+    if ([string]::IsNullOrEmpty($Command)) { return '' }
+    return ($Command -replace '[''"`\u2018-\u201E]', '')
+}
+
 function Get-RiskTier {
     # Classification is advisory. The immutable approval gate separately decides whether an
     # action may run. Keep legacy signatures as defense-in-depth, then merge AST inspection.
     param([string] $Command)
     $regexRisk = Get-RegexRiskTier $Command
     $astRisk = Get-AstRiskTier $Command
-    $tier = Get-MaxTier @($regexRisk.Tier, $astRisk.Tier)
-    $reasons = @($regexRisk.Reason, $astRisk.Reason) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+    $tierList = @($regexRisk.Tier, $astRisk.Tier)
+    $reasons = @($regexRisk.Reason, $astRisk.Reason)
+    # 0.6.20: quoted native verbs/switches (reg 'delete', schtasks '/delete') are graded like the
+    # bare form; the stricter verdict wins. Never for an AST-proven read: its quoted text is data.
+    if (-not (Test-AutoApprovableCommand $Command)) {
+        $plain = Get-UnquotedCommandText $Command
+        if ($plain -ne $Command) {
+            $plainRisk = Get-RegexRiskTier $plain
+            $tierList += $plainRisk.Tier
+            $reasons += $plainRisk.Reason
+        }
+        foreach ($d in $script:NativeDangerPatterns) {
+            if ($plain -match $d.p) { $tierList += 'danger'; $reasons += $d.r; break }
+        }
+    }
+    $tier = Get-MaxTier $tierList
+    $reasons = @($reasons) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
     return @{ Tier = $tier; Reason = (@($reasons | Select-Object -First 3) -join '; ') }
 }
 
@@ -3104,6 +3360,12 @@ function Test-AutoConfirmationRequired {
             } catch { }
         }
     }
+    # Quoted native verbs/switches run like the bare ones (reg 'delete'): match the quote-free
+    # text too. Callers keep AST-proven reads out of this check (Get-ApprovalRequired).
+    foreach ($text in @($texts)) {
+        $plain = Get-UnquotedCommandText $text
+        if ($plain -ne $text) { $texts += $plain }
+    }
     foreach ($text in $texts) {
         foreach ($item in $script:AutoConfirmPatterns) {
             if ($text -match $item.p) { return $true }
@@ -3118,6 +3380,15 @@ function Get-ApprovalRequired {
           [bool] $AutoEligible = $false, [string] $Command = '')
     if ($ReadOnlyMode) { return (-not ($Tier -eq 'safe' -and $AutoEligible)) }
     if ($AutoApprove) {
+        # An AST-validated local read (the same proof that lets it run unprompted without -Auto)
+        # cannot write or execute, so text in its arguments (Select-String -Pattern 'reg delete',
+        # a folder named C:\del) is data and never gates it. The -Auto-only static web read
+        # (tier caution) keeps the catastrophic check below: a GET can still act remotely.
+        if ($AutoEligible -and $Tier -ne 'caution') { return $false }
+        # -Auto skips the prompt for ordinary commands, but never for a command the classifier
+        # calls danger (or that matches the catastrophic set, which also catches a payload
+        # hidden in an encoded command). Non-interactive runs therefore refuse these (exit 4).
+        if ($Tier -eq 'danger') { return $true }
         return (Test-AutoConfirmationRequired $Command)
     }
     # Default (interactive, no -Auto): fail closed - anything but a proven-safe read prompts.
@@ -3125,6 +3396,16 @@ function Get-ApprovalRequired {
         'safe'   { return (-not $AutoEligible) }
         default  { return $true }
     }
+}
+
+function Get-ApprovalGateTier {
+    # The tier the approval gate uses for a `run`. The model's self-assessed risk is merged in
+    # for display (escalation only), but under -Auto the danger tier asks only when the LOCAL
+    # classifier says danger (ACT-Linux parity): a model that labels an ordinary command "high"
+    # must not stall or refuse an unattended run. Without -Auto the merged tier still decides.
+    param([string] $MergedTier, [string] $LocalTier, [bool] $AutoMode)
+    if ($AutoMode -and $MergedTier -eq 'danger' -and $LocalTier -ne 'danger') { return $LocalTier }
+    return $MergedTier
 }
 
 function Test-AutoApprovableCommand {
@@ -3783,6 +4064,14 @@ function Limit-Output {
     param([string] $Text, [int] $Max)
     if ([string]::IsNullOrEmpty($Text)) { return $Text }
     if ($Text.Length -le $Max) { return $Text }
+    # Output already capped by the executor carries its own marker; keep it at the end, but still
+    # trim the body to $Max (the model's observation limit is far below the executor cap).
+    if ($Text -match '\n\[output (truncated: only|exceeded) [^\n]*\]$') {
+        $marker = $Matches[0]
+        $body = $Text.Substring(0, $Text.Length - $marker.Length)
+        if ($body.Length -le $Max) { return $Text }
+        return ($body.Substring(0, $Max) + "`n...[output truncated: " + ($body.Length - $Max) + " more characters withheld]" + $marker)
+    }
     $extra = $Text.Length - $Max
     return ($Text.Substring(0, $Max) + "`n...[output truncated: $extra more characters withheld]")
 }
@@ -3980,6 +4269,26 @@ function Get-PathHash {
     return (Get-BytesHash (Read-FileBytesSafe $Path))
 }
 
+function Protect-JournalDirectory {
+    # 0.6.20: backups hold the previous content of files ACT edited, and undo copies them back
+    # (possibly elevated), so only this user, administrators and the system may touch them.
+    # No inheritance: a broad grant on a parent folder must not reach the journal.
+    param([string] $Path)
+    if ($env:OS -ne 'Windows_NT' -or -not $script:FullLang) { return }
+    $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($rule in @($acl.Access)) { [void]$acl.RemoveAccessRule($rule) }
+    $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    $admins = New-Object System.Security.Principal.SecurityIdentifier ('S-1-5-32-544')
+    $system = New-Object System.Security.Principal.SecurityIdentifier ('S-1-5-18')
+    $inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    $none = [System.Security.AccessControl.PropagationFlags]::None
+    foreach ($sid in @($me, $admins, $system)) {
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule ($sid, 'FullControl', $inherit, $none, 'Allow')))
+    }
+    Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
+}
+
 function Initialize-BackupJournal {
     if (-not [string]::IsNullOrWhiteSpace($script:BackupRoot) -and
         (Test-Path -LiteralPath $script:BackupRoot -PathType Container)) { return }
@@ -3999,6 +4308,8 @@ function Initialize-BackupJournal {
     if (-not (Test-Path -LiteralPath $script:BackupRoot -PathType Container)) {
         throw "Could not create the transactional backup directory: $($script:BackupRoot)"
     }
+    try { Protect-JournalDirectory $script:BackupRoot }
+    catch { throw "Could not restrict the backup directory to the current user ($($script:BackupRoot)): $($_.Exception.Message)" }
 }
 
 function Invoke-AtomicFileReplace {
@@ -4233,6 +4544,52 @@ function Get-PrivilegeStatus {
 # System prompt
 # ---------------------------------------------------------------------------
 
+function Test-OwnerAndWritersTrusted {
+    # Pure decision for a guidance/journal file: the owner must be the current user, an
+    # administrator or the system, and no one else may hold a write-type right on it.
+    # $Writers = SID strings that hold write/append/delete/change-permissions/take-ownership.
+    param([string] $OwnerSid, [string] $CurrentSid, [string[]] $Writers)
+    $trusted = @($CurrentSid, 'S-1-5-32-544', 'S-1-5-18', 'S-1-3-0',
+                 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    if ([string]::IsNullOrEmpty($OwnerSid) -or ($trusted -notcontains $OwnerSid)) { return $false }
+    foreach ($w in @($Writers)) {
+        if (-not [string]::IsNullOrEmpty($w) -and ($trusted -notcontains $w)) { return $false }
+    }
+    return $true
+}
+
+function Test-FileTrustedForGuidance {
+    # 0.6.20: text in an operator-guidance file (ProgramData\act_prompt, ~\.act_prompt) is put in
+    # the model's system prompt, so a file another user can write is an injection path. Windows
+    # checks the owner and ACL; elsewhere (test hosts) there is no ACL model to check.
+    param([string] $Path)
+    if ($env:OS -ne 'Windows_NT') { return $true }
+    try {
+        $acl = Get-Acl -LiteralPath $Path
+        $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+        $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        # WriteData, AppendData, Delete, WRITE_DAC, WRITE_OWNER, and GENERIC_ALL/GENERIC_WRITE
+        # (icacls /grant x:(GW) stores the generic bit unmapped).
+        $mask = 0x2 -bor 0x4 -bor 0x10000 -bor 0x40000 -bor 0x80000 -bor 0x10000000 -bor 0x40000000
+        $writers = @()
+        foreach ($r in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+            if ($r.AccessControlType -ne 'Allow') { continue }
+            if ((([int]$r.FileSystemRights) -band $mask) -ne 0) { $writers += $r.IdentityReference.Value }
+        }
+        return (Test-OwnerAndWritersTrusted $owner $me $writers)
+    } catch { return $false }
+}
+
+function Read-GuidanceFile {
+    param([string] $Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return '' }
+    if (-not (Test-FileTrustedForGuidance $Path)) {
+        Write-Host ('ACT: ignoring ' + $Path + ' - it is not owned by you/an administrator, or others can write to it.') -ForegroundColor Yellow
+        return ''
+    }
+    try { return ('' + (Get-Content -LiteralPath $Path -Raw)) } catch { return '' }
+}
+
 function Build-SystemPrompt {
     $base = @'
 You are the planning engine inside "act", a command-running harness on a Windows Server
@@ -4386,14 +4743,11 @@ EXAMPLE FIRST REPLY:
     $pd = [Environment]::GetEnvironmentVariable('ProgramData')
     if (-not [string]::IsNullOrEmpty($pd)) {
         $pdFile = Join-Path $pd 'act_prompt'
-        if (Test-Path -LiteralPath $pdFile) {
-            try { $extra += "`n`n" + (Get-Content -LiteralPath $pdFile -Raw) } catch { }
-        }
+        $pdText = Read-GuidanceFile $pdFile
+        if (-not [string]::IsNullOrEmpty($pdText)) { $extra += "`n`n" + $pdText }
     }
-    $homeFile = Join-Path $HOME '.act_prompt'
-    if (Test-Path -LiteralPath $homeFile) {
-        try { $extra += "`n`n" + (Get-Content -LiteralPath $homeFile -Raw) } catch { }
-    }
+    $homeText = Read-GuidanceFile (Join-Path $HOME '.act_prompt')
+    if (-not [string]::IsNullOrEmpty($homeText)) { $extra += "`n`n" + $homeText }
 
     if (-not [string]::IsNullOrEmpty($extra)) {
         return ($base + "`n`nOPERATOR GUIDANCE`n" + $extra.Trim())
@@ -4444,6 +4798,101 @@ function Stop-ChildProcessTree {
     return $killed
 }
 
+function New-CappedReader {
+    # Bounded, polled reader for a child's redirected stream. It keeps the first $Cap characters,
+    # counts (and discards) the rest, and never blocks: memory stays bounded when a command prints
+    # gigabytes, and a grandchild that inherited the pipe cannot hang ACT after the child exits.
+    param([System.IO.StreamReader] $Reader, [int] $Cap)
+    return @{ Reader = $Reader; Cap = $Cap; Sb = (New-Object System.Text.StringBuilder); Buf = (New-Object 'char[]' 8192)
+              Task = $null; Eof = $false; Total = [int64]0; Runaway = $false
+              RunawayAt = [int64][Math]::Max(268435456, 8 * [int64]$Cap) }
+}
+
+function Update-CappedReader {
+    # Reads what the child has written so far. While data keeps arriving it keeps reading (for up to
+    # ~200 ms per call): on Windows one read returns at most one pipe buffer (~4 KB), so returning to
+    # the caller's poll sleep after every read would make a few MB of output take many seconds.
+    param([hashtable] $R)
+    $flowing = $false
+    $budget = [System.Diagnostics.Stopwatch]::StartNew()
+    while (-not $R.Eof) {
+        if ($null -eq $R.Task) {
+            try { $R.Task = $R.Reader.ReadAsync($R.Buf, 0, $R.Buf.Length) } catch { $R.Eof = $true; return }
+        }
+        if (-not $R.Task.IsCompleted) {
+            if (-not $flowing -or $budget.ElapsedMilliseconds -ge 200) { return }
+            $ready = $false
+            try { $ready = $R.Task.Wait(20) } catch { $ready = $true }
+            if (-not $ready) { return }
+        }
+        $n = 0
+        try { $n = [int]$R.Task.Result } catch { $n = 0 }
+        $R.Task = $null
+        if ($n -le 0) { $R.Eof = $true; return }
+        $room = $R.Cap - $R.Sb.Length
+        if ($room -gt 0) { [void]$R.Sb.Append($R.Buf, 0, [Math]::Min($n, $room)) }
+        $R.Total += $n
+        if (($R.Total - $R.Sb.Length) -gt $R.RunawayAt) { $R.Runaway = $true; return }
+        $flowing = $true
+    }
+}
+
+function Get-CappedReaderText {
+    param([hashtable] $R)
+    $text = $R.Sb.ToString()
+    if ($R.Runaway) {
+        $text += "`n[output exceeded " + $R.Cap + " characters and kept flowing past " + $R.RunawayAt + " - process killed]"
+    } elseif ($R.Total -gt $text.Length) {
+        $text += "`n[output truncated: only the first " + $R.Cap + " characters are kept; the command was allowed to finish]"
+    }
+    return $text
+}
+
+function Wait-HostProcess {
+    # Polls the process and both stream readers until the child exits (or the timeout passes),
+    # then gives the pipes a short grace period to reach EOF. Returns @{ TimedOut; PipeHeld }.
+    param([System.Diagnostics.Process] $Process, [hashtable[]] $Readers, [int] $TimeoutMs, [int] $GraceMs = 3000)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $timedOut = $false
+    $runaway = $false
+    while (-not $Process.HasExited) {
+        foreach ($r in $Readers) { Update-CappedReader $r }
+        # Truncate and let the command finish; kill only a genuine runaway (a flood far past the cap).
+        foreach ($r in $Readers) { if ($r.Runaway) { $runaway = $true } }
+        if ($runaway) { [void](Stop-ChildProcessTree $Process); break }
+        if ($sw.ElapsedMilliseconds -ge $TimeoutMs) { $timedOut = $true; break }
+        [void]$Process.WaitForExit(20)
+    }
+    if ($timedOut) {
+        [void](Stop-ChildProcessTree $Process)
+        try { [void]$Process.WaitForExit(5000) } catch { }
+    }
+    $grace = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($grace.ElapsedMilliseconds -lt $GraceMs) {
+        foreach ($r in $Readers) { Update-CappedReader $r }
+        $allDone = $true
+        foreach ($r in $Readers) { if (-not $r.Eof) { $allDone = $false } }
+        if ($allDone) { break }
+        Start-Sleep -Milliseconds 10
+    }
+    $held = $false
+    foreach ($r in $Readers) { if (-not $r.Eof) { $held = $true } }
+    return @{ TimedOut = $timedOut; PipeHeld = $held; Runaway = $runaway }
+}
+
+function Get-ChildEnvironmentScrubNames {
+    # Names removed from a model-driven child's environment: the known provider keys plus anything
+    # that looks like a credential or is ACT's own configuration. Operator tools that legitimately
+    # need a token can be given it explicitly in the command instead.
+    param($Environment)
+    $names = @()
+    foreach ($k in @($Environment.Keys)) {
+        $name = '' + $k
+        if ($name -match '(?i)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)' -or $name -match '(?i)^(ACT_|GENAI_|ASKSAGE_)') { $names += $name }
+    }
+    return $names
+}
+
 function Start-HostCommandProcess {
     param([string] $Command, [bool] $LenientErrors = $false)
     $result = @{
@@ -4489,7 +4938,7 @@ exit 0
         $psi.RedirectStandardInput = $true
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
-        foreach ($secretName in @('GENAI_KEY', 'GENAI_BETA_KEY', 'ASKSAGE_KEY', 'ASKSAGE_API_KEY')) {
+        foreach ($secretName in @(Get-ChildEnvironmentScrubNames $psi.EnvironmentVariables)) {
             try { [void]$psi.EnvironmentVariables.Remove($secretName) } catch { }
         }
         $proc = New-Object System.Diagnostics.Process
@@ -4533,8 +4982,11 @@ function Receive-HostCommandProcess {
             $Handle.Result.DurationMs = [int64]$Handle.Stopwatch.ElapsedMilliseconds
             return @{ Completed = $false; Result = $Handle.Result }
         }
-        try { $Handle.Result.StdOut = '' + $Handle.StdOutTask.Result } catch { }
-        try { $Handle.Result.StdErr = '' + $Handle.StdErrTask.Result } catch { }
+        # A grandchild that inherited the pipe keeps it open after the child exits; never wait on it forever.
+        $pipeHeld = $false
+        try { if ($Handle.StdOutTask.Wait(3000)) { $Handle.Result.StdOut = '' + $Handle.StdOutTask.Result } else { $pipeHeld = $true } } catch { }
+        try { if ($Handle.StdErrTask.Wait(1000)) { $Handle.Result.StdErr = '' + $Handle.StdErrTask.Result } else { $pipeHeld = $true } } catch { }
+        if ($pipeHeld) { $Handle.Result.StdErr += "`n[act: output truncated - a background process still holds the command's output pipe]" }
         try { $Handle.Result.ExitCode = $proc.ExitCode } catch { $Handle.Result.ExitCode = -1 }
     } catch {
         $Handle.Result.Error = $_.Exception.Message
@@ -4662,7 +5114,7 @@ exit 0
         $psi.RedirectStandardInput = $true
         $psi.RedirectStandardOutput = $true
         $psi.RedirectStandardError = $true
-        foreach ($secretName in @('GENAI_KEY', 'GENAI_BETA_KEY', 'ASKSAGE_KEY', 'ASKSAGE_API_KEY')) {
+        foreach ($secretName in @(Get-ChildEnvironmentScrubNames $psi.EnvironmentVariables)) {
             try { [void]$psi.EnvironmentVariables.Remove($secretName) } catch { }
         }
         $proc = New-Object System.Diagnostics.Process
@@ -4670,16 +5122,15 @@ exit 0
         if (-not $proc.Start()) { throw 'PowerShell child process did not start.' }
         $result.Started = $true
         $proc.StandardInput.Close()
-        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
-        $stderrTask = $proc.StandardError.ReadToEndAsync()
+        $outReader = New-CappedReader $proc.StandardOutput $script:MaxOutput
+        $errReader = New-CappedReader $proc.StandardError $script:MaxOutput
         $timeoutMs = [Math]::Max(1, $script:CommandTimeout * 1000)
-        if (-not $proc.WaitForExit($timeoutMs)) {
-            $result.TimedOut = $true
-            $result.Killed = Stop-ChildProcessTree $proc
-            try { [void]$proc.WaitForExit(5000) } catch { }
-        }
-        try { $result.StdOut = '' + $stdoutTask.Result } catch { }
-        try { $result.StdErr = '' + $stderrTask.Result } catch { }
+        $waited = Wait-HostProcess $proc @($outReader, $errReader) $timeoutMs
+        if ($waited.TimedOut) { $result.TimedOut = $true; $result.Killed = $true }
+        if ($waited.Runaway) { $result.Killed = $true }
+        $result.StdOut = Get-CappedReaderText $outReader
+        $result.StdErr = Get-CappedReaderText $errReader
+        if ($waited.PipeHeld) { $result.StdErr += "`n[act: output may be incomplete - a background process still holds the command's output pipe]" }
         try { if ($proc.HasExited) { $result.ExitCode = $proc.ExitCode } else { $result.ExitCode = -1 } } catch { $result.ExitCode = -1 }
     } catch {
         $result.Error = $_.Exception.Message
@@ -4924,9 +5375,10 @@ function New-ActResult {
 function Get-ActResultContext {
     $cwd = ''
     try { $cwd = (Get-Location).Path } catch { }
-    # act.ps1 does not account token usage, so `tokens` is always null here.
+    # Provider-reported usage summed over the run; null when the endpoint reported none.
     return @{ host = [Environment]::MachineName; user = [Environment]::UserName; cwd = $cwd
-              provider = '' + $script:Provider; model = '' + $script:GenAiModel; tokens = $null
+              provider = '' + $script:Provider; model = '' + $script:GenAiModel
+              tokens = $(if ($script:TokensReported) { [int]$script:TokensUsed } else { $null })
               patterns = @(@($script:PreApproved) | ForEach-Object { $_.Source }) }
 }
 
@@ -5958,8 +6410,8 @@ function Show-CurrentPlan {
     }
     foreach ($step in $script:CurrentPlan) {
         $evidence = if ($step.EvidenceIds.Count -gt 0) { ' [' + ($step.EvidenceIds -join ',') + ']' } else { '' }
-        Write-Host ('  [' + $step.Status + '] ' + $step.Id + ' - ' + $step.Description +
-                    ' {goals: ' + ($step.GoalIds -join ',') + '}' + $evidence)
+        Write-Host (ConvertTo-SafeTerminalText ('  [' + $step.Status + '] ' + $step.Id + ' - ' + $step.Description +
+                    ' {goals: ' + ($step.GoalIds -join ',') + '}' + $evidence))
         Write-Themed dim ('      verify: ' + $step.Verification)
     }
 }
@@ -6501,7 +6953,7 @@ function Invoke-ActTask {
                 Write-Host ''
                 Write-Step $script:Mk.ask $msg 'prompt' 'prompt'
                 $ans = Read-Host '  your answer'
-                Add-Message 'user' ('Operator answer: ' + $ans)
+                Add-Message 'user' ('Operator answer: ' + (Protect-Secrets ('' + $ans)))
                 $unproductive = 0
                 continue
             }
@@ -6771,10 +7223,11 @@ function Invoke-ActTask {
                 }
 
                 $risk = Get-RiskTier $cmd
+                $localTier = $risk.Tier
                 # Merge the model's self-assessed risk (escalation only - max wins), so a
                 # command the local classifier under-rates can still be bumped to danger.
-                # This remains useful advisory context; auto confirmation itself is based
-                # on the narrow catastrophic payload matcher.
+                # This remains useful advisory context; under -Auto the danger-tier gate uses
+                # the LOCAL tier (Get-ApprovalGateTier), plus the catastrophic payload matcher.
                 $modelRiskRaw = ('' + (Get-Prop $obj 'risk')).Trim().ToLower()
                 $modelTier = switch -Regex ($modelRiskRaw) {
                     '^(danger|dangerous|high|critical|severe)$' { 'danger'; break }
@@ -6799,7 +7252,8 @@ function Invoke-ActTask {
                 # never applies to -ReadOnly or to a command salvaged from prose.
                 $approval = 'auto'
                 $approvalPattern = ''
-                if (-not $forceConfirmAction -and -not $script:ReadOnly -and (Test-ApprovalNeeded $risk.Tier $cmd)) {
+                $gateTier = Get-ApprovalGateTier $risk.Tier $localTier ([bool]$script:Auto)
+                if (-not $forceConfirmAction -and -not $script:ReadOnly -and (Test-ApprovalNeeded $gateTier $cmd)) {
                     $approval = 'operator'
                     $approvalPattern = Get-PreApprovedPattern $cmd $risk.Tier
                 }
@@ -6808,7 +7262,7 @@ function Invoke-ActTask {
                     Write-Themed dim ('    pre-approved by -Allow: ' + $approvalPattern)
                     $decision = 'yes'
                 } else {
-                    $decision = if ($forceConfirmAction -and -not $script:Auto) { Confirm-Action $risk.Tier } else { Resolve-Approval $risk.Tier $cmd }
+                    $decision = if ($forceConfirmAction -and -not $script:Auto) { Confirm-Action $risk.Tier } else { Resolve-Approval $gateTier $cmd }
                     if ($forceConfirmAction) { $approval = 'operator' }
                 }
                 if ($decision -eq 'abort') {
@@ -7081,17 +7535,14 @@ function Invoke-ActTask {
                 Write-Host ''
                 Write-Step $script:Mk.step ("edit " + $path) 'command'
                 Write-Themed observation $plan.Diff
+                $verb = 'edit'
                 $tier = 'mutating'
                 $reason = 'file edit'
                 if (Test-SystemRiskPath $path) { $tier = 'danger'; $reason = 'edit under a canonical system path' }
+                elseif ($script:Auto -and (Test-AutoConfirmationRequired $replace)) { $tier = 'danger'; $reason = 'the new text contains a catastrophic-looking command' }
                 Write-Themed (Get-RiskRole $tier) ("    risk: " + $tier + " - " + $reason)
-                # 0.6.5: pass the payload. Resolve-Approval -> Get-ApprovalRequired under
-                # -Auto returns Test-AutoConfirmationRequired $Command, and $Command
-                # defaulted to '' here — so for structured edit/write the catastrophic
-                # matcher never saw anything to match and the auto gate was not narrowed
-                # but ABSENT (a `run` has always had its payload matched). This restores
-                # parity with `run`; it deliberately does NOT add a danger-tier prompt
-                # (owner constraint: keep approvals minimal, do not broaden them).
+                # 0.6.20: a canonical-system-path edit/write is tier danger, and danger always asks,
+                # even under -Auto. Ordinary file edits stay unprompted under -Auto.
                 $decision = Resolve-Approval $tier -Command ("$verb " + $path)
                 if ($decision -eq 'abort') {
                     [void](Write-AuditEvent @{ event = 'file_approval'; action = 'edit'; path = $path;
@@ -7169,14 +7620,10 @@ function Invoke-ActTask {
                 $tier = 'mutating'
                 $reason = "file $verb"
                 if (Test-SystemRiskPath $path) { $tier = 'danger'; $reason = "$verb under a canonical system path" }
+                elseif ($script:Auto -and (Test-AutoConfirmationRequired $content)) { $tier = 'danger'; $reason = 'the new content contains a catastrophic-looking command' }
                 Write-Themed (Get-RiskRole $tier) ("    risk: " + $tier + " - " + $reason)
-                # 0.6.5: pass the payload. Resolve-Approval -> Get-ApprovalRequired under
-                # -Auto returns Test-AutoConfirmationRequired $Command, and $Command
-                # defaulted to '' here — so for structured edit/write the catastrophic
-                # matcher never saw anything to match and the auto gate was not narrowed
-                # but ABSENT (a `run` has always had its payload matched). This restores
-                # parity with `run`; it deliberately does NOT add a danger-tier prompt
-                # (owner constraint: keep approvals minimal, do not broaden them).
+                # 0.6.20: a canonical-system-path edit/write is tier danger, and danger always asks,
+                # even under -Auto. Ordinary file edits stay unprompted under -Auto.
                 $decision = Resolve-Approval $tier -Command ("$verb " + $path)
                 if ($decision -eq 'abort') {
                     [void](Write-AuditEvent @{ event = 'file_approval'; action = 'write'; path = $path;
@@ -7390,7 +7837,7 @@ function Invoke-ModelProbe {
     $summary = [ordered]@{}
     foreach ($m in $models) {
         Write-Host ''
-        Write-Host ('  ' + $m)
+        Write-Host (ConvertTo-SafeTerminalText ('  ' + $m))
         $results = @{}
         foreach ($fmt in @('openai', 'anthropic')) {
             $r = Test-ModelFormat $m $fmt $fullMessages
@@ -7424,7 +7871,7 @@ function Invoke-ModelProbe {
     if ($models.Count -gt 1) {
         Write-Host ''
         Write-Themed accent 'Summary:'
-        foreach ($m in @($summary.Keys)) { Write-Host ('  ' + $m + ' -> ' + $summary[$m]) }
+        foreach ($m in @($summary.Keys)) { Write-Host (ConvertTo-SafeTerminalText ('  ' + $m + ' -> ' + $summary[$m])) }
     }
     $setting = Get-ApiFormatSetting
     if ($setting -ne 'auto') {
@@ -7561,7 +8008,7 @@ function Show-Swoosh {
         Start-Sleep -Milliseconds 11
     }
     Write-Host ($esc + '[2K' + "`r") -NoNewline
-    Write-Themed dim ('  act  ' + ([char]0x2022) + '  U.S. AFRICOM  ' + ([char]0x2022) + '  Ask GenAI')
+    Write-Themed dim ('  act  ' + ([char]0x2022) + '  Ask GenAI')
 }
 
 function Select-Model {
@@ -7579,7 +8026,7 @@ function Select-Model {
     for ($i = 0; $i -lt $options.Count; $i++) {
         $tag = ''
         if ($options[$i] -eq $default) { $tag = '  (current)' }
-        Write-Host ("  [{0}] {1}{2}" -f ($i + 1), $options[$i], $tag)
+        Write-Host (ConvertTo-SafeTerminalText ("  [{0}] {1}{2}" -f ($i + 1), $options[$i], $tag))
     }
     $pick = Read-Host 'choice (Enter to keep current)'
     $p = ('' + $pick).Trim()
@@ -7667,7 +8114,7 @@ function Get-ReplHelpSections {
             [PSCustomObject]@{ Command = ':planmodel [id|off]'; Description = 'plan on one model, execute the steps on another' }
             [PSCustomObject]@{ Command = ':race [on|off]'; Description = 'plan on all models; the active model judges (pick/merge) and runs' }
             [PSCustomObject]@{ Command = ':pseudo [on|off|show]'; Description = 'mask names/IPs before sending (default on); show the mapping' }
-            [PSCustomObject]@{ Command = ':auto'; Description = 'toggle hands-off mode; only catastrophic destructive actions ask' }
+            [PSCustomObject]@{ Command = ':auto'; Description = 'toggle hands-off mode; danger-tier and catastrophic actions still ask' }
             [PSCustomObject]@{ Command = ':theme [name]'; Description = 'preview or change the color theme' }
         ) }
         [PSCustomObject]@{ Heading = 'INPUT AND NAVIGATION'; Entries = @(
@@ -7726,6 +8173,9 @@ function Restore-LastEdit {
             if ([string]::IsNullOrWhiteSpace($entry.BackupPath) -or
                 -not (Test-Path -LiteralPath $entry.BackupPath -PathType Leaf)) {
                 throw "verified backup is missing: $($entry.BackupPath)"
+            }
+            if (-not (Test-FileTrustedForGuidance $entry.BackupPath)) {
+                throw "the backup is not owned by you/an administrator, or others can write to it; refusing to restore from it: $($entry.BackupPath)"
             }
             $dir = Split-Path -LiteralPath $entry.Path
             if ([string]::IsNullOrEmpty($dir)) { $dir = '.' }
@@ -7786,7 +8236,7 @@ function Invoke-ReplCommand {
         ':auto'   {
             $script:Auto = -not $script:Auto
             if ($script:Auto) {
-                Write-Themed accent 'auto mode is now ON - only catastrophic destructive actions prompt (denied in non-interactive mode).'
+                Write-Themed accent 'auto mode is now ON - danger-tier and catastrophic actions still prompt (denied in non-interactive mode).'
             } else {
                 Write-Themed accent 'auto mode is now OFF - anything not a proven read-only command asks first.'
             }
@@ -7808,7 +8258,7 @@ function Invoke-ReplCommand {
                     $mark = ' '; if ($k -eq $script:Provider) { $mark = '*' }
                     $ks = 'no key'; if (-not [string]::IsNullOrEmpty($pp.Key)) { $ks = 'key set' }
                     $lim = ''; if ($pp.Limited) { $lim = '  [LIMIT HIT]' }
-                    Write-Host ("  " + $mark + " [" + ($pi + 1) + "] " + $k + "  (" + $pp.Name + ", model=" + $pp.Model + ", " + $ks + ")" + $lim)
+                    Write-Host (ConvertTo-SafeTerminalText ("  " + $mark + " [" + ($pi + 1) + "] " + $k + "  (" + $pp.Name + ", model=" + $pp.Model + ", " + $ks + ")" + $lim))
                 }
                 Write-Themed dim 'usage: :provider <name|number>   (e.g. :provider asksage  or  :provider 2)'
             } else {
@@ -7841,11 +8291,11 @@ function Invoke-ReplCommand {
                 $extra = ''
                 if ($raw.Count -gt $ms.Count) { $extra = "  (" + ($raw.Count - $ms.Count) + " image/audio/embedding models hidden)" }
                 Write-Themed accent ($script:Provider + " live models (" + $ms.Count + ")" + $extra + ":")
-                foreach ($m in $ms) { Write-Host ('  ' + $m) }
+                foreach ($m in $ms) { Write-Host (ConvertTo-SafeTerminalText ('  ' + $m)) }
                 Write-Themed dim 'switch with :model'
             } else {
                 Write-Themed warning '  Could not fetch live models (no key, endpoint unreachable, or unsupported). Showing curated list:'
-                Write-Host ('  ' + (($script:Providers[$script:Provider].Models) -join ', '))
+                Write-Host (ConvertTo-SafeTerminalText ('  ' + (($script:Providers[$script:Provider].Models) -join ', ')))
             }
             return $true
         }
@@ -8242,8 +8692,21 @@ function Start-Act {
         if ([Console]::IsInputRedirected) { $isPiped = $true }
     } catch { $isPiped = $false }
     if ($isPiped) {
-        try { $piped = [Console]::In.ReadToEnd() } catch { $piped = '' }
-        if ([string]::IsNullOrEmpty($piped)) {
+        # Non-interactive (AAP, Task Scheduler): a stdin that is a pipe nobody closes must not
+        # hang the run, so wait a bounded time for it. Interactive/piped-analysis reads all of it.
+        try {
+            if ($script:NonInteractive) {
+                $stdinWait = Get-ValidatedEnvInt 'ACT_STDIN_WAIT' 5 1 600
+                # [Console]::In is a synchronized reader whose ReadToEndAsync only returns at EOF
+                # (it blocks just like ReadToEnd), so read the raw stdin stream asynchronously.
+                $stdinReader = New-Object System.IO.StreamReader ([Console]::OpenStandardInput()), ([Console]::InputEncoding)
+                $readTask = $stdinReader.ReadToEndAsync()
+                if ($readTask.Wait($stdinWait * 1000)) { $piped = $readTask.Result } else { $piped = '' }
+            } else {
+                $piped = [Console]::In.ReadToEnd()
+            }
+        } catch { $piped = '' }
+        if ([string]::IsNullOrEmpty($piped) -and -not $script:NonInteractive) {
             try { $piped = ($input | Out-String) } catch { $piped = '' }
         }
     }
@@ -8279,7 +8742,7 @@ function Start-Act {
     if ($script:Auto -and -not $script:ReadOnly) {
         Write-Themed warning 'AUTO mode: commands run WITHOUT asking - file deletes, writes, and service/package/config changes included.'
         $denyNote = if ($script:NonInteractive) { '; in non-interactive mode they are denied.' } else { '.' }
-        Write-Themed dim ('  Only catastrophic destructive actions (bulk deletion, disk/data/infra destruction, account deletion, or power state) still prompt' + $denyNote)
+        Write-Themed dim ('  Danger-tier and catastrophic actions (bulk deletion, disk/data/infra destruction, account deletion, or power state) still prompt' + $denyNote)
     }
 
     if (-not [string]::IsNullOrEmpty($piped)) {
@@ -8416,6 +8879,23 @@ function Invoke-SelfTest {
     }
     function TierOf { param([string] $c) return (Get-RiskTier $c).Tier }
 
+    Write-Host '== Terminal-safe text ==' -ForegroundColor Cyan
+    $esc = [string][char]27
+    $bel = [string][char]7
+    Assert-Equal 'ab' (ConvertTo-SafeTerminalText ('a' + $esc + '[2K' + 'b')) 'sanitize: CSI erase-line removed'
+    Assert-Equal 'ab' (ConvertTo-SafeTerminalText ('a' + $esc + ']0;title' + $bel + 'b')) 'sanitize: OSC title removed'
+    Assert-Equal 'ab' (ConvertTo-SafeTerminalText ('a' + $esc + ']8;;http://x' + $esc + '\b')) 'sanitize: OSC ST-terminated removed'
+    Assert-Equal 'ab' (ConvertTo-SafeTerminalText ("a`rb")) 'sanitize: lone CR removed'
+    Assert-Equal "a`nb" (ConvertTo-SafeTerminalText ("a`r`nb")) 'sanitize: CRLF becomes LF'
+    Assert-Equal "a`tb" (ConvertTo-SafeTerminalText ("a`tb")) 'sanitize: tab kept'
+    Assert-Equal 'ab' (ConvertTo-SafeTerminalText ('a' + [char]0x8 + 'b')) 'sanitize: backspace removed'
+    Assert-Equal 'ab' (ConvertTo-SafeTerminalText ('a' + [char]0x202E + 'b')) 'sanitize: bidi override removed'
+    Assert-Equal 'ab' (ConvertTo-SafeTerminalText ('a' + [char]0x200B + 'b')) 'sanitize: zero-width space removed'
+    Assert-Equal 'a<U+202E>b' (ConvertTo-SafeTerminalText ('a' + [char]0x202E + 'b') -Mark) 'sanitize: -Mark shows bidi'
+    Assert-Equal 'a<U+000D>b' (ConvertTo-SafeTerminalText ("a`rb") -Mark) 'sanitize: -Mark shows CR'
+    Assert-Equal 'Get-Service -Name W3SVC | Sort-Object' (ConvertTo-SafeTerminalText 'Get-Service -Name W3SVC | Sort-Object' -Mark) 'sanitize: plain command untouched'
+    Assert-Equal '' (ConvertTo-SafeTerminalText $null) 'sanitize: null is empty'
+
     Write-Host '== Risk classifier ==' -ForegroundColor Cyan
     Assert-Equal 'safe' (TierOf 'Get-Service -Name W3SVC') 'safe: Get-Service'
     Assert-Equal 'safe' (TierOf 'Get-ChildItem C:\inetpub -Recurse') 'safe: Get-ChildItem -Recurse'
@@ -8514,6 +8994,20 @@ function Invoke-SelfTest {
     Assert-True (-not (Test-HasFileRedirection 'Get-Process 2>&1')) 'AST: stream merge is not a file redirection'
     Assert-Equal 'danger' (TierOf 'powershell -NoProfile -Command ''Set-Content C:\Windows\act-test.txt x''') 'AST: nested PowerShell command string is recursively classified'
     Assert-True (Test-SystemRiskPath '%SystemRoot%\System32\drivers\etc\hosts') 'path: expanded SystemRoot recognized as system path'
+    Assert-True (Test-SystemRiskPath 'C:\Users\bob\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\x.cmd') 'path: user Startup folder is a persistence path'
+    Assert-True (Test-SystemRiskPath 'C:\Users\bob\Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1') 'path: PowerShell profile script is a persistence path'
+    Assert-True (Test-SystemRiskPath 'C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp\x.lnk') 'path: all-users Startup folder is a persistence path'
+    Assert-False (Test-SystemRiskPath 'C:\Users\bob\Documents\notes.txt') 'path: ordinary user file is not a system path'
+    Assert-True (Test-SystemRiskPath 'C:\Users\bob\.ssh\config') 'path: .ssh is a persistence path'
+    Assert-True (Test-SystemRiskPath 'C:\Users\bob\.ssh\authorized_keys') 'path: authorized_keys is a persistence path'
+    Assert-True (Test-SystemRiskPath 'C:\ProgramData\ssh\sshd_config') 'path: ProgramData\ssh is a persistence path'
+    Assert-True (Test-SystemRiskPath 'C:\Users\bob\NTUSER.DAT') 'path: a user registry hive is a system path'
+    Assert-True (Test-SystemRiskPath 'C:\Program Files\PowerShell\7\profile.ps1') 'path: PowerShell 7 all-hosts profile is a persistence path'
+    Assert-True (Test-SystemRiskPath 'C:\Users\bob\Documents\PowerShell\Microsoft.PowerShell_profile.ps1') 'path: PowerShell 7 user profile is a persistence path'
+    Assert-False (Test-SystemRiskPath 'C:\Users\bob\Documents\sshnotes.txt') 'path: a name that merely contains ssh is not flagged'
+    # An edit/write payload under a system path must ask even in -Auto (the run-action tier is danger).
+    Assert-Equal $true (Get-ApprovalRequired 'danger' $true $false $false 'edit C:\Windows\System32\drivers\etc\hosts') 'approval: system-path edit asks in auto'
+    Assert-Equal $false (Get-ApprovalRequired 'mutating' $true $false $false 'edit C:\inetpub\wwwroot\web.txt') 'approval: ordinary edit does not ask in auto'
 
     Write-Host '== Approval logic ==' -ForegroundColor Cyan
     # Non-auto (interactive default): fail closed - only proven-safe reads run.
@@ -8528,14 +9022,78 @@ function Invoke-SelfTest {
     Assert-Equal $false (Get-ApprovalRequired 'caution' $true $false $true) 'approval: caution auto-runs'
     Assert-Equal $false (Get-ApprovalRequired 'mutating' $true $false $false) 'approval: mutating auto-runs'
     Assert-Equal $false (Get-ApprovalRequired 'safe' $true $false $false) 'approval: safe auto-runs'
-    Assert-Equal $false (Get-ApprovalRequired 'danger' $true $false $false 'Invoke-Command -ComputerName srv { Get-Process }') 'approval: remote execution auto-runs'
-    Assert-Equal $false (Get-ApprovalRequired 'danger' $true $false $false 'Set-Content C:\Windows\Temp\x.txt value') 'approval: advisory danger alone does not prompt in auto'
+    Assert-Equal $false (Get-ApprovalRequired 'caution' $true $false $false 'Invoke-Command -ComputerName srv { Get-Process }') 'approval: remote execution auto-runs'
+    Assert-Equal $true  (Get-ApprovalRequired 'danger' $true $false $false 'Set-Content C:\Windows\Temp\x.txt value') 'approval: danger tier prompts even in auto (0.6.20)'
+    Assert-Equal $false (Get-ApprovalRequired 'mutating' $true $false $false 'Set-Content C:\Users\x\x.txt value') 'approval: non-danger mutating still auto-runs'
     Assert-Equal $true  (Get-ApprovalRequired 'danger' $true $false $false 'Remove-Item -Recurse -Force C:\data') 'approval: recursive deletion confirms in auto'
     Assert-Equal $true  (Get-ApprovalRequired 'danger' $true $false $false 'Invoke-Command -ComputerName srv { Remove-Item -Recurse C:\data }') 'approval: destructive remote payload confirms in auto'
     Assert-Equal $true  (Get-ApprovalRequired 'danger' $true $false $false "powershell -EncodedCommand $enc") 'approval: destructive encoded payload confirms in auto'
     Assert-Equal $true  (Get-ApprovalRequired 'caution' $true $false $false '[System.IO.Directory]::Delete(''C:\data'', $true)') 'approval: explicitly recursive member delete confirms in auto'
-    Assert-Equal $false (Get-ApprovalRequired 'danger' $true $false $false 'sqlcmd -Q ''DELETE FROM users WHERE id=1''') 'approval: scoped SQL delete auto-runs'
+    # 0.6.20: a scoped SQL delete is still tier danger (SQL TRUNCATE/DELETE FROM), and the danger
+    # tier asks in auto even though the catastrophic matcher alone would let it run.
+    Assert-Equal 'danger' (TierOf 'sqlcmd -Q ''DELETE FROM users WHERE id=1''') 'tier: scoped SQL delete is danger'
+    Assert-False (Test-AutoConfirmationRequired 'sqlcmd -Q ''DELETE FROM users WHERE id=1''') 'auto-confirm: scoped SQL delete is not catastrophic'
+    Assert-Equal $true  (Get-ApprovalRequired 'danger' $true $false $false 'sqlcmd -Q ''DELETE FROM users WHERE id=1''') 'approval: scoped SQL delete (danger tier) asks in auto'
     Assert-Equal $true  (Get-ApprovalRequired 'danger' $true $false $false 'sqlcmd -Q ''DELETE FROM users''') 'approval: unscoped SQL delete confirms in auto'
+    # 0.6.20: PowerShell accepts any unambiguous parameter prefix, so the catastrophic matcher must too.
+    foreach ($c in @('Remove-Item C:\data -Rec -Force', 'rm C:\data -re', 'ri C:\data -Recu', 'Remove-Item -r C:\data',
+                     'Get-ChildItem C:\data | Remove-Item -Force', 'gci C:\data -r | rm -Force',
+                     '[IO.Directory]::Delete("C:\d",1)', '[System.IO.Directory]::Delete("C:\d", $true)',
+                     '(Get-Item C:\d).Delete($true)', 'robocopy C:\empty D:\shares /mir', 'robocopy C:\a D:\b /PURGE',
+                     'reg delete HKLM\SOFTWARE\X /f', 'Remove-ItemProperty -Path HKLM:\SOFTWARE\X -Name y',
+                     'Clear-EventLog -LogName Security', 'wevtutil cl Security', 'Set-MpPreference -DisableIOAVProtection $true',
+                     'Disable-BitLocker -MountPoint C:', 'sc delete W3SVC', 'Uninstall-WindowsFeature Web-Server',
+                     'takeown /f C:\Windows\System32\x.dll')) {
+        Assert-True (Test-AutoConfirmationRequired $c) ("auto-confirm catches: " + $c)
+        Assert-True (Get-ApprovalRequired 'safe' $true $false $false $c) ("auto asks even if mislabelled safe: " + $c)
+    }
+    foreach ($c in @('Get-ChildItem C:\data -Recurse', 'Get-Process | Sort-Object CPU', 'Remove-Item C:\Temp\one.log', 'robocopy C:\a D:\b /E', 'reg query HKLM\SOFTWARE\X', 'Get-Item C:\data')) {
+        Assert-False (Test-AutoConfirmationRequired $c) ("auto-confirm leaves alone: " + $c)
+    }
+    Assert-Equal 'danger' (TierOf 'Remove-Item C:\data -Rec -Force') 'tier: Remove-Item -Rec is danger'
+    Assert-Equal 'danger' (TierOf 'reg delete HKCU\Software\X /f') 'tier: reg delete is danger'
+    Assert-Equal 'danger' (TierOf 'sc delete W3SVC') 'tier: sc delete is danger'
+    # 0.6.20 review: display-only native forms must not look like their write forms.
+    foreach ($c in @('icacls C:\Windows\System32\drivers\etc\hosts', 'icacls "C:\Program Files\App"',
+                     'robocopy C:\a D:\b /MIR /L', 'robocopy "C:\a b" D:\x /MIR /L', 'net localgroup administrators')) {
+        Assert-False (Get-ApprovalRequired (TierOf $c) $true $false $false $c) ("auto: display-only form runs: " + $c)
+    }
+    foreach ($c in @('icacls C:\Windows\System32\x.dll /grant Everyone:F', 'icacls "C:\Program Files\App" /reset /T',
+                     'takeown /f C:\Windows\System32\x.dll', 'net localgroup administrators bob /add',
+                     'robocopy C:\a D:\b /MIR', 'robocopy C:\a D:\b /MIR /LOG:C:\x.log',
+                     'robocopy C:\a D:\b /MIR; robocopy C:\c D:\d /L',
+                     # a /L inside a quoted argument (or an unclosed quote) is not list-only mode, and
+                     # PowerShell strips the quotes from a quoted switch before the tool sees it
+                     'robocopy C:\empty D:\data /MIR /XF " /L"', 'robocopy C:\empty D:\data /MIR /XF "x /L',
+                     'robocopy C:\empty D:\data ''/MIR''', 'icacls C:\Windows\System32\x.dll ''/grant'' Everyone:F')) {
+        Assert-True (Get-ApprovalRequired (TierOf $c) $true $false $false $c) ("auto: write form still asks: " + $c)
+    }
+    # Under -Auto the danger-tier gate uses the LOCAL tier; a model's "high" label is advisory.
+    Assert-Equal 'mutating' (Get-ApprovalGateTier 'danger' 'mutating' $true) 'gate tier: in auto a model escalation to danger is advisory'
+    Assert-Equal 'danger' (Get-ApprovalGateTier 'danger' 'danger' $true) 'gate tier: a locally danger command stays danger in auto'
+    Assert-Equal 'danger' (Get-ApprovalGateTier 'danger' 'safe' $false) 'gate tier: without auto the escalated tier still decides'
+    Assert-False (Get-ApprovalRequired (Get-ApprovalGateTier 'danger' (TierOf 'Restart-Service -Name W3SVC') $true) $true $false $false 'Restart-Service -Name W3SVC') 'auto: a model "high" label alone does not stop an ordinary restart'
+    # PowerShell strips quotes/backticks before a native command sees its arguments, so a quoted
+    # verb or switch is graded like the bare form: danger tier, and it asks in auto.
+    foreach ($c in @("reg 'delete' HKLM\SOFTWARE\X /f", 'sc.exe "delete" x', "net 'user' x /del", "schtasks '/delete' /tn x /f",
+                     "bcdedit '/set' testsigning on", "wevtutil 'cl' Security", 'vssadmin "delete" shadows /all /quiet',
+                     "format 'C:' /q", 'cmd /c "del /s /q C:\x"', 'reg `delete HKCU\x /f', 'wmic shadowcopy delete',
+                     'net user x /del', 'vssadmin delete shadows /all', 'format D: /q')) {
+        Assert-Equal 'danger' (TierOf $c) ("quoted native verb is danger: " + $c)
+        Assert-True (Get-ApprovalRequired (TierOf $c) $true $false $false $c) ("quoted native verb asks in auto: " + $c)
+        Assert-False (Test-PreApprovable $c (TierOf $c)) ("quoted native verb is never pre-approvable: " + $c)
+    }
+    foreach ($c in @('reg delete HKLM\SOFTWARE\X /f', "reg 'delete' HKLM\SOFTWARE\X /f", 'vssadmin "delete" shadows /all', "format 'C:' /q", 'cmd /c "rd /s /q C:\x"')) {
+        Assert-True (Test-AutoConfirmationRequired $c) ("catastrophic also with quotes: " + $c)
+    }
+    # ... while reads that merely mention them stay unprompted (the quote-free check skips proven reads).
+    foreach ($c in @('Get-Date -Format "C:"', "Get-Service -Name 'delete'", "Select-String -Path C:\logs\*.log -Pattern 'vssadmin delete shadows'",
+                     "Select-String -Path C:\logs\*.log -Pattern 'format C:'")) {
+        Assert-False (Get-ApprovalRequired (TierOf $c) $true $false $true $c) ("quoted read stays unprompted in auto: " + $c)
+    }
+    foreach ($c in @('Get-Date -Format "C:"', "Get-Service -Name 'delete'")) {
+        Assert-Equal 'safe' (TierOf $c) ("quoted read stays tier safe: " + $c)
+    }
     # Read-only mode is the strongest constraint: only allowlisted safe reads, even with auto.
     Assert-Equal $false (Get-ApprovalRequired 'safe' $true $true $true) 'approval: read-only allowlisted safe ok'
     Assert-Equal $true  (Get-ApprovalRequired 'mutating' $true $true $true) 'approval: read-only blocks mutating even in auto'
@@ -8567,6 +9125,263 @@ function Invoke-SelfTest {
     Assert-True (-not (Test-AutoApprovableCommand 'Get-Process | ForEach-Object { $_.Kill() }')) 'approval AST: ForEach-Object scriptblock still rejected'
     Assert-True (Test-AutoApprovableCommand 'Get-Process | Select-Object Name') 'approval AST: ordinary read still approvable after G1 fix'
     Assert-True (Test-AutoApprovableCommand 'Get-ChildItem C:\temp | Sort-Object Name') 'approval AST: ordinary pipeline still approvable after G1 fix'
+
+    # -- 0.6.20 read-only regression corpus. Everyday inspection commands MUST keep running
+    # unattended (the gate is meant to stop only the write/exec forms), and the write/exec
+    # forms MUST stay gated. Cmdlet/System32 resolution is mocked so the same corpus runs
+    # on any host: the AST allowlist decision is what is under test, not the module set.
+    Write-Host '== Read-only corpus ==' -ForegroundColor Cyan
+    $roCorpus = @'
+Get-Process
+Get-Process | Sort-Object CPU -Descending | Select-Object -First 10
+Get-Process | Format-Table Name, Id -AutoSize
+Get-Process | Out-String
+Get-Process | Group-Object ProcessName | Sort-Object Count -Descending
+Get-Process | Select-Object -ExpandProperty Name
+Get-Process | ConvertTo-Csv
+Get-Service
+Get-Service -Name W3SVC
+Get-Service | Where-Object Status -eq 'Running'
+Get-Service | Measure-Object
+Get-ChildItem C:\Windows\Logs
+Get-ChildItem -Path C:\Temp -Recurse -Filter *.log
+Get-ChildItem -Force | Sort-Object Length -Descending | Select-Object -First 5
+Get-ChildItem | Select-Object Name | ConvertTo-Json
+Get-Content C:\Temp\app.log -Tail 50
+Get-Content .\app.log | Select-String -Pattern 'error'
+Select-String -Path C:\Temp\*.log -Pattern 'fail' -SimpleMatch
+Get-Item C:\Windows\System32\drivers\etc\hosts
+Get-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion
+Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' | Select-Object ProductName, CurrentBuild
+Get-ComputerInfo
+Get-CimInstance Win32_OperatingSystem
+Get-CimInstance -ClassName Win32_LogicalDisk | Select-Object DeviceID, FreeSpace, Size
+Get-WmiObject Win32_Processor
+Get-EventLog -LogName System -Newest 20
+Get-WinEvent -LogName System -MaxEvents 20
+Get-WinEvent -FilterHashtable @{LogName='System'; Level=2} -MaxEvents 10
+Get-NetIPAddress
+Get-NetIPConfiguration
+Get-NetAdapter
+Get-NetTCPConnection -State Listen
+Get-DnsClientServerAddress
+Test-Path C:\Temp\app.log
+Test-Path -Path HKLM:\SOFTWARE\Microsoft
+Get-Date
+Get-Host
+Get-Location
+Get-Command Get-Process
+Get-Help Get-Process
+Get-Volume
+Get-Disk
+Get-Partition
+Get-PSDrive
+Get-HotFix
+Get-HotFix | Sort-Object InstalledOn -Descending | Select-Object -First 5
+Get-LocalUser
+Get-LocalGroup
+Get-LocalGroupMember -Group Administrators
+Get-ScheduledTask
+Get-ScheduledTask | Where-Object State -eq 'Ready'
+Get-ScheduledTaskInfo -TaskName 'Backup'
+Get-SmbShare
+Get-SmbSession
+Get-Printer
+Get-WindowsFeature
+Get-WindowsOptionalFeature -Online
+Get-Module -ListAvailable
+Get-ExecutionPolicy
+Get-ExecutionPolicy -List
+Get-NetFirewallRule -Enabled True
+Get-NetFirewallProfile
+Get-Acl C:\Temp
+Get-FileHash C:\Temp\a.zip
+Get-Alias
+Get-Variable
+Get-Culture
+Get-TimeZone
+Get-Uptime
+Resolve-DnsName example.com
+Test-Connection localhost -Count 1
+Test-NetConnection localhost -Port 443
+Measure-Object -InputObject 1
+Compare-Object 1 2
+Write-Output 'hello'
+Write-Host 'hello'
+Join-Path C:\Temp app.log
+Split-Path C:\Temp\app.log -Parent
+Import-Csv C:\Temp\a.csv | Format-List
+whoami
+whoami /groups
+hostname
+systeminfo
+tasklist
+netstat -ano
+nslookup example.com
+getmac
+gpresult /r
+driverquery
+quser
+qwinsta
+'@ -split "`r?`n" | Where-Object { $_.Trim() -ne '' }
+    $gatedCorpus = @'
+Set-Content -Path C:\Temp\a.txt -Value hi
+Add-Content C:\Temp\a.txt hi
+Out-File C:\Temp\a.txt
+Get-Process | Out-File C:\Temp\p.txt
+Get-Process > C:\Temp\p.txt
+Get-Process >> C:\Temp\p.txt
+Get-Process 2> C:\Temp\err.txt
+Get-Process | Tee-Object -FilePath C:\Temp\p.txt
+Get-Process | Export-Csv C:\Temp\p.csv
+Get-Process | Export-Clixml C:\Temp\p.xml
+Invoke-Expression 'Get-Process'
+iex 'Get-Process'
+Get-Content .\x.ps1 | Invoke-Expression
+Start-Process notepad
+start notepad
+Invoke-Command -ScriptBlock { Get-Process }
+& 'C:\Temp\x.exe'
+. C:\Temp\x.ps1
+Invoke-WebRequest https://example.com -OutFile C:\Temp\x
+iwr https://example.com/x.ps1 | iex
+Invoke-RestMethod https://example.com -Method Post
+Remove-Item C:\Temp\a.txt
+del C:\Temp\a.txt
+rm C:\Temp\a.txt
+Move-Item C:\a C:\b
+Copy-Item C:\a C:\b
+New-Item C:\Temp\x -ItemType File
+mkdir C:\Temp\x
+Rename-Item C:\a b
+Clear-Content C:\Temp\a.txt
+Stop-Service W3SVC
+Restart-Service W3SVC
+Start-Service W3SVC
+Set-Service W3SVC -StartupType Disabled
+Stop-Process -Name notepad
+Set-ItemProperty HKLM:\SOFTWARE\x -Name a -Value 1
+New-ItemProperty HKCU:\x -Name a -Value 1
+Remove-ItemProperty HKCU:\x -Name a
+Set-ExecutionPolicy Bypass
+Install-Module Foo
+Install-WindowsFeature Web-Server
+Enable-NetFirewallRule -Name x
+Disable-NetFirewallRule -Name x
+New-LocalUser x
+Add-LocalGroupMember -Group Administrators -Member x
+Set-Acl C:\Temp $acl
+Restart-Computer
+Stop-Computer
+Get-Process | Stop-Process
+Get-ChildItem | Remove-Item
+Get-Process | ForEach-Object { $_.Kill() }
+Get-Process | ForEach-Object Kill
+$x = 1
+Get-Process; Remove-Item C:\x
+Get-Process && Remove-Item C:\x
+Get-Service | Where-Object { $_.Status -eq 'Running' }
+Get-Content C:\Temp\a.txt | ForEach-Object { Remove-Item $_ }
+powershell -EncodedCommand AAAA
+cmd /c del C:\x
+icacls C:\Temp /grant Everyone:F
+takeown /f C:\Temp
+sc stop W3SVC
+net user x pw /add
+reg add HKCU\x /v a /d 1
+schtasks /create /tn x /tr calc
+shutdown /r /t 0
+robocopy C:\a C:\b /MIR
+wmic process call create calc
+git commit -m x
+git push
+docker rm x
+kubectl delete pod x
+reg 'delete' HKLM\SOFTWARE\X /f
+sc.exe "delete" x
+net 'user' x /del
+schtasks '/delete' /tn x /f
+bcdedit '/set' testsigning on
+wevtutil 'cl' Security
+vssadmin "delete" shadows /all /quiet
+format 'C:' /q
+cmd /c "del /s /q C:\x"
+'@ -split "`r?`n" | Where-Object { $_.Trim() -ne '' }
+    $roLookalike = @("Select-String -Path C:\logs\*.log -Pattern 'reg delete'",
+                     "Select-String -Path C:\logs\*.log -Pattern 'sc delete'",
+                     'Get-ChildItem C:\del -Recurse',
+                     "Get-Content C:\scripts\cleanup.ps1 | Select-String 'Remove-Item -Recurse'")
+    $nl = "`n"
+    $gatedTricks = @(
+        ("Get-Process #'" + $nl + 'Stop-Service -Name W3SVC' + $nl + "#'"),
+        ('Get-Process #"' + $nl + 'Remove-Item C:\data -Recurse -Force' + $nl + '#"'),
+        "Get-Process <# ' #>; Stop-Service W3SVC",
+        ("Get-Process <# '" + $nl + '#> ; Remove-Item C:\data -Recurse'),
+        ("Write-Output @'" + $nl + 'x' + $nl + "'@" + $nl + 'Stop-Service W3SVC'),
+        ('Write-Output @"' + $nl + '$(Stop-Service W3SVC)' + $nl + '"@'),
+        'Write-Output `''; Stop-Service W3SVC',
+        'Write-Output `"; Stop-Service W3SVC',
+        'Write-Output "x$(Remove-Item C:\data -Recurse)y"',
+        "& 'Stop-Service' W3SVC",
+        '."iex" "Stop-Service W3SVC"',
+        "&('Stop'+'-Service') W3SVC",
+        'Get-Process -Name @(Stop-Service W3SVC)',
+        ("Get-Process 'a" + $nl + "'; Stop-Service W3SVC"),
+        'Get-Process }; Stop-Service W3SVC; & {',
+        'Get-Process -Name "a`"; Stop-Service W3SVC"; Stop-Service W3SVC',
+        ([string][char]0x2018 + 'x' + [string][char]0x2019 + '; Stop-Service W3SVC')
+    )
+    $dataTricks = @(
+        'Get-Process # Remove-Item C:\data -Recurse -Force',
+        ("Write-Output @'" + $nl + '$(Stop-Service W3SVC); Remove-Item C:\data -Recurse' + $nl + "'@"),
+        "Select-String -Path C:\x.log -Pattern 'x`"; Stop-Service W3SVC'"
+    )
+    Assert-True ($roCorpus.Count -ge 80) ("corpus: at least 80 read-only commands (have $($roCorpus.Count))")
+    Assert-True ($gatedCorpus.Count -ge 60) ("corpus: at least 60 gated forms (have $($gatedCorpus.Count))")
+    $savedSysRoot = $env:SystemRoot
+    $env:SystemRoot = (Join-Path ([System.IO.Path]::GetTempPath()) 'ActMockWindows')
+    & {
+        function Get-Command {
+            param([string] $Name, $CommandType, $ErrorAction)
+            if ($CommandType -eq 'Application') {
+                return [pscustomobject]@{ Name = $Name; Source = (Join-Path (Join-Path $env:SystemRoot 'System32') ($Name + '.exe')); ModuleName = '' }
+            }
+            return [pscustomobject]@{ Name = $Name; Source = ''; ModuleName = 'Microsoft.PowerShell.Management' }
+        }
+        foreach ($c in $roCorpus) {
+            Assert-True (Test-AutoApprovableCommand $c) "corpus RO auto-approvable: $c"
+        }
+        foreach ($c in $gatedCorpus) {
+            Assert-False (Test-AutoApprovableCommand $c) "corpus gated (not auto): $c"
+        }
+        # 0.6.20 review: under -Auto a proven read never asks - not even when the model labels it
+        # "high" (merged tier danger) or its text looks like a write (a quoted search pattern, a
+        # folder named del). The look-alikes are not tier safe, so they are listed separately.
+        foreach ($c in @($roCorpus + $roLookalike)) {
+            Assert-False (Get-ApprovalRequired 'danger' $true $false (Test-AutoApprovableCommand $c) $c) "corpus RO never asks in auto (even escalated to danger): $c"
+        }
+        # Quote/comment/here-string tricks: the gate parses with the same PowerShell parser the
+        # child runs, so a command hidden behind a comment, a here-string, an escaped quote, a
+        # subexpression or an invocation operator is never a proven read (and a hidden
+        # catastrophic payload still asks in auto), while text that really is data stays a read.
+        foreach ($c in $gatedTricks) {
+            Assert-False (Test-AutoApprovableCommand $c) ("corpus gated trick (not auto): " + ($c -replace "`n", '\n'))
+        }
+        foreach ($c in @($gatedTricks | Where-Object { $_ -match 'Remove-Item' })) {
+            Assert-True (Get-ApprovalRequired (TierOf $c) $true $false $false $c) ("hidden catastrophic payload asks in auto: " + ($c -replace "`n", '\n'))
+        }
+        foreach ($c in $dataTricks) {
+            Assert-True (Test-AutoApprovableCommand $c) ("data-only text stays a proven read: " + ($c -replace "`n", '\n'))
+            Assert-False (Get-ApprovalRequired (TierOf $c) $true $false $true $c) ("data-only text does not ask in auto: " + ($c -replace "`n", '\n'))
+        }
+    }
+    $env:SystemRoot = $savedSysRoot
+    # Default (no -Auto) mode prompts for anything that is not tier safe, so the plain
+    # Verb-Noun reads must also grade safe (native tools and a hashtable filter grade caution
+    # today and are covered by the approval-gate assertions above).
+    foreach ($c in @($roCorpus | Where-Object { $_ -match '^[A-Z][a-z]+-[A-Za-z]+' -and $_ -notmatch '@\{' })) {
+        Assert-Equal 'safe' (TierOf $c) "corpus RO tier safe: $c"
+    }
 
     # ── 0.6.5 H1: verification evidence must come from a HOST READ. $outputOnly was a
     # denylist while the approval allowlist is a verb wildcard, so ConvertFrom-*/Select-*
@@ -9135,12 +9950,12 @@ function Invoke-SelfTest {
         $batchAudit = @($loopBatch.Audit | Where-Object { $_.event -eq 'command_result' -and $null -ne $_.batch_index })
         if ($batchAudit.Count -gt 0) {
             foreach ($entry in $batchAudit) {
-                Write-Host ('  batch diagnostic: item=' + $entry.batch_index +
+                Write-Host (ConvertTo-SafeTerminalText ('  batch diagnostic: item=' + $entry.batch_index +
                             ' step=' + $entry.step_id +
                             ' exit=' + $entry.exit_code +
                             ' timed_out=' + $entry.timed_out +
                             ' killed=' + $entry.killed +
-                            ' cmd=' + $entry.command) -ForegroundColor Yellow
+                            ' cmd=' + $entry.command)) -ForegroundColor Yellow
             }
         } else {
             Write-Host '  batch diagnostic: no per-item command_result was audited (the children may not have started)' -ForegroundColor Yellow
@@ -9798,6 +10613,28 @@ function Invoke-SelfTest {
         Assert-Equal 'pre_approved' $fixAudit[0].approval 'allow: the run is recorded as pre-approved'
         Assert-Equal 'Restart-Service -Name ActDemo' $fixAudit[0].pattern 'allow: the matching pattern is recorded'
         Assert-Equal 0 @($script:ResultEvents | Where-Object { $_['event'] -eq 'policy_denied' }).Count 'allow: nothing was refused'
+
+        # 0.6.20 review: under -Auto -NonInteractive the model's "high" label is advisory - a proven
+        # read and an ordinary fix still run - while a command ACT itself grades danger is refused.
+        $script:Auto = $true; $script:PreApproved = @()
+        $script:ResultEvents.Clear()
+        $loopAuto = Invoke-ActTaskWithScriptedProvider 'ActDemo is down, fix it' @(
+            $fixPlan
+            '{"action":"run","step_id":"look","command":"Get-Variable -Name ActDemoProbe","risk":"high"}'
+            '{"action":"run","step_id":"fix","command":"Restart-Service -Name ActDemo","risk":"high"}'
+            '{"action":"finish","message":"restarted"}'
+        ) @(@{ StdOut = 'Status: Stopped'; StdErr = ''; ExitCode = 0 }, @{ StdOut = ''; StdErr = ''; ExitCode = 0 }) -RealApproval
+        Assert-Equal 'Get-Variable -Name ActDemoProbe|Restart-Service -Name ActDemo' (@($loopAuto.ExecutorCalls) -join '|') 'auto: a model "high" label alone stops neither a proven read nor an ordinary fix'
+        Assert-Equal 0 @($script:ResultEvents | Where-Object { $_['event'] -eq 'policy_denied' }).Count 'auto: nothing is refused for a model label alone'
+        $script:ResultEvents.Clear()
+        $loopAutoDanger = Invoke-ActTaskWithScriptedProvider 'ActDemo is down, fix it' @(
+            $fixPlan
+            '{"action":"run","step_id":"look","command":"Get-Variable -Name ActDemoProbe"}'
+            '{"action":"run","step_id":"fix","command":"sc.exe delete ActDemo","risk":"low"}'
+            '{"action":"finish","message":"ActDemo stopped"}'
+        ) @(@{ StdOut = 'Status: Stopped'; StdErr = ''; ExitCode = 0 }) -RealApproval
+        Assert-Equal 'Get-Variable -Name ActDemoProbe' (@($loopAutoDanger.ExecutorCalls) -join '|') 'auto: a command ACT grades danger is refused non-interactively even if the model says low'
+        Assert-Equal 1 @($script:ResultEvents | Where-Object { $_['event'] -eq 'policy_denied' }).Count 'auto: the danger-tier refusal is recorded'
     } finally {
         $script:NonInteractive = $savedNonInteractive; $script:Auto = $savedAuto; $script:ReadOnly = $savedReadOnly
         $script:ResultPath = $savedResultPath; $script:PreApproved = $savedPreApproved
@@ -9930,6 +10767,29 @@ function Invoke-SelfTest {
         Assert-Equal 0 $backgroundStatus.Result.ExitCode 'jobs: completed child exit code is retained'
         Assert-True ($backgroundStatus.Result.StdOut -match 'background-ok') 'jobs: completed child output is retained'
         Assert-True ((Format-ActBackgroundJobs) -match 'state=exited') 'jobs: non-blocking status reports completion'
+
+        # 0.6.20: output is capped while it is read (memory stays bounded), and a grandchild that keeps
+        # the pipe open cannot hang ACT after the command itself has finished.
+        $bigOut = Invoke-HostCommand '$s = ''x'' * 100000; 1..60 | ForEach-Object { Write-Output $s }'
+        Assert-True ($bigOut.StdOut.Length -lt 20000) 'executor: huge output is capped, not buffered whole'
+        Assert-True ($bigOut.StdOut -match 'output truncated: only the first \d+ characters are kept; the command was allowed to finish') 'executor: capped output says the command was allowed to finish'
+        Assert-Equal 0 $bigOut.ExitCode 'executor: truncated output keeps the command exit code'
+        Assert-False $bigOut.Killed 'executor: a command that merely prints a lot is not killed'
+        $flood = New-CappedReader (New-Object System.IO.StreamReader (New-Object System.IO.MemoryStream (,([System.Text.Encoding]::ASCII.GetBytes(('y' * 5000)))))) 100
+        $flood.RunawayAt = [int64]1000
+        for ($i = 0; $i -lt 200 -and -not $flood.Eof -and -not $flood.Runaway; $i++) { Update-CappedReader $flood; Start-Sleep -Milliseconds 5 }
+        Assert-True $flood.Runaway 'executor: a flood far past the cap is flagged as runaway'
+        Assert-True ((Get-CappedReaderText $flood) -match 'kept flowing past 1000 - process killed') 'executor: runaway marker names the limit'
+        $exeForHang = Get-ChildPowerShellPath
+        $hangCmd = 'Start-Process -FilePath ''' + $exeForHang + ''' -ArgumentList ''-NoProfile'',''-NonInteractive'',''-Command'',''Start-Sleep 25'' -NoNewWindow; Write-Output parent-done'
+        $hangWatch = [System.Diagnostics.Stopwatch]::StartNew()
+        $hang = Invoke-HostCommand $hangCmd
+        $hangWatch.Stop()
+        Assert-True ($hangWatch.ElapsedMilliseconds -lt 20000) 'executor: a grandchild holding the pipe cannot hang the runner'
+        Assert-True ($hang.StdOut -match 'parent-done') 'executor: output read before the pipe-held grace period is kept'
+        $envNames = @(Get-ChildEnvironmentScrubNames @{ GENAI_KEY = 'a'; MY_API_TOKEN = 'b'; ACT_ALLOW = 'c'; ANSIBLE_VAULT_PASSWORD_FILE = 'd'; PATH = 'e'; COMPUTERNAME = 'f' })
+        Assert-True ($envNames -contains 'MY_API_TOKEN' -and $envNames -contains 'GENAI_KEY' -and $envNames -contains 'ACT_ALLOW' -and $envNames -contains 'ANSIBLE_VAULT_PASSWORD_FILE') 'executor: credential-looking and ACT_ variables are scrubbed from the child'
+        Assert-True (-not ($envNames -contains 'PATH') -and -not ($envNames -contains 'COMPUTERNAME')) 'executor: ordinary variables are kept for the child'
     } finally {
         $script:ReadOnly = $savedReadOnly
         $script:CommandTimeout = $savedTimeout
@@ -10072,6 +10932,13 @@ function Invoke-SelfTest {
     Assert-True ($capped.Length -lt 1200) 'cap: truncated'
     Assert-True ($capped -match 'output truncated') 'cap: notice present'
     Assert-Equal 'hello' (Limit-Output 'hello' 1000) 'cap: short unchanged'
+    # 0.6.20 review: output the executor already capped keeps its marker but is still trimmed to
+    # the (much smaller) observation limit before it goes to the model.
+    $execCapped = ('x' * 5000) + "`n[output truncated: only the first 5000 characters are kept; the command was allowed to finish]"
+    $obsCapped = Limit-Output $execCapped 300
+    Assert-True ($obsCapped.Length -lt 600) 'cap: executor-capped output is still trimmed to the observation limit'
+    Assert-True ($obsCapped -match 'the command was allowed to finish\]$') 'cap: the executor marker is kept at the end'
+    Assert-Equal $execCapped (Limit-Output $execCapped 5000) 'cap: executor-capped output within the limit is left alone'
 
     Write-Host '== Providers ==' -ForegroundColor Cyan
     $script:Providers = @{
@@ -10124,6 +10991,91 @@ function Invoke-SelfTest {
     Assert-True (-not (Test-TokenParamRejected $tkey "Use 'max_completion_tokens' instead")) 'tokenparam: ACT_TOKEN_PARAM is never auto-flipped'
     Assert-Equal 'max_tokens' (Get-TokenParam $tkey) 'tokenparam: forced value wins'
     $script:TokenParamForced = ''; $script:TokenParam = @{}
+    # 0.6.20: a value complaint that merely mentions the field must not flip the name.
+    Assert-True (-not (Test-TokenParamRejected $tkey 'max_tokens is too large for this model: 999999 exceeds the maximum of 4096')) 'tokenparam: a too-large value does not flip the name'
+    Assert-True (-not (Test-TokenParamRejected $tkey 'Rate limit reached; reduce max_tokens')) 'tokenparam: a quota message that mentions max_tokens does not flip'
+    $script:TokenParam = @{}
+    # Guessed (blind) feature drops expire; refusals the server named do not.
+    $script:ToolsSupport = @{}; $script:BlindShed = @{}
+    Disable-RequestFeature 'tools' 'kk' -Blind
+    Assert-Equal $false $script:ToolsSupport['kk'] 'blind shed: tools dropped for now'
+    for ($i = 0; $i -lt 4; $i++) { Update-BlindShed }
+    Assert-Equal $false $script:ToolsSupport['kk'] 'blind shed: still dropped before the countdown ends'
+    Update-BlindShed
+    Assert-True ($null -eq $script:ToolsSupport['kk']) 'blind shed: feature is retried after a few requests'
+    Disable-RequestFeature 'json' 'kk'
+    for ($i = 0; $i -lt 10; $i++) { Update-BlindShed }
+    Assert-Equal $false $script:JsonModeSupport['kk'] 'blind shed: a refusal the server named stays remembered'
+    Disable-RequestFeature 'tools' 'kk' -Blind
+    Disable-RequestFeature 'tools' 'kk'
+    for ($i = 0; $i -lt 10; $i++) { Update-BlindShed }
+    Assert-Equal $false $script:ToolsSupport['kk'] 'blind shed: a guess later confirmed by the server does not expire'
+    $script:ToolsSupport = @{}; $script:JsonModeSupport = @{}; $script:BlindShed = @{}
+    # The key only travels over https (or to this machine).
+    Assert-True (Test-KeySafeUrl 'https://api.example.com/v1') 'key url: https is allowed'
+    Assert-True (Test-KeySafeUrl 'http://127.0.0.1:8080/v1') 'key url: loopback http is allowed'
+    Assert-True (Test-KeySafeUrl 'http://localhost:8080/v1') 'key url: localhost http is allowed'
+    Assert-False (Test-KeySafeUrl 'http://api.example.com/v1') 'key url: remote http is refused'
+    Assert-False (Test-KeySafeUrl 'ftp://api.example.com/v1') 'key url: other schemes are refused'
+    $tlsArgs = Get-TlsRequestArgs 'https://api.example.com/v1'
+    Assert-Equal 0 $tlsArgs['MaximumRedirection'] 'key url: redirects are never followed'
+    $savedAllowHttp = $env:ACT_ALLOW_HTTP; $savedAllowHttpKey = $env:ACT_ALLOW_HTTP_KEY
+    foreach ($v in @('1', 'true', 'YES', 'on')) {
+        $env:ACT_ALLOW_HTTP = $v; $env:ACT_ALLOW_HTTP_KEY = $null
+        Assert-True (Test-KeySafeUrl 'http://api.example.com/v1') "key url: ACT_ALLOW_HTTP=$v allows remote http"
+        $env:ACT_ALLOW_HTTP = $null; $env:ACT_ALLOW_HTTP_KEY = $v
+        Assert-True (Test-KeySafeUrl 'http://api.example.com/v1') "key url: ACT_ALLOW_HTTP_KEY=$v allows remote http"
+    }
+    foreach ($v in @('0', 'no', 'false', 'off', 'maybe')) {
+        $env:ACT_ALLOW_HTTP = $v; $env:ACT_ALLOW_HTTP_KEY = $null
+        Assert-False (Test-KeySafeUrl 'http://api.example.com/v1') "key url: ACT_ALLOW_HTTP=$v keeps remote http refused"
+    }
+    $env:ACT_ALLOW_HTTP = $savedAllowHttp; $env:ACT_ALLOW_HTTP_KEY = $savedAllowHttpKey
+    Assert-False (Test-KeySafeUrl 'http://[::2]/v1') 'key url: non-loopback IPv6 http is refused'
+    Assert-True (Test-KeySafeUrl 'http://[::1]/v1') 'key url: IPv6 loopback http is allowed'
+    # The request chokepoint enforces the same rule (an http Anthropic URL override, :probe).
+    $savedAllowHttp = $env:ACT_ALLOW_HTTP; $savedAllowHttpKey = $env:ACT_ALLOW_HTTP_KEY
+    $env:ACT_ALLOW_HTTP = $null; $env:ACT_ALLOW_HTTP_KEY = $null
+    $httpRefused = $false
+    try { [void](Invoke-ProviderRequestWithRetry -Uri 'http://api.example.com/v1/messages' -Headers @{} -Body '{}' -TimeoutSec 1) }
+    catch { $httpRefused = ('' + $_.Exception.Message) -match 'non-https' }
+    $env:ACT_ALLOW_HTTP = $savedAllowHttp; $env:ACT_ALLOW_HTTP_KEY = $savedAllowHttpKey
+    Assert-True $httpRefused 'key url: every keyed request refuses a remote http URL before sending'
+
+    # Guidance/journal file trust decision (pure part of the owner + ACL check).
+    $me = 'S-1-5-21-1-2-3-1001'; $other = 'S-1-5-21-1-2-3-1002'
+    Assert-True (Test-OwnerAndWritersTrusted $me $me @($me, 'S-1-5-18', 'S-1-5-32-544')) 'trust: own file, only trusted writers'
+    Assert-True (Test-OwnerAndWritersTrusted 'S-1-5-32-544' $me @('S-1-5-32-544')) 'trust: administrator-owned file'
+    Assert-False (Test-OwnerAndWritersTrusted $other $me @($me)) 'trust: another user owns the file'
+    Assert-False (Test-OwnerAndWritersTrusted $me $me @($me, $other)) 'trust: another user can write'
+    Assert-False (Test-OwnerAndWritersTrusted $me $me @($me, 'S-1-1-0')) 'trust: Everyone can write'
+    Assert-False (Test-OwnerAndWritersTrusted $me $me @($me, 'S-1-5-32-545')) 'trust: Users group can write'
+    Assert-False (Test-OwnerAndWritersTrusted '' $me @()) 'trust: unknown owner is refused'
+
+    # Token counter feeding the result file: provider-reported usage only, null when absent.
+    $savedTokUsed = $script:TokensUsed; $savedTokRep = $script:TokensReported
+    $script:TokensUsed = 0; $script:TokensReported = $false
+    Assert-True ($null -eq (Get-ActResultContext).tokens) 'tokens: null when the endpoint reported no usage'
+    Add-TokenUsage ([pscustomobject]@{ usage = [pscustomobject]@{ total_tokens = 120 } })
+    Add-TokenUsage ([pscustomobject]@{ usage = [pscustomobject]@{ prompt_tokens = 30; completion_tokens = 5 } })
+    Add-TokenUsage ([pscustomobject]@{ choices = @() })
+    Assert-Equal 155 (Get-ActResultContext).tokens 'tokens: summed across replies (total or prompt+completion)'
+    $script:TokensUsed = $savedTokUsed; $script:TokensReported = $savedTokRep
+
+    # ask answers are redacted like any other text that goes back to the model.
+    $redacted = Protect-Secrets 'Operator answer: the password is hunter2 and api_key=abcdefghijklmnop1234'
+    Assert-False ($redacted -match 'abcdefghijklmnop1234') 'ask answer: key=value secret is redacted'
+    $savedInsecureHosts = $script:InsecureTlsHosts
+    $script:InsecureTlsHosts = @('api.example.com')
+    $tlsIn = Get-TlsRequestArgs 'https://api.example.com/v1'
+    $tlsOut = Get-TlsRequestArgs 'https://other.example.org/v1'
+    if ($PSVersionTable.PSEdition -eq 'Core') {
+        Assert-True ($tlsIn.ContainsKey('SkipCertificateCheck')) 'tls bypass (PS7): scoped host is skipped per request'
+        Assert-False ($tlsOut.ContainsKey('SkipCertificateCheck')) 'tls bypass (PS7): other hosts still validate'
+    } else {
+        Assert-False ($tlsIn.ContainsKey('SkipCertificateCheck')) 'tls bypass (5.1): uses the ServicePointManager callback, no per-request switch'
+    }
+    $script:InsecureTlsHosts = $savedInsecureHosts
     $hgGet = Get-ProviderHeaders 'genai' 'GKEY'
     Assert-True (-not $hgGet.ContainsKey('Content-Type')) 'headers: GET omits Content-Type'
     # Per-provider model memory across genai->asksage->genai.
@@ -10517,13 +11469,14 @@ $o = New-ChatRequestBody 'openai' @(@{ role = 'user'; content = 'u' }) 'm' $f
 $r = ConvertFrom-AnthropicResponse ('{"content":[{"type":"text","text":"x"},{"type":"tool_use","id":"t","name":"finish","input":{"message":"ok"}}],"usage":{"input_tokens":1,"output_tokens":2}}' | ConvertFrom-Json)
 $why = Get-ApiErrorReason '{"error":{"message":"bad"}}' ''
 $k = Get-RejectedFeature 'temperature not supported' $f 'openai'
-'CLM-RESULT ' + $ExecutionContext.SessionState.LanguageMode + ' ' + ($b -match '"input_schema"') + ' ' + ($o -match '"tool_choice"') + ' ' + ((ConvertFrom-ToolCall $r) -match '"action":"finish"') + ' ' + $why + ' ' + $k
+$mk = ConvertTo-SafeTerminalText ('a' + [char]0x202E + 'b') -Mark
+'CLM-RESULT ' + $ExecutionContext.SessionState.LanguageMode + ' ' + ($b -match '"input_schema"') + ' ' + ($o -match '"tool_choice"') + ' ' + ((ConvertFrom-ToolCall $r) -match '"action":"finish"') + ' ' + $why + ' ' + $k + ' ' + $mk
 '@
         try {
             $shell = (Get-Process -Id $PID).Path
             $clmOut = @(& $shell -NoProfile -ExecutionPolicy Bypass -File $clmFile $script:ActScriptPath 2>$null | ForEach-Object { '' + $_ })
             $clmLine = '' + (@($clmOut | Where-Object { $_ -like 'CLM-RESULT *' }) | Select-Object -Last 1)
-            Assert-Equal 'CLM-RESULT ConstrainedLanguage True True True bad temperature' $clmLine 'formats: request building and reply parsing run under Constrained Language Mode'
+            Assert-Equal 'CLM-RESULT ConstrainedLanguage True True True bad temperature a<U+202E>b' $clmLine 'formats: request building, reply parsing and the -Mark sanitizer run under Constrained Language Mode'
         } finally { Remove-Item -LiteralPath $clmFile -Force -ErrorAction SilentlyContinue }
     }
 

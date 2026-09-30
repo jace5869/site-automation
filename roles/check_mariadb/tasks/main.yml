@@ -1,13 +1,86 @@
 ---
-# MARIADB health - only on database hosts (check_mariadb_enabled, by default: members of the
-# mariadb_hosts group). The checks themselves are in health.yml.
-- name: MariaDB | health (database hosts only)
-  ansible.builtin.include_tasks: health.yml
-  when: check_mariadb_enabled | bool
-
+# DATABASE health (MariaDB and MySQL) - only on database hosts (check_mariadb_enabled: by default
+# the hosts in the groups mariadb_hosts, mysql_hosts, database_hosts, mariadb or mysql, or any host
+# you give a container name). One health check per INSTANCE: each podman container you name
+# (check_mariadb_container / check_mariadb_containers, or found by check_mariadb_container_discover),
+# or - when none is named - the database installed on the host. The checks are in health.yml.
 - name: MariaDB | not a database host
   ansible.builtin.debug:
     msg: >-
-      skipped: the MariaDB check is off for {{ inventory_hostname }}. Turn it on for a group with
-      check_mariadb_enabled: true (for your mariadb group: playbooks/group_vars/mariadb.yml).
+      skipped: the MariaDB/MySQL check is off for {{ inventory_hostname }} (it is not in a
+      mariadb_hosts / mysql_hosts / database_hosts group and names no container). Turn it on with
+      check_mariadb_enabled: true (playbooks/group_vars/<your group>.yml; docs/MARIADB.md).
   when: not (check_mariadb_enabled | bool)
+
+- name: MariaDB | database host
+  when: check_mariadb_enabled | bool
+  block:
+    # A rootless container belongs to a user, and only that user sees it: podman runs as them.
+    - name: MariaDB | who runs the containers (rootless - that user's runtime directory)
+      ansible.builtin.command:
+        argv: [id, -u, "{{ check_mariadb_container_user }}"]
+      register: _mdb_uid
+      changed_when: false
+      check_mode: false
+      failed_when: false
+      when: check_mariadb_container_user | default('') | length > 0
+
+    - name: MariaDB | podman settings for this host
+      ansible.builtin.set_fact:
+        _mdb_podman_env: >-
+          {{ {'XDG_RUNTIME_DIR': '/run/user/' ~ (_mdb_uid.stdout | trim)}
+             if (check_mariadb_container_user | default('') | length > 0 and (_mdb_uid.rc | default(1)) == 0) else {} }}
+        _mdb_user_missing: "{{ check_mariadb_container_user | default('') | length > 0 and (_mdb_uid.rc | default(1)) != 0 }}"
+
+    - name: MariaDB | containers found on the host (check_mariadb_container_discover)
+      ansible.builtin.command:
+        argv: [podman, ps, -a, --format, "{% raw %}{{.Names}} {{.Image}}{% endraw %}"]
+        chdir: /
+      environment: "{{ _mdb_podman_env }}"
+      become: "{{ true if check_mariadb_container_user | default('') else omit }}"
+      become_user: "{{ check_mariadb_container_user | default(omit, true) }}"
+      register: _mdb_ps
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: check_mariadb_container_discover | bool and not (_mdb_user_missing | bool)
+
+    - name: MariaDB | the instances to check
+      ansible.builtin.set_fact:
+        _mdb_instances: >-
+          {%- set out = [] -%}
+          {%- if check_mariadb_container | length > 0 -%}{%- set _ = out.append(check_mariadb_container) -%}{%- endif -%}
+          {%- for c in check_mariadb_containers -%}{%- if c not in out -%}{%- set _ = out.append(c) -%}{%- endif -%}{%- endfor -%}
+          {%- for line in (_mdb_ps.stdout_lines | default([])) if ' ' in line -%}
+          {%-   set name, image = line.split(' ', 1) -%}
+          {%-   if image is search(check_mariadb_container_image_regex, ignorecase=true) and name not in out -%}{%- set _ = out.append(name) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ out if out | length > 0 else ([''] if not (check_mariadb_container_discover | bool) else []) }}
+
+    - name: MariaDB | rootless user does not exist
+      ansible.builtin.set_fact:
+        site_findings: >-
+          {{ site_findings | default([]) + [{'check': 'mariadb', 'id': 'mariadb:user', 'severity': 'critical',
+             'summary': 'check_mariadb_container_user is "' ~ check_mariadb_container_user ~ '" but no such user exists on ' ~ inventory_hostname,
+             'hint': 'getent passwd ' ~ check_mariadb_container_user}] }}
+      when: _mdb_user_missing | bool
+
+    - name: MariaDB | discovery found no database container
+      ansible.builtin.set_fact:
+        site_findings: >-
+          {{ site_findings | default([]) + [{'check': 'mariadb', 'id': 'mariadb:no-container', 'severity': 'warning',
+             'summary': 'no MariaDB/MySQL container with an image matching "' ~ check_mariadb_container_image_regex ~ '" was found (podman ps -a'
+                        ~ ((' as ' ~ check_mariadb_container_user) if check_mariadb_container_user | default('') else '') ~ ')',
+             'hint': ('sudo -u ' ~ check_mariadb_container_user ~ ' ' if check_mariadb_container_user | default('') else '') ~ 'podman ps -a'}] }}
+      when:
+        - check_mariadb_container_discover | bool
+        - _mdb_instances | length == 0
+        - not (_mdb_user_missing | bool)
+
+    - name: MariaDB | health, one instance at a time
+      ansible.builtin.include_tasks: health.yml
+      vars:
+        _mdb_run_as: "{{ check_mariadb_container_user if _mdb_c else '' }}"
+      loop: "{{ _mdb_instances if not (_mdb_user_missing | bool) else [] }}"
+      loop_control:
+        loop_var: _mdb_c

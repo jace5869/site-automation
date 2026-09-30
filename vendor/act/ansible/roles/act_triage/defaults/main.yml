@@ -9,11 +9,14 @@ act_triage_python_candidates: [python3.13, python3.12, python3.11, python3.10, p
 # ---- Model credentials --------------------------------------------------------------------
 # Never put a key in plain vars. In AAP, attach a custom credential that injects the key as
 # an environment variable in the execution environment (see docs/AUTOMATION_GUIDE.md). Every
-# variable named here that is set on the controller/EE is forwarded to ACT on the host, only
-# through the ACT task's environment (no_log).
+# variable named here that is set on the controller/EE is forwarded to ACT on the host through
+# the ACT task's STDIN (no_log), never a command line: Ansible's `environment:` would put it on the
+# sudo / sh command line, visible in ps and in the host's sudo log.
 act_triage_key_env_names: [GENAI_KEY, GENAI_BETA_KEY, ASKSAGE_API_KEY, ASKSAGE_KEY]
-# Non-secret settings for ACT, e.g. {ACT_PROVIDER: asksage, ASKSAGE_MODEL: gpt-4.1-gov}.
+# Non-secret settings for ACT, e.g. {ACT_PROVIDER: asksage, ASKSAGE_MODEL: gpt-4.1-gov}. An entry whose
+# name matches act_triage_secret_env_regex is treated as a secret and goes the way the keys go.
 act_triage_env: {}
+act_triage_secret_env_regex: '(KEY|TOKEN|SECRET|PASSW)'
 
 # ---- Privacy (ACT 0.6.18+) -------------------------------------------------------------------
 # ACT replaces host names, IP addresses, user names and e-mail addresses with placeholders

@@ -1,0 +1,7 @@
+---
+# Last line of defence, checked here AND NOT the model's word: an approved command that matches
+# is refused even though a person approved it. Reboots and shutdowns belong to patch_hosts.yml
+# (automatic_restarts); the rest can destroy a host. Do them by hand if you really mean them.
+# Used by tasks/apply_guard.yml (act_fix_approved.yml and the service-watch fix step).
+# A command word counts with a path in front (/sbin/reboot) and inside quotes or $( ) (bash -c 'reboot').
+_apply_refuse: '(^|[;&|`(''"]|\s)((/usr)?(/local)?/s?bin/)?(reboot|shutdown|poweroff|halt|kexec|init\s+[06]|telinit\s+[06]|systemctl\s+(-\S+\s+)*(reboot|poweroff|halt|kexec)|systemctl\s+(-\S+\s+)*(start|isolate)\s+(reboot|poweroff|halt|kexec)\.target|/proc/sysrq-trigger|mkfs(\.\w+)?|wipefs|fdisk|parted|sgdisk|passwd|chpasswd|visudo|userdel|usermod|useradd|rm\s+(-\S+\s+)*(-\S*[rR]\S*|--recursive)\s+(-\S+\s+)*(/|/\*|/(etc|boot|usr|var|bin|sbin|lib|lib64|home|root|opt))/?|dd\s+[^;|&]*of=/dev/\S*|chmod\s+(-\S+\s+)*[0-7]*777\s+/|(curl|wget)\s[^|;]*\|\s*(sudo\s+)?(ba|z)?sh|iptables\s+-F|nft\s+flush\s+ruleset)(\s|$|[;&|)''"`])'

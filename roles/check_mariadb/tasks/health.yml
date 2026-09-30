@@ -1,20 +1,25 @@
 ---
-# MARIADB health (included by main.yml on database hosts). Every step is read-only:
-#   1. is it running? (the systemd unit, or the podman container)
-#   2. one status query: server status counters, a few settings, and long-running queries
-#      (who / which database / how long - never the query text, which can contain data)
-#   3. replication status (SHOW ALL SLAVES STATUS)
+# DATABASE health (MariaDB or MySQL) for ONE instance (included by main.yml once per instance:
+# _mdb_c = the podman container name, or '' for a database installed on the host). Every step is read-only:
+#   1. is it running? (the systemd unit, or the podman container) and which client does it have
+#   2. one status query, portable across MariaDB and MySQL: SHOW GLOBAL STATUS / VARIABLES (counters,
+#      a few settings, the version) and the long-running queries (who / which database / how long -
+#      never the query text, which can contain data)
+#   3. the engine is worked out from the version, then replication: SHOW ALL SLAVES STATUS (MariaDB),
+#      SHOW REPLICA STATUS (MySQL 8.0.22+, 8.4) or SHOW SLAVE STATUS (older MySQL); and MySQL Group
+#      Replication members (performance_schema.replication_group_members) when a group is configured
 #   4. recent [ERROR] lines in its error log, and how full its data disk is
 
-- name: MariaDB | running? which client?
+- name: MariaDB | running? which client? which image?
   ansible.builtin.shell: |
     set -u
-    {% if check_mariadb_container %}
-    c={{ check_mariadb_container | quote }}
+    {% if _mdb_c %}
+    c={{ _mdb_c | quote }}
     if podman container exists "$c" 2>/dev/null; then
       echo "state $(podman inspect "$c" 2>/dev/null | grep -m1 '"Status"' | cut -d'"' -f4)"
       echo "health $(podman inspect "$c" 2>/dev/null | grep -A1 -m1 '"Health"' | grep -m1 '"Status"' | cut -d'"' -f4)"
       echo "client $(podman exec "$c" sh -c 'command -v mariadb || command -v mysql' 2>/dev/null | head -1)"
+      echo "image $(podman inspect --format '{% raw %}{{.ImageName}}{% endraw %}' "$c" 2>/dev/null | head -1)"
     else
       echo "state missing"
     fi
@@ -32,7 +37,11 @@
     exit 0
   args:
     executable: /bin/bash
+    chdir: /
   register: _mdb_probe
+  environment: "{{ _mdb_podman_env }}"
+  become: "{{ true if _mdb_run_as | default('') else omit }}"
+  become_user: "{{ _mdb_run_as | default(omit, true) }}"
   changed_when: false
   check_mode: false
 
@@ -46,16 +55,18 @@
       {{ v }}
     _mdb_user: "{{ lookup('ansible.builtin.env', 'MARIADB_MONITOR_USER') }}"
     _mdb_pw_set: "{{ lookup('ansible.builtin.env', 'MARIADB_MONITOR_PASSWORD') | length > 0 }}"
-    # the password goes to the client only as MYSQL_PWD in its environment, and only when set
-    _mdb_env: >-
-      {{ {'MYSQL_PWD': lookup('ansible.builtin.env', 'MARIADB_MONITOR_PASSWORD')}
-         if lookup('ansible.builtin.env', 'MARIADB_MONITOR_PASSWORD') else {} }}
+
+# The password is never in a fact, a command line or Ansible's `environment:` (that one becomes
+# "MYSQL_PWD=... python3 ..." on the sudo / sh command line: in ps and in the sudo log). It goes on
+# the client task's STDIN to a small sh that puts it in MYSQL_PWD and then runs the client (for a
+# container: podman exec -e MYSQL_PWD, the name only). Those tasks are no_log (stdin is a module argument).
 
 - name: MariaDB | the client command
   ansible.builtin.set_fact:
     _mdb_cmd: >-
-      {{ (['podman', 'exec'] + (['-e', 'MYSQL_PWD'] if _mdb_pw_set | bool else []) + [check_mariadb_container]
-          if check_mariadb_container else [])
+      {{ (['/bin/sh', '-c', 'IFS= read -r MYSQL_PWD; export MYSQL_PWD; exec "$@"', 'mdb'] if _mdb_pw_set | bool else [])
+         + (['podman', 'exec'] + (['-e', 'MYSQL_PWD'] if _mdb_pw_set | bool else []) + [_mdb_c]
+          if _mdb_c else [])
          + [_mdb_p.client | default('mariadb', true)]
          + (['--user=' ~ _mdb_user] if _mdb_user else [])
          + check_mariadb_client_args }}
@@ -64,55 +75,127 @@
 - name: MariaDB | status query
   ansible.builtin.command:
     argv: "{{ _mdb_cmd + ['-N', '-B', '-e', _mdb_sql] }}"
+    stdin: "{{ lookup('ansible.builtin.env', 'MARIADB_MONITOR_PASSWORD') if _mdb_pw_set | bool else omit }}"
+    chdir: /
   vars:
+    # SHOW GLOBAL STATUS / VARIABLES work on MariaDB and every MySQL (information_schema.GLOBAL_STATUS
+    # does not exist on MySQL 8). Rows: "name<TAB>value"; long queries: "L<TAB>id<TAB>user|db|secs|state|command".
     _mdb_sql: >-
-      SELECT 'S', VARIABLE_NAME, VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS WHERE VARIABLE_NAME IN
-      ('UPTIME','THREADS_CONNECTED','THREADS_RUNNING','MAX_USED_CONNECTIONS','CONNECTION_ERRORS_MAX_CONNECTIONS',
-      'INNODB_BUFFER_POOL_READS','INNODB_BUFFER_POOL_READ_REQUESTS','WSREP_CLUSTER_SIZE','WSREP_LOCAL_STATE_COMMENT',
-      'WSREP_READY','WSREP_CLUSTER_STATUS')
-      UNION ALL SELECT 'V', VARIABLE_NAME, VARIABLE_VALUE FROM information_schema.GLOBAL_VARIABLES WHERE VARIABLE_NAME IN
-      ('MAX_CONNECTIONS','DATADIR','LOG_ERROR','VERSION','WSREP_ON')
-      UNION ALL SELECT 'L', ID, CONCAT_WS('|', USER, IFNULL(DB, '-'), TIME, IFNULL(STATE, '-'), COMMAND)
+      SHOW GLOBAL STATUS WHERE Variable_name IN
+      ('Uptime','Threads_connected','Threads_running','Max_used_connections','Connection_errors_max_connections',
+      'Innodb_buffer_pool_reads','Innodb_buffer_pool_read_requests','wsrep_cluster_size','wsrep_local_state_comment',
+      'wsrep_ready','wsrep_cluster_status');
+      SHOW GLOBAL VARIABLES WHERE Variable_name IN
+      ('max_connections','datadir','log_error','version','version_comment','wsrep_on','group_replication_group_name');
+      SELECT 'L', ID, CONCAT_WS('|', USER, IFNULL(DB, '-'), TIME, IFNULL(STATE, '-'), COMMAND)
       FROM information_schema.PROCESSLIST WHERE COMMAND NOT IN ('Sleep', 'Daemon', 'Binlog Dump', 'Binlog Dump GTID',
       'Slave_IO', 'Slave_SQL', 'Slave_worker') AND USER NOT IN ('system user', 'event_scheduler')
       AND TIME >= {{ check_mariadb_long_query_seconds | int }}
-  environment: "{{ _mdb_env }}"
+  environment: "{{ _mdb_podman_env }}"
+  no_log: true                # stdin carries the password (the registered result is still used below)
+  become: "{{ true if _mdb_run_as | default('') else omit }}"
+  become_user: "{{ _mdb_run_as | default(omit, true) }}"
   register: _mdb_q
   changed_when: false
   failed_when: false
   check_mode: false
   when: _mdb_running | bool
 
+- name: MariaDB | the status numbers
+  ansible.builtin.set_fact:
+    _mdb: >-
+      {%- set v = {'S': {}, 'V': {}, 'L': []} -%}
+      {%- for line in (_mdb_q.stdout_lines | default([])) -%}
+      {%-   set c = line.split('\t') -%}
+      {%-   if c | length == 3 and c[0] == 'L' -%}{%- set _ = v.L.append('id ' ~ c[1] ~ ': ' ~ c[2].split('|') | join(' / ')) -%}
+      {%-   elif c | length >= 2 -%}{%- set _ = v.S.update({c[0] | trim | upper: c[1] | trim}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- set _ = v.V.update(v.S) -%}
+      {{ v }}
+
+# MariaDB or MySQL? The version string says so ("10.11.6-MariaDB", "8.0.36", "5.7.44-log"), and the
+# statement for replication depends on it: SHOW ALL SLAVES STATUS (MariaDB), SHOW REPLICA STATUS
+# (MySQL 8.0.22 and later, including 8.4, where SHOW SLAVE STATUS is gone), SHOW SLAVE STATUS (older MySQL).
+- name: MariaDB | which engine, which version
+  ansible.builtin.set_fact:
+    _mdb_flavor: >-
+      {{ 'mariadb' if ((_mdb.V.VERSION | default('')) ~ ' ' ~ (_mdb.V.VERSION_COMMENT | default(''))) | lower is search('mariadb')
+         else ('mysql' if _mdb.V.VERSION | default('') | length > 0 else 'unknown') }}
+    _mdb_vnum: >-
+      {%- set m = (_mdb.V.VERSION | default('')) | regex_search('^(?:5\.5\.5-)?([0-9]+)\.([0-9]+)\.([0-9]+)', '\\1', '\\2', '\\3') -%}
+      {{ (m[0] | int * 10000 + m[1] | int * 100 + m[2] | int) if m else 0 }}
+
+- name: MariaDB | the words to use for it
+  ansible.builtin.set_fact:
+    _mdb_label: >-
+      {%- if _mdb_flavor == 'mariadb' -%}MariaDB
+      {%- elif _mdb_flavor == 'mysql' -%}MySQL
+      {%- elif ((_mdb_p.image | default('')) ~ ' ' ~ (_mdb_p.unit | default(''))) | lower is search('mariadb') -%}MariaDB
+      {%- elif ((_mdb_p.image | default('')) ~ ' ' ~ (_mdb_p.unit | default(''))) | lower is search('mysql|percona') -%}MySQL
+      {%- else -%}MariaDB/MySQL{%- endif -%}
+    _mdb_repl_sql: >-
+      {{ 'SHOW ALL SLAVES STATUS' if _mdb_flavor == 'mariadb'
+         else ('SHOW REPLICA STATUS' if (_mdb_vnum | int) >= 80022 else 'SHOW SLAVE STATUS') }}
+
 - name: MariaDB | replication status
   ansible.builtin.command:
-    argv: "{{ _mdb_cmd + ['-E', '-e', 'SHOW ALL SLAVES STATUS'] }}"
-  environment: "{{ _mdb_env }}"
+    argv: "{{ _mdb_cmd + ['-E', '-e', _mdb_repl_sql] }}"
+    stdin: "{{ lookup('ansible.builtin.env', 'MARIADB_MONITOR_PASSWORD') if _mdb_pw_set | bool else omit }}"
+    chdir: /
+  environment: "{{ _mdb_podman_env }}"
+  no_log: true                # stdin carries the password (the registered result is still used below)
+  become: "{{ true if _mdb_run_as | default('') else omit }}"
+  become_user: "{{ _mdb_run_as | default(omit, true) }}"
   register: _mdb_repl
   changed_when: false
   failed_when: false
   check_mode: false
   when: _mdb_running | bool and _mdb_q.rc | default(1) == 0
 
-- name: MariaDB | the numbers
+# MySQL Group Replication (InnoDB Cluster): only when a group is configured on this server (its
+# group name is set); a server without it has nothing to report here.
+- name: MariaDB | Group Replication members
+  ansible.builtin.command:
+    argv: "{{ _mdb_cmd + ['-N', '-B', '-e', 'SELECT MEMBER_HOST, MEMBER_PORT, MEMBER_STATE, MEMBER_ROLE FROM performance_schema.replication_group_members'] }}"
+    stdin: "{{ lookup('ansible.builtin.env', 'MARIADB_MONITOR_PASSWORD') if _mdb_pw_set | bool else omit }}"
+    chdir: /
+  environment: "{{ _mdb_podman_env }}"
+  no_log: true                # stdin carries the password (the registered result is still used below)
+  become: "{{ true if _mdb_run_as | default('') else omit }}"
+  become_user: "{{ _mdb_run_as | default(omit, true) }}"
+  register: _mdb_grp
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when:
+    - _mdb_running | bool
+    - _mdb_q.rc | default(1) == 0
+    - _mdb_flavor == 'mysql'
+    - _mdb.V.GROUP_REPLICATION_GROUP_NAME | default('') | length > 0
+
+- name: MariaDB | the replication numbers
   ansible.builtin.set_fact:
-    _mdb: >-
-      {%- set v = {'S': {}, 'V': {}, 'L': []} -%}
-      {%- for line in (_mdb_q.stdout_lines | default([])) -%}
-      {%-   set c = line.split(None, 2) -%}
-      {%-   if c | length >= 2 and c[0] in ['S', 'V'] -%}{%- set _ = v[c[0]].update({c[1] | upper: (c[2] if c | length > 2 else '') | trim}) -%}
-      {%-   elif c | length >= 3 and c[0] == 'L' -%}{%- set _ = v.L.append('id ' ~ c[1] ~ ': ' ~ c[2].split('|') | join(' / ')) -%}
-      {%-   endif -%}
-      {%- endfor -%}
+    _mdb_repl_rows: >-
       {%- set repl = [] -%}
       {%- set ns = namespace(cur={}) -%}
       {%- for line in (_mdb_repl.stdout_lines | default([])) + ['*** end ***'] -%}
       {%-   if line.startswith('***') -%}
       {%-     if ns.cur -%}{%- set _ = repl.append(ns.cur) -%}{%- endif -%}{%- set ns.cur = {} -%}
-      {%-   elif ':' in line -%}{%- set _ = ns.cur.update({line.split(':', 1)[0] | trim: line.split(':', 1)[1] | trim}) -%}
+      {%-   elif ':' in line -%}
+      {#-     MySQL 8.0.22+ renamed the fields: Replica_* / *_Source; use the old names for both -#}
+      {%-     set _ = ns.cur.update({(line.split(':', 1)[0] | trim | replace('Replica_', 'Slave_') | replace('Behind_Source', 'Behind_Master')):
+                                      line.split(':', 1)[1] | trim}) -%}
       {%-   endif -%}
       {%- endfor -%}
-      {%- set _ = v.update({'repl': repl}) -%}
-      {{ v }}
+      {{ repl }}
+    _mdb_group_rows: >-
+      {%- set rows = [] -%}
+      {%- for line in (_mdb_grp.stdout_lines | default([])) -%}
+      {%-   set c = line.split('\t') -%}
+      {%-   if c | length >= 3 -%}{%- set _ = rows.append({'host': c[0] ~ ((':' ~ c[1]) if c[1] else ''), 'state': c[2], 'role': c[3] | default('')}) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ rows }}
 
 - name: MariaDB | recent errors in its log, and its data disk
   ansible.builtin.shell: |
@@ -121,10 +204,10 @@
     log={{ _mdb.V.LOG_ERROR | default('') | quote }}
     datadir={{ _mdb.V.DATADIR | default('/var/lib/mysql') | quote }}
     case "$log" in ""|stderr) log="";; /*) ;; *) log="$datadir/${log#./}";; esac
-    {% if check_mariadb_container %}
-    run() { podman exec {{ check_mariadb_container | quote }} "$@"; }
+    {% if _mdb_c %}
+    run() { podman exec {{ _mdb_c | quote }} "$@"; }
     if [ -n "$log" ]; then lines=$(run tail -n 5000 "$log" 2>/dev/null)
-    else lines=$(podman logs --since {{ check_mariadb_error_since_days | int * 24 }}h {{ check_mariadb_container | quote }} 2>&1); fi
+    else lines=$(podman logs --since {{ check_mariadb_error_since_days | int * 24 }}h {{ _mdb_c | quote }} 2>&1); fi
     {% else %}
     run() { "$@"; }
     if [ -n "$log" ] && [ -r "$log" ]; then lines=$(tail -n 5000 "$log")
@@ -137,7 +220,11 @@
     exit 0
   args:
     executable: /bin/bash
+    chdir: /
   register: _mdb_log
+  environment: "{{ _mdb_podman_env }}"
+  become: "{{ true if _mdb_run_as | default('') else omit }}"
+  become_user: "{{ _mdb_run_as | default(omit, true) }}"
   changed_when: false
   check_mode: false
   when: _mdb_running | bool and _mdb_q.rc | default(1) == 0
@@ -146,29 +233,36 @@
   ansible.builtin.set_fact:
     _mdb_findings: >-
       {%- set f = [] -%}
-      {%- set where = ('container ' ~ check_mariadb_container) if check_mariadb_container else ('service ' ~ _mdb_p.unit | default('?')) -%}
-      {%- set look = ('podman ps -a --filter name=' ~ check_mariadb_container ~ '; podman logs --tail 50 ' ~ check_mariadb_container)
-                     if check_mariadb_container else ('systemctl status ' ~ _mdb_p.unit | default('mariadb') ~ ' --no-pager -l; journalctl -u '
+      {%- set where = ('container ' ~ _mdb_c) if _mdb_c else ('service ' ~ _mdb_p.unit | default('?')) -%}
+      {%- set lbl = _mdb_label | default('MariaDB/MySQL') -%}
+      {#- the privileges the read-only monitoring account needs differ: MariaDB 10.5.9+ has REPLICA MONITOR, MySQL has REPLICATION CLIENT -#}
+      {%- set grant_my = "GRANT PROCESS, REPLICATION CLIENT ON *.* TO \'monitor\'@\'localhost\'; (MySQL Group Replication also: GRANT SELECT ON performance_schema.* TO \'monitor\'@\'localhost\';)" -%}
+      {%- set grant_maria = "GRANT PROCESS, REPLICA MONITOR ON *.* TO \'monitor\'@\'localhost\'; (MariaDB before 10.5.9: PROCESS, REPLICATION CLIENT)" -%}
+      {%- set grant = grant_maria if lbl == 'MariaDB' else (grant_my if lbl == 'MySQL' else ('MySQL: ' ~ grant_my ~ ' MariaDB: ' ~ grant_maria)) -%}
+      {%- set hp = ('sudo -u ' ~ _mdb_run_as ~ ' ') if _mdb_run_as | default('') else '' -%}
+      {%- set look = (hp ~ 'podman ps -a --filter name=' ~ _mdb_c ~ '; ' ~ hp ~ 'podman logs --tail 50 ' ~ _mdb_c)
+                     if _mdb_c else ('systemctl status ' ~ _mdb_p.unit | default('mariadb') ~ ' --no-pager -l; journalctl -u '
                                                      ~ _mdb_p.unit | default('mariadb') ~ ' -n 50 --no-pager') -%}
-      {%- set sql = (('podman exec -it ' ~ check_mariadb_container ~ ' ') if check_mariadb_container else '') ~ (_mdb_p.client | default('mariadb', true) | basename)
+      {%- set sql = ((hp ~ 'podman exec -it ' ~ _mdb_c ~ ' ') if _mdb_c else '') ~ (_mdb_p.client | default('mysql' if _mdb_label | default('') == 'MySQL' else 'mariadb', true) | basename)
                     ~ ((' -u ' ~ _mdb_user ~ ' -p') if _mdb_user else '') -%}
       {%- if not (_mdb_running | bool) -%}
       {%-   set _ = f.append({'check': 'mariadb', 'id': 'mariadb:down', 'severity': 'critical',
-                              'summary': 'MariaDB is not running (' ~ where ~ ' is ' ~ (_mdb_p.state | default('') or 'not found') ~ ')', 'hint': look}) -%}
+                              'summary': lbl ~ ' is not running (' ~ where ~ ' is ' ~ (_mdb_p.state | default('') or 'not found') ~ ')', 'hint': look}) -%}
       {%- elif _mdb_q.rc | default(1) != 0 -%}
       {%-   set denied = 'Access denied' in _mdb_q.stderr | default('') -%}
       {%-   set _ = f.append({'check': 'mariadb', 'id': 'mariadb:connect', 'severity': 'critical',
-                              'summary': 'MariaDB is running but the status query failed: ' ~ (_mdb_q.stderr | default('') | trim | truncate(200))
+                              'summary': lbl ~ ' is running but the status query failed: ' ~ (_mdb_q.stderr | default('') | trim | truncate(200))
                                          ~ ((' - log in with a monitoring account: attach the "MariaDB monitor" credential'
-                                             ~ (' (container images usually give root a password, so the root socket login is refused)' if check_mariadb_container else ''))
+                                             ~ (' (container images usually give root a password, so the root socket login is refused)' if _mdb_c else ''))
                                             if denied and not _mdb_user else ''),
-                              'hint': sql ~ ' -e "SELECT 1"; ' ~ look}) -%}
+                              'hint': sql ~ ' -e "SELECT 1"; ' ~ look
+                                      ~ ('; monitoring account (run once as an admin): CREATE USER \'monitor\'@\'localhost\' IDENTIFIED BY \'<password>\'; ' ~ grant if denied else '')}) -%}
       {%- else -%}
       {%-   set s = _mdb.S -%}{%- set g = _mdb.V -%}
       {%-   set up = s.UPTIME | default('0') | int -%}
       {%-   if up < (check_mariadb_restart_warn_minutes | int) * 60 -%}
       {%-     set _ = f.append({'check': 'mariadb', 'id': 'mariadb:restarted', 'severity': 'warning',
-                                'summary': 'MariaDB restarted ' ~ (up / 60) | round(0) | int ~ ' minutes ago (crash, or a restart nobody planned?)', 'hint': look}) -%}
+                                'summary': lbl ~ ' restarted ' ~ (up / 60) | round(0) | int ~ ' minutes ago (crash, or a restart nobody planned?)', 'hint': look}) -%}
       {%-   endif -%}
       {%-   set maxc = [g.MAX_CONNECTIONS | default('1') | int, 1] | max -%}
       {%-   set used = s.THREADS_CONNECTED | default('0') | int -%}
@@ -204,20 +298,50 @@
                                   'hint': sql ~ ' -e "SHOW GLOBAL VARIABLES LIKE \'innodb_buffer_pool_size\'"'}) -%}
       {%-     endif -%}
       {%-   endif -%}
-      {%-   for r in _mdb.repl -%}
-      {%-     set name = r.Connection_name | default('') or 'default' -%}
+      {%-   if _mdb_repl.rc | default(0) != 0 -%}
+      {%-     set _ = f.append({'check': 'mariadb', 'id': 'mariadb:replication-query', 'severity': 'warning',
+                                'summary': 'could not read the replication status (' ~ _mdb_repl_sql ~ '): ' ~ ((_mdb_repl.stderr_lines | default([''])) | select | list | last | default('') | truncate(200))
+                                           ~ (' - the monitoring account needs ' ~ ('REPLICA MONITOR (MariaDB 10.5.9+; REPLICATION CLIENT before)' if lbl == 'MariaDB' else 'the REPLICATION CLIENT privilege') if 'denied' in (_mdb_repl.stderr | default('') | lower) else ''),
+                                'hint': sql ~ ' -E -e "' ~ _mdb_repl_sql ~ '"; as an admin: ' ~ grant}) -%}
+      {%-   endif -%}
+      {%-   for r in _mdb_repl_rows -%}
+      {%-     set name = r.Connection_name | default('') or r.Channel_Name | default('') or 'default' -%}
       {%-     set lag = r.Seconds_Behind_Master | default('NULL') -%}
-      {%-     set rlook = sql ~ ' -E -e "SHOW ALL SLAVES STATUS" | grep -E "Connection_name|Running|Behind|Error"' -%}
+      {%-     set rlook = sql ~ ' -E -e "' ~ _mdb_repl_sql ~ '" | grep -E "Connection_name|Channel_Name|Running|Behind|Error"' -%}
       {%-     if r.Slave_IO_Running | default('') != 'Yes' or r.Slave_SQL_Running | default('') != 'Yes' -%}
       {%-       set _ = f.append({'check': 'mariadb', 'id': 'mariadb:replica:' ~ name, 'severity': 'critical',
                                   'summary': 'replication (' ~ name ~ ') is broken: IO thread ' ~ r.Slave_IO_Running | default('?') ~ ', SQL thread '
-                                             ~ r.Slave_SQL_Running | default('?') ~ '. ' ~ ((r.Last_IO_Error | default('')) ~ ' ' ~ (r.Last_SQL_Error | default(''))) | trim | truncate(200),
+                                             ~ r.Slave_SQL_Running | default('?')
+                                             ~ (('. ' ~ ((r.Last_IO_Error | default('')) ~ ' ' ~ (r.Last_SQL_Error | default(''))) | trim | truncate(200)) if ((r.Last_IO_Error | default('')) ~ (r.Last_SQL_Error | default(''))) | length > 0 else ''),
                                   'hint': rlook}) -%}
       {%-     elif lag is match('^[0-9]+$') and lag | int >= check_mariadb_replica_lag_warn | int -%}
       {%-       set _ = f.append({'check': 'mariadb', 'id': 'mariadb:replica-lag:' ~ name, 'severity': 'critical' if lag | int >= check_mariadb_replica_lag_crit | int else 'warning',
                                   'summary': 'replica (' ~ name ~ ') is ' ~ lag ~ ' seconds behind its primary', 'hint': rlook}) -%}
       {%-     endif -%}
       {%-   endfor -%}
+      {%-   if g.GROUP_REPLICATION_GROUP_NAME | default('') | length > 0 -%}
+      {%-     set glook = sql ~ ' -e "SELECT MEMBER_HOST, MEMBER_STATE, MEMBER_ROLE FROM performance_schema.replication_group_members"' -%}
+      {%-     if _mdb_grp.rc | default(0) != 0 -%}
+      {%-       set _ = f.append({'check': 'mariadb', 'id': 'mariadb:group-query', 'severity': 'warning',
+                                  'summary': 'could not read the Group Replication members: ' ~ (_mdb_grp.stderr | default('') | trim | truncate(200))
+                                             ~ (' - the monitoring account needs SELECT on performance_schema' if 'denied' in (_mdb_grp.stderr | default('') | lower) else ''),
+                                  'hint': glook}) -%}
+      {%-     else -%}
+      {%-       set bad = _mdb_group_rows | rejectattr('state', 'equalto', 'ONLINE') | list -%}
+      {%-       if bad or not _mdb_group_rows -%}
+      {%-         set _ = f.append({'check': 'mariadb', 'id': 'mariadb:group', 'severity': 'critical',
+                                    'summary': 'MySQL Group Replication is not healthy: '
+                                               ~ ((bad | map(attribute='host') | zip(bad | map(attribute='state')) | map('join', ' is ') | join('; ')) if bad else 'this server lists no members'),
+                                    'hint': glook}) -%}
+      {%-       endif -%}
+      {%-       if check_mariadb_group_size | int > 0 and (_mdb_group_rows | selectattr('state', 'equalto', 'ONLINE') | list | length) < check_mariadb_group_size | int -%}
+      {%-         set _ = f.append({'check': 'mariadb', 'id': 'mariadb:group-size', 'severity': 'critical',
+                                    'summary': 'MySQL Group Replication has ' ~ (_mdb_group_rows | selectattr('state', 'equalto', 'ONLINE') | list | length)
+                                               ~ ' ONLINE member(s), expected ' ~ check_mariadb_group_size,
+                                    'hint': glook}) -%}
+      {%-       endif -%}
+      {%-     endif -%}
+      {%-   endif -%}
       {%-   if g.WSREP_ON | default('OFF') == 'ON' -%}
       {%-     set glook = sql ~ ' -e "SHOW GLOBAL STATUS LIKE \'wsrep_%\'" | grep -E "cluster_size|cluster_status|local_state_comment|ready"' -%}
       {%-     if s.WSREP_READY | default('') != 'ON' or s.WSREP_LOCAL_STATE_COMMENT | default('') != 'Synced' or s.WSREP_CLUSTER_STATUS | default('') != 'Primary' -%}
@@ -237,28 +361,40 @@
       {%-   endfor -%}
       {%-   if (lg.errors | default('0') | int) > 0 -%}
       {%-     set _ = f.append({'check': 'mariadb', 'id': 'mariadb:errorlog', 'severity': 'warning',
-                                'summary': lg.errors ~ ' [ERROR] line(s) in the MariaDB log in the last ' ~ check_mariadb_error_since_days ~ ' day(s); latest: '
+                                'summary': lg.errors ~ ' [ERROR] line(s) in the ' ~ lbl ~ ' log in the last ' ~ check_mariadb_error_since_days ~ ' day(s); latest: '
                                            ~ (lg.errline[-1] | default('') | truncate(200)),
-                                'hint': (('tail -n 100 ' ~ g.LOG_ERROR ~ ' | grep ERROR') if g.LOG_ERROR | default('') and not check_mariadb_container else look)}) -%}
+                                'hint': (('tail -n 100 ' ~ g.LOG_ERROR ~ ' | grep ERROR') if g.LOG_ERROR | default('') and not _mdb_c else look)}) -%}
       {%-   endif -%}
       {%-   if (lg.diskpct | default('0') | int) >= check_mariadb_disk_warn_pct | int -%}
       {%-     set _ = f.append({'check': 'mariadb', 'id': 'mariadb:disk', 'severity': 'critical' if (lg.diskpct | int) >= check_mariadb_disk_crit_pct | int else 'warning',
-                                'summary': 'the MariaDB data directory (' ~ g.DATADIR | default('?') ~ ') is on a filesystem ' ~ lg.diskpct ~ '% full; MariaDB stops writing when it fills',
+                                'summary': 'the ' ~ lbl ~ ' data directory (' ~ g.DATADIR | default('?') ~ ') is on a filesystem ' ~ lg.diskpct ~ '% full; the database stops writing when it fills',
                                 'hint': 'df -h ' ~ g.DATADIR | default('/var/lib/mysql') ~ '; du -sh ' ~ g.DATADIR | default('/var/lib/mysql') ~ '* 2>/dev/null | sort -h | tail'}) -%}
       {%-   endif -%}
       {%- endif -%}
       {{ f }}
 
+# With several instances on one host each finding says which one (ids stay unique: the same
+# problem in two containers is two findings, and two tickets are not merged into one).
 - name: MariaDB | add them to this host's findings
   ansible.builtin.set_fact:
-    site_findings: "{{ site_findings | default([]) + _mdb_findings }}"
+    site_findings: >-
+      {%- set out = site_findings | default([]) -%}
+      {%- for f in _mdb_findings -%}
+      {%-   if _mdb_c and _mdb_instances | length > 1 -%}
+      {%-     set _ = out.append(f | combine({'id': f.id | replace('mariadb:', 'mariadb:' ~ _mdb_c ~ ':', 1),
+                                              'summary': '[' ~ _mdb_c ~ '] ' ~ f.summary})) -%}
+      {%-   else -%}{%- set _ = out.append(f) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}
 
 - name: MariaDB | status
   ansible.builtin.debug:
     msg: >-
-      {{ _mdb.V.VERSION | default('?') }} ({{ ('container ' ~ check_mariadb_container) if check_mariadb_container else ('service ' ~ _mdb_p.unit | default('?')) }}):
+      {{ _mdb_label }} {{ (_mdb.V.VERSION | default('?')) | regex_replace('^5\\.5\\.5-', '') | regex_replace('(?i)-mariadb.*$', '') }} - {{ ('container ' ~ _mdb_c ~ ' (podman, image ' ~ (_mdb_p.image | default('?')) ~ ')')
+      if _mdb_c else ('service ' ~ _mdb_p.unit | default('?') ~ ' on the host') }}:
       up {{ ((_mdb.S.UPTIME | default('0') | int) / 3600) | round(1) }} h,
       {{ _mdb.S.THREADS_CONNECTED | default('?') }}/{{ _mdb.V.MAX_CONNECTIONS | default('?') }} connections,
       {{ _mdb.S.THREADS_RUNNING | default('?') }} running, {{ _mdb.L | length }} long queries,
-      replication connections {{ _mdb.repl | length }}{{ ', Galera' if _mdb.V.WSREP_ON | default('OFF') == 'ON' else '' }}
+      replication connections {{ _mdb_repl_rows | length }}{{ ', Galera' if _mdb.V.WSREP_ON | default('OFF') == 'ON' else '' }}{{
+      (', Group Replication ' ~ (_mdb_group_rows | length) ~ ' members') if _mdb.V.GROUP_REPLICATION_GROUP_NAME | default('') else '' }}
   when: _mdb_q.rc | default(1) == 0

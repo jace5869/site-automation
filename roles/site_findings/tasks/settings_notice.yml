@@ -1,0 +1,31 @@
+---
+# One notice per run: which of YOUR settings files (playbooks/group_vars/*.yml) define settings.
+# Those files silently WIN over the same setting typed in AAP's inventory Variables box, so a
+# person who set it in AAP and sees no effect can find out why. Turn off: site_settings_notice: false.
+- name: Settings | which of your settings files define settings
+  ansible.builtin.set_fact:
+    _site_settings_files: >-
+      {#- the top-level setting names, read as text: a file with a vaulted value (!vault) or any other
+          YAML this cannot parse must not stop every job, it only gets no notice -#}
+      {%- set out = {} -%}
+      {%- for g in ['all'] + (groups.keys() | reject('equalto', 'all') | list) -%}
+      {%-   set raw = lookup('ansible.builtin.file', playbook_dir ~ '/group_vars/' ~ g ~ '.yml', errors='ignore') | default('', true) | string -%}
+      {%-   set keys = raw.splitlines() | select('match', '^[A-Za-z_][A-Za-z0-9_]*[ \t]*:') | map('regex_search', '^[A-Za-z_][A-Za-z0-9_]*')
+                     | unique | sort | list -%}
+      {%-   if keys -%}{%- set _ = out.update({g: keys}) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  delegate_to: localhost
+  run_once: true
+  when: site_settings_notice | default(true) | bool
+
+- name: Settings | say so (they win over AAP's inventory Variables box)
+  ansible.builtin.debug:
+    msg: >-
+      NOTE - settings in this project's files win over the same setting in AAP's inventory Variables box:
+      {% for g, keys in _site_settings_files.items() %}playbooks/group_vars/{{ g }}.yml sets {{ keys | join(', ') }}. {% endfor %}
+      Keep each setting in ONE place (docs/VARIABLES.md). Silence this: site_settings_notice: false.
+  run_once: true
+  when:
+    - site_settings_notice | default(true) | bool
+    - _site_settings_files | default({}) | length > 0

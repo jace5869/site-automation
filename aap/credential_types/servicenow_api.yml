@@ -1,5 +1,5 @@
 # Credential type: "ServiceNow API"
-# Used by playbooks/servicenow_tickets.yml and playbooks/servicenow_health.yml (REST Table API).
+# Used by playbooks/servicenow_tickets.yml, servicenow_health.yml and servicenow_test_ticket.yml (REST Table API, basic auth only).
 # The same variable names as the certified servicenow.itsm collection, so this credential also
 # works if you move to that collection later.
 inputs:

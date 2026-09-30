@@ -52,7 +52,7 @@
         msg: "{{ _ee_py.stdout_lines | default([_ee_py.stderr | default('could not run python')]) + _ee_krb.stdout_lines | default([]) }}"
       run_once: true
 
-    - name: pywinrm is required for WinRM
+    - name: The pywinrm module is required for WinRM
       ansible.builtin.assert:
         that: "'YES  winrm' in _ee_py.stdout | default('')"
         fail_msg: >-

@@ -10,9 +10,11 @@
 # still need a restart; a person restarts them.
 automatic_restarts: false
 # Servers in these groups are patched but NEVER restarted by this playbook (restart them by hand).
-win_patch_never_reboot_groups: []
+# Follows the Linux setting (patch_never_reboot_groups) when you set it, so ONE list covers both; the
+# fallback is the Linux role's default (roles/patch/defaults/main.yml; tests/test_protection.py checks it).
+win_patch_never_reboot_groups: "{{ patch_never_reboot_groups | default(['aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts']) }}"
 # Servers in these groups are skipped entirely (e.g. servers patched only by hand).
-win_patch_never_patch_groups: [no_patch]
+win_patch_never_patch_groups: "{{ patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts']) }}"
 
 win_patch_scan_first: true               # ask the client to rescan and re-evaluate before installing
 win_patch_scan_wait_sec: 120             # let that scan settle
@@ -36,4 +38,3 @@ win_patch_services_ignore: ['gupdate*', 'edgeupdate*', 'MicrosoftEdgeElevationSe
 # Where AAP reaches WinRM, to see the server go down and come back during the restart
 win_patch_winrm_host: "{{ ansible_host | default(inventory_hostname) }}"
 win_patch_winrm_port: "{{ ansible_port | default(5986) }}"
-

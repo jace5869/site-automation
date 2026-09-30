@@ -1,22 +1,46 @@
 ---
-# MARIADB health (read-only): running, accepting connections, connection headroom, queries that
-# run too long, replication / Galera state, recent errors in its log, and room on its disk.
-# It runs status queries only - no data is read and nothing is changed.
+# DATABASE health for MariaDB AND MySQL (read-only; role name kept for compatibility): running,
+# accepting connections, connection headroom, queries that run too long, replication (MariaDB
+# multi-source, MySQL REPLICA/SLAVE), Galera / Percona XtraDB Cluster, MySQL Group Replication, recent
+# errors in its log, and room on its disk. It runs status queries only - no data is read and
+# nothing is changed. The engine and version are detected; see docs/MARIADB.md.
 
-# Which hosts: members of the mariadb_hosts inventory group (or set this true for a host).
-check_mariadb_enabled: "{{ 'mariadb_hosts' in group_names }}"
+# Which hosts: members of any of the inventory groups mariadb_hosts, mysql_hosts, database_hosts,
+# mariadb or mysql, or any host that names a container below (or turns discovery on). Set this
+# true/false to override for a host or group.
+check_mariadb_enabled: >-
+  {{ (group_names | intersect(['mariadb_hosts', 'mysql_hosts', 'database_hosts', 'mariadb', 'mysql']) | length > 0)
+     or (check_mariadb_container | length > 0) or (check_mariadb_containers | length > 0)
+     or (check_mariadb_container_discover | bool) }}
 
-# MariaDB in a podman container (e.g. the ServiceNow database): the container NAME. The client
-# inside the container is used (podman exec). Empty = MariaDB is installed on the host itself.
+# MariaDB or MySQL in podman containers (e.g. the ServiceNow database). The client inside each container
+# is used (podman exec). Name them in one of these ways; all are checked, each as its own instance:
+#   check_mariadb_container:  mariadb                 one container
+#   check_mariadb_containers: [mariadb, snow-db]      several containers on the same host
+#   check_mariadb_container_discover: true            find them: every container (running or not) whose
+#                                                     image matches check_mariadb_container_image_regex
+# With none of the three, the database is taken to be installed on the host itself.
 check_mariadb_container: ""
+check_mariadb_containers: []
+check_mariadb_container_discover: false
+check_mariadb_container_image_regex: '(mariadb|mysql|percona)'
+# ROOTLESS podman: the containers belong to a user (e.g. AAP's own MariaDB, or an application account),
+# and only that user can see them. Name the user and the check runs podman AS that user. Empty = root's containers.
+check_mariadb_container_user: ""
 # The systemd unit (host installs). Empty = the first of mariadb, mysqld, mysql that exists.
 check_mariadb_service: ""
 
 # How to log in. Without a credential: as root through the local socket - MariaDB's default for
-# a host install on RHEL (no password needed when the job runs with sudo). MariaDB in a
-# CONTAINER usually gives root a password (the official images do), so there attach the
-# "MariaDB monitor" AAP credential: it sets MARIADB_MONITOR_USER / MARIADB_MONITOR_PASSWORD, and
-# the password reaches the client only through the environment (never the command line).
+# a host install on RHEL (no password needed when the job runs with sudo). A database in a
+# CONTAINER usually gives root a password (the official images do), and MySQL host installs
+# usually do too, so there attach the "MariaDB monitor" AAP credential (it serves MySQL as well): it
+# sets MARIADB_MONITOR_USER / MARIADB_MONITOR_PASSWORD, and the password reaches the client only
+# through the environment (never the command line).
+# The read-only monitoring account needs only (MySQL):
+#   GRANT PROCESS, REPLICATION CLIENT ON *.* TO 'monitor'@'localhost';
+#   and, for Group Replication:  GRANT SELECT ON performance_schema.* TO 'monitor'@'localhost';
+# MariaDB 10.5.9 and later (REPLICATION CLIENT no longer covers replication status there):
+#   GRANT PROCESS, REPLICA MONITOR ON *.* TO 'monitor'@'localhost';   (before 10.5.9: PROCESS, REPLICATION CLIENT)
 # Extra client options, e.g. ['--socket=/var/lib/mysql/mysql.sock'] or ['--host=127.0.0.1', '--port=3306']
 check_mariadb_client_args: []
 
@@ -26,7 +50,8 @@ check_mariadb_threads_running_warn: 32   # queries executing at this moment
 check_mariadb_long_query_seconds: 300    # a query running longer than this is "long"
 check_mariadb_replica_lag_warn: 300      # seconds a replica is behind its primary
 check_mariadb_replica_lag_crit: 1800
-check_mariadb_galera_size: 0             # expected Galera cluster size (0 = not Galera)
+check_mariadb_galera_size: 0             # expected Galera / XtraDB Cluster size (0 = do not check the size)
+check_mariadb_group_size: 0              # expected MySQL Group Replication members (0 = do not check the size)
 check_mariadb_restart_warn_minutes: 60   # restarted less than this ago -> warning
 check_mariadb_bufferpool_hit_warn: 95    # % of reads served from memory (only judged after 1M reads)
 check_mariadb_error_since_days: 1        # [ERROR] lines in its log this recent

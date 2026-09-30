@@ -25,3 +25,6 @@
       {%-   if win != (site_os == 'windows') -%}{%- set _ = out.append(h) -%}{%- endif -%}
       {%- endfor -%}
       {{ out }}
+
+- name: Findings | notice about settings files that override AAP's Variables box
+  ansible.builtin.include_tasks: settings_notice.yml

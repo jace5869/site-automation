@@ -1,20 +1,23 @@
 # The runbooks: what each one checks, and what to do about it
 
-For each runbook: what it answers, its settings (defaults in `roles/<role>/defaults/main.yml`,
-change them in the inventory), and each finding with what usually fixes it. The `look:` command
+For each runbook: what it answers, its settings (defaults in `roles/<role>/defaults/main.yml`;
+change them in your settings files or AAP's Variables boxes, as [VARIABLES.md](VARIABLES.md)
+shows), and each finding with what usually fixes it. The `look:` command
 printed with a finding is always the first thing to run.
 
 ## Health check (`playbooks/health_check.yml`)
 
 Runs the checks you pick on each host: a list of names, or the shortcuts:
 
-- `daily` = disk, mounts, services, performance, time, network, logging, mariadb
+- `daily` = disk, mounts, services, performance, time, network, logging, mariadb (the database check: MariaDB or MySQL; `mysql` and `database` also pick it)
 - `weekly` = selinux, fapolicyd, auditd, accounts, certs, patching
 - `all` = both
 
 A host with a finding at a severity in `site_fail_on` (default: critical and warning) fails. That
 is what a workflow reacts to. A check that itself breaks becomes a warning finding (`the X check
-could not run: ...`) and the other checks still run.
+could not run: ...`, id `<check>:check-error`) and the other checks still run. That finding fails
+the host even when `site_fail_on` is `[critical]` (a check that did not run is not a healthy
+result); only `site_fail_on: []` never fails.
 
 ### disk
 
@@ -157,11 +160,17 @@ the variable that holds the password (`password_env: KEYSTORE_PASSWORD`), never 
 
 <a id="mariadb"></a>
 
-### mariadb (health only)
+### mariadb and mysql (health only): the database check
 
-Runs on hosts in the `mariadb_hosts` group. It runs status queries only: no data is read and
-nothing is changed. For MariaDB in a container (the ServiceNow database), set
-`check_mariadb_container: <name>`; the client inside the container is used.
+Checks **MariaDB and MySQL** (5.7, 8.0, 8.4; MariaDB 10.x and 11.x; Percona). Pick it in the Health
+check as `mariadb`, `mysql` or `database` (the same check), or run it alone with the **Database
+health - MariaDB / MySQL** template (`playbooks/database_health.yml`: only this check, on every
+database server it is pointed at; it fails a host that has findings, so a workflow can open a
+ticket). In the Health check it runs on hosts in `mariadb_hosts`, `mysql_hosts`, `database_hosts`,
+`mariadb` or `mysql`, and on any host that has a container name set. It runs status queries only:
+no data is read and nothing is changed. It handles a database installed on the host and one in
+**podman containers** (one, several, found automatically, or rootless): the client inside each
+container is used. **How to set it up, step by step, and how to verify it: [MARIADB.md](MARIADB.md).**
 
 | Finding | Means | Usually |
 |---|---|---|
@@ -175,13 +184,15 @@ nothing is changed. For MariaDB in a container (the ServiceNow database), set
 | `replication (default) is broken: IO thread No` | a replica stopped copying | `Last_IO_Error` / `Last_SQL_Error` in the finding |
 | `replica ... is 1900 seconds behind` | replication lag | load on the replica; long transactions on the primary |
 | `Galera node is not healthy` / `cluster has 2 node(s), expected 3` | Galera cluster trouble | the node's error log; network between nodes |
+| `MySQL Group Replication is not healthy` / `has 2 ONLINE member(s), expected 3` | a Group Replication member is not ONLINE, or the group is short (`check_mariadb_group_size`) | `SELECT ... FROM performance_schema.replication_group_members` (in the finding); the member's error log |
+| `could not read the replication status` / `... Group Replication members` | the monitoring account lacks a privilege | the grant named in the finding ([MARIADB.md](MARIADB.md#4-the-login-the-mariadb-monitor-credential)) |
 | `only 91% of reads come from memory` | `innodb_buffer_pool_size` may be too small | the DBA |
 | `3 [ERROR] line(s) in the MariaDB log` | errors in its log in the last day (latest shown) | read them |
 | `the MariaDB data directory is on a filesystem 93% full` | MariaDB stops writing when it fills | disk space |
 
-**Logging in.** Without a credential, the check logs in as root through the local socket. That
-is MariaDB's default for a host install on RHEL (no password needed with sudo). **MariaDB in a
-container usually gives root a password** (the official images do), and the check then reports
+**Logging in** (the full steps are in [MARIADB.md](MARIADB.md#4-the-login-the-mariadb-monitor-credential)). Without a credential, the check logs in as root through the local socket. That
+is MariaDB's default for a host install on RHEL (no password needed with sudo); MySQL's root
+usually has a password. **A database in a container usually gives root a password** (the official images do), and the check then reports
 `Access denied ... attach the "MariaDB monitor" credential`. For containers, or whenever you prefer
 not to use root, ask the DBA to create a monitoring account with **no data access**, inside that
 database with host `localhost`, and attach the *MariaDB monitor* credential to the Health check
@@ -189,12 +200,14 @@ template:
 
 ```sql
 CREATE USER 'aap_monitor'@'localhost' IDENTIFIED BY '<password>';
-GRANT PROCESS, SLAVE MONITOR ON *.* TO 'aap_monitor'@'localhost';   -- MariaDB 10.5.9+
--- older MariaDB: GRANT PROCESS, REPLICATION CLIENT ON *.* TO 'aap_monitor'@'localhost';
+GRANT PROCESS, REPLICATION CLIENT ON *.* TO 'aap_monitor'@'localhost';   -- MySQL; MariaDB before 10.5.9
+GRANT PROCESS, REPLICA MONITOR ON *.* TO 'aap_monitor'@'localhost';      -- MariaDB 10.5.9 and newer instead
+GRANT SELECT ON performance_schema.* TO 'aap_monitor'@'localhost';       -- MySQL Group Replication only
 ```
 
-`PROCESS` shows other sessions (for long queries); `SLAVE MONITOR` shows replication status. The
-password reaches the client only through its environment, never its command line.
+`PROCESS` shows other sessions (for long queries). Replication status needs `REPLICATION CLIENT`
+(MySQL) or, on MariaDB 10.5.9 and newer, `REPLICA MONITOR`: **`REPLICATION CLIENT` alone is not
+enough there.** The password reaches the client only through its environment, never its command line.
 
 ## Troubleshoot (`playbooks/troubleshoot.yml`)
 
@@ -214,7 +227,7 @@ checks run too. Read-only. Findings do not fail this job: you asked for a look, 
 | login | sshd log, faillock lockouts, failed logins, SSSD domain status, authselect, clock offset | accounts |
 | time | chrony tracking and sources, timedatectl, configured servers | time |
 | logs | errors, top error senders, rsyslog and its queue, journal size | logging |
-| mariadb | (the MariaDB health check) | mariadb |
+| mariadb (or mysql) | (the MariaDB / MySQL health check) | mariadb |
 
 Add `use_act=true` and ACT reads everything collected and explains the root cause
 ([ADDING_ACT.md](ADDING_ACT.md)).
@@ -305,8 +318,12 @@ packages never updated here). Then:
    (`aap_hosts`).
 4. After the update (and reboot), **every service that was running before must be running
    again**. If one is not, the host fails and the rollout stops.
-5. Skips hosts in `no_patch` (vendor appliances, and AAP itself in the example inventory), and
-   refuses to patch the machine running the job.
+5. Never patches hosts in `no_patch` (vendor appliances), `aap`, `aap_hosts`, `sat`, `netapp` or
+   `netapp_console_hosts`. The AAP host is **always** protected: even a list you write yourself
+   (`patch_never_patch_groups`) cannot remove `aap` or `aap_hosts`. It also refuses a host that is
+   the machine running the job, but only when the connection is `local` or the name is
+   `localhost`; a normal SSH host that happens to be the controller is stopped by the group rule
+   above, not by this one.
 
 Run it as **Job type: Check** first: it lists what would be updated and changes nothing
 ([DRY_RUNS.md](DRY_RUNS.md)).
@@ -317,6 +334,13 @@ The step after an approval in the *Fix with approval (ACT)* workflow. It runs **
 commands ACT proposed and a person approved, then re-runs the checks that found the problem. It
 refuses to run on its own, and skips diagnose-only hosts (`aap_hosts`, `netapp_console_hosts`):
 there a person applies the fix by hand. See [ADDING_ACT.md](ADDING_ACT.md).
+
+## Windows hosts
+
+Windows has its own playbooks, checks and troubleshooting areas (for example `updates` and
+`security` in *Windows troubleshoot*). They are described, with their settings, in
+[WINDOWS.md](WINDOWS.md). Settings for them are read the same way as any other:
+[VARIABLES.md](VARIABLES.md).
 
 ## Not built yet (and why)
 

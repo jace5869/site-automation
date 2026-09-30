@@ -8,6 +8,11 @@
 - name: Certs | find and read certificates
   ansible.builtin.shell: |
     set -u
+    # keystore passwords arrive on stdin, one line each (never on a command line or in `environment:`,
+    # which Ansible puts on the sudo / sh command line: visible in ps and in the sudo log)
+    {% for k in check_certs_keystores if k.password_env | default('') %}
+    IFS= read -r {{ k.password_env }}; export {{ k.password_env }}
+    {% endfor %}
     export LC_ALL=C
     echo "NOW|$(date +%s)"
     tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
@@ -63,12 +68,14 @@
     exit 0
   args:
     executable: /bin/bash
-  environment: >-
-    {%- set e = {} -%}
-    {%- for k in check_certs_keystores if k.password_env | default('') -%}
-    {%-   set _ = e.update({k.password_env: lookup('ansible.builtin.env', k.password_env)}) -%}
-    {%- endfor -%}
-    {{ e }}
+    stdin: "{{ _certs_pw_lines if _certs_pw_set else omit }}"
+  vars:
+    _certs_pw_set: "{{ check_certs_keystores | selectattr('password_env', 'defined') | map(attribute='password_env') | select | list | length > 0 }}"
+    _certs_pw_lines: |-
+      {% for k in check_certs_keystores if k.password_env | default('') %}
+      {{ lookup('ansible.builtin.env', k.password_env) }}
+      {% endfor %}
+  no_log: "{{ _certs_pw_set }}"   # stdin carries keystore passwords (the registered result is still used below)
   register: _certs
   changed_when: false
   check_mode: false
@@ -93,7 +100,7 @@
       {%- macro _certs_hint(w) -%}
       {%-   if ' (https://' in w -%}
       {%-     set hp = w.split(' (https://')[1][:-1] -%}
-      {{-     'echo | timeout 10 openssl s_client -connect ' ~ hp ~ ' 2>/dev/null | openssl x509 -noout -subject -issuer -dates' -}}
+      {{-     'echo | timeout 10 openssl s_client -connect ' ~ (hp | quote) ~ ' 2>/dev/null | openssl x509 -noout -subject -issuer -dates' -}}
       {%-   elif ' (alias ' in w -%}
       {{-     'keytool -list -v -keystore ' ~ (w.split(' (alias ')[0] | quote) ~ ' </dev/null 2>/dev/null | grep -E "Alias name|Owner|until"' -}}
       {%-   else -%}

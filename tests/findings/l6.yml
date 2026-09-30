@@ -1,0 +1,16 @@
+---
+# Feeds site_findings' report step a fixed findings list; run_findings_test.sh checks pass/fail.
+- name: Report step with a fixed findings list
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Report
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml
+      vars:
+        site_findings: "{{ fs }}"
+        site_fail_on: "{{ fo }}"
+        site_checks_run: [x]
+        site_act_result: {}

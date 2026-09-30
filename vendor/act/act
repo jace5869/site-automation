@@ -14,7 +14,8 @@ Two backends for talking to the model:
 Safety model (defense in depth):
   * A local, deterministic classifier scans every command BEFORE it runs.
   * Proven local reads run automatically. Default mode asks for every other action;
-    auto mode asks only for catastrophic destructive payloads.
+    auto mode still asks for the danger tier (and for structured edits of sensitive
+    files) and refuses it in --non-interactive unless an anchored --allow matches.
   * Child commands run with the invoking user's host permissions but never inherit
     provider credentials or secret-like variables.
   * The model's own risk self-assessment is merged in (whichever is higher wins).
@@ -32,7 +33,7 @@ Requires: Python 3.8+, /bin/bash. No third-party Python packages.
 Environment:
   GENAI_KEY       (optional override) bearer token for the API; otherwise use :setup
   GENAI_URL       (optional)  default https://api.genai.mil/v1/chat/completions
-  GENAI_MODEL     (optional)  default gemini-3.5-flash
+  GENAI_MODEL     (optional)  default gemini-3.1-pro-preview
   GENAI_CA        (optional)  path to a CA bundle (for internal/.mil CAs)
   GENAI_INSECURE  (deprecated) also requires --insecure acknowledgment
   GENAI_TIMEOUT   (optional)  total seconds for one model turn, including retries (default 90)
@@ -61,7 +62,7 @@ Environment:
                   (endpoints that reject either are detected and it is dropped automatically)
   ACT_ALLOW       (optional)  pre-approved `run` command patterns, one regex per line (also
                   --allow, repeatable). Each must match the WHOLE command; only plain single
-                  commands qualify and never the danger tier. With --non-interactive this is
+                  commands qualify, never a catastrophic payload. With --non-interactive this is
                   an allowlist-only fix mode for automation (e.g. Ansible)
   ACT_RESULT_FILE (optional)  write a JSON summary of a one-shot run here on every exit path
                   (also --result-file); schema act.result/1, see docs/RESULT_FILE.md
@@ -85,9 +86,13 @@ Environment:
   GENAI_ANTHROPIC_URL / GENAI_BETA_ANTHROPIC_URL / ASKSAGE_ANTHROPIC_URL (optional)
                   the provider's Anthropic Messages URL. Default: its URL with
                   /chat/completions replaced by /messages
+  ACT_ALLOW_HTTP  (optional)  1 = allow a plain http:// provider URL to a non-loopback host
+                  (default: https only; http is accepted for localhost). Redirects are never
+                  followed, so the API key can not be forwarded to another host
+  The full list of variables (limits, debug, theme, ...) is in README.md.
 """
 
-ACT_VERSION = "0.6.19"  # bump when delivering; check with: act --version
+ACT_VERSION = "0.6.21"  # bump when delivering; check with: act --version
 
 import argparse
 import codecs
@@ -108,6 +113,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 try:
@@ -246,6 +252,7 @@ GENAI_BETA_MODEL = env_or_stored("GENAI_BETA_MODEL", _USER_CONFIG, "genai-beta",
                                  "gemini-2.5-pro")
 FAILOVER = os.environ.get("ACT_FAILOVER", "").lower() not in ("", "0", "false", "no")
 TOKENS_USED = {"genai": 0, "asksage": 0, "genai-beta": 0}  # session-accumulated (when reported)
+_TOKENS_LOCK = threading.Lock()                       # race threads add to TOKENS_USED concurrently
 
 
 class TokenLimitError(RuntimeError):
@@ -625,6 +632,9 @@ _RACE_RESULT = {}                                  # outcome of the most recent 
 _LIVE_MODELS_TRIED = set()                         # providers already queried this session
 DEBUG = os.environ.get("ACT_DEBUG", "") not in ("", "0", "false", "no")  # dump raw API responses to stderr
 MAX_OUTPUT_BYTES = _env_int("ACT_MAX_OUTPUT", 2 * 1024 * 1024, 1024, 64 * 1024 * 1024)
+# Past the capture cap the output is drained and discarded (the command still finishes); only a
+# command that keeps producing this many further bytes (e.g. `yes`) is killed as runaway.
+RUNAWAY_OUTPUT_BYTES = max(256 * 1024 * 1024, MAX_OUTPUT_BYTES * 8)
 MAX_API_RESPONSE_BYTES = _env_int("ACT_MAX_API_RESPONSE", 8 * 1024 * 1024,
                                   1024, 64 * 1024 * 1024)
 MAX_INPUT_BYTES = _env_int("ACT_MAX_INPUT", 2 * 1024 * 1024, 1024, 64 * 1024 * 1024)
@@ -830,30 +840,99 @@ def _result_context():
             "patterns": [src for src, _rx in PREAPPROVED]}
 
 
+def _euid():
+    return os.geteuid() if hasattr(os, "geteuid") else -1
+
+
 def _journal_root():
-    d = os.path.join(tempfile.gettempdir(), "act-journal")
+    """Per-user 0700 journal directory, or None when it cannot be trusted (a symlink, not a
+    directory, owned by someone else, or group/other accessible). Never reuses a shared,
+    predictable /tmp path that another local user could have pre-created."""
+    uid = _euid()
+    d = os.path.join(tempfile.gettempdir(), "act-journal-{0}".format(uid))
     try:
-        os.makedirs(d, exist_ok=True)
-        os.chmod(d, 0o700)
+        try:
+            os.mkdir(d, 0o700)
+        except FileExistsError:
+            pass
+        st = os.lstat(d)
     except OSError:
-        pass
+        return None
+    if (not stat.S_ISDIR(st.st_mode) or st.st_uid != uid or st.st_mode & 0o077):
+        return None
     return d
 
 
-def record_mutation(path, backup, created):
+def _journal_untrusted_note():
+    return ("the undo journal directory {0} is missing, not owned by you, or accessible to "
+            "other users; refusing to use it".format(
+                os.path.join(tempfile.gettempdir(), "act-journal-{0}".format(_euid()))))
+
+
+def _trusted_regular(path, private=False):
+    """lstat a journal or backup file: regular, owned by the current user, and not writable
+    by group/other (private=True also forbids any group/other access)."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return None
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != _euid():
+        return None
+    if st.st_mode & (0o077 if private else 0o022):
+        return None
+    return st
+
+
+def _current_umask():
+    old = os.umask(0o022)
+    os.umask(old)
+    return old
+
+
+def _copy_xattrs(src, dst):
+    """Best-effort copy of extended attributes (incl. security.selinux) from src to dst
+    (paths or fds). Whatever the kernel/user cannot copy is skipped."""
+    if not hasattr(os, "listxattr"):
+        return
+    try:
+        names = os.listxattr(src, follow_symlinks=False) if isinstance(src, str) else os.listxattr(src)
+    except OSError:
+        return
+    for name in names:
+        try:
+            value = (os.getxattr(src, name, follow_symlinks=False) if isinstance(src, str)
+                     else os.getxattr(src, name))
+            if isinstance(dst, str):
+                os.setxattr(dst, name, value, follow_symlinks=False)
+            else:
+                os.setxattr(dst, name, value)
+        except OSError:
+            continue
+
+
+def record_mutation(path, backup, created, meta=None):
     """Record a file mutation (overwrite w/ backup, or a newly-created file) so it can be
     reverted with ':undo' in the REPL or `act --undo` in a later process."""
     rec = {"ts": round(time.time(), 3), "session": _session_id(),
            "path": os.path.abspath(path), "backup": backup or "", "created": bool(created)}
+    if meta:
+        rec.update(meta)
     _MUTATION_JOURNAL.append(rec)
+    root = _journal_root()
+    if root is None:
+        sys.stderr.write("act: " + _journal_untrusted_note() + "; this change can be undone "
+                         "only in this session (:undo)\n")
+        return
     try:
-        _append_jsonl(os.path.join(_journal_root(), _session_id() + ".jsonl"), rec)
+        _append_jsonl(os.path.join(root, _session_id() + ".jsonl"), rec)
     except OSError:
         pass
 
 
 def _latest_journal():
     root = _journal_root()
+    if root is None:
+        return None
     try:
         files = sorted(f for f in os.listdir(root) if f.endswith(".jsonl"))
     except OSError:
@@ -863,8 +942,11 @@ def _latest_journal():
 
 def _load_journal(path):
     records = []
+    if _trusted_regular(path, private=True) is None:
+        return None
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0))
+        with os.fdopen(fd, "r", encoding="utf-8") as fh:
             for ln in fh:
                 ln = ln.strip()
                 if ln:
@@ -877,37 +959,70 @@ def _load_journal(path):
 def perform_undo(records=None):
     """Revert the most recent session's file mutations, newest first: restore an
     overwritten file from its verified backup; delete a file the agent created.
-    Returns (reverted_count, [human messages])."""
-    if records is None:
+    Records read from disk are only used when the journal directory, the journal file and
+    each backup are private to the current user (a root `--undo` never follows another
+    user's journal). Returns (reverted_count, [human messages])."""
+    from_disk = records is None
+    if from_disk:
         jf = _latest_journal()
-        records = _load_journal(jf) if jf else []
+        if jf is None:
+            root = _journal_root()
+            return 0, ([] if root is not None else [_journal_untrusted_note()])
+        records = _load_journal(jf)
+        if records is None:
+            return 0, ["refusing the undo journal {0}: it is not a private file owned by you".format(jf)]
     reverted, msgs = 0, []
     for rec in reversed(records):
         path, backup, created = rec.get("path"), rec.get("backup"), rec.get("created")
+        tmp = None
         try:
+            if not isinstance(path, str) or not os.path.isabs(path):
+                msgs.append("skipped a journal entry with an invalid path")
+                continue
             if created:
-                if path and os.path.lexists(path):
+                if os.path.lexists(path):
                     os.unlink(path)
                     msgs.append("removed created file " + path)
                     reverted += 1
                 else:
                     msgs.append("already absent: " + str(path))
             elif backup and os.path.exists(backup):
-                with open(backup, "rb") as b:
+                if from_disk and _trusted_regular(backup) is None:
+                    msgs.append("refusing backup {0}: not a regular file owned by you".format(backup))
+                    continue
+                fd = os.open(backup, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                with os.fdopen(fd, "rb") as b:
                     data = b.read()
                 parent = os.path.dirname(path) or "."
                 fd, tmp = tempfile.mkstemp(dir=parent, prefix=".act-undo-")
                 with os.fdopen(fd, "wb") as out:
                     out.write(data)
                     out.flush()
+                    uid, gid = rec.get("uid"), rec.get("gid")
+                    if isinstance(uid, int) and isinstance(gid, int):
+                        cur = os.fstat(out.fileno())
+                        if (cur.st_uid, cur.st_gid) != (uid, gid):
+                            os.fchown(out.fileno(), uid, gid)
+                    mode = rec.get("mode")          # after chown, which clears setuid/setgid
+                    if isinstance(mode, int):
+                        os.fchmod(out.fileno(), stat.S_IMODE(mode))
+                    if os.path.lexists(path):
+                        _copy_xattrs(path, out.fileno())
                     os.fsync(out.fileno())
                 os.replace(tmp, path)
+                tmp = None
                 msgs.append("restored " + path)
                 reverted += 1
             else:
                 msgs.append("no backup available for " + str(path) + " — cannot restore")
         except OSError as e:
             msgs.append("FAILED to revert {0}: {1}".format(path, e))
+        finally:
+            if tmp:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
     return reverted, msgs
 
 
@@ -922,7 +1037,7 @@ _JOBS = []
 
 def launch_background(cmd, cwd, step_id=""):
     """Start cmd detached (own session, survives the step/timeout). Returns (job, error)."""
-    log = os.path.join(_journal_root(), "job-{0}-{1}.log".format(_session_id(), len(_JOBS) + 1))
+    log = os.path.join(_journal_root() or _backup_root(), "job-{0}-{1}.log".format(_session_id(), len(_JOBS) + 1))
     try:
         logf = open(log, "wb")
     except OSError as e:
@@ -1180,7 +1295,16 @@ DANGER_PATTERNS = [
     (r"\binit\s+[06]\b", "runlevel change (halt/reboot)"),
     (r"\bsystemctl\b\s+(poweroff|reboot|halt|kexec|emergency|rescue)\b", "systemctl power state change"),
     (r"\b(userdel|groupdel)\b", "deleting a user/group"),
-    (r"(?<!/)\b(passwd|chpasswd)\b\s+\S", "changing credentials"),
+    # passwd in COMMAND position only (`getent passwd root` is a read), including behind a
+    # launcher that takes options, VAR=value, a number or a path first (`timeout 5`,
+    # `chroot /mnt`, `nice -n 5`, `env LANG=C`, `pkexec`, `setsid` ...).
+    (r"(?:(?:^|[;&|\n(`\"'])\s*|\b(?:sudo|doas|exec|xargs|nohup|command|time|nice|env)\s+"
+     r"(?:-[ughCpRT]\s+\S+\s+|-\S+\s+)*"
+     r"|\b(?:timeout|setsid|pkexec|chroot|stdbuf|nice|ionice|taskset|chrt|flock|env|runuser|"
+     r"unshare|nsenter|systemd-run|su)\s+"
+     r"(?:-[A-Za-z]\s+[\w.:/-]+\s+|-\S+\s+|\w+=\S*\s+|[0-9][\w.:]*\s+|/\S*\s+)*)"
+     r"(?:/usr/bin/|/bin/|/usr/sbin/|/sbin/)?"
+     r"(?:passwd|chpasswd)\b\s+\S", "changing credentials"),
     (r"\bsetenforce\s+0\b", "disabling SELinux enforcement"),
     (r">\s*/etc/selinux/config\b|\bsed\b[^\n]*-i[^\n]*/etc/selinux/config", "editing SELinux config"),
     (r"\biptables\b[^\n]*\s-(F|X|Z)\b", "flushing iptables rules"),
@@ -1251,7 +1375,8 @@ DANGER_PATTERNS = [
     (r"(?i:\baz\b[^\n]*\b(delete|deallocate|purge)\b)", "azure resource delete/deallocate"),
     (r"(?i:\bgsutil\b[^\n]*\brm\b)", "gsutil rm (object storage deletion)"),
     # ── Containers (deletion / data loss) ─────────────────────────────────────
-    (r"(?i:\b(docker|podman|nerdctl)\b[^\n]*\b(rm|rmi|kill)\b)", "container/image removal or kill"),
+    (r"(?i:\b(docker|podman|nerdctl)\b[^\n]*(?<![=\w])(rm|rmi|kill)\b)",   # not `--filter event=kill`
+     "container/image removal or kill"),
     (r"(?i:\bdocker[\s-]compose\b[^\n]*\bdown\b[^\n]*(-v|--volumes)|\b(docker|podman)\b[^\n]*\bvolume\s+(rm|prune)\b)",
      "container volume deletion"),
     # ── Database data destruction ─────────────────────────────────────────────
@@ -1365,9 +1490,11 @@ def compile_preapproved(sources):
 
 def preapprovable(cmd, risk):
     """Could an --allow pattern ever pre-approve this `run` command? Plain single commands
-    only, never the danger tier or a catastrophic payload. Reported on refused commands
-    (`pre_approvable` in the result file) so an approval workflow knows which proposed fixes
-    it can hand back to ACT and which a person must apply by hand."""
+    only (no chaining, pipes, redirection, substitution, globs or quotes), never the danger
+    tier and never a catastrophic payload (recursive delete, disk destruction, power state,
+    ...). Same rule as ACT-Windows. Reported on refused commands (`pre_approvable` in the
+    result file) so an approval workflow knows which proposed fixes it can hand back to ACT
+    and which a person must apply by hand."""
     text = (cmd or "").strip()
     return bool(text and risk != "danger" and _PREAPPROVE_CHARS.match(text)
                 and not auto_confirmation_reason(text))
@@ -1453,6 +1580,48 @@ _CONTAINER_MUT = {"run", "rm", "rmi", "stop", "start", "restart", "kill", "exec"
                   "commit", "tag", "load", "import", "cp", "compose", "up", "down",
                   "network", "volume", "pod", "play", "generate", "kube"}
 _SYS_DIR_RE = re.compile(r"^/(etc|root|var|dev|proc|sys|run|boot|usr|bin|sbin|lib|lib64|opt|srv)(/|$)")
+
+
+# Files whose contents grant access, run as root, or decide what boots. A structured
+# edit/write to one of these is never hands-off, even under --auto.
+_SENSITIVE_WRITE_RE = re.compile(
+    r"^(?:"
+    r"/etc/(?:sudoers(?:\.d)?|passwd|shadow|gshadow|group|subuid|subgid|nsswitch\.conf|"
+    r"pam\.d|security|ssh|polkit-1|audit|selinux/config|fstab|crypttab|ld\.so\.[^/]+|"
+    r"ld\.so\.conf\.d|profile(?:\.d)?|bashrc|environment|rc\.local|init\.d|crontab|"
+    r"cron\.[^/]+|anacrontab|hosts\.(?:allow|deny)|login\.defs|default/grub|grub[^/]*|"
+    r"krb5\.conf|sssd|ipa|pki|ssl/private|cron\.d)"
+    r"|/boot|/proc|/sys|/dev"
+    r"|/usr/(?:bin|sbin|lib|lib64|libexec|local/bin|local/sbin|local/lib)"
+    r"|/(?:bin|sbin|lib|lib64)"
+    r"|/var/spool/cron"
+    r"|/root/\.(?:bashrc|bash_profile|bash_login|profile|zshrc|ssh)"
+    r"|/(?:home/[^/]+|root)/\.(?:bashrc|bash_profile|bash_login|profile|zshrc)"
+    r")(?:/|$)"
+    r"|(?:^|/)\.ssh(?:/|$)"
+    r"|(?:^|/)authorized_keys2?$"
+)
+
+
+def sensitive_write_reason(path):
+    """Why a structured edit/write of *path* must not run unattended, or ''."""
+    p = os.path.normpath(path or "")
+    if not p or not p.startswith("/"):
+        return ""
+    if _SENSITIVE_WRITE_RE.search(p):
+        return "changes an authentication, boot, or system-binary file"
+    return ""
+
+
+def edit_needs_approval(erisk, verb, path):
+    """(ask, reason) for a structured edit/write. Default mode asks for every one; under
+    --auto only a sensitive path (or a catastrophic-looking payload) does."""
+    cmd = "%s %s" % (verb, path or "")
+    sens = sensitive_write_reason(path)
+    if AUTO:
+        catastrophic = needs_confirm(erisk, cmd) and erisk != "mutating"
+        return bool(sens or catastrophic), sens
+    return needs_confirm(erisk, cmd), sens
 
 
 def _writes_system_path(args):
@@ -1543,41 +1712,327 @@ def _first_verb(args):
     return None
 
 
-# sed write/execute detection (2026-07-11 classifier-bypass fix). sed can write files
-# with the `w`/`W` command (`sed -n 'w FILE' src`), the `s///w FILE` flag, and execute
-# shell with the GNU `e` command. These live inside the SCRIPT argument, not as flags, so
-# the old `-i`-only check missed them and they classified as read-only -> auto-ran.
-# We stay conservative: over-flagging a read-only sed into "confirm" is acceptable; letting
-# an arbitrary-file write auto-run is not. The `s(D)...D...D[flags]w` branch keys off a
-# write flag AFTER the closing delimiter, so ordinary substitutions like `s/new line/x/`
-# (a 'w' inside the pattern) are NOT matched.
-_SED_WRITE_RE = re.compile(
-    r"""(?:^|[;{}\n])\s*[0-9$/,+~]*\s*[wW](?:\s|$)   # standalone  w / W  write command
-      | s([^\w\s]).*?\1.*?\1[0-9a-zA-Z]*[wW]         # s/re/repl/ ... w   write flag
-      | (?:^|[;{}\n])\s*[0-9$/,+~]*\s*e(?:\s|$)      # e  execute-shell command (GNU sed)
-    """,
-    re.VERBOSE,
+def _mask_quotes(cmd):
+    """Same-length copy of *cmd* with everything inside quotes (and backslash-escaped
+    characters) replaced by '_', so shell operators that are only DATA are not mistaken
+    for syntax: the `>` in `awk '$3 > 100'`, the `|` in `grep -E 'a|b'`, the `;` in
+    `sed '1!G;h;$!d'`. Returns None when quoting is unbalanced (the caller then keeps the
+    old, stricter behaviour of treating every operator character as live), and also for
+    shell syntax that quotes by other rules: a `#` comment (bash ignores a quote after it,
+    so `ls #'<newline>cmd<newline>#'` runs cmd), `$'...'` (where \\' does not end the
+    string) and here-documents."""
+    out = []
+    i, n = 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        if c == "\\" and i + 1 < n:
+            out.append("__")
+            i += 2
+        elif c == "#" and (i == 0 or cmd[i - 1] in " \t\r\n;&|()<>"):
+            return None
+        elif c == "$" and cmd.startswith("'", i + 1):
+            return None
+        elif c == "<" and cmd.startswith("<", i + 1):
+            return None
+        elif c == "'":
+            j = cmd.find("'", i + 1)
+            if j < 0:
+                return None
+            out.append("'" + "_" * (j - i - 1) + "'")
+            i = j + 1
+        elif c == '"':
+            j = i + 1
+            while j < n and cmd[j] != '"':
+                j += 2 if cmd[j] == "\\" else 1
+            if j >= n:
+                return None
+            out.append('"' + "_" * (j - i - 1) + '"')
+            i = j + 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+_SEGMENT_SPLIT_RE = re.compile(r"\|\||&&|[|;&\n\r]")
+_SEGMENT_SPLIT_NO_NL_RE = re.compile(r"\|\||&&|[|;&]")
+
+
+def _split_segments(cmd, newlines=True):
+    """Split on shell command separators, but not on separators inside quotes."""
+    rx = _SEGMENT_SPLIT_RE if newlines else _SEGMENT_SPLIT_NO_NL_RE
+    masked = _mask_quotes(cmd)
+    if masked is None:
+        return rx.split(cmd)
+    parts, last = [], 0
+    for m in rx.finditer(masked):
+        parts.append(cmd[last:m.start()])
+        last = m.end()
+    parts.append(cmd[last:])
+    return parts
+
+
+# sed can write files (the `w`/`W` commands and the `s///w` flag), run shell (the GNU `e`
+# command and the `s///e` flag) and edit in place (`-i`, in any bundle or abbreviation).
+# None of that is visible to a regex over the argument string — an address such as `/x/`
+# sits in front of the command letter — so the script is parsed properly: addresses,
+# `s`/`y` (delimiter and escapes), the a/i/c/r/R text commands and labels are skipped as
+# the shell-free data they are. Anything the parser cannot follow counts as unsafe.
+def _sed_script_unsafe(s):
+    n = len(s)
+
+    def skip_part(i, d):
+        while i < n:
+            if s[i] == "\\":
+                i += 2
+            elif s[i] == d:
+                return i + 1
+            else:
+                i += 1
+        return -1
+
+    def skip_addr(i):
+        if i < n and s[i].isdigit():
+            while i < n and s[i].isdigit():
+                i += 1
+            if i < n and s[i] == "~":
+                i += 1
+                while i < n and s[i].isdigit():
+                    i += 1
+            return i
+        if i < n and s[i] == "$":
+            return i + 1
+        if i < n and s[i] in "/\\":
+            d = "/"
+            if s[i] == "\\":
+                if i + 1 >= n:
+                    return -1
+                d = s[i + 1]
+                i += 1
+            i = skip_part(i + 1, d)
+            while 0 <= i < n and s[i] in "IM":
+                i += 1
+            return i
+        return i
+
+    def eol(i):
+        while i < n and s[i] != "\n":
+            i += 2 if s[i] == "\\" else 1
+        return i
+
+    i = 0
+    while i < n:
+        c = s[i]
+        if c in " \t\n;{}":
+            i += 1
+            continue
+        if c == "#":
+            i = eol(i)
+            continue
+        j = skip_addr(i)
+        if j < 0:
+            return True
+        if j > i:
+            i = j
+            while i < n and s[i] in " \t":
+                i += 1
+            if i < n and s[i] == ",":
+                i += 1
+                while i < n and s[i] in " \t":
+                    i += 1
+                if i < n and s[i] in "+~":
+                    i += 1
+                    while i < n and s[i].isdigit():
+                        i += 1
+                else:
+                    i = skip_addr(i)
+                    if i < 0:
+                        return True
+        while i < n and s[i] in " \t!":
+            i += 1
+        if i >= n:
+            return False
+        c = s[i]
+        i += 1
+        if c in "sy":
+            if i >= n or s[i] in "\n\\":
+                return True
+            d = s[i]
+            i = skip_part(i + 1, d)
+            if i < 0:
+                return True
+            i = skip_part(i, d)
+            if i < 0:
+                return True
+            if c == "s":
+                while i < n and (s[i].isalnum()):
+                    if s[i] in "weW":
+                        return True
+                    i += 1
+        elif c in "weW":
+            return True
+        elif c in "aic":
+            i = eol(i)
+        elif c in "rR":
+            i = eol(i)
+        elif c in ":btTlLqQ":
+            while i < n and s[i] not in ";\n}":
+                i += 1
+        elif c in "={}dDgGhHnNpPxzF":
+            pass
+        else:
+            return True
+    return False
+
+
+_SED_FLAG_LETTERS = set("nsErzub")
+
+
+def _sed_options_and_scripts(args):
+    """(scripts, ok). ok is False for in-place editing, script files, or an option we do
+    not recognise (the safe answer is 'not a proven read')."""
+    scripts, files = [], []
+    i, seen_script = 0, False
+    positional_only = False
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if positional_only or a == "-" or not a.startswith("-"):
+            if not seen_script and not scripts:
+                scripts.append(a)
+                seen_script = True
+            else:
+                files.append(a)
+            continue
+        if a == "--":
+            positional_only = True
+            continue
+        if a.startswith("--"):
+            name, eq, val = a[2:].partition("=")
+            if name and "in-place".startswith(name) and name[0] == "i":
+                return scripts, False
+            if name and "file".startswith(name) and name[0] == "f":
+                return scripts, False
+            if name and "expression".startswith(name) and name[0] == "e":
+                if eq:
+                    scripts.append(val)
+                elif i < len(args):
+                    scripts.append(args[i])
+                    i += 1
+                else:
+                    return scripts, False
+                seen_script = True
+                continue
+            if name and "line-length".startswith(name) and name[0] == "l" and not eq:
+                i += 1
+                continue
+            known = ("binary", "debug", "follow-symlinks", "line-length", "null-data",
+                     "zero-terminated", "posix", "regexp-extended", "quiet", "silent",
+                     "separate", "sandbox", "unbuffered", "version", "help")
+            if name and any(k.startswith(name) for k in known):
+                continue
+            return scripts, False
+        body = a[1:]
+        k = 0
+        while k < len(body):
+            ch = body[k]
+            k += 1
+            if ch == "e":
+                rest = body[k:]
+                if rest:
+                    scripts.append(rest)
+                elif i < len(args):
+                    scripts.append(args[i])
+                    i += 1
+                else:
+                    return scripts, False
+                seen_script = True
+                break
+            if ch == "l":
+                if not body[k:]:
+                    i += 1
+                break
+            if ch in ("i", "f"):
+                return scripts, False
+            if ch not in _SED_FLAG_LETTERS:
+                return scripts, False
+    return scripts, True
+
+
+def _sed_is_readonly(args):
+    scripts, ok = _sed_options_and_scripts(args)
+    if not ok:
+        return False
+    return not any(_sed_script_unsafe(s) for s in scripts)
+
+
+# awk: the program is one argument. It can run shell (system(), `"cmd" | getline`, `print |
+# "cmd"`), write files (`print > "f"`) and, in gawk, load extensions or edit in place
+# (-i/--include, -l/--load, @load). A `>` in a pattern (`$3 > 100`) is only a comparison.
+_AWK_UNSAFE_LONG = ("include", "load", "exec", "file", "dump-variables", "pretty-print",
+                    "profile", "debug", "inplace")
+_AWK_STDERR_RE = re.compile(r'>>?\s*"/dev/(?:stderr|stdout)"')
+_AWK_PROG_UNSAFE_RE = re.compile(
+    r"\bsystem\s*\(|\|\s*getline\b|\|&|@\s*(?:load|include)\b|"
+    r"@\s*[A-Za-z_]\w*\s*\(|"           # gawk indirect call: f="system"; @f("id")
+    r"\bprint(?:f)?\b[^;}]*(?:>|\|)"      # a print list may continue on the next line
 )
 
 
-def _script_file_arg(args):
-    """True if a -f/--file argument moves the program text off the command line.
+def _awk_program_unsafe(text):
+    # string literals are data; only double quotes exist in awk, so mask those alone
+    t = _AWK_STDERR_RE.sub("", text)
+    out, i, n = [], 0, len(t)
+    while i < n:
+        if t[i] == '"':
+            j = i + 1
+            while j < n and t[j] != '"':
+                j += 2 if t[j] == "\\" else 1
+            if j >= n:
+                out = None
+                break
+            out.append('"' + "_" * (j - i - 1) + '"')
+            i = j + 1
+        else:
+            out.append(t[i])
+            i += 1
+    t = text if out is None else "".join(out)
+    return bool(_AWK_PROG_UNSAFE_RE.search(t))
 
-    sed and awk both accept `-f FILE` / `--file=FILE`. The write/exec scans in
-    _is_readonly_segment inspect argv only, so a program supplied this way is entirely
-    unauditable — it can carry sed's `w /path` or GNU `e`, or awk's system()/print > file.
-    An unauditable program is not a proven read. (Writing the program file first is an
-    ordinary mutation the operator sees; the danger is only in the silent second step.)
-    """
-    for i, a in enumerate(args):
-        if a in ("-f", "--file"):
-            return True
-        if a.startswith("--file="):
-            return True
-        # Bundled short flags: -nf script, -rf script. Exclude long options.
-        if a.startswith("-") and not a.startswith("--") and "f" in a[1:]:
-            return True
-    return False
+
+def _awk_readonly(args):
+    i = 0
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if a == "--":
+            break
+        if a.startswith("--"):
+            name = a[2:].partition("=")[0]
+            if name and any(full.startswith(name) for full in _AWK_UNSAFE_LONG):
+                return False
+            continue
+        if a.startswith("-") and a != "-":
+            for k, ch in enumerate(a[1:], 1):
+                if ch == "W":
+                    # gawk: `-W opt` is `--opt` (-W exec FILE, -W include=FILE, -W load=EXT)
+                    opt = a[k + 1:]
+                    if not opt:
+                        opt = args[i] if i < len(args) else ""
+                        i += 1
+                    name = opt.partition("=")[0]
+                    if not name or any(full.startswith(name) for full in _AWK_UNSAFE_LONG):
+                        return False
+                    break
+                if ch in "Fv":
+                    if k == len(a) - 1:
+                        i += 1
+                    break
+                if ch in "filEopdD":
+                    return False
+            continue
+        break
+    return not any(_awk_program_unsafe(a) for a in args)
 
 
 def _env_runs_a_command(args):
@@ -1606,13 +2061,94 @@ def _env_runs_a_command(args):
     return False
 
 
-def _sed_script_writes(args):
-    """True if any sed script argument uses a write (w/W, s///w) or execute (e) command."""
-    for a in args:
-        if a.startswith("-") and a not in ("-e", "-f", "--expression", "--file"):
-            continue  # a flag, not a script fragment (real script may follow -e/-f)
-        if _SED_WRITE_RE.search(a):
-            return True
+_GIT_SAFE_CONFIG_RE = re.compile(r"^(?:color\.|core\.quotepath=|log\.|pretty\.|format\.)", re.I)
+_GIT_BRANCH_LIST_FLAGS = {"-l", "--list", "-a", "--all", "-r", "--remotes", "-v", "-vv",
+                          "--verbose", "--contains", "--no-contains", "--merged",
+                          "--no-merged", "--points-at"}
+_GIT_BRANCH_WRITE_FLAGS = {"-d", "-D", "-m", "-M", "-c", "-C", "-f", "-u", "-t", "--delete",
+                           "--move", "--copy", "--force", "--set-upstream-to",
+                           "--unset-upstream", "--edit-description", "--track", "--no-track"}
+_GIT_TAG_LIST_FLAGS = {"-l", "--list", "--contains", "--no-contains", "--merged",
+                       "--no-merged", "--points-at", "-v", "--verify"}
+_GIT_TAG_WRITE_FLAGS = {"-d", "-a", "-s", "-u", "-f", "-m", "-F", "-e", "--delete",
+                        "--annotate", "--sign", "--local-user", "--force", "--message",
+                        "--file", "--edit"}
+_GIT_CONFIG_WRITE_FLAGS = {"--add", "--replace-all", "--unset", "--unset-all", "--edit", "-e",
+                           "--remove-section", "--rename-section", "--set", "--type-set"}
+
+
+def _git_split(args):
+    """(verb, rest, ok) after the global options; ok False for one that runs code."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if not a.startswith("-"):
+            return a, args[i + 1:], True
+        if a == "-C":
+            i += 2
+        elif a == "-c":
+            if i + 1 >= len(args) or not _GIT_SAFE_CONFIG_RE.match(args[i + 1]):
+                return None, [], False      # -c core.fsmonitor=/alias.x=!cmd execute code
+            i += 2
+        elif a.startswith("--config-env") or a.startswith("--exec-path=") or a == "--exec-path":
+            return None, [], False
+        elif a in ("--git-dir", "--work-tree", "--namespace", "--super-prefix",
+                   "--attr-source"):
+            i += 2
+        else:
+            i += 1                          # --no-pager, -P, --bare, --git-dir=x, ...
+    return None, [], True
+
+
+def _git_long_in(flag, names):
+    """True if long option *flag* is one of *names* or git's unambiguous abbreviation of one
+    (`--set-upstream-to=x`, `--unset`, `--del`)."""
+    name = flag[2:].partition("=")[0] if flag.startswith("--") else ""
+    return bool(name) and any(n.startswith("--") and n[2:].startswith(name) for n in names)
+
+
+def _git_readonly(args):
+    verb, rest, ok = _git_split(args)
+    if not ok:
+        return False
+    if verb is None:
+        return True                         # `git`, `git --version`
+    flags = [a for a in rest if a.startswith("-")]
+    pos = [a for a in rest if not a.startswith("-")]
+    # Options that write a file or launch a program, in any read-only verb.
+    for a in rest:
+        # git accepts any unambiguous prefix of a long option (`--outp=f`, `--open-files`)
+        name = a[2:].partition("=")[0] if a.startswith("--") else ""
+        if name and ("output".startswith(name) or "open-files-in-pager".startswith(name)):
+            return False
+        if verb == "grep" and re.match(r"^-[A-Za-z]*O", a):
+            return False
+    if verb in _GIT_RO_VERBS and verb not in ("remote", "reflog", "symbolic-ref"):
+        return True
+    if verb == "remote":
+        return not pos or pos[0] in ("show", "get-url")
+    if verb == "reflog":                    # `git reflog [show] [-n 10] [HEAD]` all read
+        return not pos or pos[0] not in ("expire", "delete", "drop")
+    if verb == "symbolic-ref":
+        return len(pos) <= 1 and not any(f in ("-d", "--delete", "-m") for f in flags)
+    if verb == "stash":
+        return bool(pos) and pos[0] in ("list", "show")
+    if verb == "branch":
+        if any(f in _GIT_BRANCH_WRITE_FLAGS or _git_long_in(f, _GIT_BRANCH_WRITE_FLAGS)
+               or re.match(r"^-[a-zA-Z]*[dDmMcCfut]", f) and not f.startswith("--") for f in flags):
+            return False
+        return not pos or any(f in _GIT_BRANCH_LIST_FLAGS for f in flags)
+    if verb == "tag":
+        if any(f in _GIT_TAG_WRITE_FLAGS or _git_long_in(f, _GIT_TAG_WRITE_FLAGS)
+               or (re.match(r"^-[a-zA-Z]*[dasufmFe]", f) and not f.startswith("--"))
+               for f in flags):
+            return False
+        return not pos or any(f.split("=")[0] in _GIT_TAG_LIST_FLAGS for f in flags)
+    if verb == "config":
+        if any(f in _GIT_CONFIG_WRITE_FLAGS for f in flags):
+            return False
+        return any(x in flags for x in ("--get", "-l", "--list", "--get-all", "--get-regexp",
+                                        "--get-urlmatch"))
     return False
 
 
@@ -1659,26 +2195,13 @@ def _is_readonly_segment(seg):
             return False
         if base == "dmesg" and any(a in ("-c", "-C", "--clear") for a in args):
             return False
-        if base == "sed" and (any(a == "-i" or a.startswith("-i")
-                                  or a.startswith("--in-place") for a in args)
-                              # sed can WRITE files (w/W commands, the s///w flag) and
-                              # EXECUTE (e command) — none of which are the -i flag the old
-                              # check caught (2026-07-11: `sed -n 'w /etc/passwd' f` auto-ran).
-                              or _sed_script_writes(args)
-                              # -f/--file puts the script in a FILE, where neither the -i
-                              # scan nor _sed_script_writes can see `w /path` or GNU `e`.
-                              or _script_file_arg(args)):
+        if base == "sed" and not _sed_is_readonly(args):
             return False
         if base == "sort" and any(a == "-o" or a.startswith("--output") for a in args):
             return False
         if base == "printenv" and any(_SECRET_NAME_RE.search(a) for a in args):
             return False
-        if base in ("awk", "gawk") and _script_file_arg(args):
-            # -f/--file moves the program OFF the command line, so _sed_script_writes and
-            # the system()/'>' scan below have nothing to inspect. An unauditable program
-            # file is not a proven read.
-            return False
-        if base in ("awk", "gawk") and any("system(" in a or ">" in a for a in args):
+        if base in ("awk", "gawk", "mawk", "nawk") and not _awk_readonly(args):
             return False
         # 0.6.5: allowlisted tools that are WRITE PRIMITIVES under the right flag.
         # READONLY_SIMPLE is a bare-verb set and only a handful of verbs got
@@ -1743,18 +2266,7 @@ def _is_readonly_segment(seg):
                 and not any(a in mut or a.startswith(mut) for a in args))
 
     if base == "git":
-        verb = _first_verb(args)
-        if verb in _GIT_RO_VERBS:
-            if verb == "remote" and any(x in args for x in ("add", "remove", "rm", "set-url")):
-                return False
-            return True
-        if verb == "branch":
-            return not any(f in args for f in ("-d", "-D", "-m", "-M", "-f", "--delete"))
-        if verb == "tag":
-            return "-d" not in args and "--delete" not in args
-        if verb == "config":
-            return any(x in args for x in ("--get", "-l", "--list", "--get-all", "--get-regexp"))
-        return False
+        return _git_readonly(args)
 
     if base in ("ip", "ifconfig"):
         return not any(a in _IP_MUT for a in args)
@@ -1834,7 +2346,7 @@ def _has_active_shell_syntax(cmd):
 
 
 def command_uses_network(cmd):
-    for segment in re.split(r"\|\||&&|[|;&]", canon_cmd(cmd)):
+    for segment in _split_segments(canon_cmd(cmd), newlines=False):
         try:
             tokens = _strip_prefixes(shlex.split(segment))
         except ValueError:
@@ -1843,9 +2355,10 @@ def command_uses_network(cmd):
             continue
         base = os.path.basename(tokens[0])
         if base in _NETWORK_TOOLS:
-            if base == "git" and _first_verb(tokens[1:]) not in ("fetch", "pull", "push",
-                                                               "clone", "ls-remote"):
-                continue
+            if base == "git":
+                verb, _, git_ok = _git_split(tokens[1:])
+                if git_ok and verb not in ("fetch", "pull", "push", "clone", "ls-remote"):
+                    continue
             return True
     return False
 
@@ -1855,10 +2368,33 @@ def classify(cmd):
     for rx, why in _DANGER_COMPILED:
         if rx.search(cmd):
             return "danger", why
+    return _classify_below_danger(cmd)
+
+
+def _danger_only_in_read_data(cmd):
+    """True when a danger-tier match is only text a proven read consumes as DATA: the
+    command is 'safe' apart from the danger scan, and no danger pattern matches any single
+    command once quoted text is masked (`grep 'dnf remove' /var/log/dnf.log`,
+    `podman logs web | grep -i kill`). --auto then runs it as 0.6.19 did; the default mode
+    still asks. Unparseable quoting never qualifies."""
+    masked = _mask_quotes(cmd)
+    if masked is None or _classify_below_danger(cmd)[0] != "safe":
+        return False
+    return not any(rx.search(seg) for seg in _split_segments(masked)
+                   for rx, _why in _DANGER_COMPILED)
+
+
+def _classify_below_danger(cmd):
     # Redirection to a real file is a write — a mutation worth confirming. Exclude
     # fd duplications (2>&1, >&2), /dev/null, and process substitution `>(...)` (which is
     # active shell syntax handled below as caution, not a plain file write).
-    if re.search(r">\s*(?!/dev/null\b)(?!&\d)(?!\()\S", cmd) or re.search(r">>\s*(?!/dev/null\b)\S", cmd):
+    # Only an UNQUOTED `>` is a redirect: `awk '$3 > 100'` and `echo "a > b"` are data.
+    # Unbalanced quotes fall back to scanning the raw text (the stricter old behaviour).
+    unquoted = _mask_quotes(cmd)
+    if unquoted is None:
+        unquoted = cmd
+    if re.search(r">\s*(?!/dev/null\b)(?!&\d)(?!\()\S", unquoted) or \
+            re.search(r">>\s*(?!/dev/null\b)\S", unquoted):
         return "mutating", "writes/overwrites a file"
     if _has_active_shell_syntax(cmd):
         return "caution", "contains shell expansion or an interpreter wrapper"
@@ -1877,7 +2413,7 @@ def classify(cmd):
     # path that is advertised as proven read-only. Multi-line commands are a supported
     # input (see _escape_ctrl_in_strings), so this is reachable, not theoretical.
     # Split the RAW command — canon_cmd has already destroyed the newlines.
-    segments = re.split(r"\|\||&&|[|;&\n\r]", canon_cmd_preserving_lines(cmd))
+    segments = _split_segments(canon_cmd_preserving_lines(cmd))
     if all(_is_readonly_segment(s) for s in segments):
         # A read is still 'safe' — UNLESS it touches a sensitive path (secrets/keys/creds).
         # Those surface as 'caution' so the operator sees the access; the model still gets
@@ -3504,7 +4040,7 @@ def _network_readonly_segment(segment):
     if base in _NETWORK_QUERY_TOOLS:
         return True
     if base == "git":
-        if _first_verb(args) != "ls-remote":
+        if _git_split(args)[0] != "ls-remote":
             return False
         if any(a == "-c" or a.startswith(("--config-env", "--upload-pack", "--exec-path",
                                            "--git-dir", "--work-tree", "--namespace"))
@@ -3582,7 +4118,7 @@ def _caution_read_ok(cmd):
         return False
     if "<" in cmd:
         return False
-    segments = [s for s in re.split(r"\|\||&&|[|;&]", canon_cmd(cmd)) if s.strip()]
+    segments = [s for s in _split_segments(canon_cmd(cmd), newlines=False) if s.strip()]
     saw_network = False
     for segment in segments:
         if _network_readonly_segment(segment):
@@ -3601,13 +4137,21 @@ def needs_confirm(risk, cmd=""):
     # Two postures:
     #  • Default (interactive, NOT --auto): fail closed — anything not proven read-only
     #    ('safe') prompts.
-    #  • --auto (ACT_AUTO): permissive — run safe, caution, mutating, and ordinary
-    #    high-risk actions hands-off. Only a narrow set of catastrophic/destructive
-    #    payloads prompts (and is denied in non-interactive mode).
+    #  • --auto (ACT_AUTO): run safe, caution and mutating actions hands-off. The danger
+    #    tier and catastrophic payloads prompt (and are denied in non-interactive mode
+    #    unless an --allow pattern pre-approves a non-catastrophic one).
     #  `risk` here is the MERGED tier (local classifier max the model's self-assessment,
     #  via merge_risk in the caller), so the model can escalate a missed command.
     if AUTO:
-        return bool(auto_confirmation_reason(cmd))
+        if auto_confirmation_reason(cmd):
+            return True
+        # The DANGER tier always asks, judged by the LOCAL classifier only (a model that
+        # labels an ordinary restart "high" must not stall an unattended run). Mutating and
+        # caution commands keep running hands-off. In --non-interactive it is refused
+        # unless an anchored --allow pattern matches (preapproved_pattern). A proven read
+        # that only mentions a danger keyword as data (`grep 'rpm -e' notes`) still runs.
+        return (bool(cmd) and classify(cmd)[0] == "danger"
+                and not _danger_only_in_read_data(cmd))
     if risk == "safe":
         return False
     return True
@@ -3976,6 +4520,43 @@ def _ssl_context():
     return ctx
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect: urllib would replay the Authorization header to the new host."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code,
+                                     "redirect refused (API key is never forwarded)", headers, fp)
+
+
+def _api_url_allowed(url):
+    parts = urllib.parse.urlsplit(url or "")
+    if parts.scheme == "https":
+        return True
+    if parts.scheme != "http":
+        return False
+    host = (parts.hostname or "").lower()
+    if host == "localhost":
+        return True
+    try:                                   # a loopback ADDRESS, not a name like 127.x.evil.com
+        if __import__("ipaddress").ip_address(host).is_loopback:
+            return True
+    except ValueError:
+        pass
+    return os.environ.get("ACT_ALLOW_HTTP", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def api_urlopen(req, timeout):
+    """urlopen for every provider request: https only (plain http only to loopback or with
+    ACT_ALLOW_HTTP=1) so the API key never crosses the network in clear, and no redirects."""
+    if not _api_url_allowed(req.full_url):
+        raise RuntimeError(
+            "refusing to send the API key to %s: use an https:// URL (plain http is allowed "
+            "only for localhost, or set ACT_ALLOW_HTTP=1 to accept the risk)"
+            % sanitize_terminal(req.full_url.split("?", 1)[0]))
+    urllib.request.install_opener(urllib.request.build_opener(
+        _NoRedirect, urllib.request.HTTPSHandler(context=_ssl_context())))
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
 def _read_limited(stream, limit, label):
     """Read at most limit bytes and reject oversized remote/local streams."""
     data = stream.read(limit + 1)
@@ -4293,7 +4874,7 @@ def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_too
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST", headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
+        with api_urlopen(req, timeout) as resp:
             raw = _read_limited(resp, MAX_API_RESPONSE_BYTES, "API response").decode(
                 "utf-8", "replace")
     except urllib.error.HTTPError as e:
@@ -4341,7 +4922,8 @@ def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_too
         raise RuntimeError(f"API error: {msg}")
     u = body.get("usage") if isinstance(body, dict) else None
     if isinstance(u, dict) and u.get("total_tokens"):
-        TOKENS_USED[PROVIDER] = TOKENS_USED.get(PROVIDER, 0) + int(u["total_tokens"])
+        with _TOKENS_LOCK:
+            TOKENS_USED[PROVIDER] = TOKENS_USED.get(PROVIDER, 0) + int(u["total_tokens"])
     if use_tools:
         tool_reply = _extract_tool_action(body)
         if tool_reply:
@@ -4727,7 +5309,7 @@ def _fetch_model_ids(murl, headers, timeout):
     """GET a /models list; [] on any failure (KeyboardInterrupt still propagates)."""
     req = urllib.request.Request(murl, method="GET", headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as r:
+        with api_urlopen(req, timeout) as r:
             body = json.loads(_read_limited(r, MAX_API_RESPONSE_BYTES,
                                            "model-list response").decode("utf-8", "replace"))
     except KeyboardInterrupt:
@@ -5226,7 +5808,8 @@ def run_command(cmd, timeout, cwd, echo=True, cancel=None):
         os.set_blocking(stream.fileno(), False)
         sel.register(stream, selectors.EVENT_READ, name)
     total = 0
-    timed_out = cancelled = truncated = False
+    timed_out = cancelled = truncated = runaway = False
+    dropped = 0                # bytes drained and discarded after the capture cap was reached
     deadline = started + timeout
 
     proc_exited_at = None      # when the shell exited with pipes still open (forked child)
@@ -5276,7 +5859,10 @@ def run_command(cmd, timeout, cwd, echo=True, cancel=None):
                     sys.stdout.flush()
             if len(chunk) > remaining:
                 truncated = True
-                _kill_process_group(proc)
+                dropped += len(chunk) - remaining
+                if dropped > RUNAWAY_OUTPUT_BYTES and not runaway:
+                    runaway = True
+                    _kill_process_group(proc)
         if proc.poll() is not None and not sel.get_map():
             break
 
@@ -5288,8 +5874,12 @@ def run_command(cmd, timeout, cwd, echo=True, cancel=None):
     stdout = bytes(buffers["stdout"]).decode("utf-8", "replace")
     stderr = bytes(buffers["stderr"]).decode("utf-8", "replace")
     marker = ""
-    if truncated:
-        marker = "\n[output exceeded {0} bytes — process killed]\n".format(MAX_OUTPUT_BYTES)
+    if runaway:
+        marker = ("\n[output exceeded {0} bytes and kept flowing past {1} bytes — process killed]\n"
+                  .format(MAX_OUTPUT_BYTES, MAX_OUTPUT_BYTES + RUNAWAY_OUTPUT_BYTES))
+    elif truncated:
+        marker = ("\n[output truncated: only the first {0} bytes are kept; the command was "
+                  "allowed to finish]\n".format(MAX_OUTPUT_BYTES))
     elif timed_out:
         marker = "\n[timed out after {0}s — process killed]\n".format(timeout)
     elif cancelled:
@@ -5559,7 +6149,7 @@ def _probe_post(url, headers, payload, timeout):
     try:
         req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
                                      method="POST", headers=headers)
-        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as r:
+        with api_urlopen(req, timeout) as r:
             status = getattr(r, "status", None) or 200
             raw = _read_limited(r, MAX_API_RESPONSE_BYTES, "API response").decode(
                 "utf-8", "replace")
@@ -5918,6 +6508,12 @@ def _extra_prompt():
     for p, trusted in candidates:
         try:
             with open(p, "rb") as f:
+                if trusted:
+                    fst = os.fstat(f.fileno())
+                    if (not stat.S_ISREG(fst.st_mode) or fst.st_uid not in (0, _euid())
+                            or fst.st_mode & 0o022):
+                        raise RuntimeError("trusted prompt files must be regular, owned by root "
+                                           "or you, and not writable by group/other")
                 raw = _read_limited(f, MAX_PROJECT_PROMPT_BYTES, "project/operator prompt")
                 t = raw.decode("utf-8", "strict").strip()
                 if t:
@@ -6094,7 +6690,9 @@ def _read_regular_nofollow(path):
 def _secure_backup(path, data, mode):
     fd, backup = tempfile.mkstemp(prefix="backup-", suffix=".bin", dir=_backup_root())
     try:
-        os.fchmod(fd, stat.S_IMODE(mode) & 0o777)
+        # Private: the journal records the original mode for undo, and `act --undo` refuses
+        # a backup that group/other can write (a 0664 original would otherwise be unrestorable).
+        os.fchmod(fd, 0o600)
         with os.fdopen(fd, "wb") as out:
             out.write(data)
             out.flush()
@@ -6173,11 +6771,17 @@ def apply_file_edit(step_d, cwd):
             out.flush()
             os.fsync(out.fileno())
         if st is not None:
-            os.chmod(tmp, stat.S_IMODE(st.st_mode))
-            try:
-                os.chown(tmp, st.st_uid, st.st_gid)
-            except (OSError, AttributeError):
-                pass
+            tst = os.stat(tmp)
+            if (tst.st_uid, tst.st_gid) != (st.st_uid, st.st_gid):
+                try:
+                    os.chown(tmp, st.st_uid, st.st_gid)
+                except OSError as e:
+                    return False, ("cannot preserve the owner/group of {0} ({1}); refusing to "
+                                   "replace it with a differently-owned file".format(path, e)), diff
+            os.chmod(tmp, stat.S_IMODE(st.st_mode))     # after chown, which clears setuid/setgid
+            _copy_xattrs(path, tmp)
+        else:
+            os.chmod(tmp, 0o666 & ~_current_umask())
         if exists:
             final_bytes, final_st = _read_regular_nofollow(path)
             if ((final_st.st_dev, final_st.st_ino) != (st.st_dev, st.st_ino)
@@ -6207,7 +6811,9 @@ def apply_file_edit(step_d, cwd):
     verb = "updated" if exists else "created"
     # Record the mutation for reversibility (#3): an overwrite keeps its verified backup;
     # a newly-created file is marked for deletion on undo.
-    record_mutation(path, backup, created=not exists)
+    record_mutation(path, backup, created=not exists,
+                    meta=({"mode": stat.S_IMODE(st.st_mode), "uid": st.st_uid, "gid": st.st_gid}
+                          if st is not None else None))
     note = "{0} {1} ({2} bytes)".format(verb, path, len(after_bytes))
     if backup:
         note += "; verified backup at " + backup
@@ -6549,7 +7155,10 @@ def run_turn(session, task, max_steps=100, timeout=120, loop_limit=4):
                 return 4
             ans = read_tty("\n? {0}\n> ".format(
                 sanitize_terminal(step_d["message"] or "Please clarify:")))
-            messages.append({"role": "user", "content": f"User answered: {ans}"})
+            safe_ans, ans_changed = model_safe_text(ans or "", "operator answer")
+            messages.append({"role": "user", "content": "User answered: " + safe_ans
+                             + ("\n(secret-looking text in the answer was withheld from the model)"
+                                if ans_changed else "")})
             continue
 
         if action == "jobs":
@@ -6971,30 +7580,15 @@ def run_turn(session, task, max_steps=100, timeout=120, loop_limit=4):
             verb = "edit" if action == "edit" else "write"
             print(blue("\n⏺ ") + bold(verb.capitalize()) + grey("(")
                   + sanitize_terminal(resolved_path or epath_abs or "(no path)") + grey(")"))
-            # 0.6.5: pass a real command string.
-            #
-            # This used to be `needs_confirm(erisk)` with NO command. Under AUTO,
-            # needs_confirm ignores the tier and returns
-            # bool(auto_confirmation_reason("")) -> False, so the catastrophic matcher
-            # never even saw the payload: a structured write to /etc/sudoers or
-            # /root/.ssh/authorized_keys applied with no prompt at all. For structured
-            # writes the auto gate was not narrowed, it was ABSENT — `run` has always
-            # had its payload matched, `edit`/`write` never did.
-            #
-            # Passing the command restores parity with `run`: in auto, only a
-            # CATASTROPHIC payload prompts. This deliberately does NOT add a
-            # danger-tier prompt (owner constraint 2026-07-25: keep approvals minimal
-            # and do not broaden them) — an ordinary system-path write stays hands-off
-            # in auto exactly as it is today. The change is that the matcher now has
-            # something to match on.
             _ewrite_cmd = "%s %s" % (verb, resolved_path or epath_abs or "")
-            if needs_confirm(erisk, _ewrite_cmd) and not (AUTO and erisk == "mutating"):
+            _ask, _sens = edit_needs_approval(erisk, verb, resolved_path or epath_abs)
+            if _ask:
                 if NONINTERACTIVE:
                     policy_denied.append(_ewrite_cmd)
                     declined.add(_edit_sig)
                     unproductive += 1
                     emit_event("policy_denied", target="file", command=_ewrite_cmd, risk=erisk,
-                               reason=path_error or step_d.get("reason") or "file change",
+                               reason=path_error or _sens or step_d.get("reason") or "file change",
                                step_id=plan_step["id"], thought=(step_d["thought"] or "")[:500],
                                step=step, pre_approvable=False)
                     print(red("  ✗ policy denied: needs approval in non-interactive mode; not "
@@ -7017,7 +7611,8 @@ def run_turn(session, task, max_steps=100, timeout=120, loop_limit=4):
                 except (OSError, ValueError, UnicodeError):
                     pass
                 decision, _ = review_command("{0} {1}".format(verb, resolved_path or epath_abs), erisk,
-                                             [path_error or step_d.get("reason") or "file change"])
+                                             [r for r in (path_error, _sens,
+                                                          step_d.get("reason") or "file change") if r][:2])
                 if decision == "skip":
                     declined.add(_edit_sig)
                     messages.append({"role": "user", "content": "User declined the file change. Propose an "
@@ -7478,7 +8073,9 @@ def print_banner(stream=None, force=False):
     stream.write("\n")
     for row in art:
         stream.write(blue(row) + "\n")
-    stream.write(grey("U.S. AFRICOM  -  Ask GenAI  -  act v" + ACT_VERSION) + "\n\n")
+    # ACT_BANNER_ORG (optional) puts your organization in front of the banner line.
+    org = sanitize_terminal(os.environ.get("ACT_BANNER_ORG", "")).strip()[:60]
+    stream.write(grey((org + "  -  " if org else "") + "Ask GenAI  -  act v" + ACT_VERSION) + "\n\n")
     stream.flush()
 
 
@@ -7493,7 +8090,7 @@ REPL_HELP_SECTIONS = (
     )),
     ("MODEL AND DISPLAY", (
         (":setup", "prompt for and save the active provider's API key, URL, and model"),
-        (":auto [on|off]", "toggle hands-off mode; only catastrophic destructive actions ask"),
+        (":auto [on|off]", "toggle hands-off mode; the danger tier and sensitive-file edits still ask"),
         (":model", "pick the provider and model"),
         (":provider [n]", "show or switch providers"),
         (":models", "fetch the active provider's live model list"),
@@ -7702,11 +8299,14 @@ def _main():
     p.add_argument("--no-autoheal", action="store_true",
                    help="disable automatic read-only diagnostics after a failed command")
     p.add_argument("-y", "--auto", action="store_true",
-                   help="permissive hands-off mode: run every command WITHOUT prompting "
-                        "EXCEPT the danger tier (recursive/cloud/cluster/DB destruction, disk "
-                        "ops, credential/firewall changes, power state, code-exec vectors), "
-                        "which always asks (and is denied in --non-interactive). File deletes, "
-                        "writes, and service/package/config changes run hands-off.")
+                   help="hands-off mode: run caution and mutating commands WITHOUT prompting. "
+                        "The DANGER tier (forced/recursive deletes, package removal, disk ops, "
+                        "credential/sudo/ssh-key/firewall/SELinux changes, power state, "
+                        "code-exec vectors such as `python -c` or `curl | sh`) and edits of "
+                        "authentication/boot/system-binary files always ask; with "
+                        "--non-interactive they are refused unless an anchored --allow "
+                        "pattern matches (catastrophic payloads never are). Service, "
+                        "config and ordinary file changes run hands-off.")
     p.add_argument("--non-interactive", action="store_true",
                    help="never prompt; deny actions requiring approval and return a nonzero status")
     p.add_argument("--insecure", action="store_true",
@@ -7727,8 +8327,9 @@ def _main():
     p.add_argument("--allow", action="append", metavar="REGEX", default=[],
                    help="pre-approve `run` commands whose WHOLE text matches REGEX (repeatable; "
                         "also $ACT_ALLOW, one per line). Only plain single commands qualify - no "
-                        "chaining, pipes, redirection, substitution, globs, or quotes - and never "
-                        "the danger tier or catastrophic payloads. Edits/writes are never covered. "
+                        "chaining, pipes, redirection, substitution, globs, or quotes - never "
+                        "the danger tier and never a catastrophic payload (recursive delete, disk "
+                        "destruction, power state). Edits/writes are never covered. "
                         "With --non-interactive this is an allowlist-only fix mode")
     p.add_argument("--result-file", metavar="PATH",
                    help="write a structured JSON summary of a one-shot run (status, summary, "
@@ -7848,11 +8449,13 @@ def _main():
             len(PREAPPROVED), ", ".join(sanitize_terminal(src) for src, _rx in PREAPPROVED))),
             file=sys.stderr)
     if AUTO:
-        print(yellow("⚠ AUTO mode: commands run WITHOUT asking — file deletes, writes, and "
-                     "service/package/config changes included."), file=sys.stderr)
-        print(grey("  Only catastrophic destructive actions (bulk deletion, disk/data/infra "
-                   "destruction, account deletion, or power state) still prompt"
-                   + ("; in non-interactive mode they are denied." if NONINTERACTIVE else ".")),
+        print(yellow("⚠ AUTO mode: service, package-install, config and ordinary file changes "
+                     "run WITHOUT asking."), file=sys.stderr)
+        print(grey("  The danger tier (forced deletes, package removal, credentials/sudo/ssh "
+                   "keys, disks, firewall, power state, code-exec vectors) and edits of "
+                   "auth/boot/system-binary files still prompt"
+                   + ("; in non-interactive mode they are refused unless an --allow pattern "
+                      "matches." if NONINTERACTIVE else ".")),
               file=sys.stderr)
     if args.project_context:
         LOAD_PROJECT_CONTEXT = True
@@ -7896,7 +8499,23 @@ def _main():
     # Piped input (e.g. `cat file | act "analyze this"`) → one-shot analysis of that
     # content, not the command loop. Matches the muscle memory of piping into `ask`.
     piped = ""
-    if not sys.stdin.isatty():
+    if not sys.stdin.isatty() and args.task and not args.allow_piped_upload:
+        import select
+        # A task was given and uploading stdin is not allowed, so stdin is only inspected to
+        # refuse stray input. An open, never-closed pipe (CI runners, subprocess stdin=PIPE)
+        # must not hang the run: wait briefly for data and carry on if there is none.
+        try:
+            ready, _, _ = select.select([sys.stdin], [], [], 1.0)
+            if ready:
+                first = os.read(sys.stdin.fileno(), 65536)
+                if first.strip():
+                    _RESULT_TASK = " ".join(args.task)
+                    print(red("refusing to upload piped input without --allow-piped-upload"),
+                          file=sys.stderr)
+                    return 2
+        except (OSError, ValueError):
+            pass
+    elif not sys.stdin.isatty():
         try:
             raw_piped = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
             if len(raw_piped) > MAX_INPUT_BYTES:
@@ -8108,8 +8727,8 @@ def _main():
             arg = task[6:] if task.startswith(":auto ") else ("on" if task == ":y" else "")
             _toggle_auto(arg)
             if AUTO:
-                print(yellow("  auto-approve: ON") + grey(" — only catastrophic destructive "
-                      "actions prompt (denied in non-interactive mode)"))
+                print(yellow("  auto-approve: ON") + grey(" — the danger tier and sensitive-file "
+                      "edits still prompt (refused in non-interactive mode)"))
             else:
                 print(grey("  auto-approve: off — anything not a proven read-only command asks first"))
             continue

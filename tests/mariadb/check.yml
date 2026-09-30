@@ -1,0 +1,32 @@
+---
+# Test harness: run ONLY the check_mariadb role against the local machine (fake podman on PATH)
+# and print the findings. Not a shipped playbook.
+- name: Check_mariadb with a fake podman
+  hosts: all
+  connection: local
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Start
+      ansible.builtin.include_role: {name: site_findings, tasks_from: start.yml}
+    - name: Run the check
+      ansible.builtin.include_role: {name: check_mariadb}
+    - name: Findings
+      ansible.builtin.debug:
+        msg: "FINDINGS {{ site_findings | map(attribute='id') | sort | join(',') }}"
+    - name: Summaries
+      ansible.builtin.debug:
+        msg: "SUMMARY {{ item.id }} | {{ item.severity }} | {{ item.summary }}"
+      loop: "{{ site_findings }}"
+      loop_control: {label: "{{ item.id }}"}
+    - name: Hints
+      ansible.builtin.debug:
+        msg: "HINT {{ item.id }} | {{ item.hint | default('') }}"
+      loop: "{{ site_findings }}"
+      loop_control: {label: "{{ item.id }}"}
+    # What the check leaves behind (registered results, facts): the test greps it for the password.
+    - name: Leftovers
+      ansible.builtin.debug:
+        msg: "LEFTOVERS {{ {'probe': _mdb_probe | default({}), 'q': _mdb_q | default({}), 'repl': _mdb_repl | default({}),
+                            'grp': _mdb_grp | default({}), 'log': _mdb_log | default({}), 'cmd': _mdb_cmd | default([]),
+                            'p': _mdb_p | default({}), 'env': _mdb_podman_env | default({})} | to_json }}"

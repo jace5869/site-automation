@@ -29,8 +29,31 @@ jobs:
           for pb in playbooks/*.yml; do
             ANSIBLE_ROLES_PATH=roles:vendor/act/ansible/roles /tmp/ac216/bin/ansible-playbook --syntax-check "$pb"
           done
+      - name: Lint (yamllint + ansible-lint, production profile)
+        run: |
+          pip install yamllint ansible-lint
+          yamllint .
+          ANSIBLE_ROLES_PATH=roles ansible-lint
       - name: Filter plugins (unit tests)
         run: python tests/test_filters.py
+      - name: docs/VARIABLES_REFERENCE.md is generated from the roles and is up to date
+        run: python tests/test_variable_reference.py
+      - name: AAP hosts are protected everywhere; vendored ACT is what its VERSION and checksums say
+        run: |
+          python tests/test_protection.py
+          bash tests/check_vendor.sh
+      - name: Findings, the apply-time guard (current ansible-core and 2.16)
+        run: |
+          bash tests/findings/run_findings_test.sh
+          PATH=/tmp/ac216/bin:$PATH bash tests/findings/run_findings_test.sh
+      - name: MariaDB check, host and podman containers (fake podman; current ansible-core and 2.16)
+        run: |
+          bash tests/mariadb/run_mariadb_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/mariadb/run_mariadb_test.sh
+      - name: Every Linux check runs on this runner (no check-error)
+        run: bash tests/linux/run_linux_checks.sh
+      - name: update-from-release.sh (bash twin of the PowerShell update test)
+        run: bash tests/test_update_from_release.sh
       - name: ServiceNow test ticket against a fake ServiceNow (current ansible-core and 2.16)
         run: |
           bash tests/servicenow/run_servicenow_test.sh

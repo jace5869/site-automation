@@ -23,7 +23,10 @@
   vars:
     _approved: "{{ ((act_triage | default({})).get(inventory_hostname) or {}).get('proposed_commands', []) }}"
     _checks_before: "{{ ((site_health | default({})).get(inventory_hostname) or {}).get('checks', []) }}"
-    _no_apply: "{{ site_act_diagnose_only_groups | default(['aap_hosts', 'netapp_console_hosts']) }}"
+    # AAP (aap, aap_hosts) is always diagnose-only, whatever the settings say (same list as roles/site_act/vars/main.yml).
+    # This play does not load roles/site_act/defaults: the fallback IS that default (tests/test_protection.py checks it).
+    _no_apply: "{{ ((site_act_diagnose_only_groups | default(['aap', 'aap_hosts', 'sat', 'idm', 'netapp', 'netapp_console_hosts'])) + ['aap', 'aap_hosts']) | unique }}"
+    _apply_log: /var/log/site-automation-fix.log
   pre_tasks:
     - name: Linux hosts only (Windows servers have their own templates, playbooks/win_*.yml)
       ansible.builtin.include_role:
@@ -48,13 +51,21 @@
     - name: Diagnose-only hosts get the fix by hand, not from this job
       ansible.builtin.debug:
         msg: >-
-          {{ inventory_hostname }} is in {{ group_names | intersect(_no_apply) | join(', ') }} (diagnose only).
+          {{ inventory_hostname }} is in {{ group_names | intersect(_no_apply + ['aap', 'aap_hosts']) | join(', ') }} (diagnose only).
           Apply by hand if you agree: {{ _approved | join(' ; ') }}
-      when: group_names | intersect(_no_apply) | length > 0
+      when: group_names | intersect(_no_apply + ['aap', 'aap_hosts']) | length > 0
 
+    # ['aap', 'aap_hosts'] written out on purpose: an extra variable can override _no_apply, not a literal.
     - name: Skip diagnose-only hosts
       ansible.builtin.meta: end_host
-      when: group_names | intersect(_no_apply) | length > 0
+      when: group_names | intersect(_no_apply + ['aap', 'aap_hosts']) | length > 0
+
+    - name: Refuse approved commands that could destroy the host or restart it (apply-time guard)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: apply_guard.yml
+      vars:
+        _guard_cmds: "{{ _approved }}"
 
     - name: DRY RUN (Check mode) - what would run, nothing is changed
       ansible.builtin.debug:
@@ -79,6 +90,22 @@
           {% endfor %}
         executable: /bin/bash
       register: _fix_ran
+      changed_when: true          # approved commands were run; the re-check below says whether it worked
+      failed_when: false
+
+    # A record on the host itself (who approved is in the AAP job; this says what ran and when).
+    - name: Record what ran on the host ({{ _apply_log }})
+      ansible.builtin.lineinfile:
+        path: "{{ _apply_log }}"
+        line: >-
+          {{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ') }} aap-job={{ tower_job_id | default('?') }}
+          user={{ tower_user_name | default('?') }} rc={{ _fix_ran.rc | default('?') }}
+          commands={{ _approved | to_json }}
+        create: true
+        insertafter: EOF
+        mode: '0640'
+        owner: root
+        group: root
       failed_when: false
 
     - name: Output of the approved fix (exit code {{ _fix_ran.rc | default('-') }})

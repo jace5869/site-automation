@@ -4,7 +4,7 @@
 # you also get plain-words findings. Pick the area; for "service" and "network" say what.
 #
 #   ts_area:    overview | disk | performance | service | network | selinux | fapolicyd |
-#               login | time | logs | mariadb
+#               login | time | logs | mariadb | mysql (mysql = mariadb: the database check, either engine)
 #   ts_service: the systemd unit for area=service (e.g. nginx, mariadb, stigman-api)
 #   ts_target:  host:port for area=network (e.g. ldap.example.mil:636)
 #   ts_since:   how far back to read logs (journalctl --since), e.g. -2h, -1d, "2026-09-26 08:00"
@@ -113,5 +113,8 @@ ts_areas:
       - {why: "rsyslog status and its forwarding queue", cmd: "systemctl status rsyslog --no-pager | head -15; ls -la /var/lib/rsyslog 2>/dev/null | tail -10"}
       - {why: "Journal size and storage", cmd: "journalctl --disk-usage; grep -E '^[^#]*Storage' /etc/systemd/journald.conf"}
   mariadb:
+    checks: [mariadb]
+    commands: []
+  mysql:
     checks: [mariadb]
     commands: []

@@ -10,27 +10,35 @@
 # The files in this folder are YOURS: the update script adds them the first time and never
 # changes them again. File name = AAP group name (mariadb.yml -> the hosts in group "mariadb").
 # What each setting does: roles/<role>/defaults/main.yml. Keep each setting in ONE place - here,
-# or in AAP's Variables boxes (docs/USING_YOUR_AAP_INVENTORY.md) - not both.
+# or in AAP's Variables boxes (docs/USING_YOUR_AAP_INVENTORY.md) - not both: a value in this file
+# silently WINS over the same setting in the AAP inventory's Variables box (the jobs print a notice).
 
 # ---- Safety: hosts automation must be careful with (your AAP group names) ------------------
-# ACT may only diagnose these; it never fixes anything on them by itself.
-site_act_diagnose_only_groups: [aap, sat, idm, netapp, aap_hosts, netapp_console_hosts]
-# Patching skips these completely (Satellite is upgraded with satellite-maintain, not dnf).
-patch_never_patch_groups: [aap, sat, netapp, no_patch]
-# Patching never reboots these.
-patch_never_reboot_groups: [aap, sat, netapp, aap_hosts]
+# ALREADY ON, no need to copy them here: the built-in lists in roles/patch/defaults/main.yml and
+# roles/site_act/defaults/main.yml cover aap, aap_hosts, sat, idm, netapp and netapp_console_hosts.
+# AAP itself (aap, aap_hosts) can NOT be removed from the protection. Un-comment a line only to
+# use YOUR OWN group names (the list you write REPLACES the built-in one, so repeat the names you keep):
+# site_act_diagnose_only_groups: [aap, aap_hosts, sat, idm, netapp, netapp_console_hosts, my_group]
+# patch_never_patch_groups: [no_patch, aap, aap_hosts, sat, netapp, netapp_console_hosts, my_group]
+# patch_never_reboot_groups: [aap, aap_hosts, sat, netapp, netapp_console_hosts, my_group]
+# Linux and Windows patching both honour the two patch lists.
 
 # ---- Patching (Linux and Windows): NO automatic restarts unless this is true --------------------
 # automatic_restarts: false
 
 # ---- ACT: which provider, and the model for each ----------------------------------------------
-site_act_provider: genai                 # the default provider: genai | asksage | genai-beta
-site_act_models:                         # the model follows whichever provider is picked
-  genai: gemini-3.8-flash
-  asksage: gpt-5.6-sol-gov
+# Defaults (roles/site_act/defaults/main.yml): provider genai; models genai gemini-3.8-flash,
+# asksage gpt-5.6-sol-gov. Un-comment only to change them.
+# site_act_provider: genai               # genai | asksage | genai-beta
+# site_act_models:                       # the model follows whichever provider is picked
+#   genai: gemini-3.8-flash
+#   asksage: gpt-5.6-sol-gov
 # Ask Sage URL (empty = ACT's default, https://api.genai.army.mil/server/openai/v1/chat/completions):
 # site_act_urls:
 #   asksage: https://CHANGE-ME/server/openai/v1/chat/completions
+# Self-heal only (site_act_level: self-heal): the fixes ACT may run by itself, each a regular
+# expression that must match the WHOLE command (default: none - every fix waits for approval):
+# site_act_allow: ['systemctl restart (chronyd|rsyslog|crond)']
 
 # ---- What every host must be able to reach ------------------------------------------------
 # check_network_tcp:

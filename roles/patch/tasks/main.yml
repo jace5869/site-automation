@@ -3,9 +3,21 @@
 # allowed -> the same services must be running again. Check mode (a dry run) shows what would
 # be updated and changes nothing.
 
-- name: Patch | skip hosts in the never-patch groups (patch_never_patch_groups)
+- name: Patch | which groups are protected (yours, plus AAP - built in)
+  ansible.builtin.set_fact:
+    _patch_no_patch: "{{ (patch_never_patch_groups + _site_always_protected) | unique }}"
+    _patch_no_reboot: "{{ (patch_never_reboot_groups + _site_always_protected) | unique }}"
+
+# ['aap', 'aap_hosts'] is written out below as well, on purpose: an extra variable (-e) can override
+# any variable, even these internal lists, but not a literal - no setting and no list name can remove AAP.
+- name: Patch | say why a protected host is skipped
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }} is in {{ group_names | intersect(_patch_no_patch + ['aap', 'aap_hosts']) | join(', ') }}: never patched by automation. Patch it by hand in a maintenance window."
+  when: group_names | intersect(_patch_no_patch + ['aap', 'aap_hosts']) | length > 0
+
+- name: Patch | skip hosts in the never-patch groups (patch_never_patch_groups, and AAP always)
   ansible.builtin.meta: end_host
-  when: group_names | intersect(patch_never_patch_groups) | length > 0
+  when: group_names | intersect(_patch_no_patch + ['aap', 'aap_hosts']) | length > 0
 
 - name: Patch | never patch the machine AAP is running this job from
   ansible.builtin.assert:
@@ -66,13 +78,13 @@
     _patch_reboot_needed: "{{ _patch_needs.rc | default(0) == 1 or patch_reboot == 'always' }}"
     _patch_reboot_allowed: >-
       {{ automatic_restarts | bool and patch_reboot != 'never'
-         and group_names | intersect(patch_never_reboot_groups) | length == 0 }}
+         and group_names | intersect(_patch_no_reboot) | length == 0 }}
 
 - name: Patch | reboot
   ansible.builtin.reboot:
     msg: "Rebooting after updates (Ansible Automation Platform job {{ awx_job_id | default('-') }})"
     reboot_timeout: "{{ patch_reboot_timeout | int }}"
-  when: _patch_reboot_needed | bool and _patch_reboot_allowed | bool
+  when: _patch_reboot_needed | bool and _patch_reboot_allowed | bool and group_names | intersect(['aap', 'aap_hosts']) | length == 0
 
 - name: Patch | a reboot is needed but not allowed here
   ansible.builtin.debug:
@@ -80,7 +92,7 @@
       {{ inventory_hostname }} needs a reboot to finish the updates, but this playbook does not reboot it
       ({{ 'automatic restarts are off: automatic_restarts is false' if not automatic_restarts | bool
           else 'patch_reboot=never' if patch_reboot == 'never'
-          else 'it is in ' ~ (group_names | intersect(patch_never_reboot_groups) | join(', ')) }}).
+          else 'it is in ' ~ (group_names | intersect(_patch_no_reboot) | join(', ')) }}).
       Reboot it by hand in a maintenance window{{ ', or run again with automatic_restarts: true' if not automatic_restarts | bool else '' }}.
   when: _patch_reboot_needed | bool and not (_patch_reboot_allowed | bool)
 

@@ -1,5 +1,5 @@
-# AAP itself. Checked like every host. ACT never fixes anything here (site_act_diagnose_only_groups);
-# patch_hosts.yml skips it (it is in no_patch) and would never reboot it (patch_never_reboot_groups).
+# AAP itself. Checked like every host. Built in, whatever any setting says: ACT never fixes anything
+# here, and patch_hosts.yml never patches or reboots it (roles/patch/vars, roles/site_act/vars).
 check_disk_overrides:
   /var: {warn: 80, crit: 90}                    # AAP's job output and container images live here
 check_certs_endpoints:

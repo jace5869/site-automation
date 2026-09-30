@@ -6,7 +6,8 @@
 # says what it shows, and runs the matching health checks for plain-words findings.
 #
 #   ts_area     overview | disk | performance | service | network | selinux | fapolicyd |
-#               login | time | logs | mariadb
+#               login | time | logs | mariadb | mysql   (mariadb and mysql are the same:
+#               the database check, MariaDB or MySQL, on the host or in podman containers)
 #   ts_service  area=service: the unit, e.g. nginx or stigman-api
 #   ts_target   area=network: host:port this host cannot reach, e.g. ldap.example.mil:636
 #   ts_since    how far back to read logs, e.g. -2h (default), -1d, "2026-09-26 08:00"

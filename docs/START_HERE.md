@@ -14,7 +14,8 @@ click at a time.
 
 | Runbook | What it answers | When it runs |
 |---|---|---|
-| **Health check** | Is anything wrong on these servers right now? Disk, mounts, services, load/memory, time, network, logging, SELinux, fapolicyd, auditd, accounts, certificates, patching, MariaDB | Daily (the "daily" set) and weekly (the "weekly" set) |
+| **Health check** | Is anything wrong on these servers right now? Disk, mounts, services, load/memory, time, network, logging, SELinux, fapolicyd, auditd, accounts, certificates, patching, MariaDB / MySQL | Daily (the "daily" set) and weekly (the "weekly" set) |
+| **Database health** | Are the MariaDB / MySQL databases (on the host or in podman containers) running, with connection room, no stuck replication, and disk space? | Hourly or daily, on its own |
 | **Troubleshoot** | Someone reports a problem on a host. What does it look like? | On demand |
 | **Certificate report** | Which certificates expire soon, on every server, in one list? | Weekly |
 | **POA&M status** | Which POA&M items are overdue or due soon? Which open CAT I/II findings have no POA&M item? | Weekly |
@@ -55,7 +56,7 @@ next:
 | AAP object | What it is | Here |
 |---|---|---|
 | **Project** | A copy of a Git repository that AAP keeps in sync | `site-automation` (this repository) |
-| **Inventory** | The hosts and groups, and their settings | `Linux servers`, filled from `inventories/site/` in this repository |
+| **Inventory** | The hosts and groups, and their settings | `Linux servers`, filled from `inventories/site/` in this repository, or the inventory you already have in AAP ([USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md)) |
 | **Credential type** | A form for a kind of secret, and how to hand it to the job | `ServiceNow API`, `MariaDB monitor`, `ACT model key`... (`aap/credential_types/`) |
 | **Credential** | One filled-in form: the actual secret. Nobody can read it back | `Linux ssh (sudo)`, `ServiceNow API`... |
 | **Execution environment** | The container a job runs in (Ansible, Python, tools) | The **Minimal** execution environment is enough. This repository needs no extra collections |
@@ -113,7 +114,7 @@ The report, the ServiceNow tickets and ACT only ever read findings. That is why:
 | Path | What |
 |---|---|
 | `playbooks/` | the files AAP runs (one per job template) |
-| `playbooks/group_vars/` | **your settings**, one file per AAP group: edit these ([USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md)) |
+| `playbooks/group_vars/` | **your settings**, one file per AAP group: edit these ([VARIABLES.md](VARIABLES.md), [USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md)) |
 | `roles/check_*/` | one folder per check. Its settings are in `defaults/main.yml` |
 | `roles/site_findings/` | starts, reports and publishes findings, and decides pass/fail |
 | `roles/servicenow/`, `roles/troubleshoot/`, `roles/patch/`, `roles/poam/` | the other runbooks |
@@ -121,15 +122,15 @@ The report, the ServiceNow tickets and ACT only ever read findings. That is why:
 | `inventories/example/` | a sample inventory and settings. Copy it to `inventories/site/` |
 | `aap/credential_types/` | the credential types to create in AAP |
 | `poam/poam.csv` | your POA&M list (for the POA&M runbook) |
-| `docs/` | this guide, [SETUP_AAP.md](SETUP_AAP.md), [USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md), [RUNBOOKS.md](RUNBOOKS.md), [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md), [ADDING_ACT.md](ADDING_ACT.md); PDFs in `docs/pdf/` |
+| `docs/` | this guide, [SETUP_AAP.md](SETUP_AAP.md), [USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md), [VARIABLES.md](VARIABLES.md), [RUNBOOKS.md](RUNBOOKS.md), [MARIADB.md](MARIADB.md), [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md), [ADDING_ACT.md](ADDING_ACT.md), [APPROVED_COMMANDS.md](APPROVED_COMMANDS.md); PDFs in `docs/pdf/` |
 
 ## The order to do things in
 
 1. **Set up and run one health check by hand** ([SETUP_AAP.md](SETUP_AAP.md), steps 1 to 8).
    Your inventory is already in AAP? Use [USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md)
    for the inventory part.
-   Read its output. Adjust thresholds in the inventory until the findings are the ones you care
-   about.
+   Read its output. Adjust thresholds in your settings files ([VARIABLES.md](VARIABLES.md)) until
+   the findings are the ones you care about.
 2. **Add the other job templates** (step 9) and try each once.
 3. **Add ServiceNow** (step 10), and build the *Daily health* workflow
    ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)).
