@@ -16,11 +16,14 @@ automatic_restarts: false
 patch_reboot: when_needed
 patch_reboot_timeout: 1800               # seconds to wait for the host to come back
 # Hosts in these groups are patched but NEVER rebooted by this playbook (reboot them by hand,
-# in a maintenance window). AAP itself belongs here: a job must not reboot the AAP host it runs on.
-patch_never_reboot_groups: [aap_hosts]
-# Hosts in these groups are skipped entirely.
-patch_never_patch_groups: [no_patch]
-
+# in a maintenance window). Add your own group names; the built-in protection below is on always.
+patch_never_reboot_groups: [aap, aap_hosts, sat, netapp, netapp_console_hosts]
+# Hosts in these groups are skipped entirely (Satellite is upgraded with satellite-maintain, not dnf).
+patch_never_patch_groups: [no_patch, aap, aap_hosts, sat, netapp, netapp_console_hosts]
+# BUILT IN, whatever you set above (roles/patch/vars/main.yml): the AAP hosts (groups aap and
+# aap_hosts) are never patched and never rebooted by a job, and neither is the machine the job
+# runs from (a local connection). A package script can restart services under the running job.
+# Set the two lists above only to ADD groups; you cannot remove AAP from the protection.
 patch_min_free_mb: 1024                  # free space needed in /var before starting
 patch_service_wait: 120                  # seconds to wait for services to come back after a reboot
 # Services that come and go on their own and are not compared before/after (regular expression)

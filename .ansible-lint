@@ -18,3 +18,5 @@ skip_list:
   # from the output. pipefail would only turn a harmless SIGPIPE in `cmd | grep -q` into a
   # wrong answer.
   - risky-shell-pipe
+  # Long lines are yamllint's job (.yamllint: 220, a warning); the Jinja that builds findings is long.
+  - yaml[line-length]

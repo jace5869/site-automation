@@ -33,5 +33,10 @@
       ansible.builtin.include_role:
         name: site_findings
         tasks_from: os_guard.yml
+
+    - name: Notice about settings files that override AAP's Variables box
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: settings_notice.yml
   roles:
     - role: win_patch

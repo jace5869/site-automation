@@ -14,6 +14,11 @@ takes you from nothing to a **verified test ticket**, one step at a time:
 8. a dry run, then a real run;
 9. checking the ticket in ServiceNow.
 
+**Sign-in method.** This integration uses **basic authentication only** (an account name and
+password over HTTPS). OAuth, CAC/PKI login and SSO are **not supported**. If your instance
+requires one of them for the API, ask the ServiceNow admins for an integration account that is
+allowed to use basic authentication for the Table API, and exempt from SSO.
+
 Plan about 30 minutes, plus the time the ServiceNow admins need for step 1.
 
 ## What you need
@@ -108,7 +113,7 @@ execution environment trusts the DoD root CA. Choose one:
 | Option | How | When |
 |---|---|---|
 | **A. The CA in the execution environment** | have the AAP admins build the execution environment with the DoD root CAs in its trust store | best: every job trusts it |
-| **B. A CA file in the repository** | put the CA certificate (PEM) in the project, e.g. `playbooks/files/ca/servicenow-ca.pem`, and set `servicenow_ca_path: "{{ playbook_dir }}/files/ca/servicenow-ca.pem"` (step 6) | when you cannot change the execution environment. CA certificates are public, so this is fine |
+| **B. A CA file in the repository** | put the CA certificate (PEM) in the project, for example (an example path: the folder does not exist until you create it) `playbooks/files/ca/servicenow-ca.pem`, and set `servicenow_ca_path: "{{ playbook_dir }}/files/ca/servicenow-ca.pem"` (step 6) | when you cannot change the execution environment. CA certificates are public, so this is fine |
 | C. Switch the check off | `servicenow_validate_certs: false` | only for one test, never for real use |
 
 ## Step 4. Check from a shell first (optional, fastest)
@@ -150,8 +155,10 @@ and never reach your managed hosts.
 
 ## Step 6. Your settings
 
-In VS Code, open `playbooks/group_vars/all.yml` (or `inventories/site/group_vars/all.yml` if your
-inventory comes from Git; see [USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md)). In the
+In VS Code, open `playbooks/group_vars/all.yml`. (If your inventory comes from Git, the same
+lines in `inventories/site/group_vars/all.yml` end up in AAP's inventory Variables box, and the
+project's file wins over them: keep each setting in **one** place. See
+[VARIABLES.md](VARIABLES.md#3-who-wins-when-the-same-setting-is-in-two-places).) In the
 ServiceNow block, delete the `# ` in front of the lines and fill in your values:
 
 ```yaml

@@ -1,0 +1,6 @@
+---
+# Not settings: the built-in protection (role vars beat group_vars and inventory variables).
+# The AAP hosts are never patched and never rebooted by a job. Same names as the example
+# inventory (aap_hosts) and the settings files (aap). Keep in step with
+# roles/site_act/vars/main.yml and playbooks/act_fix_approved.yml.
+_site_always_protected: [aap, aap_hosts]

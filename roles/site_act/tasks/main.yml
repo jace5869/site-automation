@@ -12,10 +12,10 @@
 # The level actually used on THIS host. A separate variable on purpose: site_act_level usually
 # arrives as a survey answer (an extra variable), and nothing - not even set_fact - can change an
 # extra variable. Diagnose-only hosts never self-heal, whatever was asked.
-- name: ACT | the level for this host (never self-heal on {{ site_act_diagnose_only_groups | join(', ') }})
+- name: ACT | the level for this host (never self-heal on {{ (site_act_diagnose_only_groups + _site_always_diagnose_only) | unique | join(', ') }})
   ansible.builtin.set_fact:
     _site_act_level: >-
-      {{ 'diagnose' if (site_act_level == 'self-heal' and group_names | intersect(site_act_diagnose_only_groups) | length > 0)
+      {{ 'diagnose' if (site_act_level == 'self-heal' and group_names | intersect(site_act_diagnose_only_groups + _site_always_diagnose_only) | length > 0)
          else site_act_level }}
 
 - name: ACT | provider, model and key
@@ -76,7 +76,7 @@
 
 - name: ACT | what ACT says
   ansible.builtin.debug:
-    msg: "{{ ['ACT ' ~ site_act_result.status ~ ' (' ~ _site_act_level ~ ', ' ~ site_act_provider ~ ')'] + site_act_result.summary.splitlines()
+    msg: "{{ ['ACT ' ~ site_act_result.status ~ ' (' ~ _site_act_level ~ ', ' ~ site_act_provider ~ ')'] + (site_act_result.summary | string).splitlines()
              + (['APPLIED (pre-approved): ' ~ (site_act_result.applied | join(' ; '))] if site_act_result.applied else [])
              + (['PROPOSED (waits for approval): ' ~ (site_act_result.proposed | join(' ; '))] if site_act_result.proposed else []) }}"
 

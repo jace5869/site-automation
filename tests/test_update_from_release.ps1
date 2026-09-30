@@ -30,9 +30,14 @@ Set-Content -LiteralPath (Join-Path $work 'docs/OLD_NOTES.md') -Value 'removed i
 Set-Content -LiteralPath (Join-Path $work 'poam/poam.csv') -Value "POAM ID,Status`nREAL-1,Ongoing"
 New-Item -ItemType Directory -Path (Join-Path $work 'roles/check_tmp/tasks') -Force | Out-Null
 Set-Content -LiteralPath (Join-Path $work 'roles/check_tmp/tasks/main.yml') -Value '- debug: msg=mine'
-Set-Content -LiteralPath (Join-Path $work '.site-local') -Value 'roles/check_tmp/   # our own check'
+New-Item -ItemType Directory -Path (Join-Path $work 'roles/check_tmp2/tasks') -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $work 'roles/check_tmp2/tasks/main.yml') -Value '- debug: msg=mine too'
+Set-Content -LiteralPath (Join-Path $work '.site-local') -Value @('roles/check_tmp/   # our own check', "roles/check_tmp2   # a folder written without the slash")
 # settings files: one the site edited, one it does not have yet
 Add-Content -LiteralPath (Join-Path $work 'playbooks/group_vars/all.yml') -Value 'site_test_marker: MY-SETTING'
+# this copy's all.yml predates a setting the release documents (servicenow_min_severity)
+$allPath = Join-Path $work 'playbooks/group_vars/all.yml'
+Set-Content -LiteralPath $allPath -Value (Get-Content -LiteralPath $allPath | Where-Object { $_ -notmatch 'servicenow_min_severity' })
 Remove-Item -LiteralPath (Join-Path $work 'playbooks/group_vars/netapp.yml')
 & git -C $work add -A 2>$null
 & git -C $work commit -q -m 'the site copy' 2>$null
@@ -50,6 +55,8 @@ Check (-not ($out -match '(NEW|CHANGED|DELETE)\s+\.vault_pass')) 'preview: git-i
 Check ($out -match 'YOURS\s+playbooks/group_vars/netapp\.yml') 'preview: missing settings file is added once (YOURS)'
 Check (-not ($out -match '(NEW|CHANGED|DELETE|YOURS)\s+playbooks/group_vars/all\.yml')) 'preview: edited settings file not touched'
 Check ((Get-Content -LiteralPath (Join-Path $work 'README.md') -Raw) -match 'OLD-README-MARKER') 'preview changed nothing'
+Check (-not ($out -match '(NEW|CHANGED|DELETE)\s+roles/check_tmp2')) 'preview: own folder written without a slash in .site-local not listed'
+Check ($out -match 'NEW SETTINGS' -and $out -match 'servicenow_min_severity') 'preview: a setting missing from your all.yml is named'
 
 # ---- apply ---------------------------------------------------------------------------------------
 $out = Run @('-Apply')
@@ -59,6 +66,7 @@ Check (Test-Path -LiteralPath (Join-Path $work 'docs/HOW_IT_FITS_TOGETHER.md')) 
 Check (-not (Test-Path -LiteralPath (Join-Path $work 'docs/OLD_NOTES.md'))) 'removed file deleted'
 Check ((Get-Content -LiteralPath (Join-Path $work 'poam/poam.csv') -Raw) -match 'REAL-1') 'poam.csv kept'
 Check (Test-Path -LiteralPath (Join-Path $work 'roles/check_tmp/tasks/main.yml')) 'own role kept'
+Check (Test-Path -LiteralPath (Join-Path $work 'roles/check_tmp2/tasks/main.yml')) 'own folder (no trailing slash in .site-local) kept'
 Check (Test-Path -LiteralPath (Join-Path $work '.vault_pass')) 'git-ignored file kept'
 Check (Test-Path -LiteralPath (Join-Path $work 'playbooks/group_vars/netapp.yml')) 'missing settings file added'
 Check ((Get-Content -LiteralPath (Join-Path $work 'playbooks/group_vars/all.yml') -Raw) -match 'MY-SETTING') 'edited settings file kept'

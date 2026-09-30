@@ -1,0 +1,12 @@
+---
+- name: Apply-time guard with a fixed command list
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Guard
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: apply_guard.yml
+      vars:
+        _guard_cmds: "{{ cmds }}"

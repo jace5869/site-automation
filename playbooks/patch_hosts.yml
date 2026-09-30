@@ -8,7 +8,8 @@
 #
 # - One host at a time (patch_serial), and the rollout STOPS at the first host that fails.
 # - Every service that was running before the update must be running after it.
-# - Hosts in no_patch are skipped; hosts in aap_hosts are patched but never rebooted by it.
+# - Hosts in no_patch, and always the AAP hosts (aap, aap_hosts), are skipped: never patched, never
+#   rebooted by a job. Add more groups with patch_never_patch_groups / patch_never_reboot_groups.
 # - Refuses to patch the machine the job runs from.
 # - Check mode (a dry run) lists what would be updated and changes nothing: run it that way first.
 #
@@ -26,5 +27,10 @@
       ansible.builtin.include_role:
         name: site_findings
         tasks_from: os_guard.yml
+
+    - name: Notice about settings files that override AAP's Variables box
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: settings_notice.yml
   roles:
     - role: patch

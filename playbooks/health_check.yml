@@ -26,7 +26,10 @@
 #   accounts     extra UID 0, empty passwords, inactive accounts, NOPASSWD sudo, expiring passwords
 #   certs        certificate files, keystores and TLS endpoints that expire soon
 #   patching     pending (security) updates, reboot needed, days since the last update
-#   mariadb      MariaDB health (only on hosts in mariadb_hosts, or with check_mariadb_enabled)
+#   mariadb      database health, MariaDB AND MySQL, on the host or in podman containers - only on
+#                hosts in mariadb_hosts / mysql_hosts / database_hosts (or the groups mariadb, mysql),
+#                or that name a container. "mysql" and "database" are other names for the same
+#                check. Only the database? Run playbooks/database_health.yml. docs/MARIADB.md
 #
 # Shortcuts: daily = disk mounts services performance time network logging mariadb
 #            weekly = selinux fapolicyd auditd accounts certs patching
@@ -40,6 +43,7 @@
   gather_facts: false
   vars:
     health_checks: [daily]
+    _health_alias: {mysql: mariadb, database: mariadb}
     _health_sets:
       daily: [disk, mounts, services, performance, time, network, logging, mariadb]
       weekly: [selinux, fapolicyd, auditd, accounts, certs, patching]
@@ -52,7 +56,7 @@
     _health_run: >-
       {%- set out = [] -%}
       {%- for c in _health_asked -%}
-      {%-   for x in _health_sets[c] | default([c]) if x not in out -%}{%- set _ = out.append(x) -%}{%- endfor -%}
+      {%-   for x in _health_sets[c] | default([_health_alias[c] | default(c)]) if x not in out -%}{%- set _ = out.append(x) -%}{%- endfor -%}
       {%- endfor -%}
       {{ out }}
   pre_tasks:
@@ -66,7 +70,7 @@
         that: _health_run | difference(_health_sets.all) | length == 0
         fail_msg: >-
           Unknown check(s): {{ _health_run | difference(_health_sets.all) | join(', ') }}.
-          Known: {{ _health_sets.all | join(', ') }} (or daily, weekly, all).
+          Known: {{ _health_sets.all | join(', ') }} (or mysql / database for the mariadb check; daily, weekly, all).
         quiet: true
       run_once: true
 

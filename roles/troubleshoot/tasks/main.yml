@@ -24,10 +24,10 @@
          + ([{'name': ts_target, 'host': ts_target.split(':')[0], 'port': (ts_target.split(':') + ['443'])[1] | int}]
             if ts_area == 'network' else []) }}
 
-- name: Troubleshoot | area mariadb checks this host even if it is not in mariadb_hosts
+- name: Troubleshoot | area mariadb / mysql checks this host even if it is not in a database group
   ansible.builtin.set_fact:
     check_mariadb_enabled: true
-  when: ts_area == 'mariadb'
+  when: ts_area in ['mariadb', 'mysql']
 
 - name: Troubleshoot | run the {{ ts_area }} commands (read-only)
   ansible.builtin.shell: "timeout 120 bash -c {{ item.cmd | quote }}"

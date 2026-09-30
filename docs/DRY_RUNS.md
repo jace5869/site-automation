@@ -30,15 +30,15 @@ line-by-line changes it would make to files, for example in STIG Manager's confi
 
 | Template | In a dry run it... |
 |---|---|
-| Health check, Troubleshoot, Certificate report | runs **exactly as usual**: they only read, so you get the same findings. Nothing is written: no syslog lines, no disk-forecast sample, and on Windows no event log entries |
+| Health check, Database health, Troubleshoot, Certificate report | runs **exactly as usual**: they only read, so you get the same findings. Nothing is written: no syslog lines, no disk-forecast sample, and on Windows no event log entries |
 | POA&M status | as usual: reads the CSV and asks STIG Manager |
 | ServiceNow tickets | asks ServiceNow what is already open, then prints `would open: ...`, `would add a note to: ...`, `would resolve: ...`. **Nothing is sent** |
 | ServiceNow health | as usual: only reads |
 | ServiceNow - test ticket | logs in and checks the assignment group and caller (it only reads), then prints the incident it would open, note and resolve. **Nothing is created** |
 | Patch hosts (Linux) | lists the packages dnf would update. Installs nothing, restarts nothing |
-| Apply approved ACT fix | `DRY RUN on <host>: approved, and would run: <commands>`. Runs nothing |
+| Apply approved ACT fix | `DRY RUN on <host>: approved, and would run: <commands>`. Runs nothing. A command the apply-time guard would refuse (reboot, `mkfs`, ...) shows `Refused on <host>: ...` and that host goes red, as in the real run |
 | Service watch - check | checks the containers and shows what it would propose. Writes no incident, does not call ACT |
-| Service watch - apply approved fix | `DRY RUN on <host>: approved, and would run: <commands>` |
+| Service watch - apply approved fix | `DRY RUN on <host>: approved, and would run: <commands>` (or `Refused on <host>: ...`, as above) |
 | STIG Manager - deploy | says which files and units would change (with Show changes: how), and verifies nothing (nothing was started). Changes nothing. *Not yet tried on a real server: try it once on the test server* |
 | Windows health check, troubleshoot, certificate report, connection test | as usual: they only read |
 | Windows patch | asks Software Center to rescan (without starting anything) and prints `DRY RUN (Check mode): would install <updates>` |

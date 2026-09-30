@@ -43,7 +43,7 @@ Generated {{ now(utc=true).strftime('%Y-%m-%d %H:%M UTC') }} for {{ ansible_play
 
 {%     endif %}
 {%     if manual %}
-**Proposed fixes to apply by hand** (not a single plain command, danger tier, or a file change — ACT will not run these unattended)
+**Proposed fixes to apply by hand** (not a single plain command, a catastrophic payload, or a file change — ACT will not run these unattended)
 
 {%       for d in manual %}
 - `{{ d.command }}` ({{ d.risk }}){{ ' — ' ~ d.thought if d.thought else '' }}

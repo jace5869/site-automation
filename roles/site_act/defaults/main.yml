@@ -24,7 +24,8 @@ site_act_allow: []
 # Hosts where ACT may only diagnose - never fix by itself, whatever site_act_level says: AAP
 # itself (a fix could stop the job that is running it) and vendor-managed appliances. The apply
 # step (act_fix_approved.yml) skips them too: a person applies the fix there by hand.
-site_act_diagnose_only_groups: [aap_hosts, netapp_console_hosts]
+# AAP (groups aap, aap_hosts) is ALWAYS in this list (roles/site_act/vars/main.yml); the list adds to it.
+site_act_diagnose_only_groups: [aap, aap_hosts, sat, idm, netapp, netapp_console_hosts]
 
 # ---- Which model ACT talks to -----------------------------------------------------------------
 #   site_act_provider  genai       GenAI.mil (the default)
@@ -45,7 +46,7 @@ site_act_diagnose_only_groups: [aap_hosts, netapp_console_hosts]
 # Sage keys) or "ACT GenAI beta key". ACT runs ON EACH HOST, so the hosts must be able to reach
 # the provider's URL (a proxy or firewall rule may be needed).
 site_act_provider: genai
-site_act_models: {}
+site_act_models: {genai: gemini-3.8-flash, asksage: gpt-5.6-sol-gov}
 site_act_urls: {}
 site_act_model: ""
 site_act_url: ""

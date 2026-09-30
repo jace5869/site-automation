@@ -81,12 +81,14 @@ certificate days, ...). The check box ends **red** when:
 A **Run on fail** link from the check box therefore leads to the approval. **Run on success**
 means the check box ended green; **Run always**, either way.
 
-```text
-[Health check]  --Run on fail-->  [Approval]  --Run on success-->  [Apply approved ACT fix]  --Run always-->  [ServiceNow tickets]
- use_act = yes
- site_act_level = diagnose
-      |--Run always-->  [ServiceNow tickets]
-```
+| Box | Link into it | Runs when |
+|---|---|---|
+| 1. Health check (`use_act` = `yes`, `site_act_level` = `diagnose`) | (start) | always |
+| 2. Approval | **Run on fail**, from 1 | the check job ended red |
+| 3. Apply approved ACT fix | **Run on success**, from 2 | a person clicked Approve |
+| 4. ServiceNow tickets | **Run always**, from 1 and from 3 | after the check, and after the fix |
+
+The steps in words:
 
 1. **Health check** box: answers `use_act` = `yes`, `site_act_level` = `diagnose`. This needs
    those two survey questions on the template ([ADDING_ACT.md](ADDING_ACT.md), step 3).
@@ -250,6 +252,12 @@ For when you use ACT. See [ADDING_ACT.md](ADDING_ACT.md) for the three levels.
 | 4 | Apply approved ACT fix | | **Run on success**, from 3 |
 | 5 | ServiceNow tickets | | **Run always**, from 4 (notes the tickets whose problem the fix cleared) |
 
+**Caveat: not yet proven in a live AAP.** The whole approve-and-fix path depends on the check
+job's result (the proposed commands) reaching the apply job through the Approval node. The
+playbooks were tested on their own, but that hand-over inside AAP itself has not been run
+end to end. Rehearse it first with the dry run below, and read
+[SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md) (Part 9) if the apply job says `Nothing to apply`.
+
 The approver reads, in the health check job, `ACT | what ACT says` (root cause, evidence, the fix)
 and the red `NEEDS APPROVAL ... ACT proposes: <command>` line. **That exact command** is all the
 apply step can run: it runs it itself (no model, no key), stops at the first command that fails,
@@ -299,17 +307,22 @@ Certificates expire on a day, not in a week:
 **Schedule:** every day 06:30. Set `check_certs_warn_days` (survey) to 30 so tickets start a month
 ahead. The de-duplication keeps it to one ticket per certificate.
 
-### 8. MariaDB watch (hourly)
+### 8. Database watch: MariaDB and MySQL (hourly)
 
 ```text
-[Health check]  --Run always-->  [ServiceNow tickets]
- disk, services, mariadb
+[Database health - MariaDB / MySQL]  --Run always-->  [ServiceNow tickets]
 ```
 
 | Step | Template | Answers | Link |
 |---|---|---|---|
-| 1 | Health check | `health_checks` = `disk`, `services`, `mariadb`; **Limit** `mariadb` | (start) |
+| 1 | Database health - MariaDB / MySQL | none; it targets `mariadb_hosts`, `mysql_hosts` and `database_hosts` by default (a **Limit** narrows it) | (start) |
 | 2 | ServiceNow tickets | | **Run always**, from 1 |
+
+The database template runs only the MariaDB / MySQL check (host installs and podman containers),
+so it is quick and the database team can own it and its tickets ([MARIADB.md](MARIADB.md)).
+Prefer to keep it in the general Health check? Use the *Health check* as step 1 with
+`health_checks` = `disk`, `services`, `mysql` (`mariadb` and `database` are the same check) and a
+**Limit** of your database group. The template *Database health* also supports `use_act=true`.
 
 **Schedule:** hourly. It is quick, and a ticket comes within the hour of a problem.
 
@@ -360,6 +373,10 @@ own once, on the test server, before you build the workflow.)
 ### 11. Service watch
 
 The approval or self-heal workflow for containers: [SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md), Part 6.
+
+If you schedule it every 15 minutes, turn **off** "Enable concurrent jobs" on the workflow (edit the
+workflow), because its approval waits up to 30 minutes: without that, a new run starts every 15
+minutes while the last one still waits for a person.
 
 ## Windows workflows
 
@@ -473,13 +490,13 @@ own template's inventory, so leave the workflow's Inventory empty:
 |---|---|---|
 | Daily health (or *Everything, every morning*) | every day 06:00 | workflow 1 (or 17) |
 | Certificate watch | every day 06:30 | workflow 7 |
-| MariaDB watch | hourly | workflow 8 |
+| Database watch | hourly | workflow 8 |
 | ServiceNow health | hourly | template *ServiceNow health*, with an email **notification on failure** |
 | Weekly compliance | Monday 07:00 | workflow 2 |
 | Security posture | Wednesday 07:00 | workflow 6 |
 | Patch preview | the Monday before patch night | template *Patch hosts*, **Prompts → Job type `Check`** |
 | Patch with checks | monthly, in your window | workflow 3 or 4 |
-| Service watch | every 15 minutes | workflow *Service watch - approve or self-heal* |
+| Service watch | every 15 minutes (with **Enable concurrent jobs** switched off on the workflow) | workflow *Service watch - approve or self-heal* |
 | Windows daily health / weekly compliance | 06:15 daily / Monday 07:15 | workflows 12 and 13 |
 | Windows patch | monthly, in the ConfigMgr maintenance window | workflow 14 |
 

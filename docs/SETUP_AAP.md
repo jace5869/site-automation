@@ -1,7 +1,7 @@
 # Setting up the runbooks in AAP, step by step
 
 Every step says **what** you are doing, **why**, the **clicks**, and what you should **see** when it
-worked. Menu names are from AAP 2.7 (they are the same in 2.5 and 2.6). If you have not yet, read
+worked. Menu names are from AAP 2.7. Older versions (2.5, 2.6) may word a label or a menu differently: follow the meaning, not the exact word. If you have not yet, read
 [START_HERE.md](START_HERE.md) first. It explains the words used here.
 
 ## Before you start
@@ -37,7 +37,12 @@ a who, a when and a why.
    group names: the playbooks use them. A host can be in several groups.
 3. Edit `inventories/site/group_vars/all.yml`. These settings apply to every host: the LDAP
    and SIEM servers each host must reach, the account AAP logs in as (`svc_aap`), and the
-   thresholds. Each setting is explained in `roles/check_<name>/defaults/main.yml`.
+   thresholds. Every setting and its default is listed in [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md).
+   **Two places can hold a setting:** this inventory file (it becomes AAP's *inventory* Variables
+   box) and the project's own settings files `playbooks/group_vars/*.yml` (`all.yml` is only
+   switched-off placeholders; a few group files, such as `stigman.yml` and `aap.yml`, ship real
+   values). If a setting is in both, the project file wins. Use one place per setting:
+   [VARIABLES.md](VARIABLES.md) explains the order.
 4. Put it in your work Git, with VS Code:
    - Create an empty repository on your Git server (for example `site-automation`) and copy its
      clone URL.
@@ -47,7 +52,7 @@ a who, a when and a why.
    - In **Source Control**: type a message, click **Commit** (answer *Yes* to "stage all
      changes"), then **Sync Changes** / **Publish Branch**.
 
-   The same from a command line: `git add -A`, `git commit -m "site-automation 0.3.1"`, then `git push`.
+   The same from a command line: `git add -A`, `git commit -m "site-automation <version>"`, then `git push`.
 5. Note the two values AAP needs in step 4: the **clone URL** (the one you pasted above) and
    the **branch** (shown at the bottom left of VS Code, usually `main`). AAP does not read them
    from your copy; you type them in once.
@@ -96,7 +101,7 @@ name. Nobody, including you, can read the secret back, and it is never in Git or
 | Linux ssh (sudo) | Machine | **Username** `svc_aap`, **SSH Private Key**, **Privilege Escalation Method** `sudo` (plus the sudo password if sudo asks for one) |
 | site-automation git | Source Control | only if the repository is private: user name and token, or an SSH key |
 | ServiceNow API | ServiceNow API | instance URL, API user, password (step 10) |
-| MariaDB monitor | MariaDB monitor | needed when MariaDB runs in a container (the ServiceNow database); optional otherwise. See [RUNBOOKS.md](RUNBOOKS.md#mariadb) for the account to ask the DBA for |
+| MariaDB monitor | MariaDB monitor | the read-only database account, for MariaDB **and MySQL**; needed when the database runs in a container (the ServiceNow database), usually needed for MySQL on a host, optional for MariaDB on a host. See [MARIADB.md](MARIADB.md) for the setup and the account to ask the DBA for |
 
 **You should see** the credentials listed, with secret fields shown as `ENCRYPTED`.
 
@@ -112,7 +117,7 @@ name. Nobody, including you, can read the secret back, and it is never in Git or
    use only modules that come with Ansible itself, so no extra collections or custom execution
    environment are needed (useful on a disconnected network).
 4. **Source control type** `Git`. **Source control URL**: from step 1.
-   **Source control branch/tag/commit**: `main`. Later, pin a release tag such as `v0.3.0`.
+   **Source control branch/tag/commit**: `main`. Later, pin a release tag such as `v<version>` (the tags are listed on the repository's Releases page).
    **Source control credential**: `site-automation git` if the repository is private.
 5. Tick **Update revision on launch**. Every job then syncs first, so a change you push is used
    right away.
@@ -175,7 +180,7 @@ which credentials. Its survey asks which checks to run.
    - **Answer type** *Multiple Choice (multiple select)*
    - **Choices**, one per line: `daily`, `weekly`, `all`, `disk`, `mounts`, `services`,
      `performance`, `time`, `network`, `logging`, `selinux`, `fapolicyd`, `auditd`,
-     `accounts`, `certs`, `patching`, `mariadb`
+     `accounts`, `certs`, `patching`, `mariadb`, `mysql`, `database`
    - **Default answer** `daily`. Tick **Required**. Click **Create question**.
 5. Turn the survey **on** (the switch at the top of the Survey tab).
 
@@ -211,17 +216,23 @@ thresholds suit you.
 **Why.** Defaults are a starting point. If a warning is expected on some host, change the
 setting for that host or group, not the code.
 
-1. Change the setting in `inventories/site/group_vars/<group>.yml` (every host: `all.yml`). A
-   single host can have `inventories/site/host_vars/<host>.yml`. Examples:
+1. Change the setting in the project's settings file `playbooks/group_vars/<group>.yml` (every
+   host: `all.yml`; one host: `playbooks/host_vars/<host>.yml`, create it). This is the place
+   [VARIABLES.md](VARIABLES.md) recommends, and it wins over the same setting in
+   `inventories/site/group_vars/` or in an AAP group or inventory Variables box. The file name must
+   be the exact group or host name. Examples:
    ```yaml
    check_disk_overrides:
      /var/log/audit: {warn: 70, crit: 85}      # this filesystem: warn earlier
    check_services_ignore_failed: ['^dnf-makecache']
    site_fail_on: [critical]                    # warnings are reported but do not fail the job
    ```
-2. Commit and push. In AAP, run the inventory source again (**Inventories → Linux servers →
-   Sources → Launch inventory update**). A setting in `group_vars` reaches AAP only through the
-   inventory source.
+   (With `[critical]`, a check that could not run, `<check>:check-error`, still fails the host:
+   a check that did not run is not a healthy result.)
+2. Commit and push. `playbooks/group_vars/` is read straight from the project, which syncs on
+   launch: nothing else to do. Only if you changed `inventories/site/group_vars/` instead, run the
+   inventory source again in AAP (**Inventories → Linux servers → Sources → Launch inventory
+   update**): those files reach AAP only through the inventory source.
 3. Launch the health check again.
 
 **You should see** the finding gone, or at its new threshold.
@@ -248,10 +259,40 @@ problem. Findings do not fail this job.
 |---|---|
 | Playbook | `playbooks/troubleshoot.yml` |
 | Credentials | `Linux ssh (sudo)` |
-| Survey: `ts_area` | "What kind of problem?" Choices: `overview`, `disk`, `performance`, `service`, `network`, `selinux`, `fapolicyd`, `login`, `time`, `logs`, `mariadb`. Default `overview` |
+| Survey: `ts_area` | "What kind of problem?" Choices: `overview`, `disk`, `performance`, `service`, `network`, `selinux`, `fapolicyd`, `login`, `time`, `logs`, `mariadb`, `mysql`. Default `overview` |
 | Survey: `ts_service` | *Text*, not required. "Service name (for area = service), e.g. nginx" |
 | Survey: `ts_target` | *Text*, not required. "host:port it cannot reach (for area = network)" |
 | Survey: `ts_since` | *Text*. "How far back to read logs". Default `-2h` |
+
+### Database health - MariaDB / MySQL
+
+The database check on its own, for **MariaDB and MySQL**, installed on the host or in **podman
+containers** (one, several, found automatically, rootless). Give it to the database team. It only
+reads: no data is read, nothing is changed. Set the databases up first
+([MARIADB.md](MARIADB.md)): the container name in a settings file, and the account for the
+credential.
+
+| Field | Value |
+|---|---|
+| Name | `Database health - MariaDB / MySQL` |
+| Playbook | `playbooks/database_health.yml` |
+| Credentials | `Linux ssh (sudo)` and `MariaDB monitor` (the read-only database account) |
+| Privilege escalation | ticked |
+| Job type | Run, with **Prompt on launch** ticked, so you can pick *Check* first |
+| Limit | empty, **Prompt on launch** ticked. The job runs on the groups `mariadb_hosts`, `mysql_hosts` and `database_hosts`; a Limit narrows that to one host or group. A Limit cannot add a server outside those groups: for that (or if your group is called `mariadb` or `mysql`), put `target: <group or host>` in the template's **Variables** |
+| Survey | none. (Optional: a *Multiple Choice* `use_act`, choices `no` and `yes`, to add ACT's explanation; then also attach the *ACT model key* credential, [ADDING_ACT.md](ADDING_ACT.md)) |
+
+Steps: create the template as in step 6, then launch it twice.
+
+1. Launch with **Job type** `Check`. You should see, for every database host, a `MariaDB | status`
+   line such as `MySQL 8.4.11 - container snow-mysql (podman, image ...): up 312.4 h, 23/151
+   connections ...`, then `HEALTHY` (or a list of findings, each with a command to look further),
+   and at the end `N healthy, M with findings`. *Check* is safe here: the job only reads either way.
+2. Launch with **Job type** `Run`. The result is the same. A host with findings shows as failed, so
+   a workflow can open a ticket ([workflow 8](WORKFLOWS_AND_SCHEDULES.md#8-database-watch-mariadb-and-mysql-hourly)).
+
+If a host prints `mariadb:connect` with `Access denied`, the credential is missing or the account
+lacks a privilege: [MARIADB.md](MARIADB.md#4-the-login-the-mariadb-monitor-credential).
 
 ### Certificate report
 
@@ -365,8 +406,9 @@ ticket in ServiceNow. In short:
    - `mid_server` (read the MID Server list), if you want the MID Server check.
 2. Create the **ServiceNow API** credential (step 3) with the instance URL, for example
    `https://servicenow.example.mil`, and the account.
-3. In your settings file (`playbooks/group_vars/all.yml`, or `inventories/site/group_vars/all.yml`
-   if your inventory comes from Git), set who gets the tickets:
+3. In your settings file (`playbooks/group_vars/all.yml`; the example inventory's
+   `inventories/site/group_vars/all.yml` already has these two lines, so change the value in one
+   place only), set who gets the tickets:
    ```yaml
    servicenow_assignment_group: Linux Operations   # a group that exists in ServiceNow
    servicenow_min_severity: warning                # or critical: tickets for critical findings only
@@ -386,6 +428,14 @@ nothing.
 
 See [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md): *Daily health*, *Weekly compliance*,
 *Patch with checks*, *Fix with approval (ACT)*, and when to schedule each.
+
+**Going further, once the basics work:**
+
+- ACT (the model): [ADDING_ACT.md](ADDING_ACT.md). If a model answers `HTTP 400`, see its section
+  [Both endpoint formats and `:probe`](ADDING_ACT.md#both-endpoint-formats-and-probe-act-0619-and-newer).
+- Letting ACT run fixes you trust without asking: [APPROVED_COMMANDS.md](APPROVED_COMMANDS.md).
+- Every setting you can change, and where to put it: [VARIABLES.md](VARIABLES.md).
+- MariaDB and MySQL checks (also in podman containers): [MARIADB.md](MARIADB.md).
 
 ## Step 12. Who can do what
 
@@ -410,7 +460,7 @@ For example, give the help desk **Execute** on *Troubleshoot*, and only the serv
 | `Missing sudo password` / `a password is required` | sudo wants a password | put it in the Machine credential (Privilege Escalation Password) |
 | `Unknown check(s): ...` | a survey choice that is not a check name | fix the survey choices (step 6) |
 | `the <name> check could not run: ...` | that check hit an error. The others still ran | the message says why, often a missing command such as `semanage` |
-| `skipped: <host> is not in mariadb_hosts` | the MariaDB check only runs on database hosts | add the host to `mariadb_hosts` in the inventory |
+| `skipped: the MariaDB/MySQL check is off for <host>` | the database check only runs on database hosts | add the host to `mariadb_hosts`, `mysql_hosts` or `database_hosts` in the inventory, or name its container ([MARIADB.md](MARIADB.md)) |
 | Findings you do not care about | defaults do not fit that host | step 8: change the setting for its group or host |
 | `NOT CONNECTED - what would be opened` | the tickets template has no ServiceNow API credential | attach it (step 10) |
 | Tickets step fails: `No check results reached this job` | the check step before it failed before checking any host, or it was launched on its own | read the first red job in the workflow; run the tickets step only inside a workflow |

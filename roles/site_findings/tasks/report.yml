@@ -93,5 +93,10 @@
       {{ ('. ACT proposes: ' ~ (_site_proposed | join(' ; '))) if _site_proposed else '' }}
   vars:
     _site_proposed: "{{ (site_act_result | default({})).proposed | default([]) }}"
-    _site_failing: "{{ site_findings | selectattr('severity', 'in', site_fail_on) | list }}"
+    # a check that could not run is a blind spot, so it fails the host even when site_fail_on is
+    # just [critical] - unless site_fail_on is empty (troubleshooting runs never fail).
+    _site_failing: >-
+      {{ site_findings | selectattr('severity', 'in', site_fail_on) | list
+         + ((site_findings | selectattr('id', 'search', ':check-error$') | rejectattr('severity', 'in', site_fail_on) | list)
+            if site_fail_on | length > 0 else []) }}
   when: _site_failing | length > 0 or _site_proposed | length > 0

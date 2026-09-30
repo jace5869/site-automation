@@ -141,58 +141,57 @@
           {{ (parts | join(_act_nl ~ _act_nl))[:act_triage_evidence_total_chars | int] }}
       when: act_triage_mode == 'evidence'
 
-    - name: ACT | analyze the evidence (evidence mode; ACT runs no commands)
-      ansible.builtin.shell: >-
-        {{ _act_python.stdout_lines | last | quote }} {{ (act_triage_dest_dir ~ '/act') | quote }}
-        --non-interactive --allow-piped-upload --result-file {{ _act_tmp.path | quote }}
-        {{ (act_triage_task if act_triage_task else lookup('ansible.builtin.template', 'task.j2') | trim) | quote }}
-        < {{ _act_evfile.path | quote }}
-      args:
-        executable: /bin/bash
-      environment: >-
-        {%- set keys = {} -%}
-        {%- for name in act_triage_key_env_names -%}
-        {%-   set value = lookup('ansible.builtin.env', name) -%}
-        {%-   if value -%}{%- set _ = keys.update({name: value}) -%}{%- endif -%}
-        {%- endfor -%}
-        {{ act_triage_env | combine({'ACT_NO_BANNER': '1',
-             'ACT_PSEUDONYMIZE': '1' if act_triage_pseudonymize | bool else '0',
-             'ACT_PSEUDO_NAMES': ([inventory_hostname, inventory_hostname_short, ansible_host | default('')]
-                                  + act_triage_pseudo_names) | map('string') | select | unique | join(',')})
-           | combine(keys) }}
-      async: "{{ act_triage_timeout | int }}"
-      poll: "{{ act_triage_poll | int }}"
-      register: _act_run_evidence
-      changed_when: false
-      failed_when: false
-      no_log: true            # the environment carries the API key
-      when: act_triage_mode == 'evidence'
-
-    - name: ACT | run {{ 'diagnosis + pre-approved fixes' if act_triage_allow else 'diagnosis only' }}
+    # The API keys never go through Ansible's `environment:` - Ansible puts that on the sudo / sh
+    # command line ("GENAI_KEY=... python3 ..."), where ps and the sudo log on the host see it, and
+    # no_log does not help. They go on the task's STDIN as NAME=value lines (ended by a blank line)
+    # to a small sh that exports them and then runs ACT. Non-secret settings stay in `environment:`.
+    - name: ACT | run {{ 'the evidence analysis (evidence mode; ACT runs no commands)' if act_triage_mode == 'evidence'
+                         else ('diagnosis + pre-approved fixes' if act_triage_allow else 'diagnosis only') }}
       ansible.builtin.command:
         argv: >-
-          {{ [_act_python.stdout_lines | last, act_triage_dest_dir ~ '/act', '--non-interactive',
-              '--result-file', _act_tmp.path, '--max-steps', act_triage_max_steps | string]
-             + (act_triage_allow | map('string') | map('regex_replace', '^', '--allow=') | list)
+          {{ ['/bin/sh', '-c', _act_key_reader, 'act-keys',
+              _act_evfile.path if act_triage_mode == 'evidence' else '/dev/null',
+              _act_python.stdout_lines | last, act_triage_dest_dir ~ '/act', '--non-interactive',
+              '--result-file', _act_tmp.path]
+             + (['--allow-piped-upload'] if act_triage_mode == 'evidence'
+                else (['--max-steps', act_triage_max_steps | string]
+                      + (act_triage_allow | map('string') | map('regex_replace', '^', '--allow=') | list)))
              + [act_triage_task if act_triage_task else lookup('ansible.builtin.template', 'task.j2') | trim] }}
+        stdin: "{{ (_act_secrets.items() | map('join', '=') | join(_act_nl)) ~ _act_nl }}"
       environment: >-
-        {%- set keys = {} -%}
-        {%- for name in act_triage_key_env_names -%}
-        {%-   set value = lookup('ansible.builtin.env', name) -%}
-        {%-   if value -%}{%- set _ = keys.update({name: value}) -%}{%- endif -%}
-        {%- endfor -%}
-        {{ act_triage_env | combine({'ACT_NO_BANNER': '1',
+        {{ act_triage_env | dict2items | rejectattr('key', 'search', act_triage_secret_env_regex) | items2dict
+           | combine({'ACT_NO_BANNER': '1',
              'ACT_PSEUDONYMIZE': '1' if act_triage_pseudonymize | bool else '0',
              'ACT_PSEUDO_NAMES': ([inventory_hostname, inventory_hostname_short, ansible_host | default('')]
-                                  + act_triage_pseudo_names) | map('string') | select | unique | join(',')})
-           | combine(keys) }}
+                                  + act_triage_pseudo_names) | map('string') | select | unique | join(',')}) }}
+      vars:
+        # the keys (act_triage_key_env_names, from the controller's environment) and any secret-looking
+        # entry of act_triage_env; names must be plain NAME_LIKE_THIS
+        _act_secrets: >-
+          {%- set keys = {} -%}
+          {%- for name in act_triage_key_env_names -%}
+          {%-   set value = lookup('ansible.builtin.env', name) -%}
+          {%-   if value -%}{%- set _ = keys.update({name: value}) -%}{%- endif -%}
+          {%- endfor -%}
+          {%- for name, value in act_triage_env.items() if name is search(act_triage_secret_env_regex) and value -%}
+          {%-   set _ = keys.update({name: value | string}) -%}
+          {%- endfor -%}
+          {{ keys | dict2items | selectattr('key', 'match', '^[A-Z_][A-Z0-9_]*$') | items2dict }}
+        # reads NAME=value lines until a blank line, exports only plain upper-case names, then runs
+        # ACT with its stdin from $1 (the evidence file, or /dev/null)
+        _act_key_reader: >-
+          while IFS= read -r l && [ -n "$l" ]; do
+          n=${l%%=*};
+          case $n in ''|[!ABCDEFGHIJKLMNOPQRSTUVWXYZ_]*|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*) continue;; esac;
+          export "$n=${l#*=}";
+          done;
+          f=$1; shift; exec "$@" < "$f"
       async: "{{ act_triage_timeout | int }}"
       poll: "{{ act_triage_poll | int }}"
       register: _act_run
       changed_when: false
       failed_when: false
-      no_log: true            # the environment carries the API key
-      when: act_triage_mode != 'evidence'
+      no_log: true            # stdin carries the API key
 
     - name: ACT | remove the evidence file
       ansible.builtin.file:
@@ -212,7 +211,7 @@
           {{ (_act_slurp.content | b64decode | from_json) if (_act_slurp.content | default('') | length > 0
               and (_act_slurp.content | b64decode | trim | length > 0))
              else {'schema': 'act.result/1', 'status': 'error',
-                   'exit_code': _act_run.rc | default(_act_run_evidence.rc | default(-1)),
+                   'exit_code': _act_run.rc | default(-1),
                    'summary': '', 'changed': false, 'commands': [], 'denied': [], 'files_changed': [],
                    'stop_reason': 'ACT produced no result (it timed out after ' ~ act_triage_timeout
                                   ~ 's or could not start); rerun with -v and no_log off to debug'} }}

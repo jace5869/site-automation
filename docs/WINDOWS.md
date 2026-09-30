@@ -98,15 +98,17 @@ ansible_connection: winrm
 ansible_port: 5986
 ansible_winrm_scheme: https
 ansible_winrm_transport: ntlm                  # or kerberos
-ansible_winrm_server_cert_validation: ignore   # see below
+ansible_winrm_server_cert_validation: validate  # needs your CA bundle in the EE, see below
+ansible_winrm_ca_trust_path: /etc/pki/ca-trust/source/anchors/your-ca.pem   # path inside the EE
 ```
 
 - **Certificate validation.** `validate` means the EE checks the server's WinRM certificate
-  against the CAs it trusts. EEs usually do not include the DoD root CAs, so `validate` fails
-  with `CERTIFICATE_VERIFY_FAILED`. `ignore` keeps the traffic encrypted but does not check who
-  the server is. To validate, add your CA bundle to the EE and set
-  `ansible_winrm_server_cert_validation: validate` and
-  `ansible_winrm_ca_trust_path: /etc/pki/ca-trust/source/anchors/dod.pem` (the path inside the EE).
+  against the CAs it trusts. EEs usually do not include your organisation's root CAs, so
+  `validate` fails with `CERTIFICATE_VERIFY_FAILED` until you add your CA bundle to the EE and
+  point `ansible_winrm_ca_trust_path` at it (the path inside the EE, as shown above). **Use this
+  setting for real servers.** `ignore` keeps the traffic encrypted but does not check who the
+  server is, so anyone who can intercept the connection could pose as it: use it **only** for a
+  short test on a lab network, then switch back.
 - **Hosts.** Add them by full name (`web01.yoursite.mil`); Kerberos needs the full name.
 - **Groups.** Use whatever helps: by site, by role (`win_dc`, `win_web`...). The settings below
   can be set per group. `inventories/example-windows/hosts.yml` shows an example.
@@ -290,6 +292,11 @@ repository, and every server gets the new version.
 - **Tell your security team before the first run.** The installer is a large PowerShell script
   that writes a `.ps1` file, and some endpoint-protection products (Defender for Endpoint,
   Trellix) flag that pattern. Let them know it is coming from AAP, and try one server first.
+- **Versions and `:probe`.** ACT for Windows has the same endpoint formats and `:probe` command as
+  the Linux one (see [ADDING_ACT.md](ADDING_ACT.md)); the copy in `vendor/act-windows/` is refreshed
+  when the repository's vendored ACT is. On Windows, an unattended run never approves the
+  danger tier of commands: only a person at the prompt can. See
+  [APPROVED_COMMANDS.md](APPROVED_COMMANDS.md).
 - ACT itself needs full PowerShell. Where WDAC or AppLocker enforce Constrained Language Mode,
   ACT's own notes (sign it with your code-signing certificate) apply.
 
@@ -300,7 +307,7 @@ does. To change one:
 
 - **for all Windows servers**, use the `Windows servers` inventory's **Variables** box;
 - **for a group**, use the group's **Variables** box, or a settings file named after the group
-  (`playbooks/group_vars/win_web.yml`);
+  (for example `playbooks/group_vars/win_web.yml` for a group called `win_web`);
 - **for one server**, use the host's **Variables** box.
 
 The settings you will most likely want:
@@ -341,7 +348,7 @@ A few defaults worth knowing:
 | What you see | What to do |
 |---|---|
 | `winrm or requests is not installed` / connection test: `no   winrm` | the EE has no pywinrm: step 2 |
-| `CERTIFICATE_VERIFY_FAILED` | `ansible_winrm_server_cert_validation: ignore`, or the CA bundle (step 4) |
+| `CERTIFICATE_VERIFY_FAILED` | the CA bundle (step 4); `ansible_winrm_server_cert_validation: ignore` only as a short lab test |
 | `the specified credentials were rejected by the server` | username format (`DOMAIN\user` for NTLM), password, or the account is locked |
 | `Connection refused` / `timed out` on 5986 | the firewall, or no HTTPS listener (step 1) |
 | `kerberos: ... kinit` or `Server not found in Kerberos database` | no Kerberos in the EE, or a short host name: use NTLM, or full names |

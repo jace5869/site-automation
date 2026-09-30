@@ -1,5 +1,126 @@
 # Changelog
 
+## 0.5.0 — 2026-09-30
+
+Safety, settings and documentation release, from a review of the code and the guides.
+
+**Upgrading from 0.4.1 - read this first**
+- **Your `playbooks/group_vars/all.yml` keeps its old settings.** The update scripts never change
+  your settings files, so the 0.4.1 lines are still real (uncommented) lines in your copy:
+  `site_act_diagnose_only_groups`, `patch_never_patch_groups`, `patch_never_reboot_groups`,
+  `site_act_provider` and the `site_act_models:` block (with its `genai:` and `asksage:` lines).
+  They still win over the same settings in AAP's inventory and group Variables boxes, and they
+  replace the new built-in lists (your old `patch_never_*` lists lack `netapp_console_hosts`). Put
+  `# ` in front of those lines (compare with the release's `playbooks/group_vars/all.yml`) unless
+  you want exactly those values. Each job now prints `NOTE - settings in this project's files win
+  ...` with what your files still set. `docs/VARIABLES.md` explains the order.
+- **The database check runs on more hosts.** Until now only the group `mariadb_hosts`; now also
+  `mysql_hosts`, `database_hosts`, `mariadb`, `mysql` and any host that names a container. Hosts in
+  those groups get the check in every `daily` Health check: without the *MariaDB monitor*
+  credential on the template, a containerized database reports `mariadb:connect` (Access denied),
+  which fails the host and, in a workflow, opens a ticket. Attach the credential, or remove the
+  host from those groups. A monitoring account made with the 0.4.1 grant (`SLAVE MONITOR`, the
+  same privilege as `REPLICA MONITOR`) needs no change.
+- **Survey choices are not updated for you.** In AAP, add `mysql` and `database` to the Health
+  check survey's `health_checks` choices and `mysql` to Troubleshoot's `ts_area`, and create the
+  *Database health - MariaDB / MySQL* template (`docs/SETUP_AAP.md`) if you want it. Workflow 8
+  now uses that template; the old Health check version keeps working.
+- **A check that could not run now fails the host** (`<check>:check-error`), also when
+  `site_fail_on` is `[critical]`. Expect a red host where a check used to break quietly.
+- **ACT 0.6.21** (see below): `--auto` asks for danger-tier commands; the key is only sent to an
+  `https://` provider URL. If your `site_act_url` / `site_act_urls` use `http://`, change them or
+  set `site_act_env: {ACT_ALLOW_HTTP: "1"}` (Linux; ACT-Windows uses `ACT_ALLOW_HTTP_KEY`).
+- Credential types: no input or injector changed; nothing to re-paste in AAP.
+
+**Security fixes - secrets no longer on a command line**
+- **ACT API key** (vendored ACT's `act_triage` role, used by every ACT-in-a-job run): the key was
+  handed to ACT through Ansible's `environment:`, which Ansible puts on the `sudo /bin/sh -c ...`
+  command line. So the key was visible in `ps` and **written to the sudo log (journal /
+  `/var/log/secure`) of every host ACT ran on**, `no_log` or not. It now goes on the task's stdin.
+  If you ran ACT from AAP with 0.2.0 - 0.4.1, **rotate the ACT key** and treat the managed hosts'
+  sudo logs from that period as containing it.
+- **MariaDB / MySQL monitor password**: same problem (`MYSQL_PWD=...` on the sudo command line and
+  in the sudo log of every database host, and in a fact shown at `-v`). It now goes on stdin; no
+  fact holds it. Rotate the monitor account's password if the check ran with 0.3.x - 0.4.1.
+- **Java keystore passwords** (`check_certs_keystores` with `password_env`): same fix.
+- `docs/SECRETS.md` rule 3 now says it plainly: Ansible's `environment:` counts as a command line.
+
+**Safety**
+- **The AAP host can never be patched, restarted or fixed by ACT**, whatever list you write. The
+  groups `aap` and `aap_hosts` are always protected (`roles/patch/vars`, `roles/site_act/vars`,
+  and written into the skip and reboot conditions themselves, so not even an extra variable
+  removes them). Your own `patch_never_*` / `site_act_diagnose_only_groups`
+  lists replace the shipped ones, but `aap` and `aap_hosts` stay in. Windows patching follows the
+  same lists.
+- **An apply-time guard** checks the exact command an approver approved, before it runs, in
+  *Apply approved ACT fix* and in *Service watch* (apply), dry runs included. It refuses what can
+  never be approved (reboot, shutdown, `kexec`, `mkfs`, account changes, recursive deletes of
+  system folders ... also as `/sbin/reboot` or inside `bash -c '...'` / `$( )`)
+  and *Apply approved ACT fix* also logs what it ran to `/var/log/site-automation-fix.log` on the host.
+- A check that could not run (`<check>:check-error`) now fails the host also when `site_fail_on`
+  is `[critical]`, so it is not mistaken for a healthy one.
+- *Apply approved ACT fix* and Windows patching fell back to shorter protected-group lists than
+  the role defaults when `all.yml` did not set them; they now use the same full lists
+  (`tests/test_protection.py` checks they stay equal).
+- A `!vault` value in any settings file no longer makes every check playbook fail.
+
+**Settings**
+- `playbooks/group_vars/all.yml` is now all commented examples; the role defaults are the single
+  source. A job prints a notice when a project settings file overrides AAP's Variables box
+  (`site_settings_notice: false` silences it).
+- The update scripts read `.site-local` more strictly (folders without a slash, `..` refused),
+  print a summary count, list a settings file the release adds as `YOURS` (added once), and list
+  under "NEW SETTINGS" the settings the release's `all.yml` mentions and yours does not.
+
+**MariaDB and MySQL** (`roles/check_mariadb`)
+- The database check works with **MariaDB and MySQL 5.7 / 8.0 / 8.4** (and Percona), on the host or in
+  **podman containers**: one, several, found by image name, and rootless
+  (`check_mariadb_container_user`). The engine is detected from the server's version, and the
+  replication statement is chosen to match (`SHOW ALL SLAVES STATUS`, `SHOW REPLICA STATUS` or
+  `SHOW SLAVE STATUS`). Findings name the container when there are several.
+- New playbook **`playbooks/database_health.yml`** ("Database health - MariaDB / MySQL"): read-only,
+  targets `mariadb_hosts`, `mysql_hosts` and `database_hosts` by default, ends with the report.
+  The Health check survey also accepts `mysql` and `database` (same check as `mariadb`), and
+  Troubleshoot accepts `mysql`. Groups `mysql_hosts`, `database_hosts` and `mysql` enable the check
+  the same way `mariadb_hosts` does. New examples: `playbooks/group_vars/mysql.yml`,
+  `inventories/example/group_vars/mysql_hosts.yml`.
+- New findings: `mariadb:replication-query`, `mariadb:group`, `mariadb:group-size`,
+  `mariadb:group-query` (Group Replication); new setting `check_mariadb_group_size` (0 = off).
+  The finding hints give the right grant per engine: MySQL `PROCESS, REPLICATION CLIENT`;
+  MariaDB 10.5.9 and newer `PROCESS, REPLICA MONITOR` (`REPLICATION CLIENT` is not enough).
+- Tested against real rootless podman containers: MySQL 8.0, MySQL 8.4 and MariaDB 11.8.
+  Group Replication and MySQL 5.7 were tested only against a fake `podman`
+  (`bash tests/mariadb/run_mariadb_test.sh`). `docs/MARIADB.md` says so plainly.
+
+**ACT**
+- **ACT 0.6.21** vendored for Linux and Windows (`vendor/act`, `vendor/act-windows`): a hardening
+  release. `--auto` / `-Auto` now always asks for danger-tier commands, and unattended
+  (`--non-interactive`) runs refuse them; no `--allow` / `site_act_allow` pattern approves the
+  danger tier, on Linux or Windows (`docs/APPROVED_COMMANDS.md`). Closed classifier holes
+  (`sed -i`, `sed s///e`, awk `system()`, `git --output`, commands hidden after a `#` comment,
+  quoted Windows verbs such as `reg 'delete'`) without gating any read-only command: a
+  before/after comparison of ~970 Linux and ~475 Windows commands shows no read newly gated.
+  The API key is sent only over `https://` and never through a redirect, and (see Security
+  fixes) never on a command line. The start-up banner no longer names an organization
+  (`ACT_BANNER_ORG` adds one). Windows reads large command output much faster.
+- `scripts/update-act-windows.sh` / `.ps1`, `vendor/CHECKSUMS` and `tests/check_vendor.sh`:
+  refresh and verify the vendored ACT for Linux and Windows together.
+
+**Documentation** (also in the PDFs)
+- New: `docs/APPROVED_COMMANDS.md` (how to pre-approve commands with `site_act_allow`, what can
+  never be approved, how Windows differs), `docs/VARIABLES.md` (what you can set, where, and who
+  wins, checked by running Ansible), `docs/VARIABLES_REFERENCE.md` (every setting and default,
+  generated by `scripts/gen_variable_reference.py`; CI fails when it is out of date),
+  `docs/MARIADB.md` (the MariaDB / MySQL check step by step, host or container).
+- `docs/ADDING_ACT.md`: both endpoint formats and the `:probe` command, and how to carry its
+  result into the jobs. Corrected: ACT provider settings are commented examples, not already set.
+- Fixed from the documentation review: settings-file names and the group they
+  apply to, WinRM certificate validation (validate first, `ignore` only for a lab test),
+  secrets table (WinRM, the ACT key on managed hosts, rotation of ServiceNow, MariaDB, WinRM),
+  ServiceNow sign-in (basic authentication only), the workflow tables, and a caveat that the
+  approval hand-over has not been run end to end in a live AAP.
+- The PDF build scripts now live in `docs/pdf/`.
+
 ## 0.4.1 — 2026-09-29
 
 - **ServiceNow - test ticket** (`playbooks/servicenow_test_ticket.yml`): proves the ServiceNow

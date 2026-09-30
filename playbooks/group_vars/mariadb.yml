@@ -1,9 +1,19 @@
-# YOUR SETTINGS FOR THE MARIADB HOSTS (AAP group mariadb). MariaDB runs in a podman container.
-# To turn the MariaDB check on:
-#   1. On a MariaDB host, run: sudo podman ps   - and note the MariaDB container's NAME.
-#   2. Below, delete the "# " in front of BOTH lines and replace CHANGE-ME with that name.
+# YOUR SETTINGS FOR THE MARIADB HOSTS (AAP group "mariadb"; the example inventory calls it
+# "mariadb_hosts" - the database check accepts both names, mysql / mysql_hosts / database_hosts too,
+# and any host you give a container name; MySQL hosts: playbooks/group_vars/mysql.yml).
+# A settings file applies to the group with the same name as the file: if your MariaDB hosts are
+# in a group with another name, copy this file to playbooks/group_vars/<that group>.yml.
+# Full guide (rootless containers, several containers, the credential): docs/MARIADB.md.
+#
+# To turn the MariaDB check on for MariaDB in podman containers:
+#   1. On a MariaDB host, run: sudo podman ps -a   - and note the container NAME(S).
+#      (Rootless containers belong to a user: sudo -u THAT_USER podman ps -a)
+#   2. Below, delete the "# " in front of the lines you need and replace CHANGE-ME.
 #   3. In AAP, attach the "MariaDB monitor" credential (the read-only DB account) to the Health
-#      check and Troubleshoot job templates. Credentials attach to templates, not to groups; the
-#      check only uses it on the hosts in this group.
+#      check, Database health and Troubleshoot job templates. Credentials attach to templates, not to groups; the
+#      check only uses it on the hosts that have a database.
 # check_mariadb_enabled: true
-# check_mariadb_container: CHANGE-ME
+# check_mariadb_container: CHANGE-ME                  # one container ...
+# check_mariadb_containers: [CHANGE-ME, CHANGE-ME-2]  # ... or several on the same host
+# check_mariadb_container_discover: true              # ... or find every mariadb/mysql/percona container
+# check_mariadb_container_user: CHANGE-ME             # rootless: the account that owns the containers

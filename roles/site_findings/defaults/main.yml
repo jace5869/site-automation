@@ -31,3 +31,7 @@ site_windows_connections: [winrm, psrp, ansible.builtin.winrm, ansible.builtin.p
 _site_host_is_windows: >-
   {{ (ansible_connection | default('ssh')) in site_windows_connections
      or (ansible_shell_type | default('sh')) in ['powershell', 'cmd'] }}
+
+# A notice in the job output when a project settings file (playbooks/group_vars/*.yml) defines a
+# setting: it wins over AAP's inventory Variables box. false = no notice.
+site_settings_notice: true

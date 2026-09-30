@@ -2,7 +2,7 @@
 # For the mariadb health check. Needed when MariaDB runs in a container (the official images give
 # root a password); optional on a host install, where the check can log in as root through the
 # local socket. The password reaches the client only through its environment (MYSQL_PWD), never
-# the command line. The account needs no data access at all (docs/RUNBOOKS.md shows the GRANT).
+# a command line. The account needs no data access at all (docs/MARIADB.md section 4 has the GRANT).
 inputs:
   fields:
     - id: username

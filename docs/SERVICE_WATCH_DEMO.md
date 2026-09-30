@@ -21,8 +21,8 @@ cause and proposed fix, approve it, and watch the container come back.
         end                                end
 ```
 
-> **Menu names.** They come from the AAP 2.5 documentation; AAP 2.7 has the same screens, but a
-> label may be worded slightly differently.
+> **Menu names.** The screens are described with the AAP 2.7 wording. Not every click was checked in a
+> live 2.7; if a label differs, follow its meaning.
 
 ---
 
@@ -180,7 +180,7 @@ What it does, in order:
    ```text
    git remote get-url origin     # Source control URL, e.g. https://gitlab.example.mil/ops/site-automation.git
    git branch --show-current     # Source control branch/tag/commit when you use a branch, e.g. main
-   git tag --list                # the release tags, if you pin the project to one (e.g. v0.2.0)
+   git tag --list                # the release tags, if you pin the project to one (e.g. `v<version>`)
    ```
    Both are also in that copy's `.git/config`. If the repository is private, have a token or
    deploy key ready for the Source Control credential.
@@ -278,6 +278,11 @@ template: it runs the commands it is handed.
    - **Timeout** 30 minutes
    - Link type **Run on fail** (important: not "Run on success")
    - **Finish**.
+
+   **If you schedule this workflow (for example every 15 minutes):** open the workflow → **Edit**
+   and turn **off** "Enable concurrent jobs" (it is off by default in AAP; check it). Then a run
+   that is waiting for an approval (30 minutes here) is not joined by a second run every 15
+   minutes for the same containers.
 6. Hover over the approval box → **Add step and link** → **Node type** *Job Template* →
    **Service watch - apply approved fix** → link type **Run on success** → **Finish**.
 7. Click **Save**. (**Close** without **Save** throws the graph away.)
@@ -356,7 +361,7 @@ when you trust it.
 8. Optional: stop one again and run the workflow with `self-heal`. The check box goes green on its
    own; the record says `self_healed`.
 
-Tested so far (0.3.4): every step on a RHEL 9 test machine running systemd and rootful podman,
+Last tested by hand at release 0.3.4 (check `CHANGELOG.md` for what changed since): every step on a RHEL 9 test machine running systemd and rootful podman,
 with Quadlet units (with `ContainerName=`, and the default name `systemd-NAME`), a hand-written
 unit that runs `podman run`, a plain container, and an `nginx.service` that is not the container
 (correctly ignored); ACT was a scripted stand-in. Not tested yet: your STIG Manager host, the real

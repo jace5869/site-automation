@@ -60,7 +60,7 @@ one-shot run write one JSON object describing what happened. It is the contract 
 `{kind, command, risk, reason, thought, pre_approvable}` — `kind` is `command` or `file`
 (`command` then reads `edit <path>` / `write <path>`). `thought` is the model's stated reason
 for proposing it. `pre_approvable` is true when an `--allow` pattern could ever approve this
-exact command (a plain single command outside the danger tier; never a file change) — so an
+exact command (a plain single command that is not a catastrophic payload; never a file change) — so an
 approval workflow can hand it back to ACT as an exact-match pattern. When false, a person has
 to apply that fix.
 
@@ -76,9 +76,9 @@ if it is a single plain command:
 - **Windows**: the PowerShell parser must see exactly one command with constant arguments —
   no pipeline, `;`, `&&`/`||`, redirection, call operator, variables, subexpressions, or arrays.
 
-The danger tier (recursive deletes, disk/partition tools, power state, …) and catastrophic
-payloads are **never** pre-approved, and patterns only ever apply to `run` commands — never
-to structured file edits/writes. With `--non-interactive`, `--allow` is an allowlist-only fix
+Danger-tier commands (forced single-file deletes, package removal, account changes, …) and
+catastrophic payloads (recursive deletes, disk/partition tools, power state, …) are **never**
+pre-approved, on Linux and Windows alike; `--auto` never approves them either. Patterns only ever apply to `run` commands — never to structured file edits/writes. With `--non-interactive`, `--allow` is an allowlist-only fix
 mode: proven reads and the listed fixes run; everything else is refused and reported in
 `denied`.
 

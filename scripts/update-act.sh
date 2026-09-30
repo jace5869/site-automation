@@ -22,4 +22,5 @@ cp -a "$src/act" "$root/vendor/act/act"
 cp -a "$src/ansible" "$root/vendor/act/ansible"
 [ -f "$src/docs/RESULT_FILE.md" ] && mkdir -p "$root/vendor/act/docs" && cp -a "$src/docs/RESULT_FILE.md" "$root/vendor/act/docs/"
 echo "$version" > "$root/vendor/act/VERSION"
+[ -f "$root/vendor/act-windows/act.ps1" ] && (cd "$root" && sha256sum vendor/act/act vendor/act-windows/act.ps1 > vendor/CHECKSUMS)
 echo "vendored ACT-Linux $version into vendor/act - review with 'git diff --stat', then commit"

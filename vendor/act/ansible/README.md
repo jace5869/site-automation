@@ -88,7 +88,7 @@ act_triage:
     changed: false
     findings: ["systemd unit failed: nginx.service"]
     proposed_commands: ["systemctl restart nginx"]   # pre-approvable: the apply job can run these
-    manual_fixes: []      # quoted/chained/danger-tier commands and file changes: a person applies
+    manual_fixes: []      # quoted/chained/catastrophic commands and file changes: a person applies
 ```
 
 ## AAP setup
@@ -111,8 +111,9 @@ act_triage:
    env:
      GENAI_KEY: "{{ genai_key }}"
    ```
-   The key lands in the execution environment; the role hands it to each host only through
-   the ACT task's `environment` with `no_log: true`.
+   The key lands in the execution environment; the role hands it to each host only on the
+   ACT task's stdin (`no_log: true`), never on a command line. Ansible's `environment:` would
+   put it on the sudo / sh command line, where `ps` and the host's sudo log see it.
 3. **Job template "ACT triage"** — `ansible/playbooks/act_triage.yml`, machine credential +
    the ACT credential, "Prompt on launch" for extra vars if you want per-run `act_triage_allow`.
    Schedule it, or launch it from an Event-Driven Ansible rulebook on an alert.
@@ -123,7 +124,7 @@ act_triage:
    status, summary and proposed commands. The triage job's `set_stats` (`act_triage`) flows
    to the later nodes as extra vars, so the apply job runs exactly those commands — each one
    becomes an exact-match `--allow` pattern. Only `pre_approvable` proposals go there; file
-   changes and commands ACT can never pre-approve (quotes, pipes, chaining, danger tier) are
+   changes and commands ACT can never pre-approve (quotes, pipes, chaining, danger tier, catastrophic payloads) are
    listed as `manual_fixes` and under "apply by hand" in the report.
 
 ## Safety notes
@@ -133,8 +134,10 @@ act_triage:
   exposed by this role.
 - **`act_triage_allow` is the whole blast radius** of unattended fixes. Keep patterns
   narrow (`systemctl restart (nginx|httpd)`, not `systemctl .*`). ACT additionally refuses to
-  pre-approve anything with shell chaining/redirection/substitution, anything in its danger
-  tier (recursive deletes, disk tools, power state), and any file edit.
+  pre-approve anything with shell chaining/redirection/substitution, any catastrophic
+  payload (recursive deletes, disk tools, power state), and any file edit. A danger-tier
+  command (`rm -f FILE`, `rpm -e`, ...) is approved only by a pattern that names it, so it
+  reaches an apply job only if the approver approves that exact proposal.
 - **Logs are untrusted input.** A crafted log line can try to instruct the model. In
   diagnose-only mode that cannot change anything; with an allowlist it can only ever steer
   ACT toward commands your patterns already permit.

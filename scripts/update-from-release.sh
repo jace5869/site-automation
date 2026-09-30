@@ -41,12 +41,23 @@ esac
 protect=(.git/ .site-local poam/poam.csv inventories/site/ playbooks/group_vars/ playbooks/host_vars/)
 if [ -f .site-local ]; then
   while IFS= read -r line || [ -n "$line" ]; do
-    line=${line%%#*}; line=$(echo "$line" | xargs)
-    [ -n "$line" ] && protect+=("$line")
+    line=${line%%#*}                                # comment
+    line=${line//$'\r'/}                            # a Windows line ending
+    line=${line//\\//}                              # backslashes -> slashes (as the PowerShell script does)
+    line=${line#"${line%%[![:space:]]*}"}           # trim (no xargs: a quote in a path must not abort the update)
+    line=${line%"${line##*[![:space:]]}"}
+    while [ "${line#/}" != "$line" ]; do line=${line#/}; done   # every leading slash (as the PowerShell script)
+    [ -n "$line" ] || continue
+    case "/$line/" in */../*) die ".site-local: '$line' - paths with .. are not allowed" ;; esac
+    protect+=("$line")
   done < .site-local
 fi
 excludes=()
-for p in "${protect[@]}"; do excludes+=(--exclude "/${p#/}"); done
+for p in "${protect[@]}"; do
+  # a path, not a pattern: * ? [ in it are taken literally (the PowerShell script does the same)
+  esc=$(printf '%s' "${p#/}" | sed 's/[][*?\\]/\\&/g')
+  excludes+=(--exclude "/$esc")
+done
 # --filter: files your .gitignore covers (local secrets, reports, caches) are left alone too.
 opts=(-a --delete --checksum --filter=':- .gitignore' "${excludes[@]}")
 
@@ -67,13 +78,32 @@ for p in "${protect[@]:1}"; do
   fi
 done
 
+# Settings the release documents in playbooks/group_vars/all.yml that your copy of that file does
+# not mention at all (it is yours, so it is never changed; new settings would otherwise go unseen).
+new_settings() {
+  local rel=playbooks/group_vars/all.yml key missing=()
+  [ -f "$release/$rel" ] && [ -f "$rel" ] || return 0
+  while IFS= read -r key; do
+    grep -qE "^[# ]*${key}:" "$rel" || missing+=("$key")
+  done < <(sed -nE 's/^#? ?([a-z][a-z0-9_]*):.*/\1/p' "$release/$rel" | sort -u)
+  [ ${#missing[@]} -eq 0 ] && return 0
+  echo
+  echo "NEW SETTINGS in this release that your $rel does not mention (it is yours, so it is not changed):"
+  printf '  %s\n' "${missing[@]}"
+  echo "  See $release/$rel for what each is, and copy the ones you want."
+}
+
 if [ "$mode" = preview ]; then
   echo "PREVIEW - nothing is changed. What --apply would do:"
-  rsync "${opts[@]}" --dry-run --itemize-changes "$release"/ ./ |
+  changes=$(rsync "${opts[@]}" --dry-run --itemize-changes "$release"/ ./ |
     awk '/^\*deleting/ {print "  DELETE   " $2; next}
          /^>f\+\+\+/   {print "  NEW      " $2; next}
-         /^>f/         {print "  CHANGED  " $2; next}' | sort -k2
+         /^>f/         {print "  CHANGED  " $2; next}' | sort -k2)
+  [ -z "$changes" ] || echo "$changes"
   for f in "${seed[@]}"; do echo "  YOURS    $f"; done
+  new_settings
+  echo
+  echo "$(printf '%s\n' "$changes" | grep -c '  NEW ' || true) new, $(printf '%s\n' "$changes" | grep -c '  CHANGED ' || true) changed, $(printf '%s\n' "$changes" | grep -c '  DELETE ' || true) to delete."
   [ ${#seed[@]} -eq 0 ] || echo "YOURS = settings files you do not have yet: added once, then yours - never changed again."
   echo
   echo "DELETE = files that are not in the release. If one of them is yours, add its path to"
@@ -89,6 +119,7 @@ else
   git status --short | head -60
   echo
   git --no-pager diff --stat | tail -1 || true
+  new_settings
   echo
   echo "Next:"
   echo "  git add -A && git commit -m \"site-automation ${version:-update}\""

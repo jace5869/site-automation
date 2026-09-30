@@ -4,6 +4,13 @@
 # Input: _watch_run_cmds (list of commands). Output: _watch_ran (the shell result) and
 # _watch_fixes_run (the commands that ran). Skipped in check mode (a dry run changes nothing).
 
+- name: Fix | apply-time guard (never reboot, shut down or wipe from here)
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: apply_guard.yml
+  vars:
+    _guard_cmds: "{{ _watch_run_cmds }}"
+
 - name: Fix | run {{ _watch_run_cmds | join(' ; ') }}
   ansible.builtin.shell:
     cmd: |
@@ -17,6 +24,7 @@
       {% endfor %}
     executable: /bin/bash
   register: _watch_ran
+  changed_when: true          # a fix command was run; the re-check says whether it worked
   failed_when: false
 
 - name: Fix | what ran

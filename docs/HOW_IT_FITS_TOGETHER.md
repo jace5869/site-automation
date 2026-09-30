@@ -17,8 +17,8 @@ jobs**. Once you know which job a piece does, you know where to look, and what y
 When a job starts, AAP puts the four together **for each host**:
 
 1. the code, from the project;
-2. the settings, from the inventory. Each host gets the values of its own groups and its own
-   Variables box;
+2. the settings, from your settings files and the inventory. Each host gets the values of its own
+   groups and its own Variables box;
 3. the secrets, from the credentials, handed over as environment variables;
 4. your answers, from the survey.
 
@@ -58,7 +58,7 @@ check_disk_overrides:                  # a table inside a table
 |---|---|---|
 | `playbooks/group_vars/*.yml` | **your settings**, one file per AAP group (`mariadb.yml` = group `mariadb`, `all.yml` = every host). Placeholders start with `#` | **yes**: this is where you change settings |
 | `playbooks/*.yml` | the files AAP runs, one per job template. Each says *which hosts* and *which roles* | **no** |
-| `roles/<role>/defaults/main.yml` | **every setting of that role**, with its default value and a comment saying what it does. The menu of what you can change | **no**: read it, then set values in AAP |
+| `roles/<role>/defaults/main.yml` | **every setting of that role**, with its default value and a comment saying what it does. The menu of what you can change (the same list, ready to read: [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md)) | **no**: read it, then set values in your settings files or in AAP |
 | `roles/<role>/tasks/*.yml` | the steps. They read the settings | **no** |
 | `roles/<role>/meta/main.yml` | the role's name tag | **no** |
 | `aap/credential_types/*.yml` | forms you paste into AAP (Credential Types) | **no** |
@@ -69,9 +69,11 @@ check_disk_overrides:                  # a table inside a table
 | `tests/`, `.github/`, `.ansible-lint`, `.yamllint` | automatic checks of the code | **no** |
 | `poam/poam.csv` | **your** POA&M list | **yes** |
 
-Two places can hold the same setting: your group file in `playbooks/group_vars/`, and AAP's
-Variables box for that group. **Keep each setting in one place.** If both have it, the file wins.
-The file is also the easier place: you edit it in VS Code, and Git remembers every change.
+Two places can hold the same setting: your settings file in `playbooks/group_vars/`, and AAP's
+Variables box. **Keep each setting in one place.** If both have it, the file wins over an AAP
+*group* or *inventory* box (a *host's* box in AAP beats a group file; a template's extra variables
+and survey answers beat everything). The full order is in [VARIABLES.md](VARIABLES.md). The file is
+also the easier place: you edit it in VS Code, and Git remembers every change.
 
 The appendix of this guide prints every `defaults/main.yml`: every setting there is, in one place.
 
@@ -91,13 +93,14 @@ Take `check_disk_warn_pct`: warn when a filesystem is this many percent full.
 5. **Change it for one host.** Open the host → **Edit host → Variables**:
    `check_disk_warn_pct: 95`. Only that host warns at 95%.
 6. **For one run.** A survey answer, or the template's own Variables box, beats all of the
-   above, for that run only. This setting has no survey question, so it simply comes from the
-   inventory.
+   above, for that run only. This setting has no survey question, so it simply comes from your
+   settings files or the inventory.
 
 <!-- figure:precedence -->
 
-The rule in one line: **the closer to the host, the stronger. An answer given at launch beats
-everything, for that run.**
+The rule in one line: **the closer to the host, the stronger, except that this project's settings
+files (`playbooks/group_vars/`) beat AAP's group and inventory boxes. An answer given at launch
+beats everything, for that run.** The full order: [VARIABLES.md](VARIABLES.md).
 
 Two things that trip people up:
 
@@ -113,7 +116,7 @@ Two things that trip people up:
   | `health_checks` | the Health check **survey** | the playbook's own value beats the inventory |
   | `ts_area`, `ts_service`, `ts_target`, `ts_since` | the Troubleshoot **survey** | chosen per problem |
   | `use_act`, `site_act_level` | a **survey** (or the inventory, as a fixed default) | chosen per run |
-  | everything named `check_*`, `patch_*`, `site_act_*` | your settings files (`playbooks/group_vars/`), or a group's or host's Variables | facts about your site and hosts. The ACT provider and models are already in `all.yml`: change them there |
+  | everything named `check_*`, `patch_*`, `site_act_*` | your settings files (`playbooks/group_vars/`), or a group's or host's Variables | facts about your site and hosts. The ACT provider and models: defaults in the role; to change, un-comment the lines in `all.yml` |
   | `servicenow_*`, `poam_*` | `playbooks/group_vars/all.yml` (the placeholders are there), or the **inventory's own Variables** box, not both (the file wins). Not a group's box | those jobs run on AAP itself, which is in no group, so it only gets `all.yml` and inventory-level settings |
 
 ## The inventory: one inventory, many groups, and a host in several groups
@@ -144,7 +147,11 @@ ways to connect your groups to the names the runbooks use. Both work, so pick on
 - **Way A: add the runbook names as groups, with your groups inside.** A few clicks, and the
   guides match what you see. For example, create `mariadb_hosts` and put `db_servers` inside
   it.
-- **Way B: tell the runbooks your names.** No new groups. In the inventory **Variables**:
+- **Way B: tell the runbooks your names.** No new groups. In your settings file
+  `playbooks/group_vars/all.yml`, or in the inventory **Variables** box in AAP (one of them, not
+  both): a list you write replaces the shipped one, so repeat the names you keep; `aap` and
+  `aap_hosts` are always protected. (Updated from 0.4.1? Your `all.yml` still sets these lists;
+  comment them out there before you use the AAP box, or the file wins.)
   ```yaml
   site_act_diagnose_only_groups: [aap, netapp]   # ACT never fixes these
   patch_never_reboot_groups: [aap]               # patching never reboots these
@@ -241,11 +248,11 @@ from your Git server by itself.
    Folder**). Open **Source Control** (Ctrl+Shift+G): it must show **no changes**. Commit or
    discard anything listed there first. Then **... → Pull**, to get whatever is newest on the
    server.
-2. **Extract the new release somewhere else.** Right-click `site-automation-0.3.1.zip` → **Extract
-   All** → for example `Downloads\site-automation-0.3.1`. **Not** into your repository folder.
+2. **Extract the new release somewhere else.** Right-click `site-automation-<version>.zip` → **Extract
+   All** → for example `Downloads\site-automation-<version>` (`<version>` is the number in the file name, for example `0.5.0`). **Not** into your repository folder.
 3. **Preview.** It changes nothing. **Terminal → New Terminal** (it is PowerShell), then:
    ```powershell
-   $rel = "$HOME\Downloads\site-automation-0.3.1"          # where you extracted the release
+   $rel = "$HOME\Downloads\site-automation-<version>"          # where you extracted the release
    & "$rel\scripts\update-from-release.ps1" -Clone "C:\git\site-automation"
    ```
    `-Clone` is your repository folder: the one VS Code has open. The script lists every file as
@@ -259,7 +266,7 @@ from your Git server by itself.
 5. **Review in VS Code.** **Source Control** now lists every file the update changed. Click one to
    see the old and new versions side by side. See something of yours? Right-click it →
    **Discard Changes** keeps your version.
-6. **Commit and push.** Type a message (`site-automation 0.3.1`), click **Commit**, and answer
+6. **Commit and push.** Type a message (`site-automation <version>`), click **Commit**, and answer
    *Yes* if VS Code asks to stage all changes. Then click **Sync Changes**. Only now does the new
    version reach your Git server.
 7. **In AAP:** **Projects → site-automation → Sync**. With **Update revision on launch** ticked, the
@@ -295,7 +302,7 @@ commands on RHEL, and those break with Windows line endings. VS Code shows `LF` 
 bar; leave it that way.
 
 **On Linux instead of Windows?** `scripts/update-from-release.sh` does the same as Method 1:
-`/tmp/site-automation-0.3.1/scripts/update-from-release.sh ~/site-automation`, then again with
+`/tmp/site-automation-<version>/scripts/update-from-release.sh ~/site-automation`, then again with
 `--apply`, then `git status`, `git commit`, `git push`.
 
 **First time, with no repository at work yet?** Create an empty repository on your Git server,

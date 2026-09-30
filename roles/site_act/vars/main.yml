@@ -1,0 +1,5 @@
+---
+# Not settings: built-in protection (role vars beat group_vars and inventory variables).
+# ACT may only DIAGNOSE on the AAP hosts, whatever site_act_level or site_act_diagnose_only_groups say.
+# Keep in step with roles/patch/vars/main.yml and playbooks/act_fix_approved.yml.
+_site_always_diagnose_only: [aap, aap_hosts]

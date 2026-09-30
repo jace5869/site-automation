@@ -45,7 +45,16 @@
          else 'fix_approved' }}
 
 # DRY RUN: the job runs as Check (Job type "Check", e.g. on the workflow's node) - show what
-# would run and change nothing. A rehearsal of the whole approve-and-fix path.
+# would run and change nothing. A rehearsal of the whole approve-and-fix path: a command the
+# apply-time guard would refuse is refused here too (the real run checks it in run_fixes.yml).
+- name: Apply | DRY RUN - the apply-time guard
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: apply_guard.yml
+  vars:
+    _guard_cmds: "{{ _watch_approved }}"
+  when: ansible_check_mode and service_watch_outcome == 'fix_approved'
+
 - name: Apply | DRY RUN (Check mode) - what would run, nothing is changed
   ansible.builtin.debug:
     msg: >-

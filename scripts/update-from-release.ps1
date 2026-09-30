@@ -96,6 +96,7 @@ $siteLocal = Join-Path $Clone '.site-local'
 if (Test-Path -LiteralPath $siteLocal) {
     foreach ($line in (Get-Content -LiteralPath $siteLocal)) {
         $p = ($line -split '#')[0].Trim().Replace('\', '/').TrimStart('/')
+        if ($p -and ('/' + $p + '/') -like '*/../*') { Fail ".site-local: '$p' - paths with .. are not allowed" }
         if ($p) { $protect += $p }
     }
 }
@@ -105,7 +106,7 @@ function Test-Yours([string]$rel) {
     foreach ($p in ($protect + $ignored)) {
         $q = $p.ToLower()
         if ($q.EndsWith('/')) { if ($r.StartsWith($q)) { return $true } }
-        elseif ($r -eq $q) { return $true }
+        elseif ($r -eq $q -or $r.StartsWith($q + '/')) { return $true }   # a file, or a folder written without the slash
     }
     return $false
 }
@@ -137,6 +138,22 @@ foreach ($f in (Get-Files $Clone)) {
 }
 $plan = @($plan | Sort-Object { $_.Path })
 
+# Settings the release documents in playbooks/group_vars/all.yml that your copy of that file does
+# not mention at all (it is yours, so it is never changed; new settings would otherwise go unseen).
+function Write-NewSettings {
+    $rel = 'playbooks/group_vars/all.yml'
+    $rf = Join-Path $release $rel; $mf = Join-Path $Clone $rel
+    if (-not ((Test-Path -LiteralPath $rf) -and (Test-Path -LiteralPath $mf))) { return }
+    $mine = Get-Content -LiteralPath $mf
+    $keys = @(Get-Content -LiteralPath $rf | ForEach-Object { if ($_ -match '^#? ?([a-z][a-z0-9_]*):') { $Matches[1] } } | Sort-Object -Unique)
+    $missing = @($keys | Where-Object { $k = $_; -not ($mine | Where-Object { $_ -match ('^[# ]*' + [regex]::Escape($k) + ':') }) })
+    if ($missing.Count -eq 0) { return }
+    Write-Host ''
+    Write-Host "NEW SETTINGS in this release that your $rel does not mention (it is yours, so it is not changed):"
+    foreach ($k in $missing) { Write-Host "  $k" }
+    Write-Host "  See $rf for what each is, and copy the ones you want."
+}
+
 $version = '?'
 $m = Select-String -LiteralPath (Join-Path $release 'CHANGELOG.md') -Pattern '^## ([0-9][0-9.]*) ' | Select-Object -First 1
 if ($m) { $version = $m.Matches[0].Groups[1].Value }
@@ -158,6 +175,7 @@ if (-not $Apply) {
     $nDel = @($plan | Where-Object { $_.Action -eq 'DELETE' }).Count
     $nYours = @($plan | Where-Object { $_.Action -eq 'YOURS' }).Count
     Write-Host ('{0} new, {1} changed, {2} to delete.' -f $nNew, $nChg, $nDel)
+    Write-NewSettings
     if ($nYours) { Write-Host ('YOURS = {0} settings file(s) you do not have yet: added once, then yours - never changed again.' -f $nYours) }
     Write-Host 'DELETE = files that are not in the release. If one of them is yours, add its path to'
     Write-Host '.site-local (one per line), commit that, and preview again. CHANGED on one of our files'
@@ -176,6 +194,7 @@ foreach ($p in $plan) {
     }
 }
 Write-Host ('Applied: {0} file(s).' -f $plan.Count)
+Write-NewSettings
 Write-Host ''
 Write-Host 'Next, in VS Code:'
 Write-Host '  1. Source Control (Ctrl+Shift+G): the list is every file the update changed. Click one to'

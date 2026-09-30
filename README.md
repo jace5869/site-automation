@@ -1,7 +1,7 @@
 # Site automation
 
 Runbooks for the site's Linux servers, run from Ansible Automation Platform 2.7 (or the Ansible
-CLI): **health checks** (system, compliance, MariaDB, certificates, patching), **troubleshooting**,
+CLI): **health checks** (system, compliance, MariaDB / MySQL, certificates, patching), **troubleshooting**,
 **ServiceNow** tickets and health, **POA&M** status, **patching** with an approval, the **STIG
 Manager** deployment, and ACT (GenAI) monitoring with approved fixes.
 
@@ -14,15 +14,20 @@ Read [docs/SECRETS.md](docs/SECRETS.md).
 
 Only modules that ship with Ansible are used (no collections to install), so the Minimal
 execution environment runs everything, also on a disconnected network. Tested with ansible-core
-2.16 and 2.21, against Rocky Linux 9 test hosts (containers, MariaDB 10.5) and, read-only, a
-Fedora host with SELinux enforcing and auditd.
+2.16 and 2.21, against Rocky Linux 9 test hosts (containers, MariaDB 10.5), MySQL 8.0 / 8.4 and
+MariaDB 11.8 in rootless podman containers, and, read-only, a Fedora host with SELinux enforcing
+and auditd.
+
+**Updating from 0.4.1?** Read the upgrade notes at the top of [CHANGELOG.md](CHANGELOG.md): your
+own `playbooks/group_vars/all.yml` keeps its old settings until you comment them out.
 
 ## Runbooks
 
 | Job template | Playbook | What |
 |---|---|---|
-| Health check | `playbooks/health_check.yml` | read-only checks, picked per run: disk (with days-until-full), mounts, services, performance, time, network, logging, SELinux, fapolicyd, auditd, accounts, certificates, patching, MariaDB. Findings in plain words, each with a command to look further; fails hosts with findings so a workflow can react |
-| Troubleshoot | `playbooks/troubleshoot.yml` | on demand: the first commands an admin runs for a kind of problem (disk, performance, service, network, SELinux, fapolicyd, login, time, logs, MariaDB), each explained, plus the matching checks |
+| Health check | `playbooks/health_check.yml` | read-only checks, picked per run: disk (with days-until-full), mounts, services, performance, time, network, logging, SELinux, fapolicyd, auditd, accounts, certificates, patching, MariaDB / MySQL (`mariadb`, `mysql` or `database`). Findings in plain words, each with a command to look further; fails hosts with findings so a workflow can react |
+| **Database health - MariaDB / MySQL** | `playbooks/database_health.yml` | **the database check on its own, for MariaDB and MySQL (5.7, 8.0, 8.4), installed on the host or in podman containers** (one, several, found automatically, rootless): running, connections, long queries, replication, Galera and Group Replication, log errors, disk. Read-only; fails hosts with findings ([docs/MARIADB.md](docs/MARIADB.md)) |
+| Troubleshoot | `playbooks/troubleshoot.yml` | on demand: the first commands an admin runs for a kind of problem (disk, performance, service, network, SELinux, fapolicyd, login, time, logs, MariaDB / MySQL), each explained, plus the matching checks |
 | Certificate report | `playbooks/cert_report.yml` | every certificate on every host (files, keystores, TLS endpoints) in one table, soonest expiry first |
 | POA&M status | `playbooks/poam_status.yml` | overdue / due-soon POA&M items from `poam/poam.csv`; optional STIG Manager cross-check for open CAT I/II findings with no POA&M item |
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | workflow step: one incident per finding, updated (not duplicated) on later runs, noted or resolved when it clears |
@@ -45,6 +50,9 @@ Fedora host with SELinux enforcing and auditd.
 | [docs/SETUP_AAP.md](docs/SETUP_AAP.md) | the setup, step by step: Git, credentials, project, inventory, templates, ServiceNow |
 | [docs/SERVICENOW_SETUP.md](docs/SERVICENOW_SETUP.md) | ServiceNow, step by step: the API account to ask for, the instance URL and API calls, firewall / proxy / DoD CA, the credential, a test ticket, and how to verify it in ServiceNow |
 | [docs/USING_YOUR_AAP_INVENTORY.md](docs/USING_YOUR_AAP_INVENTORY.md) | your inventory is already in AAP: the groups to add and which variables go on which group |
+| [docs/VARIABLES.md](docs/VARIABLES.md) | settings (variables): what you can set, where to put it (settings file, AAP Variables box, extra variables), and which place wins; with [docs/VARIABLES_REFERENCE.md](docs/VARIABLES_REFERENCE.md), every setting and its default (generated) |
+| [docs/APPROVED_COMMANDS.md](docs/APPROVED_COMMANDS.md) | how to pre-approve the commands ACT may run by itself, what can never be approved, and how to verify it |
+| [docs/MARIADB.md](docs/MARIADB.md) | the MariaDB and MySQL database checks, step by step: host installs and podman containers (rootless too), the monitor account per engine, verifying it, what was tested |
 | [docs/RUNBOOKS.md](docs/RUNBOOKS.md) | every check and finding, and what to do about it |
 | [docs/WORKFLOWS_AND_SCHEDULES.md](docs/WORKFLOWS_AND_SCHEDULES.md) | how to build any workflow, and 17 ready-made ones for Linux, Windows and both (health, compliance, patching with a dry run first, ACT fixes, certificates, MariaDB, investigations, STIG Manager); schedules |
 | [docs/ADDING_ACT.md](docs/ADDING_ACT.md) | adding ACT later (explain / diagnose / self-heal), and writing your own check |
@@ -71,9 +79,13 @@ Fedora host with SELinux enforcing and auditd.
 | `inventories/example/` | placeholder inventory and settings: copy to `inventories/site/` |
 | `poam/` | the POA&M list (CSV) for `poam_status.yml` |
 | `vendor/act/` | ACT-Linux (the `act` tool and its roles), vendored from a release |
+| `vendor/act-windows/` | ACT-Windows (`act.ps1`), vendored from a release, for the *ACT for Windows - install* template |
 | `scripts/update-act.sh` | refresh `vendor/act` from a newer ACT-Linux release |
+| `scripts/update-act-windows.sh`, `.ps1` | refresh `vendor/act-windows` from a newer ACT-Windows release |
 | `scripts/update-from-release.ps1` | Windows (VS Code): update YOUR copy from a new site-automation release - preview first; your own files (`poam/poam.csv`, `.site-local` paths, git-ignored files) are never touched |
 | `scripts/update-from-release.sh` | the same on Linux |
+| `scripts/gen_variable_reference.py` | rewrites `docs/VARIABLES_REFERENCE.md` from the roles' defaults (`--check` in CI) |
+| `docs/pdf/` | the PDFs and the scripts that build them (`docs/pdf/README.md`) |
 
 ## Using it in AAP
 
@@ -81,7 +93,9 @@ Follow [docs/SETUP_AAP.md](docs/SETUP_AAP.md). In short: put this repository in 
 with your inventory in `inventories/site/`; create the credential types in `aap/credential_types/`
 and the credentials; a project on the repository; an inventory sourced from
 `inventories/site/hosts.yml`; one job template per playbook; then the workflows and schedules in
-[docs/WORKFLOWS_AND_SCHEDULES.md](docs/WORKFLOWS_AND_SCHEDULES.md).
+[docs/WORKFLOWS_AND_SCHEDULES.md](docs/WORKFLOWS_AND_SCHEDULES.md). Your inventory is already in
+AAP? Keep it, and follow [docs/USING_YOUR_AAP_INVENTORY.md](docs/USING_YOUR_AAP_INVENTORY.md)
+instead of the inventory steps.
 
 Job template **STIG Manager - deploy**: playbook `playbooks/stigman_deploy.yml`; credentials:
 Machine, *STIG Manager database*, *TLS certificate* (and *Container registry login (hosts)* if
@@ -108,6 +122,8 @@ Manager's demo Keycloak standing in for your realm. The rootful path is the same
 ## Updating ACT
 
 ```bash
-scripts/update-act.sh ACT-Linux-0.6.19.tar.gz   # a release tarball, or a path to an ACT-Linux checkout
-git diff --stat && git commit -am "vendor ACT-Linux 0.6.19"
+scripts/update-act.sh ACT-Linux-<version>.tar.gz           # a release tarball, or a path to an ACT-Linux checkout
+scripts/update-act-windows.sh ACT-Windows-<version>.zip    # the same for ACT-Windows (Windows: update-act-windows.ps1)
+bash tests/check_vendor.sh                                 # the copies match their VERSION files and vendor/CHECKSUMS
+git diff --stat && git commit -am "vendor ACT <version>"
 ```
