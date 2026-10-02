@@ -192,10 +192,16 @@ tests. Nobody has run them against your gateway yet; treat the first run as the 
 
 ### Step 1: check which ACT the project carries
 
-`vendor/act/VERSION` must say `0.6.19` or newer. This release carries **0.6.22**. It sends the key
+`vendor/act/VERSION` must say `0.6.19` or newer. This release carries **0.6.23**. It sends the key
 only to an `https://` provider URL (an `http://` URL is refused unless
 `site_act_env: {ACT_ALLOW_HTTP: "1"}`), and more dangerous commands always need a person (see
-[APPROVED_COMMANDS.md](APPROVED_COMMANDS.md)). New in 0.6.22, all automatic:
+[APPROVED_COMMANDS.md](APPROVED_COMMANDS.md)). New in 0.6.22 and 0.6.23, all automatic:
+
+- **A bigger output limit for thinking models (0.6.23).** Gemini 2.5 and later, GPT-5 and the o-series
+  think before they answer, and the thinking counts against the output limit. At ACT's old limit
+  (4096 tokens) the thinking could use it all and the answer came back **empty** - on GenAI.mil every
+  Gemini model did that in `:probe`. These models now get 16384 (others keep 4096). It is a ceiling,
+  not a charge: you pay for the tokens used. To force one value: `site_act_env: {ACT_MAX_TOKENS: "8000"}`.
 
 - **Temperature per model.** Gemini 3 models (and GPT-5 / o-series reasoning models) get **no**
   temperature, so they use their own default (1.0): Google's Gemini 3 developer guide says to keep
@@ -252,8 +258,12 @@ At the ACT prompt:
 
 `:probe all` tries every model the key lists, on both endpoints, with a small request and then
 ACT's full request. For each it shows what worked and, for a refusal, **the gateway's own reason**.
-`:probe <model name>` tests just one. Write down, for each model, which endpoint worked
-(`openai` or `anthropic`). Leave ACT with an empty line (or Ctrl-D).
+`:probe <model name>` tests just one; `:probe model1 model2` (spaces or commas) tests several.
+Write down, for each model, which endpoint worked (`openai` or `anthropic`). Leave ACT with an empty
+line (or Ctrl-D). From 0.6.23 `full OK` means the model gave a usable answer; `full empty (...)` or
+`full no action (...)` says what came back instead (for example `finish_reason=length`: the model ran
+out of output room), and a test that needed more room says `OK (needed a higher output limit: N)` -
+ACT remembers that limit for the model.
 
 From 0.6.22 each model also gets these lines (under its `basic` / `full` lines):
 
@@ -263,6 +273,8 @@ From 0.6.22 each model also gets these lines (under its `basic` / `full` lines):
 | `structured output OK (strict)` / `OK (non-strict)` / `not supported (...)` | whether the gateway enforces ACT's JSON schema for this model | nothing: ACT uses the best one that works |
 | `tool results OK` / `tool results not supported (...)` | whether this model accepts command results as tool turns | **write it down**: step 5 |
 | `temperature: model default` / `temperature: 0.2` | what ACT sends | nothing (to force a value: `ACT_TEMPERATURE`) |
+| `output limit 16384 (thinking model)` / `output limit 4096` | the most the model may write per answer, thinking included (0.6.23) | nothing |
+| `full empty (finish_reason=length ...)` | even the higher limit was not enough for that test | tell the maintainer; or `ACT_MAX_TOKENS` higher |
 
 The result is remembered for the session. If a setup file already exists for your user on that host
 (`~/.config/act/config.json`), ACT also saves the format there (only the format table, never the

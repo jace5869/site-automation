@@ -61,9 +61,12 @@
                              the key only travels over https, or to this machine); ACT_ALLOW_HTTP is
                              the same switch. Redirects are never followed with the key.
       ACT_STDIN_WAIT         seconds to wait for piped stdin when non-interactive (default 5, 1-600)
-      ACT_MAX_TOKENS         output-token limit sent with each request (default 4096, 256-128000).
-                             A reply cut off at the limit with no usable action (thinking used it
-                             up) is retried once with max(4x, 16384), at most 65536, kept per model
+      ACT_MAX_TOKENS         output-token limit sent with each request: auto (default) = 16384 for
+                             thinking models (Gemini 2.5+, gpt-5*, o1/o3/o4 - their thinking counts
+                             against the limit), 4096 otherwise, or a limit :probe learned for the
+                             model; a number (1-1000000) forces it for every model. A reply cut off
+                             at the limit with no usable action is retried once with 4x the model's
+                             limit (at least 16384, at most 65536), kept per model
       ACT_TEMPERATURE        auto (default): no temperature for Gemini 3+ and reasoning models
                              (gpt-5*, o1/o3/o4) - Google's Gemini 3 guide: keep the default 1.0,
                              lower "may lead to unexpected behavior, such as looping or degraded
@@ -178,7 +181,7 @@ param(
     [switch] $Test
 )
 
-$script:ActVersion = '0.6.22'
+$script:ActVersion = '0.6.23'
 $script:ActScriptPath = $PSCommandPath
 
 # ---- Admin-embedded API keys (optional) -----------------------------------
@@ -270,6 +273,10 @@ $script:ToolResultsSetting = 'auto'
 $script:StreamSetting = 'auto'
 $script:MaxApiResponseBytes = 8388608
 $script:MaxTokens = 4096
+# ACT_MAX_TOKENS (0.6.23): auto (default) = 16384 for thinking models, 4096 otherwise; a number
+# forces that limit for every model ($script:MaxTokensForced).
+$script:MaxTokensForced = $false
+$script:ProbeFreshModel = $null     # :probe tests this model from scratch (ignores its learned limit)
 $script:GenAiTimeout = 120
 # One model turn: the deadline (GENAI_TIMEOUT from its start), whether Esc cancelled it, why it
 # failed (for the result file) and the tool calls of its reply (handed to the assistant turn).
@@ -282,6 +289,9 @@ $script:StreamNoted = @{}
 # Model families for ACT_TEMPERATURE=auto (identical in ACT-Linux).
 $script:Gemini3Regex = '(?i)gemini-([3-9]|[1-9][0-9])'
 $script:ReasoningModelRegex = '(?i)(^|[^a-z0-9])(gpt-5|o[134])([^0-9]|$)'
+# Thinking models whose reasoning tokens count against the output limit (0.6.23): Gemini 2.5
+# and later, plus the reasoning models above. ACT_MAX_TOKENS=auto gives them 16384.
+$script:ThinkingModelRegex = '(?i)gemini-(2\.5|[3-9]|[1-9][0-9])'
 # A 429/400 body that reports an exhausted token/credit quota (not a per-minute rate limit):
 # terminal, never retried (identical to ACT-Linux's _TOKEN_LIMIT_RE).
 # A 400 that objects to the act_action schema's shape (strict mode, nullable unions): the
@@ -308,6 +318,10 @@ $script:ActText = @{
     Cancelled      = '[The user cancelled the task before it finished. Await the next instruction.]'
     NoResult       = '(no command output for this call)'
     NotRun         = '(not executed: ACT runs one action per turn)'
+    LimitThinking  = 'thinking model'
+    LimitLearned   = 'learned by :probe'
+    LimitRaised    = 'raised this session after a cut-off reply'
+    ProbeNotListed = '(not in the provider''s model list)'
     ToolTurnsOff   = '(model {0} refused tool-result turns; sending command results as user messages for {0})'
     StreamOff      = '(streaming not usable for {0}: {1}; using normal requests)'
 }
@@ -554,7 +568,8 @@ function Get-StoredModelFormats {
 
 function Get-StoredModelFeatures {
     # What :probe learned per model (providers.<name>.features, 0.6.22), as a hashtable
-    # model -> @{ stream = bool; schema = 'strict'|'non-strict'|'object'|'none'; tool_results = bool }.
+    # model -> @{ stream = bool; schema = 'strict'|'non-strict'|'object'|'none'; tool_results = bool;
+    # max_tokens = int (0.6.23: an output limit the probe needed) }.
     # Unknown or malformed entries are skipped: a hand-edited file can never break startup.
     param($Config, [string] $ProviderName)
     $out = @{}
@@ -571,6 +586,8 @@ function Get-StoredModelFeatures {
         }
         $sc = ('' + (Get-Prop $v 'schema')).Trim().ToLower()
         if ($sc -in @('strict', 'non-strict', 'object', 'none')) { $entry['schema'] = $sc }
+        $mx = '' + (Get-Prop $v 'max_tokens')
+        if ($mx -match '^\d{1,7}$' -and [int]$mx -ge 1 -and [int]$mx -le 1000000) { $entry['max_tokens'] = [int]$mx }
         if ($entry.Count -gt 0) { $out[$prop.Name] = $entry }
     }
     return $out
@@ -584,7 +601,7 @@ function ConvertTo-FeaturesDocument {
     foreach ($m in @($Features.Keys | Sort-Object)) {
         $e = $Features[$m]
         $row = [ordered]@{}
-        foreach ($name in @('stream', 'schema', 'tool_results')) { if ($e.ContainsKey($name)) { $row[$name] = $e[$name] } }
+        foreach ($name in @('stream', 'schema', 'tool_results', 'max_tokens')) { if ($e.ContainsKey($name)) { $row[$name] = $e[$name] } }
         $doc[$m] = $row
     }
     return $doc
@@ -741,7 +758,16 @@ function Initialize-ActConfig {
     $script:Auto = ($Auto.IsPresent) -or ($envAuto -eq '1') -or ($envAuto -eq 'true')
 
     $script:MaxSteps      = Get-ValidatedEnvInt 'ACT_MAX_STEPS' 100 1 500
-    $script:MaxTokens     = Get-ValidatedEnvInt 'ACT_MAX_TOKENS' 4096 256 128000
+    # ACT_MAX_TOKENS (0.6.23): auto (or unset) picks the limit per model (Get-ModelOutputLimit);
+    # a number forces it for every model, as before.
+    $mt = ('' + (Get-EnvOrDefault 'ACT_MAX_TOKENS' 'auto')).Trim().ToLower()
+    if ($mt -eq '' -or $mt -eq 'auto') {
+        $script:MaxTokensForced = $false
+        $script:MaxTokens = 4096
+    } else {
+        $script:MaxTokens = Get-ValidatedEnvInt 'ACT_MAX_TOKENS' 4096 1 1000000
+        $script:MaxTokensForced = $true
+    }
     $script:MaxOutput     = Get-ValidatedEnvInt 'ACT_MAX_OUTPUT' 100000 1000 10000000
     $script:CommandTimeout = Get-ValidatedEnvInt 'ACT_COMMAND_TIMEOUT' 1800 1 86400
     $script:ObsChars      = Get-ValidatedEnvInt 'ACT_OBS_CHARS' 3000 500 1000000
@@ -1167,6 +1193,46 @@ function Get-ModelTemperature {
     return @{ Send = $true; Value = 0.2; Why = '' }
 }
 
+function Get-ModelOutputLimit {
+    # The output-token limit ACT sends a model: @{ Value; Why }. A number in ACT_MAX_TOKENS
+    # wins; otherwise a limit :probe learned for the model (setup file features map); otherwise
+    # 16384 for thinking models (Gemini 2.5+, gpt-5*, o1/o3/o4 - their reasoning tokens count
+    # against the limit, and 4096 left Gemini 3 replies empty) and 4096 for the rest. It is a
+    # cap, not a cost: tokens are billed as used.
+    param([string] $Model)
+    if ($script:MaxTokensForced) { return @{ Value = [int]$script:MaxTokens; Why = 'ACT_MAX_TOKENS' } }
+    $learned = $null
+    if ($script:ProbeFreshModel -ne $Model) { $learned = Get-SavedModelFeature $Model 'max_tokens' }
+    if ($null -ne $learned -and [int]$learned -gt 0) { return @{ Value = [int]$learned; Why = $script:ActText.LimitLearned } }
+    $m = '' + $Model
+    if ($m -match $script:ThinkingModelRegex -or $m -match $script:ReasoningModelRegex) {
+        return @{ Value = 16384; Why = $script:ActText.LimitThinking }
+    }
+    return @{ Value = 4096; Why = '' }
+}
+
+function Format-ModelOutputLimit {
+    # "output limit 16384 (thinking model)" - :status and :probe. A higher limit this session
+    # (after a cut-off reply) is shown too.
+    param([string] $Model, [string] $Key = '')
+    $l = Get-ModelOutputLimit $Model
+    $value = [int]$l.Value
+    $why = '' + $l.Why
+    if ($Key -and $null -ne $script:ModelMaxTokens[$Key] -and [int]$script:ModelMaxTokens[$Key] -gt $value) {
+        $value = [int]$script:ModelMaxTokens[$Key]
+        $why = $script:ActText.LimitRaised
+    }
+    $t = 'output limit ' + $value
+    if ($why) { $t += ' (' + $why + ')' }
+    return $t
+}
+
+function Get-HigherOutputLimit {
+    # The retry limit after a reply cut off at $Limit: max(4 x limit, 16384), at most 65536.
+    param([int] $Limit)
+    return [int](Get-ActMin 65536 (Get-ActMax (4 * $Limit) 16384))
+}
+
 function Format-ModelTemperature {
     # The one label for what ACT sends a model: "model default (Gemini 3)", "0.2",
     # "0.7 (ACT_TEMPERATURE)", "model default (refused by the endpoint)" - :status and
@@ -1268,7 +1334,7 @@ function Get-RequestFeatures {
     $tokenParam = 'max_tokens'
     if ($Format -eq 'openai') { $tokenParam = Get-TokenParam $Key }
     $temp = Get-ModelTemperature $model
-    $maxTokens = $script:MaxTokens
+    $maxTokens = [int](Get-ModelOutputLimit $model).Value
     if ($null -ne $script:ModelMaxTokens[$Key] -and [int]$script:ModelMaxTokens[$Key] -gt $maxTokens) { $maxTokens = [int]$script:ModelMaxTokens[$Key] }
     $stream = Test-StreamWanted $Format $Key $model
     return @{
@@ -1555,7 +1621,7 @@ function ConvertFrom-AnthropicResponse {
     if ($null -ne $usage) {
         $total = 0
         try { $total = [int](Get-Prop $usage 'input_tokens') + [int](Get-Prop $usage 'output_tokens') } catch { }
-        $out['usage'] = @{ total_tokens = $total }
+        $out['usage'] = @{ total_tokens = $total; completion_tokens = (Get-Prop $usage 'output_tokens') }
     }
     return (ConvertTo-Json -InputObject $out -Depth 20 -Compress | ConvertFrom-Json)
 }
@@ -2547,10 +2613,13 @@ function Invoke-ProviderRequestWithRetry {
             $info = Get-HttpErrorInfo $_
             $code = $info.Code
             $msg = $info.Message
+            # PowerShell 7 reports a dropped connection as "An error occurred while sending the
+            # request."; the cause ("The response ended prematurely", "Connection reset") is inside.
+            try { $msg += ' ' + $_.Exception.GetBaseException().Message } catch { }
             # An exhausted token/credit quota is not a rate limit: waiting will not help.
             if ($code -eq 429 -and (($info.Body + ' ' + $msg) -match $script:QuotaRegex)) { throw }
             $transient = ($code -in @(408, 425, 429, 500, 502, 503, 504)) -or
-                         ($null -eq $code -and $msg -match '(?i)timeout|timed out|connection|reset|temporar|unreachable|name resolution|DNS|stream stalled')
+                         ($null -eq $code -and $msg -match '(?i)timeout|timed out|connection|reset|temporar|unreachable|name resolution|DNS|stream stalled|ended prematurely|error occurred while sending|forcibly closed')
             if (-not $transient -or $retry -ge $script:ApiRetries) { throw }
             $delayMs = Get-RetryDelayMs $retry
             if (($code -eq 429 -or $code -eq 503) -and $null -ne $info.RetryAfter) {
@@ -3406,7 +3475,7 @@ function Invoke-GenAIChat {
             ($features.Tools -or [string]::IsNullOrWhiteSpace($content) -or $null -eq (ConvertFrom-ModelJson $content))) {
             # Thinking (Gemini 3, reasoning models) can use the whole output limit and leave no
             # answer. Ask once more with a higher limit, kept for this model for the session.
-            $higher = [int](Get-ActMin 65536 (Get-ActMax (4 * $script:MaxTokens) 16384))
+            $higher = Get-HigherOutputLimit ([int]$features.MaxTokens)
             if (-not $lengthRetried -and $higher -gt [int]$features.MaxTokens) {
                 $lengthRetried = $true
                 $script:ModelMaxTokens[$featureKey] = $higher
@@ -9319,6 +9388,28 @@ function Read-SecretValue {
     }
 }
 
+function Invoke-ProbeHttp {
+    # One :probe POST. A network error or HTTP 502/503/504 is sent once more after about a
+    # second (0.6.23: a reset connection used to end the test); other failures are final.
+    param([string] $Uri, [hashtable] $Headers, [string] $Body, [int] $TimeoutSec, [switch] $Stream)
+    $savedRetries = $script:ApiRetries
+    $script:ApiRetries = 0
+    try {
+        for ($try = 0; $try -lt 2; $try++) {
+            try {
+                if ($Stream) { return (Invoke-ProviderRequestWithRetry -Uri $Uri -Headers $Headers -Body $Body -TimeoutSec $TimeoutSec -Stream) }
+                return (Invoke-ProviderRequestWithRetry -Uri $Uri -Headers $Headers -Body $Body -TimeoutSec $TimeoutSec)
+            } catch {
+                if (Get-ActControlKind $_) { throw }
+                $info = Get-HttpErrorInfo $_
+                $again = ($null -eq $info.Code) -or ($info.Code -in @(502, 503, 504))
+                if ($try -ge 1 -or -not $again) { throw }
+                if (-not (Wait-ActMs 1000)) { throw '[act:cancelled] cancelled with Esc' }
+            }
+        }
+    } finally { $script:ApiRetries = $savedRetries }
+}
+
 function Invoke-ProbeRequest {
     # One :probe request. Never throws: @{ Ok; Code; Reason; Detail; Response }.
     param([string] $Format, [string] $Model, [object[]] $Messages, [hashtable] $Features)
@@ -9329,7 +9420,7 @@ function Invoke-ProbeRequest {
     if ($timeout -gt 60) { $timeout = 60 }
     $script:TurnDeadline = New-TurnDeadline $timeout
     try {
-        $resp = ConvertFrom-AnthropicResponse (Invoke-ProviderRequestWithRetry -Uri $url -Headers $headers -Body $body -TimeoutSec $timeout)
+        $resp = ConvertFrom-AnthropicResponse (Invoke-ProbeHttp -Uri $url -Headers $headers -Body $body -TimeoutSec $timeout)
     } catch {
         $info = Get-HttpErrorInfo $_
         return @{ Ok = $false; Code = $info.Code; Reason = (Get-ApiErrorReason $info.Body $info.Message); Detail = ($info.Body + ' ' + $info.Message); Response = $null }
@@ -9342,6 +9433,101 @@ function Invoke-ProbeRequest {
         return @{ Ok = $false; Code = 200; Reason = $reason; Detail = $reason; Response = $resp }
     }
     return @{ Ok = $true; Code = 200; Reason = ''; Detail = ''; Response = $resp }
+}
+
+function Get-ProbeReplyInfo {
+    # What an HTTP 200 carried, judged the way a real turn judges it (0.6.23): @{ Usable (a tool
+    # call, or text that parses to a JSON object); HasCall; Text; Finish (lower-case, 'none');
+    # Length (cut off at the output limit); Reasoning (', reasoning <r> of <n> output tokens') }.
+    param($Response, [bool] $Prefill = $false)
+    $first = $null
+    $choices = Get-Prop $Response 'choices'
+    if ($null -ne $choices -and @($choices).Count -gt 0) { $first = @($choices)[0] }
+    $message = Get-Prop $first 'message'
+    $text = ''
+    $c = Get-Prop $message 'content'
+    if ($c -is [string]) { $text = $c }
+    $text = Resolve-PrefillContent $text $Prefill
+    $call = ConvertFrom-ToolCall $Response
+    $hasCall = -not [string]::IsNullOrWhiteSpace($call)
+    $usable = $hasCall -or ((ConvertFrom-ModelJson $text) -is [System.Management.Automation.PSCustomObject])
+    $finish = ('' + (Get-Prop $first 'finish_reason')).Trim().ToLower()
+    if (-not $finish) { $finish = 'none' }
+    # Reasoning tokens, where the gateway reports them (OpenAI, Anthropic-style, Gemini).
+    $usage = Get-Prop $Response 'usage'
+    $meta = Get-Prop $Response 'usageMetadata'
+    $reasoning = $null
+    $output = $null
+    foreach ($candidate in @((Get-Prop (Get-Prop $usage 'completion_tokens_details') 'reasoning_tokens'),
+                             (Get-Prop (Get-Prop $usage 'output_tokens_details') 'reasoning_tokens'),
+                             (Get-Prop $usage 'reasoning_tokens'), (Get-Prop $meta 'thoughtsTokenCount'))) {
+        if ($null -ne $candidate -and $null -eq $reasoning) { $reasoning = $candidate }
+    }
+    foreach ($candidate in @((Get-Prop $usage 'completion_tokens'), (Get-Prop $usage 'output_tokens'))) {
+        if ($null -ne $candidate -and $null -eq $output) { $output = $candidate }
+    }
+    if ($null -eq $output -and $null -ne (Get-Prop $meta 'candidatesTokenCount')) {
+        $output = [int](Get-Prop $meta 'candidatesTokenCount') + [int](Get-Prop $meta 'thoughtsTokenCount')
+    }
+    $reasoningText = ''
+    if ($null -ne $reasoning) {
+        if ($null -ne $output) { $reasoningText = ', reasoning ' + [int]$reasoning + ' of ' + [int]$output + ' output tokens' }
+        else { $reasoningText = ', reasoning ' + [int]$reasoning + ' tokens' }
+    }
+    return @{ Usable = $usable; HasCall = $hasCall; Text = $text; Finish = $finish
+              Length = ((Get-FinishKind $finish) -eq 'length'); Reasoning = $reasoningText }
+}
+
+function Format-ProbeReplyStart {
+    # 'finish_reason=<x>, empty reply' or 'finish_reason=<x>, reply starts: "<first 60>"' -
+    # one line, terminal-sanitized - plus the reasoning note.
+    param([hashtable] $Info)
+    $t = 'finish_reason=' + $Info.Finish
+    $one = (('' + $Info.Text) -replace '\s+', ' ').Trim()
+    if (-not $one) { $t += ', empty reply' }
+    else {
+        if ($one.Length -gt 60) { $one = $one.Substring(0, 60) }
+        $t += ', reply starts: "' + (ConvertTo-SafeTerminalText $one) + '"'
+    }
+    return ($t + $Info.Reasoning)
+}
+
+function Format-ProbeNoAction {
+    # The "full" verdict for an HTTP 200 without a usable action:
+    # 'empty (finish_reason=<x>[, reasoning ...])' or 'no action (finish_reason=<x>, reply starts: "...")'.
+    param([hashtable] $Info)
+    $one = (('' + $Info.Text) -replace '\s+', ' ').Trim()
+    if (-not $one) { return ('empty (finish_reason=' + $Info.Finish + $Info.Reasoning + ')') }
+    return ('no action (' + (Format-ProbeReplyStart $Info) + ')')
+}
+
+function Write-ProbeDebug {
+    # ACT_DEBUG=1: the body of a probe reply that did not pass after an HTTP 200 (first 600
+    # characters, terminal-sanitized). The probe prompts carry no secrets; the key is never in a body.
+    param([string] $Test, [string] $Model, [string] $Format, $Response)
+    if (-not $script:Debug) { return }
+    $body = ''
+    try { $body = ConvertTo-Json -InputObject $Response -Depth 20 -Compress } catch { $body = '' + $Response }
+    if ($body.Length -gt 600) { $body = $body.Substring(0, 600) }
+    $line = '[debug] :probe ' + $Test + ' ' + $Model + ' (' + (Get-FormatLabel $Format) + '): HTTP 200 body: ' + (ConvertTo-SafeTerminalText $body)
+    $line = Protect-Secrets $line
+    try { [Console]::Error.WriteLine($line) } catch { try { Write-Warning $line } catch { } }
+}
+
+function Get-ProbeNeededNote {
+    param([int] $Needed)
+    if ($Needed -le 0) { return '' }
+    return (' (needed a higher output limit: ' + $Needed + ')')
+}
+
+function Step-ProbeOutputLimit {
+    # A probe test was cut off at the output limit without an answer: raise the limit for this
+    # model (as the main path does) and return it, or 0 when it cannot go higher.
+    param([string] $Key, [int] $Used)
+    $higher = Get-HigherOutputLimit $Used
+    if ($higher -le $Used) { return 0 }
+    $script:ModelMaxTokens[$Key] = $higher
+    return $higher
 }
 
 function Get-ProbeFeatures {
@@ -9379,7 +9565,7 @@ function Test-ProbeStream {
         $body = New-ChatRequestBody 'openai' $messages $Model $f
         $script:TurnDeadline = New-TurnDeadline $timeout
         try {
-            $r = Invoke-ProviderRequestWithRetry -Uri (Get-FormatUrl 'openai') -Headers $headers -Body $body -TimeoutSec $timeout -Stream
+            $r = Invoke-ProbeHttp -Uri (Get-FormatUrl 'openai') -Headers $headers -Body $body -TimeoutSec $timeout -Stream
         } catch {
             if (Get-ActControlKind $_) { return @{ Ok = $false; Reason = (Get-ActControlText $_) } }
             $info = Get-HttpErrorInfo $_
@@ -9408,62 +9594,120 @@ function Test-ProbeStream {
     return @{ Ok = $false; Reason = 'HTTP 400' }
 }
 
+
 function Test-ProbeSchema {
     # Which structured-output rung the OpenAI endpoint accepts for this model, tools off:
     # strict, then non-strict, then json_object; a rung counts when the reply parses to a JSON
-    # object. @{ Rung = 'strict'|'non-strict'|'object'|''; Reason = the first refusal }.
+    # object. A reply cut off at the output limit is asked once more with a higher one.
+    # @{ Rung = 'strict'|'non-strict'|'object'|''; Reason = the first refusal; Needed }.
     param([string] $Model, [object[]] $Messages)
+    $key = Get-FeatureKey 'openai' $Model
     $firstReason = ''
-    foreach ($level in @('strict', 'nonstrict', 'object')) {
-        $r = Invoke-ProbeRequest 'openai' $Model $Messages (Get-ProbeFeatures $Model -Json $level)
+    $needed = 0
+    $raised = $false
+    $levels = @('strict', 'nonstrict', 'object')
+    $i = 0
+    while ($i -lt $levels.Count) {
+        $level = $levels[$i]
+        $f = Get-ProbeFeatures $Model -Json $level
+        $r = Invoke-ProbeRequest 'openai' $Model $Messages $f
         $reason = ''
         if ($r.Ok) {
-            $content = '' + (Get-Prop (Get-Prop (@(Get-Prop $r.Response 'choices'))[0] 'message') 'content')
-            if ((ConvertFrom-ModelJson $content) -is [System.Management.Automation.PSCustomObject]) {
+            $info = Get-ProbeReplyInfo $r.Response
+            if ($info.Usable) {
                 $rung = $level
                 if ($level -eq 'nonstrict') { $rung = 'non-strict' }
-                return @{ Rung = $rung; Reason = $firstReason }
+                return @{ Rung = $rung; Reason = $firstReason; Needed = $needed }
             }
-            $reason = 'the reply was not a JSON object'
-        } else { $reason = Format-ProbeStatus $r }
+            if ($info.Length -and -not $raised) {
+                $raised = $true
+                $higher = Step-ProbeOutputLimit $key ([int]$f.MaxTokens)
+                if ($higher -gt 0) { $needed = $higher; continue }
+            }
+            $rungLabel = $level
+            if ($level -eq 'nonstrict') { $rungLabel = 'non-strict' }
+            Write-ProbeDebug ('structured output (' + $rungLabel + ')') $Model 'openai' $r.Response
+            $reason = 'the reply was not a JSON object: ' + (Format-ProbeReplyStart $info)
+        } else {
+            if ($r.Code -eq 200) {
+                $rungLabel = $level
+                if ($level -eq 'nonstrict') { $rungLabel = 'non-strict' }
+                Write-ProbeDebug ('structured output (' + $rungLabel + ')') $Model 'openai' $r.Response
+            }
+            $reason = Format-ProbeStatus $r
+        }
         if (-not $firstReason) { $firstReason = $reason }
+        $i++
     }
-    return @{ Rung = ''; Reason = $firstReason }
+    return @{ Rung = ''; Reason = $firstReason; Needed = 0 }
 }
 
 function Test-ProbeToolResults {
     # A two-turn exchange: get a tool call, send it back VERBATIM (Gemini's thought signature
-    # included) with a role:"tool" result, expect a normal reply. The proposed command is
-    # never run.
+    # included) with a role:"tool" result, expect a normal reply (a tool call or any text). The
+    # proposed command is never run. A reply cut off at the output limit is asked once more
+    # with a higher one. @{ Ok; Reason; Needed }.
     param([string] $Model)
     $key = Get-FeatureKey 'openai' $Model
     if (-not $script:ToolsMode -or $script:ToolsRejected -or $script:ToolsSupport[$key] -eq $false) {
-        return @{ Ok = $false; Reason = 'tools are off or refused for this model' }
+        return @{ Ok = $false; Reason = 'tools are off or refused for this model'; Needed = 0 }
     }
     $tag = Get-ToolTurnModelTag $Model
     $prompt = @{ role = 'user'; content = $script:ProbeToolPrompt }
-    try { $turn1 = ConvertTo-PseudoMessages @($prompt) } catch { return @{ Ok = $false; Reason = ('not sent: ' + $_.Exception.Message) } }
-    $r1 = Invoke-ProbeRequest 'openai' $Model $turn1 (Get-ProbeFeatures $Model -Tools)
-    if (-not $r1.Ok) { return @{ Ok = $false; Reason = (Format-ProbeStatus $r1) } }
-    $message = Get-Prop (@(Get-Prop $r1.Response 'choices'))[0] 'message'
-    $calls = Get-Prop $message 'tool_calls'
-    if ($null -eq $calls -or @($calls).Count -eq 0) { return @{ Ok = $false; Reason = 'the model did not answer with a tool call' } }
+    try { $turn1 = ConvertTo-PseudoMessages @($prompt) } catch { return @{ Ok = $false; Reason = ('not sent: ' + $_.Exception.Message); Needed = 0 } }
+    $needed = 0
+    $raised = $false
+    $r1 = $null
+    $message = $null
+    $calls = $null
+    while ($true) {
+        $f1 = Get-ProbeFeatures $Model -Tools
+        $r1 = Invoke-ProbeRequest 'openai' $Model $turn1 $f1
+        if (-not $r1.Ok) {
+            if ($r1.Code -eq 200) { Write-ProbeDebug 'tool results' $Model 'openai' $r1.Response }
+            return @{ Ok = $false; Reason = (Format-ProbeStatus $r1); Needed = 0 }
+        }
+        $message = Get-Prop (@(Get-Prop $r1.Response 'choices'))[0] 'message'
+        $calls = Get-Prop $message 'tool_calls'
+        if ($null -ne $calls -and @($calls).Count -gt 0) { break }
+        $info = Get-ProbeReplyInfo $r1.Response
+        if ($info.Length -and -not $raised) {
+            $raised = $true
+            $higher = Step-ProbeOutputLimit $key ([int]$f1.MaxTokens)
+            if ($higher -gt 0) { $needed = $higher; continue }
+        }
+        Write-ProbeDebug 'tool results' $Model 'openai' $r1.Response
+        return @{ Ok = $false; Reason = ('the model did not answer with a tool call: ' + (Format-ProbeReplyStart $info)); Needed = 0 }
+    }
     $records = $null
     try { $records = New-ToolCallRecords @($calls) } catch { $records = $null }
-    if ($null -eq $records -or @($records).Count -eq 0) { return @{ Ok = $false; Reason = 'the tool call carried no id' } }
+    if ($null -eq $records -or @($records).Count -eq 0) { return @{ Ok = $false; Reason = 'the tool call carried no id'; Needed = 0 } }
     $text = ''
     $c = Get-Prop $message 'content'
     if ($c -is [string] -and $c) { $text = $c }
     $history = @($prompt,
                  @{ role = 'assistant'; content = '{"action":"run"}'; act_tool_calls = @{ Model = $tag; Calls = $records; Text = $text } },
                  @{ role = 'user'; content = $script:ProbeToolResult; act_kind = 'obs' })
-    try { $masked = ConvertTo-PseudoMessages $history } catch { return @{ Ok = $false; Reason = ('not sent: ' + $_.Exception.Message) } }
+    try { $masked = ConvertTo-PseudoMessages $history } catch { return @{ Ok = $false; Reason = ('not sent: ' + $_.Exception.Message); Needed = 0 } }
     $wire = ConvertTo-WireMessages $masked $true $tag
-    $f2 = Get-ProbeFeatures $Model -Tools
-    $f2.ToolTurns = $true
-    $r2 = Invoke-ProbeRequest 'openai' $Model $wire $f2
-    if ($r2.Ok) { return @{ Ok = $true; Reason = '' } }
-    return @{ Ok = $false; Reason = (Format-ProbeStatus $r2) }
+    while ($true) {
+        $f2 = Get-ProbeFeatures $Model -Tools
+        $f2.ToolTurns = $true
+        $r2 = Invoke-ProbeRequest 'openai' $Model $wire $f2
+        if (-not $r2.Ok) {
+            if ($r2.Code -eq 200) { Write-ProbeDebug 'tool results' $Model 'openai' $r2.Response }
+            return @{ Ok = $false; Reason = (Format-ProbeStatus $r2); Needed = 0 }
+        }
+        $info2 = Get-ProbeReplyInfo $r2.Response
+        if ($info2.HasCall -or -not [string]::IsNullOrWhiteSpace($info2.Text)) { return @{ Ok = $true; Reason = ''; Needed = $needed } }
+        if ($info2.Length -and -not $raised) {
+            $raised = $true
+            $higher = Step-ProbeOutputLimit $key ([int]$f2.MaxTokens)
+            if ($higher -gt 0) { $needed = $higher; continue }
+        }
+        Write-ProbeDebug 'tool results' $Model 'openai' $r2.Response
+        return @{ Ok = $false; Reason = ('the model did not answer the tool result: finish_reason=' + $info2.Finish + ', empty reply' + $info2.Reasoning); Needed = 0 }
+    }
 }
 
 function Write-ProbeFeatureLine {
@@ -9476,23 +9720,23 @@ function Write-ProbeFeatureLine {
 }
 
 function Invoke-ProbeFeatures {
-    # The 0.6.22 :probe checks on the OpenAI endpoint - stream, structured output, tool
-    # results - one line each; returns the features map entry the setup file records, and
-    # updates this session's view of the model the same way.
+    # The :probe checks on the OpenAI endpoint - stream, structured output, tool results - one
+    # line each; returns @{ Entry = the features map entry; Needed = the highest output limit a
+    # test needed (0 = none) }, and updates this session's view of the model the same way.
     param([string] $Model, [object[]] $FullMessages)
     $key = Get-FeatureKey 'openai' $Model
     $st = @{ Ok = $false; Reason = '' }
     try { $st = Test-ProbeStream $Model } catch { $st = @{ Ok = $false; Reason = ('not sent: ' + $_.Exception.Message) } }
     Write-ProbeFeatureLine 'stream' 'OK' $st.Ok $st.Reason 'ACT uses normal requests for this model'
-    $sc = @{ Rung = ''; Reason = '' }
-    try { $sc = Test-ProbeSchema $Model $FullMessages } catch { $sc = @{ Rung = ''; Reason = ('not sent: ' + $_.Exception.Message) } }
+    $sc = @{ Rung = ''; Reason = ''; Needed = 0 }
+    try { $sc = Test-ProbeSchema $Model $FullMessages } catch { $sc = @{ Rung = ''; Reason = ('not sent: ' + $_.Exception.Message); Needed = 0 } }
     $schemaOk = ($sc.Rung -eq 'strict' -or $sc.Rung -eq 'non-strict')
     $todo = "ACT uses the '{' prefill"
     if ($sc.Rung -eq 'object') { $todo = 'ACT uses JSON object mode' }
-    Write-ProbeFeatureLine 'structured output' ('OK (' + $sc.Rung + ')') $schemaOk $sc.Reason $todo
-    $tr = @{ Ok = $false; Reason = '' }
-    try { $tr = Test-ProbeToolResults $Model } catch { $tr = @{ Ok = $false; Reason = ('not sent: ' + $_.Exception.Message) } }
-    Write-ProbeFeatureLine 'tool results' 'OK' $tr.Ok $tr.Reason 'ACT sends command results as user messages'
+    Write-ProbeFeatureLine 'structured output' ('OK (' + $sc.Rung + ')' + (Get-ProbeNeededNote ([int]$sc.Needed))) $schemaOk $sc.Reason $todo
+    $tr = @{ Ok = $false; Reason = ''; Needed = 0 }
+    try { $tr = Test-ProbeToolResults $Model } catch { $tr = @{ Ok = $false; Reason = ('not sent: ' + $_.Exception.Message); Needed = 0 } }
+    Write-ProbeFeatureLine 'tool results' ('OK' + (Get-ProbeNeededNote ([int]$tr.Needed))) $tr.Ok $tr.Reason 'ACT sends command results as user messages'
     if ($st.Ok) { [void]$script:StreamSupport.Remove($key) } else { $script:StreamSupport[$key] = $false }
     if ($sc.Rung) {
         $level = $sc.Rung
@@ -9503,7 +9747,10 @@ function Invoke-ProbeFeatures {
     if ($tr.Ok) { [void]$script:ToolResultsBroken.Remove($key) }
     $schema = 'none'
     if ($sc.Rung) { $schema = $sc.Rung }
-    return @{ stream = [bool]$st.Ok; schema = $schema; tool_results = [bool]$tr.Ok }
+    $needed = 0
+    if ($sc.Rung) { $needed = Get-ActMax $needed ([int]$sc.Needed) }
+    if ($tr.Ok) { $needed = Get-ActMax $needed ([int]$tr.Needed) }
+    return @{ Entry = @{ stream = [bool]$st.Ok; schema = $schema; tool_results = [bool]$tr.Ok }; Needed = $needed }
 }
 
 function Format-ProbeStatus {
@@ -9516,8 +9763,9 @@ function Format-ProbeStatus {
 function Test-ModelFormat {
     # Probe one model on one endpoint format: a minimal request ("basic"), then - when that
     # works - ACT's real request shape ("full": system prompt, temperature, tools, JSON mode,
-    # max tokens), shedding whatever the server says it refuses. What was refused is
-    # remembered for the session, like any request.
+    # max tokens), shedding whatever the server says it refuses. "full" passes only with a
+    # usable action in the reply (0.6.23); a reply cut off at the output limit is asked once
+    # more with a higher one. What was refused is remembered for the session.
     param([string] $Model, [string] $Format, [object[]] $FullMessages)
     $key = Get-FeatureKey $Format $Model
     # Start fresh, so the report shows what the server refuses now, not what was learned.
@@ -9537,13 +9785,28 @@ function Test-ModelFormat {
         $basicFeatures.TokenParam = Get-TokenParam $key
         $r = Invoke-ProbeRequest $Format $Model $basicMessages $basicFeatures
     }
-    $out = @{ BasicOk = $r.Ok; Basic = (Format-ProbeStatus $r); FullOk = $false; Full = ''; Changes = @() }
+    $out = @{ BasicOk = $r.Ok; Basic = (Format-ProbeStatus $r); FullOk = $false; Full = ''; Changes = @()
+              FullEmpty = $false; Needed = 0 }
     if (-not $r.Ok) { return $out }
-    for ($i = 0; $i -lt 6; $i++) {
+    $raised = $false
+    $noAction = ''
+    for ($i = 0; $i -lt 7; $i++) {
         $f = Get-RequestFeatures $Format $key $script:UsePrefill
         $f.Stream = $false; $f.StreamOptions = $false
         $r = Invoke-ProbeRequest $Format $Model $FullMessages $f
-        if ($r.Ok) { $out.FullOk = $true; break }
+        if ($r.Ok) {
+            $info = Get-ProbeReplyInfo $r.Response ([bool]$f.Prefill)
+            if ($info.Usable) { $out.FullOk = $true; break }
+            if ($info.Length -and -not $raised) {
+                $raised = $true
+                $higher = Step-ProbeOutputLimit $key ([int]$f.MaxTokens)
+                if ($higher -gt 0) { $out.Needed = $higher; continue }
+            }
+            Write-ProbeDebug 'full' $Model $Format $r.Response
+            $noAction = Format-ProbeNoAction $info
+            break
+        }
+        if ($r.Code -eq 200) { Write-ProbeDebug 'full' $Model $Format $r.Response }
         if ($r.Code -ne 400 -and $r.Code -ne 422) { break }
         if ($Format -eq 'openai' -and (Test-TokenParamRejected $key $r.Detail)) {
             $out.Changes += ('uses ' + (Get-TokenParam $key))
@@ -9562,14 +9825,30 @@ function Test-ModelFormat {
     if ($out.FullOk) {
         $out.Full = 'OK'
         if ($out.Changes.Count -gt 0) { $out.Full = 'OK (' + ($out.Changes -join ', ') + ')' }
+        $out.Full += Get-ProbeNeededNote ([int]$out.Needed)
+    } elseif ($noAction) {
+        $out.Full = $noAction
+        $out.FullEmpty = $true
+        $out.Needed = 0
     } else {
         $out.Full = Format-ProbeStatus $r
+        $out.Needed = 0
+    }
+    return $out
+}
+
+function Get-ProbeModelList {
+    # The models named after :probe - one or several, separated by spaces and/or commas.
+    param([string] $Text)
+    $out = @()
+    foreach ($name in @(('' + $Text) -split '[\s,]+')) {
+        if ($name -and $out -notcontains $name) { $out += $name }
     }
     return $out
 }
 
 function Invoke-ModelProbe {
-    # :probe [model|all] - test models on BOTH endpoint formats and remember, per model, the
+    # :probe [model ...|all] - test models on BOTH endpoint formats and remember, per model, the
     # one that works. Prints the server's reason for every refusal.
     param([string] $Target = '', [switch] $Yes)
     if ([string]::IsNullOrEmpty($script:GenAiKey)) {
@@ -9577,6 +9856,9 @@ function Invoke-ModelProbe {
         return
     }
     $t = ('' + $Target).Trim()
+    $named = $false
+    $known = @()
+    if ($script:Providers.ContainsKey($script:Provider)) { $known = @($script:Providers[$script:Provider].Models) }
     if ($t -eq 'all') {
         Write-Themed dim ('  fetching ' + $script:Provider + ' models...')
         $models = @(Select-ChatModels (Get-ProviderModels $script:Provider))
@@ -9584,12 +9866,18 @@ function Invoke-ModelProbe {
             $models = @($script:Providers[$script:Provider].Models)
             Write-Themed warning '  Could not fetch the live model list; testing the built-in list.'
         }
+        $known = $models
         if (-not $Yes) {
             $answer = Read-Host ('  Test ' + $models.Count + ' models on both endpoints (about ' + (9 * $models.Count) + ' small requests)? [y/N]')
             if (('' + $answer).Trim().ToLower() -notin @('y', 'yes')) { return }
         }
     } elseif ($t) {
-        $models = @($t)
+        $models = Get-ProbeModelList $t
+        # A name counts as "not in the list" only against the LIVE list (fetched once per
+        # session), never against the built-in fallback list.
+        Update-ProviderModels $script:Provider
+        $named = ($script:Providers.ContainsKey($script:Provider) -and $script:Providers[$script:Provider].ContainsKey('ModelsLive'))
+        if ($named) { $known = @($script:Providers[$script:Provider].Models) }
     } else {
         $models = @($script:GenAiModel)
     }
@@ -9609,52 +9897,75 @@ function Invoke-ModelProbe {
     Write-Themed dim ('  OpenAI endpoint:    ' + (Get-FormatUrl 'openai'))
     Write-Themed dim ('  Anthropic endpoint: ' + (Get-FormatUrl 'anthropic'))
     $summary = [ordered]@{}
+    $accepted = 0
     foreach ($m in $models) {
         Write-Host ''
-        Write-Host (ConvertTo-SafeTerminalText ('  ' + $m))
+        $head = '  ' + $m
+        if ($named -and $known -notcontains $m) { $head += '  ' + $script:ActText.ProbeNotListed }
+        Write-Host (ConvertTo-SafeTerminalText $head)
+        # Start from scratch: a limit learned earlier for this model is ignored while it is tested.
+        $script:ProbeFreshModel = $m
         $results = @{}
-        foreach ($fmt in @('openai', 'anthropic')) {
-            $r = Test-ModelFormat $m $fmt $fullMessages
-            $results[$fmt] = $r
-            $line = '    ' + (Get-FormatLabel $fmt).PadRight(10) + ' basic ' + $r.Basic
-            if ($r.BasicOk) { $line += '   full ' + $r.Full }
-            if ($r.FullOk) { Write-Themed success $line } else { Write-Themed dim $line }
-        }
-        $preferred = Get-PreferredFormat $m
-        $choice = ''
-        $how = ''
-        foreach ($level in @('FullOk', 'BasicOk')) {
-            $ok = @(@('openai', 'anthropic') | Where-Object { $results[$_][$level] })
-            if ($ok.Count -eq 1) { $choice = $ok[0] }
-            elseif ($ok.Count -gt 1) {
-                $choice = $preferred
-                $other = Get-OtherFormat $preferred
-                if ($results[$other].Changes.Count -lt $results[$preferred].Changes.Count) { $choice = $other }
+        try {
+            foreach ($fmt in @('openai', 'anthropic')) {
+                $r = Test-ModelFormat $m $fmt $fullMessages
+                $results[$fmt] = $r
+                $line = '    ' + (Get-FormatLabel $fmt).PadRight(10) + ' basic ' + $r.Basic
+                if ($r.BasicOk) { $line += '   full ' + $r.Full }
+                if ($r.FullOk) { Write-Themed success $line } elseif ($r.FullEmpty) { Write-Themed warning $line } else { Write-Themed dim $line }
             }
-            if ($choice) { if ($level -eq 'BasicOk') { $how = ' (only the basic request worked)' }; break }
-        }
-        # 0.6.22: stream, structured output, tool results (OpenAI endpoint), the temperature
-        # ACT sends - printed under "basic" and remembered in the setup file.
-        if ($results['openai'].BasicOk) {
-            $features = Invoke-ProbeFeatures $m $fullMessages
-            if ($script:Providers.ContainsKey($script:Provider)) {
-                $prov = $script:Providers[$script:Provider]
-                if ($null -eq $prov.Features) { $prov.Features = @{} }
-                $prov.Features[$m] = $features
-                [void](Save-ActModelFormats)
+            $preferred = Get-PreferredFormat $m
+            $choice = ''
+            $how = ''
+            foreach ($level in @('FullOk', 'BasicOk')) {
+                $ok = @(@('openai', 'anthropic') | Where-Object { $results[$_][$level] })
+                if ($ok.Count -eq 1) { $choice = $ok[0] }
+                elseif ($ok.Count -gt 1) {
+                    $choice = $preferred
+                    $other = Get-OtherFormat $preferred
+                    if ($results[$other].Changes.Count -lt $results[$preferred].Changes.Count) { $choice = $other }
+                }
+                if ($choice) { if ($level -eq 'BasicOk') { $how = ' (only the basic request worked)' }; break }
             }
-        } elseif ($choice) {
-            foreach ($pair in @(@('stream', 'ACT uses normal requests for this model'),
-                                @('structured output', "ACT uses the '{' prefill"),
-                                @('tool results', 'ACT sends command results as user messages'))) {
-                Write-ProbeFeatureLine $pair[0] '' $false 'OpenAI endpoint only in this release' $pair[1]
+            # Stream, structured output, tool results (OpenAI endpoint), the temperature and the
+            # output limit ACT sends - printed under "basic" and remembered in the setup file.
+            $needed = Get-ActMax ([int]$results['openai'].Needed) ([int]$results['anthropic'].Needed)
+            $entry = $null
+            if ($results['openai'].BasicOk) {
+                $probed = Invoke-ProbeFeatures $m $fullMessages
+                $entry = $probed.Entry
+                $needed = Get-ActMax $needed ([int]$probed.Needed)
+            } elseif ($choice) {
+                foreach ($pair in @(@('stream', 'ACT uses normal requests for this model'),
+                                    @('structured output', "ACT uses the '{' prefill"),
+                                    @('tool results', 'ACT sends command results as user messages'))) {
+                    Write-ProbeFeatureLine $pair[0] '' $false 'OpenAI endpoint only in this release' $pair[1]
+                }
             }
-        }
-        if ($choice) {
+        } finally { $script:ProbeFreshModel = $null }
+        if ($choice -and $script:Providers.ContainsKey($script:Provider)) {
+            # Record what was learned - never for a model that neither endpoint accepted.
+            $prov = $script:Providers[$script:Provider]
+            if ($null -eq $prov.Features) { $prov.Features = @{} }
+            if ($null -ne $entry) {
+                if ($needed -gt 0) { $entry['max_tokens'] = $needed }
+                $prov.Features[$m] = $entry
+            } elseif ($needed -gt 0) {
+                $old = $prov.Features[$m]
+                if ($null -eq $old) { $old = @{} }
+                $old['max_tokens'] = $needed
+                $prov.Features[$m] = $old
+            } elseif ($null -ne $prov.Features[$m] -and $prov.Features[$m].ContainsKey('max_tokens')) {
+                $prov.Features[$m].Remove('max_tokens')
+                if ($prov.Features[$m].Count -eq 0) { $prov.Features.Remove($m) }
+            }
+            # The learned limit now carries what the probe raised this session.
+            foreach ($fmt in @('openai', 'anthropic')) { [void]$script:ModelMaxTokens.Remove((Get-FeatureKey $fmt $m)) }
+            [void](Save-ActModelFormats)
             Write-Themed dim ($script:ProbeIndent + 'temperature: ' + (Format-ModelTemperature $m -Plain -Key (Get-FeatureKey $choice $m)))
-        }
-        if ($choice) {
+            Write-Themed dim ($script:ProbeIndent + (Format-ModelOutputLimit $m (Get-FeatureKey $choice $m)))
             Set-LearnedModelFormat $m $choice
+            $accepted++
             Write-Themed accent ('    -> ' + (Get-FormatLabel $choice) + ' endpoint' + $how)
             $summary[$m] = (Get-FormatLabel $choice) + $how
         } else {
@@ -9670,7 +9981,7 @@ function Invoke-ModelProbe {
     $setting = Get-ApiFormatSetting
     if ($setting -ne 'auto') {
         Write-Themed dim ('  Note: the endpoint format is set to ' + $setting + ', so every model uses it. Choose auto in :setup (or unset ACT_API_FORMAT) to use these results.')
-    } elseif (-not [string]::IsNullOrWhiteSpace($script:UserConfigPath) -and (Test-Path -LiteralPath $script:UserConfigPath -PathType Leaf)) {
+    } elseif ($accepted -gt 0 -and -not [string]::IsNullOrWhiteSpace($script:UserConfigPath) -and (Test-Path -LiteralPath $script:UserConfigPath -PathType Leaf)) {
         Write-Themed dim ('  The endpoint for each model is remembered in ' + $script:UserConfigPath + '.')
     }
 }
@@ -9904,7 +10215,7 @@ function Show-SessionStatus {
     }
     $jsonTxt = Get-JsonLevel $statusKey $script:GenAiModel
     if (-not $jsonTxt) { $jsonTxt = 'off' } elseif ($jsonTxt -eq 'nonstrict') { $jsonTxt = 'non-strict schema' } elseif ($jsonTxt -eq 'strict') { $jsonTxt = 'strict schema' } else { $jsonTxt = 'JSON object mode' }
-    Write-Themed dim ("temperature: $tempTxt   streaming: $(Get-StreamStatusLabel $modelFormat $statusKey $script:GenAiModel)")
+    Write-Themed dim ("temperature: $tempTxt   $(Format-ModelOutputLimit $script:GenAiModel $statusKey)   streaming: $(Get-StreamStatusLabel $modelFormat $statusKey $script:GenAiModel)")
     Write-Themed dim ("tool results: $(Get-ToolResultsStatusLabel $modelFormat $statusKey $script:GenAiModel)   structured output (tools off): $jsonTxt")
     Write-Themed dim ("privilege: $(Get-PrivilegeStatus)   language mode: $lm   ansi: $($script:UseAnsi)")
     if ($script:AuditReady) { Write-Themed dim ("audit: " + $script:AuditPath) }
@@ -9937,7 +10248,7 @@ function Get-ReplHelpSections {
             [PSCustomObject]@{ Command = ':setup'; Description = 'set and persist the API key, URL, and model (also :key)' }
             [PSCustomObject]@{ Command = ':provider [n]'; Description = 'list or switch providers' }
             [PSCustomObject]@{ Command = ':models'; Description = 'fetch the active provider live model list' }
-            [PSCustomObject]@{ Command = ':probe'; Description = 'test a model on both endpoints (OpenAI and Anthropic): :probe [model|all]' }
+            [PSCustomObject]@{ Command = ':probe'; Description = 'test models (space- or comma-separated) on both endpoints and their features: :probe [ids|all]' }
             [PSCustomObject]@{ Command = ':model'; Description = 'pick a model from the active provider' }
             [PSCustomObject]@{ Command = ':tools [on|off]'; Description = 'send the action protocol as a native tool schema' }
             [PSCustomObject]@{ Command = ':planmodel [id|off]'; Description = 'plan on one model, execute the steps on another' }
@@ -10671,6 +10982,11 @@ while (-not $State.Stop) {
             [void]$State.Requests.Add(@{ Path = $path; Body = $body; Headers = $hdr })
         } finally { [System.Threading.Monitor]::Exit($State.Lock) }
         if ($null -eq $rule) { $rule = @{ Status = 500; Body = '{"error":{"message":"no mock rule matched"}}' } }
+        if ($rule.Drop) {
+            # Hang up without an answer (RST): what "Connection reset by peer" looks like.
+            try { $client.Client.LingerState = New-Object System.Net.Sockets.LingerOption ($true, 0) } catch { }
+            continue
+        }
         $status = 200
         if ($rule.Status) { $status = [int]$rule.Status }
         $ctype = 'application/json'
@@ -13520,6 +13836,7 @@ try { $c.Ok += ((Format-ModelTemperature 'gemini-3.1-pro-preview') -eq 'model de
 try { $c.Ok += ((ConvertFrom-RetryAfterValue '7') -eq 7 -and (Get-RetryAfterSeconds @{ 'Retry-After' = '3' }) -eq 3) } catch { $c.Ok += 'ra:' + $_.Exception.Message }
 try { $c.Ok += ((Get-FinishKind 'max_tokens') -eq 'length' -and (Get-FinishKind 'content_filter') -eq 'filter' -and (Test-ModelNotServed 'model x was retired' 'x')) } catch { $c.Ok += 'finish:' + $_.Exception.Message }
 try { $c.Ok += (@(Add-RescueNudge @(@{ role = 'user'; content = 'u' })).Count -eq 1) } catch { $c.Ok += 'nudge:' + $_.Exception.Message }
+try { $c.Ok += ((Format-ModelOutputLimit 'gemini-3.1-pro-preview') -eq 'output limit 16384 (thinking model)' -and (Format-ProbeReplyStart (Get-ProbeReplyInfo ('{"choices":[{"message":{"content":"hi  there"},"finish_reason":"STOP"}],"usage":{"completion_tokens":9,"completion_tokens_details":{"reasoning_tokens":5}}}' | ConvertFrom-Json))) -eq 'finish_reason=stop, reply starts: "hi there", reasoning 5 of 9 output tokens') } catch { $c.Ok += 'limit:' + $_.Exception.Message }
 'CLM-0622 ' + ($c.Ok -join ' ')
 '@
         try {
@@ -13528,7 +13845,7 @@ try { $c.Ok += (@(Add-RescueNudge @(@{ role = 'user'; content = 'u' })).Count -e
             $clmLine = '' + (@($clmOut | Where-Object { $_ -like 'CLM-RESULT *' }) | Select-Object -Last 1)
             Assert-Equal 'CLM-RESULT ConstrainedLanguage True True True bad temperature a<U+202E>b' $clmLine 'formats: request building, reply parsing and the -Mark sanitizer run under Constrained Language Mode'
             $clm0622 = '' + (@($clmOut | Where-Object { $_ -like 'CLM-0622 *' }) | Select-Object -Last 1)
-            Assert-Equal 'CLM-0622 True True True True True True True' $clm0622 '0.6.22: schema, tool-call replay, temperature, Retry-After and finish-reason code run under Constrained Language Mode'
+            Assert-Equal 'CLM-0622 True True True True True True True True' $clm0622 '0.6.22: schema, tool-call replay, temperature, Retry-After and finish-reason code run under Constrained Language Mode'
         } finally { Remove-Item -LiteralPath $clmFile -Force -ErrorAction SilentlyContinue }
     }
 
@@ -13712,6 +14029,40 @@ try { $c.Ok += (@(Add-RescueNudge @(@{ role = 'user'; content = 'u' })).Count -e
     } finally {
         $script:TemperatureSetting = $savedT.Setting; $script:Providers = $savedT.Providers; $script:Provider = $savedT.Provider
         Reset-ActRequestCaches
+    }
+
+    # --- Output limit: ACT_MAX_TOKENS=auto per model family (0.6.23) -----------------------
+    $savedL = @{ Forced = $script:MaxTokensForced; Max = $script:MaxTokens; Providers = $script:Providers; Provider = $script:Provider; Raised = $script:ModelMaxTokens }
+    try {
+        $script:MaxTokensForced = $false; $script:MaxTokens = 4096; $script:ModelMaxTokens = @{}
+        $script:Providers = @{ genai = @{ Name = 'L'; Url = 'https://l/v1/chat/completions'; Key = 'k'; Model = 'x'; Models = @(); KeyEnv = 'GENAI_KEY'; Limited = $false; AnthropicUrl = ''; Format = 'auto'; Formats = @{}
+                                          Features = @{ 'gpt-4.1-learned' = @{ max_tokens = 32768 } } } }
+        $script:Provider = 'genai'
+        foreach ($m in @('gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-3.1-pro-preview', 'google-gemini-3.5-flash-gov', 'gpt-5.4-gov', 'gpt-o3-mini-gov', 'o4-mini')) {
+            Assert-Equal 16384 (Get-ModelOutputLimit $m).Value ('output limit: auto gives thinking model ' + $m + ' 16384')
+        }
+        foreach ($m in @('gemini-2.0-flash', 'gemini-1.5-pro', 'gpt-4.1-gov', 'gpt-4o', 'google-claude-45-sonnet', 'llama3')) {
+            Assert-Equal 4096 (Get-ModelOutputLimit $m).Value ('output limit: auto gives ' + $m + ' 4096')
+        }
+        Assert-Equal 'output limit 16384 (thinking model)' (Format-ModelOutputLimit 'gemini-3.1-pro-preview') 'output limit: thinking-model label'
+        Assert-Equal 'output limit 4096' (Format-ModelOutputLimit 'gpt-4.1-gov') 'output limit: default label'
+        Assert-Equal 'output limit 32768 (learned by :probe)' (Format-ModelOutputLimit 'gpt-4.1-learned') 'output limit: a limit :probe learned is used'
+        $body = New-ChatRequestBody 'openai' @(@{ role = 'user'; content = 'x' }) 'gemini-3.1-pro-preview' (Get-RequestFeatures 'openai' (Get-FeatureKey 'openai' 'gemini-3.1-pro-preview') $false)
+        Assert-Match $body '"max_tokens":\s*16384' 'output limit: sent as max_tokens'
+        $script:ModelMaxTokens[(Get-FeatureKey 'openai' 'gpt-4.1-gov')] = 16384
+        Assert-Equal 'output limit 16384 (raised this session after a cut-off reply)' (Format-ModelOutputLimit 'gpt-4.1-gov' (Get-FeatureKey 'openai' 'gpt-4.1-gov')) 'output limit: a raise this session is shown first'
+        $script:MaxTokensForced = $true; $script:MaxTokens = 8000
+        Assert-Equal 'output limit 8000 (ACT_MAX_TOKENS)' (Format-ModelOutputLimit 'gemini-3.1-pro-preview') 'output limit: a number forces it for every model'
+        Assert-Equal 8000 (Get-ModelOutputLimit 'gpt-4.1-learned').Value 'output limit: a number also beats a learned limit'
+        Assert-Equal 16384 (Get-HigherOutputLimit 4096) 'output limit: retry limit after 4096'
+        Assert-Equal 65536 (Get-HigherOutputLimit 16384) 'output limit: retry limit after 16384'
+        Assert-Equal 65536 (Get-HigherOutputLimit 65536) 'output limit: never above 65536'
+        $cfgL = '{"providers":{"genai":{"features":{"m1":{"max_tokens":16384,"stream":true},"m2":{"max_tokens":"lots"},"m3":{"max_tokens":0}}}}}' | ConvertFrom-Json
+        $fl = Get-StoredModelFeatures $cfgL 'genai'
+        Assert-True ($fl['m1']['max_tokens'] -eq 16384 -and -not $fl.ContainsKey('m2') -and -not $fl.ContainsKey('m3')) 'output limit: only a sane max_tokens is loaded from the config file'
+    } finally {
+        $script:MaxTokensForced = $savedL.Forced; $script:MaxTokens = $savedL.Max; $script:Providers = $savedL.Providers
+        $script:Provider = $savedL.Provider; $script:ModelMaxTokens = $savedL.Raised
     }
 
     # --- Settings ----------------------------------------------------------------------------
@@ -14048,12 +14399,14 @@ try { $c.Ok += (@(Add-RescueNudge @(@{ role = 'user'; content = 'u' })).Count -e
         $reqs = @(Get-ActMockRequests $gw)
         Assert-True ($r -match '"done"') 'length: the retry answers'
         Assert-Equal 2 $reqs.Count 'length: exactly one retry'
-        Assert-True ($reqs[1].Body -match '"max_tokens":\s*16384') 'length: the retry asks for max(4x ACT_MAX_TOKENS, 16384)'
+        Assert-Match $reqs[0].Body '"max_tokens":\s*16384' 'length: a thinking model starts at 16384 (ACT_MAX_TOKENS=auto)'
+        Assert-Match $reqs[1].Body '"max_tokens":\s*65536' 'length: the retry asks for min(65536, max(4x the limit, 16384))'
         Assert-True ($reqs[1].Body -match '"tools"') 'length: the retry keeps tools'
         Assert-Equal 1 $script:ModelRetries.length 'length: counted in model_retries.length'
         Set-ActMockRules $gw @(@{ Match = 'chat/completions'; Body = $finishCall })
         [void](Invoke-GenAIChat $one 6>$null)
-        Assert-True ((@(Get-ActMockRequests $gw))[0].Body -match '"max_tokens":\s*16384') 'length: the higher limit is kept for the model'
+        Assert-Match (@(Get-ActMockRequests $gw))[0].Body '"max_tokens":\s*65536' 'length: the higher limit is kept for the model'
+        Assert-Equal 'output limit 65536 (raised this session after a cut-off reply)' (Format-ModelOutputLimit $script:GenAiModel (Get-FeatureKey 'openai' $script:GenAiModel)) 'length: the raise shows in the output-limit label'
         Reset-ActRequestCaches
         Set-ActMockRules $gw @(@{ Match = 'chat/completions'; Body = '{"choices":[{"index":0,"message":{"role":"assistant","content":null},"finish_reason":"length"}]}' })
         $shown = (& { $script:StR = Invoke-GenAIChat $one } 6>&1 | ConvertTo-StText)
@@ -14338,6 +14691,96 @@ $r = Invoke-GenAIChat @(@{ role = 'user'; content = 'x' }) 6>$null
         Assert-False (Test-StreamWanted 'openai' (Get-FeatureKey 'openai' 'gemini-3.1-pro-preview')) 'stream: auto is off with -NonInteractive'
         $script:NonInteractive = $false
         Assert-False (Test-StreamWanted 'anthropic' (Get-FeatureKey 'anthropic' 'gemini-3.1-pro-preview')) 'stream: never on the Anthropic format'
+
+        # --- 0.6.23: :probe judges by content, raises the output limit, names what came back ---
+        $script:Providers['genai'].Features = @{}; $script:Providers['genai'].Formats = @{}
+        $script:StreamSetting = '0'; $script:ToolResultsSetting = 'auto'; $script:MaxTokensForced = $false
+        Reset-ActRequestCaches
+        Set-Content -LiteralPath $probeCfg -Encoding UTF8 -Value ('{"version":1,"provider":"genai","providers":{"genai":{"key_protected":"BLOB","url":"' + $gw.Base + '/v1/chat/completions","model":"gemini-3.1-pro-preview"}}}')
+        $cutOff = '{"choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"length"}],"usage":{"prompt_tokens":900,"completion_tokens":4096,"total_tokens":4996,"completion_tokens_details":{"reasoning_tokens":4096}}}'
+        $script:StWaits.Clear()
+        Set-ActMockRules $gw @(@{ Match = 'chat/completions'; Once = $true; Drop = $true },
+                              @{ Match = '^/v1/messages'; Status = 404; Body = '{"detail":"Not Found"}' },
+                              @{ Match = '"stream":\s*true'; ContentType = 'text/event-stream'; Chunks = $okStream },
+                              @{ Match = '(?s)"max_tokens":\s*4096\b'; Body = $cutOff },
+                              @{ Match = '(?s)"role":\s*"tool"'; Body = $okText },
+                              @{ Match = '(?s)"json_schema"|"json_object"'; Body = $okJson },
+                              @{ Match = '(?s)"tools"'; Body = $probeCall },
+                              @{ Match = 'chat/completions'; Body = $okText })
+        $shown = (& { Invoke-ModelProbe 'gpt-4.1-x' -Yes } 6>&1 | ConvertTo-StText)
+        Assert-Match $shown '(?m)^    OpenAI     basic OK   full OK \(needed a higher output limit: 16384\)\s*$' 'probe 0.6.23: a cut-off full test is retried with a higher limit'
+        Assert-True ($script:StWaits.Count -ge 1 -and @(Get-ActMockRequests $gw | Where-Object { $_.Path -like '*chat/completions' }).Count -ge 2) 'probe 0.6.23: a reset connection is retried once'
+        Assert-Match $shown ('(?m)^' + $ind + 'structured output OK \(strict\)\s*$') 'probe 0.6.23: the feature tests run at the higher limit'
+        Assert-Match $shown ('(?m)^' + $ind + 'output limit 16384 \(learned by :probe\)\s*$') 'probe 0.6.23: the output limit line'
+        Assert-Match $shown ('(?m)^' + $ind + 'temperature: 0\.2\s*$') 'probe 0.6.23: the temperature line stays'
+        $saved = Get-Content -Raw -LiteralPath $probeCfg | ConvertFrom-Json
+        Assert-Equal 16384 $saved.providers.genai.features.'gpt-4.1-x'.max_tokens 'probe 0.6.23: the needed limit is saved as max_tokens'
+        Assert-Equal 'BLOB' $saved.providers.genai.key_protected 'probe 0.6.23: the stored key is untouched'
+        Assert-Equal 16384 (Get-ModelOutputLimit 'gpt-4.1-x').Value 'probe 0.6.23: the session uses the learned limit'
+        Assert-Equal 16384 (Get-StoredModelFeatures $saved 'genai')['gpt-4.1-x']['max_tokens'] 'probe 0.6.23: startup loads max_tokens'
+        # Probed again where 4096 is enough: the learned limit is forgotten, not kept.
+        Set-ActMockRules $gw @(@{ Match = '^/v1/messages'; Status = 404; Body = '{"detail":"Not Found"}' },
+                              @{ Match = '"stream":\s*true'; ContentType = 'text/event-stream'; Chunks = $okStream },
+                              @{ Match = '(?s)"role":\s*"tool"'; Body = $okText },
+                              @{ Match = '(?s)"json_schema"|"json_object"'; Body = $okJson },
+                              @{ Match = '(?s)"tools"'; Body = $probeCall },
+                              @{ Match = 'chat/completions'; Body = $okText })
+        $shown = (& { Invoke-ModelProbe 'gpt-4.1-x' -Yes } 6>&1 | ConvertTo-StText)
+        Assert-Match $shown '(?m)^    OpenAI     basic OK   full OK\s*$' 'probe 0.6.23: full OK at the default limit'
+        Assert-True ((@(Get-ActMockRequests $gw | Where-Object { $_.Body -match '"max_tokens":\s*16384' })).Count -eq 0) 'probe 0.6.23: a learned limit is ignored while the model is re-probed'
+        $saved = Get-Content -Raw -LiteralPath $probeCfg | ConvertFrom-Json
+        Assert-True ($null -eq $saved.providers.genai.features.'gpt-4.1-x'.PSObject.Properties['max_tokens']) 'probe 0.6.23: a limit no longer needed is removed from the map'
+        Assert-Equal 4096 (Get-ModelOutputLimit 'gpt-4.1-x').Value 'probe 0.6.23: and the default applies again'
+        # A model that answers prose or nothing: the lines say what came back. ACT_DEBUG dumps it.
+        $prose = '{"choices":[{"index":0,"message":{"role":"assistant","content":"I can certainly help you with that request.\n  Let me think about how to approach this one."},"finish_reason":"stop"}]}'
+        $emptyStop = '{"choices":[{"index":0,"message":{"role":"assistant","content":null},"finish_reason":"stop"}],"usage":{"prompt_tokens":50,"completion_tokens":130,"total_tokens":180,"completion_tokens_details":{"reasoning_tokens":120}}}'
+        Set-ActMockRules $gw @(@{ Match = '^/v1/messages'; Status = 404; Body = '{"detail":"Not Found"}' },
+                              @{ Match = '"stream":\s*true'; ContentType = 'text/event-stream'; Chunks = $okStream },
+                              @{ Match = '(?s)"json_schema"|"json_object"'; Body = $prose },
+                              @{ Match = '(?s)"tools"'; Body = $emptyStop },
+                              @{ Match = '(?s)planning engine'; Body = $prose },
+                              @{ Match = 'chat/completions'; Body = $okText })
+        $errWriter = New-Object System.IO.StringWriter
+        $oldErr = [Console]::Error
+        $savedDebug = $script:Debug
+        try {
+            $script:Debug = $true
+            [Console]::SetError($errWriter)
+            $shown = (& { Invoke-ModelProbe 'gemini-3.8-flash' -Yes } 6>&1 | ConvertTo-StText)
+        } finally { [Console]::SetError($oldErr); $script:Debug = $savedDebug }
+        $dumped = $errWriter.ToString()
+        Assert-Match $shown '(?m)^    OpenAI     basic OK   full empty \(finish_reason=stop, reasoning 120 of 130 output tokens\)\s*$' 'probe 0.6.23: an empty full reply says so, with the reasoning tokens'
+        Assert-Match $shown ('(?m)^' + $ind + 'structured output not supported \(the reply was not a JSON object: finish_reason=stop, reply starts: "I can certainly help you with that request\. Let me think abo"\) - nothing to do: ACT uses the ''\{'' prefill\s*$') 'probe 0.6.23: prose is quoted (first 60 characters, one line)'
+        Assert-Match $shown ('(?m)^' + $ind + 'tool results not supported \(the model did not answer with a tool call: finish_reason=stop, empty reply, reasoning 120 of 130 output tokens\) - nothing to do: ACT sends command results as user messages\s*$') 'probe 0.6.23: an empty turn without a tool call says so'
+        Assert-Match $shown ('(?m)^' + $ind + 'output limit 16384 \(thinking model\)\s*$') 'probe 0.6.23: a thinking model gets 16384'
+        Assert-Match $dumped '(?m)^\[debug\] :probe full gemini-3\.8-flash \(OpenAI\): HTTP 200 body: \{"choices"' 'probe 0.6.23: ACT_DEBUG dumps the body of a full test that did not pass'
+        Assert-Match $dumped ':probe structured output \(strict\) gemini-3\.8-flash \(OpenAI\): HTTP 200 body:' 'probe 0.6.23: ACT_DEBUG dumps each failed feature test'
+        Assert-Match $dumped ':probe tool results gemini-3\.8-flash \(OpenAI\): HTTP 200 body:' 'probe 0.6.23: ACT_DEBUG dumps the tool-results test'
+        # Several models in one :probe; a name the gateway refuses everywhere is never recorded.
+        Assert-Equal 'a,b,c,d' ((Get-ProbeModelList 'a b,c ,, d a') -join ',') 'probe 0.6.23: names separated by spaces and/or commas, duplicates dropped'
+        Set-ActMockRules $gw @(@{ Match = '(?s)nosuch-model'; Status = 400; Body = '{"error":{"message":"Requested model is not available"}}' },
+                              @{ Match = '^/v1/messages'; Status = 404; Body = '{"detail":"Not Found"}' },
+                              @{ Match = '"stream":\s*true'; ContentType = 'text/event-stream'; Chunks = $okStream },
+                              @{ Match = '(?s)"role":\s*"tool"'; Body = $okText },
+                              @{ Match = '(?s)"json_schema"|"json_object"'; Body = $okJson },
+                              @{ Match = '(?s)"tools"'; Body = $probeCall },
+                              @{ Match = 'chat/completions'; Body = $okText })
+        $script:Providers['genai'].Models = @('gemini-3.1-pro-preview'); $script:Providers['genai'].ModelsLive = $true
+        $script:LiveModelsTried['genai'] = $true
+        $shown = (& { Invoke-ModelProbe 'nosuch-model, gpt-4.1-x gemini-3.1-pro-preview,nosuch-model' -Yes } 6>&1 | ConvertTo-StText)
+        $heads = @($shown -split "`n" | Where-Object { $_ -match '^  \S+(  \(not in the provider''s model list\))?$' } | ForEach-Object { ($_.Trim() -split ' ')[0] })
+        Assert-Equal 'nosuch-model,gpt-4.1-x,gemini-3.1-pro-preview' ($heads -join ',') 'probe 0.6.23: each model is tested once, in order'
+        Assert-Equal 2 ([regex]::Matches($shown, '(?m)^  \S+  ' + [regex]::Escape($script:ActText.ProbeNotListed) + '$')).Count 'probe 0.6.23: names not in the live model list get a note on their header line (and are still probed)'
+        Assert-Match $shown '(?m)^  gemini-3\.1-pro-preview$' 'probe 0.6.23: a listed name gets no note'
+        Assert-Match $shown '(?m)^    -> neither endpoint accepted this model' 'probe 0.6.23: the refused name is reported'
+        $saved = Get-Content -Raw -LiteralPath $probeCfg | ConvertFrom-Json
+        Assert-True ($null -eq $saved.providers.genai.features.PSObject.Properties['nosuch-model'] -and $null -eq $saved.providers.genai.formats.PSObject.Properties['nosuch-model']) 'probe 0.6.23: nothing is recorded for a model neither endpoint accepted'
+        Assert-True (@($saved.providers.genai.formats.PSObject.Properties | Where-Object { $_.Name -match '[\s,]' }).Count -eq 0) 'probe 0.6.23: no list of names is ever recorded as one model'
+        Assert-Equal 'openai' $saved.providers.genai.formats.'gemini-3.1-pro-preview' 'probe 0.6.23: the listed models are recorded'
+        $before = Get-Content -Raw -LiteralPath $probeCfg
+        $shown = (& { Invoke-ModelProbe 'nosuch-model' -Yes } 6>&1 | ConvertTo-StText)
+        Assert-Equal $before (Get-Content -Raw -LiteralPath $probeCfg) 'probe 0.6.23: the setup file is not touched when no model was accepted'
+        Assert-NoMatch $shown 'remembered in' 'probe 0.6.23: and nothing claims to be remembered'
         Remove-Item -LiteralPath $probeCfg -Force -ErrorAction SilentlyContinue
     } finally {
         Stop-ActMockGateway $gw
@@ -14350,6 +14793,7 @@ $r = Invoke-GenAIChat @(@{ role = 'user'; content = 'x' }) 6>$null
         $script:TemperatureSetting = $savedG.Temp; $script:EscProbe = $savedG.Esc; $script:SleepHook = $savedG.Sleep; $script:UserConfigPath = $savedG.Cfg
         $script:NonInteractive = $savedG.NonInteractive; $script:Messages = $savedG.Messages; $script:RaceModelsEnv = $savedG.RaceModels
         $script:TokensUsed = $savedG.TokUsed; $script:TokensReported = $savedG.TokRep; $script:FullLang = $savedG.FullLang
+        $script:MaxTokensForced = $false
         $script:PseudoFwd = $null; $script:TurnDeadline = $null; $script:LastReplyToolCalls = $null; $script:ModelCallCancelled = $false
         Reset-ActRequestCaches
         Remove-Variable -Scope Script -Name StWaits, StR, StEscPolls -ErrorAction SilentlyContinue
