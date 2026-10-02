@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.2 — 2026-10-02
+
+**ACT 0.6.23** (vendored for Linux and Windows):
+- **Thinking models get a 16384-token output limit** (Gemini 2.5 and later, GPT-5, o-series; others
+  keep 4096). Their thinking counts against the limit, and at 4096 the answer could come back empty -
+  in `:probe` on GenAI.mil every Gemini model did. Likely the main cause of "the model returns
+  nothing". The limit is a ceiling, not a charge. `site_act_env: {ACT_MAX_TOKENS: "8000"}` forces a
+  value.
+- **`:probe` judges replies by content** (`full OK` only with a usable answer; `full empty
+  (finish_reason=...)` / `full no action (...)` otherwise), retries a cut-off reply once with a higher
+  limit and remembers it, shows what came back when a test fails, retries one dropped connection,
+  and takes several models at once (`:probe model1 model2`).
+- On Windows, a dropped connection on PowerShell 7 is retried like any other network error.
+
+**Upgrading from 0.6.1:** nothing to change. Run `:probe all` once more on each box with ACT 0.6.23
+(docs/ADDING_ACT.md, step 4): the structured output / tool results lines may now say OK for the
+Gemini models. On AskSage, gpt-5.6-sol-gov already showed `tool results OK`: if your jobs use it,
+`site_act_env: {ACT_TOOL_RESULTS: tool}` is worth adding.
+
 ## 0.6.1 — 2026-10-02
 
 **ACT 0.6.22** (vendored for Linux and Windows) - fewer empty or refused model answers, and better

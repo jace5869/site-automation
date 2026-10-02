@@ -86,6 +86,9 @@ Environment:
                   (not this host, not in /etc/hosts, not listed) is sent as written
   ACT_PSEUDO_NAMES (optional) extra host/server names to mask, comma-separated (also
                   --pseudo-name, or "pseudo_names" in the config file)
+  ACT_MAX_TOKENS  (optional)  auto (default): 16384 for thinking models (Gemini 2.5+, gpt-5*,
+                  o1/o3/o4 - their thinking counts against the limit), 4096 otherwise; a
+                  number forces one output limit for every model
   ACT_TOKEN_PARAM (optional)  output-limit field name: max_tokens or max_completion_tokens.
                   Default: auto — newer OpenAI models (gpt-5*, o-series, Ask Sage gpt-5-gov)
                   reject max_tokens with HTTP 400; the swap is detected per endpoint.
@@ -103,7 +106,7 @@ Environment:
   The full list of variables (limits, debug, theme, ...) is in README.md.
 """
 
-ACT_VERSION = "0.6.22"  # bump when delivering; check with: act --version
+ACT_VERSION = "0.6.23"  # bump when delivering; check with: act --version
 
 import argparse
 import codecs
@@ -200,6 +203,9 @@ def clean_features(value):
             entry["schema"] = feats["schema"]
         if isinstance(feats.get("tool_results"), bool):
             entry["tool_results"] = feats["tool_results"]
+        limit = feats.get("max_tokens")
+        if isinstance(limit, int) and not isinstance(limit, bool) and 1 <= limit <= 1000000:
+            entry["max_tokens"] = limit
         if entry:
             out[str(model)] = entry
     return out
@@ -458,7 +464,7 @@ def save_model_features(name=None, path=None):
         record = providers[name] = {}
     features = clean_features(dict(sorted(
         ((_PROVIDER_STATE.get(name) or {}).get("features") or {}).items())))
-    if record.get("features") == features:
+    if (record.get("features") or {}) == features:
         return False
     record["features"] = features
     try:
@@ -483,7 +489,30 @@ BACKEND = os.environ.get("GENAI_BACKEND", "api")          # "api" or "ask"
 AUTOHEAL = True                                           # disabled with --no-autoheal
 AUTO = os.environ.get("ACT_AUTO", "").lower() in ("1", "true", "yes")
 RETRIES = _env_int("GENAI_RETRIES", 3, 0, 10)
-MAX_TOKENS = _env_int("ACT_MAX_TOKENS", 4096, 1, 1000000)
+# Output limit (0.6.23: ACT_MAX_TOKENS=auto). Thinking/reasoning models count their thinking
+# against the output limit, and 4096 left Gemini 2.5/3 and gpt-5 replies empty
+# (finish_reason=length); auto gives them 16384 - a cap, not a cost (tokens are billed as
+# used). A number forces one limit for every model. MAX_TOKENS is that number, or 4096 (the
+# limit for other models) under auto.
+def _max_tokens_setting(raw):
+    text = (raw or "").strip().lower()
+    if text in ("", "auto"):
+        return "auto", 4096
+    try:
+        value = int(text)
+    except ValueError:
+        _CONFIG_ERRORS.append("ACT_MAX_TOKENS must be auto or an integer (got {0!r})".format(raw))
+        return "auto", 4096
+    if not 1 <= value <= 1000000:
+        _CONFIG_ERRORS.append("ACT_MAX_TOKENS must be between 1 and 1000000 (got {0})".format(
+            value))
+        return "auto", 4096
+    return "fixed", value
+
+
+MAX_TOKENS_MODE, MAX_TOKENS = _max_tokens_setting(os.environ.get("ACT_MAX_TOKENS"))
+THINKING_MAX_TOKENS = 16384
+_THINKING_MODEL_RE = re.compile(r"gemini-(2\.5|[3-9]|[1-9][0-9])", re.I)
 
 
 # ---- Temperature (0.6.22): ACT_TEMPERATURE=auto|default|<0..2> ----
@@ -746,6 +775,41 @@ def temperature_label(model=None, key=None):
         return "model default (ACT_TEMPERATURE=default)"
     value, why = auto_temperature(model)
     return "model default ({0})".format(why) if value is None else "{0:g}".format(value)
+
+
+def is_thinking_model(model):
+    """Gemini 2.5 and later, gpt-5*, o1/o3/o4: their thinking counts against the output limit."""
+    return bool(_THINKING_MODEL_RE.search(model or "") or _REASONING_MODEL_RE.search(model or ""))
+
+
+def max_tokens_for(model=None):
+    """(output limit, why) for a model: a raise after a cut-off reply this session, then a
+    numeric ACT_MAX_TOKENS, then what :probe learned, then 16384 for thinking models, else
+    4096 (ACT_MAX_TOKENS=auto, 0.6.23)."""
+    model = model or MODEL
+    raised = _MAX_TOKENS_BOOST.get((PROVIDER, model))
+    if raised:
+        return raised, "raised this session after a cut-off reply"
+    if MAX_TOKENS_MODE == "fixed":
+        return MAX_TOKENS, "ACT_MAX_TOKENS"
+    learned = model_features(model).get("max_tokens")
+    if learned:
+        return learned, "learned by :probe"
+    if is_thinking_model(model):
+        return THINKING_MAX_TOKENS, "thinking model"
+    return MAX_TOKENS, ""
+
+
+def max_tokens_label(model=None):
+    """`16384 (thinking model)` - shown as "output limit <label>"."""
+    limit, why = max_tokens_for(model)
+    return "{0} ({1})".format(limit, why) if why else str(limit)
+
+
+def raised_max_tokens(limit):
+    """The limit to retry a cut-off (finish_reason=length) reply with: 4x, at least 16384,
+    at most 65536."""
+    return min(65536, max(4 * int(limit), THINKING_MAX_TOKENS))
 
 
 # Which optional field an HTTP 400/422 names. Order matters: the first on-feature named wins.
@@ -5318,7 +5382,7 @@ def json_step_down(key, detail=""):
 
 
 def build_model_request(send, model, fmt, use_json_mode, prefill, use_tools, key=None,
-                        stream=False, json_level=None):
+                        stream=False, json_level=None, max_tokens=None):
     """(url, headers, payload) for one request in `fmt`. `send` is already pseudonymized.
     Optional fields this model/endpoint refused before (temperature, tool_choice,
     stream_options) are left out; the temperature follows ACT_TEMPERATURE; the output limit
@@ -5326,7 +5390,7 @@ def build_model_request(send, model, fmt, use_json_mode, prefill, use_tools, key
     key = key or _support_key(fmt, model)
     temperature = effective_temperature(model, key)
     tool_choice = _TOOL_CHOICE_SUPPORT.get(key) is not False
-    limit = _MAX_TOKENS_BOOST.get((PROVIDER, model)) or MAX_TOKENS
+    limit = max_tokens or max_tokens_for(model)[0]
     if fmt == "anthropic":
         payload = anthropic_payload(send, model, use_tools, prefill, temperature is not None,
                                     tool_choice, temperature_value=temperature, max_tokens=limit)
@@ -6207,8 +6271,8 @@ def call_llm(messages, timeout=None, expect_action=True):
         if not usable and finish in _LENGTH_REASONS:
             # Thinking tokens (Gemini 3, reasoning models) can use the whole output limit and
             # leave no answer: once per turn, ask again with a higher limit and keep it.
-            current = _MAX_TOKENS_BOOST.get((PROVIDER, model)) or MAX_TOKENS
-            higher = min(65536, max(4 * MAX_TOKENS, 16384))
+            current = max_tokens_for(model)[0]
+            higher = raised_max_tokens(current)
             if not boosted and higher > current:
                 boosted = True
                 _MAX_TOKENS_BOOST[(PROVIDER, model)] = higher
@@ -7310,9 +7374,12 @@ def probe_model_list():
             if not _NON_CHAT_MODEL_RE.search(m)]
 
 
-def _probe_post(url, headers, payload, timeout):
-    """One probe request -> (ok, status, raw). A 200 that carries an error object (some
-    gateways answer {"response": "Token is invalid", "status": 400}) is not OK."""
+_PROBE_RETRY_PAUSE = 1.0          # seconds before a probe request is sent again after a
+_PROBE_TRANSIENT_CODES = (502, 503, 504)   # transient failure (0.6.23)
+
+
+def _probe_post_once(url, headers, payload, timeout):
+    """One probe request -> (ok, status, raw, transient)."""
     try:
         req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
                                      method="POST", headers=headers)
@@ -7321,30 +7388,136 @@ def _probe_post(url, headers, payload, timeout):
             raw = _read_limited(r, MAX_API_RESPONSE_BYTES, "API response").decode(
                 "utf-8", "replace")
     except urllib.error.HTTPError as e:
-        return False, e.code, _read_limited(e, MAX_API_RESPONSE_BYTES,
-                                            "API error response").decode("utf-8", "replace")
+        return False, e.code, _read_limited(e, MAX_API_RESPONSE_BYTES, "API error response").decode(
+            "utf-8", "replace"), e.code in _PROBE_TRANSIENT_CODES
     except KeyboardInterrupt:
         raise
     except Exception as e:  # noqa: BLE001 — report it as this endpoint's result
-        return False, None, "could not connect: {0}".format(getattr(e, "reason", None) or e)
+        transient = isinstance(e, (urllib.error.URLError, ConnectionError, TimeoutError,
+                                   OSError, http_client_errors()))
+        return False, None, "could not connect: {0}".format(getattr(e, "reason", None) or e), \
+            transient
     try:
         body = json.loads(raw)
     except ValueError:
-        return False, status, raw
+        return False, status, raw, False
     if not isinstance(body, dict) or body.get("error") or body.get("type") == "error":
-        return False, status, raw
+        return False, status, raw, False
     code = body.get("status")
     if isinstance(code, int) and code >= 400:
-        return False, status, raw
+        return False, status, raw, False
     if not ("choices" in body or "content" in body):
-        return False, status, raw
-    return True, status, raw
+        return False, status, raw, False
+    return True, status, raw, False
+
+
+def http_client_errors():
+    """http.client's own exception base (IncompleteRead, RemoteDisconnected's cousins)."""
+    import http.client
+    return http.client.HTTPException
+
+
+def _probe_post(url, headers, payload, timeout):
+    """One probe request -> (ok, status, raw). A 200 that carries an error object (some
+    gateways answer {"response": "Token is invalid", "status": 400}) is not OK. A transient
+    failure (connection reset/refused, timeout, HTTP 502/503/504) is sent once more after a
+    short pause before it is reported (0.6.23)."""
+    ok, status, raw, transient = _probe_post_once(url, headers, payload, timeout)
+    if not ok and transient:
+        time.sleep(_PROBE_RETRY_PAUSE)
+        ok, status, raw, _transient = _probe_post_once(url, headers, payload, timeout)
+    return ok, status, raw
 
 
 def _probe_text(status, raw):
     if status is None:
         return sanitize_terminal(raw)
     return "HTTP {0}: {1}".format(status, api_error_reason(raw, 160))
+
+
+def _probe_body(raw, fmt):
+    """A probe reply parsed (Anthropic normalized to the OpenAI shape), or None."""
+    try:
+        body = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if fmt == "anthropic":
+        body = normalize_anthropic_response(body)
+    return body if isinstance(body, dict) else None
+
+
+def _probe_answer(body, use_tools, prefill=False):
+    """(usable, text): does this reply carry an action a real turn would accept - a tool
+    call, or text that parses to a JSON object (0.6.23: :probe judges by content)."""
+    if not isinstance(body, dict):
+        return False, ""
+    if use_tools and _extract_tool_action(body):
+        return True, ""
+    text = _extract_reply(body) or ""
+    if prefill and not use_tools:
+        text = _resolve_prefill_content(text)
+    return isinstance(extract_json(text), dict), text
+
+
+def _usage_reasoning(body):
+    """(reasoning tokens, output tokens or None) when the reply's usage reports reasoning."""
+    if not isinstance(body, dict):
+        return None, None
+
+    def number(value):
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+    usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+    reasoning = None
+    for holder in (usage.get("completion_tokens_details"), usage.get("output_tokens_details"),
+                   usage):
+        if isinstance(holder, dict) and number(holder.get("reasoning_tokens")) is not None:
+            reasoning = holder["reasoning_tokens"]
+            break
+    output = number(usage.get("completion_tokens"))
+    if output is None:
+        output = number(usage.get("output_tokens"))
+    meta = body.get("usageMetadata")
+    if reasoning is None and isinstance(meta, dict) and number(meta.get("thoughtsTokenCount")) \
+            is not None:
+        reasoning = meta["thoughtsTokenCount"]
+        if output is None and number(meta.get("candidatesTokenCount")) is not None:
+            output = meta["candidatesTokenCount"] + reasoning
+    return reasoning, output
+
+
+def _probe_came_back(body, text, say_empty=True):
+    """What a 200 without a usable answer carried: finish_reason, the start of the text (or
+    "empty reply"), and the reasoning tokens when the usage reports them."""
+    parts = ["finish_reason={0}".format(_finish_reason(body) or "none")]
+    one_line = re.sub(r"\s+", " ", text or "").strip()
+    if one_line:
+        parts.append('reply starts: "{0}"'.format(sanitize_terminal(one_line[:60])))
+    elif say_empty:
+        parts.append("empty reply")
+    reasoning, output = _usage_reasoning(body)
+    if reasoning is not None:
+        parts.append("reasoning {0} of {1} output tokens".format(reasoning, output)
+                     if output is not None else "reasoning {0} tokens".format(reasoning))
+    return ", ".join(parts)
+
+
+def _probe_debug(test, model, fmt, raw):
+    """ACT_DEBUG: the first 600 characters of a 200 body whose test did not pass."""
+    if DEBUG:
+        sys.stderr.write(grey("[debug] :probe {0} {1} ({2}): HTTP 200 body: {3}".format(
+            test, sanitize_terminal(model), _FORMAT_LABEL[fmt],
+            sanitize_terminal((raw or "")[:600]))) + "\n")
+        sys.stderr.flush()
+
+
+def _raise_after_cut(body, limit, model, raised):
+    """The higher output limit to repeat a probe test with when its reply was cut off
+    (finish_reason length / max_tokens) - once per test - else None."""
+    used = limit or max_tokens_for(model)[0]
+    if raised or _finish_reason(body) not in _LENGTH_REASONS:
+        return None
+    higher = raised_max_tokens(used)
+    return higher if higher > used else None
 
 
 def _probe_basic(fmt, model, timeout):
@@ -7368,19 +7541,35 @@ def _probe_basic(fmt, model, timeout):
 
 def _probe_full(fmt, model, timeout):
     """ACT's real request shape (system prompt, temperature, tools/JSON mode, max tokens).
-    Refused optional fields are dropped one at a time and remembered, like a real turn."""
+    Refused optional fields are dropped one at a time and remembered, like a real turn. OK
+    only when the reply carries a usable action; a reply cut off by the output limit is
+    asked again once with a higher one. -> (ok, dropped fields | reason, limit it needed)."""
     key, use_json_mode, use_tools, prefill = _request_features(fmt, model, PREFILL)
     messages = [{"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": _PROBE_FULL_PROMPT}]
     dropped = []
-    for _ in range(6):
+    limit = None
+    for _ in range(8):
         url, headers, payload = build_model_request(pseudo_outgoing(messages), model, fmt,
-                                                    use_json_mode, prefill, use_tools, key=key)
+                                                    use_json_mode, prefill, use_tools, key=key,
+                                                    max_tokens=limit)
         ok, status, raw = _probe_post(url, headers, payload, timeout)
         if ok:
-            if use_tools:
-                _TOOLS_SUPPORT[key] = True
-            return True, dropped
+            body = _probe_body(raw, fmt)
+            usable, text = _probe_answer(body, use_tools, prefill)
+            if usable:
+                if use_tools:
+                    _TOOLS_SUPPORT[key] = True
+                return True, dropped, limit
+            higher = _raise_after_cut(body, limit, model, limit is not None)
+            if higher:
+                limit = higher
+                continue
+            _probe_debug("full", model, fmt, raw)
+            return False, ("empty (" if not (text or "").strip() else "no action (") \
+                + _probe_came_back(body, text, say_empty=False) + ")", None
+        if status == 200:
+            _probe_debug("full", model, fmt, raw)
         if status in (400, 422):
             on = _fields_on(fmt, key, use_json_mode, use_tools, prefill)
             field = rejected_field(raw, on)
@@ -7395,8 +7584,8 @@ def _probe_full(fmt, model, timeout):
                     "the strict JSON schema" if rung == "non-strict" else "the JSON schema"))
                 key, use_json_mode, use_tools, prefill = _request_features(fmt, model, prefill)
                 continue
-        return False, _probe_text(status, raw)
-    return False, "still refused after dropping " + ", ".join(dropped)
+        return False, _probe_text(status, raw), None
+    return False, "still refused after dropping " + ", ".join(dropped), None
 
 
 # ---- :probe feature tests (0.6.22): streaming, structured output, tool-result turns ----
@@ -7404,6 +7593,22 @@ _PROBE_TOOL_PROMPT = ("Connectivity check from ACT: call the run tool once with 
                       "'echo ok'. ACT will not execute it.")
 _PROBE_TOOL_RESULT = "exit_code=0\nstdout:\nok"
 _PROBE_INDENT = " " * 13
+_HIGHER_LIMIT_NOTE = " (needed a higher output limit: {0})"
+
+
+def _probe_stream_once(model, timeout, payload, headers):
+    """One streaming probe request -> body (non-stream shape) or raises."""
+    req = urllib.request.Request(format_url("openai"), data=json.dumps(payload).encode(
+        "utf-8"), method="POST", headers=headers)
+    with api_urlopen(req, timeout) as resp:
+        if "text/event-stream" in _response_header(resp, "Content-Type").lower():
+            return read_sse_stream(resp, timeout)
+        raw = _read_limited(resp, MAX_API_RESPONSE_BYTES, "API response").decode(
+            "utf-8", "replace")
+        if not raw.lstrip().startswith("data:"):
+            _probe_debug("stream", model, "openai", raw)
+            raise _StreamFallback("the gateway answered without streaming")
+        return parse_sse_text(raw)
 
 
 def _probe_stream(model, timeout):
@@ -7412,22 +7617,13 @@ def _probe_stream(model, timeout):
     send = pseudo_outgoing([{"role": "user", "content": _PROBE_BASIC_PROMPT}])
     headers = _auth_headers(PROVIDER, KEY, {"Content-Type": "application/json"}, fmt="openai")
     with_options = True
-    for _ in range(2):
+    retried = False
+    for _ in range(3):
         payload = {"model": model, "messages": send, token_param_for(key): 64, "stream": True}
         if with_options:
             payload["stream_options"] = {"include_usage": True}
-        req = urllib.request.Request(format_url("openai"), data=json.dumps(payload).encode(
-            "utf-8"), method="POST", headers=headers)
         try:
-            with api_urlopen(req, timeout) as resp:
-                if "text/event-stream" in _response_header(resp, "Content-Type").lower():
-                    body = read_sse_stream(resp, timeout)
-                else:
-                    raw = _read_limited(resp, MAX_API_RESPONSE_BYTES, "API response").decode(
-                        "utf-8", "replace")
-                    if not raw.lstrip().startswith("data:"):
-                        return False, "the gateway answered without streaming"
-                    body = parse_sse_text(raw)
+            body = _probe_stream_once(model, timeout, payload, headers)
         except urllib.error.HTTPError as e:
             raw = _read_limited(e, MAX_API_RESPONSE_BYTES, "API error response").decode(
                 "utf-8", "replace")
@@ -7436,116 +7632,174 @@ def _probe_stream(model, timeout):
                 with_options = False
                 _STREAM_OPTIONS_SUPPORT[key] = False
                 continue
+            if e.code in _PROBE_TRANSIENT_CODES and not retried:
+                retried = True
+                time.sleep(_PROBE_RETRY_PAUSE)
+                continue
             return False, _probe_text(e.code, raw)
         except _StreamFallback as e:
             return False, e.reason
         except KeyboardInterrupt:
             raise
         except Exception as e:  # noqa: BLE001 — this test's result
+            transient = isinstance(e, (urllib.error.URLError, ConnectionError, TimeoutError,
+                                       OSError, TransientError, http_client_errors()))
+            if transient and not retried:
+                retried = True
+                time.sleep(_PROBE_RETRY_PAUSE)
+                continue
             return False, sanitize_terminal(e)[:160]
         message = body["choices"][0]["message"]
         if message.get("content") or message.get("tool_calls") or body["choices"][0].get(
                 "finish_reason"):
             return True, "OK"
+        _probe_debug("stream", model, "openai", json.dumps(body))
         return False, "the stream carried no reply"
     return False, "HTTP 400"
 
 
 def _probe_structured(model, timeout):
     """Which structured-output rung the OpenAI endpoint accepts for this model, tools off:
-    (rung or None, reason of the first refusal, json_object works)."""
+    (rung or None, reason of the first refusal, json_object works, limit it needed). A reply
+    cut off by the output limit is asked again once (for the whole test) with a higher one."""
     key = _support_key("openai", model)
     messages = pseudo_outgoing([{"role": "system", "content": SYSTEM_PROMPT},
                                 {"role": "user", "content": _PROBE_FULL_PROMPT}])
     first_reason = ""
+    limit = None
     for level in _JSON_LEVELS:
-        url, headers, payload = build_model_request(messages, model, "openai", True, False,
-                                                    False, key=key, json_level=level)
-        ok, status, raw = _probe_post(url, headers, payload, timeout)
-        if ok:
-            try:
-                reply = _extract_reply(json.loads(raw))
-            except ValueError:
-                reply = ""
-            if isinstance(extract_json(reply), dict):
+        reason = ""
+        for _attempt in range(2):
+            url, headers, payload = build_model_request(messages, model, "openai", True, False,
+                                                        False, key=key, json_level=level,
+                                                        max_tokens=limit)
+            ok, status, raw = _probe_post(url, headers, payload, timeout)
+            if not ok:
+                if status == 200:
+                    _probe_debug("structured output ({0})".format(level), model, "openai", raw)
+                reason = _probe_text(status, raw)
+                break
+            body = _probe_body(raw, "openai")
+            usable, text = _probe_answer(body, False)
+            if usable:
                 if level != "object":
-                    return level, "", True
-                return "object", first_reason, True
-            reason = "the reply was not a JSON object"
-        else:
-            reason = _probe_text(status, raw)
+                    return level, "", True, limit
+                return "object", first_reason, True, limit
+            higher = _raise_after_cut(body, limit, model, limit is not None)
+            if higher:
+                limit = higher
+                continue
+            _probe_debug("structured output ({0})".format(level), model, "openai", raw)
+            reason = "the reply was not a JSON object: " + _probe_came_back(body, text)
+            break
         first_reason = first_reason or reason
-    return None, first_reason, False
+    return None, first_reason, False, None
 
 
 def _probe_tool_results(model, timeout):
     """A 2-turn exchange: get a tool call, send a role "tool" result back with the call
-    replayed verbatim, expect a normal reply. ACT never runs the proposed command."""
+    replayed verbatim, expect a reply (a tool call or text). ACT never runs the proposed
+    command. -> (ok, reason, limit it needed)."""
     key = _support_key("openai", model)
     if not TOOLS_MODE or _TOOLS_SUPPORT.get(key) is False:
-        return False, "tools are off or refused for this model"
+        return False, "tools are off or refused for this model", None
     first = pseudo_outgoing([{"role": "user", "content": _PROBE_TOOL_PROMPT}])
-    url, headers, payload = build_model_request(first, model, "openai", False, False, True,
-                                                key=key)
-    ok, status, raw = _probe_post(url, headers, payload, timeout)
-    if not ok:
-        return False, _probe_text(status, raw)
-    try:
-        message = json.loads(raw)["choices"][0]["message"]
-        calls = message.get("tool_calls")
-    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
-        calls = None
+    limit = None
+    message = calls = None
+    for _attempt in range(2):
+        url, headers, payload = build_model_request(first, model, "openai", False, False, True,
+                                                    key=key, max_tokens=limit)
+        ok, status, raw = _probe_post(url, headers, payload, timeout)
+        if not ok:
+            if status == 200:
+                _probe_debug("tool results", model, "openai", raw)
+            return False, _probe_text(status, raw), None
+        body = _probe_body(raw, "openai")
+        try:
+            message = body["choices"][0]["message"]
+            calls = message.get("tool_calls")
+        except (KeyError, IndexError, TypeError, AttributeError):
+            message, calls = {}, None
+        if isinstance(calls, list) and calls:
+            break
+        higher = _raise_after_cut(body, limit, model, limit is not None)
+        if higher:
+            limit = higher
+            continue
+        _probe_debug("tool results", model, "openai", raw)
+        return False, "the model did not answer with a tool call: " + _probe_came_back(
+            body, _extract_reply(body) if body else ""), None
     if not isinstance(calls, list) or not calls:
-        return False, "the model did not answer with a tool call"
+        return False, "the model did not answer with a tool call", None
     if not all(isinstance(c, dict) and isinstance(c.get("id"), str) and c.get("id")
                for c in calls):
-        return False, "the tool call carried no id"
+        return False, "the tool call carried no id", None
     wire = first + [{"role": "assistant", "content": message.get("content") or None,
                      "tool_calls": calls}]
     for i, call in enumerate(calls):
         wire.append({"role": "tool", "tool_call_id": call["id"],
                      "content": _PROBE_TOOL_RESULT if i == 0 else _EXTRA_CALL_TOOL_TEXT})
-    url, headers, payload = build_model_request(wire, model, "openai", False, False, True,
-                                                key=key)
-    ok, status, raw = _probe_post(url, headers, payload, timeout)
-    return (True, "OK") if ok else (False, _probe_text(status, raw))
+    raised = limit is not None
+    for _attempt in range(2):
+        url, headers, payload = build_model_request(wire, model, "openai", False, False, True,
+                                                    key=key, max_tokens=limit)
+        ok, status, raw = _probe_post(url, headers, payload, timeout)
+        if not ok:
+            if status == 200:
+                _probe_debug("tool results", model, "openai", raw)
+            return False, _probe_text(status, raw), None
+        body = _probe_body(raw, "openai")
+        text = _extract_reply(body) if body else ""
+        if (body and _extract_tool_action(body)) or (text or "").strip():
+            return True, "OK", limit
+        higher = _raise_after_cut(body, limit, model, raised)
+        if higher:
+            limit, raised = higher, True
+            continue
+        _probe_debug("tool results", model, "openai", raw)
+        return False, "the model did not answer the tool result: " + _probe_came_back(
+            body, text), None
+    return False, "the model did not answer the tool result", None
 
 
 def _probe_features(model, timeout, out):
-    """Run the three feature tests on the OpenAI endpoint, print one line each (plus the
-    temperature line), and record the result for this model (session + setup file map)."""
+    """Run the three feature tests on the OpenAI endpoint, print one line each, and record
+    the result for this model (session + setup file map). Returns the features recorded."""
     key = _support_key("openai", model)
 
-    def run(test):
+    def guarded(test, failed):
         try:
             return test(model, timeout)
         except KeyboardInterrupt:
             raise
         except Exception as e:  # noqa: BLE001 — e.g. a masking error: nothing was sent
-            return False, "not sent: " + sanitize_terminal(e)[:160]
+            return failed("not sent: " + sanitize_terminal(e)[:160])
 
-    def line(label, ok_text, ok, reason, todo):
+    def line(label, ok_text, ok, reason, todo, needed=None):
         if ok:
-            out.write(_PROBE_INDENT + label + " " + green(ok_text) + "\n")
+            out.write(_PROBE_INDENT + label + " " + green(
+                ok_text + (_HIGHER_LIMIT_NOTE.format(needed) if needed else "")) + "\n")
         else:
             out.write(_PROBE_INDENT + label + " " + yellow("not supported (" + reason + ")")
                       + grey(" - nothing to do: " + todo) + "\n")
         out.flush()
 
-    stream_ok, stream_why = run(_probe_stream)
+    stream_ok, stream_why = guarded(_probe_stream, lambda why: (False, why))
     line("stream", "OK", stream_ok, stream_why, "ACT uses normal requests for this model")
-    try:
-        rung, schema_why, object_ok = _probe_structured(model, timeout)
-    except KeyboardInterrupt:
-        raise
-    except Exception as e:  # noqa: BLE001
-        rung, schema_why, object_ok = None, "not sent: " + sanitize_terminal(e)[:160], False
+    rung, schema_why, object_ok, schema_limit = guarded(
+        _probe_structured, lambda why: (None, why, False, None))
     schema_ok = rung in ("strict", "non-strict")
     line("structured output", "OK ({0})".format(rung) if schema_ok else "", schema_ok,
-         schema_why, "ACT uses JSON object mode" if object_ok else "ACT uses the '{' prefill")
-    tools_ok, tools_why = run(_probe_tool_results)
-    line("tool results", "OK", tools_ok, tools_why, "ACT sends command results as user messages")
+         schema_why, "ACT uses JSON object mode" if object_ok else "ACT uses the '{' prefill",
+         schema_limit)
+    tools_ok, tools_why, tools_limit = guarded(_probe_tool_results,
+                                               lambda why: (False, why, None))
+    line("tool results", "OK", tools_ok, tools_why, "ACT sends command results as user messages",
+         tools_limit)
     feats = {"stream": bool(stream_ok), "schema": rung or "none", "tool_results": bool(tools_ok)}
+    needed = [n for n in (schema_limit if rung else None, tools_limit) if n]
+    if needed:
+        feats["max_tokens"] = max(needed)
     _PROVIDER_STATE[PROVIDER].setdefault("features", {})[model] = feats
     if stream_ok:
         _STREAM_SUPPORT.pop(key, None)
@@ -7568,7 +7822,8 @@ def _probe_temperature_line(model, fmt, out):
 
 
 def _forget_request_shape(model):
-    """A probe tests from scratch: forget what this model's endpoints refused before."""
+    """A probe tests from scratch: forget what this model's endpoints refused before and a
+    raised output limit (probe_models sets the learned one aside while it tests)."""
     for fmt in _API_FORMATS:
         key = _support_key(fmt, model)
         for cache in (_JSON_MODE_SUPPORT, _TOOLS_SUPPORT, _TEMPERATURE_SUPPORT,
@@ -7576,13 +7831,29 @@ def _forget_request_shape(model):
                       _STREAM_SUPPORT, _STREAM_OPTIONS_SUPPORT):
             cache.pop(key, None)
     _TOOL_RESULTS_SUPPORT.pop((PROVIDER, model), None)
+    _MAX_TOKENS_BOOST.pop((PROVIDER, model), None)
+
+
+def parse_probe_models(arg):
+    """`:probe` arguments: model names separated by spaces and/or commas, in order, each
+    once; `all` alone means every chat model the provider lists (returns "all")."""
+    text = (arg or "").strip()
+    if text.lower() == "all":
+        return "all"
+    names = []
+    for name in re.split(r"[\s,]+", text):
+        if name and name not in names:
+            names.append(name)
+    return names
 
 
 def probe_models(models, out=None):
     """:probe — test each model on BOTH endpoints: a basic request (is the model served
-    there at all?) and ACT's full request (does it accept everything ACT sends?), printing
-    the server's reason for every refusal. The working format is remembered per model (and
-    written to an existing setup file). Returns {model: format or None}."""
+    there at all?) and ACT's full request (does it accept everything ACT sends, and does the
+    reply carry a usable action?), printing the server's reason for every refusal and what
+    came back when a reply was unusable. The working format, the features and an output
+    limit the model needed are remembered per model (and written to an existing setup file);
+    nothing is recorded for a model neither endpoint accepted. Returns {model: format|None}."""
     out = out or sys.stdout
     timeout = min(LLM_TIMEOUT, 60)
     forced = provider_format()
@@ -7593,11 +7864,20 @@ def probe_models(models, out=None):
         out.write(grey("  {0:<19}{1}".format(_FORMAT_LABEL[fmt] + " endpoint",
                                              sanitize_terminal(format_url(fmt)))) + "\n")
     out.flush()
+    state = _PROVIDER_STATE[PROVIDER]
+    listed = set(state.get("models") or []) if state.get("models_live") else None
     chosen = {}
     for model in models:
         _forget_request_shape(model)
-        out.write(bold(sanitize_terminal(model)) + "\n")
+        # The tests start from the auto/forced limit; a limit learned before is re-learned
+        # when still needed, dropped when not, and kept when the model is not reachable now.
+        previous = (state.get("features") or {}).get(model)
+        previous_limit = previous.pop("max_tokens", None) if isinstance(previous, dict) else None
+        note = grey("  (not in the provider's model list)") \
+            if listed is not None and model not in listed else ""
+        out.write(bold(sanitize_terminal(model)) + note + "\n")
         results = {}
+        needed = []
         for fmt in _API_FORMATS:
             try:
                 ok, text = _probe_basic(fmt, model, timeout)
@@ -7609,10 +7889,16 @@ def probe_models(models, out=None):
                 try:
                     full = _probe_full(fmt, model, timeout)
                 except Exception as e:  # noqa: BLE001
-                    full = (False, "not sent: " + sanitize_terminal(e)[:160])
+                    full = (False, "not sent: " + sanitize_terminal(e)[:160], None)
                 if full[0]:
                     line += "   full " + green("OK" + (" without " + ", ".join(full[1])
-                                                     if full[1] else ""))
+                                                     if full[1] else "")
+                                               + (_HIGHER_LIMIT_NOTE.format(full[2])
+                                                  if full[2] else ""))
+                    if full[2]:
+                        needed.append(full[2])
+                elif full[1].startswith(("empty (", "no action (")):
+                    line += "   full " + yellow(full[1])
                 else:
                     line += "   full " + red(full[1])
             results[fmt] = (ok, full)
@@ -7626,7 +7912,9 @@ def probe_models(models, out=None):
         pick = (full_ok or basic_ok or [None])[0]
         chosen[model] = pick
         if results["openai"][0]:
-            _probe_features(model, timeout, out)
+            feats = _probe_features(model, timeout, out)
+            if feats.get("max_tokens"):
+                needed.append(feats["max_tokens"])
         elif pick:
             for label, todo in (("stream", "ACT uses normal requests for this model"),
                                 ("structured output", "ACT uses the '{' prefill"),
@@ -7634,10 +7922,14 @@ def probe_models(models, out=None):
                 out.write(_PROBE_INDENT + label + " " + yellow(
                     "not supported (OpenAI endpoint only in this release)")
                     + grey(" - nothing to do: " + todo) + "\n")
+        if pick and needed:
+            state.setdefault("features", {}).setdefault(model, {})["max_tokens"] = max(needed)
+        elif not pick and previous_limit:
+            state.setdefault("features", {}).setdefault(model, {})["max_tokens"] = previous_limit
         if pick:
             _probe_temperature_line(model, pick, out)
-        if pick:
-            _PROVIDER_STATE[PROVIDER].setdefault("formats", {})[model] = pick
+            out.write(_PROBE_INDENT + "output limit " + max_tokens_label(model) + "\n")
+            state.setdefault("formats", {})[model] = pick
             note = "" if full_ok else " (only the basic request worked; ACT's full request did not)"
             out.write(green("  -> {0} endpoint".format(_FORMAT_LABEL[pick])) + grey(note) + "\n")
         else:
@@ -7651,8 +7943,10 @@ def probe_models(models, out=None):
         out.write(blue("Summary: ") + ", ".join(
             "{0} -> {1}".format(sanitize_terminal(m), _FORMAT_LABEL[f] if f else "neither")
             for m, f in chosen.items()) + "\n")
-    saved = any(chosen.values()) and save_model_formats(PROVIDER)
-    saved = save_model_features(PROVIDER) or saved
+    saved = False
+    if any(chosen.values()):
+        saved = save_model_formats(PROVIDER)
+        saved = save_model_features(PROVIDER) or saved
     if saved:
         out.write(grey("  (remembered in " + sanitize_terminal(act_config_path()) + ")") + "\n")
     out.flush()
@@ -9452,7 +9746,7 @@ REPL_HELP_SECTIONS = (
         (":model", "pick the provider and model"),
         (":provider [n]", "show or switch providers"),
         (":models", "fetch the active provider's live model list"),
-        (":probe [id|all]", "test a model on both endpoints and its stream/schema/tool-result support; keep what works"),
+        (":probe [ids|all]", "test models (space- or comma-separated) on both endpoints and their features"),
         (":tools [on|off]", "send the action protocol as a native tool schema"),
         (":planmodel [id|off]", "plan on one model, execute the steps on another"),
         (":race [on|off]", "plan on all models; the active model judges (pick/merge) and runs"),
@@ -9540,6 +9834,7 @@ def print_session_status(session, stream=None):
                  + (grey("  (plan model {0}: {1})".format(
                      sanitize_terminal(PLAN_MODEL), temperature_label(PLAN_MODEL)))
                     if PLAN_MODEL and PLAN_MODEL != MODEL else "") + "\n")
+    stream.write(grey("  output limit      ") + max_tokens_label(MODEL) + "\n")
     stream.write(grey("  streaming         ") + stream_status(MODEL) + "\n")
     stream.write(grey("  tool results      ") + tool_results_status(MODEL) + "\n")
     stream.write(grey("  working directory ") + sanitize_terminal(session.cwd) + "\n")
@@ -9803,8 +10098,11 @@ def _main():
     if args.version:
         print(f"act {ACT_VERSION}")
         print(f"  provider={PROVIDER} model={MODEL}")
-        print(f"  ACT_DEBUG={'on' if DEBUG else 'off'}  max_tokens={MAX_TOKENS}  auto={'on' if AUTO else 'off'}")
+        print(f"  ACT_DEBUG={'on' if DEBUG else 'off'}  "
+              f"max_tokens={MAX_TOKENS if MAX_TOKENS_MODE == 'fixed' else 'auto'}  "
+              f"auto={'on' if AUTO else 'off'}")
         print(f"  temperature={temperature_label(MODEL)}")
+        print(f"  output limit {max_tokens_label(MODEL)}")
         print(f"  stream={STREAM_SETTING}  json_mode={JSON_KIND if JSON_MODE else 'off'}  "
               f"tool_results={TOOL_RESULTS_SETTING}")
         print(f"  genai_url={_PROVIDER_STATE['genai']['url']}")
@@ -9872,7 +10170,7 @@ def _main():
     if DEBUG:
         sys.stderr.write(grey("[debug] act {0} — provider={1} model={2} url={3} max_tokens={4}\n".format(
             ACT_VERSION, sanitize_terminal(PROVIDER), sanitize_terminal(MODEL),
-            sanitize_terminal(API_URL), MAX_TOKENS)))
+            sanitize_terminal(API_URL), max_tokens_label(MODEL))))
     if BACKEND == "api" and not KEY:
         if NONINTERACTIVE or not sys.stdin.isatty():
             print(red("No API key is configured. Run ACT interactively and use :setup; "
@@ -10023,7 +10321,7 @@ def _main():
                 print(yellow("  no API key for {0} — run :setup first".format(PROVIDER)))
                 continue
             try:
-                if arg.lower() == "all":
+                if parse_probe_models(arg) == "all":
                     models = probe_model_list()
                     ans = read_tty("  Test {0} models on both endpoints (about {1} small "
                                    "requests)? [y/N] > ".format(len(models), 9 * len(models)))
@@ -10031,7 +10329,8 @@ def _main():
                         print(grey("  (probe cancelled)"))
                         continue
                 else:
-                    models = [arg or MODEL]
+                    models = parse_probe_models(arg) or [MODEL]
+                    refresh_provider_models(PROVIDER)   # the live list, for the "not in" note
                 probe_models(models)
             except (EOFError, KeyboardInterrupt):
                 print(grey("\n  (probe cancelled)"))
