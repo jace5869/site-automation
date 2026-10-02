@@ -264,5 +264,5 @@ proposes, a person approves); see [WINDOWS.md](WINDOWS.md). If you run ACT for W
 | Result file (`--result-file` / `-ResultFile`) | written (since 0.6.16) | written (since 0.6.16; its `tokens` field is filled since 0.6.21) |
 
 (ACT 0.6.20 for Linux, released for a few minutes on 2026-09-30, let a pattern approve a
-danger-tier command; 0.6.21, the version in this project, does not. The Windows rows are taken
-from ACT-Windows 0.6.21 and its self-tests and were not run by hand on a Windows server.)
+danger-tier command; 0.6.21 and later (this project carries 0.6.22) do not. The Windows rows are taken
+from ACT-Windows 0.6.22 and its self-tests and were not run by hand on a Windows server.)

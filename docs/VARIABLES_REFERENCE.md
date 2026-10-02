@@ -380,6 +380,7 @@ File: `roles/site_act/defaults/main.yml`
 | `site_act_ca` | (empty) |  |
 | `site_act_env` | `{}` | Any other ACT environment settings (advanced; these win over the ones above), e.g. {GENAI_TIMEOUT: "180"}. See the top of vendor/act/act for the list. |
 | `site_act_timeout` | `600` | seconds for one ACT run |
+| `site_act_concurrency` | `3` | How many hosts may run ACT at the same time in one job (0 = no limit: as many as the job's forks). Every host in a job uses the same key, and GenAI.mil's default quota is 60 requests and 200,000 tokens a minute per key: a fleet run with many hosts at once gets HTTP 429 (too many requests). |
 | `site_act_extra_instructions` | (empty) | anything ACT should know about this site |
 | `site_act_evidence_text` | (empty) | extra evidence (troubleshoot.yml passes what it collected) |
 
