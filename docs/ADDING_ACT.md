@@ -192,10 +192,29 @@ tests. Nobody has run them against your gateway yet; treat the first run as the 
 
 ### Step 1: check which ACT the project carries
 
-`vendor/act/VERSION` must say `0.6.19` or newer. This release carries **0.6.21**, a hardening
-release: it sends the key only to an `https://` provider URL (an `http://` URL is refused unless
+`vendor/act/VERSION` must say `0.6.19` or newer. This release carries **0.6.22**. It sends the key
+only to an `https://` provider URL (an `http://` URL is refused unless
 `site_act_env: {ACT_ALLOW_HTTP: "1"}`), and more dangerous commands always need a person (see
-[APPROVED_COMMANDS.md](APPROVED_COMMANDS.md)). If it is older, update it first: README section
+[APPROVED_COMMANDS.md](APPROVED_COMMANDS.md)). New in 0.6.22, all automatic:
+
+- **Temperature per model.** Gemini 3 models (and GPT-5 / o-series reasoning models) get **no**
+  temperature, so they use their own default (1.0): Google's Gemini 3 developer guide says to keep
+  it at 1.0 and that lower values can make the model loop. Other models keep 0.2. To force a value
+  for every model: `site_act_env: {ACT_TEMPERATURE: "0.2"}`.
+- **Fewer empty answers.** A reply cut off at the output limit (the model's thinking used it all)
+  is asked again once with a higher limit; an empty reply is asked again once with a strict JSON
+  schema of ACT's actions; a reply the gateway's content filter blocked is reported as that.
+- **Structured output.** When a model refuses ACT's function-calling format, ACT asks for a strict
+  JSON schema instead of "any JSON object", so the gateway itself guarantees a valid answer.
+- **HTTP 429 (too many requests):** ACT waits as long as the gateway asks (`Retry-After`). A spent
+  credit quota still stops the run (it would not help to wait).
+- **Clearer errors.** A model alias the gateway retired (GenAI.mil retires aliases 60 days after
+  deprecation) is reported as that, not as a missing endpoint or a permission problem; a locked or
+  wrong key says to enter a new one.
+- **Interactive only:** replies stream in (a counter shows progress) and **Esc** cancels a reply
+  that is still coming. Jobs do not stream (nothing to watch, and some proxies break streaming).
+- **Tool-result turns** (command results sent back the way function-calling models expect): only
+  for models `:probe` confirmed - see step 5. If it is older, update it first: README section
 "Updating ACT" (`scripts/update-act.sh`).
 
 ### Step 2: put ACT on one lab Linux host
@@ -236,6 +255,15 @@ ACT's full request. For each it shows what worked and, for a refusal, **the gate
 `:probe <model name>` tests just one. Write down, for each model, which endpoint worked
 (`openai` or `anthropic`). Leave ACT with an empty line (or Ctrl-D).
 
+From 0.6.22 each model also gets these lines (under its `basic` / `full` lines):
+
+| Line | Meaning | What to do |
+|---|---|---|
+| `stream OK` / `stream not supported (...)` | whether replies can stream in (interactive use only) | nothing |
+| `structured output OK (strict)` / `OK (non-strict)` / `not supported (...)` | whether the gateway enforces ACT's JSON schema for this model | nothing: ACT uses the best one that works |
+| `tool results OK` / `tool results not supported (...)` | whether this model accepts command results as tool turns | **write it down**: step 5 |
+| `temperature: model default` / `temperature: 0.2` | what ACT sends | nothing (to force a value: `ACT_TEMPERATURE`) |
+
 The result is remembered for the session. If a setup file already exists for your user on that host
 (`~/.config/act/config.json`), ACT also saves the format there (only the format table, never the
 key).
@@ -255,9 +283,20 @@ result in settings, in the same places as the other ACT settings (section 2):
 | Some models work only on the Anthropic endpoint | nothing to set (ACT learns it during the run); optional, to skip the one refused request per run when **every** model you use is Anthropic-only: `site_act_env: {ACT_API_FORMAT: anthropic}` |
 | The Anthropic endpoint is at a different address than the OpenAI one with `/messages` in place of `/chat/completions` | `site_act_env: {GENAI_ANTHROPIC_URL: "https://<host>/.../v1/messages"}` (`ASKSAGE_ANTHROPIC_URL` or `GENAI_BETA_ANTHROPIC_URL` for the other providers) |
 | A model you want is listed for the key but works on neither | it is not available to your key; ask the gateway's owner. Choose another model in `site_act_models` |
+| `tool results OK` for the model your jobs use (0.6.22) | optional: `site_act_env: {ACT_TOOL_RESULTS: tool}`. Jobs then send command results as tool turns, which function-calling models handle best on long runs. If a model refuses them anyway, ACT switches that model back by itself |
+| `tool results not supported` | nothing to set (the default sends results as ordinary messages, as before) |
 
 `ACT_API_FORMAT: anthropic` applies to **every** model ACT uses in the job. If you use both kinds,
 leave it out.
+
+### Many hosts at once: `site_act_concurrency`
+
+Every host in one job uses the same key, and GenAI.mil's default quota is **60 requests and 200,000
+tokens a minute** per key (and a daily credit budget). A Health check with `use_act` on 20 hosts with
+findings would otherwise run ACT on as many hosts at once as the job's forks allow, and the gateway
+answers HTTP 429. `site_act_concurrency` (default **3**) caps how many hosts run ACT at the same
+time; the rest wait their turn. `0` = no cap. ACT itself also waits when the gateway sends a 429
+with `Retry-After`.
 
 ### How to verify
 

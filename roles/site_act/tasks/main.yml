@@ -43,6 +43,8 @@
   when: _site_act_key_ok | bool
   ansible.builtin.include_role:
     name: act_triage
+    apply:
+      throttle: "{{ site_act_concurrency | int }}"   # at most this many hosts run ACT at once
   vars:
     act_triage_builtin_checks: false      # the check roles already did this
     act_triage_always: true

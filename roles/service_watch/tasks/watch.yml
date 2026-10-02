@@ -61,6 +61,8 @@
     - name: Watch | ACT finds the root cause{{ ' and may start the container' if _watch_mode == 'self-heal' else '; every fix waits for approval' }}
       ansible.builtin.include_role:
         name: act_triage
+        apply:
+          throttle: "{{ site_act_concurrency | default(3) | int }}"   # hosts running ACT at once (site_act)
       vars:
         act_triage_builtin_checks: false                   # only these containers, not host-wide noise
         act_triage_findings_extra: "{{ service_watch_before.findings }}"

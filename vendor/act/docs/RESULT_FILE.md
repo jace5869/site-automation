@@ -35,6 +35,7 @@ one-shot run write one JSON object describing what happened. It is the contract 
 | `pre_approved_patterns` | list | the `--allow` / `ACT_ALLOW` patterns in force |
 | `race` | object \| null | race-mode outcome: `{judge, outcome, chosen, candidates, dropped}` |
 | `tokens` | int \| null | tokens used, when the provider reports them (always null on Windows) |
+| `model_retries` | object | 0.6.22, always present (last key): `{length, rescue, rate_limited, content_filter}` integer counts - output-limit retries (`finish_reason: length`), empty-reply rescues, `Retry-After` waits, content-filter blocks. Additive: the schema stays `act.result/1`; readers of older files must treat it as optional |
 
 ### `status` and `exit_code`
 
@@ -116,6 +117,7 @@ mode: proven reads and the listed fixes run; everything else is refused and repo
   "files_changed": [],
   "pre_approved_patterns": [],
   "race": null,
-  "tokens": 18342
+  "tokens": 18342,
+  "model_retries": {"length": 0, "rescue": 0, "rate_limited": 1, "content_filter": 0}
 }
 ```

@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.6.1 — 2026-10-02
+
+**ACT 0.6.22** (vendored for Linux and Windows) - fewer empty or refused model answers, and better
+behaviour on GenAI.mil:
+- **Temperature per model:** Gemini 3 models (and GPT-5 / o-series reasoning models) are sent no
+  temperature and use their own default (1.0) - Google's Gemini 3 developer guide says lower
+  values can make them loop. Other models keep 0.2. `site_act_env: {ACT_TEMPERATURE: "0.2"}`
+  forces a value.
+- **Empty answers:** a reply cut off at the output limit is asked again once with a higher limit;
+  an empty reply is asked again once with a strict JSON schema of ACT's actions; a reply the
+  content filter blocked is reported as that. When a model refuses ACT's function-calling format,
+  ACT asks for the strict schema instead of "any JSON". The result file counts these retries
+  (`model_retries`).
+- **HTTP 429:** ACT waits as long as the gateway's `Retry-After` asks; a spent credit quota still
+  stops the run.
+- **Clearer errors:** a retired model alias (GenAI.mil retires them 60 days after deprecation) is
+  reported as that, not as a permission or endpoint problem; a locked or wrong key says so.
+- **Tool-result turns** (command results sent back as `role: tool`, with Gemini's thought
+  signatures kept): used for models `:probe` confirmed, or for every model with
+  `site_act_env: {ACT_TOOL_RESULTS: tool}`; a model that refuses them falls back by itself.
+- **Interactive only:** streamed replies, and Esc cancels a reply still coming. Jobs do not stream.
+- `:probe` prints stream / structured output / tool results / temperature lines
+  (docs/ADDING_ACT.md, step 4 and 5).
+
+**`site_act_concurrency`** (default 3): at most this many hosts run ACT at the same time in one job
+(Health check, Troubleshoot, Service watch). Every host uses the same key, and GenAI.mil's default
+quota is 60 requests and 200,000 tokens a minute per key. `0` = no cap.
+
+**Upgrading from 0.6.0:** nothing to change. Optional: run `:probe all` once with ACT 0.6.22 on a
+lab host (docs/ADDING_ACT.md, step 4) and, if your jobs' model shows `tool results OK`, add
+`ACT_TOOL_RESULTS: tool` to `site_act_env`.
+
 ## 0.6.0 — 2026-09-30
 
 Podman containers are found by themselves - root's (rootful) and every user's (rootless) - by a
