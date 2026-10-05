@@ -1,8 +1,31 @@
 ---
 # AUDITD: the audit system records who did what (the STIG depends on it). Running, enabled in
 # the kernel, rules loaded, no events lost, room for its log, and (optionally) forwarding.
+# Also how MUCH it records: too much rotates the evidence away within hours, fills the disk (then
+# auditd stops the host or puts it in single-user mode, as the STIG sets it up), drops records on
+# the way to the SIEM, and uses up the SIEM licence.
 
 check_auditd_min_rules: 5                # fewer loaded rules than this = the STIG rules are missing
 check_auditd_log_warn_pct: 75            # the audit log's filesystem
 check_auditd_log_crit_pct: 90
 check_auditd_remote_required: false      # true = au-remote (audisp-remote) must be active
+
+# ---- How much is audited ----
+
+# Accounts whose audit events are expected in bulk and do NOT count toward the volume warning, e.g.
+# the account a vulnerability scanner logs in with (a credentialed scan runs thousands of commands
+# with sudo). Names or UIDs; a host that does not have the account skips it. The report still says
+# how much they made, and they still count for retention and disk space (those are physical).
+# An audit rule that stops recording an account ("-a never,..." with auid= or uid=) is reported
+# unless the account is on this list.
+check_auditd_exclude_accounts: []        # e.g. [scanner-svc]
+check_auditd_volume_hours: 24            # look at the audit records of the last N hours
+check_auditd_volume_warn_mb_day: 200     # warning above this many MB of audit records a day (excluded accounts not counted)
+# With max_log_file_action ROTATE, auditd keeps num_logs files of max_log_file MB and deletes the
+# oldest. Warning when what is left on disk reaches back fewer hours than this. The STIG wants a
+# week (168) when the records are NOT sent off the host as they are written (RHEL-08-030660). 0 = off.
+check_auditd_retention_warn_hours: 24
+# The breakdown (which account, which rule, which program) reads the audit log files of the window
+# at low CPU and disk priority, and only when the volume or the retention is over its limit. It
+# stops after this many seconds on a host with very large logs (and says so).
+check_auditd_volume_timeout: 120

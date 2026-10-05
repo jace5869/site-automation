@@ -1,0 +1,14 @@
+---
+# VM NOTES (vCenter). Edit the Notes (description) of VMs in vCenter: vm_notes_mode append
+# (default; adds a line with date and user), replace or clear. Prints the old notes.
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_notes.yml -e '{"vm_names": ["web01"]}'
+- name: VM notes
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM notes
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: notes.yml

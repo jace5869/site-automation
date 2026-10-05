@@ -1,0 +1,57 @@
+---
+# SECURE BOOT REPORT (read-only): every VM (or vm_names, or the VMs of one folder) - firmware and
+# secure boot. Two different problems: BIOS firmware (the guest must be converted to EFI first,
+# which depends on its operating system) and EFI with secure boot off (power off, tick it, start).
+- name: VMware | the VMs asked for
+  ansible.builtin.include_tasks: prepare.yml
+  when: vm_names | length > 0
+
+- name: VMware | every VM{{ ' in folder ' ~ vm_secure_boot_folder if vm_secure_boot_folder else '' }}
+  vmware.vmware.vm_info:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    folder: "{{ vm_secure_boot_folder | default(omit, true) }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    schema: vsphere
+    properties: [name, config.template, config.firmware, config.guestFullName, config.bootOptions.efiSecureBootEnabled,
+                 runtime.powerState]
+  register: _vm_all
+  check_mode: false
+  when: vm_names | length == 0
+
+- name: VMware | firmware and secure boot
+  ansible.builtin.set_fact:
+    _vm_sb: >-
+      {%- set vms = (_vm_found if vm_names | length > 0 else _vm_all.vms | map('vm_facts') | list) | rejectattr('template') | list -%}
+      {{ {'all': vms | length,
+          'ok': vms | selectattr('firmware', 'equalto', 'efi') | selectattr('secure_boot') | map(attribute='name') | sort,
+          'efi_off': vms | selectattr('firmware', 'equalto', 'efi') | rejectattr('secure_boot') | list,
+          'bios': vms | selectattr('firmware', 'equalto', 'bios') | list,
+          'unknown': vms | rejectattr('firmware', 'in', ['efi', 'bios']) | map(attribute='name') | sort} }}
+
+- name: VMware | secure boot report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_report_subject: >-
+      VMware secure boot report: {{ (_vm_sb.efi_off | length + _vm_sb.bios | length) ~ ' VM(s) to fix'
+      if (_vm_sb.efi_off | length + _vm_sb.bios | length) else 'every VM boots with secure boot' }}
+    _vm_report_lines: >-
+      {%- set out = [_vm_sb.all ~ ' VM(s) (templates not counted): ' ~ _vm_sb.ok | length ~ ' EFI with secure boot, '
+                     ~ _vm_sb.efi_off | length ~ ' EFI with secure boot OFF, ' ~ _vm_sb.bios | length ~ ' BIOS firmware'
+                     ~ (', ' ~ _vm_sb.unknown | length ~ ' unknown' if _vm_sb.unknown else '')] -%}
+      {%- for v in _vm_sb.efi_off | sort(attribute='name') -%}
+      {%-   set _ = out.append('SECURE BOOT OFF  ' ~ v.name ~ '  (' ~ v.power ~ ', ' ~ v.guest_os | default('?', true) ~ ')  fix: power off, Edit Settings > VM Options > Boot Options > Secure Boot') -%}
+      {%- endfor -%}
+      {%- for v in _vm_sb.bios | sort(attribute='name') -%}
+      {%-   set _ = out.append('BIOS             ' ~ v.name ~ '  (' ~ v.power ~ ', ' ~ v.guest_os | default('?', true) ~ ')  fix: convert the guest to EFI first (OS-specific)') -%}
+      {%- endfor -%}
+      {%- for n in _vm_sb.unknown -%}{%- set _ = out.append('UNKNOWN          ' ~ n ~ '  (no configuration readable: orphaned or inaccessible VM)') -%}{%- endfor -%}
+      {{ out }}
+
+- name: VMware | every VM boots with secure boot
+  ansible.builtin.assert:
+    that: _vm_sb.efi_off | length + _vm_sb.bios | length == 0
+    fail_msg: >-
+      {{ _vm_sb.efi_off | length }} VM(s) with secure boot off and {{ _vm_sb.bios | length }} with BIOS firmware
+      (the list is above). vm_secure_boot_fail: false makes this a report only.
+    quiet: true
+  when: vm_secure_boot_fail | bool

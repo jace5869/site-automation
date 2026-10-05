@@ -1,0 +1,7 @@
+---
+# For the TESTS (and CI) only: the collection the vm_*.yml playbooks use. Not at the repository
+# root on purpose - AAP would try to download it from Galaxy on every project sync, which fails
+# on an air-gapped network. In AAP the execution environment provides it (docs/VMWARE.md).
+collections:
+  - name: vmware.vmware
+    version: ">=2.11.0,<3.0.0"

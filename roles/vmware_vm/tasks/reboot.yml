@@ -1,0 +1,32 @@
+---
+# RESTART VMs. guest: the operating system restarts itself (VMware Tools); hard: a reset.
+- name: VMware | find the VMs
+  ansible.builtin.include_tasks: prepare.yml
+
+- name: VMware | never the AAP server or a protected VM
+  ansible.builtin.include_tasks: guard.yml
+
+- name: VMware | can be restarted
+  ansible.builtin.include_tasks: power_check.yml
+  vars:
+    _vm_power_action: restart
+
+- name: VMware | restart ({{ vm_power_mode }})
+  vmware.vmware.vm_powerstate:
+    moid: "{{ item.moid }}"
+    datacenter: "{{ item.datacenter }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    state: "{{ 'reboot-guest' if vm_power_mode == 'guest' else 'restarted' }}"
+  loop: "{{ _vm_found }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: VMware | done
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_report_subject: "VM restart: {{ _vm_found | map(attribute='name') | join(', ') | truncate(80) }}"
+    _vm_report_lines:
+      - >-
+        {{ 'Would restart' if ansible_check_mode else 'Restart requested for' }}
+        ({{ 'operating system restart through VMware Tools' if vm_power_mode == 'guest' else 'hard reset' }}):
+        {{ _vm_found | map(attribute='name') | join(', ') }}

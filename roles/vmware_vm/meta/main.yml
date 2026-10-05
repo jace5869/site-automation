@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: vmware_vm
+  description: "VMware vCenter jobs for VMs: restart, shut down, snapshots, notes, VLAN (port group), secure boot report."
+  license: MIT
+  min_ansible_version: "2.16"
+dependencies: []

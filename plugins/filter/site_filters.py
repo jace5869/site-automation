@@ -36,6 +36,17 @@ watch_allow_patterns  service watch, self-heal: the --allow patterns for ACT (st
 watch_targets      service watch: the containers to watch - watch_containers first, then the
                    discovered ones that should run - each keyed OWNER/NAME.
                        {{ watch_containers | watch_targets(site_containers, true) }}
+
+vm_facts           VMware: one VM as vmware.vmware.vm_info returns it (schema vsphere; and the same
+                   VM in schema summary, for its moid and datacenter) -> a short record: name,
+                   moid, datacenter, template, power, tools, firmware, secure_boot, annotation,
+                   hostname, ids (the names and addresses it can be recognised by) and nics (in
+                   vSphere order: label, adapter_type, network MOID, kind dvs/standard/opaque).
+                       {{ _vm_info.vms[0] | vm_facts(_vm_summary.vms[0]) }}
+
+host_ids           the names and addresses inventory hosts can be recognised by (inventory name
+                   and ansible_host; host names without the domain, lower case).
+                       {{ groups['aap'] | default([]) | host_ids(hostvars) }}
 """
 import csv
 import datetime
@@ -665,9 +676,85 @@ def watch_allow_patterns(watched):
     return out
 
 
+# ---- VMware -----------------------------------------------------------------------------------
+_NIC_TYPES = {"vim.vm.device.VirtualVmxnet3": "vmxnet3", "vim.vm.device.VirtualVmxnet3Vrdma": "vmxnet3",
+              "vim.vm.device.VirtualE1000": "e1000", "vim.vm.device.VirtualE1000e": "e1000e",
+              "vim.vm.device.VirtualPCNet32": "pcnet32", "vim.vm.device.VirtualVmxnet2": "vmxnet2",
+              "vim.vm.device.VirtualSriovEthernetCard": "sriov"}
+
+
+def _id(value):
+    """A host name without its domain, in lower case; an IP address as it is."""
+    s = str(value or "").strip().lower()
+    if not s:
+        return ""
+    if re.fullmatch(r"[0-9.]+", s) or (":" in s and re.fullmatch(r"[0-9a-f:.]+", s)):
+        return s
+    return s.split(".")[0]
+
+
+def _moid(ref):
+    """'vim.Network:network-7' -> 'network-7'."""
+    return str(ref).split(":", 1)[1] if ref and ":" in str(ref) else (ref or None)
+
+
+def _datacenter(folder):
+    """'/DC0/vm/web' (vm_info summary hw_folder) -> 'DC0': the datacenter is right before its 'vm' folder."""
+    parts = [p for p in str(folder or "").split("/") if p]
+    return parts[parts.index("vm", 1) - 1] if "vm" in parts[1:] else (parts[0] if parts else None)
+
+
+def vm_facts(vm, summary=None):
+    vm = vm or {}
+    summary = summary or {}
+    config = vm.get("config") or {}
+    guest = vm.get("guest") or {}
+    nics = []
+    for d in (config.get("hardware") or {}).get("device") or []:
+        if "macAddress" not in d:
+            continue
+        b = d.get("backing") or {}
+        bt = b.get("_vimtype", "")
+        if bt.endswith("DistributedVirtualPortBackingInfo"):
+            kind, net = "dvs", (b.get("port") or {}).get("portgroupKey")
+        elif bt.endswith("OpaqueNetworkBackingInfo"):
+            kind, net = "opaque", None
+        elif bt.endswith("NetworkBackingInfo"):
+            kind, net = "standard", _moid(b.get("network")) or b.get("deviceName")
+        else:
+            kind, net = "other", None
+        nics.append({"index": len(nics) + 1, "label": (d.get("deviceInfo") or {}).get("label", ""),
+                     "summary": (d.get("deviceInfo") or {}).get("summary", ""),
+                     "adapter_type": _NIC_TYPES.get(d.get("_vimtype")), "network": net, "kind": kind,
+                     "mac": d.get("macAddress")})
+    ips = [guest.get("ipAddress")] + [ip for n in guest.get("net") or [] for ip in (n.get("ipAddress") or [])]
+    ids = [_id(vm.get("name")), _id(guest.get("hostName"))] + [_id(ip) for ip in ips]
+    return {"name": vm.get("name"), "moid": summary.get("moid"), "datacenter": _datacenter(summary.get("hw_folder")),
+            "template": bool(config.get("template")),
+            "power": (vm.get("runtime") or {}).get("powerState"), "tools": guest.get("toolsRunningStatus"),
+            "firmware": config.get("firmware"),
+            "secure_boot": bool((config.get("bootOptions") or {}).get("efiSecureBootEnabled")),
+            "annotation": config.get("annotation") or "", "hostname": guest.get("hostName") or "",
+            "guest_os": config.get("guestFullName") or guest.get("guestFullName") or "",
+            "ids": sorted(set(i for i in ids if i)), "nics": nics}
+
+
+def host_ids(hosts, hostvars=None):
+    out = set()
+    for h in hosts or []:
+        out.add(_id(h))
+        try:
+            ah = (hostvars or {})[h].get("ansible_host")
+        except (KeyError, TypeError, AttributeError):
+            ah = None
+        if ah:
+            out.add(_id(ah))
+    return sorted(i for i in out if i)
+
+
 class FilterModule(object):
     def filters(self):
         return {"from_csv": from_csv, "days_until": days_until, "site_result": site_result,
                 "podman_discovery": podman_discovery, "podman_run_as": podman_run_as,
                 "watch_targets": watch_targets, "watch_fix_commands": watch_fix_commands,
-                "watch_allow_patterns": watch_allow_patterns}
+                "watch_allow_patterns": watch_allow_patterns, "vm_facts": vm_facts, "host_ids": host_ids}

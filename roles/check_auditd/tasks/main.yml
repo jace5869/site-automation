@@ -1,22 +1,81 @@
 ---
-# AUDITD. Read-only: systemctl, `auditctl -s` (status) and `auditctl -l` (list rules), df, and
-# the plugin config file.
+# AUDITD. Read-only: systemctl, `auditctl -s` (status) and `auditctl -l` (list rules), df, the
+# auditd and plugin config files, the sizes and first lines of the audit log files, journalctl,
+# id/getent (account -> UID), and - only when the volume or retention is over its limit - one
+# pass over the audit log files of the window (awk, low priority, time-limited).
 
-- name: Auditd | running, kernel status, rules, log space, forwarding
+- name: Auditd | settings
+  ansible.builtin.set_fact:
+    # a list, or (from a survey) text with commas / spaces / lines
+    _au_exclude: >-
+      {{ ((check_auditd_exclude_accounts | replace(',', ' ')).split() if check_auditd_exclude_accounts is string
+          else check_auditd_exclude_accounts) | map('string') | map('trim') | select | list }}
+
+- name: Auditd | running, kernel status, rules, log space, forwarding, log files
   ansible.builtin.shell: |
     set -u
+    conf={{ _au_conf_file | default('/etc/audit/auditd.conf') | quote }}
+    now={{ _au_now | default('') | quote }}; now=${now:-$(date +%s)}
+    since=$(( now - {{ check_auditd_volume_hours | int }} * 3600 ))
+    cf() { awk -F= -v k="$1" '{x = $1; gsub(/[[:space:]]/, "", x)} x == k {v = $2; gsub(/[[:space:]]/, "", v); print v; exit}' "$conf" 2>/dev/null; }
     echo "active $(systemctl is-active auditd 2>/dev/null)"
     if st=$(auditctl -s 2>&1); then
       echo "$st" | awk '$1 == "enabled" || $1 == "lost" || $1 == "backlog" || $1 == "backlog_limit" {print "k_" $1, $2}'
-      echo "rules $(auditctl -l 2>/dev/null | grep -vc '^No rules')"
+      rl=$(auditctl -l 2>/dev/null)
+      echo "rules $(printf '%s\n' "$rl" | grep -c -v -e '^No rules' -e '^$')"
+      # rules that stop recording an account altogether: -a never,exit|user (or exit|user,never) or the
+      # exclude list (-a always,exclude), with auid= / uid= and no syscall list (-S all or none).
+      # Narrow ones (the chrony adjtimex rule) are fine.
+      printf '%s\n' "$rl" | awk '/^-a (never,(exit|user)|(exit|user),never|always,exclude|exclude,always)/ && ($0 !~ / -S / || $0 ~ / -S all( |$)/) {
+          s = ""; for (i = 1; i < NF; i++) if ($i == "-F" && $(i + 1) ~ /^(auid|uid)=/) s = s (s == "" ? "" : ",") $(i + 1)
+          if (s != "") print s }' | sort -u |
+        while IFS= read -r s; do
+          nm=""
+          for kv in ${s//,/ }; do
+            u=${kv#*=}
+            case "$u" in ''|*[!0-9]*) ;; *) n=$(getent passwd "$u" 2>/dev/null | cut -d: -f1); [ -n "$n" ] && nm="$nm${nm:+,}$n" ;; esac
+          done
+          echo "never $s ${nm:--}"
+        done
     else
       echo "status_error $(echo "$st" | head -1)"
     fi
-    log=$(awk -F= '/^[[:space:]]*log_file[[:space:]]*=/ {gsub(/[[:space:]]/, "", $2); print $2}' /etc/audit/auditd.conf 2>/dev/null)
-    log=${log:-/var/log/audit/audit.log}
+    log=$(cf log_file); log=${log:-/var/log/audit/audit.log}
+    echo "logfile $log"
     echo "logdir $(dirname "$log")"
     echo "logpct $(timeout 10 df -P "$(dirname "$log")" 2>/dev/null | awk 'NR==2 {sub("%", "", $5); print $5}')"
-    echo "remote $(awk -F= '/^[[:space:]]*active[[:space:]]*=/ {gsub(/[[:space:]]/, "", $2); print $2}' /etc/audit/plugins.d/au-remote.conf 2>/dev/null)"
+    echo "remote $(awk -F= '/^[[:space:]]*active[[:space:]]*=/ {gsub(/[[:space:]]/, "", $2); print $2}' {{ _au_plugins_dir | default('/etc/audit/plugins.d') | quote }}/au-remote.conf 2>/dev/null)"
+    echo "action $(cf max_log_file_action | tr '[:lower:]' '[:upper:]')"
+    echo "num_logs $(cf num_logs)"
+    echo "max_log_file $(cf max_log_file)"
+    echo "now $now"
+    echo "since $since"
+    # The log files: how many, how many rotated (audit.log.1, .2 ...), the oldest record on disk, and
+    # the bytes in the files written to during the window (an upper bound of the volume of the window).
+    files=0 rotated=0 oldest="" winbytes=0
+    for f in "$log" "$log".[0-9]*; do
+      [ -f "$f" ] || continue
+      files=$((files + 1))
+      case "$f" in "$log") ;; *) rotated=$((rotated + 1)) ;; esac
+      t=$(head -c 4096 -- "$f" 2>/dev/null | grep -a -m1 -oE 'msg=audit\([0-9]+' | grep -oE '[0-9]+$')
+      if [ -n "$t" ] && { [ -z "$oldest" ] || [ "$t" -lt "$oldest" ]; }; then oldest=$t; fi
+      if [ "$(stat -c %Y -- "$f" 2>/dev/null || echo 0)" -ge "$since" ]; then
+        winbytes=$((winbytes + $(stat -c %s -- "$f" 2>/dev/null || echo 0)))
+      fi
+    done
+    echo "files $files"
+    echo "rotated $rotated"
+    echo "oldest ${oldest:-0}"
+    echo "winbytes $winbytes"
+    # records dropped on the way to the plugins (au-remote, the SIEM forwarder) during the window
+    echo "qdrop $(journalctl -u auditd --since -{{ check_auditd_volume_hours | int }}h -q --no-pager 2>/dev/null |
+      grep -ciE 'queue (to plugins )?is full|dispatch err|dropping event|event(s)? (was |were )?lost')"
+    # the UIDs of the excluded accounts on this host (a host that does not have one skips it)
+    {% for a in _au_exclude %}
+    u=$(id -u -- {{ a | quote }} 2>/dev/null) || u=""
+    case {{ a | quote }} in *[!0-9]*) ;; *) u={{ a | quote }} ;; esac
+    [ -n "$u" ] && echo "exuid $u" {{ a | quote }}
+    {% endfor %}
     exit 0
   args:
     executable: /bin/bash
@@ -24,13 +83,131 @@
   changed_when: false
   check_mode: false
 
+- name: Auditd | what the host says
+  ansible.builtin.set_fact:
+    _au_v: >-
+      {%- set v = {'never': [], 'exuid': {}} -%}
+      {%- for line in _au.stdout_lines if ' ' in line -%}
+      {%-   set k, val = line.split(' ', 1) -%}
+      {%-   if k == 'never' -%}{%- set _ = v.never.append(val | trim) -%}
+      {%-   elif k == 'exuid' -%}{%- set _ = v.exuid.update({val.split(' ', 1)[0]: val.split(' ', 1)[1] | trim}) -%}
+      {%-   else -%}{%- set _ = v.update({k: val | trim}) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ v }}
+
+- name: Auditd | volume and retention, from the file sizes alone
+  ansible.builtin.set_fact:
+    # ROTATE with every file slot used: the oldest record on disk is as far back as the logs reach
+    _au_saturated: >-
+      {{ _au_v.action | default('') == 'ROTATE' and (_au_v.num_logs | default('0') | int) > 1
+         and (_au_v.rotated | default('0') | int) >= (_au_v.num_logs | int) - 1
+         and (_au_v.oldest | default('0') | int) > 0 }}
+    _au_reach_h: >-
+      {{ (((_au_v.now | int) - (_au_v.oldest | default('0') | int)) / 3600) | round(1)
+         if (_au_v.oldest | default('0') | int) > 0 else 0 }}
+    # MB a day, at most (the files written in the window may also hold older records)
+    _au_est_mb_day: >-
+      {%- set start = [_au_v.since | int, _au_v.oldest | default('0') | int] | max -%}
+      {%- set hours = [((_au_v.now | int) - start) / 3600, 1] | max -%}
+      {{ ((_au_v.winbytes | default('0') | int) / 1048576 / hours * 24) | round(1) }}
+
+- name: Auditd | over a limit? then which account, rule and program it comes from
+  ansible.builtin.shell: |
+    set -u
+    since={{ _au_v.since | quote }}; log={{ _au_v.logfile | quote }}
+    files=() nf=0
+    for f in "$log" "$log".[0-9]*; do
+      [ -f "$f" ] && [ "$(stat -c %Y -- "$f" 2>/dev/null || echo 0)" -ge "$since" ] && { files+=("$f"); nf=$((nf + 1)); }
+    done
+    [ "$nf" -gt 0 ] || { echo "rc 0"; exit 0; }
+    low="nice -n 10"; command -v ionice >/dev/null 2>&1 && low="ionice -c 3 $low"
+    # One event = the records that share msg=audit(<time>:<serial>). Its account is the auid of its
+    # first record that has one (SYSCALL, USER_CMD ...): sudo keeps it, so the root commands of a scanner
+    # count for the scanner. Counted: events, bytes, the busiest hour; per account (and how many of
+    # them came from syscall rules - the rest are user-space: sudo, PAM, logins), rule key, program.
+    set -f   # no filename expansion of the words below
+    { LC_ALL=C $low timeout {{ check_auditd_volume_timeout | float }} awk -v since="$since" -v ex={{ _au_v.exuid.keys() | list | join(',') | quote }} '
+      BEGIN { n = split(ex, e, ","); for (i = 1; i <= n; i++) exu[e[i]] = 1 }
+      function flush(  k) {
+        if (cur == "") return
+        if (ca == "") ca = "none"
+        if (ca in exu) {
+          xev++; xby += cb; xa[ca]++; xab[ca] += cb; if (cs) xas[ca]++; xk[ck]++
+        } else {
+          tev++; tby += cb; ta[ca]++; tab[ca] += cb; if (cs) tas[ca]++; tk[ck]++; tx[cx]++; hr[int(ct / 3600)]++
+        }
+      }
+      {
+        i = index($0, "msg=audit(")
+        if (!i) next
+        s = substr($0, i + 10); id = substr(s, 1, index(s, ")") - 1)
+        t = substr(id, 1, index(id, ".") - 1) + 0
+        if (t < since) next
+        if (id != cur) { flush(); cur = id; ca = ""; ck = "(no key)"; cx = "(no program)"; cs = 0; cb = 0; ct = t }
+        cb += length($0) + 1
+        if (ca == "" && match($0, / auid=[0-9-]+/)) ca = substr($0, RSTART + 6, RLENGTH - 6)
+        if (!cs && match($0, /(^| )type=SYSCALL /)) cs = 1
+        if (ck == "(no key)" && match($0, / key=("[^"]*"|[^ \035]+)/)) { ck = substr($0, RSTART + 5, RLENGTH - 5); gsub(/"/, "", ck); if (ck == "(null)") ck = "(no key)" }
+        if (cx == "(no program)" && match($0, / exe="[^"]*"/)) cx = substr($0, RSTART + 6, RLENGTH - 7)
+      }
+      END {
+        flush()
+        for (h in hr) if (hr[h] > pk) { pk = hr[h]; ph = h }
+        printf "tot %.0f %.0f\nxtot %.0f %.0f\npeak %.0f %.0f\n", tev, tby, xev, xby, pk, ph * 3600
+        for (a in ta) printf "auid %.0f %.0f %.0f %s\n", ta[a], tab[a], tas[a], a
+        for (a in xa) printf "xauid %.0f %.0f %.0f %s\n", xa[a], xab[a], xas[a], a
+        for (k in tk) printf "key %.0f %s\n", tk[k], k
+        for (k in xk) printf "xkey %.0f %s\n", xk[k], k
+        for (k in tx) printf "exe %.0f %s\n", tx[k], k
+      }' "${files[@]}"; echo "rc $?"; } |
+      sort -k1,1 -k2,2nr | awk '$1 == "rc" || $1 == "tot" || $1 == "xtot" || $1 == "peak" || c[$1]++ < 5' |
+      while IFS= read -r line; do
+        set -- $line
+        case "$1" in
+          auid|xauid)
+            if [ "$5" = 4294967295 ] || [ "$5" = -1 ]; then n="(unset: system services)"
+            elif [ "$5" = none ]; then n="(no account: kernel events)"
+            else n=$(getent passwd "$5" 2>/dev/null | cut -d: -f1); n=${n:-uid $5}; fi
+            echo "$line $n" ;;
+          *) echo "$line" ;;
+        esac
+      done
+    exit 0
+  args:
+    executable: /bin/bash
+  register: _au_vol
+  changed_when: false
+  check_mode: false
+  when:
+    - _au_v.logfile is defined
+    - (_au_v.winbytes | default('0') | int) > 0
+    - (_au_est_mb_day | float) >= (check_auditd_volume_warn_mb_day | float)
+      or (_au_saturated | bool and (check_auditd_retention_warn_hours | int) > 0
+          and (_au_reach_h | float) < (check_auditd_retention_warn_hours | float))
+
+- name: Auditd | the breakdown, in numbers
+  ansible.builtin.set_fact:
+    _au_b: >-
+      {%- set b = {'auid': [], 'xauid': [], 'key': [], 'xkey': [], 'exe': []} -%}
+      {%- for line in _au_vol.stdout_lines | default([]) if ' ' in line -%}
+      {%-   set p = line.split(' ') -%}
+      {%-   if p[0] in ['auid', 'xauid'] and p | length >= 6 -%}
+      {%-     set _ = b[p[0]].append({'events': p[1] | int, 'bytes': p[2] | int, 'syscall': p[3] | int, 'uid': p[4], 'name': p[5:] | join(' ')}) -%}
+      {%-   elif p[0] in ['key', 'xkey', 'exe'] and p | length >= 3 -%}
+      {%-     set _ = b[p[0]].append({'events': p[1] | int, 'name': p[2:] | join(' ')}) -%}
+      {%-   elif p[0] in ['tot', 'xtot', 'peak'] and p | length >= 3 -%}
+      {%-     set _ = b.update({p[0]: [p[1] | int, p[2] | int]}) -%}
+      {%-   elif p[0] == 'rc' -%}{%- set _ = b.update({'rc': p[1] | int}) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- set start = [_au_v.since | default('0') | int, _au_v.oldest | default('0') | int] | max -%}
+      {%- set _ = b.update({'hours': ([((_au_v.now | default('0') | int) - start) / 3600, 1] | max) | round(1)}) -%}
+      {{ b }}
+  when: _au_vol is not skipped
+
 - name: Auditd | findings
   ansible.builtin.set_fact:
     _au_findings: >-
-      {%- set v = {} -%}
-      {%- for line in _au.stdout_lines if ' ' in line -%}
-      {%-   set _ = v.update({line.split(' ', 1)[0]: line.split(' ', 1)[1] | trim}) -%}
-      {%- endfor -%}
+      {%- set v = _au_v -%}
       {%- set f = [] -%}
       {%- set look = 'systemctl status auditd --no-pager -l; auditctl -s; journalctl -u auditd -n 30 --no-pager' -%}
       {%- if v.active | default('') != 'active' -%}
@@ -56,6 +233,24 @@
                                            ~ ' of limit ' ~ v.k_backlog_limit | default('?') ~ ')',
                                 'hint': 'auditctl -s'}) -%}
       {%-   endif -%}
+      {#-   rules that stop recording an account. Approved: any account of the rule is on the list. Not
+              an account: auid unset (only processes nobody logged in to - daemons). -#}
+      {%-   set approved = _au_exclude + v.exuid.keys() | list -%}
+      {%-   set hidden = [] -%}
+      {%-   for n in v.never -%}
+      {%-     set fields = n.split(' ')[0].split(',') -%}
+      {%-     set vals = fields | map('regex_replace', '^[a-z]+=', '') | list -%}
+      {%-     set names = (n.split(' ') + ['-'])[1].split(',') | reject('equalto', '-') | list -%}
+      {%-     if not fields | select('match', '^auid=(-1|4294967295|unset)$') | list and not (vals + names) | intersect(approved) -%}
+      {%-       set _ = hidden.append(fields | join(' ') ~ ((' (' ~ names | join(', ') ~ ')') if names else '')) -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%-   if hidden -%}
+      {%-     set _ = f.append({'check': 'auditd', 'id': 'auditd:never-rule', 'severity': 'warning',
+                                'summary': 'audit rule(s) stop recording ' ~ hidden | join('; ') ~ ' altogether (a "never" or "exclude" rule), and the account is not on the'
+                                           ~ ' approved list (check_auditd_exclude_accounts): what it does leaves no audit trail',
+                                'hint': 'auditctl -l | grep -E "never|exclude"; grep -rnE "never|exclude" /etc/audit/rules.d/'}) -%}
+      {%-   endif -%}
       {%- endif -%}
       {%- if (v.logpct | default('0') | int) >= check_auditd_log_warn_pct | int -%}
       {%-   set crit = (v.logpct | int) >= check_auditd_log_crit_pct | int -%}
@@ -69,7 +264,75 @@
                               'summary': 'audit records are not forwarded off the host (au-remote plugin is not active)',
                               'hint': 'cat /etc/audit/plugins.d/au-remote.conf; grep remote_server /etc/audit/audisp-remote.conf'}) -%}
       {%- endif -%}
+      {%- set win = check_auditd_volume_hours | int -%}
+      {%- if (v.qdrop | default('0') | int) > 0 -%}
+      {%-   set _ = f.append({'check': 'auditd', 'id': 'auditd:queue', 'severity': 'warning',
+                              'summary': 'auditd dropped records ' ~ v.qdrop ~ ' time(s) in the last ' ~ win ~ ' h on the way to its plugins (the queue was full):'
+                                         ~ ' the forwarded copy (SIEM) is missing records - usually too many audit events',
+                              'hint': 'journalctl -u auditd --since -' ~ win ~ 'h --no-pager | grep -iE "queue|dispatch|lost|drop"; grep -E "^q_depth" /etc/audit/auditd.conf'}) -%}
+      {%- endif -%}
+      {#- volume and retention; the breakdown (when it ran) says who makes the records -#}
+      {%- set b = _au_b | default({}) -%}
+      {%- set dir = v.logdir | default('/var/log/audit') -%}
+      {%- set report = 'aureport -ts yesterday -k --summary -i; aureport -ts yesterday -u --summary -i; aureport -ts yesterday -x --summary -i | head -15' -%}
+      {%- set who = [] -%}
+      {%- if b.tot is defined -%}
+      {%-   set all_by = [b.tot[1] + b.xtot[1], 1] | max -%}
+      {%-   for a in (b.auid + b.xauid) | sort(attribute='bytes', reverse=true) -%}
+      {%-     if loop.index <= 3 -%}{%- set _ = who.append(a.name ~ (' (excluded)' if a in b.xauid else '') ~ ' '
+                                                          ~ (100 * a.bytes / all_by) | round | int ~ '%') -%}{%- endif -%}
+      {%-   endfor -%}
+      {%-   set mb_day = (b.tot[1] / 1048576 / b.hours * 24) | round(1) -%}
+      {%-   if mb_day >= check_auditd_volume_warn_mb_day | float -%}
+      {%-     set n = [b.tot[0], 1] | max -%}
+      {%-     set top_a = (b.auid | sort(attribute='bytes', reverse=true) + [{'name': '?', 'bytes': 0}]) | first -%}
+      {%-     set top_k = (b.key + [{'name': '?', 'events': 0}]) | first -%}
+      {%-     set top_x = (b.exe + [{'name': '?', 'events': 0}]) | first -%}
+      {%-     set xnote = [] -%}
+      {%-     for a in b.xauid -%}{%- set _ = xnote.append(a.name ~ ' ' ~ (a.bytes / 1048576) | round(1) ~ ' MB') -%}{%- endfor -%}
+      {%-     set _ = f.append({'check': 'auditd', 'id': 'auditd:volume', 'severity': 'warning',
+                                'summary': 'audit volume is ' ~ mb_day ~ ' MB a day (' ~ b.tot[0] ~ ' events in ' ~ b.hours ~ ' h, at most '
+                                           ~ b.peak[0] ~ ' in one hour) - mostly account ' ~ top_a.name ~ ' (' ~ (100 * top_a.bytes / [b.tot[1], 1] | max) | round | int
+                                           ~ '%), rule key ' ~ top_k.name ~ ' (' ~ (100 * top_k.events / n) | round | int ~ '%), program '
+                                           ~ top_x.name ~ ' (' ~ (100 * top_x.events / n) | round | int ~ '%)'
+                                           ~ ('; not counted: ' ~ xnote | join(', ') ~ ' (check_auditd_exclude_accounts)' if xnote else ''),
+                                'hint': report}) -%}
+      {%-   endif -%}
+      {%- elif b.rc | default(0) != 0 -%}
+      {%-   set _ = f.append({'check': 'auditd', 'id': 'auditd:volume-unread', 'severity': 'warning',
+                              'summary': 'up to ' ~ _au_est_mb_day ~ ' MB of audit records a day: too much to break down by account within '
+                                         ~ check_auditd_volume_timeout ~ ' s (check_auditd_volume_timeout)',
+                              'hint': 'ls -la ' ~ dir ~ '; ' ~ report}) -%}
+      {%- endif -%}
+      {%- if _au_saturated | bool and (check_auditd_retention_warn_hours | int) > 0
+             and (_au_reach_h | float) < (check_auditd_retention_warn_hours | float) -%}
+      {%-   set _ = f.append({'check': 'auditd', 'id': 'auditd:retention', 'severity': 'warning',
+                              'summary': 'the audit logs on disk reach back only ' ~ _au_reach_h ~ ' h (' ~ v.num_logs ~ ' files of ' ~ v.max_log_file
+                                         ~ ' MB, then the oldest is deleted)' ~ (', and au-remote does not forward them' if v.remote | default('') != 'yes' else '')
+                                         ~ ('. In the last ' ~ b.hours ~ ' h: ' ~ who | join(', ') if who else ''),
+                              'hint': 'ls -la --time-style=full-iso ' ~ dir ~ '; grep -E "^(num_logs|max_log_file|max_log_file_action)" /etc/audit/auditd.conf; ' ~ report}) -%}
+      {%- endif -%}
       {{ f }}
+
+- name: Auditd | how much is audited
+  ansible.builtin.debug:
+    msg: >-
+      {%- set b = _au_b | default({}) -%}
+      {%- if b.tot is defined -%}
+      Last {{ b.hours }} h: {{ b.tot[0] }} events, {{ (b.tot[1] / 1048576 / b.hours * 24) | round(1) }} MB a day counted
+      {%- for a in b.auid | sort(attribute='bytes', reverse=true) %}{{ ' - top accounts: ' if loop.first else ', ' }}{{ a.name }} {{ a.events }}{% endfor -%}
+      {%- for k in b.key %}{{ '; rule keys: ' if loop.first else ', ' }}{{ k.name }} {{ k.events }}{% endfor -%}
+      {%- for a in b.xauid %}{{ '. Excluded: ' if loop.first else ', ' }}{{ a.name }} {{ a.events }} events, {{ (a.bytes / 1048576) | round(1) }} MB
+      ({{ (100 * a.syscall / [a.events, 1] | max) | round | int }}% from syscall rules, the rest sudo/PAM/logins){% endfor -%}
+      {%- for k in b.xkey %}{{ '; their rule keys: ' if loop.first else ', ' }}{{ k.name }} {{ k.events }}{% endfor -%}
+      {%- elif b.rc | default(0) != 0 -%}
+      The audit log breakdown did not finish within {{ check_auditd_volume_timeout }} s.
+      {%- else -%}
+      Audit volume up to {{ _au_est_mb_day }} MB a day (limit {{ check_auditd_volume_warn_mb_day }})
+      {{- ', the logs on disk reach back ' ~ _au_reach_h ~ ' h' if (_au_reach_h | float) > 0 else '' -}}
+      {{- ' (all ' ~ _au_v.num_logs ~ ' files in use)' if _au_saturated | bool else '' }}.
+      {%- endif %}
+  when: _au_v.logfile is defined
 
 - name: Auditd | add them to this host's findings
   ansible.builtin.set_fact:

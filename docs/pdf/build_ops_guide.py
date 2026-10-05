@@ -22,7 +22,7 @@ REPO = os.environ.get("SITE_AUTOMATION_DIR") or (
     os.path.dirname(os.path.dirname(_HERE)) if os.path.isfile(os.path.join(_HERE, "..", "START_HERE.md"))
     else sys.exit("build_ops_guide.py: cannot find the site-automation repository; "
                   "run the script from <repo>/docs/pdf or set SITE_AUTOMATION_DIR=<repo>"))
-SA_VERSION = "0.6.2"
+SA_VERSION = "0.7.0"
 DOCS = [  # (file, chapter title)
     ("docs/START_HERE.md", "Start here: the pieces and how they fit"),
     ("docs/SETUP_AAP.md", "Setting up AAP, step by step"),
@@ -33,6 +33,7 @@ DOCS = [  # (file, chapter title)
     ("docs/RUNBOOKS.md", "The runbooks: every check and what to do"),
     ("docs/ADDING_ACT.md", "Adding ACT (GenAI) later"),
     ("docs/WINDOWS.md", "Windows servers"),
+    ("docs/VMWARE.md", "VMware jobs (vCenter): restart, snapshots, notes, VLAN, secure boot, email"),
     ("docs/SECRETS.md", "Secrets: where they live"),
     ("docs/VARIABLES.md", "Settings (variables): what, where, and who wins"),
     ("docs/APPROVED_COMMANDS.md", "Approved commands: what ACT may run by itself"),
@@ -40,7 +41,7 @@ DOCS = [  # (file, chapter title)
 ]
 CRED_TYPES = ["servicenow_api.yml", "mariadb_monitor.yml", "keystore_password.yml",
               "stigman_api.yml", "act_model_key.yml", "act_genai_beta_key.yml",
-              "stigman_database.yml", "tls_certificate.yml", "registry_login.yml", "teams_webhook.yml"]
+              "stigman_database.yml", "tls_certificate.yml", "registry_login.yml", "teams_webhook.yml", "smtp_relay.yml"]
 
 ST["bullet2"] = style("bullet2", leftIndent=30, bulletIndent=17, spaceAfter=3)
 ST["bullet3"] = style("bullet3", leftIndent=46, bulletIndent=33, spaceAfter=3)

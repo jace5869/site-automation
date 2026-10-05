@@ -1,0 +1,19 @@
+---
+# The job's result: printed, and emailed when report_email_to is set (roles/site_email).
+# Input: _vm_report_subject, _vm_report_lines (list of text lines).
+- name: VMware | {{ _vm_report_subject }}
+  ansible.builtin.debug:
+    msg: "{{ _vm_report_lines }}"
+
+- name: VMware | email it (report_email_to)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report_subject: "{{ _vm_report_subject }}"
+    _report_body: >-
+      {{ (_vm_report_lines + ['', '--', 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)'))
+          ~ ((' (' ~ awx_job_template_name ~ ')') if awx_job_template_name is defined else '')
+          ~ ', started by ' ~ awx_user_name | default(tower_user_name | default(lookup('ansible.builtin.env', 'USER') or 'unknown'))
+          ~ ', ' ~ now(fmt='%Y-%m-%d %H:%M %Z') ~ '. vCenter ' ~ lookup('ansible.builtin.env', 'VMWARE_HOST')
+          ~ ('. DRY RUN (Check): nothing was changed.' if ansible_check_mode else '.')]) | join('\n') }}
+  when: report_email_to | default([]) | length > 0

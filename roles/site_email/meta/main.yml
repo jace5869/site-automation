@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: site_email
+  description: "Email a report through an SMTP relay (standard library only; off until report_email_to is set)."
+  license: MIT
+  min_ansible_version: "2.16"
+dependencies: []

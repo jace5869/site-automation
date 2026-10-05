@@ -1,0 +1,15 @@
+---
+# VM SECURE BOOT REPORT (vCenter). Read-only: firmware and secure boot of every VM (or vm_names, or
+# the VMs of vm_secure_boot_folder). Fails when a VM is BIOS or has secure boot off
+# (vm_secure_boot_fail: false = report only).
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_secure_boot_report.yml -e '{"vm_names": ["web01"]}'
+- name: VM secure boot report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM secure boot report
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: secure_boot.yml

@@ -1,0 +1,14 @@
+---
+# VM SNAPSHOT DELETE (vCenter). Delete a VM snapshot by its exact name (vm_snapshot_name), or every
+# snapshot of the VM (vm_snapshot_delete_all: true). Lists what each VM has first.
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_snapshot_delete.yml -e '{"vm_names": ["web01"]}'
+- name: VM snapshot delete
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM snapshot delete
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: snapshot_delete.yml

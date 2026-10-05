@@ -1,0 +1,26 @@
+---
+# Before a restart or shut down: the mode is known, and each VM can do it.
+# Input: _vm_found, _vm_power_action (restart | shut down).
+- name: VMware | vm_power_mode is guest or hard
+  ansible.builtin.assert:
+    that: vm_power_mode in ['guest', 'hard']
+    fail_msg: "vm_power_mode is '{{ vm_power_mode }}': use guest (through VMware Tools, clean) or hard (reset / power off)."
+    quiet: true
+
+- name: VMware | each VM can be {{ _vm_power_action }}
+  ansible.builtin.assert:
+    that:
+      - not item.template
+      - _vm_power_action != 'restart' or item.power == 'poweredOn'
+      - vm_power_mode == 'hard' or item.power != 'poweredOn' or item.tools == 'guestToolsRunning'
+    fail_msg: >-
+      {{ item.name }}:
+      {{ 'is a template, it has no power state.' if item.template else
+         ('is ' ~ item.power ~ ': there is nothing to restart.' if _vm_power_action == 'restart' and item.power != 'poweredOn' else
+          'VMware Tools is not running in it (' ~ item.tools | default('?') ~ '), so its operating system cannot be asked to '
+          ~ _vm_power_action ~ ' cleanly. Fix VMware Tools, or run again with vm_power_mode: hard - like pressing the '
+          ~ 'button on a physical server: unsaved data is lost.') }} Nothing was changed.
+    quiet: true
+  loop: "{{ _vm_found }}"
+  loop_control:
+    label: "{{ item.name }}"

@@ -19,7 +19,7 @@ from reportlab.platypus import (BaseDocTemplate, CondPageBreak, Flowable, Frame,
 from reportlab.platypus.tableofcontents import TableOfContents
 
 VERSION = "0.6.23"
-DATE = "September 2026"
+DATE = "October 2026"
 
 # ---------------------------------------------------------------------------- fonts
 # Noto Sans + Noto Sans Mono TTFs (Fedora/RHEL: google-noto-sans-fonts, google-noto-sans-mono-fonts).

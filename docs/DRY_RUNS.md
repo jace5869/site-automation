@@ -43,6 +43,8 @@ line-by-line changes it would make to files, for example in STIG Manager's confi
 | Windows health check, troubleshoot, certificate report, connection test | as usual: they only read |
 | Windows patch | asks Software Center to rescan (without starting anything) and prints `DRY RUN (Check mode): would install <updates>` |
 | ACT for Windows - install | `DRY RUN: would install ACT in C:\ProgramData\act because ...`, or that it is already current |
+| VMware jobs (restart, shut down, snapshot, delete snapshot, notes, change VLAN) | finds the VMs and runs every check (the AAP VM is refused as in a real run), then prints `Would restart ...`, `Would take snapshot ...`, `would delete ...`, the notes `AFTER`, `would move ...`. **vCenter is not changed**, and no report email is sent (`DRY RUN: would email ...`) |
+| VM - secure boot report | as usual: only reads |
 
 **ACT does not run in a dry run.** It would call the model, and ACT could change things. A dry
 run with `use_act` = `yes` reports the checks and says ACT gave no result. To see ACT's ideas

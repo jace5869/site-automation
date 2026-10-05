@@ -32,6 +32,59 @@
              if (check_mariadb_container_user | default('') | length > 0 and (_mdb_uid.rc | default(1)) == 0) else {} }}
         _mdb_user_missing: "{{ check_mariadb_container_user | default('') | length > 0 and (_mdb_uid.rc | default(1)) != 0 }}"
 
+    # auto (the default, when no container and no service is named): a database server installed on
+    # the host -> check the host's own; none, but podman -> find the containers. A systemd unit that only
+    # starts podman containers is then not mistaken for the database (it is inactive once they run).
+    - name: MariaDB | a database server on the host, or podman? (check_mariadb_container_discover auto)
+      ansible.builtin.shell: |
+        server=none
+        for p in {{ check_mariadb_server_paths | map('quote') | join(' ') }}; do
+          if [ -x "$p" ]; then server=$p; break; fi
+        done
+        echo "server $server"
+        if command -v podman >/dev/null 2>&1; then echo "podman yes"; else echo "podman no"; fi
+        # A unit called mariadb/mysqld/mysql that runs podman (podman compose up, podman start ...) only
+        # starts the container: the database is in the container, whatever is installed on the host.
+        for u in mariadb mysqld mysql; do
+          if systemctl show -p ExecStart -p ExecStartPre "$u.service" 2>/dev/null | grep -qE 'podman|docker'; then
+            echo "launcher $u.service"; break
+          fi
+        done
+      args:
+        executable: /bin/bash
+        chdir: /
+      register: _mdb_where
+      changed_when: false
+      check_mode: false
+      when:
+        - (check_mariadb_container_discover | string | lower) == 'auto'
+        - check_mariadb_container | length == 0
+        - check_mariadb_containers | length == 0
+        - check_mariadb_service | default('') | length == 0
+
+    - name: MariaDB | look for database containers?
+      ansible.builtin.set_fact:
+        _mdb_discover: >-
+          {{ (check_mariadb_container_discover | string | lower) in ['true', 'yes', '1', 'on'] or _mdb_auto_containers | bool }}
+        _mdb_discover_auto: "{{ _mdb_auto_containers | bool }}"
+        _mdb_launcher: >-
+          {{ (_mdb_where.stdout_lines | default([]) | select('match', '^launcher ') | first | default('launcher ')).split(' ', 1)[1] }}
+      vars:
+        _mdb_auto_containers: >-
+          {{ 'podman yes' in (_mdb_where.stdout_lines | default([]))
+             and ('server none' in (_mdb_where.stdout_lines | default([]))
+                  or (_mdb_where.stdout_lines | default([]) | select('match', '^launcher ') | list | length > 0)) }}
+
+    - name: MariaDB | the database runs in podman - looking for the database containers
+      ansible.builtin.debug:
+        msg: >-
+          {{ ('The unit ' ~ _mdb_launcher ~ ' only starts podman containers (its state says nothing about the database)')
+             if _mdb_launcher else ('No MariaDB/MySQL server is installed on ' ~ inventory_hostname ~ ' itself (none of '
+                                    ~ check_mariadb_server_paths | join(', ') ~ '), but podman is') }}:
+          the database containers are found by their image ({{ check_mariadb_container_image_regex }}).
+          To name them yourself: check_mariadb_container.
+      when: _mdb_discover_auto | bool
+
     - name: MariaDB | containers found on the host (check_mariadb_container_discover)
       ansible.builtin.command:
         argv: [podman, ps, -a, --format, "{% raw %}{{.Names}} {{.Image}}{% endraw %}"]
@@ -43,7 +96,7 @@
       changed_when: false
       failed_when: false
       check_mode: false
-      when: check_mariadb_container_discover | bool and not (_mdb_user_missing | bool)
+      when: _mdb_discover | bool and not (_mdb_user_missing | bool)
 
     - name: MariaDB | the instances to check
       ansible.builtin.set_fact:
@@ -55,7 +108,7 @@
           {%-   set name, image = line.split(' ', 1) -%}
           {%-   if image is search(check_mariadb_container_image_regex, ignorecase=true) and name not in out -%}{%- set _ = out.append(name) -%}{%- endif -%}
           {%- endfor -%}
-          {{ out if out | length > 0 else ([''] if not (check_mariadb_container_discover | bool) else []) }}
+          {{ out if out | length > 0 else ([''] if not (_mdb_discover | bool) else []) }}
 
     - name: MariaDB | rootless user does not exist
       ansible.builtin.set_fact:
@@ -69,11 +122,12 @@
       ansible.builtin.set_fact:
         site_findings: >-
           {{ site_findings | default([]) + [{'check': 'mariadb', 'id': 'mariadb:no-container', 'severity': 'warning',
-             'summary': 'no MariaDB/MySQL container with an image matching "' ~ check_mariadb_container_image_regex ~ '" was found (podman ps -a'
+             'summary': ('no MariaDB/MySQL server is installed on the host, and ' if _mdb_discover_auto | bool else '')
+                        ~ 'no MariaDB/MySQL container with an image matching "' ~ check_mariadb_container_image_regex ~ '" was found (podman ps -a'
                         ~ ((' as ' ~ check_mariadb_container_user) if check_mariadb_container_user | default('') else '') ~ ')',
              'hint': ('sudo -u ' ~ check_mariadb_container_user ~ ' ' if check_mariadb_container_user | default('') else '') ~ 'podman ps -a'}] }}
       when:
-        - check_mariadb_container_discover | bool
+        - _mdb_discover | bool
         - _mdb_instances | length == 0
         - not (_mdb_user_missing | bool)
 

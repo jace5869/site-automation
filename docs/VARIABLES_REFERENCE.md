@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
+**Contents:** [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
 
 ## check_accounts
 
@@ -32,7 +32,7 @@ File: `roles/check_accounts/defaults/main.yml`
 
 File: `roles/check_auditd/defaults/main.yml`
 
-> AUDITD: the audit system records who did what (the STIG depends on it). Running, enabled in the kernel, rules loaded, no events lost, room for its log, and (optionally) forwarding.
+> AUDITD: the audit system records who did what (the STIG depends on it). Running, enabled in the kernel, rules loaded, no events lost, room for its log, and (optionally) forwarding. Also how MUCH it records: too much rotates the evidence away within hours, fills the disk (then auditd stops the host or puts it in single-user mode, as the STIG sets it up), drops records on the way to the SIEM, and uses up the SIEM licence.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -40,6 +40,11 @@ File: `roles/check_auditd/defaults/main.yml`
 | `check_auditd_log_warn_pct` | `75` | the audit log's filesystem |
 | `check_auditd_log_crit_pct` | `90` |  |
 | `check_auditd_remote_required` | `false` | true = au-remote (audisp-remote) must be active |
+| `check_auditd_exclude_accounts` | `[]` | Accounts whose audit events are expected in bulk and do NOT count toward the volume warning, e.g. the account a vulnerability scanner logs in with (a credentialed scan runs thousands of commands with sudo). Names or UIDs; a host that does not have the account skips it. The report still says how much they made, and the… (all of it: the role file) |
+| `check_auditd_volume_hours` | `24` | look at the audit records of the last N hours |
+| `check_auditd_volume_warn_mb_day` | `200` | warning above this many MB of audit records a day (excluded accounts not counted) |
+| `check_auditd_retention_warn_hours` | `24` | With max_log_file_action ROTATE, auditd keeps num_logs files of max_log_file MB and deletes the oldest. Warning when what is left on disk reaches back fewer hours than this. The STIG wants a week (168) when the records are NOT sent off the host as they are written (RHEL-08-030660). 0 = off. |
+| `check_auditd_volume_timeout` | `120` | The breakdown (which account, which rule, which program) reads the audit log files of the window at low CPU and disk priority, and only when the volume or the retention is over its limit. It stops after this many seconds on a host with very large logs (and says so). |
 
 ## check_certs
 
@@ -133,7 +138,8 @@ File: `roles/check_mariadb/defaults/main.yml`
 | `check_mariadb_enabled` | (worked out by the role; see its file) | Which hosts: members of any of the inventory groups mariadb_hosts, mysql_hosts, database_hosts, mariadb or mysql, or any host that names a container below (or turns discovery on). Set this true/false to override for a host or group. |
 | `check_mariadb_container` | (empty) | MariaDB or MySQL in podman containers (e.g. the ServiceNow database). The client inside each container is used (podman exec). Name them in one of these ways; all are checked, each as its own instance: check_mariadb_container: mariadb one container check_mariadb_containers: [mariadb, snow-db] several containers on the… (all of it: the role file) |
 | `check_mariadb_containers` | `[]` |  |
-| `check_mariadb_container_discover` | `false` |  |
+| `check_mariadb_container_discover` | `auto` |  |
+| `check_mariadb_server_paths` | `[/usr/sbin/mariadbd, /usr/libexec/mariadbd, /usr/sbin/mysqld, /usr/libexec/mysqld, /usr/b…` | Where a database server installed on the host lives (any one present = a host install, for `auto`). |
 | `check_mariadb_container_image_regex` | `'(mariadb\|mysql\|percona)'` |  |
 | `check_mariadb_container_user` | (empty) | ROOTLESS podman: the containers belong to a user (e.g. AAP's own MariaDB, or an application account), and only that user can see them. Name the user and the check runs podman AS that user. Empty = root's containers. |
 | `check_mariadb_service` | (empty) | The systemd unit (host installs). Empty = the first of mariadb, mysqld, mysql that exists. |
@@ -384,6 +390,23 @@ File: `roles/site_act/defaults/main.yml`
 | `site_act_extra_instructions` | (empty) | anything ACT should know about this site |
 | `site_act_evidence_text` | (empty) | extra evidence (troubleshoot.yml passes what it collected) |
 
+## site_email
+
+File: `roles/site_email/defaults/main.yml`
+
+> EMAIL A REPORT through your mail relay (SMTP). Off until report_email_to has an address. Used by the VMware jobs (docs/VMWARE.md). Set these in playbooks/group_vars/all.yml, in a job template's Variables, or as survey questions. If the relay needs a login, attach an "SMTP relay" credential (aap/credential_types/smtp_relay.yml) - never put a password in these settings.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `report_email_to` | `[]` | Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no email. |
+| `report_email_cc` | `[]` |  |
+| `report_email_from` | (empty) | the sender, e.g. aap-noreply@yoursite.mil |
+| `report_email_smtp_host` | (empty) | your mail relay, e.g. smtp.yoursite.mil |
+| `report_email_smtp_port` | `25` | 25 or 587 with starttls, 465 with ssl |
+| `report_email_security` | `starttls` | starttls = encrypt after connecting (the relay must offer it); ssl = encrypted from the start (port 465); none = not encrypted (only for a relay without encryption; then no login is sent). |
+| `report_email_ca_path` | (empty) | a CA file that signed the relay's certificate (empty = the CAs the execution environment trusts) |
+| `report_email_subject_prefix` | `"[AAP]"` |  |
+
 ## site_findings
 
 File: `roles/site_findings/defaults/main.yml`
@@ -442,6 +465,32 @@ File: `roles/troubleshoot/defaults/main.yml`
 | `ts_since` | `"-2h"` |  |
 | `ts_output_lines` | `60` | keep the last this-many lines of each command |
 | `ts_areas` | `overview: checks: [disk, mounts, services, performance, time, logging] commands: - {why:…` | What each area runs. `why` is printed above the command's output. Commands must be read-only. |
+
+## vmware_vm
+
+File: `roles/vmware_vm/defaults/main.yml`
+
+> VMWARE VMs: jobs that run against vCenter (not on the VMs), with the certified vmware.vmware collection. vCenter address and account come from a "VMware vCenter" credential on the job template (VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD). docs/VMWARE.md
+
+| Setting | Default | What it does |
+|---|---|---|
+| `vm_names` | `[]` | The VMs, by their exact name in vCenter: a list, or (from a survey) one per line. No wildcards. |
+| `vmware_datacenter` | (empty) | only needed when the same VM name exists in two datacenters |
+| `vmware_validate_certs` | `true` | Check vCenter's certificate. false only if the execution environment does not trust your CA yet. |
+| `vmware_protected_groups` | `[aap, aap_hosts]` | The AAP server is ALWAYS refused (hosts in the groups aap / aap_hosts, matched by VM name, guest host name and IP address), and so are the hosts of these groups and these exact VM names. List the AAP VM's name here when it differs from its host name, and vCenter's own VM. |
+| `vmware_protected_vms` | `[]` | e.g. [AAP01, VCSA01] |
+| `vm_power_mode` | `guest` | guest = ask the operating system (needs VMware Tools running; services stop cleanly) hard = reset / power off, like the button on a physical server (unsaved data is lost) |
+| `vm_power_timeout` | `600` | shut down: seconds to wait for the VM to be off |
+| `vm_snapshot_name` | (empty) | The snapshot's name. Taking one: empty = aap-<date>-<time>. Deleting: the exact name to delete. |
+| `vm_snapshot_description` | (empty) | the AAP job number and user are added |
+| `vm_snapshot_quiesce` | `false` | true = VMware Tools freezes the file systems first |
+| `vm_snapshot_delete_all` | `false` | delete: true = every snapshot of the VM (vm_snapshot_name empty) |
+| `vm_notes` | (empty) | The text to write. |
+| `vm_notes_mode` | `append` | append (a new line, with date and user) \| replace \| clear |
+| `vm_nic` | `1` | Which adapter: 1 = Network adapter 1, 2, ... |
+| `vm_portgroup` | (empty) | the port group (standard or distributed) to move it to |
+| `vm_secure_boot_folder` | (empty) | Only the VMs in this vCenter folder ("" = every VM, or the ones in vm_names). |
+| `vm_secure_boot_fail` | `true` | fail the job when a VM is not EFI with secure boot (so a workflow can react) |
 
 ## win_act
 

@@ -15,6 +15,10 @@ jobs:
           python-version: "3.12"
       - name: Install ansible-core
         run: pip install ansible-core
+      - name: The VMware collection the vm_*.yml playbooks use, and its Python libraries (before syntax-check and lint)
+        run: |
+          pip install pyvmomi vmware-vcenter
+          ansible-galaxy collection install -r tests/vmware/requirements.yml
       - name: Syntax-check every playbook (site + vendored ACT)
         run: |
           set -e
@@ -50,6 +54,20 @@ jobs:
         run: |
           bash tests/mariadb/run_mariadb_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/mariadb/run_mariadb_test.sh
+      - name: Auditd check, audit volume and the excluded accounts (fake audit logs; current ansible-core and 2.16)
+        run: |
+          bash tests/auditd/run_auditd_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/auditd/run_auditd_test.sh
+      - name: Email a report (fake mail relay; current ansible-core and 2.16)
+        run: |
+          bash tests/email/run_email_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/email/run_email_test.sh
+      - name: VMware jobs against vcsim, the vCenter simulator (current ansible-core and 2.16)
+        env:
+          VMWARE_COLLECTIONS: /home/runner/.ansible/collections
+        run: |
+          bash tests/vmware/run_vmware_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vmware/run_vmware_test.sh
       - name: Containers check and Service watch, rootful and rootless (fake podman; current ansible-core and 2.16)
         run: |
           bash tests/containers/run_containers_test.sh

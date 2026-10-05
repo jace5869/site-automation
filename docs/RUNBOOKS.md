@@ -125,6 +125,40 @@ finding.
 | `N audit event(s) were LOST` | the kernel backlog overflowed | raise `-b` (backlog) in the rules |
 | `the audit log filesystem is 92% full` | auditd may stop, or halt the host, when it fills | rotate/offload; check `space_left_action` |
 | `audit records are not forwarded` | au-remote is not active (`check_auditd_remote_required`) | configure audisp-remote |
+| `audit volume is 850 MB a day (... events in 24 h, at most N in one hour) - mostly account svc_x (60%), rule key delete (55%), program /usr/bin/python3 (40%)` | more audit records than `check_auditd_volume_warn_mb_day` (200), excluded accounts not counted | what the named account/program does that the named STIG rule records: a job deleting temp files in a loop, an app in a rootless container (its processes keep the user's login ID) |
+| `the audit logs on disk reach back only 9.5 h (5 files of 8 MB, then the oldest is deleted)` | with `max_log_file_action = ROTATE` older records are gone (`check_auditd_retention_warn_hours` 24) | bigger `max_log_file` / more `num_logs` in `/etc/audit/auditd.conf`, or fewer records (the finding names who makes them) |
+| `auditd dropped records N time(s) ... on the way to its plugins` | the queue to au-remote / the SIEM forwarder was full: the SIEM copy is missing records | fewer records; a larger `q_depth` in `auditd.conf` |
+| `audit rule(s) stop recording auid=1234 (someone) altogether` | a `-a never` (or `-a always,exclude`) rule hides an account that is not in `check_auditd_exclude_accounts` | remove the rule, or approve the account (below) |
+| `too much to break down by account within 120 s` | very large logs | `aureport` with the `look:` command, or a larger `check_auditd_volume_timeout` |
+
+**How much is audited, and the vulnerability scanner.** The volume, retention and rule findings
+come from the audit logs themselves. The breakdown (which account, which STIG rule key, which
+program) is read only when the volume or the retention is over its limit, at low priority, and is
+always printed in the job output (`Auditd | how much is audited`), with excluded accounts shown
+separately.
+
+A credentialed vulnerability scan logs in to every host and runs thousands of commands with sudo:
+during a scan its account usually makes most of the audit records. List it in
+`check_auditd_exclude_accounts` (in `playbooks/group_vars/all.yml`, so it applies to every host) and
+it no longer counts toward the volume warning. It still counts for retention and disk space, which
+are physical: if the scan rotates a week of records away in an hour, that is still reported, with
+the scanner named as the cause. The job output shows how much of the scanner's volume comes from
+syscall rules and how much from sudo/PAM records, which tells you what an audit rule exclusion would
+remove.
+
+To stop auditd recording that account at all (a host change, not part of the health check):
+- It is a deliberate exception to the STIG audit requirements: get it approved and recorded first.
+- The rules `-a never,exit -F arch=b64 -S all -F auid=<UID>` and the same with `arch=b32` (the form
+  of audit's own sample rules), placed before the STIG rules, remove the syscall records: a file
+  like `/etc/audit/rules.d/05-exclude-scanner.rules` (`augenrules` merges the files in name order).
+  The sudo/PAM records (USER_CMD, USER_START, CRED_*) come from user space and need
+  `-a never,user -F auid=<UID>`. Leaving that one out keeps the sudo records, which still show
+  what the account ran.
+- Use the numeric UID. A name is looked up when the rules load at boot, before IdM/AD (sssd) can
+  answer, and a rule that fails to load can stop the rest of the rules from loading.
+- STIG hosts make the rules immutable (`-e 2`): a new rule takes effect only at the next reboot.
+- The auditd check then reports rules like this only for accounts that are NOT on
+  `check_auditd_exclude_accounts`.
 
 ### accounts
 

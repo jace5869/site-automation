@@ -1,0 +1,37 @@
+---
+# SHUT DOWN VMs. guest: the operating system shuts down (VMware Tools) and the job waits until the
+# VM is off; hard: power off at once.
+- name: VMware | find the VMs
+  ansible.builtin.include_tasks: prepare.yml
+
+- name: VMware | never the AAP server or a protected VM
+  ansible.builtin.include_tasks: guard.yml
+
+- name: VMware | can be shut down
+  ansible.builtin.include_tasks: power_check.yml
+  vars:
+    _vm_power_action: shut down
+
+- name: VMware | shut down ({{ vm_power_mode }})
+  vmware.vmware.vm_powerstate:
+    moid: "{{ item.moid }}"
+    datacenter: "{{ item.datacenter }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    state: "{{ 'shutdown-guest' if vm_power_mode == 'guest' else 'powered-off' }}"
+    timeout: "{{ vm_power_timeout | int if vm_power_mode == 'guest' else omit }}"
+  loop: "{{ _vm_found }}"
+  loop_control:
+    label: "{{ item.name }}{{ ' (already off)' if item.power != 'poweredOn' else '' }}"
+  when: item.power == 'poweredOn'
+
+- name: VMware | done
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_report_subject: "VM shut down: {{ _vm_found | map(attribute='name') | join(', ') | truncate(80) }}"
+    _vm_report_lines:
+      - >-
+        {{ 'Would shut down' if ansible_check_mode else 'Shut down' }}
+        ({{ 'operating system shutdown through VMware Tools' if vm_power_mode == 'guest' else 'hard power off' }}):
+        {{ _vm_found | selectattr('power', 'equalto', 'poweredOn') | map(attribute='name') | join(', ') or 'none' }}.
+        {{ ('Already off: ' ~ _vm_found | rejectattr('power', 'equalto', 'poweredOn') | map(attribute='name') | join(', '))
+           if _vm_found | rejectattr('power', 'equalto', 'poweredOn') | list else '' }}

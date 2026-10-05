@@ -1,0 +1,15 @@
+---
+# VM SNAPSHOT (vCenter). Take a snapshot of VMs - without memory (disks only). vm_snapshot_name
+# (empty = aap-<date>-<time>), vm_snapshot_description; the AAP job and user are recorded in the
+# description.
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_snapshot.yml -e '{"vm_names": ["web01"]}'
+- name: VM snapshot
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM snapshot
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: snapshot_create.yml

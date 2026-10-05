@@ -1,0 +1,15 @@
+---
+# VM SHUT DOWN (vCenter). Shut VMs down through vCenter and wait until they are off. guest
+# (default) = the operating system shuts down through VMware Tools; vm_power_mode: hard = power off
+# at once. Never the AAP server.
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_shutdown.yml -e '{"vm_names": ["web01"]}'
+- name: VM shut down
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM shut down
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: shutdown.yml

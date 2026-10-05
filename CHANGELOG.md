@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.7.0 — 2026-10-05
+
+New: **VMware jobs** (vCenter) with emailed reports, an **audit volume** check, and the database check
+finds a database in podman by itself.
+
+- **Database check: a database in podman is found by itself.** With no container named, the check
+  took the host's `mariadb.service` for the database. When that unit only starts the container
+  (`ExecStart=/usr/bin/podman compose up -d`), its state says nothing about the database: it shows
+  `active (exited)` (the check then used a client on the host) or `inactive` (the check said "not
+  running" while the container was up). Now (`check_mariadb_container_discover: auto`, the
+  default): when no database server is installed on the host (`check_mariadb_server_paths`), or the
+  `mariadb`/`mysqld`/`mysql` unit runs podman, the database containers are found by their image
+  (`docker.mariadb.com/enterprise-server` matches) and checked inside. `false` keeps the old
+  behaviour; naming the container (`check_mariadb_container: mariadb`) is still the clearest.
+- **Auditd check: how much is audited, and by whom** (weekly set). New findings:
+  - `auditd:volume`: more than `check_auditd_volume_warn_mb_day` (200) MB of audit records a day,
+    naming the top account, STIG rule key and program.
+  - `auditd:retention`: with `max_log_file_action = ROTATE` and every file in use, the logs on disk
+    reach back fewer than `check_auditd_retention_warn_hours` (24) hours.
+  - `auditd:queue`: auditd dropped records on the way to its plugins (au-remote / the SIEM).
+  - `auditd:never-rule`: an audit rule stops recording an account (`-a never ... auid=`) that is not
+    approved.
+
+  `check_auditd_exclude_accounts` lists accounts expected to make many records - the account a
+  vulnerability scanner logs in with. They do not count toward the volume warning and their rules
+  are approved, but the job output still shows how much they made (and how much of it is syscall
+  rules vs sudo/PAM), and they still count for retention. The breakdown reads the audit logs only
+  when a limit is crossed, at low priority, within `check_auditd_volume_timeout` (120 s).
+  docs/RUNBOOKS.md (auditd) also covers stopping auditd from recording a scanner's account, and what
+  to watch out for.
+
+- **VMware jobs (vCenter)**, replacing Orchestrator runbooks - `playbooks/vm_*.yml`, role
+  `vmware_vm`, [docs/VMWARE.md](docs/VMWARE.md): restart and shut down (`guest` through VMware Tools,
+  or `hard`), snapshot without memory (the AAP job and user in its description), delete one snapshot
+  or all, notes (append with date and user / replace / clear), change VLAN (one adapter to another
+  port group; the others untouched), and a secure boot report (BIOS and secure-boot-off listed
+  apart). Restart, shut down and VLAN change **refuse the AAP server's VM** (by name, guest host
+  name or IP, against the groups `aap` / `aap_hosts`, plus `vmware_protected_vms`) and refuse to run
+  when the inventory cannot say which VM that is. Exact VM names only, a duplicate name is refused,
+  every change addresses the VM by its ID. All support dry runs (*Check*). Needs the certified
+  `vmware.vmware` collection (2.11+) in the execution environment and a "VMware vCenter"
+  credential. Known limit: moving an adapter between a standard and a distributed switch fails in
+  that collection - the job says so and changes nothing. Tested against vcsim, VMware's vCenter
+  simulator (`tests/vmware/`, in CI), not yet against a real vCenter.
+- **Email the VMware reports** (`roles/site_email`): set `report_email_to` (in `all.yml`, a template's
+  Variables or a survey question) with `report_email_smtp_host` and `report_email_from`, and every
+  VMware job emails its result - the secure boot report its whole list. STARTTLS by default (the
+  relay's certificate is checked; `report_email_ca_path` for your own CA), `ssl` or `none`; a relay
+  login comes from the new "SMTP relay" credential type. Python standard library only: no extra
+  collection. Not sent in a dry run. Tested against a fake mail relay (`tests/email/`).
+
+**Upgrading from 0.6.2:** to leave your scanner's account out of the audit volume, add
+`check_auditd_exclude_accounts: [<that account>]` to your `playbooks/group_vars/all.yml` (the update
+script lists it as a new setting). For the VMware jobs: docs/VMWARE.md (check the execution
+environment first), name the AAP VM in `vmware_protected_vms`, and for emailed reports follow its
+"Email the report" steps. The new auditd findings are warnings in the weekly set: run the auditd
+check by hand on a few hosts first (docs/RUNBOOKS.md, auditd).
+
 ## 0.6.2 — 2026-10-02
 
 **ACT 0.6.23** (vendored for Linux and Windows):
