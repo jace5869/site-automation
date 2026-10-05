@@ -1,0 +1,46 @@
+---
+# NOTES: the VM's description in vCenter (its "Notes"). append adds a line with the date and the
+# AAP user; replace puts in the new text; clear empties it. The old text is printed (job output).
+- name: VMware | vm_notes_mode, and text to write
+  ansible.builtin.assert:
+    that:
+      - vm_notes_mode in ['append', 'replace', 'clear']
+      - vm_notes_mode == 'clear' or vm_notes | trim | length > 0
+    fail_msg: "Give the text in vm_notes, and vm_notes_mode append, replace or clear (now: '{{ vm_notes_mode }}')."
+    quiet: true
+
+- name: VMware | find the VMs
+  ansible.builtin.include_tasks: prepare.yml
+
+- name: VMware | the new notes
+  ansible.builtin.set_fact:
+    _vm_notes_new: >-
+      {%- set line = vm_notes | trim ~ ' (' ~ now(fmt='%Y-%m-%d') ~ ', '
+                     ~ awx_user_name | default(tower_user_name | default('AAP')) ~ ')' -%}
+      {%- set out = {} -%}
+      {%- for v in _vm_found -%}
+      {%-   set _ = out.update({v.name: '' if vm_notes_mode == 'clear' else (vm_notes | trim if vm_notes_mode == 'replace'
+                                else ((v.annotation | trim ~ '\n') if v.annotation | trim else '') ~ line)}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: VMware | write the notes ({{ vm_notes_mode }})
+  vmware.vmware.vm:
+    moid: "{{ item.moid }}"
+    datacenter: "{{ item.datacenter }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    annotation: "{{ _vm_notes_new[item.name] }}"
+  loop: "{{ _vm_found }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: VMware | done
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_report_subject: "VM notes ({{ vm_notes_mode }}): {{ _vm_found | map(attribute='name') | join(', ') | truncate(70) }}"
+    _vm_report_lines: >-
+      {%- set out = [] -%}
+      {%- for v in _vm_found -%}
+      {%-   set _ = out.append(v.name ~ ' - BEFORE: ' ~ (v.annotation | trim or '(empty)') ~ ' | AFTER: ' ~ (_vm_notes_new[v.name] or '(empty)')) -%}
+      {%- endfor -%}
+      {{ out }}

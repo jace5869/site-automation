@@ -19,10 +19,16 @@ check_mariadb_enabled: >-
 #   check_mariadb_containers: [mariadb, snow-db]      several containers on the same host
 #   check_mariadb_container_discover: true            find them: every container (running or not) whose
 #                                                     image matches check_mariadb_container_image_regex
-# With none of the three, the database is taken to be installed on the host itself.
+# With none of them, `auto` (the default) decides by itself: a database SERVER installed on the host
+# (one of check_mariadb_server_paths) -> the host's own database (its systemd unit); no server on the
+# host but podman -> the containers are found as with discovery. So a unit that only starts podman
+# containers (and is then inactive) is not mistaken for the database. false = always the host's own.
 check_mariadb_container: ""
 check_mariadb_containers: []
-check_mariadb_container_discover: false
+check_mariadb_container_discover: auto
+# Where a database server installed on the host lives (any one present = a host install, for `auto`).
+check_mariadb_server_paths: [/usr/sbin/mariadbd, /usr/libexec/mariadbd, /usr/sbin/mysqld, /usr/libexec/mysqld,
+                             /usr/bin/mariadbd, /usr/bin/mysqld]
 check_mariadb_container_image_regex: '(mariadb|mysql|percona)'
 # ROOTLESS podman: the containers belong to a user (e.g. AAP's own MariaDB, or an application account),
 # and only that user can see them. Name the user and the check runs podman AS that user. Empty = root's containers.

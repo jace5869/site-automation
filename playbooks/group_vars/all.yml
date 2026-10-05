@@ -46,6 +46,24 @@
 # check_logging_remote:
 #   - {name: logstash, host: CHANGE-ME.yoursite.mil, port: 514}
 
+# ---- Audit volume (the weekly auditd check) -----------------------------------------------------
+# The account your vulnerability scanner logs in with makes most of the audit records during a
+# scan: list it here so it does not count toward the audit volume warning (the report still says
+# how much it made). Names or UIDs, the same on every host; a host without the account skips it.
+# check_auditd_exclude_accounts: [CHANGE-ME-scanner-account]
+# check_auditd_volume_warn_mb_day: 200            # MB of audit records a day, excluded accounts not counted
+
+# ---- VMware jobs (playbooks/vm_*.yml, docs/VMWARE.md) ------------------------------------------
+# Restart, shut down and VLAN change never touch the AAP server's VM (found through the groups aap /
+# aap_hosts). Name it here too when its VM name differs from its host name - and vCenter's own VM:
+# vmware_protected_vms: [CHANGE-ME-aap-vm-name, CHANGE-ME-vcenter-vm-name]
+# vmware_validate_certs: true                     # false only until the execution environment trusts vCenter's CA
+# Email the VMware reports (docs/VMWARE.md, "Email the report"). Off until report_email_to has an address:
+# report_email_smtp_host: CHANGE-ME.yoursite.mil   # your mail relay
+# report_email_from: CHANGE-ME@yoursite.mil        # the sender
+# report_email_to: [CHANGE-ME@yoursite.mil]        # or per template / survey: report_email_to: a@x.mil, b@x.mil
+# report_email_security: starttls                  # starttls (25/587) | ssl (465, with report_email_smtp_port: 465) | none
+
 # ---- The account AAP logs in as -------------------------------------------------------------
 # check_accounts_nopasswd_allowed: [CHANGE-ME-service-account]
 # check_accounts_expiry_watch: [CHANGE-ME-service-account]

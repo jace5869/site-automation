@@ -1,0 +1,21 @@
+---
+# Test harness: run ONLY the check_auditd role on the local machine (fake auditctl / systemctl /
+# journalctl / id / getent on PATH, a fake audit log) and print the findings. Not a shipped playbook.
+- name: Check_auditd with a fake audit system
+  hosts: all
+  connection: local
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Start
+      ansible.builtin.include_role: {name: site_findings, tasks_from: start.yml}
+    - name: Run the check
+      ansible.builtin.include_role: {name: check_auditd}
+    - name: Findings
+      ansible.builtin.debug:
+        msg: "FINDINGS {{ site_findings | map(attribute='id') | sort | join(',') }}"
+    - name: Summaries
+      ansible.builtin.debug:
+        msg: "SUMMARY {{ item.id }} | {{ item.severity }} | {{ item.summary }}"
+      loop: "{{ site_findings }}"
+      loop_control: {label: "{{ item.id }}"}

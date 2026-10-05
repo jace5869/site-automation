@@ -1,0 +1,60 @@
+---
+# DELETE SNAPSHOTS: the one named vm_snapshot_name, or every snapshot of the VM with
+# vm_snapshot_delete_all: true. vCenter merges the snapshot into the disks (no data is lost from
+# the running VM; the state saved in the snapshot is).
+- name: VMware | which snapshot
+  ansible.builtin.assert:
+    that: (vm_snapshot_name | trim | length > 0) != (vm_snapshot_delete_all | bool)
+    fail_msg: >-
+      Say which snapshot to delete: vm_snapshot_name (its exact name), OR vm_snapshot_delete_all: true
+      for every snapshot of the VM - not both, not neither.
+    quiet: true
+
+- name: VMware | find the VMs
+  ansible.builtin.include_tasks: prepare.yml
+
+- name: VMware | the snapshots each VM has now
+  vmware.vmware.vm_snapshot_info:
+    moid: "{{ item.moid }}"
+    datacenter: "{{ item.datacenter }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  loop: "{{ _vm_found }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _vm_snaps
+  check_mode: false
+
+- name: VMware | the snapshots to delete
+  ansible.builtin.set_fact:
+    _vm_snap_del: >-
+      {%- set out = [] -%}
+      {%- for r in _vm_snaps.results -%}
+      {%-   set have = r.snapshots | default([]) | map(attribute='name') | list -%}
+      {%-   set del = have if vm_snapshot_delete_all | bool else (have | select('equalto', vm_snapshot_name | trim) | list) -%}
+      {%-   set _ = out.append({'vm': r.item.name, 'moid': r.item.moid, 'datacenter': r.item.datacenter, 'have': have, 'delete': del}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: VMware | delete {{ 'every snapshot' if vm_snapshot_delete_all | bool else 'snapshot ' ~ vm_snapshot_name | trim }}
+  vmware.vmware.vm_snapshot:
+    moid: "{{ item.moid }}"
+    datacenter: "{{ item.datacenter }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    state: absent
+    snapshot_name: "{{ omit if vm_snapshot_delete_all | bool else vm_snapshot_name | trim }}"
+    remove_all: "{{ vm_snapshot_delete_all | bool }}"
+  loop: "{{ _vm_snap_del | selectattr('delete') | list }}"
+  loop_control:
+    label: "{{ item.vm }}: {{ item.delete | join(', ') }}"
+
+- name: VMware | done
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_report_subject: "VM snapshot delete: {{ _vm_found | map(attribute='name') | join(', ') | truncate(80) }}"
+    _vm_report_lines: >-
+      {%- set out = [] -%}
+      {%- for d in _vm_snap_del -%}
+      {%-   set _ = out.append(d.vm ~ ': ' ~ ((('would delete ' if ansible_check_mode else 'deleted ') ~ d.delete | join(', ')) if d.delete
+                     else ('no snapshots' if not d.have else 'no snapshot named "' ~ vm_snapshot_name | trim ~ '" (it has: ' ~ d.have | join(', ') ~ ')'))) -%}
+      {%- endfor -%}
+      {{ out }}

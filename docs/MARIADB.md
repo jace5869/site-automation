@@ -54,6 +54,7 @@ Pick **one** of the four ways. Put the lines in the settings file (section 3).
 | Your situation | Setting |
 |---|---|
 | MariaDB or MySQL is installed on the host itself (a service) | nothing to set. The check finds the service `mariadb`, `mysqld` or `mysql` and tells the engine and version apart by itself. To name the service: `check_mariadb_service: mariadb` |
+| In a podman container, with **no** database server installed on the host, or started by a unit that runs podman (`podman compose up -d`, `podman start` - such a unit shows `active (exited)` or `inactive` while the database runs) | usually nothing to set (0.7.0 and later): the check sees that and finds the container by its image. Naming it is still clearer: `check_mariadb_container: mariadb` |
 | One container | `check_mariadb_container: snow-mariadb` |
 | Several containers on the same host | `check_mariadb_containers: [snow-mariadb, other-db]` |
 | You do not want to list them: find them | `check_mariadb_container_discover: true` |
@@ -233,5 +234,6 @@ command line. Nothing here has been run against **your** database: step 3 is the
 | `status query failed: ... Access denied ...` and `attach the "MariaDB monitor" credential` | container root has a password | section 4 |
 | `... is not running (container ... is missing)` but it is running | the name is wrong, or the containers belong to another user | compare with the `podman ps -a` output; `check_mariadb_container_user` |
 | The check runs on the wrong host, or not at all after a rename | a settings file only applies to the group named like the file | section 3 |
+| `MariaDB is not running (service mariadb is inactive)` - or a login error from the host's client - but `podman ps` shows the database container up | the host's `mariadb.service` only starts the container (`podman compose up -d`); before 0.7.0 the check took it for the database | 0.7.0 and later find the container by themselves; or name it: `check_mariadb_container: mariadb` |
 | **Database health** says `skipping: no hosts matched` (0.5.0), or `target '...' matches no host` | the server is in none of `mariadb_hosts`, `mysql_hosts`, `database_hosts`, `mariadb`, `mysql` (a Limit cannot add it) | section 1: `target` in the template's Variables, or add it to one of those groups |
 | Your setting has no effect | another place wins | [VARIABLES.md](VARIABLES.md#3-who-wins-when-the-same-setting-is-in-two-places) |

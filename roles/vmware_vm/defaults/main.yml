@@ -1,0 +1,51 @@
+---
+# VMWARE VMs: jobs that run against vCenter (not on the VMs), with the certified vmware.vmware
+# collection. vCenter address and account come from a "VMware vCenter" credential on the job
+# template (VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD). docs/VMWARE.md
+
+# The VMs, by their exact name in vCenter: a list, or (from a survey) one per line. No wildcards.
+vm_names: []
+vmware_datacenter: ""                    # only needed when the same VM name exists in two datacenters
+# Check vCenter's certificate. false only if the execution environment does not trust your CA yet.
+vmware_validate_certs: true
+
+# ---- Restart, shut down, VLAN change: never on these ----
+
+# The AAP server is ALWAYS refused (hosts in the groups aap / aap_hosts, matched by VM name, guest
+# host name and IP address), and so are the hosts of these groups and these exact VM names. List the
+# AAP VM's name here when it differs from its host name, and vCenter's own VM.
+vmware_protected_groups: [aap, aap_hosts]
+vmware_protected_vms: []                 # e.g. [AAP01, VCSA01]
+
+# ---- Restart / shut down ----
+
+# guest = ask the operating system (needs VMware Tools running; services stop cleanly)
+# hard  = reset / power off, like the button on a physical server (unsaved data is lost)
+vm_power_mode: guest
+vm_power_timeout: 600                    # shut down: seconds to wait for the VM to be off
+
+# ---- Snapshots (never with memory) ----
+
+# The snapshot's name. Taking one: empty = aap-<date>-<time>. Deleting: the exact name to delete.
+vm_snapshot_name: ""
+vm_snapshot_description: ""              # the AAP job number and user are added
+vm_snapshot_quiesce: false               # true = VMware Tools freezes the file systems first
+vm_snapshot_delete_all: false            # delete: true = every snapshot of the VM (vm_snapshot_name empty)
+
+# ---- Notes (the VM's description in vCenter) ----
+
+# The text to write.
+vm_notes: ""
+vm_notes_mode: append                    # append (a new line, with date and user) | replace | clear
+
+# ---- VLAN: move a network adapter to another port group ----
+
+# Which adapter: 1 = Network adapter 1, 2, ...
+vm_nic: 1
+vm_portgroup: ""                         # the port group (standard or distributed) to move it to
+
+# ---- Secure boot report ----
+
+# Only the VMs in this vCenter folder ("" = every VM, or the ones in vm_names).
+vm_secure_boot_folder: ""
+vm_secure_boot_fail: true                # fail the job when a VM is not EFI with secure boot (so a workflow can react)

@@ -124,9 +124,31 @@ FAKE_REPL=broken scenario "two engines, one broken: ids carry the container name
     "mariadb:a:replica:default,mariadb:b:replica:default"
 
 # ---- which hosts the check runs on -----------------------------------------------------------
+# A server installed on the host (/bin/sh stands in for /usr/sbin/mariadbd): the host's own database.
 for g in mysql_hosts database_hosts; do
-    INV="inv-$g.yml" scenario "host in $g: the check runs (no container named: the host's own database)" "" '{}' "mariadb:down" "is not running"
+    INV="inv-$g.yml" scenario "host in $g: the check runs (no container named, a server on the host: the host's own database)" "" \
+        '{"check_mariadb_server_paths":["/bin/sh"]}' "mariadb:down" "is not running"
 done
+
+# ---- auto: no server on the host, but podman (a unit that only starts the container is inactive) ----
+printf '#!/bin/sh\ncase "$1" in is-active) echo inactive;; esac\nexit 0\n' > "$work/bin/systemctl"; chmod +x "$work/bin/systemctl"
+scenario "auto: no server on the host, podman: the database container is found and checked (the inactive unit is ignored)" \
+    'snowdb docker.io/library/mariadb:11 running healthy\nweb nginx:1 running\n' '{"check_mariadb_server_paths":["/nonexistent/mariadbd"]}' "" \
+    "MariaDB 10.11.6 - container snowdb"
+scenario "auto: says why it looked for containers" 'snowdb mariadb:11 running\n' '{"check_mariadb_server_paths":["/nonexistent/mariadbd"]}' "" \
+    "No MariaDB/MySQL server is installed on"
+scenario "auto: no server and no database container: one clear warning" 'web nginx:1 running\n' '{"check_mariadb_server_paths":["/nonexistent/mariadbd"]}' \
+    "mariadb:no-container" "no MariaDB/MySQL server is installed on the host, and no MariaDB/MySQL container"
+scenario "auto with check_mariadb_service named: the host's own unit, no container search" 'snowdb mariadb:11 running\n' \
+    '{"check_mariadb_server_paths":["/nonexistent/mariadbd"],"check_mariadb_service":"mariadb"}' "mariadb:down" "service mariadb is inactive"
+scenario "discovery false: the host's own database, as before 0.6.3" 'snowdb mariadb:11 running\n' \
+    '{"check_mariadb_server_paths":["/nonexistent/mariadbd"],"check_mariadb_container_discover":false}' "mariadb:down" "is not running"
+# A unit that runs podman compose (the ServiceNow database's launcher): containers, even with a server on the host.
+printf '#!/bin/sh\ncase "$1" in show) echo "ExecStart={ path=/usr/bin/podman ; argv[]=/usr/bin/podman compose up -d ; }";; is-active) echo active;; esac\nexit 0\n' > "$work/bin/systemctl"
+scenario "auto: mariadb.service runs podman compose (active, exited): the container is checked, not the unit" \
+    'mariadb docker.mariadb.com/enterprise-server:10.6.28-24 running\n' '{"check_mariadb_server_paths":["/bin/sh"]}' "" \
+    "only starts podman containers"
+rm -f "$work/bin/systemctl"
 INV=inv-nogroup.yml scenario "host in no database group, nothing named: skipped" "" '{}' "" "the MariaDB/MySQL check is off"
 
 if [ "$fails" -eq 0 ]; then echo "all MariaDB checks passed"; else echo "$fails MariaDB check(s) FAILED"; exit 1; fi

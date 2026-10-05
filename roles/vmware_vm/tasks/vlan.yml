@@ -1,0 +1,82 @@
+---
+# VLAN: move network adapter vm_nic of each VM to the port group vm_portgroup (standard or
+# distributed). The guest keeps its IP settings: a different VLAN usually needs different ones.
+# vSphere identifies adapters only by their order, so adapters 1 .. vm_nic are passed (the ones
+# before it unchanged) and every other adapter is left alone.
+- name: VMware | port group and adapter given
+  ansible.builtin.assert:
+    that:
+      - vm_portgroup | trim | length > 0
+      - vm_nic | string is match('^[1-9][0-9]*$')
+    fail_msg: "Give vm_portgroup (the port group's name) and vm_nic (the adapter number: 1 = Network adapter 1)."
+    quiet: true
+
+- name: VMware | find the VMs
+  ansible.builtin.include_tasks: prepare.yml
+
+- name: VMware | never the AAP server or a protected VM
+  ansible.builtin.include_tasks: guard.yml
+
+- name: VMware | each VM has that adapter, and the adapters before it can be passed unchanged
+  ansible.builtin.assert:
+    that:
+      - item.nics | length >= vm_nic | int
+      - item.nics[:vm_nic | int] | selectattr('adapter_type', 'none') | list | length == 0
+      - item.nics[:vm_nic | int - 1] | selectattr('network', 'none') | list | length == 0
+    fail_msg: >-
+      {{ item.name }}: {{ 'has ' ~ item.nics | length ~ ' network adapter(s), there is no adapter ' ~ vm_nic
+         if item.nics | length < vm_nic | int else
+         'an adapter up to number ' ~ vm_nic ~ ' is of a type or on a network (NSX opaque) this job cannot pass on unchanged: change it in vCenter' }}.
+      Nothing was changed.
+    quiet: true
+  loop: "{{ _vm_found }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: VMware | move the adapter
+  block:
+    - name: VMware | adapter {{ vm_nic }} to port group {{ vm_portgroup }}
+      vmware.vmware.vm:
+        moid: "{{ item.moid }}"
+        datacenter: "{{ item.datacenter }}"
+        validate_certs: "{{ vmware_validate_certs | bool }}"
+        network_adapters: >-
+          {%- set out = [] -%}
+          {%- for n in item.nics[: vm_nic | int] -%}
+          {%-   set _ = out.append({'network': vm_portgroup | trim if loop.last else n.network}) -%}
+          {%- endfor -%}
+          {{ out }}
+        network_adapters_remove_unmanaged: false
+        allow_power_cycling: false
+      loop: "{{ _vm_found }}"
+      loop_control:
+        label: "{{ item.name }}: {{ item.nics[vm_nic | int - 1].label | default('') }} ({{ item.nics[vm_nic | int - 1].summary | default('') }}) -> {{ vm_portgroup }}"
+      register: _vm_vlan
+  rescue:
+    - name: VMware | why it failed
+      ansible.builtin.fail:
+        msg: >-
+          {%- set bad = ansible_failed_result.results | default([ansible_failed_result]) | selectattr('failed', 'defined') | selectattr('failed') | list -%}
+          {%- set done = ansible_failed_result.results | default([]) | selectattr('changed', 'defined') | selectattr('changed') | map(attribute='item.name') | list -%}
+          {%- set why = bad | map('dict2items') | map('selectattr', 'key', 'in', ['msg', 'module_stderr', 'exception']) | map('map', attribute='value')
+                        | map('map', 'string') | map('join', ' ') | list -%}
+          {%- if why | select('search', "NetworkAdapterPortgroup' object has no attribute") | list -%}
+          Moving a network adapter between a STANDARD switch port group and a DISTRIBUTED one is not possible with
+          the vmware.vmware collection (its vm module fails on it): do that one in vCenter (Edit Settings > Network
+          adapter). Moves within the same kind of switch work.
+          {%- else -%}
+          The change failed: {{ bad | map(attribute='msg') | join(' | ') | truncate(400) }}
+          {%- endif %}
+          Not changed: {{ bad | map(attribute='item.name', default='?') | join(', ') or '?' }}.{{ ' Changed: ' ~ done | join(', ') ~ '.' if done else '' }}
+
+- name: VMware | done
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_report_subject: "VM VLAN change to {{ vm_portgroup }}: {{ _vm_found | map(attribute='name') | join(', ') | truncate(60) }}"
+    _vm_report_lines: >-
+      {%- set out = [] -%}
+      {%- for r in _vm_vlan.results -%}
+      {%-   set _ = out.append(r.item.name ~ ': ' ~ r.item.nics[vm_nic | int - 1].label ~ ' (was ' ~ r.item.nics[vm_nic | int - 1].summary ~ ') '
+                               ~ (('would move' if ansible_check_mode else 'moved') if r.changed else 'already on') ~ ' ' ~ vm_portgroup) -%}
+      {%- endfor -%}
+      {{ out }}

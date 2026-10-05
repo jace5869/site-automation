@@ -1,0 +1,15 @@
+---
+# VM RESTART (vCenter). Restart VMs through vCenter. guest (default) = the operating system
+# restarts itself through VMware Tools; vm_power_mode: hard = a reset. Never the AAP server
+# (roles/vmware_vm/tasks/guard.yml).
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_reboot.yml -e '{"vm_names": ["web01"]}'
+- name: VM restart
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM restart
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: reboot.yml

@@ -1,0 +1,13 @@
+---
+# Test harness: email one report through roles/site_email. Not a shipped playbook.
+- name: Email a test report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Send it
+      ansible.builtin.include_role:
+        name: site_email
+      vars:
+        _report_subject: "Test report"
+        _report_body: "line one\nline two: DC0_H0_VM1\n.leading dot line"

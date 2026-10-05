@@ -23,6 +23,8 @@ check_logging_remote:
 # fapolicyd and audit forwarding are required on your hosts (STIG)
 check_fapolicyd_required: true
 check_auditd_remote_required: false
+# The vulnerability scanner's account: expected to make many audit records, not counted as excessive
+check_auditd_exclude_accounts: [scanner-svc]
 
 # Accounts: the account AAP logs in with may use sudo without a password, and its password
 # expiry matters (automation stops when it expires).

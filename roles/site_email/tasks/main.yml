@@ -1,0 +1,43 @@
+---
+# Email one report. Input: _report_subject, _report_body (text). Nothing happens when report_email_to
+# is empty. In a dry run (Check) nothing is sent: the job says what it would send.
+- name: Email | who gets the report
+  ansible.builtin.set_fact:
+    _email_to: >-
+      {{ ((report_email_to | replace(',', ' ') | replace(';', ' ')).split() if report_email_to is string
+          else report_email_to) | map('string') | map('trim') | select | unique | list }}
+    _email_cc: >-
+      {{ ((report_email_cc | replace(',', ' ') | replace(';', ' ')).split() if report_email_cc is string
+          else report_email_cc) | map('string') | map('trim') | select | unique | list }}
+
+- name: Email | the mail settings are complete
+  ansible.builtin.assert:
+    that:
+      - report_email_smtp_host | trim | length > 0
+      - report_email_from | trim | length > 0
+      - report_email_security in ['starttls', 'ssl', 'none']
+    fail_msg: >-
+      To email the report, set report_email_smtp_host (your mail relay) and report_email_from (the
+      sender address){{ '' if report_email_security in ['starttls', 'ssl', 'none'] else ', and report_email_security to starttls, ssl or none' }}.
+      docs/VMWARE.md, "Email the report".
+    quiet: true
+  when: _email_to | length > 0
+
+- name: Email | send the report to {{ _email_to | join(', ') }}
+  site_mail:
+    host: "{{ report_email_smtp_host | trim }}"
+    port: "{{ report_email_smtp_port | int }}"
+    security: "{{ report_email_security }}"
+    sender: "{{ report_email_from | trim }}"
+    to: "{{ _email_to }}"
+    cc: "{{ _email_cc }}"
+    subject: "{{ (report_email_subject_prefix ~ ' ' if report_email_subject_prefix else '') ~ _report_subject }}"
+    body: "{{ _report_body }}"
+    ca_path: "{{ report_email_ca_path | default(omit, true) }}"
+  when: _email_to | length > 0
+  register: _email_sent
+
+- name: Email | result
+  ansible.builtin.debug:
+    msg: "{{ _email_sent.msg }}"
+  when: _email_to | length > 0

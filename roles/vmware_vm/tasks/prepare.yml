@@ -1,0 +1,83 @@
+---
+# First steps of every VM job: a vCenter credential is attached, the VM names, and what vCenter
+# says about each VM. Output: _vm_found, one record per VM (plugins/filter: vm_facts).
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.assert:
+    that: lookup('ansible.builtin.env', 'VMWARE_HOST') | length > 0
+    fail_msg: >-
+      No vCenter to talk to: attach a credential of type "VMware vCenter" to this job template
+      (it gives the job VMWARE_HOST, VMWARE_USER and VMWARE_PASSWORD). docs/VMWARE.md
+    quiet: true
+
+- name: VMware | the VM names
+  ansible.builtin.set_fact:
+    # a list, or (from a survey) text: one per line, or separated by commas
+    _vm_names: >-
+      {{ ((vm_names | replace(',', '\n')).splitlines() if vm_names is string else vm_names)
+         | map('string') | map('trim') | select | unique | list }}
+
+- name: VMware | exact VM names given
+  ansible.builtin.assert:
+    that:
+      - _vm_names | length > 0
+      - _vm_names | select('search', '[*?]') | list | length == 0
+    fail_msg: >-
+      Give the VMs by their exact names in vCenter (vm_names; in the survey one per line).
+      {{ 'Wildcards (* ?) are not accepted: ' ~ _vm_names | select('search', '[*?]') | join(', ') if _vm_names else 'None given.' }}
+    quiet: true
+
+- name: VMware | find each VM in vCenter
+  vmware.vmware.vm_info:
+    name: "{{ item }}"
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    schema: vsphere
+    properties: [name, config.template, config.annotation, config.firmware, config.guestFullName,
+                 config.bootOptions.efiSecureBootEnabled, config.hardware.device, guest.hostName,
+                 guest.ipAddress, guest.net, guest.toolsRunningStatus, runtime.powerState]
+  loop: "{{ _vm_names }}"
+  register: _vm_info
+  check_mode: false
+
+- name: VMware | each name is exactly one VM
+  ansible.builtin.assert:
+    that: item.vms | default([]) | length == 1
+    fail_msg: >-
+      {{ 'No VM is named ' ~ item.item ~ ' in vCenter (names are exact, upper/lower case included).'
+         if item.vms | default([]) | length == 0 else
+         (item.vms | length) ~ ' VMs are named ' ~ item.item ~ ': rename one in vCenter, or (when they are in different datacenters) set vmware_datacenter.' }}
+    quiet: true
+  loop: "{{ _vm_info.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: VMware | each VM's ID and datacenter
+  vmware.vmware.vm_info:
+    name: "{{ item }}"
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  loop: "{{ _vm_names }}"
+  register: _vm_summary
+  check_mode: false
+
+- name: VMware | the VMs
+  ansible.builtin.set_fact:
+    # the changes below name each VM by its ID (moid) in its datacenter: never a same-named VM elsewhere
+    _vm_found: >-
+      {%- set out = [] -%}
+      {%- for r in _vm_info.results -%}
+      {%-   set v = r.vms[0] | vm_facts(_vm_summary.results[loop.index0].vms[0]) -%}
+      {%-   set _ = out.append(v | combine({'datacenter': v.datacenter or vmware_datacenter | default('', true) or ''})) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: VMware | each VM's datacenter is known
+  ansible.builtin.assert:
+    that: item.datacenter | length > 0
+    fail_msg: >-
+      Could not tell which datacenter {{ item.name }} is in (from its vCenter folder path): set vmware_datacenter
+      to its datacenter's name.
+    quiet: true
+  loop: "{{ _vm_found }}"
+  loop_control:
+    label: "{{ item.name }}"

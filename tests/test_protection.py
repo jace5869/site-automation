@@ -74,6 +74,18 @@ for f in ("playbooks/act_fix_approved.yml", "roles/service_watch/tasks/run_fixes
     check("apply_guard.yml" in (root / f).read_text(), f"{f}: runs approved commands only through the apply-time guard")
 check("_apply_refuse" in load("roles/site_findings/vars/main.yml"), "the guard pattern lives in one place (roles/site_findings/vars)")
 
+# VMware jobs (restart, shut down, VLAN change) never touch the AAP VM: literal groups in the condition,
+# checked before the change in each of them.
+vguard = (root / "roles/vmware_vm/tasks/guard.yml").read_text()
+check("item.ids | intersect(((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | host_ids(hostvars)) | length == 0" in vguard,
+      "VMware guard: the AAP VM is refused through the literal groups aap / aap_hosts")
+check("((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | length > 0" in vguard,
+      "VMware guard: refuses when the inventory cannot say which VM is AAP")
+check(AAP <= set(load("roles/vmware_vm/defaults/main.yml")["vmware_protected_groups"]), "roles/vmware_vm/defaults: protected groups list AAP")
+for f in ("reboot.yml", "shutdown.yml", "vlan.yml"):
+    txt = (root / "roles/vmware_vm/tasks" / f).read_text()
+    check("guard.yml" in txt and txt.index("guard.yml") < txt.index("vmware.vmware.vm"), f"roles/vmware_vm/tasks/{f}: the AAP guard runs before the change")
+
 for p in sorted((root / "playbooks/group_vars").glob("*.yml")) + [root / "inventories/example/group_vars/aap_hosts.yml"]:
     txt = p.read_text()
     live = [l for l in txt.splitlines() if re.match(r"^(patch_never|site_act_diagnose_only)", l)]

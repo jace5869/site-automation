@@ -1,0 +1,30 @@
+---
+# Restart, shut down and VLAN change never touch the AAP server: the job would cut off the system
+# running it, and AAP must never be restarted from AAP. The literal groups aap / aap_hosts are in
+# the conditions themselves, so no setting or extra variable can remove them.
+# Input: _vm_found.
+- name: VMware | this inventory says which server is AAP
+  ansible.builtin.assert:
+    that: >-
+      ((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | length > 0
+      or vmware_protected_vms | length > 0
+    fail_msg: >-
+      Refused: this job cannot tell which VM is the AAP server, so it will not restart, shut down or
+      re-network anything. Run the template with your inventory that has the group aap (or
+      aap_hosts), and/or list the AAP VM's name in vmware_protected_vms.
+    quiet: true
+
+- name: VMware | never the AAP server or a protected VM
+  ansible.builtin.assert:
+    that:
+      - item.ids | intersect(((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | host_ids(hostvars)) | length == 0
+      - item.ids | intersect(vmware_protected_groups | select('in', groups) | map('extract', groups) | flatten | host_ids(hostvars)) | length == 0
+      - item.name | lower not in vmware_protected_vms | map('string') | map('lower') | list
+    fail_msg: >-
+      Refused: {{ item.name }} is the AAP server or a protected VM (groups
+      {{ (['aap', 'aap_hosts'] + vmware_protected_groups) | unique | join(', ') }}, or vmware_protected_vms;
+      matched by VM name, guest host name or IP address). Nothing was changed.
+    quiet: true
+  loop: "{{ _vm_found }}"
+  loop_control:
+    label: "{{ item.name }}"

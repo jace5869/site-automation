@@ -22,7 +22,9 @@
 #   logging      journal kept on disk, remote log server reachable, rsyslog queue, error rate
 #   selinux      enforcing, config matches, custom permissive domains, AVC denials, booleans
 #   fapolicyd    running, enforcing, config/trust database OK, denials
-#   auditd       running, rules loaded, events lost, audit log space, remote forwarding
+#   auditd       running, rules loaded, events lost, audit log space, remote forwarding; how much is
+#                audited (by account, rule and program; a scanner's account can be left out), how far
+#                back the logs reach, records dropped on the way to the SIEM, rules that hide an account
 #   accounts     extra UID 0, empty passwords, inactive accounts, NOPASSWD sudo, expiring passwords
 #   certs        certificate files, keystores and TLS endpoints that expire soon
 #   patching     pending (security) updates, reboot needed, days since the last update

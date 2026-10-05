@@ -1,0 +1,14 @@
+---
+# VM VLAN CHANGE (vCenter). Move a VM network adapter (vm_nic, 1 = Network adapter 1) to another
+# port group (vm_portgroup). Other adapters are not touched. Never the AAP server.
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_vlan.yml -e '{"vm_names": ["web01"]}'
+- name: VM VLAN change
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM VLAN change
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: vlan.yml

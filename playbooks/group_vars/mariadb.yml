@@ -16,4 +16,6 @@
 # check_mariadb_container: CHANGE-ME                  # one container ...
 # check_mariadb_containers: [CHANGE-ME, CHANGE-ME-2]  # ... or several on the same host
 # check_mariadb_container_discover: true              # ... or find every mariadb/mysql/percona container
+#   (with none of them: no database server on the host, or a mariadb.service that runs podman,
+#    and the container is found by itself - 0.7.0 and later)
 # check_mariadb_container_user: CHANGE-ME             # rootless: the account that owns the containers

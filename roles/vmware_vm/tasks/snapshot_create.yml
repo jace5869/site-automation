@@ -1,0 +1,40 @@
+---
+# TAKE A SNAPSHOT of each VM - without memory (the disks only; the VM keeps running and is not
+# paused to save its memory). The description records the AAP job and user.
+- name: VMware | find the VMs
+  ansible.builtin.include_tasks: prepare.yml
+
+- name: VMware | the snapshot name
+  ansible.builtin.set_fact:
+    _vm_snap_name: "{{ vm_snapshot_name | trim or 'aap-' ~ now(fmt='%Y%m%d-%H%M') }}"
+    _vm_snap_desc: >-
+      {{ (vm_snapshot_description | trim ~ ' ') if vm_snapshot_description | trim else '' }}[AAP job
+      {{ awx_job_id | default(tower_job_id | default('local')) }}, {{ awx_user_name | default(tower_user_name | default(lookup('ansible.builtin.env', 'USER') or 'unknown')) }},
+      {{ now(fmt='%Y-%m-%d %H:%M') }}]
+
+- name: VMware | snapshot {{ _vm_snap_name }} (no memory)
+  vmware.vmware.vm_snapshot:
+    moid: "{{ item.moid }}"
+    datacenter: "{{ item.datacenter }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    state: present
+    snapshot_name: "{{ _vm_snap_name }}"
+    description: "{{ _vm_snap_desc }}"
+    memory_dump: false
+    quiesce: "{{ vm_snapshot_quiesce | bool }}"
+  loop: "{{ _vm_found }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: _vm_snap
+
+- name: VMware | done
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_report_subject: "VM snapshot {{ _vm_snap_name }}: {{ _vm_found | map(attribute='name') | join(', ') | truncate(70) }}"
+    _vm_report_lines:
+      - >-
+        {{ 'Would take' if ansible_check_mode else 'Took' }} snapshot "{{ _vm_snap_name }}" (no memory) of:
+        {{ _vm_snap.results | selectattr('changed') | map(attribute='item.name') | join(', ') or 'none' }}.
+        {{ ('Already had a snapshot with that name (unchanged): ' ~ _vm_snap.results | rejectattr('changed') | map(attribute='item.name') | join(', '))
+           if _vm_snap.results | rejectattr('changed') | list else '' }}
+      - "Description: {{ _vm_snap_desc }}"

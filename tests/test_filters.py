@@ -356,5 +356,45 @@ class WatchAllowPatterns(unittest.TestCase):
             self.assertFalse(any(p.match(c) for p in pats), c)
 
 
+class VmFacts(unittest.TestCase):
+    VM = {"name": "Web01.example.mil", "runtime": {"powerState": "poweredOn"},
+          "config": {"template": False, "firmware": "efi", "annotation": "owner: ops",
+                     "bootOptions": {"efiSecureBootEnabled": True},
+                     "hardware": {"device": [
+                         {"_vimtype": "vim.vm.device.VirtualDisk", "key": 2000},
+                         {"_vimtype": "vim.vm.device.VirtualVmxnet3", "macAddress": "00:50:56:aa:bb:01",
+                          "deviceInfo": {"label": "Network adapter 1", "summary": "DVSwitch: 50 2a"},
+                          "backing": {"_vimtype": "vim.vm.device.VirtualEthernetCard.DistributedVirtualPortBackingInfo",
+                                      "port": {"portgroupKey": "dvportgroup-12", "switchUuid": "50 2a"}}},
+                         {"_vimtype": "vim.vm.device.VirtualE1000e", "macAddress": "00:50:56:aa:bb:02",
+                          "deviceInfo": {"label": "Network adapter 2", "summary": "VM Network"},
+                          "backing": {"_vimtype": "vim.vm.device.VirtualEthernetCard.NetworkBackingInfo",
+                                      "deviceName": "VM Network", "network": "vim.Network:network-7"}}]}},
+          "guest": {"hostName": "WEB01.example.mil", "ipAddress": "10.1.2.3", "toolsRunningStatus": "guestToolsRunning",
+                    "net": [{"ipAddress": ["10.1.2.3", "fe80::1"]}]}}
+
+    def test_record(self):
+        r = f.vm_facts(self.VM, {"moid": "vm-42", "hw_folder": "/DC1/vm/web"})
+        self.assertEqual((r["moid"], r["datacenter"]), ("vm-42", "DC1"))
+        self.assertEqual(f.vm_facts(self.VM, {"hw_folder": "/Sites/East/DC2/vm"})["datacenter"], "DC2")
+        self.assertIsNone(f.vm_facts(self.VM)["datacenter"])
+        self.assertEqual((r["name"], r["power"], r["firmware"], r["secure_boot"], r["template"]),
+                         ("Web01.example.mil", "poweredOn", "efi", True, False))
+        self.assertEqual(r["ids"], ["10.1.2.3", "fe80::1", "web01"])
+        self.assertEqual([(n["index"], n["adapter_type"], n["network"], n["kind"]) for n in r["nics"]],
+                         [(1, "vmxnet3", "dvportgroup-12", "dvs"), (2, "e1000e", "network-7", "standard")])
+
+    def test_empty_and_bios(self):
+        r = f.vm_facts({"name": "x", "config": {"firmware": "bios", "bootOptions": {"efiSecureBootEnabled": None}}})
+        self.assertEqual((r["secure_boot"], r["nics"], r["ids"], r["annotation"]), (False, [], ["x"], ""))
+        self.assertEqual(f.vm_facts(None)["ids"], [])
+
+    def test_host_ids(self):
+        hv = {"aap01.example.mil": {"ansible_host": "10.0.0.5"}, "aap02": {}}
+        self.assertEqual(f.host_ids(["aap01.example.mil", "aap02"], hv), ["10.0.0.5", "aap01", "aap02"])
+        self.assertEqual(f.host_ids([], hv), [])
+        self.assertEqual(f.host_ids(["AAP03.example.mil"]), ["aap03"])
+
+
 if __name__ == "__main__":
     unittest.main()

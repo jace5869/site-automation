@@ -1,0 +1,17 @@
+---
+# EMAIL A REPORT through your mail relay (SMTP). Off until report_email_to has an address. Used by
+# the VMware jobs (docs/VMWARE.md). Set these in playbooks/group_vars/all.yml, in a job template's
+# Variables, or as survey questions. If the relay needs a login, attach an "SMTP relay" credential
+# (aap/credential_types/smtp_relay.yml) - never put a password in these settings.
+
+# Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no email.
+report_email_to: []
+report_email_cc: []
+report_email_from: ""                    # the sender, e.g. aap-noreply@yoursite.mil
+report_email_smtp_host: ""               # your mail relay, e.g. smtp.yoursite.mil
+report_email_smtp_port: 25               # 25 or 587 with starttls, 465 with ssl
+# starttls = encrypt after connecting (the relay must offer it); ssl = encrypted from the start (port
+# 465); none = not encrypted (only for a relay without encryption; then no login is sent).
+report_email_security: starttls
+report_email_ca_path: ""                 # a CA file that signed the relay's certificate (empty = the CAs the execution environment trusts)
+report_email_subject_prefix: "[AAP]"
