@@ -1,0 +1,16 @@
+---
+# VM DATASTORE REPORT (vCenter). Read-only: every datastore (or those of vmware_datacenter) with
+# capacity, free space, used and provisioned %, state - the fullest first; those at
+# vm_datastore_warn_pct (80) / vm_datastore_crit_pct (90) % used listed apart. Emailed when
+# report_email_to is set. Stays green unless vm_datastore_fail: true.
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_datastore_report.yml
+- name: VM datastore report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM datastore report
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: datastores.yml

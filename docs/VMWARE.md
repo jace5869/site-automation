@@ -1,6 +1,6 @@
 # VMware jobs (vCenter)
 
-Seven small jobs for virtual machines, done through vCenter (they replace the vCenter runbooks of
+Small jobs for virtual machines, done through vCenter (they replace the vCenter runbooks of
 System Center Orchestrator):
 
 | Job template | Playbook | What it does |
@@ -12,6 +12,7 @@ System Center Orchestrator):
 | VM - notes | `playbooks/vm_notes.yml` | edits the VM's Notes in vCenter: append a line (with date and user), replace, or clear. Prints the old notes |
 | VM - change VLAN | `playbooks/vm_vlan.yml` | moves one network adapter to another port group (VLAN). The VM's other adapters are not touched |
 | VM - secure boot report | `playbooks/vm_secure_boot_report.yml` | read-only: every VM's firmware and secure boot. Lists BIOS VMs and EFI VMs with secure boot off separately |
+| VM - datastore report | `playbooks/vm_datastore_report.yml` | read-only: every datastore's capacity, free space, used and provisioned %; the ones at 80 / 90 % used listed apart |
 
 They run on the AAP side and talk to vCenter. They never log in to the VMs.
 
@@ -148,9 +149,12 @@ Surveys (**Survey > Add**, then switch the survey **on**):
 | change VLAN | Port group (`vm_portgroup`) | Text, required | its name as vCenter shows it |
 | any (optional) | Email the result to (`report_email_to`) | Text, not required | empty = no email ("Email the report" below) |
 
-The secure boot report needs no survey. Schedule it weekly: it fails when a VM is BIOS or has
-secure boot off, so a workflow can open a ticket (`vm_secure_boot_fail: false` makes it report
-only). `vm_secure_boot_folder` limits it to one vCenter folder.
+The secure boot and datastore reports need no survey. Schedule them weekly with `report_email_to`
+in their Variables. They stay green when they find VMs or datastores to fix - the report and
+email say which; `vm_secure_boot_fail: true` / `vm_datastore_fail: true` mark the job failed
+instead, for a workflow that opens a ticket. `vm_secure_boot_folder` limits the secure boot report
+to one vCenter folder; `vmware_datacenter` limits either report to one datacenter;
+`vm_datastore_warn_pct` / `vm_datastore_crit_pct` (80 / 90) set the datastore thresholds.
 
 ## Email the report
 
@@ -200,9 +204,10 @@ Several addresses: separate them with commas. Copies: `report_email_cc`, the sam
 
 **Step 5 - test it** with the secure boot report: it only reads, so it is safe to run any time.
 Launch it with `report_email_to` set. In the job output, the task **Email | result** says
-`emailed "[AAP] VMware secure boot report: ..." to vmteam@yoursite.mil`, and the email arrives. The
-job may still end red: the report fails when VMs need fixing. Add `vm_secure_boot_fail: false` to
-the template's Variables if you want it green.
+`emailed "[AAP] VMware secure boot report: ..." to vmteam@yoursite.mil`, and the email arrives.
+
+The other reports (health checks, certificate reports, ...) email the same way:
+[EMAIL_REPORTS.md](EMAIL_REPORTS.md) lists them, and explains when a report job is green or red.
 
 **What arrives:** a formatted email, subject `[AAP] VMware secure boot report: 29 VM(s) to fix` (or
 `[AAP] VM restart: web01`, `[AAP] VM snapshot before-patch: web01`, ...). The secure boot report has

@@ -395,6 +395,13 @@ class VmFacts(unittest.TestCase):
         self.assertEqual(f.vm_where(r), "Web01.example.mil  folder /DC1/vm/web  on esx01  guest WEB01.example.mil 10.1.2.3  (poweredOn, )".replace("(poweredOn, )", "(poweredOn, ?)"))
         self.assertEqual(f.vm_where({"name": "x"}), "x  (?, ?)")
 
+    def test_ds_row(self):
+        d = {"name": "ds1", "datacenter": "DC1", "cluster": "", "type": "VMFS", "capacity_gb": 100.0, "free_gb": 5.0,
+             "used_pct": 95.0, "provisioned_pct": 120.0, "accessible": True, "maintenance": "normal", "hosts": 3, "vms": 9}
+        self.assertEqual(f.vm_ds_row(d), ["ds1", "DC1", "", "VMFS", 100.0, 5.0, 95.0, 120.0, 3, 9, "ok"])
+        self.assertEqual(f.vm_ds_row(dict(d, accessible=False))[-1], "inaccessible")
+        self.assertEqual(f.vm_ds_row(dict(d, maintenance="inMaintenance"))[-1], "maintenance")
+
     def test_host_ids(self):
         hv = {"aap01.example.mil": {"ansible_host": "10.0.0.5"}, "aap02": {}}
         self.assertEqual(f.host_ids(["aap01.example.mil", "aap02"], hv), ["10.0.0.5", "aap01", "aap02"])
@@ -423,6 +430,34 @@ class ReportText(unittest.TestCase):
     def test_cells_on_one_line(self):
         t = f.report_text({"title": "T", "sections": [{"title": "S", "columns": ["A"], "rows": [["a\nb   c"]]}]})
         self.assertIn("a b c", t)
+
+
+class FindingsReport(unittest.TestCase):
+    W = {"check": "disk", "id": "disk:/var", "severity": "warning", "summary": "/var 86% full", "hint": "df -h /var"}
+    C = {"check": "services", "id": "svc:x", "severity": "critical", "summary": "x is down", "hint": "systemctl status x"}
+
+    def test_fleet(self):
+        r = f.findings_report({"web02": [self.W], "web01": [self.W, self.C], "db01": []}, "Health check",
+                              ["web09"], ["disk", "services", "disk"], [{"title": "Extra", "lines": ["e"]}])
+        self.assertEqual(r["title"], "Health check: 3 finding(s) on 2 of 3 host(s), 1 host(s) did not report")
+        self.assertEqual(r["status"], "critical")
+        self.assertEqual([(b["label"], b["value"], b.get("status")) for b in r["summary"]],
+                         [("Hosts checked", 3, None), ("Healthy", 1, "ok"), ("With findings", 2, "warning"),
+                          ("Critical", 1, "critical"), ("Warning", 2, "warning"), ("Did not report", 1, "warning")])
+        self.assertEqual([s["title"] for s in r["sections"]], ["Findings", "Did not report", "Extra", "Healthy (1)"])
+        self.assertEqual(r["sections"][0]["rows"][0], ["web01", "CRITICAL", "services", "x is down", "systemctl status x"])
+        self.assertEqual([x[0] for x in r["sections"][0]["rows"][1:]], ["web01", "web02"])
+        self.assertEqual(r["sections"][3]["text"], "db01")
+        self.assertEqual(r["footer"], "Checks run: disk, services")
+
+    def test_healthy_and_single(self):
+        r = f.findings_report({"a": [], "b": []}, "Health check")
+        self.assertEqual((r["title"], r["status"]), ("Health check: no findings - all 2 host(s) healthy", "ok"))
+        r = f.findings_report({"localhost": [self.W]}, "POA&M status")
+        self.assertEqual(r["title"], "POA&M status: 1 finding(s)")
+        self.assertEqual(r["sections"][0]["columns"], ["Severity", "Check", "Finding", "Look further"])
+        self.assertEqual([b["label"] for b in r["summary"]], ["Critical", "Warning"])
+        self.assertEqual(f.findings_report({"localhost": []}, "X")["sections"], [{"title": "Result", "lines": ["No findings."]}])
 
 
 if __name__ == "__main__":

@@ -39,7 +39,7 @@ own `playbooks/group_vars/all.yml` keeps its old settings until you comment them
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | MySQL 8.4 + STIG Manager + nginx (TLS) on podman/Quadlet |
 | **Windows** health check, troubleshoot, certificate report, connection test | `playbooks/win_*.yml` | the same for Windows servers over WinRM: disk, services, performance, time, network, event log, security, audit policy, accounts, certificates, patching ([docs/WINDOWS.md](docs/WINDOWS.md)) |
 | Windows patch | `playbooks/win_patch.yml` | install what Software Center (ConfigMgr) offers, one server at a time; **no automatic restart** unless `automatic_restarts: true`; every service back afterwards; maintenance windows respected |
-| **VMware (vCenter)**: restart, shut down, snapshot (no memory), delete snapshot, notes, change VLAN, secure boot report | `playbooks/vm_*.yml` | jobs on virtual machines through vCenter; restart / shut down / VLAN change never touch the AAP server's VM; dry run as *Check* ([docs/VMWARE.md](docs/VMWARE.md)) |
+| **VMware (vCenter)**: restart, shut down, snapshot (no memory), delete snapshot, notes, change VLAN, secure boot report, datastore report | `playbooks/vm_*.yml` | jobs on virtual machines through vCenter; restart / shut down / VLAN change never touch the AAP server's VM; dry run as *Check* ([docs/VMWARE.md](docs/VMWARE.md)) |
 | ACT for Windows - install | `playbooks/win_act_install.yml` | ACT on the Windows servers in `C:\ProgramData\act`: locked down to Administrators and SYSTEM, unblocked, SHA256-checked every run |
 
 ## Documentation
@@ -50,7 +50,7 @@ own `playbooks/group_vars/all.yml` keeps its old settings until you comment them
 | [docs/HOW_IT_FITS_TOGETHER.md](docs/HOW_IT_FITS_TOGETHER.md) | how code, inventory, variables, credentials and surveys fit; a setting's way from YAML to a host; updating the repository at work safely |
 | [docs/SETUP_AAP.md](docs/SETUP_AAP.md) | the setup, step by step: Git, credentials, project, inventory, templates, ServiceNow |
 | [docs/VMWARE.md](docs/VMWARE.md) | the VMware jobs: the collection the execution environment needs, the vCenter account and credential, one template per job with its survey |
-| [docs/EMAIL_REPORTS.md](docs/EMAIL_REPORTS.md) | emailed reports: the formatted (HTML) email, changing its look, emailing a report from any playbook |
+| [docs/EMAIL_REPORTS.md](docs/EMAIL_REPORTS.md) | emailed reports: which jobs email, setting it up, green or red when a report finds problems, the look, adding email to a playbook |
 | [docs/SERVICENOW_SETUP.md](docs/SERVICENOW_SETUP.md) | ServiceNow, step by step: the API account to ask for, the instance URL and API calls, firewall / proxy / DoD CA, the credential, a test ticket, and how to verify it in ServiceNow |
 | [docs/USING_YOUR_AAP_INVENTORY.md](docs/USING_YOUR_AAP_INVENTORY.md) | your inventory is already in AAP: the groups to add and which variables go on which group |
 | [docs/VARIABLES.md](docs/VARIABLES.md) | settings (variables): what you can set, where to put it (settings file, AAP Variables box, extra variables), and which place wins; with [docs/VARIABLES_REFERENCE.md](docs/VARIABLES_REFERENCE.md), every setting and its default (generated) |

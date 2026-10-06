@@ -4,9 +4,10 @@
 #   2. one syslog line per finding
 #   3. publish the result (set_stats) so later workflow steps (tickets, ACT) can use it
 #   4. a fleet summary, once, at the top of the job's end
-#   5. FAIL the host if it has findings (site_fail_on), or if ACT proposed a fix that waits for
+#   5. email it, once (report_email_to; roles/site_email; extra sections: site_report_sections)
+#   6. FAIL the host if it has findings (site_fail_on), or if ACT proposed a fix that waits for
 #      approval - this is what an AAP workflow reacts to
-# Steps 3 and 4 come before the failure on purpose: a failed host still publishes its result.
+# Steps 3 to 5 come before the failure on purpose: a failed host still publishes and emails its result.
 
 - name: Report | result for this host
   ansible.builtin.debug:
@@ -84,6 +85,32 @@
       {%- endfor -%}
       {{ out }}
   run_once: true
+
+- name: Report | email the report (report_email_to) - once for the job, from the AAP side, before any host fails
+  ansible.builtin.include_role:
+    name: site_email
+    apply:
+      delegate_to: localhost
+      run_once: true
+      become: false
+  vars:
+    # the email leaves from the controller (the execution environment), whatever the hosts are
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    _report: >-
+      {{ dict(ansible_play_hosts | zip(ansible_play_hosts | map('extract', hostvars) | map(attribute='site_findings', default=[])))
+         | findings_report(site_report_title | default(ansible_play_name),
+                           ansible_play_hosts_all | difference(ansible_play_hosts),
+                           ansible_play_hosts | map('extract', hostvars) | map(attribute='site_checks_run', default=[]) | flatten | unique | list,
+                           site_report_sections | default([])) }}
+  run_once: true
+  when: report_email_to | default([]) | length > 0
+
+- name: Report | no email
+  ansible.builtin.debug:
+    msg: "No email: report_email_to is not set (docs/EMAIL_REPORTS.md)."
+  run_once: true
+  when: report_email_to | default([]) | length == 0
 
 - name: Report | FAIL this host because it has findings (an AAP workflow's "on failure" path starts here)
   ansible.builtin.fail:

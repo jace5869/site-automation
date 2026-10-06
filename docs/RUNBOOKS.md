@@ -14,7 +14,8 @@ Runs the checks you pick on each host: a list of names, or the shortcuts:
 - `all` = both
 
 A host with a finding at a severity in `site_fail_on` (default: critical and warning) fails. That
-is what a workflow reacts to. A check that itself breaks becomes a warning finding (`the X check
+is what a workflow reacts to. A template that only emails its report to people: `site_fail_on: []`
+keeps the job green ([EMAIL_REPORTS.md](EMAIL_REPORTS.md)). A check that itself breaks becomes a warning finding (`the X check
 could not run: ...`, id `<check>:check-error`) and the other checks still run. That finding fails
 the host even when `site_fail_on` is `[critical]` (a check that did not run is not a healthy
 result); only `site_fail_on: []` never fails.

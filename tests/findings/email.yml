@@ -1,0 +1,22 @@
+---
+# Feeds site_findings' report step fixed findings on three hosts and emails the report (fake relay):
+# run_findings_test.sh checks one email for the job, its content, and pass/fail. become: true and a
+# broken interpreter for every host must not reach the email task, which runs on the controller.
+- name: Report step with findings on three hosts, emailed
+  hosts: all
+  gather_facts: false
+  become: true
+  tasks:
+    - name: The findings, as the check roles leave them (facts, so every host's are in hostvars)
+      ansible.builtin.set_fact:
+        site_findings: "{{ fs[inventory_hostname] | default([]) }}"
+        site_checks_run: [disk, services]
+        site_act_result: {}
+
+    - name: Report
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml
+      vars:
+        site_syslog: false
+        site_report_title: Health check

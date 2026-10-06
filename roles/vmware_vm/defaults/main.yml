@@ -48,4 +48,16 @@ vm_portgroup: ""                         # the port group (standard or distribut
 
 # Only the VMs in this vCenter folder ("" = every VM, or the ones in vm_names).
 vm_secure_boot_folder: ""
-vm_secure_boot_fail: true                # fail the job when a VM is not EFI with secure boot (so a workflow can react)
+# The job stays green (successful) when it finds VMs to fix: the report and email say what. true =
+# mark the job FAILED when a VM is BIOS or has secure boot off, so a workflow's "on failure" path
+# can react (open a ticket).
+vm_secure_boot_fail: false
+
+# ---- Datastore report ----
+
+# Used space (% of capacity): a datastore at or above these is listed as a warning / critical.
+vm_datastore_warn_pct: 80
+vm_datastore_crit_pct: 90
+# The job stays green when datastores are full: the report and email say which. true = mark the
+# job FAILED when one is at or above vm_datastore_warn_pct (or inaccessible), for workflows.
+vm_datastore_fail: false

@@ -394,11 +394,11 @@ File: `roles/site_act/defaults/main.yml`
 
 File: `roles/site_email/defaults/main.yml`
 
-> EMAIL A REPORT through your mail relay (SMTP). Off until report_email_to has an address. Used by the VMware jobs (docs/VMWARE.md). Set these in playbooks/group_vars/all.yml, in a job template's Variables, or as survey questions. If the relay needs a login, attach an "SMTP relay" credential (aap/credential_types/smtp_relay.yml) - never put a password in these settings.
+> EMAIL A REPORT through your mail relay (SMTP). Off until report_email_to has an address. Used by every report job: health checks, certificate reports, database health, POA&M, ServiceNow health, troubleshooting, the VMware jobs (docs/EMAIL_REPORTS.md). The relay settings belong in playbooks/group_vars/all.yml. If the relay needs a login, attach an "SMTP relay" credential (aap/credential_types/smtp_relay.yml) - never put a password in these settings.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `report_email_to` | `[]` | Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no email. |
+| `report_email_to` | `[]` | Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails. |
 | `report_email_cc` | `[]` |  |
 | `report_email_from` | (empty) | the sender, e.g. aap-noreply@yoursite.mil |
 | `report_email_smtp_host` | (empty) | your mail relay, e.g. smtp.yoursite.mil |
@@ -492,7 +492,10 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_nic` | `1` | Which adapter: 1 = Network adapter 1, 2, ... |
 | `vm_portgroup` | (empty) | the port group (standard or distributed) to move it to |
 | `vm_secure_boot_folder` | (empty) | Only the VMs in this vCenter folder ("" = every VM, or the ones in vm_names). |
-| `vm_secure_boot_fail` | `true` | fail the job when a VM is not EFI with secure boot (so a workflow can react) |
+| `vm_secure_boot_fail` | `false` | The job stays green (successful) when it finds VMs to fix: the report and email say what. true = mark the job FAILED when a VM is BIOS or has secure boot off, so a workflow's "on failure" path can react (open a ticket). |
+| `vm_datastore_warn_pct` | `80` | Used space (% of capacity): a datastore at or above these is listed as a warning / critical. |
+| `vm_datastore_crit_pct` | `90` |  |
+| `vm_datastore_fail` | `false` | The job stays green when datastores are full: the report and email say which. true = mark the job FAILED when one is at or above vm_datastore_warn_pct (or inaccessible), for workflows. |
 
 ## win_act
 

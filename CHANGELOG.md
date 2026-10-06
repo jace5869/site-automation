@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.8.0 — 2026-10-06
+
+- **Every report job can email its report** - formatted, one email per run whatever the number
+  of hosts: health check (Linux and Windows), database health, certificate reports (with every
+  certificate, soonest first), POA&M status, ServiceNow health, troubleshooting, apply-approved-fix,
+  and the VMware jobs. Title with the counts, summary boxes, the findings table (critical first),
+  hosts that did not report, healthy hosts. Sent from the AAP side before any host is marked failed,
+  so a red job still emails. Set `report_email_to` on each template ([docs/EMAIL_REPORTS.md](docs/EMAIL_REPORTS.md)).
+- **VMware datastore report** (`playbooks/vm_datastore_report.yml`): every datastore's capacity,
+  free space, used and provisioned %, state, hosts and VMs - the fullest first; those at
+  `vm_datastore_warn_pct` / `vm_datastore_crit_pct` (80 / 90) % used listed apart. Read-only;
+  emailed; artifacts `vm_datastores`. Needs only pyVmomi (no extra collection).
+- **Green when a report finds problems, where that is the point:** the VM secure boot report now
+  stays green by default (`vm_secure_boot_fail: true` = red, as before), the datastore report too.
+  Health checks and the other check reports stay red on findings (the ticket workflows start
+  there); `site_fail_on: []` on a template makes it green, report only. docs/EMAIL_REPORTS.md,
+  "Green or red".
+- A job without `report_email_to` says `No email: report_email_to is not set` (once).
+
+**Upgrading from 0.7.1:**
+- `report_email_to` in your `playbooks/group_vars/all.yml` now makes **every** report job email,
+  each run. Keep the relay settings there and move `report_email_to` to the templates whose report
+  you want.
+- The VM secure boot report is green now when it finds VMs to fix. If a workflow relied on it
+  failing, add `vm_secure_boot_fail: true` to that template.
+
 ## 0.7.1 — 2026-10-06
 
 - **Formatted (HTML) report emails, for any playbook.** `roles/site_email` now sends a report as a

@@ -58,10 +58,12 @@
 # aap_hosts). Name it here too when its VM name differs from its host name - and vCenter's own VM:
 # vmware_protected_vms: [CHANGE-ME-aap-vm-name, CHANGE-ME-vcenter-vm-name]
 # vmware_validate_certs: true                     # false only until the execution environment trusts vCenter's CA
-# Email the VMware reports (docs/VMWARE.md, "Email the report"). Off until report_email_to has an address:
+
+# ---- Emailed reports (docs/EMAIL_REPORTS.md) ---------------------------------------------------
+# The mail relay for every job that emails a report. Who gets a report: report_email_to in each
+# TEMPLATE's Variables (here, every report job would email those people every time it runs).
 # report_email_smtp_host: CHANGE-ME.yoursite.mil   # your mail relay
 # report_email_from: CHANGE-ME@yoursite.mil        # the sender
-# report_email_to: [CHANGE-ME@yoursite.mil]        # or per template / survey: report_email_to: a@x.mil, b@x.mil
 # report_email_security: starttls                  # starttls (25/587) | ssl (465, with report_email_smtp_port: 465) | none
 
 # ---- The account AAP logs in as -------------------------------------------------------------
