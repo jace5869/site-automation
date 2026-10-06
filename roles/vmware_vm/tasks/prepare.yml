@@ -2,12 +2,7 @@
 # First steps of every VM job: a vCenter credential is attached, the VM names, and what vCenter
 # says about each VM. Output: _vm_found, one record per VM (plugins/filter: vm_facts).
 - name: VMware | a vCenter credential is attached
-  ansible.builtin.assert:
-    that: lookup('ansible.builtin.env', 'VMWARE_HOST') | length > 0
-    fail_msg: >-
-      No vCenter to talk to: attach a credential of type "VMware vCenter" to this job template
-      (it gives the job VMWARE_HOST, VMWARE_USER and VMWARE_PASSWORD). docs/VMWARE.md
-    quiet: true
+  ansible.builtin.include_tasks: credential.yml
 
 - name: VMware | the VM names
   ansible.builtin.set_fact:

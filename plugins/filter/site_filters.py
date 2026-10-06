@@ -39,10 +39,18 @@ watch_targets      service watch: the containers to watch - watch_containers fir
 
 vm_facts           VMware: one VM as vmware.vmware.vm_info returns it (schema vsphere; and the same
                    VM in schema summary, for its moid and datacenter) -> a short record: name,
-                   moid, datacenter, template, power, tools, firmware, secure_boot, annotation,
+                   moid, datacenter, folder, esxi_host, template, power, tools, firmware,
+                   secure_boot, annotation, ip, instance_uuid,
                    hostname, ids (the names and addresses it can be recognised by) and nics (in
                    vSphere order: label, adapter_type, network MOID, kind dvs/standard/opaque).
                        {{ _vm_info.vms[0] | vm_facts(_vm_summary.vms[0]) }}
+
+vm_where           one line telling VMs with the same name apart: name, folder, ESXi host, guest
+                   host name / IP, power state, guest OS.   {{ vm_record | vm_where }}
+
+report_text        a report (roles/site_email: title, summary, sections with tables or lines) as plain
+                   text with aligned columns - the text part of a report email.
+                       {{ _report | report_text(footer_line) }}
 
 host_ids           the names and addresses inventory hosts can be recognised by (inventory name
                    and ansible_host; host names without the domain, lower case).
@@ -736,7 +744,25 @@ def vm_facts(vm, summary=None):
             "secure_boot": bool((config.get("bootOptions") or {}).get("efiSecureBootEnabled")),
             "annotation": config.get("annotation") or "", "hostname": guest.get("hostName") or "",
             "guest_os": config.get("guestFullName") or guest.get("guestFullName") or "",
+            "ip": guest.get("ipAddress") or "", "instance_uuid": config.get("instanceUuid") or summary.get("instance_uuid"),
+            "folder": summary.get("hw_folder") or "", "esxi_host": summary.get("hw_esxi_host") or "",
             "ids": sorted(set(i for i in ids if i)), "nics": nics}
+
+
+def vm_where(v):
+    """One line that tells VMs with the same name apart: name, folder, ESXi host, guest name / IP,
+    power state and guest OS."""
+    v = v or {}
+    parts = [str(v.get("name") or "?")]
+    if v.get("folder"):
+        parts.append("folder " + str(v["folder"]))
+    if v.get("esxi_host"):
+        parts.append("on " + str(v["esxi_host"]))
+    guest = " ".join(str(x) for x in (v.get("hostname"), v.get("ip")) if x)
+    if guest:
+        parts.append("guest " + guest)
+    parts.append("(%s, %s)" % (v.get("power") or "?", v.get("guest_os") or "?"))
+    return "  ".join(parts)
 
 
 def host_ids(hosts, hostvars=None):
@@ -752,9 +778,51 @@ def host_ids(hosts, hostvars=None):
     return sorted(i for i in out if i)
 
 
+# ---- Reports (roles/site_email) -----------------------------------------------------------------
+def _cell(v):
+    return "" if v is None else " ".join(str(v).split())
+
+
+def report_text(report, footer=""):
+    """A report (roles/site_email: title, subtitle, summary, sections with columns/rows or lines,
+    footer) as plain text, tables in aligned columns."""
+    r = report or {}
+    title = str(r.get("title") or "Report")
+    out = [title, "=" * len(title)]
+    if r.get("subtitle"):
+        out.append(str(r["subtitle"]))
+    if r.get("summary"):
+        out.append("")
+        out += ["%s: %s" % (t.get("label", ""), t.get("value", "")) for t in r["summary"]]
+    for s in r.get("sections") or []:
+        head = str(s.get("title") or "")
+        if "rows" in s:
+            head += " (%d)" % len(s.get("rows") or [])
+        out += ["", "", head, "-" * len(head)]
+        if s.get("text"):
+            out.append(str(s["text"]))
+        if "columns" in s:
+            cols = [str(c) for c in s.get("columns") or []]
+            rows = [[_cell(c) for c in row] + [""] * (len(cols) - len(row)) for row in s.get("rows") or []]
+            if rows:
+                w = [max([len(c)] + [len(row[i]) for row in rows]) for i, c in enumerate(cols)]
+                fmt = lambda cells: "  ".join(c.ljust(w[i]) for i, c in enumerate(cells)).rstrip()
+                out += ["", fmt(cols), fmt(["-" * x for x in w])] + [fmt(row[:len(cols)]) for row in rows]
+            else:
+                out.append("None.")
+        out += ["- " + str(x) for x in s.get("lines") or [] if str(x).strip()]
+    out += ["", "--"]
+    if r.get("footer"):
+        out.append(str(r["footer"]))
+    if footer:
+        out.append(str(footer))
+    return "\n".join(out) + "\n"
+
+
 class FilterModule(object):
     def filters(self):
         return {"from_csv": from_csv, "days_until": days_until, "site_result": site_result,
                 "podman_discovery": podman_discovery, "podman_run_as": podman_run_as,
                 "watch_targets": watch_targets, "watch_fix_commands": watch_fix_commands,
-                "watch_allow_patterns": watch_allow_patterns, "vm_facts": vm_facts, "host_ids": host_ids}
+                "watch_allow_patterns": watch_allow_patterns, "vm_facts": vm_facts, "vm_where": vm_where, "host_ids": host_ids,
+                "report_text": report_text}

@@ -62,7 +62,7 @@ run() {
     for a in "$@"; do if [ "$a" = "--" ]; then seen=1; elif [ $seen -eq 0 ]; then args+=("$a"); else texts+=("$a"); fi; done
     (cd "$repo" && VMWARE_HOST=127.0.0.1 VMWARE_PORT=$port VMWARE_USER=user VMWARE_PASSWORD=pass \
         ANSIBLE_COLLECTIONS_PATH="$cols" ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False \
-        ANSIBLE_DEPRECATION_WARNINGS=False \
+        ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_SHOW_CUSTOM_STATS=True \
         "$ap" -i "${INV:-$work/inv.yml}" "playbooks/$pb" -e vmware_validate_certs=false \
         -e '{"awx_job_id": 4711, "awx_user_name": "operator1"}' "${args[@]}") > "$work/out.txt" 2>&1
     local rc=$?
@@ -113,9 +113,13 @@ run "survey text, one per line" ok vm_snapshot.yml -e "{\"vm_names\": \"DC0_H0_V
     env -u VMWARE_HOST "$ap" -i "$work/inv.yml" playbooks/vm_reboot.yml -e vm_names=x > "$work/out.txt" 2>&1)
 grep -q 'attach a credential of type' "$work/out.txt" && echo "ok   - no vCenter credential: says so" \
     || { echo "FAIL - no credential message"; fails=$((fails + 1)); }
+(cd "$repo" && ANSIBLE_COLLECTIONS_PATH="$cols" ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False \
+    env -u VMWARE_HOST "$ap" -i "$work/inv.yml" playbooks/vm_secure_boot_report.yml > "$work/out.txt" 2>&1)
+grep -q 'attach a credential of type' "$work/out.txt" && echo "ok   - secure boot report (every VM) without a vCenter credential: says so" \
+    || { echo "FAIL - report: no credential message"; grep -m2 -E 'ERROR|msg' "$work/out.txt"; fails=$((fails + 1)); }
 
 # ---- restart / shut down -------------------------------------------------------------------------
-run "dry run (check mode) restart: says what it would do" ok vm_reboot.yml --check -e vm_names=DC0_H0_VM1 -- "Would restart"
+run "dry run (check mode) restart: says what it would do" ok vm_reboot.yml --check -e vm_names=DC0_H0_VM1 -- "Would restart" '"vm_report"' '"dry_run": true' 
 run "restart through VMware Tools" ok vm_reboot.yml -e vm_names=DC0_H0_VM1 -- "Restart requested for (operating system restart through VMware Tools): DC0_H0_VM1"
 run "no VMware Tools: guest restart refused, with the hard option explained" fail vm_reboot.yml -e vm_names=DC0_C0_RP0_VM0 \
     -- "VMware Tools is not running in it" "vm_power_mode: hard"
@@ -175,10 +179,17 @@ check "  ...adapter 2 untouched" DC0_H0_VM1 "sorted((n['type'].split('Virtual')[
 # ---- secure boot report --------------------------------------------------------------------------
 # (vcsim cannot store secure boot ON; that case is in tests/test_filters.py)
 run "secure boot report: EFI with secure boot off and BIOS listed apart, job fails" fail vm_secure_boot_report.yml \
-    -- "SECURE BOOT OFF  DC0_C0_RP0_VM0" "BIOS             DC0_C0_RP0_VM1" "6 VM(s) (templates not counted): 0 EFI with secure boot, 2 EFI with secure boot OFF, 4 BIOS"
+    -- "SECURE BOOT OFF (fix: power the VM off" "  DC0_C0_RP0_VM0  folder /DC0/vm  on DC0_C0_H" "BIOS FIRMWARE (fix:" \
+       "  DC0_H0_VM0  folder /DC0/vm  on DC0_H0  guest aap01.example.mil 10.0.0.5  (poweredOn" "  dup  folder /DC0/vm/other" \
+       "6 VM(s) (templates not counted): 0 EFI with secure boot, 2 EFI with secure boot OFF, 4 BIOS"
 run "secure boot report, report only (vm_secure_boot_fail: false)" ok vm_secure_boot_report.yml -e vm_secure_boot_fail=false -- "EFI with secure boot OFF"
+grep -q '"secure_boot_off": \[' "$work/out.txt" && grep -A3 '"secure_boot_off"' "$work/out.txt" | grep -q '"name": "DC0_C0_RP0_VM0"' \
+    && grep -q '"vms": 6\b' "$work/out.txt" && grep -q '"secure_boot_on": 0\b' "$work/out.txt" && grep -q '"folder": "/DC0/vm/other"' "$work/out.txt" \
+    && grep -q '"vm_report"' "$work/out.txt" \
+    && echo "ok   -   ...the lists are job artifacts (vm_secure_boot, vm_report)" \
+    || { echo "FAIL -   ...artifacts"; sed -n '/CUSTOM STATS/,$p' "$work/out.txt" | head -30; fails=$((fails + 1)); }
 run "secure boot report for named VMs only" fail vm_secure_boot_report.yml -e vm_names=DC0_H0_VM1 \
-    -- "1 VM(s) (templates not counted): 0 EFI with secure boot, 1 EFI with secure boot OFF, 0 BIOS" "SECURE BOOT OFF  DC0_H0_VM1"
+    -- "1 VM(s) (templates not counted): 0 EFI with secure boot, 1 EFI with secure boot OFF, 0 BIOS" "  DC0_H0_VM1  folder /DC0/vm  on DC0_H0  guest web01.example.mil 10.0.0.20"
 
 # ---- email the result (roles/site_email; a fake mail relay without encryption) ---------------------
 smtp_port=$((port + 37))
@@ -190,11 +201,24 @@ mail="{\"report_email_to\": \"ops@example.mil, vmteam@example.mil\", \"report_em
        \"report_email_smtp_host\": \"127.0.0.1\", \"report_email_smtp_port\": $smtp_port, \"report_email_security\": \"none\"}"
 run "secure boot report emailed (and the job still fails on the findings)" fail vm_secure_boot_report.yml -e "$mail" -- "emailed"
 eml="$(ls "$work/mail"/*.eml 2>/dev/null | head -1)"
-if [ -n "$eml" ] && grep -q "Subject: \[AAP\] VMware secure boot report: 6 VM(s) to fix" "$eml" && grep -q "SECURE BOOT OFF  DC0_C0_RP0_VM0" "$eml" \
-   && grep -q "AAP job 4711, started by operator1" "$eml" && grep -q "X-Envelope-To: ops@example.mil,vmteam@example.mil" "$eml"; then
-    echo "ok   -   ...the email has the subject, the list, who ran it, both recipients"
+# the body as a mail client shows it (decoded), one line per line
+body="$work/body.txt"
+getpart() {  # getpart plain|html EML
+    "$py" -c 'import email, email.policy, sys
+m = email.message_from_binary_file(open(sys.argv[2], "rb"), policy=email.policy.default)
+b = m.get_body(preferencelist=(sys.argv[1],))
+print(b.get_content() if b is not None and b.get_content_subtype() == sys.argv[1] else "")' "$1" "$2"
+}
+[ -n "$eml" ] && getpart plain "$eml" > "$body" && getpart html "$eml" > "$work/body.html"
+if [ -n "$eml" ] && grep -q "Subject: \[AAP\] VMware secure boot report: 6 VM(s) to fix" "$eml" \
+   && grep -q "^Secure boot OFF (EFI firmware) (2)" "$body" && grep -q "^BIOS firmware (4)" "$body" \
+   && grep -Eq "^DC0_H0_VM0 +/DC0/vm +DC0_H0 +aap01.example.mil +10.0.0.5 +poweredOn +otherGuest$" "$body" \
+   && grep -Eq "^dup +/DC0/vm/other " "$body" \
+   && grep -q "^AAP job 4711, started by operator1" "$body" && ! grep -qF '\n' "$body" && grep -q "X-Envelope-To: ops@example.mil,vmteam@example.mil" "$eml" \
+   && grep -q "BIOS firmware" "$work/body.html" && grep -q ">DC0_C0_RP0_VM1<" "$work/body.html" && grep -q ">/DC0/vm/other<" "$work/body.html"; then
+    echo "ok   -   ...the email: HTML with both tables, a text copy with aligned columns, who ran it, both recipients"
 else
-    echo "FAIL -   ...email content"; [ -n "$eml" ] && head -20 "$eml"; fails=$((fails + 1))
+    echo "FAIL -   ...email content"; [ -n "$eml" ] && head -20 "$body"; fails=$((fails + 1))
 fi
 run "an action job emails its result too (snapshot)" ok vm_snapshot.yml -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=mailed -e "$mail" -- "emailed"
 grep -l 'Subject: \[AAP\] VM snapshot mailed: DC0_C0_RP0_VM1' "$work/mail"/*.eml >/dev/null && echo "ok   -   ...subject names the snapshot and the VM" \

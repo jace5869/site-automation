@@ -406,6 +406,8 @@ File: `roles/site_email/defaults/main.yml`
 | `report_email_security` | `starttls` | starttls = encrypt after connecting (the relay must offer it); ssl = encrypted from the start (port 465); none = not encrypted (only for a relay without encryption; then no login is sent). |
 | `report_email_ca_path` | (empty) | a CA file that signed the relay's certificate (empty = the CAs the execution environment trusts) |
 | `report_email_subject_prefix` | `"[AAP]"` |  |
+| `report_email_html` | `true` | Send a formatted (HTML) version too, for reports that come with one (all VMware jobs). The email always carries a plain-text copy for mail clients that do not show HTML. false = plain text only. |
+| `report_email_html_template` | `report.html.j2` | The look of the HTML version. Your own: copy roles/site_email/templates/report.html.j2 (e.g. to playbooks/files/email/report.html.j2), change it, and set report_email_html_template: "{{ playbook_dir }}/files/email/report.html.j2" |
 
 ## site_findings
 

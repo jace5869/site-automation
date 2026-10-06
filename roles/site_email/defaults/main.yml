@@ -15,3 +15,10 @@ report_email_smtp_port: 25               # 25 or 587 with starttls, 465 with ssl
 report_email_security: starttls
 report_email_ca_path: ""                 # a CA file that signed the relay's certificate (empty = the CAs the execution environment trusts)
 report_email_subject_prefix: "[AAP]"
+# Send a formatted (HTML) version too, for reports that come with one (all VMware jobs). The email
+# always carries a plain-text copy for mail clients that do not show HTML. false = plain text only.
+report_email_html: true
+# The look of the HTML version. Your own: copy roles/site_email/templates/report.html.j2 (e.g. to
+# playbooks/files/email/report.html.j2), change it, and set
+#   report_email_html_template: "{{ playbook_dir }}/files/email/report.html.j2"
+report_email_html_template: report.html.j2
