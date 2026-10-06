@@ -479,8 +479,8 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_names` | `[]` | The VMs, by their exact name in vCenter: a list, or (from a survey) one per line. No wildcards. |
 | `vmware_datacenter` | (empty) | only needed when the same VM name exists in two datacenters |
 | `vmware_validate_certs` | `true` | Check vCenter's certificate. false only if the execution environment does not trust your CA yet. |
-| `vmware_protected_groups` | `[aap, aap_hosts]` | The AAP server is ALWAYS refused (hosts in the groups aap / aap_hosts, matched by VM name, guest host name and IP address), and so are the hosts of these groups and these exact VM names. List the AAP VM's name here when it differs from its host name, and vCenter's own VM. |
-| `vmware_protected_vms` | `[]` | e.g. [AAP01, VCSA01] |
+| `vmware_protected_groups` | `[aap, aap_hosts]` | The AAP server is ALWAYS refused (hosts in the groups aap / aap_hosts, matched by VM name, guest host name and IP address), and so are the hosts of these groups and these VM names (* and ? allowed: DC*). List the AAP VM's name here when it differs from its host name, and vCenter's own VM. The snapshot cleanup never de… (all of it: the role file) |
+| `vmware_protected_vms` | `[]` | e.g. [AAP01, VCSA01, DC*] (* and ? allowed) |
 | `vm_power_mode` | `guest` | guest = ask the operating system (needs VMware Tools running; services stop cleanly) hard = reset / power off, like the button on a physical server (unsaved data is lost) |
 | `vm_power_timeout` | `600` | shut down: seconds to wait for the VM to be off |
 | `vm_snapshot_name` | (empty) | The snapshot's name. Taking one: empty = aap-<date>-<time>. Deleting: the exact name to delete. |
@@ -496,6 +496,14 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_datastore_warn_pct` | `80` | Used space (% of capacity): a datastore at or above these is listed as a warning / critical. |
 | `vm_datastore_crit_pct` | `90` |  |
 | `vm_datastore_fail` | `false` | The job stays green when datastores are full: the report and email say which. true = mark the job FAILED when one is at or above vm_datastore_warn_pct (or inaccessible), for workflows. |
+| `vm_snapshot_max_age_days` | `3` | Snapshots at least this many days old: listed apart by the report, deleted by the cleanup. |
+| `vm_snapshot_keep_regex` | `'(?i)keep\|do.?not.?delete'` | Never deleted by the cleanup (the report lists them, with the reason): - a snapshot whose name or description matches this |
+| `vm_snapshot_cleanup_exclude_vms` | `[]` | - a snapshot of these VMs: names, * and ? allowed (e.g. [DC*, VCSA01, AAP01]). The VMs in vmware_protected_vms and the AAP server are never cleaned up either. |
+| `vm_snapshot_cleanup_max_size_gb` | `1024` | - a snapshot bigger than this many GB (1024 = 1 TB), or whose size cannot be read: merging a very big snapshot can take hours and slow the VM - do those by hand, at a quiet time. |
+| `vm_snapshot_cleanup_confirm` | `false` | The cleanup on its own (not after a workflow approval) deletes only when this is true - e.g. a survey question "Delete them?". false = it lists what it would delete, and deletes nothing. |
+| `vm_snapshot_cleanup_max` | `50` | Refuse to delete more than this many snapshots in one run (a typo in the age would otherwise delete them all). Raise it on purpose for a big cleanup. |
+| `vm_snapshot_delete_timeout` | `1800` | seconds to wait for one deletion (vCenter merges it into the disk) |
+| `vm_snapshot_cleanup_email_only_if_deleted` | `false` | The cleanup's email (report_email_to): true = only when it deleted something (or a deletion failed). |
 
 ## win_act
 

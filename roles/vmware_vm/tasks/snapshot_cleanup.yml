@@ -1,0 +1,129 @@
+---
+# SNAPSHOT CLEANUP: delete the snapshots that are vm_snapshot_max_age_days or older, then report what
+# was deleted (printed, emailed, artifacts). Never deleted: names that say keep, the VMs in
+# vm_snapshot_cleanup_exclude_vms / vmware_protected_vms, the AAP server, bigger than
+# vm_snapshot_cleanup_max_size_gb (or size unknown).
+#   - in the workflow, after the approval: only the snapshots the report listed
+#     (vm_snapshot_cleanup_candidates, from its artifacts) that are still that old
+#   - on its own: only with vm_snapshot_cleanup_confirm: true; otherwise it lists what it would delete
+# Never more than vm_snapshot_cleanup_max at once. As Check (a dry run) it deletes nothing.
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | read the snapshots now
+  site_vmware_snapshots:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    now: "{{ _vm_now | default(omit) }}"
+  register: _vm_snap_read
+  check_mode: false
+
+- name: VMware | which are old, and which of those are never deleted
+  ansible.builtin.include_tasks: snapshot_split.yml
+
+- name: VMware | what to delete
+  ansible.builtin.set_fact:
+    _vm_sc: >-
+      {%- set approved = vm_snapshot_cleanup_candidates is defined -%}
+      {%- set plan = _vm_sn.old | vm_snapshot_plan(vm_snapshot_cleanup_candidates if approved else none) -%}
+      {{ plan | combine({'approved': approved, 'held': _vm_sn.held,
+                         'delete': (approved or vm_snapshot_cleanup_confirm | bool) and not ansible_check_mode}) }}
+
+- name: VMware | not more than vm_snapshot_cleanup_max ({{ vm_snapshot_cleanup_max }}) at once
+  ansible.builtin.assert:
+    that: _vm_sc.todo | length <= vm_snapshot_cleanup_max | int
+    fail_msg: >-
+      Refused: {{ _vm_sc.todo | length }} snapshots are {{ vm_snapshot_max_age_days }} days or older - more than
+      vm_snapshot_cleanup_max ({{ vm_snapshot_cleanup_max }}). Nothing was deleted. Check vm_snapshot_max_age_days; for a
+      cleanup this big on purpose, raise vm_snapshot_cleanup_max.
+    quiet: true
+  when: _vm_sc.delete | bool
+
+- name: VMware | delete the snapshots, oldest first
+  vmware.vmware.vm_snapshot:
+    moid: "{{ item.moid }}"
+    datacenter: "{{ item.datacenter }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    state: absent
+    snapshot_id: "{{ item.id | int }}"
+    timeout: "{{ vm_snapshot_delete_timeout | int }}"
+  loop: "{{ _vm_sc.todo }}"
+  loop_control:
+    label: "{{ item.vm }}: {{ item.name }} ({{ item.age_days }} days)"
+  register: _vm_sc_del
+  ignore_errors: true                 # one that fails does not stop the others; the report lists it, the job fails at the end
+  when: _vm_sc.delete | bool
+
+- name: VMware | snapshot cleanup
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_sc_failed: "{{ _vm_sc_del.results | default([]) | selectattr('failed', 'defined') | selectattr('failed') | list }}"
+    _vm_sc_done: "{{ _vm_sc_del.results | default([]) | rejectattr('skipped', 'defined') | rejectattr('failed') | map(attribute='item') | list }}"
+    _vm_sc_gb: "{{ _vm_sc_done | map(attribute='size_gb') | select('number') | sum | human_size }}"
+    # vm_snapshot_cleanup_email_only_if_deleted: no email when nothing was deleted (and nothing failed)
+    _vm_report_no_email: >-
+      {{ vm_snapshot_cleanup_email_only_if_deleted | bool and (_vm_sc_done | length + _vm_sc_failed | length == 0) }}
+    _vm_report_subject: >-
+      {%- if not _vm_sc.delete | bool -%}
+      VMware snapshot cleanup: would delete {{ _vm_sc.todo | length }} snapshot(s) older than {{ vm_snapshot_max_age_days }} days (nothing deleted)
+      {%- else -%}
+      VMware snapshot cleanup: deleted {{ _vm_sc_done | length }} snapshot(s) older than {{ vm_snapshot_max_age_days }} days ({{ _vm_sc_gb }})
+      {{- (', ' ~ _vm_sc_failed | length ~ ' failed') if _vm_sc_failed else '' }}
+      {%- endif -%}
+    _vm_report_lines: >-
+      {%- set out = [] -%}
+      {%- if not _vm_sc.delete | bool -%}
+      {%-   set _ = out.append('Nothing deleted: ' ~ ('a dry run (Check).' if ansible_check_mode else 'vm_snapshot_cleanup_confirm is not true (and no approved list from a workflow).')) -%}
+      {%-   for x in _vm_sc.todo -%}{%- set _ = out.append('WOULD DELETE ' ~ x.vm ~ ': "' ~ x.name ~ '" ' ~ x.age_days ~ ' days, ' ~ x.size_gb | human_size) -%}{%- endfor -%}
+      {%- else -%}
+      {%-   for x in _vm_sc_done -%}{%- set _ = out.append('DELETED ' ~ x.vm ~ ': "' ~ x.name ~ '" ' ~ x.age_days ~ ' days, ' ~ x.size_gb | human_size) -%}{%- endfor -%}
+      {%-   for r in _vm_sc_failed -%}{%- set _ = out.append('FAILED ' ~ r.item.vm ~ ': "' ~ r.item.name ~ '" - ' ~ r.msg | default('?') | truncate(200)) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- for x in _vm_sc.skipped -%}{%- set _ = out.append('NOT DELETED ' ~ x.vm | default(x.moid) ~ ': "' ~ x.name | default('?') ~ '" - ' ~ x.reason) -%}{%- endfor -%}
+      {%- for x in _vm_sc.held -%}{%- set _ = out.append('HELD BACK ' ~ x.vm ~ ': "' ~ x.name ~ '" ' ~ x.size_gb | human_size ~ ' - ' ~ x.reason) -%}{%- endfor -%}
+      {%- if not out -%}{%- set _ = out.append('No snapshot is ' ~ vm_snapshot_max_age_days ~ ' days or older.') -%}{%- endif -%}
+      {{ out }}
+    _vm_report_doc: >-
+      {%- set cols = ['VM', 'Snapshot', 'Taken (UTC)', 'Taken by', 'Age (days)', 'Size', 'Folder', 'Description'] -%}
+      {%- set sections = [] -%}
+      {%- if not _vm_sc.delete | bool -%}
+      {%-   set _ = sections.append({'title': 'Would delete (nothing was deleted)', 'columns': cols, 'rows': _vm_sc.todo | map('vm_snap_row') | list,
+                                     'text': 'A dry run (Check).' if ansible_check_mode else 'vm_snapshot_cleanup_confirm is not true, and no approved list came from a workflow.'}) -%}
+      {%- else -%}
+      {%-   set _ = sections.append({'title': 'Deleted', 'status': 'ok', 'columns': cols, 'rows': _vm_sc_done | map('vm_snap_row') | list}) -%}
+      {%-   if _vm_sc_failed -%}
+      {%-     set rows = [] -%}{%- for r in _vm_sc_failed -%}{%- set _ = rows.append([r.item.vm, r.item.name, r.msg | default('?')]) -%}{%- endfor -%}
+      {%-     set _ = sections.append({'title': 'Failed', 'status': 'critical', 'columns': ['VM', 'Snapshot', 'Error'], 'rows': rows}) -%}
+      {%-   endif -%}
+      {%- endif -%}
+      {%- if _vm_sc.skipped -%}
+      {%-   set rows = [] -%}{%- for x in _vm_sc.skipped -%}{%- set _ = rows.append([x.vm | default(x.moid), x.name | default('?'), x.reason]) -%}{%- endfor -%}
+      {%-   set _ = sections.append({'title': 'Approved but not deleted', 'columns': ['VM', 'Snapshot', 'Why'], 'rows': rows}) -%}
+      {%- endif -%}
+      {%- if _vm_sc.held -%}
+      {%-   set _ = sections.append({'title': 'Old, but held back (never deleted automatically)', 'columns': cols + ['Why'],
+                                     'rows': _vm_sc.held | map('vm_snap_row') | list}) -%}
+      {%- endif -%}
+      {{ {'title': _vm_report_subject | trim,
+          'status': 'critical' if _vm_sc_failed else ('ok' if _vm_sc.delete | bool else 'info'),
+          'subtitle': ('After the approval: only the snapshots the report listed.' if _vm_sc.approved else 'Snapshots ' ~ vm_snapshot_max_age_days ~ ' days or older.'),
+          'summary': ([{'label': 'Deleted', 'value': _vm_sc_done | length, 'status': 'ok'}, {'label': 'Space freed', 'value': _vm_sc_gb, 'status': 'ok'},
+                       {'label': 'Failed', 'value': _vm_sc_failed | length, 'status': 'critical' if _vm_sc_failed else 'ok'}]
+                      if _vm_sc.delete | bool else [{'label': 'Would delete', 'value': _vm_sc.todo | length}])
+                     + ([{'label': 'Held back', 'value': _vm_sc.held | length}] if _vm_sc.held else []),
+          'sections': sections} }}
+
+- name: VMware | what was deleted, as job artifacts (vm_snapshot_cleanup)
+  ansible.builtin.set_stats:
+    data:
+      vm_snapshot_cleanup: >-
+        {{ {'deleted': _vm_sc_del.results | default([]) | rejectattr('skipped', 'defined') | rejectattr('failed') | map(attribute='item') | list
+                       if _vm_sc.delete | bool else [],
+            'failed': _vm_sc_del.results | default([]) | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='item') | list,
+            'would_delete': [] if _vm_sc.delete | bool else _vm_sc.todo, 'not_deleted': _vm_sc.skipped, 'held_back': _vm_sc.held} }}
+
+- name: VMware | every deletion worked
+  ansible.builtin.assert:
+    that: _vm_sc_del.results | default([]) | selectattr('failed', 'defined') | selectattr('failed') | list | length == 0
+    fail_msg: "Some snapshots could not be deleted (the list is above, and in the email)."
+    quiet: true

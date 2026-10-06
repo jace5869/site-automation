@@ -17,6 +17,8 @@ mail clients that do not show HTML. One email per job run, whatever the number o
 | Apply approved ACT fix | `act_fix_approved.yml` | the checks after the fix |
 | VM secure boot report | `vm_secure_boot_report.yml` | VMs with secure boot off, BIOS VMs (folder, host, guest, IP) |
 | VM datastore report | `vm_datastore_report.yml` | datastores over 80 / 90 % used, then every datastore, fullest first |
+| VM snapshot report | `vm_snapshot_report.yml` | snapshots older than N days, kept ones, then every snapshot with size and age |
+| VM snapshot cleanup | `vm_snapshot_cleanup.yml` | what was deleted (and the space freed), what could not be |
 | VM restart, shut down, snapshot, delete snapshot, notes, change VLAN | `vm_*.yml` | what was done to which VM |
 
 ## Turning it on
@@ -65,7 +67,8 @@ job does when it finds problems:
 
 | Job | Default | Change it with (template Variables) |
 |---|---|---|
-| VM secure boot report, VM datastore report | **green**: the report and email say what to fix | `vm_secure_boot_fail: true` / `vm_datastore_fail: true` = red |
+| VM secure boot report, VM datastore report, VM snapshot report | **green**: the report and email say what to fix | `vm_secure_boot_fail: true` / `vm_datastore_fail: true` = red |
+| VM snapshot cleanup | green; **red** when a deletion failed | - |
 | Health checks, certificate reports, database health, POA&M, ServiceNow health | **red** when there are findings: AAP workflows start tickets (and ACT) from that | `site_fail_on: []` = green, report only |
 
 So for a template whose job is to email a report to people, set `site_fail_on: []` and it stays

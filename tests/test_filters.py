@@ -460,5 +460,54 @@ class FindingsReport(unittest.TestCase):
         self.assertEqual(f.findings_report({"localhost": []}, "X")["sections"], [{"title": "Result", "lines": ["No findings."]}])
 
 
+class Snapshots(unittest.TestCase):
+    S = [{"vm": "web01", "moid": "vm-1", "id": 1, "name": "before-patch", "description": "", "age_days": 9.0, "size_gb": 4.0},
+         {"vm": "web01", "moid": "vm-1", "id": 2, "name": "after", "description": "", "age_days": 1.5, "size_gb": 1.0},
+         {"vm": "db01", "moid": "vm-2", "id": 7, "name": "baseline", "description": "KEEP for audit", "age_days": 40.0, "size_gb": None},
+         {"vm": "app01", "moid": "vm-3", "id": 1, "name": "app_Keep", "description": "", "age_days": 5.0, "size_gb": 2.0},
+         {"vm": "app02", "moid": "vm-4", "id": 3, "name": "x", "description": "", "age_days": 3.0, "size_gb": 2.0},
+         {"vm": "DC01", "moid": "vm-5", "id": 1, "name": "pre", "description": "", "age_days": 20.0, "size_gb": 1.0},
+         {"vm": "files01", "moid": "vm-6", "id": 1, "name": "big", "description": "", "age_days": 30.0, "size_gb": 1500.0},
+         {"vm": "aapvm", "moid": "vm-7", "id": 1, "name": "s", "description": "", "age_days": 10.0, "size_gb": 1.0,
+          "hostname": "aap01.example.mil", "ip": "10.0.0.5"},
+         {"vm": "odd", "moid": "vm-8", "id": 1, "name": "s", "description": "", "age_days": 10.0, "size_gb": None}]
+    RX = "(?i)keep|do.?not.?delete"
+
+    def test_split(self):
+        r = f.vm_snapshot_split(self.S, 3, self.RX, ["dc*", "vcsa01"], ["aap01", "10.0.0.5"], 1024)
+        self.assertEqual([x["vm"] for x in r["all"]][:3], ["db01", "files01", "DC01"])
+        self.assertEqual([(x["vm"], x["id"]) for x in r["old"]], [("web01", 1), ("app02", 3)])
+        self.assertEqual({x["vm"]: x["reason"] for x in r["held"]}, {
+            "db01": "its name or description says keep", "files01": "bigger than 1.00 TB: delete it by hand, at a quiet time",
+            "DC01": "the VM is on the exclusion list", "aapvm": "the VM is the AAP server", "odd": "its size could not be read",
+            "app01": "its name or description says keep"})
+        # without the size limit an unknown size does not hold a snapshot back
+        self.assertIn("odd", [x["vm"] for x in f.vm_snapshot_split(self.S, 3, self.RX)["old"]])
+
+    def test_plan(self):
+        old = f.vm_snapshot_split(self.S, 3, self.RX, [], [], 1024)["old"]
+        self.assertEqual(len(f.vm_snapshot_plan(old)["todo"]), 4)
+        # approved: web01#1 (still old), app01#1 (held: keep), gone#9; files01#1 approved but too big now
+        plan = f.vm_snapshot_plan(old, [{"moid": "vm-1", "id": "1"}, {"moid": "vm-3", "id": 1}, {"moid": "vm-9", "id": 9},
+                                        {"moid": "vm-6", "id": 1}])
+        self.assertEqual([(x["vm"], x["id"]) for x in plan["todo"]], [("web01", 1)])
+        self.assertEqual([x["moid"] for x in plan["skipped"]], ["vm-3", "vm-9", "vm-6"])
+        self.assertEqual(f.vm_snapshot_plan(old, [])["todo"], [])
+
+    def test_row_and_sizes(self):
+        self.assertEqual(f.vm_snap_row(dict(self.S[2], created="2026-08-27T10:00:00Z", folder="/DC1/vm")),
+                         ["db01", "baseline", "2026-08-27 10:00:00", "unknown", 40.0, "?", "/DC1/vm", "KEEP for audit"])
+        self.assertEqual(f.vm_snap_row(dict(self.S[2], taken_by="CORP\\jdoe"))[3], "CORP\\jdoe")
+        self.assertEqual(f.vm_snap_row(dict(self.S[0], reason="r"))[-1], "r")
+        self.assertEqual([f.human_size(x) for x in (0.4, 0.95, 1.0, 12.44, 1023.9, 1024, 1536, None)],
+                         ["410 MB", "973 MB", "1.0 GB", "12.4 GB", "1023.9 GB", "1.00 TB", "1.50 TB", "?"])
+
+    def test_name_matches(self):
+        self.assertTrue(f.name_matches("DC01", ["dc*"]))
+        self.assertTrue(f.name_matches("vcsa01", ["VCSA01"]))
+        self.assertFalse(f.name_matches("adc01", ["dc*"]))
+        self.assertFalse(f.name_matches("x", ["", " "]))
+
+
 if __name__ == "__main__":
     unittest.main()

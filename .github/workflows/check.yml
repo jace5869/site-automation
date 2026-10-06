@@ -38,8 +38,10 @@ jobs:
           pip install yamllint ansible-lint
           yamllint .
           ANSIBLE_ROLES_PATH=roles ansible-lint
-      - name: Filter plugins (unit tests)
-        run: python tests/test_filters.py
+      - name: Filter plugins and the VMware modules' pure parts (unit tests)
+        run: |
+          python tests/test_filters.py
+          python tests/test_vmware_modules.py
       - name: docs/VARIABLES_REFERENCE.md is generated from the roles and is up to date
         run: python tests/test_variable_reference.py
       - name: AAP hosts are protected everywhere; vendored ACT is what its VERSION and checksums say

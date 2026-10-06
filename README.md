@@ -39,7 +39,7 @@ own `playbooks/group_vars/all.yml` keeps its old settings until you comment them
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | MySQL 8.4 + STIG Manager + nginx (TLS) on podman/Quadlet |
 | **Windows** health check, troubleshoot, certificate report, connection test | `playbooks/win_*.yml` | the same for Windows servers over WinRM: disk, services, performance, time, network, event log, security, audit policy, accounts, certificates, patching ([docs/WINDOWS.md](docs/WINDOWS.md)) |
 | Windows patch | `playbooks/win_patch.yml` | install what Software Center (ConfigMgr) offers, one server at a time; **no automatic restart** unless `automatic_restarts: true`; every service back afterwards; maintenance windows respected |
-| **VMware (vCenter)**: restart, shut down, snapshot (no memory), delete snapshot, notes, change VLAN, secure boot report, datastore report | `playbooks/vm_*.yml` | jobs on virtual machines through vCenter; restart / shut down / VLAN change never touch the AAP server's VM; dry run as *Check* ([docs/VMWARE.md](docs/VMWARE.md)) |
+| **VMware (vCenter)**: restart, shut down, snapshot (no memory), delete snapshot, notes, change VLAN, secure boot report, datastore report, snapshot report and cleanup (with an approval workflow) | `playbooks/vm_*.yml` | jobs on virtual machines through vCenter; restart / shut down / VLAN change never touch the AAP server's VM; dry run as *Check* ([docs/VMWARE.md](docs/VMWARE.md)) |
 | ACT for Windows - install | `playbooks/win_act_install.yml` | ACT on the Windows servers in `C:\ProgramData\act`: locked down to Administrators and SYSTEM, unblocked, SHA256-checked every run |
 
 ## Documentation

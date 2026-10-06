@@ -1,0 +1,12 @@
+---
+# Old snapshots: the ones the cleanup deletes, and the ones it never deletes (keep name, excluded
+# VM, protected VM, the AAP server, too big or size unknown). Input: _vm_snap_read. Output: _vm_sn.
+- name: VMware | which snapshots are old, and which of those are held back
+  ansible.builtin.set_fact:
+    _vm_sn: >-
+      {{ _vm_snap_read.snapshots
+         | vm_snapshot_split(vm_snapshot_max_age_days, vm_snapshot_keep_regex,
+                             ((vm_snapshot_cleanup_exclude_vms | replace(',', ' ')).split() if vm_snapshot_cleanup_exclude_vms is string
+                              else vm_snapshot_cleanup_exclude_vms) + vmware_protected_vms,
+                             ((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | host_ids(hostvars),
+                             vm_snapshot_cleanup_max_size_gb | float) }}

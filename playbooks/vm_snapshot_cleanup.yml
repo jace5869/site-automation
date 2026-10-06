@@ -1,0 +1,16 @@
+---
+# VM SNAPSHOT CLEANUP (vCenter). Deletes the snapshots vm_snapshot_max_age_days (3) days or older -
+# never the ones whose name says keep - and reports what it deleted. In the workflow: after the
+# approval, only what the report listed. On its own: only with vm_snapshot_cleanup_confirm: true
+# (else it lists what it would delete).
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_snapshot_cleanup.yml
+- name: VM snapshot cleanup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM snapshot cleanup
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: snapshot_cleanup.yml

@@ -19,7 +19,7 @@
     that:
       - item.ids | intersect(((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | host_ids(hostvars)) | length == 0
       - item.ids | intersect(vmware_protected_groups | select('in', groups) | map('extract', groups) | flatten | host_ids(hostvars)) | length == 0
-      - item.name | lower not in vmware_protected_vms | map('string') | map('lower') | list
+      - not item.name | name_matches(vmware_protected_vms)
     fail_msg: >-
       Refused: {{ item.name }} is the AAP server or a protected VM (groups
       {{ (['aap', 'aap_hosts'] + vmware_protected_groups) | unique | join(', ') }}, or vmware_protected_vms;
