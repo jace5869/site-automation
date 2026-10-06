@@ -374,8 +374,9 @@ class VmFacts(unittest.TestCase):
                     "net": [{"ipAddress": ["10.1.2.3", "fe80::1"]}]}}
 
     def test_record(self):
-        r = f.vm_facts(self.VM, {"moid": "vm-42", "hw_folder": "/DC1/vm/web"})
-        self.assertEqual((r["moid"], r["datacenter"]), ("vm-42", "DC1"))
+        r = f.vm_facts(self.VM, {"moid": "vm-42", "hw_folder": "/DC1/vm/web", "hw_esxi_host": "esx01"})
+        self.assertEqual((r["moid"], r["datacenter"], r["folder"], r["esxi_host"], r["ip"]),
+                         ("vm-42", "DC1", "/DC1/vm/web", "esx01", "10.1.2.3"))
         self.assertEqual(f.vm_facts(self.VM, {"hw_folder": "/Sites/East/DC2/vm"})["datacenter"], "DC2")
         self.assertIsNone(f.vm_facts(self.VM)["datacenter"])
         self.assertEqual((r["name"], r["power"], r["firmware"], r["secure_boot"], r["template"]),
@@ -389,11 +390,39 @@ class VmFacts(unittest.TestCase):
         self.assertEqual((r["secure_boot"], r["nics"], r["ids"], r["annotation"]), (False, [], ["x"], ""))
         self.assertEqual(f.vm_facts(None)["ids"], [])
 
+    def test_where(self):
+        r = f.vm_facts(self.VM, {"hw_folder": "/DC1/vm/web", "hw_esxi_host": "esx01"})
+        self.assertEqual(f.vm_where(r), "Web01.example.mil  folder /DC1/vm/web  on esx01  guest WEB01.example.mil 10.1.2.3  (poweredOn, )".replace("(poweredOn, )", "(poweredOn, ?)"))
+        self.assertEqual(f.vm_where({"name": "x"}), "x  (?, ?)")
+
     def test_host_ids(self):
         hv = {"aap01.example.mil": {"ansible_host": "10.0.0.5"}, "aap02": {}}
         self.assertEqual(f.host_ids(["aap01.example.mil", "aap02"], hv), ["10.0.0.5", "aap01", "aap02"])
         self.assertEqual(f.host_ids([], hv), [])
         self.assertEqual(f.host_ids(["AAP03.example.mil"]), ["aap03"])
+
+
+class ReportText(unittest.TestCase):
+    def test_tables_lines_empty(self):
+        r = {"title": "Secure boot", "subtitle": "141 VMs", "summary": [{"label": "VMs", "value": 141}],
+             "sections": [{"title": "BIOS", "text": "Fix: convert.", "columns": ["VM", "Folder", "Power"],
+                           "rows": [["DEBIAN_11_64", "/DC1/vm/A", "poweredOn"], ["x", None, "poweredOff"], ["short"]]},
+                          {"title": "Unknown", "columns": ["VM"], "rows": []},
+                          {"title": "Notes", "lines": ["one", " ", "two\nlines"]}],
+             "footer": "vCenter v1"}
+        t = f.report_text(r, "AAP job 1")
+        self.assertEqual(t.splitlines(), [
+            "Secure boot", "===========", "141 VMs", "", "VMs: 141", "", "",
+            "BIOS (3)", "--------", "Fix: convert.", "",
+            "VM            Folder     Power", "------------  ---------  ----------",
+            "DEBIAN_11_64  /DC1/vm/A  poweredOn", "x" + " " * 24 + "poweredOff", "short",
+            "", "", "Unknown (0)", "-----------", "None.",
+            "", "", "Notes", "-----", "- one", "- two", "lines",
+            "", "--", "vCenter v1", "AAP job 1"])
+
+    def test_cells_on_one_line(self):
+        t = f.report_text({"title": "T", "sections": [{"title": "S", "columns": ["A"], "rows": [["a\nb   c"]]}]})
+        self.assertIn("a b c", t)
 
 
 if __name__ == "__main__":

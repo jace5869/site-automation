@@ -1,0 +1,29 @@
+---
+# Test harness: email one formatted report (_report) through roles/site_email. Not a shipped playbook.
+- name: Email a formatted test report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Send it
+      ansible.builtin.include_role:
+        name: site_email
+      vars:
+        _report:
+          title: "Test formatted report"
+          subtitle: "2 VMs to fix"
+          status: warning
+          summary:
+            - {label: VMs checked, value: 141}
+            - {label: BIOS firmware, value: 2, status: warning}
+          sections:
+            - title: BIOS firmware
+              text: "Fix: convert the guest to EFI first."
+              status: warning
+              columns: [VM, Folder, Power]
+              rows:
+                - [DEBIAN_11_64, /DC1/vm/Lab/Team-A, poweredOn]
+                - ["<script>alert(1)</script>", /DC1/vm/Lab/Team-B, poweredOff]
+            - title: Notes
+              lines: [first note, second note]
+          footer: vCenter vcsa01.example.mil

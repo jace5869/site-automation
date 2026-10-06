@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.7.1 — 2026-10-06
+
+- **Formatted (HTML) report emails, for any playbook.** `roles/site_email` now sends a report as a
+  formatted email - a coloured title band, number boxes, a table per section - with a plain-text
+  copy (aligned columns) for mail clients without HTML. Outlook-safe (tables, inline styles), every
+  value escaped. `report_email_html: false` = plain text only; `report_email_html_template` = your
+  own look. How any playbook emails a report: [docs/EMAIL_REPORTS.md](docs/EMAIL_REPORTS.md). Today the
+  seven VMware playbooks email; mail relay setup (a whitelisted relay needs no credential):
+  docs/VMWARE.md, "Email the report".
+- **VMware secure boot report:** every VM listed with its vCenter folder, ESXi host, guest host
+  name and IP (several VMs can have the same name); the advice once per section instead of on every
+  line; the email has a table for "secure boot off" and one for BIOS.
+- **VMware jobs publish their result as job artifacts** (`vm_report`; the secure boot report also
+  `vm_secure_boot` with every VM's details): the job's Details > Artifacts, and the next workflow step.
+- Fixed: a report email showed `\n` instead of line breaks.
+- Fixed: the secure boot report for every VM, with no VMware vCenter credential on the template,
+  stopped with a module traceback; it now says to attach the credential (no ESXi inventory needed).
+- Fixed: the How-It-Fits PDF's settings appendix left out the VMware and email settings.
+
+**Upgrading from 0.7.0:** nothing to change. If you copied the report template for your own look,
+see docs/EMAIL_REPORTS.md.
+
 ## 0.7.0 — 2026-10-05
 
 New: **VMware jobs** (vCenter) with emailed reports, an **audit volume** check, and the database check

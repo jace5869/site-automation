@@ -1,6 +1,18 @@
 ---
-# Email one report. Input: _report_subject, _report_body (text). Nothing happens when report_email_to
-# is empty. In a dry run (Check) nothing is sent: the job says what it would send.
+# Email one report - from any playbook: include this role with _report set (or the plain-text pair).
+# Nothing happens when report_email_to is empty. In a dry run (Check) nothing is sent.
+#
+# Input, either a formatted report (HTML email with a plain-text copy; docs/EMAIL_REPORTS.md):
+#   _report:
+#     title: "VMware secure boot report: 3 VM(s) to fix"      # also the subject (after the prefix)
+#     subtitle: "141 VMs in vcsa01"                            # optional
+#     status: warning                                          # ok | warning | critical | info: the header colour
+#     summary: [{label: VMs, value: 141}, {label: Secure boot OFF, value: 3, status: warning}]
+#     sections:
+#       - {title: BIOS firmware, text: "Fix: ...", status: warning, columns: [VM, Folder], rows: [[web01, /DC1/vm]]}
+#       - {title: Notes, lines: [one line, another line]}
+#     footer: "vCenter vcsa01"                                 # optional; the AAP job line is added
+# or plain text: _report_subject and _report_body.
 - name: Email | who gets the report
   ansible.builtin.set_fact:
     _email_to: >-
@@ -23,6 +35,15 @@
     quiet: true
   when: _email_to | length > 0
 
+- name: Email | the report as text (and HTML)
+  ansible.builtin.set_fact:
+    _email_footer: >-
+      AAP job {{ awx_job_id | default(tower_job_id | default('(command line)')) }}{{ (' (' ~ awx_job_template_name ~ ')') if awx_job_template_name is defined else '' }},
+      started by {{ awx_user_name | default(tower_user_name | default(lookup('ansible.builtin.env', 'USER') or 'unknown')) }},
+      {{ now(fmt='%Y-%m-%d %H:%M %Z') | trim }}.
+    _email_subject: "{{ (report_email_subject_prefix ~ ' ' if report_email_subject_prefix else '') ~ (_report.title if _report is defined else _report_subject) }}"
+  when: _email_to | length > 0
+
 - name: Email | send the report to {{ _email_to | join(', ') }}
   site_mail:
     host: "{{ report_email_smtp_host | trim }}"
@@ -31,8 +52,9 @@
     sender: "{{ report_email_from | trim }}"
     to: "{{ _email_to }}"
     cc: "{{ _email_cc }}"
-    subject: "{{ (report_email_subject_prefix ~ ' ' if report_email_subject_prefix else '') ~ _report_subject }}"
-    body: "{{ _report_body }}"
+    subject: "{{ _email_subject }}"
+    body: "{{ _report | report_text(_email_footer) if _report is defined else _report_body ~ '\n\n--\n' ~ _email_footer }}"
+    html: "{{ lookup('ansible.builtin.template', report_email_html_template) if _report is defined and report_email_html | bool else omit }}"
     ca_path: "{{ report_email_ca_path | default(omit, true) }}"
   when: _email_to | length > 0
   register: _email_sent

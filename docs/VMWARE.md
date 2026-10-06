@@ -161,7 +161,8 @@ they did. Email is off until there is an address to send to.
 - the mail relay's name and port (e.g. `smtp.yoursite.mil`, port 25);
 - whether it uses encryption: STARTTLS (usual on 25 and 587), SSL (port 465), or none;
 - whether it needs a login, or instead accepts mail from allowed servers. Then the **AAP server's
-  IP address** must be on its allowed list: the email leaves from the AAP server;
+  IP address** must be on its allowed list: the email leaves from the AAP server (with separate
+  AAP execution nodes, from the node that runs the job - list those);
 - which sender address to use (e.g. `aap-noreply@yoursite.mil`).
 
 **Step 2 - the relay, in your `playbooks/group_vars/all.yml`** (VS Code, then Commit and Sync
@@ -203,10 +204,16 @@ Launch it with `report_email_to` set. In the job output, the task **Email | resu
 job may still end red: the report fails when VMs need fixing. Add `vm_secure_boot_fail: false` to
 the template's Variables if you want it green.
 
-**What arrives:** subject `[AAP] VMware secure boot report: 6 VM(s) to fix` (or `[AAP] VM restart:
-web01`, `[AAP] VM snapshot before-patch: web01`, ...). The body has the same lines as the job
-output, then the AAP job number, who started it, when, and which vCenter. A dry run (Check) sends
-nothing; it says `DRY RUN: would email ...`.
+**What arrives:** a formatted email, subject `[AAP] VMware secure boot report: 29 VM(s) to fix` (or
+`[AAP] VM restart: web01`, `[AAP] VM snapshot before-patch: web01`, ...). The secure boot report has
+number boxes (VMs checked, secure boot on / off, BIOS) and a table per problem: each VM with its
+folder, ESXi host, guest host name, IP, power state and guest OS - so VMs with the same name can be
+told apart. At the end: the AAP job, who started it, when, and which vCenter. The email also carries
+a plain-text copy. A dry run (Check) sends nothing; it says `DRY RUN: would email ...`. To change
+the look of the email: [EMAIL_REPORTS.md](EMAIL_REPORTS.md).
+
+The same report is in the job's **Details > Artifacts** (`vm_report`, and for the secure boot report
+`vm_secure_boot` with every VM's details), which is also what the next step of a workflow receives.
 
 **If it fails**, the job fails (so nobody misses it) and says why:
 

@@ -25,7 +25,8 @@ options:
   to: {description: Recipients., type: list, elements: str, required: true}
   cc: {description: Copy recipients., type: list, elements: str, default: []}
   subject: {description: Subject line., type: str, required: true}
-  body: {description: The text., type: str, required: true}
+  body: {description: The text (always sent; what a mail client shows when it does not display HTML)., type: str, required: true}
+  html: {description: The same report as HTML. When given, the email carries both versions and the client shows the HTML one., type: str}
   ca_path: {description: A CA file to trust for the relay's certificate (default - the system's trusted CAs)., type: path}
   timeout: {description: Seconds to wait for the relay., type: int, default: 30}
 author: site automation
@@ -65,6 +66,7 @@ def main():
             cc=dict(type='list', elements='str', default=[]),
             subject=dict(type='str', required=True),
             body=dict(type='str', required=True),
+            html=dict(type='str'),
             ca_path=dict(type='path'),
             timeout=dict(type='int', default=30),
         ),
@@ -93,6 +95,8 @@ def main():
         msg['Date'] = formatdate(localtime=True)
         msg['Message-ID'] = make_msgid()
         msg.set_content(p['body'])
+        if p['html']:
+            msg.add_alternative(p['html'], subtype='html')
     except (ValueError, TypeError) as e:
         module.fail_json(msg='the email could not be built (an address or the subject is not valid): %s' % e)
     context = ssl.create_default_context(cafile=p['ca_path'] or None)

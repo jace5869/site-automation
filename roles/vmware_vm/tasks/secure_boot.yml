@@ -2,6 +2,10 @@
 # SECURE BOOT REPORT (read-only): every VM (or vm_names, or the VMs of one folder) - firmware and
 # secure boot. Two different problems: BIOS firmware (the guest must be converted to EFI first,
 # which depends on its operating system) and EFI with secure boot off (power off, tick it, start).
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+  when: vm_names | length == 0
+
 - name: VMware | the VMs asked for
   ansible.builtin.include_tasks: prepare.yml
   when: vm_names | length > 0
@@ -13,15 +17,31 @@
     validate_certs: "{{ vmware_validate_certs | bool }}"
     schema: vsphere
     properties: [name, config.template, config.firmware, config.guestFullName, config.bootOptions.efiSecureBootEnabled,
-                 runtime.powerState]
+                 config.instanceUuid, runtime.powerState, guest.hostName, guest.ipAddress]
   register: _vm_all
   check_mode: false
+  when: vm_names | length == 0
+
+- name: VMware | where each VM is (folder, ESXi host) - several VMs can have the same name
+  vmware.vmware.vm_info:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    folder: "{{ vm_secure_boot_folder | default(omit, true) }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _vm_all_where
+  check_mode: false
+  failed_when: false              # the report still runs without it, only without folder and host
   when: vm_names | length == 0
 
 - name: VMware | firmware and secure boot
   ansible.builtin.set_fact:
     _vm_sb: >-
-      {%- set vms = (_vm_found if vm_names | length > 0 else _vm_all.vms | map('vm_facts') | list) | rejectattr('template') | list -%}
+      {%- set where = {} -%}
+      {%- for w in _vm_all_where.vms | default([]) if w.instance_uuid | default('') -%}{%- set _ = where.update({w.instance_uuid: w}) -%}{%- endfor -%}
+      {%- set listed = [] -%}
+      {%- for v in _vm_all.vms | default([]) -%}
+      {%-   set _ = listed.append(v | vm_facts(where[(v.config | default({}, true)).instanceUuid | default('')] | default({}))) -%}
+      {%- endfor -%}
+      {%- set vms = (_vm_found if vm_names | length > 0 else listed) | rejectattr('template') | sort(attribute='name') | sort(attribute='folder') | list -%}
       {{ {'all': vms | length,
           'ok': vms | selectattr('firmware', 'equalto', 'efi') | selectattr('secure_boot') | map(attribute='name') | sort,
           'efi_off': vms | selectattr('firmware', 'equalto', 'efi') | rejectattr('secure_boot') | list,
@@ -31,6 +51,37 @@
 - name: VMware | secure boot report
   ansible.builtin.include_tasks: report.yml
   vars:
+    # the formatted email: summary boxes, then one table per problem
+    _vm_report_doc: >-
+      {%- set cols = ['VM', 'Folder', 'ESXi host', 'Guest host name', 'IP', 'Power', 'Guest OS'] -%}
+      {%- set off = [] -%}{%- set bios = [] -%}
+      {%- for v in _vm_sb.efi_off -%}{%- set _ = off.append([v.name, v.folder, v.esxi_host, v.hostname, v.ip, v.power, v.guest_os]) -%}{%- endfor -%}
+      {%- for v in _vm_sb.bios -%}{%- set _ = bios.append([v.name, v.folder, v.esxi_host, v.hostname, v.ip, v.power, v.guest_os]) -%}{%- endfor -%}
+      {%- set fix = off | length + bios | length -%}
+      {%- set sections = [] -%}
+      {%- if off -%}
+      {%-   set _ = sections.append({'title': 'Secure boot OFF (EFI firmware)', 'status': 'warning', 'columns': cols, 'rows': off,
+                                     'text': 'Fix: power the VM off, Edit Settings > VM Options > Boot Options > tick Secure Boot, power it on.'}) -%}
+      {%- endif -%}
+      {%- if bios -%}
+      {%-   set _ = sections.append({'title': 'BIOS firmware', 'status': 'warning', 'columns': cols, 'rows': bios,
+                                     'text': 'Fix: convert the guest to EFI first (it depends on the operating system), then turn on Secure Boot.'}) -%}
+      {%- endif -%}
+      {%- if _vm_sb.unknown -%}
+      {%-   set _ = sections.append({'title': 'Unknown (configuration not readable: orphaned or inaccessible VMs)', 'columns': ['VM'],
+                                     'rows': _vm_sb.unknown | batch(1) | list}) -%}
+      {%- endif -%}
+      {%- if not sections -%}
+      {%-   set _ = sections.append({'title': 'Result', 'lines': ['Every VM boots with secure boot.']}) -%}
+      {%- endif -%}
+      {{ {'title': _vm_report_subject, 'status': 'warning' if fix else 'ok',
+          'subtitle': _vm_sb.all ~ ' VMs checked (templates not counted)' ~ (' in folder ' ~ vm_secure_boot_folder if vm_secure_boot_folder else ''),
+          'summary': [{'label': 'VMs checked', 'value': _vm_sb.all},
+                      {'label': 'Secure boot ON', 'value': _vm_sb.ok | length, 'status': 'ok'},
+                      {'label': 'Secure boot OFF', 'value': off | length, 'status': 'warning' if off else 'ok'},
+                      {'label': 'BIOS firmware', 'value': bios | length, 'status': 'warning' if bios else 'ok'}]
+                     + ([{'label': 'Unknown', 'value': _vm_sb.unknown | length, 'status': 'warning'}] if _vm_sb.unknown else []),
+          'sections': sections} }}
     _vm_report_subject: >-
       VMware secure boot report: {{ (_vm_sb.efi_off | length + _vm_sb.bios | length) ~ ' VM(s) to fix'
       if (_vm_sb.efi_off | length + _vm_sb.bios | length) else 'every VM boots with secure boot' }}
@@ -38,14 +89,37 @@
       {%- set out = [_vm_sb.all ~ ' VM(s) (templates not counted): ' ~ _vm_sb.ok | length ~ ' EFI with secure boot, '
                      ~ _vm_sb.efi_off | length ~ ' EFI with secure boot OFF, ' ~ _vm_sb.bios | length ~ ' BIOS firmware'
                      ~ (', ' ~ _vm_sb.unknown | length ~ ' unknown' if _vm_sb.unknown else '')] -%}
-      {%- for v in _vm_sb.efi_off | sort(attribute='name') -%}
-      {%-   set _ = out.append('SECURE BOOT OFF  ' ~ v.name ~ '  (' ~ v.power ~ ', ' ~ v.guest_os | default('?', true) ~ ')  fix: power off, Edit Settings > VM Options > Boot Options > Secure Boot') -%}
-      {%- endfor -%}
-      {%- for v in _vm_sb.bios | sort(attribute='name') -%}
-      {%-   set _ = out.append('BIOS             ' ~ v.name ~ '  (' ~ v.power ~ ', ' ~ v.guest_os | default('?', true) ~ ')  fix: convert the guest to EFI first (OS-specific)') -%}
-      {%- endfor -%}
-      {%- for n in _vm_sb.unknown -%}{%- set _ = out.append('UNKNOWN          ' ~ n ~ '  (no configuration readable: orphaned or inaccessible VM)') -%}{%- endfor -%}
+      {%- if _vm_sb.efi_off -%}
+      {%-   set _ = out.append('') -%}
+      {%-   set _ = out.append('SECURE BOOT OFF (fix: power the VM off, Edit Settings > VM Options > Boot Options > tick Secure Boot, power on):') -%}
+      {%- endif -%}
+      {%- for v in _vm_sb.efi_off -%}{%- set _ = out.append('  ' ~ v | vm_where) -%}{%- endfor -%}
+      {%- if _vm_sb.bios -%}
+      {%-   set _ = out.append('') -%}
+      {%-   set _ = out.append('BIOS FIRMWARE (fix: convert the guest to EFI first - it depends on the operating system - then turn on Secure Boot):') -%}
+      {%- endif -%}
+      {%- for v in _vm_sb.bios -%}{%- set _ = out.append('  ' ~ v | vm_where) -%}{%- endfor -%}
+      {%- if _vm_sb.unknown -%}
+      {%-   set _ = out.append('') -%}
+      {%-   set _ = out.append('UNKNOWN (no configuration readable: an orphaned or inaccessible VM):') -%}
+      {%- endif -%}
+      {%- for n in _vm_sb.unknown -%}{%- set _ = out.append('  ' ~ n) -%}{%- endfor -%}
+      {%- if _vm_all_where is defined and _vm_all_where.failed | default(false) -%}
+      {%-   set _ = out.append('') -%}
+      {%-   set _ = out.append('(Folder and ESXi host could not be read: ' ~ _vm_all_where.msg | default('?') | truncate(160) ~ ')') -%}
+      {%- endif -%}
       {{ out }}
+
+- name: VMware | the lists as job artifacts (vm_secure_boot)
+  ansible.builtin.set_stats:
+    data:
+      # one expression, so the counts stay numbers on ansible-core 2.16 too
+      vm_secure_boot: >-
+        {%- set keep = ['name', 'folder', 'esxi_host', 'hostname', 'ip', 'power', 'guest_os', 'moid'] -%}
+        {{ {'vms': _vm_sb.all | int, 'secure_boot_on': _vm_sb.ok | length,
+            'secure_boot_off': _vm_sb.efi_off | map('dict2items') | map('selectattr', 'key', 'in', keep) | map('items2dict') | list,
+            'bios': _vm_sb.bios | map('dict2items') | map('selectattr', 'key', 'in', keep) | map('items2dict') | list,
+            'unknown': _vm_sb.unknown} }}
 
 - name: VMware | every VM boots with secure boot
   ansible.builtin.assert:

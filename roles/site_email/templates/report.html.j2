@@ -1,0 +1,83 @@
+{#- A report as an email, in HTML that Outlook shows as intended: tables for the layout, every style
+    inline, no images, no scripts. Input: _report (see roles/site_email/tasks/main.yml), and the
+    footer line _email_footer. Every value is escaped (| e). Your own look: copy this file and point
+    report_email_html_template at the copy. -#}
+{%- set r = _report -%}
+{%- set colour = {'ok': '#15803d', 'warning': '#b45309', 'critical': '#b91c1c', 'info': '#1d4ed8'} -%}
+{%- set band = colour[r.status | default('info')] | default('#1d4ed8') -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ r.title | e }}</title>
+</head>
+<body style="margin:0;padding:0;background:#f3f4f6;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f3f4f6;">
+<tr><td align="center" style="padding:16px 8px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:1000px;background:#ffffff;border:1px solid #d1d5db;font-family:'Segoe UI',Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;color:#111827;">
+<tr><td style="background:{{ band }};color:#ffffff;padding:16px 20px;">
+<div style="font-size:20px;font-weight:bold;">{{ r.title | e }}</div>
+{%- if r.subtitle | default('') %}
+<div style="font-size:14px;margin-top:4px;">{{ r.subtitle | e }}</div>
+{%- endif %}
+</td></tr>
+{%- if r.summary | default([]) %}
+<tr><td style="padding:16px 20px 4px 20px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+{%- for t in r.summary %}
+<td style="padding:0 8px 8px 0;vertical-align:top;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border:1px solid #d1d5db;border-top:4px solid {{ colour[t.status | default('')] | default('#6b7280') }};min-width:120px;">
+<tr><td style="padding:8px 12px;">
+<div style="font-size:22px;font-weight:bold;color:{{ colour[t.status | default('')] | default('#111827') }};">{{ t.value | string | e }}</div>
+<div style="font-size:12px;color:#4b5563;">{{ t.label | e }}</div>
+</td></tr></table>
+</td>
+{%- endfor %}
+</tr></table>
+</td></tr>
+{%- endif %}
+{%- for s in r.sections | default([]) %}
+<tr><td style="padding:12px 20px 4px 20px;">
+<div style="font-size:16px;font-weight:bold;color:{{ colour[s.status | default('')] | default('#111827') }};border-bottom:2px solid #e5e7eb;padding-bottom:4px;">{{ s.title | e }}{% if s.rows is defined %} <span style="font-weight:normal;color:#6b7280;">({{ s.rows | length }})</span>{% endif %}</div>
+{%- if s.text | default('') %}
+<div style="padding:6px 0;color:#374151;">{{ s.text | e }}</div>
+{%- endif %}
+{%- if s.columns is defined %}
+{%- if s.rows | default([]) %}
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid #d1d5db;font-size:13px;margin:4px 0 8px 0;">
+<tr>
+{%- for c in s.columns %}
+<th align="left" style="background:#b8c3d4;color:#111827;padding:6px 8px;border:1px solid #9aa7bb;font-weight:bold;">{{ c | e }}</th>
+{%- endfor %}
+</tr>
+{%- for row in s.rows %}
+<tr style="background:{{ '#ffffff' if loop.index is odd else '#f9fafb' }};">
+{%- for cell in row %}
+<td style="padding:5px 8px;border:1px solid #c9d1dd;vertical-align:top;">{{ cell | default('', true) | string | e }}</td>
+{%- endfor %}
+</tr>
+{%- endfor %}
+</table>
+{%- else %}
+<div style="padding:6px 0;color:#6b7280;">None.</div>
+{%- endif %}
+{%- endif %}
+{%- if s.lines | default([]) %}
+<ul style="margin:6px 0 8px 0;padding-left:20px;">
+{%- for l in s.lines if l | trim %}
+<li style="margin:2px 0;">{{ l | e }}</li>
+{%- endfor %}
+</ul>
+{%- endif %}
+</td></tr>
+{%- endfor %}
+<tr><td style="padding:12px 20px 16px 20px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;">
+{%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
+{{ _email_footer | e }}
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>

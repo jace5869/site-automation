@@ -17,7 +17,8 @@ ROLES = ["check_disk", "check_mounts", "check_services", "check_performance", "c
          "check_network", "check_logging", "check_selinux", "check_fapolicyd", "check_auditd",
          "check_accounts", "check_certs", "check_patching", "check_mariadb", "check_containers",
          "podman_discover", "site_findings",
-         "site_act", "servicenow", "poam", "patch", "troubleshoot", "service_watch", "stigman_stack"]
+         "site_act", "servicenow", "poam", "patch", "troubleshoot", "service_watch", "stigman_stack",
+         "vmware_vm", "site_email"]
 CUT = {"troubleshoot": "ts_areas:", "service_watch": "# ---- Derived"}   # print the file up to here
 
 
