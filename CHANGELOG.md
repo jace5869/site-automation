@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.9.0 — 2026-10-06
+
+- **VMware snapshot report** (`playbooks/vm_snapshot_report.yml`, read-only): every snapshot of
+  every VM - name, when taken, **who took it** (from vCenter's events; "unknown" once vCenter has
+  forgotten them), age, size in MB / GB / TB (the space it holds), folder, description - oldest
+  first. Listed apart: the ones `vm_snapshot_max_age_days` (3) or older that the cleanup would
+  delete, and the old ones it never deletes, each with the reason. Emailed; artifacts `vm_snapshots`.
+- **VMware snapshot cleanup** (`playbooks/vm_snapshot_cleanup.yml`): deletes those old snapshots and
+  reports (emails) what it deleted, the space freed and any failure. **Never deleted:** names or
+  descriptions that say keep / do not delete; VMs in `vm_snapshot_cleanup_exclude_vms` (wildcards:
+  `DC*`) or `vmware_protected_vms`; the AAP server; snapshots over `vm_snapshot_cleanup_max_size_gb`
+  (1 TB) or of unknown size; more than `vm_snapshot_cleanup_max` (50) per run. After an approval in
+  a workflow: only the snapshots the report listed; on its own: only with
+  `vm_snapshot_cleanup_confirm: true`, else it lists. `vm_snapshot_cleanup_email_only_if_deleted:
+  true` = email only when something was deleted.
+- **The approval workflow** (report, approve, delete, report), set up click by click and explained
+  simply, with dry runs: docs/VMWARE.md, "Snapshots".
+- `vmware_protected_vms` takes wildcards (`DC*`) - restart, shut down and VLAN change refuse those VMs.
+
 ## 0.8.0 — 2026-10-06
 
 - **Every report job can email its report** - formatted, one email per run whatever the number

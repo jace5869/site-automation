@@ -58,12 +58,21 @@ report_text        a report (roles/site_email: title, summary, sections with tab
 
 vm_ds_row          a datastore (site_vmware_datastores) as a row of the datastore report's tables.
 
+vm_snapshot_split  snapshots -> all (oldest first), old (to delete), held (old but never deleted
+                   automatically: keep name, excluded VM, the AAP server, too big - each with a reason).
+human_size         GB -> '980 MB', '12.4 GB', '1.32 TB'.
+name_matches       does a name match one of these patterns (case-insensitive, * and ? wildcards)?
+vm_snapshot_plan   what the snapshot cleanup deletes: the old ones, or after an approval only the
+                   approved ones that are still old.
+vm_snap_row        a snapshot as a row of the snapshot report's tables.
+
 host_ids           the names and addresses inventory hosts can be recognised by (inventory name
                    and ansible_host; host names without the domain, lower case).
                        {{ groups['aap'] | default([]) | host_ids(hostvars) }}
 """
 import csv
 import datetime
+import fnmatch
 import json
 import io
 import re
@@ -780,6 +789,82 @@ def vm_ds_row(d):
             d.get("free_gb", ""), d.get("used_pct", ""), d.get("provisioned_pct", ""), d.get("hosts", ""), d.get("vms", ""), state]
 
 
+def human_size(gb):
+    """A size in GB -> '980 MB', '12.4 GB', '1.32 TB'; None -> '?'."""
+    if gb is None or gb == "":
+        return "?"
+    gb = float(gb)
+    if gb >= 1024:
+        return "%.2f TB" % (gb / 1024)
+    if gb >= 1:
+        return "%.1f GB" % gb
+    return "%.0f MB" % (gb * 1024)
+
+
+def name_matches(name, patterns):
+    """Does a name match one of these (case-insensitive; * and ? wildcards, e.g. DC*)?"""
+    n = str(name or "").lower()
+    return any(fnmatch.fnmatchcase(n, str(p).lower()) for p in patterns or [] if str(p).strip())
+
+
+def vm_snapshot_split(snaps, max_age_days, keep_regex="", exclude=None, protected_ids=None, max_size_gb=None):
+    """Snapshots (site_vmware_snapshots) -> {'all': oldest first, 'old': at least max_age_days old AND
+    deletable, 'held': old but never deleted automatically, each with a 'reason'}. Held back: the name
+    or description matches keep_regex; the VM matches an exclude pattern; the VM is a protected host
+    (its name, guest host name or IP in protected_ids - the AAP server); bigger than max_size_gb, or
+    its size unknown."""
+    rx = re.compile(keep_regex) if keep_regex else None
+    prot = set(protected_ids or [])
+    allsn = sorted(snaps or [], key=lambda x: (-(x.get("age_days") or 0), x.get("vm", ""), x.get("name", "")))
+    old, held = [], []
+    for x in allsn:
+        if (x.get("age_days") or 0) < float(max_age_days):
+            continue
+        size = x.get("size_gb")
+        ids = {_id(x.get("vm")), _id(x.get("hostname")), _id(x.get("ip"))} - {""}
+        if rx and (rx.search(x.get("name") or "") or rx.search(x.get("description") or "")):
+            why = "its name or description says keep"
+        elif name_matches(x.get("vm"), exclude):
+            why = "the VM is on the exclusion list"
+        elif ids & prot:
+            why = "the VM is the AAP server"
+        elif max_size_gb is not None and size is None:
+            why = "its size could not be read"
+        elif max_size_gb is not None and float(size) > float(max_size_gb):
+            why = "bigger than %s: delete it by hand, at a quiet time" % human_size(max_size_gb)
+        else:
+            old.append(x)
+            continue
+        held.append(dict(x, reason=why))
+    return {"all": allsn, "old": old, "held": held}
+
+
+def vm_snapshot_plan(old, approved=None):
+    """What the cleanup deletes: the old snapshots now; after an approval (a workflow), only those
+    that were approved AND are still old - never one the approver did not see.
+    -> {'todo': [...], 'skipped': [approved ones not deleted, each with 'reason']}"""
+    if approved is None:
+        return {"todo": list(old or []), "skipped": []}
+    key = lambda x: (str(x.get("moid")), str(x.get("id")))
+    now_old = {key(x): x for x in old or []}
+    todo, skipped = [], []
+    for a in approved or []:
+        if key(a) in now_old:
+            todo.append(now_old[key(a)])
+        else:
+            skipped.append(dict(a, reason="no longer there, or no longer old enough / now kept"))
+    return {"todo": todo, "skipped": skipped}
+
+
+def vm_snap_row(x):
+    """A snapshot as a row of the snapshot report's tables (with its 'reason' when it has one)."""
+    x = x or {}
+    row = [x.get("vm", ""), x.get("name", ""), str(x.get("created", "")).replace("T", " ").replace("Z", ""),
+           x.get("taken_by") or "unknown", x.get("age_days", ""), human_size(x.get("size_gb")), x.get("folder", ""),
+           x.get("description", "")]
+    return row + [x["reason"]] if "reason" in x else row
+
+
 def host_ids(hosts, hostvars=None):
     out = set()
     for h in hosts or []:
@@ -894,4 +979,6 @@ class FilterModule(object):
                 "podman_discovery": podman_discovery, "podman_run_as": podman_run_as,
                 "watch_targets": watch_targets, "watch_fix_commands": watch_fix_commands,
                 "watch_allow_patterns": watch_allow_patterns, "vm_facts": vm_facts, "vm_where": vm_where, "vm_ds_row": vm_ds_row, "host_ids": host_ids,
+                "vm_snapshot_split": vm_snapshot_split, "vm_snapshot_plan": vm_snapshot_plan, "vm_snap_row": vm_snap_row,
+                "human_size": human_size, "name_matches": name_matches,
                 "report_text": report_text, "findings_report": findings_report}

@@ -13,6 +13,8 @@ System Center Orchestrator):
 | VM - change VLAN | `playbooks/vm_vlan.yml` | moves one network adapter to another port group (VLAN). The VM's other adapters are not touched |
 | VM - secure boot report | `playbooks/vm_secure_boot_report.yml` | read-only: every VM's firmware and secure boot. Lists BIOS VMs and EFI VMs with secure boot off separately |
 | VM - datastore report | `playbooks/vm_datastore_report.yml` | read-only: every datastore's capacity, free space, used and provisioned %; the ones at 80 / 90 % used listed apart |
+| VM - snapshot report | `playbooks/vm_snapshot_report.yml` | read-only: every snapshot of every VM - name, when taken and by whom, age, size, folder - oldest first; the ones 3 days or older listed apart |
+| VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | deletes the snapshots 3 days or older - never "keep" ones, excluded VMs, the AAP server or ones over 1 TB - then reports what it deleted. Best run in the workflow below, after an approval |
 
 They run on the AAP side and talk to vCenter. They never log in to the VMs.
 
@@ -155,6 +157,135 @@ email say which; `vm_secure_boot_fail: true` / `vm_datastore_fail: true` mark th
 instead, for a workflow that opens a ticket. `vm_secure_boot_folder` limits the secure boot report
 to one vCenter folder; `vmware_datacenter` limits either report to one datacenter;
 `vm_datastore_warn_pct` / `vm_datastore_crit_pct` (80 / 90) set the datastore thresholds.
+
+## Snapshots: the report, the cleanup, and the approval workflow
+
+### The idea, in one picture
+
+```
+ 1. SNAPSHOT REPORT          looks at every VM and makes a list of its snapshots.
+         |                   It changes nothing. It emails you the list.
+         v
+ 2. APPROVAL                 AAP stops and waits. A person reads the list and
+         |                   clicks Approve (go ahead) or Deny (stop).
+         v  (only on Approve)
+ 3. SNAPSHOT CLEANUP         deletes the old snapshots that were ON THAT LIST -
+                             nothing else - and emails what it deleted.
+```
+
+Think of it like cleaning out a fridge: first someone writes down everything old in it (the
+report), then a grown-up says "yes, throw those out" (the approval), then the helper throws out
+**only what is on the paper** (the cleanup). Anything someone put a "keep" label on stays.
+
+### What the report shows
+
+For every snapshot of every VM: the VM, the snapshot's name, when it was taken, **who took it**,
+how many days old it is, how big it is (MB, GB or TB), the VM's folder and the description.
+Oldest first. Then two short lists on top:
+
+- **To delete:** snapshots 3 days old or older (`vm_snapshot_max_age_days`).
+- **Held back:** old snapshots the cleanup will never delete, each with the reason.
+
+"Who took it" comes from vCenter's history. vCenter forgets old history (often after 30 days), so
+for an old snapshot it may say **unknown**. Snapshots taken by the "VM - snapshot" job also have the
+AAP user in their description.
+
+### What the cleanup never deletes
+
+| Never deleted | Why | Change it with (in `playbooks/group_vars/all.yml`) |
+|---|---|---|
+| A snapshot whose name or description says **keep** or **do not delete** | someone wants it kept | `vm_snapshot_keep_regex` |
+| Any snapshot of the VMs on your do-not-touch list | domain controllers, vCenter, ... | `vm_snapshot_cleanup_exclude_vms: [DC*, VCSA*]` (`*` = anything) |
+| Any snapshot of the VMs in `vmware_protected_vms` | the same protected VMs as for restart | `vmware_protected_vms` |
+| Any snapshot of the AAP server | AAP must never be put at risk by AAP | (always) |
+| A snapshot bigger than **1 TB**, or whose size is unknown | merging a huge snapshot can take hours and slow the VM: do it by hand, at a quiet time | `vm_snapshot_cleanup_max_size_gb: 1024` |
+| More than 50 snapshots in one run | a typo in the days would otherwise delete everything | `vm_snapshot_cleanup_max: 50` |
+| Anything that was not on the approved list | the approver only said yes to that list | (always, in the workflow) |
+
+### Set it up (once)
+
+**Step 0 - what you need first** (see "Before you start" above): the VMware vCenter credential, the
+execution environment with `vmware.vmware`, and the mail relay in `all.yml` ("Email the report").
+
+**Step 1 - your do-not-touch list.** In VS Code, in `playbooks/group_vars/all.yml`, add (with your
+VM names; `*` matches anything) - then Commit, Sync Changes, and sync the project in AAP:
+
+```yaml
+vm_snapshot_cleanup_exclude_vms: [DC*, VCSA*, AAP*]
+```
+
+**Step 2 - the report template.** Templates > Create template > Create job template:
+- Name: `VM - snapshot report`
+- Inventory: your inventory with the `aap` group
+- Project: site-automation. Playbook: `playbooks/vm_snapshot_report.yml`
+- Execution environment: the one with `vmware.vmware`
+- Credentials: your **VMware vCenter** credential
+- Leave Limit empty. No survey. Save.
+
+**Step 3 - the cleanup template.** The same again:
+- Name: `VM - snapshot cleanup`
+- Playbook: `playbooks/vm_snapshot_cleanup.yml`
+- Tick **Prompt on launch** next to **Job type** (this lets you do a dry run - below).
+- No survey. Save.
+
+**Step 4 - the workflow.** Templates > Create template > **Create workflow job template**:
+- Name: `VM snapshot cleanup (with approval)`, your organization. Save.
+- **Survey** tab > Create survey question - two questions, then switch the survey **on**:
+
+  | Question | Answer variable name | Answer type | Default |
+  |---|---|---|---|
+  | Delete snapshots older than how many days? | `vm_snapshot_max_age_days` | Integer, required, minimum 1 | `3` |
+  | Email the reports to | `report_email_to` | Text | your team's address |
+
+  The workflow hands these answers to both jobs, so the report and the cleanup use the same days.
+
+- **Visualizer** (the boxes):
+  1. Click **Add step**. Node type: **Job template**. Pick `VM - snapshot report`. Save.
+  2. Hover over that box > **Add step and link** (the plus sign). Node type: **Approval**. Name:
+     `Delete the snapshots listed in the report?`. Timeout: e.g. `1 day` (no answer by then = no).
+     Run type: **Run on success**. Save.
+  3. Hover over the approval box > **Add step and link**. Node type: **Job template**. Pick
+     `VM - snapshot cleanup`. Run type: **Run on success** (after an approval, that means: approved). Save.
+  4. Click **Save** at the top of the Visualizer.
+
+**Step 5 - who may approve.** On the workflow: **User Access** (or Team Access) > Add > pick the
+people > role **Approve**. They need no other rights. Optional: **Notifications** tab > turn on
+the approval notification so they get an email when something waits for them.
+
+**Step 6 - when it runs.** On the workflow: **Schedules** > Create schedule (e.g. every Monday 7:00).
+Or launch it by hand.
+
+### Run it
+
+1. Launch the workflow (or the schedule does). Answer the survey (or keep 3 days).
+2. The report runs and **emails the list**: what will be deleted, what is held back, and why.
+3. AAP waits at the approval. Open **Automation Execution > Administration > Workflow Approvals**
+   (or the workflow job's view) > the approval > **Approve** or **Deny**.
+4. On **Approve**: the cleanup deletes the snapshots from that list that are still there, and still
+   that old, and **emails what it deleted** (and how much space came back). On **Deny** or timeout:
+   nothing is deleted.
+
+The cleanup's email can be sent only when something was actually deleted:
+`vm_snapshot_cleanup_email_only_if_deleted: true` (in the cleanup template's Variables).
+
+### Dry run: try it, delete nothing
+
+- **The safest first try: say no.** Launch the workflow, read the report email, then **Deny** the
+  approval. The report only reads, so nothing changed anywhere.
+- **See exactly what the cleanup would delete, without deleting:** in the workflow's Visualizer,
+  click the `VM - snapshot cleanup` box > **Edit** (pencil) > Job type **Check** > Save, and save
+  the Visualizer. Run the workflow and **Approve**: the cleanup job's output lists
+  `WOULD DELETE ...` for each snapshot and deletes nothing (and sends no email). Set the box back to
+  **Run** afterwards. (This needs the Step 3 tick "Prompt on launch" for Job type.)
+- **Without the workflow:** launch `VM - snapshot cleanup` on its own. With no approved list and no
+  `vm_snapshot_cleanup_confirm: true` it only lists what it would delete - it never deletes.
+
+### Without the workflow
+
+To clean up by hand, make a separate template (not the one in the workflow) on
+`playbooks/vm_snapshot_cleanup.yml` with a survey: `vm_snapshot_max_age_days` (Integer, 3) and
+`vm_snapshot_cleanup_confirm` ("Delete them?", Multiple choice `false` / `true`, default `false`).
+With `false` it only lists; with `true` it deletes - with every rule above still in place.
 
 ## Email the report
 

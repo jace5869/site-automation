@@ -191,6 +191,46 @@ grep -q '"secure_boot_off": \[' "$work/out.txt" && grep -A3 '"secure_boot_off"' 
 run "secure boot report for named VMs only" ok vm_secure_boot_report.yml -e vm_names=DC0_H0_VM1 \
     -- "1 VM(s) (templates not counted): 0 EFI with secure boot, 1 EFI with secure boot OFF, 0 BIOS" "  DC0_H0_VM1  folder /DC0/vm  on DC0_H0  guest web01.example.mil 10.0.0.20"
 
+# ---- snapshot report and cleanup (DC0_C0_RP0_VM1: baseline, multi; DC0_H0_VM0 = AAP: aap-snap; "later" = 5 days on) --
+later=$(( $(date +%s) + 5 * 86400 ))
+run "snapshot report: nothing old yet" ok vm_snapshot_report.yml -- "VMware snapshot report: 3 snapshot(s) on 2 VM(s); none older than 3 days"
+run "a snapshot to keep (its name says so)" ok vm_snapshot.yml -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=keep-me -- "Took snapshot"
+run "snapshot report five days later: to delete apart, held back apart with the reason, sizes readable" ok vm_snapshot_report.yml -e _vm_now=$later \
+    -- "4 snapshot(s) on 2 VM(s); 2 to delete (older than 3 days, 0 MB), 2 old one(s) held back" \
+       "HELD BACK (the VM is the AAP server) DC0_H0_VM0" "HELD BACK (its name or description says keep) DC0_C0_RP0_VM1" \
+       "OLD DC0_C0_RP0_VM1" "days old, 0 MB, taken" "jdoe" '"vm_snapshot_cleanup_candidates"' '"held_back"'
+run "exclusion list (wildcards): the VM's snapshots are held back" ok vm_snapshot_report.yml -e _vm_now=$later \
+    -e '{"vm_snapshot_cleanup_exclude_vms": ["dc0_c0_*"]}' -- "4 snapshot(s) on 2 VM(s); 4 old one(s) held back" \
+       "HELD BACK (the VM is on the exclusion list) DC0_C0_RP0_VM1"
+run "vmware_protected_vms is honoured too" ok vm_snapshot_report.yml -e _vm_now=$later -e '{"vmware_protected_vms": ["DC0_C0_RP0_VM?"]}' \
+    -- "HELD BACK (the VM is on the exclusion list) DC0_C0_RP0_VM1"
+run "size limit: bigger than vm_snapshot_cleanup_max_size_gb is held back" ok vm_snapshot_report.yml -e _vm_now=$later -e vm_snapshot_cleanup_max_size_gb=-1 \
+    -- "HELD BACK (bigger than"
+run "cleanup on its own, not confirmed: lists, deletes nothing, green" ok vm_snapshot_cleanup.yml -e _vm_now=$later \
+    -- "would delete 2 snapshot(s) older than 3 days (nothing deleted)" "WOULD DELETE DC0_C0_RP0_VM1" "HELD BACK DC0_H0_VM0"
+check "  ...all three still there" DC0_C0_RP0_VM1 "len(v['snapshots'])" 3
+run "cleanup confirmed but more than vm_snapshot_cleanup_max: refused" fail vm_snapshot_cleanup.yml -e _vm_now=$later \
+    -e vm_snapshot_cleanup_confirm=true -e vm_snapshot_cleanup_max=1 -- "Refused: 2 snapshots"
+run "cleanup confirmed, as a dry run (Check): deletes nothing" ok vm_snapshot_cleanup.yml --check -e _vm_now=$later -e vm_snapshot_cleanup_confirm=true \
+    -- "would delete 2 snapshot(s)"
+check "  ...still three" DC0_C0_RP0_VM1 "len(v['snapshots'])" 3
+run "cleanup confirmed, the VM excluded: deletes nothing" ok vm_snapshot_cleanup.yml -e _vm_now=$later -e vm_snapshot_cleanup_confirm=true \
+    -e '{"vm_snapshot_cleanup_exclude_vms": "DC0_C0_RP0_VM1"}' -- "deleted 0 snapshot(s)"
+check "  ...still three" DC0_C0_RP0_VM1 "len(v['snapshots'])" 3
+snapmoid="$(state DC0_C0_RP0_VM1 "v['moid']")"; multi="$(state DC0_C0_RP0_VM1 "[s['id'] for s in v['snapshots'] if s['name'] == 'multi'][0]")"
+aapmoid="$(state DC0_H0_VM0 "v['moid']")"; aapsnap="$(state DC0_H0_VM0 "v['snapshots'][0]['id']")"
+approved="{\"vm_snapshot_cleanup_candidates\": [{\"vm\": \"DC0_C0_RP0_VM1\", \"moid\": \"$snapmoid\", \"id\": $multi, \"name\": \"multi\"},
+           {\"vm\": \"gone01\", \"moid\": \"vm-999\", \"id\": 1, \"name\": \"old\"},
+           {\"vm\": \"DC0_H0_VM0\", \"moid\": \"$aapmoid\", \"id\": $aapsnap, \"name\": \"aap-snap\"}]}"
+run "cleanup after the approval: only the approved snapshot - never the AAP server's, even if listed" ok vm_snapshot_cleanup.yml -e _vm_now=$later \
+    -e "$approved" -- "deleted 1 snapshot(s) older than 3 days" 'DELETED DC0_C0_RP0_VM1: \"multi\"' "NOT DELETED gone01" "NOT DELETED DC0_H0_VM0"
+check "  ...baseline (old, not approved) and keep-me remain" DC0_C0_RP0_VM1 "','.join(s['name'] for s in v['snapshots'])" "baseline,keep-me"
+check "  ...the AAP server's snapshot remains" DC0_H0_VM0 "len(v['snapshots'])" 1
+run "cleanup confirmed: deletes the old one, never keep-me or the AAP server's" ok vm_snapshot_cleanup.yml -e _vm_now=$later -e vm_snapshot_cleanup_confirm=true \
+    -- "deleted 1 snapshot(s)" 'DELETED DC0_C0_RP0_VM1: \"baseline\"'
+check "  ...only keep-me remains" DC0_C0_RP0_VM1 "','.join(s['name'] for s in v['snapshots'])" "keep-me"
+check "  ...and aap-snap" DC0_H0_VM0 "len(v['snapshots'])" 1
+
 # ---- datastore report (read-only; vcsim's LocalDS_0 is about 1% used) -------------------------------
 run "datastore report, default thresholds: all below 80%, green" ok vm_datastore_report.yml \
     -- "VMware datastore report: all 1 below 80% used" "LocalDS_0 (DC0): " '"vm_datastores"'
@@ -234,6 +274,15 @@ grep -l 'Subject: \[AAP\] VM snapshot mailed: DC0_C0_RP0_VM1' "$work/mail"/*.eml
     || { echo "FAIL -   ...snapshot email"; fails=$((fails + 1)); }
 run "dry run: says it would email, sends nothing" ok vm_reboot.yml --check -e vm_names=DC0_H0_VM1 -e "$mail" -- "DRY RUN: would email"
 n="$(ls "$work/mail" | grep -c 'eml$')"; [ "$n" = 2 ] && echo "ok   -   ...still 2 emails" || { echo "FAIL - dry run emailed ($n)"; fails=$((fails + 1)); }
+# (the snapshot "mailed" taken above is old by "later": the first run deletes it and emails, the second finds nothing)
+run "cleanup, email only if deleted: deleted one, emailed" ok vm_snapshot_cleanup.yml -e _vm_now=$later -e vm_snapshot_cleanup_confirm=true \
+    -e "$mail" -e vm_snapshot_cleanup_email_only_if_deleted=true -- "deleted 1 snapshot(s)" "emailed"
+run "cleanup again, nothing left to delete: no email" ok vm_snapshot_cleanup.yml -e _vm_now=$later -e vm_snapshot_cleanup_confirm=true \
+    -e "$mail" -e vm_snapshot_cleanup_email_only_if_deleted=true -- "No email: nothing was deleted"
+run "snapshot report emailed" ok vm_snapshot_report.yml -e _vm_now=$later -e "$mail" -- "emailed"
+eml4="$(ls "$work/mail"/*.eml | sort -V | tail -1)"
+getpart html "$eml4" | grep -q ">keep-me<" && grep -q "Subject: \[AAP\] VMware snapshot report: " "$eml4" \
+    && echo "ok   -   ...the snapshot table in the email" || { echo "FAIL -   ...snapshot email"; fails=$((fails + 1)); }
 run "datastore report emailed" ok vm_datastore_report.yml -e vm_datastore_warn_pct=0.5 -e "$mail" -- "emailed"
 eml3="$(ls "$work/mail"/*.eml | sort -V | tail -1)"
 getpart plain "$eml3" | grep -Eq "^LocalDS_0 +DC0 +.* ok$" && grep -q "Subject: \[AAP\] VMware datastore report: 1 at 0.5%+ used" "$eml3" \
