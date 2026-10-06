@@ -48,9 +48,15 @@ vm_facts           VMware: one VM as vmware.vmware.vm_info returns it (schema vs
 vm_where           one line telling VMs with the same name apart: name, folder, ESXi host, guest
                    host name / IP, power state, guest OS.   {{ vm_record | vm_where }}
 
+findings_report    the findings of a check run, per host -> a report for roles/site_email (counts in
+                   the title, summary boxes, a findings table, hosts that did not report, extra
+                   sections, healthy hosts).   {{ by_host | findings_report(title, missing, checks, extra) }}
+
 report_text        a report (roles/site_email: title, summary, sections with tables or lines) as plain
                    text with aligned columns - the text part of a report email.
                        {{ _report | report_text(footer_line) }}
+
+vm_ds_row          a datastore (site_vmware_datastores) as a row of the datastore report's tables.
 
 host_ids           the names and addresses inventory hosts can be recognised by (inventory name
                    and ansible_host; host names without the domain, lower case).
@@ -765,6 +771,15 @@ def vm_where(v):
     return "  ".join(parts)
 
 
+def vm_ds_row(d):
+    """A datastore (roles/vmware_vm/library/site_vmware_datastores) as a table row for the report:
+    name, datacenter, datastore cluster, type, capacity GB, free GB, used %, provisioned %, hosts, VMs, state."""
+    d = d or {}
+    state = "inaccessible" if not d.get("accessible", True) else ("maintenance" if d.get("maintenance", "normal") != "normal" else "ok")
+    return [d.get("name", ""), d.get("datacenter", ""), d.get("cluster", ""), d.get("type", ""), d.get("capacity_gb", ""),
+            d.get("free_gb", ""), d.get("used_pct", ""), d.get("provisioned_pct", ""), d.get("hosts", ""), d.get("vms", ""), state]
+
+
 def host_ids(hosts, hostvars=None):
     out = set()
     for h in hosts or []:
@@ -819,10 +834,64 @@ def report_text(report, footer=""):
     return "\n".join(out) + "\n"
 
 
+def findings_report(by_host, title, missing=None, checks=None, extra=None):
+    """The result of a check run (site_findings on every host) as a report for roles/site_email:
+    title with the counts, summary boxes, one findings table (critical first), the hosts that did
+    not report, any extra sections the playbook adds (e.g. every certificate), the healthy hosts."""
+    by_host = by_host or {}
+    hosts = sorted(by_host)
+    missing = sorted(missing or [])
+    single = len(hosts) + len(missing) <= 1
+    rows, bad, crit, warn = [], [], 0, 0
+    for h in hosts:
+        fs = by_host.get(h) or []
+        if fs:
+            bad.append(h)
+        for f in fs:
+            sev = str(f.get("severity") or "warning")
+            crit += sev == "critical"
+            warn += sev != "critical"
+            row = [sev.upper(), f.get("check", ""), f.get("summary", ""), f.get("hint", "")]
+            rows.append(row if single else [h] + row)
+    rows.sort(key=lambda r: (0 if "CRITICAL" in r[:2] else 1, r[0]))
+    n = len(rows)
+    if n:
+        t = "%s: %d finding(s)" % (title, n) + ("" if single else " on %d of %d host(s)" % (len(bad), len(hosts)))
+    else:
+        t = "%s: no findings" % title + ("" if single else " - all %d host(s) healthy" % len(hosts))
+    if missing:
+        t += ", %d host(s) did not report" % len(missing)
+    status = "critical" if crit else ("warning" if warn or missing else "ok")
+    box = lambda label, value, bad_status: {"label": label, "value": value, "status": bad_status if value else "ok"}
+    summary = [] if single else [{"label": "Hosts checked", "value": len(hosts)},
+                                 {"label": "Healthy", "value": len(hosts) - len(bad), "status": "ok"},
+                                 box("With findings", len(bad), "warning")]
+    summary += [box("Critical", crit, "critical"), box("Warning", warn, "warning")]
+    if missing:
+        summary.append(box("Did not report", len(missing), "warning"))
+    sections = []
+    if rows:
+        sections.append({"title": "Findings", "status": status,
+                         "columns": ([] if single else ["Host"]) + ["Severity", "Check", "Finding", "Look further"],
+                         "rows": rows})
+    if missing:
+        sections.append({"title": "Did not report", "status": "warning",
+                         "text": "Unreachable, or the job failed on them before the checks ran: their health is unknown.",
+                         "lines": missing})
+    sections += list(extra or [])
+    healthy = [h for h in hosts if h not in bad]
+    if healthy and not single:
+        sections.append({"title": "Healthy (%d)" % len(healthy), "text": ", ".join(healthy)})
+    if not sections:
+        sections.append({"title": "Result", "lines": ["No findings."]})
+    return {"title": t, "status": status, "summary": summary, "sections": sections,
+            "footer": ("Checks run: " + ", ".join(sorted(set(checks)))) if checks else ""}
+
+
 class FilterModule(object):
     def filters(self):
         return {"from_csv": from_csv, "days_until": days_until, "site_result": site_result,
                 "podman_discovery": podman_discovery, "podman_run_as": podman_run_as,
                 "watch_targets": watch_targets, "watch_fix_commands": watch_fix_commands,
-                "watch_allow_patterns": watch_allow_patterns, "vm_facts": vm_facts, "vm_where": vm_where, "host_ids": host_ids,
-                "report_text": report_text}
+                "watch_allow_patterns": watch_allow_patterns, "vm_facts": vm_facts, "vm_where": vm_where, "vm_ds_row": vm_ds_row, "host_ids": host_ids,
+                "report_text": report_text, "findings_report": findings_report}

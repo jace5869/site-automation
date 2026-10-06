@@ -44,6 +44,22 @@
           {{ out if rows else ['no certificates found in the machine stores'] }}
       run_once: true
 
+    - name: The certificate table for the report email
+      ansible.builtin.set_fact:
+        site_report_sections: >-
+          {%- set rows = [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   for c in hostvars[h].check_certs_inventory | default([]) -%}{%- set _ = rows.append(c) -%}{%- endfor -%}
+          {%- endfor -%}
+          {%- set out = [] -%}
+          {%- for c in rows | sort(attribute='days') -%}
+          {%-   set _ = out.append([c.days, c.expires, c.host, c.subject, c.where,
+                                    'EXPIRED' if c.days < 0 else ('expires soon' if c.days <= win_check_certs_warn_days | default(30) | int else '')]) -%}
+          {%- endfor -%}
+          {{ [{'title': 'All certificates, soonest expiry first', 'columns': ['Days left', 'Expires', 'Host', 'Subject', 'Where', 'Status'],
+               'rows': out}] }}
+      run_once: true
+
   post_tasks:
     - name: Report (fails the hosts with certificates that expire soon)
       ansible.builtin.include_role:

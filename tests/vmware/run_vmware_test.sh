@@ -119,7 +119,7 @@ grep -q 'attach a credential of type' "$work/out.txt" && echo "ok   - secure boo
     || { echo "FAIL - report: no credential message"; grep -m2 -E 'ERROR|msg' "$work/out.txt"; fails=$((fails + 1)); }
 
 # ---- restart / shut down -------------------------------------------------------------------------
-run "dry run (check mode) restart: says what it would do" ok vm_reboot.yml --check -e vm_names=DC0_H0_VM1 -- "Would restart" '"vm_report"' '"dry_run": true' 
+run "dry run (check mode) restart: says what it would do" ok vm_reboot.yml --check -e vm_names=DC0_H0_VM1 -- "Would restart" '"vm_report"' '"dry_run": true' "No email: report_email_to is not set" 
 run "restart through VMware Tools" ok vm_reboot.yml -e vm_names=DC0_H0_VM1 -- "Restart requested for (operating system restart through VMware Tools): DC0_H0_VM1"
 run "no VMware Tools: guest restart refused, with the hard option explained" fail vm_reboot.yml -e vm_names=DC0_C0_RP0_VM0 \
     -- "VMware Tools is not running in it" "vm_power_mode: hard"
@@ -178,18 +178,27 @@ check "  ...adapter 2 untouched" DC0_H0_VM1 "sorted((n['type'].split('Virtual')[
 
 # ---- secure boot report --------------------------------------------------------------------------
 # (vcsim cannot store secure boot ON; that case is in tests/test_filters.py)
-run "secure boot report: EFI with secure boot off and BIOS listed apart, job fails" fail vm_secure_boot_report.yml \
+run "secure boot report: EFI with secure boot off and BIOS listed apart, job stays green (report only by default)" ok vm_secure_boot_report.yml \
     -- "SECURE BOOT OFF (fix: power the VM off" "  DC0_C0_RP0_VM0  folder /DC0/vm  on DC0_C0_H" "BIOS FIRMWARE (fix:" \
        "  DC0_H0_VM0  folder /DC0/vm  on DC0_H0  guest aap01.example.mil 10.0.0.5  (poweredOn" "  dup  folder /DC0/vm/other" \
        "6 VM(s) (templates not counted): 0 EFI with secure boot, 2 EFI with secure boot OFF, 4 BIOS"
-run "secure boot report, report only (vm_secure_boot_fail: false)" ok vm_secure_boot_report.yml -e vm_secure_boot_fail=false -- "EFI with secure boot OFF"
+run "secure boot report with vm_secure_boot_fail: true: the job fails, for workflows" fail vm_secure_boot_report.yml -e vm_secure_boot_fail=true -- "EFI with secure boot OFF" "vm_secure_boot_fail: false makes this a report only"
 grep -q '"secure_boot_off": \[' "$work/out.txt" && grep -A3 '"secure_boot_off"' "$work/out.txt" | grep -q '"name": "DC0_C0_RP0_VM0"' \
     && grep -q '"vms": 6\b' "$work/out.txt" && grep -q '"secure_boot_on": 0\b' "$work/out.txt" && grep -q '"folder": "/DC0/vm/other"' "$work/out.txt" \
     && grep -q '"vm_report"' "$work/out.txt" \
     && echo "ok   -   ...the lists are job artifacts (vm_secure_boot, vm_report)" \
     || { echo "FAIL -   ...artifacts"; sed -n '/CUSTOM STATS/,$p' "$work/out.txt" | head -30; fails=$((fails + 1)); }
-run "secure boot report for named VMs only" fail vm_secure_boot_report.yml -e vm_names=DC0_H0_VM1 \
+run "secure boot report for named VMs only" ok vm_secure_boot_report.yml -e vm_names=DC0_H0_VM1 \
     -- "1 VM(s) (templates not counted): 0 EFI with secure boot, 1 EFI with secure boot OFF, 0 BIOS" "  DC0_H0_VM1  folder /DC0/vm  on DC0_H0  guest web01.example.mil 10.0.0.20"
+
+# ---- datastore report (read-only; vcsim's LocalDS_0 is about 1% used) -------------------------------
+run "datastore report, default thresholds: all below 80%, green" ok vm_datastore_report.yml \
+    -- "VMware datastore report: all 1 below 80% used" "LocalDS_0 (DC0): " '"vm_datastores"'
+run "datastore report over a (test) threshold: listed apart, still green" ok vm_datastore_report.yml -e vm_datastore_warn_pct=0.5 -e vm_datastore_crit_pct=50 \
+    -- "VMware datastore report: 1 at 0.5%+ used" "WARNING LocalDS_0 (DC0)" '"warning": [' 
+run "datastore report with vm_datastore_fail: true: the job fails, for workflows" fail vm_datastore_report.yml -e vm_datastore_warn_pct=0.5 \
+    -e vm_datastore_fail=true -- "vm_datastore_fail: false makes this a report only"
+run "datastore report for another datacenter: none" ok vm_datastore_report.yml -e vmware_datacenter=NOPE -- "VMware datastore report: all 0 below 80% used"
 
 # ---- email the result (roles/site_email; a fake mail relay without encryption) ---------------------
 smtp_port=$((port + 37))
@@ -199,7 +208,7 @@ smtp_pid=$!
 for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$smtp_port") 2>/dev/null && break; sleep 0.1; done
 mail="{\"report_email_to\": \"ops@example.mil, vmteam@example.mil\", \"report_email_from\": \"aap@example.mil\",
        \"report_email_smtp_host\": \"127.0.0.1\", \"report_email_smtp_port\": $smtp_port, \"report_email_security\": \"none\"}"
-run "secure boot report emailed (and the job still fails on the findings)" fail vm_secure_boot_report.yml -e "$mail" -- "emailed"
+run "secure boot report emailed (and still sent when the job is marked failed)" fail vm_secure_boot_report.yml -e "$mail" -e vm_secure_boot_fail=true -- "emailed"
 eml="$(ls "$work/mail"/*.eml 2>/dev/null | head -1)"
 # the body as a mail client shows it (decoded), one line per line
 body="$work/body.txt"
@@ -225,5 +234,9 @@ grep -l 'Subject: \[AAP\] VM snapshot mailed: DC0_C0_RP0_VM1' "$work/mail"/*.eml
     || { echo "FAIL -   ...snapshot email"; fails=$((fails + 1)); }
 run "dry run: says it would email, sends nothing" ok vm_reboot.yml --check -e vm_names=DC0_H0_VM1 -e "$mail" -- "DRY RUN: would email"
 n="$(ls "$work/mail" | grep -c 'eml$')"; [ "$n" = 2 ] && echo "ok   -   ...still 2 emails" || { echo "FAIL - dry run emailed ($n)"; fails=$((fails + 1)); }
+run "datastore report emailed" ok vm_datastore_report.yml -e vm_datastore_warn_pct=0.5 -e "$mail" -- "emailed"
+eml3="$(ls "$work/mail"/*.eml | sort -V | tail -1)"
+getpart plain "$eml3" | grep -Eq "^LocalDS_0 +DC0 +.* ok$" && grep -q "Subject: \[AAP\] VMware datastore report: 1 at 0.5%+ used" "$eml3" \
+    && echo "ok   -   ...subject with the count, a row per datastore" || { echo "FAIL -   ...datastore email"; getpart plain "$eml3" | head; fails=$((fails + 1)); }
 
 if [ "$fails" -eq 0 ]; then echo "ok   - all VMware scenarios passed"; else echo "$fails FAILED"; exit 1; fi
