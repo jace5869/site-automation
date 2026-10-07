@@ -1,0 +1,97 @@
+---
+# VSPHERE CAPACITY PLANNING (read-only): overall and per cluster - CPU, memory (also with the biggest
+# host(s) failed), vCPUs per core, the VMs that still fit, shared datastores - with growth fitted on
+# vCenter's own daily statistics and the runway (days, date) until each limit. Optionally ACT's own
+# estimate next to it (vm_capacity_act: math vs GenAI). Printed, emailed (report_email_to), and
+# published as artifacts (vm_capacity). Green unless vm_capacity_fail.
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | read clusters, hosts, VMs, datastores and vCenter's daily statistics of the last {{ vm_capacity_history_days }} days
+  site_vmware_capacity:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    clusters: "{{ (vm_capacity_clusters | replace(',', ' ')).split() if vm_capacity_clusters is string else vm_capacity_clusters }}"
+    history_days: "{{ vm_capacity_history_days | int }}"
+    events_days: "{{ vm_capacity_events_days | int }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    now: "{{ _vm_now | default(omit) }}"
+  register: _vm_cap_read
+  check_mode: false
+
+# one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: VMware | the capacity, headroom and runways
+  ansible.builtin.set_fact:
+    _vm_cap_opts: >-
+      {{ {'trend_days': vm_capacity_trend_days | float, 'min_samples': vm_capacity_min_samples | int,
+          'events_days': vm_capacity_events_days | float, 'failover_hosts': vm_capacity_failover_hosts | int,
+          'mem_target_pct': vm_capacity_mem_target_pct | float, 'cpu_target_pct': vm_capacity_cpu_target_pct | float,
+          'vcpu_per_core_max': vm_capacity_vcpu_per_core_max | float, 'storage_warn_pct': vm_capacity_storage_warn_pct | float,
+          'horizon_months': vm_capacity_horizon_months | float,
+          'storage_crit_pct': vm_capacity_storage_crit_pct | float, 'runway_warn_days': vm_capacity_runway_warn_days | float,
+          'runway_crit_days': vm_capacity_runway_crit_days | float,
+          'include_local_datastores': vm_capacity_include_local_datastores | bool, 'max_rows': vm_capacity_max_rows | int,
+          'datacenter': vmware_datacenter | default('', true),
+          'clusters': (vm_capacity_clusters | replace(',', ' ')).split() if vm_capacity_clusters is string else vm_capacity_clusters} }}
+
+- name: VMware | the report
+  ansible.builtin.set_fact:
+    _vm_cap: "{{ _vm_cap_read | vm_capacity_report(_vm_cap_opts) }}"
+
+- name: VMware | GenAI's estimate next to the math (vm_capacity_act)
+  when: vm_capacity_act | bool
+  block:
+    - name: "VMware | ACT estimates the {{ _vm_cap['items'][: vm_capacity_act_max_items | int] | length }} item(s) - evidence mode, ACT runs no command"
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: evidence_analysis.yml
+        public: true
+      vars:
+        _ea_items: "{{ _vm_cap['items'][: vm_capacity_act_max_items | int] }}"
+        _ea_evidence: "{{ _vm_cap | vm_capacity_evidence(_vm_cap_opts) }}"
+        _ea_task: "{{ _vm_cap['items'][: vm_capacity_act_max_items | int] | vm_capacity_act_task(_vm_cap_opts | combine({'extra': site_act_extra_instructions | default('')})) }}"
+        _ea_names: "{{ _vm_cap_read | vm_capacity_names }}"
+        _ea_model_timeout: "{{ vm_capacity_act_model_timeout }}"
+        _ea_check_url: "{{ vm_capacity_act_check_url }}"
+
+    - name: VMware | ACT's estimate in the report
+      ansible.builtin.set_fact:
+        _vm_cap_act_sections: >-
+          {{ _vm_cap['items'][: vm_capacity_act_max_items | int] | vm_capacity_act_section(_ea_parsed,
+               _vm_cap_opts | combine({'ran': _ea_ran | bool, 'reason': _ea_reason, 'raw': _ea_raw})) }}
+
+- name: VMware | the report to print and email
+  ansible.builtin.set_fact:
+    _vm_cap_doc: >-
+      {{ _vm_cap.report | combine({'sections': _vm_cap.report.sections[:4] + (_vm_cap_act_sections | default([]))
+                                              + _vm_cap.report.sections[4:]}) }}
+
+- name: VMware | capacity planning report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_report_subject: "{{ _vm_cap_doc.title }}"
+    _vm_report_lines: "{{ (_vm_cap_doc | report_text).splitlines() }}"
+    _vm_report_doc: "{{ _vm_cap_doc }}"
+
+- name: VMware | the numbers as job artifacts (vm_capacity)
+  ansible.builtin.set_stats:
+    data:
+      vm_capacity: >-
+        {{ _vm_cap.numbers | combine({'items': _vm_cap['items'],
+                                      'act': {'ran': _ea_ran | default(false) | bool, 'overall': (_ea_parsed | default({})).overall | default(''),
+                                              'by_id': (_ea_parsed | default({})).by_id | default({})} if vm_capacity_act | bool else {}}) }}
+
+- name: VMware | ACT made its estimate
+  ansible.builtin.assert:
+    that: _ea_ran | bool
+    fail_msg: "ACT did not estimate: {{ _ea_reason }} The capacity report (the math) is above and in the email."
+    quiet: true
+  when: vm_capacity_act | bool and not ansible_check_mode
+
+- name: VMware | no cluster or datastore is critical
+  ansible.builtin.assert:
+    that: _vm_cap['items'] | selectattr('status', 'equalto', 'critical') | list | length == 0
+    fail_msg: >-
+      {{ _vm_cap['items'] | selectattr('status', 'equalto', 'critical') | map(attribute='name') | join(', ') }}: critical (the
+      report is above). vm_capacity_fail: false makes this a report only.
+    quiet: true
+  when: vm_capacity_fail | bool

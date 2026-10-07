@@ -1,0 +1,17 @@
+---
+# VSPHERE CAPACITY PLANNING (vCenter). Read-only: overall and per cluster - CPU, memory (also with
+# the biggest host failed: N+1), vCPUs per core, how many more VMs fit, shared datastores - with the
+# growth fitted on vCenter's own daily statistics and the runway (days, date) until each limit.
+# vm_capacity_act: true adds GenAI's (ACT's) own estimate next to the math. Emailed (report_email_to).
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential (and an "ACT model key"
+# for vm_capacity_act); no Limit. docs/VMWARE.md, "Capacity planning".
+#   ansible-playbook playbooks/vm_capacity_report.yml
+- name: VM capacity planning (vSphere)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM capacity planning (vSphere)
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: capacity.yml

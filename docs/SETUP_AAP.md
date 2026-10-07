@@ -404,6 +404,11 @@ They run against vCenter, not your hosts, and have their own setup: the VMware e
 environment, a vCenter credential, one template per job. Follow [VMWARE.md](VMWARE.md); the
 emails are in [EMAIL_REPORTS.md](EMAIL_REPORTS.md).
 
+### NetApp ONTAP health report
+
+It reads the storage clusters' REST API, not your hosts: a read-only ONTAP account, a NetApp
+ONTAP credential, one template. Follow [NETAPP.md](NETAPP.md).
+
 ### Try each one
 
 With a Limit of one host:

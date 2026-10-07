@@ -9,6 +9,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "plugins", "filter"))
 import site_filters as f  # noqa: E402
 import vmware_alarm_filters as va  # noqa: E402
+import esxi_filters as ef  # noqa: E402
 
 
 class FromCsv(unittest.TestCase):
@@ -651,6 +652,40 @@ class VmwareAlarms(unittest.TestCase):
         self.assertIn("ACT did not run", nr["title"])
         raw = va.vm_alarm_act_report(p, va.act_analysis_parse("just text", p), {"ran": True, "raw": "line one\n\nline two"})
         self.assertEqual([s for s in raw["sections"] if s["title"] == "ACT's answer"][0]["lines"], ["line one", "line two"])
+
+
+class EsxiSecurityReport(unittest.TestCase):
+    H = [{"name": "esx01", "cluster": "C", "datacenter": "D", "status": "changed", "before": {"SSH": "running, starts with the host", "lockdown": "disabled"},
+          "changes": ["SSH stopped and set to start manually", "lockdown disabled -> normal"], "notes": [], "errors": []},
+         {"name": "esx02", "cluster": "C", "datacenter": "D", "status": "failed", "before": {"SSH": "stopped, starts manually"},
+          "changes": [], "notes": [], "errors": ["lockdown: the vCenter account lacks the privilege Host.Config.Settings on this host"]},
+         {"name": "esx03", "cluster": "C", "datacenter": "D", "status": "ok", "before": {"SSH": "stopped, starts manually", "lockdown": "normal"},
+          "changes": [], "notes": [], "errors": []},
+         {"name": "esx04", "cluster": "C", "datacenter": "D", "status": "skipped", "before": {}, "changes": [],
+          "notes": ["not connected to vCenter (notResponding)"], "errors": []}]
+    O = {"ssh": "disabled", "settings": {"UserVars.ESXiShellTimeOut": 600}, "lockdown": "normal"}
+
+    def test_report(self):
+        r = ef.esxi_security_report(self.H, self.O)
+        self.assertEqual(r["title"], "ESXi security settings: 1 of 4 host(s) changed, 1 failed, 1 skipped (not connected)")
+        self.assertEqual(r["status"], "critical")
+        self.assertEqual(r["subtitle"], "Wanted: SSH disabled; UserVars.ESXiShellTimeOut = 600; lockdown normal")
+        sec = {s["title"]: s for s in r["sections"]}
+        self.assertIn("Host.Config.Settings", sec["Failed"]["rows"][0][2])
+        self.assertEqual(sec["Changed"]["rows"][0][2], "SSH stopped and set to start manually; lockdown disabled -> normal")
+        allh = sec["All hosts"]
+        self.assertEqual(allh["columns"], ["Host", "Cluster", "Datacenter", "Result", "SSH (before)", "lockdown (before)", "Notes"])
+        self.assertEqual(allh["row_status"], ["warning", "critical", "", "unknown"])
+        self.assertEqual([c[3] for c in allh["cell_status"]], ["warning", "critical", "ok", "unknown"])
+        self.assertIn("CHANGED", f.report_text(r))
+
+    def test_dry_run_and_all_set(self):
+        dry = ef.esxi_security_report(self.H[:1], dict(self.O, check_mode=True))
+        self.assertEqual(dry["title"], "ESXi security settings (dry run): 1 of 1 host(s) would change")
+        self.assertTrue(dry["subtitle"].endswith("DRY RUN: nothing was changed"))
+        self.assertIn("Would change", [s["title"] for s in dry["sections"]])
+        ok = ef.esxi_security_report([self.H[2]], self.O)
+        self.assertEqual((ok["title"], ok["status"]), ("ESXi security settings: all 1 host(s) already set", "ok"))
 
 
 def _t(iso):

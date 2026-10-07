@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
+**Contents:** [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
 
 ## check_accounts
 
@@ -260,6 +260,41 @@ File: `roles/check_time/defaults/main.yml`
 | `check_time_offset_warn` | `0.5` | seconds |
 | `check_time_offset_crit` | `5.0` |  |
 | `check_time_min_sources` | `1` | time servers chrony must be able to reach |
+
+## ontap_report
+
+File: `roles/ontap_report/defaults/main.yml`
+
+> NetApp ONTAP health report (playbooks/ontap_health_report.yml). Read-only: GET requests to each cluster's REST API, with the account of a "NetApp ONTAP" credential (docs/NETAPP.md).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ontap_clusters` | `[]` | The clusters' management addresses (names or IPs), e.g. [cluster1.yoursite.mil, cluster2.yoursite.mil]. The credential's account must exist on each of them. |
+| `ontap_validate_certs` | `true` | Check the clusters' HTTPS certificates. ONTAP's own certificate is often self-signed: then put its CA in ontap_ca_path (a file in the project, e.g. "{{ playbook_dir }}/files/ca/ontap-ca.pem"), or set false. |
+| `ontap_ca_path` | (empty) |  |
+| `ontap_timeout` | `30` | seconds for one request |
+| `ontap_volume_warn_pct` | `85` | Thresholds (used %, hours, days, seconds): at or above "warn" = amber, at or above "crit" = red. |
+| `ontap_volume_crit_pct` | `90` |  |
+| `ontap_aggr_warn_pct` | `85` |  |
+| `ontap_aggr_crit_pct` | `90` |  |
+| `ontap_inode_warn_pct` | `85` |  |
+| `ontap_inode_crit_pct` | `90` |  |
+| `ontap_snapmirror_lag_warn_hours` | `24` | last good transfer longer ago than this |
+| `ontap_snapmirror_lag_crit_hours` | `48` |  |
+| `ontap_snapshot_reserve_warn_pct` | `100` | snapshots using this much of their reserve (100 = they spill into the volume) |
+| `ontap_snapshot_reserve_crit_pct` | `150` |  |
+| `ontap_cert_warn_days` | `60` | certificates expiring within this many days |
+| `ontap_cert_crit_days` | `14` |  |
+| `ontap_time_drift_warn_seconds` | `60` | a node's clock against the AAP server's |
+| `ontap_time_drift_crit_seconds` | `300` |  |
+| `ontap_port_errors_warn` | `1` | receive errors (CRC and other bad frames) since the node booted |
+| `ontap_port_errors_crit` | `10000` |  |
+| `ontap_min_spares` | `1` | fewer spare disks than this on a node = amber (0 = red) |
+| `ontap_ems_hours` | `24` | the error events of the last this-many hours |
+| `ontap_ems_max` | `500` | read at most this many events per cluster |
+| `ontap_report_max_rows` | `50` | rows per table (problems first); the job's artifacts have all |
+| `ontap_snapshot_top` | `25` | the snapshot space table: the volumes whose snapshots use the most |
+| `ontap_report_fail` | `false` | The job stays green when it finds problems: the report and email say what. true = mark it FAILED when there is a critical finding or a cluster could not be read, for workflows. |
 
 ## patch
 
@@ -517,6 +552,37 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_alarm_act_config_issues` | `true` | configuration issues too (false = alarms and events only) |
 | `vm_alarm_act_email_if_none` | `false` | true = email even when there is nothing to analyze |
 | `vm_alarm_act_check_url` | `true` | first check that the AAP node can reach the model's URL |
+| `vm_alarm_act_model_timeout` | `300` | Seconds the model may take for its answer (ACT's GENAI_TIMEOUT, 90 by default, is too short for a long analysis). A GENAI_TIMEOUT in site_act_env wins over this. |
+| `esxi_security_hosts` | `[]` | Which hosts: names (* and ? allowed; the short name matches too). [] = every host of vCenter (or of vmware_datacenter). |
+| `esxi_security_clusters` | `[]` | only the hosts of these clusters (names, wildcards); [] = all |
+| `esxi_security_exclude_hosts` | `[]` | Never these hosts (names, wildcards). E.g. a host you opened SSH on for a support case: the nightly run would otherwise close it again. |
+| `esxi_security_ssh` | `disabled` | The SSH service (TSM-SSH): disabled = stopped, and set to start manually; enabled = started, and set to start with the host; "" = leave it as it is. |
+| `esxi_security_shell` | `disabled` | The ESXi Shell service (TSM), the host's local shell: the same choices. |
+| `esxi_security_settings` | `UserVars.ESXiShellTimeOut: 600 UserVars.ESXiShellInteractiveTimeOut: 600` | Advanced settings, name: value; {} = none. The defaults (seconds): UserVars.ESXiShellTimeOut SSH and the ESXi Shell stop by themselves this long after someone starts them (0 = never) UserVars.ESXiShellInteractiveTimeOut an idle SSH or ESXi Shell session is logged out Others often set: UserVars.DcuiTimeOut (an idle DCU… (all of it: the role file) |
+| `esxi_security_lockdown` | `normal` | Lockdown mode: normal = the host is managed only through vCenter (the DCUI still works); disabled; "" = leave it as it is. strict is refused, and a host already strict is left alone. |
+| `esxi_security_lockdown_exception_users` | `[]` | Accounts that must keep logging in to the hosts directly under lockdown (a vulnerability scanner, a monitoring tool): host-local accounts, or Active Directory accounts with their own permission on the host (not vsphere.local, not an AD group). Added before lockdown is turned on; never removed. |
+| `esxi_security_email_only_if_changed` | `true` | The email (report_email_to): true = only when a host was changed or failed; false = every run. |
+| `vm_capacity_clusters` | `[]` | ---- vSphere capacity planning (playbooks/vm_capacity_report.yml) ---- only these clusters (names; * and ? allowed); [] = every cluster |
+| `vm_capacity_history_days` | `90` | The history: vCenter's own daily statistics (cluster CPU and memory, datastore space), kept a year at statistics level 1. Read this many days; the growth is a straight line over the last vm_capacity_trend_days, with at least vm_capacity_min_samples daily values. |
+| `vm_capacity_trend_days` | `30` |  |
+| `vm_capacity_min_samples` | `7` |  |
+| `vm_capacity_events_days` | `30` | VMs added and removed (vCenter keeps events 30 days by default) |
+| `vm_capacity_failover_hosts` | `1` | Plan for this many failed hosts per cluster (N+1); a larger HA admission control failover level wins. |
+| `vm_capacity_mem_target_pct` | `80` | memory used at most this %, with those hosts failed |
+| `vm_capacity_cpu_target_pct` | `80` | CPU used at most this %, with those hosts failed |
+| `vm_capacity_vcpu_per_core_max` | `4` | vCPUs per physical core (amber from here, red from 1.5 times it) |
+| `vm_capacity_horizon_months` | `12` | Hosts recommended per cluster (of its average host size) to keep memory and CPU at their targets with those hosts failed: now, and at the current growth within this many months. |
+| `vm_capacity_storage_warn_pct` | `85` | datastore used %: amber |
+| `vm_capacity_storage_crit_pct` | `90` | red, and the target of the storage runway |
+| `vm_capacity_runway_warn_days` | `90` | a runway shorter than this is amber |
+| `vm_capacity_runway_crit_days` | `30` | and red |
+| `vm_capacity_include_local_datastores` | `false` | a host's own (not shared) datastores count too |
+| `vm_capacity_max_rows` | `100` | rows per table (problems first); the artifacts have all |
+| `vm_capacity_fail` | `false` | The job stays green: the report says what is short. true = mark it FAILED when a cluster or datastore is critical (for workflows). |
+| `vm_capacity_act` | `false` | GenAI: ACT reads the numbers and makes its own estimate, shown next to the job's (math vs GenAI). Needs an "ACT model key" credential on the template; the same site_act_* settings as the alarms analysis. ACT runs on the AAP side and runs no command. |
+| `vm_capacity_act_max_items` | `30` | items ACT estimates: everything overall, then clusters and datastores, problems first |
+| `vm_capacity_act_model_timeout` | `300` | seconds the model may take for its answer |
+| `vm_capacity_act_check_url` | `true` | first check that the AAP node can reach the model's URL |
 
 ## win_act
 

@@ -33,98 +33,31 @@
 - name: VMware | ACT analysis
   when: _vm_al_p.problems | length > 0
   block:
-    - name: VMware | ACT settings (provider, model, URL; the key comes from the job's credential)
-      ansible.builtin.include_role:
-        name: site_act
-        tasks_from: env.yml
-        public: true
-
-    - name: VMware | where ACT sends its request, and the proxy settings it uses
-      ansible.builtin.set_fact:
-        _vm_al_url: >-
-          {{ _site_act_env_all[{'genai': 'GENAI_URL', 'asksage': 'ASKSAGE_URL', 'genai-beta': 'GENAI_BETA_URL'}[site_act_provider]]
-             | default({'genai': 'https://api.genai.mil/v1/chat/completions',
-                        'asksage': 'https://api.genai.army.mil/server/openai/v1/chat/completions',
-                        'genai-beta': 'https://api-beta.genai.mil/v1/chat/completions'}[site_act_provider]) }}
-        _vm_al_proxy: "{{ _site_act_env_all | dict2items | selectattr('key', 'match', '(?i)^(https?|no)_proxy$') | items2dict }}"
-
-    # Any HTTP answer (even 401 or 404) shows the way is open; no answer at all means a firewall, a
-    # proxy or DNS is in the way. The key is not sent.
-    - name: VMware | can this AAP node reach the model at {{ _vm_al_url }}?
-      ansible.builtin.uri:
-        url: "{{ _vm_al_url }}"
-        method: GET
-        timeout: 20
-        ca_path: "{{ site_act_ca | default(omit, true) }}"
-      environment: "{{ _vm_al_proxy }}"
-      register: _vm_al_reach
-      failed_when: false
-      check_mode: false
-      when: _site_act_key_ok | bool and vm_alarm_act_check_url | bool and not ansible_check_mode
-
-    - name: VMware | can ACT run?
-      ansible.builtin.set_fact:
-        _vm_al_why_not: >-
-          {%- if ansible_check_mode -%}
-          A dry run (Check): ACT was not called. It would analyze the {{ _vm_al_p.problems | length }} problem(s) below.
-          {%- elif not _site_act_key_ok | bool -%}
-          This job has no API key for provider {{ site_act_provider }}: attach {{ _site_act_key_hint }} to the job template.
-          {%- elif vm_alarm_act_check_url | bool and (_vm_al_reach.status | default(-1) | int) <= 0 -%}
-          This AAP node cannot reach the model at {{ _vm_al_url }} ({{ _vm_al_reach.msg | default('no answer') | regex_replace('^Status code was -1 and not \[200\]: ', '') }}).
-          {{ ' Its certificate is not trusted: set site_act_ca to the CA file (docs/VMWARE.md, "ACT analysis").'
-             if 'certificate verify failed' in (_vm_al_reach.msg | default('') | lower)
-             else ' Open HTTPS (port 443) from the AAP node to that address, or set a proxy: site_act_env: {HTTPS_PROXY: "http://proxy.yoursite.mil:8080"}.' }}
-          {%- endif -%}
-
-    - name: VMware | a folder for ACT on the AAP side
-      ansible.builtin.tempfile:
-        state: directory
-        suffix: .act
-      register: _vm_al_dir
-      when: not _vm_al_why_not
-
     - name: VMware | ACT analyzes the {{ _vm_al_p.problems | length }} problem(s) - evidence mode, ACT runs no command
       ansible.builtin.include_role:
-        name: act_triage
+        name: site_act
+        tasks_from: evidence_analysis.yml
+        public: true
       vars:
-        act_triage_builtin_checks: false            # those check the machine ACT runs on: here the execution environment
-        act_triage_always: true
-        act_triage_findings_extra: "{{ _vm_al_p.problems | map(attribute='problem') | list }}"
-        act_triage_mode: evidence
-        act_triage_evidence_commands: []
-        act_triage_evidence_text: "{{ _vm_al_read | vm_alarm_evidence(_vm_al_p.problems) }}"
-        act_triage_task: "{{ _vm_al_p.problems | vm_alarm_act_task({'hours': vm_alarm_hours, 'extra': site_act_extra_instructions}) }}"
-        act_triage_env: "{{ _site_act_env_all }}"
-        act_triage_timeout: "{{ site_act_timeout }}"
-        act_triage_fail_in_role: false
-        act_triage_write_report: false
-        act_triage_dest_dir: "{{ _vm_al_dir.path }}"
-        act_triage_pseudo_names: "{{ _vm_al_read | vm_alarm_names }}"     # ACT masks these before anything reaches the model
-      when: not _vm_al_why_not
+        _ea_items: "{{ _vm_al_p.problems }}"
+        _ea_evidence: "{{ _vm_al_read | vm_alarm_evidence(_vm_al_p.problems) }}"
+        _ea_task: "{{ _vm_al_p.problems | vm_alarm_act_task({'hours': vm_alarm_hours, 'extra': site_act_extra_instructions | default('')}) }}"
+        _ea_names: "{{ _vm_al_read | vm_alarm_names }}"
+        _ea_model_timeout: "{{ vm_alarm_act_model_timeout }}"
+        _ea_check_url: "{{ vm_alarm_act_check_url }}"
 
-    - name: VMware | remove ACT's folder
-      ansible.builtin.file:
-        path: "{{ _vm_al_dir.path }}"
-        state: absent
-      when: _vm_al_dir.path is defined
-
-    - name: VMware | what ACT said
+    - name: VMware | what ACT said, for the report
       ansible.builtin.set_fact:
-        _vm_al_ran: >-
-          {{ not _vm_al_why_not and act_triage_result is defined and act_triage_result.status != 'error'
-             and (act_triage_result.summary | default('') | length > 0) }}
-        _vm_al_parsed: "{{ act_triage_result.summary | default('') | act_analysis_parse(_vm_al_p.problems) }}"
-        _vm_al_reason: >-
-          {{ _vm_al_why_not or ('ACT failed: ' ~ (act_triage_result.stop_reason | default('') or 'it gave no answer')
-                                ~ ' (provider ' ~ site_act_provider ~ ', ' ~ _vm_al_url ~ ').') }}
+        _vm_al_ran: "{{ _ea_ran | bool }}"
+        _vm_al_parsed: "{{ _ea_parsed }}"
+        _vm_al_reason: "{{ _ea_reason }}"
 
     - name: VMware | the analysis
       ansible.builtin.set_fact:
         _vm_al_doc: >-
           {{ _vm_al_p.problems | vm_alarm_act_report(_vm_al_parsed,
                {'vcenter': _vm_al_read.vcenter, 'hours': vm_alarm_hours, 'provider': site_act_provider,
-                'model': act_triage_result.model | default(site_act_model or (site_act_models | default({}))[site_act_provider] | default('')),
-                'ran': _vm_al_ran | bool, 'reason': _vm_al_reason, 'raw': act_triage_result.summary | default(''),
+                'model': _ea_model, 'ran': _vm_al_ran | bool, 'reason': _vm_al_reason, 'raw': _ea_raw,
                 'not_analyzed': _vm_al_p.not_analyzed, 'max_items': vm_alarm_act_max_items}) }}
 
     - name: VMware | ACT analysis

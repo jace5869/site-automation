@@ -1,0 +1,15 @@
+---
+# NETAPP ONTAP HEALTH REPORT. Read-only (GET requests to each cluster's REST API): clusters and
+# nodes, health and alerts, hardware, network, capacity (aggregates, volumes, inodes, snapshots),
+# SnapMirror, SVMs, CIFS, LUNs, certificates, time - coloured by severity, problems first.
+# Emailed (report_email_to). Stays green unless ontap_report_fail: true.
+# Runs on the AAP side: attach a "NetApp ONTAP" credential, set ontap_clusters; no Limit. docs/NETAPP.md
+#   ansible-playbook playbooks/ontap_health_report.yml -e '{"ontap_clusters": ["cluster1.example.mil"]}'
+- name: NetApp ONTAP health report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: NetApp ONTAP health report
+      ansible.builtin.include_role:
+        name: ontap_report

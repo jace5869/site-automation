@@ -1,0 +1,25 @@
+---
+# Print the report, publish it as artifacts and email it (report_email_to). Input: _ontap_doc (a
+# report in the layout roles/site_email/tasks/main.yml describes).
+- name: NetApp | the report as job artifacts (ontap_report)
+  ansible.builtin.set_stats:
+    data:
+      ontap_report:
+        subject: "{{ _ontap_doc.title }}"
+        lines: "{{ (_ontap_doc | report_text).splitlines() }}"
+
+- name: NetApp | {{ _ontap_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_ontap_doc | report_text).splitlines() }}"
+
+- name: NetApp | email it (report_email_to)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _ontap_doc | combine({'footer': (_ontap_doc.footer ~ ' ' if _ontap_doc.footer is defined else '') ~ 'Read-only: GET requests to the ONTAP REST API.'}) }}"
+  when: report_email_to | default([]) | length > 0
+
+- name: NetApp | no email
+  ansible.builtin.debug:
+    msg: "No email: report_email_to is not set (docs/EMAIL_REPORTS.md)."
+  when: report_email_to | default([]) | length == 0

@@ -123,3 +123,74 @@ vm_alarm_act_max_items: 40               # analyze at most this many problems, t
 vm_alarm_act_config_issues: true         # configuration issues too (false = alarms and events only)
 vm_alarm_act_email_if_none: false        # true = email even when there is nothing to analyze
 vm_alarm_act_check_url: true             # first check that the AAP node can reach the model's URL
+# Seconds the model may take for its answer (ACT's GENAI_TIMEOUT, 90 by default, is too short for
+# a long analysis). A GENAI_TIMEOUT in site_act_env wins over this.
+vm_alarm_act_model_timeout: 300
+
+# ---- ESXi security settings (playbooks/esxi_security.yml), e.g. every night ----
+
+# Which hosts: names (* and ? allowed; the short name matches too). [] = every host of vCenter
+# (or of vmware_datacenter).
+esxi_security_hosts: []
+esxi_security_clusters: []               # only the hosts of these clusters (names, wildcards); [] = all
+# Never these hosts (names, wildcards). E.g. a host you opened SSH on for a support case: the
+# nightly run would otherwise close it again.
+esxi_security_exclude_hosts: []
+# The SSH service (TSM-SSH): disabled = stopped, and set to start manually; enabled = started, and
+# set to start with the host; "" = leave it as it is.
+esxi_security_ssh: disabled
+# The ESXi Shell service (TSM), the host's local shell: the same choices.
+esxi_security_shell: disabled
+# Advanced settings, name: value; {} = none. The defaults (seconds):
+#   UserVars.ESXiShellTimeOut             SSH and the ESXi Shell stop by themselves this long after
+#                                         someone starts them (0 = never)
+#   UserVars.ESXiShellInteractiveTimeOut  an idle SSH or ESXi Shell session is logged out
+# Others often set: UserVars.DcuiTimeOut (an idle DCUI session), UserVars.HostClientSessionTimeout
+# (an idle Host Client session).
+esxi_security_settings:
+  UserVars.ESXiShellTimeOut: 600
+  UserVars.ESXiShellInteractiveTimeOut: 600
+# Lockdown mode: normal = the host is managed only through vCenter (the DCUI still works);
+# disabled; "" = leave it as it is. strict is refused, and a host already strict is left alone.
+esxi_security_lockdown: normal
+# Accounts that must keep logging in to the hosts directly under lockdown (a vulnerability scanner,
+# a monitoring tool): host-local accounts, or Active Directory accounts with their own permission on
+# the host (not vsphere.local, not an AD group). Added before lockdown is turned on; never removed.
+esxi_security_lockdown_exception_users: []
+# The email (report_email_to): true = only when a host was changed or failed; false = every run.
+esxi_security_email_only_if_changed: true
+
+# ---- vSphere capacity planning (playbooks/vm_capacity_report.yml) ----
+
+vm_capacity_clusters: []                 # only these clusters (names; * and ? allowed); [] = every cluster
+# The history: vCenter's own daily statistics (cluster CPU and memory, datastore space), kept a year
+# at statistics level 1. Read this many days; the growth is a straight line over the last
+# vm_capacity_trend_days, with at least vm_capacity_min_samples daily values.
+vm_capacity_history_days: 90
+vm_capacity_trend_days: 30
+vm_capacity_min_samples: 7
+vm_capacity_events_days: 30              # VMs added and removed (vCenter keeps events 30 days by default)
+# Plan for this many failed hosts per cluster (N+1); a larger HA admission control failover level wins.
+vm_capacity_failover_hosts: 1
+vm_capacity_mem_target_pct: 80           # memory used at most this %, with those hosts failed
+vm_capacity_cpu_target_pct: 80           # CPU used at most this %, with those hosts failed
+vm_capacity_vcpu_per_core_max: 4         # vCPUs per physical core (amber from here, red from 1.5 times it)
+# Hosts recommended per cluster (of its average host size) to keep memory and CPU at their targets
+# with those hosts failed: now, and at the current growth within this many months.
+vm_capacity_horizon_months: 12
+vm_capacity_storage_warn_pct: 85         # datastore used %: amber
+vm_capacity_storage_crit_pct: 90         # red, and the target of the storage runway
+vm_capacity_runway_warn_days: 90         # a runway shorter than this is amber
+vm_capacity_runway_crit_days: 30         # and red
+vm_capacity_include_local_datastores: false   # a host's own (not shared) datastores count too
+vm_capacity_max_rows: 100                # rows per table (problems first); the artifacts have all
+# The job stays green: the report says what is short. true = mark it FAILED when a cluster or
+# datastore is critical (for workflows).
+vm_capacity_fail: false
+# GenAI: ACT reads the numbers and makes its own estimate, shown next to the job's (math vs GenAI).
+# Needs an "ACT model key" credential on the template; the same site_act_* settings as the alarms
+# analysis. ACT runs on the AAP side and runs no command.
+vm_capacity_act: false
+vm_capacity_act_max_items: 30            # items ACT estimates: everything overall, then clusters and datastores, problems first
+vm_capacity_act_model_timeout: 300       # seconds the model may take for its answer
+vm_capacity_act_check_url: true          # first check that the AAP node can reach the model's URL

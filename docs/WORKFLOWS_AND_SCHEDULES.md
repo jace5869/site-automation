@@ -496,6 +496,24 @@ analysis is wanted? Schedule `VM - alarms ACT analysis` on its own: its email li
 
 Click by click, with the survey and the dry run: [VMWARE.md](VMWARE.md), "Snapshots".
 
+### 20. ESXi security settings (nightly)
+
+No workflow needed: a schedule on the `ESXi - security settings` template, every day at 00:00 in
+**your** time zone ([VMWARE.md](VMWARE.md), "ESXi security settings").
+
+
+### 22. vSphere capacity planning (weekly)
+
+No workflow needed: a schedule on `VM - capacity planning`, e.g. every Monday at 07:00. One
+template per cluster (`vm_capacity_clusters`) gives each cluster's owners their own report
+([VMWARE.md](VMWARE.md), "Capacity planning").
+
+### 21. NetApp ONTAP health (daily)
+
+No workflow needed: a schedule on the `NetApp - ONTAP health report` template, e.g. every day at
+06:00 in your time zone ([NETAPP.md](NETAPP.md)). In a workflow with `ontap_report_fail: true`, its
+"On failure" path can open a ticket.
+
 ## Schedules
 
 **What.** A schedule launches a template or workflow at set times.

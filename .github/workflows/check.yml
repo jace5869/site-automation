@@ -42,6 +42,8 @@ jobs:
         run: |
           python tests/test_filters.py
           python tests/test_vmware_modules.py
+          python tests/test_ontap.py
+          python tests/test_capacity.py
       - name: The real ACT in the alarms analysis mode (piped evidence, masked names, the answer read back)
         run: python tests/test_alarm_act_contract.py
       - name: docs/VARIABLES_REFERENCE.md is generated from the roles and is up to date
@@ -66,6 +68,10 @@ jobs:
         run: |
           bash tests/email/run_email_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/email/run_email_test.sh
+      - name: NetApp ONTAP health report against a fake ONTAP REST API (current ansible-core and 2.16)
+        run: |
+          bash tests/netapp/run_netapp_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netapp/run_netapp_test.sh
       - name: VMware jobs against vcsim, the vCenter simulator (current ansible-core and 2.16)
         env:
           VMWARE_COLLECTIONS: /home/runner/.ansible/collections
