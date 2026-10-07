@@ -18,6 +18,7 @@ into **Injector configuration**. Then create one credential of each type per env
 | `stigman_api.yml` | STIG Manager API | `poam_status.yml` STIG Manager cross-check - optional |
 | `keystore_password.yml` | Keystore password | `health_check.yml` / `cert_report.yml` for a PKCS12 keystore - optional |
 | `smtp_relay.yml` | SMTP relay | any job that emails a report (`report_email_to`; the VMware jobs, `docs/VMWARE.md`) - only when the mail relay needs a login |
+| `netapp_ontap.yml` | NetApp ONTAP | `ontap_health_report.yml` - a read-only account on the clusters (`docs/NETAPP.md`) |
 
 A job template can have one Machine credential plus one credential of each custom type, so the
 health check can carry Machine + MariaDB monitor + Keystore password + ACT model key at once.

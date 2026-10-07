@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.11.0 — 2026-10-07
+
+**Updating without scripts** (copying the release over your repository): first delete
+`playbooks\group_vars`, `playbooks\host_vars` and `poam\poam.csv` from the extracted release
+(docs/HOW_IT_FITS_TOGETHER.md, "Method 2"). New: three job templates and one credential type
+(`aap/credential_types/netapp_ontap.yml`) - docs/VMWARE.md ("Capacity planning", "ESXi security
+settings") and docs/NETAPP.md.
+
+- **vSphere capacity planning** (`playbooks/vm_capacity_report.yml`, read-only): overall and per cluster
+  (`vm_capacity_clusters`) - CPU and memory used, memory used with the biggest host down (N+1),
+  vCPUs per core, how many more VMs of the average size fit and what limits them, **hosts
+  recommended** (of the cluster's average size, to keep memory and CPU at 80 % with a host down:
+  now and within `vm_capacity_horizon_months`), VMs added / removed; shared datastores per cluster
+  and one by one. Growth is a straight line through vCenter's own daily statistics (no history to
+  collect first), with the days and date until each limit and how well the line fits.
+  `vm_capacity_act: true` adds GenAI's (ACT's) own estimate next to the math for every item, with
+  whether they agree, its recommendation, reasoning and confidence; ACT states needs in hosts, GB and
+  TB. docs/VMWARE.md, "Capacity planning".
+- The ACT steps of the alarms analysis are now shared (`roles/site_act/tasks/evidence_analysis.yml`):
+  the alarms analysis and the capacity planning use the same, tested path.
+- **NetApp ONTAP health report** (`playbooks/ontap_health_report.yml`, read-only): one email for all
+  clusters (`ontap_clusters`), problems first, every status coloured: clusters (version, health,
+  nodes up, space, NTP); nodes (green up / red down, uptime d hh:mm, takeover possible, service
+  processor, NVRAM battery, clock against AAP); system health subsystems and alerts; error events of
+  the last 24 h, grouped; controllers and shelves (power supplies, fans, temperature, failed FRUs);
+  broken, rebuilding and unassigned disks; spares per node; LIFs down or not home; ports down; port
+  receive and CRC errors (CRC: ONTAP 9.11+); every aggregate (node, home node, size, available,
+  used %) and the ones not on their home node; volumes 85 % / 90 % full or offline (with their
+  aggregate); inodes; snapshot space (count, reserve, used, spill); SnapMirror (unhealthy, lag,
+  state, status, progress, last transfer); cluster and SVM peers; SVMs not running; CIFS servers and
+  their domain controllers; unmapped and offline LUNs; certificates expiring. Thresholds are
+  settings. The collector (`roles/ontap_report/library/site_ontap_collect.py`, Python standard
+  library, no NetApp collection) sends **GET requests only**, follows pages, and when an older ONTAP
+  refuses a field asks again with `ignore_unknown_fields` and then fewer fields ("reduced detail").
+  Fields checked against NetApp's REST reference for ONTAP 9.10 to 9.16. New credential type
+  `aap/credential_types/netapp_ontap.yml`. Green unless `ontap_report_fail: true`. docs/NETAPP.md.
+- **ESXi security settings** (`playbooks/esxi_security.yml`), for every night: on every ESXi host
+  through vCenter, SSH and the ESXi Shell off (stopped, start manually), the shell timeouts at 600 s
+  (`UserVars.ESXiShellTimeOut`, `UserVars.ESXiShellInteractiveTimeOut`; any advanced setting can be
+  added in `esxi_security_settings`), lockdown mode normal. Changes only what differs, so it puts
+  back whatever drifted; strict lockdown is refused and a strict host left alone; exception users
+  (`esxi_security_lockdown_exception_users`) are added before lockdown, never removed; hosts by
+  name, cluster or exclusion list; not-connected hosts skipped. A missing vCenter privilege is named.
+  Check (a dry run) changes nothing. Emailed only when a host was changed or failed; red when a host
+  could not be set. pyVmomi module `site_vmware_esxi_security.py` (vmware.vmware has no lockdown or
+  host advanced-settings module). Setup, the nightly schedule and what lockdown blocks:
+  docs/VMWARE.md, "ESXi security settings".
+- VM alarms ACT analysis: the model may take 300 s for its answer (`vm_alarm_act_model_timeout`;
+  ACT's own default, 90 s, timed out on long analyses). A `GENAI_TIMEOUT` in `site_act_env` still
+  wins. The message is in the troubleshooting table.
+
 ## 0.10.0 — 2026-10-07
 
 **Updating without scripts** (copying the release over your repository): first delete

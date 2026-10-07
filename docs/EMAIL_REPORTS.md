@@ -21,6 +21,9 @@ mail clients that do not show HTML. One email per job run, whatever the number o
 | VM snapshot cleanup | `vm_snapshot_cleanup.yml` | what was deleted (and the space freed), what could not be |
 | VM alarms report | `vm_alarm_report.yml` | triggered alarms, host connection, failed logins, VM events, other errors and warnings, configuration issues, every host - each row coloured by severity |
 | VM alarms ACT analysis | `vm_alarm_act_analysis.yml` | per problem: ACT's likely cause, evidence, fix and confidence (coloured); what to do first |
+| NetApp ONTAP health report | `ontap_health_report.yml` | clusters, nodes, health alerts, events, hardware, disks, network, aggregates, volumes, inodes, snapshots, SnapMirror, SVMs, CIFS, LUNs, certificates - problems first, coloured ([NETAPP.md](NETAPP.md)) |
+| VM capacity planning | `vm_capacity_report.yml` | overall and per cluster: CPU, memory with a host down, vCPUs per core, VMs that fit, hosts recommended, datastores with runways; with GenAI, its estimate next to the math |
+| ESXi security settings | `esxi_security.yml` | the hosts it changed (what), the ones that failed (why), every host's settings before the run. By default only when a host was changed or failed |
 | VM restart, shut down, snapshot, delete snapshot, notes, change VLAN | `vm_*.yml` | what was done to which VM |
 
 ## Turning it on
@@ -73,6 +76,9 @@ job does when it finds problems:
 | VM snapshot cleanup | green; **red** when a deletion failed | - |
 | VM alarms report | **green**: the report and email say what is wrong | `vm_alarm_fail: true` = red on a critical alarm or a host not connected |
 | VM alarms ACT analysis | green; **red** when ACT could not run (no key, no network): the email still lists the problems | - |
+| VM capacity planning | **green**; red when GenAI was asked for and could not run | `vm_capacity_fail: true` = red when a cluster or datastore is critical |
+| ESXi security settings | green; **red** when a host could not be set (the email says why) | - |
+| NetApp ONTAP health report | **green**: the report and email say what is wrong | `ontap_report_fail: true` = red on a critical finding or a cluster not read |
 | Health checks, certificate reports, database health, POA&M, ServiceNow health | **red** when there are findings: AAP workflows start tickets (and ACT) from that | `site_fail_on: []` = green, report only |
 
 So for a template whose job is to email a report to people, set `site_fail_on: []` and it stays

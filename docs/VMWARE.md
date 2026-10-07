@@ -17,6 +17,8 @@ System Center Orchestrator):
 | VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | deletes the snapshots 3 days or older - never "keep" ones, excluded VMs, the AAP server or ones over 1 TB - then reports what it deleted. Best run in the workflow below, after an approval |
 | VM - alarms report | `playbooks/vm_alarm_report.yml` | read-only: the triggered alarms on vCenter, datacenters, clusters and hosts; hosts not connected; the last 24 hours' failed logins, VM shutdowns / HA restarts and other errors and warnings; configuration issues - coloured by severity |
 | VM - alarms ACT analysis | `playbooks/vm_alarm_act_analysis.yml` | read-only: the same problems, with ACT's likely cause, fix and confidence for each. ACT runs on the AAP side, never on the hosts |
+| VM - capacity planning | `playbooks/vm_capacity_report.yml` | read-only: overall and per cluster - CPU, memory (also with a host down), vCPUs per core, VMs that still fit, hosts recommended, datastores - with growth from vCenter's own history and the days until each limit; optionally GenAI's estimate next to it |
+| ESXi - security settings | `playbooks/esxi_security.yml` | on every ESXi host: SSH off, the shell timeouts at 600 s, lockdown mode normal. Changes only what differs, so it can run every night and puts back whatever drifted |
 
 They run on the AAP side and talk to vCenter. They never log in to the VMs.
 
@@ -76,6 +78,7 @@ A service account with a vCenter role that has only what the jobs need:
 | snapshot / delete snapshot | Virtual machine > Snapshot management > Create snapshot / Remove snapshot |
 | notes | Virtual machine > Change configuration > Set annotation |
 | change VLAN | Virtual machine > Change configuration > Modify device settings, and Network > Assign network on the port groups |
+| ESXi security settings | Host > Configuration > Security profile and firewall (the SSH service), Advanced settings (the timeouts), Change settings (lockdown mode and its exception users). If one is missing, the job's error names it (e.g. `lacks the privilege Host.Config.Settings`) |
 | all (to read), and the alarms report | Read-only, which every vCenter role includes |
 
 Give it the role on the folders or clusters of the VMs these jobs may touch, and nowhere else.
@@ -398,7 +401,176 @@ key, no network, an ACT error): the email still lists the problems, and says why
 | `vm_alarm_act_max_items` | `40` | give ACT at most this many problems, the most severe first (the rest are listed as not analyzed) |
 | `vm_alarm_act_config_issues` | `true` | configuration issues too |
 | `vm_alarm_act_check_url` | `true` | check that the AAP node can reach the model first |
-| `site_act_timeout` | `600` | seconds ACT may take |
+| `vm_alarm_act_model_timeout` | `300` | seconds the model may take for its answer (a `GENAI_TIMEOUT` in `site_act_env` wins) |
+| `site_act_timeout` | `600` | seconds the whole ACT run may take (keep it above the model's) |
+
+## Capacity planning: overall and per cluster
+
+`playbooks/vm_capacity_report.yml` answers "how much room is left, and for how long?" - for all
+clusters together and for each cluster. It only reads. The history comes from **vCenter's own
+daily statistics** (it keeps a year of them at the default statistics level), so it works from
+the first run: nothing has to be collected first.
+
+### What the report shows
+
+| Section | What it shows |
+|---|---|
+| **Overall** | all clusters together: CPU and memory capacity, used, used with a host down in each cluster, growth per month and the days until the target; hosts usable and **hosts recommended** (now, and within 12 months); vCPUs per core and room for more VMs; shared storage with its growth and runway |
+| **Clusters: CPU and memory** | per cluster: hosts usable, CPU and memory used, **memory used if the biggest host fails** (N+1: the cluster must still run everything), vCPUs per core, VMs and their average size, memory growth, **memory runway** (days and date until the target with a host down), **room for more VMs** of the average size (and what limits it), **hosts recommended**, VMs added / removed in the last 30 days |
+| **Clusters: storage** | per cluster, its shared datastores together: capacity, free, used, provisioned (thin disks at full size), growth, days until 85 % and until full |
+| **Datastores: runway** | each shared datastore, the one that fills first on top: growth, days (and date) until 85 %, 90 % and full, and how well a straight line fits its history |
+| **Math vs GenAI** (with `vm_capacity_act: true`) | for every item, the job's runway (the math) next to ACT's own estimate (GenAI), whether they agree, ACT's recommendation and reasoning, and its confidence |
+| **Hosts per cluster** | every host: state, cores, CPU and memory used, VMs - an unbalanced cluster shows here |
+
+**Hosts recommended** is a count of hosts of the cluster's average size (cores, memory) that keeps
+memory and CPU at their targets (80 %) with one host down - for example `1 now (memory 59% on
+average then); 2 within 12 months`. "Within 12 months" applies the current growth. It is a
+sizing guide in hosts, not a list of models.
+
+**How the runway is worked out:** a straight line through the last 30 days of vCenter's daily
+values (memory consumed, CPU used, datastore space used), continued until it reaches the limit.
+"Not growing" means the line is flat or falling. The **trend fit** (R²) says how straight the
+history is: poor means jumps (VMs moved, snapshots deleted, a datastore grown), and the runway is a
+rough guide then.
+
+### Math vs GenAI
+
+With `vm_capacity_act: true`, ACT (the AI assistant, GenAI.mil or Ask Sage) reads the same numbers
+and makes **its own estimate** for the overall picture, each cluster and each datastore: when it needs
+action (in days), what to do, why, and how sure it is. The report puts the two side by side:
+
+| Math (straight line) | GenAI (ACT) | Agreement |
+|---|---|---|
+| 102 days (90 % full) | 55 days | GenAI 47 days sooner |
+| 0 days (memory) | 0 days | agree |
+
+They **agree** when they are within 30 days or 25 % of each other. Where they differ, read ACT's
+reasoning (a recent jump, a limit that comes first, a poor fit), and plan for the sooner one. ACT
+states needs in hosts, cores, GB and TB, and timing in days or months. It runs on the AAP side and
+runs no command (as in "The ACT analysis" above: the same key, URL, proxy and CA settings).
+
+### Set it up
+
+1. **Templates > Create template > Create job template:**
+   - Name: `VM - capacity planning`
+   - Inventory: any (e.g. your VMware one). Project: site-automation. Playbook: `playbooks/vm_capacity_report.yml`
+   - Execution environment: your VMware one. Credentials: **VMware vCenter** (read-only is enough)
+   - Tick **Prompt on launch** next to **Variables** (to try one cluster)
+   - Variables: `report_email_to: vmteam@yoursite.mil`
+   - Save. Launch it once and read the report.
+2. **Per cluster:** the same report for one or a few clusters - Variables
+   `vm_capacity_clusters: [PROD-CL01]` (`*` works: `[PROD-*]`). A second template with that
+   variable gives each cluster its own report.
+3. **GenAI's estimate (optional):** add the **ACT model key** credential to the template, and
+   `vm_capacity_act: true` to its Variables. Launch.
+4. **Schedule:** **Schedules > Create schedule**, e.g. every Monday at 07:00 (your time zone).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `vm_capacity_clusters` | `[]` (all) | only these clusters |
+| `vm_capacity_failover_hosts` | `1` | hosts down to plan for (N+1); a larger HA admission control failover level wins |
+| `vm_capacity_mem_target_pct` / `_cpu_target_pct` | `80` / `80` | memory / CPU used at most this, with those hosts down |
+| `vm_capacity_vcpu_per_core_max` | `4` | vCPUs per physical core (amber from here) |
+| `vm_capacity_storage_warn_pct` / `_crit_pct` | `85` / `90` | datastore used % (the storage runway is to 90 %) |
+| `vm_capacity_runway_warn_days` / `_crit_days` | `90` / `30` | a runway shorter than this is amber / red |
+| `vm_capacity_horizon_months` | `12` | "hosts recommended within N months" |
+| `vm_capacity_trend_days` / `vm_capacity_history_days` | `30` / `90` | the days the trend is fitted on / read |
+| `vm_capacity_include_local_datastores` | `false` | count a host's own datastores too |
+| `vm_capacity_act` | `false` | GenAI's estimate next to the math |
+| `vm_capacity_fail` | `false` | `true` = the job shows failed when a cluster or datastore is critical |
+
+## ESXi security settings (every night): SSH off, timeouts, lockdown
+
+One job, `playbooks/esxi_security.yml`, sets these on every ESXi host, through vCenter:
+
+| What | Setting | Default |
+|---|---|---|
+| **SSH** off: the service stopped, and set to start manually | `esxi_security_ssh` | `disabled` (`enabled`, or `""` = leave it) |
+| **ESXi Shell** off (the host's local shell, a separate service from SSH): the same | `esxi_security_shell` | `disabled` (`enabled`, or `""` = leave it) |
+| **Timeouts** at 600 s (10 minutes): SSH and the ESXi Shell stop by themselves 600 s after someone starts them (`UserVars.ESXiShellTimeOut`), and an idle SSH or shell session is logged out after 600 s (`UserVars.ESXiShellInteractiveTimeOut`) | `esxi_security_settings` | those two, at `600` |
+| **Lockdown mode normal**: the host is managed only through vCenter; the DCUI (the host's console) still works | `esxi_security_lockdown` | `normal` (`disabled`, or `""` = leave it). **strict is refused**, and a host already in strict is left alone |
+
+It changes **only what differs**: a host that already matches is not touched. So it is safe to run
+every night: it puts back whatever someone changed (SSH turned on, a timeout changed, lockdown
+turned off) and the email says which host and what. A dry run (Check) changes nothing and lists
+what it would change. Hosts not connected to vCenter are skipped and listed.
+
+**Another timeout?** `esxi_security_settings` is a list of advanced settings, name: value. Add
+or remove lines, e.g. the DCUI and Host Client idle timeouts:
+
+```yaml
+esxi_security_settings:
+  UserVars.ESXiShellTimeOut: 600
+  UserVars.ESXiShellInteractiveTimeOut: 600
+  UserVars.DcuiTimeOut: 600
+  UserVars.HostClientSessionTimeout: 600
+```
+
+### Before the first real run: who logs in to the hosts directly?
+
+Lockdown mode **blocks direct logins** to the hosts: SSH, the Host Client
+(`https://<host>/ui`), and any tool that connects to a host instead of vCenter. Most often that is
+the **vulnerability scanner** with ESXi credentials, and sometimes a monitoring or backup tool. Ask
+those teams first. For each such account, add it to the host's **exception users**: the job adds
+them **before** it turns lockdown on, and never removes one.
+
+```yaml
+esxi_security_lockdown_exception_users: [svc_scanner, svc_monitor]
+```
+
+Exception users must be **local accounts on the host**, or **Active Directory accounts with their
+own permission on the host**. A `vsphere.local` account or an AD group does not work. Your vCenter
+service account for AAP is not affected: lockdown keeps vCenter's access.
+
+### Set it up
+
+1. **The vCenter account** needs the privileges in "Before you start", step 2 (the ESXi security
+   settings row), on the hosts or their cluster.
+2. **Templates > Create template > Create job template:**
+   - Name: `ESXi - security settings`
+   - Inventory: any (e.g. your VMware one). Project: site-automation. Playbook: `playbooks/esxi_security.yml`
+   - Execution environment: your VMware one. Credentials: your **VMware vCenter** credential
+   - Tick **Prompt on launch** next to **Job type** (for the dry run) and next to **Variables**
+     (to try it on one host)
+   - Variables: `report_email_to: vmteam@yoursite.mil` and, if you have them,
+     `esxi_security_lockdown_exception_users: [...]`
+   - Save.
+3. **Dry run:** Launch, Job type **Check**. Read the report: every host and what it would change.
+4. **One host for real:** Launch, Job type **Run**, Variables `esxi_security_hosts: [esx01.yoursite.mil]`.
+   Check the host in the vSphere Client: **Configure > System > Services** (SSH and ESXi Shell
+   stopped, policy Start and stop manually), **Advanced System Settings** (the two timeouts), **Security Profile >
+   Lockdown Mode** (Normal). Have the scanner team run a scan of it.
+5. **All hosts:** Launch again without `esxi_security_hosts`.
+6. **Every night at midnight:** the template's **Schedules** tab > **Create schedule**:
+   - Name: `Nightly 00:00`
+   - Start date: tomorrow, start time **00:00**
+   - **Time zone: yours** (e.g. `America/New_York`). AAP does not assume your local time: with
+     the wrong zone, "midnight" runs at another hour.
+   - Repeat: **Daily**, every 1 day. No end. Save.
+
+The nightly email comes only when a host was changed or failed (an empty night sends nothing);
+`esxi_security_email_only_if_changed: false` emails every night.
+
+### A host that needs SSH (a support case)
+
+The nightly run would turn SSH off again. Exempt the host while the case is open, in the
+template's Variables:
+
+```yaml
+esxi_security_exclude_hosts: [esx07.yoursite.mil]
+```
+
+Then turn SSH on in the vSphere Client (and lockdown off if the vendor needs the Host Client).
+Remove the line when the case is closed: the next night sets the host back. To **undo** on
+purpose for every host: `esxi_security_lockdown: disabled`, and `esxi_security_ssh: ""` to leave
+SSH as it is.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `esxi_security_hosts` | `[]` (all) | only these hosts (names, `*` and `?` allowed; the short name works) |
+| `esxi_security_clusters` | `[]` (all) | only the hosts of these clusters |
+| `esxi_security_exclude_hosts` | `[]` | never these hosts |
+| `vmware_datacenter` | (all) | one datacenter only |
 
 ## Email the report
 
@@ -535,6 +707,34 @@ the last column says.
 | `NOT DELETED ...: no longer there, or no longer old enough / now kept` | the snapshot changed between the report and the approval | nothing: it is safe. Run the workflow again |
 | `Taken by` says `unknown` | vCenter no longer keeps the event (often after 30 days) | nothing: the snapshot's description may name the AAP user |
 
+### ESXi security settings
+
+| You see | It means | Do |
+|---|---|---|
+| `... the vCenter account lacks the privilege Host.Config.... on this host` | the vCenter role misses that privilege | add it to the role ("Before you start", step 2), on the hosts or their cluster |
+| `lockdown strict is refused` | `esxi_security_lockdown: strict` | use `normal` |
+| `No host matches (hosts: ...)` | a typo in `esxi_security_hosts` / `_clusters`, or `vmware_datacenter` | the names as the vSphere Client shows them |
+| `X: the host has no such setting` | that advanced setting does not exist on this ESXi version | check the name (case matters), or remove it from `esxi_security_settings` |
+| `lockdown exception users: ... - lockdown left disabled, so they are not locked out` | the exception users could not be added, so lockdown was not turned on (on purpose) | fix the cause (often a privilege, or an account the host does not know) and run again |
+| `lockdown is strict: left as it is` | someone set strict on that host | nothing, or set it to normal in vCenter if strict was a mistake |
+| A host is listed as **skipped** | it is not connected to vCenter | reconnect it; the next run sets it |
+| The scanner (or another tool) cannot log in to a host any more | lockdown blocks direct logins | add its account to `esxi_security_lockdown_exception_users` and run again, or exempt the host |
+| SSH is off again on a host you opened for support | the nightly run did its job | `esxi_security_exclude_hosts` while the case is open |
+| The ESXi Shell stays on, and the report does not mention it | `esxi_security_shell: ""` is set somewhere (leave it as it is) | remove it: the default is `disabled` |
+| Every night's email lists the same host as changed | something turns the setting back every day (a host profile, a script, a person) | find what it is: two tools fighting over one setting |
+
+### Capacity planning
+
+| You see | It means | Do |
+|---|---|---|
+| `not enough history` / `No trend: vCenter has fewer than 7 daily samples` | a new vCenter, or its statistics level or daily interval was changed | wait a week; check vCenter > Configure > General > Statistics: the 1-day interval enabled, level 1 or more |
+| `vCenter's daily statistics interval is turned off: no history` | the 1-day interval is disabled | enable it (same place); usage now is still shown |
+| A runway that jumps from run to run | the trend fit is poor: VMs were moved, snapshots deleted, a datastore grown | read the Trend fit column; use `vm_capacity_trend_days: 60` for a longer, steadier line |
+| `cannot lose a host` | the cluster has as many hosts down (or in maintenance) as it plans to survive | bring hosts back; or set `vm_capacity_failover_hosts: 0` for a cluster that needs no failover |
+| `No cluster matches ...` | a typo in `vm_capacity_clusters` | the cluster's name as the vSphere Client shows it |
+| `ACT did not run: ...` | as for the alarms analysis (key, network, certificate) | the ACT rows above |
+| Math and GenAI differ a lot | ACT weighed something the line does not (a jump, a limit that comes first) | read ACT's reasoning; plan for the sooner of the two |
+
 ### Alarms report
 
 | You see | It means | Do |
@@ -559,6 +759,7 @@ the last column says.
 | `... Its certificate is not trusted: set site_act_ca ...` | the execution environment does not trust the model's certificate authority | put that CA certificate at `playbooks/files/ca/model-ca.pem`, `site_act_ca: "{{ playbook_dir }}/files/ca/model-ca.pem"` in `all.yml`, and `playbooks/files/ca/` in `.site-local` |
 | `ACT failed: ...` with `401` or `Unauthorized` | the key is wrong or expired | a new key in the credential |
 | `ACT failed: ...` with `429` or `Too Many Requests` | the key's quota per minute | run it less often, or lower `vm_alarm_act_max_items` |
+| `model turn exceeded the 90s total timeout` (or `300s`) | the model took longer than ACT allows for one answer (90 s by default; this job allows 300 s, `vm_alarm_act_model_timeout`) | `vm_alarm_act_model_timeout: 600` (keep `site_act_timeout` above it), fewer problems (`vm_alarm_act_max_items: 20`), or a faster model |
 | `ACT produced no result (it timed out after 600s ...)` | a slow model, or a lot of evidence | `site_act_timeout: 900`, or `vm_alarm_act_max_items: 20` |
 | `ACT's answer is below as text` | the model did not use the table format | the answer is still in the email. Run it again, or try another model (`site_act_models`) |
 | A row says `ACT gave no answer for this one` | the model skipped that problem | run it again; fewer problems (`vm_alarm_act_max_items`) help a small model |

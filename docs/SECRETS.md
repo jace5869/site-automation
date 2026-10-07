@@ -34,6 +34,7 @@ variables, or surveys.
 | STIG Manager API client | **STIG Manager API** (`stigman_api.yml`) | env `STIGMAN_TOKEN_URL`, `STIGMAN_CLIENT_ID`, `STIGMAN_CLIENT_SECRET` (token request is `no_log`) |
 | Java keystore password | **Keystore password** (`keystore_password.yml`) | env `KEYSTORE_PASSWORD`; the inventory names the variable (`password_env`), never the value; the check reads it on stdin and `keytool` takes it with `-storepass:env` (never a command line) |
 | vCenter account (VMware jobs) | built-in **VMware vCenter** | env `VMWARE_HOST`, `VMWARE_USER`, `VMWARE_PASSWORD` on the controller (the jobs talk only to vCenter) |
+| NetApp ONTAP read-only account (ONTAP health report) | **NetApp ONTAP** (`netapp_ontap.yml`) | env `ONTAP_USERNAME`, `ONTAP_PASSWORD` on the controller; sent only to the clusters' REST API over HTTPS (basic auth); the job sends GET requests only |
 | Mail relay login (emailed reports) | **SMTP relay** (`smtp_relay.yml`), only if the relay needs a login | env `SMTP_USERNAME` / `SMTP_PASSWORD`; sent only over STARTTLS or SSL (refused with `report_email_security: none`) |
 
 Create one credential of each type **per environment** (dev / test / prod) so a test job can never

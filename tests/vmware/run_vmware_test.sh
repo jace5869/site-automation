@@ -4,7 +4,8 @@
 # server and protected VMs refused, snapshots without memory (create, delete one, delete all),
 # notes, VLAN (port group) change of one adapter leaving the others alone, the secure boot report,
 # dry runs, duplicate and unknown names, no credential; the alarms report (posted events, a
-# disconnected host) and its ACT analysis (a fake ACT: tests/containers/fake_act.py).
+# disconnected host) and its ACT analysis (a fake ACT: tests/containers/fake_act.py); the ESXi
+# security settings; capacity planning (with and without GenAI's estimate).
 #   bash tests/vmware/run_vmware_test.sh
 # Needs: podman or docker; a python with pyVmomi and the vSphere Automation SDK (pip install pyvmomi
 # vmware-vcenter; VMWARE_TEST_PYTHON=... to pick it); the vmware.vmware collection (installed into a
@@ -301,6 +302,26 @@ grep -q "Subject: \[AAP\] VMware datastore report: all 1 below 85% used" "$eml5"
     && getpart html "$eml5" | grep -q "warning at 85% used, critical at 90%" \
     && echo "ok   -   ...85% (the default) in the subject and the heading" || { echo "FAIL -   ...datastore 85%"; getpart plain "$eml5" | head; fails=$((fails + 1)); }
 
+# ---- ESXi security settings (vcsim has no service system and no lockdown: tests/test_vmware_modules.py
+# covers those with a fake host; here an advanced setting vcsim has, the report, email, failures) -------
+only='{"esxi_security_ssh": "", "esxi_security_shell": "", "esxi_security_lockdown": "", "esxi_security_settings": {"Config.HostAgent.log.level": "warning"}}'
+n0="$(ls "$work/mail" | grep -c 'eml$')"
+run "ESXi security, dry run: says what it would change, changes nothing, no email" ok esxi_security.yml --check -e "$only" -e "$mail" \
+    -- "ESXi security settings (dry run): 4 of 4 host(s) would change" "Config.HostAgent.log.level info -> warning" "DRY RUN: would email"
+run "ESXi security: sets it on every host but the excluded one, emails what it changed" ok esxi_security.yml -e "$only" -e "$mail" \
+    -e '{"esxi_security_exclude_hosts": ["dc0_h0"]}' -- "ESXi security settings: 3 of 3 host(s) changed" "on the exclusion list" "emailed"
+eml="$(ls "$work/mail"/*.eml | sort -V | tail -1)"
+[ "$(ls "$work/mail" | grep -c 'eml$')" = $((n0 + 1)) ] && getpart html "$eml" | grep -q 'bgcolor="#b45309"[^>]*>CHANGED<' \
+    && getpart html "$eml" | grep -q "Config.HostAgent.log.level info -&gt; warning" \
+    && echo "ok   -   ...one email, the changed hosts in amber" || { echo "FAIL -   ...ESXi security email"; fails=$((fails + 1)); }
+run "ESXi security again: nothing to change, no email (only when something changed)" ok esxi_security.yml -e "$only" -e "$mail" \
+    -e '{"esxi_security_exclude_hosts": ["dc0_h0"]}' -- "ESXi security settings: all 3 host(s) already set" "No email: no host was changed or failed"
+run "ESXi security with the defaults where the host cannot do it: the host fails, named, the job fails" fail esxi_security.yml \
+    -e esxi_security_hosts=DC0_H0 -- "ESXi security settings: 0 of 1 host(s) changed, 1 failed" "DC0_H0: services:" "the host has no such setting"
+run "ESXi security: strict lockdown is refused" fail esxi_security.yml -e esxi_security_lockdown=strict -- "lockdown strict is refused"
+run "ESXi security: a host name that matches nothing is an error, not a silent no-op" fail esxi_security.yml -e esxi_security_hosts=nope \
+    -- "No host matches (hosts: nope; clusters: all; datacenter: all)"
+
 # ---- alarms report and its ACT analysis (vcsim triggers no alarms: tests/test_filters.py covers them) --
 http_port=$((port + 38))
 mkdir -p "$work/www" "$work/act"
@@ -368,7 +389,7 @@ echo '{"summary": "ROOT CAUSE: the host is disconnected. CONFIDENCE: high"}' > "
 run "ACT analysis: an answer without the JSON block is shown as text, the job stays green" ok vm_alarm_act_analysis.yml -e "$actvars" \
     -- "ACT's answer is below as text" "ROOT CAUSE: the host is disconnected."
 run "ACT analysis as a dry run (Check): ACT not called, green" ok vm_alarm_act_analysis.yml --check -e "$actvars" \
-    -- "A dry run (Check): ACT was not called. It would analyze the 4 problem(s) below."
+    -- "A dry run (Check): ACT was not called. It would analyze the 4 item(s) below."
 INV="$work/inv.yml" run "ACT analysis when the model's URL cannot be reached: says so, emails the problems, fails" fail vm_alarm_act_analysis.yml \
     -e "$mail" -e "$actvars" -e "site_act_url=http://127.0.0.1:$((port + 39))/v1/chat/completions" \
     -- "This AAP node cannot reach the model at http://127.0.0.1:$((port + 39))/v1/chat/completions" "or set a proxy" "emailed"
@@ -378,6 +399,35 @@ run "ACT analysis without an API key: says which credential, still emails the pr
     -- "This job has no API key for provider genai" "ACT model key" "emailed"
 [ "$(nmail)" = $((n0 + 1)) ] && subject "$(lastmail)" | grep -q "ACT did not run - 4 problem(s) not analyzed" \
     && echo "ok   -   ...the email says ACT did not run, and lists the problems" || { echo "FAIL -   ...no-key email"; fails=$((fails + 1)); }
-unset FAKE_ACT_OUT FAKE_ACT_CONFIG
+
+# ---- capacity planning (vcsim's statistics are generated: the checks are about the report, not its numbers) ----
+run "capacity planning: overall and per cluster, the disconnected host not counted, emailed" ok vm_capacity_report.yml -e "$mail" \
+    -- "vSphere capacity planning: " "Overall" "Clusters: CPU and memory" "Clusters: storage" "Datastores: runway" "Hosts per cluster" \
+       "DISCONNECTED" "2 of 3" "Memory after host failure" "LocalDS_0" '"vm_capacity"' "emailed"
+eml="$(lastmail)"
+subject "$eml" | grep -q "^\[AAP\] vSphere capacity planning: " && getpart html "$eml" | grep -q ">Math vs GenAI" && { echo "FAIL -   ...no GenAI section without vm_capacity_act"; fails=$((fails + 1)); } \
+    || echo "ok   -   ...the email, without a GenAI section unless asked"
+"$py" - "$work/act/act.json" <<'EOPY'
+import json, sys
+items = [{"id": "P%d" % i, "estimate": "in about %d months" % i, "estimate_days": 30 * i, "recommendation": "add a host",
+          "reasoning": "memory grows", "confidence": 70} for i in range(1, 6)]
+json.dump({"summary": "BEGIN_ACT_ANALYSIS\n" + json.dumps({"overall": "Plan one more host.", "items": items}) + "\nEND_ACT_ANALYSIS"},
+          open(sys.argv[1], "w"))
+EOPY
+export GENAI_KEY=test-key FAKE_ACT_OUT="$work/act" FAKE_ACT_CONFIG="$work/act/act.json"
+run "capacity planning with GenAI: the math and ACT's estimate side by side" ok vm_capacity_report.yml -e "$mail" -e "$actvars" \
+    -e vm_capacity_act=true -- "Math vs GenAI: runway estimates side by side" "GenAI (ACT): what to do first" "Plan one more host." \
+       "in about 1 months" "emailed"
+grep -q "estimate_days" "$work/act/fake-act-task.txt" && grep -q "^P1 OVERALL" "$work/act/fake-act-stdin.txt" \
+    && grep -q "cluster DC0_C0" "$work/act/fake-act-stdin.txt" && getpart html "$(lastmail)" | grep -q "Math vs GenAI" \
+    && echo "ok   -   ...ACT got the numbers and the days format; the email has both estimates" \
+    || { echo "FAIL -   ...capacity ACT"; head -5 "$work/act/fake-act-stdin.txt"; fails=$((fails + 1)); }
+run "capacity planning with GenAI as a dry run (Check): ACT not called, the math still shown" ok vm_capacity_report.yml --check \
+    -e "$actvars" -e vm_capacity_act=true -- "ACT did not run: A dry run (Check)" "Clusters: CPU and memory"
+run "capacity planning for one cluster" ok vm_capacity_report.yml -e '{"vm_capacity_clusters": ["dc0_c0"]}' \
+    -- "clusters dc0_c0" "Clusters: 1"
+run "capacity planning: a cluster name that matches nothing is an error" fail vm_capacity_report.yml -e vm_capacity_clusters=nope \
+    -- "No cluster matches nope"
+unset GENAI_KEY FAKE_ACT_OUT FAKE_ACT_CONFIG
 
 if [ "$fails" -eq 0 ]; then echo "ok   - all VMware scenarios passed"; else echo "$fails FAILED"; exit 1; fi

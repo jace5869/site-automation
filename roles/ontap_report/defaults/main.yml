@@ -1,0 +1,40 @@
+---
+# NetApp ONTAP health report (playbooks/ontap_health_report.yml). Read-only: GET requests to each
+# cluster's REST API, with the account of a "NetApp ONTAP" credential (docs/NETAPP.md).
+
+# The clusters' management addresses (names or IPs), e.g. [cluster1.yoursite.mil, cluster2.yoursite.mil].
+# The credential's account must exist on each of them.
+ontap_clusters: []
+# Check the clusters' HTTPS certificates. ONTAP's own certificate is often self-signed: then put
+# its CA in ontap_ca_path (a file in the project, e.g. "{{ playbook_dir }}/files/ca/ontap-ca.pem"),
+# or set false.
+ontap_validate_certs: true
+ontap_ca_path: ""
+ontap_timeout: 30                        # seconds for one request
+
+# Thresholds (used %, hours, days, seconds): at or above "warn" = amber, at or above "crit" = red.
+ontap_volume_warn_pct: 85
+ontap_volume_crit_pct: 90
+ontap_aggr_warn_pct: 85
+ontap_aggr_crit_pct: 90
+ontap_inode_warn_pct: 85
+ontap_inode_crit_pct: 90
+ontap_snapmirror_lag_warn_hours: 24      # last good transfer longer ago than this
+ontap_snapmirror_lag_crit_hours: 48
+ontap_snapshot_reserve_warn_pct: 100     # snapshots using this much of their reserve (100 = they spill into the volume)
+ontap_snapshot_reserve_crit_pct: 150
+ontap_cert_warn_days: 60                 # certificates expiring within this many days
+ontap_cert_crit_days: 14
+ontap_time_drift_warn_seconds: 60        # a node's clock against the AAP server's
+ontap_time_drift_crit_seconds: 300
+ontap_port_errors_warn: 1                # receive errors (CRC and other bad frames) since the node booted
+ontap_port_errors_crit: 10000
+ontap_min_spares: 1                      # fewer spare disks than this on a node = amber (0 = red)
+ontap_ems_hours: 24                      # the error events of the last this-many hours
+ontap_ems_max: 500                       # read at most this many events per cluster
+
+ontap_report_max_rows: 50                # rows per table (problems first); the job's artifacts have all
+ontap_snapshot_top: 25                   # the snapshot space table: the volumes whose snapshots use the most
+# The job stays green when it finds problems: the report and email say what. true = mark it
+# FAILED when there is a critical finding or a cluster could not be read, for workflows.
+ontap_report_fail: false

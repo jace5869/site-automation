@@ -8,6 +8,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "roles", "vmware_vm", "library"))
 import site_vmware_snapshots as m  # noqa: E402
 import site_vmware_alarms as al  # noqa: E402
+import site_vmware_esxi_security as es  # noqa: E402
 
 G = 1024 ** 3
 
@@ -116,10 +117,151 @@ class AlarmEvents(unittest.TestCase):
 class AlarmDefaultsMatchModule(unittest.TestCase):
     def test_event_type_lists(self):
         import yaml
-        d = yaml.safe_load(open(os.path.join(os.path.dirname(__file__), "..", "roles", "vmware_vm", "defaults", "main.yml")))
+        with open(os.path.join(os.path.dirname(__file__), "..", "roles", "vmware_vm", "defaults", "main.yml")) as fh:
+            d = yaml.safe_load(fh)
         self.assertEqual(d["vm_alarm_login_event_types"], al.LOGIN_EVENTS)
         self.assertEqual(d["vm_alarm_connection_event_types"], al.CONNECTION_EVENTS)
         self.assertEqual(d["vm_alarm_vm_event_types"], al.VM_EVENTS)
+
+
+class FakeHost(object):
+    """An ESXi host for secure_host(): its state, and every call that would change it."""
+    MUTATING = ("stop_service", "start_service", "set_policy", "set_option", "set_lockdown", "set_exceptions")
+
+    def __init__(self, ssh=(True, "on"), opts=None, lockdown="disabled", exceptions=None, fail=None):
+        self.svc = {"TSM-SSH": ssh, "TSM": (False, "off")}
+        self.opts = dict(opts if opts is not None else {"UserVars.ESXiShellTimeOut": 0, "UserVars.ESXiShellInteractiveTimeOut": 0})
+        self.mode, self.exc, self.calls, self.fail = lockdown, list(exceptions or []), [], fail or {}
+
+    def _call(self, name, *a):
+        self.calls.append((name,) + a)
+        if name in self.fail:
+            raise self.fail[name]
+
+    def services(self):
+        return dict(self.svc)
+
+    def stop_service(self, k):
+        self._call("stop_service", k)
+        self.svc[k] = (False, self.svc[k][1])
+
+    def start_service(self, k):
+        self._call("start_service", k)
+        self.svc[k] = (True, self.svc[k][1])
+
+    def set_policy(self, k, p):
+        self._call("set_policy", k, p)
+        self.svc[k] = (self.svc[k][0], p)
+
+    def option(self, k):
+        if k not in self.opts:
+            raise KeyError(k)
+        return self.opts[k]
+
+    def set_option(self, k, v):
+        self._call("set_option", k, v)
+        self.opts[k] = int(v)
+
+    def lockdown(self):
+        return self.mode
+
+    def set_lockdown(self, m):
+        self._call("set_lockdown", m)
+        self.mode = m
+
+    def exceptions(self):
+        return list(self.exc)
+
+    def set_exceptions(self, users):
+        self._call("set_exceptions", list(users))
+        self.exc = list(users)
+
+
+class NoPermission(Exception):
+    privilegeId = "Host.Config.Settings"
+
+
+WANT = {"services": {"TSM-SSH": "disabled"}, "labels": {"TSM-SSH": "SSH", "TSM": "ESXi Shell"},
+        "settings": {"UserVars.ESXiShellTimeOut": 600, "UserVars.ESXiShellInteractiveTimeOut": "600"},
+        "lockdown": "normal", "exception_users": ["svc_scan", "svc_mon"]}
+
+
+class EsxiSecurity(unittest.TestCase):
+    def test_dry_run_changes_nothing(self):
+        h = FakeHost(exceptions=["svc_mon"])
+        r = es.secure_host(h, WANT, check_mode=True)
+        self.assertEqual(h.calls, [])                                    # not one change
+        self.assertEqual(r["changes"], ["SSH stopped and set to start manually", "UserVars.ESXiShellInteractiveTimeOut 0 -> 600",
+                                        "UserVars.ESXiShellTimeOut 0 -> 600", "lockdown exception users added: svc_scan",
+                                        "lockdown disabled -> normal"])
+        self.assertEqual(r["before"]["SSH"], "running, starts with the host")
+
+    def test_apply_in_order_then_nothing_to_do(self):
+        h = FakeHost(exceptions=["SVC_MON"])
+        r = es.secure_host(h, WANT)
+        self.assertEqual(r["errors"], [])
+        names = [c[0] for c in h.calls]
+        self.assertEqual(names[:2], ["stop_service", "set_policy"])
+        self.assertLess(names.index("set_exceptions"), names.index("set_lockdown"))        # exceptions BEFORE lockdown
+        self.assertIn(("set_exceptions", ["SVC_MON", "svc_scan"]), h.calls)                  # added, never removed (any case)
+        self.assertEqual((h.svc["TSM-SSH"], h.mode, h.opts["UserVars.ESXiShellTimeOut"]), ((False, "off"), "normal", 600))
+        h.calls = []
+        again = es.secure_host(h, WANT)
+        self.assertEqual((h.calls, again["changes"], again["errors"]), ([], [], []))         # a second run: nothing
+
+    def test_strict_is_left_alone(self):
+        h = FakeHost(ssh=(False, "off"), opts={"UserVars.ESXiShellTimeOut": 600, "UserVars.ESXiShellInteractiveTimeOut": 600},
+                     lockdown="strict", exceptions=["svc_scan", "svc_mon"])
+        r = es.secure_host(h, WANT)
+        self.assertEqual((h.calls, r["changes"]), ([], []))
+        self.assertEqual(r["notes"], ["lockdown is strict: left as it is (stricter than normal)"])
+
+    def test_missing_privilege_is_named_and_the_rest_still_runs(self):
+        h = FakeHost(fail={"set_option": NoPermission()})
+        r = es.secure_host(h, dict(WANT, exception_users=[]))
+        self.assertEqual(r["errors"][0], "UserVars.ESXiShellInteractiveTimeOut: the vCenter account lacks the privilege "
+                                         "Host.Config.Settings on this host")
+        self.assertEqual(h.mode, "normal")                                                 # lockdown still set
+        self.assertEqual(h.svc["TSM-SSH"], (False, "off"))
+
+    def test_unknown_setting_and_failed_exceptions(self):
+        h = FakeHost(fail={"set_exceptions": RuntimeError("boom")})
+        r = es.secure_host(h, dict(WANT, settings={"UserVars.NoSuch": 1}))
+        self.assertIn("UserVars.NoSuch: the host has no such setting", r["errors"])
+        self.assertTrue(any(e.startswith("lockdown exception users: RuntimeError: boom - lockdown left disabled") for e in r["errors"]))
+        self.assertEqual(h.mode, "disabled")                       # not locked: the exception users could not be added first
+
+    def test_enable_and_disable_lockdown(self):
+        h = FakeHost(ssh=(False, "off"), lockdown="normal")
+        r = es.secure_host(h, {"services": {"TSM-SSH": "enabled"}, "labels": {"TSM-SSH": "SSH"}, "lockdown": "disabled"})
+        self.assertEqual([c[0] for c in h.calls], ["set_policy", "start_service", "set_lockdown"])
+        self.assertEqual(r["changes"], ["SSH started and set to start with the host", "lockdown normal -> disabled"])
+
+    def test_ssh_and_shell_both_off(self):
+        h = FakeHost()
+        h.svc["TSM"] = (True, "on")
+        r = es.secure_host(h, {"services": {"TSM-SSH": "disabled", "TSM": "disabled"}, "labels": {"TSM-SSH": "SSH", "TSM": "ESXi Shell"}})
+        self.assertEqual((h.svc["TSM-SSH"], h.svc["TSM"]), ((False, "off"), (False, "off")))
+        self.assertEqual(sorted(r["changes"]), ["ESXi Shell stopped and set to start manually", "SSH stopped and set to start manually"])
+        self.assertEqual(r["before"]["ESXi Shell"], "running, starts with the host")
+
+    def test_same_value_and_faults(self):
+        self.assertTrue(es.same_value(600, "600"))
+        self.assertFalse(es.same_value(0, 600))
+        self.assertTrue(es.same_value(True, "true"))
+        self.assertFalse(es.same_value(600, "ten"))
+        self.assertTrue(es.same_value("info", "info"))
+        self.assertEqual(es.fault_text(RuntimeError("x  y")), "RuntimeError: x y")
+
+    def test_pick_hosts(self):
+        hs = [{"name": "esx01.corp.mil", "cluster": "PROD", "datacenter": "DC1"}, {"name": "esx02.corp.mil", "cluster": "LAB", "datacenter": "DC1"},
+              {"name": "esx03.corp.mil", "cluster": "PROD", "datacenter": "DC2"}]
+        self.assertEqual([h["name"] for h in es.pick_hosts(hs)[0]], ["esx01.corp.mil", "esx02.corp.mil", "esx03.corp.mil"])
+        self.assertEqual([h["name"] for h in es.pick_hosts(hs, names=["ESX0[12]"])[0]], ["esx01.corp.mil", "esx02.corp.mil"])
+        self.assertEqual([h["name"] for h in es.pick_hosts(hs, clusters=["prod"], datacenter="DC1")[0]], ["esx01.corp.mil"])
+        picked, excluded = es.pick_hosts(hs, exclude=["esx02"])
+        self.assertEqual(([h["name"] for h in picked], [h["name"] for h in excluded]),
+                         (["esx01.corp.mil", "esx03.corp.mil"], ["esx02.corp.mil"]))
 
 
 if __name__ == "__main__":

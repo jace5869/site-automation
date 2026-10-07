@@ -1,0 +1,92 @@
+---
+# ACT reads evidence the job collected and answers - it runs NO command (act_triage evidence mode).
+# ACT runs here, on the AAP side (the execution environment): only this AAP node must reach the
+# model's URL. Used by the VMware alarms ACT analysis and the vSphere capacity planning.
+# Input:  _ea_evidence (text), _ea_task (the prompt, asking for the BEGIN_ACT_ANALYSIS JSON),
+#         _ea_items (list with id), _ea_names (names ACT masks), _ea_model_timeout (seconds),
+#         _ea_check_url (bool)
+# Output: _ea_ran (bool), _ea_parsed (act_analysis_parse), _ea_reason (why not / what failed),
+#         _ea_raw (ACT's answer), _ea_model, _ea_url
+- name: ACT | settings (provider, model, URL; the key comes from the job's credential)
+  ansible.builtin.include_tasks: env.yml
+
+- name: ACT | where ACT sends its request, and the proxy settings it uses
+  ansible.builtin.set_fact:
+    _ea_url: >-
+      {{ _site_act_env_all[{'genai': 'GENAI_URL', 'asksage': 'ASKSAGE_URL', 'genai-beta': 'GENAI_BETA_URL'}[site_act_provider]]
+         | default({'genai': 'https://api.genai.mil/v1/chat/completions',
+                    'asksage': 'https://api.genai.army.mil/server/openai/v1/chat/completions',
+                    'genai-beta': 'https://api-beta.genai.mil/v1/chat/completions'}[site_act_provider]) }}
+    _ea_proxy: "{{ _site_act_env_all | dict2items | selectattr('key', 'match', '(?i)^(https?|no)_proxy$') | items2dict }}"
+
+# Any HTTP answer (even 401 or 404) shows the way is open; no answer at all means a firewall, a
+# proxy or DNS is in the way. The key is not sent.
+- name: ACT | can this AAP node reach the model at {{ _ea_url }}?
+  ansible.builtin.uri:
+    url: "{{ _ea_url }}"
+    method: GET
+    timeout: 20
+    ca_path: "{{ site_act_ca | default(omit, true) }}"
+  environment: "{{ _ea_proxy }}"
+  register: _ea_reach
+  failed_when: false
+  check_mode: false
+  when: _site_act_key_ok | bool and _ea_check_url | default(true) | bool and not ansible_check_mode
+
+- name: ACT | can ACT run?
+  ansible.builtin.set_fact:
+    _ea_why_not: >-
+      {%- if ansible_check_mode -%}
+      A dry run (Check): ACT was not called. It would analyze the {{ _ea_items | length }} item(s) below.
+      {%- elif not _site_act_key_ok | bool -%}
+      This job has no API key for provider {{ site_act_provider }}: attach {{ _site_act_key_hint }} to the job template.
+      {%- elif _ea_check_url | default(true) | bool and (_ea_reach.status | default(-1) | int) <= 0 -%}
+      This AAP node cannot reach the model at {{ _ea_url }} ({{ _ea_reach.msg | default('no answer') | regex_replace('^Status code was -1 and not \[200\]: ', '') }}).
+      {{ ' Its certificate is not trusted: set site_act_ca to the CA file (docs/VMWARE.md, "ACT analysis").'
+         if 'certificate verify failed' in (_ea_reach.msg | default('') | lower)
+         else ' Open HTTPS (port 443) from the AAP node to that address, or set a proxy: site_act_env: {HTTPS_PROXY: "http://proxy.yoursite.mil:8080"}.' }}
+      {%- endif -%}
+
+- name: ACT | a folder for ACT on the AAP side
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: .act
+  register: _ea_dir
+  when: not _ea_why_not
+
+- name: ACT | analyze the {{ _ea_items | length }} item(s) - evidence mode, ACT runs no command
+  ansible.builtin.include_role:
+    name: act_triage
+  vars:
+    act_triage_builtin_checks: false            # those check the machine ACT runs on: here the execution environment
+    act_triage_always: true
+    act_triage_findings_extra: "{{ _ea_items | map(attribute='id') | list }}"
+    act_triage_mode: evidence
+    act_triage_evidence_commands: []
+    act_triage_evidence_text: "{{ _ea_evidence }}"
+    act_triage_task: "{{ _ea_task }}"
+    act_triage_env: "{{ {'GENAI_TIMEOUT': _ea_model_timeout | default(300) | string} | combine(_site_act_env_all) }}"   # site_act_env wins
+    act_triage_timeout: "{{ site_act_timeout }}"
+    act_triage_fail_in_role: false
+    act_triage_write_report: false
+    act_triage_dest_dir: "{{ _ea_dir.path }}"
+    act_triage_pseudo_names: "{{ _ea_names | default([]) }}"     # ACT masks these before anything reaches the model
+  when: not _ea_why_not
+
+- name: ACT | remove ACT's folder
+  ansible.builtin.file:
+    path: "{{ _ea_dir.path }}"
+    state: absent
+  when: _ea_dir.path is defined
+
+- name: ACT | what ACT said
+  ansible.builtin.set_fact:
+    _ea_ran: >-
+      {{ not _ea_why_not and act_triage_result is defined and act_triage_result.status != 'error'
+         and (act_triage_result.summary | default('') | length > 0) }}
+    _ea_parsed: "{{ act_triage_result.summary | default('') | act_analysis_parse(_ea_items) }}"
+    _ea_raw: "{{ act_triage_result.summary | default('') }}"
+    _ea_model: "{{ act_triage_result.model | default(site_act_model or (site_act_models | default({}))[site_act_provider] | default('')) }}"
+    _ea_reason: >-
+      {{ _ea_why_not or ('ACT failed: ' ~ (act_triage_result.stop_reason | default('') or 'it gave no answer')
+                         ~ ' (provider ' ~ site_act_provider ~ ', ' ~ _ea_url ~ ').') }}

@@ -1,0 +1,55 @@
+---
+# NETAPP ONTAP HEALTH REPORT (playbooks/ontap_health_report.yml). Read-only: the collector sends
+# GET requests only (roles/ontap_report/library/site_ontap_collect.py; what it reads:
+# roles/ontap_report/vars/main.yml). The report (plugins/filter/ontap_filters.py) is printed,
+# emailed (report_email_to) and published as artifacts (ontap_health). Green unless ontap_report_fail.
+- name: NetApp | read the clusters (GET requests only)
+  site_ontap_collect:
+    clusters: "{{ (ontap_clusters | replace(',', ' ')).split() if ontap_clusters is string else ontap_clusters }}"
+    queries: "{{ _ontap_queries }}"
+    validate_certs: "{{ ontap_validate_certs | bool }}"
+    ca_path: "{{ ontap_ca_path | default(omit, true) }}"
+    timeout: "{{ ontap_timeout | int }}"
+  register: _ontap_read
+  check_mode: false                     # it only reads: a dry run (Check) shows the real report
+
+# one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: NetApp | the report
+  ansible.builtin.set_fact:
+    _ontap: >-
+      {{ _ontap_read | ontap_report({
+           'aggr_warn_pct': ontap_aggr_warn_pct | float, 'aggr_crit_pct': ontap_aggr_crit_pct | float,
+           'volume_warn_pct': ontap_volume_warn_pct | float, 'volume_crit_pct': ontap_volume_crit_pct | float,
+           'inode_warn_pct': ontap_inode_warn_pct | float, 'inode_crit_pct': ontap_inode_crit_pct | float,
+           'snap_warn_pct': ontap_snapshot_reserve_warn_pct | float, 'snap_crit_pct': ontap_snapshot_reserve_crit_pct | float,
+           'lag_warn_hours': ontap_snapmirror_lag_warn_hours | float, 'lag_crit_hours': ontap_snapmirror_lag_crit_hours | float,
+           'cert_warn_days': ontap_cert_warn_days | float, 'cert_crit_days': ontap_cert_crit_days | float,
+           'drift_warn': ontap_time_drift_warn_seconds | float, 'drift_crit': ontap_time_drift_crit_seconds | float,
+           'port_errors_warn': ontap_port_errors_warn | float, 'port_errors_crit': ontap_port_errors_crit | float,
+           'min_spares': ontap_min_spares | int, 'ems_hours': ontap_ems_hours | float,
+           'max_rows': ontap_report_max_rows | int, 'snapshot_top': ontap_snapshot_top | int}) }}
+
+- name: NetApp | the report to print and email
+  ansible.builtin.set_fact:
+    _ontap_doc: "{{ _ontap.report }}"
+
+- name: NetApp | report
+  ansible.builtin.include_tasks: report.yml
+
+- name: NetApp | the findings as job artifacts (ontap_health)
+  ansible.builtin.set_stats:
+    data:
+      ontap_health: >-
+        {{ {'clusters': _ontap.clusters, 'critical': _ontap.critical, 'warning': _ontap.warning, 'problems': _ontap.problems,
+            'read_at': _ontap_read.read_at} }}
+
+- name: NetApp | no critical finding, every cluster read
+  ansible.builtin.assert:
+    that:
+      - _ontap.critical | int == 0
+      - _ontap.clusters | rejectattr('reachable') | list | length == 0
+    fail_msg: >-
+      {{ _ontap.critical }} critical finding(s), {{ _ontap.clusters | rejectattr('reachable') | list | length }} cluster(s)
+      not read (the report is above). ontap_report_fail: false makes this a report only.
+    quiet: true
+  when: ontap_report_fail | bool

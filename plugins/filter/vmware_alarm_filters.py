@@ -428,7 +428,8 @@ def _strings(v):
 
 
 def act_analysis_parse(text, problems=None, depth=0):
-    """ACT's answer -> {'parsed': bool, 'overall': str, 'by_id': {P1: {cause, evidence, fix, confidence}},
+    """ACT's answer -> {'parsed': bool, 'overall': str, 'by_id': {P1: {cause, evidence, fix, confidence} (and
+    estimate, estimate_days, recommendation, reasoning when given)},
     'error': why it could not be read}. Reads the JSON between the markers, else a ```json block,
     else the outermost {...}; tolerates trailing commas and a confidence given as 85, "85%", 0.85 or
     high / medium / low."""
@@ -486,6 +487,14 @@ def act_analysis_parse(text, problems=None, depth=0):
                       "evidence": " ".join(str(it.get("evidence") or "").split()),
                       "fix": " ".join(str(it.get("fix") or it.get("remediation") or "").split()),
                       "confidence": _conf(it.get("confidence"))}
+        for k in ("estimate", "recommendation", "reasoning"):      # the capacity planning's answer
+            if it.get(k) is not None:
+                by_id[pid][k] = " ".join(str(it[k]).split())
+        if "estimate_days" in it:
+            try:
+                by_id[pid]["estimate_days"] = None if it["estimate_days"] in (None, "", "null") else int(float(it["estimate_days"]))
+            except (TypeError, ValueError):
+                by_id[pid]["estimate_days"] = None
     return {"parsed": True, "overall": " ".join(str(obj.get("overall") or "").split()), "by_id": by_id, "error": ""}
 
 

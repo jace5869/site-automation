@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: ontap_report
+  description: "NetApp ONTAP health report through the REST API (read-only): clusters, health, hardware, network, capacity, SnapMirror, services, certificates."
+  license: MIT
+  min_ansible_version: "2.16"
+dependencies: []

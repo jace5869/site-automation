@@ -46,6 +46,9 @@ line-by-line changes it would make to files, for example in STIG Manager's confi
 | VMware jobs (restart, shut down, snapshot, delete snapshot, notes, change VLAN) | finds the VMs and runs every check (the AAP VM is refused as in a real run), then prints `Would restart ...`, `Would take snapshot ...`, `would delete ...`, the notes `AFTER`, `would move ...`. **vCenter is not changed**, and no report email is sent (`DRY RUN: would email ...`) |
 | VM - secure boot report, VM datastore report, VM snapshot report, VM alarms report | as usual: only read. No report email is sent |
 | VM - alarms ACT analysis | reads vCenter and lists the problems it would give ACT (`A dry run (Check): ACT was not called`). ACT is not called, no email is sent |
+| NetApp - ONTAP health report | as usual: it only reads (GET requests), and prints the same report. No email is sent |
+| VM - capacity planning | as usual: it only reads. With `vm_capacity_act`, ACT is not called (`ACT did not run: A dry run`). No email |
+| ESXi - security settings | reads every host's SSH service, timeouts and lockdown mode and lists what it would change (`ESXi security settings (dry run): 3 of 40 host(s) would change`). **No host is changed**, no email is sent |
 | VM - snapshot cleanup | lists what it would delete (`WOULD DELETE ...`), deletes nothing, sends no email. In the approval workflow: set the cleanup step's Job type to Check (docs/VMWARE.md, "Dry run") |
 
 **ACT does not run in a dry run.** It would call the model, and ACT could change things. A dry
