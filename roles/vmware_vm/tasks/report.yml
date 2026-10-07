@@ -2,7 +2,8 @@
 # The job's result: printed, published as job artifacts (the job's Details > Artifacts in AAP, and
 # what the next step of a workflow receives), and emailed when report_email_to is set.
 # Input: _vm_report_subject, _vm_report_lines (list of text lines); optional _vm_report_doc, a
-# formatted report for the email (the layout roles/site_email/tasks/main.yml describes).
+# formatted report for the email (the layout roles/site_email/tasks/main.yml describes);
+# _vm_report_no_email (true = no email) with _vm_report_no_email_why (said instead).
 - name: VMware | the result as job artifacts (vm_report)
   ansible.builtin.set_stats:
     data:
@@ -23,13 +24,14 @@
     _report: >-
       {{ (_vm_report_doc | default({'title': _vm_report_subject, 'status': 'info',
                                     'sections': [{'title': 'Result', 'lines': _vm_report_lines}]}, true))
-         | combine({'footer': 'vCenter ' ~ lookup('ansible.builtin.env', 'VMWARE_HOST')
+         | combine({'footer': ((_vm_report_doc.footer ~ ' ') if (_vm_report_doc | default({}, true)).footer is defined else '')
+                              ~ 'vCenter ' ~ lookup('ansible.builtin.env', 'VMWARE_HOST')
                               ~ (' - DRY RUN (Check): nothing was changed.' if ansible_check_mode else '')}) }}
   when: report_email_to | default([]) | length > 0 and not _vm_report_no_email | default(false) | bool
 
 - name: VMware | no email
   ansible.builtin.debug:
     msg: >-
-      {{ 'No email: nothing was deleted (vm_snapshot_cleanup_email_only_if_deleted).' if _vm_report_no_email | default(false) | bool
+      {{ 'No email: ' ~ _vm_report_no_email_why | default('nothing was deleted (vm_snapshot_cleanup_email_only_if_deleted).') if _vm_report_no_email | default(false) | bool
          else 'No email: report_email_to is not set (docs/EMAIL_REPORTS.md).' }}
   when: report_email_to | default([]) | length == 0 or _vm_report_no_email | default(false) | bool

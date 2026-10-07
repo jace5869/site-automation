@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.10.0 — 2026-10-07
+
+**Updating without scripts** (copying the release over your repository): first delete
+`playbooks\group_vars`, `playbooks\host_vars` and `poam\poam.csv` from the extracted release, or
+they replace your settings. Step by step, with a safety net: docs/HOW_IT_FITS_TOGETHER.md,
+"Method 2". Two new templates to create: docs/VMWARE.md, "Alarms".
+
+- **VMware alarms report** (`playbooks/vm_alarm_report.yml`, read-only): the triggered alarms on
+  vCenter, the datacenters, clusters and hosts (`vm_alarm_types`), acknowledged or not; hosts not
+  connected, or that lost the connection; and from the events of the last `vm_alarm_hours` (24)
+  hours: failed logins grouped per user, source and server (red from `vm_alarm_login_critical`, 10),
+  VM shutdowns / power-offs / resets / HA restarts with who did it, every other error and warning
+  (the same event on the same object counted once); configuration issues; and every host with its
+  state, ESXi version and hardware. Every row coloured by severity. Emailed; artifacts `vm_alarms`;
+  green unless `vm_alarm_fail: true`. Needs only pyVmomi (vmware.vmware has no alarm or event module).
+- **VMware alarms ACT analysis** (`playbooks/vm_alarm_act_analysis.yml`): the same problems, numbered,
+  with their evidence (host state and versions, each object's recent events) handed to ACT in
+  evidence mode - ACT runs no command. Per problem: likely cause, evidence, fix and a confidence of
+  0-100 (green 80+, amber 50-79, red under 50), plus what to do first. ACT runs on the AAP side
+  (the execution environment), never on the ESXi hosts; the job first checks that the AAP node can
+  reach the model's URL and says what to do when it cannot (firewall, proxy, CA). Names and
+  addresses are masked before anything reaches the model. Red when ACT could not run; the email still
+  lists the problems. docs/VMWARE.md, "Alarms". tests/test_alarm_act_contract.py runs the real ACT in
+  this mode in CI: no command run, no real name or address sent to the model, every answer read back.
+- **Report emails: coloured rows.** A table may give `row_status` (tints the row) and `cell_status`
+  (fills a cell): the alarms reports use them. A number 0 in a table now shows as 0 (it showed as an
+  empty cell). If you use your own copy of `report.html.j2`, copy these two changes from the new one.
+- `.gitignore` lets public CA certificates in `playbooks/files/ca/` be committed (they were ignored
+  like private keys, so the documented `report_email_ca_path` file never reached AAP). List
+  `playbooks/files/ca/` in `.site-local` so an update keeps them.
+- **Datastore report: warning at 85% used** (was 80%; critical stays 90%). The heading and subject
+  always name the limit: `VMware datastore report: 3 of 40 at 85%+ used (1 at 90%+)`, or `all 40
+  below 85% used`; a line under it gives both limits. The "85%+ used" box counts the 90%+ ones too.
+  A site that set `vm_datastore_warn_pct` keeps its own number.
+- **Snapshot report: the age limit is in the heading and subject**, whatever the result:
+  `VMware snapshot report (older than 2 days): 4 to delete (310 GB); 23 snapshot(s) on 17 VM(s)`.
+  "1 day", not "1 days". The cleanup's email says it the same way. How to use 1 or 2 days instead
+  of 3: docs/VMWARE.md, "What the report shows".
+- `vm_snapshot_max_age_days` that is not a number (e.g. `three`) is refused with a clear message.
+- docs/EMAIL_REPORTS.md: your own copy of the email look must be listed in `.site-local`, or an
+  update deletes it (the docs said an update leaves it alone).
+- **Docs: troubleshooting tables** (what you see, what it means, what to do) for every VMware job
+  and report including the ACT analysis (docs/VMWARE.md) and for report emails
+  (docs/EMAIL_REPORTS.md); the copy-and-paste update spelled out (which folders to delete first,
+  and Discard Changes as the safety net); VMware workflows 18 (alarms, then ACT) and 19 (snapshot
+  cleanup) in docs/WORKFLOWS_AND_SCHEDULES.md; dry-run rows, ACT on the AAP side
+  (docs/ADDING_ACT.md), pointers from SETUP_AAP, RUNBOOKS and START_HERE.
+
 ## 0.9.0 — 2026-10-06
 
 - **VMware snapshot report** (`playbooks/vm_snapshot_report.yml`, read-only): every snapshot of

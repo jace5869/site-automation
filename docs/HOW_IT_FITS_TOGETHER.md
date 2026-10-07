@@ -286,15 +286,42 @@ powershell -ExecutionPolicy Bypass -File .\scripts\update-from-release.ps1 -Clon
 
 If your organization blocks that too, use Method 2.
 
-### Method 2: copy by hand (when you cannot run scripts)
+### Method 2: copy and paste the release (no scripts)
 
-1. Steps 1 and 2 above.
-2. In the **extracted** folder, delete `poam\poam.csv` and anything else you have your own version
-   of. They then cannot overwrite yours.
-3. Select everything in the extracted folder → **Copy** → go to your repository folder → **Paste** →
-   **Replace the files in the destination**.
-4. Steps 5 to 8 above. Copying never deletes anything, so a file the new release *removed* stays
-   in your folder. The `CHANGELOG.md` says when a release removes one; delete it by hand.
+Most people do this: copy the release over the repository. It is safe as long as **your own
+files are not in what you paste**. The release has example copies of them, and pasting those
+would replace yours: your mail relay, your exclusion lists, every setting you made.
+
+1. **Your folder is up to date and clean.** VS Code, **Source Control** (Ctrl+Shift+G): no
+   changes listed. Commit or discard anything there first. Then **... → Pull**.
+2. **Extract the release somewhere else**: right-click `site-automation-<version>.zip` →
+   **Extract All** → e.g. `Downloads\site-automation-<version>`. Not into your repository folder.
+3. **In the extracted folder, delete what is yours** (only the release's examples are deleted):
+   - the folder `playbooks\group_vars` (your settings: `all.yml`, `aap.yml`, ...);
+   - the folder `playbooks\host_vars`, if there is one;
+   - `poam\poam.csv`;
+   - `inventories\site`, if you keep an inventory in Git;
+   - `.site-local`, and every path listed in yours.
+4. **Copy and paste.** In the extracted folder: Ctrl+A, Ctrl+C. In your repository folder:
+   Ctrl+V → **Replace the files in the destination**.
+5. **The safety net: look before you commit.** **Source Control** now lists what the release
+   changed (**M**) and added (**U**, new files).
+   - One of your files in the list, e.g. `playbooks/group_vars/all.yml` (step 3 forgotten)?
+     Right-click it → **Discard Changes**. Your version is back.
+   - The **U** files are new parts of the release: keep them.
+6. **Commit and push.** Message `site-automation <version>` → **Commit** (answer **Yes** when VS
+   Code asks to stage all changes: that includes the new files) → **Sync Changes**.
+7. **In AAP:** **Projects → site-automation → Sync**. Then run one job to check: the health
+   check on one host, or a job the release changed.
+
+The same steps work for a zip of only the changed files.
+
+Copying never deletes: a file the release *removed* stays in your folder. The `CHANGELOG.md`
+says when a release removes one; delete it by hand.
+
+**New settings in a release** have their defaults in the roles, so they work without you doing
+anything. To change one, add it to **your** `playbooks/group_vars/all.yml` (or a template's
+Variables); [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md) lists them all.
 
 **Line endings are taken care of.** The repository's `.gitattributes` keeps Linux line endings
 (LF) in Git, even when you edit and commit on Windows. That matters: the playbooks run shell

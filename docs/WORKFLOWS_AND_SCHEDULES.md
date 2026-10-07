@@ -472,6 +472,30 @@ own template's inventory, so leave the workflow's Inventory empty:
 
 **Schedule:** every day 06:00. It replaces workflows 1, 7 and 12.
 
+## VMware workflows
+
+The VMware templates run on the AAP side against vCenter: no Limit, and each uses its own
+template's credentials ([VMWARE.md](VMWARE.md)).
+
+### 18. VMware alarms: the report, then ACT's analysis (daily)
+
+```text
+[VM - alarms report]  --Run always-->  [VM - alarms ACT analysis]
+```
+
+**Always**, not On success: the report is red when `vm_alarm_fail: true` is set, and the analysis
+should run anyway. Each step sends its own email (`report_email_to` on each template, or a
+workflow survey question `report_email_to` for both). **Schedule:** every day 06:00. Only the
+analysis is wanted? Schedule `VM - alarms ACT analysis` on its own: its email lists every problem.
+
+### 19. Snapshot cleanup with approval
+
+```text
+[VM - snapshot report]  --On success-->  [Approval]  --On success-->  [VM - snapshot cleanup]
+```
+
+Click by click, with the survey and the dry run: [VMWARE.md](VMWARE.md), "Snapshots".
+
 ## Schedules
 
 **What.** A schedule launches a template or workflow at set times.

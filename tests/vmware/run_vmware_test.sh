@@ -3,7 +3,8 @@
 # simulator, in a container: restart / shut down (guest and hard, VMware Tools check), the AAP
 # server and protected VMs refused, snapshots without memory (create, delete one, delete all),
 # notes, VLAN (port group) change of one adapter leaving the others alone, the secure boot report,
-# dry runs, duplicate and unknown names, no credential.
+# dry runs, duplicate and unknown names, no credential; the alarms report (posted events, a
+# disconnected host) and its ACT analysis (a fake ACT: tests/containers/fake_act.py).
 #   bash tests/vmware/run_vmware_test.sh
 # Needs: podman or docker; a python with pyVmomi and the vSphere Automation SDK (pip install pyvmomi
 # vmware-vcenter; VMWARE_TEST_PYTHON=... to pick it); the vmware.vmware collection (installed into a
@@ -21,7 +22,8 @@ image="docker.io/vmware/vcsim:v0.52.0"
 name="vcsim-site-test-$$"
 work="$(mktemp -d)"
 smtp_pid=""
-cleanup() { "$engine" rm -f "$name" >/dev/null 2>&1; [ -n "$smtp_pid" ] && kill "$smtp_pid" 2>/dev/null; rm -rf "$work"; }
+http_pid=""
+cleanup() { "$engine" rm -f "$name" >/dev/null 2>&1; [ -n "$smtp_pid" ] && kill "$smtp_pid" 2>/dev/null; [ -n "$http_pid" ] && kill "$http_pid" 2>/dev/null; rm -rf "$work"; }
 trap cleanup EXIT
 fails=0
 
@@ -193,17 +195,22 @@ run "secure boot report for named VMs only" ok vm_secure_boot_report.yml -e vm_n
 
 # ---- snapshot report and cleanup (DC0_C0_RP0_VM1: baseline, multi; DC0_H0_VM0 = AAP: aap-snap; "later" = 5 days on) --
 later=$(( $(date +%s) + 5 * 86400 ))
-run "snapshot report: nothing old yet" ok vm_snapshot_report.yml -- "VMware snapshot report: 3 snapshot(s) on 2 VM(s); none older than 3 days"
+run "snapshot report: nothing old yet" ok vm_snapshot_report.yml -- "VMware snapshot report (older than 3 days): nothing to delete; 3 snapshot(s) on 2 VM(s)"
 run "a snapshot to keep (its name says so)" ok vm_snapshot.yml -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=keep-me -- "Took snapshot"
 run "snapshot report five days later: to delete apart, held back apart with the reason, sizes readable" ok vm_snapshot_report.yml -e _vm_now=$later \
-    -- "4 snapshot(s) on 2 VM(s); 2 to delete (older than 3 days, 0 MB), 2 old one(s) held back" \
+    -- "VMware snapshot report (older than 3 days): 2 to delete (0 MB), 2 held back; 4 snapshot(s) on 2 VM(s)" \
        "HELD BACK (the VM is the AAP server) DC0_H0_VM0" "HELD BACK (its name or description says keep) DC0_C0_RP0_VM1" \
        "OLD DC0_C0_RP0_VM1" "days old, 0 MB, taken" "jdoe" '"vm_snapshot_cleanup_candidates"' '"held_back"'
 run "exclusion list (wildcards): the VM's snapshots are held back" ok vm_snapshot_report.yml -e _vm_now=$later \
-    -e '{"vm_snapshot_cleanup_exclude_vms": ["dc0_c0_*"]}' -- "4 snapshot(s) on 2 VM(s); 4 old one(s) held back" \
+    -e '{"vm_snapshot_cleanup_exclude_vms": ["dc0_c0_*"]}' -- "nothing to delete, 4 held back; 4 snapshot(s) on 2 VM(s)" \
        "HELD BACK (the VM is on the exclusion list) DC0_C0_RP0_VM1"
 run "vmware_protected_vms is honoured too" ok vm_snapshot_report.yml -e _vm_now=$later -e '{"vmware_protected_vms": ["DC0_C0_RP0_VM?"]}' \
     -- "HELD BACK (the VM is on the exclusion list) DC0_C0_RP0_VM1"
+run "a 1-day limit two days on: the heading says 1 day, every snapshot is old" ok vm_snapshot_report.yml -e _vm_now=$(( $(date +%s) + 2 * 86400 )) \
+    -e vm_snapshot_max_age_days=1 -- "VMware snapshot report (older than 1 day): 2 to delete (0 MB), 2 held back; 4 snapshot(s)" \
+       "OLD = older than 1 day"
+run "a limit that is not a number: refused before anything is read as old" fail vm_snapshot_report.yml -e vm_snapshot_max_age_days=three \
+    -- "vm_snapshot_max_age_days must be a number of days"
 run "size limit: bigger than vm_snapshot_cleanup_max_size_gb is held back" ok vm_snapshot_report.yml -e _vm_now=$later -e vm_snapshot_cleanup_max_size_gb=-1 \
     -- "HELD BACK (bigger than"
 run "cleanup on its own, not confirmed: lists, deletes nothing, green" ok vm_snapshot_cleanup.yml -e _vm_now=$later \
@@ -233,12 +240,12 @@ check "  ...and aap-snap" DC0_H0_VM0 "len(v['snapshots'])" 1
 
 # ---- datastore report (read-only; vcsim's LocalDS_0 is about 1% used) -------------------------------
 run "datastore report, default thresholds: all below 80%, green" ok vm_datastore_report.yml \
-    -- "VMware datastore report: all 1 below 80% used" "LocalDS_0 (DC0): " '"vm_datastores"'
+    -- "VMware datastore report: all 1 below 85% used" "LocalDS_0 (DC0): " '"vm_datastores"'
 run "datastore report over a (test) threshold: listed apart, still green" ok vm_datastore_report.yml -e vm_datastore_warn_pct=0.5 -e vm_datastore_crit_pct=50 \
-    -- "VMware datastore report: 1 at 0.5%+ used" "WARNING LocalDS_0 (DC0)" '"warning": [' 
+    -- "VMware datastore report: 1 of 1 at 0.5%+ used" "WARNING LocalDS_0 (DC0)" '"warning": [' 
 run "datastore report with vm_datastore_fail: true: the job fails, for workflows" fail vm_datastore_report.yml -e vm_datastore_warn_pct=0.5 \
     -e vm_datastore_fail=true -- "vm_datastore_fail: false makes this a report only"
-run "datastore report for another datacenter: none" ok vm_datastore_report.yml -e vmware_datacenter=NOPE -- "VMware datastore report: all 0 below 80% used"
+run "datastore report for another datacenter: none" ok vm_datastore_report.yml -e vmware_datacenter=NOPE -- "VMware datastore report: all 0 below 85% used"
 
 # ---- email the result (roles/site_email; a fake mail relay without encryption) ---------------------
 smtp_port=$((port + 37))
@@ -281,11 +288,96 @@ run "cleanup again, nothing left to delete: no email" ok vm_snapshot_cleanup.yml
     -e "$mail" -e vm_snapshot_cleanup_email_only_if_deleted=true -- "No email: nothing was deleted"
 run "snapshot report emailed" ok vm_snapshot_report.yml -e _vm_now=$later -e "$mail" -- "emailed"
 eml4="$(ls "$work/mail"/*.eml | sort -V | tail -1)"
-getpart html "$eml4" | grep -q ">keep-me<" && grep -q "Subject: \[AAP\] VMware snapshot report: " "$eml4" \
-    && echo "ok   -   ...the snapshot table in the email" || { echo "FAIL -   ...snapshot email"; fails=$((fails + 1)); }
+getpart html "$eml4" | grep -q ">keep-me<" && grep -q "Subject: \[AAP\] VMware snapshot report (older than 3 days): " "$eml4" \
+    && getpart html "$eml4" | grep -q "VMware snapshot report (older than 3 days): " && getpart html "$eml4" | grep -q "Older than 3 days, held back" \
+    && echo "ok   -   ...the snapshot table in the email, the age limit in the subject and headings" || { echo "FAIL -   ...snapshot email"; fails=$((fails + 1)); }
 run "datastore report emailed" ok vm_datastore_report.yml -e vm_datastore_warn_pct=0.5 -e "$mail" -- "emailed"
 eml3="$(ls "$work/mail"/*.eml | sort -V | tail -1)"
-getpart plain "$eml3" | grep -Eq "^LocalDS_0 +DC0 +.* ok$" && grep -q "Subject: \[AAP\] VMware datastore report: 1 at 0.5%+ used" "$eml3" \
+getpart plain "$eml3" | grep -Eq "^LocalDS_0 +DC0 +.* ok$" && grep -q "Subject: \[AAP\] VMware datastore report: 1 of 1 at 0.5%+ used" "$eml3" \
     && echo "ok   -   ...subject with the count, a row per datastore" || { echo "FAIL -   ...datastore email"; getpart plain "$eml3" | head; fails=$((fails + 1)); }
+run "datastore report emailed, default thresholds" ok vm_datastore_report.yml -e "$mail" -- "emailed"
+eml5="$(ls "$work/mail"/*.eml | sort -V | tail -1)"
+grep -q "Subject: \[AAP\] VMware datastore report: all 1 below 85% used" "$eml5" && getpart html "$eml5" | grep -q "all 1 below 85% used" \
+    && getpart html "$eml5" | grep -q "warning at 85% used, critical at 90%" \
+    && echo "ok   -   ...85% (the default) in the subject and the heading" || { echo "FAIL -   ...datastore 85%"; getpart plain "$eml5" | head; fails=$((fails + 1)); }
+
+# ---- alarms report and its ACT analysis (vcsim triggers no alarms: tests/test_filters.py covers them) --
+http_port=$((port + 38))
+mkdir -p "$work/www" "$work/act"
+"$py" -m http.server "$http_port" --bind 127.0.0.1 --directory "$work/www" >/dev/null 2>&1 &
+http_pid=$!
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$http_port") 2>/dev/null && break; sleep 0.1; done
+# the model's URL is the local web server (any HTTP answer = reachable); ACT is the fake
+actvars="{\"act_triage_script_src\": \"$repo/tests/containers/fake_act.py\", \"act_triage_poll\": 1,
+          \"site_act_url\": \"http://127.0.0.1:$http_port/v1/chat/completions\"}"
+export FAKE_ACT_OUT="$work/act" FAKE_ACT_CONFIG="$work/act/act.json"
+lastmail() { ls "$work/mail"/*.eml | sort -V | tail -1; }
+subject() {  # the decoded Subject of an email (a long one is folded over two lines in the file)
+    "$py" -c 'import email, email.policy, sys; print(email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)["Subject"])' "$1"
+}
+nmail() { ls "$work/mail" | grep -c 'eml$'; }
+run "ACT analysis with nothing to analyze (no alarm, no events read): ACT not called, no email" ok vm_alarm_act_analysis.yml \
+    -e vm_alarm_hours=0 -e "$mail" -e "$actvars" -- "VMware alarms ACT analysis: nothing to analyze" "No email: nothing to analyze"
+VMWARE_PORT=$port "$py" "$here/vcsim.py" events || { echo "ABORT - vcsim events"; exit 1; }
+n0="$(nmail)"
+run "alarms report: host not connected, connection lost, failed logins grouped, VM and other events; green" ok vm_alarm_report.yml -e "$mail" \
+    -- "VMware alarms report: no triggered alarms, 1 host(s) not connected, 1 host(s) lost the connection, 3 failed login(s) (events: last 24 h)" \
+       "Host DC0_C0_H1 lost its connection to vCenter" "Guest OS shut down for DC0_H0_VM1" "Datastore LocalDS_0 latency is high" \
+       '"hosts_not_connected": [   "DC0_C0_H2"' '"failed_logins"' "emailed"
+eml="$(lastmail)"; getpart html "$eml" > "$work/al.html"; getpart plain "$eml" > "$work/al.txt"
+if [ "$(nmail)" = $((n0 + 1)) ] && subject "$eml" | grep -q "^\[AAP\] VMware alarms report: no triggered alarms, 1 host(s) not connected" \
+   && grep -q 'bgcolor="#fee2e2"' "$work/al.html" && grep -q 'bgcolor="#b91c1c"[^>]*>CRITICAL<' "$work/al.html" \
+   && grep -q 'bgcolor="#fef3c7"' "$work/al.html" && grep -q 'bgcolor="#b45309"[^>]*>WARNING<' "$work/al.html" \
+   && grep -q ">DC0_C0_H2<" "$work/al.html" && grep -q ">disconnected<" "$work/al.html" \
+   && grep -Eq "^CRITICAL +DC0_C0_H2 +disconnected" "$work/al.txt" && grep -Eq "^WARNING +user +10.9.9.9 +DC0_C0_H0 +3 " "$work/al.txt"; then
+    echo "ok   -   ...the email: red and amber rows, the severity cells filled, a text copy"
+else
+    echo "FAIL -   ...alarms email"; head -40 "$work/al.txt"; fails=$((fails + 1))
+fi
+run "alarms report with vm_alarm_fail: true: a host not connected fails the job, for workflows" fail vm_alarm_report.yml -e vm_alarm_fail=true \
+    -- "1 host(s) not connected (the report is above)"
+run "alarms report: an unknown object type is refused" fail vm_alarm_report.yml -e '{"vm_alarm_types": ["host", "hosst"]}' -- "unknown object type(s) hosst"
+"$py" - "$work/act/act.json" <<'EOPY'
+import json, sys
+items = [{"id": "P1", "cause": "The host was disconnected in vCenter.", "evidence": "connection disconnected",
+          "fix": "Right-click the host, Connection, Connect.", "confidence": 92},
+         {"id": "P2", "cause": "A short management network outage.", "evidence": "HostConnectionLostEvent",
+          "fix": "Check the vmk0 uplinks.", "confidence": "55%"},
+         {"id": "P3", "cause": "A service account with an old password.", "evidence": "3 failed logins from 10.9.9.9",
+          "fix": "Update its password.", "confidence": "low"}]
+answer = json.dumps({"overall": "Reconnect DC0_C0_H2 first.", "items": items}, indent=1)
+json.dump({"summary": "Analysis below.\nBEGIN_ACT_ANALYSIS\n" + answer + "\nEND_ACT_ANALYSIS"}, open(sys.argv[1], "w"))
+EOPY
+export GENAI_KEY=test-key
+n0="$(nmail)"
+run "ACT analysis: problems numbered, the evidence piped to ACT (it runs nothing), causes, fixes and confidence emailed" ok vm_alarm_act_analysis.yml \
+    -e "$mail" -e "$actvars" -- "VMware alarms ACT analysis: likely causes and fixes for 4 problem(s)" "92% high" "55% medium" "30% low" \
+       "ACT gave no answer for this one" "Reconnect DC0_C0_H2 first." '"vm_alarm_act"' "emailed"
+eml="$(lastmail)"; getpart html "$eml" > "$work/act.html"
+if [ "$(nmail)" = $((n0 + 1)) ] && grep -q "P1 \[CRITICAL\] Host DC0_C0_H2 (DC0_C0 / DC0) - host is disconnected" "$work/act/fake-act-stdin.txt" \
+   && grep -q "^\[DC0_C0_H0\]" "$work/act/fake-act-stdin.txt" && grep -q "DC0_C0_H1: cluster DC0_C0, datacenter DC0, connection connected" "$work/act/fake-act-stdin.txt" \
+   && grep -q "BEGIN_ACT_ANALYSIS" "$work/act/fake-act-task.txt" && grep -q "You cannot run any commands" "$work/act/fake-act-task.txt" \
+   && grep -q 'bgcolor="#15803d"[^>]*>92% high<' "$work/act.html" && grep -q 'bgcolor="#b45309"[^>]*>55% medium<' "$work/act.html" \
+   && grep -q 'bgcolor="#b91c1c"[^>]*>30% low<' "$work/act.html" && grep -q "Likely causes and fixes" "$work/act.html" \
+   && subject "$eml" | grep -q "^\[AAP\] VMware alarms ACT analysis: likely causes and fixes for 4 problem(s)"; then
+    echo "ok   -   ...ACT got the evidence on stdin and the JSON contract; the email colours the confidence"
+else
+    echo "FAIL -   ...ACT evidence / email"; head -c 800 "$work/act/fake-act-stdin.txt"; fails=$((fails + 1))
+fi
+echo '{"summary": "ROOT CAUSE: the host is disconnected. CONFIDENCE: high"}' > "$work/act/act.json"
+run "ACT analysis: an answer without the JSON block is shown as text, the job stays green" ok vm_alarm_act_analysis.yml -e "$actvars" \
+    -- "ACT's answer is below as text" "ROOT CAUSE: the host is disconnected."
+run "ACT analysis as a dry run (Check): ACT not called, green" ok vm_alarm_act_analysis.yml --check -e "$actvars" \
+    -- "A dry run (Check): ACT was not called. It would analyze the 4 problem(s) below."
+INV="$work/inv.yml" run "ACT analysis when the model's URL cannot be reached: says so, emails the problems, fails" fail vm_alarm_act_analysis.yml \
+    -e "$mail" -e "$actvars" -e "site_act_url=http://127.0.0.1:$((port + 39))/v1/chat/completions" \
+    -- "This AAP node cannot reach the model at http://127.0.0.1:$((port + 39))/v1/chat/completions" "or set a proxy" "emailed"
+unset GENAI_KEY
+n0="$(nmail)"
+run "ACT analysis without an API key: says which credential, still emails the problems, fails" fail vm_alarm_act_analysis.yml -e "$mail" -e "$actvars" \
+    -- "This job has no API key for provider genai" "ACT model key" "emailed"
+[ "$(nmail)" = $((n0 + 1)) ] && subject "$(lastmail)" | grep -q "ACT did not run - 4 problem(s) not analyzed" \
+    && echo "ok   -   ...the email says ACT did not run, and lists the problems" || { echo "FAIL -   ...no-key email"; fails=$((fails + 1)); }
+unset FAKE_ACT_OUT FAKE_ACT_CONFIG
 
 if [ "$fails" -eq 0 ]; then echo "ok   - all VMware scenarios passed"; else echo "$fails FAILED"; exit 1; fi

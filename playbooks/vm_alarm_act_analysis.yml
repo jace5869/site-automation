@@ -1,0 +1,16 @@
+---
+# VM ALARMS - ACT ANALYSIS (vCenter + ACT). Reads vCenter's alarms, host state and recent events
+# (as vm_alarm_report.yml does), and has ACT work out the likely cause, the fix and a confidence
+# score for each problem. ACT runs in evidence mode on the AAP side (this job's execution
+# environment): it runs no command and the ESXi hosts need nothing. Emailed (report_email_to).
+# Attach a "VMware vCenter" credential AND an "ACT model key" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_alarm_act_analysis.yml
+- name: VM alarms - ACT analysis
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM alarms - ACT analysis
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: alarm_act.yml

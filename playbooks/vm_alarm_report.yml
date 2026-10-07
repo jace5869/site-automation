@@ -1,0 +1,17 @@
+---
+# VM ALARMS REPORT (vCenter). Read-only: the triggered alarms on vCenter, the datacenters, clusters
+# and hosts, every host's connection state, the events of the last vm_alarm_hours (24) hours -
+# failed logins, host connection events, VM shutdowns / power-offs / HA restarts, other errors and
+# warnings - and configuration issues, coloured by severity. Emailed (report_email_to). Stays
+# green unless vm_alarm_fail: true. ACT's analysis of the same: vm_alarm_act_analysis.yml.
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_alarm_report.yml
+- name: VM alarms report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM alarms report
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: alarms.yml

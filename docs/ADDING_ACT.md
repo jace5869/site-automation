@@ -323,6 +323,17 @@ with `Retry-After`.
 If a step fails, the message after `HTTP 400` is the gateway's reason: copy it exactly when you ask
 its owner for help, but remove the key and host names first.
 
+## ACT for vCenter alarms (it runs on the AAP side)
+
+`VM - alarms ACT analysis` ([VMWARE.md](VMWARE.md), "Alarms") uses ACT differently from the
+health checks: ACT runs **inside the job's execution environment on the AAP node**, not on a
+managed host, and only reads the evidence the job collected from vCenter (it runs no command).
+So the ESXi hosts need nothing; the **AAP node** needs HTTPS to the model's URL, and the job checks
+that first. It uses the same settings as everything else here: `site_act_provider`,
+`site_act_models`, `site_act_url`, `site_act_env` (a proxy), `site_act_ca` (a CA file **in the
+execution environment**, e.g. one from the project: `"{{ playbook_dir }}/files/ca/model-ca.pem"`),
+and the **ACT model key** credential on its template.
+
 ## Write your own check (it works with the report, tickets and ACT automatically)
 
 A check is a role named `check_<name>` that **adds findings** to `site_findings`. That is the whole
