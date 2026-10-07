@@ -437,6 +437,12 @@ commands ACT proposed and a person approved, then re-runs the checks that found 
 refuses to run on its own, and skips diagnose-only hosts (`aap_hosts`, `netapp_console_hosts`):
 there a person applies the fix by hand. See [ADDING_ACT.md](ADDING_ACT.md).
 
+## VMware jobs and reports (`playbooks/vm_*.yml`)
+
+Restart, shut down, snapshot, notes, change VLAN; the secure boot, datastore, snapshot and
+alarms reports; the snapshot cleanup; ACT's analysis of the alarms. They work through vCenter:
+setup, every report's sections and troubleshooting are in [VMWARE.md](VMWARE.md).
+
 ## Windows hosts
 
 Windows has its own playbooks, checks and troubleshooting areas (for example `updates` and

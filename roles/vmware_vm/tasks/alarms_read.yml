@@ -1,0 +1,29 @@
+---
+# Read vCenter's triggered alarms, configuration issues, hosts and the events of the last
+# vm_alarm_hours hours (read-only). Output: _vm_al_read (roles/vmware_vm/library/site_vmware_alarms.py).
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | read the alarms, configuration issues, hosts and the events of the last {{ vm_alarm_hours }} h
+  site_vmware_alarms:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    types: "{{ (vm_alarm_types | replace(',', ' ')).split() if vm_alarm_types is string else vm_alarm_types }}"
+    hours: "{{ vm_alarm_hours | float }}"
+    max_events: "{{ vm_alarm_max_events | int }}"
+    login_event_types: "{{ vm_alarm_login_event_types }}"
+    connection_event_types: "{{ vm_alarm_connection_event_types }}"
+    vm_event_types: "{{ vm_alarm_vm_event_types }}"
+    now: "{{ _vm_now | default(omit) }}"
+  register: _vm_al_read
+  check_mode: false
+
+# one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: VMware | how the report groups them
+  ansible.builtin.set_fact:
+    _vm_al_opts: >-
+      {{ {'hours': vm_alarm_hours | float,
+          'types': (vm_alarm_types | replace(',', ' ')).split() if vm_alarm_types is string else vm_alarm_types,
+          'datacenter': vmware_datacenter | default('', true), 'login_critical': vm_alarm_login_critical | int,
+          'max_rows': vm_alarm_max_rows | int, 'max_events': vm_alarm_max_events | int,
+          'config_issues': vm_alarm_act_config_issues | bool, 'max_items': vm_alarm_act_max_items | int} }}

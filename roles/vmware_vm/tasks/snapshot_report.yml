@@ -26,13 +26,12 @@
     _vm_sn_old_gb: "{{ _vm_sn.old | map(attribute='size_gb') | select('number') | sum | human_size }}"
     _vm_sn_all_gb: "{{ _vm_sn.all | map(attribute='size_gb') | select('number') | sum | human_size }}"
     _vm_report_subject: >-
-      {%- set parts = [] -%}
-      {%- if _vm_sn.old -%}{%- set _ = parts.append(_vm_sn.old | length ~ ' to delete (older than ' ~ vm_snapshot_max_age_days ~ ' days, ' ~ _vm_sn_old_gb ~ ')') -%}{%- endif -%}
-      {%- if _vm_sn.held -%}{%- set _ = parts.append(_vm_sn.held | length ~ ' old one(s) held back') -%}{%- endif -%}
-      {%- if not parts -%}{%- set _ = parts.append('none older than ' ~ vm_snapshot_max_age_days ~ ' days') -%}{%- endif -%}
-      VMware snapshot report: {{ (_vm_sn.all | length ~ ' snapshot(s) on ' ~ _vm_sn_vms ~ ' VM(s); ' ~ parts | join(', ')) if _vm_sn.all else 'no snapshots' }}
+      {%- set parts = [(_vm_sn.old | length ~ ' to delete (' ~ _vm_sn_old_gb ~ ')') if _vm_sn.old else 'nothing to delete'] -%}
+      {%- if _vm_sn.held -%}{%- set _ = parts.append(_vm_sn.held | length ~ ' held back') -%}{%- endif -%}
+      VMware snapshot report (older than {{ _vm_sn_days }}): {{ (parts | join(', ') ~ '; ' ~ _vm_sn.all | length ~ ' snapshot(s) on ' ~ _vm_sn_vms ~ ' VM(s)')
+                                                              if _vm_sn.all else 'no snapshots' }}
     _vm_report_lines: >-
-      {%- set out = [_vm_sn.all | length ~ ' snapshot(s) on ' ~ _vm_sn_vms ~ ' VM(s), ' ~ _vm_sn_all_gb] -%}
+      {%- set out = [_vm_sn.all | length ~ ' snapshot(s) on ' ~ _vm_sn_vms ~ ' VM(s), ' ~ _vm_sn_all_gb ~ ' - OLD = older than ' ~ _vm_sn_days] -%}
       {%- set held = {} -%}{%- for h in _vm_sn.held -%}{%- set _ = held.update({h.moid ~ '#' ~ h.id: h.reason}) -%}{%- endfor -%}
       {%- for x in _vm_sn.all -%}
       {%-   set k = x.moid ~ '#' ~ x.id -%}
@@ -45,26 +44,27 @@
       {%- set cols = ['VM', 'Snapshot', 'Taken (UTC)', 'Taken by', 'Age (days)', 'Size', 'Folder', 'Description'] -%}
       {%- set sections = [] -%}
       {%- if _vm_sn.old -%}
-      {%-   set _ = sections.append({'title': 'Older than ' ~ vm_snapshot_max_age_days ~ ' days', 'status': 'warning', 'columns': cols,
+      {%-   set _ = sections.append({'title': 'To delete: older than ' ~ _vm_sn_days, 'status': 'warning', 'columns': cols,
                                      'rows': _vm_sn.old | map('vm_snap_row') | list,
                                      'text': 'The snapshot cleanup deletes these (in the workflow: after the approval). Old snapshots slow the VM down and fill the datastore.'}) -%}
       {%- endif -%}
       {%- if _vm_sn.held -%}
-      {%-   set _ = sections.append({'title': 'Older than ' ~ vm_snapshot_max_age_days ~ ' days, held back (never deleted automatically)',
+      {%-   set _ = sections.append({'title': 'Older than ' ~ _vm_sn_days ~ ', held back (never deleted automatically)',
                                      'columns': cols + ['Why'], 'rows': _vm_sn.held | map('vm_snap_row') | list,
                                      'text': 'The cleanup leaves these alone. The big ones are best deleted by hand, at a quiet time.'}) -%}
       {%- endif -%}
       {%- if _vm_sn.all -%}
-      {%-   set _ = sections.append({'title': 'All snapshots, oldest first', 'columns': cols, 'rows': _vm_sn.all | map('vm_snap_row') | list,
+      {%-   set _ = sections.append({'title': 'All snapshots (any age), oldest first', 'columns': cols, 'rows': _vm_sn.all | map('vm_snap_row') | list,
                                      'text': 'Taken by: from vCenter events; unknown = older than vCenter keeps its events (often 30 days).'}) -%}
       {%- else -%}
       {%-   set _ = sections.append({'title': 'Result', 'lines': ['No VM has a snapshot.']}) -%}
       {%- endif -%}
       {{ {'title': _vm_report_subject | trim, 'status': 'warning' if _vm_sn.old else 'ok',
-          'subtitle': 'Snapshots ' ~ vm_snapshot_max_age_days ~ ' days or older are listed apart' ~ (' - datacenter ' ~ vmware_datacenter if vmware_datacenter else ''),
+          'subtitle': 'Every snapshot is listed below, whatever its age; the ones older than ' ~ _vm_sn_days ~ ' are listed apart, for the cleanup'
+                      ~ (' - datacenter ' ~ vmware_datacenter if vmware_datacenter else ''),
           'summary': [{'label': 'VMs with snapshots', 'value': _vm_sn_vms | int}, {'label': 'Snapshots', 'value': _vm_sn.all | length},
                       {'label': 'Total size', 'value': _vm_sn_all_gb},
-                      {'label': 'To delete (' ~ vm_snapshot_max_age_days ~ '+ days)', 'value': _vm_sn.old | length, 'status': 'warning' if _vm_sn.old else 'ok'},
+                      {'label': 'To delete (older than ' ~ _vm_sn_days ~ ')', 'value': _vm_sn.old | length, 'status': 'warning' if _vm_sn.old else 'ok'},
                       {'label': 'Their size', 'value': _vm_sn_old_gb, 'status': 'warning' if _vm_sn.old else 'ok'}]
                      + ([{'label': 'Old, held back', 'value': _vm_sn.held | length}] if _vm_sn.held else []),
           'sections': sections} }}

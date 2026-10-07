@@ -4,6 +4,9 @@
 *.p12
 *.pfx
 *.crt
+# ...except public CA certificates the jobs need (docs/VMWARE.md: report_email_ca_path, site_act_ca)
+!playbooks/files/ca/*.pem
+!playbooks/files/ca/*.crt
 .vault_pass*
 vault-password*
 *.secret

@@ -1,8 +1,18 @@
 ---
 # Old snapshots: the ones the cleanup deletes, and the ones it never deletes (keep name, excluded
-# VM, protected VM, the AAP server, too big or size unknown). Input: _vm_snap_read. Output: _vm_sn.
+# VM, protected VM, the AAP server, too big or size unknown). Input: _vm_snap_read. Output: _vm_sn,
+# and _vm_sn_days ("1 day", "3 days") for the report titles.
+- name: VMware | vm_snapshot_max_age_days is a number of days
+  ansible.builtin.assert:
+    that: vm_snapshot_max_age_days | string | trim is match('^[0-9]+([.][0-9]+)?$')
+    fail_msg: "vm_snapshot_max_age_days must be a number of days (e.g. 1, 2 or 3), not '{{ vm_snapshot_max_age_days }}'"
+    quiet: true
+
 - name: VMware | which snapshots are old, and which of those are held back
   ansible.builtin.set_fact:
+    _vm_sn_days: >-
+      {%- set d = vm_snapshot_max_age_days | float -%}
+      {{ (d | int if d == d | int else d) ~ (' day' if d == 1 else ' days') }}
     _vm_sn: >-
       {{ _vm_snap_read.snapshots
          | vm_snapshot_split(vm_snapshot_max_age_days, vm_snapshot_keep_regex,

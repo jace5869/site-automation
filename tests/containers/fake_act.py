@@ -3,7 +3,8 @@
 file and records what it was given. Behaviour from $FAKE_ACT_CONFIG (or /etc/fake-act.json):
 {"propose": ["cmd", ...], "summary": "..."}. Records in $FAKE_ACT_OUT (or /tmp): fake-act-task.txt
 (the task text), fake-act-allow.json (the --allow patterns), fake-act-evidence.txt (the file the
-task says to `cat`, read while ACT runs - the playbook removes it afterwards)."""
+task says to `cat`, read while ACT runs - the playbook removes it afterwards), fake-act-stdin.txt
+(what was piped in, with --allow-piped-upload: evidence mode)."""
 import json
 import os
 import re
@@ -26,6 +27,9 @@ if m:
         text = "UNREADABLE: %s" % e
     with open(os.path.join(out, "fake-act-evidence.txt"), "w") as fh:
         fh.write(text)
+if "--allow-piped-upload" in args:
+    with open(os.path.join(out, "fake-act-stdin.txt"), "w") as fh:
+        fh.write(sys.stdin.read())
 cfg = {}
 path = os.environ.get("FAKE_ACT_CONFIG", "/etc/fake-act.json")
 if os.path.exists(path):

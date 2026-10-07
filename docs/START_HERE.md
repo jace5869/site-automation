@@ -23,7 +23,7 @@ click at a time.
 | **ServiceNow health** | Is ServiceNow answering? Are the MID Servers up? | Hourly |
 | **Patch hosts** | Installs updates, and proves every service came back. Reboots only with `automatic_restarts: yes` | Monthly, after an approval |
 | **Apply approved ACT fix** | Applies exactly the fix a person approved | Only inside a workflow, after an approval |
-| **VMware jobs** | Restart, shut down, snapshot, notes or change the VLAN of VMs through vCenter; which VMs boot without secure boot ([VMWARE.md](VMWARE.md)) | On demand (the report weekly) |
+| **VMware jobs** | Restart, shut down, snapshot, notes or change the VLAN of VMs through vCenter. Reports: secure boot, datastores, snapshots (with an approved cleanup), alarms and events, and ACT's analysis of the alarms: likely cause, fix and confidence ([VMWARE.md](VMWARE.md)) | On demand; the reports daily or weekly |
 
 Every check is **read-only**. It looks and reports, and changes nothing. Patching changes servers,
 and waits for an approval first; the VMware jobs change only what an operator asked for, and never

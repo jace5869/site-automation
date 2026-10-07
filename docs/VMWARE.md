@@ -12,9 +12,11 @@ System Center Orchestrator):
 | VM - notes | `playbooks/vm_notes.yml` | edits the VM's Notes in vCenter: append a line (with date and user), replace, or clear. Prints the old notes |
 | VM - change VLAN | `playbooks/vm_vlan.yml` | moves one network adapter to another port group (VLAN). The VM's other adapters are not touched |
 | VM - secure boot report | `playbooks/vm_secure_boot_report.yml` | read-only: every VM's firmware and secure boot. Lists BIOS VMs and EFI VMs with secure boot off separately |
-| VM - datastore report | `playbooks/vm_datastore_report.yml` | read-only: every datastore's capacity, free space, used and provisioned %; the ones at 80 / 90 % used listed apart |
+| VM - datastore report | `playbooks/vm_datastore_report.yml` | read-only: every datastore's capacity, free space, used and provisioned %; the ones at 85 / 90 % used listed apart |
 | VM - snapshot report | `playbooks/vm_snapshot_report.yml` | read-only: every snapshot of every VM - name, when taken and by whom, age, size, folder - oldest first; the ones 3 days or older listed apart |
 | VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | deletes the snapshots 3 days or older - never "keep" ones, excluded VMs, the AAP server or ones over 1 TB - then reports what it deleted. Best run in the workflow below, after an approval |
+| VM - alarms report | `playbooks/vm_alarm_report.yml` | read-only: the triggered alarms on vCenter, datacenters, clusters and hosts; hosts not connected; the last 24 hours' failed logins, VM shutdowns / HA restarts and other errors and warnings; configuration issues - coloured by severity |
+| VM - alarms ACT analysis | `playbooks/vm_alarm_act_analysis.yml` | read-only: the same problems, with ACT's likely cause, fix and confidence for each. ACT runs on the AAP side, never on the hosts |
 
 They run on the AAP side and talk to vCenter. They never log in to the VMs.
 
@@ -74,7 +76,7 @@ A service account with a vCenter role that has only what the jobs need:
 | snapshot / delete snapshot | Virtual machine > Snapshot management > Create snapshot / Remove snapshot |
 | notes | Virtual machine > Change configuration > Set annotation |
 | change VLAN | Virtual machine > Change configuration > Modify device settings, and Network > Assign network on the port groups |
-| all (to read) | Read-only, which every vCenter role includes |
+| all (to read), and the alarms report | Read-only, which every vCenter role includes |
 
 Give it the role on the folders or clusters of the VMs these jobs may touch, and nowhere else.
 
@@ -156,7 +158,7 @@ in their Variables. They stay green when they find VMs or datastores to fix - th
 email say which; `vm_secure_boot_fail: true` / `vm_datastore_fail: true` mark the job failed
 instead, for a workflow that opens a ticket. `vm_secure_boot_folder` limits the secure boot report
 to one vCenter folder; `vmware_datacenter` limits either report to one datacenter;
-`vm_datastore_warn_pct` / `vm_datastore_crit_pct` (80 / 90) set the datastore thresholds.
+`vm_datastore_warn_pct` / `vm_datastore_crit_pct` (85 / 90) set the datastore thresholds.
 
 ## Snapshots: the report, the cleanup, and the approval workflow
 
@@ -181,10 +183,23 @@ report), then a grown-up says "yes, throw those out" (the approval), then the he
 
 For every snapshot of every VM: the VM, the snapshot's name, when it was taken, **who took it**,
 how many days old it is, how big it is (MB, GB or TB), the VM's folder and the description.
-Oldest first. Then two short lists on top:
+Oldest first. **Every snapshot is in that list, whatever its age** - even one taken an hour ago.
+Then two short lists on top:
 
-- **To delete:** snapshots 3 days old or older (`vm_snapshot_max_age_days`).
+- **To delete:** snapshots older than 3 days (`vm_snapshot_max_age_days`).
 - **Held back:** old snapshots the cleanup will never delete, each with the reason.
+
+The email's heading and subject always say the limit, e.g. `VMware snapshot report (older than 2
+days): 4 to delete (310 GB); 23 snapshot(s) on 17 VM(s)`.
+
+**To use 1 or 2 days instead of 3:**
+
+| Where | Change |
+|---|---|
+| In the workflow | the survey answer when you launch it - or for good: the workflow > **Survey** tab > the question > **Default** `2`. The report and the cleanup both use it: after the approval, snapshots older than 2 days are deleted. |
+| The report template on its own | Templates > `VM - snapshot report` > Edit > **Variables**: `vm_snapshot_max_age_days: 2` |
+
+In the workflow, the survey answer wins over the template's Variables.
 
 "Who took it" comes from vCenter's history. vCenter forgets old history (often after 30 days), so
 for an old snapshot it may say **unknown**. Snapshots taken by the "VM - snapshot" job also have the
@@ -287,6 +302,104 @@ To clean up by hand, make a separate template (not the one in the workflow) on
 `vm_snapshot_cleanup_confirm` ("Delete them?", Multiple choice `false` / `true`, default `false`).
 With `false` it only lists; with `true` it deletes - with every rule above still in place.
 
+## Alarms: the report, and ACT's analysis
+
+Two read-only jobs. The **report** shows what is wrong in vCenter now and what happened in the last
+24 hours. The **ACT analysis** has ACT (the AI assistant) work out the likely cause and the fix of
+each of those problems, and say how sure it is. Neither changes anything.
+
+### What the report shows
+
+| Section | What is in it | Colour |
+|---|---|---|
+| Triggered alarms | the alarms vCenter shows now on vCenter itself, the datacenters, clusters and hosts: severity, object, alarm, since when, acknowledged by whom | red = critical, amber = warning |
+| Host connection | hosts not connected to vCenter now, and hosts that lost the connection in the last 24 h and came back | red / amber |
+| Failed logins | wrong user name or password: one row per user, source address and server, with the count and the first and last time | amber; red from 10 failures |
+| Virtual machine events | guest shutdowns and restarts, power-offs, resets, HA restarts and failures, and who did it | blue = someone did it, amber = HA or nobody, red = a failover or power-on failed |
+| Other errors and warnings | every other error and warning event; the same event on the same object counted once | red = error, amber = warning |
+| Configuration issues | what vCenter shows as configuration issues (SSH left on, HA problems, ...) | amber |
+| All hosts | every host: connection, maintenance mode, ESXi version and build, hardware, its alarms and its errors / warnings | red / amber / blue row |
+
+On top: the counts in coloured boxes. The subject says the most important ones, e.g.
+`[AAP] VMware alarms report: 1 critical, 2 warning alarm(s), 47 failed login(s) (events: last 24 h)`.
+
+### Set up the report
+
+1. **Templates > Create template > Create job template:**
+   - Name: `VM - alarms report`
+   - Inventory: any (e.g. your VMware one: the job runs on the AAP side)
+   - Project: site-automation. Playbook: `playbooks/vm_alarm_report.yml`
+   - Execution environment: your VMware one (this job needs only pyVmomi, which it has)
+   - Credentials: your **VMware vCenter** credential. A read-only vCenter account is enough.
+   - Variables: `report_email_to: vmteam@yoursite.mil`
+   - Save.
+2. **Schedules > Create schedule:** e.g. every day at 06:00.
+
+| Setting (template Variables) | Default | What it does |
+|---|---|---|
+| `vm_alarm_hours` | `24` | the events of the last this-many hours (168 for a weekly report; 0 = alarms and hosts only) |
+| `vm_alarm_types` | `[vcenter, datacenter, cluster, host]` | whose alarms; add `vm`, `datastore` or `network` for theirs too |
+| `vm_alarm_login_critical` | `10` | this many failed logins of one user from one place, or more, is red |
+| `vm_alarm_fail` | `false` | `true` = the job shows **failed** on a critical alarm or a host not connected, for a workflow |
+| `vmware_datacenter` | (all) | one datacenter only |
+
+### The ACT analysis
+
+**What you get:** an email "VMware alarms ACT analysis". First "What to do first", then one row per
+problem (P1, P2, ...): severity, object, the problem, the **likely cause**, the evidence, the **fix**
+and a **confidence**. The confidence is ACT's own estimate, from 0 to 100: green 80 and up (the
+evidence shows it), amber 50-79 (likely), red under 50 (a guess: check first). These are likely
+causes, not certain ones: check before you change anything. ACT runs no command and changes nothing.
+
+**Where ACT runs, and what about the hosts?** ACT runs inside this job's execution environment, on
+the AAP server (or the execution node that runs the job). Not on the ESXi hosts, not on the VMs. So:
+
+- The **ESXi hosts need nothing**: no Python, no network path to ACT.
+- **Python** is in every execution environment (Ansible itself runs on it; ACT needs 3.8 or later).
+- The **AAP node must reach the model's address over HTTPS** (port 443): `https://api.genai.mil` for
+  GenAI.mil, or your `site_act_url`. The job checks this first and says plainly when it cannot:
+  - *"cannot reach the model ... Open HTTPS ... or set a proxy"*: ask for a firewall rule from the
+    AAP node to that address, or set your proxy in `playbooks/group_vars/all.yml`:
+    `site_act_env: {HTTPS_PROXY: "http://proxy.yoursite.mil:8080", NO_PROXY: "localhost,.yoursite.mil"}`
+  - *"Its certificate is not trusted"*: the execution environment does not trust the model's
+    certificate authority. Put that CA certificate (public, `.pem`) at
+    `playbooks/files/ca/model-ca.pem`, add `site_act_ca: "{{ playbook_dir }}/files/ca/model-ca.pem"`
+    to `all.yml`, and add the line `playbooks/files/ca/` to `.site-local` (so an update keeps it).
+
+**Privacy:** before anything leaves, ACT replaces host, cluster, datacenter and VM names, IP
+addresses and user names with placeholders, and puts the real names back into its answer.
+
+**Set it up:**
+
+1. **The key.** If your other ACT jobs have an **ACT model key** credential, use it. If not: create
+   the credential type from `aap/credential_types/act_model_key.yml`, then a credential of that type
+   with your GenAI.mil (or Ask Sage) key ([SECRETS.md](SECRETS.md)).
+2. **Templates > Create template > Create job template:**
+   - Name: `VM - alarms ACT analysis`
+   - Inventory, project, execution environment: as for the report. Playbook: `playbooks/vm_alarm_act_analysis.yml`
+   - Credentials: **VMware vCenter** and **ACT model key** (both)
+   - Tick **Prompt on launch** next to **Job type** (for the dry run)
+   - Variables: `report_email_to: vmteam@yoursite.mil`
+   - Save. The provider and model are your usual ACT settings (`site_act_provider`, `site_act_models`
+     in `all.yml`); the default is GenAI.mil.
+3. **First run, as a dry run:** Launch, Job type **Check**. It reads vCenter, lists the problems it
+   would give ACT, and calls nothing. Then launch it normally.
+
+**Both in one go:** a workflow with `VM - alarms report`, then `VM - alarms ACT analysis` linked
+with **Always**. Each sends its own email. Or schedule just the ACT analysis: its email lists every
+problem too.
+
+**Green or red:** nothing wrong = ACT is not called and no email is sent
+(`vm_alarm_act_email_if_none: true` sends one anyway). The job is **red** when ACT could not run (no
+key, no network, an ACT error): the email still lists the problems, and says why.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `vm_alarm_act_max_items` | `40` | give ACT at most this many problems, the most severe first (the rest are listed as not analyzed) |
+| `vm_alarm_act_config_issues` | `true` | configuration issues too |
+| `vm_alarm_act_check_url` | `true` | check that the AAP node can reach the model first |
+| `site_act_timeout` | `600` | seconds ACT may take |
+
 ## Email the report
 
 Every VMware job can email its result: the secure boot report its whole list, the other jobs what
@@ -316,7 +429,7 @@ Add these lines only when step 1 says so:
 | a port other than 25 | `report_email_smtp_port: 587` (its port) |
 | SSL on port 465 | `report_email_smtp_port: 465` and `report_email_security: ssl` |
 | no encryption at all | `report_email_security: none` (then no login can be used) |
-| its certificate is from your own CA (DoD) and the job says `certificate verify failed` | put the CA certificate (`.pem`, public) at `playbooks/files/ca/smtp-ca.pem` in the repository, and `report_email_ca_path: "{{ playbook_dir }}/files/ca/smtp-ca.pem"` |
+| its certificate is from your own CA (DoD) and the job says `certificate verify failed` | put the CA certificate (`.pem`, public) at `playbooks/files/ca/smtp-ca.pem` in the repository, `report_email_ca_path: "{{ playbook_dir }}/files/ca/smtp-ca.pem"`, and the line `playbooks/files/ca/` in `.site-local` (so an update keeps it) |
 
 **Step 3 - only if the relay needs a login:** a credential, so the password stays out of Git.
 1. AAP: **Automation Execution > Infrastructure > Credential Types > Create credential type**. Name
@@ -380,6 +493,11 @@ failed. This sends the report itself.
 - **notes:** the notes `BEFORE` and `AFTER`, for each VM.
 - **change VLAN:** `web01: Network adapter 2 moved VLAN200`, or `already on VLAN200`.
 - **secure boot report:** a count, then one line per VM to fix, with what to do.
+- **datastore report, snapshot report, alarms report:** the report as text (the same tables as the
+  email), with the counts in the task name, e.g.
+  `VMware alarms report: 1 critical, 2 warning alarm(s), 47 failed login(s) (events: last 24 h)`.
+- **alarms ACT analysis:** `VMware alarms ACT analysis: likely causes and fixes for 12 problem(s)`,
+  then one row per problem with ACT's cause, fix and confidence.
 
 **Refusals, and what to do:**
 - `VMware Tools is not running`: a `guest` restart or shutdown cannot work. Fix Tools, or use
@@ -388,6 +506,73 @@ failed. This sends the report itself.
 - `2 VMs are named ...`: rename one, or set `vmware_datacenter` if they are in different
   datacenters.
 - `Refused: ... is the AAP server or a protected VM`: by design. Do it in vCenter yourself.
+
+## Troubleshooting
+
+Find the message in the job's output (the red task near the end), or in the email, then do what
+the last column says.
+
+### Every VMware job
+
+| You see | It means | Do |
+|---|---|---|
+| `No vCenter to talk to: attach a credential of type "VMware vCenter"` | the template has no vCenter credential | Template → Edit → Credentials → add your **VMware vCenter** credential |
+| `vCenter ... refused the login` | wrong user name or password, or the account is locked | fix the credential; log in to the vSphere Client with the same account to test it |
+| `Could not connect to vCenter ...: ... CERTIFICATE_VERIFY_FAILED` | the execution environment does not trust vCenter's certificate | add vCenter's CA to the execution environment; to test only, `vmware_validate_certs: false` in the template's Variables |
+| `Could not connect to vCenter ...: timed out` or `Connection refused` | the AAP node cannot reach vCenter on port 443 | a firewall rule from the AAP node (or execution node) to vCenter, port 443 |
+| `pyVmomi is not installed in the execution environment`, or `couldn't resolve module/action 'vmware.vmware...'` | the template uses an execution environment without the VMware parts | pick your VMware execution environment on the template ("Before you start", step 1) |
+| A VM, host or datastore you see in vSphere is missing from a report | the vCenter account cannot see it | give its role on that folder or cluster, with **Propagate to children** ("Before you start", step 2) |
+| `Refused: ... is the AAP server or a protected VM` | by design | do it in vCenter yourself |
+
+### Datastore and snapshot reports, snapshot cleanup
+
+| You see | It means | Do |
+|---|---|---|
+| The datastore heading still says 80% | `vm_datastore_warn_pct: 80` is set somewhere (it wins over the default 85) | remove it from `all.yml` and the template's Variables, or set the number you want |
+| `vm_snapshot_max_age_days must be a number of days` | a survey or variable answer like `three` | a number: `1`, `2`, `3` |
+| The snapshot report says 3 days although you set 2 | in the workflow, the **survey answer** wins over the template's Variables | change the survey's answer or its Default (section "Snapshots") |
+| `Refused: N snapshots are older than ... - more than vm_snapshot_cleanup_max` | more than 50 at once (often a wrong number of days) | check the days; for a big cleanup on purpose, raise `vm_snapshot_cleanup_max` |
+| `NOT DELETED ...: no longer there, or no longer old enough / now kept` | the snapshot changed between the report and the approval | nothing: it is safe. Run the workflow again |
+| `Taken by` says `unknown` | vCenter no longer keeps the event (often after 30 days) | nothing: the snapshot's description may name the AAP user |
+
+### Alarms report
+
+| You see | It means | Do |
+|---|---|---|
+| `types: unknown object type(s) ...` | a typo in `vm_alarm_types` | use `vcenter`, `datacenter`, `cluster`, `host`, `datastore`, `vm`, `network` |
+| `vCenter ... has no datacenter named ...` | a typo in `vmware_datacenter` | the exact name, as the vSphere Client shows it |
+| An alarm the vSphere Client shows is missing | it is on a VM, datastore or network (not read by default), or in another datacenter | add its type to `vm_alarm_types` (e.g. `[vcenter, datacenter, cluster, host, vm]`); check `vmware_datacenter` |
+| No events at all, or fewer than in the vSphere Client | `vm_alarm_hours: 0`, or the account sees only part of the inventory (vCenter shows an account only the events of what it can see) | give the role at the top of the vCenter inventory, with Propagate to children |
+| `Only the newest 5000 events were read` | a busy vCenter | lower `vm_alarm_hours`, or raise `vm_alarm_max_events` |
+| `Only the first 200 are shown` | a long table | the job's **Artifacts** (`vm_alarms`) have all of them; or raise `vm_alarm_max_rows` |
+| The job shows **failed** with `critical alarm(s) ... host(s) not connected` | `vm_alarm_fail: true` is set | expected (for a workflow); remove it for a report only |
+| `Reading alarms and events from vCenter ... failed: ...` | something this job did not expect from your vCenter | send that line to the people who maintain this repository |
+
+### Alarms ACT analysis
+
+| You see | It means | Do |
+|---|---|---|
+| `nothing to analyze`, and no email | nothing is wrong: no alarm, no problem in the window | nothing. `vm_alarm_act_email_if_none: true` sends an email anyway |
+| `A dry run (Check): ACT was not called` | the job ran as Check | launch it with Job type Run |
+| `This job has no API key for provider genai: attach ...` | no **ACT model key** credential on the template, or its GenAI field is empty | add the credential (with the key for your provider) to the template |
+| `This AAP node cannot reach the model at ... (... timed out / Connection refused / Name or service not known ...)` | a firewall, DNS or a missing proxy between the AAP node and the model | ask for HTTPS (443) from the AAP node to that address, or set your proxy: `site_act_env: {HTTPS_PROXY: "http://proxy.yoursite.mil:8080"}` in `all.yml` |
+| `... Its certificate is not trusted: set site_act_ca ...` | the execution environment does not trust the model's certificate authority | put that CA certificate at `playbooks/files/ca/model-ca.pem`, `site_act_ca: "{{ playbook_dir }}/files/ca/model-ca.pem"` in `all.yml`, and `playbooks/files/ca/` in `.site-local` |
+| `ACT failed: ...` with `401` or `Unauthorized` | the key is wrong or expired | a new key in the credential |
+| `ACT failed: ...` with `429` or `Too Many Requests` | the key's quota per minute | run it less often, or lower `vm_alarm_act_max_items` |
+| `ACT produced no result (it timed out after 600s ...)` | a slow model, or a lot of evidence | `site_act_timeout: 900`, or `vm_alarm_act_max_items: 20` |
+| `ACT's answer is below as text` | the model did not use the table format | the answer is still in the email. Run it again, or try another model (`site_act_models`) |
+| A row says `ACT gave no answer for this one` | the model skipped that problem | run it again; fewer problems (`vm_alarm_act_max_items`) help a small model |
+| The job is red, but the email came | ACT could not run; the email lists the problems and says why | fix what the email says, then run it again |
+
+**Test the way to the model by hand**, from the AAP server (the execution environment uses the
+same network):
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' https://api.genai.mil/v1/chat/completions
+```
+
+Any number (401, 404, 405) means the way is open. `Could not resolve host`, a timeout, or
+`SSL certificate problem` is the problem the job reports.
 
 ## Limits
 
@@ -399,4 +584,7 @@ failed. This sends the report itself.
 - `vm_names` are exact VM names. To act on many VMs, list them.
 - Tested against vcsim, VMware's vCenter simulator (`tests/vmware/run_vmware_test.sh`), not against
   a real vCenter. Run each job once as **Check**, then on a test VM, before you use it on real
-  servers.
+  servers. The simulator raises no alarms: the alarms report's alarm handling is tested with
+  recorded data (`tests/test_filters.py`, `tests/test_vmware_modules.py`). The ACT analysis is
+  tested with the real ACT against a scripted model (`tests/test_alarm_act_contract.py`), not a
+  real one.

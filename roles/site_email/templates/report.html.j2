@@ -3,7 +3,10 @@
     footer line _email_footer. Every value is escaped (| e). Your own look: copy this file and point
     report_email_html_template at the copy. -#}
 {%- set r = _report -%}
-{%- set colour = {'ok': '#15803d', 'warning': '#b45309', 'critical': '#b91c1c', 'info': '#1d4ed8'} -%}
+{%- set colour = {'ok': '#15803d', 'warning': '#b45309', 'critical': '#b91c1c', 'info': '#1d4ed8', 'unknown': '#6b7280'} -%}
+{#- a section may colour its rows: row_status (one status per row: a light tint of the whole row) and
+    cell_status (per row, one status per cell: that cell in the full colour, white bold text) -#}
+{%- set tint = {'ok': '#dcfce7', 'warning': '#fef3c7', 'critical': '#fee2e2', 'info': '#dbeafe', 'unknown': '#f3f4f6'} -%}
 {%- set band = colour[r.status | default('info')] | default('#1d4ed8') -%}
 <!DOCTYPE html>
 <html lang="en">
@@ -52,9 +55,20 @@
 {%- endfor %}
 </tr>
 {%- for row in s.rows %}
+{%- set rs = (s.row_status[loop.index0] if s.row_status is defined and s.row_status | length > loop.index0 else '') | default('', true) %}
+{%- set cs = (s.cell_status[loop.index0] if s.cell_status is defined and s.cell_status | length > loop.index0 else []) | default([], true) %}
+{%- if rs in tint %}
+<tr bgcolor="{{ tint[rs] }}" style="background:{{ tint[rs] }};">
+{%- else %}
 <tr style="background:{{ '#ffffff' if loop.index is odd else '#f9fafb' }};">
+{%- endif %}
 {%- for cell in row %}
-<td style="padding:5px 8px;border:1px solid #c9d1dd;vertical-align:top;">{{ cell | default('', true) | string | e }}</td>
+{%- set st = cs[loop.index0] if cs | length > loop.index0 else '' %}
+{%- if st and st in colour %}
+<td bgcolor="{{ colour[st] }}" style="padding:5px 8px;border:1px solid #c9d1dd;vertical-align:top;background:{{ colour[st] }};color:#ffffff;font-weight:bold;">{{ ('' if cell is none else cell) | string | e }}</td>
+{%- else %}
+<td style="padding:5px 8px;border:1px solid #c9d1dd;vertical-align:top;">{{ ('' if cell is none else cell) | string | e }}</td>
+{%- endif %}
 {%- endfor %}
 </tr>
 {%- endfor %}

@@ -11,6 +11,9 @@
 #     sections:
 #       - {title: BIOS firmware, text: "Fix: ...", status: warning, columns: [VM, Folder], rows: [[web01, /DC1/vm]]}
 #       - {title: Notes, lines: [one line, another line]}
+#       # optional colours of a table, one entry per row: row_status tints the row, cell_status
+#       # (one status per cell, '' = none) fills that cell - e.g. the Severity column
+#       - {title: Alarms, columns: [Severity, Host], rows: [[CRITICAL, esx01]], row_status: [critical], cell_status: [[critical, '']]}
 #     footer: "vCenter vcsa01"                                 # optional; the AAP job line is added
 # or plain text: _report_subject and _report_body.
 - name: Email | who gets the report

@@ -8,6 +8,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "plugins", "filter"))
 import site_filters as f  # noqa: E402
+import vmware_alarm_filters as va  # noqa: E402
 
 
 class FromCsv(unittest.TestCase):
@@ -507,6 +508,153 @@ class Snapshots(unittest.TestCase):
         self.assertTrue(f.name_matches("vcsa01", ["VCSA01"]))
         self.assertFalse(f.name_matches("adc01", ["dc*"]))
         self.assertFalse(f.name_matches("x", ["", " "]))
+
+
+class VmwareAlarms(unittest.TestCase):
+    D = {"vcenter": "vc01", "read_at": "2026-10-07T12:00:00Z", "window_hours": 24.0, "events_capped": False,
+         "alarms": [{"entity_type": "host", "entity": "esx01", "moid": "host-1", "cluster": "CL1", "datacenter": "DC1",
+                     "alarm": "Host hardware power status", "alarm_description": "PSU", "status": "red", "severity": "critical",
+                     "time": "2026-10-07T03:00:00Z", "acknowledged": False, "acknowledged_by": "", "acknowledged_time": ""},
+                    {"entity_type": "cluster", "entity": "CL1", "moid": "domain-c1", "cluster": "CL1", "datacenter": "DC1",
+                     "alarm": "vSphere HA failover resources", "alarm_description": "", "status": "yellow", "severity": "warning",
+                     "time": "2026-10-06T03:00:00Z", "acknowledged": True, "acknowledged_by": "CORP\\op", "acknowledged_time": "2026-10-06T04:00:00Z"}],
+         "config_issues": [{"entity_type": "host", "entity": "esx02", "moid": "host-2", "cluster": "CL1", "datacenter": "DC1",
+                            "message": "SSH for the host has been enabled", "time": "", "type": "LocalTSMEnabledEvent"}],
+         "hosts": [{"name": "esx01", "moid": "host-1", "cluster": "CL1", "datacenter": "DC1", "connection": "connected", "power": "poweredOn",
+                    "maintenance": False, "version": "8.0.2", "build": "1", "vendor": "Dell", "model": "R750", "status": "red"},
+                   {"name": "esx02", "moid": "host-2", "cluster": "CL1", "datacenter": "DC1", "connection": "notResponding", "power": "unknown",
+                    "maintenance": False, "version": "", "build": "", "vendor": "", "model": "", "status": "gray"},
+                   {"name": "esx03", "moid": "host-3", "cluster": "CL1", "datacenter": "DC1", "connection": "connected", "power": "poweredOn",
+                    "maintenance": True, "version": "8.0.2", "build": "1", "vendor": "Dell", "model": "R750", "status": "green"}],
+         "events": [{"key": i, "time": "2026-10-07T0%d:00:00Z" % i, "type": "BadUsernameSessionEvent", "group": "login", "severity": "warning",
+                     "category": "info", "message": "Cannot login svc_scan@10.9.9.9", "user": "", "login_user": "svc_scan", "ip": "10.9.9.9",
+                     "host": "esx01", "vm": "", "cluster": "CL1", "datacenter": "DC1"} for i in range(1, 4)]
+                   + [{"key": 10, "time": "2026-10-07T05:00:00Z", "type": "HostNotRespondingEvent", "group": "connection", "severity": "critical",
+                       "category": "error", "message": "Host esx02 is not responding", "user": "", "login_user": "", "ip": "", "host": "esx02",
+                       "vm": "", "cluster": "CL1", "datacenter": "DC1"},
+                      {"key": 11, "time": "2026-10-07T06:00:00Z", "type": "VmGuestShutdownEvent", "group": "vm", "severity": "info",
+                       "category": "info", "message": "Guest OS shut down for app01", "user": "CORP\\admin", "login_user": "", "ip": "",
+                       "host": "esx01", "vm": "app01", "cluster": "CL1", "datacenter": "DC1"},
+                      {"key": 12, "time": "2026-10-07T07:00:00Z", "type": "com.vmware.vc.ha.VmRestartedByHAEvent", "group": "vm", "severity": "warning",
+                       "category": "warning", "message": "vSphere HA restarted db01", "user": "", "login_user": "", "ip": "",
+                       "host": "esx03", "vm": "db01", "cluster": "CL1", "datacenter": "DC1"}]
+                   + [{"key": 20 + i, "time": "2026-10-07T1%d:00:00Z" % i, "type": "esx.problem.storage.latency", "group": "other",
+                       "severity": "warning", "category": "warning", "message": "latency %d ms" % (100 + i), "user": "", "login_user": "",
+                       "ip": "", "host": "esx01", "vm": "", "cluster": "CL1", "datacenter": "DC1"} for i in range(2)]}
+
+    def test_groups(self):
+        g = va.vm_alarm_groups(self.D, {"login_critical": 3})
+        self.assertEqual([(x["user"], x["ip"], x["where"], x["count"], x["severity"], _t(x["first"]), _t(x["last"])) for x in g["logins"]],
+                         [("svc_scan", "10.9.9.9", "esx01", 3, "critical", "01", "03")])
+        self.assertEqual([(c["host"], c["state"], c["events"], c["severity"]) for c in g["connection"]], [("esx02", "notResponding", 1, "critical")])
+        self.assertEqual([e["vm"] for e in g["vm"]], ["db01", "app01"])                        # newest first
+        self.assertEqual([(x["type"], x["count"], x["message"]) for x in g["other"]], [("esx.problem.storage.latency", 2, "latency 101 ms")])
+        self.assertEqual(va.vm_alarm_groups(self.D)["logins"][0]["severity"], "warning")       # 3 < 10
+
+    def test_report_colours_and_counts(self):
+        r = va.vm_alarm_report(self.D, {"login_critical": 10})
+        self.assertEqual(r["status"], "critical")
+        self.assertIn("1 critical, 1 warning alarm(s)", r["title"])
+        self.assertIn("1 host(s) not connected", r["title"])
+        self.assertIn("3 failed login(s)", r["title"])
+        self.assertIn("1 VM event(s) to check", r["title"])
+        sec = {s["title"]: s for s in r["sections"]}
+        al = sec["Triggered alarms"]
+        self.assertEqual([row[0] for row in al["rows"]], ["CRITICAL", "WARNING"])
+        self.assertEqual(al["row_status"], ["critical", "warning"])
+        self.assertEqual([c[0] for c in al["cell_status"]], ["critical", "warning"])
+        self.assertTrue(al["rows"][1][5].startswith("yes - CORP\\op"))
+        self.assertEqual(sec["Host connection"]["rows"][0][:3], ["CRITICAL", "esx02", "notResponding"])
+        self.assertEqual(sec["Virtual machine events"]["row_status"], ["warning", "info"])
+        hosts = sec["All hosts"]
+        self.assertEqual(hosts["row_status"], ["critical", "critical", "info"])      # critical alarm, not connected, maintenance
+        self.assertEqual(hosts["cell_status"][1][3], "critical")                     # its Connection cell
+        self.assertEqual(hosts["rows"][0][7:], [1, 5])                               # 1 alarm, 5 warning/critical events
+        self.assertEqual(sec["Configuration issues"]["rows"][0][3], "SSH for the host has been enabled")
+        text = f.report_text(r)
+        self.assertRegex(text, r"\nCRITICAL +Host +esx01 +Host hardware power status")
+
+    def test_report_quiet_and_no_events(self):
+        quiet = dict(self.D, alarms=[], config_issues=[], events=[], hosts=[dict(self.D["hosts"][0])])
+        r = va.vm_alarm_report(quiet)
+        self.assertEqual(r["status"], "ok")
+        self.assertTrue(r["title"].startswith("VMware alarms report: no triggered alarms (events: last 24 h)"))
+        sec = {s["title"]: s for s in r["sections"]}
+        self.assertNotIn("columns", sec["Triggered alarms"])                        # no empty table, the text says it
+        self.assertEqual(sec["Host connection"]["text"], "Every host is connected, and none lost its connection in the last 24 h.")
+        r = va.vm_alarm_report(dict(quiet, window_hours=0))
+        self.assertNotIn("Failed logins", [s["title"] for s in r["sections"]])
+        self.assertNotIn("events: last", r["title"])
+
+    def test_problems_order_ids_and_cap(self):
+        p = va.vm_alarm_problems(self.D, {"login_critical": 10})
+        kinds = [(x["id"], x["kind"], x["severity"]) for x in p["problems"]]
+        self.assertEqual(kinds[:2], [("P1", "alarm", "critical"), ("P2", "connection", "critical")])
+        self.assertEqual({k for _, k, _ in kinds}, {"alarm", "connection", "login", "vm", "event", "config"})
+        self.assertNotIn("app01", [x["object"] for x in p["problems"]])             # an info VM event is not a problem
+        capped = va.vm_alarm_problems(self.D, {"max_items": 2, "config_issues": False})
+        self.assertEqual((len(capped["problems"]), len(capped["not_analyzed"])), (2, 4))
+        self.assertNotIn("config", [x["kind"] for x in capped["problems"] + capped["not_analyzed"]])
+
+    def test_evidence_task_and_names(self):
+        p = va.vm_alarm_problems(self.D)["problems"]
+        ev = va.vm_alarm_evidence(self.D, p)
+        self.assertIn("P1 [CRITICAL] Host esx01 (CL1 / DC1) - alarm \"Host hardware power status\"", ev)
+        self.assertIn("esx02: cluster CL1, datacenter DC1, connection notResponding", ev)
+        self.assertIn("[esx01]", ev)
+        self.assertIn("BadUsernameSessionEvent", ev)
+        self.assertTrue(va.vm_alarm_evidence(self.D, p, {"max_chars": 100}).endswith("[... evidence cut at 100 characters ...]"))
+        task = va.vm_alarm_act_task(p, {"hours": 24, "extra": "Site note."})
+        self.assertIn("BEGIN_ACT_ANALYSIS", task)
+        self.assertIn("P1, P2", task)
+        self.assertIn("You cannot run any commands", task)
+        self.assertTrue(task.endswith("Site note."))
+        names = va.vm_alarm_names(self.D)
+        for n in ("vc01", "esx01", "CL1", "DC1", "app01", "db01"):
+            self.assertIn(n, names)
+
+    def test_parse(self):
+        p = [{"id": "P1"}, {"id": "P2"}, {"id": "P3"}, {"id": "P4"}]
+        good = ('Some text.\nBEGIN_ACT_ANALYSIS\n{"overall": "Fix  esx02 first.", "items": ['
+                '{"id": "P1", "cause": "A PSU failed.", "evidence": "alarm", "fix": "Replace it.", "confidence": 92},'
+                '{"id": "p2", "cause": "c", "confidence": "55%"}, {"id": 3, "likely_cause": "x", "confidence": "low"},'
+                '{"id": "P4", "cause": "y", "confidence": 0.9}, {"id": "P9", "cause": "unknown id"},]}\nEND_ACT_ANALYSIS')
+        r = va.act_analysis_parse(good, p)
+        self.assertTrue(r["parsed"])
+        self.assertEqual(r["overall"], "Fix esx02 first.")
+        self.assertEqual({k: v["confidence"] for k, v in r["by_id"].items()}, {"P1": 92, "P2": 55, "P3": 30, "P4": 90})
+        self.assertEqual(r["by_id"]["P3"]["cause"], "x")
+        fenced = va.act_analysis_parse('Answer:\n```json\n[{"id": "P1", "cause": "c", "confidence": 101}]\n```', p)
+        self.assertEqual(fenced["by_id"]["P1"]["confidence"], 100)
+        inner = 'BEGIN_ACT_ANALYSIS\n{"overall": "o", "items": [{"id": "P2", "cause": "c", "confidence": 70}]}\nEND_ACT_ANALYSIS'
+        wrapped = json.dumps({"action": "plan", "next_action": {"action": "finish", "message": inner}})
+        w = va.act_analysis_parse(wrapped, p)                       # inside another JSON reply
+        self.assertEqual((w["parsed"], w["overall"], w["by_id"]["P2"]["confidence"]), (True, "o", 70))
+        bad = va.act_analysis_parse("ROOT CAUSE: something. CONFIDENCE: high", p)
+        self.assertEqual((bad["parsed"], bad["error"]), (False, "ACT's answer has no readable JSON block"))
+        self.assertEqual(va.act_analysis_parse("", p)["error"], "ACT gave no answer")
+
+    def test_act_report(self):
+        p = va.vm_alarm_problems(self.D)["problems"]
+        parsed = va.act_analysis_parse('{"overall": "o", "items": [{"id": "P1", "cause": "PSU", "evidence": "e", "fix": "f", "confidence": 90},'
+                                       '{"id": "P2", "cause": "net", "confidence": 60}, {"id": "P3", "cause": "?", "confidence": 20}]}', p)
+        r = va.vm_alarm_act_report(p, parsed, {"ran": True, "vcenter": "vc01", "provider": "genai", "model": "m", "hours": 24})
+        self.assertEqual(r["title"], "VMware alarms ACT analysis: likely causes and fixes for %d problem(s)" % len(p))
+        t = [s for s in r["sections"] if s["title"] == "Likely causes and fixes"][0]
+        self.assertEqual([row[7] for row in t["rows"][:3]], ["90% high", "60% medium", "20% low"])
+        self.assertEqual([c[7] for c in t["cell_status"][:3]], ["ok", "warning", "critical"])
+        self.assertEqual(t["cell_status"][0][1], "critical")
+        self.assertEqual(t["rows"][3][4], "ACT gave no answer for this one")
+        self.assertEqual(r["sections"][0], {"title": "What to do first", "status": "critical", "lines": ["o"]})
+        nr = va.vm_alarm_act_report(p, {}, {"ran": False, "reason": "no key"})
+        self.assertEqual((nr["status"], nr["sections"][0]["lines"][0]), ("critical", "no key"))
+        self.assertIn("ACT did not run", nr["title"])
+        raw = va.vm_alarm_act_report(p, va.act_analysis_parse("just text", p), {"ran": True, "raw": "line one\n\nline two"})
+        self.assertEqual([s for s in raw["sections"] if s["title"] == "ACT's answer"][0]["lines"], ["line one", "line two"])
+
+
+def _t(iso):
+    return iso[11:13]
 
 
 if __name__ == "__main__":

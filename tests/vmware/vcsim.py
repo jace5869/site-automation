@@ -3,6 +3,10 @@
 
   vcsim.py setup   give the simulator's VMs what the tests need
   vcsim.py state   print every VM as JSON: power, snapshots (name, description), notes, adapters
+  vcsim.py events  post the events the alarms report reads, and disconnect host DC0_C0_H2: 3 failed
+                   logins of svc_scan from 10.9.9.9 on DC0_C0_H0, DC0_C0_H1 lost its connection, a
+                   guest shutdown of DC0_H0_VM1, a host warning on DC0_H0 (vcsim cannot trigger alarms:
+                   tests/test_filters.py covers them)
 
 Setup (vcsim's default inventory: DC0_H0_VM0/1, DC0_C0_RP0_VM0/1; port groups DC0_DVPG0/1, VM Network):
   DC0_H0_VM0      the AAP server: guest host name aap01.example.mil, IP 10.0.0.5, Tools running, a
@@ -134,4 +138,27 @@ def state():
     print(json.dumps(out, sort_keys=True))
 
 
-{"setup": setup, "state": state}[sys.argv[1]]()
+def events():
+    # vcsim records the session's user as each event's user, and leaves the message of some event
+    # types empty (the module then writes one, as vCenter would)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    em = content.eventManager
+    hosts = {h.name: h for h in content.viewManager.CreateContainerView(content.rootFolder, [vim.HostSystem], True).view}
+    dc = content.rootFolder.childEntity[0]
+
+    def where(h):
+        return dict(host=vim.event.HostEventArgument(name=h.name, host=h), datacenter=vim.event.DatacenterEventArgument(name=dc.name, datacenter=dc),
+                    computeResource=vim.event.ComputeResourceEventArgument(name=h.parent.name, computeResource=h.parent))
+    for i in range(3):
+        em.PostEvent(vim.event.BadUsernameSessionEvent(key=0, chainId=0, createdTime=now - datetime.timedelta(minutes=10 - i),
+                                                       userName="svc_scan", ipAddress="10.9.9.9", **where(hosts["DC0_C0_H0"])))
+    em.PostEvent(vim.event.HostConnectionLostEvent(key=0, chainId=0, createdTime=now, userName="", **where(hosts["DC0_C0_H1"])))
+    web = vm("DC0_H0_VM1")
+    em.PostEvent(vim.event.VmGuestShutdownEvent(key=0, chainId=0, createdTime=now, userName="VSPHERE.LOCAL\\admin",
+                                                vm=vim.event.VmEventArgument(name=web.name, vm=web), **where(hosts["DC0_H0"])))
+    em.PostEvent(vim.event.GeneralHostWarningEvent(key=0, chainId=0, createdTime=now, userName="",
+                                                   message="Datastore LocalDS_0 latency is high", **where(hosts["DC0_H0"])))
+    WaitForTask(hosts["DC0_C0_H2"].DisconnectHost_Task())
+
+
+{"setup": setup, "state": state, "events": events}[sys.argv[1]]()

@@ -493,7 +493,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_portgroup` | (empty) | the port group (standard or distributed) to move it to |
 | `vm_secure_boot_folder` | (empty) | Only the VMs in this vCenter folder ("" = every VM, or the ones in vm_names). |
 | `vm_secure_boot_fail` | `false` | The job stays green (successful) when it finds VMs to fix: the report and email say what. true = mark the job FAILED when a VM is BIOS or has secure boot off, so a workflow's "on failure" path can react (open a ticket). |
-| `vm_datastore_warn_pct` | `80` | Used space (% of capacity): a datastore at or above these is listed as a warning / critical. |
+| `vm_datastore_warn_pct` | `85` | Used space (% of capacity): a datastore at or above these is listed as a warning / critical. |
 | `vm_datastore_crit_pct` | `90` |  |
 | `vm_datastore_fail` | `false` | The job stays green when datastores are full: the report and email say which. true = mark the job FAILED when one is at or above vm_datastore_warn_pct (or inaccessible), for workflows. |
 | `vm_snapshot_max_age_days` | `3` | Snapshots at least this many days old: listed apart by the report, deleted by the cleanup. |
@@ -504,6 +504,19 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_snapshot_cleanup_max` | `50` | Refuse to delete more than this many snapshots in one run (a typo in the age would otherwise delete them all). Raise it on purpose for a big cleanup. |
 | `vm_snapshot_delete_timeout` | `1800` | seconds to wait for one deletion (vCenter merges it into the disk) |
 | `vm_snapshot_cleanup_email_only_if_deleted` | `false` | The cleanup's email (report_email_to): true = only when it deleted something (or a deletion failed). |
+| `vm_alarm_types` | `[vcenter, datacenter, cluster, host]` | Whose triggered alarms and configuration issues: vcenter, datacenter, cluster, host. Add vm, datastore or network for theirs too (VM alarms can be many). |
+| `vm_alarm_hours` | `24` | The events of the last this-many hours: every error and warning, failed logins, host connection events and VM shutdowns / power-offs / resets / HA restarts. 0 = alarms and host state only. |
+| `vm_alarm_max_events` | `5000` | read at most this many events (the newest) |
+| `vm_alarm_max_rows` | `200` | rows per table in the report (the artifacts have them all) |
+| `vm_alarm_login_critical` | `10` | This many failed logins of one user from one place, or more, is critical (fewer: a warning). |
+| `vm_alarm_login_event_types` | `[BadUsernameSessionEvent, com.vmware.sso.LoginFailure, esx.audit.account.locked, esx.audi…` | The event types read whatever their category (vCenter's event type names). Add to these lists rather than replacing them; [] = none of that kind. |
+| `vm_alarm_connection_event_types` | `[HostConnectionLostEvent, HostNotRespondingEvent, HostDisconnectedEvent, HostReconnection…` |  |
+| `vm_alarm_vm_event_types` | `[VmGuestShutdownEvent, VmGuestRebootEvent, VmPoweredOffEvent, VmResettingEvent, VmFailove…` |  |
+| `vm_alarm_fail` | `false` | The job stays green when it finds alarms: the report and email say what. true = mark the job FAILED when there is a critical alarm or a host is not connected, for workflows. |
+| `vm_alarm_act_max_items` | `40` | ACT analysis (playbooks/vm_alarm_act_analysis.yml). ACT runs on the AAP side (the execution environment), never on the ESXi hosts; the model provider, model, URL, proxy and CA are the site_act_* settings (roles/site_act/defaults/main.yml), the key an "ACT model key" credential. analyze at most this many problems, the… (all of it: the role file) |
+| `vm_alarm_act_config_issues` | `true` | configuration issues too (false = alarms and events only) |
+| `vm_alarm_act_email_if_none` | `false` | true = email even when there is nothing to analyze |
+| `vm_alarm_act_check_url` | `true` | first check that the AAP node can reach the model's URL |
 
 ## win_act
 

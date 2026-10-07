@@ -33,7 +33,7 @@
   ansible.builtin.assert:
     that: _vm_sc.todo | length <= vm_snapshot_cleanup_max | int
     fail_msg: >-
-      Refused: {{ _vm_sc.todo | length }} snapshots are {{ vm_snapshot_max_age_days }} days or older - more than
+      Refused: {{ _vm_sc.todo | length }} snapshots are older than {{ _vm_sn_days }} - more than
       vm_snapshot_cleanup_max ({{ vm_snapshot_cleanup_max }}). Nothing was deleted. Check vm_snapshot_max_age_days; for a
       cleanup this big on purpose, raise vm_snapshot_cleanup_max.
     quiet: true
@@ -65,9 +65,9 @@
       {{ vm_snapshot_cleanup_email_only_if_deleted | bool and (_vm_sc_done | length + _vm_sc_failed | length == 0) }}
     _vm_report_subject: >-
       {%- if not _vm_sc.delete | bool -%}
-      VMware snapshot cleanup: would delete {{ _vm_sc.todo | length }} snapshot(s) older than {{ vm_snapshot_max_age_days }} days (nothing deleted)
+      VMware snapshot cleanup: would delete {{ _vm_sc.todo | length }} snapshot(s) older than {{ _vm_sn_days }} (nothing deleted)
       {%- else -%}
-      VMware snapshot cleanup: deleted {{ _vm_sc_done | length }} snapshot(s) older than {{ vm_snapshot_max_age_days }} days ({{ _vm_sc_gb }})
+      VMware snapshot cleanup: deleted {{ _vm_sc_done | length }} snapshot(s) older than {{ _vm_sn_days }} ({{ _vm_sc_gb }})
       {{- (', ' ~ _vm_sc_failed | length ~ ' failed') if _vm_sc_failed else '' }}
       {%- endif -%}
     _vm_report_lines: >-
@@ -81,7 +81,7 @@
       {%- endif -%}
       {%- for x in _vm_sc.skipped -%}{%- set _ = out.append('NOT DELETED ' ~ x.vm | default(x.moid) ~ ': "' ~ x.name | default('?') ~ '" - ' ~ x.reason) -%}{%- endfor -%}
       {%- for x in _vm_sc.held -%}{%- set _ = out.append('HELD BACK ' ~ x.vm ~ ': "' ~ x.name ~ '" ' ~ x.size_gb | human_size ~ ' - ' ~ x.reason) -%}{%- endfor -%}
-      {%- if not out -%}{%- set _ = out.append('No snapshot is ' ~ vm_snapshot_max_age_days ~ ' days or older.') -%}{%- endif -%}
+      {%- if not out -%}{%- set _ = out.append('No snapshot is older than ' ~ _vm_sn_days ~ '.') -%}{%- endif -%}
       {{ out }}
     _vm_report_doc: >-
       {%- set cols = ['VM', 'Snapshot', 'Taken (UTC)', 'Taken by', 'Age (days)', 'Size', 'Folder', 'Description'] -%}
@@ -106,7 +106,7 @@
       {%- endif -%}
       {{ {'title': _vm_report_subject | trim,
           'status': 'critical' if _vm_sc_failed else ('ok' if _vm_sc.delete | bool else 'info'),
-          'subtitle': ('After the approval: only the snapshots the report listed.' if _vm_sc.approved else 'Snapshots ' ~ vm_snapshot_max_age_days ~ ' days or older.'),
+          'subtitle': ('After the approval: only the snapshots the report listed.' if _vm_sc.approved else 'Snapshots older than ' ~ _vm_sn_days ~ '.'),
           'summary': ([{'label': 'Deleted', 'value': _vm_sc_done | length, 'status': 'ok'}, {'label': 'Space freed', 'value': _vm_sc_gb, 'status': 'ok'},
                        {'label': 'Failed', 'value': _vm_sc_failed | length, 'status': 'critical' if _vm_sc_failed else 'ok'}]
                       if _vm_sc.delete | bool else [{'label': 'Would delete', 'value': _vm_sc.todo | length}])
