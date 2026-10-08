@@ -521,25 +521,41 @@ builds it, and writes the result - with the VM's IP address - on the ticket.
 
 ### How it flows, step by step
 
-```
- 1. Requester ── writes the ticket in ServiceNow (key: value lines, or plain words)
- 2. Operator  ── launches "VM - deploy from ServiceNow ticket" in AAP with the ticket number
- 3. AAP       ── reads the ticket from ServiceNow (REST API, the ServiceNow API credential)
+The operator launches **one workflow**, `VM - deploy from ServiceNow ticket (workflow)`, with the
+ticket number. It runs the deploy job twice - as its *propose* step and its *build* step - with an
+approval between them:
 
-    with GenAI (plain words)                       without GenAI (key: value lines)
- 4. AAP → GenAI: "what does this ticket ask for?"       (skipped)
- 5. GenAI → AAP: name, template, CPU, memory, disks, site - each with the ticket's own words
- 6. AAP checks every value against the ticket text; posts the PROPOSAL on the ticket (or
-    questions to the requester). STOPS - nothing is built.
- 7. Operator  ── reads the proposal, launches the job again
- 8. AAP       ── reads the ticket and the proposal again (GenAI is NOT asked again)
-
- 9. AAP checks the request against the rules (templates, sites, caps, a free name, the group)
-10. AAP → ServiceNow: "[AAP] Deploying this VM" with the exact request (if refused: nothing is built)
-11. AAP → vCenter: clone the template, CPU / memory / disks, customize (or network boot), power on
-12. AAP → ServiceNow: "[AAP] VM ... deployed" - IP (or MAC for MECM), where it went, the result
-13. AAP → email (report_email_to), and the job's artifacts
 ```
+ 1. Requester ── writes the ticket in ServiceNow (plain words, or key: value lines)
+ 2. Operator  ── launches the workflow in AAP with the ticket number          (ONE launch)
+
+ ── workflow step 1: PROPOSE (the deploy job, vm_deploy_phase: propose) ──────────────────────
+ 3. AAP → ServiceNow: reads the ticket
+ 4. AAP → GenAI:      "what does this ticket ask for?"           (plain words only; key: value
+ 5. GenAI → AAP:      name, template, CPU, memory, disks, site    lines skip 4-6)
+                      - each with the ticket's own words
+ 6. AAP checks every value really is in the ticket
+       questions?  → AAP → ServiceNow: questions to the requester (a comment); the workflow STOPS
+ 7. AAP checks the rules (templates, site, caps, a free name, the group) and finds the cluster and
+    datastore (read-only)
+ 8. AAP → ServiceNow: "[AAP] GenAI proposal" + "[AAP] Checked - ready to build: ... it would go to ..."
+    AAP → email: the same, to the approver.                       NOTHING IS BUILT
+
+ ── workflow step 2: APPROVAL ─────────────────────────────────────────────────────────────────
+ 9. Approver  ── reads the email (or the ticket), clicks Approve in AAP     (Deny = nothing built)
+
+ ── workflow step 3: BUILD (the deploy job, vm_deploy_phase: build) ─────────────────────────
+10. AAP → ServiceNow: reads the ticket and the posted proposal  (GenAI is NOT asked again; a ticket
+                      changed since the proposal = nothing built)
+11. AAP checks the rules again; AAP → ServiceNow: "[AAP] Deploying this VM" (refused = nothing built)
+12. AAP → vCenter:    clone the template, CPU / memory / disks, customize (or network boot), power on
+13. AAP → ServiceNow: "[AAP] VM ... deployed" - IP (or MAC for MECM), where it went
+14. AAP → email: the result
+```
+
+For a demo with no person in between: `vm_deploy_genai_approval: false` on the job template and
+launch the job itself - one run reads, checks and builds (steps 3-8, then 11-14), when every value
+is traced to the ticket and within the rules; questions or a refusal still stop it.
 
 **Who does what:**
 
@@ -549,7 +565,7 @@ builds it, and writes the result - with the VM's IP address - on the ticket.
 | **AAP** (this job) | reads the ticket, checks everything, writes the notes, **builds the VM in vCenter**, reports | builds anything the rules do not allow, or without a "Deploying" note on the ticket |
 | **GenAI** (ACT, evidence mode) | **reads the ticket text and turns it into values** (name, template, CPU, memory, disks, site), quoting the words each comes from | builds or changes anything, runs a command, sees a password or a credential, sees vCenter, chooses a cluster or datastore, decides whether to build |
 | **vCenter** | does what AAP asks: clone, size, customize, power on | - |
-| **The operator** | launches the job; with GenAI, reads the proposal before the second run | - |
+| **The operator / approver** | launches the workflow; reads the proposal and approves (or denies) in AAP | - |
 
 **GenAI only interprets text into values.** It answers once, in run 1, with values and quotes; AAP
 checks each quote is really in the ticket and each value against the rules, and writes the result on
@@ -645,25 +661,22 @@ With `vm_deploy_genai: true`, a ticket does not need the `key: value` lines. A r
 *"We need a Windows Server 2022 box called winapp05 for SiteA, 8 GB RAM, 2 CPUs, a 120 GB system disk
 and a 200 GB data disk"*, and ACT (GenAI.mil, the same ACT model key credential) reads it.
 
-**It takes two runs - the first only proposes:**
-
-1. **Run 1 - the proposal.** ACT reads the ticket (in evidence mode: it runs no command, sees no
-   credential and no inventory) and gives the name, template, CPU, memory, disks and site. The job
-   posts them on the ticket as a work note, `[AAP] GenAI proposal (ticket text sha256:...)`, each value
-   with the words of the ticket it came from, and what the rules would refuse. **Nothing is built.**
-   If something is missing or unclear, the questions go to the requester as a **comment** (they see
-   comments, not work notes) instead.
-2. **Run 2 - the build.** The same job, launched again, builds **the posted proposal** - GenAI is not
-   asked again - with every check of a normal build. A value the ticket gives itself (`cpu: 4` in a
-   comment) still wins over the proposal.
+**Propose, approve, build.** In the workflow (below), the propose step has ACT read the ticket (in
+evidence mode: it runs no command, sees no credential and no inventory). The job posts what it read
+on the ticket - `[AAP] GenAI proposal (ticket text sha256:...)`, each value with the words of the
+ticket it came from - then checks it and finds where it would go, and emails that to the approver.
+**Nothing is built** until someone approves; the build step then builds **the posted proposal** -
+GenAI is not asked again - with every check of a normal build. If something is missing or unclear,
+the questions go to the requester as a **comment** (they see comments, not work notes) and the
+workflow stops. A value the ticket gives itself (`cpu: 4` in a comment) always wins.
 
 **The guardrails:**
 
 | Guardrail | What it does |
 |---|---|
 | Off by default | `vm_deploy_genai: false`; the `key: value` lines work without GenAI |
-| Two runs | run 1 proposes, run 2 builds the proposal on the ticket - never a fresh answer, never unseen |
-| The ticket must not change in between | the proposal carries a hash of the ticket text; editing the description or adding a comment voids it, and the next run asks GenAI again |
+| A person approves | the workflow's approval sits between the proposal and the build; the build step builds the proposal posted on the ticket - never a fresh answer, never unseen (`vm_deploy_genai_approval: false` drops the person, for a demo) |
+| The ticket must not change in between | the proposal carries a hash of the ticket text; editing the description or adding a comment voids it: the build step builds nothing, and the workflow is run again from the start |
 | Every value traceable to the ticket | each value comes with the ticket's words it is from; the job checks those words are in the ticket and contain the value (the name word for word, the numbers as written) - anything else is dropped and becomes a question. GenAI's own confidence is not trusted |
 | Templates from a catalog | GenAI may only pick a key of `vm_deploy_template_catalog`, and it must be in `vm_deploy_templates` |
 | Same rules as any request | allow-lists, CPU / memory / disk caps, name rules, the group, a free name: what the ticket text asks for ("use 64 CPUs") is refused like a typed request |
@@ -671,14 +684,40 @@ and a 200 GB data disk"*, and ACT (GenAI.mil, the same ACT model key credential)
 | Instructions in the ticket are data | the prompt tells the model to ignore them; the two checks above make them harmless anyway |
 | Everything on the record | the proposal, the questions, the "Deploying" note and the result are on the ticket; the job's artifacts keep what GenAI read |
 
-**Set it up:** add the **ACT model key** credential to the deploy template, and:
+**Set it up:**
 
-```yaml
-vm_deploy_genai: true
-vm_deploy_template_catalog:
-  win2022-pxe: "Windows Server 2022 (installed over the network by MECM)"
-  rhel9-gold: "Red Hat Enterprise Linux 9"
-```
+1. The deploy job template (Set it up, above) gets the **ACT model key** credential too, and
+   **Prompt on launch** ticked next to **Variables** (the workflow hands each step its
+   `vm_deploy_phase`). Its Variables gain:
+
+   ```yaml
+   vm_deploy_genai: true
+   vm_deploy_template_catalog:
+     win2022-pxe: "Windows Server 2022 (installed over the network by MECM)"
+     rhel9-gold: "Red Hat Enterprise Linux 9"
+   ```
+
+2. **Templates > Create template > Create workflow job template:** name
+   `VM - deploy from ServiceNow ticket (workflow)`; a **survey** with one question, *Ticket number*,
+   variable `vm_deploy_ticket` (the workflow passes it to every step). Save, then open the
+   **Workflow Visualizer**:
+   - **Start → node 1:** job template `VM - deploy from ServiceNow ticket`; its prompt, Variables:
+     `vm_deploy_phase: propose`
+   - **node 1 → (On success) → node 2:** **Approval**, name `Build the VM on the ticket?`, a timeout
+     of, e.g., 8 hours
+   - **node 2 → (On success = approved) → node 3:** job template `VM - deploy from ServiceNow ticket`;
+     Variables: `vm_deploy_phase: build`
+   - Nothing on *On failure*: a question for the requester, a refusal or a denied approval ends it.
+3. Give the approvers the workflow's **Approve** permission (Access > the workflow > Roles), and
+   `report_email_to` their address on the job template: the propose step's email is what they read.
+4. Launch the workflow with a test ticket. The proposal and "ready to build" are on the ticket and in
+   the email; approve in **Automation Execution > Workflow Approvals**; the VM is built.
+
+The same workflow works for tickets with `key: value` lines: step 1 then only checks and places.
+
+**Without the workflow** (a demo): launch the job template itself with `vm_deploy_genai_approval:
+false` - one run reads, checks and builds. With `vm_deploy_genai_approval: true` and no workflow,
+the job proposes and stops; launching it again builds the posted proposal.
 
 The ticket text goes to the model (GenAI.mil): only use it for tickets whose text may go there.
 
@@ -761,7 +800,9 @@ request.
 | `vm_deploy_max_disks` / `vm_deploy_max_disk_gb` / `vm_deploy_max_total_disk_gb` | `4` / `2048` / `4096` | disk caps: how many, the biggest one, all together |
 | `vm_deploy_mem_target_pct` / `vm_deploy_failover_hosts` | `80` / `1` | automatic placement: a cluster fits when memory with this VM and that many hosts down stays under the % |
 | `vm_deploy_datastore_max_used_pct` | `85` | automatic placement: a datastore fits when it stays under this % with the VM at its full size |
-| `vm_deploy_genai` | `false` | GenAI reads requests written in plain words (two runs: propose, then build) |
+| `vm_deploy_genai` | `false` | GenAI reads requests written in plain words (propose, approve, build) |
+| `vm_deploy_genai_approval` | `true` | a GenAI proposal waits for a person (the workflow's approval); `false` = one run reads, checks and builds |
+| `vm_deploy_phase` | `""` | the workflow's steps: `propose` (read, check, place - build nothing), `build` (build what the ticket says - never ask GenAI); `""` = the job alone |
 | `vm_deploy_template_catalog` | `{}` | the templates GenAI may pick, each with a plain description |
 | `vm_deploy_genai_model_timeout` | `site_act_model_timeout` (600) | seconds the model may take |
 
@@ -1036,7 +1077,8 @@ the last column says.
 | `template ... is Windows: name a customization specification` | Windows needs Sysprep settings | `customization_spec: <name>` in the ticket (vCenter: Policies and Profiles) - or, for a network-boot (MECM) template, list it in `vm_deploy_pxe_templates` |
 | `the ticket does not say which site` | sites are set up, the ticket names none (and its Location is not a site) | `site: ...` in a comment; or `vm_deploy_site_required: false` |
 | `site '...' is not one of vm_deploy_sites` | a site name you have not set up | correct the ticket, or add the site |
-| `GenAI proposal posted - run the job again to build it` | run 1 of a plain-words request: by design | read the proposal on the ticket, then launch the job again |
+| `... ready to build in ... - waiting for the approval` | the propose step (or the job alone with `vm_deploy_genai_approval: true`): by design | approve the workflow (or launch the job again) |
+| `has no GenAI proposal for its text as it is now` | the build step, but the ticket changed after the proposal (or there is none) | run the workflow from the start |
 | `questions for the requester (nothing built)` | GenAI could not trace a value to the ticket, or something is missing | the requester answers in a comment (`memory_gb: 16`); run the job again |
 | `DROPPED (not in the ticket): vm_name ...` | GenAI gave a value the ticket does not contain (made up, or guessed) | nothing: it is a question now |
 | `GenAI did not run: ...` | no ACT model key, the model not reachable, or a timeout | the ACT model key credential on the template; see docs/ADDING_ACT.md; or `key: value` lines |

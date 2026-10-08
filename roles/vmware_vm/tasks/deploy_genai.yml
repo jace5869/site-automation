@@ -1,7 +1,7 @@
 ---
 # DEPLOY, the GenAI part - a proof of concept with guardrails (vm_deploy_genai: true; deploy.yml
 # includes it when the ticket's own 'key: value' lines do not say the name and the template, and no
-# proposal matches the ticket text as it is now). NOTHING IS BUILT IN THIS RUN:
+# proposal matches the ticket text as it is now). NOTHING IS BUILT HERE:
 #   1. ACT (GenAI, evidence mode: it runs no command) reads the ticket text and gives the VM's name,
 #      template (a key of vm_deploy_template_catalog), CPU, memory, disks and site - each with the words
 #      of the ticket it comes from.
@@ -10,8 +10,10 @@
 #   3. Questions -> a comment to the requester (they see comments, not work notes). Otherwise the
 #      proposal -> a work note, "[AAP] GenAI proposal (ticket text sha256:...)", with what the rules
 #      would refuse.
-#   4. The next run builds that proposal - without asking GenAI again - only while the ticket text is
-#      unchanged (the hash); the ticket's own lines still win over it.
+#   4. A clean proposal (traced, no questions, within the rules: _vd_g_clean) goes on to the check
+#      step: in the workflow, "ready to build" and the approval; without an approval
+#      (vm_deploy_genai_approval: false), built in this run. The workflow's build step (or a later
+#      run) builds the posted proposal without asking GenAI again, while the ticket text is unchanged.
 - name: VMware | GenAI has a template catalog to pick from
   ansible.builtin.assert:
     that: vm_deploy_template_catalog | length > 0
@@ -51,7 +53,12 @@
            'sites': vm_deploy_sites, 'site_required': vm_deploy_site_required | bool, 'pxe_templates': vm_deploy_pxe_templates,
            'max_disks': vm_deploy_max_disks | int, 'max_disk_gb': vm_deploy_max_disk_gb | float,
            'max_total_disk_gb': vm_deploy_max_total_disk_gb | float}) }}
+
+- name: VMware | does the request go on? (questions, or a refusal, stop it)
+  ansible.builtin.set_fact:
     _vd_g_ask: "{{ _ea_ran | default(false) | bool and not _vd_g.error and _vd_g.questions | length > 0 }}"
+    _vd_g_clean: >-
+      {{ _ea_ran | default(false) | bool and not _vd_g.error and _vd_g.questions | length == 0 and _vd_gc.problems | length == 0 }}
 
 - name: VMware | what GenAI proposes
   ansible.builtin.debug:
@@ -93,7 +100,9 @@
     body_format: json
     body:
       work_notes: >-
-        {{ (_vd_g | vm_deploy_proposal_note(_vd_digest, _vd_job))
+        {{ (_vd_g | vm_deploy_proposal_note(_vd_digest, _vd_job,
+              'Building it now (no approval step: vm_deploy_genai_approval is off).'
+              if _vd_phase == '' and not vm_deploy_genai_approval | bool and _vd_gc.problems | length == 0 else ''))
            ~ ((('\nThe build would refuse it now: ' ~ (_vd_gc.problems | join('; ')))) if _vd_gc.problems else '') }}
     validate_certs: "{{ servicenow_validate_certs | default(true) }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
@@ -102,8 +111,10 @@
   register: _vd_gnote_p
   when: _ea_ran | default(false) | bool and not _vd_g.error and not _vd_g_ask | bool and not ansible_check_mode
 
-- name: VMware | GenAI proposal report
+# a clean proposal goes on to the check / build step, which reports; here only what stops
+- name: VMware | GenAI proposal report (it stops here)
   ansible.builtin.include_tasks: report.yml
+  when: not _vd_g_clean | bool
   vars:
     _vd_written: >-
       {{ (_vd_gnote_q.status | default(0)) == 200 or (_vd_gnote_p.status | default(0)) == 200 }}
@@ -112,7 +123,7 @@
          ~ ('GenAI would read the ticket (dry run: not asked)' if ansible_check_mode else
             ('GenAI did not run' if _vd_g.error else
              ('questions for the requester (nothing built)' if _vd_g_ask | bool else
-              'GenAI proposal posted - run the job again to build it'))) }}
+              'GenAI proposal posted - the rules refuse it (nothing built)'))) }}
     _vm_report_lines: >-
       {{ [_vm_report_subject | trim] + (_vd_g.fields | vm_deploy_spec_text)
          + (['ERROR: ' ~ _vd_g.error] if _vd_g.error else [])
@@ -135,6 +146,7 @@
           'subtitle': 'Ticket ' ~ _vd_rec.number ~ ' (' ~ _vd_digest ~ ') - ' ~ _vd_job, 'sections': sections} }}
 
 - name: VMware | the proposal as job artifacts (vm_deploy)
+  when: not _vd_g_clean | bool
   ansible.builtin.set_stats:
     data:
       vm_deploy: >-
@@ -142,9 +154,14 @@
             'fields': _vd_g.fields, 'evidence': _vd_g.evidence, 'questions': _vd_g.questions, 'dropped': _vd_g.dropped,
             'would_refuse': _vd_gc.problems, 'error': _vd_g.error}, 'built': false, 'dry_run': ansible_check_mode} }}
 
-- name: VMware | GenAI read the ticket
+- name: VMware | GenAI read the ticket, and the request can go on (a workflow stops here otherwise)
   ansible.builtin.assert:
-    that: not _vd_g.error
-    fail_msg: "GenAI did not read the ticket: {{ _vd_g.error }}. Nothing was built; the ticket's own 'key: value' lines still work without GenAI."
+    that: _vd_g_clean | bool
+    fail_msg: >-
+      {{ ('GenAI did not read the ticket: ' ~ _vd_g.error ~ ". Nothing was built; the ticket's own 'key: value' lines still work without GenAI.")
+         if _vd_g.error else
+         ('Nothing was built: the requester has to answer ' ~ _vd_g.questions | length ~ ' question(s) - they are on the ticket as a comment.')
+         if _vd_g.questions else
+         ('Nothing was built: the rules refuse the request - ' ~ _vd_gc.problems | join('; ')) }}
     quiet: true
   when: not ansible_check_mode

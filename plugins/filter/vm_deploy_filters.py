@@ -367,7 +367,7 @@ def vm_deploy_genai_parse(raw, ticket_text, opts=None):
     return out
 
 
-def vm_deploy_proposal_note(parsed, digest, job=""):
+def vm_deploy_proposal_note(parsed, digest, job="", next_step=""):
     """The work note a GenAI proposal is posted as - and later read back (vm_deploy_find_proposal)."""
     p = parsed or {}
     lines = ["%s (ticket text %s%s):" % (PROPOSAL, digest, (", " + job) if job else "")]
@@ -375,9 +375,9 @@ def vm_deploy_proposal_note(parsed, digest, job=""):
         if f in (p.get("fields") or {}):
             v = p["fields"][f]
             lines.append('%s: %s    <- "%s"' % (f, ", ".join(str(x) for x in v) if isinstance(v, list) else v, (p.get("evidence") or {}).get(f, "")))
-    lines.append("Run the deploy job again to build this. To change a value, add a comment with the line (e.g. 'memory_gb: 32'): "
-                 "a line the ticket gives itself always wins. Editing the description or adding comments makes this proposal void "
-                 "(GenAI reads the ticket again).")
+    lines.append(next_step or "It is built after the approval (or when the deploy job runs again). To change a value, add a comment "
+                 "with the line (e.g. 'memory_gb: 32'): a line the ticket gives itself always wins. Editing the description or adding "
+                 "comments makes this proposal void (GenAI reads the ticket again).")
     return "\n".join(lines)
 
 

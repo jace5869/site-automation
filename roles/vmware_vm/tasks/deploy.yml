@@ -73,19 +73,49 @@
     _vd_own: "{{ (_vd_get.json.result[0] | vm_deploy_spec).spec }}"
 
 # GenAI is asked only when it is on, the ticket's own lines do not say the name AND the template,
-# and there is no proposal for the ticket text as it is now. The build never asks GenAI: it builds
-# what the posted proposal says - the ticket's own lines winning - or nothing.
-- name: VMware | GenAI needed?
+# and there is no proposal for the ticket text as it is now. The build step never asks GenAI: it
+# builds what the posted proposal says - the ticket's own lines winning - or nothing.
+#   vm_deploy_phase: ""        one job does it all: with GenAI, it proposes and stops for a person
+#                              (vm_deploy_genai_approval) - or, with that off, builds right away
+#                    propose   the workflow's first step: read, ask GenAI if needed, check, find where
+#                              it would go, write it all on the ticket - build nothing
+#                    build     the workflow's step after the approval: build what the ticket (and its
+#                              proposal) says - never ask GenAI
+- name: VMware | which step this is, and is GenAI needed?
   ansible.builtin.set_fact:
+    _vd_phase: "{{ vm_deploy_phase | default('', true) | string | lower | trim }}"
     _vd_prop_ok: "{{ vm_deploy_genai | bool and (_vd_prop.digest | default('')) == _vd_digest }}"
     _vd_genai_needed: >-
       {{ vm_deploy_genai | bool and not (_vd_own.vm_name is defined and _vd_own.template is defined)
          and (_vd_prop.digest | default('')) != _vd_digest }}
 
-- name: VMware | GenAI reads the request and proposes - nothing is built in this run
+- name: VMware | a step this job knows
+  ansible.builtin.assert:
+    that: _vd_phase in ['', 'propose', 'build']
+    fail_msg: "vm_deploy_phase must be propose, build or empty, not {{ _vd_phase }}"
+    quiet: true
+
+- name: VMware | the build step has something to build (it never asks GenAI)
+  ansible.builtin.assert:
+    that: not (_vd_genai_needed | bool and _vd_phase == 'build')
+    fail_msg: >-
+      Nothing was built: ticket {{ _vd_rec.number }} has no GenAI proposal for its text as it is now (none yet, or the ticket
+      was changed after it - a new comment voids it). Run the workflow from the start: its first step makes the proposal.
+    quiet: true
+
+- name: VMware | GenAI reads the request and proposes
   ansible.builtin.include_tasks: deploy_genai.yml
   when: _vd_genai_needed | bool
 
-- name: VMware | check and build
+- name: VMware | the proposal GenAI just made is the one to check (and, without an approval, to build)
+  ansible.builtin.set_fact:
+    _vd_prop: "{{ {'fields': _vd_g.fields, 'header': 'this run', 'digest': _vd_digest} }}"
+    _vd_prop_ok: true
+  when: _vd_genai_needed | bool and _vd_g_clean | bool
+
+- name: VMware | check and build - or, in the propose step (or waiting for a person), check and say where it would go
   ansible.builtin.include_tasks: deploy_build.yml
-  when: not _vd_genai_needed | bool
+  vars:
+    _vd_plan_only: >-
+      {{ _vd_phase == 'propose' or (_vd_genai_needed | bool and _vd_phase == '' and vm_deploy_genai_approval | bool) }}
+  when: not _vd_genai_needed | bool or _vd_g_clean | bool
