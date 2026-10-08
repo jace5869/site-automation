@@ -3,7 +3,9 @@
 # what the next step of a workflow receives), and emailed when report_email_to is set.
 # Input: _vm_report_subject, _vm_report_lines (list of text lines); optional _vm_report_doc, a
 # formatted report for the email (the layout roles/site_email/tasks/main.yml describes);
-# _vm_report_no_email (true = no email) with _vm_report_no_email_why (said instead).
+# _vm_report_no_email (true = no email) with _vm_report_no_email_why (said instead); _vm_vcenters,
+# the vCenters the job read (a site_vmware_* module's 'vcenters'): the ones not read are listed in
+# red on top (the job fails at its end: vcenters_read.yml).
 - name: VMware | the result as job artifacts (vm_report)
   ansible.builtin.set_stats:
     data:
@@ -11,10 +13,13 @@
         subject: "{{ _vm_report_subject }}"
         lines: "{{ _vm_report_lines }}"
         dry_run: "{{ ansible_check_mode }}"
+        vcenters: "{{ _vm_vcenters | default([]) }}"
 
 - name: VMware | {{ _vm_report_subject }}
   ansible.builtin.debug:
-    msg: "{{ _vm_report_lines }}"
+    msg: >-
+      {{ (_vm_vcenters | default([]) | selectattr('error') | map(attribute='error') | map('regex_replace', '^', 'NOT READ: ') | list)
+         + _vm_report_lines }}
 
 - name: VMware | email it (report_email_to)
   ansible.builtin.include_role:
@@ -22,10 +27,13 @@
   vars:
     # a job may hand over its own formatted report (_vm_report_doc); otherwise its lines become one section
     _report: >-
+      {%- set read = _vm_vcenters | default([]) | vm_vcenters_read -%}
       {{ (_vm_report_doc | default({'title': _vm_report_subject, 'status': 'info',
                                     'sections': [{'title': 'Result', 'lines': _vm_report_lines}]}, true))
+         | vm_vcenter_report(_vm_vcenters | default([]))
          | combine({'footer': ((_vm_report_doc.footer ~ ' ') if (_vm_report_doc | default({}, true)).footer is defined else '')
-                              ~ 'vCenter ' ~ lookup('ansible.builtin.env', 'VMWARE_HOST')
+                              ~ ('vCenter ' ~ read[0] if read | length == 1 else ('vCenters ' ~ read | join(', ') if read
+                                 else 'vCenter ' ~ lookup('ansible.builtin.env', 'VMWARE_HOST')))
                               ~ (' - DRY RUN (Check): nothing was changed.' if ansible_check_mode else '')}) }}
   when: report_email_to | default([]) | length > 0 and not _vm_report_no_email | default(false) | bool
 

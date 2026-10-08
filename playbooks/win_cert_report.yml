@@ -38,26 +38,20 @@
           {%- endfor -%}
           {%- set out = ['DAYS  EXPIRES     HOST  |  SUBJECT  |  WHERE'] -%}
           {%- for c in rows | sort(attribute='days') -%}
-          {%-   set flag = ' <-- EXPIRED' if c.days < 0 else (' <-- ' ~ c.days ~ ' days' if c.days <= win_check_certs_warn_days | default(30) | int else '') -%}
+          {%-   set flag = ' <-- EXPIRED' if c.days < 0 else (' <-- ' ~ c.days ~ ' days' if c.days <= win_check_certs_notice_days | default(60) | int else '') -%}
           {%-   set _ = out.append(c.days ~ '  ' ~ c.expires ~ '  ' ~ c.host ~ '  |  ' ~ c.subject | truncate(70) ~ '  |  ' ~ c.where ~ flag) -%}
           {%- endfor -%}
           {{ out if rows else ['no certificates found in the machine stores'] }}
       run_once: true
 
-    - name: The certificate table for the report email
+    - name: The certificate table for the report email (expired red, within win_check_certs_warn_days amber, within win_check_certs_notice_days blue)
       ansible.builtin.set_fact:
         site_report_sections: >-
           {%- set rows = [] -%}
           {%- for h in ansible_play_hosts -%}
           {%-   for c in hostvars[h].check_certs_inventory | default([]) -%}{%- set _ = rows.append(c) -%}{%- endfor -%}
           {%- endfor -%}
-          {%- set out = [] -%}
-          {%- for c in rows | sort(attribute='days') -%}
-          {%-   set _ = out.append([c.days, c.expires, c.host, c.subject, c.where,
-                                    'EXPIRED' if c.days < 0 else ('expires soon' if c.days <= win_check_certs_warn_days | default(30) | int else '')]) -%}
-          {%- endfor -%}
-          {{ [{'title': 'All certificates, soonest expiry first', 'columns': ['Days left', 'Expires', 'Host', 'Subject', 'Where', 'Status'],
-               'rows': out}] }}
+          {{ [rows | cert_report_section(win_check_certs_warn_days | default(30) | int, win_check_certs_notice_days | default(60) | int)] }}
       run_once: true
 
   post_tasks:

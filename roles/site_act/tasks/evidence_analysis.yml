@@ -65,7 +65,10 @@
     act_triage_evidence_commands: []
     act_triage_evidence_text: "{{ _ea_evidence }}"
     act_triage_task: "{{ _ea_task }}"
-    act_triage_env: "{{ {'GENAI_TIMEOUT': _ea_model_timeout | default(300) | string} | combine(_site_act_env_all) }}"   # site_act_env wins
+    # this job's model time (vm_alarm_act_model_timeout ...) over site_act_model_timeout; a GENAI_TIMEOUT in site_act_env wins over both
+    act_triage_env: >-
+      {{ _site_act_env_all | combine({'GENAI_TIMEOUT': (_ea_model_timeout | default(site_act_model_timeout, true) | int | string)})
+         | combine(site_act_env | default({})) }}
     act_triage_timeout: "{{ site_act_timeout }}"
     act_triage_fail_in_role: false
     act_triage_write_report: false

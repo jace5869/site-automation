@@ -6,5 +6,5 @@
 #   - many errors in System + Application (the finding names the top sources)       -> warning
 #   - a System / Application / Security log that is full and not overwriting        -> critical
 
-win_check_eventlog_hours: 24
-win_check_eventlog_error_warn: 50
+win_check_eventlog_hours: 24             # how many hours back the event logs are read
+win_check_eventlog_error_warn: 50        # this many errors or more in System + Application -> warning

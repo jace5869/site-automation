@@ -23,6 +23,7 @@ demo_list:
   - 'b # not a comment'
 demo_quoted: "x # still the value"   # the comment
 demo_empty: ""
+_demo_internal: "{{ demo_empty }}"
 """
 
 
@@ -54,9 +55,12 @@ def main():
             total += 1
             if "| `%s` |" % s["name"] not in text:
                 failures.append("missing from the reference: " + s["name"])
+            if not " ".join(s["doc"]).strip():      # every setting says what it does
+                failures.append("no description (a comment above it, or '# ...' after it, in %s): %s"
+                                % (os.path.relpath(path, ROOT), s["name"]))
     if total < 100:
         failures.append("only %d settings found; the parser lost some" % total)
-    for name in re.findall(r"^([a-z_]+):", open(os.path.join(ROOT, "roles", "site_act", "defaults", "main.yml")).read(), re.M):
+    for name in re.findall(r"^([a-z][a-z_]*):", open(os.path.join(ROOT, "roles", "site_act", "defaults", "main.yml")).read(), re.M):
         if "`%s`" % name not in text:
             failures.append("site_act setting not documented: " + name)
 

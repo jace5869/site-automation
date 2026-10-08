@@ -56,7 +56,13 @@ report_text        a report (roles/site_email: title, summary, sections with tab
                    text with aligned columns - the text part of a report email.
                        {{ _report | report_text(footer_line) }}
 
-vm_ds_row          a datastore (site_vmware_datastores) as a row of the datastore report's tables.
+vm_ds_row          a datastore (site_vmware_datastores) as a row of the datastore report's tables
+                   (multi = several vCenters: the datacenter cell names the vCenter too).
+act_is_chat_reply  is ACT's summary a chat greeting / question back instead of an analysis?
+vc_short           a vCenter's name as the reports show it: vc02.example.mil -> vc02.
+vm_dc_label        the Datacenter cell of a VMware report ('vc02 / DC1' with several vCenters).
+vm_vcenters_read   the vCenters a site_vmware_* module read (its 'vcenters' result).
+vm_vcenter_report  a VMware report with the vCenters that could not be read on top, in red.
 
 vm_snapshot_split  snapshots -> all (oldest first), old (to delete), held (old but never deleted
                    automatically: keep name, excluded VM, the AAP server, too big - each with a reason).
@@ -65,6 +71,9 @@ name_matches       does a name match one of these patterns (case-insensitive, * 
 vm_snapshot_plan   what the snapshot cleanup deletes: the old ones, or after an approval only the
                    approved ones that are still old.
 vm_snap_row        a snapshot as a row of the snapshot report's tables.
+cert_report_section every certificate as the certificate report's table, coloured (expired red,
+                   within the warning days amber, within the notice days blue).
+vm_snap_vm_key     a snapshot's VM, unique across vCenters (vCenter / moid).
 
 host_ids           the names and addresses inventory hosts can be recognised by (inventory name
                    and ansible_host; host names without the domain, lower case).
@@ -780,12 +789,63 @@ def vm_where(v):
     return "  ".join(parts)
 
 
-def vm_ds_row(d):
+_CHAT = re.compile(r"(?i)^\W*(i am ready|i'm ready|ready to (help|assist)|how (can|may) i (help|assist)|what (task|command|would you)"
+                   r"|what can i (do|help)|please (provide|tell me|let me know) (the|what|which)|i('m| am) (here|happy) to help"
+                   r"|hello|hi there)")
+
+
+def act_is_chat_reply(summary):
+    """True when ACT's summary is a chat greeting or a question back ("I am ready. What task or command
+    would you like me to assist you with?") instead of an analysis: the model lost the thread."""
+    s = str(summary or "").strip()
+    return bool(s) and len(s) < 400 and bool(_CHAT.search(s))
+
+
+def vc_short(name):
+    """A vCenter as the reports show it: 'vc02.example.mil' -> 'vc02'; an IP address (or name:port) as it is."""
+    n = str(name or "")
+    host = n.split(":")[0]
+    return n if host.replace(".", "").isdigit() else host.split(".")[0] + n[len(host):]
+
+
+def vm_dc_label(x, multi=False):
+    """The Datacenter cell of a VMware report: 'DC1', or with several vCenters 'vc02 / DC1'."""
+    x = x or {}
+    dc = x.get("datacenter", "")
+    return ("%s / %s" % (vc_short(x.get("vcenter")), dc)) if multi and x.get("vcenter") else dc
+
+
+def vm_vcenters_read(statuses):
+    """The vCenters a site_vmware_* module read (its 'vcenters' result), without the same vCenter
+    under a second name."""
+    return [s.get("name") for s in statuses or [] if s.get("ok") and not str(s.get("note", "")).startswith("the same vCenter")]
+
+
+def vm_vcenter_report(doc, statuses):
+    """A VMware report with the vCenters that could not be read: a red section on top, the report
+    red, and '- N vCenter(s) not read' in its title. Unchanged when every vCenter was read."""
+    doc = dict(doc or {})
+    bad = [s for s in statuses or [] if s.get("error")]
+    if not bad:
+        return doc
+    doc["title"] = "%s - %d vCenter(s) not read" % (doc.get("title", ""), len(bad))
+    doc["status"] = "critical"
+    sec = {"title": "vCenters not read", "status": "critical", "columns": ["vCenter", "Why"],
+           "rows": [[s.get("name", ""), s.get("error", "")] for s in bad],
+           "row_status": ["critical"] * len(bad), "cell_status": [["critical", ""]] * len(bad),
+           "text": "Nothing below comes from these: the report covers the other vCenters only. The account is the "
+                   "same for every vCenter (the VMware vCenter credential); docs/VMWARE.md, \"Several vCenters\"."}
+    doc["sections"] = [sec] + list(doc.get("sections") or [])
+    return doc
+
+
+def vm_ds_row(d, multi=False):
     """A datastore (roles/vmware_vm/library/site_vmware_datastores) as a table row for the report:
-    name, datacenter, datastore cluster, type, capacity GB, free GB, used %, provisioned %, hosts, VMs, state."""
+    name, datacenter (with several vCenters: 'vc02 / DC1'), datastore cluster, type, capacity GB,
+    free GB, used %, provisioned %, hosts, VMs, state."""
     d = d or {}
     state = "inaccessible" if not d.get("accessible", True) else ("maintenance" if d.get("maintenance", "normal") != "normal" else "ok")
-    return [d.get("name", ""), d.get("datacenter", ""), d.get("cluster", ""), d.get("type", ""), d.get("capacity_gb", ""),
+    return [d.get("name", ""), vm_dc_label(d, multi), d.get("cluster", ""), d.get("type", ""), d.get("capacity_gb", ""),
             d.get("free_gb", ""), d.get("used_pct", ""), d.get("provisioned_pct", ""), d.get("hosts", ""), d.get("vms", ""), state]
 
 
@@ -839,13 +899,16 @@ def vm_snapshot_split(snaps, max_age_days, keep_regex="", exclude=None, protecte
     return {"all": allsn, "old": old, "held": held}
 
 
-def vm_snapshot_plan(old, approved=None):
+def vm_snapshot_plan(old, approved=None, default_vcenter=""):
     """What the cleanup deletes: the old snapshots now; after an approval (a workflow), only those
-    that were approved AND are still old - never one the approver did not see.
+    that were approved AND are still old - never one the approver did not see. A snapshot is its
+    vCenter, VM ID (moid) and snapshot ID: a moid repeats in every vCenter. An approved entry
+    without a vCenter (from a report before several vCenters were read) means default_vcenter, the
+    credential's: the only one such a report read.
     -> {'todo': [...], 'skipped': [approved ones not deleted, each with 'reason']}"""
     if approved is None:
         return {"todo": list(old or []), "skipped": []}
-    key = lambda x: (str(x.get("moid")), str(x.get("id")))
+    key = lambda x: (str(x.get("vcenter") or default_vcenter or "").lower(), str(x.get("moid")), str(x.get("id")))
     now_old = {key(x): x for x in old or []}
     todo, skipped = [], []
     for a in approved or []:
@@ -856,11 +919,50 @@ def vm_snapshot_plan(old, approved=None):
     return {"todo": todo, "skipped": skipped}
 
 
-def vm_snap_row(x):
-    """A snapshot as a row of the snapshot report's tables (with its 'reason' when it has one)."""
+def cert_report_section(certs, warn_days=30, notice_days=60):
+    """Every certificate found (check_certs / win_check_certs inventory: days, expires, host, subject,
+    where) as the certificate report's table, soonest expiry first, coloured: expired red, within
+    warn_days amber, within notice_days blue, the rest plain. The Days left and Status cells in full colour."""
+    warn, notice = int(warn_days), max(int(notice_days), int(warn_days))
+    rows, rs, cs = [], [], []
+    for c in sorted(certs or [], key=lambda x: x.get("days", 0)):
+        d = int(c.get("days", 0))
+        if d < 0:
+            st, text = "critical", "EXPIRED"
+        elif d <= warn:
+            st, text = "warning", "expires within %d days" % warn
+        elif d <= notice:
+            st, text = "info", "expires within %d days" % notice
+        else:
+            st, text = "", "ok"
+        rows.append([d, c.get("expires", ""), c.get("host", ""), c.get("subject", ""), c.get("where", ""), text])
+        rs.append(st)
+        cs.append([st, "", "", "", "", st or "ok"])
+    out = {"title": "All certificates, soonest expiry first", "columns": ["Days left", "Expires", "Host", "Subject", "Where", "Status"],
+           "rows": rows, "row_status": rs, "cell_status": cs,
+           "text": "Red = expired, amber = expires within %d days, blue = within %d days." % (warn, notice)}
+    if any(x == "critical" for x in rs):
+        out["status"] = "critical"
+    elif any(x == "warning" for x in rs):
+        out["status"] = "warning"
+    return out
+
+
+def vm_snap_vm_key(x):
+    """A snapshot's VM, unique across vCenters: 'vc01.example.mil/vm-42' (a moid repeats in every vCenter)."""
     x = x or {}
+    return "%s/%s" % (str(x.get("vcenter", "")).lower(), x.get("moid", ""))
+
+
+def vm_snap_row(x, multi=False):
+    """A snapshot as a row of the snapshot report's tables (with its 'reason' when it has one); with
+    several vCenters the folder starts with the vCenter ('vc02: /DC1/vm/Linux')."""
+    x = x or {}
+    folder = x.get("folder", "")
+    if multi and x.get("vcenter"):
+        folder = "%s: %s" % (vc_short(x["vcenter"]), folder)
     row = [x.get("vm", ""), x.get("name", ""), str(x.get("created", "")).replace("T", " ").replace("Z", ""),
-           x.get("taken_by") or "unknown", x.get("age_days", ""), human_size(x.get("size_gb")), x.get("folder", ""),
+           x.get("taken_by") or "unknown", x.get("age_days", ""), human_size(x.get("size_gb")), folder,
            x.get("description", "")]
     return row + [x["reason"]] if "reason" in x else row
 
@@ -979,6 +1081,7 @@ class FilterModule(object):
                 "podman_discovery": podman_discovery, "podman_run_as": podman_run_as,
                 "watch_targets": watch_targets, "watch_fix_commands": watch_fix_commands,
                 "watch_allow_patterns": watch_allow_patterns, "vm_facts": vm_facts, "vm_where": vm_where, "vm_ds_row": vm_ds_row, "host_ids": host_ids,
-                "vm_snapshot_split": vm_snapshot_split, "vm_snapshot_plan": vm_snapshot_plan, "vm_snap_row": vm_snap_row,
+                "vc_short": vc_short, "act_is_chat_reply": act_is_chat_reply, "vm_dc_label": vm_dc_label, "vm_vcenters_read": vm_vcenters_read, "vm_vcenter_report": vm_vcenter_report,
+                "vm_snapshot_split": vm_snapshot_split, "vm_snapshot_plan": vm_snapshot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "cert_report_section": cert_report_section,
                 "human_size": human_size, "name_matches": name_matches,
                 "report_text": report_text, "findings_report": findings_report}

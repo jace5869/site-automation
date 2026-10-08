@@ -6,7 +6,7 @@
 check_disk_warn_pct: 85                 # % used -> warning
 check_disk_crit_pct: 95                 # % used -> critical
 check_disk_inode_warn_pct: 85           # inodes: too many small files fill a disk too
-check_disk_inode_crit_pct: 95
+check_disk_inode_crit_pct: 95            # % of inodes used -> critical (warning from check_disk_inode_warn_pct)
 
 # Different limits for particular mount points, e.g. keep the audit log partition emptier:
 #   check_disk_overrides:
@@ -18,15 +18,15 @@ check_disk_ignore:
   - '^/(proc|sys|dev|run)(/|$)'
   - '^/etc/(hosts|hostname|resolv\.conf)$'   # bind-mounted files (containers)
   - '^/var/lib/containers/storage/'
-check_disk_exclude_types: [tmpfs, devtmpfs, squashfs, overlay, iso9660, efivarfs, nsfs]
+check_disk_exclude_types: [tmpfs, devtmpfs, squashfs, overlay, iso9660, efivarfs, nsfs]  # filesystem types never checked (df -x)
 
 # Days-until-full forecast. Each run adds a sample (date, bytes used) per mount to a small file
 # on the host; once there is at least a day of history, the growth rate predicts when the
 # filesystem fills. Check mode (a dry run) reads the history but does not add to it.
 check_disk_forecast: true
-check_disk_forecast_warn_days: 14
-check_disk_forecast_crit_days: 3
-check_disk_history_file: /var/lib/site-health/disk-history.json
-check_disk_history_keep_days: 30
+check_disk_forecast_warn_days: 14        # full within this many days at the current growth -> warning
+check_disk_forecast_crit_days: 3         # full within this many days -> critical
+check_disk_history_file: /var/lib/site-health/disk-history.json  # where the forecast keeps its samples, on the host
+check_disk_history_keep_days: 30         # samples older than this are dropped (the forecast uses what is left)
 
 check_disk_timeout: 20                  # seconds for df

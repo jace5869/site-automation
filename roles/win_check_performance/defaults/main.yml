@@ -2,8 +2,8 @@
 # WINDOWS PERFORMANCE: CPU (average of three samples a second apart), memory, page file.
 # The finding names the busiest processes, so you know where to look.
 
-win_check_performance_cpu_warn_pct: 90
-win_check_performance_cpu_crit_pct: 98
-win_check_performance_mem_warn_pct: 90
-win_check_performance_mem_crit_pct: 97
-win_check_performance_pagefile_warn_pct: 80
+win_check_performance_cpu_warn_pct: 90   # CPU busy % (average of three samples) -> warning
+win_check_performance_cpu_crit_pct: 98   # CPU busy % -> critical
+win_check_performance_mem_warn_pct: 90   # memory in use % -> warning
+win_check_performance_mem_crit_pct: 97   # memory in use % -> critical
+win_check_performance_pagefile_warn_pct: 80  # page file in use % -> warning

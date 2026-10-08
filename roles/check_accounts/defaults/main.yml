@@ -10,4 +10,4 @@ check_accounts_ignore_inactive: []
 check_accounts_nopasswd_allowed: []
 # Accounts whose password/account expiry matters - above all the account AAP logs in with.
 check_accounts_expiry_watch: []          # e.g. [svc_aap]
-check_accounts_expiry_warn_days: 14
+check_accounts_expiry_warn_days: 14      # a watched account's password or account expiring within this many days -> warning (3 days or less -> critical)

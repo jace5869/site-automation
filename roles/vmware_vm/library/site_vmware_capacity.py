@@ -18,9 +18,11 @@ description:
   - VMs added and removed in the last I(events_days) days (vCenter events; vCenter keeps them 30
     days by default).
   - vCenter's address and account come from VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD (and
-    VMWARE_PORT). A read-only vCenter role is enough. Changes nothing.
+    VMWARE_PORT); vcenters adds more vCenters (the same account). A read-only vCenter role is
+    enough. Changes nothing.
 options:
   datacenter: {description: Only this datacenter., type: str}
+  vcenters: {description: More vCenters to read besides the credential's (same account; name or name:port)., type: list, elements: str, default: []}
   clusters: {description: Only these clusters (names; * and ? allowed)., type: list, elements: str, default: []}
   history_days: {description: Days of daily statistics to read. 0 = none., type: int, default: 90}
   events_days: {description: Days of VM add / remove events to count. 0 = none., type: int, default: 30}
@@ -42,13 +44,12 @@ datastores:
 
 import datetime
 import fnmatch
-import os
 import time
 
 from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.site_vcenters import Skip, each_vcenter
 
 try:
-    from pyVim.connect import Disconnect, SmartConnect
     from pyVmomi import vim, vmodl
     HAS_PYVMOMI = True
 except ImportError:
@@ -172,168 +173,164 @@ def _perf(content, specs_by_key, history_days, now):
     return out, note
 
 
+def _read(content, p, now, host):
+    res = {"clusters": [], "datastores": [], "notes": []}
+    dcache = {}
+    for m, (o, pr) in _props(content, vim.Datacenter, ["name"]).items():
+        dcache[m] = pr.get("name", "")
+    crs = _props(content, vim.ComputeResource, ["name", "parent"])
+    clus = _props(content, vim.ClusterComputeResource, ["configurationEx"])
+    hosts = _props(content, vim.HostSystem, ["name", "parent", "runtime.connectionState", "runtime.inMaintenanceMode",
+                                              "summary.hardware.numCpuCores", "summary.hardware.cpuMhz", "summary.hardware.memorySize",
+                                              "summary.quickStats.overallCpuUsage", "summary.quickStats.overallMemoryUsage"])
+    vms = _props(content, vim.VirtualMachine, ["runtime.powerState", "runtime.host", "config.hardware.numCPU",
+                                                "config.hardware.memoryMB", "config.template"])
+    dss = _props(content, vim.Datastore, ["name", "parent", "summary.capacity", "summary.freeSpace", "summary.uncommitted",
+                                           "summary.type", "summary.accessible", "summary.multipleHostAccess", "host"])
+    pods = _props(content, vim.StoragePod, ["name", "childEntity"])
+    pod_of = {}
+    for m, (o, pr) in pods.items():
+        for child in pr.get("childEntity") or []:
+            pod_of[child._moId] = pr.get("name", "")
+
+    def wanted(name, dc):
+        if p["datacenter"] and dc != p["datacenter"]:
+            return False
+        return not p["clusters"] or any(fnmatch.fnmatchcase(str(name).lower(), str(c).strip().lower()) for c in p["clusters"] if str(c).strip())
+
+    cl_of_host, clusters = {}, {}
+    for m, (o, pr) in crs.items():
+        dc = _datacenter_of(o, dcache)
+        if not wanted(pr.get("name", ""), dc):
+            continue
+        cfg = clus.get(m, (None, {}))[1].get("configurationEx")
+        clusters[m] = {"name": pr.get("name", ""), "moid": m, "datacenter": dc, "standalone": m not in clus,
+                       "ha": ha_policy(cfg), "drs": bool(getattr(getattr(cfg, "drsConfig", None), "enabled", False)) if cfg else False,
+                       "hosts": [], "vms_on": 0, "vms_off": 0, "vcpus_on": 0, "mem_configured_on": 0,
+                       "added": 0, "removed": 0, "history": {}, "obj": o}
+    for m, (o, pr) in hosts.items():
+        parent = pr.get("parent")
+        c = clusters.get(parent._moId) if parent is not None else None
+        if c is None:
+            continue
+        cl_of_host[m] = parent._moId
+        c["hosts"].append({"name": pr.get("name", ""), "moid": m, "connection": str(pr.get("runtime.connectionState") or ""),
+                           "maintenance": bool(pr.get("runtime.inMaintenanceMode")),
+                           "cores": int(pr.get("summary.hardware.numCpuCores") or 0),
+                           "cpu_mhz": int(pr.get("summary.hardware.numCpuCores") or 0) * int(pr.get("summary.hardware.cpuMhz") or 0),
+                           "mem_bytes": int(pr.get("summary.hardware.memorySize") or 0),
+                           "cpu_used_mhz": int(pr.get("summary.quickStats.overallCpuUsage") or 0),
+                           "mem_used_bytes": int(pr.get("summary.quickStats.overallMemoryUsage") or 0) * 1024 * 1024, "vms_on": 0})
+    hosts_by = {h["moid"]: h for c in clusters.values() for h in c["hosts"]}
+    for m, (o, pr) in vms.items():
+        if pr.get("config.template"):
+            continue
+        hm = pr.get("runtime.host")
+        if hm is None or hm._moId not in cl_of_host:
+            continue
+        c = clusters[cl_of_host[hm._moId]]
+        if str(pr.get("runtime.powerState")) == "poweredOn":
+            c["vms_on"] += 1
+            c["vcpus_on"] += int(pr.get("config.hardware.numCPU") or 0)
+            c["mem_configured_on"] += int(pr.get("config.hardware.memoryMB") or 0) * 1024 * 1024
+            hosts_by[hm._moId]["vms_on"] += 1
+        else:
+            c["vms_off"] += 1
+    datastores = []
+    for m, (o, pr) in dss.items():
+        mounts = [x.key._moId for x in (pr.get("host") or []) if getattr(x, "key", None) is not None]
+        cl_names = sorted({clusters[cl_of_host[h]]["name"] for h in mounts if h in cl_of_host})
+        if not cl_names:
+            continue
+        cap, free = int(pr.get("summary.capacity") or 0), int(pr.get("summary.freeSpace") or 0)
+        datastores.append({"name": pr.get("name", ""), "moid": m, "datacenter": _datacenter_of(o, dcache), "clusters": cl_names,
+                           "hosts": len(mounts), "pod": pod_of.get(m, ""), "type": str(pr.get("summary.type") or ""),
+                           "accessible": bool(pr.get("summary.accessible")), "shared": bool(pr.get("summary.multipleHostAccess")),
+                           "capacity": cap, "free": free, "uncommitted": int(pr.get("summary.uncommitted") or 0), "history": [],
+                           "obj": o})
+
+    # vCenter's own history: daily statistics, a year at level 1
+    specs = {}
+    for m, c in clusters.items():
+        if not c["standalone"]:
+            specs[("c", m, "cpu")] = (c["obj"], "cpu.usagemhz.average")
+            specs[("c", m, "mem")] = (c["obj"], "mem.consumed.average")
+    for d in datastores:
+        specs[("d", d["moid"], "used")] = (d["obj"], "disk.used.latest")
+    hist, note = _perf(content, specs, p["history_days"], now)
+    if note:
+        res["notes"].append(note)
+    for (kind, m, what), s in hist.items():
+        if kind == "c":
+            clusters[m]["history"][what] = s
+    for d in datastores:
+        d["history"] = hist.get(("d", d["moid"], "used"), [])
+
+    # VMs added and removed (vCenter events)
+    if p["events_days"] > 0 and clusters:
+        try:
+            em = content.eventManager
+            spec = vim.event.EventFilterSpec(eventTypeId=ADDED + REMOVED,
+                                             time=vim.event.EventFilterSpec.ByTime(beginTime=datetime.datetime.fromtimestamp(
+                                                 now - p["events_days"] * 86400, tz=datetime.timezone.utc)))
+            col = em.CreateCollectorForEvents(spec)
+            try:
+                col.SetCollectorPageSize(1000)
+                seen, batch, n = set(), list(col.latestPage or []), 0
+                while batch and n < 20000:
+                    new = [e for e in batch if e.key not in seen]
+                    if not new:
+                        break
+                    for e in new:
+                        seen.add(e.key)
+                        n += 1
+                        cr = getattr(e, "computeResource", None)
+                        cm = cr.computeResource._moId if cr is not None and cr.computeResource is not None else None
+                        if cm in clusters:
+                            kind = type(e).__name__.split(".")[-1]
+                            clusters[cm]["removed" if kind in REMOVED else "added"] += 1
+                    batch = col.ReadPreviousEvents(1000) or []
+            finally:
+                col.DestroyCollector()
+        except Exception as e:              # noqa: BLE001
+            res["notes"].append("VM add / remove events could not be read: %s" % e)
+    for c in clusters.values():
+        c.pop("obj", None)
+        c["hosts"].sort(key=lambda h: h["name"])
+        res["clusters"].append(c)
+    for d in datastores:
+        d.pop("obj", None)
+        res["datastores"].append(d)
+    res["clusters"].sort(key=lambda c: (c["datacenter"], c["standalone"], c["name"]))
+    res["datastores"].sort(key=lambda d: (d["datacenter"], d["name"]))
+    if p["clusters"] and not res["clusters"]:
+        raise Skip("No cluster matches %s in vCenter %s" % (", ".join(p["clusters"]), host))
+    for x in res["clusters"] + res["datastores"]:
+        x["vcenter"] = host
+    return res
+
+
 def main():
     module = AnsibleModule(
         argument_spec=dict(datacenter=dict(type="str"), clusters=dict(type="list", elements="str", default=[]),
                            history_days=dict(type="int", default=90), events_days=dict(type="int", default=30),
-                           validate_certs=dict(type="bool", default=True), now=dict(type="float")),
+                           validate_certs=dict(type="bool", default=True), now=dict(type="float"),
+                           vcenters=dict(type="list", elements="str", default=[])),
         supports_check_mode=True,
     )
     if not HAS_PYVMOMI:
         module.fail_json(msg="pyVmomi is not installed in the execution environment (the vmware.vmware collection needs it too)")
-    host = os.environ.get("VMWARE_HOST")
-    if not host:
-        module.fail_json(msg='No vCenter to talk to: attach a credential of type "VMware vCenter" to this job template.')
     p = module.params
     now = p["now"] or time.time()
-    try:
-        si = SmartConnect(host=host, user=os.environ.get("VMWARE_USER", ""), pwd=os.environ.get("VMWARE_PASSWORD", ""),
-                          port=int(os.environ.get("VMWARE_PORT") or 443), disableSslCertValidation=not p["validate_certs"])
-    except vim.fault.InvalidLogin:
-        module.fail_json(msg="vCenter %s refused the login (the VMware vCenter credential)" % host)
-    except Exception as e:                      # noqa: BLE001
-        module.fail_json(msg="Could not connect to vCenter %s: %s" % (host, e))
-    res = {"vcenter": host, "read_at": datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    done, statuses = each_vcenter(module, lambda si, content, name: _read(content, p, now, name), p["vcenters"],
+                                  p["validate_certs"], "capacity")
+    res = {"vcenter": ", ".join(name for name, _ in done), "vcenters": statuses,
+           "read_at": datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
            "history_days": p["history_days"], "events_days": p["events_days"], "clusters": [], "datastores": [], "notes": []}
-    try:
-        content = si.RetrieveContent()
-        dcache = {}
-        for m, (o, pr) in _props(content, vim.Datacenter, ["name"]).items():
-            dcache[m] = pr.get("name", "")
-        crs = _props(content, vim.ComputeResource, ["name", "parent"])
-        clus = _props(content, vim.ClusterComputeResource, ["configurationEx"])
-        hosts = _props(content, vim.HostSystem, ["name", "parent", "runtime.connectionState", "runtime.inMaintenanceMode",
-                                                  "summary.hardware.numCpuCores", "summary.hardware.cpuMhz", "summary.hardware.memorySize",
-                                                  "summary.quickStats.overallCpuUsage", "summary.quickStats.overallMemoryUsage"])
-        vms = _props(content, vim.VirtualMachine, ["runtime.powerState", "runtime.host", "config.hardware.numCPU",
-                                                    "config.hardware.memoryMB", "config.template"])
-        dss = _props(content, vim.Datastore, ["name", "parent", "summary.capacity", "summary.freeSpace", "summary.uncommitted",
-                                               "summary.type", "summary.accessible", "summary.multipleHostAccess", "host"])
-        pods = _props(content, vim.StoragePod, ["name", "childEntity"])
-        pod_of = {}
-        for m, (o, pr) in pods.items():
-            for child in pr.get("childEntity") or []:
-                pod_of[child._moId] = pr.get("name", "")
-
-        def wanted(name, dc):
-            if p["datacenter"] and dc != p["datacenter"]:
-                return False
-            return not p["clusters"] or any(fnmatch.fnmatchcase(str(name).lower(), str(c).strip().lower()) for c in p["clusters"] if str(c).strip())
-
-        cl_of_host, clusters = {}, {}
-        for m, (o, pr) in crs.items():
-            dc = _datacenter_of(o, dcache)
-            if not wanted(pr.get("name", ""), dc):
-                continue
-            cfg = clus.get(m, (None, {}))[1].get("configurationEx")
-            clusters[m] = {"name": pr.get("name", ""), "moid": m, "datacenter": dc, "standalone": m not in clus,
-                           "ha": ha_policy(cfg), "drs": bool(getattr(getattr(cfg, "drsConfig", None), "enabled", False)) if cfg else False,
-                           "hosts": [], "vms_on": 0, "vms_off": 0, "vcpus_on": 0, "mem_configured_on": 0,
-                           "added": 0, "removed": 0, "history": {}, "obj": o}
-        for m, (o, pr) in hosts.items():
-            parent = pr.get("parent")
-            c = clusters.get(parent._moId) if parent is not None else None
-            if c is None:
-                continue
-            cl_of_host[m] = parent._moId
-            c["hosts"].append({"name": pr.get("name", ""), "moid": m, "connection": str(pr.get("runtime.connectionState") or ""),
-                               "maintenance": bool(pr.get("runtime.inMaintenanceMode")),
-                               "cores": int(pr.get("summary.hardware.numCpuCores") or 0),
-                               "cpu_mhz": int(pr.get("summary.hardware.numCpuCores") or 0) * int(pr.get("summary.hardware.cpuMhz") or 0),
-                               "mem_bytes": int(pr.get("summary.hardware.memorySize") or 0),
-                               "cpu_used_mhz": int(pr.get("summary.quickStats.overallCpuUsage") or 0),
-                               "mem_used_bytes": int(pr.get("summary.quickStats.overallMemoryUsage") or 0) * 1024 * 1024, "vms_on": 0})
-        hosts_by = {h["moid"]: h for c in clusters.values() for h in c["hosts"]}
-        for m, (o, pr) in vms.items():
-            if pr.get("config.template"):
-                continue
-            hm = pr.get("runtime.host")
-            if hm is None or hm._moId not in cl_of_host:
-                continue
-            c = clusters[cl_of_host[hm._moId]]
-            if str(pr.get("runtime.powerState")) == "poweredOn":
-                c["vms_on"] += 1
-                c["vcpus_on"] += int(pr.get("config.hardware.numCPU") or 0)
-                c["mem_configured_on"] += int(pr.get("config.hardware.memoryMB") or 0) * 1024 * 1024
-                hosts_by[hm._moId]["vms_on"] += 1
-            else:
-                c["vms_off"] += 1
-        datastores = []
-        for m, (o, pr) in dss.items():
-            mounts = [x.key._moId for x in (pr.get("host") or []) if getattr(x, "key", None) is not None]
-            cl_names = sorted({clusters[cl_of_host[h]]["name"] for h in mounts if h in cl_of_host})
-            if not cl_names:
-                continue
-            cap, free = int(pr.get("summary.capacity") or 0), int(pr.get("summary.freeSpace") or 0)
-            datastores.append({"name": pr.get("name", ""), "moid": m, "datacenter": _datacenter_of(o, dcache), "clusters": cl_names,
-                               "hosts": len(mounts), "pod": pod_of.get(m, ""), "type": str(pr.get("summary.type") or ""),
-                               "accessible": bool(pr.get("summary.accessible")), "shared": bool(pr.get("summary.multipleHostAccess")),
-                               "capacity": cap, "free": free, "uncommitted": int(pr.get("summary.uncommitted") or 0), "history": [],
-                               "obj": o})
-
-        # vCenter's own history: daily statistics, a year at level 1
-        specs = {}
-        for m, c in clusters.items():
-            if not c["standalone"]:
-                specs[("c", m, "cpu")] = (c["obj"], "cpu.usagemhz.average")
-                specs[("c", m, "mem")] = (c["obj"], "mem.consumed.average")
-        for d in datastores:
-            specs[("d", d["moid"], "used")] = (d["obj"], "disk.used.latest")
-        hist, note = _perf(content, specs, p["history_days"], now)
-        if note:
-            res["notes"].append(note)
-        for (kind, m, what), s in hist.items():
-            if kind == "c":
-                clusters[m]["history"][what] = s
-        for d in datastores:
-            d["history"] = hist.get(("d", d["moid"], "used"), [])
-
-        # VMs added and removed (vCenter events)
-        if p["events_days"] > 0 and clusters:
-            try:
-                em = content.eventManager
-                spec = vim.event.EventFilterSpec(eventTypeId=ADDED + REMOVED,
-                                                 time=vim.event.EventFilterSpec.ByTime(beginTime=datetime.datetime.fromtimestamp(
-                                                     now - p["events_days"] * 86400, tz=datetime.timezone.utc)))
-                col = em.CreateCollectorForEvents(spec)
-                try:
-                    col.SetCollectorPageSize(1000)
-                    seen, batch, n = set(), list(col.latestPage or []), 0
-                    while batch and n < 20000:
-                        new = [e for e in batch if e.key not in seen]
-                        if not new:
-                            break
-                        for e in new:
-                            seen.add(e.key)
-                            n += 1
-                            cr = getattr(e, "computeResource", None)
-                            cm = cr.computeResource._moId if cr is not None and cr.computeResource is not None else None
-                            if cm in clusters:
-                                kind = type(e).__name__.split(".")[-1]
-                                clusters[cm]["removed" if kind in REMOVED else "added"] += 1
-                        batch = col.ReadPreviousEvents(1000) or []
-                finally:
-                    col.DestroyCollector()
-            except Exception as e:              # noqa: BLE001
-                res["notes"].append("VM add / remove events could not be read: %s" % e)
-        for c in clusters.values():
-            c.pop("obj", None)
-            c["hosts"].sort(key=lambda h: h["name"])
-            res["clusters"].append(c)
-        for d in datastores:
-            d.pop("obj", None)
-            res["datastores"].append(d)
-        res["clusters"].sort(key=lambda c: (c["datacenter"], c["standalone"], c["name"]))
-        res["datastores"].sort(key=lambda d: (d["datacenter"], d["name"]))
-        if p["clusters"] and not res["clusters"]:
-            module.fail_json(msg="No cluster matches %s in vCenter %s" % (", ".join(p["clusters"]), host))
-    except Exception as e:                      # noqa: BLE001
-        module.fail_json(msg="Reading capacity from vCenter %s failed: %s" % (host, e))
-    finally:
-        try:
-            Disconnect(si)
-        except Exception:                       # noqa: BLE001
-            pass
+    for name, part in done:
+        res["clusters"] += part["clusters"]
+        res["datastores"] += part["datastores"]
+        res["notes"] += [("%s: %s" % (name, n)) if len(done) > 1 else n for n in part["notes"]]
     module.exit_json(changed=False, **res)
 
 

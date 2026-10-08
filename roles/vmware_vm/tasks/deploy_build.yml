@@ -1,0 +1,212 @@
+---
+# DEPLOY, the build part (deploy.yml includes it): the request checked against the rules, the
+# "Deploying" note, the build, the result on the ticket, the report. Input from deploy.yml: _vd_rec,
+# _vd_table, _vd_sn_url, _vd_sn_user, _vd_job, _vd_prop (+ _vd_prop_ok: a GenAI proposal for the
+# ticket text as it is now).
+
+- name: VMware | the VM the ticket asks for, checked against the rules
+  ansible.builtin.set_fact:
+    _vd_parsed: "{{ _vd_rec | vm_deploy_spec(vm_deploy_defaults, _vd_prop if _vd_prop_ok | bool else none) }}"
+    _vd: >-
+      {{ (_vd_rec | vm_deploy_spec(vm_deploy_defaults, _vd_prop if _vd_prop_ok | bool else none)) | vm_deploy_check(_vd_rec, {
+           'templates': vm_deploy_templates, 'clusters': vm_deploy_clusters, 'datastores': vm_deploy_datastores,
+           'folders': vm_deploy_folders, 'max_cpu': vm_deploy_max_cpu | int, 'max_memory_gb': vm_deploy_max_memory_gb | float,
+           'name_regex': vm_deploy_name_regex, 'assignment_group': vm_deploy_assignment_group,
+           'sites': vm_deploy_sites, 'site_required': vm_deploy_site_required | bool, 'pxe_templates': vm_deploy_pxe_templates,
+           'max_disks': vm_deploy_max_disks | int, 'max_disk_gb': vm_deploy_max_disk_gb | float,
+           'max_total_disk_gb': vm_deploy_max_total_disk_gb | float}) }}
+
+- name: VMware | the request, and where each value came from
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['Ticket ' ~ _vd_rec.number ~ ' (' ~ _vd_table ~ ', ' ~ _vd_rec.state | default('?') ~ ', '
+          ~ (_vd_rec.assignment_group | default('', true) or 'no group') ~ '): ' ~ _vd_rec.short_description | default('')]
+         + (_vd.spec | vm_deploy_spec_text(_vd.sources))
+         + (_vd.problems | map('regex_replace', '^', 'REFUSED: ') | list) }}
+
+- name: VMware | refused - say why on the ticket
+  ansible.builtin.uri:
+    url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
+    method: PATCH
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body:
+      work_notes: >-
+        [AAP] VM not deployed ({{ _vd_job }}):
+        {{ _vd.problems | join('; ') }}. Correct the ticket (a comment with the corrected 'key: value' lines is enough) and run the job again.
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+  failed_when: false
+  when: _vd.problems | length > 0 and not ansible_check_mode
+
+- name: VMware | the request passes the rules
+  ansible.builtin.assert:
+    that: _vd.problems | length == 0
+    fail_msg: "Not deployed: {{ _vd.problems | join('; ') }}"
+    quiet: true
+
+- name: VMware | the ticket records what is being built, before anything is built
+  ansible.builtin.uri:
+    url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
+    method: PATCH
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body:
+      work_notes: "{{ (['[AAP] Deploying this VM (' ~ _vd_job ~ '):'] + (_vd.spec | vm_deploy_spec_text)) | join('\n') }}"
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 401, 403, 404]
+  register: _vd_note1
+  when: not ansible_check_mode
+
+- name: VMware | the ticket took the note (no VM without a record on its ticket)
+  ansible.builtin.assert:
+    that: _vd_note1.status == 200
+    fail_msg: >-
+      Nothing was built: ServiceNow refused the work note (HTTP {{ _vd_note1.status }}) - the ServiceNow API account needs to
+      update {{ _vd_table }} tickets. {{ _vd_note1.json.error.message | default('') }}
+    quiet: true
+  when: not ansible_check_mode
+
+- name: "VMware | deploy {{ _vd.spec.vm_name }} from {{ _vd.spec.template }}{{ ' - DRY RUN, nothing is built' if ansible_check_mode else '' }}"
+  site_vmware_deploy:
+    name: "{{ _vd.spec.vm_name }}"
+    template: "{{ _vd.spec.template }}"
+    vcenter: "{{ _vd.spec.vcenter | default('') }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    datacenter: "{{ _vd.spec.datacenter | default(vmware_datacenter | default('', true)) }}"
+    cluster: "{{ _vd.spec.cluster | default('') }}"
+    datastore: "{{ _vd.spec.datastore | default('') }}"
+    folder: "{{ _vd.spec.folder | default('') }}"
+    cpu: "{{ _vd.spec.cpu | default(0) | int }}"
+    memory_mb: "{{ ((_vd.spec.memory_gb | default(0) | float) * 1024) | int }}"
+    annotation: >-
+      {{ ('Deployed from ' ~ _vd.spec.template ~ ' for ' ~ _vd_rec.number ~ ' by ' ~ _vd_job ~ ', ' ~ now(utc=true).strftime('%Y-%m-%d') ~ ' UTC.'
+          ~ ((' ' ~ _vd.spec.notes) if _vd.spec.notes is defined else '')) | truncate(1000) }}
+    domain: "{{ _vd.spec.domain | default(vm_deploy_domain, true) }}"
+    customization_spec: "{{ _vd.spec.customization_spec | default('') }}"
+    disks_gb: "{{ _vd.spec.disks_gb | default([]) }}"
+    # no cluster / datastore from the ticket, its site or vm_deploy_defaults: choose among the site's
+    # 'clusters' / 'datastores' lists, else the allow-lists - never from all of vCenter (empty = the template's)
+    cluster_candidates: "{{ [] if _vd.spec.cluster | default('') else (_vd.spec.clusters | default(vm_deploy_clusters)) }}"
+    datastore_candidates: "{{ [] if _vd.spec.datastore | default('') else (_vd.spec.datastores | default(vm_deploy_datastores)) }}"
+    mem_target_pct: "{{ vm_deploy_mem_target_pct | float }}"
+    failover_hosts: "{{ vm_deploy_failover_hosts | int }}"
+    datastore_max_used_pct: "{{ vm_deploy_datastore_max_used_pct | float }}"
+    customize: "{{ vm_deploy_customize | bool }}"
+    boot_from_network: "{{ _vd.spec.pxe | default(false) | bool }}"
+    power_on: "{{ vm_deploy_power_on | bool }}"
+    wait_customization: "{{ vm_deploy_wait_customization | int }}"
+    wait_ip: "{{ vm_deploy_wait_ip | int }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _vd_vm
+  ignore_errors: true                 # the failure is written on the ticket and reported; the job fails at the end
+
+- name: VMware | the result on the ticket
+  ansible.builtin.uri:
+    url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
+    method: PATCH
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body: >-
+      {%- set v = _vd_vm.vm | default({}) -%}
+      {%- if not _vd_vm.failed | default(false) -%}
+      {%-   set lines = ['[AAP] VM ' ~ v.name ~ ' deployed (' ~ _vd_job ~ ').',
+                         ('MAC address: ' ~ v.mac | default('?') ~ ' - it boots from the network (PXE) to its task sequence; computer name '
+                          ~ v.hostname | default(v.name)) if _vd.spec.pxe | default(false) else
+                         'IP address: ' ~ (v.ip | default('', true) or 'none yet (DHCP: see the notes)'),
+                         'Customization: ' ~ v.customization | default('?'),
+                         'vCenter ' ~ v.vcenter | default('') ~ ', datacenter ' ~ v.datacenter | default('') ~ ', cluster ' ~ v.cluster | default('')
+                         ~ ', host ' ~ v.host | default('') ~ ', datastore ' ~ v.datastore | default('') ~ ', folder ' ~ v.folder | default(''),
+                         v.cpu | default('?') ~ ' vCPU, ' ~ v.memory_gb | default('?') ~ ' GB memory, ' ~ v.power | default('')] + _vd_vm.notes | default([]) -%}
+      {%- else -%}
+      {%-   set lines = ['[AAP] VM ' ~ _vd.spec.vm_name ~ ' NOT deployed (' ~ _vd_job ~ '): ' ~ _vd_vm.msg | default('unknown error')]
+                       + (['The VM exists in vCenter (partly set up): check it, or delete it before running the job again.'] if v.created | default(false) else [])
+                       + _vd_vm.notes | default([]) -%}
+      {%- endif -%}
+      {{ {'work_notes': lines | join('\n')} | combine(vm_deploy_done_fields if not _vd_vm.failed | default(false) else {}) }}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  register: _vd_note2
+  when: not ansible_check_mode
+
+- name: VMware | deploy report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vd_v: "{{ _vd_vm.vm | default({}) }}"
+    _vd_ok: "{{ not _vd_vm.failed | default(false) }}"
+    _vm_report_subject: >-
+      {{ 'VM deploy ' ~ _vd_rec.number ~ ': ' ~ _vd.spec.vm_name ~ ' '
+         ~ (('would be deployed in ' ~ _vd_v.cluster | default('?') ~ ' (dry run)') if ansible_check_mode
+            else (('deployed' ~ ((' - PXE boot, MAC ' ~ _vd_v.mac | default('?')) if _vd.spec.pxe | default(false)
+                                 else ((' - ' ~ _vd_v.ip) if _vd_v.ip | default('') else ', no IP yet'))) if _vd_ok | bool else 'NOT deployed')) }}
+    _vm_report_lines: >-
+      {{ [_vm_report_subject | trim]
+         + (['IP address: ' ~ (_vd_v.ip | default('', true) or 'none yet'), 'MAC address: ' ~ _vd_v.mac | default('-'),
+             'Customization: ' ~ _vd_v.customization | default('-'),
+             'Placed: vCenter ' ~ _vd_v.vcenter | default('?') ~ ', cluster ' ~ _vd_v.cluster | default('?') ~ ', datastore '
+             ~ _vd_v.datastore | default('?') ~ ', folder ' ~ _vd_v.folder | default('?')] if _vd_v else [])
+         + (_vd.spec | vm_deploy_spec_text(_vd.sources))
+         + ([] if _vd_ok | bool else ['ERROR: ' ~ _vd_vm.msg | default('')])
+         + (_vd_vm.notes | default([]) | map('regex_replace', '^', 'NOTE: ') | list)
+         + (['WARNING: the result could not be written on the ticket (HTTP ' ~ _vd_note2.status | default('?') ~ ')']
+            if not ansible_check_mode and _vd_note2.status | default(200) != 200 else []) }}
+    _vm_report_doc: >-
+      {%- set sp = _vd.sources -%}
+      {%- set req = [] -%}
+      {%- for line in _vd.spec | vm_deploy_spec_text -%}
+      {%-   set k = line.split(':', 1)[0] -%}
+      {%-   set _ = req.append([k, line.split(':', 1)[1] | trim, sp[k] | default('')]) -%}
+      {%- endfor -%}
+      {%- set res = [['VM', _vd_v.name | default(_vd.spec.vm_name)], ['IP address', _vd_v.ip | default('', true) or ('-' if ansible_check_mode else 'none yet')],
+                     ['MAC address', _vd_v.mac | default('-', true)], ['Site', _vd.spec.site | default('-')],
+                     ['Customization', _vd_v.customization | default('-')], ['vCenter', _vd_v.vcenter | default('')],
+                     ['Datacenter', _vd_v.datacenter | default('')], ['Cluster', _vd_v.cluster | default('')], ['Host', _vd_v.host | default('-')],
+                     ['Datastore', _vd_v.datastore | default('')], ['Folder', _vd_v.folder | default('')],
+                     ['Size', _vd_v.cpu | default('?') ~ ' vCPU, ' ~ _vd_v.memory_gb | default('?') ~ ' GB'],
+                     ['Disks (GB)', _vd_v.disks_gb | default([]) | join(', ')], ['Power', _vd_v.power | default('-')]] -%}
+      {%- set sections = [{'title': 'Result', 'status': ('info' if ansible_check_mode else ('ok' if _vd_ok | bool else 'critical')),
+                           'columns': ['', ''], 'rows': res,
+                           'text': ('A dry run (Check): nothing was built and nothing was written on the ticket.' if ansible_check_mode
+                                    else ('' if _vd_ok | bool else _vd_vm.msg | default('')))},
+                          {'title': 'The request (from ticket ' ~ _vd_rec.number ~ ')', 'columns': ['Setting', 'Value', 'From'], 'rows': req,
+                           'text': _vd_rec.short_description | default('')}] -%}
+      {%- if _vd_vm.notes | default([]) -%}
+      {%-   set _ = sections.append({'title': 'Notes', 'status': 'warning', 'lines': _vd_vm.notes}) -%}
+      {%- endif -%}
+      {{ {'title': _vm_report_subject | trim,
+          'status': 'info' if ansible_check_mode else ('critical' if not _vd_ok | bool else ('warning' if _vd_vm.notes | default([]) else 'ok')),
+          'subtitle': 'Ticket ' ~ _vd_rec.number ~ ' - ' ~ _vd_job,
+          'summary': [{'label': 'VM', 'value': _vd.spec.vm_name},
+                      {'label': 'IP address', 'value': _vd_v.ip | default('', true) or '-', 'status': 'ok' if _vd_v.ip | default('') else ''},
+                      {'label': 'Customization', 'value': (_vd_v.customization | default('-')).split(' ')[0],
+                       'status': 'ok' if _vd_v.customization | default('') == 'succeeded' else
+                                 ('critical' if (_vd_v.customization | default('')).startswith('FAILED') else '')}],
+          'sections': sections} }}
+
+- name: VMware | the deployment as job artifacts (vm_deploy)
+  ansible.builtin.set_stats:
+    data:
+      vm_deploy: >-
+        {{ {'ticket': _vd_rec.number, 'table': _vd_table, 'spec': _vd.spec, 'sources': _vd.sources,
+            'vm': _vd_vm.vm | default({}), 'notes': _vd_vm.notes | default([]), 'ok': not _vd_vm.failed | default(false),
+            'error': _vd_vm.msg | default('') if _vd_vm.failed | default(false) else '', 'dry_run': ansible_check_mode} }}
+
+- name: VMware | the VM was deployed
+  ansible.builtin.assert:
+    that: not _vd_vm.failed | default(false)
+    fail_msg: "{{ _vd_vm.msg | default('the deployment failed') }} (the ticket says so too)"
+    quiet: true

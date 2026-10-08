@@ -18,9 +18,11 @@ description:
   - Changes only what differs; a host that already matches is not touched. Check mode changes
     nothing and says what it would change. A host that is not connected is skipped.
   - vCenter's address and account come from VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD (and
-    VMWARE_PORT), as a "VMware vCenter" credential in AAP gives them.
+    VMWARE_PORT), as a "VMware vCenter" credential in AAP gives them; vcenters adds more vCenters
+    (the same account).
 options:
   datacenter: {description: Only this datacenter's hosts., type: str}
+  vcenters: {description: More vCenters to set the hosts of, besides the credential's (same account; name or name:port)., type: list, elements: str, default: []}
   hosts: {description: Only these hosts (names; * and ? allowed; the short name matches too). Empty = every host., type: list, elements: str, default: []}
   clusters: {description: Only the hosts of these clusters (names, wildcards)., type: list, elements: str, default: []}
   exclude: {description: Never these hosts (names, wildcards)., type: list, elements: str, default: []}
@@ -45,12 +47,11 @@ hosts:
 '''
 
 import fnmatch
-import os
 
 from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.site_vcenters import Skip, each_vcenter
 
 try:
-    from pyVim.connect import Disconnect, SmartConnect
     from pyVmomi import vim, vmodl
     HAS_PYVMOMI = True
 except ImportError:
@@ -290,6 +291,50 @@ def _datacenter_of(obj, cache):
     return name
 
 
+def _read(content, p, want, check_mode, host, out):
+    """Every wanted host of this vCenter, set; one record each appended to out (kept when a later
+    host fails the whole vCenter)."""
+    view = content.viewManager.CreateContainerView(content.rootFolder, [vim.HostSystem], True)
+    spec = vmodl.query.PropertyCollector.FilterSpec(
+        objectSet=[vmodl.query.PropertyCollector.ObjectSpec(
+            obj=view, skip=True,
+            selectSet=[vmodl.query.PropertyCollector.TraversalSpec(name="v", path="view", skip=False, type=vim.view.ContainerView)])],
+        propSet=[vmodl.query.PropertyCollector.PropertySpec(type=vim.HostSystem,
+                                                             pathSet=["name", "parent", "runtime.connectionState",
+                                                                      "runtime.inMaintenanceMode"])])
+    cache, found = {}, []
+    for o in content.propertyCollector.RetrieveContents([spec]) or []:
+        pr = {x.name: x.val for x in o.propSet}
+        parent = pr.get("parent")
+        found.append({"name": pr.get("name", ""), "obj": o.obj,
+                      "cluster": parent.name if isinstance(parent, vim.ClusterComputeResource) else "",
+                      "datacenter": _datacenter_of(parent, cache) if parent is not None else "",
+                      "connection": str(pr.get("runtime.connectionState") or ""),
+                      "maintenance": bool(pr.get("runtime.inMaintenanceMode"))})
+    view.Destroy()
+    found.sort(key=lambda h: (h["datacenter"], h["cluster"], h["name"]))
+    hosts, excluded = pick_hosts(found, p["hosts"], p["clusters"], p["exclude"], p["datacenter"])
+    if not hosts and not excluded:
+        raise Skip("No host matches (hosts: %s; clusters: %s; datacenter: %s) among the %d host(s) of vCenter %s"
+                   % (", ".join(p["hosts"]) or "all", ", ".join(p["clusters"]) or "all", p["datacenter"] or "all",
+                      len(found), host))
+    for h in excluded:
+        out.append(dict({k: h[k] for k in ("name", "cluster", "datacenter", "connection", "maintenance")}, vcenter=host,
+                        status="excluded", before={}, changes=[], notes=["on the exclusion list"], errors=[]))
+    for h in hosts:
+        base = dict({k: h[k] for k in ("name", "cluster", "datacenter", "connection", "maintenance")}, vcenter=host)
+        if h["connection"] != "connected":
+            out.append(dict(base, status="skipped", before={}, changes=[], notes=["not connected to vCenter (%s)" % h["connection"]],
+                            errors=[]))
+            continue
+        try:
+            rec = secure_host(HostApi(h["obj"]), want, check_mode)
+        except Exception as e:              # noqa: BLE001
+            rec = {"before": {}, "changes": [], "notes": [], "errors": [fault_text(e)]}
+        rec["status"] = "failed" if rec["errors"] else ("changed" if rec["changes"] else "ok")
+        out.append(dict(base, **rec))
+
+
 def main():
     module = AnsibleModule(
         argument_spec=dict(datacenter=dict(type="str"), hosts=dict(type="list", elements="str", default=[]),
@@ -299,6 +344,7 @@ def main():
                            shell=dict(type="str", choices=["disabled", "enabled", ""], default=""),
                            settings=dict(type="dict", default={}), lockdown=dict(type="str", default=""),
                            exception_users=dict(type="list", elements="str", default=[]),
+                           vcenters=dict(type="list", elements="str", default=[]),
                            validate_certs=dict(type="bool", default=True)),
         supports_check_mode=True,
     )
@@ -311,71 +357,15 @@ def main():
         module.fail_json(msg="lockdown must be normal, disabled or empty, not %s" % p["lockdown"])
     if not HAS_PYVMOMI:
         module.fail_json(msg="pyVmomi is not installed in the execution environment (the vmware.vmware collection needs it too)")
-    host = os.environ.get("VMWARE_HOST")
-    if not host:
-        module.fail_json(msg='No vCenter to talk to: attach a credential of type "VMware vCenter" to this job template.')
     want = {"services": {SERVICES[k][0]: p[k] for k in ("ssh", "shell") if p[k]},
             "labels": {v[0]: v[1] for v in SERVICES.values()},
             "settings": p["settings"] or {}, "lockdown": lockdown, "exception_users": p["exception_users"]}
-    try:
-        si = SmartConnect(host=host, user=os.environ.get("VMWARE_USER", ""), pwd=os.environ.get("VMWARE_PASSWORD", ""),
-                          port=int(os.environ.get("VMWARE_PORT") or 443),
-                          disableSslCertValidation=not p["validate_certs"])
-    except vim.fault.InvalidLogin:
-        module.fail_json(msg="vCenter %s refused the login (the VMware vCenter credential)" % host)
-    except Exception as e:                      # noqa: BLE001
-        module.fail_json(msg="Could not connect to vCenter %s: %s" % (host, e))
     out = []
-    try:
-        content = si.RetrieveContent()
-        view = content.viewManager.CreateContainerView(content.rootFolder, [vim.HostSystem], True)
-        spec = vmodl.query.PropertyCollector.FilterSpec(
-            objectSet=[vmodl.query.PropertyCollector.ObjectSpec(
-                obj=view, skip=True,
-                selectSet=[vmodl.query.PropertyCollector.TraversalSpec(name="v", path="view", skip=False, type=vim.view.ContainerView)])],
-            propSet=[vmodl.query.PropertyCollector.PropertySpec(type=vim.HostSystem,
-                                                                 pathSet=["name", "parent", "runtime.connectionState",
-                                                                          "runtime.inMaintenanceMode"])])
-        cache, found = {}, []
-        for o in content.propertyCollector.RetrieveContents([spec]) or []:
-            pr = {x.name: x.val for x in o.propSet}
-            parent = pr.get("parent")
-            found.append({"name": pr.get("name", ""), "obj": o.obj,
-                          "cluster": parent.name if isinstance(parent, vim.ClusterComputeResource) else "",
-                          "datacenter": _datacenter_of(parent, cache) if parent is not None else "",
-                          "connection": str(pr.get("runtime.connectionState") or ""),
-                          "maintenance": bool(pr.get("runtime.inMaintenanceMode"))})
-        view.Destroy()
-        found.sort(key=lambda h: (h["datacenter"], h["cluster"], h["name"]))
-        hosts, excluded = pick_hosts(found, p["hosts"], p["clusters"], p["exclude"], p["datacenter"])
-        if not hosts and not excluded:
-            module.fail_json(msg="No host matches (hosts: %s; clusters: %s; datacenter: %s) among the %d host(s) of vCenter %s"
-                                 % (", ".join(p["hosts"]) or "all", ", ".join(p["clusters"]) or "all", p["datacenter"] or "all",
-                                    len(found), host))
-        for h in excluded:
-            out.append(dict({k: h[k] for k in ("name", "cluster", "datacenter", "connection", "maintenance")},
-                            status="excluded", before={}, changes=[], notes=["on the exclusion list"], errors=[]))
-        for h in hosts:
-            base = {k: h[k] for k in ("name", "cluster", "datacenter", "connection", "maintenance")}
-            if h["connection"] != "connected":
-                out.append(dict(base, status="skipped", before={}, changes=[], notes=["not connected to vCenter (%s)" % h["connection"]],
-                                errors=[]))
-                continue
-            try:
-                rec = secure_host(HostApi(h["obj"]), want, module.check_mode)
-            except Exception as e:              # noqa: BLE001
-                rec = {"before": {}, "changes": [], "notes": [], "errors": [fault_text(e)]}
-            rec["status"] = "failed" if rec["errors"] else ("changed" if rec["changes"] else "ok")
-            out.append(dict(base, **rec))
-    except Exception as e:                      # noqa: BLE001
-        module.fail_json(msg="Setting the hosts through vCenter %s failed: %s" % (host, fault_text(e)), hosts=out)
-    finally:
-        try:
-            Disconnect(si)
-        except Exception:                       # noqa: BLE001
-            pass
+    _, statuses = each_vcenter(module, lambda si, content, name: _read(content, p, want, module.check_mode, name, out),
+                               p["vcenters"], p["validate_certs"], "the hosts",
+                               error_format="Setting the hosts through vCenter {name} failed: {error}")
     module.exit_json(changed=any(h["status"] in ("changed", "failed") and h["changes"] for h in out) and not module.check_mode,
-                     hosts=out, check_mode=module.check_mode)
+                     hosts=out, vcenters=statuses, check_mode=module.check_mode)
 
 
 if __name__ == "__main__":

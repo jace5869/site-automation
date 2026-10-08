@@ -8,6 +8,11 @@ vm_names: []
 vmware_datacenter: ""                    # only needed when the same VM name exists in two datacenters
 # Check vCenter's certificate. false only if the execution environment does not trust your CA yet.
 vmware_validate_certs: true
+# Several vCenters (e.g. Enhanced Linked Mode), one report: the reports and the ESXi security
+# settings read the credential's vCenter AND these (names, or name:port), with the same account.
+# The same vCenter under two names is read once. docs/VMWARE.md, "Several vCenters".
+vmware_vcenters: []                      # e.g. [vc01.yoursite.mil, vc02.yoursite.mil]
+vmware_vcenter_fail_unread: false        # true = the job shows failed when a vCenter could not be read (the report lists it in red either way)
 
 # ---- Restart, shut down, VLAN change: never on these ----
 
@@ -58,7 +63,7 @@ vm_secure_boot_fail: false
 
 # Used space (% of capacity): a datastore at or above these is listed as a warning / critical.
 vm_datastore_warn_pct: 85
-vm_datastore_crit_pct: 90
+vm_datastore_crit_pct: 90                # a datastore this % used or more is red (critical); amber from vm_datastore_warn_pct
 # The job stays green when datastores are full: the report and email say which. true = mark the
 # job FAILED when one is at or above vm_datastore_warn_pct (or inaccessible), for workflows.
 vm_datastore_fail: false
@@ -102,11 +107,13 @@ vm_alarm_login_critical: 10
 # rather than replacing them; [] = none of that kind.
 vm_alarm_login_event_types: [BadUsernameSessionEvent, com.vmware.sso.LoginFailure, esx.audit.account.locked,
                              esx.audit.account.loginfailures]
+# Events about a host losing (or failing to get back) its connection to vCenter: the Host connection table.
 vm_alarm_connection_event_types: [HostConnectionLostEvent, HostNotRespondingEvent, HostDisconnectedEvent,
                                   HostReconnectionFailedEvent, HostShutdownEvent, HostCnxFailedEvent,
                                   HostCnxFailedAccountFailedEvent, HostCnxFailedNetworkErrorEvent,
                                   HostCnxFailedNoConnectionEvent, HostCnxFailedTimeoutEvent,
                                   HostCnxFailedBadUsernameEvent, HostCnxFailedNoAccessEvent]
+# Events about a VM stopping, restarting or failing over (guest shutdown, power off, HA restart): the VM events table.
 vm_alarm_vm_event_types: [VmGuestShutdownEvent, VmGuestRebootEvent, VmPoweredOffEvent, VmResettingEvent,
                           VmFailoverFailed, VmDasBeingResetEvent, VmDasBeingResetWithScreenshotEvent,
                           VmRestartedOnAlternateHostEvent, com.vmware.vc.ha.VmRestartedByHAEvent,
@@ -124,8 +131,8 @@ vm_alarm_act_config_issues: true         # configuration issues too (false = ala
 vm_alarm_act_email_if_none: false        # true = email even when there is nothing to analyze
 vm_alarm_act_check_url: true             # first check that the AAP node can reach the model's URL
 # Seconds the model may take for its answer (ACT's GENAI_TIMEOUT, 90 by default, is too short for
-# a long analysis). A GENAI_TIMEOUT in site_act_env wins over this.
-vm_alarm_act_model_timeout: 300
+# a long analysis): site_act_model_timeout (600) unless set here. A GENAI_TIMEOUT in site_act_env wins.
+vm_alarm_act_model_timeout: "{{ site_act_model_timeout | default(600) }}"
 
 # ---- ESXi security settings (playbooks/esxi_security.yml), e.g. every night ----
 
@@ -167,8 +174,8 @@ vm_capacity_clusters: []                 # only these clusters (names; * and ? a
 # at statistics level 1. Read this many days; the growth is a straight line over the last
 # vm_capacity_trend_days, with at least vm_capacity_min_samples daily values.
 vm_capacity_history_days: 90
-vm_capacity_trend_days: 30
-vm_capacity_min_samples: 7
+vm_capacity_trend_days: 30               # the growth (straight line) is fitted on this many most recent days
+vm_capacity_min_samples: 7               # fewer daily values than this in those days = 'not enough history' (no trend)
 vm_capacity_events_days: 30              # VMs added and removed (vCenter keeps events 30 days by default)
 # Plan for this many failed hosts per cluster (N+1); a larger HA admission control failover level wins.
 vm_capacity_failover_hosts: 1
@@ -192,5 +199,67 @@ vm_capacity_fail: false
 # analysis. ACT runs on the AAP side and runs no command.
 vm_capacity_act: false
 vm_capacity_act_max_items: 30            # items ACT estimates: everything overall, then clusters and datastores, problems first
-vm_capacity_act_model_timeout: 300       # seconds the model may take for its answer
+vm_capacity_act_model_timeout: "{{ site_act_model_timeout | default(600) }}"   # seconds the model may take for its answer
 vm_capacity_act_check_url: true          # first check that the AAP node can reach the model's URL
+
+# ---- Deploy a VM from a ServiceNow ticket (playbooks/vm_deploy_from_ticket.yml) ----
+# The ticket (survey answer): INC..., TASK..., SCTASK..., RITM..., CHG... The table follows from the
+# prefix; vm_deploy_ticket_table sets it for another prefix. The ticket says what to build in
+# 'key: value' lines - in its description, or in a comment / work note (a newer one overrides):
+#   vm_name: app01   template: rhel9-gold   cpu: 4   memory_gb: 16   (cluster, datastore, folder,
+#   datacenter, vcenter, domain, customization_spec, notes: optional). docs/VMWARE.md
+vm_deploy_ticket: ""
+vm_deploy_ticket_table: ""               # the ServiceNow table, for a ticket prefix the job does not know (e.g. u_vm_request)
+# What a ticket may ask for (names; * and ? allowed). Templates MUST be listed: nothing else is
+# deployed. The others: [] = any.
+vm_deploy_templates: []                  # e.g. [rhel9-gold, win2022-gold]
+vm_deploy_clusters: []                   # clusters (and standalone hosts) a ticket may use; also the candidates of automatic placement
+vm_deploy_datastores: []                 # datastores (or datastore clusters) a ticket may use; also the candidates of automatic placement
+vm_deploy_folders: []                    # VM folders a ticket may use (paths below the datacenter's VM folder, e.g. Linux/*)
+vm_deploy_max_cpu: 16                    # the most vCPUs a ticket may ask for
+vm_deploy_max_memory_gb: 128             # the most memory a ticket may ask for, in GB
+# The VM names allowed (a regular expression); e.g. '^[a-z0-9-]{1,15}$' for Windows-safe names.
+vm_deploy_name_regex: '^[A-Za-z0-9][A-Za-z0-9-]{0,62}$'
+# Only tickets assigned to this group (its name as ServiceNow shows it); "" = any group.
+vm_deploy_assignment_group: ""
+# What a ticket does not say: e.g. {cluster: PROD-CL01, datastore: DS-CLUSTER-01, folder: Linux/New}.
+# Not set = the template's own cluster, datastore and folder; its CPU and memory.
+vm_deploy_defaults: {}
+# Sites: a ticket's 'site: A' line (or its Location field, when it is one of these names) picks the
+# placement - over vm_deploy_defaults; a cluster / datastore / folder the ticket names itself still wins.
+#   vm_deploy_sites:
+#     SiteA: {cluster: A-PROD-CL01, datastore: A-DSC01, folder: Servers/New}
+#     SiteB: {cluster: B-PROD-CL01, datastore: B-DSC01, folder: Servers/New, vcenter: vc02.yoursite.mil}
+vm_deploy_sites: {}
+vm_deploy_site_required: true            # with sites set up: a ticket must say its site (false = vm_deploy_defaults)
+# Templates with no operating system that boot from the network (PXE) into a deployment (e.g. an MECM
+# task sequence): no guest customization, no waiting for an IP; the ticket gets the MAC address.
+vm_deploy_pxe_templates: []              # e.g. [win2022-pxe]
+vm_deploy_max_disks: 4                   # disks a ticket may ask for (disks_gb: 100, 200 = disk 1 grown to 100 GB, one 200 GB disk added)
+vm_deploy_max_disk_gb: 2048              # the biggest disk a ticket may ask for, in GB
+vm_deploy_max_total_disk_gb: 4096        # all its disks together, in GB
+# Automatic placement - when the ticket, its site and vm_deploy_defaults name no cluster / datastore:
+# the job chooses among a site's 'clusters' / 'datastores' lists (e.g. SiteA: {clusters: [A-PROD-*]}),
+# else among vm_deploy_clusters / vm_deploy_datastores; with neither, the template's own.
+vm_deploy_mem_target_pct: 80             # a cluster fits when its memory, this VM included and a host down, stays under this %
+vm_deploy_failover_hosts: 1              # hosts to plan as failed when choosing a cluster
+vm_deploy_datastore_max_used_pct: 85     # a datastore fits when it stays under this % with the VM at its full size
+vm_deploy_domain: localdomain            # the DNS domain Linux customization sets (a ticket's domain: wins)
+vm_deploy_customize: true                # guest customization: host name = vm_name, every adapter on DHCP
+vm_deploy_power_on: true                 # power the new VM on (false = leave it off, e.g. to check it first)
+vm_deploy_wait_customization: 900        # seconds to wait for vCenter's customization result
+vm_deploy_wait_ip: 600                   # seconds to wait for an IPv4 address (DHCP, through VMware Tools)
+# Fields set on the ticket when the VM is up, e.g. to resolve an incident:
+#   {state: "6", close_code: "Solution provided", close_notes: "VM deployed"}   (your instance's values)
+vm_deploy_done_fields: {}
+# ---- GenAI reads a request written in plain words (a proof of concept, off by default) ----
+# When the ticket's own 'key: value' lines do not give vm_name and template: ACT (GenAI, evidence mode,
+# no commands) reads the ticket and proposes the VM - each value with the ticket's words it comes from,
+# or a question to the requester. That run builds NOTHING: it posts the proposal on the ticket. The
+# next run builds that proposal (GenAI is not asked again), while the ticket text is unchanged; the
+# ticket's own lines still win. Needs the ACT model key credential on the template. docs/VMWARE.md
+vm_deploy_genai: false
+# The templates GenAI may choose from, each with a plain description it can match the request to:
+#   {win2022-pxe: "Windows Server 2022 (installed over the network by MECM)", rhel9-gold: "Red Hat Enterprise Linux 9"}
+vm_deploy_template_catalog: {}
+vm_deploy_genai_model_timeout: "{{ site_act_model_timeout | default(600) }}"   # seconds the model may take for its answer

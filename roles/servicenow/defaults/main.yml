@@ -10,19 +10,19 @@
 # Findings at or above this severity get a ticket: critical | warning
 servicenow_min_severity: warning
 
-servicenow_table: incident
+servicenow_table: incident               # the table tickets are opened in (incident)
 # Values for new incidents. Names work (the API is asked to accept display values), e.g.
 # servicenow_assignment_group: Linux Operations
 servicenow_assignment_group: ""
 servicenow_caller: ""                    # user name; empty = the API account
 servicenow_category: ""                  # e.g. Software
-servicenow_urgency: {critical: "1", warning: "2"}
-servicenow_impact: {critical: "2", warning: "3"}
+servicenow_urgency: {critical: "1", warning: "2"}  # a new ticket's urgency, per finding severity (your instance's values)
+servicenow_impact: {critical: "2", warning: "3"}  # a new ticket's impact, per finding severity
 servicenow_set_ci: true                  # set Configuration item = the host name (must exist in the CMDB)
 
 # When a problem that had a ticket is gone, add a work note (and, if you want, resolve it).
 servicenow_note_cleared: true
-servicenow_resolve_cleared: false
+servicenow_resolve_cleared: false        # true = also resolve the ticket (servicenow_resolved_state, servicenow_close_code)
 servicenow_resolved_state: "6"           # Resolved
 servicenow_close_code: "Solution provided"   # must be a close code your instance has
 # Add a work note to an open ticket each time its finding is seen again.
@@ -32,13 +32,13 @@ servicenow_note_repeats: true
 # problem on the same host always updates the same ticket.
 servicenow_correlation_prefix: site-health
 
-servicenow_validate_certs: true
+servicenow_validate_certs: true          # check the instance's HTTPS certificate (see servicenow_ca_path)
 # A CA bundle (PEM) for the instance's TLS certificate, when the execution environment does not
 # trust its CA (e.g. a DoD root CA): a path on the controller, such as a file you add to the
 # project: servicenow_ca_path: "{{ playbook_dir }}/files/ca/servicenow-ca.pem". Empty = the
 # execution environment's normal trust store. Prefer this over servicenow_validate_certs: false.
 servicenow_ca_path: ""
-servicenow_timeout: 30
+servicenow_timeout: 30                   # seconds for one API request
 # Fail the job when it opened/updated tickets, so the workflow shows red while problems exist.
 servicenow_fail_when_findings: true
 

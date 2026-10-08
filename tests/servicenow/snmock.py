@@ -4,6 +4,9 @@
 Accounts (basic auth):  api / goodpw  = itil (read, create, update)
                         ro  / goodpw  = read only (create/update -> 403 ACL)
 Tables: incident, sys_user_group (Linux Operations), sys_user (svc_aap), ecc_agent.
+Journal fields (comments, work_notes): what is POSTed or PATCHed is kept as entries; with
+sysparm_display_value=true they come back as ServiceNow shows them - newest first, each under a
+header "<date time> - <user> (Additional comments)" / "(Work notes)"; without it, empty.
 SNMOCK_NO_RESOLVE=1: resolving answers 403 "Data Policy Exception" (close code missing).
 Usage: snmock.py PORT   (requests appended to $SNMOCK_LOG as JSON lines)
 """
@@ -39,6 +42,33 @@ def matches(rec, query):
             elif str(rec.get(field, "")) != value:
                 return False
     return True
+
+
+CLOCK = [0]
+JOURNAL_LABEL = {"comments": "Additional comments", "work_notes": "Work notes"}
+
+
+def journal_add(rec, body, user):
+    for field in JOURNAL_LABEL:
+        if body.get(field):
+            CLOCK[0] += 1
+            rec.setdefault("_journal", []).append((field, "2026-10-08 09:%02d:%02d - %s" % (CLOCK[0] // 60, CLOCK[0] % 60, user),
+                                                   str(body[field])))
+
+
+def show(rec, disp):
+    """A record as the API returns it: journal fields as text (display) or empty; active from the state."""
+    out = {k: v for k, v in rec.items() if not k.startswith("_") and k not in JOURNAL_LABEL}
+    out["active"] = "false" if rec.get("state") in ("6", "7") else "true"
+    for field, label in JOURNAL_LABEL.items():
+        if disp:
+            ents = [e for e in reversed(rec.get("_journal", [])) if e[0] == field]
+            out[field] = "".join("%s (%s)\n%s\n\n" % (head, label, text) for _, head, text in ents)
+        else:
+            out[field] = ""
+    if disp:
+        out["state"] = STATE_LABEL.get(rec.get("state"), rec.get("state"))
+    return out
 
 
 def pick(rec, fields):
@@ -112,7 +142,8 @@ class H(BaseHTTPRequestHandler):
         if method == "GET" and not sys_id:
             rows = [i for i in INCIDENTS.values() if matches(i, q.get("sysparm_query", ""))]
             rows = rows[:int(q.get("sysparm_limit", "10000"))]
-            return 200, {"result": [pick(i, q.get("sysparm_fields")) for i in rows]}
+            disp = q.get("sysparm_display_value") == "true"
+            return 200, {"result": [pick(show(i, disp), q.get("sysparm_fields")) for i in rows]}
         if method == "POST":
             if not itil:
                 return fail("Operation Failed", "ACL Exception Insert Failed due to security constraints", 403)
@@ -122,8 +153,11 @@ class H(BaseHTTPRequestHandler):
             group = rec.get("assignment_group", "")
             if q.get("sysparm_input_display_value") == "true" and group and group not in [g["name"] for g in GROUPS]:
                 rec["assignment_group"] = ""                    # an unknown display value is dropped
-            rec.update({"sys_id": sid, "number": "INC00%d" % COUNTER[0], "state": "1",
+            for field in JOURNAL_LABEL:
+                rec.pop(field, None)
+            rec.update({"sys_id": sid, "number": "INC00%d" % COUNTER[0], "state": rec.get("state") or "1",
                         "sys_created_on": "2026-09-29 12:00:00", "work_notes_list": []})
+            journal_add(rec, body, name)
             INCIDENTS[sid] = rec
             return 201, {"result": {"sys_id": sid, "number": rec["number"]}}
         rec = INCIDENTS.get(sys_id)
@@ -143,6 +177,7 @@ class H(BaseHTTPRequestHandler):
                 return fail("Operation Failed", "Data Policy Exception: Resolution code is mandatory", 403)
             if "work_notes" in body:
                 rec["work_notes_list"].append(body["work_notes"])
+            journal_add(rec, body, name)
             for k in ("state", "close_code", "close_notes"):
                 if k in body:
                     rec[k] = body[k]

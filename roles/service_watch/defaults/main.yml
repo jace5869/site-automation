@@ -28,7 +28,7 @@ watch_url_ok_status: [200, 301, 302, 401, 403]   # HTTP codes that count as "ans
 # A user's container (rootless) is looked at AS that user, and its unit is a user unit:
 # `runuser -u USER -- env XDG_RUNTIME_DIR=/run/user/UID systemctl --user start UNIT`.
 watch_find_units: true
-watch_quadlet_dirs: [/etc/containers/systemd, /usr/share/containers/systemd]
+watch_quadlet_dirs: [/etc/containers/systemd, /usr/share/containers/systemd]  # where root's Quadlet files are looked for (to find the unit that runs a container)
 
 # ---- What happens when one is down -------------------------------------------------------
 # approval:  ACT only diagnoses. Its proposed fix waits for the AAP approval step, then
@@ -42,20 +42,20 @@ watch_quadlet_dirs: [/etc/containers/systemd, /usr/share/containers/systemd]
 #            Any other fix goes to a person, as in approval mode.
 watch_mode: approval
 watch_verify_retries: 6                  # re-checks after a fix (every watch_verify_delay seconds)
-watch_verify_delay: 5
+watch_verify_delay: 5                    # seconds between those re-checks
 
 # ---- Where incidents are recorded (on the host) ------------------------------------------
 # One JSON line per event, plus a syslog line (tag service-watch) that your log forwarding
 # (Splunk, Elastic, rsyslog relay) picks up. AAP's job history keeps its own copy.
 watch_record_file: /var/log/service-watch/incidents.jsonl
-watch_record_syslog: true
+watch_record_syslog: true                # also send each incident to syslog (tag service-watch)
 
 # ---- ACT settings --------------------------------------------------------------------------
 # Which provider and model: site_act_provider / site_act_model / site_act_url / site_act_ca, the
 # same settings every runbook uses (roles/site_act/defaults/main.yml). The key comes from the
 # "ACT model key" AAP credential, never from here. Extra ACT settings for service watch only:
 watch_act_env: {}
-watch_act_timeout: 600                   # seconds for one ACT run
+watch_act_timeout: 1200                  # seconds for one ACT run (the model's time per answer: site_act_model_timeout)
 
 # What ACT is told, on top of the act_triage role's standard instructions.
 watch_instructions: |-

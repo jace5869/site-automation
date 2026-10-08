@@ -22,7 +22,7 @@ win_check_audit_subcategories:
   - {name: System Integrity, guid: 0CCE9212-69AE-11D9-BED3-505054503030, need: Success and Failure}
 
 win_check_audit_security_log_min_kb: 196608       # STIG
-win_check_audit_application_log_min_kb: 32768
-win_check_audit_system_log_min_kb: 32768
+win_check_audit_application_log_min_kb: 32768  # the Application log's maximum size must be at least this (KB)
+win_check_audit_system_log_min_kb: 32768  # the System log's maximum size must be at least this (KB)
 # Log forwarding agents that must run, e.g. [SplunkForwarder] or [nxlog]
 win_check_audit_forwarder_services: []

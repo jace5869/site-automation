@@ -18,10 +18,11 @@ description:
     connection events and VM power / guest / HA events whatever their category. Each is classified
     (group login / connection / vm / other) with a severity (critical / warning / info).
   - vCenter's address and account come from VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD (and
-    VMWARE_PORT), as a "VMware vCenter" credential in AAP gives them. A read-only vCenter role is
-    enough. Changes nothing.
+    VMWARE_PORT), as a "VMware vCenter" credential in AAP gives them; vcenters adds more vCenters
+    (the same account). A read-only vCenter role is enough. Changes nothing.
 options:
   datacenter: {description: Only this datacenter (vCenter-level alarms are always included)., type: str}
+  vcenters: {description: More vCenters to read besides the credential's (same account; name or name:port)., type: list, elements: str, default: []}
   validate_certs: {description: Check vCenter's certificate., type: bool, default: true}
   types:
     description: The object types whose alarms and configuration issues are read - vcenter, datacenter,
@@ -66,14 +67,13 @@ events:
 '''
 
 import datetime
-import os
 import re
 import time
 
 from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.site_vcenters import Skip, each_vcenter
 
 try:
-    from pyVim.connect import Disconnect, SmartConnect
     from pyVmomi import vim, vmodl
     HAS_PYVMOMI = True
 except ImportError:
@@ -310,6 +310,114 @@ def _read_events(content, root, begin, cap, type_ids):
     return out, capped
 
 
+def _read(content, p, types, login_t, conn_t, vm_t, now, host):
+    res = {"alarms": [], "config_issues": [], "hosts": [], "events": [], "events_capped": False}
+    root = content.rootFolder
+    dcs = _props(content, root, vim.Datacenter, ["name", "configIssue"])
+    if p["datacenter"] and p["datacenter"] not in [v[1].get("name") for v in dcs.values()]:
+        raise Skip("vCenter %s has no datacenter named %s" % (host, p["datacenter"]))
+    dc_cache = {m: v[1].get("name", "") for m, v in dcs.items()}
+    names = {root._moId: {"name": host, "cluster": "", "datacenter": ""}}
+    for m, (_, pr) in dcs.items():
+        names[m] = {"name": pr.get("name", ""), "cluster": "", "datacenter": pr.get("name", "")}
+    clusters = _props(content, root, vim.ClusterComputeResource, ["name", "configIssue"])
+    for m, (o, pr) in clusters.items():
+        names[m] = {"name": pr.get("name", ""), "cluster": pr.get("name", ""), "datacenter": _datacenter_of(o, dc_cache)}
+    hosts = _props(content, root, vim.HostSystem,
+                   ["name", "parent", "configIssue", "overallStatus", "runtime.connectionState", "runtime.powerState",
+                    "runtime.inMaintenanceMode", "summary.config.product.version", "summary.config.product.build",
+                    "hardware.systemInfo.vendor", "hardware.systemInfo.model"])
+    for m, (o, pr) in hosts.items():
+        parent = pr.get("parent")
+        cl = names.get(parent._moId, {}).get("name", "") if isinstance(parent, vim.ClusterComputeResource) else ""
+        dc = _datacenter_of(parent, dc_cache) if parent is not None else ""
+        names[m] = {"name": pr.get("name", ""), "cluster": cl, "datacenter": dc}
+        if parent is not None and not isinstance(parent, vim.ClusterComputeResource):
+            names[parent._moId] = names[m]       # a standalone host's compute resource
+        if p["datacenter"] and dc != p["datacenter"]:
+            continue
+        res["hosts"].append({"name": pr.get("name", ""), "moid": m, "cluster": cl, "datacenter": dc,
+                             "connection": str(pr.get("runtime.connectionState") or ""), "power": str(pr.get("runtime.powerState") or ""),
+                             "maintenance": bool(pr.get("runtime.inMaintenanceMode")),
+                             "version": pr.get("summary.config.product.version") or "", "build": pr.get("summary.config.product.build") or "",
+                             "vendor": pr.get("hardware.systemInfo.vendor") or "", "model": pr.get("hardware.systemInfo.model") or "",
+                             "status": str(pr.get("overallStatus") or "")})
+    res["hosts"].sort(key=lambda h: (h["datacenter"], h["cluster"], h["name"]))
+
+    def in_dc(n):
+        return not p["datacenter"] or n.get("datacenter") == p["datacenter"]
+
+    # configuration issues
+    issues = []
+    if "vcenter" in types:
+        try:
+            issues += _issues("vcenter", host, root._moId, "", "", root.configIssue)
+        except Exception:
+            pass
+    for kind, objs in (("datacenter", dcs), ("cluster", clusters), ("host", hosts)):
+        if kind in types:
+            for m, (_, pr) in objs.items():
+                n = names.get(m, {})
+                if in_dc(n):
+                    issues += _issues(kind, n.get("name", ""), m, n.get("cluster", "") if kind == "host" else "",
+                                      n.get("datacenter", ""), pr.get("configIssue"))
+    res["config_issues"] = sorted(issues, key=lambda i: (i["entity_type"], i["entity"], i["message"]))
+
+    # triggered alarms: rootFolder carries every alarm below it; each state names its own object
+    states, alarm_refs, others = [], {}, {}
+    for s in root.triggeredAlarmState or []:
+        ent = s.entity
+        kind = _kind(ent, root)
+        if kind not in types:
+            continue
+        m = ent._moId
+        if m not in names:              # a VM, datastore or network (asked for in types): read its name
+            if m not in others:
+                try:
+                    others[m] = {"name": ent.name, "cluster": "", "datacenter": _datacenter_of(ent, dc_cache)}
+                except Exception:
+                    others[m] = {"name": m, "cluster": "", "datacenter": ""}
+            names[m] = others[m]
+        if kind != "vcenter" and not in_dc(names[m]):
+            continue
+        alarm_refs[s.alarm._moId] = s.alarm
+        states.append({"key": s.key, "kind": kind, "moid": m, "alarm": s.alarm._moId, "status": str(s.overallStatus),
+                       "time": _iso(s.time), "acknowledged": bool(s.acknowledged), "acknowledged_by": s.acknowledgedByUser or "",
+                       "acknowledged_time": _iso(s.acknowledgedTime)})
+    defs = {}
+    if alarm_refs:
+        spec = vmodl.query.PropertyCollector.FilterSpec(
+            objectSet=[vmodl.query.PropertyCollector.ObjectSpec(obj=a) for a in alarm_refs.values()],
+            propSet=[vmodl.query.PropertyCollector.PropertySpec(type=vim.alarm.Alarm, pathSet=["info.name", "info.description"])])
+        for o in content.propertyCollector.RetrieveContents([spec]) or []:
+            pr = {x.name: x.val for x in o.propSet}
+            defs[o.obj._moId] = {"name": pr.get("info.name", ""), "description": pr.get("info.description", "")}
+    res["alarms"] = alarm_records(states, names, defs, types)
+
+    # events
+    if p["hours"] and p["hours"] > 0 and p["max_events"] > 0:
+        begin = datetime.datetime.fromtimestamp(now - p["hours"] * 3600, tz=datetime.timezone.utc)
+        ev_root = None
+        if p["datacenter"]:
+            ev_root = [o for m, (o, pr) in dcs.items() if pr.get("name") == p["datacenter"]][0]
+        raw, res["events_capped"] = _read_events(content, ev_root, begin, p["max_events"], list(login_t) + list(conn_t) + list(vm_t))
+        by_host = {n.get("name"): n for n in names.values()}
+        for e in raw:
+            # the event names the compute resource: a cluster, or a standalone host's own one (no cluster)
+            cm = e.pop("cluster_moid", "")
+            if cm and cm not in clusters:
+                e["cluster"] = ""
+            if not cm and e["host"]:
+                e["cluster"] = by_host.get(e["host"], {}).get("cluster", "")
+            r = event_record(e, login_t, conn_t, vm_t)
+            if r:
+                res["events"].append(r)
+    for k in ("alarms", "config_issues", "hosts", "events"):
+        for r in res[k]:
+            r["vcenter"] = host
+    return res
+
+
 def main():
     module = AnsibleModule(
         argument_spec=dict(datacenter=dict(type="str"), validate_certs=dict(type="bool", default=True),
@@ -318,14 +426,12 @@ def main():
                            login_event_types=dict(type="list", elements="str"),
                            connection_event_types=dict(type="list", elements="str"),
                            vm_event_types=dict(type="list", elements="str"),
+                           vcenters=dict(type="list", elements="str", default=[]),
                            now=dict(type="float")),
         supports_check_mode=True,
     )
     if not HAS_PYVMOMI:
         module.fail_json(msg="pyVmomi is not installed in the execution environment (the vmware.vmware collection needs it too)")
-    host = os.environ.get("VMWARE_HOST")
-    if not host:
-        module.fail_json(msg='No vCenter to talk to: attach a credential of type "VMware vCenter" to this job template.')
     p = module.params
     types = [str(t).strip().lower() for t in p["types"]]
     bad = [t for t in types if t not in ("vcenter", "datacenter", "cluster", "host", "datastore", "vm", "network")]
@@ -335,125 +441,19 @@ def main():
     conn_t = p["connection_event_types"] if p["connection_event_types"] is not None else CONNECTION_EVENTS
     vm_t = p["vm_event_types"] if p["vm_event_types"] is not None else VM_EVENTS
     now = p["now"] or time.time()
-    try:
-        si = SmartConnect(host=host, user=os.environ.get("VMWARE_USER", ""), pwd=os.environ.get("VMWARE_PASSWORD", ""),
-                          port=int(os.environ.get("VMWARE_PORT") or 443),
-                          disableSslCertValidation=not p["validate_certs"])
-    except vim.fault.InvalidLogin:
-        module.fail_json(msg="vCenter %s refused the login (the VMware vCenter credential)" % host)
-    except Exception as e:
-        module.fail_json(msg="Could not connect to vCenter %s: %s" % (host, e))
-    res = {"vcenter": host, "window_hours": p["hours"], "read_at": _iso(datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc)),
+    done, statuses = each_vcenter(module, lambda si, content, name: _read(content, p, types, login_t, conn_t, vm_t, now, name),
+                                  p["vcenters"], p["validate_certs"], "alarms and events")
+    res = {"vcenter": ", ".join(name for name, _ in done), "vcenters": statuses, "window_hours": p["hours"],
+           "read_at": _iso(datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc)),
            "alarms": [], "config_issues": [], "hosts": [], "events": [], "events_capped": False}
-    try:
-        content = si.RetrieveContent()
-        root = content.rootFolder
-        dcs = _props(content, root, vim.Datacenter, ["name", "configIssue"])
-        if p["datacenter"] and p["datacenter"] not in [v[1].get("name") for v in dcs.values()]:
-            module.fail_json(msg="vCenter %s has no datacenter named %s" % (host, p["datacenter"]))
-        dc_cache = {m: v[1].get("name", "") for m, v in dcs.items()}
-        names = {root._moId: {"name": host, "cluster": "", "datacenter": ""}}
-        for m, (_, pr) in dcs.items():
-            names[m] = {"name": pr.get("name", ""), "cluster": "", "datacenter": pr.get("name", "")}
-        clusters = _props(content, root, vim.ClusterComputeResource, ["name", "configIssue"])
-        for m, (o, pr) in clusters.items():
-            names[m] = {"name": pr.get("name", ""), "cluster": pr.get("name", ""), "datacenter": _datacenter_of(o, dc_cache)}
-        hosts = _props(content, root, vim.HostSystem,
-                       ["name", "parent", "configIssue", "overallStatus", "runtime.connectionState", "runtime.powerState",
-                        "runtime.inMaintenanceMode", "summary.config.product.version", "summary.config.product.build",
-                        "hardware.systemInfo.vendor", "hardware.systemInfo.model"])
-        for m, (o, pr) in hosts.items():
-            parent = pr.get("parent")
-            cl = names.get(parent._moId, {}).get("name", "") if isinstance(parent, vim.ClusterComputeResource) else ""
-            dc = _datacenter_of(parent, dc_cache) if parent is not None else ""
-            names[m] = {"name": pr.get("name", ""), "cluster": cl, "datacenter": dc}
-            if parent is not None and not isinstance(parent, vim.ClusterComputeResource):
-                names[parent._moId] = names[m]       # a standalone host's compute resource
-            if p["datacenter"] and dc != p["datacenter"]:
-                continue
-            res["hosts"].append({"name": pr.get("name", ""), "moid": m, "cluster": cl, "datacenter": dc,
-                                 "connection": str(pr.get("runtime.connectionState") or ""), "power": str(pr.get("runtime.powerState") or ""),
-                                 "maintenance": bool(pr.get("runtime.inMaintenanceMode")),
-                                 "version": pr.get("summary.config.product.version") or "", "build": pr.get("summary.config.product.build") or "",
-                                 "vendor": pr.get("hardware.systemInfo.vendor") or "", "model": pr.get("hardware.systemInfo.model") or "",
-                                 "status": str(pr.get("overallStatus") or "")})
-        res["hosts"].sort(key=lambda h: (h["datacenter"], h["cluster"], h["name"]))
-
-        def in_dc(n):
-            return not p["datacenter"] or n.get("datacenter") == p["datacenter"]
-
-        # configuration issues
-        issues = []
-        if "vcenter" in types:
-            try:
-                issues += _issues("vcenter", host, root._moId, "", "", root.configIssue)
-            except Exception:
-                pass
-        for kind, objs in (("datacenter", dcs), ("cluster", clusters), ("host", hosts)):
-            if kind in types:
-                for m, (_, pr) in objs.items():
-                    n = names.get(m, {})
-                    if in_dc(n):
-                        issues += _issues(kind, n.get("name", ""), m, n.get("cluster", "") if kind == "host" else "",
-                                          n.get("datacenter", ""), pr.get("configIssue"))
-        res["config_issues"] = sorted(issues, key=lambda i: (i["entity_type"], i["entity"], i["message"]))
-
-        # triggered alarms: rootFolder carries every alarm below it; each state names its own object
-        states, alarm_refs, others = [], {}, {}
-        for s in root.triggeredAlarmState or []:
-            ent = s.entity
-            kind = _kind(ent, root)
-            if kind not in types:
-                continue
-            m = ent._moId
-            if m not in names:              # a VM, datastore or network (asked for in types): read its name
-                if m not in others:
-                    try:
-                        others[m] = {"name": ent.name, "cluster": "", "datacenter": _datacenter_of(ent, dc_cache)}
-                    except Exception:
-                        others[m] = {"name": m, "cluster": "", "datacenter": ""}
-                names[m] = others[m]
-            if kind != "vcenter" and not in_dc(names[m]):
-                continue
-            alarm_refs[s.alarm._moId] = s.alarm
-            states.append({"key": s.key, "kind": kind, "moid": m, "alarm": s.alarm._moId, "status": str(s.overallStatus),
-                           "time": _iso(s.time), "acknowledged": bool(s.acknowledged), "acknowledged_by": s.acknowledgedByUser or "",
-                           "acknowledged_time": _iso(s.acknowledgedTime)})
-        defs = {}
-        if alarm_refs:
-            spec = vmodl.query.PropertyCollector.FilterSpec(
-                objectSet=[vmodl.query.PropertyCollector.ObjectSpec(obj=a) for a in alarm_refs.values()],
-                propSet=[vmodl.query.PropertyCollector.PropertySpec(type=vim.alarm.Alarm, pathSet=["info.name", "info.description"])])
-            for o in content.propertyCollector.RetrieveContents([spec]) or []:
-                pr = {x.name: x.val for x in o.propSet}
-                defs[o.obj._moId] = {"name": pr.get("info.name", ""), "description": pr.get("info.description", "")}
-        res["alarms"] = alarm_records(states, names, defs, types)
-
-        # events
-        if p["hours"] and p["hours"] > 0 and p["max_events"] > 0:
-            begin = datetime.datetime.fromtimestamp(now - p["hours"] * 3600, tz=datetime.timezone.utc)
-            ev_root = None
-            if p["datacenter"]:
-                ev_root = [o for m, (o, pr) in dcs.items() if pr.get("name") == p["datacenter"]][0]
-            raw, res["events_capped"] = _read_events(content, ev_root, begin, p["max_events"], list(login_t) + list(conn_t) + list(vm_t))
-            by_host = {n.get("name"): n for n in names.values()}
-            for e in raw:
-                # the event names the compute resource: a cluster, or a standalone host's own one (no cluster)
-                cm = e.pop("cluster_moid", "")
-                if cm and cm not in clusters:
-                    e["cluster"] = ""
-                if not cm and e["host"]:
-                    e["cluster"] = by_host.get(e["host"], {}).get("cluster", "")
-                r = event_record(e, login_t, conn_t, vm_t)
-                if r:
-                    res["events"].append(r)
-    except Exception as e:
-        module.fail_json(msg="Reading alarms and events from vCenter %s failed: %s" % (host, e))
-    finally:
-        try:
-            Disconnect(si)
-        except Exception:
-            pass
+    for _, part in done:
+        for k in ("alarms", "config_issues", "hosts", "events"):
+            res[k] += part[k]
+        res["events_capped"] = res["events_capped"] or part["events_capped"]
+    if len(done) > 1:
+        res["alarms"].sort(key=lambda x: x["time"], reverse=True)
+        res["alarms"].sort(key=lambda x: RANK.get(x["severity"], 9))
+        res["events"].sort(key=lambda x: x["time"], reverse=True)
     module.exit_json(changed=False, **res)
 
 

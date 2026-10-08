@@ -1,0 +1,91 @@
+---
+# DEPLOY A VM FROM A SERVICENOW TICKET (playbooks/vm_deploy_from_ticket.yml): read the ticket
+# (vm_deploy_ticket: INC..., TASK..., SCTASK...), take the VM details from its description and its
+# comments / work notes ('key: value' lines; a newer one overrides), check them against the rules
+# set in AAP (allowed templates, clusters, datastores, folders; CPU and memory caps; a free name),
+# write "[AAP] Deploying ..." on the ticket - and only if that worked - clone the template, set CPU and
+# memory, customize the guest (host name, DHCP), power it on, and write the result on the ticket.
+# Check (a dry run) reads the ticket, checks everything, says where the VM would go: it builds
+# nothing and writes nothing on the ticket. Printed, emailed (report_email_to), artifacts (vm_deploy).
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | the ticket and the ServiceNow connection
+  ansible.builtin.set_fact:
+    _vd_number: "{{ vm_deploy_ticket | default('', true) | string | trim | upper }}"
+    _vd_table: "{{ vm_deploy_ticket_table | default('', true) or (vm_deploy_ticket | default('', true) | string | vm_deploy_table) }}"
+    _vd_sn_url: >-
+      {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+    _vd_sn_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    _vd_job: "{{ ('AAP job ' ~ awx_job_id) if awx_job_id is defined else 'AAP' }}{{ (' by ' ~ awx_user_name) if awx_user_name is defined else '' }}"
+
+- name: VMware | a ticket number, and a ServiceNow API credential
+  ansible.builtin.assert:
+    that:
+      - _vd_number is match('^[A-Z]{2,8}[0-9]{4,}$')
+      - _vd_table | length > 0
+      - _vd_sn_url | length > 0 and _vd_sn_user | length > 0
+    fail_msg: >-
+      {{ ('Give the ticket number: vm_deploy_ticket (e.g. INC0012345 or SCTASK0012345), not "' ~ _vd_number ~ '".')
+         if _vd_number is not match('^[A-Z]{2,8}[0-9]{4,}$') else
+         ('Unknown ticket prefix in ' ~ _vd_number ~ ': set vm_deploy_ticket_table (e.g. incident, task, sc_task).')
+         if not _vd_table else
+         'No ServiceNow connection: attach the "ServiceNow API" credential to this job template (it gives SN_HOST, SN_USERNAME, SN_PASSWORD).' }}
+    quiet: true
+
+- name: VMware | read ticket {{ _vd_number }}
+  ansible.builtin.uri:
+    url: >-
+      {{ _vd_sn_url }}/api/now/table/{{ _vd_table }}?sysparm_display_value=true&sysparm_limit=2&sysparm_fields={{
+      'sys_id,number,state,active,assignment_group,location,short_description,description,comments,work_notes' }}&sysparm_query={{
+      ('number=' ~ _vd_number) | urlencode }}
+    method: GET
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 401, 403, 404]
+  register: _vd_get
+  check_mode: false
+
+- name: VMware | the ticket was found
+  ansible.builtin.assert:
+    that:
+      - _vd_get.status == 200
+      - (_vd_get.json.result | default([])) | length == 1
+    fail_msg: >-
+      {{ ('ServiceNow refused the read (HTTP ' ~ _vd_get.status ~ '): the ServiceNow API account needs read access to the '
+          ~ _vd_table ~ ' table. ' ~ (_vd_get.json.error.message | default('')))
+         if _vd_get.status != 200 else
+         ('No ' ~ _vd_table ~ ' ticket ' ~ _vd_number ~ ' in ServiceNow.') }}
+    quiet: true
+
+- name: VMware | the ticket, and a GenAI proposal on it (vm_deploy_genai)
+  ansible.builtin.set_fact:
+    _vd_rec: "{{ _vd_get.json.result[0] }}"
+    _vd_text: "{{ _vd_get.json.result[0] | vm_deploy_ticket_text }}"
+    _vd_digest: "{{ 'sha256:' ~ ((_vd_get.json.result[0] | vm_deploy_ticket_text) | hash('sha256'))[:16] }}"
+    _vd_prop: "{{ _vd_get.json.result[0] | vm_deploy_find_proposal }}"
+    _vd_own: "{{ (_vd_get.json.result[0] | vm_deploy_spec).spec }}"
+
+# GenAI is asked only when it is on, the ticket's own lines do not say the name AND the template,
+# and there is no proposal for the ticket text as it is now. The build never asks GenAI: it builds
+# what the posted proposal says - the ticket's own lines winning - or nothing.
+- name: VMware | GenAI needed?
+  ansible.builtin.set_fact:
+    _vd_prop_ok: "{{ vm_deploy_genai | bool and (_vd_prop.digest | default('')) == _vd_digest }}"
+    _vd_genai_needed: >-
+      {{ vm_deploy_genai | bool and not (_vd_own.vm_name is defined and _vd_own.template is defined)
+         and (_vd_prop.digest | default('')) != _vd_digest }}
+
+- name: VMware | GenAI reads the request and proposes - nothing is built in this run
+  ansible.builtin.include_tasks: deploy_genai.yml
+  when: _vd_genai_needed | bool
+
+- name: VMware | check and build
+  ansible.builtin.include_tasks: deploy_build.yml
+  when: not _vd_genai_needed | bool

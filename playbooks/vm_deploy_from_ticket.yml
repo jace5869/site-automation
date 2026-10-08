@@ -1,0 +1,18 @@
+---
+# DEPLOY A VM FROM A SERVICENOW TICKET. Reads the ticket (vm_deploy_ticket), takes the VM details from
+# its description and comments / work notes ('vm_name: app01', 'template: rhel9-gold', 'cpu: 4',
+# 'memory_gb: 16' ...), checks them against the rules in AAP (vm_deploy_templates ...), notes on the
+# ticket what it builds, deploys the template (host name and DHCP by guest customization), and
+# writes the result - IP address included - on the ticket. Check = a dry run: builds nothing.
+# Runs on the AAP side: attach the "VMware vCenter" and "ServiceNow API" credentials; no Limit.
+# docs/VMWARE.md, "Deploy a VM from a ServiceNow ticket"
+#   ansible-playbook playbooks/vm_deploy_from_ticket.yml -e vm_deploy_ticket=INC0012345
+- name: Deploy a VM from a ServiceNow ticket
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Deploy a VM from a ServiceNow ticket
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: deploy.yml

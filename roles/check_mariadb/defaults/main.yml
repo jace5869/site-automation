@@ -24,12 +24,12 @@ check_mariadb_enabled: >-
 # host but podman -> the containers are found as with discovery. So a unit that only starts podman
 # containers (and is then inactive) is not mistaken for the database. false = always the host's own.
 check_mariadb_container: ""
-check_mariadb_containers: []
-check_mariadb_container_discover: auto
+check_mariadb_containers: []             # several containers on one host, e.g. [mariadb, snow-db] (see above)
+check_mariadb_container_discover: auto   # auto, true or false: find database containers by their image (see above)
 # Where a database server installed on the host lives (any one present = a host install, for `auto`).
 check_mariadb_server_paths: [/usr/sbin/mariadbd, /usr/libexec/mariadbd, /usr/sbin/mysqld, /usr/libexec/mysqld,
                              /usr/bin/mariadbd, /usr/bin/mysqld]
-check_mariadb_container_image_regex: '(mariadb|mysql|percona)'
+check_mariadb_container_image_regex: '(mariadb|mysql|percona)'  # regular expression: a container whose image matches is a database (discovery)
 # ROOTLESS podman: the containers belong to a user (e.g. AAP's own MariaDB, or an application account),
 # and only that user can see them. Name the user and the check runs podman AS that user. Empty = root's containers.
 check_mariadb_container_user: ""
@@ -51,15 +51,15 @@ check_mariadb_service: ""
 check_mariadb_client_args: []
 
 check_mariadb_conn_warn_pct: 80          # connections in use, % of max_connections
-check_mariadb_conn_crit_pct: 95
+check_mariadb_conn_crit_pct: 95          # connections in use, % of max_connections -> critical
 check_mariadb_threads_running_warn: 32   # queries executing at this moment
 check_mariadb_long_query_seconds: 300    # a query running longer than this is "long"
 check_mariadb_replica_lag_warn: 300      # seconds a replica is behind its primary
-check_mariadb_replica_lag_crit: 1800
+check_mariadb_replica_lag_crit: 1800     # seconds behind its primary -> critical
 check_mariadb_galera_size: 0             # expected Galera / XtraDB Cluster size (0 = do not check the size)
 check_mariadb_group_size: 0              # expected MySQL Group Replication members (0 = do not check the size)
 check_mariadb_restart_warn_minutes: 60   # restarted less than this ago -> warning
 check_mariadb_bufferpool_hit_warn: 95    # % of reads served from memory (only judged after 1M reads)
 check_mariadb_error_since_days: 1        # [ERROR] lines in its log this recent
 check_mariadb_disk_warn_pct: 85          # the filesystem holding the data directory
-check_mariadb_disk_crit_pct: 95
+check_mariadb_disk_crit_pct: 95          # % used of the data directory's filesystem -> critical

@@ -7,7 +7,7 @@
 
 check_auditd_min_rules: 5                # fewer loaded rules than this = the STIG rules are missing
 check_auditd_log_warn_pct: 75            # the audit log's filesystem
-check_auditd_log_crit_pct: 90
+check_auditd_log_crit_pct: 90            # % used of that filesystem -> critical (warning from check_auditd_log_warn_pct)
 check_auditd_remote_required: false      # true = au-remote (audisp-remote) must be active
 
 # ---- How much is audited ----

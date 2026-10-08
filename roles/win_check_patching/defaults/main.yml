@@ -4,7 +4,7 @@
 #   - days since the last update was installed (Get-HotFix)
 #   - optional: ask Windows Update which updates are missing (slower; needs full PowerShell)
 
-win_check_patching_warn_days: 35
-win_check_patching_crit_days: 60
-win_check_patching_reboot_pending: true
-win_check_patching_search_pending: false
+win_check_patching_warn_days: 35         # last update installed this many days ago or more -> warning
+win_check_patching_crit_days: 60         # this many days or more -> critical
+win_check_patching_reboot_pending: true  # report a restart pending for installed updates
+win_check_patching_search_pending: false  # also ask Windows Update which updates are missing (slower)

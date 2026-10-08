@@ -8,6 +8,7 @@
 - name: VMware | read the datastores
   site_vmware_datastores:
     datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
     validate_certs: "{{ vmware_validate_certs | bool }}"
   register: _vm_ds_read
   check_mode: false
@@ -21,11 +22,13 @@
           'warn': all | selectattr('used_pct', '>=', vm_datastore_warn_pct | float) | rejectattr('used_pct', '>=', vm_datastore_crit_pct | float) | list,
           'down': all | rejectattr('accessible') | list,
           'cap_tb': ((all | map(attribute='capacity_gb') | sum) / 1024) | round(1),
-          'free_tb': ((all | map(attribute='free_gb') | sum) / 1024) | round(1)} }}
+          'free_tb': ((all | map(attribute='free_gb') | sum) / 1024) | round(1),
+          'multi': _vm_ds_read.vcenters | default([]) | vm_vcenters_read | length > 1} }}
 
 - name: VMware | datastore report
   ansible.builtin.include_tasks: report.yml
   vars:
+    _vm_vcenters: "{{ _vm_ds_read.vcenters }}"
     _vm_report_subject: >-
       {%- set parts = [] -%}
       {%- set full = _vm_ds.crit | length + _vm_ds.warn | length -%}
@@ -37,7 +40,7 @@
       {%- set out = [_vm_ds.all | length ~ ' datastore(s), ' ~ _vm_ds.cap_tb ~ ' TB, ' ~ _vm_ds.free_tb ~ ' TB free'] -%}
       {%- for d in _vm_ds.all -%}
       {%-   set flag = 'INACCESSIBLE' if not d.accessible else ('CRITICAL' if d in _vm_ds.crit else ('WARNING' if d in _vm_ds.warn else '')) -%}
-      {%-   set _ = out.append((flag ~ ' ' if flag else '') ~ d.name ~ ' (' ~ d.datacenter ~ (' / ' ~ d.cluster if d.cluster else '') ~ '): '
+      {%-   set _ = out.append((flag ~ ' ' if flag else '') ~ d.name ~ ' (' ~ d | vm_dc_label(_vm_ds.multi) ~ (' / ' ~ d.cluster if d.cluster else '') ~ '): '
                                ~ d.used_pct ~ '% used, ' ~ d.free_gb ~ ' GB free of ' ~ d.capacity_gb ~ ' GB, provisioned ' ~ d.provisioned_pct ~ '%') -%}
       {%- endfor -%}
       {{ out }}
@@ -45,22 +48,23 @@
       {%- set cols = ['Datastore', 'Datacenter', 'Datastore cluster', 'Type', 'Capacity (GB)', 'Free (GB)', 'Used %', 'Provisioned %', 'Hosts', 'VMs', 'State'] -%}
       {%- set sections = [] -%}
       {%- if _vm_ds.down -%}
-      {%-   set _ = sections.append({'title': 'Inaccessible', 'status': 'critical', 'columns': cols, 'rows': _vm_ds.down | map('vm_ds_row') | list,
+      {%-   set _ = sections.append({'title': 'Inaccessible', 'status': 'critical', 'columns': cols, 'rows': _vm_ds.down | map('vm_ds_row', _vm_ds.multi) | list,
                                      'text': 'vCenter cannot reach these datastores: check the storage, its paths, and the hosts that mount them.'}) -%}
       {%- endif -%}
       {%- if _vm_ds.crit -%}
       {%-   set _ = sections.append({'title': vm_datastore_crit_pct ~ '% or more used', 'status': 'critical', 'columns': cols,
-                                     'rows': _vm_ds.crit | map('vm_ds_row') | list,
+                                     'rows': _vm_ds.crit | map('vm_ds_row', _vm_ds.multi) | list,
                                      'text': 'Free space now: delete old snapshots, move or remove VMs, or grow the datastore.'}) -%}
       {%- endif -%}
       {%- if _vm_ds.warn -%}
       {%-   set _ = sections.append({'title': vm_datastore_warn_pct ~ '% to ' ~ vm_datastore_crit_pct ~ '% used', 'status': 'warning', 'columns': cols,
-                                     'rows': _vm_ds.warn | map('vm_ds_row') | list}) -%}
+                                     'rows': _vm_ds.warn | map('vm_ds_row', _vm_ds.multi) | list}) -%}
       {%- endif -%}
-      {%- set _ = sections.append({'title': 'All datastores, fullest first', 'columns': cols, 'rows': _vm_ds.all | map('vm_ds_row') | list}) -%}
+      {%- set _ = sections.append({'title': 'All datastores, fullest first', 'columns': cols, 'rows': _vm_ds.all | map('vm_ds_row', _vm_ds.multi) | list}) -%}
       {{ {'title': _vm_report_subject | trim,
           'status': 'critical' if (_vm_ds.crit or _vm_ds.down) else ('warning' if _vm_ds.warn else 'ok'),
           'subtitle': _vm_ds.all | length ~ ' datastores' ~ (' in ' ~ vmware_datacenter if vmware_datacenter else '')
+                      ~ (' of ' ~ _vm_ds_read.vcenters | vm_vcenters_read | map('vc_short') | join(', ') if _vm_ds.multi else '')
                       ~ ' - warning at ' ~ vm_datastore_warn_pct ~ '% used, critical at ' ~ vm_datastore_crit_pct ~ '%',
           'summary': [{'label': 'Datastores', 'value': _vm_ds.all | length},
                       {'label': 'Capacity (TB)', 'value': _vm_ds.cap_tb}, {'label': 'Free (TB)', 'value': _vm_ds.free_tb},
@@ -74,7 +78,7 @@
   ansible.builtin.set_stats:
     data:
       vm_datastores: >-
-        {{ {'datastores': _vm_ds.all, 'critical': _vm_ds.crit | map(attribute='name') | list,
+        {{ {'vcenters': _vm_ds_read.vcenters, 'datastores': _vm_ds.all, 'critical': _vm_ds.crit | map(attribute='name') | list,
             'warning': _vm_ds.warn | map(attribute='name') | list, 'inaccessible': _vm_ds.down | map(attribute='name') | list} }}
 
 - name: VMware | every datastore below {{ vm_datastore_warn_pct }}% used, and reachable
@@ -86,3 +90,8 @@
       vm_datastore_fail: false makes this a report only.
     quiet: true
   when: vm_datastore_fail | bool
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_ds_read.vcenters }}"

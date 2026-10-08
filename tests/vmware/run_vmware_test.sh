@@ -21,10 +21,12 @@ engine="${CONTAINER_ENGINE:-$(command -v podman || command -v docker)}"
 port="${VCSIM_PORT:-18989}"
 image="docker.io/vmware/vcsim:v0.52.0"
 name="vcsim-site-test-$$"
+name2="vcsim-site-test2-$$"      # a second vCenter (several vCenters, one report)
+port2=$((port + 7))
 work="$(mktemp -d)"
 smtp_pid=""
 http_pid=""
-cleanup() { "$engine" rm -f "$name" >/dev/null 2>&1; [ -n "$smtp_pid" ] && kill "$smtp_pid" 2>/dev/null; [ -n "$http_pid" ] && kill "$http_pid" 2>/dev/null; rm -rf "$work"; }
+cleanup() { "$engine" rm -f "$name" "$name2" >/dev/null 2>&1; [ -n "$smtp_pid" ] && kill "$smtp_pid" 2>/dev/null; [ -n "$http_pid" ] && kill "$http_pid" 2>/dev/null; rm -rf "$work"; }
 trap cleanup EXIT
 fails=0
 
@@ -54,8 +56,8 @@ fresh() {  # a new simulator with the test VMs (tests/vmware/vcsim.py setup)
         || { echo "ABORT - could not start $image"; exit 1; }
     VMWARE_PORT=$port "$py" "$here/vcsim.py" setup || { echo "ABORT - vcsim setup"; exit 1; }
 }
-state() {  # state VM FIELD-EXPRESSION (python, v = the VM's first record)
-    VMWARE_PORT=$port "$py" "$here/vcsim.py" state | "$py" -c "import json,sys; d=json.load(sys.stdin); v=d['$1'][0]; print($2)"
+state() {  # state VM FIELD-EXPRESSION (python, v = the VM's first record); STATE_PORT=... for the second vCenter
+    VMWARE_PORT=${STATE_PORT:-$port} "$py" "$here/vcsim.py" state | "$py" -c "import json,sys; d=json.load(sys.stdin); v=d['$1'][0]; print($2)"
 }
 
 # run NAME EXPECT(ok|fail) PLAYBOOK [args...] then TEXT... after '--'
@@ -63,7 +65,7 @@ run() {
     local tname="$1" want="$2" pb="$3"; shift 3
     local args=() texts=() seen=0
     for a in "$@"; do if [ "$a" = "--" ]; then seen=1; elif [ $seen -eq 0 ]; then args+=("$a"); else texts+=("$a"); fi; done
-    (cd "$repo" && VMWARE_HOST=127.0.0.1 VMWARE_PORT=$port VMWARE_USER=user VMWARE_PASSWORD=pass \
+    (cd "$repo" && VMWARE_HOST=127.0.0.1 VMWARE_PORT=${RUN_PORT:-$port} VMWARE_USER=user VMWARE_PASSWORD=pass \
         ANSIBLE_COLLECTIONS_PATH="$cols" ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False \
         ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_SHOW_CUSTOM_STATS=True \
         "$ap" -i "${INV:-$work/inv.yml}" "playbooks/$pb" -e vmware_validate_certs=false \
@@ -420,7 +422,9 @@ run "capacity planning with GenAI: the math and ACT's estimate side by side" ok 
        "in about 1 months" "emailed"
 grep -q "estimate_days" "$work/act/fake-act-task.txt" && grep -q "^P1 OVERALL" "$work/act/fake-act-stdin.txt" \
     && grep -q "cluster DC0_C0" "$work/act/fake-act-stdin.txt" && getpart html "$(lastmail)" | grep -q "Math vs GenAI" \
-    && echo "ok   -   ...ACT got the numbers and the days format; the email has both estimates" \
+    && grep -q '"ACT_STREAM": "1"' "$work/act/fake-act-env.json" && grep -q '"GENAI_TIMEOUT": "600"' "$work/act/fake-act-env.json" \
+    && grep -q '"GENAI_MODEL": "gemini-3.8-flash"' "$work/act/fake-act-env.json" \
+    && echo "ok   -   ...ACT got the numbers and the days format, streams, 600 s per answer, gemini-3.8-flash; the email has both estimates" \
     || { echo "FAIL -   ...capacity ACT"; head -5 "$work/act/fake-act-stdin.txt"; fails=$((fails + 1)); }
 run "capacity planning with GenAI as a dry run (Check): ACT not called, the math still shown" ok vm_capacity_report.yml --check \
     -e "$actvars" -e vm_capacity_act=true -- "ACT did not run: A dry run (Check)" "Clusters: CPU and memory"
@@ -429,5 +433,239 @@ run "capacity planning for one cluster" ok vm_capacity_report.yml -e '{"vm_capac
 run "capacity planning: a cluster name that matches nothing is an error" fail vm_capacity_report.yml -e vm_capacity_clusters=nope \
     -- "No cluster matches nope"
 unset GENAI_KEY FAKE_ACT_OUT FAKE_ACT_CONFIG
+
+# ---- several vCenters, one report: a second simulator with the SAME inventory (same VM names, same
+# moids) - nothing may be mixed up, above all the snapshot cleanup ------------------------------------
+"$engine" run -d --name "$name2" -p "127.0.0.1:$port2:8989" "$image" -l 0.0.0.0:8989 -api-version 8.0 -pg 2 >/dev/null \
+    || { echo "ABORT - could not start the second $image"; exit 1; }
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$port2") 2>/dev/null && break; sleep 0.2; done
+vc2="127.0.0.1:$port2"
+two="{\"vmware_vcenters\": [\"$vc2\"]}"
+run "vCenter 1: a snapshot old-a on DC0_C0_RP0_VM1" ok vm_snapshot.yml -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=old-a -- "Took snapshot"
+# (a VM that never had a snapshot trips vmware.vmware.vm_snapshot on a fresh vcsim: take it with pyVmomi, as vcsim.py setup does)
+VMWARE_PORT=$port2 "$py" - <<'EOPY' || { echo "ABORT - snapshot on the second vCenter"; exit 1; }
+import os, time
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+vm = [v for v in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if v.name == "DC0_C0_RP0_VM1"][0]
+t = vm.CreateSnapshot_Task(name="old-b", description="", memory=False, quiesce=False)
+while t.info.state not in ("success", "error"):
+    time.sleep(0.1)
+assert t.info.state == "success", t.info.error
+EOPY
+echo "ok   - vCenter 2: a snapshot old-b on its own DC0_C0_RP0_VM1"
+m1="$(state DC0_C0_RP0_VM1 "v['moid']")"; m2="$(STATE_PORT=$port2 state DC0_C0_RP0_VM1 "v['moid']")"
+id2="$(STATE_PORT=$port2 state DC0_C0_RP0_VM1 "[s['id'] for s in v['snapshots'] if s['name'] == 'old-b'][0]")"
+id1="$(state DC0_C0_RP0_VM1 "[s['id'] for s in v['snapshots'] if s['name'] == 'old-a'][0]")"
+[ "$m1" = "$m2" ] && echo "ok   -   ...the two VMs have the same ID ($m1): the case to get right" || echo "ok   -   ...(moids differ here: $m1 / $m2)"
+run "snapshot report of both vCenters: one report, each snapshot with its vCenter" ok vm_snapshot_report.yml -e _vm_now=$later -e "$two" \
+    -- 'OLD DC0_C0_RP0_VM1 (127.0.0.1): \"old-a\"' 'OLD DC0_C0_RP0_VM1 ('"$vc2"'): \"old-b\"' "\"vcenter\": \"$vc2\""
+approved2="{\"vm_snapshot_cleanup_candidates\": [{\"vm\": \"DC0_C0_RP0_VM1\", \"vcenter\": \"$vc2\", \"moid\": \"$m2\", \"id\": $id2, \"name\": \"old-b\"}]}"
+run "cleanup after the approval of vCenter 2's snapshot: deleted there, and only there" ok vm_snapshot_cleanup.yml -e _vm_now=$later -e "$two" \
+    -e "$approved2" -- "deleted 1 snapshot(s)" 'DELETED DC0_C0_RP0_VM1 ('"$vc2"'): \"old-b\"'
+check "  ...vCenter 1's VM (same ID) keeps old-a" DC0_C0_RP0_VM1 "','.join(s['name'] for s in v['snapshots'])" "keep-me,old-a"
+got="$(STATE_PORT=$port2 state DC0_C0_RP0_VM1 "','.join(s['name'] for s in v['snapshots'])")"
+[ -z "$got" ] && echo "ok   -   ...vCenter 2's old-b is gone" || { echo "FAIL -   ...vCenter 2 still has [$got]"; fails=$((fails + 1)); }
+approved1="{\"vm_snapshot_cleanup_candidates\": [{\"vm\": \"DC0_C0_RP0_VM1\", \"moid\": \"$m1\", \"id\": $id1, \"name\": \"old-a\"}]}"
+run "an approval from an older report (no vCenter on it) means the credential's vCenter only" ok vm_snapshot_cleanup.yml --check -e _vm_now=$later \
+    -e "$two" -e "$approved1" -- "would delete 1 snapshot(s)" 'WOULD DELETE DC0_C0_RP0_VM1 (127.0.0.1): \"old-a\"'
+run "datastore report of both: each datastore with its vCenter" ok vm_datastore_report.yml -e "$two" -e "$mail" \
+    -- "VMware datastore report: all 2 below 85% used" "LocalDS_0 (127.0.0.1 / DC0)" "LocalDS_0 ($vc2 / DC0)" "emailed"
+getpart html "$(lastmail)" | grep -q "vCenters 127.0.0.1, $vc2" && echo "ok   -   ...the email names both vCenters" \
+    || { echo "FAIL -   ...the email's vCenters"; fails=$((fails + 1)); }
+run "the same vCenter under a second name is read once" ok vm_datastore_report.yml -e "{\"vmware_vcenters\": [\"localhost:$port\"]}" \
+    -- "all 1 below 85% used" "the same vCenter as 127.0.0.1: read once"
+run "alarms report of both vCenters" ok vm_alarm_report.yml -e "$two" -e vm_alarm_hours=0 -- "vCenters 127.0.0.1, $vc2"
+run "capacity planning of both: the same cluster name in each, never merged" ok vm_capacity_report.yml -e "$two" \
+    -- "DC0_C0 (127.0.0.1 / DC0)" "DC0_C0 ($vc2 / DC0)" "vCenters 127.0.0.1, $vc2"
+run "ESXi security settings (dry run) on both vCenters' hosts" ok esxi_security.yml --check -e "$two" \
+    -e '{"esxi_security_ssh": "", "esxi_security_shell": "", "esxi_security_lockdown": "", "esxi_security_settings": {"Config.HostAgent.log.level": "info"}}' \
+    -- "$vc2 / DC0"
+run "a vCenter that cannot be reached: the others are reported, it is listed, the report completes green" ok vm_datastore_report.yml \
+    -e "{\"vmware_vcenters\": [\"$vc2\", \"127.0.0.1:1\"]}" -e "$mail" \
+    -- "NOT READ: Could not connect to vCenter 127.0.0.1:1" "all 2 below 85% used" "emailed"
+subject "$(lastmail)" | grep -q "1 vCenter(s) not read" && getpart html "$(lastmail)" | grep -q ">vCenters not read <span" \
+    && echo "ok   -   ...the email says so, in red on top" || { echo "FAIL -   ...unreachable vCenter email"; subject "$(lastmail)"; fails=$((fails + 1)); }
+run "...vmware_vcenter_fail_unread: true makes the job fail at its end (for a workflow)" fail vm_datastore_report.yml \
+    -e "{\"vmware_vcenters\": [\"127.0.0.1:1\"]}" -e vmware_vcenter_fail_unread=true \
+    -- "NOT READ: Could not connect to vCenter 127.0.0.1:1" "Not read: Could not connect to vCenter 127.0.0.1:1"
+
+# ---- deploy a VM from a ServiceNow ticket (a fake ServiceNow, tests/servicenow/snmock.py) -----------------
+sn_port=$((port + 41))
+SNMOCK_LOG="$work/sn.jsonl" "$py" "$repo/tests/servicenow/snmock.py" "$sn_port" >/dev/null 2>&1 &
+sn_pid=$!
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$sn_port") 2>/dev/null && break; sleep 0.1; done
+VMWARE_PORT=$port "$py" - <<'EOPY' || { echo "ABORT - template"; exit 1; }
+import os, time
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+vms = c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view
+src = [v for v in vms if v.name == "DC0_C0_RP0_VM0"][0]
+t = src.CloneVM_Task(folder=src.parent, name="rhel9-gold", spec=vim.vm.CloneSpec(location=vim.vm.RelocateSpec(), powerOn=False, template=True))
+while t.info.state not in ("success", "error"):
+    time.sleep(0.1)
+assert t.info.state == "success", t.info.error
+EOPY
+newticket() {  # newticket DESCRIPTION [COMMENT] -> the incident number
+    "$py" - "$sn_port" "$1" "${2:-}" <<'EOPY'
+import base64, json, sys, urllib.request
+body = {"short_description": "New VM", "description": sys.argv[2], "assignment_group": "Linux Operations"}
+if sys.argv[3]:
+    body["comments"] = sys.argv[3]
+r = urllib.request.Request("http://127.0.0.1:%s/api/now/table/incident" % sys.argv[1], data=json.dumps(body).encode(), method="POST",
+                           headers={"Content-Type": "application/json", "Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode()})
+print(json.load(urllib.request.urlopen(r))["result"]["number"])
+EOPY
+}
+export SN_HOST="http://127.0.0.1:$sn_port" SN_USERNAME=api SN_PASSWORD=goodpw
+rules='{"vm_deploy_templates": ["rhel9-*"], "vm_deploy_assignment_group": "Linux Operations", "vm_deploy_max_cpu": 8, "vm_deploy_wait_ip": 3, "vm_deploy_wait_customization": 60}'
+inc="$(newticket $'Please build a server.\nvm_name: app01\ntemplate: rhel9-gold\ncpu: 2\nmemory_gb: 4\nName: Jane Doe' $'more power please\ncpu: 4\nmemory_gb: 8')"
+n0=$(wc -l < "$work/sn.jsonl")
+run "deploy from a ticket, dry run: the request with where each value came from, where it would go; nothing built or written" ok \
+    vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$inc" -e "$rules" \
+    -- "vm_name: app01   (from description)" "cpu: 4   (from comment" "would be deployed in DC0_C0 (dry run)"
+[ "$(sed -n "$((n0 + 1)),\$p" "$work/sn.jsonl" | grep -c '"PATCH"')" = 0 ] && ! VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q '"app01"' \
+    && echo "ok   -   ...no VM built, nothing written on the ticket" || { echo "FAIL -   ...the dry run built or wrote something"; fails=$((fails + 1)); }
+run "deploy from a ticket: a template not allowed is refused, and the ticket says why" fail vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$inc" -e "$rules" -e '{"vm_deploy_templates": ["win*"]}' -- "REFUSED: template 'rhel9-gold' is not in vm_deploy_templates"
+tail -1 "$work/sn.jsonl" | grep -q 'VM not deployed' && echo "ok   -   ...the work note says why" || { echo "FAIL -   ...refusal note"; fails=$((fails + 1)); }
+run "deploy from a ticket: built - 4 vCPU and 8 GB (the comment wins), host name by customization, the result on the ticket" ok \
+    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc" -e "$rules" -e "$mail" \
+    -- "VM deploy $inc: app01 deployed, no IP yet" "Customization" "succeeded" "no IPv4 address within 3 s" "emailed"
+VMWARE_PORT=$port "$py" - <<'EOPY' && echo "ok   -   ...app01 exists: 4 vCPU, 8192 MB, notes name the ticket, guest host name app01" || { echo "FAIL -   ...the VM"; fails=$((fails + 1)); }
+import os, sys
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+v = [x for x in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if x.name == "app01"][0]
+ok = v.config.hardware.numCPU == 4 and v.config.hardware.memoryMB == 8192 and "INC" in (v.config.annotation or "") and v.guest.hostName == "app01"
+print(v.config.hardware.numCPU, v.config.hardware.memoryMB, v.config.annotation, v.guest.hostName)
+sys.exit(0 if ok else 1)
+EOPY
+"$py" - "$work/sn.jsonl" <<'EOPY' && echo "ok   -   ...the ticket got 'Deploying' (with the request) before the build, then 'deployed'" || { echo "FAIL -   ...ticket notes"; fails=$((fails + 1)); }
+import json, sys
+notes = [json.loads(l)["body"].get("work_notes", "") for l in open(sys.argv[1]) if '"PATCH"' in l]
+i = [k for k, n in enumerate(notes) if n.startswith("[AAP] Deploying this VM")]
+j = [k for k, n in enumerate(notes) if n.startswith("[AAP] VM app01 deployed")]
+sys.exit(0 if i and j and i[-1] < j[-1] and "cpu: 4" in notes[i[-1]] and "Customization: succeeded" in notes[j[-1]] else 1)
+EOPY
+run "deploy from a ticket again: the name exists - refused, nothing built, the ticket says so" fail vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$inc" -e "$rules" -- "a VM named app01 already exists in vCenter 127.0.0.1"
+tail -1 "$work/sn.jsonl" | grep -q 'NOT deployed' && echo "ok   -   ...noted on the ticket" || { echo "FAIL -   ...duplicate note"; fails=$((fails + 1)); }
+inc2="$(newticket $'vm_name: app02\ntemplate: rhel9-gold')"
+"$py" - "$sn_port" "$inc2" <<'EOPY'
+import base64, json, sys, urllib.request
+h = {"Content-Type": "application/json", "Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode()}
+u = "http://127.0.0.1:%s/api/now/table/incident" % sys.argv[1]
+sid = json.load(urllib.request.urlopen(urllib.request.Request(u + "?sysparm_query=number=" + sys.argv[2], headers=h)))["result"][0]["sys_id"]
+urllib.request.urlopen(urllib.request.Request(u + "/" + sid, data=b'{"state": "7"}', method="PATCH", headers=h))
+EOPY
+run "deploy from a closed ticket: refused" fail vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc2" -e "$rules" -- "the ticket is closed"
+run "deploy from a ticket: not a ticket number" fail vm_deploy_from_ticket.yml -e vm_deploy_ticket=app01 -e "$rules" -- "Give the ticket number"
+SN_HOST= run "deploy from a ticket without the ServiceNow credential: says which to attach" fail vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$inc" -e "$rules" -- 'attach the \"ServiceNow API\" credential'
+VMWARE_PORT=$port "$py" - <<'EOPY' || { echo "ABORT - PXE template"; exit 1; }
+import os, time
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+src = [v for v in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if v.name == "DC0_C0_RP0_VM1"][0]
+t = src.CloneVM_Task(folder=src.parent, name="win2022-pxe", spec=vim.vm.CloneSpec(location=vim.vm.RelocateSpec(), powerOn=False, template=True))
+while t.info.state not in ("success", "error"):
+    time.sleep(0.1)
+assert t.info.state == "success", t.info.error
+EOPY
+sites='{"vm_deploy_templates": ["rhel9-*", "win2022-*"], "vm_deploy_pxe_templates": ["*-pxe"], "vm_deploy_wait_ip": 3,
+        "vm_deploy_sites": {"SiteA": {"cluster": "DC0_C0"}, "SiteB": {"cluster": "DC0_H0"}}}'
+inc3="$(newticket $'vm_name: winapp01\ntemplate: win2022-pxe\nsite: siteb')"
+run "deploy from a ticket: a network-boot (PXE / MECM) Windows template, its site picks the cluster; the ticket gets the MAC" ok \
+    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc3" -e "$sites" \
+    -- "cluster: DC0_H0   (from site SiteB)" "winapp01 deployed - PXE boot, MAC 00:" "none: boots from the network (PXE)"
+VMWARE_PORT=$port "$py" - <<'EOPY' && echo "ok   -   ...winapp01 is on SiteB's host DC0_H0, powered on, not customized" || { echo "FAIL -   ...the PXE VM"; fails=$((fails + 1)); }
+import os, sys
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+v = [x for x in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if x.name == "winapp01"][0]
+evs = [type(e).__name__ for e in c.eventManager.QueryEvents(vim.event.EventFilterSpec(entity=vim.event.EventFilterSpec.ByEntity(entity=v, recursion="self")))]
+sys.exit(0 if v.resourcePool.parent.name == "DC0_H0" and v.runtime.host.name == "DC0_H0" and str(v.runtime.powerState) == "poweredOn" and not any("Customization" in e for e in evs) else 1)
+EOPY
+tail -1 "$work/sn.jsonl" | grep -q 'MAC address: 00:' && echo "ok   -   ...the ticket has the MAC address for MECM" || { echo "FAIL -   ...MAC note"; fails=$((fails + 1)); }
+inc4="$(newticket $'vm_name: winapp02\ntemplate: win2022-pxe')"
+run "deploy from a ticket: sites set up, the ticket names none - refused" fail vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc4" -e "$sites" \
+    -- "the ticket does not say which site"
+# ---- GenAI reads a request written in plain words (vm_deploy_genai; ACT is the fake, scripted) ---------------
+export GENAI_KEY=test-key FAKE_ACT_OUT="$work/act" FAKE_ACT_CONFIG="$work/act/act.json"
+genai='{"vm_deploy_genai": true, "vm_deploy_template_catalog": {"win2022-pxe": "Windows Server 2022 (MECM)", "rhel9-gold": "RHEL 9"},
+        "vm_deploy_templates": ["rhel9-*", "win2022-*"], "vm_deploy_pxe_templates": ["*-pxe"], "vm_deploy_mem_target_pct": 95,
+        "vm_deploy_sites": {"SiteA": {"clusters": ["DC0_C0", "DC0_H0"]}}, "vm_deploy_datastores": ["LocalDS_*"], "vm_deploy_max_disk_gb": 500}'
+act_says() {  # act_says JSON-OF-THE-ANSWER: what the fake ACT answers next
+    "$py" - "$work/act/act.json" "$1" <<'EOPY'
+import json, sys
+json.dump({"summary": "Here is the request.\nBEGIN_ACT_ANALYSIS\n" + sys.argv[2] + "\nEND_ACT_ANALYSIS"}, open(sys.argv[1], "w"))
+EOPY
+}
+good='{"vm_name": {"value": "winapp05", "evidence": "called winapp05"}, "template": {"value": "win2022-pxe", "evidence": "Windows Server 2022"},
+       "cpu": {"value": 2, "evidence": "2 CPUs"}, "memory_gb": {"value": 2, "evidence": "2 GB of RAM"},
+       "disks_gb": {"value": [120, 200], "evidence": "a 120 GB system disk plus a 200 GB data disk"}, "site": {"value": "SiteA", "evidence": "for SiteA"},
+       "questions": []}'
+inc5="$(newticket 'Hi team, we need a new Windows Server 2022 box called winapp05 for SiteA with 2 GB of RAM, 2 CPUs and a 120 GB system disk plus a 200 GB data disk. Thanks, Jane')"
+act_says "$good"
+run "GenAI reads a request in plain words: a proposal on the ticket, each value with its words - nothing built" ok \
+    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc5" -e "$genai" -e "$actvars" \
+    -- "GenAI proposal posted - run the job again to build it" "vm_name: winapp05" "disks_gb: 120, 200"
+tail -1 "$work/sn.jsonl" | grep -q '\[AAP\] GenAI proposal (ticket text sha256:' && ! VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q '"winapp05"' \
+    && echo "ok   -   ...the proposal is a work note; no VM yet" || { echo "FAIL -   ...proposal"; fails=$((fails + 1)); }
+rm -f "$work/act/fake-act-stdin.txt"
+act_says '{"vm_name": {"value": "evil01", "evidence": "x"}, "questions": []}'          # must not be asked again
+run "the next run builds the proposal - GenAI not asked again - placed by the rules among the site's clusters" ok \
+    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc5" -e "$genai" -e "$actvars" \
+    -- "winapp05 deployed - PXE boot" "cluster chosen: DC0_" "datastore chosen: LocalDS_0" "vm_name: winapp05   (from GenAI proposal"
+[ ! -e "$work/act/fake-act-stdin.txt" ] && echo "ok   -   ...ACT was not called by the build run" || { echo "FAIL -   ...the build asked GenAI"; fails=$((fails + 1)); }
+VMWARE_PORT=$port "$py" - <<'EOPY' && echo "ok   -   ...winapp05: 2 vCPU, 2048 MB, disks 120 + 200 GB (thin), on one of the site's clusters" || { echo "FAIL -   ...the GenAI-requested VM"; fails=$((fails + 1)); }
+import os, sys
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+v = [x for x in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if x.name == "winapp05"][0]
+disks = sorted(d.capacityInKB // 1048576 for d in v.config.hardware.device if isinstance(d, vim.vm.device.VirtualDisk))
+# the simulator's numbers are its own: only that the choice is one of the candidates is checked here (tests/test_vm_deploy.py: the math)
+sys.exit(0 if v.config.hardware.numCPU == 2 and v.config.hardware.memoryMB == 2048 and disks == [120, 200]
+         and v.resourcePool.parent.name in ("DC0_C0", "DC0_H0") else 1)
+EOPY
+inc6="$(newticket 'please build me a RHEL 9 server with 4 CPUs')"
+act_says '{"vm_name": {"value": "rhelsrv01", "evidence": "a RHEL 9 server"}, "template": {"value": "rhel9-gold", "evidence": "RHEL 9"},
+           "cpu": {"value": 4, "evidence": "4 CPUs"}, "questions": ["Which site: SiteA?"]}'
+run "GenAI makes up a name: dropped; the questions go to the requester as a comment; nothing built" ok \
+    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc6" -e "$genai" -e "$actvars" \
+    -- "questions for the requester (nothing built)" "DROPPED (not in the ticket): vm_name 'rhelsrv01'" "QUESTION: Which site: SiteA?"
+tail -1 "$work/sn.jsonl" | grep -q '"comments": "\[AAP\] To build this VM' && echo "ok   -   ...a comment the requester sees" || { echo "FAIL -   ...questions comment"; fails=$((fails + 1)); }
+inc7="$(newticket 'New RHEL 9 server called lnxapp07 for SiteA please, 2 CPUs and 2 GB of RAM')"
+act_says '{"vm_name": {"value": "lnxapp07", "evidence": "called lnxapp07"}, "template": {"value": "rhel9-gold", "evidence": "RHEL 9"},
+           "cpu": {"value": 2, "evidence": "2 CPUs"}, "memory_gb": {"value": 2, "evidence": "2 GB of RAM"}, "site": {"value": "SiteA", "evidence": "for SiteA"}}'
+run "GenAI proposal for lnxapp07" ok vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc7" -e "$genai" -e "$actvars" -- "GenAI proposal posted"
+"$py" - "$sn_port" "$inc7" <<'EOPY'
+import base64, json, sys, urllib.request
+h = {"Content-Type": "application/json", "Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode()}
+u = "http://127.0.0.1:%s/api/now/table/incident" % sys.argv[1]
+sid = json.load(urllib.request.urlopen(urllib.request.Request(u + "?sysparm_query=number=" + sys.argv[2], headers=h)))["result"][0]["sys_id"]
+urllib.request.urlopen(urllib.request.Request(u + "/" + sid, data=b'{"comments": "actually make it 4 CPUs"}', method="PATCH", headers=h))
+EOPY
+rm -f "$work/act/fake-act-stdin.txt"
+run "the ticket changed after the proposal: void - GenAI reads it again, nothing built" ok vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc7" \
+    -e "$genai" -e "$actvars" -- "GenAI proposal posted - run the job again to build it"
+[ -e "$work/act/fake-act-stdin.txt" ] && ! VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q '"lnxapp07"' \
+    && echo "ok   -   ...asked again, not built" || { echo "FAIL -   ...stale proposal"; fails=$((fails + 1)); }
+unset GENAI_KEY FAKE_ACT_OUT FAKE_ACT_CONFIG
+unset SN_HOST SN_USERNAME SN_PASSWORD
+kill "$sn_pid" 2>/dev/null
 
 if [ "$fails" -eq 0 ]; then echo "ok   - all VMware scenarios passed"; else echo "$fails FAILED"; exit 1; fi

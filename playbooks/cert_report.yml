@@ -1,6 +1,7 @@
 ---
 # CERTIFICATE REPORT - weekly. Every certificate the certs check finds on every host (files,
-# keystores, TLS endpoints), in ONE table sorted by expiry date - the list to hand to whoever
+# keystores, TLS endpoints - and, found by themselves, the listening ports that answer TLS and the
+# Java keystores: cert_report_discover), in ONE table sorted by expiry date - the list to hand to whoever
 # renews certificates. Read-only. Fails when one expires within check_certs_warn_days, so a
 # workflow can open tickets.
 #
@@ -10,6 +11,11 @@
   hosts: "{{ target | default('all') }}"
   become: true
   gather_facts: false
+  vars:
+    # the report also finds certificates by itself: listening ports that answer TLS, Java keystores
+    # (the health check's weekly certs check does not: cert_report_discover: false turns it off here too)
+    check_certs_discover_ports: "{{ cert_report_discover | default(true) }}"
+    check_certs_discover_keystores: "{{ cert_report_discover | default(true) }}"
   pre_tasks:
     - name: Linux hosts only (Windows servers have their own templates, playbooks/win_*.yml)
       ansible.builtin.include_role:
@@ -37,26 +43,27 @@
           {%- endfor -%}
           {%- set out = ['DAYS  EXPIRES     HOST  |  SUBJECT  |  WHERE'] -%}
           {%- for c in rows | sort(attribute='days') -%}
-          {%-   set flag = ' <-- EXPIRED' if c.days < 0 else (' <-- ' ~ c.days ~ ' days' if c.days <= check_certs_warn_days | default(30) | int else '') -%}
+          {%-   set flag = ' <-- EXPIRED' if c.days < 0 else (' <-- ' ~ c.days ~ ' days' if c.days <= check_certs_notice_days | default(60) | int else '') -%}
           {%-   set _ = out.append(c.days ~ '  ' ~ c.expires ~ '  ' ~ c.host ~ '  |  ' ~ c.subject | truncate(70) ~ '  |  ' ~ c.where ~ flag) -%}
           {%- endfor -%}
           {{ out if rows else ['no certificates found - set check_certs_files / check_certs_endpoints in the inventory'] }}
       run_once: true
 
-    - name: The certificate table for the report email
+    - name: The certificate table for the report email (expired red, within check_certs_warn_days amber, within check_certs_notice_days blue)
       ansible.builtin.set_fact:
         site_report_sections: >-
           {%- set rows = [] -%}
           {%- for h in ansible_play_hosts -%}
           {%-   for c in hostvars[h].check_certs_inventory | default([]) -%}{%- set _ = rows.append(c) -%}{%- endfor -%}
           {%- endfor -%}
-          {%- set out = [] -%}
-          {%- for c in rows | sort(attribute='days') -%}
-          {%-   set _ = out.append([c.days, c.expires, c.host, c.subject, c.where,
-                                    'EXPIRED' if c.days < 0 else ('expires soon' if c.days <= check_certs_warn_days | default(30) | int else '')]) -%}
+          {%- set skipped = [] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   for c in hostvars[h].check_certs_skipped | default([]) -%}{%- set _ = skipped.append([c.host, c.where, c.reason]) -%}{%- endfor -%}
           {%- endfor -%}
-          {{ [{'title': 'All certificates, soonest expiry first', 'columns': ['Days left', 'Expires', 'Host', 'Subject', 'Where', 'Status'],
-               'rows': out}] }}
+          {{ [rows | cert_report_section(check_certs_warn_days | default(30) | int, check_certs_notice_days | default(60) | int)]
+             + ([{'title': 'Found but not checked', 'columns': ['Host', 'Where', 'Why'], 'rows': skipped,
+                  'text': 'Keystores that need a password (none is ever guessed: give it in check_certs_keystores with password_env), '
+                          ~ 'or that need keytool.'}] if skipped else []) }}
       run_once: true
 
   post_tasks:

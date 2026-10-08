@@ -463,7 +463,7 @@ See [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md): *Daily health*, *W
 - ACT (the model): [ADDING_ACT.md](ADDING_ACT.md). If a model answers `HTTP 400`, see its section
   [Both endpoint formats and `:probe`](ADDING_ACT.md#both-endpoint-formats-and-probe-act-0619-and-newer).
 - Letting ACT run fixes you trust without asking: [APPROVED_COMMANDS.md](APPROVED_COMMANDS.md).
-- Every setting you can change, and where to put it: [VARIABLES.md](VARIABLES.md).
+- Every setting you can change, and where to put it: [VARIABLES.md](VARIABLES.md) and [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md) (in print: the *Settings Reference* PDF).
 - MariaDB and MySQL checks (also in podman containers): [MARIADB.md](MARIADB.md).
 
 ## Step 12. Who can do what

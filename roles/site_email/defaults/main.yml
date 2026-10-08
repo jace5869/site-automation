@@ -8,7 +8,7 @@
 # Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
 # email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails.
 report_email_to: []
-report_email_cc: []
+report_email_cc: []                      # copied: a list, or text like report_email_to
 report_email_from: ""                    # the sender, e.g. aap-noreply@yoursite.mil
 report_email_smtp_host: ""               # your mail relay, e.g. smtp.yoursite.mil
 report_email_smtp_port: 25               # 25 or 587 with starttls, 465 with ssl
@@ -16,7 +16,7 @@ report_email_smtp_port: 25               # 25 or 587 with starttls, 465 with ssl
 # 465); none = not encrypted (only for a relay without encryption; then no login is sent).
 report_email_security: starttls
 report_email_ca_path: ""                 # a CA file that signed the relay's certificate (empty = the CAs the execution environment trusts)
-report_email_subject_prefix: "[AAP]"
+report_email_subject_prefix: "[AAP]"     # put before every subject, e.g. "[AAP] Certificate report: ..."
 # Send a formatted (HTML) version too, for reports that come with one (all VMware jobs). The email
 # always carries a plain-text copy for mail clients that do not show HTML. false = plain text only.
 report_email_html: true

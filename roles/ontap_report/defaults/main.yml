@@ -9,26 +9,26 @@ ontap_clusters: []
 # its CA in ontap_ca_path (a file in the project, e.g. "{{ playbook_dir }}/files/ca/ontap-ca.pem"),
 # or set false.
 ontap_validate_certs: true
-ontap_ca_path: ""
+ontap_ca_path: ""                        # the CA file (PEM) the clusters' certificates are checked with; empty = the execution environment's own trust
 ontap_timeout: 30                        # seconds for one request
 
 # Thresholds (used %, hours, days, seconds): at or above "warn" = amber, at or above "crit" = red.
 ontap_volume_warn_pct: 85
-ontap_volume_crit_pct: 90
-ontap_aggr_warn_pct: 85
-ontap_aggr_crit_pct: 90
-ontap_inode_warn_pct: 85
-ontap_inode_crit_pct: 90
+ontap_volume_crit_pct: 90                # volume used % -> red
+ontap_aggr_warn_pct: 85                  # aggregate used % -> amber
+ontap_aggr_crit_pct: 90                  # aggregate used % -> red
+ontap_inode_warn_pct: 85                 # inodes used % of a volume -> amber
+ontap_inode_crit_pct: 90                 # inodes used % -> red
 ontap_snapmirror_lag_warn_hours: 24      # last good transfer longer ago than this
-ontap_snapmirror_lag_crit_hours: 48
+ontap_snapmirror_lag_crit_hours: 48      # last good transfer longer ago than this -> red
 ontap_snapshot_reserve_warn_pct: 100     # snapshots using this much of their reserve (100 = they spill into the volume)
-ontap_snapshot_reserve_crit_pct: 150
+ontap_snapshot_reserve_crit_pct: 150     # snapshots using this much of their reserve -> red
 ontap_cert_warn_days: 60                 # certificates expiring within this many days
-ontap_cert_crit_days: 14
+ontap_cert_crit_days: 14                 # certificates expiring within this many days (or expired) -> red
 ontap_time_drift_warn_seconds: 60        # a node's clock against the AAP server's
-ontap_time_drift_crit_seconds: 300
+ontap_time_drift_crit_seconds: 300       # a node's clock this far off -> red
 ontap_port_errors_warn: 1                # receive errors (CRC and other bad frames) since the node booted
-ontap_port_errors_crit: 10000
+ontap_port_errors_crit: 10000            # receive errors on a port since boot -> red
 ontap_min_spares: 1                      # fewer spare disks than this on a node = amber (0 = red)
 ontap_ems_hours: 24                      # the error events of the last this-many hours
 ontap_ems_max: 500                       # read at most this many events per cluster

@@ -11,6 +11,7 @@
 - name: VMware | read the snapshots
   site_vmware_snapshots:
     datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
     validate_certs: "{{ vmware_validate_certs | bool }}"
     now: "{{ _vm_now | default(omit) }}"
   register: _vm_snap_read
@@ -22,7 +23,8 @@
 - name: VMware | snapshot report
   ansible.builtin.include_tasks: report.yml
   vars:
-    _vm_sn_vms: "{{ _vm_sn.all | map(attribute='moid') | unique | list | length }}"
+    _vm_vcenters: "{{ _vm_snap_read.vcenters }}"
+    _vm_sn_vms: "{{ _vm_sn.all | map('vm_snap_vm_key') | unique | list | length }}"
     _vm_sn_old_gb: "{{ _vm_sn.old | map(attribute='size_gb') | select('number') | sum | human_size }}"
     _vm_sn_all_gb: "{{ _vm_sn.all | map(attribute='size_gb') | select('number') | sum | human_size }}"
     _vm_report_subject: >-
@@ -32,11 +34,11 @@
                                                               if _vm_sn.all else 'no snapshots' }}
     _vm_report_lines: >-
       {%- set out = [_vm_sn.all | length ~ ' snapshot(s) on ' ~ _vm_sn_vms ~ ' VM(s), ' ~ _vm_sn_all_gb ~ ' - OLD = older than ' ~ _vm_sn_days] -%}
-      {%- set held = {} -%}{%- for h in _vm_sn.held -%}{%- set _ = held.update({h.moid ~ '#' ~ h.id: h.reason}) -%}{%- endfor -%}
+      {%- set held = {} -%}{%- for h in _vm_sn.held -%}{%- set _ = held.update({h | vm_snap_vm_key ~ '#' ~ h.id: h.reason}) -%}{%- endfor -%}
       {%- for x in _vm_sn.all -%}
-      {%-   set k = x.moid ~ '#' ~ x.id -%}
+      {%-   set k = x | vm_snap_vm_key ~ '#' ~ x.id -%}
       {%-   set flag = 'OLD ' if x in _vm_sn.old else ('HELD BACK (' ~ held[k] ~ ') ' if k in held else '') -%}
-      {%-   set _ = out.append(flag ~ x.vm ~ ': "' ~ x.name ~ '" ' ~ x.age_days ~ ' days old, ' ~ x.size_gb | human_size
+      {%-   set _ = out.append(flag ~ x.vm ~ (' (' ~ x.vcenter | vc_short ~ ')' if _vm_sn_multi else '') ~ ': "' ~ x.name ~ '" ' ~ x.age_days ~ ' days old, ' ~ x.size_gb | human_size
                                ~ ', taken ' ~ x.created ~ ' by ' ~ (x.taken_by or 'unknown') ~ (' - ' ~ x.description if x.description else '')) -%}
       {%- endfor -%}
       {{ out }}
@@ -45,16 +47,16 @@
       {%- set sections = [] -%}
       {%- if _vm_sn.old -%}
       {%-   set _ = sections.append({'title': 'To delete: older than ' ~ _vm_sn_days, 'status': 'warning', 'columns': cols,
-                                     'rows': _vm_sn.old | map('vm_snap_row') | list,
+                                     'rows': _vm_sn.old | map('vm_snap_row', _vm_sn_multi) | list,
                                      'text': 'The snapshot cleanup deletes these (in the workflow: after the approval). Old snapshots slow the VM down and fill the datastore.'}) -%}
       {%- endif -%}
       {%- if _vm_sn.held -%}
       {%-   set _ = sections.append({'title': 'Older than ' ~ _vm_sn_days ~ ', held back (never deleted automatically)',
-                                     'columns': cols + ['Why'], 'rows': _vm_sn.held | map('vm_snap_row') | list,
+                                     'columns': cols + ['Why'], 'rows': _vm_sn.held | map('vm_snap_row', _vm_sn_multi) | list,
                                      'text': 'The cleanup leaves these alone. The big ones are best deleted by hand, at a quiet time.'}) -%}
       {%- endif -%}
       {%- if _vm_sn.all -%}
-      {%-   set _ = sections.append({'title': 'All snapshots (any age), oldest first', 'columns': cols, 'rows': _vm_sn.all | map('vm_snap_row') | list,
+      {%-   set _ = sections.append({'title': 'All snapshots (any age), oldest first', 'columns': cols, 'rows': _vm_sn.all | map('vm_snap_row', _vm_sn_multi) | list,
                                      'text': 'Taken by: from vCenter events; unknown = older than vCenter keeps its events (often 30 days).'}) -%}
       {%- else -%}
       {%-   set _ = sections.append({'title': 'Result', 'lines': ['No VM has a snapshot.']}) -%}
@@ -73,13 +75,18 @@
   ansible.builtin.set_stats:
     data:
       vm_snapshots: >-
-        {{ {'max_age_days': vm_snapshot_max_age_days | float, 'snapshots': _vm_sn.all,
+        {{ {'vcenters': _vm_snap_read.vcenters, 'max_age_days': vm_snapshot_max_age_days | float, 'snapshots': _vm_sn.all,
             'to_delete': _vm_sn.old | length, 'held_back': _vm_sn.held} }}
       # the workflow passes these to the cleanup: it deletes only snapshots on this list (what the approver saw)
       vm_snapshot_cleanup_candidates: >-
         {%- set out = [] -%}
         {%- for x in _vm_sn.old -%}
-        {%-   set _ = out.append({'vm': x.vm, 'moid': x.moid, 'id': x.id, 'name': x.name, 'created': x.created, 'size_gb': x.size_gb,
+        {%-   set _ = out.append({'vm': x.vm, 'vcenter': x.vcenter, 'moid': x.moid, 'id': x.id, 'name': x.name, 'created': x.created, 'size_gb': x.size_gb,
                                   'size': x.size_gb | human_size}) -%}
         {%- endfor -%}
         {{ out }}
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_snap_read.vcenters }}"

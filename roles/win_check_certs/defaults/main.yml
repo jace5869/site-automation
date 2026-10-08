@@ -5,10 +5,11 @@
 # less than win_check_certs_expired_report_days ago (older leftovers are only listed in the
 # certificate report).
 
-win_check_certs_warn_days: 30
-win_check_certs_crit_days: 7
-win_check_certs_expired_report_days: 30
-win_check_certs_stores: ['Cert:\LocalMachine\My', 'Cert:\LocalMachine\WebHosting', 'Cert:\LocalMachine\Remote Desktop']
+win_check_certs_warn_days: 30            # a certificate expiring within this many days -> warning (amber in the certificate report)
+win_check_certs_notice_days: 60                # the certificate report colours these blue (an early heads-up; not a finding)
+win_check_certs_crit_days: 7             # within this many days -> critical
+win_check_certs_expired_report_days: 30  # an expired certificate NOT in use is a finding for this many days after it expired; older ones only in the report
+win_check_certs_stores: ['Cert:\LocalMachine\My', 'Cert:\LocalMachine\WebHosting', 'Cert:\LocalMachine\Remote Desktop']  # the machine certificate stores read
 win_check_certs_ignore_subjects: []     # wildcards, e.g. ['CN=localhost*']
 # TLS services whose certificate a client actually gets, e.g.
 #   win_check_certs_endpoints:

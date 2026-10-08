@@ -67,14 +67,21 @@
   ansible.builtin.set_fact:
     site_act_result:
       level: "{{ _site_act_level }}"
-      status: "{{ act_triage_result.status | default('error') }}"
-      summary: "{{ (act_triage_result.summary | default('') or act_triage_result.stop_reason | default('ACT gave no report')) | truncate(6000) }}"
+      # a model that lost the thread answers like a chat ("I am ready. What task would you like ...?"):
+      # that is no analysis, and whatever it tried to run is not a fix - say so instead of passing it on
+      status: "{{ 'no_analysis' if _site_act_chat else act_triage_result.status | default('error') }}"
+      summary: >-
+        {{ ('ACT gave no analysis: the model answered as a chat ("' ~ act_triage_result.summary | default('') | truncate(120) ~ '"), not about the findings.'
+            ~ ' Run the job again; if it repeats, try another model (site_act_models).') if _site_act_chat
+           else (act_triage_result.summary | default('') or act_triage_result.stop_reason | default('ACT gave no report')) | truncate(6000) }}
       applied: >-
         {{ act_triage_result.commands | default([]) | selectattr('approval', 'equalto', 'pre_approved')
            | map(attribute='command') | list }}
       proposed: >-
-        {{ act_triage_result.denied | default([]) | selectattr('pre_approvable', 'defined') | selectattr('pre_approvable')
+        {{ [] if _site_act_chat else act_triage_result.denied | default([]) | selectattr('pre_approvable', 'defined') | selectattr('pre_approvable')
            | map(attribute='command') | list }}
+  vars:
+    _site_act_chat: "{{ act_triage_result.summary | default('') | act_is_chat_reply }}"
 
 - name: ACT | what ACT says
   ansible.builtin.debug:

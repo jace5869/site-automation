@@ -10,7 +10,7 @@ mail clients that do not show HTML. One email per job run, whatever the number o
 | Health check (Linux) | `health_check.yml` | findings of every host (critical first), hosts that did not report, healthy hosts |
 | Windows health check | `win_health_check.yml` | the same, for Windows servers |
 | Database health | `database_health.yml` | the same, for the database check |
-| Certificate report (Linux / Windows) | `cert_report.yml`, `win_cert_report.yml` | findings, plus every certificate, soonest expiry first |
+| Certificate report (Linux / Windows) | `cert_report.yml`, `win_cert_report.yml` | findings, plus every certificate, soonest expiry first: red expired, amber within 30 days, blue within 60 |
 | POA&M status | `poam_status.yml` | overdue, due-soon and missing items |
 | ServiceNow health | `servicenow_health.yml` | the instance and the MID Servers |
 | Troubleshoot (Linux / Windows) | `troubleshoot.yml`, `win_troubleshoot.yml` | what the checks found |
@@ -64,6 +64,8 @@ The subject is the report's title with its counts, e.g. `[AAP] Health check: 3 f
 48 host(s)`. Every email ends with the AAP job number, the template, who started it and when. A dry
 run (Check) sends nothing. A job without `report_email_to` says `No email: report_email_to is not
 set`.
+
+**All settings**, with their defaults: [site_email](VARIABLES_REFERENCE.md#site_email).
 
 ## Green or red: when a report finds problems
 

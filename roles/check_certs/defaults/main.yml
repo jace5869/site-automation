@@ -2,8 +2,9 @@
 # CERTS: certificates that expire soon - as files on the host, inside Java keystores, and as
 # served by TLS endpoints (what a browser or client actually sees).
 
-check_certs_warn_days: 30
-check_certs_crit_days: 14
+check_certs_warn_days: 30                # a certificate expiring within this many days -> warning (and amber in the certificate report)
+check_certs_notice_days: 60                # the certificate report colours these blue (an early heads-up; not a finding)
+check_certs_crit_days: 14                # within this many days (or expired) -> critical
 
 # Certificate files (PEM) to check. Globs work. Every certificate in a file is checked (a chain
 # file with an expiring intermediate is a problem too).
@@ -12,9 +13,9 @@ check_certs_files: []                    # e.g. [/etc/stigman/*.crt, /etc/pki/tl
 # Also look for certificates in the usual places. Files with many certificates are CA bundles
 # (hundreds of roots, noisy) and are skipped unless listed in check_certs_files.
 check_certs_discover: true
-check_certs_discover_dirs: [/etc/pki/tls/certs, /etc/pki/nginx, /etc/nginx, /etc/httpd/conf.d, /etc/stigman]
-check_certs_discover_exclude: 'ca-bundle|ca-certificates|/localhost\.crt$'
-check_certs_discover_max_per_file: 10
+check_certs_discover_dirs: [/etc/pki/tls/certs, /etc/pki/nginx, /etc/nginx, /etc/httpd/conf.d, /etc/stigman]  # the folders searched (two levels deep) for *.crt, *.pem, *.cer
+check_certs_discover_exclude: 'ca-bundle|ca-certificates|/localhost\.crt$'  # regular expression: found files whose path matches are skipped
+check_certs_discover_max_per_file: 10    # a found file with more certificates than this is a CA bundle: skipped
 
 # TLS endpoints, checked FROM this host, e.g. the site's own web server:
 #   check_certs_endpoints:
@@ -27,3 +28,21 @@ check_certs_endpoints: []
 #   check_certs_keystores:
 #     - {path: /opt/servicenow/mid/agent/security/agent_keystore, password_env: KEYSTORE_PASSWORD}
 check_certs_keystores: []
+
+# ---- Finding them by themselves (the certificate report turns both on; the health check does not) ----
+# Listening TCP ports that answer TLS: each probed once, on the address it listens on, with
+# `openssl s_client` (check_certs_probe_timeout seconds each, at most check_certs_discover_ports_max
+# ports). Not these ports: plain-text services that would only log a stray connection.
+check_certs_discover_ports: false
+check_certs_discover_ports_skip: [22, 25, 53, 80, 110, 111, 123, 143, 323, 389, 631, 2049, 3306, 5355, 5432, 6379, 11211, 20048]  # ports never probed (plain-text services: ssh, smtp, dns, http, ldap, databases ...)
+check_certs_discover_ports_max: 25       # probe at most this many listening ports (the rest are listed as not probed)
+check_certs_probe_timeout: 3             # seconds for each port probe
+# Java keystores (*.jks, *.keystore, *.p12, *.pfx) in these folders, and the ones running Java programs
+# use (-Djavax.net.ssl.keyStore=...). A keystore that needs a password is listed as not checked: no
+# password is ever guessed - give it in check_certs_keystores (password_env). The JDK's own trust
+# stores (cacerts) are skipped.
+check_certs_discover_keystores: false
+check_certs_discover_keystore_dirs: [/etc, /opt, /srv, /usr/share/tomcat, /var/lib/tomcat, /var/lib/pki]  # the folders searched for keystores
+check_certs_discover_keystore_depth: 5   # how many folder levels deep the search goes
+check_certs_discover_keystore_exclude: '/(cacerts|jssecacerts)$|/jre/lib/security/|/lib/security/'  # regular expression: keystore paths skipped (the JDK's trust stores)
+check_certs_discover_keystore_max: 40    # read at most this many found keystores per host

@@ -22,7 +22,7 @@ REPO = os.environ.get("SITE_AUTOMATION_DIR") or (
     os.path.dirname(os.path.dirname(_HERE)) if os.path.isfile(os.path.join(_HERE, "..", "START_HERE.md"))
     else sys.exit("build_ops_guide.py: cannot find the site-automation repository; "
                   "run the script from <repo>/docs/pdf or set SITE_AUTOMATION_DIR=<repo>"))
-SA_VERSION = "0.11.1"
+SA_VERSION = "0.12.0"
 DOCS = [  # (file, chapter title)
     ("docs/START_HERE.md", "Start here: the pieces and how they fit"),
     ("docs/SETUP_AAP.md", "Setting up AAP, step by step"),
@@ -37,7 +37,6 @@ DOCS = [  # (file, chapter title)
     ("docs/NETAPP.md", "NetApp ONTAP health report"),
     ("docs/EMAIL_REPORTS.md", "Emailed reports: the formatted email and its look"),
     ("docs/SECRETS.md", "Secrets: where they live"),
-    ("docs/VARIABLES.md", "Settings (variables): what, where, and who wins"),
     ("docs/APPROVED_COMMANDS.md", "Approved commands: what ACT may run by itself"),
     ("docs/MARIADB.md", "The MariaDB and MySQL check, step by step"),
 ]
@@ -428,6 +427,8 @@ def build():
             "already in AAP? Chapter 3 replaces the inventory parts of chapter 2. The later chapters "
             "are reference: open them when you build a workflow, read a finding, add ACT, change "
             "a setting, approve commands or set up the MariaDB / MySQL check.",
+            "Every setting, with its default and what it does - and where to put it - is in its own PDF, "
+            "the *Settings Reference*: keep it open next to this one.",
             "Rendered from `docs/` in the site-automation repository (version %s). The "
             "repository is the source of truth." % SA_VERSION]),
         NextPageTemplate("content"), PageBreak(), Paragraph("Contents", ST["tochead"])]
@@ -436,6 +437,7 @@ def build():
     story += [toc, PageBreak()]
     for n, (path, chapter) in enumerate(DOCS, 1):
         text = open("%s/%s" % (REPO, path), encoding="utf-8").read()
+        text = re.sub(r"<!--.*?-->\s*", "", text, flags=re.S)      # notes for editors, not for readers
         story += render(text, "%d. %s" % (n, chapter))
     story += appendix_credential_types()
     OpsDoc(OUT).multiBuild(story)

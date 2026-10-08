@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build "Site Automation - How It Fits Together" (PDF): the teaching guide rendered from
-docs/HOW_IT_FITS_TOGETHER.md, with drawn diagrams, plus an appendix that prints every role's
-defaults/main.yml (every setting there is).
+docs/HOW_IT_FITS_TOGETHER.md, with drawn diagrams, plus an appendix with the settings files
+(playbooks/group_vars/). Every setting is in its own PDF: build_settings_reference.py.
 
     python3 build_how_it_fits.py [output.pdf]
 """
@@ -13,13 +13,6 @@ from actpdf import _arrow, _box
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "Site-Automation-How-It-Fits-Together.pdf"
 SRC = "docs/HOW_IT_FITS_TOGETHER.md"
-ROLES = ["check_disk", "check_mounts", "check_services", "check_performance", "check_time",
-         "check_network", "check_logging", "check_selinux", "check_fapolicyd", "check_auditd",
-         "check_accounts", "check_certs", "check_patching", "check_mariadb", "check_containers",
-         "podman_discover", "site_findings",
-         "site_act", "servicenow", "poam", "patch", "troubleshoot", "service_watch", "stigman_stack",
-         "vmware_vm", "site_email"]
-CUT = {"troubleshoot": "ts_areas:", "service_watch": "# ---- Derived"}   # print the file up to here
 
 
 class HowDoc(g.OpsDoc):
@@ -179,25 +172,6 @@ g.FIGURES.update({"four_sources": fig_four_sources, "precedence": fig_precedence
                   "inventory_tree": fig_inventory_tree, "launch": fig_launch, "update_flow": fig_update_flow})
 
 
-def appendix_defaults():
-    story = [PageBreak()] + section("Appendix: every setting you can change", [P(
-        "Each block is one role's `defaults/main.yml`: the settings with their default values and "
-        "what they do. To change one, set the same name in your settings files "
-        "(`playbooks/group_vars/`, `playbooks/host_vars/`) or in AAP's Variables boxes - never edit "
-        "the file (`docs/VARIABLES.md`). Names that start with an underscore are internal. The Windows "
-        "roles (`win_*`) are not printed here: every setting, Windows included, is in "
-        "`docs/VARIABLES_REFERENCE.md`.")])
-    for role in ROLES:
-        path = "%s/roles/%s/defaults/main.yml" % (g.REPO, role)
-        text = open(path, encoding="utf-8").read()
-        if role in CUT and CUT[role] in text:
-            text = text.split(CUT[role])[0].rstrip() + "\n# ... (the rest of this file: see the repository)"
-        text = "\n".join(l for l in text.splitlines() if l.strip() != "---")
-        story += [H2("%s  (roles/%s/defaults/main.yml)" % (role, role), toc=True)] + \
-            code_chunks(text.strip(), "YAML")
-    return story
-
-
 def code_chunks(text, label, size=34):
     """A long file as several code blocks, so a block never leaves a page half empty."""
     lines = g.wrap_code(text).splitlines()
@@ -234,9 +208,9 @@ def build():
         space(4),
         callout("note", "Read this first", [
             "This guide explains the ideas. The *Operations Runbooks Setup Guide* has the clicks, "
-            "one step at a time. The appendix lists every Linux setting you can change "
-            "(all of them, Windows too: `docs/VARIABLES_REFERENCE.md`).",
-            "Rendered from `docs/HOW_IT_FITS_TOGETHER.md` and `roles/*/defaults/main.yml` in the "
+            "one step at a time. Every setting you can change, with its default, is in the "
+            "*Settings Reference* PDF.",
+            "Rendered from `docs/HOW_IT_FITS_TOGETHER.md` and `playbooks/group_vars/` in the "
             "site-automation repository (version %s)." % g.SA_VERSION]),
         NextPageTemplate("content"), PageBreak(), Paragraph("Contents", ST["tochead"])]
     toc = TableOfContents()
@@ -245,7 +219,6 @@ def build():
     text = open("%s/%s" % (g.REPO, SRC), encoding="utf-8").read()
     story += g.render(text, "1. How it all fits together")
     story += appendix_group_vars()
-    story += appendix_defaults()
     HowDoc(OUT).multiBuild(story)
     print("wrote", OUT)
 
