@@ -15,7 +15,7 @@ spaces.
 | [ACT-5Ws-Leadership-Brief.pdf](ACT-5Ws-Leadership-Brief.pdf) | Leadership brief: ACT with AAP (who, what, when, where, why) | - |
 | [ACT-5Ws-Standalone-Brief.pdf](ACT-5Ws-Standalone-Brief.pdf) | Leadership brief: ACT on its own | - |
 
-**Versions.** The three site-automation PDFs are for this release (site-automation 0.11.0, ACT
+**Versions.** The three site-automation PDFs are for this release (site-automation 0.11.1, ACT
 0.6.23). The four ACT PDFs were made for ACT 0.6.18 (two of them were corrected for 0.6.21: how
 the key reaches a host); for what
 changed since (both endpoint formats and `:probe`, the danger tier under `--auto`, https-only

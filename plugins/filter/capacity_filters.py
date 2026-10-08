@@ -95,8 +95,10 @@ def runway_text(days, now=None):
         return "not growing"
     if days == 0:
         return "reached"
+    if days >= 3650:                        # before the date: a tiny growth gives a date past year 9999
+        return "10+ years"
     when = (now or datetime.datetime.now(datetime.timezone.utc)) + datetime.timedelta(days=days)
-    return "%d days (%s)" % (days, when.strftime("%Y-%m-%d")) if days < 3650 else "10+ years"
+    return "%d days (%s)" % (days, when.strftime("%Y-%m-%d"))
 
 
 def days_text(days):

@@ -70,6 +70,7 @@ class Trend(unittest.TestCase):
         self.assertEqual(cf.runway_text(None), "not growing")
         self.assertEqual(cf.runway_text(0), "reached")
         self.assertTrue(cf.runway_text(10).startswith("10 days ("))
+        self.assertEqual(cf.runway_text(10 ** 9), "10+ years")                    # past year 9999: no date, no crash
         self.assertEqual(cf.fit_text({"r2": 0.91, "span": 30.0}), "good (R2 0.91, 30 days)")
 
 
@@ -157,6 +158,17 @@ class Report(unittest.TestCase):
         self.assertIn("hosts recommended (average host here: 32 cores, 512.0 GB memory): 1 now, 5 within 12 months", ev)
         self.assertIn("BEGIN_ACT_ANALYSIS", task)
         self.assertIn("esx1", cf.vm_capacity_names(DATA))
+
+    def test_almost_flat_growth(self):
+        """A few bytes a day: runways of millions of days (seen on a real vCenter) read 10+ years."""
+        import copy
+        d = copy.deepcopy(DATA)
+        d["datastores"][1]["history"] = line(1 * TB, 1)
+        d["clusters"][1]["history"]["mem"] = line(100 * GB, 1)
+        r = cf.vm_capacity_report(d, OPTS)
+        cells = [c for s in r["report"]["sections"] for row in s.get("rows") or [] for c in row]
+        self.assertIn("10+ years", cells)
+        json.dumps(r["numbers"])
 
     def test_math_vs_genai(self):
         self.assertEqual(cf.compare(100, 110), ("agree", "ok"))
