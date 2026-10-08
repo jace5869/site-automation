@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.1 — 2026-10-08
+
+**Updating without scripts:** only `plugins/filter/capacity_filters.py` changed (and its test):
+copy that one file over yours, or paste the release after deleting `playbooks\group_vars`,
+`playbooks\host_vars` and `poam\poam.csv` from it.
+
+- **Fix: capacity planning stopped with `OverflowError: date value out of range`** when a cluster or
+  datastore grows by only a few bytes a day: its runway (millions of days) was turned into a date
+  past the year 9999 before "10+ years" was chosen. Such runways now read "10+ years" first; a
+  test covers an almost flat history.
+
 ## 0.11.0 — 2026-10-07
 
 **Updating without scripts** (copying the release over your repository): first delete
