@@ -527,7 +527,7 @@ inc="$(newticket $'Please build a server.\nvm_name: app01\ntemplate: rhel9-gold\
 n0=$(wc -l < "$work/sn.jsonl")
 run "deploy from a ticket, dry run: the request with where each value came from, where it would go; nothing built or written" ok \
     vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$inc" -e "$rules" \
-    -- "vm_name: app01   (from description)" "cpu: 4   (from comment" "would be deployed in DC0_C0 (dry run)"
+    -- "vm_name: app01   (from description)" "cpu: 4   (from comment" "ready to build in DC0_C0 - dry run"
 [ "$(sed -n "$((n0 + 1)),\$p" "$work/sn.jsonl" | grep -c '"PATCH"')" = 0 ] && ! VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q '"app01"' \
     && echo "ok   -   ...no VM built, nothing written on the ticket" || { echo "FAIL -   ...the dry run built or wrote something"; fails=$((fails + 1)); }
 run "deploy from a ticket: a template not allowed is refused, and the ticket says why" fail vm_deploy_from_ticket.yml \
@@ -618,11 +618,12 @@ good='{"vm_name": {"value": "winapp05", "evidence": "called winapp05"}, "templat
        "questions": []}'
 inc5="$(newticket 'Hi team, we need a new Windows Server 2022 box called winapp05 for SiteA with 2 GB of RAM, 2 CPUs and a 120 GB system disk plus a 200 GB data disk. Thanks, Jane')"
 act_says "$good"
-run "GenAI reads a request in plain words: a proposal on the ticket, each value with its words - nothing built" ok \
+run "GenAI reads a request in plain words: a proposal on the ticket, checked and placed, waiting for a person - nothing built" ok \
     vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc5" -e "$genai" -e "$actvars" \
-    -- "GenAI proposal posted - run the job again to build it" "vm_name: winapp05" "disks_gb: 120, 200"
-tail -1 "$work/sn.jsonl" | grep -q '\[AAP\] GenAI proposal (ticket text sha256:' && ! VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q '"winapp05"' \
-    && echo "ok   -   ...the proposal is a work note; no VM yet" || { echo "FAIL -   ...proposal"; fails=$((fails + 1)); }
+    -- "winapp05 ready to build in DC0_" "waiting for the approval" "vm_name: winapp05   (from GenAI proposal (this run))" "disks_gb: 120, 200"
+grep -q '\[AAP\] GenAI proposal (ticket text sha256:' "$work/sn.jsonl" && tail -1 "$work/sn.jsonl" | grep -q '\[AAP\] Checked - ready to build' \
+    && ! VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q '"winapp05"' \
+    && echo "ok   -   ...the proposal and where it would go are work notes; no VM yet" || { echo "FAIL -   ...proposal"; fails=$((fails + 1)); }
 rm -f "$work/act/fake-act-stdin.txt"
 act_says '{"vm_name": {"value": "evil01", "evidence": "x"}, "questions": []}'          # must not be asked again
 run "the next run builds the proposal - GenAI not asked again - placed by the rules among the site's clusters" ok \
@@ -644,14 +645,15 @@ EOPY
 inc6="$(newticket 'please build me a RHEL 9 server with 4 CPUs')"
 act_says '{"vm_name": {"value": "rhelsrv01", "evidence": "a RHEL 9 server"}, "template": {"value": "rhel9-gold", "evidence": "RHEL 9"},
            "cpu": {"value": 4, "evidence": "4 CPUs"}, "questions": ["Which site: SiteA?"]}'
-run "GenAI makes up a name: dropped; the questions go to the requester as a comment; nothing built" ok \
+run "GenAI makes up a name: dropped; the questions go to the requester as a comment; nothing built (red: a workflow stops)" fail \
     vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc6" -e "$genai" -e "$actvars" \
-    -- "questions for the requester (nothing built)" "DROPPED (not in the ticket): vm_name 'rhelsrv01'" "QUESTION: Which site: SiteA?"
+    -- "questions for the requester (nothing built)" "DROPPED (not in the ticket): vm_name 'rhelsrv01'" "QUESTION: Which site: SiteA?" \
+       "the requester has to answer"
 tail -1 "$work/sn.jsonl" | grep -q '"comments": "\[AAP\] To build this VM' && echo "ok   -   ...a comment the requester sees" || { echo "FAIL -   ...questions comment"; fails=$((fails + 1)); }
 inc7="$(newticket 'New RHEL 9 server called lnxapp07 for SiteA please, 2 CPUs and 2 GB of RAM')"
 act_says '{"vm_name": {"value": "lnxapp07", "evidence": "called lnxapp07"}, "template": {"value": "rhel9-gold", "evidence": "RHEL 9"},
            "cpu": {"value": 2, "evidence": "2 CPUs"}, "memory_gb": {"value": 2, "evidence": "2 GB of RAM"}, "site": {"value": "SiteA", "evidence": "for SiteA"}}'
-run "GenAI proposal for lnxapp07" ok vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc7" -e "$genai" -e "$actvars" -- "GenAI proposal posted"
+run "GenAI proposal for lnxapp07" ok vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc7" -e "$genai" -e "$actvars" -- "lnxapp07 ready to build"
 "$py" - "$sn_port" "$inc7" <<'EOPY'
 import base64, json, sys, urllib.request
 h = {"Content-Type": "application/json", "Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode()}
@@ -661,9 +663,33 @@ urllib.request.urlopen(urllib.request.Request(u + "/" + sid, data=b'{"comments":
 EOPY
 rm -f "$work/act/fake-act-stdin.txt"
 run "the ticket changed after the proposal: void - GenAI reads it again, nothing built" ok vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc7" \
-    -e "$genai" -e "$actvars" -- "GenAI proposal posted - run the job again to build it"
+    -e "$genai" -e "$actvars" -- "lnxapp07 ready to build" "waiting for the approval"
 [ -e "$work/act/fake-act-stdin.txt" ] && ! VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q '"lnxapp07"' \
     && echo "ok   -   ...asked again, not built" || { echo "FAIL -   ...stale proposal"; fails=$((fails + 1)); }
+# the workflow: one launch - propose, the approval, build (the steps as AAP's workflow runs them)
+inc8="$(newticket 'Please build a RHEL 9 server called lnxapp08 for SiteA, 2 CPUs, 2 GB of RAM')"
+act_says '{"vm_name": {"value": "lnxapp08", "evidence": "called lnxapp08"}, "template": {"value": "rhel9-gold", "evidence": "RHEL 9"},
+           "cpu": {"value": 2, "evidence": "2 CPUs"}, "memory_gb": {"value": 2, "evidence": "2 GB of RAM"}, "site": {"value": "SiteA", "evidence": "for SiteA"}}'
+run "workflow step 1 (vm_deploy_phase: propose): GenAI proposes, checked and placed - nothing built" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$inc8" -e "$genai" -e "$actvars" -e vm_deploy_phase=propose -- "lnxapp08 ready to build in DC0_" "waiting for the approval"
+rm -f "$work/act/fake-act-stdin.txt"
+run "workflow step 3, after the approval (vm_deploy_phase: build): built from the posted proposal, GenAI not asked" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$inc8" -e "$genai" -e "$actvars" -e vm_deploy_phase=build -- "lnxapp08 deployed"
+[ ! -e "$work/act/fake-act-stdin.txt" ] && VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q '"lnxapp08"' \
+    && echo "ok   -   ...lnxapp08 exists; ACT was not called by the build step" || { echo "FAIL -   ...workflow build"; fails=$((fails + 1)); }
+inc9="$(newticket 'Need a RHEL 9 server called lnxapp09 for SiteA')"
+run "workflow build step on a ticket with no proposal: refused, nothing built (GenAI is never asked in the build step)" fail \
+    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc9" -e "$genai" -e "$actvars" -e vm_deploy_phase=build -- "has no GenAI proposal"
+inc10="$(newticket 'Please build a RHEL 9 server called lnxapp10 for SiteA, 2 CPUs, 2 GB of RAM')"
+act_says '{"vm_name": {"value": "lnxapp10", "evidence": "called lnxapp10"}, "template": {"value": "rhel9-gold", "evidence": "RHEL 9"},
+           "cpu": {"value": 2, "evidence": "2 CPUs"}, "memory_gb": {"value": 2, "evidence": "2 GB of RAM"}, "site": {"value": "SiteA", "evidence": "for SiteA"}}'
+run "one run, no approval (vm_deploy_genai_approval: false): GenAI reads, AAP checks and builds" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$inc10" -e "$genai" -e "$actvars" -e vm_deploy_genai_approval=false -- "lnxapp10 deployed"
+grep -q 'Building it now (no approval step' "$work/sn.jsonl" && echo "ok   -   ...the proposal note says it is built now" || { echo "FAIL -   ...auto note"; fails=$((fails + 1)); }
+inc11="$(newticket $'vm_name: lnxapp11\ntemplate: rhel9-gold\nsite: SiteA\ncpu: 2\nmemory_gb: 2')"
+run "workflow step 1 with key: value lines (no GenAI needed): checked and placed, nothing built" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$inc11" -e "$genai" -e "$actvars" -e vm_deploy_phase=propose -- "lnxapp11 ready to build in DC0_"
+! VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q '"lnxapp11"' && echo "ok   -   ...no VM before the approval" || { echo "FAIL -   ...built too early"; fails=$((fails + 1)); }
 unset GENAI_KEY FAKE_ACT_OUT FAKE_ACT_CONFIG
 unset SN_HOST SN_USERNAME SN_PASSWORD
 kill "$sn_pid" 2>/dev/null

@@ -2,10 +2,12 @@
 # DEPLOY, the build part (deploy.yml includes it): the request checked against the rules, the
 # "Deploying" note, the build, the result on the ticket, the report. Input from deploy.yml: _vd_rec,
 # _vd_table, _vd_sn_url, _vd_sn_user, _vd_job, _vd_prop (+ _vd_prop_ok: a GenAI proposal for the
-# ticket text as it is now).
+# ticket text as it is now), _vd_plan_only (the workflow's propose step, or a GenAI proposal waiting
+# for a person: check everything, find where it would go, write that on the ticket - build nothing).
 
 - name: VMware | the VM the ticket asks for, checked against the rules
   ansible.builtin.set_fact:
+    _vd_dry: "{{ ansible_check_mode or _vd_plan_only | default(false) | bool }}"
     _vd_parsed: "{{ _vd_rec | vm_deploy_spec(vm_deploy_defaults, _vd_prop if _vd_prop_ok | bool else none) }}"
     _vd: >-
       {{ (_vd_rec | vm_deploy_spec(vm_deploy_defaults, _vd_prop if _vd_prop_ok | bool else none)) | vm_deploy_check(_vd_rec, {
@@ -65,7 +67,7 @@
     timeout: "{{ servicenow_timeout | default(30) }}"
     status_code: [200, 401, 403, 404]
   register: _vd_note1
-  when: not ansible_check_mode
+  when: not ansible_check_mode and not _vd_plan_only | bool
 
 - name: VMware | the ticket took the note (no VM without a record on its ticket)
   ansible.builtin.assert:
@@ -74,9 +76,9 @@
       Nothing was built: ServiceNow refused the work note (HTTP {{ _vd_note1.status }}) - the ServiceNow API account needs to
       update {{ _vd_table }} tickets. {{ _vd_note1.json.error.message | default('') }}
     quiet: true
-  when: not ansible_check_mode
+  when: not ansible_check_mode and not _vd_plan_only | bool
 
-- name: "VMware | deploy {{ _vd.spec.vm_name }} from {{ _vd.spec.template }}{{ ' - DRY RUN, nothing is built' if ansible_check_mode else '' }}"
+- name: "VMware | deploy {{ _vd.spec.vm_name }} from {{ _vd.spec.template }}{{ ' - nothing is built: where it would go' if _vd_dry | bool else '' }}"
   site_vmware_deploy:
     name: "{{ _vd.spec.vm_name }}"
     template: "{{ _vd.spec.template }}"
@@ -108,6 +110,7 @@
     wait_ip: "{{ vm_deploy_wait_ip | int }}"
     validate_certs: "{{ vmware_validate_certs | bool }}"
   register: _vd_vm
+  check_mode: "{{ _vd_dry | bool }}"  # the propose step resolves the placement (read-only) like a dry run
   ignore_errors: true                 # the failure is written on the ticket and reported; the job fails at the end
 
 - name: VMware | the result on the ticket
@@ -121,7 +124,14 @@
     body_format: json
     body: >-
       {%- set v = _vd_vm.vm | default({}) -%}
-      {%- if not _vd_vm.failed | default(false) -%}
+      {%- if _vd_plan_only | bool and not _vd_vm.failed | default(false) -%}
+      {%-   set lines = ['[AAP] Checked - ready to build after the approval (' ~ _vd_job ~ '):']
+                       + (_vd.spec | vm_deploy_spec_text)
+                       + ['It would go to: vCenter ' ~ v.vcenter | default('') ~ ', cluster ' ~ v.cluster | default('') ~ ', datastore '
+                          ~ v.datastore | default('') ~ ', folder ' ~ v.folder | default('') ~ ' - ' ~ v.cpu | default('?') ~ ' vCPU, '
+                          ~ v.memory_gb | default('?') ~ ' GB, disks ' ~ v.disks_gb | default([]) | join(' + ') ~ ' GB']
+                       + _vd_vm.notes | default([]) -%}
+      {%- elif not _vd_vm.failed | default(false) -%}
       {%-   set lines = ['[AAP] VM ' ~ v.name ~ ' deployed (' ~ _vd_job ~ ').',
                          ('MAC address: ' ~ v.mac | default('?') ~ ' - it boots from the network (PXE) to its task sequence; computer name '
                           ~ v.hostname | default(v.name)) if _vd.spec.pxe | default(false) else
@@ -135,7 +145,7 @@
                        + (['The VM exists in vCenter (partly set up): check it, or delete it before running the job again.'] if v.created | default(false) else [])
                        + _vd_vm.notes | default([]) -%}
       {%- endif -%}
-      {{ {'work_notes': lines | join('\n')} | combine(vm_deploy_done_fields if not _vd_vm.failed | default(false) else {}) }}
+      {{ {'work_notes': lines | join('\n')} | combine(vm_deploy_done_fields if not _vd_vm.failed | default(false) and not _vd_plan_only | bool else {}) }}
     validate_certs: "{{ servicenow_validate_certs | default(true) }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"
@@ -146,11 +156,13 @@
 - name: VMware | deploy report
   ansible.builtin.include_tasks: report.yml
   vars:
+    _vd_how: "{{ 'dry run' if ansible_check_mode else 'waiting for the approval' }}"
     _vd_v: "{{ _vd_vm.vm | default({}) }}"
     _vd_ok: "{{ not _vd_vm.failed | default(false) }}"
     _vm_report_subject: >-
       {{ 'VM deploy ' ~ _vd_rec.number ~ ': ' ~ _vd.spec.vm_name ~ ' '
-         ~ (('would be deployed in ' ~ _vd_v.cluster | default('?') ~ ' (dry run)') if ansible_check_mode
+         ~ (('ready to build in ' ~ _vd_v.cluster | default('?') ~ ' - ' ~ _vd_how) if _vd_dry | bool and _vd_ok | bool
+            else ('NOT deployable: ' ~ _vd_vm.msg | default('?') | truncate(120)) if _vd_dry | bool
             else (('deployed' ~ ((' - PXE boot, MAC ' ~ _vd_v.mac | default('?')) if _vd.spec.pxe | default(false)
                                  else ((' - ' ~ _vd_v.ip) if _vd_v.ip | default('') else ', no IP yet'))) if _vd_ok | bool else 'NOT deployed')) }}
     _vm_report_lines: >-
@@ -178,9 +190,11 @@
                      ['Datastore', _vd_v.datastore | default('')], ['Folder', _vd_v.folder | default('')],
                      ['Size', _vd_v.cpu | default('?') ~ ' vCPU, ' ~ _vd_v.memory_gb | default('?') ~ ' GB'],
                      ['Disks (GB)', _vd_v.disks_gb | default([]) | join(', ')], ['Power', _vd_v.power | default('-')]] -%}
-      {%- set sections = [{'title': 'Result', 'status': ('info' if ansible_check_mode else ('ok' if _vd_ok | bool else 'critical')),
+      {%- set sections = [{'title': 'Result', 'status': ('info' if _vd_dry | bool and _vd_ok | bool else ('ok' if _vd_ok | bool else 'critical')),
                            'columns': ['', ''], 'rows': res,
                            'text': ('A dry run (Check): nothing was built and nothing was written on the ticket.' if ansible_check_mode
+                                    else 'Checked: nothing is built yet. Approve the workflow to build it (where it would go: above).'
+                                    if _vd_plan_only | bool and _vd_ok | bool
                                     else ('' if _vd_ok | bool else _vd_vm.msg | default('')))},
                           {'title': 'The request (from ticket ' ~ _vd_rec.number ~ ')', 'columns': ['Setting', 'Value', 'From'], 'rows': req,
                            'text': _vd_rec.short_description | default('')}] -%}
@@ -188,7 +202,7 @@
       {%-   set _ = sections.append({'title': 'Notes', 'status': 'warning', 'lines': _vd_vm.notes}) -%}
       {%- endif -%}
       {{ {'title': _vm_report_subject | trim,
-          'status': 'info' if ansible_check_mode else ('critical' if not _vd_ok | bool else ('warning' if _vd_vm.notes | default([]) else 'ok')),
+          'status': 'info' if _vd_dry | bool and _vd_ok | bool else ('critical' if not _vd_ok | bool else ('warning' if _vd_vm.notes | default([]) else 'ok')),
           'subtitle': 'Ticket ' ~ _vd_rec.number ~ ' - ' ~ _vd_job,
           'summary': [{'label': 'VM', 'value': _vd.spec.vm_name},
                       {'label': 'IP address', 'value': _vd_v.ip | default('', true) or '-', 'status': 'ok' if _vd_v.ip | default('') else ''},
@@ -203,7 +217,8 @@
       vm_deploy: >-
         {{ {'ticket': _vd_rec.number, 'table': _vd_table, 'spec': _vd.spec, 'sources': _vd.sources,
             'vm': _vd_vm.vm | default({}), 'notes': _vd_vm.notes | default([]), 'ok': not _vd_vm.failed | default(false),
-            'error': _vd_vm.msg | default('') if _vd_vm.failed | default(false) else '', 'dry_run': ansible_check_mode} }}
+            'error': _vd_vm.msg | default('') if _vd_vm.failed | default(false) else '', 'dry_run': ansible_check_mode,
+            'built': not _vd_dry | bool and not _vd_vm.failed | default(false), 'waiting_for_approval': _vd_plan_only | bool} }}
 
 - name: VMware | the VM was deployed
   ansible.builtin.assert:

@@ -617,6 +617,8 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_deploy_done_fields` | `{}` | Fields set on the ticket when the VM is up, e.g. to resolve an incident: {state: "6", close_code: "Solution provided", close_notes: "VM deployed"} (your instance's values) |
 | `vm_deploy_genai` | `false` | ---- GenAI reads a request written in plain words (a proof of concept, off by default) ---- When the ticket's own 'key: value' lines do not give vm_name and template: ACT (GenAI, evidence mode, no commands) reads the ticket and proposes the VM - each value with the ticket's words it comes from, or a question to the re… (all of it: the role file) |
 | `vm_deploy_template_catalog` | `{}` | The templates GenAI may choose from, each with a plain description it can match the request to: {win2022-pxe: "Windows Server 2022 (installed over the network by MECM)", rhel9-gold: "Red Hat Enterprise Linux 9"} |
+| `vm_deploy_genai_approval` | `true` | true: a GenAI proposal waits for a person - the workflow's approval (or a second run) - before it is built. false: one run reads, checks and builds, when every value is traced to the ticket and within the rules (questions or a refusal still stop it). |
+| `vm_deploy_phase` | (empty) | Which step this run is: "" = one job does it all; propose = the workflow's first step (read, ask GenAI if needed, check, write where it would go on the ticket - build nothing); build = the step after the approval (build what the ticket and its proposal say - never ask GenAI). |
 | `vm_deploy_genai_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | seconds the model may take for its answer |
 
 ## win_act

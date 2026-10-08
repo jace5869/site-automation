@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.12.1 — 2026-10-08
+
+**Updating without scripts:** paste `site-automation-0.12.1-changed-since-0.12.0.zip` as it is. Then
+build the new workflow (docs/VMWARE.md, "Requests in plain words", "Set it up"), and tick **Prompt on
+launch** next to Variables on the deploy job template.
+
+- **One launch for a GenAI request: propose, approve, build.** A workflow (`VM - deploy from
+  ServiceNow ticket (workflow)`) runs the deploy job as its propose step (`vm_deploy_phase:
+  propose`: GenAI reads the ticket, AAP checks every value and the rules, finds the cluster and
+  datastore, writes the proposal and "ready to build" on the ticket and emails it - nothing is
+  built), an approval, and the build step (`vm_deploy_phase: build`: builds the posted proposal,
+  never asks GenAI). No more launching the same job twice.
+- **Or one run with no person in between** (`vm_deploy_genai_approval: false`), for a demo: GenAI
+  reads, AAP checks and builds - questions or a refusal still stop it.
+- A GenAI request with questions for the requester, or that the rules refuse, now ends the job red
+  (so a workflow stops there); the questions are still on the ticket as a comment.
+- docs/VMWARE.md, "How it flows, step by step": the workflow, step by step - ServiceNow, AAP,
+  GenAI, the approval, vCenter.
+
 ## 0.12.0 — 2026-10-08
 
 **Updating without scripts** (copying the release over your repository): first delete
