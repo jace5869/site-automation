@@ -172,6 +172,8 @@ Leave **Variables** empty: with no `target`, they run on every server in the inv
 Each command's output appears under a `### what it shows` line, followed by the matching health
 checks. Findings do not fail this job.
 
+**All settings** of this job, with their defaults: [win_troubleshoot](VARIABLES_REFERENCE.md#win_troubleshoot).
+
 ### Windows certificate report
 
 | Field | Value |
@@ -267,6 +269,8 @@ If a server fails:
 | `did not accept a logon after the restart` | look at the server's console |
 | `... ran before patching and do not run now` | the service did not come back: `Get-Service <name>`, System log |
 
+**All settings** of this job, with their defaults: [win_patch](VARIABLES_REFERENCE.md#win_patch).
+
 ## ACT on the servers (`C:\ProgramData\act`)
 
 `playbooks/win_act_install.yml` puts ACT for Windows (`vendor/act-windows/act.ps1`) on the
@@ -299,6 +303,8 @@ repository, and every server gets the new version.
   [APPROVED_COMMANDS.md](APPROVED_COMMANDS.md).
 - ACT itself needs full PowerShell. Where WDAC or AppLocker enforce Constrained Language Mode,
   ACT's own notes (sign it with your code-signing certificate) apply.
+
+**All settings**, with their defaults: [win_act](VARIABLES_REFERENCE.md#win_act).
 
 ## Settings: what each check looks at, and how to change it
 
@@ -342,6 +348,8 @@ A few defaults worth knowing:
 - **certs**: warning 30 days before expiry, critical 7 days before. Old expired certificates
   that nothing uses are listed in the report, not raised as findings.
 - **patching**: warning when the last update is 35 days old, critical at 60 days.
+
+**All settings**, with their defaults: [win_check_accounts](VARIABLES_REFERENCE.md#win_check_accounts), [win_check_audit](VARIABLES_REFERENCE.md#win_check_audit), [win_check_certs](VARIABLES_REFERENCE.md#win_check_certs), [win_check_disk](VARIABLES_REFERENCE.md#win_check_disk), [win_check_eventlog](VARIABLES_REFERENCE.md#win_check_eventlog), [win_check_network](VARIABLES_REFERENCE.md#win_check_network), [win_check_patching](VARIABLES_REFERENCE.md#win_check_patching), [win_check_performance](VARIABLES_REFERENCE.md#win_check_performance), [win_check_security](VARIABLES_REFERENCE.md#win_check_security), [win_check_services](VARIABLES_REFERENCE.md#win_check_services), [win_check_time](VARIABLES_REFERENCE.md#win_check_time).
 
 ## If something goes wrong
 

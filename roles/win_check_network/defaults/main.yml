@@ -13,5 +13,5 @@ win_check_network_dns_names: []
 #     - {name: LDAPS, host: dc01.yoursite.mil, port: 636}
 #     - {name: SIEM, host: siem.yoursite.mil, port: 9997}
 win_check_network_tcp: []
-win_check_network_secure_channel: true
-win_check_network_timeout_ms: 3000
+win_check_network_secure_channel: true   # domain members: test the computer's trust with the domain (nltest /sc_query)
+win_check_network_timeout_ms: 3000       # milliseconds for each TCP test

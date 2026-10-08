@@ -187,6 +187,8 @@ setting with its default is in [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md#c
 several containers on one host, the finding id includes the container name, for example
 `mariadb:snow-mariadb:connections`.
 
+**All settings** of this job, with their defaults: [check_mariadb](VARIABLES_REFERENCE.md#check_mariadb).
+
 ## How to verify
 
 1. **The names are right.** On the database host: `sudo podman ps -a` (rootless:

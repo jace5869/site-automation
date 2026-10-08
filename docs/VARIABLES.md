@@ -22,6 +22,41 @@ You do not need to read it all. Do the two-minute version first.
 
 That is all for a normal change. The rest of this page explains the details and the exceptions.
 
+## How to use a setting
+
+Every job's chapter in these docs ends its settings part with an **All settings** link: the list of
+that job's settings in [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md), each with its default and
+what it does. Pick the place by **who the setting is for**:
+
+| The setting is about | Put it in | Example |
+|---|---|---|
+| hosts (thresholds, what a check looks at) | `playbooks/group_vars/all.yml` (every host), `playbooks/group_vars/<group>.yml`, `playbooks/host_vars/<host>.yml` | `check_disk_warn_pct: 90` |
+| one job template (who gets its email, its rules) | the job template's **Variables** box in AAP | `report_email_to: ops@yoursite.mil` on the certificate report template |
+| one run | a **survey** question (its variable name = the setting's name) or **Prompt on launch** | a survey question `health_checks`, multiple choice `daily` / `weekly` |
+
+Three examples:
+
+```yaml
+# 1. playbooks/group_vars/all.yml - every host: disks warn at 90 %, a stricter audit log partition
+check_disk_warn_pct: 90
+check_disk_overrides:
+  /var/log/audit: {warn: 70, crit: 85}
+
+# 2. the "Certificate report" template's Variables - this job only: email it, stay green
+report_email_to: [pki-team@yoursite.mil]
+site_fail_on: []
+
+# 3. playbooks/group_vars/win_web.yml - the Windows web servers only: IIS must run too
+win_check_services_required_extra: [W3SVC, WAS]
+```
+
+- **A list replaces the default list** (it does not add to it): repeat the entries you keep.
+  Details: "Three shapes of value" below.
+- **Check what a job used:** in AAP, the job's **Details** tab shows the template's and the launch's
+  variables; the job's output prints the decisions it made (thresholds in the finding texts, `REFUSED:`
+  lines, the settings each report names in its email); its **artifacts** (Details > Artifacts) carry the
+  results. A setting that seems ignored: [If a setting does nothing](#if-a-setting-does-nothing).
+
 ---
 
 ## 1. What you can set

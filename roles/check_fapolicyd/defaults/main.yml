@@ -9,4 +9,4 @@ check_fapolicyd_expect_enforcing: true   # permissive = 1 means it only logs, ne
 # changed outside RPM show up here, e.g. after a manual update).
 check_fapolicyd_check_trustdb: true
 check_fapolicyd_denials_since: yesterday # ausearch -ts value
-check_fapolicyd_denials_warn: 1
+check_fapolicyd_denials_warn: 1          # this many denials or more since check_fapolicyd_denials_since -> warning

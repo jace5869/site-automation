@@ -139,6 +139,8 @@ Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for e
 | `ontap_report_fail` | `false` | `true` = the job shows **failed** on a critical finding or a cluster not read (for a workflow) |
 | `ontap_timeout` | `30` | seconds for one request |
 
+**All settings** of this job, with their defaults: [ontap_report](VARIABLES_REFERENCE.md#ontap_report).
+
 ## Troubleshooting
 
 | You see | It means | Do |

@@ -3,6 +3,6 @@
 # synced recently, and how far off the clock is from its source. Kerberos (domain logons) fails
 # when a clock is 5 minutes off.
 
-win_check_time_offset_warn_sec: 1
-win_check_time_offset_crit_sec: 5
-win_check_time_max_hours_since_sync: 24
+win_check_time_offset_warn_sec: 1        # seconds off its time source -> warning
+win_check_time_offset_crit_sec: 5        # seconds off -> critical
+win_check_time_max_hours_since_sync: 24  # last successful sync longer ago than this many hours -> finding

@@ -37,4 +37,4 @@ win_patch_services_ignore: ['gupdate*', 'edgeupdate*', 'MicrosoftEdgeElevationSe
 
 # Where AAP reaches WinRM, to see the server go down and come back during the restart
 win_patch_winrm_host: "{{ ansible_host | default(inventory_hostname) }}"
-win_patch_winrm_port: "{{ ansible_port | default(5986) }}"
+win_patch_winrm_port: "{{ ansible_port | default(5986) }}"  # its WinRM port (5986 = HTTPS)

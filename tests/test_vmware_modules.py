@@ -6,6 +6,13 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "roles", "vmware_vm", "library"))
+# the modules import their shared vCenter code as Ansible does: from ansible.module_utils.site_vcenters
+import importlib.util  # noqa: E402
+_spec = importlib.util.spec_from_file_location("ansible.module_utils.site_vcenters", os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "roles", "vmware_vm", "module_utils", "site_vcenters.py"))
+site_vcenters = importlib.util.module_from_spec(_spec)
+sys.modules["ansible.module_utils.site_vcenters"] = site_vcenters
+_spec.loader.exec_module(site_vcenters)
 import site_vmware_snapshots as m  # noqa: E402
 import site_vmware_alarms as al  # noqa: E402
 import site_vmware_esxi_security as es  # noqa: E402

@@ -11,6 +11,7 @@
 - name: "VMware | ESXi security settings{{ ' - DRY RUN, nothing is changed' if ansible_check_mode else '' }}"
   site_vmware_esxi_security:
     datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
     validate_certs: "{{ vmware_validate_certs | bool }}"
     hosts: "{{ (esxi_security_hosts | replace(',', ' ')).split() if esxi_security_hosts is string else esxi_security_hosts }}"
     clusters: "{{ (esxi_security_clusters | replace(',', ' ')).split() if esxi_security_clusters is string else esxi_security_clusters }}"
@@ -34,24 +35,26 @@
            'settings': esxi_security_settings | default({}, true), 'lockdown': esxi_security_lockdown | default('', true),
            'exception_users': esxi_security_lockdown_exception_users if esxi_security_lockdown_exception_users is not string
                               else (esxi_security_lockdown_exception_users | replace(',', ' ')).split(),
-           'check_mode': ansible_check_mode}) }}
+           'check_mode': ansible_check_mode, 'multi': _esx.vcenters | default([]) | vm_vcenters_read | length > 1}) }}
 
 - name: VMware | ESXi security settings report
   ansible.builtin.include_tasks: report.yml
   vars:
+    _vm_vcenters: "{{ _esx.vcenters }}"
     _vm_report_doc: "{{ _esx_doc }}"
     _vm_report_subject: "{{ _esx_doc.title }}"
     _vm_report_lines: "{{ (_esx_doc | report_text).splitlines() }}"
     _vm_report_no_email: >-
       {{ esxi_security_email_only_if_changed | bool
-         and _esx.hosts | selectattr('status', 'in', ['changed', 'failed']) | list | length == 0 }}
-    _vm_report_no_email_why: "no host was changed or failed (esxi_security_email_only_if_changed)."
+         and _esx.hosts | selectattr('status', 'in', ['changed', 'failed']) | list | length == 0
+         and _esx.vcenters | default([]) | selectattr('error') | list | length == 0 }}
+    _vm_report_no_email_why: "no host was changed or failed, and every vCenter was read (esxi_security_email_only_if_changed)."
 
 - name: VMware | the result as job artifacts (esxi_security)
   ansible.builtin.set_stats:
     data:
       esxi_security: >-
-        {{ {'dry_run': ansible_check_mode, 'hosts': _esx.hosts,
+        {{ {'dry_run': ansible_check_mode, 'vcenters': _esx.vcenters, 'hosts': _esx.hosts,
             'changed': _esx.hosts | selectattr('status', 'equalto', 'changed') | map(attribute='name') | list,
             'failed': _esx.hosts | selectattr('status', 'equalto', 'failed') | map(attribute='name') | list,
             'skipped': _esx.hosts | selectattr('status', 'equalto', 'skipped') | map(attribute='name') | list} }}
@@ -63,3 +66,8 @@
       {% for h in _esx.hosts | selectattr('status', 'equalto', 'failed') %}{{ h.name }}: {{ h.errors | join('; ') }}. {% endfor %}
       The other hosts are done; the report (and the email) has the details.
     quiet: true
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _esx.vcenters }}"

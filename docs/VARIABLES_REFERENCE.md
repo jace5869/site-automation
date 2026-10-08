@@ -26,7 +26,7 @@ File: `roles/check_accounts/defaults/main.yml`
 | `check_accounts_ignore_inactive` | `[]` | Accounts that may stay unused (break-glass, service accounts that never log in interactively) |
 | `check_accounts_nopasswd_allowed` | `[]` | sudoers entries allowed to use NOPASSWD, e.g. the account AAP connects as: [svc_aap, "%wheel"] |
 | `check_accounts_expiry_watch` | `[]` | Accounts whose password/account expiry matters - above all the account AAP logs in with. e.g. [svc_aap] |
-| `check_accounts_expiry_warn_days` | `14` |  |
+| `check_accounts_expiry_warn_days` | `14` | a watched account's password or account expiring within this many days -> warning (3 days or less -> critical) |
 
 ## check_auditd
 
@@ -38,7 +38,7 @@ File: `roles/check_auditd/defaults/main.yml`
 |---|---|---|
 | `check_auditd_min_rules` | `5` | fewer loaded rules than this = the STIG rules are missing |
 | `check_auditd_log_warn_pct` | `75` | the audit log's filesystem |
-| `check_auditd_log_crit_pct` | `90` |  |
+| `check_auditd_log_crit_pct` | `90` | % used of that filesystem -> critical (warning from check_auditd_log_warn_pct) |
 | `check_auditd_remote_required` | `false` | true = au-remote (audisp-remote) must be active |
 | `check_auditd_exclude_accounts` | `[]` | Accounts whose audit events are expected in bulk and do NOT count toward the volume warning, e.g. the account a vulnerability scanner logs in with (a credentialed scan runs thousands of commands with sudo). Names or UIDs; a host that does not have the account skips it. The report still says how much they made, and the… (all of it: the role file) |
 | `check_auditd_volume_hours` | `24` | look at the audit records of the last N hours |
@@ -54,15 +54,25 @@ File: `roles/check_certs/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `check_certs_warn_days` | `30` |  |
-| `check_certs_crit_days` | `14` |  |
+| `check_certs_warn_days` | `30` | a certificate expiring within this many days -> warning (and amber in the certificate report) |
+| `check_certs_notice_days` | `60` | the certificate report colours these blue (an early heads-up; not a finding) |
+| `check_certs_crit_days` | `14` | within this many days (or expired) -> critical |
 | `check_certs_files` | `[]` | Certificate files (PEM) to check. Globs work. Every certificate in a file is checked (a chain file with an expiring intermediate is a problem too). e.g. [/etc/stigman/*.crt, /etc/pki/tls/certs/server.crt] |
 | `check_certs_discover` | `true` | Also look for certificates in the usual places. Files with many certificates are CA bundles (hundreds of roots, noisy) and are skipped unless listed in check_certs_files. |
-| `check_certs_discover_dirs` | `[/etc/pki/tls/certs, /etc/pki/nginx, /etc/nginx, /etc/httpd/conf.d, /etc/stigman]` |  |
-| `check_certs_discover_exclude` | `'ca-bundle\|ca-certificates\|/localhost\.crt$'` |  |
-| `check_certs_discover_max_per_file` | `10` |  |
+| `check_certs_discover_dirs` | `[/etc/pki/tls/certs, /etc/pki/nginx, /etc/nginx, /etc/httpd/conf.d, /etc/stigman]` | the folders searched (two levels deep) for *.crt, *.pem, *.cer |
+| `check_certs_discover_exclude` | `'ca-bundle\|ca-certificates\|/localhost\.crt$'` | regular expression: found files whose path matches are skipped |
+| `check_certs_discover_max_per_file` | `10` | a found file with more certificates than this is a CA bundle: skipped |
 | `check_certs_endpoints` | `[]` | TLS endpoints, checked FROM this host, e.g. the site's own web server: check_certs_endpoints: - {name: STIG Manager, host: 127.0.0.1, port: 443, servername: stigman.example.mil} |
 | `check_certs_keystores` | `[]` | Java keystores (Tomcat, the ServiceNow MID Server ...). A JKS keystore lists without a password; a PKCS12 one needs it - give the NAME of an environment variable that holds it (set by an AAP credential), never the password itself: check_certs_keystores: - {path: /opt/servicenow/mid/agent/security/agent_keystore, passw… (all of it: the role file) |
+| `check_certs_discover_ports` | `false` | ---- Finding them by themselves (the certificate report turns both on; the health check does not) ---- Listening TCP ports that answer TLS: each probed once, on the address it listens on, with `openssl s_client` (check_certs_probe_timeout seconds each, at most check_certs_discover_ports_max ports). Not these ports: pl… (all of it: the role file) |
+| `check_certs_discover_ports_skip` | `[22, 25, 53, 80, 110, 111, 123, 143, 323, 389, 631, 2049, 3306, 5355, 5432, 6379, 11211,…` | ports never probed (plain-text services: ssh, smtp, dns, http, ldap, databases ...) |
+| `check_certs_discover_ports_max` | `25` | probe at most this many listening ports (the rest are listed as not probed) |
+| `check_certs_probe_timeout` | `3` | seconds for each port probe |
+| `check_certs_discover_keystores` | `false` | Java keystores (*.jks, *.keystore, *.p12, *.pfx) in these folders, and the ones running Java programs use (-Djavax.net.ssl.keyStore=...). A keystore that needs a password is listed as not checked: no password is ever guessed - give it in check_certs_keystores (password_env). The JDK's own trust stores (cacerts) are sk… (all of it: the role file) |
+| `check_certs_discover_keystore_dirs` | `[/etc, /opt, /srv, /usr/share/tomcat, /var/lib/tomcat, /var/lib/pki]` | the folders searched for keystores |
+| `check_certs_discover_keystore_depth` | `5` | how many folder levels deep the search goes |
+| `check_certs_discover_keystore_exclude` | `'/(cacerts\|jssecacerts)$\|/jre/lib/security/\|/lib/security/'` | regular expression: keystore paths skipped (the JDK's trust stores) |
+| `check_certs_discover_keystore_max` | `40` | read at most this many found keystores per host |
 
 ## check_containers
 
@@ -87,15 +97,15 @@ File: `roles/check_disk/defaults/main.yml`
 | `check_disk_warn_pct` | `85` | % used -> warning |
 | `check_disk_crit_pct` | `95` | % used -> critical |
 | `check_disk_inode_warn_pct` | `85` | inodes: too many small files fill a disk too |
-| `check_disk_inode_crit_pct` | `95` |  |
+| `check_disk_inode_crit_pct` | `95` | % of inodes used -> critical (warning from check_disk_inode_warn_pct) |
 | `check_disk_overrides` | `{}` | Different limits for particular mount points, e.g. keep the audit log partition emptier: check_disk_overrides: /var/log/audit: {warn: 70, crit: 85} |
 | `check_disk_ignore` | `- '^/(proc\|sys\|dev\|run)(/\|$)' - '^/etc/(hosts\|hostname\|resolv\.conf)$' # bind-mounted fil…` | Mount points to skip (regular expressions). |
-| `check_disk_exclude_types` | `[tmpfs, devtmpfs, squashfs, overlay, iso9660, efivarfs, nsfs]` |  |
+| `check_disk_exclude_types` | `[tmpfs, devtmpfs, squashfs, overlay, iso9660, efivarfs, nsfs]` | filesystem types never checked (df -x) |
 | `check_disk_forecast` | `true` | Days-until-full forecast. Each run adds a sample (date, bytes used) per mount to a small file on the host; once there is at least a day of history, the growth rate predicts when the filesystem fills. Check mode (a dry run) reads the history but does not add to it. |
-| `check_disk_forecast_warn_days` | `14` |  |
-| `check_disk_forecast_crit_days` | `3` |  |
-| `check_disk_history_file` | `/var/lib/site-health/disk-history.json` |  |
-| `check_disk_history_keep_days` | `30` |  |
+| `check_disk_forecast_warn_days` | `14` | full within this many days at the current growth -> warning |
+| `check_disk_forecast_crit_days` | `3` | full within this many days -> critical |
+| `check_disk_history_file` | `/var/lib/site-health/disk-history.json` | where the forecast keeps its samples, on the host |
+| `check_disk_history_keep_days` | `30` | samples older than this are dropped (the forecast uses what is left) |
 | `check_disk_timeout` | `20` | seconds for df |
 
 ## check_fapolicyd
@@ -110,7 +120,7 @@ File: `roles/check_fapolicyd/defaults/main.yml`
 | `check_fapolicyd_expect_enforcing` | `true` | permissive = 1 means it only logs, never blocks |
 | `check_fapolicyd_check_trustdb` | `true` | Compare the trust database with the files on disk (can take a minute on big hosts; files changed outside RPM show up here, e.g. after a manual update). |
 | `check_fapolicyd_denials_since` | `yesterday` | ausearch -ts value |
-| `check_fapolicyd_denials_warn` | `1` |  |
+| `check_fapolicyd_denials_warn` | `1` | this many denials or more since check_fapolicyd_denials_since -> warning |
 
 ## check_logging
 
@@ -122,10 +132,10 @@ File: `roles/check_logging/defaults/main.yml`
 |---|---|---|
 | `check_logging_journal_persistent` | `true` | the journal must survive a reboot (/var/log/journal) |
 | `check_logging_remote` | `[]` | The central log server(s) this host forwards to, e.g. check_logging_remote: - {name: SIEM, host: siem.example.mil, port: 6514} |
-| `check_logging_timeout` | `5` |  |
+| `check_logging_timeout` | `5` | seconds to wait for each log server's TCP port |
 | `check_logging_queue_warn_mb` | `100` | rsyslog keeps messages it cannot deliver in /var/lib/rsyslog. A big queue = the log server has been unreachable for a while. |
 | `check_logging_errors_since` | `"-24h"` | Error-priority journal messages in the last day. Many = something is complaining a lot. |
-| `check_logging_errors_warn` | `500` |  |
+| `check_logging_errors_warn` | `500` | this many error messages or more -> warning |
 
 ## check_mariadb
 
@@ -137,26 +147,26 @@ File: `roles/check_mariadb/defaults/main.yml`
 |---|---|---|
 | `check_mariadb_enabled` | (worked out by the role; see its file) | Which hosts: members of any of the inventory groups mariadb_hosts, mysql_hosts, database_hosts, mariadb or mysql, or any host that names a container below (or turns discovery on). Set this true/false to override for a host or group. |
 | `check_mariadb_container` | (empty) | MariaDB or MySQL in podman containers (e.g. the ServiceNow database). The client inside each container is used (podman exec). Name them in one of these ways; all are checked, each as its own instance: check_mariadb_container: mariadb one container check_mariadb_containers: [mariadb, snow-db] several containers on the… (all of it: the role file) |
-| `check_mariadb_containers` | `[]` |  |
-| `check_mariadb_container_discover` | `auto` |  |
+| `check_mariadb_containers` | `[]` | several containers on one host, e.g. [mariadb, snow-db] (see above) |
+| `check_mariadb_container_discover` | `auto` | auto, true or false: find database containers by their image (see above) |
 | `check_mariadb_server_paths` | `[/usr/sbin/mariadbd, /usr/libexec/mariadbd, /usr/sbin/mysqld, /usr/libexec/mysqld, /usr/b…` | Where a database server installed on the host lives (any one present = a host install, for `auto`). |
-| `check_mariadb_container_image_regex` | `'(mariadb\|mysql\|percona)'` |  |
+| `check_mariadb_container_image_regex` | `'(mariadb\|mysql\|percona)'` | regular expression: a container whose image matches is a database (discovery) |
 | `check_mariadb_container_user` | (empty) | ROOTLESS podman: the containers belong to a user (e.g. AAP's own MariaDB, or an application account), and only that user can see them. Name the user and the check runs podman AS that user. Empty = root's containers. |
 | `check_mariadb_service` | (empty) | The systemd unit (host installs). Empty = the first of mariadb, mysqld, mysql that exists. |
 | `check_mariadb_client_args` | `[]` | How to log in. Without a credential: as root through the local socket - MariaDB's default for a host install on RHEL (no password needed when the job runs with sudo). A database in a CONTAINER usually gives root a password (the official images do), and MySQL host installs usually do too, so there attach the "MariaDB m… (all of it: the role file) |
 | `check_mariadb_conn_warn_pct` | `80` | connections in use, % of max_connections |
-| `check_mariadb_conn_crit_pct` | `95` |  |
+| `check_mariadb_conn_crit_pct` | `95` | connections in use, % of max_connections -> critical |
 | `check_mariadb_threads_running_warn` | `32` | queries executing at this moment |
 | `check_mariadb_long_query_seconds` | `300` | a query running longer than this is "long" |
 | `check_mariadb_replica_lag_warn` | `300` | seconds a replica is behind its primary |
-| `check_mariadb_replica_lag_crit` | `1800` |  |
+| `check_mariadb_replica_lag_crit` | `1800` | seconds behind its primary -> critical |
 | `check_mariadb_galera_size` | `0` | expected Galera / XtraDB Cluster size (0 = do not check the size) |
 | `check_mariadb_group_size` | `0` | expected MySQL Group Replication members (0 = do not check the size) |
 | `check_mariadb_restart_warn_minutes` | `60` | restarted less than this ago -> warning |
 | `check_mariadb_bufferpool_hit_warn` | `95` | % of reads served from memory (only judged after 1M reads) |
 | `check_mariadb_error_since_days` | `1` | [ERROR] lines in its log this recent |
 | `check_mariadb_disk_warn_pct` | `85` | the filesystem holding the data directory |
-| `check_mariadb_disk_crit_pct` | `95` |  |
+| `check_mariadb_disk_crit_pct` | `95` | % used of the data directory's filesystem -> critical |
 
 ## check_mounts
 
@@ -166,11 +176,11 @@ File: `roles/check_mounts/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `check_mounts_network_types` | `[nfs, nfs4, cifs, smb3]` |  |
-| `check_mounts_local_types` | `[xfs, ext4, ext3, btrfs, vfat]` |  |
+| `check_mounts_network_types` | `[nfs, nfs4, cifs, smb3]` | filesystem types counted as network mounts (checked for hangs and fullness) |
+| `check_mounts_local_types` | `[xfs, ext4, ext3, btrfs, vfat]` | filesystem types checked for having gone read-only |
 | `check_mounts_timeout` | `5` | seconds before a network mount counts as hung |
 | `check_mounts_warn_pct` | `85` | Network mounts: how full (same idea as the disk check) |
-| `check_mounts_crit_pct` | `95` |  |
+| `check_mounts_crit_pct` | `95` | % used of a network mount -> critical (warning from check_mounts_warn_pct) |
 | `check_mounts_ignore` | `[]` | fstab mount points that are allowed to be unmounted (regular expressions) |
 
 ## check_network
@@ -181,11 +191,11 @@ File: `roles/check_network/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `check_network_require_default_route` | `true` |  |
+| `check_network_require_default_route` | `true` | no default route -> finding (false for an isolated host) |
 | `check_network_resolve_self` | `true` | this host's own full name (hostname -f) resolves |
 | `check_network_dns_names` | `[]` | e.g. [ldap.example.mil, servicenow.example.mil] |
 | `check_network_tcp` | `[]` | TCP services this host needs, e.g. check_network_tcp: - {name: LDAP, host: ldap.example.mil, port: 636} - {name: SIEM (syslog over TLS), host: siem.example.mil, port: 6514} |
-| `check_network_timeout` | `5` |  |
+| `check_network_timeout` | `5` | seconds for each name lookup and TCP port test |
 
 ## check_patching
 
@@ -199,7 +209,7 @@ File: `roles/check_patching/defaults/main.yml`
 | `check_patching_security_warn` | `1` | this many pending security advisories -> warning |
 | `check_patching_critical_is_critical` | `true` | a pending Critical-severity advisory -> critical |
 | `check_patching_timeout` | `300` | seconds for dnf to talk to the repositories |
-| `check_patching_reboot_check` | `true` |  |
+| `check_patching_reboot_check` | `true` | report a reboot still needed (needs-restarting -r, newer kernel installed than running) |
 
 ## check_performance
 
@@ -210,17 +220,17 @@ File: `roles/check_performance/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `check_performance_load_warn` | `1.5` | 15-minute load average PER CPU (1.0 = every CPU busy) |
-| `check_performance_load_crit` | `3.0` |  |
+| `check_performance_load_crit` | `3.0` | load per CPU -> critical |
 | `check_performance_mem_avail_warn_pct` | `10` | memory still available for programs, % of total |
-| `check_performance_mem_avail_crit_pct` | `5` |  |
+| `check_performance_mem_avail_crit_pct` | `5` | available memory below this % -> critical |
 | `check_performance_swap_warn_pct` | `50` | swap in use, % of swap |
-| `check_performance_swap_crit_pct` | `80` |  |
+| `check_performance_swap_crit_pct` | `80` | swap in use above this % -> critical |
 | `check_performance_iowait_warn` | `20` | % of CPU time waiting for disk (average over the sample) |
-| `check_performance_iowait_crit` | `40` |  |
+| `check_performance_iowait_crit` | `40` | I/O wait above this % -> critical |
 | `check_performance_steal_warn` | `10` | % of CPU taken by the hypervisor (VM starved) |
 | `check_performance_sample_seconds` | `5` | how long vmstat samples |
 | `check_performance_oom_since` | `"-24h"` | look for out-of-memory kills this far back |
-| `check_performance_zombie_warn` | `20` |  |
+| `check_performance_zombie_warn` | `20` | this many zombie processes or more -> warning |
 
 ## check_selinux
 
@@ -230,7 +240,7 @@ File: `roles/check_selinux/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `check_selinux_expected_mode` | `enforcing` |  |
+| `check_selinux_expected_mode` | `enforcing` | the mode SELinux must be in (and the config file must say); anything else -> critical |
 | `check_selinux_avc_since` | `yesterday` | ausearch -ts: recent (10 min), today, yesterday, this-week |
 | `check_selinux_avc_warn` | `1` | this many denials or more -> warning |
 | `check_selinux_booleans` | `{}` | Booleans that must have a value, e.g. {httpd_can_network_connect: "on"} |
@@ -258,7 +268,7 @@ File: `roles/check_time/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `check_time_offset_warn` | `0.5` | seconds |
-| `check_time_offset_crit` | `5.0` |  |
+| `check_time_offset_crit` | `5.0` | seconds off -> critical (warning from check_time_offset_warn) |
 | `check_time_min_sources` | `1` | time servers chrony must be able to reach |
 
 ## ontap_report
@@ -271,24 +281,24 @@ File: `roles/ontap_report/defaults/main.yml`
 |---|---|---|
 | `ontap_clusters` | `[]` | The clusters' management addresses (names or IPs), e.g. [cluster1.yoursite.mil, cluster2.yoursite.mil]. The credential's account must exist on each of them. |
 | `ontap_validate_certs` | `true` | Check the clusters' HTTPS certificates. ONTAP's own certificate is often self-signed: then put its CA in ontap_ca_path (a file in the project, e.g. "{{ playbook_dir }}/files/ca/ontap-ca.pem"), or set false. |
-| `ontap_ca_path` | (empty) |  |
+| `ontap_ca_path` | (empty) | the CA file (PEM) the clusters' certificates are checked with; empty = the execution environment's own trust |
 | `ontap_timeout` | `30` | seconds for one request |
 | `ontap_volume_warn_pct` | `85` | Thresholds (used %, hours, days, seconds): at or above "warn" = amber, at or above "crit" = red. |
-| `ontap_volume_crit_pct` | `90` |  |
-| `ontap_aggr_warn_pct` | `85` |  |
-| `ontap_aggr_crit_pct` | `90` |  |
-| `ontap_inode_warn_pct` | `85` |  |
-| `ontap_inode_crit_pct` | `90` |  |
+| `ontap_volume_crit_pct` | `90` | volume used % -> red |
+| `ontap_aggr_warn_pct` | `85` | aggregate used % -> amber |
+| `ontap_aggr_crit_pct` | `90` | aggregate used % -> red |
+| `ontap_inode_warn_pct` | `85` | inodes used % of a volume -> amber |
+| `ontap_inode_crit_pct` | `90` | inodes used % -> red |
 | `ontap_snapmirror_lag_warn_hours` | `24` | last good transfer longer ago than this |
-| `ontap_snapmirror_lag_crit_hours` | `48` |  |
+| `ontap_snapmirror_lag_crit_hours` | `48` | last good transfer longer ago than this -> red |
 | `ontap_snapshot_reserve_warn_pct` | `100` | snapshots using this much of their reserve (100 = they spill into the volume) |
-| `ontap_snapshot_reserve_crit_pct` | `150` |  |
+| `ontap_snapshot_reserve_crit_pct` | `150` | snapshots using this much of their reserve -> red |
 | `ontap_cert_warn_days` | `60` | certificates expiring within this many days |
-| `ontap_cert_crit_days` | `14` |  |
+| `ontap_cert_crit_days` | `14` | certificates expiring within this many days (or expired) -> red |
 | `ontap_time_drift_warn_seconds` | `60` | a node's clock against the AAP server's |
-| `ontap_time_drift_crit_seconds` | `300` |  |
+| `ontap_time_drift_crit_seconds` | `300` | a node's clock this far off -> red |
 | `ontap_port_errors_warn` | `1` | receive errors (CRC and other bad frames) since the node booted |
-| `ontap_port_errors_crit` | `10000` |  |
+| `ontap_port_errors_crit` | `10000` | receive errors on a port since boot -> red |
 | `ontap_min_spares` | `1` | fewer spare disks than this on a node = amber (0 = red) |
 | `ontap_ems_hours` | `24` | the error events of the last this-many hours |
 | `ontap_ems_max` | `500` | read at most this many events per cluster |
@@ -324,14 +334,14 @@ File: `roles/poam/defaults/main.yml`
 |---|---|---|
 | `poam_csv` | `"{{ playbook_dir }}/../poam/poam.csv"` | POA&M STATUS: which Plan of Action & Milestones items are overdue or due soon, and (optional) which open CAT I / CAT II findings in STIG Manager have no POA&M item yet. The POA&M list is a CSV file in your work Git (export from eMASS or your spreadsheet, keep the columns below, save as CSV). POA&M data is sensitive: k… (all of it: the role file) |
 | `poam_columns` | `id: POAM ID # unique item number weakness: Weakness # what is wrong severity: Severity #…` | Column names in YOUR file for each field this check needs (change the right-hand side). |
-| `poam_closed_statuses` | `[Completed, Closed, Risk Accepted, Cancelled]` |  |
-| `poam_due_soon_days` | `30` |  |
-| `poam_date_formats` | `['%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y', '%d-%b-%Y', '%d %b %Y', '%b %d, %Y']` |  |
+| `poam_closed_statuses` | `[Completed, Closed, Risk Accepted, Cancelled]` | items with one of these statuses are done: never reported |
+| `poam_due_soon_days` | `30` | an open item due within this many days -> warning (past due -> critical) |
+| `poam_date_formats` | `['%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y', '%d-%b-%Y', '%d %b %Y', '%b %d, %Y']` | the date formats your file may use (Python strptime), tried in this order |
 | `poam_stigman_api` | (empty) | ---- STIG Manager cross-check (optional) ----------------------------------------------------- Needs a Keycloak client that may use the client-credentials grant, with the scope stig-manager:collection:read, and a grant in the collections to read. Your realm owner creates it - this repository never changes the realm. T… (all of it: the role file) |
 | `poam_stigman_collections` | `[]` | collection names; empty = every collection the client can read |
 | `poam_stigman_severities` | `[high, medium]` | CAT I and CAT II findings must have a POA&M item |
 | `poam_stigman_scope` | (empty) | Scope to ask for. Empty = the client's default scopes (they must include stig-manager:collection:read or stig-manager:collection). |
-| `poam_validate_certs` | `true` |  |
+| `poam_validate_certs` | `true` | check STIG Manager's and Keycloak's HTTPS certificates |
 
 ## podman_discover
 
@@ -358,21 +368,15 @@ File: `roles/service_watch/defaults/main.yml`
 | `watch_containers` | `[]` | Containers to watch in any case, in dependency order (a container's dependencies first). They are watched before the discovered ones, and one that is missing is reported as down. name: the container name, as `podman ps -a` shows it (or its Quadlet / service name) user: optional: the user that owns it (rootless podman)… (all of it: the role file) |
 | `watch_url_ok_status` | `[200, 301, 302, 401, 403]` | HTTP codes that count as "answering" |
 | `watch_find_units` | `true` | ---- How each container is run (found by itself) ------------------------------------------- A container that a systemd unit runs (a Quadlet .container file, `podman generate systemd`, or a unit you wrote) must be started with systemctl, never with `podman start`: the unit owns it, and while the unit is stopped the co… (all of it: the role file) |
-| `watch_quadlet_dirs` | `[/etc/containers/systemd, /usr/share/containers/systemd]` |  |
+| `watch_quadlet_dirs` | `[/etc/containers/systemd, /usr/share/containers/systemd]` | where root's Quadlet files are looked for (to find the unit that runs a container) |
 | `watch_mode` | `approval` | ---- What happens when one is down ------------------------------------------------------- approval: ACT only diagnoses. Its proposed fix waits for the AAP approval step, then service_fix_approved.yml runs exactly the approved command(s) - no model involved. When ACT proposes nothing (or cannot run), the standard fix… (all of it: the role file) |
 | `watch_verify_retries` | `6` | re-checks after a fix (every watch_verify_delay seconds) |
-| `watch_verify_delay` | `5` |  |
+| `watch_verify_delay` | `5` | seconds between those re-checks |
 | `watch_record_file` | `/var/log/service-watch/incidents.jsonl` | ---- Where incidents are recorded (on the host) ------------------------------------------ One JSON line per event, plus a syslog line (tag service-watch) that your log forwarding (Splunk, Elastic, rsyslog relay) picks up. AAP's job history keeps its own copy. |
-| `watch_record_syslog` | `true` |  |
+| `watch_record_syslog` | `true` | also send each incident to syslog (tag service-watch) |
 | `watch_act_env` | `{}` | ---- ACT settings -------------------------------------------------------------------------- Which provider and model: site_act_provider / site_act_model / site_act_url / site_act_ca, the same settings every runbook uses (roles/site_act/defaults/main.yml). The key comes from the "ACT model key" AAP credential, never f… (all of it: the role file) |
-| `watch_act_timeout` | `600` | seconds for one ACT run |
+| `watch_act_timeout` | `1200` | seconds for one ACT run (the model's time per answer: site_act_model_timeout) |
 | `watch_instructions` | (worked out by the role; see its file) | What ACT is told, on top of the act_triage role's standard instructions. |
-| `_watch_no_heal` | `"{{ ((site_act_diagnose_only_groups \| default(['aap', 'aap_hosts', 'sat', 'idm', 'netapp'…` | ---- Derived (do not set) ------------------------------------------------------------------ Hosts that never self-heal and whose approved fix is applied by hand (as in act_fix_approved.yml): AAP (aap, aap_hosts - always: a restart there could stop the job that runs it) and the diagnose-only groups of the ACT settings… (all of it: the role file) |
-| `_watch_nl` | `"\n"` | a real newline for templates |
-| `_watch_what` | (worked out by the role; see its file) | the watched containers, as "name (root)" / "name (user alice)" |
-| `_watch_units` | (worked out by the role; see its file) | OWNER/NAME -> unit ('' = plain podman), from the last check |
-| `_watch_how_text` | (worked out by the role; see its file) |  |
-| `_watch_fix_patterns` | `"{{ ((service_watch \| default({})).watched \| default(_watch_list \| default([]))) \| watch_…` | The only changes self-heal may make: start/restart of the watched containers - through their systemd unit when one runs them, with podman otherwise, as each container's owner. Each pattern must match the whole command. |
 
 ## servicenow
 
@@ -383,22 +387,22 @@ File: `roles/servicenow/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `servicenow_min_severity` | `warning` | Findings at or above this severity get a ticket: critical \| warning |
-| `servicenow_table` | `incident` |  |
+| `servicenow_table` | `incident` | the table tickets are opened in (incident) |
 | `servicenow_assignment_group` | (empty) | Values for new incidents. Names work (the API is asked to accept display values), e.g. servicenow_assignment_group: Linux Operations |
 | `servicenow_caller` | (empty) | user name; empty = the API account |
 | `servicenow_category` | (empty) | e.g. Software |
-| `servicenow_urgency` | `{critical: "1", warning: "2"}` |  |
-| `servicenow_impact` | `{critical: "2", warning: "3"}` |  |
+| `servicenow_urgency` | `{critical: "1", warning: "2"}` | a new ticket's urgency, per finding severity (your instance's values) |
+| `servicenow_impact` | `{critical: "2", warning: "3"}` | a new ticket's impact, per finding severity |
 | `servicenow_set_ci` | `true` | set Configuration item = the host name (must exist in the CMDB) |
 | `servicenow_note_cleared` | `true` | When a problem that had a ticket is gone, add a work note (and, if you want, resolve it). |
-| `servicenow_resolve_cleared` | `false` |  |
+| `servicenow_resolve_cleared` | `false` | true = also resolve the ticket (servicenow_resolved_state, servicenow_close_code) |
 | `servicenow_resolved_state` | `"6"` | Resolved |
 | `servicenow_close_code` | `"Solution provided"` | must be a close code your instance has |
 | `servicenow_note_repeats` | `true` | Add a work note to an open ticket each time its finding is seen again. |
 | `servicenow_correlation_prefix` | `site-health` | Every ticket from these playbooks carries a correlation ID starting with this, so the same problem on the same host always updates the same ticket. |
-| `servicenow_validate_certs` | `true` |  |
+| `servicenow_validate_certs` | `true` | check the instance's HTTPS certificate (see servicenow_ca_path) |
 | `servicenow_ca_path` | (empty) | A CA bundle (PEM) for the instance's TLS certificate, when the execution environment does not trust its CA (e.g. a DoD root CA): a path on the controller, such as a file you add to the project: servicenow_ca_path: "{{ playbook_dir }}/files/ca/servicenow-ca.pem". Empty = the execution environment's normal trust store.… (all of it: the role file) |
-| `servicenow_timeout` | `30` |  |
+| `servicenow_timeout` | `30` | seconds for one API request |
 | `servicenow_fail_when_findings` | `true` | Fail the job when it opened/updated tickets, so the workflow shows red while problems exist. |
 | `servicenow_check_mid` | `true` | servicenow_health.yml: also check the MID Servers (needs read access to the ecc_agent table) |
 | `servicenow_slow_seconds` | `5` | the API answering slower than this -> warning |
@@ -414,13 +418,14 @@ File: `roles/site_act/defaults/main.yml`
 | `site_act_allow` | `[]` | self-heal only: regular expressions of fix commands ACT may run without a person. Each must match the WHOLE command. Keep them narrow, e.g. site_act_allow: ['systemctl restart (chronyd\|rsyslog\|crond)'] |
 | `site_act_diagnose_only_groups` | `[aap, aap_hosts, sat, idm, netapp, netapp_console_hosts]` | Hosts where ACT may only diagnose - never fix by itself, whatever site_act_level says: AAP itself (a fix could stop the job that is running it) and vendor-managed appliances. The apply step (act_fix_approved.yml) skips them too: a person applies the fix there by hand. AAP (groups aap, aap_hosts) is ALWAYS in this list… (all of it: the role file) |
 | `site_act_provider` | `genai` | ---- Which model ACT talks to ----------------------------------------------------------------- site_act_provider genai GenAI.mil (the default) asksage Ask Sage (set site_act_url to your organization's instance) genai-beta the GenAI.mil beta proxy (preview models) site_act_models the model to use FOR EACH provider, e.… (all of it: the role file) |
-| `site_act_models` | `{genai: gemini-3.8-flash, asksage: gpt-5.6-sol-gov}` |  |
-| `site_act_urls` | `{}` |  |
-| `site_act_model` | (empty) |  |
-| `site_act_url` | (empty) |  |
-| `site_act_ca` | (empty) |  |
-| `site_act_env` | `{}` | Any other ACT environment settings (advanced; these win over the ones above), e.g. {GENAI_TIMEOUT: "180"}. See the top of vendor/act/act for the list. |
-| `site_act_timeout` | `600` | seconds for one ACT run |
+| `site_act_models` | `{genai: gemini-3.8-flash, asksage: gpt-5.6-sol-gov}` | the model for each provider (see above): the model follows the provider picked |
+| `site_act_urls` | `{}` | the API URL for each provider; a provider not listed uses ACT's default |
+| `site_act_model` | (empty) | one model for this run, whatever the provider (e.g. a survey answer); empty = site_act_models |
+| `site_act_url` | (empty) | one URL for this run; empty = site_act_urls |
+| `site_act_ca` | (empty) | a CA bundle file ON THE HOSTS for the provider's certificate; empty = the host's trust store |
+| `site_act_env` | `{}` | Any other ACT environment settings (advanced; these win over the ones above), e.g. {HTTPS_PROXY: "http://proxy.yoursite.mil:8080"}. See the top of vendor/act/act for the list. Every ACT job streams the model's answer (ACT_STREAM=1), so a firewall or proxy idle timeout does not cut a long answer ("connection reset by p… (all of it: the role file) |
+| `site_act_model_timeout` | `600` | Seconds the model may take for ONE answer, retries after a provider hiccup included (ACT's GENAI_TIMEOUT; ACT's own default, 90, is too short for a long analysis or a busy provider). Every ACT job uses it: the runbooks' use_act, the VMware alarms and capacity analyses, service watch. |
+| `site_act_timeout` | `1200` | seconds for one whole ACT run (several answers): keep it above site_act_model_timeout |
 | `site_act_concurrency` | `3` | How many hosts may run ACT at the same time in one job (0 = no limit: as many as the job's forks). Every host in a job uses the same key, and GenAI.mil's default quota is 60 requests and 200,000 tokens a minute per key: a fleet run with many hosts at once gets HTTP 429 (too many requests). |
 | `site_act_extra_instructions` | (empty) | anything ACT should know about this site |
 | `site_act_evidence_text` | (empty) | extra evidence (troubleshoot.yml passes what it collected) |
@@ -434,13 +439,13 @@ File: `roles/site_email/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `report_email_to` | `[]` | Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails. |
-| `report_email_cc` | `[]` |  |
+| `report_email_cc` | `[]` | copied: a list, or text like report_email_to |
 | `report_email_from` | (empty) | the sender, e.g. aap-noreply@yoursite.mil |
 | `report_email_smtp_host` | (empty) | your mail relay, e.g. smtp.yoursite.mil |
 | `report_email_smtp_port` | `25` | 25 or 587 with starttls, 465 with ssl |
 | `report_email_security` | `starttls` | starttls = encrypt after connecting (the relay must offer it); ssl = encrypted from the start (port 465); none = not encrypted (only for a relay without encryption; then no login is sent). |
 | `report_email_ca_path` | (empty) | a CA file that signed the relay's certificate (empty = the CAs the execution environment trusts) |
-| `report_email_subject_prefix` | `"[AAP]"` |  |
+| `report_email_subject_prefix` | `"[AAP]"` | put before every subject, e.g. "[AAP] Certificate report: ..." |
 | `report_email_html` | `true` | Send a formatted (HTML) version too, for reports that come with one (all VMware jobs). The email always carries a plain-text copy for mail clients that do not show HTML. false = plain text only. |
 | `report_email_html_template` | `report.html.j2` | The look of the HTML version. Your own: copy roles/site_email/templates/report.html.j2 (e.g. to playbooks/files/email/report.html.j2), change it, and set report_email_html_template: "{{ playbook_dir }}/files/email/report.html.j2" |
 
@@ -454,12 +459,11 @@ File: `roles/site_findings/defaults/main.yml`
 |---|---|---|
 | `site_fail_on` | `[critical, warning]` | Which severities make the job FAIL. A failed job is what sends an AAP workflow down its "on failure" path (open tickets, ask ACT, wait for approval). [] = report only, never fail. |
 | `site_syslog` | `true` | One syslog line per finding (tag below), so your log server / SIEM sees them too. |
-| `site_syslog_tag` | `site-health` |  |
+| `site_syslog_tag` | `site-health` | the syslog tag those lines carry (to filter on in the SIEM) |
 | `site_eventlog_source` | `site-health` | Windows: one Application event log entry per finding instead of syslog (source below). |
 | `site_os` | `linux` | ---- Linux or Windows (set by the playbook; do not set) ----------------------------------------- Linux playbooks run the roles check_<name>, the Windows ones (win_*.yml) the roles win_check_<name>. |
-| `site_check_role_prefix` | `"{{ 'win_check_' if site_os == 'windows' else 'check_' }}"` |  |
+| `site_check_role_prefix` | `"{{ 'win_check_' if site_os == 'windows' else 'check_' }}"` | check_ (Linux) or win_check_ (Windows): set by the playbook from site_os |
 | `site_windows_connections` | `[winrm, psrp, ansible.builtin.winrm, ansible.builtin.psrp]` | How a host is recognized as Windows: its connection, or its shell (Windows OpenSSH). |
-| `_site_host_is_windows` | (worked out by the role; see its file) |  |
 | `site_settings_notice` | `true` | A notice in the job output when a project settings file (playbooks/group_vars/*.yml) defines a setting: it wins over AAP's inventory Variables box. false = no notice. |
 
 ## stigman_stack
@@ -471,24 +475,24 @@ File: `roles/stigman_stack/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `stigman_scope` | `system` | system = rootful (/etc/containers/systemd, systemctl) <- production user = rootless (~/.config/containers/systemd, systemctl --user) <- tests / rootless hosts |
-| `stigman_images` | `mysql: docker.io/library/mysql:8.4 api: docker.io/nuwcdivnpt/stig-manager:1.6.17 # pin a…` |  |
+| `stigman_images` | `mysql: docker.io/library/mysql:8.4 api: docker.io/nuwcdivnpt/stig-manager:1.6.17 # pin a…` | the container images (pin STIG Manager's version; change it deliberately) |
 | `stigman_config_dir` | `/etc/stigman` | nginx.conf, TLS files, CA bundle |
 | `stigman_https_port` | `443` | host port nginx publishes |
-| `stigman_server_name` | `"{{ inventory_hostname }}"` |  |
+| `stigman_server_name` | `"{{ inventory_hostname }}"` | the name nginx answers to (and the TLS certificate is for) |
 | `stigman_oidc_provider` | `"https://keycloak.example.mil/realms/stigman"` | Existing Keycloak realm (server-side URL used by the API; browser-side URL for the web client) |
-| `stigman_client_oidc_provider` | `"{{ stigman_oidc_provider }}"` |  |
-| `stigman_client_id` | `stig-manager` |  |
+| `stigman_client_oidc_provider` | `"{{ stigman_oidc_provider }}"` | the Keycloak realm URL the browser uses (when it differs from the server-side one) |
+| `stigman_client_id` | `stig-manager` | the Keycloak client the web app logs in with |
 | `stigman_classification` | `U` | banner: U, CUI, C, S, TS, SCI, NONE |
-| `stigman_db_schema` | `stigman` |  |
-| `stigman_db_user` | `stigman` |  |
+| `stigman_db_schema` | `stigman` | the MySQL database STIG Manager uses |
+| `stigman_db_user` | `stigman` | the MySQL account STIG Manager uses (its password: the credential) |
 | `stigman_mysql_buffer_pool` | `1G` | STIG Manager docs: >= 8G for real deployments |
 | `stigman_ready_retries` | `40` | How long to wait for the API to answer through nginx after (re)starting |
-| `stigman_ready_delay` | `6` |  |
+| `stigman_ready_delay` | `6` | seconds between those tries |
 | `stigman_mysql_root_password` | `"{{ lookup('ansible.builtin.env', 'STIGMAN_MYSQL_ROOT_PASSWORD') }}"` | ---- Secrets: NEVER set these in a vars file or inventory ----------------------------------- They come from AAP credentials (aap/credential_types/*.yml) as environment variables / files on the controller (execution environment). See docs/SECRETS.md. |
-| `stigman_db_password` | `"{{ lookup('ansible.builtin.env', 'STIGMAN_DB_PASSWORD') }}"` |  |
-| `stigman_tls_cert_src` | `"{{ lookup('ansible.builtin.env', 'TLS_CERT_FILE') }}"` |  |
-| `stigman_tls_key_src` | `"{{ lookup('ansible.builtin.env', 'TLS_KEY_FILE') }}"` |  |
-| `stigman_tls_ca_src` | `"{{ lookup('ansible.builtin.env', 'TLS_CA_FILE') }}"` |  |
+| `stigman_db_password` | `"{{ lookup('ansible.builtin.env', 'STIGMAN_DB_PASSWORD') }}"` | from the credential (STIGMAN_DB_PASSWORD), never set here |
+| `stigman_tls_cert_src` | `"{{ lookup('ansible.builtin.env', 'TLS_CERT_FILE') }}"` | nginx's certificate file, from the TLS certificate credential (TLS_CERT_FILE) |
+| `stigman_tls_key_src` | `"{{ lookup('ansible.builtin.env', 'TLS_KEY_FILE') }}"` | its private key file, from the credential (TLS_KEY_FILE) |
+| `stigman_tls_ca_src` | `"{{ lookup('ansible.builtin.env', 'TLS_CA_FILE') }}"` | the CA bundle file, from the credential (TLS_CA_FILE) |
 
 ## troubleshoot
 
@@ -497,9 +501,9 @@ File: `roles/troubleshoot/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `ts_area` | `overview` | TROUBLESHOOT: the commands an experienced admin runs first for a kind of problem, run for you (read-only), each with a line saying what it shows. The matching health checks run too, so you also get plain-words findings. Pick the area; for "service" and "network" say what. ts_area: overview \| disk \| performance \| servi… (all of it: the role file) |
-| `ts_service` | (empty) |  |
-| `ts_target` | (empty) |  |
-| `ts_since` | `"-2h"` |  |
+| `ts_service` | (empty) | the systemd unit, for ts_area service (see above) |
+| `ts_target` | (empty) | host:port, for ts_area network |
+| `ts_since` | `"-2h"` | how far back logs are read (journalctl --since) |
 | `ts_output_lines` | `60` | keep the last this-many lines of each command |
 | `ts_areas` | `overview: checks: [disk, mounts, services, performance, time, logging] commands: - {why:…` | What each area runs. `why` is printed above the command's output. Commands must be read-only. |
 
@@ -514,6 +518,8 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_names` | `[]` | The VMs, by their exact name in vCenter: a list, or (from a survey) one per line. No wildcards. |
 | `vmware_datacenter` | (empty) | only needed when the same VM name exists in two datacenters |
 | `vmware_validate_certs` | `true` | Check vCenter's certificate. false only if the execution environment does not trust your CA yet. |
+| `vmware_vcenters` | `[]` | Several vCenters (e.g. Enhanced Linked Mode), one report: the reports and the ESXi security settings read the credential's vCenter AND these (names, or name:port), with the same account. The same vCenter under two names is read once. docs/VMWARE.md, "Several vCenters". e.g. [vc01.yoursite.mil, vc02.yoursite.mil] |
+| `vmware_vcenter_fail_unread` | `false` | true = the job shows failed when a vCenter could not be read (the report lists it in red either way) |
 | `vmware_protected_groups` | `[aap, aap_hosts]` | The AAP server is ALWAYS refused (hosts in the groups aap / aap_hosts, matched by VM name, guest host name and IP address), and so are the hosts of these groups and these VM names (* and ? allowed: DC*). List the AAP VM's name here when it differs from its host name, and vCenter's own VM. The snapshot cleanup never de… (all of it: the role file) |
 | `vmware_protected_vms` | `[]` | e.g. [AAP01, VCSA01, DC*] (* and ? allowed) |
 | `vm_power_mode` | `guest` | guest = ask the operating system (needs VMware Tools running; services stop cleanly) hard = reset / power off, like the button on a physical server (unsaved data is lost) |
@@ -529,7 +535,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_secure_boot_folder` | (empty) | Only the VMs in this vCenter folder ("" = every VM, or the ones in vm_names). |
 | `vm_secure_boot_fail` | `false` | The job stays green (successful) when it finds VMs to fix: the report and email say what. true = mark the job FAILED when a VM is BIOS or has secure boot off, so a workflow's "on failure" path can react (open a ticket). |
 | `vm_datastore_warn_pct` | `85` | Used space (% of capacity): a datastore at or above these is listed as a warning / critical. |
-| `vm_datastore_crit_pct` | `90` |  |
+| `vm_datastore_crit_pct` | `90` | a datastore this % used or more is red (critical); amber from vm_datastore_warn_pct |
 | `vm_datastore_fail` | `false` | The job stays green when datastores are full: the report and email say which. true = mark the job FAILED when one is at or above vm_datastore_warn_pct (or inaccessible), for workflows. |
 | `vm_snapshot_max_age_days` | `3` | Snapshots at least this many days old: listed apart by the report, deleted by the cleanup. |
 | `vm_snapshot_keep_regex` | `'(?i)keep\|do.?not.?delete'` | Never deleted by the cleanup (the report lists them, with the reason): - a snapshot whose name or description matches this |
@@ -545,14 +551,14 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_alarm_max_rows` | `200` | rows per table in the report (the artifacts have them all) |
 | `vm_alarm_login_critical` | `10` | This many failed logins of one user from one place, or more, is critical (fewer: a warning). |
 | `vm_alarm_login_event_types` | `[BadUsernameSessionEvent, com.vmware.sso.LoginFailure, esx.audit.account.locked, esx.audi…` | The event types read whatever their category (vCenter's event type names). Add to these lists rather than replacing them; [] = none of that kind. |
-| `vm_alarm_connection_event_types` | `[HostConnectionLostEvent, HostNotRespondingEvent, HostDisconnectedEvent, HostReconnection…` |  |
-| `vm_alarm_vm_event_types` | `[VmGuestShutdownEvent, VmGuestRebootEvent, VmPoweredOffEvent, VmResettingEvent, VmFailove…` |  |
+| `vm_alarm_connection_event_types` | `[HostConnectionLostEvent, HostNotRespondingEvent, HostDisconnectedEvent, HostReconnection…` | Events about a host losing (or failing to get back) its connection to vCenter: the Host connection table. |
+| `vm_alarm_vm_event_types` | `[VmGuestShutdownEvent, VmGuestRebootEvent, VmPoweredOffEvent, VmResettingEvent, VmFailove…` | Events about a VM stopping, restarting or failing over (guest shutdown, power off, HA restart): the VM events table. |
 | `vm_alarm_fail` | `false` | The job stays green when it finds alarms: the report and email say what. true = mark the job FAILED when there is a critical alarm or a host is not connected, for workflows. |
 | `vm_alarm_act_max_items` | `40` | ACT analysis (playbooks/vm_alarm_act_analysis.yml). ACT runs on the AAP side (the execution environment), never on the ESXi hosts; the model provider, model, URL, proxy and CA are the site_act_* settings (roles/site_act/defaults/main.yml), the key an "ACT model key" credential. analyze at most this many problems, the… (all of it: the role file) |
 | `vm_alarm_act_config_issues` | `true` | configuration issues too (false = alarms and events only) |
 | `vm_alarm_act_email_if_none` | `false` | true = email even when there is nothing to analyze |
 | `vm_alarm_act_check_url` | `true` | first check that the AAP node can reach the model's URL |
-| `vm_alarm_act_model_timeout` | `300` | Seconds the model may take for its answer (ACT's GENAI_TIMEOUT, 90 by default, is too short for a long analysis). A GENAI_TIMEOUT in site_act_env wins over this. |
+| `vm_alarm_act_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | Seconds the model may take for its answer (ACT's GENAI_TIMEOUT, 90 by default, is too short for a long analysis): site_act_model_timeout (600) unless set here. A GENAI_TIMEOUT in site_act_env wins. |
 | `esxi_security_hosts` | `[]` | Which hosts: names (* and ? allowed; the short name matches too). [] = every host of vCenter (or of vmware_datacenter). |
 | `esxi_security_clusters` | `[]` | only the hosts of these clusters (names, wildcards); [] = all |
 | `esxi_security_exclude_hosts` | `[]` | Never these hosts (names, wildcards). E.g. a host you opened SSH on for a support case: the nightly run would otherwise close it again. |
@@ -564,8 +570,8 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `esxi_security_email_only_if_changed` | `true` | The email (report_email_to): true = only when a host was changed or failed; false = every run. |
 | `vm_capacity_clusters` | `[]` | ---- vSphere capacity planning (playbooks/vm_capacity_report.yml) ---- only these clusters (names; * and ? allowed); [] = every cluster |
 | `vm_capacity_history_days` | `90` | The history: vCenter's own daily statistics (cluster CPU and memory, datastore space), kept a year at statistics level 1. Read this many days; the growth is a straight line over the last vm_capacity_trend_days, with at least vm_capacity_min_samples daily values. |
-| `vm_capacity_trend_days` | `30` |  |
-| `vm_capacity_min_samples` | `7` |  |
+| `vm_capacity_trend_days` | `30` | the growth (straight line) is fitted on this many most recent days |
+| `vm_capacity_min_samples` | `7` | fewer daily values than this in those days = 'not enough history' (no trend) |
 | `vm_capacity_events_days` | `30` | VMs added and removed (vCenter keeps events 30 days by default) |
 | `vm_capacity_failover_hosts` | `1` | Plan for this many failed hosts per cluster (N+1); a larger HA admission control failover level wins. |
 | `vm_capacity_mem_target_pct` | `80` | memory used at most this %, with those hosts failed |
@@ -581,8 +587,37 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_capacity_fail` | `false` | The job stays green: the report says what is short. true = mark it FAILED when a cluster or datastore is critical (for workflows). |
 | `vm_capacity_act` | `false` | GenAI: ACT reads the numbers and makes its own estimate, shown next to the job's (math vs GenAI). Needs an "ACT model key" credential on the template; the same site_act_* settings as the alarms analysis. ACT runs on the AAP side and runs no command. |
 | `vm_capacity_act_max_items` | `30` | items ACT estimates: everything overall, then clusters and datastores, problems first |
-| `vm_capacity_act_model_timeout` | `300` | seconds the model may take for its answer |
+| `vm_capacity_act_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | seconds the model may take for its answer |
 | `vm_capacity_act_check_url` | `true` | first check that the AAP node can reach the model's URL |
+| `vm_deploy_ticket` | (empty) | ---- Deploy a VM from a ServiceNow ticket (playbooks/vm_deploy_from_ticket.yml) ---- The ticket (survey answer): INC..., TASK..., SCTASK..., RITM..., CHG... The table follows from the prefix; vm_deploy_ticket_table sets it for another prefix. The ticket says what to build in 'key: value' lines - in its description, or… (all of it: the role file) |
+| `vm_deploy_ticket_table` | (empty) | the ServiceNow table, for a ticket prefix the job does not know (e.g. u_vm_request) |
+| `vm_deploy_templates` | `[]` | What a ticket may ask for (names; * and ? allowed). Templates MUST be listed: nothing else is deployed. The others: [] = any. e.g. [rhel9-gold, win2022-gold] |
+| `vm_deploy_clusters` | `[]` | clusters (and standalone hosts) a ticket may use; also the candidates of automatic placement |
+| `vm_deploy_datastores` | `[]` | datastores (or datastore clusters) a ticket may use; also the candidates of automatic placement |
+| `vm_deploy_folders` | `[]` | VM folders a ticket may use (paths below the datacenter's VM folder, e.g. Linux/*) |
+| `vm_deploy_max_cpu` | `16` | the most vCPUs a ticket may ask for |
+| `vm_deploy_max_memory_gb` | `128` | the most memory a ticket may ask for, in GB |
+| `vm_deploy_name_regex` | `'^[A-Za-z0-9][A-Za-z0-9-]{0,62}$'` | The VM names allowed (a regular expression); e.g. '^[a-z0-9-]{1,15}$' for Windows-safe names. |
+| `vm_deploy_assignment_group` | (empty) | Only tickets assigned to this group (its name as ServiceNow shows it); "" = any group. |
+| `vm_deploy_defaults` | `{}` | What a ticket does not say: e.g. {cluster: PROD-CL01, datastore: DS-CLUSTER-01, folder: Linux/New}. Not set = the template's own cluster, datastore and folder; its CPU and memory. |
+| `vm_deploy_sites` | `{}` | Sites: a ticket's 'site: A' line (or its Location field, when it is one of these names) picks the placement - over vm_deploy_defaults; a cluster / datastore / folder the ticket names itself still wins. vm_deploy_sites: SiteA: {cluster: A-PROD-CL01, datastore: A-DSC01, folder: Servers/New} SiteB: {cluster: B-PROD-CL01,… (all of it: the role file) |
+| `vm_deploy_site_required` | `true` | with sites set up: a ticket must say its site (false = vm_deploy_defaults) |
+| `vm_deploy_pxe_templates` | `[]` | Templates with no operating system that boot from the network (PXE) into a deployment (e.g. an MECM task sequence): no guest customization, no waiting for an IP; the ticket gets the MAC address. e.g. [win2022-pxe] |
+| `vm_deploy_max_disks` | `4` | disks a ticket may ask for (disks_gb: 100, 200 = disk 1 grown to 100 GB, one 200 GB disk added) |
+| `vm_deploy_max_disk_gb` | `2048` | the biggest disk a ticket may ask for, in GB |
+| `vm_deploy_max_total_disk_gb` | `4096` | all its disks together, in GB |
+| `vm_deploy_mem_target_pct` | `80` | Automatic placement - when the ticket, its site and vm_deploy_defaults name no cluster / datastore: the job chooses among a site's 'clusters' / 'datastores' lists (e.g. SiteA: {clusters: [A-PROD-*]}), else among vm_deploy_clusters / vm_deploy_datastores; with neither, the template's own. a cluster fits when its memory… (all of it: the role file) |
+| `vm_deploy_failover_hosts` | `1` | hosts to plan as failed when choosing a cluster |
+| `vm_deploy_datastore_max_used_pct` | `85` | a datastore fits when it stays under this % with the VM at its full size |
+| `vm_deploy_domain` | `localdomain` | the DNS domain Linux customization sets (a ticket's domain: wins) |
+| `vm_deploy_customize` | `true` | guest customization: host name = vm_name, every adapter on DHCP |
+| `vm_deploy_power_on` | `true` | power the new VM on (false = leave it off, e.g. to check it first) |
+| `vm_deploy_wait_customization` | `900` | seconds to wait for vCenter's customization result |
+| `vm_deploy_wait_ip` | `600` | seconds to wait for an IPv4 address (DHCP, through VMware Tools) |
+| `vm_deploy_done_fields` | `{}` | Fields set on the ticket when the VM is up, e.g. to resolve an incident: {state: "6", close_code: "Solution provided", close_notes: "VM deployed"} (your instance's values) |
+| `vm_deploy_genai` | `false` | ---- GenAI reads a request written in plain words (a proof of concept, off by default) ---- When the ticket's own 'key: value' lines do not give vm_name and template: ACT (GenAI, evidence mode, no commands) reads the ticket and proposes the VM - each value with the ticket's words it comes from, or a question to the re… (all of it: the role file) |
+| `vm_deploy_template_catalog` | `{}` | The templates GenAI may choose from, each with a plain description it can match the request to: {win2022-pxe: "Windows Server 2022 (installed over the network by MECM)", rhel9-gold: "Red Hat Enterprise Linux 9"} |
+| `vm_deploy_genai_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | seconds the model may take for its answer |
 
 ## win_act
 
@@ -602,10 +637,10 @@ File: `roles/win_check_accounts/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `win_check_accounts_password_max_age_days` | `60` |  |
-| `win_check_accounts_inactive_days` | `35` |  |
-| `win_check_accounts_password_never_expires_allowed` | `[]` |  |
-| `win_check_accounts_inactive_allowed` | `[]` |  |
+| `win_check_accounts_password_max_age_days` | `60` | an enabled local account's password older than this -> warning (0 = off) |
+| `win_check_accounts_inactive_days` | `35` | an enabled local account with no logon for this many days -> warning (0 = off) |
+| `win_check_accounts_password_never_expires_allowed` | `[]` | accounts allowed "password never expires" (wildcards) |
+| `win_check_accounts_inactive_allowed` | `[]` | accounts allowed to stay unused (wildcards) |
 | `win_check_accounts_admins_allowed` | `[]` | Empty = list the members in the job output only. Set it to report anyone else, e.g. win_check_accounts_admins_allowed: ['*\Administrator', 'YOURDOMAIN\Domain Admins', 'YOURDOMAIN\svc_aap'] |
 
 ## win_check_audit
@@ -618,8 +653,8 @@ File: `roles/win_check_audit/defaults/main.yml`
 |---|---|---|
 | `win_check_audit_subcategories` | `- {name: Credential Validation, guid: 0CCE923F-69AE-11D9-BED3-505054503030, need: Success…` | Advanced audit policy subcategories (checked by GUID, so any Windows language works). need: Success \| Failure \| Success and Failure |
 | `win_check_audit_security_log_min_kb` | `196608` | STIG |
-| `win_check_audit_application_log_min_kb` | `32768` |  |
-| `win_check_audit_system_log_min_kb` | `32768` |  |
+| `win_check_audit_application_log_min_kb` | `32768` | the Application log's maximum size must be at least this (KB) |
+| `win_check_audit_system_log_min_kb` | `32768` | the System log's maximum size must be at least this (KB) |
 | `win_check_audit_forwarder_services` | `[]` | Log forwarding agents that must run, e.g. [SplunkForwarder] or [nxlog] |
 
 ## win_check_certs
@@ -630,10 +665,11 @@ File: `roles/win_check_certs/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `win_check_certs_warn_days` | `30` |  |
-| `win_check_certs_crit_days` | `7` |  |
-| `win_check_certs_expired_report_days` | `30` |  |
-| `win_check_certs_stores` | `['Cert:\LocalMachine\My', 'Cert:\LocalMachine\WebHosting', 'Cert:\LocalMachine\Remote Des…` |  |
+| `win_check_certs_warn_days` | `30` | a certificate expiring within this many days -> warning (amber in the certificate report) |
+| `win_check_certs_notice_days` | `60` | the certificate report colours these blue (an early heads-up; not a finding) |
+| `win_check_certs_crit_days` | `7` | within this many days -> critical |
+| `win_check_certs_expired_report_days` | `30` | an expired certificate NOT in use is a finding for this many days after it expired; older ones only in the report |
+| `win_check_certs_stores` | `['Cert:\LocalMachine\My', 'Cert:\LocalMachine\WebHosting', 'Cert:\LocalMachine\Remote Des…` | the machine certificate stores read |
 | `win_check_certs_ignore_subjects` | `[]` | wildcards, e.g. ['CN=localhost*'] |
 | `win_check_certs_endpoints` | `[]` | TLS services whose certificate a client actually gets, e.g. win_check_certs_endpoints: - {name: IIS, host: 127.0.0.1, port: 443, servername: web01.yoursite.mil} |
 
@@ -659,8 +695,8 @@ File: `roles/win_check_eventlog/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `win_check_eventlog_hours` | `24` |  |
-| `win_check_eventlog_error_warn` | `50` |  |
+| `win_check_eventlog_hours` | `24` | how many hours back the event logs are read |
+| `win_check_eventlog_error_warn` | `50` | this many errors or more in System + Application -> warning |
 
 ## win_check_network
 
@@ -672,8 +708,8 @@ File: `roles/win_check_network/defaults/main.yml`
 |---|---|---|
 | `win_check_network_dns_names` | `[]` | Names every Windows server must resolve, e.g. [dc01.yoursite.mil, ldap.yoursite.mil] |
 | `win_check_network_tcp` | `[]` | Services every Windows server must reach, e.g. win_check_network_tcp: - {name: LDAPS, host: dc01.yoursite.mil, port: 636} - {name: SIEM, host: siem.yoursite.mil, port: 9997} |
-| `win_check_network_secure_channel` | `true` |  |
-| `win_check_network_timeout_ms` | `3000` |  |
+| `win_check_network_secure_channel` | `true` | domain members: test the computer's trust with the domain (nltest /sc_query) |
+| `win_check_network_timeout_ms` | `3000` | milliseconds for each TCP test |
 
 ## win_check_patching
 
@@ -683,10 +719,10 @@ File: `roles/win_check_patching/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `win_check_patching_warn_days` | `35` |  |
-| `win_check_patching_crit_days` | `60` |  |
-| `win_check_patching_reboot_pending` | `true` |  |
-| `win_check_patching_search_pending` | `false` |  |
+| `win_check_patching_warn_days` | `35` | last update installed this many days ago or more -> warning |
+| `win_check_patching_crit_days` | `60` | this many days or more -> critical |
+| `win_check_patching_reboot_pending` | `true` | report a restart pending for installed updates |
+| `win_check_patching_search_pending` | `false` | also ask Windows Update which updates are missing (slower) |
 
 ## win_check_performance
 
@@ -696,11 +732,11 @@ File: `roles/win_check_performance/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `win_check_performance_cpu_warn_pct` | `90` |  |
-| `win_check_performance_cpu_crit_pct` | `98` |  |
-| `win_check_performance_mem_warn_pct` | `90` |  |
-| `win_check_performance_mem_crit_pct` | `97` |  |
-| `win_check_performance_pagefile_warn_pct` | `80` |  |
+| `win_check_performance_cpu_warn_pct` | `90` | CPU busy % (average of three samples) -> warning |
+| `win_check_performance_cpu_crit_pct` | `98` | CPU busy % -> critical |
+| `win_check_performance_mem_warn_pct` | `90` | memory in use % -> warning |
+| `win_check_performance_mem_crit_pct` | `97` | memory in use % -> critical |
+| `win_check_performance_pagefile_warn_pct` | `80` | page file in use % -> warning |
 
 ## win_check_security
 
@@ -711,7 +747,7 @@ File: `roles/win_check_security/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `win_check_security_av` | `auto` | Antivirus: auto = check Microsoft Defender when it is the active antivirus (skipped when it is passive or off because another product protects the server); defender = always; none = never. |
-| `win_check_security_av_signature_max_days` | `7` |  |
+| `win_check_security_av_signature_max_days` | `7` | Defender's signatures older than this many days -> finding |
 | `win_check_security_av_services` | `[]` | Services of your endpoint protection that must run, e.g. Trellix / McAfee: [masvc, mfemms] |
 | `win_check_security_firewall_profiles` | `[Domain, Private, Public]` | must be on |
 | `win_check_security_smb1` | `true` | SMBv1 must be off |
@@ -728,7 +764,7 @@ File: `roles/win_check_services/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `win_check_services_required` | `[EventLog, RpcSs, Dnscache, W32Time, WinRM, mpssvc]` | Must be running on every Windows server. Add your own per group with ..._required_extra, e.g. for IIS servers: win_check_services_required_extra: [W3SVC, WAS] |
-| `win_check_services_required_extra` | `[]` |  |
+| `win_check_services_required_extra` | `[]` | more services that must run, e.g. for a group of IIS servers (see above) |
 | `win_check_services_ignore` | `- gupdate - gupdatem - edgeupdate - edgeupdatem - MicrosoftEdgeElevationService - GoogleU…` | Automatic services never to report (wildcards allowed: * and ?) |
 | `win_check_services_crash_hours` | `24` | look back this far for unexpected stops |
 | `win_check_services_crash_warn` | `3` | this many unexpected stops of one service -> warning |
@@ -741,9 +777,9 @@ File: `roles/win_check_time/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `win_check_time_offset_warn_sec` | `1` |  |
-| `win_check_time_offset_crit_sec` | `5` |  |
-| `win_check_time_max_hours_since_sync` | `24` |  |
+| `win_check_time_offset_warn_sec` | `1` | seconds off its time source -> warning |
+| `win_check_time_offset_crit_sec` | `5` | seconds off -> critical |
+| `win_check_time_max_hours_since_sync` | `24` | last successful sync longer ago than this many hours -> finding |
 
 ## win_patch
 
@@ -768,7 +804,7 @@ File: `roles/win_patch/defaults/main.yml`
 | `win_patch_services_grace_min` | `5` | After the restart, give delayed-start services this long before calling one missing. |
 | `win_patch_services_ignore` | `['gupdate*', 'edgeupdate*', 'MicrosoftEdgeElevationService', 'GoogleUpdater*', 'MapsBroke…` | Automatic services that come and go on their own (wildcards); not compared before/after. |
 | `win_patch_winrm_host` | `"{{ ansible_host \| default(inventory_hostname) }}"` | Where AAP reaches WinRM, to see the server go down and come back during the restart |
-| `win_patch_winrm_port` | `"{{ ansible_port \| default(5986) }}"` |  |
+| `win_patch_winrm_port` | `"{{ ansible_port \| default(5986) }}"` | its WinRM port (5986 = HTTPS) |
 
 ## win_troubleshoot
 
@@ -777,12 +813,8 @@ File: `roles/win_troubleshoot/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `ts_area` | `overview` | WINDOWS TROUBLESHOOT: the PowerShell commands an experienced Windows admin runs first for a kind of problem, run for you (read-only), each with a line saying what it shows. The matching health checks run too, so you also get plain-words findings. ts_area: overview \| disk \| performance \| service \| network \| login \| tim… (all of it: the role file) |
-| `ts_service` | (empty) |  |
-| `ts_target` | (empty) |  |
-| `ts_hours` | `2` |  |
+| `ts_service` | (empty) | the service name, for ts_area service (see above) |
+| `ts_target` | (empty) | host:port, for ts_area network |
+| `ts_hours` | `2` | how many hours back the event logs are read |
 | `ts_output_lines` | `60` | keep the last this-many lines of each command |
-| `_ts_svc` | `"{{ ts_service \| replace(\"'\", \"''\") }}"` | Values used inside the commands below (quoted for PowerShell) |
-| `_ts_host` | `"{{ ts_target.split(':')[0] \| replace(\"'\", \"''\") }}"` |  |
-| `_ts_port` | `"{{ (ts_target.split(':') + ['443'])[1] \| int }}"` |  |
-| `_ts_since` | `"(Get-Date).AddHours(-{{ ts_hours \| int }})"` |  |
 | `win_ts_areas` | `overview: checks: [disk, services, performance, time, eventlog] commands: - {why: "Window…` | What each area runs. `why` is printed above the command's output. Commands must be read-only. |

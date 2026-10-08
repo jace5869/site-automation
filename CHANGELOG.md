@@ -1,5 +1,86 @@
 # Changelog
 
+## 0.12.0 — 2026-10-08
+
+**Updating without scripts** (copying the release over your repository): first delete
+`playbooks\group_vars`, `playbooks\host_vars` and `poam\poam.csv` from the extracted release
+(docs/HOW_IT_FITS_TOGETHER.md, "Method 2"). New folder: `roles/vmware_vm/module_utils/` (copy it
+too). Then add your vCenters to `playbooks/group_vars/all.yml`:
+`vmware_vcenters: [vc01.yoursite.mil, vc02.yoursite.mil]`. New job template: *VM - deploy from
+ServiceNow ticket* (docs/VMWARE.md, "Deploy a VM from a ServiceNow ticket").
+
+- **Several vCenters, one report.** The alarms report and its ACT analysis, the datastore report, the
+  snapshot report and cleanup, capacity planning and the ESXi security settings read every vCenter
+  in `vmware_vcenters` besides the credential's own, with the same account (Enhanced Linked Mode
+  shares single sign-on), into one report. Before, they read only the credential's vCenter, so a
+  linked vCenter's datacenters and clusters were missing.
+  - The Datacenter column names the vCenter (`vc02 / DC1`); the footer lists the vCenters read.
+  - Nothing is mixed up between vCenters: a VM's or host's ID repeats in every vCenter, and two
+    vCenters may both have a cluster `PROD`. The snapshot cleanup deletes each snapshot on its own
+    vCenter (the report hands it the vCenter; an approval from an older report means the
+    credential's vCenter only); capacity planning keeps same-named clusters and datastores apart
+    (`PROD (vc02 / DC1)`), each with its own datastores; the alarms report colours each host by its
+    own alarms.
+  - A vCenter that cannot be read does not stop the others: the report lists it in red on top and
+    the job stays green - the report completed (`vmware_vcenter_fail_unread: true` makes it fail). The same vCenter
+    listed twice (a short name and its FQDN) is read once.
+  - The jobs that act on VMs by name (restart, shut down, snapshot, notes, VLAN, secure boot) still
+    use the credential's vCenter. docs/VMWARE.md, "Several vCenters, one report".
+- **Deploy a VM from a ServiceNow ticket** (`playbooks/vm_deploy_from_ticket.yml`): launched with the
+  ticket number (an incident or a task); the ticket says what to build in `key: value` lines in its
+  description or a comment (`vm_name`, `template`, `cpu`, `memory_gb`; a newer comment overrides).
+  Checked against the rules in AAP (allowed templates - required -, clusters, datastores, folders; CPU
+  and memory caps; the ticket open and assigned to your group; the name free in every vCenter); the
+  ticket gets "[AAP] Deploying" with the exact request before anything is built, then the result with
+  the IP address. Clone, CPU and memory, guest customization (host name, DHCP; Windows: a vCenter
+  customization specification), power on, vCenter's customization result and the DHCP address. Check
+  = a dry run that builds and writes nothing. **Sites** (`vm_deploy_sites`): a ticket's `site: A` (or its
+  Location field) picks the cluster, datastore, folder and vCenter. **Network-boot templates**
+  (`vm_deploy_pxe_templates`, e.g. a Windows template that boots into an MECM task sequence): no guest
+  customization, names of 15 characters at most, the MAC address on the ticket. A standalone host or
+  a cluster without DRS gets the VM on its connected host with the most free memory. **Disks**
+  (`disks_gb: 120, 200`: disk 1 grown, never shrunk; more disks added thin; capped). **Automatic
+  placement** among a site's (or the allow-lists') candidate clusters and datastores: memory with a
+  host down under 80 %, a shared datastore under 85 % with the VM at full size; the ranking is on
+  the ticket. **GenAI reads requests in plain words** (`vm_deploy_genai`, a proof of concept, off by
+  default): run 1 posts a proposal - every value traced to the ticket's own words, a template from
+  `vm_deploy_template_catalog`, questions to the requester as a comment - and builds nothing; run 2
+  builds that proposal without asking GenAI again, only while the ticket text is unchanged. GenAI only
+  turns the ticket's text into values: every action (the ticket notes, everything in vCenter) is done
+  by AAP. docs/VMWARE.md, "How it flows, step by step".
+  docs/VMWARE.md, "Deploy a VM from a ServiceNow ticket".
+- Capacity planning: provisioned space per cluster is now counted from that cluster's own
+  datastores (a datastore name used in two places was counted for both).
+- **ACT timeouts raised for every ACT job**: `site_act_model_timeout: 600` (new: the model's time for
+  one answer, retries after a provider error included - ACT's own default was 90 s) and
+  `site_act_timeout: 1200` (the whole run, was 600); the VMware alarms and capacity analyses follow
+  `site_act_model_timeout` (were 300 s); *Service watch* `watch_act_timeout: 1200`. Fixes
+  `model turn exceeded the 90s / 300s total timeout after a transient provider failure`.
+- **Every setting is documented**: each of the 449 settings in `roles/*/defaults/main.yml` has its
+  own description in docs/VARIABLES_REFERENCE.md (a test keeps it so), every job's chapter links to
+  its settings, and docs/VARIABLES.md has "How to use a setting". In print the settings have **their own
+  PDF**, `docs/pdf/Site-Automation-Settings-Reference.pdf`, to read next to the setup guide (which is
+  shorter for it; the How-It-Fits guide's settings appendix moved there too).
+- **Every ACT job streams the model's answer** (`ACT_STREAM=1`): data keeps flowing while the model
+  writes, so a firewall or proxy idle timeout no longer cuts a long answer (`network error reaching
+  API: connection reset by peer`). ACT falls back by itself where a gateway cannot stream;
+  `site_act_env: {ACT_STREAM: "0"}` turns it off.
+- **A chat reply is not an analysis**: when the model answers like a chat window ("I am ready. What
+  task or command would you like me to assist you with?") instead of analysing, the report says
+  `ACT gave no analysis` (status `no_analysis`) and nothing it tried is passed on for approval.
+- **Certificate report, coloured** (Linux and Windows): in the emailed table, expired = red, within
+  `check_certs_warn_days` (30) = amber, within the new `check_certs_notice_days` (60) = blue, the rest
+  plain with a green "ok" (Windows: `win_check_certs_warn_days` / `win_check_certs_notice_days`). The
+  printed table marks the 60-day ones too.
+- **Certificate report finds certificates by itself** (Linux): the listening ports that answer TLS
+  (each probed once, 3 s, at most 25; plain-text ports such as 22, 25, 53, 389, 3306 never touched),
+  and Java keystores (`*.jks`, `*.keystore`, `*.p12`, `*.pfx` in `/etc`, `/opt`, `/srv`, Tomcat's
+  folders, and the ones running Java programs name). A keystore that needs a password is listed under
+  "Found but not checked" - no password is guessed. `cert_report_discover: false` turns it off; the
+  weekly health check does not search by itself (`check_certs_discover_ports` / `_keystores`).
+- Provider and model: GenAI.mil with `gemini-3.8-flash` stays the default (`site_act_provider`,
+  `site_act_models`); a `site_act_provider: asksage` in your `all.yml` or a template overrides it.
+
 ## 0.11.1 — 2026-10-08
 
 **Updating without scripts:** only `plugins/filter/capacity_filters.py` changed (and its test):

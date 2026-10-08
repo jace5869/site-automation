@@ -44,6 +44,27 @@ def _where(e, vcenter):
     return e.get("host") or e.get("cluster") or e.get("datacenter") or vcenter or "vCenter"
 
 
+def _vcs(d):
+    """The vCenters the data comes from (several: one report for all)."""
+    st = d.get("vcenters")
+    if st:
+        return [x.get("name") for x in st if x.get("ok") and not str(x.get("note", "")).startswith("the same vCenter")]
+    return [d["vcenter"]] if d.get("vcenter") else []
+
+
+def _short(vc):
+    """'vc02.example.mil' -> 'vc02'; an IP address (or name:port) as it is."""
+    vc = str(vc or "")
+    host = vc.split(":")[0]
+    return vc if host.replace(".", "").isdigit() else host.split(".")[0] + vc[len(host):]
+
+
+def _dc(x, multi):
+    """The Datacenter cell: 'DC1', or with several vCenters 'vc02 / DC1'."""
+    dc = x.get("datacenter", "") or ""
+    return ("%s / %s" % (_short(x.get("vcenter")), dc) if dc else _short(x.get("vcenter"))) if multi and x.get("vcenter") else dc
+
+
 def vm_alarm_groups(data, opts=None):
     """The events, grouped the way the report shows them:
     logins      failed logins per user, source and server: count, first, last (critical from
@@ -57,8 +78,10 @@ def vm_alarm_groups(data, opts=None):
     ev = d.get("events") or []
     logins = {}
     for e in (x for x in ev if x.get("group") == "login"):
-        k = (e.get("login_user") or "?", e.get("ip") or "?", _where(e, vc))
-        g = logins.setdefault(k, {"user": k[0], "ip": k[1], "where": k[2], "cluster": e.get("cluster", ""),
+        evc = e.get("vcenter") or vc
+        k = (e.get("login_user") or "?", e.get("ip") or "?", _where(e, evc), evc)
+        g = logins.setdefault(k, {"user": k[0], "ip": k[1], "where": k[2], "vcenter": evc, "on_vcenter": k[2] == evc,
+                                  "cluster": e.get("cluster", ""),
                                   "datacenter": e.get("datacenter", ""), "count": 0, "first": e.get("time", ""),
                                   "last": e.get("time", ""), "message": e.get("message", "")})
         g["count"] += 1
@@ -67,17 +90,19 @@ def vm_alarm_groups(data, opts=None):
             g["last"], g["message"] = e.get("time", ""), e.get("message", "")
     for g in logins.values():
         g["severity"] = "critical" if g["count"] >= crit_n else "warning"
-    hosts = {h.get("name"): h for h in d.get("hosts") or []}
+    # a host by vCenter and name: two vCenters may each have an esx01
+    hosts = {(h.get("vcenter", ""), h.get("name")): h for h in d.get("hosts") or []}
     conn = {}
     for h in hosts.values():
         if h.get("connection") not in ("connected", ""):
-            conn[h["name"]] = {"host": h["name"], "cluster": h.get("cluster", ""), "datacenter": h.get("datacenter", ""),
+            conn[(h.get("vcenter", ""), h["name"])] = {
+                               "host": h["name"], "vcenter": h.get("vcenter", ""), "cluster": h.get("cluster", ""), "datacenter": h.get("datacenter", ""),
                                "state": h.get("connection", ""), "maintenance": bool(h.get("maintenance")),
                                "events": 0, "last": "", "message": "", "worst": "critical"}
     for e in (x for x in ev if x.get("group") == "connection"):
         hn = e.get("host") or "?"
-        h = hosts.get(hn, {})
-        c = conn.setdefault(hn, {"host": hn, "cluster": e.get("cluster") or h.get("cluster", ""),
+        h = hosts.get((e.get("vcenter", ""), hn), {})
+        c = conn.setdefault((e.get("vcenter", ""), hn), {"host": hn, "vcenter": e.get("vcenter", ""), "cluster": e.get("cluster") or h.get("cluster", ""),
                                  "datacenter": e.get("datacenter") or h.get("datacenter", ""),
                                  "state": h.get("connection", "") or "?", "maintenance": bool(h.get("maintenance")),
                                  "events": 0, "last": "", "message": "", "worst": ""})
@@ -92,9 +117,10 @@ def vm_alarm_groups(data, opts=None):
     for e in (x for x in ev if x.get("group") == "other"):
         obj, kind = ((e["vm"], "vm") if e.get("vm") else (e["host"], "host") if e.get("host")
                      else (e["cluster"], "cluster") if e.get("cluster") else (e["datacenter"], "datacenter")
-                     if e.get("datacenter") else (vc, "vcenter"))
-        k = (e.get("type", ""), obj)
-        g = other.setdefault(k, {"type": e.get("type", ""), "object": obj, "object_type": kind, "cluster": e.get("cluster", ""),
+                     if e.get("datacenter") else (e.get("vcenter") or vc, "vcenter"))
+        k = (e.get("type", ""), obj, e.get("vcenter", ""))
+        g = other.setdefault(k, {"type": e.get("type", ""), "object": obj, "object_type": kind, "vcenter": e.get("vcenter", ""),
+                                 "cluster": e.get("cluster", ""),
                                  "datacenter": e.get("datacenter", ""), "count": 0, "first": e.get("time", ""),
                                  "last": e.get("time", ""), "message": e.get("message", ""), "severity": ""})
         g["count"] += 1
@@ -145,7 +171,9 @@ def _section(title, columns, rows, text="", status="", status_col=0, max_rows=0)
 def vm_alarm_report(data, opts=None):
     """The alarms report (roles/site_email layout)."""
     d, o = data or {}, opts or {}
-    vc = d.get("vcenter") or "vCenter"
+    vcs = _vcs(d)
+    multi = len(vcs) > 1
+    vc = ("vCenters " + ", ".join(vcs)) if multi else ("vCenter " + (d.get("vcenter") or ""))
     hours = _hours(d.get("window_hours", o.get("hours", 24)))
     max_rows = int(o.get("max_rows") or 200)
     g = vm_alarm_groups(d, o)
@@ -177,7 +205,7 @@ def vm_alarm_report(data, opts=None):
     status = worst if worst in ("critical", "warning") else "ok"
     types = o.get("types") or ["vcenter", "datacenter", "cluster", "host"]
     tl = [PLURAL.get(t, t) for t in types]
-    subtitle = "vCenter %s - alarms now on %s%s - read %s UTC%s" % (
+    subtitle = "%s - alarms now on %s%s - read %s UTC%s" % (
         vc, ", ".join(tl[:-1]) + " and " + tl[-1] if len(tl) > 1 else tl[0],
         ("; events of the last %s hours" % hours) if events_on else "", _t(d.get("read_at")),
         (" - datacenter " + o["datacenter"]) if o.get("datacenter") else "")
@@ -203,7 +231,7 @@ def vm_alarm_report(data, opts=None):
     sections = [_section(
         "Triggered alarms", ["Severity", "Type", "Object", "Alarm", "Since (UTC)", "Acknowledged", "Cluster", "Datacenter"],
         [(a.get("severity"), [_sev(a.get("severity")), TYPE_LABEL.get(a.get("entity_type"), a.get("entity_type")), a.get("entity"),
-                              a.get("alarm"), _t(a.get("time")), ack(a), a.get("cluster"), a.get("datacenter")]) for a in alarms],
+                              a.get("alarm"), _t(a.get("time")), ack(a), a.get("cluster"), _dc(a, multi)]) for a in alarms],
         "As vCenter shows them now: red = critical, yellow = warning. Acknowledged = someone has seen it in vCenter; "
         "the alarm is still active until its cause is gone." if alarms else "No alarm is triggered.",
         _worst([a.get("severity") for a in alarms]), max_rows=max_rows)]
@@ -211,7 +239,7 @@ def vm_alarm_report(data, opts=None):
         "Host connection", ["Severity", "Host", "State now", "Maintenance", "Connection events", "Last event (UTC)", "Last message",
                             "Cluster", "Datacenter"],
         [(c["severity"], [_sev(c["severity"]), c["host"], c["state"], "yes" if c["maintenance"] else "no", c["events"],
-                          _t(c["last"]), c["message"], c["cluster"], c["datacenter"]]) for c in g["connection"]],
+                          _t(c["last"]), c["message"], c["cluster"], _dc(c, multi)]) for c in g["connection"]],
         ("Hosts not connected to vCenter now (critical), and hosts that lost the connection in the last %s h but are back (warning)." % hours)
         if g["connection"] else "Every host is connected%s." % (", and none lost its connection in the last %s h" % hours if events_on else ""),
         _worst([c["severity"] for c in g["connection"]]), max_rows=max_rows))
@@ -227,7 +255,7 @@ def vm_alarm_report(data, opts=None):
         sections.append(_section(
             "Virtual machine events", ["Severity", "Time (UTC)", "VM", "Event", "Host", "Cluster", "Datacenter", "By"],
             [(e.get("severity"), [_sev(e.get("severity")), _t(e.get("time")), e.get("vm"), e.get("message"), e.get("host"),
-                                  e.get("cluster"), e.get("datacenter"), e.get("user") or "-"]) for e in g["vm"]],
+                                  e.get("cluster"), _dc(e, multi), e.get("user") or "-"]) for e in g["vm"]],
             "Guest shutdowns and restarts, power-offs, resets and HA restarts. Info = someone did it (By); warning = HA "
             "restarted or reset it, or it was powered off with no user; critical = a failover or power-on failed."
             if g["vm"] else "No VM was shut down, powered off, reset or restarted by HA in the last %s h." % hours,
@@ -243,26 +271,27 @@ def vm_alarm_report(data, opts=None):
     sections.append(_section(
         "Configuration issues", ["Severity", "Type", "Object", "Issue", "Cluster", "Datacenter"],
         [("warning", ["WARNING", TYPE_LABEL.get(i.get("entity_type"), i.get("entity_type")), i.get("entity"), i.get("message"),
-                      i.get("cluster"), i.get("datacenter")]) for i in issues],
+                      i.get("cluster"), _dc(i, multi)]) for i in issues],
         "What vCenter shows as configuration issues (e.g. SSH or the ESXi shell left on, HA problems)." if issues
         else "No configuration issue.", "warning" if issues else "", max_rows=max_rows))
 
-    al_by = {}
+    al_by = {}                  # by vCenter and moid: every vCenter has a host-10
     for a in alarms:
         if a.get("entity_type") == "host":
-            al_by.setdefault(a.get("moid"), []).append(a.get("severity"))
+            al_by.setdefault((a.get("vcenter", ""), a.get("moid")), []).append(a.get("severity"))
     ev_by = {}
     for e in d.get("events") or []:
         if e.get("host") and e.get("severity") in ("critical", "warning"):
-            ev_by[e["host"]] = ev_by.get(e["host"], 0) + 1
+            k = (e.get("vcenter", ""), e["host"])
+            ev_by[k] = ev_by.get(k, 0) + 1
     rows = []
     for h in hosts:
-        sevs = al_by.get(h.get("moid"), [])
+        sevs = al_by.get((h.get("vcenter", ""), h.get("moid")), [])
         st = ("critical" if h.get("connection") not in ("connected", "") or "critical" in sevs else
               "warning" if "warning" in sevs else "info" if h.get("maintenance") else "")
-        cells = [h.get("name"), h.get("cluster"), h.get("datacenter"), h.get("connection"), "yes" if h.get("maintenance") else "no",
+        cells = [h.get("name"), h.get("cluster"), _dc(h, multi), h.get("connection"), "yes" if h.get("maintenance") else "no",
                  ("%s (%s)" % (h.get("version"), h.get("build"))) if h.get("version") else "", " ".join(x for x in (h.get("vendor"), h.get("model")) if x),
-                 len(sevs), ev_by.get(h.get("name"), 0)]
+                 len(sevs), ev_by.get((h.get("vcenter", ""), h.get("name")), 0)]
         rows.append((st, cells))
     s = _section("All hosts", ["Host", "Cluster", "Datacenter", "Connection", "Maintenance", "ESXi", "Hardware", "Alarms",
                                "Errors / warnings (%s h)" % hours if events_on else "Errors / warnings"],
@@ -282,7 +311,6 @@ def vm_alarm_problems(data, opts=None):
     other error / warning groups, and (opts.config_issues, default true) configuration issues.
     -> {'problems': first opts.max_items (40), 'not_analyzed': the rest}"""
     d, o = data or {}, opts or {}
-    vc = d.get("vcenter") or "vCenter"
     g = vm_alarm_groups(d, o)
     out = []
     for a in d.get("alarms") or []:
@@ -299,7 +327,7 @@ def vm_alarm_problems(data, opts=None):
                         else "host lost its connection to vCenter %d time(s), connected again now" % c["events"],
                         "detail": c["message"], "time": c["last"], "count": c["events"]})
     for x in g["logins"]:
-        out.append({"kind": "login", "severity": x["severity"], "object_type": "host" if x["where"] != vc else "vcenter",
+        out.append({"kind": "login", "severity": x["severity"], "object_type": "vcenter" if x.get("on_vcenter") else "host",
                     "object": x["where"], "cluster": x["cluster"], "datacenter": x["datacenter"],
                     "problem": "%d failed login(s) as %s from %s" % (x["count"], x["user"], x["ip"]),
                     "detail": "first %s, last %s: %s" % (_t(x["first"]), _t(x["last"]), x["message"]), "time": x["last"], "count": x["count"]})
@@ -319,6 +347,16 @@ def vm_alarm_problems(data, opts=None):
             out.append({"kind": "config", "severity": "warning", "object_type": i.get("entity_type", ""), "object": i.get("entity", ""),
                         "cluster": i.get("cluster", ""), "datacenter": i.get("datacenter", ""),
                         "problem": "configuration issue", "detail": i.get("message", ""), "time": i.get("time", ""), "count": 1})
+    if len(_vcs(d)) > 1:        # several vCenters: say which one, in the object's place (vc02 / DC1)
+        vc_of = {}
+        for x in (d.get("hosts") or []) + (d.get("alarms") or []) + (d.get("config_issues") or []) + (d.get("events") or []):
+            for k in ("name", "entity", "host", "vm", "cluster"):
+                if x.get(k) and x.get("vcenter"):
+                    vc_of.setdefault(x[k], x["vcenter"])
+        for p in out:
+            v = vc_of.get(p["object"]) if p["object_type"] != "vcenter" else None
+            if v:
+                p["datacenter"] = _dc({"vcenter": v, "datacenter": p.get("datacenter", "")}, True)
     out.sort(key=lambda p: RANK.get(p["severity"], 9))       # stable: alarms first within a severity
     cap = int(o.get("max_items") or 40)
     for n, p in enumerate(out, 1):
@@ -348,7 +386,7 @@ def vm_alarm_evidence(data, problems, opts=None):
     lines += ["", "HOSTS (state, ESXi version, hardware)"]
     for h in d.get("hosts") or []:
         lines.append("%s: cluster %s, datacenter %s, connection %s, power %s, maintenance %s, ESXi %s build %s, %s %s, status %s" % (
-            h.get("name"), h.get("cluster") or "-", h.get("datacenter") or "-", h.get("connection"), h.get("power"),
+            h.get("name"), h.get("cluster") or "-", _dc(h, len(_vcs(d)) > 1) or "-", h.get("connection"), h.get("power"),
             "yes" if h.get("maintenance") else "no", h.get("version") or "?", h.get("build") or "?", h.get("vendor", ""), h.get("model", ""),
             h.get("status", "")))
     issues = d.get("config_issues") or []
@@ -580,6 +618,8 @@ def vm_alarm_names(data):
     names, VMs): ACT replaces them with placeholders before anything reaches the model."""
     d = data or {}
     out = {d.get("vcenter", "")}
+    for v in _vcs(d):
+        out.update([v, _short(v), v.split(":")[0]])
     for h in d.get("hosts") or []:
         for k in ("name", "cluster", "datacenter"):
             out.add(h.get(k, ""))

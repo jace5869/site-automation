@@ -44,6 +44,7 @@ jobs:
           python tests/test_vmware_modules.py
           python tests/test_ontap.py
           python tests/test_capacity.py
+          python tests/test_vm_deploy.py
       - name: The real ACT in the alarms analysis mode (piped evidence, masked names, the answer read back)
         run: python tests/test_alarm_act_contract.py
       - name: docs/VARIABLES_REFERENCE.md is generated from the roles and is up to date
@@ -90,6 +91,10 @@ jobs:
         run: |
           bash tests/servicenow/run_servicenow_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_servicenow_test.sh
+      - name: Certificate report finding TLS ports and keystores by itself (in a private namespace; skips where unshare is not allowed)
+        run: |
+          bash tests/certs/run_certs_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/certs/run_certs_test.sh
       - name: Credential types and inventory are valid YAML
         run: |
           python - <<'PY'

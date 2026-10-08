@@ -5,6 +5,14 @@ roles/site_email renders (rows coloured by result)."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+def _dc(h, multi):
+    """The Datacenter cell: 'DC1', or with several vCenters 'vc02 / DC1'."""
+    vc = str(h.get("vcenter") or "")
+    host = vc.split(":")[0]
+    short = vc if host.replace(".", "").isdigit() else host.split(".")[0] + vc[len(host):]
+    return ("%s / %s" % (short, h.get("datacenter", ""))) if multi and vc else h.get("datacenter", "")
+
+
 ROW = {"failed": "critical", "changed": "warning", "skipped": "unknown", "excluded": "", "ok": ""}
 CELL = {"failed": "critical", "changed": "warning", "skipped": "unknown", "excluded": "", "ok": "ok"}
 
@@ -28,6 +36,7 @@ def esxi_security_report(hosts, opts=None):
     """The job's result as a report: failed first, then changed, skipped, and every host."""
     o, hs = opts or {}, hosts or []
     dry = bool(o.get("check_mode"))
+    multi = bool(o.get("multi"))
     by = {k: [h for h in hs if h.get("status") == k] for k in ("failed", "changed", "ok", "skipped", "excluded")}
     acted = len(hs) - len(by["excluded"])
     verb = "would change" if dry else "changed"
@@ -65,7 +74,7 @@ def esxi_security_report(hosts, opts=None):
     for h in hs:
         st = h.get("status", "")
         notes = (h.get("changes") or []) + (h.get("notes") or []) + (h.get("errors") or [])
-        rows.append([h["name"], h.get("cluster", ""), h.get("datacenter", ""), st.upper()]
+        rows.append([h["name"], h.get("cluster", ""), _dc(h, multi), st.upper()]
                     + [h.get("before", {}).get(k, "") for k in keys] + ["; ".join(notes)])
         rs.append(ROW.get(st, ""))
         cs.append(["", "", "", CELL.get(st, "")] + [""] * (len(keys) + 1))

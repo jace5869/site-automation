@@ -13,6 +13,36 @@ RANK = {"critical": 0, "warning": 1, "unknown": 2, "info": 3, "ok": 4, "": 5}
 DAY = 86400.0
 
 
+def vcenters_of(d):
+    """The vCenters the data comes from (several: one report for all)."""
+    st = (d or {}).get("vcenters")
+    if st:
+        return [x.get("name") for x in st if x.get("ok") and not str(x.get("note", "")).startswith("the same vCenter")]
+    return [d["vcenter"]] if (d or {}).get("vcenter") else []
+
+
+def vc_short(vc):
+    """'vc02.example.mil' -> 'vc02'; an IP address (or name:port) as it is."""
+    vc = str(vc or "")
+    host = vc.split(":")[0]
+    return vc if host.replace(".", "").isdigit() else host.split(".")[0] + vc[len(host):]
+
+
+def dc_label(x, multi):
+    """The Datacenter cell: 'DC1', or with several vCenters 'vc02 / DC1'."""
+    return ("%s / %s" % (vc_short(x.get("vcenter")), x.get("datacenter", ""))) if multi and x.get("vcenter") else x.get("datacenter", "")
+
+
+def _labels(objs, multi):
+    """A name each cluster (or datastore) can be told apart by: its name, or - when two share it (two
+    vCenters, or two datacenters) - 'name (vc02 / DC1)'. Sets obj['label']."""
+    seen = {}
+    for x in objs:
+        seen[x["name"]] = seen.get(x["name"], 0) + 1
+    for x in objs:
+        x["label"] = x["name"] if seen[x["name"]] == 1 else "%s (%s)" % (x["name"], dc_label(x, multi) or "?")
+
+
 def worst(statuses):
     s = sorted((x for x in statuses if x), key=lambda x: RANK.get(x, 9))
     return s[0] if s else ""
@@ -188,7 +218,7 @@ def cluster_numbers(c, o, now_ts):
     hosts_now = max(now_n) if now_n else None
     hosts_later = max(later_n) if later_n else None
     avg_after = pct(mem_used, mem + (hosts_now or 0) * per_mem) if hosts_now else None
-    return {"name": c.get("name"), "datacenter": c.get("datacenter", ""), "standalone": bool(c.get("standalone")),
+    return {"name": c.get("name"), "vcenter": c.get("vcenter", ""), "datacenter": c.get("datacenter", ""), "standalone": bool(c.get("standalone")),
             "hosts_total": len(c.get("hosts") or []), "hosts_usable": len(usable), "failover_hosts": fail, "survives": survives,
             "ha": c.get("ha") or {}, "cores": cores, "cpu": cpu, "mem": mem, "cpu_used": cpu_used, "mem_used": mem_used,
             "cpu_n1": cpu_n1, "mem_n1": mem_n1, "cores_n1": cores_n1,
@@ -225,7 +255,8 @@ def datastore_numbers(d, o, now_ts):
     t = trend(d.get("history"), float(o.get("trend_days", 30)), now_ts, int(o.get("min_samples", 7)))
     sw, sc = float(o.get("storage_warn_pct", 85)), float(o.get("storage_crit_pct", 90))
     slope = t["slope"] if t else None
-    return {"name": d.get("name"), "datacenter": d.get("datacenter", ""), "clusters": d.get("clusters") or [], "pod": d.get("pod", ""),
+    return {"name": d.get("name"), "vcenter": d.get("vcenter", ""), "datacenter": d.get("datacenter", ""), "clusters": d.get("clusters") or [],
+            "pod": d.get("pod", ""), "uncommitted": d.get("uncommitted") or 0,
             "type": d.get("type", ""), "accessible": d.get("accessible", True),
             "shared": bool(d.get("shared")) or int(d.get("hosts") or 0) >= 2,    # mounted by two hosts or more
             "capacity": cap, "free": free, "used": used, "pct": pct(used, cap),
@@ -259,16 +290,19 @@ def capacity_numbers(data, opts=None):
         n = datastore_numbers(x, o, now_ts)
         n["status"] = datastore_status(n, o)
         dss.append(n)
+    multi = len(vcenters_of(d)) > 1
+    _labels(cls, multi)
+    _labels(dss, multi)
     counted = [x for x in dss if x["shared"] or local]
     for n in cls:
-        mine = [x for x in counted if n["name"] in x["clusters"]]
+        # a cluster's datastores: same vCenter and datacenter (two vCenters may both have a PROD)
+        mine = [x for x in counted if n["name"] in x["clusters"] and x["vcenter"] == n["vcenter"] and x["datacenter"] == n["datacenter"]]
         cap = sum(x["capacity"] for x in mine)
         used = sum(x["used"] for x in mine)
         slope = sum(x["slope"] for x in mine if x["slope"]) if any(x["slope"] for x in mine) else None
         sw, sc = float(o.get("storage_warn_pct", 85)), float(o.get("storage_crit_pct", 90))
         n["storage"] = {"datastores": len(mine), "capacity": cap, "used": used, "free": cap - used, "pct": pct(used, cap),
-                        "prov_pct": pct(sum(x["used"] for x in mine) + sum(dd.get("uncommitted") or 0 for dd in d.get("datastores") or []
-                                                                           if dd.get("name") in [x["name"] for x in mine]), cap),
+                        "prov_pct": pct(used + sum(x["uncommitted"] for x in mine), cap),
                         "slope": slope, "days_warn": days_until(used, slope, cap * sw / 100.0),
                         "days_crit": days_until(used, slope, cap * sc / 100.0), "days_full": days_until(used, slope, cap),
                         "status": worst([x["status"] for x in mine])}
@@ -278,7 +312,7 @@ def capacity_numbers(data, opts=None):
     cpu_slope = sum(n["cpu_trend"]["slope"] for n in cls if n["cpu_trend"]) if any(n["cpu_trend"] for n in cls) else None
     s_cap = sum(x["capacity"] for x in counted)
     s_used = sum(x["used"] for x in counted)
-    s_unc = sum(dd.get("uncommitted") or 0 for dd in d.get("datastores") or [] if dd.get("shared") or local)
+    s_unc = sum(x["uncommitted"] for x in counted)
     s_slope = sum(x["slope"] for x in counted if x["slope"]) if any(x["slope"] for x in counted) else None
     sw, sc = float(o.get("storage_warn_pct", 85)), float(o.get("storage_crit_pct", 90))
     vms, vcpus = tot("vms_on"), tot("vcpus_on")
@@ -299,7 +333,7 @@ def capacity_numbers(data, opts=None):
     overall["horizon_months"] = int(float(o.get("horizon_months", 12)))
     overall["mem_days"] = days_until(overall["mem_used"], mem_slope, overall["mem_n1"] * mt)
     overall["cpu_days"] = days_until(overall["cpu_used"], cpu_slope, overall["cpu_n1"] * ct)
-    return {"now": now, "clusters": cls, "datastores": dss, "overall": overall}
+    return {"now": now, "clusters": cls, "datastores": dss, "overall": overall, "multi": multi, "vcenters": vcenters_of(d)}
 
 
 # ---- the report ----------------------------------------------------------------------------------
@@ -361,6 +395,8 @@ def vm_capacity_report(data, opts=None):
     sw, sc = float(o.get("storage_warn_pct", 85)), float(o.get("storage_crit_pct", 90))
     max_rows = int(o.get("max_rows") or 100)
     fail = int(o.get("failover_hosts", 1))
+    multi = N["multi"]
+    vc_text = ("vCenters " + ", ".join(N["vcenters"])) if multi else "vCenter " + d.get("vcenter", "")
     sections = []
 
     # ---- overall ----
@@ -384,9 +420,9 @@ def vm_capacity_report(data, opts=None):
              ["", "", "", level(s["pct"], sw, sc), "", "", runway_status(s["days_crit"], warn_d, crit_d)]) if s["capacity"] else
         _row(["Storage (shared datastores)", "-", "-", "-", "", "", "no shared datastore"]),
     ]
-    sections.append(_section("Overall", "All %d cluster(s) of vCenter %s together: %d hosts (%d usable), %d VMs powered on. "
+    sections.append(_section("Overall", "All %d cluster(s) of %s together: %d hosts (%d usable), %d VMs powered on. "
                              "\"After host failure\" is the use with %d host(s) of each cluster down (N+%d). Growth is fitted on vCenter's "
-                             "daily statistics of the last %s days." % (ov["clusters"], d.get("vcenter", ""), ov["hosts"], ov["hosts_usable"],
+                             "daily statistics of the last %s days." % (ov["clusters"], vc_text, ov["hosts"], ov["hosts_usable"],
                                                                         ov["vms_on"], fail, fail, int(float(o.get("trend_days", 30)))),
                              ["Resource", "Capacity", "Used", "Used %", "Used after host failure", "Growth", "Runway"], rows, "", keep_order=True))
 
@@ -396,7 +432,7 @@ def vm_capacity_report(data, opts=None):
         c = n["status_cells"]
         avg = n["avg"]
         avg_txt = ("%.1f vCPU, %s" % (avg["vcpu"], size(avg["mem_configured"]))) if avg["vcpu"] else "-"
-        rows.append(_row([n["name"], n["datacenter"], "%d of %d" % (n["hosts_usable"], n["hosts_total"]), pct_text(n["cpu_pct"]),
+        rows.append(_row([n["label"], dc_label(n, multi), "%d of %d" % (n["hosts_usable"], n["hosts_total"]), pct_text(n["cpu_pct"]),
                           pct_text(n["mem_pct"]),
                           (pct_text(n["mem_n1_pct"]) if n["survives"] else "cannot lose a host") if n["failover_hosts"] else "standalone",
                           n["vcpu_ratio"] if n["vcpu_ratio"] is not None else "?", n["vms_on"], avg_txt,
@@ -424,7 +460,7 @@ def vm_capacity_report(data, opts=None):
         st = n["storage"]
         if not st["datastores"]:
             continue
-        rows.append(_row([n["name"], st["datastores"], size(st["capacity"]), size(st["free"]), pct_text(st["pct"]), pct_text(st["prov_pct"]),
+        rows.append(_row([n["label"], st["datastores"], size(st["capacity"]), size(st["free"]), pct_text(st["pct"]), pct_text(st["prov_pct"]),
                           _per_month(st["slope"]), runway_text(st["days_warn"], now), runway_text(st["days_full"], now)],
                          ["", "", "", "", level(st["pct"], sw, sc), "warning" if (st["prov_pct"] or 0) > 150 else "", "",
                           runway_status(st["days_warn"], warn_d, crit_d), runway_status(st["days_full"], warn_d, crit_d)]))
@@ -439,7 +475,8 @@ def vm_capacity_report(data, opts=None):
     for x in sorted(dss, key=lambda x: (x["days_crit"] if x["days_crit"] is not None else 99999, -(x["pct"] or 0))):
         if not (x["shared"] or o.get("include_local_datastores")):
             continue
-        rows.append(_row([x["name"], ", ".join(x["clusters"]), x["pod"], x["type"], size(x["capacity"]), size(x["free"]), pct_text(x["pct"]),
+        rows.append(_row([x["label"], (vc_short(x["vcenter"]) + ": " if multi else "") + ", ".join(x["clusters"]), x["pod"], x["type"],
+                          size(x["capacity"]), size(x["free"]), pct_text(x["pct"]),
                           pct_text(x["prov_pct"]), _per_month(x["slope"]), runway_text(x["days_warn"], now), runway_text(x["days_crit"], now),
                           runway_text(x["days_full"], now), fit_text(x["trend"])],
                          ["", "", "", "", "", "", level(x["pct"], sw, sc), "warning" if (x["prov_pct"] or 0) > 150 else "", "",
@@ -460,7 +497,7 @@ def vm_capacity_report(data, opts=None):
             hst = "info" if h.get("maintenance") else ("ok" if h.get("connection") == "connected" else "critical")
             mp = pct(h.get("mem_used_bytes"), h.get("mem_bytes"))
             cp = pct(h.get("cpu_used_mhz"), h.get("cpu_mhz"))
-            rows.append(_row([n["name"], h.get("name"), state, h.get("cores"), pct_text(cp), size(h.get("mem_bytes")), pct_text(mp), h.get("vms_on", 0)],
+            rows.append(_row([n["label"], h.get("name"), state, h.get("cores"), pct_text(cp), size(h.get("mem_bytes")), pct_text(mp), h.get("vms_on", 0)],
                              ["", "", hst, "", level(cp, 80, 90), "", level(mp, 85, 95)], hst if hst != "ok" else worst([level(cp, 80, 90), level(mp, 85, 95)])))
     sections.append(_section("Hosts per cluster", "Every host: state (blue: in maintenance, red: not connected - neither counts as capacity), "
                              "cores, CPU and memory used now, VMs. Hosts much fuller than their neighbours mean DRS is off or limited.",
@@ -479,9 +516,9 @@ def vm_capacity_report(data, opts=None):
               "status": worst([n["status"] for n in cls] + [x["status"] for x in shared]) or "ok"}]
     for n in sorted(cls, key=lambda n: RANK.get(n["status"], 9)):
         dd, w = first([(n["mem_days"], "memory"), (n["cpu_days"], "CPU"), (n["storage"]["days_crit"], "storage")])
-        items.append({"kind": "cluster", "name": n["name"], "status": n["status"] or "ok", "job_days": dd, "job_limit": w})
+        items.append({"kind": "cluster", "name": n["label"], "status": n["status"] or "ok", "job_days": dd, "job_limit": w})
     for x in sorted(shared, key=lambda x: RANK.get(x["status"], 9)):
-        items.append({"kind": "datastore", "name": x["name"], "status": x["status"] or "ok", "job_days": x["days_crit"],
+        items.append({"kind": "datastore", "name": x["label"], "status": x["status"] or "ok", "job_days": x["days_crit"],
                       "job_limit": "%s%% full" % int(sc) if x["days_crit"] is not None else ""})
     items = items[:1] + sorted(items[1:], key=lambda i: RANK.get(i["status"], 9))
     for k, it in enumerate(items, 1):
@@ -515,7 +552,7 @@ def vm_capacity_report(data, opts=None):
     if notes:
         sections.append({"title": "Notes", "lines": notes})
     report = {"title": title, "status": status, "summary": summary, "sections": sections,
-              "subtitle": "vCenter %s - read %s UTC%s%s" % (d.get("vcenter", ""), now.strftime("%Y-%m-%d %H:%M"),
+              "subtitle": "%s - read %s UTC%s%s" % (vc_text, now.strftime("%Y-%m-%d %H:%M"),
                                                            " - datacenter " + o["datacenter"] if o.get("datacenter") else "",
                                                            " - clusters " + ", ".join(o["clusters"]) if o.get("clusters") else ""),
               "footer": "Estimates from a straight line over the last %s days of vCenter's daily statistics: a guide for planning, not a "
@@ -560,7 +597,8 @@ def vm_capacity_evidence(result, opts=None):
                  "growth %s (fit R2 %s over %s days), runway to target %s days; CPU runway %s days; room for %s more VMs (limit: %s); VMs added %s, "
                  "removed %s in the last %s days; HA %s; storage %s datastores, %s of %s used, runway to %s%% %s days; hosts recommended "
                  "(average host here: %s cores, %s memory): %s now, %s within %s months."
-                 % (ids.get(("cluster", n["name"]), "?"), n["name"], n["datacenter"], n.get("status") or "ok", n["hosts_usable"], n["hosts_total"],
+                 % (ids.get(("cluster", n.get("label", n["name"])), "?"), n.get("label", n["name"]), dc_label(n, N.get("multi")),
+                    n.get("status") or "ok", n["hosts_usable"], n["hosts_total"],
                     n["failover_hosts"], n["cores"], ghz(n["cpu_used"]), ghz(n["cpu"]), pct_text(n["cpu_pct"]), pct_text(n["cpu_n1_pct"]),
                     size(n["mem_used"]), size(n["mem"]), pct_text(n["mem_pct"]), pct_text(n["mem_n1_pct"]), n["vcpu_ratio"], n["vms_on"],
                     round((n["avg"] or {}).get("vcpu") or 0, 1), size((n["avg"] or {}).get("mem_configured")), size((n["avg"] or {}).get("mem_used")),
@@ -576,7 +614,8 @@ def vm_capacity_evidence(result, opts=None):
         t = x.get("trend") or {}
         L.append("%s datastore %s (clusters %s, status %s): %s of %s used (%s, provisioned %s), growth %s (fit R2 %s over %s days), runway to "
                  "%s%% %s days, to %s%% %s days, to full %s days."
-                 % (ids.get(("datastore", x["name"]), "?"), x["name"], ", ".join(x["clusters"]), x.get("status") or "ok", size(x["used"]),
+                 % (ids.get(("datastore", x.get("label", x["name"])), "?"), x.get("label", x["name"]),
+                    (vc_short(x.get("vcenter")) + ": " if N.get("multi") else "") + ", ".join(x["clusters"]), x.get("status") or "ok", size(x["used"]),
                     size(x["capacity"]), pct_text(x["pct"]), pct_text(x["prov_pct"]), _per_month(x.get("slope")), t.get("r2", "-"), t.get("span", "-"),
                     o.get("storage_warn_pct", 85), x["days_warn"], o.get("storage_crit_pct", 90), x["days_crit"], x["days_full"]))
     text = "\n".join(L)
@@ -679,6 +718,8 @@ def vm_capacity_names(data):
     datastores): ACT replaces them with placeholders before anything reaches the model."""
     d = data or {}
     out = {d.get("vcenter", "")}
+    for v in vcenters_of(d):
+        out.update([v, vc_short(v), v.split(":")[0]])
     for c in d.get("clusters") or []:
         out.update([c.get("name", ""), c.get("datacenter", "")])
         for h in c.get("hosts") or []:

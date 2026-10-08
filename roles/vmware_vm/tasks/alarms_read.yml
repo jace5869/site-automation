@@ -7,6 +7,7 @@
 - name: VMware | read the alarms, configuration issues, hosts and the events of the last {{ vm_alarm_hours }} h
   site_vmware_alarms:
     datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
     validate_certs: "{{ vmware_validate_certs | bool }}"
     types: "{{ (vm_alarm_types | replace(',', ' ')).split() if vm_alarm_types is string else vm_alarm_types }}"
     hours: "{{ vm_alarm_hours | float }}"

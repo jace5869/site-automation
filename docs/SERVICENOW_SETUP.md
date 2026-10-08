@@ -172,6 +172,8 @@ servicenow_min_severity: warning                # or critical: tickets for criti
 **Commit** and **Sync Changes**. Every other ServiceNow setting (urgency, impact, resolve, close
 code) is described in `roles/servicenow/defaults/main.yml`.
 
+**All settings**, with their defaults: [servicenow](VARIABLES_REFERENCE.md#servicenow).
+
 ## Step 7. The ServiceNow - test ticket template
 
 **Automation Execution → Templates → Create template → Create job template**:

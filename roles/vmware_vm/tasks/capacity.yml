@@ -10,6 +10,7 @@
 - name: VMware | read clusters, hosts, VMs, datastores and vCenter's daily statistics of the last {{ vm_capacity_history_days }} days
   site_vmware_capacity:
     datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
     clusters: "{{ (vm_capacity_clusters | replace(',', ' ')).split() if vm_capacity_clusters is string else vm_capacity_clusters }}"
     history_days: "{{ vm_capacity_history_days | int }}"
     events_days: "{{ vm_capacity_events_days | int }}"
@@ -68,6 +69,7 @@
 - name: VMware | capacity planning report
   ansible.builtin.include_tasks: report.yml
   vars:
+    _vm_vcenters: "{{ _vm_cap_read.vcenters }}"
     _vm_report_subject: "{{ _vm_cap_doc.title }}"
     _vm_report_lines: "{{ (_vm_cap_doc | report_text).splitlines() }}"
     _vm_report_doc: "{{ _vm_cap_doc }}"
@@ -76,7 +78,7 @@
   ansible.builtin.set_stats:
     data:
       vm_capacity: >-
-        {{ _vm_cap.numbers | combine({'items': _vm_cap['items'],
+        {{ _vm_cap.numbers | combine({'items': _vm_cap['items'], 'vcenters': _vm_cap_read.vcenters,
                                       'act': {'ran': _ea_ran | default(false) | bool, 'overall': (_ea_parsed | default({})).overall | default(''),
                                               'by_id': (_ea_parsed | default({})).by_id | default({})} if vm_capacity_act | bool else {}}) }}
 
@@ -95,3 +97,8 @@
       report is above). vm_capacity_fail: false makes this a report only.
     quiet: true
   when: vm_capacity_fail | bool
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_cap_read.vcenters }}"

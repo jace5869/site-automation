@@ -13,6 +13,7 @@
 - name: VMware | read the snapshots now
   site_vmware_snapshots:
     datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
     validate_certs: "{{ vmware_validate_certs | bool }}"
     now: "{{ _vm_now | default(omit) }}"
   register: _vm_snap_read
@@ -25,7 +26,8 @@
   ansible.builtin.set_fact:
     _vm_sc: >-
       {%- set approved = vm_snapshot_cleanup_candidates is defined -%}
-      {%- set plan = _vm_sn.old | vm_snapshot_plan(vm_snapshot_cleanup_candidates if approved else none) -%}
+      {%- set plan = _vm_sn.old | vm_snapshot_plan(vm_snapshot_cleanup_candidates if approved else none,
+                                                  (_vm_snap_read.vcenters | first).name) -%}
       {{ plan | combine({'approved': approved, 'held': _vm_sn.held,
                          'delete': (approved or vm_snapshot_cleanup_confirm | bool) and not ansible_check_mode}) }}
 
@@ -41,6 +43,9 @@
 
 - name: VMware | delete the snapshots, oldest first
   vmware.vmware.vm_snapshot:
+    # the VM's own vCenter: its ID (moid) means another VM, or none, in any other vCenter
+    hostname: "{{ item.vcenter.split(':')[0] if item.vcenter.count(':') == 1 else item.vcenter }}"
+    port: "{{ (item.vcenter.split(':')[1] | int) if item.vcenter.count(':') == 1 else omit }}"
     moid: "{{ item.moid }}"
     datacenter: "{{ item.datacenter }}"
     validate_certs: "{{ vmware_validate_certs | bool }}"
@@ -49,7 +54,7 @@
     timeout: "{{ vm_snapshot_delete_timeout | int }}"
   loop: "{{ _vm_sc.todo }}"
   loop_control:
-    label: "{{ item.vm }}: {{ item.name }} ({{ item.age_days }} days)"
+    label: "{{ item.vm }}{{ ' (' ~ item.vcenter | vc_short ~ ')' if _vm_sn_multi else '' }}: {{ item.name }} ({{ item.age_days }} days)"
   register: _vm_sc_del
   ignore_errors: true                 # one that fails does not stop the others; the report lists it, the job fails at the end
   when: _vm_sc.delete | bool
@@ -57,6 +62,7 @@
 - name: VMware | snapshot cleanup
   ansible.builtin.include_tasks: report.yml
   vars:
+    _vm_vcenters: "{{ _vm_snap_read.vcenters }}"
     _vm_sc_failed: "{{ _vm_sc_del.results | default([]) | selectattr('failed', 'defined') | selectattr('failed') | list }}"
     _vm_sc_done: "{{ _vm_sc_del.results | default([]) | rejectattr('skipped', 'defined') | rejectattr('failed') | map(attribute='item') | list }}"
     _vm_sc_gb: "{{ _vm_sc_done | map(attribute='size_gb') | select('number') | sum | human_size }}"
@@ -74,23 +80,23 @@
       {%- set out = [] -%}
       {%- if not _vm_sc.delete | bool -%}
       {%-   set _ = out.append('Nothing deleted: ' ~ ('a dry run (Check).' if ansible_check_mode else 'vm_snapshot_cleanup_confirm is not true (and no approved list from a workflow).')) -%}
-      {%-   for x in _vm_sc.todo -%}{%- set _ = out.append('WOULD DELETE ' ~ x.vm ~ ': "' ~ x.name ~ '" ' ~ x.age_days ~ ' days, ' ~ x.size_gb | human_size) -%}{%- endfor -%}
+      {%-   for x in _vm_sc.todo -%}{%- set _ = out.append('WOULD DELETE ' ~ x.vm ~ (' (' ~ x.vcenter | vc_short ~ ')' if _vm_sn_multi and x.vcenter is defined else '') ~ ': "' ~ x.name ~ '" ' ~ x.age_days ~ ' days, ' ~ x.size_gb | human_size) -%}{%- endfor -%}
       {%- else -%}
-      {%-   for x in _vm_sc_done -%}{%- set _ = out.append('DELETED ' ~ x.vm ~ ': "' ~ x.name ~ '" ' ~ x.age_days ~ ' days, ' ~ x.size_gb | human_size) -%}{%- endfor -%}
-      {%-   for r in _vm_sc_failed -%}{%- set _ = out.append('FAILED ' ~ r.item.vm ~ ': "' ~ r.item.name ~ '" - ' ~ r.msg | default('?') | truncate(200)) -%}{%- endfor -%}
+      {%-   for x in _vm_sc_done -%}{%- set _ = out.append('DELETED ' ~ x.vm ~ (' (' ~ x.vcenter | vc_short ~ ')' if _vm_sn_multi and x.vcenter is defined else '') ~ ': "' ~ x.name ~ '" ' ~ x.age_days ~ ' days, ' ~ x.size_gb | human_size) -%}{%- endfor -%}
+      {%-   for r in _vm_sc_failed -%}{%- set _ = out.append('FAILED ' ~ r.item.vm ~ (' (' ~ r.item.vcenter | vc_short ~ ')' if _vm_sn_multi and r.item.vcenter is defined else '') ~ ': "' ~ r.item.name ~ '" - ' ~ r.msg | default('?') | truncate(200)) -%}{%- endfor -%}
       {%- endif -%}
-      {%- for x in _vm_sc.skipped -%}{%- set _ = out.append('NOT DELETED ' ~ x.vm | default(x.moid) ~ ': "' ~ x.name | default('?') ~ '" - ' ~ x.reason) -%}{%- endfor -%}
-      {%- for x in _vm_sc.held -%}{%- set _ = out.append('HELD BACK ' ~ x.vm ~ ': "' ~ x.name ~ '" ' ~ x.size_gb | human_size ~ ' - ' ~ x.reason) -%}{%- endfor -%}
+      {%- for x in _vm_sc.skipped -%}{%- set _ = out.append('NOT DELETED ' ~ x.vm | default(x.moid) ~ (' (' ~ x.vcenter | vc_short ~ ')' if _vm_sn_multi and x.vcenter is defined else '') ~ ': "' ~ x.name | default('?') ~ '" - ' ~ x.reason) -%}{%- endfor -%}
+      {%- for x in _vm_sc.held -%}{%- set _ = out.append('HELD BACK ' ~ x.vm ~ (' (' ~ x.vcenter | vc_short ~ ')' if _vm_sn_multi and x.vcenter is defined else '') ~ ': "' ~ x.name ~ '" ' ~ x.size_gb | human_size ~ ' - ' ~ x.reason) -%}{%- endfor -%}
       {%- if not out -%}{%- set _ = out.append('No snapshot is older than ' ~ _vm_sn_days ~ '.') -%}{%- endif -%}
       {{ out }}
     _vm_report_doc: >-
       {%- set cols = ['VM', 'Snapshot', 'Taken (UTC)', 'Taken by', 'Age (days)', 'Size', 'Folder', 'Description'] -%}
       {%- set sections = [] -%}
       {%- if not _vm_sc.delete | bool -%}
-      {%-   set _ = sections.append({'title': 'Would delete (nothing was deleted)', 'columns': cols, 'rows': _vm_sc.todo | map('vm_snap_row') | list,
+      {%-   set _ = sections.append({'title': 'Would delete (nothing was deleted)', 'columns': cols, 'rows': _vm_sc.todo | map('vm_snap_row', _vm_sn_multi) | list,
                                      'text': 'A dry run (Check).' if ansible_check_mode else 'vm_snapshot_cleanup_confirm is not true, and no approved list came from a workflow.'}) -%}
       {%- else -%}
-      {%-   set _ = sections.append({'title': 'Deleted', 'status': 'ok', 'columns': cols, 'rows': _vm_sc_done | map('vm_snap_row') | list}) -%}
+      {%-   set _ = sections.append({'title': 'Deleted', 'status': 'ok', 'columns': cols, 'rows': _vm_sc_done | map('vm_snap_row', _vm_sn_multi) | list}) -%}
       {%-   if _vm_sc_failed -%}
       {%-     set rows = [] -%}{%- for r in _vm_sc_failed -%}{%- set _ = rows.append([r.item.vm, r.item.name, r.msg | default('?')]) -%}{%- endfor -%}
       {%-     set _ = sections.append({'title': 'Failed', 'status': 'critical', 'columns': ['VM', 'Snapshot', 'Error'], 'rows': rows}) -%}
@@ -102,7 +108,7 @@
       {%- endif -%}
       {%- if _vm_sc.held -%}
       {%-   set _ = sections.append({'title': 'Old, but held back (never deleted automatically)', 'columns': cols + ['Why'],
-                                     'rows': _vm_sc.held | map('vm_snap_row') | list}) -%}
+                                     'rows': _vm_sc.held | map('vm_snap_row', _vm_sn_multi) | list}) -%}
       {%- endif -%}
       {{ {'title': _vm_report_subject | trim,
           'status': 'critical' if _vm_sc_failed else ('ok' if _vm_sc.delete | bool else 'info'),
@@ -127,3 +133,8 @@
     that: _vm_sc_del.results | default([]) | selectattr('failed', 'defined') | selectattr('failed') | list | length == 0
     fail_msg: "Some snapshots could not be deleted (the list is above, and in the email)."
     quiet: true
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_snap_read.vcenters }}"

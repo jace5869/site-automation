@@ -20,6 +20,8 @@ could not run: ...`, id `<check>:check-error`) and the other checks still run. T
 the host even when `site_fail_on` is `[critical]` (a check that did not run is not a healthy
 result); only `site_fail_on: []` never fails.
 
+**All settings** of this job, with their defaults: [site_findings](VARIABLES_REFERENCE.md#site_findings).
+
 ### disk
 
 | Finding | Means | Usually |
@@ -33,6 +35,8 @@ Per-mount limits: `check_disk_overrides: {/var/log/audit: {warn: 70, crit: 85}}`
 keeps a small history in `/var/lib/site-health/disk-history.json` (the only file the checks write;
 a Check-mode run does not write it).
 
+**All settings** of this check, with their defaults: [check_disk](VARIABLES_REFERENCE.md#check_disk).
+
 ### mounts
 
 | Finding | Means | Usually |
@@ -41,6 +45,8 @@ a Check-mode run does not write it).
 | `/var is mounted READ-ONLY` | the kernel remounted it read-only after disk/filesystem errors | **urgent**: `journalctl -k` for I/O errors; storage team; plan an fsck |
 | `network mount /mnt/share does not answer within 5s` | NFS/CIFS server down, network, or a stale handle | check the server and the network; diagnose only (NetApp is vendor-managed) |
 | `network mount ... is 96% full` | the share is full | the storage owner |
+
+**All settings** of this check, with their defaults: [check_mounts](VARIABLES_REFERENCE.md#check_mounts).
 
 ### services
 
@@ -55,6 +61,8 @@ a Check-mode run does not write it).
 Per group: `check_services_required_extra: [mariadb]`. To ignore a failed unit:
 `check_services_ignore_failed: ['^dnf-makecache']`.
 
+**All settings** of this check, with their defaults: [check_services](VARIABLES_REFERENCE.md#check_services).
+
 ### performance
 
 | Finding | Means | Usually |
@@ -67,6 +75,8 @@ Per group: `check_services_required_extra: [mariadb]`. To ignore a failed unit:
 | `the kernel killed processes for lack of memory` | OOM kills in the last 24 h (with the victims) | the victim's memory limit, or the host's memory |
 | `27 zombie processes` | a parent process is not reaping its children | restart the parent (`look:` shows it) |
 
+**All settings** of this check, with their defaults: [check_performance](VARIABLES_REFERENCE.md#check_performance).
+
 ### time
 
 | Finding | Means | Usually |
@@ -74,6 +84,8 @@ Per group: `check_services_required_extra: [mariadb]`. To ignore a failed unit:
 | `the clock is NOT synchronized` | chrony uses no time source | `chronyc sources -v`: unreachable servers, firewall (UDP 123) |
 | `chrony is installed but not answering` | chronyd is not running | `systemctl start chronyd` |
 | `the clock is 2.4s ahead of NTP time` | offset above `check_time_offset_warn` | chrony corrects it slowly; very large offsets break Kerberos/AD logins at 5 minutes |
+
+**All settings** of this check, with their defaults: [check_time](VARIABLES_REFERENCE.md#check_time).
 
 ### network
 
@@ -84,6 +96,8 @@ Per group: `check_services_required_extra: [mariadb]`. To ignore a failed unit:
 | `ldap.example.mil does not resolve (DNS)` | a name in `check_network_dns_names` fails | `/etc/resolv.conf`, DNS server |
 | `LDAP (ldap.example.mil:636) does not answer within 5s` | a TCP port in `check_network_tcp` is unreachable **from this host** | firewall (local or network), the service down, routing |
 
+**All settings** of this check, with their defaults: [check_network](VARIABLES_REFERENCE.md#check_network).
+
 ### logging
 
 | Finding | Means | Usually |
@@ -92,6 +106,8 @@ Per group: `check_services_required_extra: [mariadb]`. To ignore a failed unit:
 | `log server SIEM (...) does not answer` | forwarding target unreachable | network/firewall; the SIEM collector |
 | `rsyslog has 850 MB of undelivered messages queued` | the log server has been unreachable for a while | as above; the queue drains once it answers |
 | `1203 error messages in the journal` | something complains a lot (top senders listed) | look at the top sender first |
+
+**All settings** of this check, with their defaults: [check_logging](VARIABLES_REFERENCE.md#check_logging).
 
 ### selinux
 
@@ -104,6 +120,8 @@ Per group: `check_services_required_extra: [mariadb]`. To ignore a failed unit:
 | `SELinux boolean X is off, expected on` | a boolean in `check_selinux_booleans` differs | `setsebool -P X on` |
 | `N file(s) under /etc/nginx have the wrong SELinux label` | a dry-run `restorecon` would relabel them (`check_selinux_relabel_paths`) | `restorecon -Rv <path>` |
 
+**All settings** of this check, with their defaults: [check_selinux](VARIABLES_REFERENCE.md#check_selinux).
+
 ### fapolicyd
 
 | Finding | Means | Usually |
@@ -115,6 +133,8 @@ Per group: `check_services_required_extra: [mariadb]`. To ignore a failed unit:
 
 `check_fapolicyd_required: true` (the example inventory sets it) makes a missing fapolicyd a
 finding.
+
+**All settings** of this check, with their defaults: [check_fapolicyd](VARIABLES_REFERENCE.md#check_fapolicyd).
 
 ### auditd
 
@@ -161,6 +181,8 @@ To stop auditd recording that account at all (a host change, not part of the hea
 - The auditd check then reports rules like this only for accounts that are NOT on
   `check_auditd_exclude_accounts`.
 
+**All settings** of this check, with their defaults: [check_auditd](VARIABLES_REFERENCE.md#check_auditd).
+
 ### accounts
 
 | Finding | Means | Usually |
@@ -170,6 +192,8 @@ To stop auditd recording that account at all (a host change, not part of the hea
 | `3 account(s) not used for 35+ days` | inactive and not locked (STIG) | lock them (`usermod -L`), or list break-glass accounts in `check_accounts_ignore_inactive` |
 | `sudo without a password (NOPASSWD) for: alice` | a sudoers entry skips the password | remove it, or allow it on purpose in `check_accounts_nopasswd_allowed` (e.g. `svc_aap`) |
 | `the password of svc_aap expires in 6 days` | an account in `check_accounts_expiry_watch` expires soon | **change it before it breaks automation** (and update the Machine credential) |
+
+**All settings** of this check, with their defaults: [check_accounts](VARIABLES_REFERENCE.md#check_accounts).
 
 ### certs
 
@@ -184,6 +208,8 @@ What it looks at: `check_certs_files` (globs), the usual directories (`check_cer
 skipping CA bundles), `check_certs_endpoints`, `check_certs_keystores`. For a PKCS12 keystore, name
 the variable that holds the password (`password_env: KEYSTORE_PASSWORD`), never the password.
 
+**All settings** of this check, with their defaults: [check_certs](VARIABLES_REFERENCE.md#check_certs).
+
 ### patching
 
 | Finding | Means | Usually |
@@ -194,6 +220,8 @@ the variable that holds the password (`password_env: KEYSTORE_PASSWORD`), never 
 | `cannot check for updates` | dnf cannot reach its repositories (Satellite, mirror) | repository configuration, network, subscription |
 
 <a id="mariadb"></a>
+
+**All settings** of this check, with their defaults: [check_patching](VARIABLES_REFERENCE.md#check_patching).
 
 ### mariadb and mysql (health only): the database check
 
@@ -245,6 +273,8 @@ GRANT SELECT ON performance_schema.* TO 'aap_monitor'@'localhost';       -- MySQ
 enough there.** The password reaches the client only through its environment, never its command line.
 
 <a id="containers"></a>
+
+**All settings** of this check, with their defaults: [check_mariadb](VARIABLES_REFERENCE.md#check_mariadb).
 
 ### containers: podman containers, root's and every user's
 
@@ -311,6 +341,8 @@ that host; compare the table with `sudo podman ps -a` and, for a user,
 `sudo runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/$(id -u alice) podman ps -a`. Service watch
 uses the same way of finding containers ([SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md)).
 
+**All settings** of this check, with their defaults: [check_containers](VARIABLES_REFERENCE.md#check_containers), [podman_discover](VARIABLES_REFERENCE.md#podman_discover).
+
 ## Troubleshoot (`playbooks/troubleshoot.yml`)
 
 For "something is wrong on this host": pick the area and the job runs the commands an experienced
@@ -334,11 +366,39 @@ checks run too. Read-only. Findings do not fail this job: you asked for a look, 
 Add `use_act=true` and ACT reads everything collected and explains the root cause
 ([ADDING_ACT.md](ADDING_ACT.md)).
 
+**All settings** of this job, with their defaults: [troubleshoot](VARIABLES_REFERENCE.md#troubleshoot).
+
 ## Certificate report (`playbooks/cert_report.yml`)
 
 The certs check on every host, and **one table**, soonest expiry first: days left, date, host,
 subject, and where the certificate is. Hand it to whoever renews certificates. It fails the hosts
-with a certificate inside `check_certs_warn_days`, so a workflow can open tickets.
+with a certificate inside `check_certs_warn_days`, so a workflow can open tickets
+(`site_fail_on: []` keeps it green: a report only).
+
+**Emailed** with `report_email_to` (Linux and Windows: `win_cert_report.yml`). In the email the table
+is coloured: **red** = expired, **amber** = expires within `check_certs_warn_days` (30), **blue** =
+within `check_certs_notice_days` (60), the rest plain with a green "ok". Windows:
+`win_check_certs_warn_days` / `win_check_certs_notice_days`.
+
+**Found by itself** (the report only; `cert_report_discover: false` turns it off):
+
+- **TLS ports:** every listening TCP port is asked once for its certificate, on the address it listens
+  on, with a 3-second limit (`check_certs_probe_timeout`), at most 25 ports
+  (`check_certs_discover_ports_max`). Ports that are plain text are never touched
+  (`check_certs_discover_ports_skip`: 22, 25, 53, 80, 389, 3306, 5432 ...), nor the ones you listed in
+  `check_certs_endpoints`. Shown as `TLS port 8443, java (https://127.0.0.1:8443)`.
+- **Java keystores:** `*.jks`, `*.keystore`, `*.p12`, `*.pfx` in `check_certs_discover_keystore_dirs`
+  (`/etc`, `/opt`, `/srv`, Tomcat's folders), and the ones running Java programs use
+  (`-Djavax.net.ssl.keyStore=...`). A JKS is read without its password; a PKCS12 that needs one is
+  listed under **Found but not checked** - no password is ever guessed. To check it, add it to
+  `check_certs_keystores` with `password_env` and a *Keystore password* credential. The JDK's own
+  trust stores (`cacerts`) are skipped.
+
+The weekly health check (`certs` in `health_checks`) does not search by itself, so it opens no
+tickets for certificates nobody listed; set `check_certs_discover_ports` / `_keystores: true` on it
+when you want that.
+
+**All settings** of this job, with their defaults: [check_certs](VARIABLES_REFERENCE.md#check_certs).
 
 ## POA&M status (`playbooks/poam_status.yml`)
 
@@ -362,6 +422,8 @@ Then create the *STIG Manager API* credential (token URL
 `https://<keycloak>/realms/<realm>/protocol/openid-connect/token`, client ID, secret), and set
 `poam_stigman_api: https://<stigman>/api`.
 
+**All settings** of this job, with their defaults: [poam](VARIABLES_REFERENCE.md#poam).
+
 ## ServiceNow tickets (`playbooks/servicenow_tickets.yml`)
 
 A workflow step after a check. For each finding at or above `servicenow_min_severity`:
@@ -380,6 +442,8 @@ Tickets are matched by a correlation ID (`site-health:<host>:<check>:<finding>`,
 by text, so the same problem always updates the same ticket. Without the ServiceNow API credential
 it only prints what it would open. If no check results reach it at all (the check step died before
 checking any host), it fails, so a broken schedule shows red instead of green.
+
+**All settings** of this job, with their defaults: [servicenow](VARIABLES_REFERENCE.md#servicenow).
 
 ## ServiceNow - test ticket (`playbooks/servicenow_test_ticket.yml`)
 
@@ -406,6 +470,8 @@ schedule. Alert with an AAP **notification** (email) on failure, not with a tick
 ServiceNow cannot take tickets. The MID Server **hosts** (the Linux service, its keystore) are
 covered by the health check: see `inventories/example/group_vars/servicenow_mid_hosts.yml`.
 
+**All settings** of this job, with their defaults: [servicenow](VARIABLES_REFERENCE.md#servicenow).
+
 ## Patch hosts (`playbooks/patch_hosts.yml`)
 
 Installs updates with dnf (`patch_security_only` for security fixes only; `patch_exclude` for
@@ -430,6 +496,8 @@ packages never updated here). Then:
 Run it as **Job type: Check** first: it lists what would be updated and changes nothing
 ([DRY_RUNS.md](DRY_RUNS.md)).
 
+**All settings** of this job, with their defaults: [patch](VARIABLES_REFERENCE.md#patch).
+
 ## Apply approved ACT fix (`playbooks/act_fix_approved.yml`)
 
 The step after an approval in the *Fix with approval (ACT)* workflow. It runs **exactly** the
@@ -437,11 +505,15 @@ commands ACT proposed and a person approved, then re-runs the checks that found 
 refuses to run on its own, and skips diagnose-only hosts (`aap_hosts`, `netapp_console_hosts`):
 there a person applies the fix by hand. See [ADDING_ACT.md](ADDING_ACT.md).
 
+**All settings** of this job, with their defaults: [site_act](VARIABLES_REFERENCE.md#site_act).
+
 ## VMware jobs and reports (`playbooks/vm_*.yml`)
 
 Restart, shut down, snapshot, notes, change VLAN; the secure boot, datastore, snapshot and
 alarms reports; the snapshot cleanup; ACT's analysis of the alarms. They work through vCenter:
 setup, every report's sections and troubleshooting are in [VMWARE.md](VMWARE.md).
+
+**All settings** of this job, with their defaults: [vmware_vm](VARIABLES_REFERENCE.md#vmware_vm).
 
 ## Windows hosts
 

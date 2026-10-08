@@ -114,12 +114,35 @@ only through the Anthropic endpoint and answer HTTP 400 for it on `.../v1/chat/c
 tries the other endpoint by itself, with nothing to set. To test your models and set the
 switches on purpose, follow [Both endpoint formats and `:probe`](#both-endpoint-formats-and-probe-act-0619-and-newer) below.
 
+**How long ACT may take.** `site_act_model_timeout` (default **600** seconds) is the time the model
+may take for one answer, retries after a provider error included (ACT's `GENAI_TIMEOUT`; ACT's own
+default, 90, is too short for a long analysis or a busy provider). `site_act_timeout` (default
+**1200**) is the whole ACT run, several answers. They apply to every ACT job: the runbooks with
+`use_act`, the VMware alarms and capacity analyses, *Service watch*. A
+`model turn exceeded the 600s total timeout after a transient provider failure` means the provider
+was failing and retrying for that long: run it again; if it repeats, raise both in `all.yml`
+(`site_act_model_timeout: 900`, `site_act_timeout: 1800`).
+
+**Streaming.** Every ACT job has the model stream its answer (`ACT_STREAM=1`): data keeps flowing
+while it writes, so a firewall or proxy that cuts quiet connections (`network error reaching API:
+connection reset by peer`, often on the longer answers only) no longer does. Where a gateway cannot
+stream, ACT notices and sends normal requests by itself. To turn it off:
+`site_act_env: {ACT_STREAM: "0"}`.
+
+**"ACT gave no analysis: the model answered as a chat".** Now and then a model loses the thread and
+answers like a chat window ("I am ready. What task or command would you like me to assist you
+with?") instead of analysing the findings; whatever it tried to run then is no fix. The report says
+so (ACT status `no_analysis`) and nothing is passed on for approval. Run the job again; if it
+repeats with one model, switch that template to another (`site_act_models`).
+
 Anything else ACT should know about your site goes in the same places (for example `playbooks/group_vars/all.yml`):
 
 ```yaml
 site_act_extra_instructions: >-
   RHEL 9 servers under DISA STIG. fapolicyd and SELinux are enforcing. Never suggest disabling them.
 ```
+
+**All settings**, with their defaults: [site_act](VARIABLES_REFERENCE.md#site_act).
 
 ### 3. Survey questions
 

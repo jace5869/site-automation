@@ -9,9 +9,9 @@
 #   ts_target:  host:port for area=network (e.g. dc01.example.mil:636)
 #   ts_hours:   how many hours back to read the event logs (default 2)
 ts_area: overview
-ts_service: ""
-ts_target: ""
-ts_hours: 2
+ts_service: ""                           # the service name, for ts_area service (see above)
+ts_target: ""                            # host:port, for ts_area network
+ts_hours: 2                              # how many hours back the event logs are read
 ts_output_lines: 60                     # keep the last this-many lines of each command
 
 # Values used inside the commands below (quoted for PowerShell)

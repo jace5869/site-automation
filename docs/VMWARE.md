@@ -94,8 +94,41 @@ AAP: **Credentials > Add**, type **VMware vCenter**: vCenter Host (its name, e.g
 `vmware_validate_certs: false` turns the check off, in the template's Variables (not
 recommended).
 
-**Several vCenters:** one credential each. Either make one template per vCenter, or tick **Prompt
-on launch** for Credentials and pick the vCenter when you start the job.
+**Several vCenters:** the reports (alarms, datastores, snapshots and their cleanup, capacity
+planning) and the ESXi security settings read **every vCenter in one job, into one report**: keep
+one VMware vCenter credential and list the vCenters in `vmware_vcenters` (see "Several vCenters, one
+report" below). The jobs that act on VMs by name (restart, shut down, snapshot, notes, VLAN, secure
+boot) still use the credential's vCenter only: for a VM in another vCenter, use a second credential
+with that vCenter's address, or tick **Prompt on launch** for Credentials and pick it at launch.
+
+### 5. Several vCenters, one report
+
+With two or more vCenters (for example in Enhanced Linked Mode, as one tree in the vSphere Client),
+list them all in `playbooks/group_vars/all.yml` (for every job) or in a template's Variables:
+
+```yaml
+vmware_vcenters: [vc01.yoursite.mil, vc02.yoursite.mil]
+```
+
+- **One credential** is enough: the jobs log in to every vCenter with its user name and password.
+  In Enhanced Linked Mode the vCenters share single sign-on, so the same account works on all of
+  them. Give its role as a **Global Permission** (vSphere Client: **Administration > Access Control
+  > Global Permissions**), or on each vCenter's root with **Propagate to children**.
+- The credential's own vCenter is always read. Listing it again (or by another name, its IP) is
+  fine: each vCenter is read once.
+- A vCenter on another port: `vc03.yoursite.mil:8443`.
+- **The report:** one email for all. The **Datacenter** column says which vCenter
+  (`vc02 / DC1`); the footer lists the vCenters read. A cluster or datastore name that exists in
+  two places is shown with its vCenter and datacenter, e.g. `PROD (vc02 / DC1)`, and never added
+  together.
+- **A vCenter that cannot be read** (down, a firewall, a refused login) does not stop the others: the
+  report covers the others, lists it in red on top ("vCenters not read") and its title ends with
+  "- 1 vCenter(s) not read". The job stays **green**: the report completed
+  (`vmware_vcenter_fail_unread: true` makes it fail, e.g. for a workflow's failure path).
+- **Snapshot cleanup:** each snapshot is deleted on its own vCenter. A VM's ID repeats in every
+  vCenter (both have a `vm-42`), so the report hands the cleanup the vCenter with each snapshot,
+  and the cleanup deletes only that one.
+- The ESXi security settings set the hosts of every vCenter listed.
 
 ### 4. Name the AAP VM (and vCenter's)
 
@@ -401,8 +434,8 @@ key, no network, an ACT error): the email still lists the problems, and says why
 | `vm_alarm_act_max_items` | `40` | give ACT at most this many problems, the most severe first (the rest are listed as not analyzed) |
 | `vm_alarm_act_config_issues` | `true` | configuration issues too |
 | `vm_alarm_act_check_url` | `true` | check that the AAP node can reach the model first |
-| `vm_alarm_act_model_timeout` | `300` | seconds the model may take for its answer (a `GENAI_TIMEOUT` in `site_act_env` wins) |
-| `site_act_timeout` | `600` | seconds the whole ACT run may take (keep it above the model's) |
+| `vm_alarm_act_model_timeout` | `site_act_model_timeout` (600) | seconds the model may take for its answer (a `GENAI_TIMEOUT` in `site_act_env` wins) |
+| `site_act_timeout` | `1200` | seconds the whole ACT run may take (keep it above the model's) |
 
 ## Capacity planning: overall and per cluster
 
@@ -478,6 +511,266 @@ runs no command (as in "The ACT analysis" above: the same key, URL, proxy and CA
 | `vm_capacity_include_local_datastores` | `false` | count a host's own datastores too |
 | `vm_capacity_act` | `false` | GenAI's estimate next to the math |
 | `vm_capacity_fail` | `false` | `true` = the job shows failed when a cluster or datastore is critical |
+
+## Deploy a VM from a ServiceNow ticket
+
+`playbooks/vm_deploy_from_ticket.yml` builds one VM from a vCenter template for a ServiceNow ticket
+(an incident or a task assigned to your team). You launch it with the ticket number; it reads the
+ticket, checks the request against the rules you set in AAP, writes on the ticket what it builds,
+builds it, and writes the result - with the VM's IP address - on the ticket.
+
+### How it flows, step by step
+
+```
+ 1. Requester ── writes the ticket in ServiceNow (key: value lines, or plain words)
+ 2. Operator  ── launches "VM - deploy from ServiceNow ticket" in AAP with the ticket number
+ 3. AAP       ── reads the ticket from ServiceNow (REST API, the ServiceNow API credential)
+
+    with GenAI (plain words)                       without GenAI (key: value lines)
+ 4. AAP → GenAI: "what does this ticket ask for?"       (skipped)
+ 5. GenAI → AAP: name, template, CPU, memory, disks, site - each with the ticket's own words
+ 6. AAP checks every value against the ticket text; posts the PROPOSAL on the ticket (or
+    questions to the requester). STOPS - nothing is built.
+ 7. Operator  ── reads the proposal, launches the job again
+ 8. AAP       ── reads the ticket and the proposal again (GenAI is NOT asked again)
+
+ 9. AAP checks the request against the rules (templates, sites, caps, a free name, the group)
+10. AAP → ServiceNow: "[AAP] Deploying this VM" with the exact request (if refused: nothing is built)
+11. AAP → vCenter: clone the template, CPU / memory / disks, customize (or network boot), power on
+12. AAP → ServiceNow: "[AAP] VM ... deployed" - IP (or MAC for MECM), where it went, the result
+13. AAP → email (report_email_to), and the job's artifacts
+```
+
+**Who does what:**
+
+| Who | Does | Never does |
+|---|---|---|
+| **ServiceNow** | holds the request; shows the job's notes and questions | - |
+| **AAP** (this job) | reads the ticket, checks everything, writes the notes, **builds the VM in vCenter**, reports | builds anything the rules do not allow, or without a "Deploying" note on the ticket |
+| **GenAI** (ACT, evidence mode) | **reads the ticket text and turns it into values** (name, template, CPU, memory, disks, site), quoting the words each comes from | builds or changes anything, runs a command, sees a password or a credential, sees vCenter, chooses a cluster or datastore, decides whether to build |
+| **vCenter** | does what AAP asks: clone, size, customize, power on | - |
+| **The operator** | launches the job; with GenAI, reads the proposal before the second run | - |
+
+**GenAI only interprets text into values.** It answers once, in run 1, with values and quotes; AAP
+checks each quote is really in the ticket and each value against the rules, and writes the result on
+the ticket for a person to see. Every action - the notes on the ticket and everything in vCenter - is
+done by AAP, with the VMware vCenter and ServiceNow credentials, which GenAI never sees. Run 2 builds
+from what is written on the ticket, not from a new GenAI answer.
+
+### What the requester writes in the ticket
+
+`key: value` lines, in the ticket's **description** or in a **comment / work note**. A later comment
+overrides an earlier value (to correct a request, add a comment with the new line):
+
+```
+vm_name: app01
+template: rhel9-gold
+cpu: 4
+memory_gb: 16
+```
+
+| Key | Meaning | Not given |
+|---|---|---|
+| `vm_name` | the VM's name in vCenter and its host name | **required** |
+| `template` | the template, by its name in vCenter | **required** |
+| `cpu`, `memory_gb` | vCPUs, memory in GB | the template's |
+| `disks_gb` | disk sizes in GB, system disk first: `disks_gb: 120, 200` grows disk 1 to 120 GB (never shrinks it) and adds one 200 GB disk (thin) | the template's disks |
+| `site` | which site: its cluster, datastore, folder (and vCenter) come from `vm_deploy_sites` | the ticket's **Location** field, when it is one of the sites |
+| `cluster`, `datastore`, `folder` | where it goes (`folder` as a path: `Linux/App`; `datastore` may be a datastore cluster) - overrides the site's | the site's, else `vm_deploy_defaults`, else the template's own |
+| `domain` | the DNS domain set in the guest (Linux) | `vm_deploy_domain` |
+| `customization_spec` | a customization specification from vCenter (**needed for Windows**) | Linux: none needed |
+| `vcenter`, `datacenter` | which one, when the template exists in several | found by the job |
+| `notes` | added to the VM's notes | - |
+
+Other lines (a greeting, `Name: Jane Doe`) are ignored. Upper and lower case do not matter
+(`Memory: 16 GB` works too).
+
+### What the job does, in order
+
+1. Reads the ticket (`vm_deploy_ticket`: `INC...`, `TASK...`, `SCTASK...`, `RITM...`, `CHG...`).
+2. Checks: the ticket is open and assigned to `vm_deploy_assignment_group`; the template is in
+   `vm_deploy_templates`; the cluster, datastore and folder are allowed; CPU and memory are within
+   the caps; the name is valid and **not used in any vCenter** (`vmware_vcenters`). Anything wrong:
+   a work note on the ticket says what, and nothing is built.
+3. Writes **"[AAP] Deploying this VM"** with the exact request on the ticket - and builds nothing if
+   ServiceNow refuses that note.
+4. Clones the template (powered off), sets CPU, memory and the VM's notes (the ticket number), applies
+   **guest customization** (Linux: host name = `vm_name`, every network adapter on DHCP; Windows: the
+   named customization specification, its computer name set to `vm_name`), powers it on.
+5. Waits for vCenter's customization result (`vm_deploy_wait_customization`, 900 s) and for an IPv4
+   address from VMware Tools (`vm_deploy_wait_ip`, 600 s).
+6. Writes **"[AAP] VM app01 deployed"** on the ticket: IP address, customization result, where it went,
+   size. On a failure: what failed, and whether a (partly set up) VM exists.
+
+The network is the template's: the template's adapter is on your staging VLAN, and so is the new VM.
+
+### Sites: site A goes to this cluster, site B to that one
+
+```yaml
+vm_deploy_sites:
+  SiteA: {cluster: A-PROD-CL01, datastore: A-DSC01, folder: Servers/New}
+  SiteB: {cluster: B-PROD-CL01, datastore: B-DSC01, folder: Servers/New, vcenter: vc02.yoursite.mil}
+```
+
+The ticket says `site: SiteA` (upper / lower case does not matter) - or nothing, when the ticket's
+**Location** field is one of the site names. The site's values fill in what the ticket does not say
+(over `vm_deploy_defaults`); a `cluster:` the ticket names itself still wins, within the allow-lists.
+With sites set up, a ticket that names no site is refused (`vm_deploy_site_required: false` uses
+`vm_deploy_defaults` instead). Any setting can go in a site: `cluster`, `datastore`, `folder`,
+`vcenter`, `datacenter`, `domain`, `cpu`, `memory_gb`.
+
+### Automatic placement: the job picks the cluster and datastore
+
+When neither the ticket, its site nor `vm_deploy_defaults` names a cluster (or a datastore), the job
+chooses one by rules - never from all of vCenter, only among explicit candidates:
+
+- **Candidates:** a site's `clusters` / `datastores` lists, else `vm_deploy_clusters` /
+  `vm_deploy_datastores`. With neither, the VM goes where the template is.
+- **Cluster:** the one with the most memory left after this VM, planning one host down
+  (`vm_deploy_failover_hosts`) - it must stay under `vm_deploy_mem_target_pct` (80 %).
+- **Datastore:** shared, accessible, not in maintenance, mounted by that cluster, and under
+  `vm_deploy_datastore_max_used_pct` (85 %) with the VM at its **full** size (thin disks counted full).
+- The ticket note and the report give the ranking: `cluster chosen: PROD-A2: memory 61.3% used with
+  this VM and 1 host down (target 80%)`.
+
+```yaml
+vm_deploy_sites:
+  SiteA: {clusters: [A-PROD-*], datastores: [A-DS-*], folder: Servers/New}
+  SiteB: {clusters: [B-PROD-*], datastores: [B-DS-*], folder: Servers/New, vcenter: vc02.yoursite.mil}
+```
+
+### Requests in plain words: GenAI reads the ticket (proof of concept)
+
+With `vm_deploy_genai: true`, a ticket does not need the `key: value` lines. A requester can write
+*"We need a Windows Server 2022 box called winapp05 for SiteA, 8 GB RAM, 2 CPUs, a 120 GB system disk
+and a 200 GB data disk"*, and ACT (GenAI.mil, the same ACT model key credential) reads it.
+
+**It takes two runs - the first only proposes:**
+
+1. **Run 1 - the proposal.** ACT reads the ticket (in evidence mode: it runs no command, sees no
+   credential and no inventory) and gives the name, template, CPU, memory, disks and site. The job
+   posts them on the ticket as a work note, `[AAP] GenAI proposal (ticket text sha256:...)`, each value
+   with the words of the ticket it came from, and what the rules would refuse. **Nothing is built.**
+   If something is missing or unclear, the questions go to the requester as a **comment** (they see
+   comments, not work notes) instead.
+2. **Run 2 - the build.** The same job, launched again, builds **the posted proposal** - GenAI is not
+   asked again - with every check of a normal build. A value the ticket gives itself (`cpu: 4` in a
+   comment) still wins over the proposal.
+
+**The guardrails:**
+
+| Guardrail | What it does |
+|---|---|
+| Off by default | `vm_deploy_genai: false`; the `key: value` lines work without GenAI |
+| Two runs | run 1 proposes, run 2 builds the proposal on the ticket - never a fresh answer, never unseen |
+| The ticket must not change in between | the proposal carries a hash of the ticket text; editing the description or adding a comment voids it, and the next run asks GenAI again |
+| Every value traceable to the ticket | each value comes with the ticket's words it is from; the job checks those words are in the ticket and contain the value (the name word for word, the numbers as written) - anything else is dropped and becomes a question. GenAI's own confidence is not trusted |
+| Templates from a catalog | GenAI may only pick a key of `vm_deploy_template_catalog`, and it must be in `vm_deploy_templates` |
+| Same rules as any request | allow-lists, CPU / memory / disk caps, name rules, the group, a free name: what the ticket text asks for ("use 64 CPUs") is refused like a typed request |
+| No placement by GenAI | cluster and datastore come from the site, the defaults or the rules above |
+| Instructions in the ticket are data | the prompt tells the model to ignore them; the two checks above make them harmless anyway |
+| Everything on the record | the proposal, the questions, the "Deploying" note and the result are on the ticket; the job's artifacts keep what GenAI read |
+
+**Set it up:** add the **ACT model key** credential to the deploy template, and:
+
+```yaml
+vm_deploy_genai: true
+vm_deploy_template_catalog:
+  win2022-pxe: "Windows Server 2022 (installed over the network by MECM)"
+  rhel9-gold: "Red Hat Enterprise Linux 9"
+```
+
+The ticket text goes to the model (GenAI.mil): only use it for tickets whose text may go there.
+
+### Windows from a network-boot (PXE / MECM) template
+
+A template with **no operating system** that boots from the network into an MECM (SCCM) task
+sequence: list it in `vm_deploy_pxe_templates` (e.g. `[win2022-pxe]`). For those, the job:
+
+- does **no guest customization** (there is no OS yet) and does not wait for an IP address;
+- refuses a `vm_name` longer than 15 characters (the Windows / MECM computer name limit);
+- powers the VM on - it boots from the network to MECM - and writes on the ticket its **MAC address**
+  and the computer name to use.
+
+On the MECM side, one of the two usual ways:
+
+1. **Unknown computers:** the task sequence is deployed to *All Unknown Computers* and asks for (or
+   sets) the computer name - use the VM's name from the ticket.
+2. **Known computers:** an MECM admin imports the computer (**Assets and Compliance > Devices > Import
+   Computer Information**: name = `vm_name`, MAC = the one on the ticket) into the collection the task
+   sequence is deployed to. (This step can be automated later through MECM's AdminService.)
+
+Check that the template boots from the network first (VM Options > Boot Options: EFI, network
+first or a boot delay), that its adapter is on the staging VLAN, and that the VLAN forwards PXE to your
+MECM distribution point (DHCP / IP helper).
+
+**A dry run (Check)** reads the ticket, prints the request with where each value came from
+(`cpu: 4 (from comment 2026-10-08 10:05 - Jane Doe ...)`), checks everything and says where the VM
+would go. It builds nothing and writes nothing on the ticket. Run it first on every new kind of
+request.
+
+### Set it up
+
+1. **The template:** VMware Tools (open-vm-tools on Linux) installed and running; for Linux with
+   cloud-init, VMware guest customization allowed (`disable_vmware_customization: false`); its network
+   adapter set to **Connect at power on**.
+2. **The vCenter account** needs, on the template, the target cluster, datastore(s), folder(s) and the
+   staging port group: *Virtual machine > Provisioning > Deploy template, Customize guest, Read
+   customization specifications*; *Virtual machine > Inventory > Create from existing*; *Virtual machine >
+   Change configuration > Change CPU count, Change memory, Set annotation*; *Virtual machine > Interaction
+   > Power on*; *Resource > Assign virtual machine to resource pool*; *Datastore > Allocate space*;
+   *Network > Assign network*. A missing one is named in the error (`lacks the privilege ...`).
+3. **The ServiceNow API credential** (the one the ticket jobs use): its account reads the ticket's table
+   (incident, task ...) and adds work notes to it.
+4. **Templates > Create template > Create job template:**
+   - Name: `VM - deploy from ServiceNow ticket`
+   - Inventory: any. Project: site-automation. Playbook: `playbooks/vm_deploy_from_ticket.yml`
+   - Execution environment: your VMware one. Credentials: **VMware vCenter** and **ServiceNow API**
+   - Tick **Prompt on launch** next to **Job type** (for the dry run)
+   - **Survey:** one question, *Ticket number*, variable `vm_deploy_ticket`, text, required
+   - Variables (the rules - a ticket cannot go beyond them):
+     ```yaml
+     vm_deploy_templates: [rhel9-gold, rhel8-gold]      # REQUIRED: only these are deployed (* allowed)
+     vm_deploy_assignment_group: Linux Operations       # only tickets assigned to this group
+     vm_deploy_clusters: [PROD-*]                       # [] = any
+     vm_deploy_defaults: {cluster: PROD-CL01, datastore: DSC-PROD, folder: Linux/New}
+     vm_deploy_max_cpu: 16
+     vm_deploy_max_memory_gb: 128
+     vm_deploy_domain: yoursite.mil
+     report_email_to: vmteam@yoursite.mil
+     ```
+5. **First run:** a test ticket assigned to your group with the four lines above; launch as **Check**,
+   read the request and where it would go; then launch it for real.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `vm_deploy_templates` | `[]` | the templates a ticket may ask for (**required**: nothing is deployed until set) |
+| `vm_deploy_clusters` / `_datastores` / `_folders` | `[]` (any) | where a ticket may put the VM |
+| `vm_deploy_defaults` | `{}` | what a ticket does not say (cluster, datastore, folder, cpu, memory_gb, domain) |
+| `vm_deploy_max_cpu` / `vm_deploy_max_memory_gb` | `16` / `128` | caps |
+| `vm_deploy_name_regex` | letters, digits, `-` | the names allowed (`'^[a-z0-9-]{1,15}$'` for Windows-safe names) |
+| `vm_deploy_assignment_group` | `""` (any) | only tickets assigned to this group |
+| `vm_deploy_domain` | `localdomain` | the DNS domain Linux customization sets |
+| `vm_deploy_customize` / `vm_deploy_power_on` | `true` / `true` | guest customization; power on |
+| `vm_deploy_wait_customization` / `vm_deploy_wait_ip` | `900` / `600` | seconds to wait for each |
+| `vm_deploy_done_fields` | `{}` | fields set on the ticket when the VM is up, e.g. `{state: "6", close_code: "Solution provided", close_notes: "VM deployed"}` |
+| `vm_deploy_ticket_table` | from the prefix | the table, for a ticket number with another prefix |
+| `vm_deploy_sites` | `{}` | per site: `cluster`, `datastore`, `folder`, `vcenter` ... (a ticket's `site:` or Location picks one) |
+| `vm_deploy_site_required` | `true` | with sites set up, a ticket must name its site |
+| `vm_deploy_pxe_templates` | `[]` | templates that boot from the network (PXE / MECM): no customization, MAC on the ticket |
+| `vm_deploy_max_disks` / `vm_deploy_max_disk_gb` / `vm_deploy_max_total_disk_gb` | `4` / `2048` / `4096` | disk caps: how many, the biggest one, all together |
+| `vm_deploy_mem_target_pct` / `vm_deploy_failover_hosts` | `80` / `1` | automatic placement: a cluster fits when memory with this VM and that many hosts down stays under the % |
+| `vm_deploy_datastore_max_used_pct` | `85` | automatic placement: a datastore fits when it stays under this % with the VM at its full size |
+| `vm_deploy_genai` | `false` | GenAI reads requests written in plain words (two runs: propose, then build) |
+| `vm_deploy_template_catalog` | `{}` | the templates GenAI may pick, each with a plain description |
+| `vm_deploy_genai_model_timeout` | `site_act_model_timeout` (600) | seconds the model may take |
+
+**All settings** of the VMware jobs, with defaults: [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md#vmware_vm).
+
+**Who can change the request:** anyone who can comment on the ticket can change its lines, and an
+incident or a task has no approval of its own: the person who launches the job is the control, and
+the "Deploying" note records exactly what was built. When the job later picks up tickets by itself (a
+schedule), it will need a stronger gate - an approved change, or an approval step in a workflow.
 
 ## ESXi security settings (every night): SSH off, timeouts, lockdown
 
@@ -694,6 +987,10 @@ the last column says.
 | `Could not connect to vCenter ...: timed out` or `Connection refused` | the AAP node cannot reach vCenter on port 443 | a firewall rule from the AAP node (or execution node) to vCenter, port 443 |
 | `pyVmomi is not installed in the execution environment`, or `couldn't resolve module/action 'vmware.vmware...'` | the template uses an execution environment without the VMware parts | pick your VMware execution environment on the template ("Before you start", step 1) |
 | A VM, host or datastore you see in vSphere is missing from a report | the vCenter account cannot see it | give its role on that folder or cluster, with **Propagate to children** ("Before you start", step 2) |
+| A whole vCenter's datacenters and clusters are missing (the vSphere Client shows two or more vCenters) | the jobs read the credential's vCenter, plus only those in `vmware_vcenters` | `vmware_vcenters: [vc01..., vc02...]` in `all.yml` ("Before you start", step 5) |
+| Red **vCenters not read** on top, `- 1 vCenter(s) not read` in the title (the job failed at `every vCenter was read` only with `vmware_vcenter_fail_unread: true`) | that vCenter could not be reached, or refused the login; the rest of the report covers the others | the reason is in the row: `refused the login` = the account is not known there (in linked mode: give it a Global Permission); `timed out` / `Connection refused` = a firewall rule to that vCenter, port 443 |
+| `Could not find imported module support code for ... site_vmware_... Looked for ... ansible.module_utils.site_vcenters` | the folder `roles/vmware_vm/module_utils/` is missing: an update copied the changed files but not that new folder | copy `roles/vmware_vm/module_utils/` from the release into your repository, commit, sync the project |
+| `the same vCenter as ...: read once` in the artifacts | a vCenter listed twice (a short name and its FQDN, or its IP) | nothing: it is read once |
 | `Refused: ... is the AAP server or a protected VM` | by design | do it in vCenter yourself |
 
 ### Datastore and snapshot reports, snapshot cleanup
@@ -722,6 +1019,35 @@ the last column says.
 | SSH is off again on a host you opened for support | the nightly run did its job | `esxi_security_exclude_hosts` while the case is open |
 | The ESXi Shell stays on, and the report does not mention it | `esxi_security_shell: ""` is set somewhere (leave it as it is) | remove it: the default is `disabled` |
 | Every night's email lists the same host as changed | something turns the setting back every day (a host profile, a script, a person) | find what it is: two tools fighting over one setting |
+
+### Deploy from a ServiceNow ticket
+
+| You see | It means | Do |
+|---|---|---|
+| `No ServiceNow connection: attach the "ServiceNow API" credential` | the template has no ServiceNow credential | add it (Set it up, step 4) |
+| `No incident ticket INC... in ServiceNow` | a wrong number, or the account cannot see it | check the number; the account needs read access to that table |
+| `ServiceNow refused the read (HTTP 403)` | the account may not read that table | give it read access (e.g. the itil role) |
+| `REFUSED: template '...' is not in vm_deploy_templates` | a template you have not allowed | add it to `vm_deploy_templates`, or correct the ticket |
+| `REFUSED: the ticket is assigned to ...` | not your team's ticket | reassign it, or `vm_deploy_assignment_group` |
+| `the ticket does not say vm_name` | no `vm_name:` line | the requester adds a comment `vm_name: ...` |
+| `Nothing was built: ServiceNow refused the work note` | the account cannot update that table | give it write access to work notes; nothing was built, by design |
+| `a VM named ... already exists in vCenter ...` | the name is taken (or the job ran twice) | another name in a comment, or nothing to do |
+| `template ... is in vc01 / DC1, vc02 / DC1` | the same template name in two places | `vcenter:` (or `datacenter:`) in the ticket |
+| `template ... is Windows: name a customization specification` | Windows needs Sysprep settings | `customization_spec: <name>` in the ticket (vCenter: Policies and Profiles) - or, for a network-boot (MECM) template, list it in `vm_deploy_pxe_templates` |
+| `the ticket does not say which site` | sites are set up, the ticket names none (and its Location is not a site) | `site: ...` in a comment; or `vm_deploy_site_required: false` |
+| `site '...' is not one of vm_deploy_sites` | a site name you have not set up | correct the ticket, or add the site |
+| `GenAI proposal posted - run the job again to build it` | run 1 of a plain-words request: by design | read the proposal on the ticket, then launch the job again |
+| `questions for the requester (nothing built)` | GenAI could not trace a value to the ticket, or something is missing | the requester answers in a comment (`memory_gb: 16`); run the job again |
+| `DROPPED (not in the ticket): vm_name ...` | GenAI gave a value the ticket does not contain (made up, or guessed) | nothing: it is a question now |
+| `GenAI did not run: ...` | no ACT model key, the model not reachable, or a timeout | the ACT model key credential on the template; see docs/ADDING_ACT.md; or `key: value` lines |
+| `no cluster among ... has room` | automatic placement: every candidate would go over the memory target with a host down | another site / cluster, less memory, or a higher `vm_deploy_mem_target_pct` |
+| `no datastore among ... has room` | every candidate datastore would go over 85 % with the VM | another datastore list, smaller disks |
+| `disk 1 cannot shrink` | `disks_gb` asks for a smaller first disk than the template's | the first size at least the template's |
+| A network-boot VM sits at "PXE-E..." / "No boot device" | the VLAN does not reach MECM's PXE, or MECM does not answer this computer | the DHCP / IP helper on the staging VLAN; the computer imported in MECM, or unknown-computer support on the task sequence |
+| `lacks the privilege VirtualMachine.Provisioning...` | the vCenter account's role | grant it (Set it up, step 2) |
+| Customization `no result within 900 s` | VMware Tools does not run in the template, or cloud-init blocks VMware customization | fix the template; the VM exists - set its host name by hand, or delete it and run again |
+| `no IPv4 address within 600 s` | no DHCP lease on the staging VLAN, or VMware Tools does not run | check DHCP; the IP shows in vCenter when it comes |
+| `the template's ... is not set to connect at power on` | the template's adapter | tick **Connect at power on** on the template |
 
 ### Capacity planning
 
@@ -759,8 +1085,8 @@ the last column says.
 | `... Its certificate is not trusted: set site_act_ca ...` | the execution environment does not trust the model's certificate authority | put that CA certificate at `playbooks/files/ca/model-ca.pem`, `site_act_ca: "{{ playbook_dir }}/files/ca/model-ca.pem"` in `all.yml`, and `playbooks/files/ca/` in `.site-local` |
 | `ACT failed: ...` with `401` or `Unauthorized` | the key is wrong or expired | a new key in the credential |
 | `ACT failed: ...` with `429` or `Too Many Requests` | the key's quota per minute | run it less often, or lower `vm_alarm_act_max_items` |
-| `model turn exceeded the 90s total timeout` (or `300s`) | the model took longer than ACT allows for one answer (90 s by default; this job allows 300 s, `vm_alarm_act_model_timeout`) | `vm_alarm_act_model_timeout: 600` (keep `site_act_timeout` above it), fewer problems (`vm_alarm_act_max_items: 20`), or a faster model |
-| `ACT produced no result (it timed out after 600s ...)` | a slow model, or a lot of evidence | `site_act_timeout: 900`, or `vm_alarm_act_max_items: 20` |
+| `model turn exceeded the 600s total timeout` (older releases: `90s`, `300s`), often `after a transient provider failure` | the model (or the provider, retrying after an error) took longer than ACT allows for one answer: `site_act_model_timeout`, 600 s | run it again (a provider hiccup passes); `site_act_model_timeout: 900` in `all.yml` (keep `site_act_timeout` above it); fewer items (`vm_alarm_act_max_items: 20`); or a faster model |
+| `ACT produced no result (it timed out after 1200s ...)` | a slow model, or a lot of evidence | `site_act_timeout: 1800`, or `vm_alarm_act_max_items: 20` |
 | `ACT's answer is below as text` | the model did not use the table format | the answer is still in the email. Run it again, or try another model (`site_act_models`) |
 | A row says `ACT gave no answer for this one` | the model skipped that problem | run it again; fewer problems (`vm_alarm_act_max_items`) help a small model |
 | The job is red, but the email came | ACT could not run; the email lists the problems and says why | fix what the email says, then run it again |

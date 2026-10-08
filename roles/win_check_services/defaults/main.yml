@@ -8,7 +8,7 @@
 # Must be running on every Windows server. Add your own per group with ..._required_extra, e.g.
 # for IIS servers: win_check_services_required_extra: [W3SVC, WAS]
 win_check_services_required: [EventLog, RpcSs, Dnscache, W32Time, WinRM, mpssvc]
-win_check_services_required_extra: []
+win_check_services_required_extra: []    # more services that must run, e.g. for a group of IIS servers (see above)
 
 # Automatic services never to report (wildcards allowed: * and ?)
 win_check_services_ignore:

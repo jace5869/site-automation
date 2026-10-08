@@ -8,6 +8,7 @@
 # user   = rootless (~/.config/containers/systemd, systemctl --user) <- tests / rootless hosts
 stigman_scope: system
 
+# the container images (pin STIG Manager's version; change it deliberately)
 stigman_images:
   mysql: docker.io/library/mysql:8.4
   api: docker.io/nuwcdivnpt/stig-manager:1.6.17     # pin a version; bump deliberately
@@ -15,27 +16,27 @@ stigman_images:
 
 stigman_config_dir: /etc/stigman                    # nginx.conf, TLS files, CA bundle
 stigman_https_port: 443                             # host port nginx publishes
-stigman_server_name: "{{ inventory_hostname }}"
+stigman_server_name: "{{ inventory_hostname }}"  # the name nginx answers to (and the TLS certificate is for)
 
 # Existing Keycloak realm (server-side URL used by the API; browser-side URL for the web client)
 stigman_oidc_provider: "https://keycloak.example.mil/realms/stigman"
-stigman_client_oidc_provider: "{{ stigman_oidc_provider }}"
-stigman_client_id: stig-manager
+stigman_client_oidc_provider: "{{ stigman_oidc_provider }}"  # the Keycloak realm URL the browser uses (when it differs from the server-side one)
+stigman_client_id: stig-manager          # the Keycloak client the web app logs in with
 stigman_classification: U                           # banner: U, CUI, C, S, TS, SCI, NONE
 
-stigman_db_schema: stigman
-stigman_db_user: stigman
+stigman_db_schema: stigman               # the MySQL database STIG Manager uses
+stigman_db_user: stigman                 # the MySQL account STIG Manager uses (its password: the credential)
 stigman_mysql_buffer_pool: 1G                       # STIG Manager docs: >= 8G for real deployments
 
 # How long to wait for the API to answer through nginx after (re)starting
 stigman_ready_retries: 40
-stigman_ready_delay: 6
+stigman_ready_delay: 6                   # seconds between those tries
 
 # ---- Secrets: NEVER set these in a vars file or inventory -----------------------------------
 # They come from AAP credentials (aap/credential_types/*.yml) as environment variables / files
 # on the controller (execution environment). See docs/SECRETS.md.
 stigman_mysql_root_password: "{{ lookup('ansible.builtin.env', 'STIGMAN_MYSQL_ROOT_PASSWORD') }}"
-stigman_db_password: "{{ lookup('ansible.builtin.env', 'STIGMAN_DB_PASSWORD') }}"
-stigman_tls_cert_src: "{{ lookup('ansible.builtin.env', 'TLS_CERT_FILE') }}"
-stigman_tls_key_src: "{{ lookup('ansible.builtin.env', 'TLS_KEY_FILE') }}"
-stigman_tls_ca_src: "{{ lookup('ansible.builtin.env', 'TLS_CA_FILE') }}"
+stigman_db_password: "{{ lookup('ansible.builtin.env', 'STIGMAN_DB_PASSWORD') }}"  # from the credential (STIGMAN_DB_PASSWORD), never set here
+stigman_tls_cert_src: "{{ lookup('ansible.builtin.env', 'TLS_CERT_FILE') }}"  # nginx's certificate file, from the TLS certificate credential (TLS_CERT_FILE)
+stigman_tls_key_src: "{{ lookup('ansible.builtin.env', 'TLS_KEY_FILE') }}"  # its private key file, from the credential (TLS_KEY_FILE)
+stigman_tls_ca_src: "{{ lookup('ansible.builtin.env', 'TLS_CA_FILE') }}"  # the CA bundle file, from the credential (TLS_CA_FILE)

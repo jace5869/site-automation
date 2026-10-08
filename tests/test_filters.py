@@ -504,6 +504,65 @@ class Snapshots(unittest.TestCase):
         self.assertEqual([f.human_size(x) for x in (0.4, 0.95, 1.0, 12.44, 1023.9, 1024, 1536, None)],
                          ["410 MB", "973 MB", "1.0 GB", "12.4 GB", "1023.9 GB", "1.00 TB", "1.50 TB", "?"])
 
+    def test_two_vcenters(self):
+        """Two vCenters both have a vm-1 with snapshot 1: the approval names the vCenter, and only that
+        vCenter's snapshot is deleted (a moid alone would pick the other VM)."""
+        a = dict(self.S[0], vcenter="vc01.example.mil")
+        b = dict(self.S[0], vm="other", vcenter="vc02.example.mil")
+        plan = f.vm_snapshot_plan([a, b], [{"vcenter": "vc02.example.mil", "moid": "vm-1", "id": 1}])
+        self.assertEqual([(x["vm"], x["vcenter"]) for x in plan["todo"]], [("other", "vc02.example.mil")])
+        # an approval without a vCenter (from an older report, which read only the credential's vCenter)
+        # means the credential's vCenter - never the other one
+        plan = f.vm_snapshot_plan([a, b], [{"moid": "vm-1", "id": 1}], "vc01.example.mil")
+        self.assertEqual([x["vcenter"] for x in plan["todo"]], ["vc01.example.mil"])
+        plan = f.vm_snapshot_plan([b], [{"moid": "vm-1", "id": 1}], "vc01.example.mil")
+        self.assertEqual((plan["todo"], len(plan["skipped"])), ([], 1))
+        self.assertNotEqual(f.vm_snap_vm_key(a), f.vm_snap_vm_key(b))
+        self.assertEqual(f.vm_snap_row(dict(b, folder="/DC1/vm"), True)[6], "vc02: /DC1/vm")
+        self.assertEqual(f.vm_snap_row(dict(b, folder="/DC1/vm"))[6], "/DC1/vm")
+
+    def test_cert_report_section(self):
+        certs = [{"days": 45, "expires": "2026-11-22", "host": "web01", "subject": "CN=web01", "where": "/etc/pki/tls/certs/web01.crt"},
+                 {"days": -3, "expires": "2026-10-05", "host": "db01", "subject": "CN=db01", "where": "tcp 443"},
+                 {"days": 200, "expires": "2027-04-26", "host": "app01", "subject": "CN=app01", "where": "/etc/app.crt"},
+                 {"days": 30, "expires": "2026-11-07", "host": "app02", "subject": "CN=app02", "where": "/etc/app2.crt"},
+                 {"days": 60, "expires": "2026-12-07", "host": "app03", "subject": "CN=app03", "where": "/etc/app3.crt"}]
+        s = f.cert_report_section(certs, 30, 60)
+        self.assertEqual([r[0] for r in s["rows"]], [-3, 30, 45, 60, 200])                    # soonest first
+        self.assertEqual(s["row_status"], ["critical", "warning", "info", "info", ""])
+        self.assertEqual([c[0] for c in s["cell_status"]], ["critical", "warning", "info", "info", ""])
+        self.assertEqual([r[5] for r in s["rows"]], ["EXPIRED", "expires within 30 days", "expires within 60 days",
+                                                      "expires within 60 days", "ok"])
+        self.assertEqual(s["status"], "critical")
+        self.assertNotIn("status", f.cert_report_section(certs[2:3]))
+        self.assertEqual(f.cert_report_section([])["rows"], [])
+        html = f.report_text({"title": "t", "sections": [s]})
+        self.assertIn("EXPIRED", html)
+
+    def test_act_chat_reply(self):
+        for t in ("I am ready. What task or command would you like me to assist you with?", "How can I help you today?",
+                  "Hello! What would you like me to do?", "  I'm ready to assist."):
+            self.assertTrue(f.act_is_chat_reply(t), t)
+        for t in ("", "The container kcmysql was removed and no unit runs it: recreate it, then podman generate systemd.",
+                  "What happened: chronyd stopped at 03:12 after the NTP server became unreachable."):
+            self.assertFalse(f.act_is_chat_reply(t), t)
+
+    def test_vcenter_helpers(self):
+        st = [{"name": "vc01.example.mil", "ok": True, "error": "", "note": ""},
+              {"name": "VC01", "ok": True, "error": "", "note": "the same vCenter as vc01.example.mil: read once"},
+              {"name": "vc02.example.mil:8443", "ok": True, "error": "", "note": "vCenter vc02 has no datacenter named DC9"},
+              {"name": "10.1.2.3", "ok": False, "error": "Could not connect to vCenter 10.1.2.3: timed out", "note": ""}]
+        self.assertEqual(f.vm_vcenters_read(st), ["vc01.example.mil", "vc02.example.mil:8443"])
+        self.assertEqual([f.vc_short(x) for x in ("vc01.example.mil", "vc02.example.mil:8443", "10.1.2.3")], ["vc01", "vc02:8443", "10.1.2.3"])
+        self.assertEqual(f.vm_dc_label({"vcenter": "vc02.example.mil", "datacenter": "DC1"}, True), "vc02 / DC1")
+        self.assertEqual(f.vm_dc_label({"vcenter": "vc02.example.mil", "datacenter": "DC1"}), "DC1")
+        doc = f.vm_vcenter_report({"title": "VMware datastore report: all 4 below 85% used", "status": "ok", "sections": [{"title": "All"}]}, st)
+        self.assertEqual((doc["title"], doc["status"]), ("VMware datastore report: all 4 below 85% used - 1 vCenter(s) not read", "critical"))
+        self.assertEqual(doc["sections"][0]["rows"], [["10.1.2.3", "Could not connect to vCenter 10.1.2.3: timed out"]])
+        self.assertEqual(len(doc["sections"]), 2)
+        self.assertEqual(f.vm_vcenter_report({"title": "x"}, st[:3]), {"title": "x"})
+        self.assertEqual(f.vm_ds_row({"name": "ds1", "vcenter": "vc02.example.mil", "datacenter": "DC1"}, True)[1], "vc02 / DC1")
+
     def test_name_matches(self):
         self.assertTrue(f.name_matches("DC01", ["dc*"]))
         self.assertTrue(f.name_matches("vcsa01", ["VCSA01"]))
@@ -551,6 +610,37 @@ class VmwareAlarms(unittest.TestCase):
         self.assertEqual([e["vm"] for e in g["vm"]], ["db01", "app01"])                        # newest first
         self.assertEqual([(x["type"], x["count"], x["message"]) for x in g["other"]], [("esx.problem.storage.latency", 2, "latency 101 ms")])
         self.assertEqual(va.vm_alarm_groups(self.D)["logins"][0]["severity"], "warning")       # 3 < 10
+
+    def test_two_vcenters(self):
+        """vc02 also has a host-1 (esx01b, no alarm): vc01's critical host alarm must not colour it, the
+        datacenter cells name the vCenter, and a failed login on vc02 itself is a vCenter-level problem."""
+        import copy
+        d = copy.deepcopy(self.D)
+        for k in ("alarms", "config_issues", "hosts", "events"):
+            for x in d[k]:
+                x["vcenter"] = "vc01.example.mil"
+        d["vcenter"] = "vc01.example.mil, vc02.example.mil"
+        d["vcenters"] = [{"name": "vc01.example.mil", "ok": True, "error": "", "note": ""},
+                         {"name": "vc02.example.mil", "ok": True, "error": "", "note": ""}]
+        d["hosts"].append({"name": "esx01b", "moid": "host-1", "cluster": "CL9", "datacenter": "DC9", "connection": "connected",
+                           "power": "poweredOn", "maintenance": False, "version": "8.0.2", "build": "1", "vendor": "", "model": "",
+                           "status": "green", "vcenter": "vc02.example.mil"})
+        d["events"].append({"key": 1, "time": "2026-10-07T09:00:00Z", "type": "BadUsernameSessionEvent", "group": "login", "severity": "warning",
+                            "category": "info", "message": "Cannot login", "user": "", "login_user": "bob", "ip": "10.1.1.1", "host": "", "vm": "",
+                            "cluster": "", "datacenter": "", "vcenter": "vc02.example.mil"})
+        r = va.vm_alarm_report(d, {"login_critical": 10})
+        self.assertIn("vCenters vc01.example.mil, vc02.example.mil", r["subtitle"])
+        hosts = [x for x in r["sections"] if x["title"] == "All hosts"][0]
+        i = [row[0] for row in hosts["rows"]].index("esx01b")
+        self.assertEqual((hosts["rows"][i][2], hosts["rows"][i][7], hosts["row_status"][i]), ("vc02 / DC9", 0, ""))
+        j = [row[0] for row in hosts["rows"]].index("esx01")
+        self.assertEqual((hosts["rows"][j][2], hosts["rows"][j][7], hosts["row_status"][j]), ("vc01 / DC1", 1, "critical"))
+        logins = va.vm_alarm_groups(d)["logins"]
+        self.assertEqual([(x["where"], x["on_vcenter"]) for x in logins if x["user"] == "bob"], [("vc02.example.mil", True)])
+        probs = va.vm_alarm_problems(d)["problems"]
+        self.assertEqual([p["object_type"] for p in probs if "bob" in p["problem"]], ["vcenter"])
+        self.assertEqual([p["datacenter"] for p in probs if p["object"] == "esx01"][0], "vc01 / DC1")
+        self.assertIn("vc02", va.vm_alarm_names(d))
 
     def test_report_colours_and_counts(self):
         r = va.vm_alarm_report(self.D, {"login_critical": 10})

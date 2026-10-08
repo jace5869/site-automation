@@ -17,13 +17,15 @@
 - name: VMware | nothing to analyze
   ansible.builtin.include_tasks: report.yml
   vars:
+    _vm_vcenters: "{{ _vm_al_read.vcenters }}"
     _vm_report_subject: "VMware alarms ACT analysis: nothing to analyze"
     _vm_report_lines:
       - "No triggered alarm, every host connected, and no failed login, VM event to check, error or warning in the last {{ vm_alarm_hours }} h."
       - "ACT was not called."
     _vm_report_doc: >-
       {{ {'title': 'VMware alarms ACT analysis: nothing to analyze', 'status': 'ok',
-          'subtitle': 'vCenter ' ~ _vm_al_read.vcenter ~ ': no triggered alarm, every host connected, and no failed login, VM event to check, '
+          'subtitle': ('vCenters ' if _vm_al_read.vcenters | default([]) | vm_vcenters_read | length > 1 else 'vCenter ')
+                      ~ _vm_al_read.vcenter ~ ': no triggered alarm, every host connected, and no failed login, VM event to check, '
                       ~ 'error or warning in the last ' ~ vm_alarm_hours ~ ' h.',
           'sections': [{'title': 'Result', 'lines': ['Nothing for ACT to analyze: ACT was not called.']}]} }}
     _vm_report_no_email: "{{ not vm_alarm_act_email_if_none | bool }}"
@@ -63,6 +65,7 @@
     - name: VMware | ACT analysis
       ansible.builtin.include_tasks: report.yml
       vars:
+        _vm_vcenters: "{{ _vm_al_read.vcenters }}"
         _vm_report_subject: "{{ _vm_al_doc.title }}"
         _vm_report_lines: "{{ (_vm_al_doc | report_text).splitlines() }}"
         _vm_report_doc: "{{ _vm_al_doc }}"
@@ -84,3 +87,8 @@
         fail_msg: "ACT did not analyze the alarms: {{ _vm_al_reason }} The alarms are in the report (and the email) without an analysis."
         quiet: true
       when: not ansible_check_mode
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_al_read.vcenters }}"

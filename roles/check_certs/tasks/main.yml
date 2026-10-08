@@ -4,6 +4,9 @@
 #   ERR|<where>|<what went wrong>
 # It reads only the CERTIFICATE blocks of each file (never a private key) with openssl, asks
 # each TLS endpoint for its certificate with `openssl s_client`, and lists keystores with keytool.
+# With check_certs_discover_ports / _keystores (the certificate report turns them on) it also finds
+# the listening ports that answer TLS, and the Java keystores on the host:
+#   SKIP|<where>|<why it was not checked>   (listed in the report, not a finding)
 
 - name: Certs | find and read certificates
   ansible.builtin.shell: |
@@ -54,6 +57,75 @@
       echo "ERR|{{ e.name | default(e.host) }} (https://{{ e.host }}:{{ e.port }})|no certificate: not answering, or not TLS"
     fi
     {% endfor %}
+    {% if check_certs_discover_ports | bool %}
+    # listening TCP ports that answer TLS (not the ports in check_certs_discover_ports_skip - ssh, dns,
+    # plain databases ... - nor the ones already in check_certs_endpoints), each probed once on the
+    # address it is bound to, at most check_certs_discover_ports_max of them
+    fqdn=$(hostname -f 2>/dev/null || hostname)
+    skip=" {{ (check_certs_discover_ports_skip + (check_certs_endpoints | map(attribute='port') | list)) | join(' ') }} "
+    ss -Htlnp 2>/dev/null | awk '{print $4 "\t" $6}' | sort -t$'\t' -k1,1 -u | {
+      seen=" "; n=0
+      while IFS=$'\t' read -r local procs; do
+        port=${local##*:}; addr=${local%:*}
+        case "$skip$seen" in *" $port "*) continue ;; esac
+        addr=$(printf '%s' "$addr" | sed 's/%[^]]*//')        # 127.0.0.53%lo -> 127.0.0.53
+        case "$addr" in "*"|0.0.0.0) addr=127.0.0.1 ;; "[::]"|"::") addr="[::1]" ;; "[fe80:"*) continue ;; esac
+        [ "$n" -lt {{ check_certs_discover_ports_max | int }} ] || { echo "SKIP|TLS ports|more than {{ check_certs_discover_ports_max | int }} listening ports: the rest not probed (check_certs_discover_ports_max)"; break; }
+        n=$((n + 1)); seen="$seen$port "
+        proc=$(printf '%s' "$procs" | sed -n 's/.*users:(("\([^"]*\)".*/\1/p')
+        pem=$(timeout {{ check_certs_probe_timeout | int }} openssl s_client -connect "$addr:$port" -servername "$fqdn" </dev/null 2>/dev/null | openssl x509 2>/dev/null)
+        [ -n "$pem" ] || continue                                 # not TLS: nothing to report
+        end=$(echo "$pem" | openssl x509 -noout -enddate | cut -d= -f2-)
+        subj=$(echo "$pem" | openssl x509 -noout -subject -nameopt RFC2253 | sed 's/^subject=//; s/|/ /g')
+        echo "CERT|TLS port $port${proc:+, $proc} (https://$addr:$port)|$subj|$(date -d "$end" +%s)"
+      done
+    }
+    {% endif %}
+    {% if check_certs_discover_keystores | bool %}
+    # Java keystores: files in check_certs_discover_keystore_dirs, and the ones running Java programs
+    # name (-Djavax.net.ssl.keyStore=...). Never a guessed password: one that needs a password is
+    # listed as not checked (give it in check_certs_keystores with password_env)
+    kt=$(command -v keytool 2>/dev/null || true)
+    if [ -z "$kt" ]; then
+      for e in /proc/[0-9]*/exe; do b=$(readlink "$e" 2>/dev/null) || continue
+        case "$b" in */bin/java) [ -x "${b%/java}/keytool" ] && { kt="${b%/java}/keytool"; break; } ;; esac
+      done
+    fi
+    explicitks=" {{ check_certs_keystores | map(attribute='path') | join(' ') }} "
+    {
+      timeout 120 find {{ check_certs_discover_keystore_dirs | map('quote') | join(' ') }} -maxdepth {{ check_certs_discover_keystore_depth | int }} -type f \
+        \( -iname '*.jks' -o -iname '*.keystore' -o -iname '*.p12' -o -iname '*.pfx' \) 2>/dev/null
+      for c in /proc/[0-9]*/cmdline; do tr '\0' '\n' < "$c" 2>/dev/null | sed -n 's/^-Djavax\.net\.ssl\.keyStore=//p'; done
+    } | grep -vE {{ check_certs_discover_keystore_exclude | quote }} | sort -u | head -n {{ check_certs_discover_keystore_max | int }} |
+    while IFS= read -r ks; do
+      [ -r "$ks" ] || continue
+      case "$explicitks" in *" $ks "*) continue ;; esac
+      listed=""
+      if [ -n "$kt" ]; then
+        listed=$(timeout 30 "$kt" -list -v -keystore "$ks" </dev/null 2>/dev/null |
+          awk '/^Alias name:/ {a = substr($0, 13)} /^Owner:/ {o = substr($0, 8)} /until: / {sub(/.*until: /, ""); print a "|" o "|" $0}')
+      fi
+      if [ -n "$listed" ]; then
+        while IFS='|' read -r alias owner until; do
+          echo "CERT|$ks (alias $alias)|$owner|$(date -d "$until" +%s 2>/dev/null || echo 0)"
+        done <<< "$listed"
+        continue
+      fi
+      case "$ks" in *.p12|*.P12|*.pfx|*.PFX)
+        rm -f "$tmp"/p12.pem
+        if openssl pkcs12 -in "$ks" -nokeys -passin pass: -out "$tmp"/p12.pem 2>/dev/null \
+           || openssl pkcs12 -legacy -in "$ks" -nokeys -passin pass: -out "$tmp"/p12.pem 2>/dev/null; then
+          one_file "$tmp"/p12.pem 0 | sed "s#|$tmp/p12.pem|#|$ks|#"
+          continue
+        fi ;;
+      esac
+      if [ -z "$kt" ] && case "$ks" in *.jks|*.keystore) true ;; *) false ;; esac; then
+        echo "SKIP|$ks|a Java keystore, and no keytool on this host to read it"
+      else
+        echo "SKIP|$ks|needs its password: add it to check_certs_keystores with password_env (an AAP credential)"
+      fi
+    done
+    {% endif %}
     {% for k in check_certs_keystores %}
     if [ -r {{ k.path | quote }} ]; then
       timeout 30 keytool -list -v -keystore {{ k.path | quote }} {{ ('-storepass:env ' ~ k.password_env) if k.password_env | default('') else '' }} </dev/null 2>/dev/null |
@@ -93,6 +165,16 @@
                                 'days': (((exp - now) / 86400) | round(0, 'floor') | int) if exp > 0 else -99999}) -%}
       {%- endfor -%}
       {{ out | sort(attribute='days') }}
+
+- name: Certs | what could not be checked (a keystore that needs a password ...) - listed, not a finding
+  ansible.builtin.set_fact:
+    check_certs_skipped: >-
+      {%- set out = [] -%}
+      {%- for line in _certs.stdout_lines if line.startswith('SKIP|') -%}
+      {%-   set c = line.split('|', 2) -%}
+      {%-   set _ = out.append({'host': inventory_hostname, 'where': c[1], 'reason': c[2]}) -%}
+      {%- endfor -%}
+      {{ out }}
 
 - name: Certs | findings
   ansible.builtin.set_fact:

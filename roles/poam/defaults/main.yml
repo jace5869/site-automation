@@ -15,9 +15,9 @@ poam_columns:
   due: Scheduled Completion Date        # a date
   owner: Owner                          # person or office
   vuln_ids: Vulnerability IDs           # STIG group IDs it covers (V-123456 ...), for the STIG Manager cross-check
-poam_closed_statuses: [Completed, Closed, Risk Accepted, Cancelled]
-poam_due_soon_days: 30
-poam_date_formats: ['%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y', '%d-%b-%Y', '%d %b %Y', '%b %d, %Y']
+poam_closed_statuses: [Completed, Closed, Risk Accepted, Cancelled]  # items with one of these statuses are done: never reported
+poam_due_soon_days: 30                   # an open item due within this many days -> warning (past due -> critical)
+poam_date_formats: ['%Y-%m-%d', '%m/%d/%Y', '%m/%d/%y', '%d-%b-%Y', '%d %b %Y', '%b %d, %Y']  # the date formats your file may use (Python strptime), tried in this order
 
 # ---- STIG Manager cross-check (optional) -----------------------------------------------------
 # Needs a Keycloak client that may use the client-credentials grant, with the scope
@@ -30,4 +30,4 @@ poam_stigman_severities: [high, medium]  # CAT I and CAT II findings must have a
 # Scope to ask for. Empty = the client's default scopes (they must include
 # stig-manager:collection:read or stig-manager:collection).
 poam_stigman_scope: ""
-poam_validate_certs: true
+poam_validate_certs: true                # check STIG Manager's and Keycloak's HTTPS certificates

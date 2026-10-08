@@ -10,6 +10,13 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))
 sys.path.insert(0, os.path.join(HERE, "..", "roles", "vmware_vm", "library"))
+# the modules import their shared vCenter code as Ansible does: from ansible.module_utils.site_vcenters
+import importlib.util  # noqa: E402
+_spec = importlib.util.spec_from_file_location("ansible.module_utils.site_vcenters", os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "roles", "vmware_vm", "module_utils", "site_vcenters.py"))
+site_vcenters = importlib.util.module_from_spec(_spec)
+sys.modules["ansible.module_utils.site_vcenters"] = site_vcenters
+_spec.loader.exec_module(site_vcenters)
 import capacity_filters as cf  # noqa: E402
 import vmware_alarm_filters as va  # noqa: E402
 import site_vmware_capacity as sc  # noqa: E402
@@ -197,6 +204,62 @@ class Report(unittest.TestCase):
         self.assertEqual((p4[2], p4[3], p4[4]), ("102 days (90% full)", "55 days", "GenAI 47 days sooner"))
         no = cf.vm_capacity_act_section(r["items"], {}, {"ran": False, "reason": "no key"})
         self.assertEqual(no[0]["lines"], ["ACT did not run: no key"])
+
+
+class TwoVcenters(unittest.TestCase):
+    """Two vCenters, both with a cluster PROD in a datacenter DC1 (and moids that repeat): never merged."""
+    def setUp(self):
+        import copy
+        a, b = copy.deepcopy(DATA), copy.deepcopy(DATA)
+        for x in a["clusters"] + a["datastores"]:
+            x["vcenter"] = "vc01.example.mil"
+        for x in b["clusters"] + b["datastores"]:
+            x["vcenter"] = "vc02.example.mil"
+        b["clusters"] = b["clusters"][:1]                   # vc02: PROD only, and its own ds_prod
+        b["datastores"] = b["datastores"][:1]
+        b["datastores"][0]["capacity"] = 20 * TB             # bigger: tells the two ds_prod apart
+        self.d = dict(DATA, vcenter="vc01.example.mil, vc02.example.mil",
+                      vcenters=[{"name": "vc01.example.mil", "ok": True, "error": "", "note": ""},
+                                {"name": "vc02.example.mil", "ok": True, "error": "", "note": ""}],
+                      clusters=a["clusters"] + b["clusters"], datastores=a["datastores"] + b["datastores"])
+
+    def test_numbers_not_merged(self):
+        N = cf.capacity_numbers(self.d, OPTS)
+        prods = [n for n in N["clusters"] if n["name"] == "PROD"]
+        self.assertEqual(sorted(n["label"] for n in prods), ["PROD (vc01 / DC1)", "PROD (vc02 / DC1)"])
+        caps = {n["vcenter"]: n["storage"]["capacity"] for n in prods}
+        self.assertEqual(caps, {"vc01.example.mil": 10 * TB, "vc02.example.mil": 20 * TB})
+        self.assertEqual([n["label"] for n in N["clusters"] if n["name"] == "LAB"], ["LAB"])     # unique: its name
+        self.assertEqual(N["overall"]["clusters"], 3)
+
+    def test_report_and_items(self):
+        r = cf.vm_capacity_report(self.d, OPTS)
+        self.assertIn("vCenters vc01.example.mil, vc02.example.mil", r["report"]["subtitle"])
+        comp = r["report"]["sections"][1]
+        self.assertEqual(sorted(row[0] for row in comp["rows"]), ["LAB", "PROD (vc01 / DC1)", "PROD (vc02 / DC1)"])
+        self.assertIn("vc02 / DC1", [row[1] for row in comp["rows"]])
+        names = [i["name"] for i in r["items"]]
+        self.assertEqual(len(names), len(set(names)))                                           # every ACT item can be told apart
+        self.assertIn("ds_prod (vc02 / DC1)", names)
+        ev = cf.vm_capacity_evidence(r, OPTS)
+        self.assertIn("cluster PROD (vc02 / DC1) (datacenter vc02 / DC1", ev)
+        self.assertIn("vc02", cf.vm_capacity_names(self.d))
+
+    def test_one_vcenter_unchanged(self):
+        r = cf.vm_capacity_report(DATA, OPTS)
+        self.assertEqual(sorted(row[0] for row in r["report"]["sections"][1]["rows"]), ["LAB", "PROD"])
+        self.assertTrue(r["report"]["subtitle"].startswith("vCenter vc01 - read"))
+
+
+class VcenterList(unittest.TestCase):
+    def test_list_and_port(self):
+        env = {"VMWARE_HOST": "vc01.example.mil", "VMWARE_PORT": "443"}
+        self.assertEqual(site_vcenters.vcenter_list(["https://VC01.example.mil/", "vc02.example.mil", " ", "vc02.example.mil:8443"], env),
+                         ["vc01.example.mil", "vc02.example.mil", "vc02.example.mil:8443"])
+        self.assertEqual(site_vcenters.vcenter_list([], {}), [])
+        self.assertEqual(site_vcenters.host_port("vc02:8443", env), ("vc02", 8443))
+        self.assertEqual(site_vcenters.host_port("vc02", {"VMWARE_PORT": "9443"}), ("vc02", 9443))
+        self.assertEqual(site_vcenters.host_port("fe80::1", env), ("fe80::1", 443))
 
 
 class ModuleParts(unittest.TestCase):

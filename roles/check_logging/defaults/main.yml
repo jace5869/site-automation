@@ -6,10 +6,10 @@ check_logging_journal_persistent: true   # the journal must survive a reboot (/v
 #   check_logging_remote:
 #     - {name: SIEM, host: siem.example.mil, port: 6514}
 check_logging_remote: []
-check_logging_timeout: 5
+check_logging_timeout: 5                 # seconds to wait for each log server's TCP port
 # rsyslog keeps messages it cannot deliver in /var/lib/rsyslog. A big queue = the log server
 # has been unreachable for a while.
 check_logging_queue_warn_mb: 100
 # Error-priority journal messages in the last day. Many = something is complaining a lot.
 check_logging_errors_since: "-24h"
-check_logging_errors_warn: 500
+check_logging_errors_warn: 500           # this many error messages or more -> warning

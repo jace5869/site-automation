@@ -4,7 +4,7 @@
 # Antivirus: auto = check Microsoft Defender when it is the active antivirus (skipped when it is
 # passive or off because another product protects the server); defender = always; none = never.
 win_check_security_av: auto
-win_check_security_av_signature_max_days: 7
+win_check_security_av_signature_max_days: 7  # Defender's signatures older than this many days -> finding
 # Services of your endpoint protection that must run, e.g. Trellix / McAfee: [masvc, mfemms]
 win_check_security_av_services: []
 

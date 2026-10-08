@@ -7,4 +7,4 @@ check_patching_max_age_days: 35          # last package update older than this -
 check_patching_security_warn: 1          # this many pending security advisories -> warning
 check_patching_critical_is_critical: true  # a pending Critical-severity advisory -> critical
 check_patching_timeout: 300              # seconds for dnf to talk to the repositories
-check_patching_reboot_check: true
+check_patching_reboot_check: true        # report a reboot still needed (needs-restarting -r, newer kernel installed than running)

@@ -80,7 +80,8 @@ def parse_defaults(path):
             doc = section
         if inline:
             doc = doc + [inline]
-        settings.append({"name": name, "value": value, "doc": doc})
+        if not name.startswith("_"):            # _name = the role's own working value, not a setting
+            settings.append({"name": name, "value": value, "doc": doc})
         block, section = [], []
         i = j
     if not settings and block and not header:

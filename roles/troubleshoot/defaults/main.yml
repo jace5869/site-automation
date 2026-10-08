@@ -9,9 +9,9 @@
 #   ts_target:  host:port for area=network (e.g. ldap.example.mil:636)
 #   ts_since:   how far back to read logs (journalctl --since), e.g. -2h, -1d, "2026-09-26 08:00"
 ts_area: overview
-ts_service: ""
-ts_target: ""
-ts_since: "-2h"
+ts_service: ""                           # the systemd unit, for ts_area service (see above)
+ts_target: ""                            # host:port, for ts_area network
+ts_since: "-2h"                          # how far back logs are read (journalctl --since)
 ts_output_lines: 60                       # keep the last this-many lines of each command
 
 # What each area runs. `why` is printed above the command's output. Commands must be read-only.

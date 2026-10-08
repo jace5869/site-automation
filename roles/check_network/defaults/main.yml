@@ -2,7 +2,7 @@
 # NETWORK: can this host reach what it depends on? A default route, names that must resolve,
 # and TCP ports that must answer (from THIS host, which is what matters when a service breaks).
 
-check_network_require_default_route: true
+check_network_require_default_route: true  # no default route -> finding (false for an isolated host)
 check_network_resolve_self: true         # this host's own full name (hostname -f) resolves
 check_network_dns_names: []              # e.g. [ldap.example.mil, servicenow.example.mil]
 # TCP services this host needs, e.g.
@@ -10,4 +10,4 @@ check_network_dns_names: []              # e.g. [ldap.example.mil, servicenow.ex
 #     - {name: LDAP, host: ldap.example.mil, port: 636}
 #     - {name: SIEM (syslog over TLS), host: siem.example.mil, port: 6514}
 check_network_tcp: []
-check_network_timeout: 5
+check_network_timeout: 5                 # seconds for each name lookup and TCP port test

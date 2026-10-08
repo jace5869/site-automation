@@ -1,0 +1,150 @@
+---
+# DEPLOY, the GenAI part - a proof of concept with guardrails (vm_deploy_genai: true; deploy.yml
+# includes it when the ticket's own 'key: value' lines do not say the name and the template, and no
+# proposal matches the ticket text as it is now). NOTHING IS BUILT IN THIS RUN:
+#   1. ACT (GenAI, evidence mode: it runs no command) reads the ticket text and gives the VM's name,
+#      template (a key of vm_deploy_template_catalog), CPU, memory, disks and site - each with the words
+#      of the ticket it comes from.
+#   2. Every value is checked against the ticket (vm_deploy_genai_parse): its words must be in the
+#      ticket and contain it; anything else is dropped and becomes a question.
+#   3. Questions -> a comment to the requester (they see comments, not work notes). Otherwise the
+#      proposal -> a work note, "[AAP] GenAI proposal (ticket text sha256:...)", with what the rules
+#      would refuse.
+#   4. The next run builds that proposal - without asking GenAI again - only while the ticket text is
+#      unchanged (the hash); the ticket's own lines still win over it.
+- name: VMware | GenAI has a template catalog to pick from
+  ansible.builtin.assert:
+    that: vm_deploy_template_catalog | length > 0
+    fail_msg: >-
+      vm_deploy_genai is on, but vm_deploy_template_catalog is empty: list the templates GenAI may pick, each with
+      a plain description (e.g. {win2022-pxe: "Windows Server 2022, installed by MECM"}).
+    quiet: true
+
+- name: VMware | GenAI reads the ticket - evidence mode, ACT runs no command
+  ansible.builtin.include_role:
+    name: site_act
+    tasks_from: evidence_analysis.yml
+    public: true
+  vars:
+    _ea_items: [{id: P1}]
+    _ea_evidence: "{{ _vd_text }}"
+    _ea_task: >-
+      {{ {'catalog': vm_deploy_template_catalog, 'sites': vm_deploy_sites | list,
+          'extra': site_act_extra_instructions | default('')} | vm_deploy_genai_task }}
+    _ea_names: []
+    _ea_model_timeout: "{{ vm_deploy_genai_model_timeout }}"
+    _ea_check_url: true
+
+- name: VMware | what GenAI read, checked against the ticket
+  ansible.builtin.set_fact:
+    _vd_g: >-
+      {{ (_ea_raw | default('')) | vm_deploy_genai_parse(_vd_text, {'catalog': vm_deploy_template_catalog, 'sites': vm_deploy_sites | list})
+         if _ea_ran | default(false) | bool else {'fields': {}, 'evidence': {}, 'questions': [], 'dropped': [], 'error': _ea_reason | default('')} }}
+
+- name: VMware | the proposal against the rules (a preview of what the build run will check)
+  ansible.builtin.set_fact:
+    _vd_gc: >-
+      {{ (_vd_rec | vm_deploy_spec(vm_deploy_defaults, {'fields': _vd_g.fields, 'header': 'this run'})) | vm_deploy_check(_vd_rec, {
+           'templates': vm_deploy_templates, 'clusters': vm_deploy_clusters, 'datastores': vm_deploy_datastores,
+           'folders': vm_deploy_folders, 'max_cpu': vm_deploy_max_cpu | int, 'max_memory_gb': vm_deploy_max_memory_gb | float,
+           'name_regex': vm_deploy_name_regex, 'assignment_group': vm_deploy_assignment_group,
+           'sites': vm_deploy_sites, 'site_required': vm_deploy_site_required | bool, 'pxe_templates': vm_deploy_pxe_templates,
+           'max_disks': vm_deploy_max_disks | int, 'max_disk_gb': vm_deploy_max_disk_gb | float,
+           'max_total_disk_gb': vm_deploy_max_total_disk_gb | float}) }}
+    _vd_g_ask: "{{ _ea_ran | default(false) | bool and not _vd_g.error and _vd_g.questions | length > 0 }}"
+
+- name: VMware | what GenAI proposes
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['GenAI ' ~ ('did not run: ' ~ _vd_g.error if _vd_g.error else 'read ticket ' ~ _vd_rec.number ~ ' (' ~ _vd_digest ~ '):')]
+         + (_vd_g.fields | vm_deploy_spec_text)
+         + (_vd_g.dropped | map('regex_replace', '^', 'DROPPED (not in the ticket): ') | list)
+         + (_vd_g.questions | map('regex_replace', '^', 'QUESTION: ') | list)
+         + (_vd_gc.problems | map('regex_replace', '^', 'THE BUILD WOULD REFUSE: ') | list) }}
+
+- name: VMware | questions to the requester (a comment - requesters see comments, not work notes)
+  ansible.builtin.uri:
+    url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
+    method: PATCH
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body:
+      comments: >-
+        {{ (['[AAP] To build this VM we need a few details. Please add a comment with the answers, one per line - for example "memory_gb: 16":']
+            + _vd_g.questions) | join('\n') }}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  register: _vd_gnote_q
+  when: _vd_g_ask | bool and not ansible_check_mode
+
+- name: VMware | the proposal on the ticket (a work note, read back by the build run)
+  ansible.builtin.uri:
+    url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
+    method: PATCH
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body:
+      work_notes: >-
+        {{ (_vd_g | vm_deploy_proposal_note(_vd_digest, _vd_job))
+           ~ ((('\nThe build would refuse it now: ' ~ (_vd_gc.problems | join('; ')))) if _vd_gc.problems else '') }}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  register: _vd_gnote_p
+  when: _ea_ran | default(false) | bool and not _vd_g.error and not _vd_g_ask | bool and not ansible_check_mode
+
+- name: VMware | GenAI proposal report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vd_written: >-
+      {{ (_vd_gnote_q.status | default(0)) == 200 or (_vd_gnote_p.status | default(0)) == 200 }}
+    _vm_report_subject: >-
+      {{ 'VM deploy ' ~ _vd_rec.number ~ ': '
+         ~ ('GenAI would read the ticket (dry run: not asked)' if ansible_check_mode else
+            ('GenAI did not run' if _vd_g.error else
+             ('questions for the requester (nothing built)' if _vd_g_ask | bool else
+              'GenAI proposal posted - run the job again to build it'))) }}
+    _vm_report_lines: >-
+      {{ [_vm_report_subject | trim] + (_vd_g.fields | vm_deploy_spec_text)
+         + (['ERROR: ' ~ _vd_g.error] if _vd_g.error else [])
+         + (_vd_g.dropped | map('regex_replace', '^', 'DROPPED: ') | list) + (_vd_g.questions | map('regex_replace', '^', 'QUESTION: ') | list)
+         + (_vd_gc.problems | map('regex_replace', '^', 'THE BUILD WOULD REFUSE: ') | list)
+         + (['WARNING: ServiceNow did not take the note'] if not ansible_check_mode and not _vd_g.error and not _vd_written | bool else []) }}
+    _vm_report_doc: >-
+      {%- set rows = [] -%}
+      {%- for f in ['vm_name', 'template', 'cpu', 'memory_gb', 'disks_gb', 'site'] if f in _vd_g.fields -%}
+      {%-   set v = _vd_g.fields[f] -%}
+      {%-   set _ = rows.append([f, (v | join(', ')) if v is iterable and v is not string else v, _vd_g.evidence[f] | default('')]) -%}
+      {%- endfor -%}
+      {%- set sections = [{'title': 'What GenAI read (each value with the words of the ticket it comes from)', 'columns': ['Setting', 'Value', 'From the ticket'],
+                           'rows': rows, 'text': 'Nothing was built in this run. The next run builds this, as long as the ticket text does not change.'}] -%}
+      {%- if _vd_g.questions -%}{%- set _ = sections.append({'title': 'Questions for the requester', 'status': 'warning', 'lines': _vd_g.questions}) -%}{%- endif -%}
+      {%- if _vd_g.dropped -%}{%- set _ = sections.append({'title': 'Dropped: not traceable to the ticket', 'status': 'warning', 'lines': _vd_g.dropped}) -%}{%- endif -%}
+      {%- if _vd_gc.problems -%}{%- set _ = sections.append({'title': 'The build would refuse it now', 'status': 'warning', 'lines': _vd_gc.problems}) -%}{%- endif -%}
+      {%- if _vd_g.error -%}{%- set _ = sections.append({'title': 'GenAI did not run', 'status': 'critical', 'lines': [_vd_g.error]}) -%}{%- endif -%}
+      {{ {'title': _vm_report_subject | trim, 'status': 'critical' if _vd_g.error and not ansible_check_mode else ('warning' if _vd_g_ask | bool else 'info'),
+          'subtitle': 'Ticket ' ~ _vd_rec.number ~ ' (' ~ _vd_digest ~ ') - ' ~ _vd_job, 'sections': sections} }}
+
+- name: VMware | the proposal as job artifacts (vm_deploy)
+  ansible.builtin.set_stats:
+    data:
+      vm_deploy: >-
+        {{ {'ticket': _vd_rec.number, 'table': _vd_table, 'genai': {'ran': _ea_ran | default(false) | bool, 'digest': _vd_digest,
+            'fields': _vd_g.fields, 'evidence': _vd_g.evidence, 'questions': _vd_g.questions, 'dropped': _vd_g.dropped,
+            'would_refuse': _vd_gc.problems, 'error': _vd_g.error}, 'built': false, 'dry_run': ansible_check_mode} }}
+
+- name: VMware | GenAI read the ticket
+  ansible.builtin.assert:
+    that: not _vd_g.error
+    fail_msg: "GenAI did not read the ticket: {{ _vd_g.error }}. Nothing was built; the ticket's own 'key: value' lines still work without GenAI."
+    quiet: true
+  when: not ansible_check_mode

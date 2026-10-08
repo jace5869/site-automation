@@ -75,7 +75,7 @@ Variables box. **Keep each setting in one place.** If both have it, the file win
 and survey answers beat everything). The full order is in [VARIABLES.md](VARIABLES.md). The file is
 also the easier place: you edit it in VS Code, and Git remembers every change.
 
-The appendix of this guide prints every `defaults/main.yml`: every setting there is, in one place.
+Every setting there is, with its default and what it does, is in one place: [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md) - in print, the *Settings Reference* PDF.
 
 ## Follow one setting from its default to a host
 
