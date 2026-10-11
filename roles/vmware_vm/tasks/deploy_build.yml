@@ -15,6 +15,7 @@
            'folders': vm_deploy_folders, 'max_cpu': vm_deploy_max_cpu | int, 'max_memory_gb': vm_deploy_max_memory_gb | float,
            'name_regex': vm_deploy_name_regex, 'assignment_group': vm_deploy_assignment_group,
            'sites': vm_deploy_sites, 'site_required': vm_deploy_site_required | bool, 'pxe_templates': vm_deploy_pxe_templates,
+           'name_rules': vm_deploy_name_rules,
            'max_disks': vm_deploy_max_disks | int, 'max_disk_gb': vm_deploy_max_disk_gb | float,
            'max_total_disk_gb': vm_deploy_max_total_disk_gb | float}) }}
 

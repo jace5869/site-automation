@@ -136,6 +136,40 @@ def answer(**fields):
     return "Here it is.\nBEGIN_ACT_ANALYSIS\n" + _j.dumps(fields) + "\nEND_ACT_ANALYSIS"
 
 
+class NameRules(unittest.TestCase):
+    RULES = [{"match": "*AB01*", "cluster": "CLUSTER-ONE"}, {"match": "*cd02*", "cluster": "CLUSTER-TWO", "folder": "Servers/New"},
+             {"match": "*EF03*", "site": "SiteB"}]
+
+    def check(self, desc, **opts):
+        rec = {"active": "true", "description": desc}
+        return d.vm_deploy_check(d.vm_deploy_spec(rec, {"cluster": "DEFAULT-CL"}), rec,
+                                 dict(RULES, assignment_group="", clusters=[], name_rules=self.RULES, **opts))
+
+    def test_first_match_by_name_case_insensitive(self):
+        c = self.check("vm_name: xyab01app1\ntemplate: rhel9-gold")
+        self.assertEqual((c["spec"]["cluster"], c["sources"]["cluster"]), ("CLUSTER-ONE", "name rule *AB01*"))
+        c = self.check("vm_name: XYCD02DB1\ntemplate: rhel9-gold")
+        self.assertEqual((c["spec"]["cluster"], c["spec"]["folder"]), ("CLUSTER-TWO", "Servers/New"))
+        c = self.check("vm_name: other01\ntemplate: rhel9-gold")
+        self.assertEqual((c["spec"]["cluster"], c["sources"]["cluster"]), ("DEFAULT-CL", "default (vm_deploy_defaults)"))
+        self.assertEqual(d.vm_deploy_name_rule("zzAB01x", self.RULES)["cluster"], "CLUSTER-ONE")
+        self.assertEqual(d.vm_deploy_name_rule("", self.RULES), {})
+
+    def test_the_ticket_still_wins(self):
+        c = self.check("vm_name: xyab01app1\ntemplate: rhel9-gold\ncluster: PROD-OTHER")
+        self.assertEqual(c["spec"]["cluster"], "PROD-OTHER")
+
+    def test_rule_with_a_site_and_sites_required(self):
+        sites = {"SiteA": {"cluster": "A-CL"}, "SiteB": {"cluster": "B-CL"}}
+        c = self.check("vm_name: xyef03web\ntemplate: rhel9-gold", sites=sites)
+        self.assertEqual((c["problems"], c["spec"]["site"], c["spec"]["cluster"]), ([], "SiteB", "B-CL"))
+        c = self.check("vm_name: xyab01web\ntemplate: rhel9-gold", sites=sites)        # a cluster rule: no site needed
+        self.assertEqual((c["problems"], c["spec"]["cluster"]), ([], "CLUSTER-ONE"))
+        c = self.check("vm_name: xyab01web\ntemplate: rhel9-gold\nsite: SiteA", sites=sites)   # the ticket names a site: it wins
+        self.assertEqual(c["spec"]["cluster"], "A-CL")
+        self.assertIn("the ticket does not say which site", " ".join(self.check("vm_name: zz9\ntemplate: rhel9-gold", sites=sites)["problems"]))
+
+
 class GenAI(unittest.TestCase):
     TEXT = d.vm_deploy_ticket_text(TICKET)
     OPTS = {"catalog": CAT, "sites": ["SiteA", "SiteB"]}

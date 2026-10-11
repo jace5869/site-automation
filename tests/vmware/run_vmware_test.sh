@@ -690,6 +690,24 @@ inc11="$(newticket $'vm_name: lnxapp11\ntemplate: rhel9-gold\nsite: SiteA\ncpu: 
 run "workflow step 1 with key: value lines (no GenAI needed): checked and placed, nothing built" ok vm_deploy_from_ticket.yml \
     -e vm_deploy_ticket="$inc11" -e "$genai" -e "$actvars" -e vm_deploy_phase=propose -- "lnxapp11 ready to build in DC0_"
 ! VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q '"lnxapp11"' && echo "ok   -   ...no VM before the approval" || { echo "FAIL -   ...built too early"; fails=$((fails + 1)); }
+# name rules: the VM's name picks the cluster (the template is on DC0_C0; DC0_H0 is a standalone host)
+rules='{"vm_deploy_templates": ["rhel9-*"], "vm_deploy_wait_ip": 3, "vm_deploy_wait_customization": 60,
+        "vm_deploy_name_rules": [{"match": "*AB01*", "cluster": "DC0_H0"}, {"match": "*CD02*", "cluster": "DC0_C0"}]}'
+inc12="$(newticket $'vm_name: xyab01web\ntemplate: rhel9-gold')"
+run "a name rule: a name with AB01 in it goes to its cluster (DC0_H0)" ok vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc12" \
+    -e "$rules" -- "cluster: DC0_H0   (from name rule *AB01*)" "xyab01web deployed"
+inc13="$(newticket $'vm_name: XYCD02WEB\ntemplate: rhel9-gold')"
+run "...and a name with CD02 in it (upper case) to the other one (DC0_C0)" ok vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc13" \
+    -e "$rules" -- "cluster: DC0_C0   (from name rule *CD02*)" "XYCD02WEB deployed"
+VMWARE_PORT=$port "$py" - <<'EOPY' && echo "ok   -   ...each VM is on its rule's cluster" || { echo "FAIL -   ...name rule placement"; fails=$((fails + 1)); }
+import os, sys
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+vms = {x.name: x for x in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view}
+sys.exit(0 if vms["xyab01web"].resourcePool.parent.name == "DC0_H0" and vms["XYCD02WEB"].resourcePool.parent.name == "DC0_C0" else 1)
+EOPY
 unset GENAI_KEY FAKE_ACT_OUT FAKE_ACT_CONFIG
 unset SN_HOST SN_USERNAME SN_PASSWORD
 kill "$sn_pid" 2>/dev/null

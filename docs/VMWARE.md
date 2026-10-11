@@ -635,6 +635,31 @@ With sites set up, a ticket that names no site is refused (`vm_deploy_site_requi
 `vm_deploy_defaults` instead). Any setting can go in a site: `cluster`, `datastore`, `folder`,
 `vcenter`, `datacenter`, `domain`, `cpu`, `memory_gb`.
 
+### Name rules: the VM's name picks the cluster
+
+When your names say where a VM belongs (a site or room code in the name), let the name pick the
+cluster - no `site:` or `cluster:` line needed in the ticket. Put your real cluster names in the deploy
+template's Variables (or `playbooks/group_vars/all.yml`):
+
+```yaml
+vm_deploy_name_rules:
+  - {match: "*AB01*", cluster: YOUR-CLUSTER-FOR-AB01}            # every name with AB01 in it
+  - {match: "*CD02*", cluster: YOUR-CLUSTER-FOR-CD02, folder: Servers/New}
+  - {match: "??EF03*", site: SiteB}                              # 2 characters, then EF03: a site's settings
+```
+
+- `match`: the name pattern - `*` = any characters, `?` = one character; upper and lower case alike.
+  The **first** rule that fits the name is used.
+- The rest of the rule fills in what the ticket does not say: `cluster` (or `clusters: [..]` to choose
+  among), `datastore` (or `datastores: [..]`), `folder`, `vcenter` ... - or `site:` a name from
+  `vm_deploy_sites`. A `cluster:` the ticket gives itself, or a site it names, still wins.
+- With a name rule matched, the ticket needs no site (even with `vm_deploy_site_required`).
+- The cluster must still be allowed (`vm_deploy_clusters`, when you set that list).
+- Datastore: the rule's, else the site's or `vm_deploy_datastores` candidates, else the template's -
+  and when the template's datastore is not on that cluster, the cluster's own datastore with the most
+  room (shared, under 85 % with the VM).
+- The dry run (Check) shows it: `cluster: YOUR-CLUSTER-FOR-AB01   (from name rule *AB01*)`.
+
 ### Automatic placement: the job picks the cluster and datastore
 
 When neither the ticket, its site nor `vm_deploy_defaults` names a cluster (or a datastore), the job
@@ -795,6 +820,7 @@ request.
 | `vm_deploy_done_fields` | `{}` | fields set on the ticket when the VM is up, e.g. `{state: "6", close_code: "Solution provided", close_notes: "VM deployed"}` |
 | `vm_deploy_ticket_table` | from the prefix | the table, for a ticket number with another prefix |
 | `vm_deploy_sites` | `{}` | per site: `cluster`, `datastore`, `folder`, `vcenter` ... (a ticket's `site:` or Location picks one) |
+| `vm_deploy_name_rules` | `[]` | the VM's name picks the cluster (or site): `[{match: "*AB01*", cluster: ...}]`, the first match wins |
 | `vm_deploy_site_required` | `true` | with sites set up, a ticket must name its site |
 | `vm_deploy_pxe_templates` | `[]` | templates that boot from the network (PXE / MECM): no customization, MAC on the ticket |
 | `vm_deploy_max_disks` / `vm_deploy_max_disk_gb` / `vm_deploy_max_total_disk_gb` | `4` / `2048` / `4096` | disk caps: how many, the biggest one, all together |
@@ -1075,7 +1101,8 @@ the last column says.
 | `a VM named ... already exists in vCenter ...` | the name is taken (or the job ran twice) | another name in a comment, or nothing to do |
 | `template ... is in vc01 / DC1, vc02 / DC1` | the same template name in two places | `vcenter:` (or `datacenter:`) in the ticket |
 | `template ... is Windows: name a customization specification` | Windows needs Sysprep settings | `customization_spec: <name>` in the ticket (vCenter: Policies and Profiles) - or, for a network-boot (MECM) template, list it in `vm_deploy_pxe_templates` |
-| `the ticket does not say which site` | sites are set up, the ticket names none (and its Location is not a site) | `site: ...` in a comment; or `vm_deploy_site_required: false` |
+| `the ticket does not say which site` | sites are set up, the ticket names none, its Location is not a site, and no name rule fits the name | `site: ...` in a comment; a name rule; or `vm_deploy_site_required: false` |
+| The VM went to the default (or the template's) cluster, not the name rule's | no rule's `match` fits the name (a typo, or `AB01*` when the name starts with other letters) | `*AB01*` (anywhere in the name); check the dry run's `(from name rule ...)` |
 | `site '...' is not one of vm_deploy_sites` | a site name you have not set up | correct the ticket, or add the site |
 | `... ready to build in ... - waiting for the approval` | the propose step (or the job alone with `vm_deploy_genai_approval: true`): by design | approve the workflow (or launch the job again) |
 | `has no GenAI proposal for its text as it is now` | the build step, but the ticket changed after the proposal (or there is none) | run the workflow from the start |

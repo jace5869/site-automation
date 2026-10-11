@@ -231,7 +231,15 @@ vm_deploy_defaults: {}
 #     SiteA: {cluster: A-PROD-CL01, datastore: A-DSC01, folder: Servers/New}
 #     SiteB: {cluster: B-PROD-CL01, datastore: B-DSC01, folder: Servers/New, vcenter: vc02.yoursite.mil}
 vm_deploy_sites: {}
-vm_deploy_site_required: true            # with sites set up: a ticket must say its site (false = vm_deploy_defaults)
+vm_deploy_site_required: true            # with sites set up: a ticket must say its site (false = vm_deploy_defaults); a name rule counts too
+# Name rules: the VM's name picks where it goes - the first rule whose 'match' fits the name (* and ?,
+# upper / lower case alike) fills in what the ticket does not say: a cluster (and datastores,
+# folder ...) or a site. The ticket's own lines, and a site the ticket names, still win.
+#   vm_deploy_name_rules:
+#     - {match: "*AB01*", cluster: CLUSTER-ONE}                   # every name with AB01 in it
+#     - {match: "*CD02*", cluster: CLUSTER-TWO, folder: Servers/New}
+#     - {match: "*EF03*", site: SiteB}                            # or a site from vm_deploy_sites
+vm_deploy_name_rules: []                 # [{match: "*AB01*", cluster: ...}, ...] - see above
 # Templates with no operating system that boot from the network (PXE) into a deployment (e.g. an MECM
 # task sequence): no guest customization, no waiting for an IP; the ticket gets the MAC address.
 vm_deploy_pxe_templates: []              # e.g. [win2022-pxe]

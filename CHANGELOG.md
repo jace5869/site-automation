@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.12.2 — 2026-10-11
+
+**Updating without scripts:** paste `site-automation-0.12.2-changed-since-0.12.1.zip` as it is.
+
+- **Name rules for the VM deploy** (`vm_deploy_name_rules`): the VM's name picks the cluster - e.g.
+  every name with `AB01` in it to one cluster, every name with `CD02` to another - with no `site:` or
+  `cluster:` line in the ticket. Patterns with `*` and `?`, upper / lower case alike, the first match
+  wins; a rule can also give a site, datastores, a folder. The ticket's own lines still win.
+- When the chosen cluster cannot see the template's datastore, the deploy picks that cluster's own
+  datastore with the most room (shared, under 85 % with the VM) instead of failing.
+
 ## 0.12.1 — 2026-10-08
 
 **Updating without scripts:** paste `site-automation-0.12.1-changed-since-0.12.0.zip` as it is. Then

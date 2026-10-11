@@ -601,7 +601,8 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_deploy_assignment_group` | (empty) | Only tickets assigned to this group (its name as ServiceNow shows it); "" = any group. |
 | `vm_deploy_defaults` | `{}` | What a ticket does not say: e.g. {cluster: PROD-CL01, datastore: DS-CLUSTER-01, folder: Linux/New}. Not set = the template's own cluster, datastore and folder; its CPU and memory. |
 | `vm_deploy_sites` | `{}` | Sites: a ticket's 'site: A' line (or its Location field, when it is one of these names) picks the placement - over vm_deploy_defaults; a cluster / datastore / folder the ticket names itself still wins. vm_deploy_sites: SiteA: {cluster: A-PROD-CL01, datastore: A-DSC01, folder: Servers/New} SiteB: {cluster: B-PROD-CL01,… (all of it: the role file) |
-| `vm_deploy_site_required` | `true` | with sites set up: a ticket must say its site (false = vm_deploy_defaults) |
+| `vm_deploy_site_required` | `true` | with sites set up: a ticket must say its site (false = vm_deploy_defaults); a name rule counts too |
+| `vm_deploy_name_rules` | `[]` | Name rules: the VM's name picks where it goes - the first rule whose 'match' fits the name (* and ?, upper / lower case alike) fills in what the ticket does not say: a cluster (and datastores, folder ...) or a site. The ticket's own lines, and a site the ticket names, still win. vm_deploy_name_rules: - {match: "*AB01*… (all of it: the role file) |
 | `vm_deploy_pxe_templates` | `[]` | Templates with no operating system that boot from the network (PXE) into a deployment (e.g. an MECM task sequence): no guest customization, no waiting for an IP; the ticket gets the MAC address. e.g. [win2022-pxe] |
 | `vm_deploy_max_disks` | `4` | disks a ticket may ask for (disks_gb: 100, 200 = disk 1 grown to 100 GB, one 200 GB disk added) |
 | `vm_deploy_max_disk_gb` | `2048` | the biggest disk a ticket may ask for, in GB |

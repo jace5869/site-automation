@@ -130,6 +130,15 @@ def _site(spec, sources, record, sites):
     return None, "", ""
 
 
+def vm_deploy_name_rule(name, rules):
+    """The first of vm_deploy_name_rules whose 'match' (* and ?, upper / lower case alike) fits the VM
+    name -> the rule, or {}."""
+    for r in rules or []:
+        if isinstance(r, dict) and r.get("match") and name and _allowed(name, [r["match"]]):
+            return r
+    return {}
+
+
 def vm_deploy_check(parsed, record=None, opts=None):
     """The request against the rules set in AAP -> {'spec': cleaned spec (cpu int, memory_gb number,
     the site's placement filled in, pxe true for a network-boot template), 'sources', 'problems': [why
@@ -140,6 +149,12 @@ def vm_deploy_check(parsed, record=None, opts=None):
     spec = dict((parsed or {}).get("spec") or {})
     sources = dict((parsed or {}).get("sources") or {})
     problems = []
+    # a name rule: the VM's name picks the placement (e.g. every name like ??AB01* to one cluster).
+    # It fills what the ticket and its site do not say; a value the ticket gives itself wins.
+    rule = vm_deploy_name_rule(spec.get("vm_name"), o.get("name_rules"))
+    rule_src = "name rule %s" % rule.get("match") if rule else ""
+    if rule.get("site") and (not spec.get("site") or str(sources.get("site", "")).startswith("default")):
+        spec["site"], sources["site"] = rule["site"], rule_src
     sites = o.get("sites") or {}
     if sites:
         key, where, said = _site(spec, sources, r, sites)
@@ -151,10 +166,15 @@ def vm_deploy_check(parsed, record=None, opts=None):
                     spec[k], sources[k] = v, "site %s" % key
         elif said:
             problems.append("site %r is not one of vm_deploy_sites (%s)" % (said, ", ".join(str(k) for k in sites)))
-        elif o.get("site_required", True):
+        elif o.get("site_required", True) and not rule:
             problems.append("the ticket does not say which site: add a line 'site: ...' (%s)" % ", ".join(str(k) for k in sites))
     elif spec.get("site"):
         problems.append("the ticket says site %r, but no sites are set up (vm_deploy_sites)" % spec["site"])
+    for k, v in rule.items():
+        if k in ("match", "site") or v in (None, "", []):
+            continue
+        if k not in spec or str(sources.get(k, "")).startswith("default"):
+            spec[k], sources[k] = v, rule_src
     if str(r.get("active", "true")).lower() not in ("true", "1"):
         problems.append("the ticket is closed (state %s): a closed ticket is never deployed" % (r.get("state") or "?"))
     group = str(o.get("assignment_group") or "").strip()
@@ -402,4 +422,5 @@ class FilterModule(object):
         return {"vm_deploy_table": vm_deploy_table, "vm_deploy_spec": vm_deploy_spec, "vm_deploy_check": vm_deploy_check,
                 "vm_deploy_spec_text": vm_deploy_spec_text, "vm_deploy_ticket_text": vm_deploy_ticket_text,
                 "vm_deploy_genai_task": vm_deploy_genai_task, "vm_deploy_genai_parse": vm_deploy_genai_parse,
-                "vm_deploy_proposal_note": vm_deploy_proposal_note, "vm_deploy_find_proposal": vm_deploy_find_proposal}
+                "vm_deploy_proposal_note": vm_deploy_proposal_note, "vm_deploy_find_proposal": vm_deploy_find_proposal,
+                "vm_deploy_name_rule": vm_deploy_name_rule}

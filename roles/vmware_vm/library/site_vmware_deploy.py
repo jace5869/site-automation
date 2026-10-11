@@ -332,9 +332,17 @@ def main():
                 notes.append("datastore cluster %s: put on %s (the most free space)" % (p["datastore"], ds.name))
             else:
                 module.fail_json(msg="no datastore or datastore cluster named %s in datacenter %s" % (p["datastore"], dc.name), vm=vm, notes=notes)
-        elif p["datastore_candidates"]:
+        else:
+            ds = tpl.datastore[0] if tpl.datastore else None
+        ds_cands = p["datastore_candidates"]
+        if not p["datastore"] and not ds_cands and ds is not None and cr.host and not any(m.key in set(cr.host) for m in (ds.host or [])):
+            # the template's datastore is not on the chosen cluster (a name rule or a site picked
+            # another one): choose among that cluster's own datastores, by the same rules
+            ds_cands = ["*"]
+            notes.append("the template's datastore %s is not on %s: chose among %s's own datastores" % (ds.name, cr.name, cr.name))
+        if not p["datastore"] and ds_cands:
             mine = set(cr.host or [])
-            cands = [d for d in _all(content, vim.Datastore, dc.datastoreFolder) if _match(d.name, p["datastore_candidates"])
+            cands = [d for d in _all(content, vim.Datastore, dc.datastoreFolder) if _match(d.name, ds_cands)
                      and any(m.key in mine for m in (d.host or []))]
             info = [{"name": d.name, "obj": d, "capacity": d.summary.capacity, "free": d.summary.freeSpace,
                      "ok": bool(d.summary.accessible) and str(d.summary.maintenanceMode or "normal") == "normal",
@@ -342,15 +350,13 @@ def main():
             ranked = rank_datastores(info, need_disk, p["datastore_max_used_pct"])
             placement["datastores"] = ["%s: %s%s" % (r["name"], r["why"], "" if r["fits"] else " - does not fit") for r in ranked[:5]]
             if not ranked or not ranked[0]["fits"]:
-                module.fail_json(msg="no datastore among %s of %s has room for %d GB: %s" % (", ".join(p["datastore_candidates"]), cr.name,
+                module.fail_json(msg="no datastore among %s of %s has room for %d GB: %s" % (", ".join(ds_cands), cr.name,
                                  need_disk // 1073741824, "; ".join(placement.get("datastores") or ["none matches, mounted by " + cr.name])),
                                  vm=vm, notes=notes)
             ds = [d["obj"] for d in info if d["name"] == ranked[0]["name"]][0]
             notes.append("datastore chosen: %s" % placement["datastores"][0])
-        else:
-            ds = tpl.datastore[0] if tpl.datastore else None
-            if ds is None:
-                module.fail_json(msg="the template %s has no datastore: name one" % p["template"], vm=vm, notes=notes)
+        if ds is None:
+            module.fail_json(msg="the template %s has no datastore: name one" % p["template"], vm=vm, notes=notes)
         mounted = [m.key for m in (ds.host or [])]
         hosts = list(cr.host or [])
         if hosts and not any(h in mounted for h in hosts):
