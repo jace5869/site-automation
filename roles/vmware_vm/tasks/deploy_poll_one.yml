@@ -1,0 +1,116 @@
+---
+# One ticket of deploy_poll.yml (_vp_t: number, sys_id, table, short_description): "[AAP] Picked up"
+# on it, read back (the next run must see it, or it would pick the ticket up again), the workflow
+# started with the ticket number, and its job number and link on the ticket. Appends to _vp_done;
+# sets _vp_blind when the note cannot be seen (the remaining tickets are left alone).
+- name: VMware | {{ _vp_t.number }} - "Picked up" on the ticket
+  ansible.builtin.uri:
+    url: "{{ _vp_sn_url }}/api/now/table/{{ _vp_t.table }}/{{ _vp_t.sys_id }}"
+    method: PATCH
+    url_username: "{{ _vp_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body: >-
+      {{ {'work_notes': '[AAP] Picked up by ' ~ _vp_job ~ ' - starting the workflow "' ~ vm_deploy_poll_workflow ~ '". It reads this ticket, '
+          ~ 'checks it against the rules and waits for an approval before anything is built.'} | combine(vm_deploy_poll_claim_fields) }}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  register: _vp_claim
+  failed_when: false
+  when: not _vp_blind | bool
+
+- name: VMware | {{ _vp_t.number }} - the note can be read back (or the next run would pick it up again)
+  ansible.builtin.uri:
+    url: >-
+      {{ _vp_sn_url }}/api/now/table/{{ _vp_t.table }}?sysparm_display_value=true&sysparm_limit=1&sysparm_fields=number,comments,work_notes&sysparm_query={{
+      ('sys_id=' ~ _vp_t.sys_id) | urlencode }}
+    method: GET
+    url_username: "{{ _vp_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  register: _vp_back
+  failed_when: false
+  when: not _vp_blind | bool and _vp_claim.status | default(0) == 200
+
+- name: VMware | {{ _vp_t.number }} - picked up?
+  ansible.builtin.set_fact:
+    _vp_claimed: "{{ _vp_back.status | default(0) == 200 and (_vp_back.json.result | default([{}]) | first | default({}, true)) | vm_deploy_poll_claimed }}"
+    _vp_blind: "{{ _vp_blind | bool or (_vp_claim.status | default(0) == 200 and not (_vp_back.status | default(0) == 200
+                   and (_vp_back.json.result | default([{}]) | first | default({}, true)) | vm_deploy_poll_claimed)) }}"
+  when: not _vp_blind | bool
+
+- name: VMware | {{ _vp_t.number }} - start the workflow
+  ansible.builtin.uri:
+    url: "{{ _vp_aap_host }}/{{ _vp_wf.api }}workflow_job_templates/{{ _vp_wf.id }}/launch/"
+    method: POST
+    headers: >-
+      {{ {'Accept': 'application/json'} | combine({'Authorization': 'Bearer ' ~ lookup('ansible.builtin.env', _vp_aap_vars.token)}
+                                                  if _vp_aap_login == 'token' else {}) }}
+    url_username: "{{ lookup('ansible.builtin.env', _vp_aap_vars.user) if _vp_aap_login == 'password' else omit }}"
+    url_password: "{{ lookup('ansible.builtin.env', _vp_aap_vars.password) if _vp_aap_login == 'password' else omit }}"
+    force_basic_auth: "{{ _vp_aap_login == 'password' }}"
+    validate_certs: "{{ _vp_aap_verify }}"
+    ca_path: "{{ vm_deploy_poll_aap_ca_path | default(omit, true) }}"
+    body_format: json
+    body: {extra_vars: {vm_deploy_ticket: "{{ _vp_t.number }}"}}
+    timeout: 60
+    status_code: [200, 201, 400, 401, 403, 404, 405]
+  register: _vp_launch
+  failed_when: false
+  no_log: true                           # the request carries the token or password
+  when: _vp_claimed | default(false) | bool
+
+- name: VMware | {{ _vp_t.number }} - what happened
+  ansible.builtin.set_fact:
+    _vp_r: >-
+      {%- set l = _vp_launch if _vp_launch.status is defined else {} -%}
+      {%- set jid = l.json.workflow_job | default(l.json.id | default(0)) if l.status | default(0) in [200, 201] else 0 -%}
+      {%- set ign = (l.json.ignored_fields | default({})).extra_vars | default({}) if jid else {} -%}
+      {%- set url = (_vp_aap_host ~ ('/execution/jobs/workflow/' if _vp_wf.api == 'api/controller/v2/' else '/#/jobs/workflow/') ~ jid ~ '/output') if jid else '' -%}
+      {%- set err = '' if jid and not ign else
+            ('started as workflow job ' ~ jid ~ ', but it ignored vm_deploy_ticket: give the workflow its survey question vm_deploy_ticket') if jid else
+            ('the "Picked up" note was not written (HTTP ' ~ _vp_claim.status | default('?') ~ ': ' ~ (_vp_claim.json.error.message | default(_vp_claim.msg | default('')))
+             ~ ')') if _vp_claim.status | default(0) != 200 else
+            'the "Picked up" note does not show when the ticket is read back' if not _vp_claimed | default(false) | bool else
+            ('AAP did not start it (HTTP ' ~ l.status | default('?') ~ ': ' ~ ((l.json | default({})) | to_json | truncate(200)) ~ ')') -%}
+      {{ {'number': _vp_t.number, 'ok': not err, 'job': jid, 'url': url, 'error': err,
+          'text': _vp_t.number ~ ((' - workflow job ' ~ jid ~ ' ' ~ url) if not err else (' - ' ~ err)),
+          'row': [_vp_t.number, _vp_t.short_description, ('job ' ~ jid ~ ': ' ~ url) if not err else 'NOT STARTED: ' ~ err],
+          'artifact': {'ticket': _vp_t.number, 'workflow_job': jid, 'url': url, 'error': err}} }}
+  when: _vp_claim.status is defined       # not when an earlier ticket stopped the run (_vp_blind)
+
+- name: VMware | {{ _vp_t.number }} - the workflow's job on the ticket (or why it did not start)
+  ansible.builtin.uri:
+    url: "{{ _vp_sn_url }}/api/now/table/{{ _vp_t.table }}/{{ _vp_t.sys_id }}"
+    method: PATCH
+    url_username: "{{ _vp_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body:
+      work_notes: >-
+        {{ ('[AAP] Workflow job ' ~ _vp_r.job ~ ' started for this ticket: ' ~ _vp_r.url) if _vp_r.ok else
+           ('[AAP] Picked up, but the workflow was not started: ' ~ _vp_r.error ~ '. Nothing was built. To go on, start the workflow "'
+            ~ vm_deploy_poll_workflow ~ '" by hand with this ticket number.') }}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  failed_when: false
+  when: _vp_claimed | default(false) | bool
+
+- name: VMware | {{ _vp_t.number }} - done
+  ansible.builtin.set_fact:
+    _vp_done: "{{ _vp_done + [_vp_r] }}"
+    _vp_claimed: false
+  when: _vp_claim.status is defined

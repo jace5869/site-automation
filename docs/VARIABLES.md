@@ -22,6 +22,12 @@ You do not need to read it all. Do the two-minute version first.
 
 That is all for a normal change. The rest of this page explains the details and the exceptions.
 
+**For one job template:** `aap/extra_vars/<playbook>.yml` ([the list](../aap/extra_vars/README.md))
+has every setting that template reads, switched off, with its default and what it does. Copy the
+file into the template's **Variables** box (YAML selected), delete the `# ` in front of the settings
+you change, and change their values. Switch on only what you change: a template's Variables beat
+`all.yml`.
+
 ## How to use a setting
 
 Every job's chapter in these docs ends its settings part with an **All settings** link: the list of

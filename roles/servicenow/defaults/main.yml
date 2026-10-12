@@ -19,12 +19,20 @@ servicenow_category: ""                  # e.g. Software
 servicenow_urgency: {critical: "1", warning: "2"}  # a new ticket's urgency, per finding severity (your instance's values)
 servicenow_impact: {critical: "2", warning: "3"}  # a new ticket's impact, per finding severity
 servicenow_set_ci: true                  # set Configuration item = the host name (must exist in the CMDB)
+# More fields for every new ticket - for an instance that makes fields such as Location, Subcategory
+# or Channel mandatory: {column name: value}. Names and choice labels work, e.g.
+#   servicenow_fields: {location: "Building 100", subcategory: "Operating System", contact_type: "Self-service"}
+# A field's column name: right-click its label on the form > Show - '<column name>'.
+servicenow_fields: {}
 
 # When a problem that had a ticket is gone, add a work note (and, if you want, resolve it).
 servicenow_note_cleared: true
 servicenow_resolve_cleared: false        # true = also resolve the ticket (servicenow_resolved_state, servicenow_close_code)
 servicenow_resolved_state: "6"           # Resolved
 servicenow_close_code: "Solution provided"   # must be a close code your instance has
+# More fields set when a ticket is resolved (servicenow_resolve_cleared, and the test ticket), for an
+# instance that makes them mandatory: {column name: value}, e.g. {resolved_by: svc_aap_sn}
+servicenow_resolve_fields: {}
 # Add a work note to an open ticket each time its finding is seen again.
 servicenow_note_repeats: true
 

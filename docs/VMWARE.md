@@ -18,6 +18,8 @@ System Center Orchestrator):
 | VM - alarms report | `playbooks/vm_alarm_report.yml` | read-only: the triggered alarms on vCenter, datacenters, clusters and hosts; hosts not connected; the last 24 hours' failed logins, VM shutdowns / HA restarts and other errors and warnings; configuration issues - coloured by severity |
 | VM - alarms ACT analysis | `playbooks/vm_alarm_act_analysis.yml` | read-only: the same problems, with ACT's likely cause, fix and confidence for each. ACT runs on the AAP side, never on the hosts |
 | VM - capacity planning | `playbooks/vm_capacity_report.yml` | read-only: overall and per cluster - CPU, memory (also with a host down), vCPUs per core, VMs that still fit, hosts recommended, datastores - with growth from vCenter's own history and the days until each limit; optionally GenAI's estimate next to it |
+| VM - deploy from ServiceNow ticket | `playbooks/vm_deploy_from_ticket.yml` | builds one VM from a template for a ServiceNow ticket - checked against your rules, placed by site, name rule or free room, the result on the ticket. Best run in its workflow (propose, approval, build) |
+| VM - pick up deploy tickets | `playbooks/vm_deploy_poll.yml` | on a schedule: finds new VM request tickets in ServiceNow and starts the deploy workflow for each. Builds nothing itself; the approval stays |
 | ESXi - security settings | `playbooks/esxi_security.yml` | on every ESXi host: SSH off, the shell timeouts at 600 s, lockdown mode normal. Changes only what differs, so it can run every night and puts back whatever drifted |
 
 They run on the AAP side and talk to vCenter. They never log in to the VMs.
@@ -781,7 +783,7 @@ request.
 2. **The vCenter account** needs, on the template, the target cluster, datastore(s), folder(s) and the
    staging port group: *Virtual machine > Provisioning > Deploy template, Customize guest, Read
    customization specifications*; *Virtual machine > Inventory > Create from existing*; *Virtual machine >
-   Change configuration > Change CPU count, Change memory, Set annotation*; *Virtual machine > Interaction
+   Change configuration > Change CPU count, Change memory, Set annotation, Add new disk, Extend virtual disk*; *Virtual machine > Interaction
    > Power on*; *Resource > Assign virtual machine to resource pool*; *Datastore > Allocate space*;
    *Network > Assign network*. A missing one is named in the error (`lacks the privilege ...`).
 3. **The ServiceNow API credential** (the one the ticket jobs use): its account reads the ticket's table
@@ -836,8 +838,118 @@ request.
 
 **Who can change the request:** anyone who can comment on the ticket can change its lines, and an
 incident or a task has no approval of its own: the person who launches the job is the control, and
-the "Deploying" note records exactly what was built. When the job later picks up tickets by itself (a
-schedule), it will need a stronger gate - an approved change, or an approval step in a workflow.
+the "Deploying" note records exactly what was built. When tickets are picked up by a schedule (below),
+the workflow's approval is that control: a person approves every VM before it is built.
+
+### Pick up tickets automatically (a schedule)
+
+`playbooks/vm_deploy_poll.yml` runs on a schedule - every 15 minutes, for example - and starts the
+deploy workflow above for each new VM request in ServiceNow. Nobody has to type ticket numbers;
+nobody's approval is skipped.
+
+**How it works, each run:**
+
+1. It asks ServiceNow for tickets that are **active**, in the states `vm_deploy_poll_states` (New),
+   **assigned to `vm_deploy_assignment_group`**, and **marked as VM requests**: the short description
+   starts with `vm_deploy_poll_prefix` ("VM request", in any case), and/or they match
+   `vm_deploy_poll_query` (e.g. `category=vm_request`). Sorted oldest first.
+2. It skips every ticket that already has a note of AAP's on it (`[AAP] ...`: picked up, a proposal,
+   a question, "Deploying", "deployed"): AAP has it already.
+3. For each of the others, at most `vm_deploy_poll_max` (3) per run:
+   - it writes `[AAP] Picked up by AAP job ... - starting the workflow ...` on the ticket, and reads the
+     ticket back to make sure the note shows (if the account could not see it, the next run would
+     pick the same ticket up again - so the job stops there, red);
+   - it starts the workflow `vm_deploy_poll_workflow` with the ticket number (`vm_deploy_ticket`);
+   - it writes the workflow's job number and link on the ticket.
+4. The workflow then does what it does when you start it by hand: reads the ticket, asks GenAI if
+   needed, checks the rules, finds where the VM goes, writes it on the ticket, emails the approver -
+   and builds only after the **approval**.
+
+The job itself builds nothing, and it never changes a ticket other than adding those two notes (and
+`vm_deploy_poll_claim_fields`, if you set them). It is green when it ran - also when there was nothing
+new - and red when ServiceNow or AAP did not answer or a workflow could not be started. It emails
+(`report_email_to`) only when it started something or something failed, not every 15 minutes.
+
+**The guardrails:**
+
+| Guardrail | What it does |
+|---|---|
+| The approval stays | the job only starts the workflow; a person approves every VM before it is built |
+| Only marked tickets | the group is required, and a VM request must be marked (the prefix or the query): an ordinary ticket of the group is never picked up. A query with `^NQ` (a second query that would bypass the group) is refused |
+| A limit per run | `vm_deploy_poll_max` (3): a flood of tickets cannot start 50 workflows; the rest wait for the next run |
+| Once per ticket | the "Picked up" note, read back before the workflow starts; a ticket with any note of AAP's is never picked up again |
+| An off switch | `vm_deploy_poll_enabled: false`: the schedule runs, picks up nothing and says so |
+| A dry run | `vm_deploy_poll_dry_run: true` (or Job type Check): lists what it would pick up - no note, no workflow, no email |
+| Its own AAP user | the job starts the workflow as an AAP user that may do nothing else |
+
+**Set it up:**
+
+1. **The workflow works by hand first:** "Requests in plain words", step 2 above, tested with a ticket.
+   Its survey asks for `vm_deploy_ticket` - the pickup hands the ticket number over that way.
+2. **An AAP user that may only start the workflow:** **Access Management > Users > Create user**, e.g.
+   `svc_aap_pickup` (a normal user, not an administrator). Then open the workflow > **User access** >
+   **Add roles** > that user > the **Execute** role (WorkflowJobTemplate Execute). Nothing else.
+3. **Its credential:** **Automation Execution > Infrastructure > Credentials > Create credential**,
+   type **Red Hat Ansible Automation Platform** (built in): **Red Hat Ansible Automation Platform** =
+   AAP's own address (e.g. `https://aap.yoursite.mil`, the one in your browser), the user name and
+   password from step 2 (or a token of that user, then no password), **Verify SSL** ticked. The job
+   gets them as `CONTROLLER_HOST`, `CONTROLLER_USERNAME`, `CONTROLLER_PASSWORD` (or
+   `CONTROLLER_OAUTH_TOKEN`); the `AAP_*` names newer AAP versions add work too. If the execution
+   environment does not trust AAP's certificate, set `vm_deploy_poll_aap_ca_path` to its CA file
+   rather than unticking Verify SSL.
+4. **Templates > Create template > Create job template:**
+   - Name: `VM - pick up deploy tickets`
+   - Inventory: any. Project: site-automation. Playbook: `playbooks/vm_deploy_poll.yml`
+   - Execution environment: any (it only talks to ServiceNow and AAP)
+   - Credentials: **ServiceNow API** and the **Red Hat Ansible Automation Platform** one from step 3
+   - Tick **Prompt on launch** next to **Job type** (for a dry run by hand)
+   - Leave **Concurrent jobs** unticked (two runs at once could pick up the same ticket)
+   - Variables:
+     ```yaml
+     vm_deploy_assignment_group: Windows Operations     # REQUIRED - the same group as the deploy job
+     vm_deploy_poll_prefix: "VM request"                # tickets whose short description starts with it
+     vm_deploy_poll_max: 3
+     vm_deploy_poll_dry_run: true                       # the first week: list only
+     report_email_to: vmteam@yoursite.mil
+     ```
+5. **Launch** it once as **Check**: it lists the tickets it would pick up and says whether AAP can
+   start the workflow (`AAP: workflow "..." (id ...) can be started`).
+6. **The schedule:** open the template > **Schedules** > **Create schedule**: a name (`every 15
+   minutes`), a start time, **Repeat frequency** Minute, every **15**. Save.
+7. **A week of dry runs:** read the jobs' output - are these the tickets you expect? Then delete
+   `vm_deploy_poll_dry_run: true` from the Variables. From the next run, tickets are picked up.
+
+Tell the requesters to start the short description with **VM request** (or ask the ServiceNow team
+for a category or a catalog item, and use `vm_deploy_poll_query`).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `vm_deploy_poll_enabled` | `true` | the off switch |
+| `vm_deploy_poll_tables` | `[incident]` | the tables to look in (`incident`, `sc_task`, `task` ...) |
+| `vm_deploy_poll_prefix` | `VM request` | a VM request's short description starts with it (any case) |
+| `vm_deploy_poll_query` | `""` | an extra ServiceNow encoded query, ANDed in (e.g. `category=vm_request`) |
+| `vm_deploy_poll_states` | `["1"]` | the ticket states picked up (`1` = New) |
+| `vm_deploy_poll_max` | `3` | the most workflows started per run |
+| `vm_deploy_poll_scan` | `100` | the most tickets read per table and run, oldest first |
+| `vm_deploy_poll_workflow` | `VM - deploy from ServiceNow ticket (workflow)` | the workflow started per ticket |
+| `vm_deploy_poll_dry_run` | `false` | list only: no note, no workflow |
+| `vm_deploy_poll_claim_fields` | `{}` | fields set with the "Picked up" note, e.g. `{state: "2"}` (In Progress) |
+| `vm_deploy_poll_aap_ca_path` | `""` | a CA file for AAP's own certificate |
+
+**When it goes wrong:**
+
+| Message | What to do |
+|---|---|
+| `attach a credential of type "Red Hat Ansible Automation Platform"` | step 3, on this job template |
+| `AAP refused the login (HTTP 401)` | the credential's user name and password (or token) |
+| `no workflow named "..." that the AAP user may see` | the workflow's exact name in `vm_deploy_poll_workflow`, and the Execute role (step 2) |
+| `takes no ticket number` | the workflow's survey question `vm_deploy_ticket` (or Prompt on launch for Variables) |
+| `AAP did not answer at ...` | AAP's address in the credential; its certificate (`vm_deploy_poll_aap_ca_path`) |
+| `vm_deploy_assignment_group is empty` / `nothing marks a VM request` | set the group, and the prefix or the query |
+| `STOPPED - this account cannot see the work notes it writes` | the ServiceNow account needs to read work notes (the itil role); or set `vm_deploy_poll_claim_fields: {state: "2"}` so a picked-up ticket leaves the New state. Until then `vm_deploy_poll_enabled: false` |
+| `NOT STARTED: ... AAP did not start it` | the reason is on the ticket too; fix the workflow (its templates, inventory, credentials), then start it by hand with that ticket number - the pickup does not try a ticket twice |
+| a ticket is never picked up | the job's output lists every ticket it read and why it skipped it; a ticket not listed at all did not match the query (the `Query:` line): its group, its state, its short description |
+| `only the oldest 100 were read` | tickets AAP already has stay New and count too: set `vm_deploy_poll_claim_fields: {state: "2"}`, or resolve them |
 
 ## ESXi security settings (every night): SSH off, timeouts, lockdown
 

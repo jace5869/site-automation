@@ -49,6 +49,8 @@ jobs:
         run: python tests/test_alarm_act_contract.py
       - name: docs/VARIABLES_REFERENCE.md is generated from the roles and is up to date
         run: python tests/test_variable_reference.py
+      - name: aap/extra_vars (each template's settings, to paste into its Variables) is generated and up to date
+        run: python tests/test_template_vars.py
       - name: AAP hosts are protected everywhere; vendored ACT is what its VERSION and checksums say
         run: |
           python tests/test_protection.py

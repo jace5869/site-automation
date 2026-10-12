@@ -169,6 +169,27 @@ servicenow_min_severity: warning                # or critical: tickets for criti
 # servicenow_ca_path: "{{ playbook_dir }}/files/ca/servicenow-ca.pem"   # step 3, option B
 ```
 
+**Fields your instance makes mandatory.** If your incident form requires more fields (a red
+asterisk: Location, Subcategory, Channel ...), set them for every new ticket, and the fields a
+resolved ticket needs for the resolve step. Use each field's **column name**: right-click its label
+on the form and choose **Show - '<column name>'** (Channel is `contact_type`). Names and choice labels
+work as values, as they appear on the form:
+
+```yaml
+servicenow_category: Software
+servicenow_fields:
+  location: "Building 100"
+  subcategory: "Operating System"
+  contact_type: "Self-service"         # Channel
+servicenow_close_code: "Solution provided"     # Resolution code, as your instance has it
+servicenow_resolve_fields:
+  resolved_by: svc_aap_sn
+```
+
+Mandatory fields enforced only by the form (UI policies) do not stop the API, but the ticket then
+cannot be closed by hand until someone fills them in, so set them here anyway. A data policy does stop
+the API: step 3 or 6 of the test then fails with `Data Policy Exception` and names the field.
+
 **Commit** and **Sync Changes**. Every other ServiceNow setting (urgency, impact, resolve, close
 code) is described in `roles/servicenow/defaults/main.yml`.
 

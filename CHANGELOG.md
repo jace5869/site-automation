@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.13.0 — 2026-10-12
+
+- **A variables file for each job template** (`aap/extra_vars/<playbook>.yml`, index in
+  `aap/extra_vars/README.md`): the settings that template's playbook reads, each switched off with its
+  default and what it does, ready to copy into the template's Variables box and switch on line by line.
+  The deploy, pickup and ServiceNow templates start with the lines to fill in. Generated from the
+  roles' defaults by `scripts/gen_template_vars.py` (CI checks it is up to date).
+- **ServiceNow: the fields your instance makes mandatory** - `servicenow_fields` (set on every new
+  ticket, e.g. Location, Subcategory, Channel = `contact_type`) and `servicenow_resolve_fields` (set
+  when a ticket is resolved, e.g. `resolved_by`), by the health tickets and the test ticket. Names
+  and choice labels work (resolving now also accepts display values). docs/SERVICENOW_SETUP.md, step 6.
+- **Pick up VM request tickets on a schedule** (`playbooks/vm_deploy_poll.yml`, template `VM - pick
+  up deploy tickets`): every run - e.g. every 15 minutes - finds the new VM requests in ServiceNow
+  (active, New, assigned to `vm_deploy_assignment_group`, short description starting with `VM request`
+  and/or `vm_deploy_poll_query`), writes `[AAP] Picked up` on each, and starts the deploy workflow with
+  its ticket number - at most `vm_deploy_poll_max` (3) per run, oldest first. It builds nothing: the
+  workflow's approval stays. A ticket with any note of AAP's is never picked up again; the note is
+  read back first (an account that cannot see work notes stops the job). An off switch, a dry run
+  (`vm_deploy_poll_dry_run` or Check), its own AAP user with only Execute on the workflow (credential
+  type "Red Hat Ansible Automation Platform"; AAP 2.5+ and older API paths). docs/VMWARE.md, "Pick up
+  tickets automatically (a schedule)".
+- **Fix: the VM deploy read a real ServiceNow's assignment group and location as
+  `{"display_value": ..., "link": ...}`**, so a ticket assigned to the right group was refused as
+  assigned to another, and a Location never matched a site. The ticket is now read with
+  `sysparm_exclude_reference_link=true` (and either form is understood). The test ServiceNow now
+  answers like a real one.
+- docs/VMWARE.md: the deploy's vCenter role also needs *Add new disk* and *Extend virtual disk*
+  (Virtual machine > Change configuration), for tickets that ask for disks.
+
 ## 0.12.2 — 2026-10-11
 
 **Updating without scripts:** paste `site-automation-0.12.2-changed-since-0.12.1.zip` as it is.

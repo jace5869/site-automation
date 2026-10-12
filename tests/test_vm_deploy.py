@@ -287,5 +287,82 @@ class ModuleParts(unittest.TestCase):
         self.assertEqual(m.fault_text(NoPermission()), "the vCenter account lacks the privilege VirtualMachine.Provisioning.DeployTemplate")
 
 
+class ReferenceFields(unittest.TestCase):
+    def test_group_and_location_as_servicenow_sends_them_with_links(self):
+        rec = dict(REC, assignment_group={"display_value": "Linux Operations", "link": "https://x/api/now/table/sys_user_group/1"})
+        self.assertNotIn("assigned", " ".join(d.vm_deploy_check(d.vm_deploy_spec(rec), rec, RULES)["problems"]))
+        rec["assignment_group"] = {"display_value": "Network", "link": "https://x"}
+        self.assertIn("assigned to 'Network'", " ".join(d.vm_deploy_check(d.vm_deploy_spec(rec), rec, RULES)["problems"]))
+        sites = dict(RULES, sites={"SiteA": {"cluster": "PROD-CL01"}})
+        rec = dict(REC, location={"display_value": "SITEA", "link": "https://x"})
+        self.assertEqual(d.vm_deploy_check(d.vm_deploy_spec(rec), rec, sites)["spec"]["site"], "SiteA")
+
+
+POLL = {"assignment_group": "Linux Operations", "prefix": "VM request", "max": 2}
+
+
+def _t(num, sd="VM request: app", notes="", group="Linux Operations", active="true"):
+    return {"number": num, "sys_id": "id" + num, "short_description": sd, "assignment_group": group, "active": active,
+            "work_notes": notes, "comments": ""}
+
+
+class Poll(unittest.TestCase):
+    def test_query(self):
+        q = d.vm_deploy_poll_query({"assignment_group": "Linux Operations", "prefix": "VM request", "states": ["1"]})
+        self.assertEqual(q, {"query": "active=true^assignment_group.name=Linux Operations^short_descriptionSTARTSWITHVM request"
+                                      "^stateIN1^ORDERBYsys_created_on", "problems": []})
+
+    def test_extra_query_first_so_its_or_stays_inside_it(self):
+        q = d.vm_deploy_poll_query({"assignment_group": "G", "query": "^category=vm^ORsubcategory=vm", "states": []})["query"]
+        self.assertEqual(q, "category=vm^ORsubcategory=vm^active=true^assignment_group.name=G^ORDERBYsys_created_on")
+
+    def test_refusals(self):
+        def probs(**o):
+            return " ".join(d.vm_deploy_poll_query(dict({"assignment_group": "G", "prefix": "VM request", "states": ["1"]}, **o))["problems"])
+        self.assertIn("vm_deploy_assignment_group is empty", probs(assignment_group=" "))
+        self.assertIn("nothing marks a VM request", probs(prefix="", query=""))
+        self.assertIn("^NQ", probs(query="category=vm^NQactive=true"))
+        self.assertIn("^NQ", probs(query="NQactive=true"))
+        self.assertIn("must not contain ^", probs(prefix="VM^ORactive=true"))
+        self.assertIn("state values", probs(states=["1^ORactive=true"]))
+        self.assertEqual(probs(prefix="", query="category=vm"), "")
+
+    def test_pick_oldest_first_with_reasons(self):
+        recs = [_t("INC0010001"), _t("INC0010002", sd="Printer"), _t("INC0010003", group="Network"),
+                _t("INC0010004", notes="2026-10-12 09:00:00 - svc (Work notes)\n[AAP] Picked up by AAP job 1 - starting\n\n"),
+                _t("INC0010005", active="false"), _t("XYZ0010006"), _t("inc0010007", sd="vm REQUEST lower case"),
+                _t("INC0010008"), _t("INC0010001")]
+        r = d.vm_deploy_poll_pick(recs, POLL)
+        self.assertEqual([x["number"] for x in r["pick"]], ["INC0010001", "INC0010007"])
+        self.assertEqual(r["pick"][0], {"number": "INC0010001", "sys_id": "idINC0010001", "table": "incident",
+                                        "short_description": "VM request: app"})
+        why = {x["number"]: x["why"] for x in r["skipped"]}
+        self.assertIn("does not start with", why["INC0010002"])
+        self.assertIn("assigned to 'Network'", why["INC0010003"])
+        self.assertIn("AAP has it already ([AAP] Picked up", why["INC0010004"])
+        self.assertEqual(why["INC0010005"], "closed")
+        self.assertIn("unknown number prefix", why["XYZ0010006"])
+        self.assertIn("over the limit of 2 per run", why["INC0010008"])
+        self.assertEqual(len(r["skipped"]), 6)                      # the duplicate INC0010001 (task and incident) is not listed twice
+
+    def test_any_note_of_aaps_counts_and_a_group_as_a_reference(self):
+        q = "2026-10-12 09:00:00 - svc (Additional comments)\n[AAP] To build this VM we need a few details\n\n"
+        r = d.vm_deploy_poll_pick([dict(_t("INC0010001"), comments=q),
+                                   _t("INC0010002", group={"display_value": "Linux Operations", "link": "x"})], POLL)
+        self.assertEqual([x["number"] for x in r["pick"]], ["INC0010002"])
+        self.assertIn("[AAP] To build this VM", r["skipped"][0]["why"])
+
+    def test_claim_seen(self):
+        self.assertTrue(d.vm_deploy_poll_claimed({"work_notes": "2026-10-12 - svc (Work notes)\n[AAP] Picked up by AAP job 5 - x\n\n"}))
+        self.assertFalse(d.vm_deploy_poll_claimed({"work_notes": ""}))
+        self.assertFalse(d.vm_deploy_poll_claimed({"work_notes": "2026-10-12 - Bob (Work notes)\nsomeone wrote [AAP] Picked up\n\n"}))
+
+    def test_the_claim_note_does_not_change_the_ticket_text_genai_reads(self):
+        before = d.vm_deploy_ticket_text(REC)
+        after = d.vm_deploy_ticket_text(dict(REC, work_notes="2026-10-12 12:00:00 - svc (Work notes)\n[AAP] Picked up by AAP job 5 - x\n\n"
+                                             + REC["work_notes"]))
+        self.assertEqual(before, after)
+
+
 if __name__ == "__main__":
     unittest.main()

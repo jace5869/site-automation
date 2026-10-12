@@ -7,7 +7,10 @@ Tables: incident, sys_user_group (Linux Operations), sys_user (svc_aap), ecc_age
 Journal fields (comments, work_notes): what is POSTed or PATCHed is kept as entries; with
 sysparm_display_value=true they come back as ServiceNow shows them - newest first, each under a
 header "<date time> - <user> (Additional comments)" / "(Work notes)"; without it, empty.
+Reference fields (assignment_group, location, caller_id) with sysparm_display_value=true come as
+{"display_value", "link"}, as ServiceNow sends them, unless sysparm_exclude_reference_link=true.
 SNMOCK_NO_RESOLVE=1: resolving answers 403 "Data Policy Exception" (close code missing).
+SNMOCK_HIDE_JOURNAL=1: journal fields always come back empty (an account that cannot read them).
 Usage: snmock.py PORT   (requests appended to $SNMOCK_LOG as JSON lines)
 """
 import base64
@@ -28,19 +31,29 @@ STATE_LABEL = {"1": "New", "2": "In Progress", "6": "Resolved", "7": "Closed"}
 
 
 def matches(rec, query):
-    """The encoded-query subset the playbooks use: a=b, aSTARTSWITHb, active=true, joined by ^."""
+    """The encoded-query subset the playbooks use, joined by ^: a=b, aSTARTSWITHb (any case), aINb,c,
+    active=true, a.name=b (a reference by its name: the mock keeps names), ORDERBY... (ignored: the
+    records are kept oldest first)."""
     for cond in [c for c in query.split("^") if c]:
+        if cond.startswith("ORDERBY"):
+            continue
         if "STARTSWITH" in cond:
             field, _, value = cond.partition("STARTSWITH")
-            if not str(rec.get(field, "")).startswith(value):
+            if not str(rec.get(field, "")).lower().startswith(value.lower()):
                 return False
-        else:
-            field, _, value = cond.partition("=")
-            if field == "active":
-                if (rec.get("state") not in ("6", "7")) != (value == "true"):
-                    return False
-            elif str(rec.get(field, "")) != value:
+            continue
+        if "IN" in cond and "=" not in cond:
+            field, _, value = cond.partition("IN")
+            if str(rec.get(field, "")) not in value.split(","):
                 return False
+            continue
+        field, _, value = cond.partition("=")
+        field = field[:-5] if field.endswith(".name") else field
+        if field == "active":
+            if (rec.get("state") not in ("6", "7")) != (value == "true"):
+                return False
+        elif str(rec.get(field, "")) != value:
+            return False
     return True
 
 
@@ -56,12 +69,20 @@ def journal_add(rec, body, user):
                                                    str(body[field])))
 
 
-def show(rec, disp):
-    """A record as the API returns it: journal fields as text (display) or empty; active from the state."""
+REFS = ("assignment_group", "location", "caller_id")
+
+
+def show(rec, disp, links=True):
+    """A record as the API returns it: journal fields as text (display) or empty; active from the state;
+    reference fields as {display_value, link} (display, with links) or their name."""
     out = {k: v for k, v in rec.items() if not k.startswith("_") and k not in JOURNAL_LABEL}
     out["active"] = "false" if rec.get("state") in ("6", "7") else "true"
+    if disp and links:
+        for f in REFS:
+            if out.get(f):
+                out[f] = {"display_value": out[f], "link": "https://snmock/api/now/table/%s/%s" % (f, abs(hash(out[f])) % 10000)}
     for field, label in JOURNAL_LABEL.items():
-        if disp:
+        if disp and os.environ.get("SNMOCK_HIDE_JOURNAL") != "1":
             ents = [e for e in reversed(rec.get("_journal", [])) if e[0] == field]
             out[field] = "".join("%s (%s)\n%s\n\n" % (head, label, text) for _, head, text in ents)
         else:
@@ -143,7 +164,8 @@ class H(BaseHTTPRequestHandler):
             rows = [i for i in INCIDENTS.values() if matches(i, q.get("sysparm_query", ""))]
             rows = rows[:int(q.get("sysparm_limit", "10000"))]
             disp = q.get("sysparm_display_value") == "true"
-            return 200, {"result": [pick(show(i, disp), q.get("sysparm_fields")) for i in rows]}
+            links = q.get("sysparm_exclude_reference_link") != "true"
+            return 200, {"result": [pick(show(i, disp, links), q.get("sysparm_fields")) for i in rows]}
         if method == "POST":
             if not itil:
                 return fail("Operation Failed", "ACL Exception Insert Failed due to security constraints", 403)

@@ -279,3 +279,26 @@ vm_deploy_genai_approval: true
 # after the approval (build what the ticket and its proposal say - never ask GenAI).
 vm_deploy_phase: ""
 vm_deploy_genai_model_timeout: "{{ site_act_model_timeout | default(600) }}"   # seconds the model may take for its answer
+# ---- Pick up VM request tickets on a schedule (playbooks/vm_deploy_poll.yml) ----
+# Every run (an AAP schedule, e.g. every 15 minutes) asks ServiceNow for NEW VM requests - active,
+# assigned to vm_deploy_assignment_group (required), marked by vm_deploy_poll_prefix and/or
+# vm_deploy_poll_query - and starts the deploy workflow once per ticket, after writing
+# "[AAP] Picked up ..." on it. A ticket with any note of AAP's on it is never picked up again.
+# Nothing is built by this job: the workflow reads, checks, asks for the approval and builds.
+# Needs the "ServiceNow API" credential and a "Red Hat Ansible Automation Platform" credential (an
+# AAP user that may only start that workflow). docs/VMWARE.md, "Pick up tickets automatically"
+vm_deploy_poll_enabled: true             # false = the job runs, picks up nothing and says so (the off switch)
+vm_deploy_poll_tables: [incident]        # the ServiceNow tables to look in: incident, sc_task, task ...
+vm_deploy_poll_prefix: "VM request"      # a VM request's short description starts with this ("" = mark them by vm_deploy_poll_query)
+# An extra ServiceNow encoded query, ANDed with the rest, e.g. "category=vm_request" or
+# "cmdb_ci.name=VM Request" ("" = none). ^NQ (a second query) is refused.
+vm_deploy_poll_query: ""
+vm_deploy_poll_states: ["1"]             # the ticket states to pick up (state values: "1" = New)
+vm_deploy_poll_max: 3                    # the most tickets started per run; the rest wait for the next run
+vm_deploy_poll_scan: 100                 # the most tickets read per table and run, oldest first (tickets AAP already has count too)
+vm_deploy_poll_workflow: "VM - deploy from ServiceNow ticket (workflow)"   # the workflow job template started per ticket
+vm_deploy_poll_dry_run: false            # true = only list what it would pick up: no note, no workflow (Check does the same)
+# Fields set on the ticket together with the "Picked up" note, e.g. {state: "2"} (In Progress) - so the
+# ticket leaves the states picked up as well ({} = only the note).
+vm_deploy_poll_claim_fields: {}
+vm_deploy_poll_aap_ca_path: ""           # a CA file for AAP's own HTTPS certificate ("" = what the execution environment trusts)

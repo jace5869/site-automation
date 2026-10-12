@@ -2,7 +2,8 @@
 """Filters for deploying a VM from a ServiceNow ticket (roles/vmware_vm/tasks/deploy.yml): which
 table a ticket number lives in, the VM details read from the ticket (its description, then its
 comments and work notes - a newer one overrides), and the checks the request must pass before
-anything is built. Pure: the polling job (later) uses the same filters."""
+anything is built. Pure: the polling job (vm_deploy_poll.yml) uses the same filters, and its own
+(vm_deploy_poll_query, vm_deploy_poll_pick: which tickets it picks up)."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -36,6 +37,14 @@ LINE = re.compile(r"^\s*[-*]?\s*([A-Za-z][A-Za-z0-9 _]*?)\s*[:=]\s*(.*?)\s*$")
 # the date follows the API account's own format, so only the "(... comments)" / "(Work notes)" end is relied on
 HEADER = re.compile(r"^\s*(\S.*?)\s+\((Additional comments|Comments|Work notes)\)\s*$", re.I)
 OWN = "[AAP]"                       # this job's own notes start with this: never read back as a request
+
+
+def _ref(value):
+    """A reference field (assignment group, location) as text: ServiceNow sends it as {"display_value":
+    ..., "link": ...} unless the request says sysparm_exclude_reference_link=true."""
+    if isinstance(value, dict):
+        return str(value.get("display_value") or value.get("value") or "")
+    return str(value or "")
 
 
 def vm_deploy_table(number):
@@ -124,7 +133,7 @@ def _site(spec, sources, record, sites):
     said = str(spec.get("site") or "").strip()
     if said:
         return keys.get(said.lower()), sources.get("site", "the ticket"), said
-    loc = str((record or {}).get("location") or "").strip()
+    loc = _ref((record or {}).get("location")).strip()
     if loc and loc.lower() in keys:
         return keys[loc.lower()], "the ticket's Location field", loc
     return None, "", ""
@@ -178,9 +187,9 @@ def vm_deploy_check(parsed, record=None, opts=None):
     if str(r.get("active", "true")).lower() not in ("true", "1"):
         problems.append("the ticket is closed (state %s): a closed ticket is never deployed" % (r.get("state") or "?"))
     group = str(o.get("assignment_group") or "").strip()
-    if group and str(r.get("assignment_group") or "").strip().lower() != group.lower():
+    if group and _ref(r.get("assignment_group")).strip().lower() != group.lower():
         problems.append("the ticket is assigned to %r, not to %r (vm_deploy_assignment_group)"
-                        % (r.get("assignment_group") or "nobody", group))
+                        % (_ref(r.get("assignment_group")) or "nobody", group))
     for k in ("vm_name", "template"):
         if not spec.get(k):
             problems.append("the ticket does not say %s: add a line '%s: ...' to the description or a comment" % (k, k))
@@ -417,10 +426,102 @@ def vm_deploy_find_proposal(record):
     return found
 
 
+# ---- the polling job (playbooks/vm_deploy_poll.yml): which tickets it picks up -------------------
+PICKED = "[AAP] Picked up"          # the polling job's claim note: a ticket with it is never picked up again
+
+
+def vm_deploy_poll_query(opts=None):
+    """The ServiceNow encoded query for new VM requests -> {'query', 'problems'}. opts:
+    assignment_group (required: without it, anyone's tickets could be picked up), prefix (short
+    description starts with it), query (an extra encoded query, ANDed in), states (e.g. ["1"]). A VM
+    request must be marked - by the prefix or the extra query - so an ordinary ticket of the group
+    is never picked up. The extra query comes first, so an ^OR in it stays inside it; ^NQ (a second,
+    separate query) is refused: it would bypass the group."""
+    o = opts or {}
+    group = str(o.get("assignment_group") or "").strip()
+    prefix = str(o.get("prefix") or "").strip()
+    extra = str(o.get("query") or "").strip().strip("^")
+    states = [str(x).strip() for x in (o.get("states") or []) if str(x).strip()]
+    problems = []
+    if not group:
+        problems.append("vm_deploy_assignment_group is empty: the polling job only picks up tickets assigned to that group "
+                        "(without it, it could pick up anyone's tickets)")
+    if not prefix and not extra:
+        problems.append("nothing marks a VM request: set vm_deploy_poll_prefix (the short description starts with it) "
+                        "or vm_deploy_poll_query (e.g. category=vm_request)")
+    for name, v in (("vm_deploy_assignment_group", group), ("vm_deploy_poll_prefix", prefix)):
+        if "^" in v:
+            problems.append("%s must not contain ^ (it separates the conditions of a ServiceNow query): %r" % (name, v))
+    if re.search(r"\^NQ", "^" + extra, re.I):
+        problems.append("vm_deploy_poll_query must not contain ^NQ (a second query would bypass the group): %r" % extra)
+    if any(not re.match(r"^[\w -]+$", x) for x in states):
+        problems.append("vm_deploy_poll_states are state values, e.g. [\"1\"] (New): %r" % states)
+    parts = ([extra] if extra else []) + ["active=true", "assignment_group.name=" + group]
+    parts += ["short_descriptionSTARTSWITH" + prefix] if prefix else []
+    parts += ["stateIN" + ",".join(states)] if states else []
+    return {"query": "^".join(parts + ["ORDERBYsys_created_on"]), "problems": problems}
+
+
+def _own_notes(record):
+    """This job's own notes ([AAP] ...) on a ticket, newest first: (field, header, first line)."""
+    out = []
+    for field in ("work_notes", "comments"):
+        for head, body in journal_entries((record or {}).get(field)):
+            if body.startswith(OWN):
+                out.append((field, head, body.splitlines()[0]))
+    return list(reversed(out))
+
+
+def vm_deploy_poll_pick(records, opts=None):
+    """The tickets to pick up this run, from what the query returned (oldest first) -> {'pick':
+    [{number, sys_id, table, short_description}], 'skipped': [{number, why}]}. Checked again here,
+    whatever the query said: active, the group, the prefix; a known number prefix (the deploy job
+    finds the table by it); no note of this job on it yet (picked up, proposed, deployed, a question
+    ...: it is AAP's already); at most opts.max (the rest: next run). opts: assignment_group, prefix,
+    max, table."""
+    o = opts or {}
+    group = str(o.get("assignment_group") or "").strip().lower()
+    prefix = str(o.get("prefix") or "").strip().lower()
+    most = int(o.get("max") or 0)
+    pick, skipped, seen = [], [], set()
+    for r in records or []:
+        num = str(r.get("number") or "").strip().upper()
+        why = ""
+        own = _own_notes(r)
+        if not num or num in seen:
+            continue
+        seen.add(num)
+        if str(r.get("active", "true")).lower() not in ("true", "1"):
+            why = "closed"
+        elif group and _ref(r.get("assignment_group")).strip().lower() != group:
+            why = "assigned to %r, not to the group" % (_ref(r.get("assignment_group")) or "nobody")
+        elif prefix and not str(r.get("short_description") or "").strip().lower().startswith(prefix):
+            why = "the short description does not start with %r" % o.get("prefix")
+        elif not vm_deploy_table(num):
+            why = "unknown number prefix: the deploy job would not know its table"
+        elif own:
+            why = "AAP has it already (%s)" % own[0][2][:160]
+        elif most and len(pick) >= most:
+            why = "over the limit of %d per run (vm_deploy_poll_max): the next run picks it up" % most
+        if why:
+            skipped.append({"number": num, "why": why})
+        else:
+            pick.append({"number": num, "sys_id": r.get("sys_id", ""), "table": o.get("table") or vm_deploy_table(num),
+                         "short_description": str(r.get("short_description") or "")})
+    return {"pick": pick, "skipped": skipped}
+
+
+def vm_deploy_poll_claimed(record):
+    """True when the ticket, as the API returns it, shows the polling job's claim note: proof that
+    this account sees the work notes - and so that the next run will not pick the ticket up again."""
+    return any(line.startswith(PICKED) for _, _, line in _own_notes(record))
+
+
 class FilterModule(object):
     def filters(self):
         return {"vm_deploy_table": vm_deploy_table, "vm_deploy_spec": vm_deploy_spec, "vm_deploy_check": vm_deploy_check,
                 "vm_deploy_spec_text": vm_deploy_spec_text, "vm_deploy_ticket_text": vm_deploy_ticket_text,
                 "vm_deploy_genai_task": vm_deploy_genai_task, "vm_deploy_genai_parse": vm_deploy_genai_parse,
                 "vm_deploy_proposal_note": vm_deploy_proposal_note, "vm_deploy_find_proposal": vm_deploy_find_proposal,
-                "vm_deploy_name_rule": vm_deploy_name_rule}
+                "vm_deploy_name_rule": vm_deploy_name_rule, "vm_deploy_poll_query": vm_deploy_poll_query,
+                "vm_deploy_poll_pick": vm_deploy_poll_pick, "vm_deploy_poll_claimed": vm_deploy_poll_claimed}

@@ -34,10 +34,12 @@
          'No ServiceNow connection: attach the "ServiceNow API" credential to this job template (it gives SN_HOST, SN_USERNAME, SN_PASSWORD).' }}
     quiet: true
 
+# display values: the state, group and location as people see them; exclude_reference_link: a reference
+# field (group, location) as its name, not {"display_value": ..., "link": ...}
 - name: VMware | read ticket {{ _vd_number }}
   ansible.builtin.uri:
     url: >-
-      {{ _vd_sn_url }}/api/now/table/{{ _vd_table }}?sysparm_display_value=true&sysparm_limit=2&sysparm_fields={{
+      {{ _vd_sn_url }}/api/now/table/{{ _vd_table }}?sysparm_display_value=true&sysparm_exclude_reference_link=true&sysparm_limit=2&sysparm_fields={{
       'sys_id,number,state,active,assignment_group,location,short_description,description,comments,work_notes' }}&sysparm_query={{
       ('number=' ~ _vd_number) | urlencode }}
     method: GET

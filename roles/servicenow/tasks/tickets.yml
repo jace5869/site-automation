@@ -107,7 +107,7 @@
           {%- if servicenow_caller -%}{%- set _ = b.update({'caller_id': servicenow_caller}) -%}{%- endif -%}
           {%- if servicenow_category -%}{%- set _ = b.update({'category': servicenow_category}) -%}{%- endif -%}
           {%- if servicenow_set_ci | bool and i.host in groups['all'] -%}{%- set _ = b.update({'cmdb_ci': i.host}) -%}{%- endif -%}
-          {{ b | to_json }}
+          {{ b | combine(servicenow_fields) | to_json }}
         status_code: [200, 201]
         validate_certs: "{{ servicenow_validate_certs }}"
         ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
@@ -182,7 +182,7 @@
 
     - name: ServiceNow | note (or resolve) the tickets whose problem cleared
       ansible.builtin.uri:
-        url: "{{ _sn_url }}/api/now/table/{{ servicenow_table }}/{{ item.sys_id }}"
+        url: "{{ _sn_url }}/api/now/table/{{ servicenow_table }}/{{ item.sys_id }}?sysparm_input_display_value=true"
         method: PATCH
         url_username: "{{ _sn_user }}"
         url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
@@ -193,6 +193,7 @@
           {{ {'work_notes': 'The automated check passes again at ' ~ _sn_now ~ '.'}
              | combine({'state': servicenow_resolved_state, 'close_code': servicenow_close_code,
                         'close_notes': 'Resolved automatically: the check that opened this ticket passes again.'}
+                       | combine(servicenow_resolve_fields)
                        if servicenow_resolve_cleared | bool else {}) | to_json }}
         validate_certs: "{{ servicenow_validate_certs }}"
         ca_path: "{{ servicenow_ca_path | default(omit, true) }}"

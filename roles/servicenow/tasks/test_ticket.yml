@@ -176,7 +176,7 @@
       {%- if servicenow_assignment_group -%}{%- set _ = b.update({'assignment_group': servicenow_assignment_group}) -%}{%- endif -%}
       {%- if servicenow_caller -%}{%- set _ = b.update({'caller_id': servicenow_caller}) -%}{%- endif -%}
       {%- if servicenow_category -%}{%- set _ = b.update({'category': servicenow_category}) -%}{%- endif -%}
-      {{ b }}
+      {{ b | combine(servicenow_fields) }}
 
 - name: ServiceNow test | DRY RUN - what it would open, note and resolve (nothing is sent)
   ansible.builtin.debug:
@@ -185,7 +185,8 @@
       - "3 open: POST {{ _snt_url }}/api/now/table/{{ servicenow_table }} {{ _snt_body | to_json }}"
       - "4 read back: GET {{ _snt_url }}/api/now/table/{{ servicenow_table }}/<sys_id>"
       - "5 work note: PATCH .../{{ servicenow_table }}/<sys_id> work_notes"
-      - "6 resolve: {{ ('PATCH state ' ~ servicenow_resolved_state ~ ', close_code ' ~ servicenow_close_code) if servicenow_test_resolve | bool else 'skipped (servicenow_test_resolve is false)' }}"
+      - "6 resolve: {{ ('PATCH state ' ~ servicenow_resolved_state ~ ', close_code ' ~ servicenow_close_code
+                         ~ ((', ' ~ servicenow_resolve_fields | to_json) if servicenow_resolve_fields else '')) if servicenow_test_resolve | bool else 'skipped (servicenow_test_resolve is false)' }}"
   when: ansible_check_mode
 
 - name: ServiceNow test | 3-6 open, read back, note, resolve
@@ -309,17 +310,17 @@
 
     - name: ServiceNow test | 6/6 resolve
       ansible.builtin.uri:
-        url: "{{ _snt_url }}/api/now/table/{{ servicenow_table }}/{{ _snt_sys_id }}?sysparm_fields=number,state"
+        url: "{{ _snt_url }}/api/now/table/{{ servicenow_table }}/{{ _snt_sys_id }}?sysparm_input_display_value=true&sysparm_fields=number,state"
         method: PATCH
         url_username: "{{ _snt_user }}"
         url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
         force_basic_auth: true
         headers: {Accept: application/json}
         body_format: json
-        body:
-          state: "{{ servicenow_resolved_state }}"
-          close_code: "{{ servicenow_close_code }}"
-          close_notes: "Test ticket from AAP job {{ _snt_job }}: resolved automatically by the same job."
+        body: >-
+          {{ {'state': servicenow_resolved_state, 'close_code': servicenow_close_code,
+              'close_notes': 'Test ticket from AAP job ' ~ _snt_job ~ ': resolved automatically by the same job.'}
+             | combine(servicenow_resolve_fields) | to_json }}
         validate_certs: "{{ servicenow_validate_certs }}"
         ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
         timeout: "{{ servicenow_timeout }}"

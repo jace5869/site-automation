@@ -33,7 +33,7 @@
          | vm_vcenter_report(_vm_vcenters | default([]))
          | combine({'footer': ((_vm_report_doc.footer ~ ' ') if (_vm_report_doc | default({}, true)).footer is defined else '')
                               ~ ('vCenter ' ~ read[0] if read | length == 1 else ('vCenters ' ~ read | join(', ') if read
-                                 else 'vCenter ' ~ lookup('ansible.builtin.env', 'VMWARE_HOST')))
+                                 else ('vCenter ' ~ lookup('ansible.builtin.env', 'VMWARE_HOST')) if lookup('ansible.builtin.env', 'VMWARE_HOST') else ''))
                               ~ (' - DRY RUN (Check): nothing was changed.' if ansible_check_mode else '')}) }}
   when: report_email_to | default([]) | length > 0 and not _vm_report_no_email | default(false) | bool
 

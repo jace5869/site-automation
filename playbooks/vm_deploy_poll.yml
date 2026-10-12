@@ -1,0 +1,20 @@
+---
+# PICK UP VM REQUEST TICKETS - run it on a schedule (e.g. every 15 minutes). Asks ServiceNow for new
+# VM requests (active, assigned to vm_deploy_assignment_group, short description starting with
+# vm_deploy_poll_prefix - "VM request" - and/or vm_deploy_poll_query), writes "[AAP] Picked up" on
+# each, and starts the deploy workflow (vm_deploy_poll_workflow) with its number: at most
+# vm_deploy_poll_max per run. It builds nothing itself: the workflow reads, checks, waits for the
+# approval and builds. Check (or vm_deploy_poll_dry_run: true) = list what it would pick up only.
+# Runs on the AAP side: attach the "ServiceNow API" and a "Red Hat Ansible Automation Platform"
+# credential (an AAP user with Execute on the workflow); no Limit.
+# docs/VMWARE.md, "Pick up tickets automatically (a schedule)"
+#   ansible-playbook playbooks/vm_deploy_poll.yml -e '{"vm_deploy_assignment_group": "Windows Operations"}'
+- name: Pick up VM request tickets from ServiceNow
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Pick up VM request tickets and start the deploy workflow
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: deploy_poll.yml

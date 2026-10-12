@@ -394,10 +394,12 @@ File: `roles/servicenow/defaults/main.yml`
 | `servicenow_urgency` | `{critical: "1", warning: "2"}` | a new ticket's urgency, per finding severity (your instance's values) |
 | `servicenow_impact` | `{critical: "2", warning: "3"}` | a new ticket's impact, per finding severity |
 | `servicenow_set_ci` | `true` | set Configuration item = the host name (must exist in the CMDB) |
+| `servicenow_fields` | `{}` | More fields for every new ticket - for an instance that makes fields such as Location, Subcategory or Channel mandatory: {column name: value}. Names and choice labels work, e.g. servicenow_fields: {location: "Building 100", subcategory: "Operating System", contact_type: "Self-service"} A field's column name: right-cli… (all of it: the role file) |
 | `servicenow_note_cleared` | `true` | When a problem that had a ticket is gone, add a work note (and, if you want, resolve it). |
 | `servicenow_resolve_cleared` | `false` | true = also resolve the ticket (servicenow_resolved_state, servicenow_close_code) |
 | `servicenow_resolved_state` | `"6"` | Resolved |
 | `servicenow_close_code` | `"Solution provided"` | must be a close code your instance has |
+| `servicenow_resolve_fields` | `{}` | More fields set when a ticket is resolved (servicenow_resolve_cleared, and the test ticket), for an instance that makes them mandatory: {column name: value}, e.g. {resolved_by: svc_aap_sn} |
 | `servicenow_note_repeats` | `true` | Add a work note to an open ticket each time its finding is seen again. |
 | `servicenow_correlation_prefix` | `site-health` | Every ticket from these playbooks carries a correlation ID starting with this, so the same problem on the same host always updates the same ticket. |
 | `servicenow_validate_certs` | `true` | check the instance's HTTPS certificate (see servicenow_ca_path) |
@@ -621,6 +623,17 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_deploy_genai_approval` | `true` | true: a GenAI proposal waits for a person - the workflow's approval (or a second run) - before it is built. false: one run reads, checks and builds, when every value is traced to the ticket and within the rules (questions or a refusal still stop it). |
 | `vm_deploy_phase` | (empty) | Which step this run is: "" = one job does it all; propose = the workflow's first step (read, ask GenAI if needed, check, write where it would go on the ticket - build nothing); build = the step after the approval (build what the ticket and its proposal say - never ask GenAI). |
 | `vm_deploy_genai_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | seconds the model may take for its answer |
+| `vm_deploy_poll_enabled` | `true` | ---- Pick up VM request tickets on a schedule (playbooks/vm_deploy_poll.yml) ---- Every run (an AAP schedule, e.g. every 15 minutes) asks ServiceNow for NEW VM requests - active, assigned to vm_deploy_assignment_group (required), marked by vm_deploy_poll_prefix and/or vm_deploy_poll_query - and starts the deploy workf… (all of it: the role file) |
+| `vm_deploy_poll_tables` | `[incident]` | the ServiceNow tables to look in: incident, sc_task, task ... |
+| `vm_deploy_poll_prefix` | `"VM request"` | a VM request's short description starts with this ("" = mark them by vm_deploy_poll_query) |
+| `vm_deploy_poll_query` | (empty) | An extra ServiceNow encoded query, ANDed with the rest, e.g. "category=vm_request" or "cmdb_ci.name=VM Request" ("" = none). ^NQ (a second query) is refused. |
+| `vm_deploy_poll_states` | `["1"]` | the ticket states to pick up (state values: "1" = New) |
+| `vm_deploy_poll_max` | `3` | the most tickets started per run; the rest wait for the next run |
+| `vm_deploy_poll_scan` | `100` | the most tickets read per table and run, oldest first (tickets AAP already has count too) |
+| `vm_deploy_poll_workflow` | `"VM - deploy from ServiceNow ticket (workflow)"` | the workflow job template started per ticket |
+| `vm_deploy_poll_dry_run` | `false` | true = only list what it would pick up: no note, no workflow (Check does the same) |
+| `vm_deploy_poll_claim_fields` | `{}` | Fields set on the ticket together with the "Picked up" note, e.g. {state: "2"} (In Progress) - so the ticket leaves the states picked up as well ({} = only the note). |
+| `vm_deploy_poll_aap_ca_path` | (empty) | a CA file for AAP's own HTTPS certificate ("" = what the execution environment trusts) |
 
 ## win_act
 
