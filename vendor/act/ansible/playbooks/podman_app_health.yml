@@ -1,11 +1,25 @@
 ---
 # Podman application health, with ACT diagnosing (and optionally restarting) what is broken.
 #
-# The example stack is STIG Manager behind nginx, with MySQL and Keycloak: edit podman_apps
-# for your containers. Cheap checks run on every host; ACT is called only where one trips.
+# Which containers: by default (podman_apps: []) the ones podman runs on each host, found by
+# themselves - every running container, and the stopped ones that should run (a systemd unit or
+# quadlet runs them, or their restart policy restarts them) or that crashed (exit code not 0) within
+# podman_log_window. Pod infra containers and names matching podman_discover_exclude are left out.
+# Found containers are diagnosed only: ACT proposes restarts for a person to approve. A quadlet
+# container is removed when it stops (podman run --rm), so a stopped one is not found: list it in
+# podman_apps with its unit to have it reported.
+# To check one application more closely, list its containers in podman_apps instead: then only
+# those are checked, with probe URLs / commands and the order they depend on each other, e.g.
+#   podman_apps:
+#     - {name: mysql, container: mysql, unit: "", probe_cmd: "podman exec mysql mysqladmin ping -h 127.0.0.1", depends_on: []}
+#     - {name: keycloak, container: keycloak, unit: "", probe_url: "http://127.0.0.1:8080/realms/master", depends_on: []}
+#     - {name: stigman, container: stigman, unit: "", probe_url: "http://127.0.0.1:54000/api/op/configuration", depends_on: [mysql, keycloak]}
+#     - {name: nginx, container: nginx, unit: "", probe_url: "https://127.0.0.1/", depends_on: [stigman, keycloak]}
+# Cheap checks run on every host; ACT is called only where one trips.
 #
 #   ansible-playbook -i inventory ansible/playbooks/podman_app_health.yml -e target=stigman_hosts
-#   ... -e podman_allow_restart=true      # let ACT restart the listed containers/units unattended
+#   ... -e podman_allow_restart=true      # let ACT restart the containers/units listed in podman_apps
+#                                         # unattended (found containers are diagnosed only)
 #
 # Rootless podman (containers owned by a service account): set podman_user. ACT then runs as
 # that user, installs under its home, and uses its XDG_RUNTIME_DIR. The account needs
@@ -17,33 +31,17 @@
   gather_facts: false
   vars:
     act_triage_fail_in_role: false   # fail in post_tasks, after the Teams report
-    podman_apps:
-      - name: mysql
-        container: mysql
-        unit: ""                    # systemd unit if systemd/quadlet manages it, e.g. mysql.service
-        probe_cmd: "podman exec mysql mysqladmin ping -h 127.0.0.1"   # rc 0 = server up
-        depends_on: []
-      - name: keycloak
-        container: keycloak
-        unit: ""
-        probe_url: "http://127.0.0.1:8080/realms/master"             # adjust to your deployment
-        depends_on: []
-      - name: stigman
-        container: stigman
-        unit: ""
-        probe_url: "http://127.0.0.1:54000/api/op/configuration"     # adjust to your deployment
-        depends_on: [mysql, keycloak]
-      - name: nginx
-        container: nginx
-        unit: ""
-        probe_url: "https://127.0.0.1/"
-        depends_on: [stigman, keycloak]
+    # [] = find the containers on each host (see above); a list = only these, as listed:
+    # {name, container, unit (systemd unit if systemd/quadlet manages it, e.g. mysql.service),
+    #  probe_url or probe_cmd (rc 0 = up), depends_on: [names]}
+    podman_apps: []
+    podman_discover_exclude: []     # regular expressions: found containers whose name matches are left out
     podman_user: ""                 # rootless owner of the containers; empty = rootful
     podman_log_window: 30m          # how far back to scan container logs
     podman_log_error_regex: '(?i)\b(error|fatal|exception|panic|refused|denied|timed? ?out)\b'
     podman_log_error_threshold: 25  # error-looking log lines in the window that count as a finding
     podman_restart_threshold: 3     # RestartCount above this is a finding
-    podman_allow_restart: false     # true = ACT may restart the listed containers/units unattended
+    podman_allow_restart: false     # true = ACT may restart the containers/units in podman_apps unattended
     # role settings for this job
     act_triage_builtin_checks: false
     act_triage_max_steps: 40
@@ -54,6 +52,10 @@
     act_triage_extra_instructions: "{{ lookup('ansible.builtin.template', 'templates/podman_prompt.j2') }}"
     _podman_uid: ""
     _podman_home: ""
+    _podman_apps: "{{ podman_apps }}"  # the containers checked: podman_apps, or the ones found
+    _podman_found: []                  # what discovery read, per container (state, exit code, unit)
+    _podman_checked: []                # the podman inspect results of the containers checked
+    _podman_keep: []                   # found containers that count (running, or should be)
   environment: "{{ {'XDG_RUNTIME_DIR': '/run/user/' ~ _podman_uid} if (podman_user and _podman_uid) else {} }}"
 
   pre_tasks:
@@ -69,20 +71,89 @@
         _podman_home: "{{ ansible_facts.getent_passwd[podman_user][4] }}"
       when: podman_user | length > 0
 
+    - name: Podman | the time on the host (to tell a recent crash from an old one)
+      ansible.builtin.command:
+        argv: [date, +%s]
+      register: _podman_now
+      changed_when: false
+      when: podman_apps | length == 0
+
+    - name: Podman | find the containers (podman_apps is empty)
+      ansible.builtin.command:
+        argv: [podman, ps, --all, --format, json]
+      register: _podman_ps
+      changed_when: false
+      failed_when: false
+      when: podman_apps | length == 0
+
+    # every container but pod infra containers and the excluded ones; which stopped ones count is
+    # decided after podman inspect (their restart policy), below
+    - name: Podman | the containers found
+      ansible.builtin.set_fact:
+        _podman_found: >-
+          {%- set out = [] -%}
+          {%- set m = podman_log_window | string | regex_search('^(\\d+)([smhd]?)$', '\\1', '\\2') or ['1800', 's'] -%}
+          {%- set window = (m[0] | int) * {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, '': 1}[m[1]] -%}
+          {%- set now = _podman_now.stdout | default('0', true) | int -%}
+          {%- for c in (_podman_ps.stdout | default('[]', true) | from_json) if not c.IsInfra | default(false) -%}
+          {%-   set name = c.Names if c.Names is string else (c.Names | default([''], true) | first) -%}
+          {%-   set ex = namespace(hit=false) -%}
+          {%-   for x in podman_discover_exclude if name is search(x) -%}{%- set ex.hit = true -%}{%- endfor -%}
+          {%-   if name and not ex.hit -%}
+          {%-     set running = c.State | default('') == 'running' -%}
+          {%-     set _ = out.append({'name': name, 'container': name, 'unit': (c.Labels | default({}, true)).PODMAN_SYSTEMD_UNIT | default(''),
+                                      'depends_on': [], 'running': running, 'state': c.State | default(''),
+                                      'crashed': not running and (c.ExitCode | default(0) | int) != 0
+                                                 and (now - (c.ExitedAt | default(0) | int)) <= window}) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+      when: podman_apps | length == 0
+
     - name: Podman | inspect each container
       ansible.builtin.command:
         argv: [podman, inspect, "{{ item.container }}"]
-      loop: "{{ podman_apps }}"
+      loop: "{{ _podman_found if podman_apps | length == 0 else podman_apps }}"
       loop_control:
         label: "{{ item.container }}"
       register: _podman_inspect
       changed_when: false
       failed_when: false
 
+    # found containers: the running ones, and the stopped ones that should run - a systemd unit or
+    # quadlet runs them, their restart policy is always / unless-stopped (or on-failure and they
+    # failed), or they crashed within podman_log_window. A one-off that finished is left out.
+    - name: Podman | the containers found that count
+      ansible.builtin.set_fact:
+        _podman_keep: >-
+          {%- set out = [] -%}
+          {%- for r in _podman_inspect.results -%}
+          {%-   set i = r.item -%}
+          {%-   if i.running or i.crashed or i.unit -%}
+          {%-     set _ = out.append(i.container) -%}
+          {%-   elif r.rc == 0 -%}
+          {%-     set c = (r.stdout | from_json)[0] -%}
+          {%-     set policy = ((c.HostConfig | default({}, true)).RestartPolicy | default({}, true)).Name | default('', true) -%}
+          {%-     set failed = (c.State.ExitCode | default(0) | int) != 0 -%}
+          {%-     if policy in ['always', 'unless-stopped'] or (policy == 'on-failure' and failed) -%}
+          {%-       set _ = out.append(i.container) -%}
+          {%-     endif -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+      when: podman_apps | length == 0
+
+    - name: Podman | the containers checked
+      ansible.builtin.set_fact:
+        _podman_checked: "{{ _podman_inspect.results | selectattr('item.container', 'in', _podman_keep) | list
+                             if podman_apps | length == 0 else _podman_inspect.results }}"
+        _podman_apps: "{{ _podman_found | selectattr('container', 'in', _podman_keep) | list
+                          if podman_apps | length == 0 else podman_apps }}"
+
     - name: Podman | recent logs of each running container
       ansible.builtin.command:
         argv: [podman, logs, --since, "{{ podman_log_window }}", --tail, "3000", "{{ item.item.container }}"]
-      loop: "{{ _podman_inspect.results }}"
+      loop: "{{ _podman_checked }}"
       loop_control:
         label: "{{ item.item.container }}"
       register: _podman_logs
@@ -115,7 +186,10 @@
       ansible.builtin.set_fact:
         _podman_findings: >-
           {%- set f = [] -%}
-          {%- for r in _podman_inspect.results -%}
+          {%- if _podman_ps.rc | default(0) != 0 and 'No such file' not in _podman_ps.msg | default('') -%}
+          {%-   set _ = f.append('podman ps --all failed (rc ' ~ _podman_ps.rc ~ '): ' ~ (_podman_ps.stderr | default('') | trim | truncate(200))) -%}
+          {%- endif -%}
+          {%- for r in _podman_checked -%}
           {%-   set c = r.item.container -%}
           {%-   if r.rc != 0 -%}
           {%-     set _ = f.append('container ' ~ c ~ ' does not exist') -%}
@@ -123,9 +197,12 @@
           {%-     set st = (r.stdout | from_json)[0].State -%}
           {%-     set rc_count = (r.stdout | from_json)[0].RestartCount | default(0) | int -%}
           {%-     set health = (st.Health | default(st.Healthcheck | default({}))).Status | default('') -%}
+          {%-     set policy = (((r.stdout | from_json)[0].HostConfig | default({}, true)).RestartPolicy | default({}, true)).Name | default('', true) -%}
           {%-     if st.Status | default('') != 'running' -%}
           {%-       set _ = f.append('container ' ~ c ~ ' is ' ~ st.Status | default('unknown') ~ ' (exit code '
-                                    ~ st.ExitCode | default('?') ~ (', OOM killed' if st.OOMKilled | default(false) else '') ~ ')') -%}
+                                    ~ st.ExitCode | default('?') ~ (', OOM killed' if st.OOMKilled | default(false) else '') ~ ')'
+                                    ~ ((' - systemd unit ' ~ r.item.unit ~ ' runs it') if r.item.unit | default('')
+                                       else (' - its restart policy is ' ~ policy) if policy in ['always', 'unless-stopped', 'on-failure'] else '')) -%}
           {%-     elif health == 'unhealthy' -%}
           {%-       set _ = f.append('container ' ~ c ~ ' is running but its healthcheck reports unhealthy') -%}
           {%-     endif -%}
@@ -161,7 +238,19 @@
 
     - name: Podman | summary
       ansible.builtin.debug:
-        msg: "{{ _podman_findings if _podman_findings else 'all containers healthy' }}"
+        msg: >-
+          {{ _podman_findings if _podman_findings
+             else ('podman is not installed' if 'No such file' in _podman_ps.msg | default('')
+             else ('no containers to check' if not _podman_apps
+             else (_podman_apps | length | string) ~ ' container(s) healthy: ' ~ (_podman_apps | map(attribute='container') | join(', ')))) }}
+
+    - name: Podman | restarts are for the containers listed in podman_apps only
+      ansible.builtin.debug:
+        msg: >-
+          podman_allow_restart is true but podman_apps is empty: the containers found are diagnosed
+          only, and any restart ACT proposes needs a person. List the containers in podman_apps to let
+          ACT restart them.
+      when: podman_allow_restart | bool and podman_apps | length == 0
 
   roles:
     - role: act_triage

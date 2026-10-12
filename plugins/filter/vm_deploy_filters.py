@@ -148,12 +148,37 @@ def vm_deploy_name_rule(name, rules):
     return {}
 
 
+def _tnorm(name):
+    """A template name as people type it: case, spaces and the spaces around a dash do not count."""
+    return re.sub(r"\s*-\s*", "-", re.sub(r"\s+", " ", str(name or "").strip().lower()))
+
+
+def _template_names(spec, sources, o):
+    """The ticket's template: a short name (vm_deploy_template_aliases) becomes the template's name, and
+    a name written in other case or spacing takes the spelling of vm_deploy_templates - vCenter finds a
+    template by its exact name."""
+    asked = spec.get("template")
+    if not asked:
+        return
+    t = _tnorm(asked)
+    aliases = dict((_tnorm(k), v) for k, v in (o.get("template_aliases") or {}).items() if v)
+    if t in aliases:
+        real = aliases[t]
+    else:
+        real = next((x for x in o.get("templates") or [] if not re.search(r"[*?\[]", str(x)) and _tnorm(x) == t), asked)
+    if real != asked:
+        spec["template"] = real
+        how = "short name" if t in aliases else "written"
+        sources["template"] = ("%s; %s %r" % (sources["template"], how, asked)) if sources.get("template") else "%s %r" % (how, asked)
+
+
 def vm_deploy_check(parsed, record=None, opts=None):
     """The request against the rules set in AAP -> {'spec': cleaned spec (cpu int, memory_gb number,
     the site's placement filled in, pxe true for a network-boot template), 'sources', 'problems': [why
     it is refused]}. opts: templates (required allow-list), clusters, datastores, folders (allow-lists,
     [] = any), max_cpu, max_memory_gb, name_regex, assignment_group, sites ({site: {cluster, datastore,
-    folder, vcenter, datacenter, domain ...}}), site_required, pxe_templates."""
+    folder, vcenter, datacenter, domain ...}}), site_required, pxe_templates, template_aliases ({short name:
+    template}), template_specs ({template pattern: customization specification})."""
     o, r = opts or {}, record or {}
     spec = dict((parsed or {}).get("spec") or {})
     sources = dict((parsed or {}).get("sources") or {})
@@ -197,6 +222,7 @@ def vm_deploy_check(parsed, record=None, opts=None):
     rx = o.get("name_regex") or r"^[A-Za-z0-9][A-Za-z0-9-]{0,62}$"
     if name and not re.match(rx, name):
         problems.append("vm_name %r is not a valid name here (letters, digits and -; vm_deploy_name_regex: %s)" % (name, rx))
+    _template_names(spec, sources, o)
     if spec.get("template"):
         if not o.get("templates"):
             problems.append("no template may be deployed yet: list the allowed ones in vm_deploy_templates")
@@ -229,10 +255,14 @@ def vm_deploy_check(parsed, record=None, opts=None):
             if o.get(cap) and n > float(o[cap]):
                 problems.append("%s %s%s is more than vm_deploy_%s (%s%s)" % (k, spec[k], unit, cap, o[cap], unit))
     if spec.get("template") and _allowed(spec["template"], o.get("pxe_templates")):
+        # a Windows one's 15-character name limit is checked by the build, which sees the guest OS
         spec["pxe"] = True
         sources["pxe"] = "vm_deploy_pxe_templates"
-        if len(name) > 15:
-            problems.append("vm_name %r has %d characters: a Windows computer name (and MECM's) has 15 at most" % (name, len(name)))
+    elif spec.get("template") and (not spec.get("customization_spec") or str(sources.get("customization_spec", "")).startswith("default")):
+        for pattern, cs in (o.get("template_specs") or {}).items():
+            if cs and _allowed(spec["template"], [pattern]):
+                spec["customization_spec"], sources["customization_spec"] = cs, "vm_deploy_template_specs"
+                break
     return {"spec": spec, "sources": sources, "problems": problems}
 
 
@@ -517,6 +547,98 @@ def vm_deploy_poll_claimed(record):
     return any(line.startswith(PICKED) for _, _, line in _own_notes(record))
 
 
+def _q(text):
+    """A YAML-safe value that reads cleanly in the job's output too: single-quoted (' doubled)."""
+    return "'%s'" % str(text).replace("'", "''")
+
+
+def vm_deploy_finder(datacenters, specs=None):
+    """The deploy settings finder (playbooks/vm_deploy_inventory.yml), pure: from what vCenter has
+    (site_vmware_deploy_inventory) -> {'paste': YAML lines for the deploy template's Variables - valid
+    as they are, CHANGE-ME where only the user knows -, 'fields': [[setting, what it is, an example from
+    this vCenter]], 'warnings': [...]}."""
+    dcs = [d for d in (datacenters or []) if isinstance(d, dict)]
+    multi = len({d.get("vcenter") for d in dcs}) > 1
+    where = {}
+    for d in dcs:
+        for t in d.get("templates") or []:
+            where.setdefault(t["name"], []).append(d)
+    warnings = []
+    for name, ds in sorted(where.items()):
+        if len(ds) > 1:
+            warnings.append("template %s is in %d places (%s): give each name rule its datacenter: (and vcenter:) so the deploy "
+                            "knows which copy to use" % (name, len(ds), ", ".join("%s / %s" % (d["vcenter"], d["name"]) for d in ds)))
+    computes = [(d, c) for d in dcs for c in d.get("clusters") or [] if c.get("hosts_ok")]
+    for d, c in computes:
+        if not [x for x in c.get("datastores") or [] if x.get("shared") and x.get("ok")]:
+            warnings.append("%s %s (%s / %s) has no shared datastore it can use: automatic placement skips it - a ticket or rule "
+                            "then names the datastore (datastore:)" % (c.get("kind", "cluster"), c["name"], d["vcenter"], d["name"]))
+    for d in dcs:
+        if d.get("clusters") and not d.get("templates"):
+            warnings.append("datacenter %s / %s has no template: a rule sending VMs there needs a copy of the template in it "
+                            "(right-click the template > Clone to Template, same name)" % (d["vcenter"], d["name"]))
+    names = sorted(where)
+    wins = sorted(n for n in names if any(t["name"] == n and t.get("windows") for d in where[n] for t in d["templates"]))
+    paste = ["# From vCenter: paste what you need into the deploy template's Variables (YAML), then change CHANGE-ME.",
+             "# Names are written exactly as vCenter has them (upper / lower case too).",
+             "vm_deploy_templates: [%s]   # the templates a ticket may ask for - delete the ones not to use" % ", ".join(_q(n) for n in names)]
+    if wins:
+        paste.append("# vm_deploy_pxe_templates: [%s]   # only the empty ones that install their OS (MECM network boot, or a CD)"
+                     % ", ".join(_q(n) for n in wins))
+    if names:
+        paste.append("vm_deploy_template_catalog:   # for GenAI: each template in plain words (vCenter's guest OS - reword it)")
+        for n in names:
+            t = [x for x in where[n][0]["templates"] if x["name"] == n][0]
+            paste.append("  %s: %s" % (_q(n), _q(t.get("guest") or n)))
+    longs = [n for n in names if " " in n or len(n) > 20]
+    if longs:
+        paste.append("# vm_deploy_template_aliases:   # short names a ticket (or the catalog) may use instead - pick them, then switch on")
+        paste += ["#   short%d: %s" % (i, _q(n)) for i, n in enumerate(longs, 1)]
+    if wins:
+        paste.append("# vm_deploy_template_specs:   # a Windows template that is NOT network-boot needs its Sysprep customization specification")
+        paste += ["#   %s: 'CHANGE-ME'" % _q(n) for n in wins]
+    if computes:
+        paste.append("vm_deploy_name_rules:   # one line per cluster: CHANGE-ME = the part of the VM names that goes there; delete the rest")
+        for d, c in computes:
+            here = [t["name"] for t in d.get("templates") or []]
+            shared = [x for x in c.get("datastores") or [] if x.get("shared") and x.get("ok")]
+            rule = "{match: '*CHANGE-ME*', cluster: %s, datacenter: %s%s}" % (_q(c["name"]), _q(d["name"]),
+                                                                              (", vcenter: %s" % _q(d["vcenter"])) if multi else "")
+            note = ("templates here: " + ", ".join(here)) if here else "NO template in this datacenter"
+            note += "; %d shared datastore(s)%s" % (len(shared), (", the most free %s (%s GB)" % (shared[0]["name"], shared[0]["free_gb"])) if shared else "")
+            if c.get("kind") != "cluster":
+                note = "a standalone host; " + note
+            paste.append("  - %s   # %s" % (rule, note))
+    for d in dcs:
+        folders = d.get("folders") or []
+        if folders:
+            more = len(folders) - 25
+            paste.append("# VM folders in %s%s (for vm_deploy_defaults: {folder: ...} or a ticket's folder: line): %s%s"
+                         % (d["name"], (" / " + d["vcenter"]) if multi else "", ", ".join(folders[:25]), (" ... and %d more" % more) if more > 0 else ""))
+    for sp in specs or []:
+        if sp.get("names"):
+            paste.append("# customization specifications%s (a ticket's customization_spec: line): %s"
+                         % ((" in " + sp["vcenter"]) if multi else "", ", ".join(sp["names"])))
+    ex_c = computes[0] if computes else None
+    ex_t = names[0] if names else "win2022-pxe"
+    ex_f = next((f for d in dcs for f in d.get("folders") or []), "Servers/New")
+    fields = [
+        ["vm_deploy_templates", "the vCenter templates a ticket may ask for (the name in VMs and Templates)", ex_t],
+        ["vm_deploy_pxe_templates", "of those, the empty ones that install their OS: network boot to MECM, or boot from a CD", ex_t],
+        ["vm_deploy_name_rules: match", "a pattern of the VM names that go to this cluster (* = any letters)", "*AB01*"],
+        ["vm_deploy_name_rules: cluster", "the cluster (or standalone host) the VM runs on (Hosts and Clusters view)",
+         ex_c[1]["name"] if ex_c else "CLUSTER-1"],
+        ["vm_deploy_name_rules: datacenter", "the datacenter that holds that cluster - the template must be in it too",
+         ex_c[0]["name"] if ex_c else "DATACENTER-1"],
+        ["vm_deploy_name_rules: vcenter", "the vCenter that holds it, as the credential or vmware_vcenters names it - only "
+         "with several vCenters", ex_c[0]["vcenter"] if ex_c else "vcenter1.yoursite.mil"],
+        ["datastore (ticket or rule)", "where the VM's disks go; empty = the shared datastore with the most room", "(automatic)"],
+        ["folder (ticket, rule or vm_deploy_defaults)", "the VM folder, a path below the datacenter (VMs and Templates view)", ex_f],
+        ["vm_deploy_template_catalog", "for GenAI only: each template in plain words, so it can pick from a request", ex_t],
+    ]
+    return {"paste": paste, "fields": fields, "warnings": warnings}
+
+
 class FilterModule(object):
     def filters(self):
         return {"vm_deploy_table": vm_deploy_table, "vm_deploy_spec": vm_deploy_spec, "vm_deploy_check": vm_deploy_check,
@@ -524,4 +646,5 @@ class FilterModule(object):
                 "vm_deploy_genai_task": vm_deploy_genai_task, "vm_deploy_genai_parse": vm_deploy_genai_parse,
                 "vm_deploy_proposal_note": vm_deploy_proposal_note, "vm_deploy_find_proposal": vm_deploy_find_proposal,
                 "vm_deploy_name_rule": vm_deploy_name_rule, "vm_deploy_poll_query": vm_deploy_poll_query,
-                "vm_deploy_poll_pick": vm_deploy_poll_pick, "vm_deploy_poll_claimed": vm_deploy_poll_claimed}
+                "vm_deploy_poll_pick": vm_deploy_poll_pick, "vm_deploy_poll_claimed": vm_deploy_poll_claimed,
+                "vm_deploy_finder": vm_deploy_finder}

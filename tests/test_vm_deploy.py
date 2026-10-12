@@ -7,6 +7,8 @@ import os
 import sys
 import unittest
 
+import yaml
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))
 sys.path.insert(0, os.path.join(HERE, "..", "roles", "vmware_vm", "library"))
@@ -121,7 +123,7 @@ class SitesAndPxe(unittest.TestCase):
         self.assertEqual((c["problems"], c["spec"]["pxe"]), ([], True))
         c = self.run_check("vm_name: winapp-0123456789\ntemplate: win2022-pxe\nsite: SiteA", templates=["win2022-*"], pxe_templates=["*-pxe"],
                            name_regex=r"^[a-z0-9-]+$")
-        self.assertIn("vm_name 'winapp-0123456789' has 17 characters: a Windows computer name (and MECM's) has 15 at most", c["problems"])
+        self.assertEqual(c["problems"], [])     # the 15-character limit is the build's (it knows a Windows guest)
         self.assertNotIn("pxe", self.run_check("vm_name: a1\ntemplate: rhel9-gold\nsite: SiteA")["spec"])
 
 
@@ -362,6 +364,102 @@ class Poll(unittest.TestCase):
         after = d.vm_deploy_ticket_text(dict(REC, work_notes="2026-10-12 12:00:00 - svc (Work notes)\n[AAP] Picked up by AAP job 5 - x\n\n"
                                              + REC["work_notes"]))
         self.assertEqual(before, after)
+
+
+
+class TemplateNames(unittest.TestCase):
+    LONG = "Windows 2022 Standard Template - Site 1"
+    OPTS = {"assignment_group": "", "templates": [LONG, "RHEL Server Template-A", "rhel9-*"], "pxe_templates": ["*PXE*"],
+            "template_aliases": {"win2022": LONG, "Win PXE": "Win2022 PXE"},
+            "template_specs": {"Windows 2022*": "Win2022-Sysprep", "*": ""}}
+
+    def check(self, desc, **opts):
+        rec = {"active": "true", "description": "vm_name: app01\n" + desc}
+        o = dict(self.OPTS)
+        o.update(opts)
+        return d.vm_deploy_check(d.vm_deploy_spec(rec, {}), rec, o)
+
+    def test_a_short_name(self):
+        c = self.check("template: WIN2022")
+        self.assertEqual(c["spec"]["template"], self.LONG)
+        self.assertIn("short name 'WIN2022'", c["sources"]["template"])
+        self.assertEqual(c["problems"], [])
+
+    def test_other_case_and_spacing_takes_the_allowed_spelling(self):
+        c = self.check("template: windows 2022 standard template-site 1")
+        self.assertEqual(c["spec"]["template"], self.LONG)
+        c = self.check("template: rhel  server template - a")
+        self.assertEqual(c["spec"]["template"], "RHEL Server Template-A")
+        c = self.check("template: RHEL9-GOLD")           # a pattern: kept as written, vCenter's lookup forgives the case
+        self.assertEqual((c["spec"]["template"], c["problems"]), ("RHEL9-GOLD", []))
+
+    def test_a_windows_template_gets_its_customization_spec(self):
+        c = self.check("template: win2022")
+        self.assertEqual((c["spec"]["customization_spec"], c["sources"]["customization_spec"]), ("Win2022-Sysprep", "vm_deploy_template_specs"))
+        c = self.check("template: win2022\ncustomization_spec: Other-Spec")
+        self.assertEqual(c["spec"]["customization_spec"], "Other-Spec")      # the ticket's own wins
+        c = self.check("template: rhel9-gold")
+        self.assertNotIn("customization_spec", c["spec"])                    # "*": "" = none
+
+    def test_a_network_boot_template_gets_none(self):
+        c = self.check("template: win pxe", templates=["Win2022 PXE"], template_specs={"*": "Win2022-Sysprep"})
+        self.assertEqual(c["spec"]["template"], "Win2022 PXE")
+        self.assertTrue(c["spec"]["pxe"])
+        self.assertNotIn("customization_spec", c["spec"])
+
+    def test_module_tnorm_matches_the_filter(self):
+        for a, b in (("Windows 2019 Standard Template- Site B", "windows 2019 standard template - SITE b"),
+                     ("A  B", "a b")):
+            self.assertEqual(m._tnorm(a), m._tnorm(b))
+            self.assertEqual(d._tnorm(a), m._tnorm(a))
+        self.assertNotEqual(m._tnorm("a-b"), m._tnorm("ab"))
+
+
+class Finder(unittest.TestCase):
+    DCS = [{"vcenter": "vc1", "name": "DC1", "folders": ["Linux", "Linux/App"],
+            "templates": [{"name": "win2022-pxe", "guest": "Microsoft Windows Server 2022 (64-bit)", "windows": True},
+                          {"name": "rhel9's", "guest": "Red Hat Enterprise Linux 9 (64-bit)", "windows": False}],
+            "clusters": [{"name": "CL 1", "kind": "cluster", "hosts_ok": 2,
+                          "datastores": [{"name": "ds1", "shared": True, "ok": True, "free_gb": 900.5}]},
+                         {"name": "esx9", "kind": "standalone host", "hosts_ok": 0, "datastores": []}]},
+           {"vcenter": "vc2", "name": "DC2", "folders": [], "templates": [{"name": "win2022-pxe", "guest": "x", "windows": True}],
+            "clusters": [{"name": "CL2", "kind": "cluster", "hosts_ok": 3, "datastores": [{"name": "local", "shared": False, "ok": True}]}]},
+           {"vcenter": "vc2", "name": "DC3", "folders": [], "templates": [],
+            "clusters": [{"name": "CL3", "kind": "cluster", "hosts_ok": 1, "datastores": [{"name": "d3", "shared": True, "ok": True, "free_gb": 1}]}]}]
+
+    def test_paste_is_valid_yaml_with_every_usable_cluster(self):
+        r = d.vm_deploy_finder(self.DCS, [{"vcenter": "vc1", "names": ["lin-dhcp"]}])
+        v = yaml.safe_load("\n".join(r["paste"]))
+        self.assertEqual(v["vm_deploy_templates"], ["rhel9's", "win2022-pxe"])
+        self.assertEqual(v["vm_deploy_template_catalog"]["win2022-pxe"], "Microsoft Windows Server 2022 (64-bit)")
+        self.assertEqual([(x["cluster"], x["datacenter"], x["vcenter"]) for x in v["vm_deploy_name_rules"]],
+                         [("CL 1", "DC1", "vc1"), ("CL2", "DC2", "vc2"), ("CL3", "DC3", "vc2")])   # esx9: no usable host
+        self.assertTrue(all(x["match"] == "*CHANGE-ME*" for x in v["vm_deploy_name_rules"]))
+        text = "\n".join(r["paste"])
+        self.assertIn("# vm_deploy_pxe_templates: ['win2022-pxe']", text)
+        self.assertIn("Linux, Linux/App", text)
+        self.assertIn("lin-dhcp", text)
+        self.assertIn("NO template in this datacenter", text)
+        spaced = [{"vcenter": "vc1", "name": "DC1", "clusters": [],
+                   "templates": [{"name": "Windows 2022 Standard Template - Site 1", "guest": "w", "windows": True}]}]
+        self.assertIn("#   short1: 'Windows 2022 Standard Template - Site 1'", "\n".join(d.vm_deploy_finder(spaced)["paste"]))
+        self.assertIn("#   'win2022-pxe': 'CHANGE-ME'", text)
+
+    def test_one_vcenter_needs_no_vcenter_key(self):
+        v = yaml.safe_load("\n".join(d.vm_deploy_finder(self.DCS[:1])["paste"]))
+        self.assertNotIn("vcenter", v["vm_deploy_name_rules"][0])
+
+    def test_warnings(self):
+        w = " | ".join(d.vm_deploy_finder(self.DCS)["warnings"])
+        self.assertIn("template win2022-pxe is in 2 places (vc1 / DC1, vc2 / DC2)", w)
+        self.assertIn("cluster CL2 (vc2 / DC2) has no shared datastore", w)
+        self.assertIn("datacenter vc2 / DC3 has no template", w)
+        self.assertNotIn("esx9", w)
+
+    def test_nothing_read(self):
+        r = d.vm_deploy_finder([])
+        self.assertEqual(yaml.safe_load("\n".join(r["paste"])), {"vm_deploy_templates": []})
+        self.assertEqual(r["warnings"], [])
 
 
 if __name__ == "__main__":

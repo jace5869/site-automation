@@ -240,9 +240,26 @@ vm_deploy_site_required: true            # with sites set up: a ticket must say 
 #     - {match: "*CD02*", cluster: CLUSTER-TWO, folder: Servers/New}
 #     - {match: "*EF03*", site: SiteB}                            # or a site from vm_deploy_sites
 vm_deploy_name_rules: []                 # [{match: "*AB01*", cluster: ...}, ...] - see above
-# Templates with no operating system that boot from the network (PXE) into a deployment (e.g. an MECM
-# task sequence): no guest customization, no waiting for an IP; the ticket gets the MAC address.
-vm_deploy_pxe_templates: []              # e.g. [win2022-pxe]
+# Templates with no operating system yet, that install it themselves: they boot from the network (PXE,
+# e.g. an MECM task sequence) or from their CD / ISO (e.g. a kickstart). No guest customization, no
+# waiting for an IP address; the MAC address and the computer name go on the ticket. e.g. [win2022-pxe]
+vm_deploy_pxe_templates: []
+# Give a VM from one of those empty templates the ticket's name and number as VM settings its installer
+# can read: guestinfo.hostname and guestinfo.ticket (a kickstart with VMware Tools in the installer:
+# vmtoolsd --cmd "info-get guestinfo.hostname"). Needs the vCenter privilege Change configuration >
+# Advanced configuration; without it the VM is still built (a note says so). false = none.
+vm_deploy_guestinfo: true
+# Short names for long template names - for the ticket's 'template:' line and GenAI's catalog (whose
+# keys may be these short names): {short name: the template's name in vCenter}, e.g.
+#   {win2022: "Windows 2022 Standard Template - Site 1", rhel9: "RHEL 9 Server Template"}
+# A ticket may also write a template's own name in other case or spacing: it is matched to the
+# spelling in vm_deploy_templates.
+vm_deploy_template_aliases: {}
+# The customization specification (vCenter > Policies and Profiles) for each template, when the
+# ticket, its site and the name rules name none: {template name or pattern: spec}. A Windows template
+# that is not network-boot needs one (Sysprep: administrator password, domain or workgroup), e.g.
+#   {"Windows 2022*": Win2022-Sysprep-Domain}. Linux templates need none (the job's own DHCP one).
+vm_deploy_template_specs: {}
 vm_deploy_max_disks: 4                   # disks a ticket may ask for (disks_gb: 100, 200 = disk 1 grown to 100 GB, one 200 GB disk added)
 vm_deploy_max_disk_gb: 2048              # the biggest disk a ticket may ask for, in GB
 vm_deploy_max_total_disk_gb: 4096        # all its disks together, in GB

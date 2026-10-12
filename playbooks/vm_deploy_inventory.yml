@@ -1,0 +1,19 @@
+---
+# VM DEPLOY SETTINGS FINDER (vCenter). Read-only: for every vCenter (the credential's and
+# vmware_vcenters) and datacenter, the clusters and standalone hosts (hosts, memory use, datastores,
+# networks), the templates (where they are, guest OS, CPU, memory, disks, networks), the VM folders and
+# the customization specifications - with what each deploy setting means, and the lines to paste
+# into the "VM - deploy from ServiceNow ticket" template's Variables (vm_deploy_templates,
+# vm_deploy_name_rules with each cluster's datacenter and vCenter, the template catalog ...).
+# Emailed when report_email_to is set. Changes nothing; stays green.
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_deploy_inventory.yml
+- name: VM deploy settings finder
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM deploy settings finder
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: deploy_inventory.yml

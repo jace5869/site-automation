@@ -576,18 +576,26 @@ from pyVmomi import vim
 si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
 c = si.RetrieveContent()
 src = [v for v in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if v.name == "DC0_C0_RP0_VM1"][0]
-t = src.CloneVM_Task(folder=src.parent, name="win2022-pxe", spec=vim.vm.CloneSpec(location=vim.vm.RelocateSpec(), powerOn=False, template=True))
+t = src.CloneVM_Task(folder=src.parent, name="win2022-pxe", spec=vim.vm.CloneSpec(location=vim.vm.RelocateSpec(), powerOn=False, template=False))
 while t.info.state not in ("success", "error"):
     time.sleep(0.1)
 assert t.info.state == "success", t.info.error
+# a Windows guest OS, as the real template has: the 15-character name limit is for Windows only
+v = t.info.result
+t = v.ReconfigVM_Task(spec=vim.vm.ConfigSpec(guestId="windows2019srv_64Guest"))
+while t.info.state not in ("success", "error"):
+    time.sleep(0.1)
+assert t.info.state == "success", t.info.error
+v.MarkAsTemplate()
+assert v.config.template and v.config.guestId.startswith("win"), (v.config.template, v.config.guestId)
 EOPY
 sites='{"vm_deploy_templates": ["rhel9-*", "win2022-*"], "vm_deploy_pxe_templates": ["*-pxe"], "vm_deploy_wait_ip": 3,
         "vm_deploy_sites": {"SiteA": {"cluster": "DC0_C0"}, "SiteB": {"cluster": "DC0_H0"}}}'
 inc3="$(newticket $'vm_name: winapp01\ntemplate: win2022-pxe\nsite: siteb')"
 run "deploy from a ticket: a network-boot (PXE / MECM) Windows template, its site picks the cluster; the ticket gets the MAC" ok \
     vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc3" -e "$sites" \
-    -- "cluster: DC0_H0   (from site SiteB)" "winapp01 deployed - PXE boot, MAC 00:" "none: boots from the network (PXE)"
-VMWARE_PORT=$port "$py" - <<'EOPY' && echo "ok   -   ...winapp01 is on SiteB's host DC0_H0, powered on, not customized" || { echo "FAIL -   ...the PXE VM"; fails=$((fails + 1)); }
+    -- "cluster: DC0_H0   (from site SiteB)" "winapp01 deployed - installs its OS, MAC 00:" "none: the template installs its operating system"
+VMWARE_PORT=$port "$py" - <<'EOPY' && echo "ok   -   ...winapp01 is on SiteB's host DC0_H0, powered on, not customized, its name in guestinfo.hostname" || { echo "FAIL -   ...the PXE VM"; fails=$((fails + 1)); }
 import os, sys
 from pyVim.connect import SmartConnect
 from pyVmomi import vim
@@ -595,12 +603,35 @@ si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="u
 c = si.RetrieveContent()
 v = [x for x in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if x.name == "winapp01"][0]
 evs = [type(e).__name__ for e in c.eventManager.QueryEvents(vim.event.EventFilterSpec(entity=vim.event.EventFilterSpec.ByEntity(entity=v, recursion="self")))]
-sys.exit(0 if v.resourcePool.parent.name == "DC0_H0" and v.runtime.host.name == "DC0_H0" and str(v.runtime.powerState) == "poweredOn" and not any("Customization" in e for e in evs) else 1)
+gi = {o.key: o.value for o in (v.config.extraConfig or [])}
+sys.exit(0 if v.resourcePool.parent.name == "DC0_H0" and v.runtime.host.name == "DC0_H0" and str(v.runtime.powerState) == "poweredOn"
+         and not any("Customization" in e for e in evs) and gi.get("guestinfo.hostname") == "winapp01" else 1)
 EOPY
 tail -1 "$work/sn.jsonl" | grep -q 'MAC address: 00:' && echo "ok   -   ...the ticket has the MAC address for MECM" || { echo "FAIL -   ...MAC note"; fails=$((fails + 1)); }
 inc4="$(newticket $'vm_name: winapp02\ntemplate: win2022-pxe')"
 run "deploy from a ticket: sites set up, the ticket names none - refused" fail vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc4" -e "$sites" \
     -- "the ticket does not say which site"
+# the 15-character limit is for Windows only: a Linux template that boots from its CD takes a longer name
+inc4b="$(newticket $'vm_name: winapp-0123456789\ntemplate: win2022-pxe\nsite: siteb')"
+run "a Windows network-boot VM with a 17-character name: refused by the dry run (the propose step)" fail vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$inc4b" -e "$sites" -- "Windows computer names (and MECM's) have 15 characters at most"
+inc4c="$(newticket $'vm_name: lnxcdboot-0123456\ntemplate: rhel9-gold\nsite: siteb')"
+run "a Linux template that boots from its CD, 17-character name: the dry run passes" ok vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$inc4c" -e "$sites" -e '{"vm_deploy_pxe_templates": ["*-pxe", "rhel9-*"]}' -- "lnxcdboot-0123456 ready to build in"
+run "...and the build: no customization, its name in guestinfo.hostname" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$inc4c" -e "$sites" -e '{"vm_deploy_pxe_templates": ["*-pxe", "rhel9-*"]}' \
+    -- "lnxcdboot-0123456 deployed - installs its OS, MAC 00:" "none: the template installs its operating system"
+VMWARE_PORT=$port "$py" - <<'EOPY' && echo "ok   -   ...lnxcdboot-0123456 has guestinfo.hostname and guestinfo.ticket" || { echo "FAIL -   ...the CD-boot VM's guestinfo"; fails=$((fails + 1)); }
+import os, sys
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+v = [x for x in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if x.name == "lnxcdboot-0123456"][0]
+gi = {o.key: o.value for o in (v.config.extraConfig or [])}
+sys.exit(0 if gi.get("guestinfo.hostname") == "lnxcdboot-0123456" and gi.get("guestinfo.ticket", "").startswith("INC") else 1)
+EOPY
+tail -1 "$work/sn.jsonl" | grep -q 'also in the VM setting guestinfo.hostname' && echo "ok   -   ...the ticket says the name is in guestinfo" || { echo "FAIL -   ...guestinfo note"; fails=$((fails + 1)); }
 # ---- GenAI reads a request written in plain words (vm_deploy_genai; ACT is the fake, scripted) ---------------
 export GENAI_KEY=test-key FAKE_ACT_OUT="$work/act" FAKE_ACT_CONFIG="$work/act/act.json"
 genai='{"vm_deploy_genai": true, "vm_deploy_template_catalog": {"win2022-pxe": "Windows Server 2022 (MECM)", "rhel9-gold": "RHEL 9"},
@@ -628,7 +659,7 @@ rm -f "$work/act/fake-act-stdin.txt"
 act_says '{"vm_name": {"value": "evil01", "evidence": "x"}, "questions": []}'          # must not be asked again
 run "the next run builds the proposal - GenAI not asked again - placed by the rules among the site's clusters" ok \
     vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc5" -e "$genai" -e "$actvars" \
-    -- "winapp05 deployed - PXE boot" "cluster chosen: DC0_" "datastore chosen: LocalDS_0" "vm_name: winapp05   (from GenAI proposal"
+    -- "winapp05 deployed - installs its OS" "cluster chosen: DC0_" "datastore chosen: LocalDS_0" "vm_name: winapp05   (from GenAI proposal"
 [ ! -e "$work/act/fake-act-stdin.txt" ] && echo "ok   -   ...ACT was not called by the build run" || { echo "FAIL -   ...the build asked GenAI"; fails=$((fails + 1)); }
 VMWARE_PORT=$port "$py" - <<'EOPY' && echo "ok   -   ...winapp05: 2 vCPU, 2048 MB, disks 120 + 200 GB (thin), on one of the site's clusters" || { echo "FAIL -   ...the GenAI-requested VM"; fails=$((fails + 1)); }
 import os, sys
@@ -708,6 +739,24 @@ c = si.RetrieveContent()
 vms = {x.name: x for x in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view}
 sys.exit(0 if vms["xyab01web"].resourcePool.parent.name == "DC0_H0" and vms["XYCD02WEB"].resourcePool.parent.name == "DC0_C0" else 1)
 EOPY
+# template names as people write them: another case (vCenter's exact name is found), a short name
+inc14="$(newticket $'vm_name: casetest01\ntemplate: RHEL9-GOLD')"
+run "a template written in another case: found by vCenter's exact name (dry run)" ok vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$inc14" -e "$rules" -- "casetest01 ready to build in" "rhel9-gold"
+inc15="$(newticket $'vm_name: aliastest01\ntemplate: Gold')"
+run "a template by its short name (vm_deploy_template_aliases, dry run)" ok vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$inc15" -e "$rules" -e '{"vm_deploy_template_aliases": {"gold": "rhel9-gold"}}' \
+    -- "template: rhel9-gold" "short name 'Gold'" "aliastest01 ready to build in"
+# ---- the deploy settings finder (read-only), over both vCenters: the second one has no template ----
+run "deploy settings finder: clusters, templates, folders and the lines to paste, both vCenters" ok vm_deploy_inventory.yml \
+    -e "{\"vmware_vcenters\": [\"$vc2\"]}" \
+    -- "DATACENTER DC0   (vCenter 127.0.0.1)" "  CLUSTER DC0_C0: " "  STANDALONE HOST DC0_H0: " "  TEMPLATE rhel9-gold: " \
+       "vm_deploy_templates: ['rhel9-gold'" "{match: '*CHANGE-ME*', cluster: 'DC0_C0', datacenter: 'DC0', vcenter: '127.0.0.1'}" \
+       "LOOK AT: datacenter $vc2 / DC0 has no template" '"vm_deploy_inventory"'
+before_vms="$(VMWARE_PORT=$port "$py" "$here/vcsim.py" state | "$py" -c "import json,sys; print(len(json.load(sys.stdin)))")"
+run "deploy settings finder as a dry run (Check): the same, nothing changed" ok vm_deploy_inventory.yml --check -- "  TEMPLATE win2022-pxe: "
+after_vms="$(VMWARE_PORT=$port "$py" "$here/vcsim.py" state | "$py" -c "import json,sys; print(len(json.load(sys.stdin)))")"
+[ "$before_vms" = "$after_vms" ] && echo "ok   -   ...nothing created" || { echo "FAIL -   ...the finder changed vCenter"; fails=$((fails + 1)); }
 unset GENAI_KEY FAKE_ACT_OUT FAKE_ACT_CONFIG
 unset SN_HOST SN_USERNAME SN_PASSWORD
 kill "$sn_pid" 2>/dev/null

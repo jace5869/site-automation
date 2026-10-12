@@ -41,7 +41,8 @@ options:
   domain: {description: The DNS domain for Linux customization., type: str, default: localdomain}
   customization_spec: {description: A customization specification in vCenter (needed for Windows templates)., type: str, default: ''}
   customize: {description: Apply guest customization at all., type: bool, default: true}
-  boot_from_network: {description: The template has no operating system and boots from the network (PXE, e.g. an MECM task sequence) - no guest customization, no waiting for an IP address; the network adapters' MAC addresses are returned (to import the computer in MECM)., type: bool, default: false}
+  boot_from_network: {description: The template has no operating system yet and installs it itself - it boots from the network (PXE, e.g. an MECM task sequence) or from its CD / ISO (e.g. a kickstart) - no guest customization, no waiting for an IP address; the network adapters' MAC addresses are returned (to import the computer in MECM)., type: bool, default: false}
+  guestinfo: {description: "Values for the guest to read, set as the VM's guestinfo.<key> settings (e.g. {hostname: app01}: a kickstart or a task sequence reads it with VMware Tools - vmtoolsd --cmd 'info-get guestinfo.hostname').", type: dict, default: {}}
   power_on: {description: Power the VM on., type: bool, default: true}
   wait_customization: {description: Seconds to wait for the customization result., type: int, default: 900}
   wait_ip: {description: Seconds to wait for an IPv4 address (0 = do not wait)., type: int, default: 600}
@@ -65,6 +66,7 @@ notes:
 '''
 
 import fnmatch
+import re
 import time
 
 from ansible.module_utils.basic import AnsibleModule
@@ -96,6 +98,11 @@ def pick_ipv4(addresses):
         if a.count(".") == 3 and not a.startswith(("169.254.", "127.")):
             return a
     return ""
+
+
+def _tnorm(name):
+    """A template name as people type it: case, spaces and the spaces around a dash do not count."""
+    return re.sub(r"\s*-\s*", "-", re.sub(r"\s+", " ", str(name or "").strip().lower()))
 
 
 def _match(name, patterns):
@@ -227,7 +234,7 @@ def main():
                            annotation=dict(type="str", default=""), hostname=dict(type="str", default=""),
                            domain=dict(type="str", default="localdomain"), customization_spec=dict(type="str", default=""),
                            customize=dict(type="bool", default=True), power_on=dict(type="bool", default=True),
-                           boot_from_network=dict(type="bool", default=False),
+                           boot_from_network=dict(type="bool", default=False), guestinfo=dict(type="dict", default={}),
                            cluster_candidates=dict(type="list", elements="str", default=[]),
                            datastore_candidates=dict(type="list", elements="str", default=[]),
                            mem_target_pct=dict(type="float", default=80), failover_hosts=dict(type="int", default=1),
@@ -252,7 +259,7 @@ def main():
     sessions = {}
     try:
         # 1. the name is free in every vCenter; the template is in exactly one (or the one named)
-        templates = []
+        templates, loose = [], []
         for n in names:
             try:
                 si = connect(n, p["validate_certs"])
@@ -268,9 +275,13 @@ def main():
                 if vname == p["name"]:
                     module.fail_json(msg="a VM named %s already exists in vCenter %s (%s): nothing was built"
                                          % (p["name"], n, "a template" if is_t else _folder_path(v.parent)), vm=vm, notes=notes)
-                if vname == p["template"] and is_t and (not want_vc or n.lower() == want_vc.lower()):
+                if is_t and _tnorm(vname) == _tnorm(p["template"]) and (not want_vc or n.lower() == want_vc.lower()):
                     if not p["datacenter"] or _datacenter(v).name == p["datacenter"]:
-                        templates.append((n, v))
+                        (templates if vname == p["template"] else loose).append((n, v))
+        # the exact name first; else the one written in other case or spacing (when only one is)
+        if not templates and len({t.name for _, t in loose}) == 1:
+            templates = loose
+            notes.append("template %s is written %r in vCenter" % (p["template"], loose[0][1].name))
         if not templates:
             module.fail_json(msg="no template named %s%s in %s" % (p["template"], (" in datacenter %s" % p["datacenter"]) if p["datacenter"] else "",
                                                                     want_vc or ", ".join(names)), vm=vm, notes=notes)
@@ -278,6 +289,7 @@ def main():
             module.fail_json(msg="template %s is in %s: name the vCenter (vcenter: ...) or the datacenter in the ticket"
                                  % (p["template"], ", ".join("%s / %s" % (n, _datacenter(t).name) for n, t in templates)), vm=vm, notes=notes)
         vc, tpl = templates[0]
+        vm["template"] = tpl.name
         content = sessions[vc].RetrieveContent()
         dc = _datacenter(tpl)
         win = is_windows(tpl.config.guestId)
@@ -398,7 +410,7 @@ def main():
             notes.append("the template has no network adapter")
         cspec = None
         pxe = p["boot_from_network"]
-        if pxe and len(hostname) > 15:
+        if pxe and win and len(hostname) > 15:
             module.fail_json(msg="Windows computer names (and MECM's) have 15 characters at most: %s is %d" % (hostname, len(hostname)),
                              vm=vm, notes=notes)
         if p["customize"] and not pxe:
@@ -426,7 +438,7 @@ def main():
                     globalIPSettings=vim.vm.customization.GlobalIPSettings(),
                     nicSettingMap=[vim.vm.customization.AdapterMapping(
                         adapter=vim.vm.customization.IPSettings(ip=vim.vm.customization.DhcpIpGenerator())) for _ in nics])
-        vm["customization"] = "planned" if cspec is not None else ("none: boots from the network (PXE)" if pxe else "none")
+        vm["customization"] = "planned" if cspec is not None else ("none: the template installs its operating system (network boot or CD)" if pxe else "none")
         if module.check_mode:
             module.exit_json(changed=True, vm=vm, notes=notes)
 
@@ -462,6 +474,17 @@ def main():
                     len(adds), ", ".join(str(kb // 1048576) for _, _, kb in adds)))
         if p["cpu"] or p["memory_mb"] or p["annotation"] or changes:
             _wait(new.ReconfigVM_Task(spec=cfg), 600, "setting CPU, memory and disks")
+        # guestinfo on its own: a role without Advanced configuration loses only this, not the VM's size
+        info = dict((str(k), str(v)) for k, v in (p["guestinfo"] or {}).items() if v not in (None, ""))
+        if info:
+            try:
+                _wait(new.ReconfigVM_Task(spec=vim.vm.ConfigSpec(extraConfig=[
+                    vim.option.OptionValue(key="guestinfo." + k, value=v) for k, v in sorted(info.items())])), 600, "setting guestinfo")
+                vm["guestinfo"] = info
+            except (vmodl.MethodFault, RuntimeError) as e:
+                info = {}
+                notes.append("guestinfo (the name for the installer) was not set: %s - grant the vCenter role Virtual machine > "
+                             "Change configuration > Advanced configuration; the name is on the ticket" % fault_text(e))
         if cspec is not None:
             _wait(new.CustomizeVM_Task(spec=cspec), 600, "the guest customization")
             vm["customization"] = "applied (not yet run)"
@@ -474,8 +497,9 @@ def main():
                       if isinstance(d, vim.vm.device.VirtualEthernetCard)]
         vm["mac"] = ", ".join(n["mac"] for n in vm["nics"] if n["mac"])
         if pxe:
-            notes.append("booting from the network (PXE): the operating system comes from the deployment server (e.g. an MECM "
-                         "task sequence) - MAC %s, computer name %s" % (vm["mac"] or "?", hostname))
+            notes.append("no operating system yet: it installs from the network (e.g. an MECM task sequence) or its CD (e.g. a "
+                         "kickstart) - MAC %s, computer name %s%s" % (vm["mac"] or "?", hostname,
+                                                               " (in the VM's guestinfo.hostname)" if info.get("hostname") else ""))
 
         # 5. the result: vCenter's customization events, then an IPv4 address from VMware Tools
         if cspec is not None and p["power_on"]:

@@ -1,9 +1,13 @@
+{% if podman_apps %}
 This host runs a podman application stack{{ ' (rootless, owned by ' ~ podman_user ~ ')' if podman_user else '' }}. The containers and their dependencies:
-{% for app in podman_apps %}
+{% else %}
+This host runs podman containers{{ ' (rootless, owned by ' ~ podman_user ~ ')' if podman_user else '' }}, found with `podman ps --all`: the running ones and the stopped ones that should run. Their dependencies are not known: work them out from container names, networks (`podman inspect` NetworkSettings), environment and logs before deciding what failed first.
+{% endif %}
+{% for app in _podman_apps %}
 - {{ app.name }}: container `{{ app.container }}`{{ (', systemd unit `' ~ app.unit ~ '`') if app.unit else ', no systemd unit' }}{{ (', depends on ' ~ (app.depends_on | join(', '))) if app.depends_on else '' }}
 {% endfor %}
 
-How to investigate (all read-only): `podman ps -a`, `podman inspect NAME` (State.Status, ExitCode, OOMKilled, Health, RestartCount), `podman logs --since 1h --tail 300 NAME`, `podman healthcheck run NAME`, `df -h`, `free -m`{{ ', and `journalctl -u UNIT -n 200 --no-pager` for containers with a unit' if podman_apps | selectattr('unit') | list else '' }}.
+How to investigate (all read-only): `podman ps -a`, `podman inspect NAME` (State.Status, ExitCode, OOMKilled, Health, RestartCount), `podman logs --since 1h --tail 300 NAME`, `podman healthcheck run NAME`, `df -h`, `free -m`{{ ', and `journalctl ' ~ ('--user ' if podman_user else '') ~ '-u UNIT -n 200 --no-pager` for containers with a unit' if _podman_apps | selectattr('unit') | list else '' }}.
 
 Rules:
 - Check dependencies first. If a dependency (for example the database or the identity provider) is down, the failures of the containers that depend on it are symptoms: fix the dependency, not the symptom.

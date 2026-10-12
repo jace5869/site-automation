@@ -35,6 +35,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VM - datastore report | `playbooks/vm_datastore_report.yml` | [vm_datastore_report.yml](vm_datastore_report.yml) |
 | VM - delete snapshot | `playbooks/vm_snapshot_delete.yml` | [vm_snapshot_delete.yml](vm_snapshot_delete.yml) |
 | VM - deploy from ServiceNow ticket | `playbooks/vm_deploy_from_ticket.yml` | [vm_deploy_from_ticket.yml](vm_deploy_from_ticket.yml) |
+| VM - deploy settings finder | `playbooks/vm_deploy_inventory.yml` | [vm_deploy_inventory.yml](vm_deploy_inventory.yml) |
 | VM - notes | `playbooks/vm_notes.yml` | [vm_notes.yml](vm_notes.yml) |
 | VM - pick up deploy tickets | `playbooks/vm_deploy_poll.yml` | [vm_deploy_poll.yml](vm_deploy_poll.yml) |
 | VM - restart | `playbooks/vm_reboot.yml` | [vm_reboot.yml](vm_reboot.yml) |

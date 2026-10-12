@@ -23,7 +23,7 @@ Playbooks:
 | playbook | does |
 |---|---|
 | `playbooks/act_triage.yml` | generic checks + ACT triage. Diagnose-only unless you pass `act_triage_allow`. |
-| `playbooks/podman_app_health.yml` | podman application stack (example: STIG Manager, nginx, MySQL, Keycloak): container state, health, restarts, log errors, probe URLs/commands; ACT diagnoses in dependency order and, with `podman_allow_restart: true`, restarts exactly those containers/units. Rootful or rootless (`podman_user`). |
+| `playbooks/podman_app_health.yml` | podman containers: by default the ones each host runs, found with `podman ps --all` (running, and stopped ones a unit or restart policy should run, or that crashed); or an application stack you list in `podman_apps` (e.g. STIG Manager, nginx, MySQL, Keycloak) with probe URLs/commands and dependencies. Container state, health, restarts, log errors; ACT diagnoses in dependency order and, with `podman_allow_restart: true`, restarts exactly the listed containers/units (found ones are diagnosed only). Rootful or rootless (`podman_user`). |
 | `playbooks/fapolicyd_denials.yml` | what fapolicyd blocked and the minimal safe allow (trust entry or narrow rule). Evidence mode: the playbook collects audit denials, rules, and per-file trust/package/label facts (paths only ever passed as argv); ACT analyzes and runs nothing. |
 | `playbooks/act_apply_approved.yml` | second half of an approval workflow: applies exactly the commands ACT proposed (from the previous job's `act_triage` stats), then verifies. |
 

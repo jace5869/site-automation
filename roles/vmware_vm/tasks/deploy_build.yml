@@ -16,6 +16,7 @@
            'name_regex': vm_deploy_name_regex, 'assignment_group': vm_deploy_assignment_group,
            'sites': vm_deploy_sites, 'site_required': vm_deploy_site_required | bool, 'pxe_templates': vm_deploy_pxe_templates,
            'name_rules': vm_deploy_name_rules,
+           'template_aliases': vm_deploy_template_aliases, 'template_specs': vm_deploy_template_specs,
            'max_disks': vm_deploy_max_disks | int, 'max_disk_gb': vm_deploy_max_disk_gb | float,
            'max_total_disk_gb': vm_deploy_max_total_disk_gb | float}) }}
 
@@ -106,6 +107,7 @@
     datastore_max_used_pct: "{{ vm_deploy_datastore_max_used_pct | float }}"
     customize: "{{ vm_deploy_customize | bool }}"
     boot_from_network: "{{ _vd.spec.pxe | default(false) | bool }}"
+    guestinfo: "{{ {'hostname': _vd.spec.vm_name, 'ticket': _vd_rec.number} if vm_deploy_guestinfo | bool and _vd.spec.pxe | default(false) | bool else {} }}"
     power_on: "{{ vm_deploy_power_on | bool }}"
     wait_customization: "{{ vm_deploy_wait_customization | int }}"
     wait_ip: "{{ vm_deploy_wait_ip | int }}"
@@ -134,8 +136,8 @@
                        + _vd_vm.notes | default([]) -%}
       {%- elif not _vd_vm.failed | default(false) -%}
       {%-   set lines = ['[AAP] VM ' ~ v.name ~ ' deployed (' ~ _vd_job ~ ').',
-                         ('MAC address: ' ~ v.mac | default('?') ~ ' - it boots from the network (PXE) to its task sequence; computer name '
-                          ~ v.hostname | default(v.name)) if _vd.spec.pxe | default(false) else
+                         ('MAC address: ' ~ v.mac | default('?') ~ ' - no operating system yet: it installs it from the network (MECM) or its CD; computer name '
+                          ~ v.hostname | default(v.name) ~ (' (also in the VM setting guestinfo.hostname)' if v.guestinfo is defined else '')) if _vd.spec.pxe | default(false) else
                          'IP address: ' ~ (v.ip | default('', true) or 'none yet (DHCP: see the notes)'),
                          'Customization: ' ~ v.customization | default('?'),
                          'vCenter ' ~ v.vcenter | default('') ~ ', datacenter ' ~ v.datacenter | default('') ~ ', cluster ' ~ v.cluster | default('')
@@ -164,7 +166,7 @@
       {{ 'VM deploy ' ~ _vd_rec.number ~ ': ' ~ _vd.spec.vm_name ~ ' '
          ~ (('ready to build in ' ~ _vd_v.cluster | default('?') ~ ' - ' ~ _vd_how) if _vd_dry | bool and _vd_ok | bool
             else ('NOT deployable: ' ~ _vd_vm.msg | default('?') | truncate(120)) if _vd_dry | bool
-            else (('deployed' ~ ((' - PXE boot, MAC ' ~ _vd_v.mac | default('?')) if _vd.spec.pxe | default(false)
+            else (('deployed' ~ ((' - installs its OS, MAC ' ~ _vd_v.mac | default('?')) if _vd.spec.pxe | default(false)
                                  else ((' - ' ~ _vd_v.ip) if _vd_v.ip | default('') else ', no IP yet'))) if _vd_ok | bool else 'NOT deployed')) }}
     _vm_report_lines: >-
       {{ [_vm_report_subject | trim]

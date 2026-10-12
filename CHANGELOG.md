@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.13.1 — 2026-10-12
+
+- **VM - deploy settings finder** (`playbooks/vm_deploy_inventory.yml`, read-only): for every vCenter
+  and datacenter, the clusters and standalone hosts (hosts usable, memory used, shared datastores and
+  their free space, networks), the templates (where, guest OS, CPU, memory, disks, network), the VM
+  folders and the customization specifications - by the names the deploy's settings use - with what
+  each setting means, what to look at first (a template in several datacenters, a datacenter with no
+  template, a cluster with no shared datastore), and the lines to paste into the deploy template's
+  Variables: `vm_deploy_templates`, the template catalog, one `vm_deploy_name_rules` line per cluster
+  with its datacenter (and vCenter). Printed, emailed, and in the job's artifacts. docs/VMWARE.md,
+  "Find the names first".
+- **Template names as people write them.** `vm_deploy_template_aliases` gives long template names a
+  short one (`template: win2022` in a ticket, or as a key of GenAI's catalog). A template's own name in
+  other case or spacing (`windows 2022 standard template-site 1`) is matched to its exact name -
+  before, it passed the allow-list but vCenter did not find it.
+- **`vm_deploy_template_specs`**: the customization specification for each template (names or
+  patterns), so a Windows template that is not network-boot gets its Sysprep specification without a
+  `customization_spec:` line in every ticket. The finder suggests both for your templates.
+- **Empty templates that boot from a CD** (a kickstart ISO) work like the network-boot ones: list
+  them in `vm_deploy_pxe_templates` - no customization, no waiting for an IP, MAC and name on the
+  ticket. The 15-character name limit now applies only to Windows guests.
+- **`vm_deploy_guestinfo`** (default on): a VM from an empty template gets the ticket's VM name and
+  number as the VM settings `guestinfo.hostname` and `guestinfo.ticket`, for a kickstart to read
+  (`vmtoolsd --cmd "info-get guestinfo.hostname"`; docs/VMWARE.md has a `%pre` example). It needs the
+  vCenter privilege *Change configuration > Advanced configuration*; without it the VM is still built
+  and sized, and a note on the ticket says the name was not set. (Windows PE cannot read it: a Windows
+  VM's name comes from MECM, as before.)
+- **ACT 0.6.24** (vendored for Linux and Windows). ACT's own example playbook
+  `vendor/act/ansible/playbooks/podman_app_health.yml` now finds the containers on each host by
+  itself (running ones, and stopped ones a unit or restart policy should run, or that crashed)
+  instead of checking only the STIG Manager list; it diagnoses those only. The STIG Manager list is
+  now an example to set in `podman_apps`. The site-automation jobs do not use that playbook: the
+  Health check's `containers` check is the one to schedule for every container.
+
 ## 0.13.0 — 2026-10-12
 
 - **A variables file for each job template** (`aap/extra_vars/<playbook>.yml`, index in

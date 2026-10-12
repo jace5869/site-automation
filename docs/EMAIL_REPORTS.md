@@ -25,6 +25,7 @@ mail clients that do not show HTML. One email per job run, whatever the number o
 | VM capacity planning | `vm_capacity_report.yml` | overall and per cluster: CPU, memory with a host down, vCPUs per core, VMs that fit, hosts recommended, datastores with runways; with GenAI, its estimate next to the math |
 | ESXi security settings | `esxi_security.yml` | the hosts it changed (what), the ones that failed (why), every host's settings before the run. By default only when a host was changed or failed |
 | VM deploy from a ServiceNow ticket | `vm_deploy_from_ticket.yml` | the VM (IP or MAC, where it went), the request with where each value came from; in the workflow's first step, where it would go - for the approver |
+| VM deploy settings finder | `vm_deploy_inventory.yml` | the clusters, templates, datastores and folders by the names the deploy uses, what to look at first, and the lines to paste into the deploy template's Variables |
 | VM request pickup | `vm_deploy_poll.yml` | the tickets picked up and their workflow jobs, the ones not started (why), the ones skipped. Only when it started something or something failed |
 | VM restart, shut down, snapshot, delete snapshot, notes, change VLAN | `vm_*.yml` | what was done to which VM |
 

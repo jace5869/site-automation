@@ -19,6 +19,7 @@ System Center Orchestrator):
 | VM - alarms ACT analysis | `playbooks/vm_alarm_act_analysis.yml` | read-only: the same problems, with ACT's likely cause, fix and confidence for each. ACT runs on the AAP side, never on the hosts |
 | VM - capacity planning | `playbooks/vm_capacity_report.yml` | read-only: overall and per cluster - CPU, memory (also with a host down), vCPUs per core, VMs that still fit, hosts recommended, datastores - with growth from vCenter's own history and the days until each limit; optionally GenAI's estimate next to it |
 | VM - deploy from ServiceNow ticket | `playbooks/vm_deploy_from_ticket.yml` | builds one VM from a template for a ServiceNow ticket - checked against your rules, placed by site, name rule or free room, the result on the ticket. Best run in its workflow (propose, approval, build) |
+| VM - deploy settings finder | `playbooks/vm_deploy_inventory.yml` | read-only: every vCenter's datacenters, clusters, templates, datastores, folders and networks, by the names the deploy's settings use - with the lines to paste into the deploy template's Variables |
 | VM - pick up deploy tickets | `playbooks/vm_deploy_poll.yml` | on a schedule: finds new VM request tickets in ServiceNow and starts the deploy workflow for each. Builds nothing itself; the approval stays |
 | ESXi - security settings | `playbooks/esxi_security.yml` | on every ESXi host: SSH off, the shell timeouts at 600 s, lockdown mode normal. Changes only what differs, so it can run every night and puts back whatever drifted |
 
@@ -748,15 +749,38 @@ the job proposes and stops; launching it again builds the posted proposal.
 
 The ticket text goes to the model (GenAI.mil): only use it for tickets whose text may go there.
 
-### Windows from a network-boot (PXE / MECM) template
+### Empty templates: network boot to MECM, or boot from a CD (kickstart)
 
-A template with **no operating system** that boots from the network into an MECM (SCCM) task
-sequence: list it in `vm_deploy_pxe_templates` (e.g. `[win2022-pxe]`). For those, the job:
+A template with **no operating system** that installs it itself - it boots from the network into an
+MECM (SCCM) task sequence, or from its CD / ISO into a kickstart: list it in `vm_deploy_pxe_templates`
+(e.g. `["Windows 20*", "Rhel*"]`). For those, the job:
 
+- names the VM in vCenter as the ticket says (`vm_name`), like every deploy;
 - does **no guest customization** (there is no OS yet) and does not wait for an IP address;
-- refuses a `vm_name` longer than 15 characters (the Windows / MECM computer name limit);
-- powers the VM on - it boots from the network to MECM - and writes on the ticket its **MAC address**
-  and the computer name to use.
+- refuses, for a Windows guest, a `vm_name` longer than 15 characters (the Windows / MECM computer
+  name limit);
+- gives the VM the ticket's name and number as VM settings the installer can read -
+  `guestinfo.hostname` and `guestinfo.ticket` (`vm_deploy_guestinfo`; vCenter privilege *Change
+  configuration > Advanced configuration* - without it the VM is still built and a note on the ticket
+  says the name was not set there);
+- powers the VM on - it boots to MECM or its CD - and writes on the ticket its **MAC address** and the
+  computer name to use.
+
+**The name inside the OS** comes from the installer, not from vCenter:
+
+- **A kickstart (Linux, from the CD):** read the name in `%pre` and use it, for example
+  ```
+  %pre
+  name=$(vmtoolsd --cmd "info-get guestinfo.hostname" 2>/dev/null)
+  [ -n "$name" ] && echo "network --hostname=$name" > /tmp/hostname.ks
+  %end
+  %include /tmp/hostname.ks
+  ```
+  This needs VMware Tools in the installer (`vmtoolsd`, from open-vm-tools); check your ISO (boot it,
+  press Ctrl+Alt+F2 and type `which vmtoolsd`). Without it: a DHCP reservation for the MAC address on
+  the ticket gives the name, or whoever finishes the install sets the name from the ticket.
+- **Windows (MECM, from the network):** the name comes from MECM, not from `guestinfo` - Windows PE
+  has no VMware Tools to read it. Use one of the two MECM ways below.
 
 On the MECM side, one of the two usual ways:
 
@@ -770,10 +794,40 @@ Check that the template boots from the network first (VM Options > Boot Options:
 first or a boot delay), that its adapter is on the staging VLAN, and that the VLAN forwards PXE to your
 MECM distribution point (DHCP / IP helper).
 
+For a template that **boots from its CD**: the CD drive must point at the ISO on a **datastore every
+target cluster's hosts can see** (a clone in a cluster that cannot see it boots to nothing), with
+*Connect At Power On* ticked, and the CD first in the boot order.
+
 **A dry run (Check)** reads the ticket, prints the request with where each value came from
 (`cpu: 4 (from comment 2026-10-08 10:05 - Jane Doe ...)`), checks everything and says where the VM
 would go. It builds nothing and writes nothing on the ticket. Run it first on every new kind of
 request.
+
+### Find the names first: the deploy settings finder
+
+Not sure what to write for `cluster:`, `datacenter:`, `vcenter:`, the template or a folder? Run the
+read-only **VM - deploy settings finder** first. For every vCenter (the credential's and
+`vmware_vcenters`) and datacenter it lists:
+
+- the **clusters and standalone hosts**: hosts usable, memory used, the shared datastores with their
+  free space (the ones automatic placement can use), the networks;
+- the **templates**: where each one is (datacenter, cluster, folder), guest OS, CPU, memory, disks, network;
+- the **VM folders**, as paths below the datacenter (what `folder:` takes), and the customization
+  specifications;
+- what each deploy setting means, with an example from your vCenter;
+- what to look at first: a template in several datacenters (each name rule then needs its
+  `datacenter:`), a datacenter with no template, a cluster with no shared datastore;
+- **the lines to paste** into the deploy template's Variables: `vm_deploy_templates`, the template
+  catalog for GenAI, and one `vm_deploy_name_rules` line per cluster with its datacenter (and vCenter,
+  with several). Change `CHANGE-ME` to the part of the VM names that goes to that cluster, and delete
+  the lines you do not need.
+
+**Set it up:** **Templates > Create template > Create job template**: Name `VM - deploy settings
+finder`; Inventory: any; Playbook `playbooks/vm_deploy_inventory.yml`; Execution environment: your
+VMware one; Credentials: **VMware vCenter** (read-only is enough). Optional Variables:
+`report_email_to` (the email has the same tables), `vmware_datacenter` (one datacenter only).
+**Launch.** The paste lines are at the end of the output (and in the email, and in the job's
+artifacts as `vm_deploy_inventory.paste`). It changes nothing.
 
 ### Set it up
 
@@ -783,7 +837,7 @@ request.
 2. **The vCenter account** needs, on the template, the target cluster, datastore(s), folder(s) and the
    staging port group: *Virtual machine > Provisioning > Deploy template, Customize guest, Read
    customization specifications*; *Virtual machine > Inventory > Create from existing*; *Virtual machine >
-   Change configuration > Change CPU count, Change memory, Set annotation, Add new disk, Extend virtual disk*; *Virtual machine > Interaction
+   Change configuration > Change CPU count, Change memory, Set annotation, Add new disk, Extend virtual disk, Advanced configuration*; *Virtual machine > Interaction
    > Power on*; *Resource > Assign virtual machine to resource pool*; *Datastore > Allocate space*;
    *Network > Assign network*. A missing one is named in the error (`lacks the privilege ...`).
 3. **The ServiceNow API credential** (the one the ticket jobs use): its account reads the ticket's table
@@ -824,7 +878,10 @@ request.
 | `vm_deploy_sites` | `{}` | per site: `cluster`, `datastore`, `folder`, `vcenter` ... (a ticket's `site:` or Location picks one) |
 | `vm_deploy_name_rules` | `[]` | the VM's name picks the cluster (or site): `[{match: "*AB01*", cluster: ...}]`, the first match wins |
 | `vm_deploy_site_required` | `true` | with sites set up, a ticket must name its site |
-| `vm_deploy_pxe_templates` | `[]` | templates that boot from the network (PXE / MECM): no customization, MAC on the ticket |
+| `vm_deploy_pxe_templates` | `[]` | empty templates that install their OS themselves - boot from the network (PXE / MECM) or from their CD (kickstart): no customization, MAC and name on the ticket |
+| `vm_deploy_guestinfo` | `true` | a VM from an empty template (`vm_deploy_pxe_templates`) gets `guestinfo.hostname` (the ticket's VM name) and `guestinfo.ticket` as VM settings, for its installer to read (`vmtoolsd --cmd "info-get guestinfo.hostname"`). Without the *Advanced configuration* privilege the VM is still built, with a note |
+| `vm_deploy_template_aliases` | `{}` | short names for long template names: `{win2022: "Windows 2022 Standard Template - Site 1"}` - the ticket (and GenAI's catalog) may write `win2022`. A template's own name in other case or spacing is matched too |
+| `vm_deploy_template_specs` | `{}` | the customization specification per template (names or patterns): `{"Windows 2022*": Win2022-Sysprep}` - a Windows template that is not network-boot needs one |
 | `vm_deploy_max_disks` / `vm_deploy_max_disk_gb` / `vm_deploy_max_total_disk_gb` | `4` / `2048` / `4096` | disk caps: how many, the biggest one, all together |
 | `vm_deploy_mem_target_pct` / `vm_deploy_failover_hosts` | `80` / `1` | automatic placement: a cluster fits when memory with this VM and that many hosts down stays under the % |
 | `vm_deploy_datastore_max_used_pct` | `85` | automatic placement: a datastore fits when it stays under this % with the VM at its full size |

@@ -1,0 +1,102 @@
+---
+# DEPLOY SETTINGS FINDER (read-only): what vCenter has, by the names the VM deploy's settings use -
+# printed, published as artifacts (vm_deploy_inventory), emailed (report_email_to). The lines to
+# paste into the deploy template's Variables come from vm_deploy_finder (plugins/filter).
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | read the clusters, templates, datastores, folders and networks
+  site_vmware_deploy_inventory:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _vm_inv_read
+  check_mode: false
+
+- name: VMware | what the deploy settings would be
+  ansible.builtin.set_fact:
+    _vm_inv: "{{ _vm_inv_read.datacenters | vm_deploy_finder(_vm_inv_read.customization_specs) }}"
+    _vm_inv_multi: "{{ _vm_inv_read.vcenters | default([]) | vm_vcenters_read | length > 1 }}"
+
+- name: VMware | deploy settings finder report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_vcenters: "{{ _vm_inv_read.vcenters }}"
+    _vm_report_subject: >-
+      VM deploy settings finder: {{ _vm_inv_read.datacenters | map(attribute='clusters') | map('length') | sum }} cluster(s) / host(s),
+      {{ _vm_inv_read.datacenters | map(attribute='templates') | map('length') | sum }} template(s) in
+      {{ _vm_inv_read.datacenters | length }} datacenter(s){{ (', ' ~ _vm_inv.warnings | length ~ ' to look at') if _vm_inv.warnings else '' }}
+    _vm_report_lines: >-
+      {%- set out = [] -%}
+      {%- for d in _vm_inv_read.datacenters -%}
+      {%-   set _ = out.append('DATACENTER ' ~ d.name ~ '   (vCenter ' ~ d.vcenter ~ ')') -%}
+      {%-   for c in d.clusters -%}
+      {%-     set sh = c.datastores | selectattr('shared') | selectattr('ok') | list -%}
+      {%-     set _ = out.append('  ' ~ ('CLUSTER ' if c.kind == 'cluster' else 'STANDALONE HOST ') ~ c.name ~ ': ' ~ c.hosts_ok ~ ' of ' ~ c.hosts
+                                 ~ ' host(s) usable, memory ' ~ c.memory_used_pct ~ '% used of ' ~ c.memory_gb ~ ' GB'
+                                 ~ (', DRS on' if c.drs else '') ~ '; shared datastores: '
+                                 ~ ((sh | map(attribute='name') | zip(sh | map(attribute='free_gb')) | map('join', ' ') | map('regex_replace', '$', ' GB free') | join(', ')) or 'none')
+                                 ~ '; networks: ' ~ (c.networks | join(', ') or 'none')) -%}
+      {%-   endfor -%}
+      {%-   for t in d.templates -%}
+      {%-     set _ = out.append('  TEMPLATE ' ~ t.name ~ ': ' ~ t.guest ~ ', ' ~ t.cpu ~ ' CPU, ' ~ t.memory_gb ~ ' GB, disks ' ~ (t.disks_gb | join(' + ')) ~ ' GB'
+                                 ~ ', on ' ~ (t.cluster or '?') ~ ', folder ' ~ (t.folder or '(top)') ~ ', network ' ~ (t.networks | join(', ') or 'none')
+                                 ~ ', datastore ' ~ (t.datastores | join(', ') or '?')) -%}
+      {%-   endfor -%}
+      {%-   if not d.templates -%}{%- set _ = out.append('  no template in this datacenter') -%}{%- endif -%}
+      {%-   set _ = out.append('  VM FOLDERS: ' ~ (d.folders | join(', ') or 'none (only the top level)')) -%}
+      {%- endfor -%}
+      {%- for w in _vm_inv.warnings -%}{%- set _ = out.append('LOOK AT: ' ~ w) -%}{%- endfor -%}
+      {%- set _ = out.append("---- PASTE INTO THE DEPLOY TEMPLATE'S VARIABLES (change CHANGE-ME; delete what you do not need) ----") -%}
+      {{ out + _vm_inv.paste }}
+    _vm_report_doc: >-
+      {%- set sections = [] -%}
+      {%- if _vm_inv.warnings -%}
+      {%-   set _ = sections.append({'title': 'Look at these first', 'status': 'warning', 'lines': _vm_inv.warnings}) -%}
+      {%- endif -%}
+      {%- set _ = sections.append({'title': 'What each deploy setting is', 'columns': ['Setting', 'What it is', 'From your vCenter'], 'rows': _vm_inv.fields}) -%}
+      {%- set crow = [] -%}
+      {%- set trow = [] -%}
+      {%- for d in _vm_inv_read.datacenters -%}
+      {%-   for c in d.clusters -%}
+      {%-     set sh = c.datastores | selectattr('shared') | selectattr('ok') | list -%}
+      {%-     set _ = crow.append([c.name, c.kind, d.name, d.vcenter, c.hosts_ok ~ ' / ' ~ c.hosts, c.memory_used_pct ~ '%',
+                                   (sh | map(attribute='name') | zip(sh | map(attribute='free_gb')) | map('join', ': ') | map('regex_replace', '$', ' GB') | join(', ')) or 'none',
+                                   c.networks | join(', ')]) -%}
+      {%-   endfor -%}
+      {%-   for t in d.templates -%}
+      {%-     set _ = trow.append([t.name, d.name, d.vcenter, t.cluster, t.folder or '(top)', t.guest, t.cpu ~ ' / ' ~ t.memory_gb ~ ' GB',
+                                   t.disks_gb | join(' + '), t.networks | join(', '), t.firmware]) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {%- set _ = sections.append({'title': 'Clusters and standalone hosts (cluster:, datacenter:, vcenter:)',
+                                   'columns': ['Cluster / host', 'Kind', 'Datacenter', 'vCenter', 'Hosts usable', 'Memory used', 'Shared datastores (free)', 'Networks'],
+                                   'rows': crow}) -%}
+      {%- set _ = sections.append({'title': 'Templates (vm_deploy_templates)',
+                                   'columns': ['Template', 'Datacenter', 'vCenter', 'On', 'Folder', 'Guest OS', 'CPU / memory', 'Disks (GB)', 'Network', 'Firmware'],
+                                   'rows': trow}) -%}
+      {%- for d in _vm_inv_read.datacenters if d.folders -%}
+      {%-   set _ = sections.append({'title': 'VM folders in ' ~ d.name ~ ((' (' ~ d.vcenter ~ ')') if _vm_inv_multi else '') ~ ' (folder:)', 'lines': d.folders}) -%}
+      {%- endfor -%}
+      {%- set _ = sections.append({'title': "Paste into the deploy template's Variables", 'lines': _vm_inv.paste,
+                                   'text': 'Change CHANGE-ME to the part of the VM names that goes to that cluster, and delete what you do not need.'}) -%}
+      {{ {'title': _vm_report_subject | trim, 'status': 'warning' if _vm_inv.warnings else 'info',
+          'subtitle': 'Read-only: what the VM deploy settings name, as vCenter has it',
+          'summary': [{'label': 'Datacenters', 'value': _vm_inv_read.datacenters | length},
+                      {'label': 'Clusters / hosts', 'value': _vm_inv_read.datacenters | map(attribute='clusters') | map('length') | sum},
+                      {'label': 'Templates', 'value': _vm_inv_read.datacenters | map(attribute='templates') | map('length') | sum}],
+          'sections': sections} }}
+
+- name: VMware | the finder's result as job artifacts (vm_deploy_inventory)
+  ansible.builtin.set_stats:
+    data:
+      vm_deploy_inventory:
+        datacenters: "{{ _vm_inv_read.datacenters }}"
+        customization_specs: "{{ _vm_inv_read.customization_specs }}"
+        warnings: "{{ _vm_inv.warnings }}"
+        paste: "{{ _vm_inv.paste | join('\n') }}"
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_inv_read.vcenters }}"

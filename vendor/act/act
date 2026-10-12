@@ -106,7 +106,7 @@ Environment:
   The full list of variables (limits, debug, theme, ...) is in README.md.
 """
 
-ACT_VERSION = "0.6.23"  # bump when delivering; check with: act --version
+ACT_VERSION = "0.6.24"  # bump when delivering; check with: act --version
 
 import argparse
 import codecs

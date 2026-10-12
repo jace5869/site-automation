@@ -73,6 +73,7 @@ vm_deploy_template_catalog:                       # what GenAI may pick, in plai
   TEMPLATE-NAME: "Windows Server 2022 (installed over the network by MECM)"
 report_email_to: approvers@yoursite.mil           # the approver reads the plan in this email
 """),
+    "vm_deploy_inventory.yml": ("VM - deploy settings finder", "VMware vCenter", "", ""),
     "vm_deploy_poll.yml": ("VM - pick up deploy tickets", "ServiceNow API, Red Hat Ansible Automation Platform", "", """\
 vm_deploy_assignment_group: YOUR GROUP NAME       # REQUIRED: only this group's tickets are picked up
 # vm_deploy_poll_dry_run: true                    # the first week: list what it would start, start nothing

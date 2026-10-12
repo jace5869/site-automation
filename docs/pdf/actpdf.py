@@ -18,7 +18,7 @@ from reportlab.platypus import (BaseDocTemplate, CondPageBreak, Flowable, Frame,
                                 Preformatted, Spacer, Table, TableStyle)
 from reportlab.platypus.tableofcontents import TableOfContents
 
-VERSION = "0.6.23"
+VERSION = "0.6.24"
 DATE = "October 2026"
 
 # ---------------------------------------------------------------------------- fonts
