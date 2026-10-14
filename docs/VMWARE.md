@@ -795,46 +795,118 @@ web03`, `2 VMs: web01 and web02`.
 |---|---|---|
 | `vm_deploy_max_vms` | `10` | the most VMs one ticket may ask for |
 
-### A task whose change holds the request - and closing only the task
+### A change request: its task does the work, the change must be approved
 
-A common setup: the **change request** has the requirements; the team gets a **task** (an SCTASK or
-a CTASK) that may or may not repeat them; the task is what the job runs on, and only the task is
-closed when the VM is up. Nothing to set for the first part:
+A common setup: the **change request** holds the requirements and is approved; the team gets a
+**change task** (a CTASK - or an SCTASK) that may or may not repeat them; the task is what the job runs
+on, and only the task is closed when the VMs are up. The change itself is never written to.
 
-- **The request from the change:** the job follows the task's link to its change - the field
-  `change_request` (a change task's), else `parent` (`vm_deploy_parent_fields`) - and reads the change's
-  `'key: value'` lines too, from its description (`vm_deploy_parent_text_fields`, e.g. add
-  `implementation_plan` if your changes keep it there). A line on the task wins over the change's. The
-  dry run says where each value came from: `vm_name: app09   (from parent CHG0030001 description)`.
+1. Someone raises the change, the request in its description - in plain words like any ticket (with
+   `vm_deploy_plain_words`), or `key: value` lines.
+2. The change is approved and goes to **Implement**; the change task is assigned to your group.
+3. The job runs on the **change task's number** - launched by hand, or picked up by the schedule.
+4. It reads the task and its change, checks that the change is **still approved and in Implement**,
+   builds, writes one note per VM on the task, and closes the task.
+
+**The request from the change** - nothing to set:
+
+- The job follows the task's link to its change - the field `change_request` (a change task's), else
+  `parent` (`vm_deploy_parent_fields`) - and reads the change's description (`vm_deploy_parent_text_fields`,
+  e.g. add `implementation_plan` if your changes keep the request there).
+- Both the change's `key: value` lines and, with `vm_deploy_plain_words`, its **plain words** are read. What
+  the task says itself wins: a task that only says *"deploy the VM of the change"* takes everything from
+  the change; a task that says `memory_gb: 16` changes only the memory. The dry run says where each value
+  came from: `vm_name: web01, web02   (from the words 'named web01 and web02' in the parent CHG0030001 description)`.
 - Only a parent that is a **change** is read (`vm_deploy_parent_tables: [change_request]`; `[]` = never
   read a parent): an incident's parent incident, or a catalog task's request item, is not.
-- A change that **cannot be read** (the ServiceNow account needs read access to `change_request`) or is
-  **closed or canceled** stops the build: nothing is built from the task alone.
 - The change's comments and work notes are not read (CAB notes are not a request), unless you list
   them in `vm_deploy_parent_text_fields`. GenAI (`vm_deploy_genai`) reads the change's text too.
 
-**Close only the task** when the VM is up - on the deploy template (your instance's values):
+**The change must be approved and in Implement** (`vm_deploy_ready_by_table`, on by default):
+
+```yaml
+vm_deploy_ready_by_table:
+  change_request: {approval: Approved, state: Implement}
+```
+
+- Written as the change's form shows them (upper / lower case does not matter); a list allows any of
+  them: `state: [Implement, Scheduled]`. Your instance's labels may differ - the refusal says what the
+  change has: *"the change CHG0030001 (this ticket's parent) is not ready to build: approval is
+  'Requested', not Approved; state is 'Assess', not Implement"*.
+- It applies to the change a task belongs to, and to a change that is itself the ticket. Other tables
+  can have an entry too, e.g. `change_task: {state: [Open, Work in Progress]}`. `{}` = no check.
+- It is checked by the dry run, by the workflow's propose step **and again right before the build**: a
+  change sent back while the AAP approval waited is not built.
+- A change that **cannot be read** (the ServiceNow account needs read access to `change_request`), or is
+  **closed or canceled**, stops the build too.
+- Not ready = nothing built, a note on the task says why. **Run the job again** once the change is ready
+  (a ticket the schedule picked up is not picked up again).
+
+**Close only the task** when the VMs are up - on the deploy template, **your instance's values** (the
+values, not the labels: open a closed change task, right-click its header, *Show XML*, and copy what
+`<state>` and `<close_code>` hold):
 
 ```yaml
 vm_deploy_done_fields_by_table:
-  sc_task: {state: "3", close_notes: "VM deployed by AAP"}        # 3 = Closed Complete
   change_task: {state: "3", close_code: successful, close_notes: "VM deployed by AAP"}
-vm_deploy_done_fields: {}        # every other table (the change, an incident): left open
+  sc_task: {state: "3", close_notes: "VM deployed by AAP"}        # 3 = Closed Complete
+vm_deploy_done_fields_issues_by_table:          # over those when something did not finish
+  change_task: {close_code: successful_issues}
+vm_deploy_done_fields: {}        # every other table (an incident): left open
 ```
 
 - The ticket's **table** picks the entry (`sc_task`, `change_task`, `incident` ...), also with your own
   number prefixes. The change itself is never written to.
+- **Successful with issues:** every VM is built, but something did not finish - no IPv4 address within
+  `vm_deploy_wait_ip`, no customization result, the guest's host name not applied, a network adapter not
+  connected at power on, `guestinfo` not set. The task's work notes say what. (A network-boot VM's
+  *"no operating system yet"* is not an issue.)
+- **A VM not built:** the task **stays open** - fix the cause and run the job again: the VMs already built
+  are left as they are, the others are built, then the task is closed. Close it *Unsuccessful* by hand
+  if you give up: a closed ticket is never deployed again.
 - The close is sent **after** the result note, on its own, and the job checks what ServiceNow kept:
-  when a mandatory field (a data policy) or a business rule stops it, the VM is still built, the job
+  when a mandatory field (a data policy) or a business rule stops it, the VMs are still built, the job
   stays green, and the report and a work note say **"could not be closed"** with ServiceNow's reason.
+  (A value that is not one of the field's choices is not caught: take the values from *Show XML*.)
 - A **network-boot** VM (`vm_deploy_pxe_templates`) is closed when it is powered on and booting to
   MECM - the OS install is not finished yet. To leave those tickets open for whoever checks the
   install: `vm_deploy_done_fields_pxe: false`.
-- A closed ticket is never deployed again: running the job on it again is refused.
-- **Picked up by the schedule:** list the task's table - `vm_deploy_poll_tables: [sc_task]` - and the
-  task must be marked as a VM request itself: its short description starts with `vm_deploy_poll_prefix`
-  ("VM request"), or `vm_deploy_poll_query` matches it.
 
+**Picked up by the schedule** - on the pickup template:
+
+```yaml
+vm_deploy_poll_tables: [change_task]
+vm_deploy_poll_prefix: "VM request"     # how your VM change tasks' short description starts: never every task of the group
+vm_deploy_poll_query: "change_request.approval=approved^change_request.state=-1"
+vm_deploy_poll_states: ["1"]            # the task's own state VALUES to pick up (1 = Open)
+```
+
+- The query reaches into the task's change (ServiceNow's *dot-walking*): only tasks whose change is
+  approved (`approved`) and in Implement (`-1`) are picked up. These are **values**, not labels: build
+  the filter in the change task list (*Change request.Approval* is *Approved* ...), then right-click the
+  filter and *Copy query*.
+- `vm_deploy_poll_states` are the **task's** state values: a change task in a state your instance added
+  (e.g. one shown as *Implementation*) has its own value - copy it the same way.
+- Run it once with `vm_deploy_poll_dry_run: true` (or Check): it lists what it would pick up.
+
+**Approvals.** The change's approval can stand in for the AAP approval step: for change tasks read by the
+parser, a workflow with the deploy job alone (no approval node) is enough. With GenAI on, keep the AAP
+approval - the change was approved for its words, not for GenAI's reading of them.
+
+**One change task for all the change's VMs** works as it is. With **one task per VM**, give each task its
+own `vm_name:` line: otherwise each task reads every name from the change, and the second task is refused
+(the names are taken).
+
+**Test it, step by step** (a test change and a test template):
+
+1. A change in your test instance, its description in plain words (2 VMs, names, OS, CPU, memory),
+   approval **Requested**, state **Assess**; a change task under it, assigned to your group.
+2. Launch the deploy template on the **task's** number with **Check**: *"is not ready to build: approval is
+   'Requested', not Approved ..."* - the labels your instance uses are in that line.
+3. Approve the change and move it to **Implement**. Check again: both VMs, each value *"from the words ...
+   in the parent CHG... description"*, *"ready to build"*.
+4. Run it for real: the VMs are built, one note each on the task, the task closed with your close code;
+   the change has no new note.
 ### Sites: site A goes to this cluster, site B to that one
 
 ```yaml
@@ -1174,9 +1246,11 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
 | `vm_deploy_customize` / `vm_deploy_power_on` | `true` / `true` | guest customization; power on |
 | `vm_deploy_wait_customization` / `vm_deploy_wait_ip` | `900` / `600` | seconds to wait for each |
 | `vm_deploy_done_fields` | `{}` | fields set on the ticket when the VM is up, e.g. `{state: "6", close_code: "Solution provided", close_notes: "VM deployed"}` |
-| `vm_deploy_done_fields_by_table` | `{}` | the same per table, in place of `vm_deploy_done_fields` for it: `{sc_task: {state: "3", close_notes: "VM deployed by AAP"}}` - close the task, never the change ("A task whose change holds the request") |
+| `vm_deploy_done_fields_by_table` | `{}` | the same per table, in place of `vm_deploy_done_fields` for it: `{change_task: {state: "3", close_code: successful, close_notes: "VM deployed by AAP"}}` - close the task, never the change ("A change request: its task does the work") |
+| `vm_deploy_done_fields_issues_by_table` | `{}` | over those when every VM is built but something did not finish (no IP in time, no customization result ...): `{change_task: {close_code: successful_issues}}` |
 | `vm_deploy_done_fields_pxe` | `true` | close it also for a network-boot VM (still installing its OS from MECM); `false` = leave that ticket open |
-| `vm_deploy_parent_tables` / `_fields` / `_text_fields` | `[change_request]` / `[change_request, parent]` / `[description]` | read the request from the ticket's parent change too, under the ticket's own lines |
+| `vm_deploy_parent_tables` / `_fields` / `_text_fields` | `[change_request]` / `[change_request, parent]` / `[description]` | read the request from the ticket's parent change too (its lines, and its plain words with `vm_deploy_plain_words`), under the ticket's own |
+| `vm_deploy_ready_by_table` | `{change_request: {approval: Approved, state: Implement}}` | the fields a ticket - or the change it belongs to - must have before anything is built (as the form shows them); checked again right before the build; `{}` = no check |
 | `vm_deploy_ticket_table` | from the prefix | the table, for a ticket number with another prefix |
 | `vm_deploy_ticket_prefixes` | `{}` | your instance's own number prefixes, e.g. `{INCN: incident, CHGN: change_request}` - rarely needed: the job asks ServiceNow which table a ticket is in |
 | `vm_deploy_sites` | `{}` | per site: `cluster`, `datastore`, `folder`, `vcenter` ... (a ticket's `site:` or Location picks one) |
@@ -1573,6 +1647,11 @@ the last column says.
 | `No ServiceNow connection: attach the "ServiceNow API" credential` | the template has no ServiceNow credential | add it (Set it up, step 4) |
 | `Give the ticket number: the job got none` | the template has no survey, or it is switched off | the Survey tab: *Ticket number*, variable `vm_deploy_ticket`, text, required - and switch it on |
 | `Which table is INCN0012345 in? ...` | your instance numbers its tickets its own way, and the account may not read the task table (or there is no such ticket) | `vm_deploy_ticket_prefixes: {INCN: incident, CHGN: change_request}` on the template; check the number |
+| `the change CHG... (this ticket's parent) is not ready to build: approval is 'Requested', not Approved; state is 'Assess', not Implement` | the change is not approved, or not in Implement (yet, or any more) - nothing was built | approve it / move it to Implement and run the job again; your instance's labels differ (e.g. *Implementation*): put them in `vm_deploy_ready_by_table` |
+| `this ticket (CHG...) is not ready to build: ...` | the job ran on a change itself, which is not approved and in Implement | the same; or run it on the change's task |
+| `... approval is empty, not Approved` | the account may not read the change's approval field, or the table has none | read access to `change_request.approval`; or take `approval` out of `vm_deploy_ready_by_table` |
+| A change task gets questions ("which operating system ...") though its change says it all | plain words are off (`vm_deploy_plain_words`), or the request is in another field of the change | `vm_deploy_plain_words: true`; `vm_deploy_parent_text_fields: [description, implementation_plan]` |
+| The task closed, but its *Close code* shows a value in grey / not in the list | the close fields sent a label or a value your instance does not have | take the values from a closed task's *Show XML* |
 | `the ticket asks for 2 VMs ('2 vms', ...) but names 1 (web01)` | the words say how many VMs, and the names found are fewer (or more) | the requester writes every name (`named web01 and web02`) in a comment, or a line `vm_name: web01, web02` |
 | `the ticket gives a range of names ('named web01 to web05' ...)` | a range is never expanded | the requester writes every name; a line `vm_name: web01-05` means one VM of that name |
 | `the ticket asks for 12 VMs (...): more than 10 (vm_deploy_max_vms)` | more names than one ticket may build | split the ticket, or raise `vm_deploy_max_vms` on the template |

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.14.1 — 2026-10-14
+
+- **VM deploy - a change must be approved and in Implement** (`vm_deploy_ready_by_table`, on by default:
+  `{change_request: {approval: Approved, state: Implement}}`, as the form shows them). It applies to the
+  change a task (CTASK, SCTASK) belongs to and to a change that is itself the ticket, and is checked by the
+  dry run, the workflow's propose step and again right before the build - a change sent back while the
+  approval waited is not built. Before, only a closed change stopped the build: a task whose change was
+  still in Assess or Authorize could be built. **This changes a change launched directly too:** it needs
+  Approved and Implement now (`vm_deploy_ready_by_table: {}` = the old behaviour).
+- **VM deploy - the change's plain words are read:** with `vm_deploy_plain_words`, a task whose change says
+  *"2 VMs named web01 and web02, RHEL 9, 8 cpus ..."* in its description gets all of it - the task's own
+  words and lines still win. Before, only the change's `key: value` lines were read (GenAI read both).
+- **VM deploy - closed "successful with issues":** `vm_deploy_done_fields_issues_by_table` (e.g.
+  `{change_task: {close_code: successful_issues}}`) goes over the close fields when every VM is built but
+  something did not finish (no IP address in time, no customization result, the guest's name not applied,
+  no network at power on, guestinfo not set). The job's artifact lists these `issues`.
+- docs/VMWARE.md, "A change request: its task does the work, the change must be approved": the flow, the
+  close values from *Show XML*, picking up change tasks with a query that reaches into their change
+  (`change_request.approval=approved^change_request.state=-1`), a test plan.
+
 ## 0.14.0 — 2026-10-14
 
 - **VM deploy - several VMs on one ticket:** a ticket may ask for more than one VM of the same size - `named

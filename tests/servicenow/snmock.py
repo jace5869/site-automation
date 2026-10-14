@@ -10,7 +10,9 @@ sysparm_display_value=true they come back as ServiceNow shows them - newest firs
 header "<date time> - <user> (Additional comments)" / "(Work notes)"; without it, empty.
 Reference fields (assignment_group, location, caller_id) with sysparm_display_value=true come as
 {"display_value", "link"}, as ServiceNow sends them, unless sysparm_exclude_reference_link=true.
-Reference fields parent and change_request hold a ticket number.
+Reference fields parent and change_request hold a ticket number; a query may dot-walk them
+(change_request.approval=approved: the field of the ticket they hold). approval (a change's) comes back
+as its label with sysparm_display_value=true (approved -> Approved).
 SNMOCK_NO_RESOLVE=1: resolving answers 403 "Data Policy Exception" (close code missing).
 A ticket whose short description has "[mock:no-close]": a PATCH of its state answers 403 (a data
 policy); "[mock:keep-state]": answers 200 but keeps the state (a business rule). A PATCH with
@@ -36,6 +38,7 @@ STATE_LABEL = {"1": "New", "2": "In Progress", "6": "Resolved", "7": "Closed"}
 TASK_LABEL = {"1": "Open", "2": "Work in Progress", "3": "Closed Complete", "4": "Closed Incomplete", "7": "Closed Skipped",
               "-5": "New", "-4": "Assess", "-3": "Authorize", "-2": "Scheduled", "-1": "Implement", "0": "Review"}
 PREFIX = {"incident": "INC", "sc_task": "SCTASK", "change_request": "CHG", "change_task": "CTASK"}
+APPROVAL_LABEL = {"approved": "Approved", "requested": "Requested", "not requested": "Not Yet Requested", "rejected": "Rejected"}
 
 
 def closed(rec):
@@ -49,8 +52,9 @@ def state_label(rec):
 
 def matches(rec, query):
     """The encoded-query subset the playbooks use, joined by ^: a=b, aSTARTSWITHb (any case), aINb,c,
-    active=true, a.name=b (a reference by its name: the mock keeps names), ORDERBY... (ignored: the
-    records are kept oldest first)."""
+    active=true, a.name=b (a reference by its name: the mock keeps names), ref.field=b (parent /
+    change_request: that field of the ticket the reference holds), ORDERBY... (ignored: the records are
+    kept oldest first)."""
     for cond in [c for c in query.split("^") if c]:
         if cond.startswith("ORDERBY"):
             continue
@@ -66,7 +70,12 @@ def matches(rec, query):
             continue
         field, _, value = cond.partition("=")
         field = field[:-5] if field.endswith(".name") else field
-        if field == "active":
+        if "." in field:
+            ref, _, sub = field.partition(".")
+            target = next((x for x in INCIDENTS.values() if rec.get(ref) and x.get("number") == rec.get(ref)), {})
+            if str(target.get(sub, "")) != value:
+                return False
+        elif field == "active":
             if (not closed(rec)) != (value == "true"):
                 return False
         elif str(rec.get(field, "")) != value:
@@ -106,6 +115,8 @@ def show(rec, disp, links=True):
             out[field] = ""
     if disp:
         out["state"] = state_label(rec)
+        if out.get("approval"):
+            out["approval"] = APPROVAL_LABEL.get(out["approval"], out["approval"])
     return out
 
 

@@ -110,8 +110,9 @@
   ansible.builtin.uri:
     url: >-
       {{ _vd_sn_url }}/api/now/table/{{ _vd_table }}?sysparm_display_value=true&sysparm_exclude_reference_link=true&sysparm_limit=2&sysparm_fields={{
-      'sys_id,number,state,active,assignment_group,location,short_description,description,comments,work_notes'
-      ~ ((',' ~ vm_deploy_parent_fields | join(',')) if vm_deploy_parent_fields | default([]) | length > 0 else '') }}&sysparm_query={{
+      (['sys_id', 'number', 'state', 'active', 'assignment_group', 'location', 'short_description', 'description', 'comments', 'work_notes']
+       + vm_deploy_parent_fields | default([]) + ((vm_deploy_ready_by_table | default({}, true))[_vd_table] | default({}, true)).keys() | list)
+      | unique | join(',') }}&sysparm_query={{
       ('number=' ~ _vd_number) | urlencode }}
     method: GET
     url_username: "{{ _vd_sn_user }}"
@@ -148,7 +149,8 @@
   ansible.builtin.uri:
     url: >-
       {{ _vd_sn_url }}/api/now/table/{{ _vd_pref.table }}?sysparm_display_value=true&sysparm_exclude_reference_link=true&sysparm_limit=2&sysparm_fields={{
-      (['sys_id', 'number', 'state', 'active', 'short_description'] + vm_deploy_parent_text_fields) | unique | join(',') }}&sysparm_query={{
+      (['sys_id', 'number', 'state', 'active', 'short_description'] + vm_deploy_parent_text_fields
+       + ((vm_deploy_ready_by_table | default({}, true))[_vd_pref.table] | default({}, true)).keys() | list) | unique | join(',') }}&sysparm_query={{
       ('number=' ~ _vd_pref.number) | urlencode }}
     method: GET
     url_username: "{{ _vd_sn_user }}"
@@ -166,7 +168,7 @@
 - name: VMware | the ticket, its parent, and a GenAI proposal on it (vm_deploy_genai)
   ansible.builtin.set_fact:
     _vd_rec: "{{ _vd_get.json.result[0] }}"
-    _vd_parent: "{{ _vd_pref | vm_deploy_parent_read(_vd_pget, vm_deploy_parent_text_fields) }}"
+    _vd_parent: "{{ _vd_pref | vm_deploy_parent_read(_vd_pget, vm_deploy_parent_text_fields, vm_deploy_ready_by_table | default({}, true)) }}"
     _vd_prop: "{{ _vd_get.json.result[0] | vm_deploy_find_proposal }}"
 
 - name: VMware | what GenAI would read, and the ticket's own lines (its parent's under them)

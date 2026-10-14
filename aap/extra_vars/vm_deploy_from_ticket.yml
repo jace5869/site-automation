@@ -58,9 +58,10 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 # vm_deploy_ticket_prefixes: {}
 
 ## The request may also be on the ticket's parent - e.g. a task (SCTASK, CTASK) whose change holds
-## the requirements: the parent's 'key: value' lines are read too, under the ticket's own (a line on
-## the ticket wins). A parent that cannot be read, or is closed, stops the build. Only a parent in
-## one of these tables is read ([] = never read a parent):
+## the requirements: the parent's 'key: value' lines (and, with vm_deploy_plain_words, its plain
+## words) are read too, under the ticket's own (what the ticket says wins). A parent that cannot be
+## read, is closed, or is not ready (vm_deploy_ready_by_table) stops the build. Only a parent in one
+## of these tables is read ([] = never read a parent):
 # vm_deploy_parent_tables: [change_request]
 
 ## The ticket's fields that point to its parent - the first one set is used: a change task's
@@ -71,6 +72,15 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 ## implementation_plan]; comments and work_notes may be listed too (oldest first). GenAI reads them
 ## as well.
 # vm_deploy_parent_text_fields: [description]
+
+## Before anything is built, a ticket of these tables - the ticket itself, or the parent it belongs
+## to (a change task's change) - must have these fields: one value or a list (any of them), written
+## as the ticket's form shows them (upper / lower case ignored). Checked by the dry run, the propose
+## step AND right before the build: a change sent back while the approval waited is not built. Your
+## instance's labels, e.g. {change_request: {approval: Approved, state: [Implement, Scheduled]}}; {}
+## = no check.
+# vm_deploy_ready_by_table:
+#   change_request: {approval: Approved, state: Implement}
 
 ## clusters (and standalone hosts) a ticket may use; also the candidates of automatic placement
 # vm_deploy_clusters: []
@@ -179,6 +189,12 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 ## rule) the note stays, and the job says so on the ticket and in its report (it stays green: the VM
 ## is built).
 # vm_deploy_done_fields_by_table: {}
+
+## Over those fields when every VM is built but something did not finish: no IPv4 address in time,
+## no customization result, the guest's host name not applied, no network at power on, guestinfo not
+## set - e.g. {change_task: {close_code: successful_issues}} (your instance's values; {} = closed
+## the same way). What happened is on the ticket's work notes.
+# vm_deploy_done_fields_issues_by_table: {}
 
 ## Also for a VM from a network-boot template (vm_deploy_pxe_templates), which is powered on and
 ## still installing its OS from MECM when the job ends. false = that ticket stays open for whoever

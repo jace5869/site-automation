@@ -67,6 +67,33 @@ def _ref(value):
     return str(value or "")
 
 
+_TICKET_KIND = {"change_request": "the change", "change_task": "the change task", "sc_task": "the catalog task",
+                "sc_req_item": "the requested item", "incident": "the incident"}
+
+
+def vm_deploy_ready(record, table, ready=None, what=""):
+    """Is the ticket ready to build? ready: vm_deploy_ready_by_table ({table: {field: value or [values]}});
+    the entry for the ticket's table, matched to the fields as the form shows them (display values;
+    upper / lower case ignored) -> '' or why not. A field that is not there counts as empty."""
+    rules = (ready or {}).get(str(table or "")) if isinstance(ready, dict) else None
+    if not isinstance(rules, dict) or not rules:
+        return ""
+    r = record or {}
+    bad = []
+    for field, want in rules.items():
+        wants = [str(x).strip() for x in (want if isinstance(want, (list, tuple)) else [want]) if str(x if x is not None else "").strip()]
+        if not wants:
+            continue
+        have = _ref(r.get(field)).strip()
+        if have.lower() not in [w.lower() for w in wants]:
+            bad.append("%s is %s, not %s" % (field, repr(have) if have else "empty", " or ".join(wants)))
+    if not bad:
+        return ""
+    who = what or "%s %s" % (_TICKET_KIND.get(str(table), "the ticket"), _ref(r.get("number")))
+    return ("%s is not ready to build: %s (vm_deploy_ready_by_table) - nothing is built; run the job again once it is"
+            % (who.strip(), "; ".join(bad)))
+
+
 def vm_deploy_table(number, prefixes=None, guess=True):
     """'INC0012345' -> 'incident', 'SCTASK0001' -> 'sc_task'. prefixes: the site's own ({INCN: incident}),
     before the standard ones. guess: a prefix that starts with a known one is taken as that table
@@ -383,9 +410,11 @@ def _words_pieces(record):
 def vm_deploy_words(record, opts=None):
     """A ticket in plain words -> {'spec', 'sources', 'questions': {key: question}}. opts: templates
     ({words: template}), sizes ({word: {cpu, memory_gb}}), name_patterns (the name rules' match
-    patterns), sites (site names), number (the ticket's own number, never a VM name). The text is read
-    in order (short description, description, comments and work notes oldest first): a later piece
-    that says it once wins; two different answers in the piece that says it last are a question."""
+    patterns), sites (site names), number (the ticket's own number, never a VM name), before ([(label,
+    text)]: read before the ticket's own text - e.g. its parent change's, so the ticket's own words win;
+    numbers: more ticket numbers that are never a VM name). The text is read in order (short
+    description, description, comments and work notes oldest first): a later piece that says it once
+    wins; two different answers in the piece that says it last are a question."""
     o = opts or {}
     if not isinstance(o.get("templates"), dict):
         o = dict(o, templates={})
@@ -418,7 +447,7 @@ def vm_deploy_words(record, opts=None):
     pats = [str(p).strip().lower() for p in (o.get("name_patterns") or [])
             + [r.get("match") for r in o.get("name_rules") or [] if isinstance(r, dict)] if str(p or "").strip()]
     sites = [str(x) for x in (o.get("sites") or []) if str(x).strip()]
-    number = str(o.get("number") or "").lower()
+    numbers = set(str(x).lower() for x in [o.get("number")] + list(o.get("numbers") or []) if str(x or "").strip())
     state = {}                                  # key -> (values found, label, piece index)
 
     def os_word(word):
@@ -428,7 +457,8 @@ def vm_deploy_words(record, opts=None):
         if found:
             state[key] = (found, label, idx)
 
-    for idx, (label, text) in enumerate(_words_pieces(record)):
+    before = [(str(lab), _NOISE.sub(" ", str(t or ""))) for lab, t in (o.get("before") or []) if str(t or "").strip()]
+    for idx, (label, text) in enumerate(before + _words_pieces(record)):
         low = text.lower()
         tpls = {}
         for c, tpl in rx:
@@ -487,13 +517,13 @@ def vm_deploy_words(record, opts=None):
             got = [t]
             while True:
                 mm = _MORE.match(text, pos)
-                if not mm or not _name_like(mm.group(1), t) or mm.group(1).lower() == number or os_word(mm.group(1)):
+                if not mm or not _name_like(mm.group(1), t) or mm.group(1).lower() in numbers or os_word(mm.group(1)):
                     return got, pos
                 got.append(mm.group(1))
                 pos = mm.end()
         for m in _NAMED.finditer(text):
             t = m.group(1)
-            if t.lower() in _STOP or t.lower() == number:
+            if t.lower() in _STOP or t.lower() in numbers:
                 continue
             r_ = _RANGE.match(text, m.end())
             if r_ and _name_like(r_.group(1), t):
@@ -512,7 +542,7 @@ def vm_deploy_words(record, opts=None):
                 if m.group(1).isdigit() and _OS_BEFORE.search(text[max(0, m.start() - 12):m.start()]):
                     continue
                 a = _AFTER_COUNT.match(text, m.end())
-                if a and _name_like(a.group(1), "") and not os_word(a.group(1)) and a.group(1).lower() != number:
+                if a and _name_like(a.group(1), "") and not os_word(a.group(1)) and a.group(1).lower() not in numbers:
                     got, pos = more(a.group(1), a.end())
                     if len(got) == cnt:
                         for x in got:
@@ -522,7 +552,7 @@ def vm_deploy_words(record, opts=None):
         if not named and pats:
             for m in re.finditer(r"(?<![\w@.-])([A-Za-z0-9][A-Za-z0-9-]{2,62})(?![\w@-])", text):
                 t = m.group(1)
-                if t.lower() == number:
+                if t.lower() in numbers:
                     continue
                 for p in pats:
                     if fnmatch.fnmatchcase(t.lower(), p) and len(t) > _fixed(p):
@@ -628,9 +658,10 @@ def vm_deploy_spec(record, defaults=None, proposal=None, words=None, parent=None
     from the oldest to the newest - a later value overrides an earlier one. This job's own notes
     ([AAP] ...) are skipped. A GenAI proposal (vm_deploy_find_proposal, already checked against the
     ticket text) comes between the defaults and the ticket's own lines: what the ticket says itself
-    wins. words (vm_deploy_words' opts, or None): the ticket's plain words come after the proposal and
-    before the lines. parent (vm_deploy_parent_read): the 'key: value' lines of the parent ticket (e.g.
-    the change a task belongs to) come after those and before the ticket's own lines. -> {'spec': {...},
+    wins. words (vm_deploy_words' opts, or None): the plain words - the parent's text first, then the
+    ticket's own, which wins - come after the proposal and before the lines. parent
+    (vm_deploy_parent_read): the 'key: value' lines of the parent ticket (e.g. the change a task belongs
+    to) come after those and before the ticket's own lines. -> {'spec': {...},
     'sources': {key: where it came from}, 'questions': [...] (plain-words questions for what is still
     open), 'words': whether plain words were read}"""
     r = record or {}
@@ -645,7 +676,9 @@ def vm_deploy_spec(record, defaults=None, proposal=None, words=None, parent=None
     if words is not None and words.get("on", True) is False:
         words = None
     if words is not None:
-        w = vm_deploy_words(r, dict(words, number=words.get("number") or r.get("number") or ""))
+        pnum = (parent or {}).get("number", "")
+        w = vm_deploy_words(r, dict(words, number=words.get("number") or r.get("number") or "", numbers=[pnum],
+                                    before=[("the parent %s %s" % (pnum, label), text) for label, text in (parent or {}).get("pieces") or []]))
         for k, v in w["spec"].items():
             spec[k], sources[k] = v, w["sources"][k]
         wq, count = w["questions"], w.get("count")
@@ -742,7 +775,8 @@ def vm_deploy_check(parsed, record=None, opts=None):
     templates (required allow-list), clusters, datastores, folders (allow-lists, [] = any), max_cpu,
     max_memory_gb, name_regex, assignment_group, sites ({site: {cluster, datastore, folder, vcenter,
     datacenter, domain ...}}), site_required, pxe_templates, template_aliases ({short name: template}),
-    template_specs ({template pattern: customization specification}), max_vms.
+    template_specs ({template pattern: customization specification}), max_vms, ready
+    (vm_deploy_ready_by_table) and table (the ticket's table): the fields the ticket must have.
 
     Several names (vm_name 'web01, web02'): one VM each, the same size; each name is checked on its
     own (its name rule, its site); 'spec' then shows them together (vm_name lists every name, a value
@@ -830,6 +864,10 @@ def _check_one(parsed, record=None, opts=None):
         problems.append("the ticket is closed (state %s): a closed ticket is never deployed" % (r.get("state") or "?"))
     if (o.get("parent") or {}).get("problem"):
         problems.append(o["parent"]["problem"])
+    if o.get("table") and str(r.get("active", "true")).lower() in ("true", "1"):
+        why = vm_deploy_ready(r, o.get("table"), o.get("ready"), "this ticket (%s)" % _ref(r.get("number")))
+        if why:
+            problems.append(why)
     groups = _groups(o.get("assignment_group"))
     if not _group_ok(r.get("assignment_group"), groups):
         problems.append("the ticket is assigned to %r, not to %s (vm_deploy_assignment_group)"
@@ -940,11 +978,12 @@ def vm_deploy_parent_ref(record, opts=None):
     return {"read": False, "note": "no parent ticket (looked at the fields %s)" % ", ".join(fields)}
 
 
-def vm_deploy_parent_read(ref, result=None, text_fields=None):
+def vm_deploy_parent_read(ref, result=None, text_fields=None, ready=None):
     """The parent ticket as read (ref from vm_deploy_parent_ref, result: the registered GET of it) ->
     ref + {'pieces': [(label, text)] in reading order - the text_fields in their order (comments and
     work notes: oldest first, not this job's own) -, 'state', 'problem': why nothing may be built (it
-    could not be read, is not there, or is closed)}. Not to be read: ref as it is, without pieces."""
+    could not be read, is not there, is closed, or is not ready: ready = vm_deploy_ready_by_table, e.g.
+    a change not yet approved and in Implement)}. Not to be read: ref as it is, without pieces."""
     out = dict(ref or {})
     if not out.get("read"):
         return out
@@ -964,6 +1003,10 @@ def vm_deploy_parent_read(ref, result=None, text_fields=None):
     out["state"] = _ref(p.get("state"))
     if str(p.get("active", "true")).lower() not in ("true", "1"):
         out["problem"] = "the parent ticket %s is closed (state %s): nothing is built for it" % (num, out["state"] or "?")
+    else:
+        why = vm_deploy_ready(p, table, ready, "%s %s (this ticket's parent)" % (_TICKET_KIND.get(table, "the parent ticket"), num))
+        if why:
+            out["problem"] = why
     pieces, used = [], []
     wanted = [str(x).strip() for x in (text_fields or ["description"]) if str(x).strip()]
     for f in wanted:

@@ -218,6 +218,23 @@ poll "pickup after a refused start: not picked up again (a person starts it by h
 expect "pickup after refused: skipped" "skipped $p4: AAP has it already ([AAP] Picked up, but the workflow was not started"
 poll "pickup: off (vm_deploy_poll_enabled false)" 0 "$aapp" -e vm_deploy_poll_enabled=false
 expect "pickup off: says so" "Picking up VM request tickets is off"
+# change tasks: picked up only once their change is approved and in Implement (a query that dot-walks to the change)
+newrec() {   # newrec PORT TABLE JSON-BODY -> the new record's number
+    python3 - "$1" "$2" "$3" <<'EOPY'
+import base64, json, sys, urllib.request
+r = urllib.request.Request("http://127.0.0.1:%s/api/now/table/%s" % (sys.argv[1], sys.argv[2]), data=sys.argv[3].encode(), method="POST",
+                           headers={"Content-Type": "application/json", "Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode()})
+print(json.load(urllib.request.urlopen(r))["result"]["number"])
+EOPY
+}
+cok="$(newrec $snp change_request '{"short_description": "New servers", "state": "-1", "approval": "approved"}')"
+cwait="$(newrec $snp change_request '{"short_description": "New servers too", "state": "-4", "approval": "requested"}')"
+tok="$(newrec $snp change_task "{\"short_description\": \"VM request: build\", \"change_request\": \"$cok\", \"assignment_group\": \"Linux Operations\"}")"
+twait="$(newrec $snp change_task "{\"short_description\": \"VM request: build\", \"change_request\": \"$cwait\", \"assignment_group\": \"Linux Operations\"}")"
+poll "pickup: change tasks, only those whose change is approved and in Implement (dry run)" 0 "$aapp" --check \
+    -e '{"vm_deploy_poll_tables": ["change_task"], "vm_deploy_poll_query": "change_request.approval=approved^change_request.state=-1"}'
+expect "pickup change tasks: the one whose change is ready" "WOULD START: $tok"
+deny "pickup change tasks: not the one whose change waits for its approval" "WOULD START: $twait"
 
 # an account that cannot read work notes: the note it writes does not show, so the next run would pick
 # the ticket up again - the job stops before starting the workflow

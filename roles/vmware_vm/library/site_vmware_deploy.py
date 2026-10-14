@@ -65,6 +65,11 @@ notes:
   description: Things to know (a network adapter not connected at power on, no IP yet ...).
   type: list
   returned: always
+issues:
+  description: The notes that mean something did not finish though the VM is built (no IP in time, no customization
+    result, the guest's name not applied, no network at power on, guestinfo not set).
+  type: list
+  returned: success
 '''
 
 import fnmatch
@@ -317,6 +322,11 @@ def main():
     hostname = p["hostname"] or p["name"]
     vm = {"name": p["name"], "template": p["template"], "created": False}
     notes = []
+    issues = []                                 # the notes that mean something did not finish (the VM is built)
+
+    def issue(text):
+        notes.append(text)
+        issues.append(text)
     sessions = {}
     try:
         # 1. the name is free in every vCenter; the template is in exactly one (or the one named)
@@ -337,7 +347,7 @@ def main():
                         and p["ticket"].strip().lower() in str(v.config.annotation or "").lower():
                     module.exit_json(changed=False, vm=_existing(n, v, p["template"]),
                                      notes=["built by an earlier run for this ticket (its work note says so, and the VM's notes name "
-                                            "the ticket): left as it is"])
+                                            "the ticket): left as it is"], issues=[])
                 if vname == p["name"]:
                     module.fail_json(msg="a VM named %s already exists in vCenter %s (%s): nothing was built"
                                          % (p["name"], n, "a template" if is_t else _folder_path(v.parent)), vm=vm, notes=notes)
@@ -470,10 +480,10 @@ def main():
         nics = [d for d in tpl.config.hardware.device if isinstance(d, vim.vm.device.VirtualEthernetCard)]
         for d in nics:
             if d.connectable is not None and not d.connectable.startConnected:
-                notes.append("the template's %s is not set to connect at power on: the VM will have no network until it is"
-                             % d.deviceInfo.label)
+                issue("the template's %s is not set to connect at power on: the VM will have no network until it is"
+                      % d.deviceInfo.label)
         if not nics:
-            notes.append("the template has no network adapter")
+            issue("the template has no network adapter")
         cspec = None
         pxe = p["boot_from_network"]
         if pxe and win and len(hostname) > 15:
@@ -518,7 +528,7 @@ def main():
                         adapter=vim.vm.customization.IPSettings(ip=vim.vm.customization.DhcpIpGenerator())) for _ in nics])
         vm["customization"] = "planned" if cspec is not None else ("none: the template installs its operating system (network boot or CD)" if pxe else "none")
         if module.check_mode:
-            module.exit_json(changed=True, vm=vm, notes=notes)
+            module.exit_json(changed=True, vm=vm, notes=notes, issues=issues)
 
         # 4. build: clone powered off, size, customize, power on
         spec = vim.vm.CloneSpec(location=vim.vm.RelocateSpec(pool=pool, datastore=ds, host=target), powerOn=False, template=False)
@@ -561,8 +571,8 @@ def main():
                 vm["guestinfo"] = info
             except (vmodl.MethodFault, RuntimeError) as e:
                 info = {}
-                notes.append("guestinfo (the name for the installer) was not set: %s - grant the vCenter role Virtual machine > "
-                             "Change configuration > Advanced configuration; the name is on the ticket" % fault_text(e))
+                issue("guestinfo (the name for the installer) was not set: %s - grant the vCenter role Virtual machine > "
+                      "Change configuration > Advanced configuration; the name is on the ticket" % fault_text(e))
         if cspec is not None:
             _wait(new.CustomizeVM_Task(spec=cspec), 600, "the guest customization")
             vm["customization"] = "applied (not yet run)"
@@ -597,8 +607,8 @@ def main():
                     break
                 time.sleep(5)
             if vm["customization"].startswith("no result"):
-                notes.append("vCenter reported no customization result: VMware Tools (open-vm-tools) must run in the template, and a "
-                             "cloud-init template must allow VMware customization")
+                issue("vCenter reported no customization result: VMware Tools (open-vm-tools) must run in the template, and a "
+                      "cloud-init template must allow VMware customization")
         if p["power_on"] and p["wait_ip"] > 0 and not pxe:
             end = time.time() + p["wait_ip"]
             ip = ""
@@ -611,9 +621,9 @@ def main():
             vm["ip"] = ip
             vm["guest_hostname"] = new.guest.hostName or ""
             if not ip:
-                notes.append("no IPv4 address within %d s: check DHCP on the network, and that VMware Tools runs" % p["wait_ip"])
+                issue("no IPv4 address within %d s: check DHCP on the network, and that VMware Tools runs" % p["wait_ip"])
             if vm["guest_hostname"] and vm["guest_hostname"].split(".")[0].lower() != hostname.lower():
-                notes.append("the guest reports host name %s, not %s: the customization did not apply it" % (vm["guest_hostname"], hostname))
+                issue("the guest reports host name %s, not %s: the customization did not apply it" % (vm["guest_hostname"], hostname))
         vm["power"] = str(new.runtime.powerState)
     except Exception as e:                      # noqa: BLE001
         module.fail_json(msg=("The VM %s was created, then: %s" % (p["name"], fault_text(e))) if vm.get("created")
@@ -624,7 +634,7 @@ def main():
     if vm["customization"].startswith("FAILED"):
         module.fail_json(msg="The VM %s was created and started, but its guest customization %s" % (p["name"], vm["customization"]),
                          changed=True, vm=vm, notes=notes)
-    module.exit_json(changed=True, vm=vm, notes=notes)
+    module.exit_json(changed=True, vm=vm, notes=notes, issues=issues)
 
 
 if __name__ == "__main__":

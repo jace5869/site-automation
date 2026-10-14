@@ -594,7 +594,7 @@ r = urllib.request.Request("http://127.0.0.1:%s/api/now/table/%s" % (sys.argv[1]
 print(json.load(urllib.request.urlopen(r))["result"]["number"])
 EOPY
 }
-chg="$(newrec change_request '{"short_description": "Build chgapp01", "description": "Approved.\nvm_name: chgapp01\ntemplate: rhel9-gold\ncpu: 2\nmemory_gb: 4", "state": "-1", "assignment_group": "Change Board"}')"
+chg="$(newrec change_request '{"short_description": "Build chgapp01", "description": "Approved.\nvm_name: chgapp01\ntemplate: rhel9-gold\ncpu: 2\nmemory_gb: 4", "state": "-1", "approval": "approved", "assignment_group": "Change Board"}')"
 sct="$(newrec sc_task "{\"short_description\": \"VM request for $chg\", \"description\": \"memory_gb: 8\", \"parent\": \"$chg\", \"assignment_group\": \"Linux Operations\"}")"
 close='{"vm_deploy_done_fields_by_table": {"sc_task": {"state": "3", "close_notes": "VM deployed by AAP"}}}'
 run "a task whose change holds the request, dry run: the change's lines under the task's own" ok vm_deploy_from_ticket.yml --check \
@@ -633,6 +633,52 @@ run "a task whose change is closed: refused, nothing built" fail vm_deploy_from_
 sct4="$(newrec sc_task "{\"short_description\": \"VM request\", \"description\": \"vm_name: chgapp04\ntemplate: rhel9-gold\", \"parent\": \"$inc\", \"assignment_group\": \"Linux Operations\"}")"
 run "a parent that is not a change (an incident): not read" ok vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$sct4" -e "$rules" \
     -- "Parent: parent $inc (incident, field parent): not read - only a parent in change_request (vm_deploy_parent_tables)" "vm_name: chgapp04   (from description)"
+# ---- a change task: built only while its change is approved and in Implement (vm_deploy_ready_by_table),
+# the change's plain words read under the task's own, the task closed 'successful with issues' when something did not finish
+setrec() {  # setrec TABLE NUMBER JSON-BODY
+    "$py" - "$sn_port" "$1" "$2" "$3" <<'EOPY'
+import base64, json, sys, urllib.request
+h = {"Content-Type": "application/json", "Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode()}
+u = "http://127.0.0.1:%s/api/now/table/%s" % (sys.argv[1], sys.argv[2])
+sid = json.load(urllib.request.urlopen(urllib.request.Request(u + "?sysparm_query=number=" + sys.argv[3], headers=h)))["result"][0]["sys_id"]
+urllib.request.urlopen(urllib.request.Request(u + "/" + sid, data=sys.argv[4].encode(), method="PATCH", headers=h))
+EOPY
+}
+ctw='{"vm_deploy_plain_words": true, "vm_deploy_templates": ["rhel9-gold"],
+      "vm_deploy_done_fields_by_table": {"change_task": {"state": "3", "close_code": "successful", "close_notes": "VMs deployed by AAP"}},
+      "vm_deploy_done_fields_issues_by_table": {"change_task": {"close_code": "successful_issues"}}}'
+chg6="$(newrec change_request '{"short_description": "New servers", "description": "I need 2 vms created named ctapp01 and ctapp02\nboth servers need:\nRHEL 9\n2 cpus\n4gb of memory", "state": "-4", "approval": "requested"}')"
+ct6="$(newrec change_task "{\"short_description\": \"Platform team to deploy VM with access, (CPU, Storage, Memory, OS image details and location) for the service owner to install\", \"change_request\": \"$chg6\", \"assignment_group\": \"Linux Operations\"}")"
+run "a change task whose change is not approved, in Assess: refused, nothing built - the task says why" fail vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$ct6" -e "$rules" -e "$ctw" \
+    -- "the change $chg6 (this ticket's parent) is not ready to build: approval is 'Requested', not Approved; state is 'Assess', not Implement"
+tail -1 "$work/sn.jsonl" | grep -q "run the job again once it is" && echo "ok   -   ...noted on the change task" || { echo "FAIL -   ...not-ready note"; fails=$((fails + 1)); }
+setrec change_request "$chg6" '{"approval": "approved", "state": "-1"}'
+run "...approved, in Implement: the propose step reads the change's plain words - two VMs, checked, nothing built" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$ct6" -e "$rules" -e "$ctw" -e vm_deploy_phase=propose \
+    -- "vm_name: ctapp01, ctapp02   (from the words 'named ctapp01 and ctapp02' in the parent $chg6 description)" \
+       "template: rhel9-gold   (from the words 'rhel 9' in the parent $chg6 description)" "waiting for the approval"
+setrec change_request "$chg6" '{"state": "-4"}'
+run "...sent back to Assess while the approval waited: the build step refuses" fail vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$ct6" -e "$rules" -e "$ctw" -e vm_deploy_phase=build -- "state is 'Assess', not Implement"
+VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q '"ctapp01"' && { echo "FAIL -   ...built while the change was not ready"; fails=$((fails + 1)); } \
+    || echo "ok   -   ...no VM built"
+setrec change_request "$chg6" '{"state": "-1"}'
+n3=$(wc -l < "$work/sn.jsonl")
+run "...in Implement again: both built; the task closed 'successful with issues' (no IP in time); the change untouched" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$ct6" -e "$rules" -e "$ctw" -e vm_deploy_phase=build \
+    -- "2 VMs (ctapp01, ctapp02) deployed" "Ticket closed: close_code = successful_issues, close_notes = VMs deployed by AAP, state = 3"
+"$py" - "$work/sn.jsonl" "$n3" <<'EOPY' && echo "ok   -   ...only the change task was written" || { echo "FAIL -   ...wrote to the change"; fails=$((fails + 1)); }
+import json, sys
+writes = [json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):]]
+writes = [l for l in writes if l["method"] in ("PATCH", "POST")]
+sys.exit(0 if writes and all(l["path"].startswith("/api/now/table/change_task/") for l in writes) else 1)
+EOPY
+chg7="$(newrec change_request '{"short_description": "VM request", "description": "vm_name: chgapp07\ntemplate: rhel9-gold", "state": "-1", "approval": "requested", "assignment_group": "Linux Operations"}')"
+run "a change as the ticket itself, not approved: refused (dry run)" fail vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$chg7" -e "$rules" \
+    -- "this ticket ($chg7) is not ready to build: approval is 'Requested', not Approved"
+run "...vm_deploy_ready_by_table: {} - no such check (dry run)" ok vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$chg7" -e "$rules" \
+    -e '{"vm_deploy_ready_by_table": {}}' -- "chgapp07 ready to build in DC0_C0 - dry run"
 run "deploy from a ticket: not a ticket number" fail vm_deploy_from_ticket.yml -e vm_deploy_ticket=app01 -e "$rules" -- "Give the ticket number"
 # a site's own number prefix (INCN...): the job asks ServiceNow's task table which table the ticket is in
 incn="$(NEWTICKET_NUMBER=INCN0012345 newticket $'vm_name: appincn01\ntemplate: rhel9-gold')"
@@ -883,7 +929,7 @@ good='{"vm_name": {"value": "winapp05", "evidence": "called winapp05"}, "templat
        "cpu": {"value": 2, "evidence": "2 CPUs"}, "memory_gb": {"value": 2, "evidence": "2 GB of RAM"},
        "disks_gb": {"value": [120, 200], "evidence": "a 120 GB system disk plus a 200 GB data disk"}, "site": {"value": "SiteA", "evidence": "for SiteA"},
        "questions": []}'
-chg5="$(newrec change_request '{"short_description": "Build", "description": "vm_name: chgapp05\ntemplate: rhel9-gold", "state": "-1"}')"
+chg5="$(newrec change_request '{"short_description": "Build", "description": "vm_name: chgapp05\ntemplate: rhel9-gold", "state": "-1", "approval": "approved"}')"
 sct5="$(newrec sc_task "{\"short_description\": \"Please build the server of the change\", \"parent\": \"$chg5\", \"assignment_group\": \"Linux Operations\"}")"
 run "GenAI on, a task whose change gives the name and template: no GenAI needed (the build step goes on)" ok vm_deploy_from_ticket.yml --check \
     -e vm_deploy_ticket="$sct5" -e "$genai" -e "$actvars" -e '{"vm_deploy_sites": {}, "vm_deploy_phase": "build"}' \

@@ -54,7 +54,8 @@
            'name_rules': vm_deploy_name_rules,
            'template_aliases': vm_deploy_template_aliases, 'template_specs': vm_deploy_template_specs,
            'max_disks': vm_deploy_max_disks | int, 'max_disk_gb': vm_deploy_max_disk_gb | float,
-           'max_total_disk_gb': vm_deploy_max_total_disk_gb | float, 'parent': _vd_parent}) }}
+           'max_total_disk_gb': vm_deploy_max_total_disk_gb | float, 'parent': _vd_parent,
+           'ready': vm_deploy_ready_by_table | default({}, true), 'table': _vd_table}) }}
 
 - name: VMware | does the request go on? (questions, or a refusal, stop it)
   ansible.builtin.set_fact:

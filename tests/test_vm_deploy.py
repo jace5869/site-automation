@@ -744,6 +744,89 @@ class ParentTicket(unittest.TestCase):
         self.assertIn("vm_name: app09", t)
 
 
+class ChangeReady(unittest.TestCase):
+    """A change must be approved and in Implement before anything is built (vm_deploy_ready_by_table) - the
+    ticket itself or the change a task belongs to; and the change's plain words are read under the task's."""
+    READY = {"change_request": {"approval": "Approved", "state": "Implement"}}
+    TASK = {"number": "CTASK0010003", "active": "true", "state": "Open", "assignment_group": "Linux Operations",
+            "short_description": "Platform team to deploy VM with access, (CPU, Storage, Memory, OS image details and location) "
+                                 "for the service owner to install", "description": "", "comments": "", "work_notes": "",
+            "change_request": "CHG0030009", "parent": ""}
+    WORDS = ("I need 2 vms created named web-test01 and web-test02\nboth servers need:\nRHEL 9\n8 cpus\n12gb of memory\n"
+             "storage 180GB disk and 50gb disk\nStore in the App-Servers folder.")
+    CHG = {"number": "CHG0030009", "active": "true", "state": "Implement", "approval": "Approved", "description": WORDS}
+
+    def read(self, rec):
+        ref = d.vm_deploy_parent_ref(self.TASK, PARENT_OPTS)
+        return d.vm_deploy_parent_read(ref, {"status": 200, "json": {"result": [rec]}}, ["description"], self.READY)
+
+    def test_the_change_must_be_approved_and_in_implement(self):
+        self.assertNotIn("problem", self.read(self.CHG))
+        par = self.read(dict(self.CHG, approval="Requested", state="Assess"))
+        self.assertEqual(par["problem"], "the change CHG0030009 (this ticket's parent) is not ready to build: approval is 'Requested', "
+                                         "not Approved; state is 'Assess', not Implement (vm_deploy_ready_by_table) - nothing is built; "
+                                         "run the job again once it is")
+        checked = d.vm_deploy_check(d.vm_deploy_spec(self.TASK, {}, None, None, par), self.TASK, dict(RULES, parent=par))
+        self.assertIn("is not ready to build", " ".join(checked["problems"]))
+        # a field the change does not have counts as empty; a closed change is said to be closed, not 'not ready'
+        self.assertIn("approval is empty, not Approved", self.read(dict(self.CHG, approval=""))["problem"])
+        self.assertIn("is closed (state Closed)", self.read(dict(self.CHG, active="false", state="Closed"))["problem"])
+
+    def test_labels_any_case_a_list_or_no_check(self):
+        self.assertEqual(d.vm_deploy_ready({"approval": "APPROVED", "state": "scheduled"}, "change_request",
+                                           {"change_request": {"approval": "approved", "state": ["Implement", "Scheduled"]}}), "")
+        self.assertEqual(d.vm_deploy_ready({"approval": "Requested"}, "change_request", {}), "")
+        self.assertEqual(d.vm_deploy_ready({"approval": "Requested"}, "incident", self.READY), "")
+        self.assertEqual(d.vm_deploy_ready({"approval": "Requested"}, "change_request", {"change_request": {"approval": []}}), "")
+        why = d.vm_deploy_ready({"number": "CHG0030010", "approval": "Requested", "state": "Implement"}, "change_request", self.READY)
+        self.assertTrue(why.startswith("the change CHG0030010 is not ready to build: approval is 'Requested', not Approved ("), why)
+
+    def test_the_ticket_itself(self):
+        chg = dict(self.CHG, number="CHG0030011", assignment_group="Linux Operations", description="vm_name: app11\ntemplate: rhel9-gold",
+                   approval="Requested", comments="", work_notes="")
+        parsed = d.vm_deploy_spec(chg, {}, None, None, None)
+        probs = d.vm_deploy_check(parsed, chg, dict(RULES, ready=self.READY, table="change_request"))["problems"]
+        self.assertIn("this ticket (CHG0030011) is not ready to build: approval is 'Requested', not Approved", " ".join(probs))
+        self.assertEqual(d.vm_deploy_check(parsed, dict(chg, approval="Approved"), dict(RULES, ready=self.READY, table="change_request"))["problems"], [])
+        self.assertEqual(d.vm_deploy_check(parsed, chg, dict(RULES, ready=self.READY, table="incident"))["problems"], [])
+        # a closed ticket says closed, once
+        probs = d.vm_deploy_check(parsed, dict(chg, active="false"), dict(RULES, ready=self.READY, table="change_request"))["problems"]
+        self.assertEqual([p for p in probs if "not ready" in p], [])
+
+    def test_the_changes_plain_words_under_the_tasks(self):
+        words = {"on": True, "allowed": ["rhel9-gold"]}
+        self.assertEqual(d.vm_deploy_words(self.TASK, dict(words, number=self.TASK["number"]))["spec"], {})   # the task's words say nothing
+        r = d.vm_deploy_spec(self.TASK, {}, None, words, self.read(self.CHG))
+        self.assertEqual(r["spec"], {"vm_name": "web-test01, web-test02", "template": "rhel9-gold", "cpu": 8, "memory_gb": 12,
+                                     "disks_gb": [180, 50], "folder": "App-Servers"})
+        self.assertEqual(r["sources"]["vm_name"], "the words 'named web-test01 and web-test02' in the parent CHG0030009 description")
+        self.assertEqual(r["questions"], [])
+        # the task's own words win; its own line wins over everything
+        r = d.vm_deploy_spec(dict(self.TASK, description="make it 4 cpus"), {}, None, words, self.read(self.CHG))
+        self.assertEqual((r["spec"]["cpu"], r["spec"]["memory_gb"]), (4, 12))
+        r = d.vm_deploy_spec(dict(self.TASK, description="cpu: 2"), {}, None, words, self.read(self.CHG))
+        self.assertEqual(r["spec"]["cpu"], "2")
+        # never the change's number as a VM name; plain words off: the change's words are not read
+        r = d.vm_deploy_spec(self.TASK, {}, None, words, self.read(dict(self.CHG, description="named CHG0030009")))
+        self.assertNotIn("vm_name", r["spec"])
+        self.assertEqual(d.vm_deploy_spec(self.TASK, {}, None, None, self.read(self.CHG))["spec"], {})
+
+
+class DoneIssues(unittest.TestCase):
+    """The module tells the notes that mean something did not finish (issues) from the ones only to know."""
+
+    def test_issue_notes_are_listed_in_the_module(self):
+        import re
+        with open(os.path.join(HERE, "..", "roles", "vmware_vm", "library", "site_vmware_deploy.py")) as fh:
+            src = fh.read()
+        issues = " | ".join(re.findall(r'issue\(\s*"([^"]*)"', src))
+        for text in ("no IPv4 address within", "vCenter reported no customization result", "the guest reports host name",
+                     "is not set to connect at power on", "the template has no network adapter", "guestinfo (the name for the installer) was not set"):
+            self.assertIn(text, issues)
+        for text in ("cluster chosen", "datastore chosen", "no operating system yet", "disk 1 was grown", "disk(s) added"):
+            self.assertNotIn(text, issues)
+
+
 class TicketStyles(unittest.TestCase):
     """The ways people write a request - lines with other names, a line per value in plain words, one
     sentence - all read to the same values (after the check: units converted)."""

@@ -18,7 +18,8 @@
            'name_rules': vm_deploy_name_rules,
            'template_aliases': vm_deploy_template_aliases, 'template_specs': vm_deploy_template_specs,
            'max_disks': vm_deploy_max_disks | int, 'max_disk_gb': vm_deploy_max_disk_gb | float,
-           'max_total_disk_gb': vm_deploy_max_total_disk_gb | float, 'parent': _vd_parent, 'max_vms': vm_deploy_max_vms | int}) }}
+           'max_total_disk_gb': vm_deploy_max_total_disk_gb | float, 'parent': _vd_parent,
+           'ready': vm_deploy_ready_by_table | default({}, true), 'table': _vd_table, 'max_vms': vm_deploy_max_vms | int}) }}
     # the VMs an earlier run built for this ticket (its own notes): left as they are when the job runs again
     _vd_built: "{{ _vd_rec | vm_deploy_built }}"
 
@@ -150,14 +151,20 @@
     _vd_vm: "{{ _vd_vms.results[0] }}"   # one VM: its result, as before
     _vd_bad: "{{ _vd_vms.results | selectattr('failed', 'defined') | selectattr('failed') | list }}"
     _vd_all_ok: "{{ _vd_vms.results | selectattr('failed', 'defined') | selectattr('failed') | list | length == 0 }}"
+    # built, but something did not finish (no IP in time, no customization result ...): the module's issues
+    _vd_issues: "{{ _vd_vms.results | map(attribute='issues', default=[]) | flatten }}"
 
 # what closes the ticket when the VM is up: its table's entry in vm_deploy_done_fields_by_table (e.g.
-# sc_task - never the change it belongs to), else vm_deploy_done_fields; {} = it stays open
+# sc_task - never the change it belongs to), else vm_deploy_done_fields; {} = it stays open. Built with
+# issues: vm_deploy_done_fields_issues_by_table's entry over it (e.g. close_code: successful_issues)
 - name: VMware | what closes the ticket (vm_deploy_done_fields, vm_deploy_done_fields_by_table)
   ansible.builtin.set_fact:
     _vd_done: >-
-      {{ ((vm_deploy_done_fields_by_table | default({}, true))[_vd_table]
-          if _vd_table in (vm_deploy_done_fields_by_table | default({}, true)) else vm_deploy_done_fields) | default({}, true)
+      {%- set base = ((vm_deploy_done_fields_by_table | default({}, true))[_vd_table]
+                      if _vd_table in (vm_deploy_done_fields_by_table | default({}, true)) else vm_deploy_done_fields) | default({}, true) -%}
+      {%- set extra = (vm_deploy_done_fields_issues_by_table | default({}, true))[_vd_table] | default({}, true)
+                      if _vd_issues | length > 0 and base | length > 0 else {} -%}
+      {{ base | combine(extra)
          if not ansible_check_mode and not _vd_plan_only | bool and _vd_all_ok | bool
             and (vm_deploy_done_fields_pxe | default(true) | bool or not _vd.spec.pxe | default(false) | bool) else {} }}
 
@@ -459,7 +466,7 @@
             'error': _vd_bad | map(attribute='msg', default='') | join('; '), 'dry_run': ansible_check_mode,
             'built': not _vd_dry | bool and _vd_all_ok | bool, 'waiting_for_approval': _vd_plan_only | bool,
             'closed': _vd_closed.ok | default(false), 'close_error': _vd_closed.why | default(''), 'parent': _vd_parent.number | default(''),
-            'vms': vms} }}
+            'issues': _vd_issues, 'vms': vms} }}
 
 - name: VMware | the VM was deployed{{ ' - every one' if _vd_multi | bool else '' }}
   ansible.builtin.assert:
