@@ -17,6 +17,8 @@ description:
   - The events of the last I(hours) hours: every warning and error event, plus failed logins, host
     connection events and VM power / guest / HA events whatever their category. Each is classified
     (group login / connection / vm / other) with a severity (critical / warning / info).
+  - The alarm status changes of the same hours (alarm_changes): every time an alarm on those objects
+    turned green, yellow or red - also the ones that fired and cleared since.
   - vCenter's address and account come from VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD (and
     VMWARE_PORT), as a "VMware vCenter" credential in AAP gives them; vcenters adds more vCenters
     (the same account). A read-only vCenter role is enough. Changes nothing.
@@ -32,6 +34,7 @@ options:
     default: [vcenter, datacenter, cluster, host]
   hours: {description: How far back to read events, in hours. 0 = no events., type: float, default: 24}
   max_events: {description: Read at most this many events (the newest)., type: int, default: 5000}
+  max_alarm_changes: {description: Read at most this many alarm status changes (the newest; 0 = none)., type: int, default: 2000}
   login_event_types: {description: Event types that are failed logins., type: list, elements: str}
   connection_event_types: {description: Event types about a host losing its connection to vCenter., type: list, elements: str}
   vm_event_types: {description: Event types about a VM stopping, restarting or failing over., type: list, elements: str}
@@ -57,6 +60,12 @@ hosts:
   returned: success
   sample: [{name: esx01.example.mil, moid: host-12, cluster: CL1, datacenter: DC1, connection: connected,
             power: poweredOn, maintenance: false, version: 8.0.2, build: "21997540", vendor: Dell Inc., model: PowerEdge R750, status: green}]
+alarm_changes:
+  description: The alarm status changes of the window, newest first.
+  type: list
+  returned: success
+  sample: [{key: 4712, time: "2026-10-05T03:52:47Z", alarm: "Host connection and power state", entity_type: host,
+            entity: esx01.example.mil, moid: host-12, from: green, to: red, cluster: CL1, datacenter: DC1}]
 events:
   description: The events of the window, newest first, each classified.
   type: list
@@ -257,10 +266,14 @@ def _issues(kind, name, moid, cluster, dc, issues):
     return out
 
 
+ALARM_CHANGE = "AlarmStatusChangedEvent"
+
+
 def _read_events(content, root, begin, cap, type_ids):
     """The events since begin - under root (a datacenter), or all of them (root None: that includes
     the ones of no object, like failed vCenter logins) - every warning / error one plus the given
-    types, newest first, at most cap, deduplicated."""
+    types, newest first, at most cap, deduplicated. Alarm status changes are left out (their own
+    read: _read_alarm_changes)."""
     em = content.eventManager
     try:
         info = {d.key: d.category for d in em.description.eventInfo or []}
@@ -277,7 +290,7 @@ def _read_events(content, root, begin, cap, type_ids):
             batch, n = list(col.latestPage or []), 0
             while batch and n < cap:
                 for e in batch:
-                    if e.key not in found:
+                    if e.key not in found and type(e).__name__.split(".")[-1] != ALARM_CHANGE:
                         found[e.key] = e
                         n += 1
                 if n >= cap:
@@ -310,8 +323,34 @@ def _read_events(content, root, begin, cap, type_ids):
     return out, capped
 
 
+def _read_alarm_changes(content, root, begin, cap):
+    """The alarm status changes since begin (under root, or all), newest first, at most cap."""
+    spec = vim.event.EventFilterSpec(time=vim.event.EventFilterSpec.ByTime(beginTime=begin), eventTypeId=[ALARM_CHANGE])
+    if root is not None:
+        spec.entity = vim.event.EventFilterSpec.ByEntity(entity=root, recursion="all")
+    found = {}
+    col = content.eventManager.CreateCollectorForEvents(spec)
+    try:
+        col.SetCollectorPageSize(1000)
+        batch = list(col.latestPage or [])
+        while batch and len(found) < cap:
+            for e in batch:
+                found.setdefault(e.key, e)
+            nxt = col.ReadPreviousEvents(1000) or []
+            if not nxt or all(e.key in found for e in nxt):
+                break
+            batch = nxt
+    finally:
+        try:
+            col.DestroyCollector()
+        except Exception:
+            pass
+    return sorted(found.values(), key=lambda x: x.createdTime, reverse=True)[:cap], len(found) >= cap
+
+
 def _read(content, p, types, login_t, conn_t, vm_t, now, host):
-    res = {"alarms": [], "config_issues": [], "hosts": [], "events": [], "events_capped": False}
+    res = {"alarms": [], "config_issues": [], "hosts": [], "events": [], "events_capped": False,
+           "alarm_changes": [], "alarm_changes_capped": False}
     root = content.rootFolder
     dcs = _props(content, root, vim.Datacenter, ["name", "configIssue"])
     if p["datacenter"] and p["datacenter"] not in [v[1].get("name") for v in dcs.values()]:
@@ -412,7 +451,33 @@ def _read(content, p, types, login_t, conn_t, vm_t, now, host):
             r = event_record(e, login_t, conn_t, vm_t)
             if r:
                 res["events"].append(r)
-    for k in ("alarms", "config_issues", "hosts", "events"):
+    # alarm status changes: the alarms that fired (and maybe cleared) in the window
+    if p["hours"] and p["hours"] > 0 and p["max_alarm_changes"] > 0:
+        begin = datetime.datetime.fromtimestamp(now - p["hours"] * 3600, tz=datetime.timezone.utc)
+        ev_root = None
+        if p["datacenter"]:
+            ev_root = [o for m, (o, pr) in dcs.items() if pr.get("name") == p["datacenter"]][0]
+        raw, res["alarm_changes_capped"] = _read_alarm_changes(content, ev_root, begin, p["max_alarm_changes"])
+        for e in raw:
+            ent = getattr(getattr(e, "entity", None), "entity", None)
+            kind = _kind(ent, root) if ent is not None else ""
+            if kind not in types:
+                continue
+            m = ent._moId
+            n = names.get(m) or {}
+            if not n:
+                try:
+                    n = {"name": getattr(e.entity, "name", "") or ent.name, "cluster": "", "datacenter": _datacenter_of(ent, dc_cache)}
+                except Exception:
+                    n = {"name": getattr(e.entity, "name", "") or m, "cluster": "", "datacenter": ""}
+            if kind != "vcenter" and not in_dc(n):
+                continue
+            res["alarm_changes"].append({
+                "key": e.key, "time": _iso(e.createdTime), "alarm": getattr(getattr(e, "alarm", None), "name", "") or "",
+                "entity_type": kind, "entity": n.get("name") or getattr(e.entity, "name", "") or m, "moid": m,
+                "from": str(getattr(e, "from", "") or ""), "to": str(getattr(e, "to", "") or ""),
+                "cluster": n.get("cluster", ""), "datacenter": n.get("datacenter", "") or (e.datacenter.name if e.datacenter else "")})
+    for k in ("alarms", "config_issues", "hosts", "events", "alarm_changes"):
         for r in res[k]:
             r["vcenter"] = host
     return res
@@ -423,6 +488,7 @@ def main():
         argument_spec=dict(datacenter=dict(type="str"), validate_certs=dict(type="bool", default=True),
                            types=dict(type="list", elements="str", default=["vcenter", "datacenter", "cluster", "host"]),
                            hours=dict(type="float", default=24), max_events=dict(type="int", default=5000),
+                           max_alarm_changes=dict(type="int", default=2000),
                            login_event_types=dict(type="list", elements="str"),
                            connection_event_types=dict(type="list", elements="str"),
                            vm_event_types=dict(type="list", elements="str"),
@@ -445,15 +511,18 @@ def main():
                                   p["vcenters"], p["validate_certs"], "alarms and events")
     res = {"vcenter": ", ".join(name for name, _ in done), "vcenters": statuses, "window_hours": p["hours"],
            "read_at": _iso(datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc)),
-           "alarms": [], "config_issues": [], "hosts": [], "events": [], "events_capped": False}
+           "alarms": [], "config_issues": [], "hosts": [], "events": [], "events_capped": False,
+           "alarm_changes": [], "alarm_changes_capped": False}
     for _, part in done:
-        for k in ("alarms", "config_issues", "hosts", "events"):
+        for k in ("alarms", "config_issues", "hosts", "events", "alarm_changes"):
             res[k] += part[k]
         res["events_capped"] = res["events_capped"] or part["events_capped"]
+        res["alarm_changes_capped"] = res["alarm_changes_capped"] or part["alarm_changes_capped"]
     if len(done) > 1:
         res["alarms"].sort(key=lambda x: x["time"], reverse=True)
         res["alarms"].sort(key=lambda x: RANK.get(x["severity"], 9))
         res["events"].sort(key=lambda x: x["time"], reverse=True)
+        res["alarm_changes"].sort(key=lambda x: x["time"], reverse=True)
     module.exit_json(changed=False, **res)
 
 

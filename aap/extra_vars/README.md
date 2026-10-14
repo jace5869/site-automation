@@ -36,6 +36,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VM - delete snapshot | `playbooks/vm_snapshot_delete.yml` | [vm_snapshot_delete.yml](vm_snapshot_delete.yml) |
 | VM - deploy from ServiceNow ticket | `playbooks/vm_deploy_from_ticket.yml` | [vm_deploy_from_ticket.yml](vm_deploy_from_ticket.yml) |
 | VM - deploy settings finder | `playbooks/vm_deploy_inventory.yml` | [vm_deploy_inventory.yml](vm_deploy_inventory.yml) |
+| VM - health report | `playbooks/vm_health_report.yml` | [vm_health_report.yml](vm_health_report.yml) |
 | VM - notes | `playbooks/vm_notes.yml` | [vm_notes.yml](vm_notes.yml) |
 | VM - pick up deploy tickets | `playbooks/vm_deploy_poll.yml` | [vm_deploy_poll.yml](vm_deploy_poll.yml) |
 | VM - restart | `playbooks/vm_reboot.yml` | [vm_reboot.yml](vm_reboot.yml) |
@@ -44,6 +45,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VM - snapshot | `playbooks/vm_snapshot.yml` | [vm_snapshot.yml](vm_snapshot.yml) |
 | VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | [vm_snapshot_cleanup.yml](vm_snapshot_cleanup.yml) |
 | VM - snapshot report | `playbooks/vm_snapshot_report.yml` | [vm_snapshot_report.yml](vm_snapshot_report.yml) |
+| VM - VMs created report | `playbooks/vm_created_report.yml` | [vm_created_report.yml](vm_created_report.yml) |
 | Windows certificate report | `playbooks/win_cert_report.yml` | [win_cert_report.yml](win_cert_report.yml) |
 | Windows connection test | `playbooks/win_connection_test.yml` | [win_connection_test.yml](win_connection_test.yml) |
 | Windows health check | `playbooks/win_health_check.yml` | [win_health_check.yml](win_health_check.yml) |

@@ -261,6 +261,27 @@ class VcenterList(unittest.TestCase):
         self.assertEqual(site_vcenters.host_port("vc02", {"VMWARE_PORT": "9443"}), ("vc02", 9443))
         self.assertEqual(site_vcenters.host_port("fe80::1", env), ("fe80::1", 443))
 
+    def test_refused_login_says_why_without_the_user_name(self):
+        r = site_vcenters.refused
+        self.assertIn("has no user name", r("vc01", {"VMWARE_USER": " "}))
+        bare = r("vc01", {"VMWARE_USER": "svc-deploy"})
+        self.assertIn("name@vsphere.local", bare)
+        self.assertNotIn("svc-deploy", bare)
+        for user in ("svc-deploy@vsphere.local", "VSPHERE.LOCAL\\svc-deploy"):
+            msg = r("vc02", {"VMWARE_USER": user})
+            self.assertTrue(msg.startswith("vCenter vc02 refused the login (the VMware vCenter credential): "))
+            self.assertIn("single sign-on domain", msg)
+            self.assertNotIn("svc-deploy", msg)
+
+    def test_login_accepted_but_no_role_in_that_vcenter(self):
+        class Fault:
+            privilegeId = "System.View"
+        msg = site_vcenters.no_rights("vc02", Fault())
+        self.assertTrue(msg.startswith("vCenter vc02 accepted the login, but the account has no permission in that vCenter"))
+        self.assertIn("lacks System.View", msg)
+        self.assertIn("Global Permissions", msg)
+        self.assertIn("lacks System.View", site_vcenters.no_rights("vc02"))
+
 
 class ModuleParts(unittest.TestCase):
     def test_series_drops_missing(self):

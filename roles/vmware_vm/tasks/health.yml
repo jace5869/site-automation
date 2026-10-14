@@ -1,0 +1,64 @@
+---
+# HEALTH REPORT (read-only): every datacenter, cluster and host of every vCenter - vSphere HA (on,
+# host monitoring, failover capacity left, each host's HA agent), DRS (on, automation, recommendations
+# waiting, faults), vCLS retreat mode, hosts not connected or in maintenance, hardware sensors not
+# green, hosts that need a restart, CPU and memory used, configuration issues and triggered alarms.
+# Coloured by severity, what to do for each problem. Printed, emailed (report_email_to), and published
+# as artifacts (vm_health). Green unless vm_health_fail.
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | read every datacenter, cluster and host
+  site_vmware_health:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    sensors: "{{ vm_health_sensors | bool }}"
+    now: "{{ _vm_now | default(omit) }}"
+  register: _vm_hl_read
+  check_mode: false
+
+# one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: VMware | what counts as a problem
+  ansible.builtin.set_fact:
+    _vm_hl_opts: >-
+      {{ {'require_ha': vm_health_require_ha | bool, 'require_drs': vm_health_require_drs | bool,
+          'cpu_warn_pct': vm_health_cpu_warn_pct | float, 'cpu_crit_pct': vm_health_cpu_crit_pct | float,
+          'mem_warn_pct': vm_health_mem_warn_pct | float, 'mem_crit_pct': vm_health_mem_crit_pct | float,
+          'max_rows': vm_health_max_rows | int, 'datacenter': vmware_datacenter | default('', true)} }}
+
+- name: VMware | the report
+  ansible.builtin.set_fact:
+    _vm_hl_doc: "{{ _vm_hl_read | vm_health_report(_vm_hl_opts) }}"
+    _vm_hl_problems: "{{ _vm_hl_read | vm_health_problems(_vm_hl_opts) }}"
+
+- name: VMware | health report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_vcenters: "{{ _vm_hl_read.vcenters }}"
+    _vm_report_subject: "{{ _vm_hl_doc.title }}"
+    _vm_report_lines: "{{ (_vm_hl_doc | report_text).splitlines() }}"
+    _vm_report_doc: "{{ _vm_hl_doc }}"
+
+- name: VMware | the health as job artifacts (vm_health)
+  ansible.builtin.set_stats:
+    data:
+      vm_health: >-
+        {{ {'vcenter': _vm_hl_read.vcenter, 'vcenters': _vm_hl_read.vcenters, 'read_at': _vm_hl_read.read_at,
+            'problems': _vm_hl_problems, 'datacenters': _vm_hl_read.datacenters, 'clusters': _vm_hl_read.clusters,
+            'hosts': _vm_hl_read.hosts} }}
+
+- name: VMware | nothing critical
+  ansible.builtin.assert:
+    that: _vm_hl_problems | selectattr('severity', 'equalto', 'critical') | list | length == 0
+    fail_msg: >-
+      {{ _vm_hl_problems | selectattr('severity', 'equalto', 'critical') | list | length }} critical problem(s):
+      {{ _vm_hl_problems | selectattr('severity', 'equalto', 'critical') | map(attribute='object') | unique | join(', ') }}
+      (the report is above). vm_health_fail: false makes this a report only.
+    quiet: true
+  when: vm_health_fail | bool
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_hl_read.vcenters }}"

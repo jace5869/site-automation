@@ -8,8 +8,10 @@
   ansible.builtin.set_fact:
     # a list, or (from a survey) text: one per line, or separated by commas
     _vm_names: >-
-      {{ ((vm_names | replace(',', '\n')).splitlines() if vm_names is string else vm_names)
+      {{ ((vm_names | replace(',', _vm_nl)).splitlines() if vm_names is string else vm_names)
          | map('string') | map('trim') | select | unique | list }}
+  vars:
+    _vm_nl: "\n"                      # a real newline: '\n' inside {{ }} in a >- block stays a backslash and n
 
 - name: VMware | exact VM names given
   ansible.builtin.assert:

@@ -1,0 +1,116 @@
+---
+# VMS CREATED REPORT (read-only): how many VMs were created in the last vm_created_days days, and
+# each one - when, by whom, how, the ticket when the AAP deploy built it, where, its size - by person
+# and by day; the ones created and deleted since apart. Printed, emailed (report_email_to), and
+# published as the job artifact vm_created.
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | the window is a number of days
+  ansible.builtin.assert:
+    that: (vm_created_days | string) is match('^[0-9]+(\.[0-9]+)?$') and vm_created_days | float > 0
+    fail_msg: "vm_created_days must be a number of days (e.g. 7 for the past week), not {{ vm_created_days }}"
+    quiet: true
+
+- name: VMware | read the VMs created in the last {{ vm_created_days }} days
+  site_vmware_vm_created:
+    days: "{{ vm_created_days | float }}"
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    now: "{{ _vm_now | default(omit) }}"
+  register: _vc_read
+  check_mode: false
+
+- name: VMware | the ones still there, the ones deleted since
+  ansible.builtin.set_fact:
+    _vc_live: "{{ _vc_read.created | rejectattr('deleted') | list }}"
+    _vc_gone: "{{ _vc_read.created | selectattr('deleted') | list }}"
+    _vc_multi: "{{ _vc_read.vcenters | default([]) | vm_vcenters_read | length > 1 }}"
+    _vc_days: "{{ (vm_created_days | float | int if vm_created_days | float == vm_created_days | float | int else vm_created_days) ~ (' day' if vm_created_days | float == 1 else ' days') }}"
+
+- name: VMware | VMs created report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_vcenters: "{{ _vc_read.vcenters }}"
+    _vc_all: "{{ _vc_read.created | length }}"
+    _vc_aap: "{{ _vc_read.created | selectattr('aap') | list | length }}"
+    _vc_when: "{{ _vc_read.since | replace('T', ' ') | replace('Z', '') }} to {{ _vc_read.until | replace('T', ' ') | replace('Z', '') }} UTC"
+    _vm_report_subject: >-
+      VMware: {{ ((_vc_all ~ ' VM' ~ ('' if _vc_all | int == 1 else 's') ~ ' created in the last ' ~ _vc_days
+                   ~ ' (' ~ ([_vc_aap ~ ' by AAP from tickets'] + ([_vc_gone | length ~ ' deleted since'] if _vc_gone else [])) | join(', ') ~ ')')
+                  if _vc_all | int > 0 else 'no VMs created in the last ' ~ _vc_days) }}
+    _vm_report_lines: >-
+      {%- set out = ['From ' ~ _vc_when ~ (' - datacenter ' ~ vmware_datacenter if vmware_datacenter else '')] -%}
+      {%- for x in _vc_read.created -%}
+      {%-   set _ = out.append(('DELETED ' ~ x.removed | replace('T', ' ') | replace('Z', '') ~ ': ' if x.deleted else '')
+                               ~ x.created | replace('T', ' ') | replace('Z', '') ~ ' ' ~ x.vm ~ (' (' ~ x.vcenter | vc_short ~ ')' if _vc_multi | bool else '')
+                               ~ ' by ' ~ (x.by or 'unknown') ~ (' - ' ~ x.how if x.how else '') ~ (' - ticket ' ~ x.ticket if x.ticket else '')
+                               ~ ((' - cluster ' ~ (x.cluster or '-') ~ ', folder ' ~ (x.folder or '-') ~ ' - ' ~ x.cpu | default('?') ~ ' vCPU, '
+                                   ~ x.memory_gb | default('?') ~ ' GB, ' ~ x.disk_gb | default('?') ~ ' GB disk - ' ~ x.power | default('?'))
+                                  if not x.deleted else '')) -%}
+      {%- endfor -%}
+      {%- set who = [] -%}
+      {%- for g in _vc_read.created | groupby('by') -%}{%- set _ = who.append((g.grouper or 'unknown') ~ ' (' ~ g.list | length ~ ')') -%}{%- endfor -%}
+      {{ out + (['By whom: ' ~ who | join(', ')] if who else ['No VM was created in the last ' ~ _vc_days ~ '.']) }}
+    _vm_report_doc: >-
+      {%- set rows, gone, who, days = [], [], [], [] -%}
+      {%- for x in _vc_live -%}
+      {%-   set _ = rows.append([x.created | replace('T', ' ') | replace('Z', ''), x.vm ~ (' (' ~ x.vcenter | vc_short ~ ')' if _vc_multi | bool else ''),
+                                 x.by or 'unknown', x.how or '-', x.ticket or '-', x.cluster or '-', x.folder or '-', x.cpu | default('-'),
+                                 x.memory_gb | default('-'), x.disk_gb | default('-'), x.guest_os | default('', true) or '-', x.power | default('-')]) -%}
+      {%- endfor -%}
+      {%- for x in _vc_gone -%}
+      {%-   set _ = gone.append([x.created | replace('T', ' ') | replace('Z', ''), x.vm ~ (' (' ~ x.vcenter | vc_short ~ ')' if _vc_multi | bool else ''),
+                                 x.by or 'unknown', x.how or '-', x.removed | replace('T', ' ') | replace('Z', '') or 'not known']) -%}
+      {%- endfor -%}
+      {%- for g in _vc_read.created | groupby('by') -%}
+      {%-   set _ = who.append([g.grouper or 'unknown', g.list | length, g.list | selectattr('aap') | list | length]) -%}
+      {%- endfor -%}
+      {%- set who = who | sort(attribute='1', reverse=true) -%}
+      {%- set perday = {} -%}
+      {%- for x in _vc_read.created -%}
+      {%-   set d = x.created[:10] -%}
+      {%-   set _ = perday.update({d: perday.get(d, 0) + 1}) -%}
+      {%- endfor -%}
+      {%- for d in perday | dictsort -%}{%- set _ = days.append([d[0], d[1]]) -%}{%- endfor -%}
+      {%- set sections = [] -%}
+      {%- if rows -%}
+      {%-   set _ = sections.append({'title': 'VMs created, oldest first', 'columns': ['Created (UTC)', 'VM', 'By', 'How', 'Ticket', 'Cluster', 'Folder',
+                                                                                    'vCPU', 'Memory (GB)', 'Disk (GB)', 'Operating system', 'Power'],
+                                     'rows': rows,
+                                     'text': 'Ticket: the VMs the AAP deploy built (their notes name the ticket). By: from vCenter events.'}) -%}
+      {%- endif -%}
+      {%- if who -%}
+      {%-   set _ = sections.append({'title': 'By whom', 'columns': ['Created by', 'VMs', 'Of them by AAP from tickets'], 'rows': who}) -%}
+      {%-   set _ = sections.append({'title': 'By day (UTC)', 'columns': ['Day', 'VMs'], 'rows': days}) -%}
+      {%- endif -%}
+      {%- if gone -%}
+      {%-   set _ = sections.append({'title': 'Created and deleted since', 'status': 'warning',
+                                     'columns': ['Created (UTC)', 'VM', 'By', 'How', 'Deleted (UTC)'], 'rows': gone,
+                                     'text': 'Counted above too: created in the window, no longer in vCenter (from its events).'}) -%}
+      {%- endif -%}
+      {%- if not _vc_read.created -%}
+      {%-   set _ = sections.append({'title': 'Result', 'lines': ['No VM was created in the last ' ~ _vc_days ~ '.']}) -%}
+      {%- endif -%}
+      {{ {'title': _vm_report_subject | trim, 'status': 'info',
+          'subtitle': 'From ' ~ _vc_when ~ (' - datacenter ' ~ vmware_datacenter if vmware_datacenter else ''),
+          'summary': [{'label': 'VMs created', 'value': _vc_all | int}, {'label': 'By AAP from tickets', 'value': _vc_aap | int},
+                      {'label': 'Deleted since', 'value': _vc_gone | length, 'status': 'warning' if _vc_gone else ''},
+                      {'label': 'vCPU added', 'value': _vc_live | map(attribute='cpu', default=0) | sum},
+                      {'label': 'Memory added', 'value': (_vc_live | map(attribute='memory_gb', default=0) | sum) | human_size},
+                      {'label': 'Disk added', 'value': (_vc_live | map(attribute='disk_gb', default=0) | sum) | human_size}],
+          'sections': sections} }}
+
+- name: VMware | the VMs created as a job artifact (vm_created)
+  ansible.builtin.set_stats:
+    data:
+      vm_created: >-
+        {{ {'since': _vc_read.since, 'until': _vc_read.until, 'days': vm_created_days | float, 'count': _vc_read.created | length,
+            'by_aap': _vc_read.created | selectattr('aap') | list | length, 'deleted_since': _vc_gone | length,
+            'vms': _vc_read.created, 'vcenters': _vc_read.vcenters} }}
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vc_read.vcenters }}"

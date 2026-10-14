@@ -13,12 +13,76 @@
 - name: VMware | the ticket and the ServiceNow connection
   ansible.builtin.set_fact:
     _vd_number: "{{ vm_deploy_ticket | default('', true) | string | trim | upper }}"
-    _vd_table: "{{ vm_deploy_ticket_table | default('', true) or (vm_deploy_ticket | default('', true) | string | vm_deploy_table) }}"
+    # the table: vm_deploy_ticket_table, else the number's prefix (the standard ones and vm_deploy_ticket_prefixes);
+    # any other prefix (e.g. INCN, CHGN): ServiceNow's task table says (below)
+    _vd_table: >-
+      {{ vm_deploy_ticket_table | default('', true)
+         or (vm_deploy_ticket | default('', true) | string | vm_deploy_table(vm_deploy_ticket_prefixes | default({}, true), false)) }}
     _vd_sn_url: >-
       {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
       {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
     _vd_sn_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
     _vd_job: "{{ ('AAP job ' ~ awx_job_id) if awx_job_id is defined else 'AAP' }}{{ (' by ' ~ awx_user_name) if awx_user_name is defined else '' }}"
+    # the plain-words rules (vm_deploy_plain_words), one dict expression (ansible-core 2.16 keeps its types)
+    _vd_words: >-
+      {{ {'on': vm_deploy_plain_words | bool, 'templates': vm_deploy_plain_templates | default({}, true),
+          'sizes': vm_deploy_plain_sizes | default({}, true), 'allowed': vm_deploy_templates,
+          'aliases': vm_deploy_template_aliases | default({}, true), 'name_rules': vm_deploy_name_rules | default([], true),
+          'sites': (vm_deploy_sites | default({}, true)).keys() | list} }}
+
+- name: VMware | the plain-words settings have their shape (words -> a template; a size word -> CPU and memory)
+  ansible.builtin.assert:
+    that:
+      - vm_deploy_plain_templates | default({}, true) is mapping
+      - vm_deploy_plain_sizes | default({}, true) is mapping
+      - vm_deploy_templates | default([], true) is not string and vm_deploy_templates | default([], true) is not mapping
+    fail_msg: >-
+      {{ ('vm_deploy_plain_templates maps words to a template - e.g. {"server 2022": "' ~ (vm_deploy_templates | default(['<template name>'], true) | first)
+          ~ '"} - not a list of words. It is rarely needed: with the exact template names in vm_deploy_templates, "Windows Server 2022",'
+          ~ ' "Server 2022", "RHEL 9" ... find the template by themselves - delete it.')
+         if vm_deploy_plain_templates | default({}, true) is not mapping else
+         ('vm_deploy_plain_sizes maps a size word to CPU and memory - e.g. {small: {cpu: 2, memory_gb: 8}, medium: {cpu: 4, memory_gb: 16}}.')
+         if vm_deploy_plain_sizes | default({}, true) is not mapping else
+         'vm_deploy_templates is a list of template names (one per line, each starting with "- "), e.g. ["Windows 2022 Template", rhel9-gold].' }}
+    quiet: true
+
+# a prefix the job does not know (a site's own, like INCN or CHGN): every ticket is a task, and the
+# task table names its real table (sys_class_name). Read-only, so also in a dry run.
+- name: VMware | which table is {{ _vd_number }} in? (ServiceNow's task table says)
+  ansible.builtin.uri:
+    url: >-
+      {{ _vd_sn_url }}/api/now/table/task?sysparm_limit=2&sysparm_fields=number,sys_class_name&sysparm_query={{
+      ('number=' ~ _vd_number) | urlencode }}
+    method: GET
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  register: _vd_class
+  check_mode: false
+  when:
+    - _vd_table | length == 0
+    - _vd_number is match('^[A-Z]{2,8}[0-9]{4,}$')
+    - _vd_sn_url | length > 0 and _vd_sn_user | length > 0
+
+# what the task table said; when it would not say (no read access to task), a prefix that starts with
+# a known one (INCN -> incident)
+- name: VMware | the ticket's table
+  ansible.builtin.set_fact:
+    _vd_table: >-
+      {%- set found = (_vd_class.json.result | default([]) | map(attribute='sys_class_name', default='') | select | list)
+                      if (_vd_class.status | default(0)) == 200 else [] -%}
+      {{ found[0] if found | length == 1
+         else (_vd_number | vm_deploy_table(vm_deploy_ticket_prefixes | default({}, true), true)) }}
+    _vd_class_why: >-
+      {{ '' if _vd_class.skipped | default(false) or _vd_class.status is not defined
+         else ('ServiceNow has no ticket ' ~ _vd_number if (_vd_class.status == 200 and (_vd_class.json.result | default([])) | length == 0)
+               else ('the task table could not be read (HTTP ' ~ _vd_class.status ~ ')' if _vd_class.status != 200 else '')) }}
+  when: _vd_table | length == 0
 
 - name: VMware | a ticket number, and a ServiceNow API credential
   ansible.builtin.assert:
@@ -27,9 +91,15 @@
       - _vd_table | length > 0
       - _vd_sn_url | length > 0 and _vd_sn_user | length > 0
     fail_msg: >-
-      {{ ('Give the ticket number: vm_deploy_ticket (e.g. INC0012345 or SCTASK0012345), not "' ~ _vd_number ~ '".')
+      {{ ('Give the ticket number: the job got none. The template needs its survey - Survey tab: question "Ticket number", '
+          ~ 'answer variable name vm_deploy_ticket, text, required - and the survey switched on; then Launch asks for it. '
+          ~ 'A quick test without a survey: tick Prompt on launch for Variables and launch with vm_deploy_ticket: INC0012345.')
+         if not _vd_number else
+         ('Give the ticket number: vm_deploy_ticket (e.g. INC0012345 or SCTASK0012345), not "' ~ _vd_number ~ '".')
          if _vd_number is not match('^[A-Z]{2,8}[0-9]{4,}$') else
-         ('Unknown ticket prefix in ' ~ _vd_number ~ ': set vm_deploy_ticket_table (e.g. incident, task, sc_task).')
+         ('Which table is ' ~ _vd_number ~ ' in? ' ~ (_vd_class_why | default('', true) ~ '. ' if _vd_class_why | default('', true) else '')
+          ~ 'Set vm_deploy_ticket_prefixes on the template, e.g. {INCN: incident, CHGN: change_request} '
+          ~ '(or vm_deploy_ticket_table: incident for this ticket).')
          if not _vd_table else
          'No ServiceNow connection: attach the "ServiceNow API" credential to this job template (it gives SN_HOST, SN_USERNAME, SN_PASSWORD).' }}
     quiet: true
@@ -40,7 +110,8 @@
   ansible.builtin.uri:
     url: >-
       {{ _vd_sn_url }}/api/now/table/{{ _vd_table }}?sysparm_display_value=true&sysparm_exclude_reference_link=true&sysparm_limit=2&sysparm_fields={{
-      'sys_id,number,state,active,assignment_group,location,short_description,description,comments,work_notes' }}&sysparm_query={{
+      'sys_id,number,state,active,assignment_group,location,short_description,description,comments,work_notes'
+      ~ ((',' ~ vm_deploy_parent_fields | join(',')) if vm_deploy_parent_fields | default([]) | length > 0 else '') }}&sysparm_query={{
       ('number=' ~ _vd_number) | urlencode }}
     method: GET
     url_username: "{{ _vd_sn_user }}"
@@ -66,16 +137,48 @@
          ('No ' ~ _vd_table ~ ' ticket ' ~ _vd_number ~ ' in ServiceNow.') }}
     quiet: true
 
-- name: VMware | the ticket, and a GenAI proposal on it (vm_deploy_genai)
+# the parent (e.g. the change a task belongs to): more of the request, under the ticket's own lines
+- name: VMware | the ticket's parent (vm_deploy_parent_tables, vm_deploy_parent_fields)
+  ansible.builtin.set_fact:
+    _vd_pref: >-
+      {{ _vd_get.json.result[0] | vm_deploy_parent_ref({'fields': vm_deploy_parent_fields | default([]),
+           'tables': vm_deploy_parent_tables | default([]), 'prefixes': vm_deploy_ticket_prefixes | default({}, true)}) }}
+
+- name: VMware | read the parent ticket {{ _vd_pref.number | default('') }}
+  ansible.builtin.uri:
+    url: >-
+      {{ _vd_sn_url }}/api/now/table/{{ _vd_pref.table }}?sysparm_display_value=true&sysparm_exclude_reference_link=true&sysparm_limit=2&sysparm_fields={{
+      (['sys_id', 'number', 'state', 'active', 'short_description'] + vm_deploy_parent_text_fields) | unique | join(',') }}&sysparm_query={{
+      ('number=' ~ _vd_pref.number) | urlencode }}
+    method: GET
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  register: _vd_pget
+  check_mode: false
+  when: _vd_pref.read | bool
+
+- name: VMware | the ticket, its parent, and a GenAI proposal on it (vm_deploy_genai)
   ansible.builtin.set_fact:
     _vd_rec: "{{ _vd_get.json.result[0] }}"
-    _vd_text: "{{ _vd_get.json.result[0] | vm_deploy_ticket_text }}"
-    _vd_digest: "{{ 'sha256:' ~ ((_vd_get.json.result[0] | vm_deploy_ticket_text) | hash('sha256'))[:16] }}"
+    _vd_parent: "{{ _vd_pref | vm_deploy_parent_read(_vd_pget, vm_deploy_parent_text_fields) }}"
     _vd_prop: "{{ _vd_get.json.result[0] | vm_deploy_find_proposal }}"
-    _vd_own: "{{ (_vd_get.json.result[0] | vm_deploy_spec).spec }}"
 
-# GenAI is asked only when it is on, the ticket's own lines do not say the name AND the template,
-# and there is no proposal for the ticket text as it is now. The build step never asks GenAI: it
+- name: VMware | what GenAI would read, and the ticket's own lines (its parent's under them)
+  ansible.builtin.set_fact:
+    _vd_text: "{{ _vd_rec | vm_deploy_ticket_text(_vd_parent) }}"
+    _vd_digest: "{{ 'sha256:' ~ ((_vd_rec | vm_deploy_ticket_text(_vd_parent)) | hash('sha256'))[:16] }}"
+    _vd_own: "{{ (_vd_rec | vm_deploy_spec({}, none, _vd_words, _vd_parent)).spec }}"
+    _vd_own_q: "{{ (_vd_rec | vm_deploy_spec({}, none, _vd_words, _vd_parent)).questions }}"
+
+# GenAI is asked only when it is on, there is no proposal for the ticket text as it is now, and the
+# ticket's own lines (and plain words) do not say the name AND the template - or the plain words left a
+# question (e.g. two sizes for disk 1): GenAI fills the gaps, the parser stays the main reader. The build step never asks GenAI: it
 # builds what the posted proposal says - the ticket's own lines winning - or nothing.
 #   vm_deploy_phase: ""        one job does it all: with GenAI, it proposes and stops for a person
 #                              (vm_deploy_genai_approval) - or, with that off, builds right away
@@ -88,7 +191,7 @@
     _vd_phase: "{{ vm_deploy_phase | default('', true) | string | lower | trim }}"
     _vd_prop_ok: "{{ vm_deploy_genai | bool and (_vd_prop.digest | default('')) == _vd_digest }}"
     _vd_genai_needed: >-
-      {{ vm_deploy_genai | bool and not (_vd_own.vm_name is defined and _vd_own.template is defined)
+      {{ vm_deploy_genai | bool and (not (_vd_own.vm_name is defined and _vd_own.template is defined) or _vd_own_q | length > 0)
          and (_vd_prop.digest | default('')) != _vd_digest }}
 
 - name: VMware | a step this job knows

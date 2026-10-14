@@ -1,0 +1,16 @@
+---
+# VMS CREATED REPORT (vCenter). Read-only: how many VMs were created in the last vm_created_days (7)
+# days, and each one - when, by whom, how (cloned, deployed from a template, created new), the
+# ticket when the AAP deploy built it, where it is and its size - by person and by day, and the
+# ones created and deleted since. Emailed (report_email_to). Schedule it weekly, e.g. Fridays at noon.
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_created_report.yml
+- name: VMs created report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VMs created report
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: vm_created.yml

@@ -137,6 +137,41 @@ def vm_alarm_groups(data, opts=None):
     }
 
 
+def vm_alarm_history(data, opts=None):
+    """The alarms that fired in the window (alarm_changes), one row per alarm and object: how many
+    times it turned red and yellow, when first and last, and how it is now - still on (its severity)
+    or cleared since (info). Still-on ones first, then newest first."""
+    d = data or {}
+    now = {}
+    for a in d.get("alarms") or []:
+        now[(a.get("vcenter", ""), a.get("moid"), a.get("alarm"))] = a
+    groups = {}
+    for c in d.get("alarm_changes") or []:
+        k = (c.get("vcenter", ""), c.get("moid"), c.get("alarm"))
+        g = groups.setdefault(k, {"vcenter": c.get("vcenter", ""), "entity_type": c.get("entity_type", ""), "entity": c.get("entity", ""),
+                                  "moid": c.get("moid", ""), "alarm": c.get("alarm", ""), "cluster": c.get("cluster", ""),
+                                  "datacenter": c.get("datacenter", ""), "red": 0, "yellow": 0, "first": "", "last": "", "last_to": ""})
+        to = str(c.get("to") or "").lower()
+        if to in ("red", "yellow"):
+            g[to] += 1
+            g["first"] = min(g["first"], c.get("time", "")) if g["first"] else c.get("time", "")
+        if c.get("time", "") >= g["last"]:
+            g["last"], g["last_to"] = c.get("time", ""), to
+    out = []
+    for k, g in groups.items():
+        if not (g["red"] or g["yellow"]):
+            continue
+        a = now.get(k)
+        if a is not None:
+            g["now"], g["severity"] = a.get("status", ""), a.get("severity", "")
+        else:
+            g["now"], g["severity"] = "cleared", "info"
+        out.append(g)
+    out.sort(key=lambda x: x["last"], reverse=True)
+    out.sort(key=lambda x: RANK.get(x["severity"], 9))
+    return out
+
+
 def _table(rows, status_col=0):
     """rows of (status, [cells]) -> rows, row_status, cell_status (the status cell coloured)."""
     out, rs, cs = [], [], []
@@ -187,6 +222,8 @@ def vm_alarm_report(data, opts=None):
     vm_bad = [e for e in g["vm"] if e.get("severity") in ("critical", "warning")]
     other_n = sum(x["count"] for x in g["other"])
     events_on = float(d.get("window_hours") or 0) > 0
+    fired = vm_alarm_history(d) if events_on else []
+    cleared = [x for x in fired if x["severity"] == "info"]
 
     parts = ["%d critical, %d warning alarm(s)" % (len(crit), len(warn)) if alarms else "no triggered alarms"]
     if notconn:
@@ -198,6 +235,8 @@ def vm_alarm_report(data, opts=None):
         parts.append("%d failed login(s)" % login_n)
     if vm_bad:
         parts.append("%d VM event(s) to check" % len(vm_bad))
+    if cleared:
+        parts.append("%d alarm(s) fired and cleared" % len(cleared))
     title = "VMware alarms report: " + ", ".join(parts) + (" (events: last %s h)" % hours if events_on else "")
     worst = _worst([a.get("severity") for a in alarms] + ["critical" if notconn else ""]
                    + [x["severity"] for x in g["logins"] + g["connection"] + g["other"]]
@@ -216,6 +255,8 @@ def vm_alarm_report(data, opts=None):
     ]
     if events_on:
         summary += [
+            {"label": "Alarms fired (%s h)" % hours, "value": len(fired),
+             "status": _worst([x["severity"] for x in fired if x["severity"] != "info"]) or ("info" if fired else "ok")},
             {"label": "Failed logins", "value": login_n, "status": _worst([x["severity"] for x in g["logins"]]) or "ok"},
             {"label": "VM events to check", "value": len(vm_bad), "status": _worst([e.get("severity") for e in vm_bad]) or "ok"},
             {"label": "Other errors / warnings", "value": other_n, "status": _worst([x["severity"] for x in g["other"]]) or "ok"},
@@ -235,6 +276,20 @@ def vm_alarm_report(data, opts=None):
         "As vCenter shows them now: red = critical, yellow = warning. Acknowledged = someone has seen it in vCenter; "
         "the alarm is still active until its cause is gone." if alarms else "No alarm is triggered.",
         _worst([a.get("severity") for a in alarms]), max_rows=max_rows)]
+    if events_on:
+        sections.append(_section(
+            "Alarms that fired in the last %s h" % hours,
+            ["Severity", "Type", "Object", "Alarm", "Went red", "Went yellow", "First fired (UTC)", "Last change (UTC)", "Now",
+             "Cluster", "Datacenter"],
+            [(x["severity"], [_sev(x["severity"]), TYPE_LABEL.get(x["entity_type"], x["entity_type"]), x["entity"], x["alarm"],
+                              x["red"], x["yellow"], _t(x["first"]), _t(x["last"]),
+                              "cleared" if x["now"] == "cleared" else "still %s" % x["now"], x["cluster"], _dc(x, multi)]) for x in fired],
+            ("Every alarm that turned yellow or red in the last %s h: still on (red / amber, also in the table above), "
+             "or cleared since (blue) - an alarm that comes and goes is worth a look too." % hours
+             + (" Only the newest %s alarm changes were read (vm_alarm_max_alarm_changes)." % o.get("max_alarm_changes", "")
+                if d.get("alarm_changes_capped") else ""))
+            if fired else "No alarm fired in the last %s h." % hours,
+            _worst([x["severity"] for x in fired if x["severity"] != "info"]), max_rows=max_rows))
     sections.append(_section(
         "Host connection", ["Severity", "Host", "State now", "Maintenance", "Connection events", "Last event (UTC)", "Last message",
                             "Cluster", "Datacenter"],
@@ -635,7 +690,7 @@ def vm_alarm_names(data):
 
 class FilterModule(object):
     def filters(self):
-        return {"vm_alarm_groups": vm_alarm_groups, "vm_alarm_report": vm_alarm_report,
+        return {"vm_alarm_groups": vm_alarm_groups, "vm_alarm_report": vm_alarm_report, "vm_alarm_history": vm_alarm_history,
                 "vm_alarm_problems": vm_alarm_problems, "vm_alarm_evidence": vm_alarm_evidence,
                 "vm_alarm_act_task": vm_alarm_act_task, "act_analysis_parse": act_analysis_parse,
                 "vm_alarm_act_report": vm_alarm_act_report, "vm_alarm_names": vm_alarm_names}

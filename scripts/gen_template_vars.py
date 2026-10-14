@@ -61,19 +61,21 @@ servicenow_assignment_group: YOUR GROUP NAME   # exactly as in ServiceNow
     "vm_deploy_from_ticket.yml": ("VM - deploy from ServiceNow ticket", "VMware vCenter, ServiceNow API, ACT model key", "", """\
 # ---- fill these in first (the CAPITALS) ------------------------------------------------------
 vm_deploy_templates: [TEMPLATE-NAME]              # REQUIRED: only these templates are ever deployed
-vm_deploy_pxe_templates: [TEMPLATE-NAME]          # the ones that boot to MECM (no OS yet); [] for none
-vm_deploy_name_regex: '^[A-Za-z0-9-]{1,15}$'      # allowed VM names (15 = the Windows limit)
+vm_deploy_pxe_templates: [TEMPLATE-NAME]          # empty ones (MECM network boot or a kickstart CD); [] for none
 vm_deploy_assignment_group: YOUR GROUP NAME       # only tickets assigned to this group
 vm_deploy_name_rules:                             # the VM's name picks the cluster; quotes keep the * safe
   - {match: "*AB01*", cluster: "CLUSTER-1", datacenter: "DATACENTER-1", vcenter: "vcenter1.yoursite.mil"}
   - {match: "*CD02*", cluster: "CLUSTER-2", datacenter: "DATACENTER-2", vcenter: "vcenter2.yoursite.mil"}
                                                   # datacenter / vcenter: only when not the template's own
-vm_deploy_genai: true                             # requests in plain words (GenAI reads, AAP checks)
-vm_deploy_template_catalog:                       # what GenAI may pick, in plain words
-  TEMPLATE-NAME: "Windows Server 2022 (installed over the network by MECM)"
+## VM names: 63 characters by default, and Windows is held to 15 on its own - no vm_deploy_name_regex needed
+# vm_deploy_genai: true                           # optional, needs the ACT model key credential: requests in plain words
+# vm_deploy_template_catalog:                     # what GenAI may pick, in plain words
+#   TEMPLATE-NAME: "Windows Server 2022 (installed over the network by MECM)"
 report_email_to: approvers@yoursite.mil           # the approver reads the plan in this email
 """),
+    "vm_created_report.yml": ("VM - VMs created report", "VMware vCenter", "", ""),
     "vm_deploy_inventory.yml": ("VM - deploy settings finder", "VMware vCenter", "", ""),
+    "vm_health_report.yml": ("VM - health report", "VMware vCenter", "", ""),
     "vm_deploy_poll.yml": ("VM - pick up deploy tickets", "ServiceNow API, Red Hat Ansible Automation Platform", "", """\
 vm_deploy_assignment_group: YOUR GROUP NAME       # REQUIRED: only this group's tickets are picked up
 # vm_deploy_poll_dry_run: true                    # the first week: list what it would start, start nothing

@@ -15,12 +15,14 @@ System Center Orchestrator):
 | VM - datastore report | `playbooks/vm_datastore_report.yml` | read-only: every datastore's capacity, free space, used and provisioned %; the ones at 85 / 90 % used listed apart |
 | VM - snapshot report | `playbooks/vm_snapshot_report.yml` | read-only: every snapshot of every VM - name, when taken and by whom, age, size, folder - oldest first; the ones 3 days or older listed apart |
 | VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | deletes the snapshots 3 days or older - never "keep" ones, excluded VMs, the AAP server or ones over 1 TB - then reports what it deleted. Best run in the workflow below, after an approval |
-| VM - alarms report | `playbooks/vm_alarm_report.yml` | read-only: the triggered alarms on vCenter, datacenters, clusters and hosts; hosts not connected; the last 24 hours' failed logins, VM shutdowns / HA restarts and other errors and warnings; configuration issues - coloured by severity |
+| VM - health report | `playbooks/vm_health_report.yml` | read-only: every datacenter, cluster and host of every vCenter - vSphere HA and DRS working or not (HA agents, failover capacity, DRS recommendations and faults, vCLS retreat mode), hosts not connected or in maintenance, hardware sensors not green, hosts that need a restart, CPU and memory used, configuration issues and alarms - coloured, with what to do for each problem |
+| VM - alarms report | `playbooks/vm_alarm_report.yml` | read-only: the triggered alarms on vCenter, datacenters, clusters and hosts; the alarms that fired in the last 24 hours (also the ones that cleared since); hosts not connected; the last 24 hours' failed logins, VM shutdowns / HA restarts and other errors and warnings; configuration issues - coloured by severity |
 | VM - alarms ACT analysis | `playbooks/vm_alarm_act_analysis.yml` | read-only: the same problems, with ACT's likely cause, fix and confidence for each. ACT runs on the AAP side, never on the hosts |
 | VM - capacity planning | `playbooks/vm_capacity_report.yml` | read-only: overall and per cluster - CPU, memory (also with a host down), vCPUs per core, VMs that still fit, hosts recommended, datastores - with growth from vCenter's own history and the days until each limit; optionally GenAI's estimate next to it |
-| VM - deploy from ServiceNow ticket | `playbooks/vm_deploy_from_ticket.yml` | builds one VM from a template for a ServiceNow ticket - checked against your rules, placed by site, name rule or free room, the result on the ticket. Best run in its workflow (propose, approval, build) |
+| VM - deploy from ServiceNow ticket | `playbooks/vm_deploy_from_ticket.yml` | builds the VM - or VMs, one per name, the same size - a ServiceNow ticket asks for, from a template - checked against your rules, placed by site, name rule or free room, the result on the ticket. Best run in its workflow (propose, approval, build) |
 | VM - deploy settings finder | `playbooks/vm_deploy_inventory.yml` | read-only: every vCenter's datacenters, clusters, templates, datastores, folders and networks, by the names the deploy's settings use - with the lines to paste into the deploy template's Variables |
 | VM - pick up deploy tickets | `playbooks/vm_deploy_poll.yml` | on a schedule: finds new VM request tickets in ServiceNow and starts the deploy workflow for each. Builds nothing itself; the approval stays |
+| VM - VMs created report | `playbooks/vm_created_report.yml` | read-only: how many VMs were created in the last 7 days and each one - when, by whom, how (cloned, deployed from a template, new), the ticket when the AAP deploy built it, where, its size - by person and by day, and the ones created and deleted since. Schedule it weekly (e.g. Fridays at noon) |
 | ESXi - security settings | `playbooks/esxi_security.yml` | on every ESXi host: SSH off, the shell timeouts at 600 s, lockdown mode normal. Changes only what differs, so it can run every night and puts back whatever drifted |
 
 They run on the AAP side and talk to vCenter. They never log in to the VMs.
@@ -300,6 +302,9 @@ vm_snapshot_cleanup_exclude_vms: [DC*, VCSA*, AAP*]
      Run type: **Run on success**. Save.
   3. Hover over the approval box > **Add step and link**. Node type: **Job template**. Pick
      `VM - snapshot cleanup`. Run type: **Run on success** (after an approval, that means: approved). Save.
+     **Never Run always here:** the cleanup would then also run when the approval is denied or times
+     out - and it still gets the report's list, so it would delete. (Check the link's label in the
+     Visualizer: green *Run on success*, not blue *Run always*.)
   4. Click **Save** at the top of the Visualizer.
 
 **Step 5 - who may approve.** On the workflow: **User Access** (or Team Access) > Add > pick the
@@ -341,6 +346,114 @@ To clean up by hand, make a separate template (not the one in the workflow) on
 `vm_snapshot_cleanup_confirm` ("Delete them?", Multiple choice `false` / `true`, default `false`).
 With `false` it only lists; with `true` it deletes - with every rule above still in place.
 
+## Health: every datacenter, cluster and host
+
+The read-only **VM - health report** answers "is the virtual infrastructure healthy?" for every
+vCenter (the credential's and `vmware_vcenters`), every datacenter, every cluster and every host - in
+one email, coloured by severity, with what to do for each problem. The alarms themselves, failed
+logins and the day's events are in the **alarms report** below: run both every morning (workflow 18
+in [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)).
+
+### What the report shows
+
+| Section | What is in it |
+|---|---|
+| Needs attention | every problem found, most severe first: severity, the object (vCenter, datacenter, cluster or host), the problem, **what to do**, and where it is (datacenter / cluster) |
+| Datacenters | each datacenter with everything in it: clusters, hosts, hosts running VMs, in maintenance, not connected, its problems |
+| Clusters | each cluster: hosts running VMs, **vSphere HA** (on or OFF, what admission control reserves, host agents not OK), **DRS** (on or OFF, automation level, score, recommendations waiting), **vCLS** (normal or RETREAT MODE), CPU and memory used, alarms, problems |
+| Hosts | every host, by datacenter and cluster (standalone hosts too): connection, maintenance mode, the **HA agent** (primary, secondary, isolated, partitioned ...), **hardware** (sensors and hardware status not green), CPU and memory used, days up, ESXi version and build, alarms |
+| vCenter | each vCenter's version and the alarms on vCenter itself |
+
+On top: the counts in coloured boxes (hosts not connected, HA problems, DRS problems, hosts with
+hardware faults, triggered alarms). The subject says it in one line, e.g.
+`[AAP] VMware health report: 2 critical, 3 warning(s) - 3 datacenter(s), 7 cluster(s), 26 host(s)`.
+
+| Colour | What |
+|---|---|
+| **Red (critical)** | a host not connected to vCenter (or powered off); a host's HA agent isolated, partitioned, unreachable or in error; vCLS retreat mode on a cluster with DRS (DRS stops); a red hardware sensor; a red alarm; CPU or memory from 95 % |
+| **Amber (warning)** | HA or DRS off on a cluster of 2 or more hosts; HA host monitoring off; HA failover capacity below what admission control reserves; DRS recommendations waiting, or DRS faults; retreat mode without DRS; a yellow sensor; a host that needs a restart; a configuration issue (SSH on, ...); a yellow alarm; CPU from 85 %, memory from 90 % |
+| **Blue (info)** | a host in maintenance mode or standby; HA admission control off; DRS in manual mode - worth knowing, not broken |
+
+A one-host cluster without HA or DRS is fine, and so is a host in maintenance mode whose HA agent is
+not configured (that is what maintenance mode does).
+
+### Set up the report
+
+1. **Templates > Create template > Create job template:**
+   - Name: `VM - health report`
+   - Inventory: any (the job runs on the AAP side)
+   - Project: site-automation. Playbook: `playbooks/vm_health_report.yml`
+   - Execution environment: your VMware one
+   - Credentials: your **VMware vCenter** credential. A read-only vCenter account is enough.
+   - Variables: `report_email_to: vmteam@yoursite.mil` (and `vmware_vcenters: [...]` for more
+     vCenters, if not already in `all.yml`)
+   - Save, then **Launch** it once and read the email.
+2. **Schedules > Create schedule:** e.g. every day at 06:00 - or put it in front of the alarms report
+   in workflow 18.
+
+| Setting (template Variables) | Default | What it does |
+|---|---|---|
+| `vm_health_require_ha` | `true` | a cluster of 2 or more hosts without vSphere HA is a warning; `false` if that is on purpose |
+| `vm_health_require_drs` | `true` | the same for DRS; `false` where DRS is not licensed (e.g. vSphere Standard) |
+| `vm_health_cpu_warn_pct` / `vm_health_cpu_crit_pct` | `85` / `95` | CPU used (a host, or a cluster's hosts running VMs): amber from, red from |
+| `vm_health_mem_warn_pct` / `vm_health_mem_crit_pct` | `90` / `95` | the same for memory |
+| `vm_health_sensors` | `true` | read the hosts' hardware sensors |
+| `vm_health_fail` | `false` | `true` = the job shows **failed** on a critical problem, for a workflow |
+| `vmware_datacenter` | (all) | one datacenter only |
+
+**vCLS retreat mode** is read from vCenter's advanced settings
+(`config.vcls.clusters.<cluster id>.enabled = false`). If the account may not read them, the report
+says so in blue, and retreat mode still shows as vCenter's own alarm on the cluster.
+
+## VMs created: the weekly report
+
+The read-only **VM - VMs created report** answers "how many VMs were created this past week?" for
+every vCenter (the credential's and `vmware_vcenters`): the count up front, then each VM.
+
+| Section | What is in it |
+|---|---|
+| On top | VMs created, of them by AAP from tickets, deleted since; vCPU, memory and disk added |
+| VMs created, oldest first | when (UTC), the VM, **by whom**, **how** (deployed from template X, cloned from Y, created new), the **ticket** when the AAP deploy built it, cluster, folder, vCPU, memory, disk, operating system, power |
+| By whom | each person (account) and how many VMs - and how many of them came from tickets |
+| By day | how many VMs each day |
+| Created and deleted since | VMs created in the week that are gone now (counted on top too), and when they were deleted |
+
+The subject says it in one line, e.g. `[AAP] VMware: 5 VMs created in the last 7 days (3 by AAP from
+tickets, 1 deleted since)`.
+
+- **When:** the VM's own creation date (vSphere 6.7 and later), else its creation event. **By whom and
+  how:** vCenter's events. vCenter keeps events for a limited time (often 30 days): a week is well
+  inside that. A VM whose event is gone still counts, by its date, with "By" empty.
+- **The window** is the last `vm_created_days` (7) days up to the moment the job starts. Run every
+  Friday at noon, each report covers about Friday noon to Friday noon (a job that starts a minute late
+  moves the window by that minute).
+- **The ticket** comes from the notes the deploy writes on each VM (*"Deployed from ... for INC... by
+  ..."*); a VM built by hand has none. Templates are not counted.
+
+### Set up the report, every Friday at noon
+
+1. **Templates > Create template > Create job template:**
+   - Name: `VM - VMs created report`
+   - Inventory: any (the job runs on the AAP side)
+   - Project: site-automation. Playbook: `playbooks/vm_created_report.yml`
+   - Execution environment: your VMware one
+   - Credentials: your **VMware vCenter** credential. A read-only vCenter account is enough (it reads
+     the VMs and the events).
+   - Variables: `report_email_to: vmteam@yoursite.mil` (and `vmware_vcenters: [...]` for more
+     vCenters, if not already in `all.yml`)
+   - Save, then **Launch** it once and read the email.
+2. **Schedules tab > Create schedule:**
+   - Name: `Weekly - VMs created`
+   - Start date/time: the next Friday, **12:00**, and **Time zone: your site's** (not UTC - so 12:00 is
+     your noon)
+   - Repeat frequency: **Week**, every **1** week, on **Friday**
+   - Save. The schedule's next run shows on the template's Schedules tab.
+
+| Setting (template Variables) | Default | What it does |
+|---|---|---|
+| `vm_created_days` | `7` | the window: the last this many days (e.g. `14` for a report every other Friday, `30` for a monthly one) |
+| `vmware_datacenter` | (all) | one datacenter only |
+
 ## Alarms: the report, and ACT's analysis
 
 Two read-only jobs. The **report** shows what is wrong in vCenter now and what happened in the last
@@ -352,6 +465,7 @@ each of those problems, and say how sure it is. Neither changes anything.
 | Section | What is in it | Colour |
 |---|---|---|
 | Triggered alarms | the alarms vCenter shows now on vCenter itself, the datacenters, clusters and hosts: severity, object, alarm, since when, acknowledged by whom | red = critical, amber = warning |
+| Alarms that fired in the last 24 h | every alarm that turned yellow or red in the window, one row per alarm and object: how many times it went red and yellow, first and last change, and how it is now - still on, or cleared since (an alarm that comes and goes is worth a look too) | red / amber = still on, blue = cleared |
 | Host connection | hosts not connected to vCenter now, and hosts that lost the connection in the last 24 h and came back | red / amber |
 | Failed logins | wrong user name or password: one row per user, source address and server, with the count and the first and last time | amber; red from 10 failures |
 | Virtual machine events | guest shutdowns and restarts, power-offs, resets, HA restarts and failures, and who did it | blue = someone did it, amber = HA or nobody, red = a failover or power-on failed |
@@ -590,7 +704,7 @@ memory_gb: 16
 
 | Key | Meaning | Not given |
 |---|---|---|
-| `vm_name` | the VM's name in vCenter and its host name | **required** |
+| `vm_name` | the VM's name in vCenter and its host name - or **several names** (`vm_name: web01, web02`): one VM each, the same size (below) | **required** |
 | `template` | the template, by its name in vCenter | **required** |
 | `cpu`, `memory_gb` | vCPUs, memory in GB | the template's |
 | `disks_gb` | disk sizes in GB, system disk first: `disks_gb: 120, 200` grows disk 1 to 120 GB (never shrinks it) and adds one 200 GB disk (thin) | the template's disks |
@@ -602,11 +716,19 @@ memory_gb: 16
 | `notes` | added to the VM's notes | - |
 
 Other lines (a greeting, `Name: Jane Doe`) are ignored. Upper and lower case do not matter
-(`Memory: 16 GB` works too).
+(`Memory: 16 GB` works too), and the names people use work as well: `Hostname:`, `Server Name:`,
+`Computer name:` (the VM's name; for several, `Hostnames:`, `Server names:` ... with the names after it, or one per line below it); `CPUs:`, `vCPU:`, `Cores:`, `Processors:`; `RAM:`, `Mem:`; `Disk:`,
+`Storage:`, `HDD:`, `Hard drive:`. A unit is read with the value: `Memory: 16384 MB` = 16 GB, `Storage:
+100GB, 1TB` = 100 and 1024 GB, `Memory (GB): 16`.
+
+Requesters who do not know template names or `key: value` lines: switch on **plain words**
+(`vm_deploy_plain_words`, next section, no GenAI) and/or GenAI (`vm_deploy_genai`, below).
 
 ### What the job does, in order
 
-1. Reads the ticket (`vm_deploy_ticket`: `INC...`, `TASK...`, `SCTASK...`, `RITM...`, `CHG...`).
+1. Reads the ticket (`vm_deploy_ticket`: `INC...`, `TASK...`, `SCTASK...`, `RITM...`, `CHG...` - or your
+   instance's own prefixes like `INCN...` / `CHGN...`: the job asks ServiceNow's task table which table the
+   ticket is in).
 2. Checks: the ticket is open and assigned to `vm_deploy_assignment_group`; the template is in
    `vm_deploy_templates`; the cluster, datastore and folder are allowed; CPU and memory are within
    the caps; the name is valid and **not used in any vCenter** (`vmware_vcenters`). Anything wrong:
@@ -620,8 +742,98 @@ Other lines (a greeting, `Name: Jane Doe`) are ignored. Upper and lower case do 
    address from VMware Tools (`vm_deploy_wait_ip`, 600 s).
 6. Writes **"[AAP] VM app01 deployed"** on the ticket: IP address, customization result, where it went,
    size. On a failure: what failed, and whether a (partly set up) VM exists.
+7. Closes the ticket, when you set what closes it (`vm_deploy_done_fields_by_table`, below).
 
 The network is the template's: the template's adapter is on your staging VLAN, and so is the new VM.
+
+### Several VMs on one ticket
+
+One ticket may ask for several VMs **of the same size**: one VM per name, the template, CPU, memory,
+disks and folder the same for each.
+
+```
+I need 2 vms created named web-test01 and web-test02
+both servers need:
+Windows 2022
+8 cpus
+12gb of memory
+storage 180GB disk and 50gb disk
+Store in the App-Servers folder.
+```
+
+The names, as people write them: `vm_name: web01, web02` (a line), `Hostnames:` with one name per line
+below it (`- web01`, `1. web01` ...), and in plain words `named web01 and web02`, `named web01, web02 and
+web03`, `2 VMs: web01 and web02`.
+
+- **Each VM is checked on its own**: its name (valid, not used in any vCenter), its name rule (so two
+  names may go to two clusters), the caps (`vm_deploy_max_cpu` ... are per VM). One VM refused = none
+  is built: the ticket says why.
+- **How many** - `2 VMs`, `two servers`, `both servers`, `3 virtual machines` - must match the names:
+  *"2 VMs named web01"* is a question to the requester, nothing is built. A range (`web01 to web05`,
+  `web01-05`) is never expanded: a question too - every name is written out.
+- **At most `vm_deploy_max_vms` (10) per ticket.** More: refused, nothing built (split the ticket, or
+  raise the setting).
+- **Built one after the other.** Each VM is placed after the ones before it are there, so automatic
+  placement sees them. The dry run and the propose step show where each would go as if alone: the
+  build may place them differently.
+- **On the ticket:** "[AAP] Deploying 2 VMs, one after the other", then one note per VM ("[AAP] VM
+  web01 deployed (...) - 1 of 2."). The ticket is **closed only when every VM is built**.
+- **One fails, the others are still built.** The ticket stays open with a note per VM and one that sums
+  it up: *"[AAP] 1 of 2 VMs built; this ticket stays open: - web01: built - web02: NOT deployed - ..."*.
+  Fix the cause and **run the job again**: the VMs already built are left as they are (the ticket's
+  own note says so and the VM's notes name the ticket), the others are built, and the ticket is closed.
+  This works for a one-VM ticket too: run it again and the VM it built is reported, not refused (and
+  the ticket closed, when close fields are set) - to build a test VM again, delete it in vCenter first. A
+  VM of that name that the ticket did not build is still refused.
+- The PXE / MECM case works the same: each VM gets its own MAC address on its own note.
+- **The job takes as long as all its VMs.** A template with guest customization waits up to
+  `vm_deploy_wait_customization` (900 s) and `vm_deploy_wait_ip` (600 s) **per VM**: ten such VMs can
+  take hours. Give the deploy template a **Timeout** that allows it (0 = none), or keep tickets small.
+  Network-boot (PXE / MECM) templates do not wait for either.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `vm_deploy_max_vms` | `10` | the most VMs one ticket may ask for |
+
+### A task whose change holds the request - and closing only the task
+
+A common setup: the **change request** has the requirements; the team gets a **task** (an SCTASK or
+a CTASK) that may or may not repeat them; the task is what the job runs on, and only the task is
+closed when the VM is up. Nothing to set for the first part:
+
+- **The request from the change:** the job follows the task's link to its change - the field
+  `change_request` (a change task's), else `parent` (`vm_deploy_parent_fields`) - and reads the change's
+  `'key: value'` lines too, from its description (`vm_deploy_parent_text_fields`, e.g. add
+  `implementation_plan` if your changes keep it there). A line on the task wins over the change's. The
+  dry run says where each value came from: `vm_name: app09   (from parent CHG0030001 description)`.
+- Only a parent that is a **change** is read (`vm_deploy_parent_tables: [change_request]`; `[]` = never
+  read a parent): an incident's parent incident, or a catalog task's request item, is not.
+- A change that **cannot be read** (the ServiceNow account needs read access to `change_request`) or is
+  **closed or canceled** stops the build: nothing is built from the task alone.
+- The change's comments and work notes are not read (CAB notes are not a request), unless you list
+  them in `vm_deploy_parent_text_fields`. GenAI (`vm_deploy_genai`) reads the change's text too.
+
+**Close only the task** when the VM is up - on the deploy template (your instance's values):
+
+```yaml
+vm_deploy_done_fields_by_table:
+  sc_task: {state: "3", close_notes: "VM deployed by AAP"}        # 3 = Closed Complete
+  change_task: {state: "3", close_code: successful, close_notes: "VM deployed by AAP"}
+vm_deploy_done_fields: {}        # every other table (the change, an incident): left open
+```
+
+- The ticket's **table** picks the entry (`sc_task`, `change_task`, `incident` ...), also with your own
+  number prefixes. The change itself is never written to.
+- The close is sent **after** the result note, on its own, and the job checks what ServiceNow kept:
+  when a mandatory field (a data policy) or a business rule stops it, the VM is still built, the job
+  stays green, and the report and a work note say **"could not be closed"** with ServiceNow's reason.
+- A **network-boot** VM (`vm_deploy_pxe_templates`) is closed when it is powered on and booting to
+  MECM - the OS install is not finished yet. To leave those tickets open for whoever checks the
+  install: `vm_deploy_done_fields_pxe: false`.
+- A closed ticket is never deployed again: running the job on it again is refused.
+- **Picked up by the schedule:** list the task's table - `vm_deploy_poll_tables: [sc_task]` - and the
+  task must be marked as a VM request itself: its short description starts with `vm_deploy_poll_prefix`
+  ("VM request"), or `vm_deploy_poll_query` matches it.
 
 ### Sites: site A goes to this cluster, site B to that one
 
@@ -683,6 +895,68 @@ vm_deploy_sites:
   SiteB: {clusters: [B-PROD-*], datastores: [B-DS-*], folder: Servers/New, vcenter: vc02.yoursite.mil}
 ```
 
+### Requests in plain words, without GenAI
+
+With `vm_deploy_plain_words: true` the job also reads the ticket's own words, by rules you set, so a
+requester can write:
+
+```
+Hi, please build a Red Hat 9 server named ab01web05, medium size, for the new portal. Thanks, Jane
+```
+
+| What | Read from | Your setting |
+|---|---|---|
+| the template | **the operating system as people write it** - found from the template names in `vm_deploy_templates`, nothing to set: a template named *Windows 2022 Standard Template* is found by `Windows 2022`, `Windows Server 2022`, `Server 2022`, `Win2022`; *rhel9-gold* by `RHEL 9`, `RHEL 9.4`, `Red Hat 9`, `Red Hat Enterprise Linux 9` (also Rocky, Alma, CentOS, Oracle Linux, Ubuntu, Debian, SLES). Two allowed templates for the same OS (a PXE and a Gold Windows 2022): a question. Also the words you list (`vm_deploy_plain_templates`), the template's own name and its short names (`vm_deploy_template_aliases`). Any case; `-`, `_` or nothing between the words; up to two other words between them | `vm_deploy_templates` with the templates' **exact names** (a pattern like `Windows 20*` has no OS to read: list the names, or use `vm_deploy_plain_templates`) |
+| CPU and memory | a size word (`small`, `medium`, `large`), and numbers next to their unit: `4 vCPU`, `4 cores`, `CPU - 4`, `Processors: 4`, `2 sockets, 2 cores per socket` (= 4), `16 GB RAM`, `4 gigs of ram`, `RAM - 16GB`, `Memory (GB): 16`, `16384 MB of memory` - a bare `16 GB` is not read | `vm_deploy_plain_sizes` |
+| disks | `storage 180gb and 50gb`, `storage 180GB disk and 50gb disk`, `a 180GB disk and a 50GB disk`, `Disk 1: 100 GB` / `Disk 2: 200 GB`, `C: 100GB` / `D: 200GB`, `a 100GB OS disk and a 200GB data disk`, `hard drive 80 gigs`, `disks 1TB + 500gb` - disk 1 first (below) | - |
+| the folder | `the Web-Servers folder`, `folder: Linux/New`, `in folder App`, `the "App Servers" folder` (a name with spaces in quotes) | - |
+| the VM's name | `named ab01web05`, `called ...`, `hostname: ...`, `server name ...`; several: `named web01 and web02`, `named web01, web02 and web03`, `2 VMs: web01 and web02` (how many, when said, must match: above) - or else the one word that fits a name rule (`vm_deploy_name_rules`; longer than the rule's own letters, so a site code alone is not a name). Web and email addresses are skipped | the requester gives it |
+| the site | a site's name (`vm_deploy_sites`) as a word of its own | - |
+
+```yaml
+vm_deploy_plain_words: true
+vm_deploy_plain_templates:
+  "rhel 9": rhel9-gold
+  "red hat 9": rhel9-gold
+  "windows 2022": WIN2022-TEMPLATE
+vm_deploy_plain_sizes:
+  small: {cpu: 2, memory_gb: 8}
+  medium: {cpu: 4, memory_gb: 16}
+  large: {cpu: 8, memory_gb: 32}
+```
+
+**Never a guess.** Two different answers in the text that says it last (`RHEL 9 or RHEL 8`, `small or
+medium`, two server names as in *"same as ab01web03, the new one ab01web06"*) are a **question**,
+written on the ticket as a **comment** (requesters see comments, not work notes): *"[AAP] We cannot
+build this VM yet: the ticket names more than one operating system ('rhel 9', 'rhel 8'): which
+one?"*. Nothing is built. The requester answers in a comment (*"RHEL 8 please"*): a later comment wins.
+Then run the workflow again (the pickup does not take a ticket twice).
+
+- **What wins:** `key: value` lines always; then the words; then a GenAI proposal; then the defaults.
+  A size word and a number in the same text: the number (`medium with 32 GB RAM` = 4 vCPU, 32 GB). A
+  later comment beats the description.
+- **Every value says where it came from** in the job output, the propose note and the approver's
+  email: `template: rhel9-gold   (from the words 'red hat 9' in the description)`.
+- **Your rules still apply:** the template the words lead to must be in `vm_deploy_templates`, CPU and
+  memory within `vm_deploy_max_cpu` / `vm_deploy_max_memory_gb`.
+- **Disks in words:** a disk word with sizes after it is a list, disk 1 first - `storage 180gb and 50gb`
+  = disk 1 grown to 180 GB plus an added 50 GB disk; one size before a disk word is disk 1 (`180gb hard
+  disk`, `a 100 GB system disk`, `C drive 100gb`), or an added disk when the words say so (`50gb second hard
+  disk`, `a 200 GB data disk`, `D drive 200gb`); a numbered disk or a drive letter says which (`Disk 2:
+  200 GB`, `D: 200GB`). Two sizes for disk 1, or only added disks, are a question (a `disks_gb:` line
+  answers it - or GenAI, when it is on).
+- **CPUs:** sockets x cores per socket is the number of vCPUs (`2 sockets, 4 cores per socket` = 8);
+  `2 sockets` alone = 2. Sockets and cores that do not add up (`2 sockets, 4 cores`: 4 or 8?) are a question.
+- **The folder** the words name must exist in the datacenter (and be in `vm_deploy_folders`, when set):
+  the dry run says when it does not.
+- **With GenAI on too:** GenAI is asked when the words (and lines) do not give both the name and the
+  template, **or the words left a question** (e.g. disks written in words, or two sizes) - and what the
+  lines and words say wins over GenAI: GenAI fills only what is still open.
+- A value is never read across a line break: `memory` at the end of one line and `180gb` on the next
+  are not "180 GB of memory".
+- Test it like any change: a dry run (**Check**) on a test ticket shows each value and where it came
+  from.
+
 ### Requests in plain words: GenAI reads the ticket (proof of concept)
 
 With `vm_deploy_genai: true`, a ticket does not need the `key: value` lines. A requester can write
@@ -736,7 +1010,7 @@ workflow stops. A value the ticket gives itself (`cpu: 4` in a comment) always w
    - **node 2 → (On success = approved) → node 3:** job template `VM - deploy from ServiceNow ticket`;
      Variables: `vm_deploy_phase: build`
    - Nothing on *On failure*: a question for the requester, a refusal or a denied approval ends it.
-3. Give the approvers the workflow's **Approve** permission (Access > the workflow > Roles), and
+3. Give the approvers the workflow's **Approve** role (the workflow > **User access** > **Add roles**), and
    `report_email_to` their address on the job template: the propose step's email is what they read.
 4. Launch the workflow with a test ticket. The proposal and "ready to build" are on the ticket and in
    the email; approve in **Automation Execution > Workflow Approvals**; the VM is built.
@@ -790,13 +1064,33 @@ On the MECM side, one of the two usual ways:
    Computer Information**: name = `vm_name`, MAC = the one on the ticket) into the collection the task
    sequence is deployed to. (This step can be automated later through MECM's AdminService.)
 
-Check that the template boots from the network first (VM Options > Boot Options: EFI, network
-first or a boot delay), that its adapter is on the staging VLAN, and that the VLAN forwards PXE to your
-MECM distribution point (DHCP / IP helper).
+**Network boot first, the disk after the install** - the template:
+
+- **Boot order: leave VMware's default, the hard disk first and the network after it.** The empty disk
+  is skipped, so the first boot goes to the network (PXE) and MECM. Once the task sequence has
+  installed Windows, the disk can boot and starts first (with EFI, Windows Setup also puts *Windows Boot
+  Manager* first in the firmware). Nothing to change after the install. With the network first, every
+  restart would ask MECM again.
+- **VM Options > Boot Options > Failed Boot Recovery:** on, 10 seconds - a network boot MECM did not
+  answer (e.g. the computer is not imported yet) is tried again instead of stopping at "no operating system".
+- **Firmware EFI** (Secure Boot may stay on: MECM's boot images are signed by Microsoft).
+- **The adapter:** on the staging VLAN, *Connect At Power On* ticked, and the VLAN forwards PXE to your
+  MECM distribution point (DHCP / IP helper). A **VMXNET3** adapter needs VMware's vmxnet3 driver in the
+  MECM **boot image** (Windows PE has none: it starts, then the task sequence finds no network) - MECM:
+  import the driver (from VMware Tools, `Drivers\vmxnet3`), add it on the boot image's **Drivers** tab and
+  update the distribution points. An **E1000E** adapter works without.
+- **The disk:** empty, never initialized.
+
+On the MECM side: the task sequence deployment **Required**, available to *Configuration Manager
+clients, media and PXE* (Available would wait for someone to press F12). After it succeeded, MECM does not
+start it again on that computer; to rebuild the same VM: the device in MECM > **Clear Required PXE
+Deployments**.
 
 For a template that **boots from its CD**: the CD drive must point at the ISO on a **datastore every
 target cluster's hosts can see** (a clone in a cluster that cannot see it boots to nothing), with
-*Connect At Power On* ticked, and the CD first in the boot order.
+*Connect At Power On* ticked, and the **hard disk before the CD** in the boot order (VMware's default): the
+empty disk is skipped, so the first boot starts the ISO, and once installed the VM starts from its disk. With
+the CD first it can start the installer again, unless the kickstart ends with `reboot --eject`.
 
 **A dry run (Check)** reads the ticket, prints the request with where each value came from
 (`cpu: 4 (from comment 2026-10-08 10:05 - Jane Doe ...)`), checks everything and says where the VM
@@ -840,6 +1134,12 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
    Change configuration > Change CPU count, Change memory, Set annotation, Add new disk, Extend virtual disk, Advanced configuration*; *Virtual machine > Interaction
    > Power on*; *Resource > Assign virtual machine to resource pool*; *Datastore > Allocate space*;
    *Network > Assign network*. A missing one is named in the error (`lacks the privilege ...`).
+   **A template with a vTPM or encrypted disks** (Windows Server 2022 / Windows 11 templates often have
+   a vTPM, and a vTPM makes the VM encrypted) also needs *Cryptographic operations > Clone* (on the
+   template), *Encrypt new* and *Register VM* (on the target VM folder), *Add disk* (on the VMs - for a
+   ticket that adds a disk) and, only while the hosts' encryption mode is not on yet, *Register host* (on
+   the clusters). Not *Manage keys*, *Manage KMS*, *Decrypt* or *Direct Access*. The hosts must reach the
+   key provider (Native Key Provider or KMS) the template's keys come from.
 3. **The ServiceNow API credential** (the one the ticket jobs use): its account reads the ticket's table
    (incident, task ...) and adds work notes to it.
 4. **Templates > Create template > Create job template:**
@@ -869,12 +1169,16 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
 | `vm_deploy_defaults` | `{}` | what a ticket does not say (cluster, datastore, folder, cpu, memory_gb, domain) |
 | `vm_deploy_max_cpu` / `vm_deploy_max_memory_gb` | `16` / `128` | caps |
 | `vm_deploy_name_regex` | letters, digits, `-` | the names allowed (`'^[a-z0-9-]{1,15}$'` for Windows-safe names) |
-| `vm_deploy_assignment_group` | `""` (any) | only tickets assigned to this group |
+| `vm_deploy_assignment_group` | `""` (any) | only tickets assigned to this group - or to one of a list: `["Group A", "Group B"]` |
 | `vm_deploy_domain` | `localdomain` | the DNS domain Linux customization sets |
 | `vm_deploy_customize` / `vm_deploy_power_on` | `true` / `true` | guest customization; power on |
 | `vm_deploy_wait_customization` / `vm_deploy_wait_ip` | `900` / `600` | seconds to wait for each |
 | `vm_deploy_done_fields` | `{}` | fields set on the ticket when the VM is up, e.g. `{state: "6", close_code: "Solution provided", close_notes: "VM deployed"}` |
+| `vm_deploy_done_fields_by_table` | `{}` | the same per table, in place of `vm_deploy_done_fields` for it: `{sc_task: {state: "3", close_notes: "VM deployed by AAP"}}` - close the task, never the change ("A task whose change holds the request") |
+| `vm_deploy_done_fields_pxe` | `true` | close it also for a network-boot VM (still installing its OS from MECM); `false` = leave that ticket open |
+| `vm_deploy_parent_tables` / `_fields` / `_text_fields` | `[change_request]` / `[change_request, parent]` / `[description]` | read the request from the ticket's parent change too, under the ticket's own lines |
 | `vm_deploy_ticket_table` | from the prefix | the table, for a ticket number with another prefix |
+| `vm_deploy_ticket_prefixes` | `{}` | your instance's own number prefixes, e.g. `{INCN: incident, CHGN: change_request}` - rarely needed: the job asks ServiceNow which table a ticket is in |
 | `vm_deploy_sites` | `{}` | per site: `cluster`, `datastore`, `folder`, `vcenter` ... (a ticket's `site:` or Location picks one) |
 | `vm_deploy_name_rules` | `[]` | the VM's name picks the cluster (or site): `[{match: "*AB01*", cluster: ...}]`, the first match wins |
 | `vm_deploy_site_required` | `true` | with sites set up, a ticket must name its site |
@@ -885,6 +1189,9 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
 | `vm_deploy_max_disks` / `vm_deploy_max_disk_gb` / `vm_deploy_max_total_disk_gb` | `4` / `2048` / `4096` | disk caps: how many, the biggest one, all together |
 | `vm_deploy_mem_target_pct` / `vm_deploy_failover_hosts` | `80` / `1` | automatic placement: a cluster fits when memory with this VM and that many hosts down stays under the % |
 | `vm_deploy_datastore_max_used_pct` | `85` | automatic placement: a datastore fits when it stays under this % with the VM at its full size |
+| `vm_deploy_plain_words` | `false` | read the ticket's own words by your rules (no GenAI): template words, size words, `named ...` |
+| `vm_deploy_plain_templates` | `{}` | the words for each template, e.g. `{"rhel 9": rhel9-gold, "windows 2022": WIN2022-TEMPLATE}` |
+| `vm_deploy_plain_sizes` | `{}` | size words, e.g. `{small: {cpu: 2, memory_gb: 8}, medium: {cpu: 4, memory_gb: 16}}` |
 | `vm_deploy_genai` | `false` | GenAI reads requests written in plain words (propose, approve, build) |
 | `vm_deploy_genai_approval` | `true` | a GenAI proposal waits for a person (the workflow's approval); `false` = one run reads, checks and builds |
 | `vm_deploy_phase` | `""` | the workflow's steps: `propose` (read, check, place - build nothing), `build` (build what the ticket says - never ask GenAI); `""` = the job alone |
@@ -1218,10 +1525,13 @@ the last column says.
 | You see | It means | Do |
 |---|---|---|
 | `No vCenter to talk to: attach a credential of type "VMware vCenter"` | the template has no vCenter credential | Template → Edit → Credentials → add your **VMware vCenter** credential |
-| `vCenter ... refused the login` | wrong user name or password, or the account is locked | fix the credential; log in to the vSphere Client with the same account to test it |
+| `vCenter ... refused the login` | the message says which: no domain in the user name (a local vCenter account is `name@vsphere.local`), a wrong user name or password, a locked account or an expired password - or that vCenter does not know the account (the jobs log in to every vCenter of `vmware_vcenters` with it; a `vsphere.local` account works only on the vCenters of its own single sign-on domain, in linked mode) | fix the credential (type **VMware vCenter**); log in to the vSphere Client of **that** vCenter with the same account to test it. The deploy stops when any vCenter refuses: it checks the new name is free in all of them |
+| `vCenter ... accepted the login, but the account has no permission in that vCenter` (before: `NoPermission ... System.View ... group-d1`) | the account logs in (single sign-on) but has no role anywhere in that vCenter, so vCenter refuses the session | give it its role there: a **Global Permission** (Administration > Access Control > Global Permissions, Propagate to children) covers every vCenter of its single sign-on domain. Read-only is enough on a vCenter the job only reads - the deploy reads every vCenter of `vmware_vcenters` to check the new name |
 | `Could not connect to vCenter ...: ... CERTIFICATE_VERIFY_FAILED` | the execution environment does not trust vCenter's certificate | add vCenter's CA to the execution environment; to test only, `vmware_validate_certs: false` in the template's Variables |
 | `Could not connect to vCenter ...: timed out` or `Connection refused` | the AAP node cannot reach vCenter on port 443 | a firewall rule from the AAP node (or execution node) to vCenter, port 443 |
 | `pyVmomi is not installed in the execution environment`, or `couldn't resolve module/action 'vmware.vmware...'` | the template uses an execution environment without the VMware parts | pick your VMware execution environment on the template ("Before you start", step 1) |
+| `GenAI did not read the ticket: GenAI gave no readable answer` | the model answered, but not with the JSON the job asks for (a chat reply, a refusal, or an answer cut short) | the job output (task *what GenAI proposes*) and the report show what it answered under **WHAT GENAI ANSWERED**: a chat reply ("I am ready...") means the model ignored the task - try another model (`site_act_model`); an answer cut short - a longer `vm_deploy_genai_model_timeout`. The parser (`vm_deploy_plain_words`) works without GenAI |
+| `lacks the privilege System.View on host-...` (a deploy) | the account has no role on that ESXi host: its permission is on the cluster without **Propagate to children**, or the host is in a cluster it has no role on - the deploy reads the hosts of the cluster it builds in, and the host the template is registered on | give the role on those clusters (and the template's) with **Propagate to children** ticked, or as a Global Permission. A host's name for an ID: `https://<vcenter>/mob/?moid=host-...` |
 | A VM, host or datastore you see in vSphere is missing from a report | the vCenter account cannot see it | give its role on that folder or cluster, with **Propagate to children** ("Before you start", step 2) |
 | A whole vCenter's datacenters and clusters are missing (the vSphere Client shows two or more vCenters) | the jobs read the credential's vCenter, plus only those in `vmware_vcenters` | `vmware_vcenters: [vc01..., vc02...]` in `all.yml` ("Before you start", step 5) |
 | Red **vCenters not read** on top, `- 1 vCenter(s) not read` in the title (the job failed at `every vCenter was read` only with `vmware_vcenter_fail_unread: true`) | that vCenter could not be reached, or refused the login; the rest of the report covers the others | the reason is in the row: `refused the login` = the account is not known there (in linked mode: give it a Global Permission); `timed out` / `Connection refused` = a firewall rule to that vCenter, port 443 |
@@ -1261,6 +1571,13 @@ the last column says.
 | You see | It means | Do |
 |---|---|---|
 | `No ServiceNow connection: attach the "ServiceNow API" credential` | the template has no ServiceNow credential | add it (Set it up, step 4) |
+| `Give the ticket number: the job got none` | the template has no survey, or it is switched off | the Survey tab: *Ticket number*, variable `vm_deploy_ticket`, text, required - and switch it on |
+| `Which table is INCN0012345 in? ...` | your instance numbers its tickets its own way, and the account may not read the task table (or there is no such ticket) | `vm_deploy_ticket_prefixes: {INCN: incident, CHGN: change_request}` on the template; check the number |
+| `the ticket asks for 2 VMs ('2 vms', ...) but names 1 (web01)` | the words say how many VMs, and the names found are fewer (or more) | the requester writes every name (`named web01 and web02`) in a comment, or a line `vm_name: web01, web02` |
+| `the ticket gives a range of names ('named web01 to web05' ...)` | a range is never expanded | the requester writes every name; a line `vm_name: web01-05` means one VM of that name |
+| `the ticket asks for 12 VMs (...): more than 10 (vm_deploy_max_vms)` | more names than one ticket may build | split the ticket, or raise `vm_deploy_max_vms` on the template |
+| `[AAP] 1 of 2 VMs built (...); this ticket stays open` | one VM failed (its own note says why), the others were built | fix the cause and run the job again: the VMs built are left as they are, the rest are built, the ticket is closed |
+| `a VM named web01 already exists` on a ticket that built it | the VM's notes no longer name the ticket (edited), or the ticket has no "deployed" note for it | check that it is the right VM; delete it to build again, or close the ticket by hand |
 | `No incident ticket INC... in ServiceNow` | a wrong number, or the account cannot see it | check the number; the account needs read access to that table |
 | `ServiceNow refused the read (HTTP 403)` | the account may not read that table | give it read access (e.g. the itil role) |
 | `REFUSED: template '...' is not in vm_deploy_templates` | a template you have not allowed | add it to `vm_deploy_templates`, or correct the ticket |
@@ -1269,7 +1586,7 @@ the last column says.
 | `Nothing was built: ServiceNow refused the work note` | the account cannot update that table | give it write access to work notes; nothing was built, by design |
 | `a VM named ... already exists in vCenter ...` | the name is taken (or the job ran twice) | another name in a comment, or nothing to do |
 | `template ... is in vc01 / DC1, vc02 / DC1` | the same template name in two places | `vcenter:` (or `datacenter:`) in the ticket |
-| `template ... is Windows: name a customization specification` | Windows needs Sysprep settings | `customization_spec: <name>` in the ticket (vCenter: Policies and Profiles) - or, for a network-boot (MECM) template, list it in `vm_deploy_pxe_templates` |
+| `template ... is Windows and has no customization specification` | an empty template that installs Windows from the network (MECM) is not listed as one - or a template with Windows installed has no Sysprep specification | the empty one: add it to `vm_deploy_pxe_templates` (no customization then); one with Windows: `vm_deploy_template_specs: {"Windows 2022*": <spec>}` - the message lists the vCenter's Windows specifications - or a ticket's `customization_spec:` line |
 | `the ticket does not say which site` | sites are set up, the ticket names none, its Location is not a site, and no name rule fits the name | `site: ...` in a comment; a name rule; or `vm_deploy_site_required: false` |
 | The VM went to the default (or the template's) cluster, not the name rule's | no rule's `match` fits the name (a typo, or `AB01*` when the name starts with other letters) | `*AB01*` (anywhere in the name); check the dry run's `(from name rule ...)` |
 | `site '...' is not one of vm_deploy_sites` | a site name you have not set up | correct the ticket, or add the site |
@@ -1283,6 +1600,7 @@ the last column says.
 | `disk 1 cannot shrink` | `disks_gb` asks for a smaller first disk than the template's | the first size at least the template's |
 | A network-boot VM sits at "PXE-E..." / "No boot device" | the VLAN does not reach MECM's PXE, or MECM does not answer this computer | the DHCP / IP helper on the staging VLAN; the computer imported in MECM, or unknown-computer support on the task sequence |
 | `lacks the privilege VirtualMachine.Provisioning...` | the vCenter account's role | grant it (Set it up, step 2) |
+| `lacks the privilege Cryptographer.Clone ... the template is encrypted` | the template has a vTPM (or encrypted disks) | grant the *Cryptographic operations* privileges in Set it up, step 2 |
 | Customization `no result within 900 s` | VMware Tools does not run in the template, or cloud-init blocks VMware customization | fix the template; the VM exists - set its host name by hand, or delete it and run again |
 | `no IPv4 address within 600 s` | no DHCP lease on the staging VLAN, or VMware Tools does not run | check DHCP; the IP shows in vCenter when it comes |
 | `the template's ... is not set to connect at power on` | the template's adapter | tick **Connect at power on** on the template |
@@ -1299,6 +1617,28 @@ the last column says.
 | `ACT did not run: ...` | as for the alarms analysis (key, network, certificate) | the ACT rows above |
 | Math and GenAI differ a lot | ACT weighed something the line does not (a jump, a limit that comes first) | read ACT's reasoning; plan for the sooner of the two |
 
+### VMs created report
+
+| You see | It means | Do |
+|---|---|---|
+| *By* is `unknown` | vCenter no longer has the VM's creation event (it keeps them for a limited time), or the VM was created on a host directly | nothing: the VM still counts, by its creation date |
+| *Ticket* is `-` for a VM the deploy built | its notes in vCenter were edited, so they no longer say *"Deployed from ... for <ticket>"* | nothing for the count; the ticket's own notes say which VM it built |
+| a VM restored from a backup is listed | a restore creates a new VM in vCenter | nothing: to vCenter it is new |
+| `vm_created_days must be a number of days` | the setting is not a number | `vm_created_days: 7` |
+
+### Health report
+
+| You see | It means | Do |
+|---|---|---|
+| `vSphere HA is off` / `DRS is off` on a cluster that should not have them | your design | `vm_health_require_ha: false` / `vm_health_require_drs: false` on the template |
+| `vCLS in retreat mode` | someone set `config.vcls.clusters.<id>.enabled` to `false` in vCenter's advanced settings (often for maintenance) and it was not set back | vCenter > Configure > Settings > Advanced Settings: set it to `true` when the work is done; DRS starts again |
+| `vSphere HA agent: network isolated` / `network partitioned` | the host's management network cannot reach the other hosts (or its isolation address) | the host's management VLAN, uplinks and switch ports; then **Reconfigure for vSphere HA** on the host |
+| `HA can survive 0 host failure(s) now` | the cluster is too full to restart a failed host's VMs | add capacity or move VMs: see the capacity planning report |
+| HA agent `?` on every host | vCenter did not say (some versions or a limited account) | the HA state shows in the vSphere Client: cluster > Monitor > vSphere HA |
+| `Could not read vCLS retreat mode` (blue) | the account may not read vCenter's advanced settings | nothing needed: retreat mode still raises vCenter's own alarm on the cluster |
+| `vCenter ... has no datacenter named ...` | a typo in `vmware_datacenter` | the exact name, as the vSphere Client shows it |
+| `Reading the health of datacenters, clusters and hosts from vCenter ... failed: ...` | something this job did not expect from your vCenter | send that line to the people who maintain this repository |
+
 ### Alarms report
 
 | You see | It means | Do |
@@ -1308,6 +1648,7 @@ the last column says.
 | An alarm the vSphere Client shows is missing | it is on a VM, datastore or network (not read by default), or in another datacenter | add its type to `vm_alarm_types` (e.g. `[vcenter, datacenter, cluster, host, vm]`); check `vmware_datacenter` |
 | No events at all, or fewer than in the vSphere Client | `vm_alarm_hours: 0`, or the account sees only part of the inventory (vCenter shows an account only the events of what it can see) | give the role at the top of the vCenter inventory, with Propagate to children |
 | `Only the newest 5000 events were read` | a busy vCenter | lower `vm_alarm_hours`, or raise `vm_alarm_max_events` |
+| `Only the newest 2000 alarm changes were read` | an alarm that flaps (on, off, on ...) all day | find it in *Alarms that fired* (the highest counts) and fix its cause; or raise `vm_alarm_max_alarm_changes` |
 | `Only the first 200 are shown` | a long table | the job's **Artifacts** (`vm_alarms`) have all of them; or raise `vm_alarm_max_rows` |
 | The job shows **failed** with `critical alarm(s) ... host(s) not connected` | `vm_alarm_fail: true` is set | expected (for a workflow); remove it for a report only |
 | `Reading alarms and events from vCenter ... failed: ...` | something this job did not expect from your vCenter | send that line to the people who maintain this repository |

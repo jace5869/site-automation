@@ -55,6 +55,32 @@ def host_port(v, env=None):
     return v, port
 
 
+def refused(name, env=None):
+    """The message for a login vCenter refused: the likely reason, from the user name's form (never
+    the name itself)."""
+    env = os.environ if env is None else env
+    user = str(env.get("VMWARE_USER") or "").strip()
+    why = ("the credential has no user name (a credential type whose injector does not set VMWARE_USER: use the "
+           "built-in VMware vCenter type)" if not user else
+           "the user name has no domain: a local vCenter account is written name@vsphere.local, a domain account "
+           "name@yourdomain" if "@" not in user and "\\" not in user else
+           "the user name or password is wrong, the account is locked or its password expired - or this vCenter does "
+           "not know the account (every vCenter of the job is logged in to with it: a vsphere.local account works on "
+           "the vCenters of its own single sign-on domain, in linked mode, only)")
+    return "vCenter %s refused the login (the VMware vCenter credential): %s" % (name, why)
+
+
+def no_rights(name, e=None):
+    """The message for a login vCenter accepted but the account has no role in that vCenter at all:
+    vCenter then refuses the session (System.View on the root folder)."""
+    pid = getattr(e, "privilegeId", None) or "System.View"
+    return ("vCenter %s accepted the login, but the account has no permission in that vCenter (it lacks %s on the top "
+            "of the inventory, which vCenter gives only to an account with a role somewhere in it): give the account a role "
+            "there - a Global Permission (vSphere Client: Administration > Access Control > Global Permissions, Propagate to "
+            "children) covers every vCenter of its single sign-on domain. Read-only is enough where the job only reads; the "
+            "deploy reads every vCenter of vmware_vcenters, to check the new VM's name is free" % (name, pid))
+
+
 def connect(name, validate_certs=True, timeout=None):
     """A session with one vCenter (name or name:port), the credential's account. Raises
     RuntimeError with the message the jobs show."""
@@ -64,7 +90,9 @@ def connect(name, validate_certs=True, timeout=None):
         return SmartConnect(host=host, user=os.environ.get("VMWARE_USER", ""), pwd=os.environ.get("VMWARE_PASSWORD", ""),
                             port=port, disableSslCertValidation=not validate_certs, **kw)
     except vim.fault.InvalidLogin:
-        raise RuntimeError("vCenter %s refused the login (the VMware vCenter credential)" % name)
+        raise RuntimeError(refused(name))
+    except vim.fault.NoPermission as e:
+        raise RuntimeError(no_rights(name, e))
     except Exception as e:                      # noqa: BLE001
         raise RuntimeError("Could not connect to vCenter %s: %s" % (name, e))
 
@@ -97,7 +125,10 @@ def each_vcenter(module, read, extra=None, validate_certs=True, what="vCenter", 
             si = SmartConnect(host=host, user=os.environ.get("VMWARE_USER", ""), pwd=os.environ.get("VMWARE_PASSWORD", ""),
                               port=port, disableSslCertValidation=not validate_certs, **kw)
         except vim.fault.InvalidLogin:
-            st["error"] = "vCenter %s refused the login (the VMware vCenter credential)" % name
+            st["error"] = refused(name)
+            continue
+        except vim.fault.NoPermission as e:
+            st["error"] = no_rights(name, e)
             continue
         except Exception as e:                  # noqa: BLE001
             st["error"] = "Could not connect to vCenter %s: %s" % (name, e)

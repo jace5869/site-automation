@@ -550,6 +550,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_alarm_types` | `[vcenter, datacenter, cluster, host]` | Whose triggered alarms and configuration issues: vcenter, datacenter, cluster, host. Add vm, datastore or network for theirs too (VM alarms can be many). |
 | `vm_alarm_hours` | `24` | The events of the last this-many hours: every error and warning, failed logins, host connection events and VM shutdowns / power-offs / resets / HA restarts. 0 = alarms and host state only. |
 | `vm_alarm_max_events` | `5000` | read at most this many events (the newest) |
+| `vm_alarm_max_alarm_changes` | `2000` | read at most this many alarm status changes (the newest; 0 = no "Alarms that fired") |
 | `vm_alarm_max_rows` | `200` | rows per table in the report (the artifacts have them all) |
 | `vm_alarm_login_critical` | `10` | This many failed logins of one user from one place, or more, is critical (fewer: a warning). |
 | `vm_alarm_login_event_types` | `[BadUsernameSessionEvent, com.vmware.sso.LoginFailure, esx.audit.account.locked, esx.audi…` | The event types read whatever their category (vCenter's event type names). Add to these lists rather than replacing them; [] = none of that kind. |
@@ -561,6 +562,16 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_alarm_act_email_if_none` | `false` | true = email even when there is nothing to analyze |
 | `vm_alarm_act_check_url` | `true` | first check that the AAP node can reach the model's URL |
 | `vm_alarm_act_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | Seconds the model may take for its answer (ACT's GENAI_TIMEOUT, 90 by default, is too short for a long analysis): site_act_model_timeout (600) unless set here. A GENAI_TIMEOUT in site_act_env wins. |
+| `vm_health_require_ha` | `true` | A cluster of 2 or more hosts without vSphere HA is a warning (false = HA off is on purpose). |
+| `vm_health_require_drs` | `true` | A cluster of 2 or more hosts without DRS is a warning (false where DRS is off on purpose or not licensed, e.g. vSphere Standard). |
+| `vm_health_cpu_warn_pct` | `85` | CPU and memory used, in percent of a host (or of a cluster's hosts running VMs): CPU used: a warning from this percent |
+| `vm_health_cpu_crit_pct` | `95` | CPU used: critical from this percent |
+| `vm_health_mem_warn_pct` | `90` | memory used: a warning from this percent |
+| `vm_health_mem_crit_pct` | `95` | memory used: critical from this percent |
+| `vm_health_sensors` | `true` | read the hosts' hardware sensors (false = skip them) |
+| `vm_health_max_rows` | `500` | rows per table in the report (the artifacts have them all) |
+| `vm_health_fail` | `false` | The job stays green when it finds problems: the report and email say what. true = mark the job FAILED when there is a critical problem (a host not connected, an HA agent isolated ...), for workflows. |
+| `vm_created_days` | `7` | The window: the VMs created in the last this many days, up to the moment the job runs (7 = the past week; run weekly, each VM is in exactly one report). VMs created and deleted since are listed too, as long as vCenter keeps their events (often 30 days). |
 | `esxi_security_hosts` | `[]` | Which hosts: names (* and ? allowed; the short name matches too). [] = every host of vCenter (or of vmware_datacenter). |
 | `esxi_security_clusters` | `[]` | only the hosts of these clusters (names, wildcards); [] = all |
 | `esxi_security_exclude_hosts` | `[]` | Never these hosts (names, wildcards). E.g. a host you opened SSH on for a support case: the nightly run would otherwise close it again. |
@@ -591,16 +602,21 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_capacity_act_max_items` | `30` | items ACT estimates: everything overall, then clusters and datastores, problems first |
 | `vm_capacity_act_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | seconds the model may take for its answer |
 | `vm_capacity_act_check_url` | `true` | first check that the AAP node can reach the model's URL |
-| `vm_deploy_ticket` | (empty) | ---- Deploy a VM from a ServiceNow ticket (playbooks/vm_deploy_from_ticket.yml) ---- The ticket (survey answer): INC..., TASK..., SCTASK..., RITM..., CHG... The table follows from the prefix; vm_deploy_ticket_table sets it for another prefix. The ticket says what to build in 'key: value' lines - in its description, or… (all of it: the role file) |
+| `vm_deploy_ticket` | (empty) | ---- Deploy a VM from a ServiceNow ticket (playbooks/vm_deploy_from_ticket.yml) ---- The ticket (survey answer): INC..., TASK..., SCTASK..., RITM..., CHG... - or your instance's own prefixes (INCN..., CHGN...): the job asks ServiceNow which table a ticket is in. The ticket says what to build in 'key: value' lines - in… (all of it: the role file) |
 | `vm_deploy_ticket_table` | (empty) | the ServiceNow table, for a ticket prefix the job does not know (e.g. u_vm_request) |
+| `vm_deploy_ticket_prefixes` | `{}` | Your instance's own number prefixes and their tables, e.g. {INCN: incident, CHGN: change_request}. Rarely needed: for a prefix it does not know, the job asks ServiceNow's task table (and takes INCN as INC, CHGN as CHG when it may not read that table). |
+| `vm_deploy_parent_tables` | `[change_request]` | The request may also be on the ticket's parent - e.g. a task (SCTASK, CTASK) whose change holds the requirements: the parent's 'key: value' lines are read too, under the ticket's own (a line on the ticket wins). A parent that cannot be read, or is closed, stops the build. Only a parent in one of these tables is read (… (all of it: the role file) |
+| `vm_deploy_parent_fields` | `[change_request, parent]` | The ticket's fields that point to its parent - the first one set is used: a change task's change_request, any ticket's parent (or your instance's own field, e.g. u_change): |
+| `vm_deploy_parent_text_fields` | `[description]` | The parent's fields with the request, in this order (a later one wins), e.g. [description, implementation_plan]; comments and work_notes may be listed too (oldest first). GenAI reads them as well. |
 | `vm_deploy_templates` | `[]` | What a ticket may ask for (names; * and ? allowed). Templates MUST be listed: nothing else is deployed. The others: [] = any. e.g. [rhel9-gold, win2022-gold] |
 | `vm_deploy_clusters` | `[]` | clusters (and standalone hosts) a ticket may use; also the candidates of automatic placement |
 | `vm_deploy_datastores` | `[]` | datastores (or datastore clusters) a ticket may use; also the candidates of automatic placement |
 | `vm_deploy_folders` | `[]` | VM folders a ticket may use (paths below the datacenter's VM folder, e.g. Linux/*) |
 | `vm_deploy_max_cpu` | `16` | the most vCPUs a ticket may ask for |
 | `vm_deploy_max_memory_gb` | `128` | the most memory a ticket may ask for, in GB |
+| `vm_deploy_max_vms` | `10` | A ticket may ask for several VMs of the same size ("2 VMs named web01 and web02", "vm_name: web01, web02", or "Hostnames:" and one name per line): one VM each, built one after the other, the ticket closed when all are built. More names than this: refused, nothing built (the limits above are per VM). |
 | `vm_deploy_name_regex` | `'^[A-Za-z0-9][A-Za-z0-9-]{0,62}$'` | The VM names allowed (a regular expression); e.g. '^[a-z0-9-]{1,15}$' for Windows-safe names. |
-| `vm_deploy_assignment_group` | (empty) | Only tickets assigned to this group (its name as ServiceNow shows it); "" = any group. |
+| `vm_deploy_assignment_group` | (empty) | Only tickets assigned to this group (its name as ServiceNow shows it), or to one of a list of groups (["Group A", "Group B"]); "" = any group (the pickup needs one). |
 | `vm_deploy_defaults` | `{}` | What a ticket does not say: e.g. {cluster: PROD-CL01, datastore: DS-CLUSTER-01, folder: Linux/New}. Not set = the template's own cluster, datastore and folder; its CPU and memory. |
 | `vm_deploy_sites` | `{}` | Sites: a ticket's 'site: A' line (or its Location field, when it is one of these names) picks the placement - over vm_deploy_defaults; a cluster / datastore / folder the ticket names itself still wins. vm_deploy_sites: SiteA: {cluster: A-PROD-CL01, datastore: A-DSC01, folder: Servers/New} SiteB: {cluster: B-PROD-CL01,… (all of it: the role file) |
 | `vm_deploy_site_required` | `true` | with sites set up: a ticket must say its site (false = vm_deploy_defaults); a name rule counts too |
@@ -621,6 +637,11 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_deploy_wait_customization` | `900` | seconds to wait for vCenter's customization result |
 | `vm_deploy_wait_ip` | `600` | seconds to wait for an IPv4 address (DHCP, through VMware Tools) |
 | `vm_deploy_done_fields` | `{}` | Fields set on the ticket when the VM is up, e.g. to resolve an incident: {state: "6", close_code: "Solution provided", close_notes: "VM deployed"} (your instance's values) |
+| `vm_deploy_done_fields_by_table` | `{}` | The same for one table (the ticket's table: incident, sc_task, change_task ...), in place of vm_deploy_done_fields for it - e.g. close the task, never the change it belongs to: {sc_task: {state: "3", close_notes: "VM deployed by AAP"}} (3 = Closed Complete; your instance's values) Sent on its own, after the result not… (all of it: the role file) |
+| `vm_deploy_done_fields_pxe` | `true` | Also for a VM from a network-boot template (vm_deploy_pxe_templates), which is powered on and still installing its OS from MECM when the job ends. false = that ticket stays open for whoever checks the install. |
+| `vm_deploy_plain_words` | `false` | ---- A request in plain words, without GenAI (off by default) ---- true = also read the ticket's own words, by the rules below, so a requester can write "a Red Hat 9 server named ab01web05, medium" instead of 'key: value' lines. Never a guess: two different answers in the text are a question to the requester (a commen… (all of it: the role file) |
+| `vm_deploy_plain_templates` | `{}` | The words for each template (any case; "windows 2022" also matches "Windows Server 2022"). An allowed template's own name and its short names (vm_deploy_template_aliases) count too. e.g. {"rhel 9": rhel9-gold, "red hat 9": rhel9-gold, "windows 2022": WIN2022-TEMPLATE} |
+| `vm_deploy_plain_sizes` | `{}` | Size words and what they mean, e.g. {small: {cpu: 2, memory_gb: 8}, medium: {cpu: 4, memory_gb: 16}, large: {cpu: 8, memory_gb: 32}}. "4 vCPU" and "16 GB RAM" in the ticket are read too, and win in the same text. |
 | `vm_deploy_genai` | `false` | ---- GenAI reads a request written in plain words (a proof of concept, off by default) ---- When the ticket's own 'key: value' lines do not give vm_name and template: ACT (GenAI, evidence mode, no commands) reads the ticket and proposes the VM - each value with the ticket's words it comes from, or a question to the re… (all of it: the role file) |
 | `vm_deploy_template_catalog` | `{}` | The templates GenAI may choose from, each with a plain description it can match the request to: {win2022-pxe: "Windows Server 2022 (installed over the network by MECM)", rhel9-gold: "Red Hat Enterprise Linux 9"} |
 | `vm_deploy_genai_approval` | `true` | true: a GenAI proposal waits for a person - the workflow's approval (or a second run) - before it is built. false: one run reads, checks and builds, when every value is traced to the ticket and within the rules (questions or a refusal still stop it). |

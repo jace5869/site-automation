@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "plugins", "fil
 import site_filters as f  # noqa: E402
 import vmware_alarm_filters as va  # noqa: E402
 import esxi_filters as ef  # noqa: E402
+import vmware_health_filters as vh  # noqa: E402
 
 
 class FromCsv(unittest.TestCase):
@@ -776,6 +777,217 @@ class EsxiSecurityReport(unittest.TestCase):
         self.assertIn("Would change", [s["title"] for s in dry["sections"]])
         ok = ef.esxi_security_report([self.H[2]], self.O)
         self.assertEqual((ok["title"], ok["status"]), ("ESXi security settings: all 1 host(s) already set", "ok"))
+
+
+def _hl_host(name, cluster, dc="DC1", vc="vc01.example.mil", **kw):
+    h = {"vcenter": vc, "datacenter": dc, "cluster": cluster, "standalone": not cluster, "name": name, "moid": "host-" + name,
+         "connection": "connected", "power": "poweredOn", "maintenance": False, "standby": "none", "status": "green",
+         "ha_state": "connectedToMaster", "cpu_used_mhz": 10000, "cpu_mhz": 100000, "mem_used_mb": 200000, "mem_mb": 524288,
+         "uptime_days": 40.5, "reboot_required": False, "version": "8.0.3", "build": "24022510", "vendor": "Dell Inc.",
+         "model": "PowerEdge R760", "sensors_bad": [], "config_issues": [], "alarms": []}
+    h.update(kw)
+    return h
+
+
+def _hl_cluster(name, dc="DC1", vc="vc01.example.mil", ha_on=True, drs_on=True, **kw):
+    ha, drs = ha_on, drs_on
+    c = {"vcenter": vc, "datacenter": dc, "name": name, "moid": "domain-" + name, "status": "green",
+         "ha": {"enabled": ha, "host_monitoring": "enabled" if ha else "", "admission": "hosts" if ha else "", "admission_hosts": 1 if ha else 0,
+                "admission_cpu_pct": None, "admission_mem_pct": None, "failover_level_now": 1 if ha else None,
+                "cpu_left_pct": None, "mem_left_pct": None},
+         "drs": {"enabled": drs, "behavior": "fullyAutomated" if drs else "", "recommendations": 0, "faults": 0, "score": 97 if drs else None},
+         "vcls_retreat": False, "evc": "", "hosts": 2, "effective_hosts": 2, "config_issues": [], "alarms": []}
+    for k, v in kw.items():
+        if isinstance(v, dict) and isinstance(c.get(k), dict):
+            c[k] = dict(c[k], **v)
+        else:
+            c[k] = v
+    return c
+
+
+class VmHealth(unittest.TestCase):
+    VC = "vc01.example.mil"
+
+    def data(self):
+        return {
+            "vcenter": self.VC, "vcenters": [{"name": self.VC, "ok": True, "error": "", "note": ""}], "read_at": "2026-10-13T06:00:00Z",
+            "vcenter_info": [{"vcenter": self.VC, "version": "8.0.3", "build": "1", "name": "VMware vCenter Server 8.0.3", "alarms": [],
+                              "vcls_readable": True}],
+            "datacenters": [{"vcenter": self.VC, "name": "DC1", "moid": "datacenter-1", "status": "green", "config_issues": [], "alarms": []},
+                            {"vcenter": self.VC, "name": "DC2", "moid": "datacenter-2", "status": "green", "config_issues": [], "alarms": []}],
+            "clusters": [
+                # HA reserves 1 host but survives 0 now; 2 DRS recommendations waiting
+                _hl_cluster("CL1", ha={"failover_level_now": 0}, drs={"recommendations": 2}, hosts=3),
+                # HA and DRS off on 2 hosts
+                _hl_cluster("CL2", ha_on=False, drs_on=False),
+                # retreat mode with DRS on
+                _hl_cluster("CL3", dc="DC2", vcls_retreat=True, hosts=1),
+                # one host: HA and DRS off are fine
+                _hl_cluster("CL4", dc="DC2", ha_on=False, drs_on=False, hosts=1),
+            ],
+            "hosts": [
+                _hl_host("esx01", "CL1", ha_state="networkIsolated"),
+                _hl_host("esx02", "CL1", ha_state="master", mem_used_mb=500000),
+                _hl_host("esx03", "CL1", maintenance=True, ha_state="uninitialized"),
+                _hl_host("esx04", "CL2", ha_state="", reboot_required=True,
+                         sensors_bad=[{"name": "Power Supply 2", "state": "red", "type": "power"},
+                                      {"name": "Fan 3", "state": "yellow", "type": "fan"}]),
+                _hl_host("esx05", "CL2", ha_state="", connection="notResponding", cpu_used_mhz=None, mem_used_mb=None, uptime_days=None),
+                _hl_host("esx06", "CL3", dc="DC2", ha_state="master"),
+                _hl_host("esx07", "CL4", dc="DC2", ha_state=""),
+                _hl_host("esx08", "", dc="DC2", ha_state="", config_issues=["SSH for the host has been enabled"],
+                         alarms=[{"alarm": "Host memory usage", "status": "yellow", "time": "2026-10-13T05:00:00Z", "acknowledged": False}]),
+            ],
+        }
+
+    def problems(self, d=None, **o):
+        return [(p["severity"], p["object"], p["problem"]) for p in vh.vm_health_problems(d or self.data(), o)]
+
+    def test_problems(self):
+        ps = self.problems()
+        crit = {(o, pr) for s, o, pr in ps if s == "critical"}
+        warn = {(o, pr) for s, o, pr in ps if s == "warning"}
+        info = {(o, pr) for s, o, pr in ps if s == "info"}
+        self.assertIn(("esx01", "vSphere HA agent: network isolated"), crit)
+        self.assertIn(("esx05", "Not responding to vCenter"), crit)
+        self.assertIn(("esx04", "Hardware fault: Power Supply 2"), crit)
+        self.assertIn(("CL3", "vSphere Cluster Services (vCLS) in retreat mode: DRS is not working and HA works less well"), crit)
+        self.assertIn(("CL1", "HA can survive 0 host failure(s) now; admission control reserves 1"), warn)
+        self.assertIn(("CL1", "2 DRS recommendation(s) waiting"), warn)
+        self.assertIn(("CL2", "vSphere HA is off: the VMs of a failed host are not restarted"), warn)
+        self.assertIn(("CL2", "DRS is off: VMs are not balanced, and maintenance mode does not move them"), warn)
+        self.assertIn(("esx04", "Hardware warning: Fan 3"), warn)
+        self.assertIn(("esx04", "Needs a restart (an update or a setting waits for it)"), warn)
+        self.assertIn(("esx08", "SSH for the host has been enabled"), warn)
+        self.assertIn(("esx02", "Memory 95% used"), crit)
+        self.assertTrue(any(o == "esx08" and pr.startswith("Alarm: Host memory usage") for o, pr in warn))
+        self.assertIn(("esx03", "In maintenance mode"), info)
+        # a host in maintenance: its HA agent is not configured, as expected - not a problem
+        self.assertFalse(any(o == "esx03" and "HA" in pr for s, o, pr in ps))
+        # one-host cluster: HA and DRS off are fine; a host of a cluster without HA has no HA problem
+        self.assertFalse(any(o in ("CL4", "esx07", "esx06") for s, o, pr in ps))
+        # most severe first
+        self.assertEqual([p[0] for p in ps], sorted([p[0] for p in ps], key=lambda x: vh.RANK[x]))
+
+    def test_settings(self):
+        ps = self.problems(require_ha=False, require_drs=False, mem_crit_pct=99, mem_warn_pct=0)
+        self.assertFalse(any(o == "CL2" for s, o, pr in ps))
+        self.assertFalse(any(o == "esx02" and pr.startswith("Memory") for s, o, pr in ps))
+        ps = self.problems(cpu_warn_pct=5, cpu_crit_pct=0)
+        self.assertIn(("warning", "esx06", "CPU 10% used"), ps)
+
+    def test_admission_percent_and_drs_faults(self):
+        c = _hl_cluster("CLP", ha={"admission": "percent", "admission_cpu_pct": 25, "admission_mem_pct": 25, "cpu_left_pct": 40,
+                                   "mem_left_pct": 10, "failover_level_now": None},
+                        drs={"faults": 3, "behavior": "manual"})
+        ps = [(s, pr) for s, pr, _ in vh.cluster_problems(c, [_hl_host("a", "CLP"), _hl_host("b", "CLP")], {})]
+        self.assertIn(("warning", "HA failover capacity below what is reserved: memory 10% left, 25% reserved"), ps)
+        self.assertIn(("warning", "DRS could not apply 3 recommendation(s)"), ps)
+        self.assertIn(("info", "DRS is manual: its recommendations wait for someone to apply them"), ps)
+        off = _hl_cluster("CLX", ha={"admission": "off", "host_monitoring": "disabled"})
+        ps = [(s, pr) for s, pr, _ in vh.cluster_problems(off, [_hl_host("a", "CLX"), _hl_host("b", "CLX")], {})]
+        self.assertIn(("warning", "vSphere HA host monitoring is off: a failed host is not noticed"), ps)
+        self.assertTrue(any(s == "info" and pr.startswith("HA admission control is off") for s, pr in ps))
+        # retreat mode without DRS is a warning; a red cluster with nothing to explain it says so
+        r = _hl_cluster("CLR", drs_on=False, vcls_retreat=True, status="red", hosts=1)
+        ps = [(s, pr) for s, pr, _ in vh.cluster_problems(r, [_hl_host("a", "CLR")], {})]
+        self.assertIn(("warning", "vSphere Cluster Services (vCLS) in retreat mode"), ps)
+        self.assertIn(("critical", "vCenter shows the cluster red"), ps)
+
+    def test_report(self):
+        r = vh.vm_health_report(self.data(), {})
+        n = {s: len([p for p in vh.vm_health_problems(self.data(), {}) if p["severity"] == s]) for s in ("critical", "warning")}
+        self.assertEqual(r["title"], "VMware health report: %d critical, %d warning(s) - 2 datacenter(s), 4 cluster(s), 8 host(s)"
+                         % (n["critical"], n["warning"]))
+        self.assertEqual(r["status"], "critical")
+        summ = {x["label"]: (x["value"], x["status"]) for x in r["summary"]}
+        self.assertEqual(summ["Hosts not connected"], (1, "critical"))
+        self.assertEqual(summ["Hosts with hardware faults"], (1, "critical"))
+        self.assertEqual(summ["Triggered alarms"], (1, "warning"))
+        self.assertEqual(summ["Datacenters"], (2, "critical"))
+        sec = {s["title"]: s for s in r["sections"]}
+        self.assertEqual(list(sec), ["Needs attention", "Datacenters", "Clusters", "Hosts", "vCenter"])
+        need = sec["Needs attention"]
+        self.assertEqual(need["columns"], ["Severity", "Object", "Problem", "What to do", "Where"])
+        self.assertEqual(need["rows"][0][0], "CRITICAL")
+        self.assertIn(["CRITICAL", "Host esx01", "vSphere HA agent: network isolated"], [row[:3] for row in need["rows"]])
+        self.assertIn("DC1 / CL1", [row[4] for row in need["rows"] if row[1] == "Host esx01"])
+        cl = {row[1]: (row, sec["Clusters"]["cell_status"][i]) for i, row in enumerate(sec["Clusters"]["rows"])}
+        self.assertEqual(cl["CL2"][0][4:7], ["OFF", "OFF", "normal"])
+        self.assertEqual(cl["CL2"][1][4:6], ["warning", "warning"])
+        self.assertEqual(cl["CL2"][0][3], "1 of 2 (1 not connected)")
+        self.assertEqual(cl["CL2"][1][3], "critical")
+        self.assertEqual((cl["CL3"][0][6], cl["CL3"][1][6]), ("RETREAT MODE", "critical"))
+        self.assertEqual(cl["CL4"][0][0], "OK")
+        self.assertTrue(cl["CL1"][0][4].startswith("on, reserves 1 host(s); 1 host agent(s) not OK"))
+        self.assertEqual(cl["CL1"][0][5], "on (fully automated), score 97%, 2 waiting")
+        hs = {row[1]: (row, sec["Hosts"]["cell_status"][i]) for i, row in enumerate(sec["Hosts"]["rows"])}
+        self.assertEqual((hs["esx05"][0][4], hs["esx05"][1][4]), ("not responding", "critical"))
+        self.assertEqual((hs["esx01"][0][6], hs["esx01"][1][6]), ("network isolated", "critical"))
+        self.assertEqual((hs["esx04"][0][7], hs["esx04"][1][7]), ("1 red, 1 yellow", "critical"))
+        self.assertEqual((hs["esx02"][0][9], hs["esx02"][1][9]), ("95%", "critical"))
+        self.assertEqual(hs["esx08"][0][2], "(standalone)")
+        self.assertEqual(hs["esx03"][0][0], "INFO")
+        dcs = {row[1]: row for row in sec["Datacenters"]["rows"]}
+        self.assertEqual(dcs["DC1"][:8], ["CRITICAL", "DC1", 2, 5, 3, 1, 1, 0])
+        self.assertIn("CRITICAL", f.report_text(r))
+
+    def test_healthy_and_several_vcenters(self):
+        d = self.data()
+        d["clusters"] = [_hl_cluster("CL1")]
+        d["hosts"] = [_hl_host("esx01", "CL1", ha_state="master"), _hl_host("esx02", "CL1")]
+        r = vh.vm_health_report(d, {})
+        self.assertEqual((r["title"], r["status"]), ("VMware health report: healthy - 2 datacenter(s), 1 cluster(s), 2 host(s)", "ok"))
+        self.assertTrue(r["sections"][0]["text"].startswith("Nothing needs attention"))
+        # two vCenters, each with a DC1 and a CL1: nothing mixed up, the vCenter in front
+        vc2 = "vc02.example.mil"
+        d2 = self.data()
+        d2["vcenters"] = [{"name": self.VC, "ok": True}, {"name": vc2, "ok": True}]
+        d2["clusters"] = [_hl_cluster("CL1"), _hl_cluster("CL1", vc=vc2, ha_on=False)]
+        d2["hosts"] = [_hl_host("esx01", "CL1", ha_state="master"), _hl_host("esx02", "CL1"),
+                       _hl_host("esx01", "CL1", vc=vc2, ha_state=""), _hl_host("esx02", "CL1", vc=vc2, ha_state="")]
+        ps = vh.vm_health_problems(d2, {})
+        self.assertEqual([(p["vcenter"], p["object"], p["problem"]) for p in ps],
+                         [(vc2, "CL1", "vSphere HA is off: the VMs of a failed host are not restarted")])
+        r = vh.vm_health_report(d2, {})
+        self.assertEqual(r["sections"][0]["rows"][0][4], "vc02 / DC1")
+        self.assertIn("vc02 / DC1", [row[2] for row in [s for s in r["sections"] if s["title"] == "Clusters"][0]["rows"]])
+
+    def test_vcls_unreadable(self):
+        d = self.data()
+        d["vcenter_info"][0]["vcls_readable"] = False
+        ps = self.problems(d)
+        self.assertTrue(any(s == "info" and o == self.VC and pr.startswith("Could not read vCLS retreat mode") for s, o, pr in ps))
+
+
+class VmAlarmHistory(unittest.TestCase):
+    def test_fired_and_cleared(self):
+        vc = "vc01.example.mil"
+        ch = lambda t, to, moid="host-1", alarm="Host connection and power state", v=vc: {
+            "vcenter": v, "time": "2026-10-13T0%d:00:00Z" % t, "alarm": alarm, "entity_type": "host", "entity": "esx01", "moid": moid,
+            "from": "green", "to": to, "cluster": "CL1", "datacenter": "DC1"}
+        d = {"vcenter": vc, "window_hours": 24, "alarms": [
+                {"vcenter": vc, "moid": "host-2", "alarm": "Host CPU usage", "severity": "warning", "status": "yellow", "entity_type": "host",
+                 "entity": "esx02"}],
+             "alarm_changes": [ch(1, "red"), ch(2, "green"), ch(3, "red"), ch(4, "green"),
+                               ch(5, "yellow", "host-2", "Host CPU usage"), ch(6, "green", "host-3", "Host CPU usage"),
+                               ch(7, "red", v="vc02.example.mil")]}
+        h = va.vm_alarm_history(d)
+        got = [(x["vcenter"], x["moid"], x["alarm"], x["red"], x["yellow"], x["now"], x["severity"]) for x in h]
+        self.assertEqual(got, [
+            (vc, "host-2", "Host CPU usage", 0, 1, "yellow", "warning"),              # still on: first
+            ("vc02.example.mil", "host-1", "Host connection and power state", 1, 0, "cleared", "info"),
+            (vc, "host-1", "Host connection and power state", 2, 0, "cleared", "info")])   # went green-only host-3: left out
+        self.assertEqual((h[2]["first"], h[2]["last"]), ("2026-10-13T01:00:00Z", "2026-10-13T04:00:00Z"))
+        r = va.vm_alarm_report(d)
+        self.assertIn("2 alarm(s) fired and cleared", r["title"])
+        sec = {s["title"]: s for s in r["sections"]}["Alarms that fired in the last 24 h"]
+        self.assertEqual(sec["rows"][0][8], "still yellow")
+        self.assertEqual(sec["row_status"], ["warning", "info", "info"])
+        self.assertEqual({x["label"]: x["value"] for x in r["summary"]}["Alarms fired (24 h)"], 3)
+        # no events read: no such section
+        quiet = va.vm_alarm_report(dict(d, window_hours=0))
+        self.assertNotIn("Alarms that fired in the last 24 h", [s["title"] for s in quiet["sections"]])
 
 
 def _t(iso):

@@ -16,6 +16,8 @@ _spec.loader.exec_module(site_vcenters)
 import site_vmware_snapshots as m  # noqa: E402
 import site_vmware_alarms as al  # noqa: E402
 import site_vmware_esxi_security as es  # noqa: E402
+import site_vmware_health as hl  # noqa: E402
+import site_vmware_vm_created as vc  # noqa: E402
 
 G = 1024 ** 3
 
@@ -61,6 +63,43 @@ class SnapshotCreators(unittest.TestCase):
     def test_each_event_once_and_no_events(self):
         self.assertEqual(m.snapshot_creators([("a", 100), ("b", 101)], [(99, "u")]), {"a": "u", "b": ""})
         self.assertEqual(m.snapshot_creators([("a", 100)], []), {"a": ""})
+
+
+class VmCreated(unittest.TestCase):
+    DAY = 86400.0
+    NOW = 1760000000.0
+    SINCE = NOW - 7 * 86400
+
+    def ev(self, t, typ, moid, name, user="CORP\\jdoe", source=""):
+        return {"type": typ, "time": self.NOW - t * self.DAY, "user": user, "moid": moid, "name": name, "source": source, "vcenter": "vc1"}
+
+    def test_the_week_by_creation_date_and_events(self):
+        vms = [{"moid": "vm-1", "name": "web01", "created": self.NOW - 2 * self.DAY, "template": False,
+                "annotation": "Deployed from rhel9-gold for INC0012345 by AAP job 42 (operator1), 2026-10-09 UTC.", "vcenter": "vc1"},
+               {"moid": "vm-2", "name": "old01", "created": self.NOW - 30 * self.DAY, "template": False, "annotation": "", "vcenter": "vc1"},
+               {"moid": "vm-3", "name": "tpl", "created": self.NOW - 1 * self.DAY, "template": True, "annotation": "", "vcenter": "vc1"},
+               {"moid": "vm-4", "name": "db01", "created": None, "template": False, "annotation": "", "vcenter": "vc1"}]
+        events = [self.ev(2, "VmCreatedEvent", "vm-1", "web01", "VSPHERE.LOCAL\\svc_aap"),
+                  self.ev(2, "VmDeployedEvent", "vm-1", "web01", "VSPHERE.LOCAL\\svc_aap", "rhel9-gold"),
+                  self.ev(3, "VmClonedEvent", "vm-4", "db01", source="db00"),
+                  self.ev(5, "VmCreatedEvent", "vm-9", "scratch01"), self.ev(4, "VmRemovedEvent", "vm-9", "scratch01"),
+                  self.ev(9, "VmCreatedEvent", "vm-8", "gone-before")]
+        rows = vc.created_rows(vms, events, self.SINCE, self.NOW)
+        self.assertEqual([r["vm"] for r in rows], ["scratch01", "db01", "web01"])      # oldest first; not old01, the template, gone-before
+        web = rows[2]
+        self.assertEqual((web["how"], web["by"], web["ticket"], web["template"], web["aap"], web["deleted"]),
+                         ("deployed from template rhel9-gold", "VSPHERE.LOCAL\\svc_aap", "INC0012345", "rhel9-gold", True, False))
+        db = rows[1]   # no creation date (before vSphere 6.7): its event's time
+        self.assertEqual((db["how"], db["by"], db["aap"]), ("cloned from db00", "CORP\\jdoe", False))
+        self.assertTrue(db["created"].endswith("Z"))
+        gone = rows[0]
+        self.assertEqual((gone["deleted"], gone["how"], gone["removed"] != ""), (True, "created new", True))
+
+    def test_no_events_a_vm_still_counts_by_its_date(self):
+        rows = vc.created_rows([{"moid": "vm-1", "name": "a", "created": self.NOW - self.DAY, "template": False, "annotation": ""}], [],
+                               self.SINCE, self.NOW)
+        self.assertEqual((len(rows), rows[0]["by"], rows[0]["how"]), (1, "", ""))
+        self.assertEqual(vc.created_rows([], [], self.SINCE, self.NOW), [])
 
 
 class AlarmEvents(unittest.TestCase):
@@ -269,6 +308,64 @@ class EsxiSecurity(unittest.TestCase):
         picked, excluded = es.pick_hosts(hs, exclude=["esx02"])
         self.assertEqual(([h["name"] for h in picked], [h["name"] for h in excluded]),
                          (["esx01.corp.mil", "esx03.corp.mil"], ["esx02.corp.mil"]))
+
+
+class _NS(object):
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+class FailoverLevelAdmissionControlPolicy(_NS):
+    pass
+
+
+class FailoverResourcesAdmissionControlPolicy(_NS):
+    pass
+
+
+class HealthFacts(unittest.TestCase):
+    def test_ha(self):
+        off = _NS(dasConfig=_NS(enabled=False))
+        self.assertEqual(hl.ha_facts(off, None)["enabled"], False)
+        self.assertEqual(hl.ha_facts(None, None)["enabled"], False)
+        lvl = _NS(dasConfig=_NS(enabled=True, hostMonitoring="enabled", admissionControlEnabled=True,
+                                admissionControlPolicy=FailoverLevelAdmissionControlPolicy(failoverLevel=1)))
+        f = hl.ha_facts(lvl, _NS(admissionControlInfo=_NS(currentFailoverLevel=0)))
+        self.assertEqual((f["admission"], f["admission_hosts"], f["failover_level_now"], f["host_monitoring"]), ("hosts", 1, 0, "enabled"))
+        # older servers: the level from the summary
+        self.assertEqual(hl.ha_facts(lvl, _NS(admissionControlInfo=None, currentFailoverLevel=2))["failover_level_now"], 2)
+        pct = _NS(dasConfig=_NS(enabled=True, hostMonitoring="disabled", admissionControlEnabled=True,
+                                admissionControlPolicy=FailoverResourcesAdmissionControlPolicy(cpuFailoverResourcesPercent=25,
+                                                                                               memoryFailoverResourcesPercent=30)))
+        f = hl.ha_facts(pct, _NS(admissionControlInfo=_NS(currentCpuFailoverResourcesPercent=60, currentMemoryFailoverResourcesPercent=20)))
+        self.assertEqual((f["admission"], f["admission_cpu_pct"], f["admission_mem_pct"], f["cpu_left_pct"], f["mem_left_pct"]),
+                         ("percent", 25, 30, 60, 20))
+        noadm = _NS(dasConfig=_NS(enabled=True, admissionControlEnabled=False, admissionControlPolicy=None))
+        self.assertEqual(hl.ha_facts(noadm, None)["admission"], "off")
+
+    def test_drs(self):
+        f = hl.drs_facts(_NS(drsConfig=_NS(enabled=True, defaultVmBehavior="manual")), _NS(drsScore=88), [1, 2], [_NS(faultsByVm=[1, 2, 3])])
+        self.assertEqual(f, {"enabled": True, "behavior": "manual", "recommendations": 2, "faults": 3, "score": 88})
+        self.assertEqual(hl.drs_facts(_NS(drsConfig=None), None, None, None),
+                         {"enabled": False, "behavior": "", "recommendations": 0, "faults": 0, "score": None})
+
+    def test_sensors(self):
+        st = lambda k: _NS(key=k)
+        rt = _NS(systemHealthInfo=_NS(numericSensorInfo=[
+                     _NS(name="VMware Rollup Health State", healthState=st("red"), sensorType="system"),
+                     _NS(name="Power  Supply 2", healthState=st("red"), sensorType="power"),
+                     _NS(name="Fan 1", healthState=st("unknown"), sensorType="fan"),
+                     _NS(name="Fan 3", healthState=st("Yellow"), sensorType="fan")]),
+                 hardwareStatusInfo=_NS(memoryStatusInfo=[_NS(name="DIMM A1", status=st("Red"))], cpuStatusInfo=[_NS(name="CPU 0", status=st("Green"))],
+                                        storageStatusInfo=None))
+        self.assertEqual(hl.bad_sensors(rt), [{"name": "Power Supply 2", "state": "red", "type": "power"},
+                                              {"name": "Fan 3", "state": "yellow", "type": "fan"},
+                                              {"name": "DIMM A1", "state": "red", "type": "memory"}])
+        # only the rollup is red: it is kept, so the fault is not lost
+        only = _NS(systemHealthInfo=_NS(numericSensorInfo=[_NS(name="VMware Rollup Health State", healthState=st("red"), sensorType="system")]),
+                   hardwareStatusInfo=None)
+        self.assertEqual([x["name"] for x in hl.bad_sensors(only)], ["VMware Rollup Health State"])
+        self.assertEqual(hl.bad_sensors(None), [])
 
 
 if __name__ == "__main__":

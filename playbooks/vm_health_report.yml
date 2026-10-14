@@ -1,0 +1,18 @@
+---
+# VMWARE HEALTH REPORT (vCenter). Read-only: every datacenter, cluster and host of every vCenter -
+# vSphere HA and DRS working or not (HA agents, failover capacity, DRS recommendations and faults,
+# vCLS retreat mode), hosts not connected or in maintenance, hardware sensors not green, hosts that
+# need a restart, CPU and memory used, configuration issues and triggered alarms - coloured by
+# severity, with what to do. Emailed (report_email_to). Stays green unless vm_health_fail: true.
+# The alarms themselves, failed logins and the day's events: vm_alarm_report.yml.
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_health_report.yml
+- name: VMware health report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VMware health report
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: health.yml

@@ -16,16 +16,16 @@
 ---
 # ---- fill these in first (the CAPITALS) ------------------------------------------------------
 vm_deploy_templates: [TEMPLATE-NAME]              # REQUIRED: only these templates are ever deployed
-vm_deploy_pxe_templates: [TEMPLATE-NAME]          # the ones that boot to MECM (no OS yet); [] for none
-vm_deploy_name_regex: '^[A-Za-z0-9-]{1,15}$'      # allowed VM names (15 = the Windows limit)
+vm_deploy_pxe_templates: [TEMPLATE-NAME]          # empty ones (MECM network boot or a kickstart CD); [] for none
 vm_deploy_assignment_group: YOUR GROUP NAME       # only tickets assigned to this group
 vm_deploy_name_rules:                             # the VM's name picks the cluster; quotes keep the * safe
   - {match: "*AB01*", cluster: "CLUSTER-1", datacenter: "DATACENTER-1", vcenter: "vcenter1.yoursite.mil"}
   - {match: "*CD02*", cluster: "CLUSTER-2", datacenter: "DATACENTER-2", vcenter: "vcenter2.yoursite.mil"}
                                                   # datacenter / vcenter: only when not the template's own
-vm_deploy_genai: true                             # requests in plain words (GenAI reads, AAP checks)
-vm_deploy_template_catalog:                       # what GenAI may pick, in plain words
-  TEMPLATE-NAME: "Windows Server 2022 (installed over the network by MECM)"
+## VM names: 63 characters by default, and Windows is held to 15 on its own - no vm_deploy_name_regex needed
+# vm_deploy_genai: true                           # optional, needs the ACT model key credential: requests in plain words
+# vm_deploy_template_catalog:                     # what GenAI may pick, in plain words
+#   TEMPLATE-NAME: "Windows Server 2022 (installed over the network by MECM)"
 report_email_to: approvers@yoursite.mil           # the approver reads the plan in this email
 
 # ---- vmware_vm -----------------------------------------------------------------------------------
@@ -42,15 +42,35 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 # vmware_vcenters: []
 
 ## ---- Deploy a VM from a ServiceNow ticket (playbooks/vm_deploy_from_ticket.yml) ---- The ticket
-## (survey answer): INC..., TASK..., SCTASK..., RITM..., CHG... The table follows from the prefix;
-## vm_deploy_ticket_table sets it for another prefix. The ticket says what to build in 'key: value'
-## lines - in its description, or in a comment / work note (a newer one overrides): vm_name: app01
-## template: rhel9-gold cpu: 4 memory_gb: 16 (cluster, datastore, folder, datacenter, vcenter,
-## domain, customization_spec, notes: optional). docs/VMWARE.md
+## (survey answer): INC..., TASK..., SCTASK..., RITM..., CHG... - or your instance's own prefixes
+## (INCN..., CHGN...): the job asks ServiceNow which table a ticket is in. The ticket says what to
+## build in 'key: value' lines - in its description, or in a comment / work note (a newer one
+## overrides): vm_name: app01 template: rhel9-gold cpu: 4 memory_gb: 16 (cluster, datastore, folder,
+## datacenter, vcenter, domain, customization_spec, notes: optional). docs/VMWARE.md
 # vm_deploy_ticket: ""
 
 ## the ServiceNow table, for a ticket prefix the job does not know (e.g. u_vm_request)
 # vm_deploy_ticket_table: ""
+
+## Your instance's own number prefixes and their tables, e.g. {INCN: incident, CHGN:
+## change_request}. Rarely needed: for a prefix it does not know, the job asks ServiceNow's task
+## table (and takes INCN as INC, CHGN as CHG when it may not read that table).
+# vm_deploy_ticket_prefixes: {}
+
+## The request may also be on the ticket's parent - e.g. a task (SCTASK, CTASK) whose change holds
+## the requirements: the parent's 'key: value' lines are read too, under the ticket's own (a line on
+## the ticket wins). A parent that cannot be read, or is closed, stops the build. Only a parent in
+## one of these tables is read ([] = never read a parent):
+# vm_deploy_parent_tables: [change_request]
+
+## The ticket's fields that point to its parent - the first one set is used: a change task's
+## change_request, any ticket's parent (or your instance's own field, e.g. u_change):
+# vm_deploy_parent_fields: [change_request, parent]
+
+## The parent's fields with the request, in this order (a later one wins), e.g. [description,
+## implementation_plan]; comments and work_notes may be listed too (oldest first). GenAI reads them
+## as well.
+# vm_deploy_parent_text_fields: [description]
 
 ## clusters (and standalone hosts) a ticket may use; also the candidates of automatic placement
 # vm_deploy_clusters: []
@@ -66,6 +86,15 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 
 ## the most memory a ticket may ask for, in GB
 # vm_deploy_max_memory_gb: 128
+
+## A ticket may ask for several VMs of the same size ("2 VMs named web01 and web02", "vm_name:
+## web01, web02", or "Hostnames:" and one name per line): one VM each, built one after the other,
+## the ticket closed when all are built. More names than this: refused, nothing built (the limits
+## above are per VM).
+# vm_deploy_max_vms: 10
+
+## The VM names allowed (a regular expression); e.g. '^[a-z0-9-]{1,15}$' for Windows-safe names.
+# vm_deploy_name_regex: '^[A-Za-z0-9][A-Za-z0-9-]{0,62}$'
 
 ## What a ticket does not say: e.g. {cluster: PROD-CL01, datastore: DS-CLUSTER-01, folder:
 ## Linux/New}. Not set = the template's own cluster, datastore and folder; its CPU and memory.
@@ -142,6 +171,37 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 ## Fields set on the ticket when the VM is up, e.g. to resolve an incident: {state: "6", close_code:
 ## "Solution provided", close_notes: "VM deployed"} (your instance's values)
 # vm_deploy_done_fields: {}
+
+## The same for one table (the ticket's table: incident, sc_task, change_task ...), in place of
+## vm_deploy_done_fields for it - e.g. close the task, never the change it belongs to: {sc_task:
+## {state: "3", close_notes: "VM deployed by AAP"}} (3 = Closed Complete; your instance's values)
+## Sent on its own, after the result note: when ServiceNow refuses it (a mandatory field, a business
+## rule) the note stays, and the job says so on the ticket and in its report (it stays green: the VM
+## is built).
+# vm_deploy_done_fields_by_table: {}
+
+## Also for a VM from a network-boot template (vm_deploy_pxe_templates), which is powered on and
+## still installing its OS from MECM when the job ends. false = that ticket stays open for whoever
+## checks the install.
+# vm_deploy_done_fields_pxe: true
+
+## ---- A request in plain words, without GenAI (off by default) ---- true = also read the ticket's
+## own words, by the rules below, so a requester can write "a Red Hat 9 server named ab01web05,
+## medium" instead of 'key: value' lines. Never a guess: two different answers in the text are a
+## question to the requester (a comment). 'key: value' lines still work and win; with
+## vm_deploy_genai also on, GenAI is asked when the words leave the name or template - or a question
+## - open.
+# vm_deploy_plain_words: false
+
+## The words for each template (any case; "windows 2022" also matches "Windows Server 2022"). An
+## allowed template's own name and its short names (vm_deploy_template_aliases) count too. e.g.
+## {"rhel 9": rhel9-gold, "red hat 9": rhel9-gold, "windows 2022": WIN2022-TEMPLATE}
+# vm_deploy_plain_templates: {}
+
+## Size words and what they mean, e.g. {small: {cpu: 2, memory_gb: 8}, medium: {cpu: 4, memory_gb:
+## 16}, large: {cpu: 8, memory_gb: 32}}. "4 vCPU" and "16 GB RAM" in the ticket are read too, and
+## win in the same text.
+# vm_deploy_plain_sizes: {}
 
 ## true: a GenAI proposal waits for a person - the workflow's approval (or a second run) - before it
 ## is built. false: one run reads, checks and builds, when every value is traced to the ticket and

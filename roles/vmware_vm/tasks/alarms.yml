@@ -1,6 +1,7 @@
 ---
 # ALARMS REPORT (read-only): vCenter's triggered alarms on vCenter, the datacenters, clusters and
-# hosts (vm_alarm_types), every host's connection state, and the events of the last vm_alarm_hours
+# hosts (vm_alarm_types), the alarms that fired in the window (also the ones that cleared since),
+# every host's connection state, and the events of the last vm_alarm_hours
 # hours - failed logins (grouped), host connection events, VM shutdowns / power-offs / HA restarts,
 # other errors and warnings (grouped) - and configuration issues. Coloured by severity. Printed,
 # emailed (report_email_to), and published as artifacts (vm_alarms). Green unless vm_alarm_fail.
@@ -28,7 +29,8 @@
             'alarms': _vm_al_read.alarms, 'config_issues': _vm_al_read.config_issues,
             'hosts_not_connected': _vm_al_read.hosts | rejectattr('connection', 'equalto', 'connected') | map(attribute='name') | list,
             'failed_logins': _vm_al_groups.logins, 'host_connection': _vm_al_groups.connection,
-            'vm_events': _vm_al_groups.vm, 'other_events': _vm_al_groups.other, 'events_capped': _vm_al_read.events_capped} }}
+            'vm_events': _vm_al_groups.vm, 'other_events': _vm_al_groups.other, 'events_capped': _vm_al_read.events_capped,
+            'alarms_fired': _vm_al_read | vm_alarm_history} }}
 
 - name: VMware | no critical alarm, every host connected
   ansible.builtin.assert:

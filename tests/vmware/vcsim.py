@@ -5,8 +5,12 @@
   vcsim.py state   print every VM as JSON: power, snapshots (name, description), notes, adapters
   vcsim.py events  post the events the alarms report reads, and disconnect host DC0_C0_H2: 3 failed
                    logins of svc_scan from 10.9.9.9 on DC0_C0_H0, DC0_C0_H1 lost its connection, a
-                   guest shutdown of DC0_H0_VM1, a host warning on DC0_H0 (vcsim cannot trigger alarms:
-                   tests/test_filters.py covers them)
+                   guest shutdown of DC0_H0_VM1, a host warning on DC0_H0, and the alarm "Host error"
+                   on DC0_C0_H0 turned red and back to green (vcsim cannot trigger alarms:
+                   tests/test_filters.py covers triggered ones)
+  vcsim.py health  for the health report, on a simulator started with -dc 2 -cluster 2 -host 2
+                   -standalone-host 1: vSphere HA on for DC0_C0 (admission control off), DC1_C0 in vCLS
+                   retreat mode, host DC0_C1_H1 disconnected
 
 Setup (vcsim's default inventory: DC0_H0_VM0/1, DC0_C0_RP0_VM0/1; port groups DC0_DVPG0/1, VM Network):
   DC0_H0_VM0      the AAP server: guest host name aap01.example.mil, IP 10.0.0.5, Tools running, a
@@ -158,7 +162,28 @@ def events():
                                                 vm=vim.event.VmEventArgument(name=web.name, vm=web), **where(hosts["DC0_H0"])))
     em.PostEvent(vim.event.GeneralHostWarningEvent(key=0, chainId=0, createdTime=now, userName="",
                                                    message="Datastore LocalDS_0 latency is high", **where(hosts["DC0_H0"])))
+    alarms = content.alarmManager.GetAlarm(content.rootFolder) or []
+    alarm = next((a for a in alarms if a.info.name == "Host error"), alarms[0])
+    h = hosts["DC0_C0_H0"]
+    for minutes, old, new in ((30, "green", "red"), (20, "red", "green")):
+        ev = vim.event.AlarmStatusChangedEvent(key=0, chainId=0, createdTime=now - datetime.timedelta(minutes=minutes), userName="",
+                                               alarm=vim.event.AlarmEventArgument(alarm=alarm, name=alarm.info.name),
+                                               source=vim.event.ManagedEntityEventArgument(entity=content.rootFolder, name="Datacenters"),
+                                               entity=vim.event.ManagedEntityEventArgument(entity=h, name=h.name), to=new, **where(h))
+        setattr(ev, "from", old)
+        em.PostEvent(ev)
     WaitForTask(hosts["DC0_C0_H2"].DisconnectHost_Task())
 
 
-{"setup": setup, "state": state, "events": events}[sys.argv[1]]()
+def health():
+    view = content.viewManager.CreateContainerView(content.rootFolder, [vim.ClusterComputeResource], True)
+    cls = {c.name: c for c in view.view}
+    WaitForTask(cls["DC0_C0"].ReconfigureComputeResource_Task(
+        spec=vim.cluster.ConfigSpecEx(dasConfig=vim.cluster.DasConfigInfo(enabled=True, admissionControlEnabled=False)), modify=True))
+    content.setting.UpdateOptions(changedValue=[vim.option.OptionValue(key="config.vcls.clusters.%s.enabled" % cls["DC1_C0"]._moId,
+                                                                       value="false")])
+    hosts = {h.name: h for h in content.viewManager.CreateContainerView(content.rootFolder, [vim.HostSystem], True).view}
+    WaitForTask(hosts["DC0_C1_H1"].DisconnectHost_Task())
+
+
+{"setup": setup, "state": state, "events": events, "health": health}[sys.argv[1]]()

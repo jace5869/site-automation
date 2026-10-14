@@ -3,13 +3,18 @@
 
 Accounts (basic auth):  api / goodpw  = itil (read, create, update)
                         ro  / goodpw  = read only (create/update -> 403 ACL)
-Tables: incident, sys_user_group (Linux Operations), sys_user (svc_aap), ecc_agent.
+Tables: incident, sc_task, change_request, change_task (each numbered by its prefix; task = all of them,
+with sys_class_name), sys_user_group (Linux Operations), sys_user (svc_aap), ecc_agent.
 Journal fields (comments, work_notes): what is POSTed or PATCHed is kept as entries; with
 sysparm_display_value=true they come back as ServiceNow shows them - newest first, each under a
 header "<date time> - <user> (Additional comments)" / "(Work notes)"; without it, empty.
 Reference fields (assignment_group, location, caller_id) with sysparm_display_value=true come as
 {"display_value", "link"}, as ServiceNow sends them, unless sysparm_exclude_reference_link=true.
+Reference fields parent and change_request hold a ticket number.
 SNMOCK_NO_RESOLVE=1: resolving answers 403 "Data Policy Exception" (close code missing).
+A ticket whose short description has "[mock:no-close]": a PATCH of its state answers 403 (a data
+policy); "[mock:keep-state]": answers 200 but keeps the state (a business rule). A PATCH with
+sysparm_fields answers with those fields of the record.
 SNMOCK_HIDE_JOURNAL=1: journal fields always come back empty (an account that cannot read them).
 Usage: snmock.py PORT   (requests appended to $SNMOCK_LOG as JSON lines)
 """
@@ -28,6 +33,18 @@ INCIDENTS = {}
 COUNTER = [10000]
 LOG = os.environ.get("SNMOCK_LOG", "snmock.jsonl")
 STATE_LABEL = {"1": "New", "2": "In Progress", "6": "Resolved", "7": "Closed"}
+TASK_LABEL = {"1": "Open", "2": "Work in Progress", "3": "Closed Complete", "4": "Closed Incomplete", "7": "Closed Skipped",
+              "-5": "New", "-4": "Assess", "-3": "Authorize", "-2": "Scheduled", "-1": "Implement", "0": "Review"}
+PREFIX = {"incident": "INC", "sc_task": "SCTASK", "change_request": "CHG", "change_task": "CTASK"}
+
+
+def closed(rec):
+    """An incident is closed when Resolved or Closed; the other tables when Closed (3, 4, 7)."""
+    return rec.get("state") in (("6", "7") if rec.get("_table", "incident") == "incident" else ("3", "4", "7"))
+
+
+def state_label(rec):
+    return (STATE_LABEL if rec.get("_table", "incident") == "incident" else TASK_LABEL).get(rec.get("state"), rec.get("state"))
 
 
 def matches(rec, query):
@@ -50,7 +67,7 @@ def matches(rec, query):
         field, _, value = cond.partition("=")
         field = field[:-5] if field.endswith(".name") else field
         if field == "active":
-            if (rec.get("state") not in ("6", "7")) != (value == "true"):
+            if (not closed(rec)) != (value == "true"):
                 return False
         elif str(rec.get(field, "")) != value:
             return False
@@ -69,14 +86,14 @@ def journal_add(rec, body, user):
                                                    str(body[field])))
 
 
-REFS = ("assignment_group", "location", "caller_id")
+REFS = ("assignment_group", "location", "caller_id", "parent", "change_request")
 
 
 def show(rec, disp, links=True):
     """A record as the API returns it: journal fields as text (display) or empty; active from the state;
     reference fields as {display_value, link} (display, with links) or their name."""
     out = {k: v for k, v in rec.items() if not k.startswith("_") and k not in JOURNAL_LABEL}
-    out["active"] = "false" if rec.get("state") in ("6", "7") else "true"
+    out["active"] = "false" if closed(rec) else "true"
     if disp and links:
         for f in REFS:
             if out.get(f):
@@ -88,7 +105,7 @@ def show(rec, disp, links=True):
         else:
             out[field] = ""
     if disp:
-        out["state"] = STATE_LABEL.get(rec.get("state"), rec.get("state"))
+        out["state"] = state_label(rec)
     return out
 
 
@@ -158,10 +175,17 @@ class H(BaseHTTPRequestHandler):
             return 200, {"result": [u for u in SYSUSERS if u["user_name"] == want]}
         if table == "ecc_agent":
             return 200, {"result": []}
-        if table != "incident":
+        if table == "task" and method == "GET" and not sys_id:
+            # every ticket is a task: the parent table, with sys_class_name naming the real one
+            if os.environ.get("SNMOCK_NO_TASK") == "1":
+                return fail("Operation Failed", "ACL Exception: no read access to task", 403)
+            rows = [i for i in INCIDENTS.values() if matches(i, q.get("sysparm_query", ""))]
+            rows = rows[:int(q.get("sysparm_limit", "10000"))]
+            return 200, {"result": [pick(dict(i, sys_class_name=i.get("_table", "incident")), q.get("sysparm_fields")) for i in rows]}
+        if table not in PREFIX:
             return 400, {"error": {"message": "Invalid table " + table}}
         if method == "GET" and not sys_id:
-            rows = [i for i in INCIDENTS.values() if matches(i, q.get("sysparm_query", ""))]
+            rows = [i for i in INCIDENTS.values() if i.get("_table", "incident") == table and matches(i, q.get("sysparm_query", ""))]
             rows = rows[:int(q.get("sysparm_limit", "10000"))]
             disp = q.get("sysparm_display_value") == "true"
             links = q.get("sysparm_exclude_reference_link") != "true"
@@ -177,19 +201,22 @@ class H(BaseHTTPRequestHandler):
                 rec["assignment_group"] = ""                    # an unknown display value is dropped
             for field in JOURNAL_LABEL:
                 rec.pop(field, None)
-            rec.update({"sys_id": sid, "number": "INC00%d" % COUNTER[0], "state": rec.get("state") or "1",
+            rec.update({"sys_id": sid, "number": body.get("number") or "%s00%d" % (PREFIX[table], COUNTER[0]), "state": rec.get("state") or "1",
+                        "_table": table,
                         "sys_created_on": "2026-09-29 12:00:00", "work_notes_list": []})
             journal_add(rec, body, name)
             INCIDENTS[sid] = rec
             return 201, {"result": {"sys_id": sid, "number": rec["number"]}}
         rec = INCIDENTS.get(sys_id)
+        if rec is not None and rec.get("_table", "incident") != table:
+            rec = None
         if rec is None:
             return 404, {"error": {"message": "No Record found"}}
         if method == "GET":
             disp = q.get("sysparm_display_value") == "true"
             out = pick(rec, q.get("sysparm_fields"))
             if disp:
-                out["state"] = STATE_LABEL.get(rec["state"], rec["state"])
+                out["state"] = state_label(rec)
                 out["priority"] = "5 - Planning" if rec.get("urgency") == "3" else "3 - Moderate"
             return 200, {"result": out}
         if method == "PATCH":
@@ -197,12 +224,16 @@ class H(BaseHTTPRequestHandler):
                 return fail("Operation Failed", "ACL Exception Update Failed due to security constraints", 403)
             if "state" in body and os.environ.get("SNMOCK_NO_RESOLVE") == "1":
                 return fail("Operation Failed", "Data Policy Exception: Resolution code is mandatory", 403)
+            if "state" in body and "[mock:no-close]" in str(rec.get("short_description")):
+                return fail("Operation Failed", "Data Policy Exception: Close notes is mandatory", 403)
             if "work_notes" in body:
                 rec["work_notes_list"].append(body["work_notes"])
             journal_add(rec, body, name)
-            for k in ("state", "close_code", "close_notes"):
-                if k in body:
-                    rec[k] = body[k]
+            for k, v in body.items():
+                if k not in JOURNAL_LABEL and not (k == "state" and "[mock:keep-state]" in str(rec.get("short_description"))):
+                    rec[k] = v
+            if q.get("sysparm_fields"):
+                return 200, {"result": pick({k: v for k, v in rec.items() if not k.startswith("_")}, q["sysparm_fields"])}
             return 200, {"result": {"number": rec["number"], "state": rec["state"]}}
         return 405, {"error": {"message": "Method not allowed"}}
 

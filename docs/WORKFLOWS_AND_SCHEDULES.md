@@ -477,15 +477,17 @@ own template's inventory, so leave the workflow's Inventory empty:
 The VMware templates run on the AAP side against vCenter: no Limit, and each uses its own
 template's credentials ([VMWARE.md](VMWARE.md)).
 
-### 18. VMware alarms: the report, then ACT's analysis (daily)
+### 18. VMware daily checks: health, alarms, then ACT's analysis (daily)
 
 ```text
-[VM - alarms report]  --Run always-->  [VM - alarms ACT analysis]
+[VM - health report]  --Run always-->  [VM - alarms report]  --Run always-->  [VM - alarms ACT analysis]
 ```
 
-**Always**, not On success: the report is red when `vm_alarm_fail: true` is set, and the analysis
-should run anyway. Each step sends its own email (`report_email_to` on each template, or a
-workflow survey question `report_email_to` for both). **Schedule:** every day 06:00. Only the
+**Always**, not On success: a report is red when `vm_health_fail` / `vm_alarm_fail: true` is set,
+and the next step should run anyway. The health report covers every datacenter, cluster and host
+(HA, DRS, vCLS, hardware); the alarms report the alarms and the day's events; the analysis ACT's
+likely cause and fix for each. Each step sends its own email (`report_email_to` on each template, or
+a workflow survey question `report_email_to` for all). **Schedule:** every day 06:00. Only the
 analysis is wanted? Schedule `VM - alarms ACT analysis` on its own: its email lists every problem.
 
 ### 19. Snapshot cleanup with approval
@@ -507,6 +509,12 @@ No workflow needed: a schedule on the `ESXi - security settings` template, every
 No workflow needed: a schedule on `VM - capacity planning`, e.g. every Monday at 07:00. One
 template per cluster (`vm_capacity_clusters`) gives each cluster's owners their own report
 ([VMWARE.md](VMWARE.md), "Capacity planning").
+
+### 23. VMs created this week (weekly)
+
+No workflow needed: a schedule on `VM - VMs created report`, every Friday at 12:00 in your time zone
+(Repeat frequency *Week*, on *Friday*). It reports the VMs created in the 7 days up to the run
+([VMWARE.md](VMWARE.md), "VMs created").
 
 ### 21. NetApp ONTAP health (daily)
 
@@ -541,6 +549,7 @@ No workflow needed: a schedule on the `NetApp - ONTAP health report` template, e
 | Service watch | every 15 minutes (with **Enable concurrent jobs** switched off on the workflow) | workflow *Service watch - approve or self-heal* |
 | Windows daily health / weekly compliance | 06:15 daily / Monday 07:15 | workflows 12 and 13 |
 | Windows patch | monthly, in the ConfigMgr maintenance window | workflow 14 |
+| VMware daily checks (health, alarms, ACT analysis) | every day 06:00 | workflow 18 |
 
 **Notifications** (optional). **Automation Execution → Administration → Notifiers → Create
 notifier** (type *Email*, your mail relay). Then on a template or workflow → **Notifications** tab

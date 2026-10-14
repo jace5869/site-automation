@@ -42,6 +42,9 @@
 ## read at most this many events (the newest)
 # vm_alarm_max_events: 5000
 
+## read at most this many alarm status changes (the newest; 0 = no "Alarms that fired")
+# vm_alarm_max_alarm_changes: 2000
+
 ## rows per table in the report (the artifacts have them all)
 # vm_alarm_max_rows: 200
 

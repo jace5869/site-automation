@@ -19,11 +19,11 @@ vm_deploy_assignment_group: YOUR GROUP NAME       # REQUIRED: only this group's 
 
 # ---- vmware_vm -----------------------------------------------------------------------------------
 ## ---- Deploy a VM from a ServiceNow ticket (playbooks/vm_deploy_from_ticket.yml) ---- The ticket
-## (survey answer): INC..., TASK..., SCTASK..., RITM..., CHG... The table follows from the prefix;
-## vm_deploy_ticket_table sets it for another prefix. The ticket says what to build in 'key: value'
-## lines - in its description, or in a comment / work note (a newer one overrides): vm_name: app01
-## template: rhel9-gold cpu: 4 memory_gb: 16 (cluster, datastore, folder, datacenter, vcenter,
-## domain, customization_spec, notes: optional). docs/VMWARE.md
+## (survey answer): INC..., TASK..., SCTASK..., RITM..., CHG... - or your instance's own prefixes
+## (INCN..., CHGN...): the job asks ServiceNow which table a ticket is in. The ticket says what to
+## build in 'key: value' lines - in its description, or in a comment / work note (a newer one
+## overrides): vm_name: app01 template: rhel9-gold cpu: 4 memory_gb: 16 (cluster, datastore, folder,
+## datacenter, vcenter, domain, customization_spec, notes: optional). docs/VMWARE.md
 # vm_deploy_ticket: ""
 
 ## ---- Pick up VM request tickets on a schedule (playbooks/vm_deploy_poll.yml) ---- Every run (an

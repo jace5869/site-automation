@@ -7,8 +7,9 @@ each one is a PowerShell script that runs on the server over WinRM.
 
 **Nothing extra to install on AAP or on the servers.** The playbooks use only Ansible's built-in
 `script` module, so no Ansible collection is needed. The execution environment needs the Python
-library for WinRM (`pywinrm`); step 2 shows how to check. The servers need WinRM over HTTPS,
-which you already use. The check scripts run in Windows PowerShell 5.1 and PowerShell 7, and
+library for WinRM (`pywinrm`); step 2 shows how to check. The servers need WinRM, which you
+already use: over HTTPS (5986), or over HTTP (5985) with Kerberos or NTLM encrypting each message
+(step 1). The check scripts run in Windows PowerShell 5.1 and PowerShell 7, and
 also in Constrained Language Mode (see step 5).
 
 | Template | Playbook | What it does |
@@ -40,7 +41,7 @@ also in Constrained Language Mode (see step 5).
 Everything is read-only. The one write is one Application event log entry per finding (source
 `site-health`), so a SIEM that collects event logs sees the findings too.
 
-## Step 1. WinRM over HTTPS on the servers
+## Step 1. WinRM on the servers
 
 You already use it. To see it on a server:
 
@@ -48,9 +49,14 @@ You already use it. To see it on a server:
 winrm enumerate winrm/config/listener
 ```
 
-It shows a listener with `Transport = HTTPS`, `Port = 5986` and a `CertificateThumbprint`.
-The firewall must let port 5986 in from the AAP execution nodes. The `certs` check warns before
-that listener's certificate expires: when it expires, AAP can no longer connect.
+- **A listener with `Transport = HTTPS`, `Port = 5986`** and a `CertificateThumbprint`: the
+  connection is TLS. The `certs` check warns before that listener's certificate expires: when it
+  expires, AAP can no longer connect.
+- **Only `Transport = HTTP`, `Port = 5985`** (often set by a GPO): that works too. Kerberos and NTLM
+  encrypt every message themselves; `ansible_winrm_message_encryption: always` (step 4) makes the
+  connection fail rather than ever send in clear. Never use `basic` sign-in over HTTP.
+
+The firewall must let that port in from the AAP execution nodes.
 
 ## Step 2. The execution environment
 
@@ -80,7 +86,8 @@ not. **The Windows connection test tells you**: its first part runs inside the E
 
 - **Name**: `Windows (WinRM)`; **Credential type**: *Machine*.
 - **Username**: `YOURDOMAIN\svc_aap` for NTLM. For Kerberos, use `svc_aap@YOURDOMAIN.MIL`, with
-  the domain in capitals.
+  the domain in capitals. On a **FIPS** system (STIG) NTLM does not work at all - use Kerberos (see
+  *If something goes wrong*).
 - **Password**: the account's password.
 - **Privilege escalation**: leave it empty. An administrator's WinRM session is already elevated.
 
@@ -102,7 +109,18 @@ ansible_winrm_server_cert_validation: validate  # needs your CA bundle in the EE
 ansible_winrm_ca_trust_path: /etc/pki/ca-trust/source/anchors/your-ca.pem   # path inside the EE
 ```
 
-- **Certificate validation.** `validate` means the EE checks the server's WinRM certificate
+Servers with **only an HTTP listener (5985)**, step 1, take these lines instead (no certificate
+lines: Kerberos or NTLM encrypts the messages):
+
+```yaml
+ansible_connection: winrm
+ansible_port: 5985
+ansible_winrm_scheme: http
+ansible_winrm_transport: kerberos              # or ntlm (not on a FIPS system)
+ansible_winrm_message_encryption: always       # encrypted by Kerberos / NTLM, or no connection
+```
+
+- **Certificate validation** (HTTPS). `validate` means the EE checks the server's WinRM certificate
   against the CAs it trusts. EEs usually do not include your organisation's root CAs, so
   `validate` fails with `CERTIFICATE_VERIFY_FAILED` until you add your CA bundle to the EE and
   point `ansible_winrm_ca_trust_path` at it (the path inside the EE, as shown above). **Use this
@@ -358,8 +376,10 @@ A few defaults worth knowing:
 | `winrm or requests is not installed` / connection test: `no   winrm` | the EE has no pywinrm: step 2 |
 | `CERTIFICATE_VERIFY_FAILED` | the CA bundle (step 4); `ansible_winrm_server_cert_validation: ignore` only as a short lab test |
 | `the specified credentials were rejected by the server` | username format (`DOMAIN\user` for NTLM), password, or the account is locked |
-| `Connection refused` / `timed out` on 5986 | the firewall, or no HTTPS listener (step 1) |
+| `Connection refused` / `timed out` on 5986 | the firewall, or no HTTPS listener (step 1): a server with only HTTP takes port 5985 (step 4) |
 | `kerberos: ... kinit` or `Server not found in Kerberos database` | no Kerberos in the EE, or a short host name: use NTLM, or full names |
+| `ntlm: ... [digital envelope routines] unsupported` | the system is in FIPS mode: NTLM needs MD4 and RC4, which FIPS forbids. Use Kerberos (`svc_aap@YOURDOMAIN.MIL`, `ansible_winrm_transport: kerberos`) |
+| `KDC has no support for encryption type` (Kerberos, FIPS) | the EE's Kerberos follows the host's FIPS policy and offers only AES with SHA-2, while Active Directory's keys are AES with SHA-1. Build your Windows EE with the file `/etc/krb5.conf.d/crypto-policies` removed and a file in `/etc/krb5.conf.d/` holding `[libdefaults]` `permitted_enctypes = aes256-sha2 aes128-sha2 aes256-sha1 aes128-sha1` (no RC4, no DES); check it inside the EE with `kinit svc_aap@YOURDOMAIN.MIL` - it asks for the password when Kerberos is fixed |
 | `local administrator: NO` | add the account to the local Administrators group |
 | `the <name> check could not run: ...` | the text after it is PowerShell's error. The other checks still ran |
 | `skipping: no hosts matched` | the template's inventory is not `Windows servers`, or the Limit matches no server there |

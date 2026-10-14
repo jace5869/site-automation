@@ -37,6 +37,8 @@ options:
   cpu: {description: vCPUs; 0 = as the template., type: int, default: 0}
   memory_mb: {description: Memory in MB; 0 = as the template., type: int, default: 0}
   annotation: {description: The VM's notes., type: str, default: ''}
+  existing_ok: {description: "An earlier run built this VM for the ticket (the ticket's own note says so): when a VM with the name exists and its notes name the ticket, it is reported as it is and nothing is built (a ticket of several VMs run again after one failed). Off = an existing name is refused.", type: bool, default: false}
+  ticket: {description: The ticket's number - with existing_ok, the existing VM's notes must name it., type: str, default: ''}
   hostname: {description: The guest's host name; empty = name., type: str, default: ''}
   domain: {description: The DNS domain for Linux customization., type: str, default: localdomain}
   customization_spec: {description: A customization specification in vCenter (needed for Windows templates)., type: str, default: ''}
@@ -79,12 +81,55 @@ except ImportError:
     HAS_PYVMOMI = False
 
 
+# the privileges a deploy uses, as the vSphere Client shows them in a role (Administration > Roles)
+PRIVILEGES = {
+    "VirtualMachine.Provisioning.DeployTemplate": "Virtual machine > Provisioning > Deploy template",
+    "VirtualMachine.Provisioning.Customize": "Virtual machine > Provisioning > Customize guest",
+    "VirtualMachine.Provisioning.ReadCustSpecs": "Virtual machine > Provisioning > Read customization specifications",
+    "VirtualMachine.Inventory.CreateFromExisting": "Virtual machine > Inventory > Create from existing",
+    "VirtualMachine.Config.CPUCount": "Virtual machine > Change configuration > Change CPU count",
+    "VirtualMachine.Config.Memory": "Virtual machine > Change configuration > Change memory",
+    "VirtualMachine.Config.Annotation": "Virtual machine > Change configuration > Set annotation",
+    "VirtualMachine.Config.AddNewDisk": "Virtual machine > Change configuration > Add new disk",
+    "VirtualMachine.Config.DiskExtend": "Virtual machine > Change configuration > Extend virtual disk",
+    "VirtualMachine.Config.AdvancedConfig": "Virtual machine > Change configuration > Advanced configuration",
+    "VirtualMachine.Interact.PowerOn": "Virtual machine > Interaction > Power on",
+    "Resource.AssignVMToPool": "Resource > Assign virtual machine to resource pool",
+    "Datastore.AllocateSpace": "Datastore > Allocate space",
+    "Network.Assign": "Network > Assign network",
+    "Cryptographer.Clone": "Cryptographic operations > Clone",
+    "Cryptographer.EncryptNew": "Cryptographic operations > Encrypt new",
+    "Cryptographer.RegisterVM": "Cryptographic operations > Register VM",
+    "Cryptographer.RegisterHost": "Cryptographic operations > Register host",
+    "Cryptographer.AddDisk": "Cryptographic operations > Add disk",
+}
+
+
 def fault_text(e):
-    """A vSphere fault (or any error) as one line. A missing privilege is named: that is what to grant."""
+    """A vSphere fault (or any error) as one line. A missing privilege is named: that is what to grant -
+    as the role editor shows it, on which object (by name), and for an encrypted template why."""
     pid = getattr(e, "privilegeId", None)
     if pid:
         obj = getattr(e, "object", None)
-        return "the vCenter account lacks the privilege %s%s" % (pid, (" on %s" % getattr(obj, "_moId", "")) if obj is not None else "")
+        where = ""
+        if obj is not None:
+            moid = getattr(obj, "_moId", "")
+            try:
+                name = obj.name
+            except Exception:  # the fault's object may not be readable
+                name = ""
+            where = " on %s" % (("%s (%s)" % (name, moid)) if name and name != moid else moid)
+        ui = PRIVILEGES.get(pid, "")
+        moid = getattr(obj, "_moId", "") if obj is not None else ""
+        why = (" - the template is encrypted (it has a vTPM, or encrypted disks): its deploy needs the Cryptographic operations "
+               "privileges in docs/VMWARE.md" if pid.startswith("Cryptographer.") else
+               # every role has System.View: lacking it means no permission on that object at all
+               (" - the account has no role on that object at all (every role, Read-only too, includes this one): its permission "
+                "is set on a parent without Propagate to children, or the object has its own (e.g. No access)"
+                + ("; it is an ESXi host - the deploy reads the hosts of the cluster it builds in, and the host the template is "
+                   "registered on: give the role on those clusters with Propagate to children ticked" if moid.startswith("host-") else ""))
+               if pid in ("System.View", "System.Read") else "")
+        return "the vCenter account lacks the privilege %s%s%s%s" % (pid, (" (%s)" % ui) if ui else "", where, why)
     msg = getattr(e, "msg", None) or str(e)
     msg = " ".join(str(msg).split())
     name = type(e).__name__.split(".")[-1]
@@ -198,6 +243,21 @@ def _folder_path(f):
     return "/" + "/".join(([f.name] if f is not None else []) + list(reversed(names)))
 
 
+def _existing(vc, v, template):
+    """What a VM built earlier is, read from vCenter (the result of a run that builds nothing)."""
+    host = v.runtime.host
+    hw = v.config.hardware
+    nics = [d for d in hw.device if isinstance(d, vim.vm.device.VirtualEthernetCard)]
+    return {"name": v.name, "existing": True, "created": False, "template": template, "vcenter": vc, "datacenter": getattr(_datacenter(v), "name", ""),
+            "cluster": host.parent.name if host is not None and host.parent is not None else "", "host": host.name if host is not None else "",
+            "datastore": ", ".join(d.name for d in v.datastore or []), "folder": _folder_path(v.parent), "cpu": hw.numCPU,
+            "memory_gb": round(hw.memoryMB / 1024.0, 1),
+            "disks_gb": [d.capacityInKB // 1048576 for d in hw.device if isinstance(d, vim.vm.device.VirtualDisk)],
+            "power": str(v.runtime.powerState), "mac": ", ".join(d.macAddress for d in nics if d.macAddress),
+            "ip": pick_ipv4([a for n in (v.guest.net or []) for a in (n.ipAddress or [])] + [v.guest.ipAddress or ""]) if v.guest else "",
+            "customization": "-"}
+
+
 def _wait(task, timeout, what):
     end = time.time() + timeout
     while task.info.state not in (vim.TaskInfo.State.success, vim.TaskInfo.State.error):
@@ -232,6 +292,7 @@ def main():
                            datastore=dict(type="str", default=""), folder=dict(type="str", default=""),
                            cpu=dict(type="int", default=0), memory_mb=dict(type="int", default=0),
                            annotation=dict(type="str", default=""), hostname=dict(type="str", default=""),
+                           existing_ok=dict(type="bool", default=False), ticket=dict(type="str", default=""),
                            domain=dict(type="str", default="localdomain"), customization_spec=dict(type="str", default=""),
                            customize=dict(type="bool", default=True), power_on=dict(type="bool", default=True),
                            boot_from_network=dict(type="bool", default=False), guestinfo=dict(type="dict", default={}),
@@ -272,6 +333,11 @@ def main():
                     vname, is_t = v.name, bool(v.config and v.config.template)
                 except vmodl.fault.ManagedObjectNotFound:
                     continue
+                if vname == p["name"] and not is_t and p["existing_ok"] and p["ticket"].strip() \
+                        and p["ticket"].strip().lower() in str(v.config.annotation or "").lower():
+                    module.exit_json(changed=False, vm=_existing(n, v, p["template"]),
+                                     notes=["built by an earlier run for this ticket (its work note says so, and the VM's notes name "
+                                            "the ticket): left as it is"])
                 if vname == p["name"]:
                     module.fail_json(msg="a VM named %s already exists in vCenter %s (%s): nothing was built"
                                          % (p["name"], n, "a template" if is_t else _folder_path(v.parent)), vm=vm, notes=notes)
@@ -428,9 +494,21 @@ def main():
                     ident.userData.computerName = vim.vm.customization.FixedName(name=hostname)
                 vm["customization_spec"] = p["customization_spec"]
             elif win:
-                module.fail_json(msg="template %s is Windows: name a customization specification (customization_spec: ...) - one from "
-                                     "vCenter's Policies and Profiles, with the administrator password and domain or workgroup" % p["template"],
-                                 vm=vm, notes=notes)
+                # two different fixes: an empty template (MECM network boot) needs none, an installed Windows needs Sysprep
+                empty = getattr(getattr(tpl.config, "tools", None), "toolsVersion", None) == 0
+                try:
+                    wspecs = sorted(i.name for i in (content.customizationSpecManager.info or []) if str(i.type).lower() == "windows")
+                    have = ("Windows specifications in vCenter %s: %s" % (vc, ", ".join(wspecs))) if wspecs else \
+                        ("vCenter %s has no Windows specification yet" % vc)
+                except Exception:  # the account may not read them
+                    have = "vCenter > Policies and Profiles > VM Customization Specifications"
+                module.fail_json(msg="template %s is Windows and has no customization specification.%s If it is an empty template "
+                                     "that installs Windows from the network (an MECM task sequence), list it in vm_deploy_pxe_templates "
+                                     "on the deploy template: no customization then. If Windows is installed in it, it needs a Sysprep "
+                                     "specification (administrator password, domain or workgroup): vm_deploy_template_specs on the deploy "
+                                     "template, e.g. {\"%s\": SPEC-NAME}, or a ticket's customization_spec: line (%s)"
+                                     % (p["template"], " VMware Tools never ran in it, so it looks empty." if empty else "",
+                                        p["template"], have), vm=vm, notes=notes)
             else:
                 cspec = vim.vm.customization.Specification(
                     identity=vim.vm.customization.LinuxPrep(hostName=vim.vm.customization.FixedName(name=hostname),

@@ -1,5 +1,134 @@
 # Changelog
 
+## 0.14.0 — 2026-10-14
+
+- **VM deploy - several VMs on one ticket:** a ticket may ask for more than one VM of the same size - `named
+  web01 and web02`, `named web01, web02 and web03`, `2 VMs: web01 and web02`, `vm_name: web01, web02`, or a
+  `Hostnames:` line with one name per line below it. One VM per name, the same template, size, disks and
+  folder; each name checked on its own (validity, not used in any vCenter, its name rule), built one after
+  the other, one note each on the ticket; the ticket is closed only when every one is built. How many (`2
+  VMs`, `two servers`, `both servers`) must match the names, and a range (`web01 to web05`) is never
+  expanded: both are a question. At most `vm_deploy_max_vms` (10) per ticket. Before, *"2 VMs named web01
+  and web02"* built **only web01** and could close the ticket - the second name was silently dropped.
+- **VM deploy - run again after a failure:** a VM the ticket already built (its own "deployed" note says so,
+  and the VM's notes name the ticket) is left as it is and reported, not refused as a name taken - so a
+  ticket of several VMs where one failed is finished by running the job again. A VM of that name the
+  ticket did not build is still refused. This changes a one-VM ticket run again too: it now succeeds (and
+  closes the ticket, when close fields are set) - to build a test VM again, delete it in vCenter first.
+- **VM deploy - disks written one by one:** `storage 180GB disk and 50gb disk` and `a 180GB disk and a 50GB
+  disk` are disk 1 and an added disk; before, they were a question ("two sizes for disk 1").
+- **VM deploy - a number after an operating system is not a count:** `a Red Hat 9 server` is one server.
+- **New: VMs created report** (`playbooks/vm_created_report.yml`): how many VMs were created in the last
+  `vm_created_days` (7) days, and each one - when, by whom and how (cloned, deployed from a template, new;
+  vCenter's events), the ticket when the AAP deploy built it, cluster, folder, size, OS, power - by person
+  and by day, and the ones created and deleted since. Read-only, every vCenter, emailed. Schedule it
+  weekly, e.g. Fridays at 12:00 (workflow 23 in WORKFLOWS_AND_SCHEDULES.md).
+- **VM deploy - the operating system instead of the template's name:** with plain words on, a ticket that
+  says `Windows Server 2022`, `Server 2022`, `Win2022`, `RHEL 9.4` or `Red Hat Enterprise Linux 9` finds the
+  allowed template for that OS - read from the template names in `vm_deploy_templates`, nothing to set (Windows,
+  RHEL, Rocky, Alma, CentOS, Oracle Linux, Ubuntu, Debian, SLES). A `template:` line written that way works
+  too. Two allowed templates for the same OS are a question that names both.
+- **VM deploy - GenAI's answer read more tolerantly, and shown when it cannot be:** the JSON is found
+  between the markers, in a ```json block or as the answer's outermost `{...}`, with a trailing comma
+  forgiven and an answer wrapped in another JSON reply looked into. When the answer still cannot be read
+  ("GenAI gave no readable answer"), the job output and the report show what GenAI answered.
+- **VM deploy - ticket notes easy to read:** every note the deploy and the pickup write on a ticket is a
+  header line and one item per line - the refusal lists each problem on its own line (`- ...`) and ends
+  with what to do; the result has a line each for the IP or MAC address, customization, vCenter, cluster
+  and host, datastore, folder, size and power; GenAI's questions are a list. Before, a refusal was one long
+  sentence of problems joined by `;`.
+- **VM deploy - the parser reads more of how people write a request** (`vm_deploy_plain_words`), so
+  requesters do not have to learn `key: value` lines: other line names (`Hostname:`, `Cores:`,
+  `Processors:`, `RAM:`, `Storage:`, `HDD:`), a unit with the value (`Memory: 16384 MB` = 16 GB, `Storage:
+  100GB, 1TB`, `Memory (GB): 16`), `2 sockets, 2 cores per socket` (= 4 vCPUs), `4 gigs of ram`, numbered
+  disks and drive letters (`Disk 2: 200 GB`, `C: 100GB` / `D: 200GB`), and the folder (`the Web-Servers
+  folder`, `folder: Linux/New`). Before, several of these were silently missed or misread (memory in MB
+  read as GB). Unclear sockets / cores and two folders are a question. GenAI, when on, still only fills
+  what the parser leaves open - and can now propose the folder too.
+- **VM deploy - disks in plain words** (`vm_deploy_plain_words`): `storage 180gb and 50gb`, `180gb hard disk`
+  + `50gb second hard disk`, `C drive 100gb, D drive 200gb`, `disks 1TB + 500gb` are read as disk 1 first, then
+  the added disks - before, any disk words were a question, and a size after the word (`storage 180gb`) was
+  missed: the VM would have been built with the template's disks. Two sizes for disk 1, or only added
+  disks, stay a question.
+- **Fix - plain words read a value across a line break:** `32gb of memory` on one line and `180gb hard disk` on
+  the next was read as two memory sizes (`memory` + `180gb`) - and refused. A value is now read within its line.
+- **VM deploy - GenAI fills what the words leave open:** with `vm_deploy_genai` on, GenAI is also asked when
+  the ticket's lines give the name and template but its plain words left a question (e.g. disks written in
+  words: `180gb hard disk`, `50gb second hard disk`). Before, it was asked only when the name or template was
+  missing. The lines and words still win; GenAI fills the rest, and its proposal waits for the approval.
+- **VM deploy - a task whose change holds the request:** the job follows a task's link to its change
+  (`change_request`, else `parent`) and reads the change's `key: value` lines too (its description;
+  `vm_deploy_parent_text_fields` for more, e.g. `implementation_plan`), under the task's own - a line on
+  the task wins, and the dry run says which came from the change. Only a change is read
+  (`vm_deploy_parent_tables`); one that cannot be read, or is closed, stops the build. GenAI reads it too.
+- **VM deploy - close only the task:** `vm_deploy_done_fields_by_table` (e.g. `{sc_task: {state: "3"}}`)
+  closes tickets of that table, never the change. The close is its own request after the result note,
+  and what ServiceNow kept is checked: a close a data policy or business rule stopped is reported (a work
+  note and the report; the job stays green - the VM is built). `vm_deploy_done_fields_pxe: false` leaves the
+  ticket of a network-boot VM (OS still installing) open.
+- **Fix - ticket notes on one line:** the deploy's result note ("VM ... deployed", "Checked - ready to build"),
+  GenAI's questions to the requester and the line under its proposal reached ServiceNow with `\n` as text
+  instead of line breaks (inside `{{ }}` in a `>-` block Ansible keeps `'\n'` as a backslash and n). They
+  now have real line breaks; the VMware tests check every note written on a ticket.
+- **Fix - VM names separated by commas** (`vm_names: web01, web02` from a survey, in the restart, shut
+  down, snapshot, notes, VLAN and secure boot jobs) were not split - the same cause. One per line always worked.
+- docs/VMWARE.md, empty templates: the boot order is the hard disk first, the network after it (it said
+  network first) - the empty disk is skipped, so the VM boots to MECM once and from its disk after the
+  install; Failed Boot Recovery, EFI, the vmxnet3 driver in the MECM boot image, a Required deployment.
+- VM deploy: a Windows template with no customization specification - the message now names both fixes: an
+  empty template that installs Windows from the network (MECM) goes in `vm_deploy_pxe_templates`, one with
+  Windows installed needs a Sysprep specification (it lists the vCenter's Windows specifications, and says
+  when VMware Tools never ran in the template, i.e. it looks empty).
+- docs/VMWARE.md: a template that boots from its CD - the hard disk before the CD in the boot order (it said CD first).
+- VM deploy: a missing vCenter privilege is named as the role editor shows it (`Cryptographer.Clone
+  (Cryptographic operations > Clone)`), on the object by name, not only its ID; for an encrypted template
+  (a vTPM) the message says so. docs/VMWARE.md lists the Cryptographic operations privileges a deploy needs.
+- VMware jobs: `vCenter ... refused the login` says the likely reason - a user name without its domain
+  (`name@vsphere.local`), no user name at all (a credential type that does not set `VMWARE_USER`), or a
+  wrong password, a locked account, or a vCenter outside the account's single sign-on domain. The user name
+  itself is never shown. A login vCenter accepts for an account with no role in that vCenter (`NoPermission`,
+  `System.View` on `group-d1`) now says so, and how to fix it (a Global Permission), instead of the raw fault.
+- VM deploy: `lacks the privilege System.View` on an object says the account has no role on it at all (a permission
+  without Propagate to children); on an ESXi host, that the deploy reads the hosts of its cluster and the template's host.
+- **VM - health report** (`playbooks/vm_health_report.yml`, read-only): every datacenter, cluster and
+  host of every vCenter in one coloured report, with what to do for each problem. Clusters: vSphere HA
+  (on or off, host monitoring, what admission control reserves and the failover capacity left), DRS
+  (on or off, automation level, score, recommendations waiting, faults), vCLS retreat mode (DRS stops),
+  hosts running VMs, CPU and memory used. Hosts: connection, maintenance mode, the HA agent
+  (isolated, partitioned, unreachable ...), hardware sensors and hardware status not green, reboot
+  required, CPU and memory used, days up, ESXi build. Configuration issues and triggered alarms on
+  each. A one-host cluster without HA or DRS, and a host in maintenance without an HA agent, are not
+  problems. Settings `vm_health_*` (HA / DRS required, CPU and memory thresholds, `vm_health_fail`).
+  Emailed, and in the job's artifacts (`vm_health`). docs/VMWARE.md, "Health".
+- **Alarms report: the alarms that fired.** A new section lists every alarm that turned yellow or
+  red in the last 24 hours, one row per alarm and object - how many times it went red and yellow,
+  first and last change, and whether it is still on or cleared since. Alarm status changes no longer
+  count among "Other errors and warnings". `vm_alarm_max_alarm_changes` (2000) caps the read.
+- Workflow 18 (VMware daily checks) now starts with the health report.
+- docs/VMWARE.md, snapshot cleanup workflow: never *Run always* after the approval (a denied approval would
+  still delete).
+- **VM deploy: requests in plain words, without GenAI** (`vm_deploy_plain_words`, off by default). The
+  job reads the ticket's own words by rules you set: the words for each template
+  (`vm_deploy_plain_templates`, e.g. "red hat 9" -> rhel9-gold; "windows 2022" also matches "Windows
+  Server 2022"), size words (`vm_deploy_plain_sizes`), "4 vCPU" / "16 GB RAM", "named ab01web05" (or
+  the one word that fits a name rule), a site's name. Never a guess: two different answers are a
+  question, posted as a comment the requester sees. `key: value` lines still win; with GenAI on too,
+  GenAI fills only what the words did not say. docs/VMWARE.md, "Requests in plain words, without GenAI".
+- `vm_deploy_assignment_group` takes a list of groups too (any of them); before, a list was compared as
+  its text (`['Group A']`) and every ticket was refused.
+- **VM deploy: your instance's own ticket prefixes** (`INCN...`, `CHGN...`). A prefix the job does not
+  know is looked up in ServiceNow's task table (every ticket is a task, and the task names its table);
+  when the account may not read it, `INCN` is taken as `INC`, `CHGN` as `CHG`. `vm_deploy_ticket_prefixes`
+  names them outright. The pickup no longer skips tickets with such numbers.
+- VM deploy: launched with no ticket number at all (the template has no survey, or it is switched off),
+  the job now says how to add the survey instead of only `not ""`.
+- docs/WINDOWS.md: WinRM over HTTP (5985) with Kerberos or NTLM message encryption works (it said HTTPS
+  was required) - the inventory lines for it; on a FIPS system NTLM fails (`digital envelope routines
+  unsupported`) and Kerberos may say `KDC has no support for encryption type`: what each means and the fix.
+- `aap/extra_vars/vm_deploy_from_ticket.yml`: the lines to fill in first no longer switch on a
+  15-character `vm_deploy_name_regex` (0.13.1 allows 63 and holds Windows to 15 on its own) or GenAI
+  (optional: switched off, with the ACT model key it needs).
+
 ## 0.13.1 — 2026-10-12
 
 - **VM - deploy settings finder** (`playbooks/vm_deploy_inventory.yml`, read-only): for every vCenter

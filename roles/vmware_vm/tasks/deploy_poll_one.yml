@@ -13,12 +13,14 @@
     headers: {Accept: application/json}
     body_format: json
     body: >-
-      {{ {'work_notes': '[AAP] Picked up by ' ~ _vp_job ~ ' - starting the workflow "' ~ vm_deploy_poll_workflow ~ '". It reads this ticket, '
-          ~ 'checks it against the rules and waits for an approval before anything is built.'} | combine(vm_deploy_poll_claim_fields) }}
+      {{ {'work_notes': ['[AAP] Picked up by ' ~ _vp_job ~ '.', 'Starting the workflow "' ~ vm_deploy_poll_workflow ~ '": it reads this ticket, '
+          ~ 'checks it against the rules and waits for an approval before anything is built.'] | join(_vp_nl)} | combine(vm_deploy_poll_claim_fields) }}
     validate_certs: "{{ servicenow_validate_certs | default(true) }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"
     status_code: [200, 400, 401, 403, 404]
+  vars:
+    _vp_nl: "\n"                       # a real newline ('\n' inside {{ }} in a >- block stays a backslash and n)
   register: _vp_claim
   failed_when: false
   when: not _vp_blind | bool
@@ -100,12 +102,14 @@
     body:
       work_notes: >-
         {{ ('[AAP] Workflow job ' ~ _vp_r.job ~ ' started for this ticket: ' ~ _vp_r.url) if _vp_r.ok else
-           ('[AAP] Picked up, but the workflow was not started: ' ~ _vp_r.error ~ '. Nothing was built. To go on, start the workflow "'
-            ~ vm_deploy_poll_workflow ~ '" by hand with this ticket number.') }}
+           (['[AAP] Picked up, but the workflow was not started:', '- ' ~ _vp_r.error, 'Nothing was built. To go on, start the workflow "'
+             ~ vm_deploy_poll_workflow ~ '" by hand with this ticket number.'] | join(_vp_nl)) }}
     validate_certs: "{{ servicenow_validate_certs | default(true) }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"
     status_code: [200, 400, 401, 403, 404]
+  vars:
+    _vp_nl: "\n"
   failed_when: false
   when: _vp_claimed | default(false) | bool
 
