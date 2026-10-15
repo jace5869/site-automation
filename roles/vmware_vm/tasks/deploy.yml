@@ -16,7 +16,7 @@
     # the table: vm_deploy_ticket_table, else the number's prefix (the standard ones and vm_deploy_ticket_prefixes);
     # any other prefix (e.g. INCN, CHGN): ServiceNow's task table says (below)
     _vd_table: >-
-      {{ vm_deploy_ticket_table | default('', true)
+      {{ vm_deploy_ticket_table | default('', true) | vm_deploy_table_name
          or (vm_deploy_ticket | default('', true) | string | vm_deploy_table(vm_deploy_ticket_prefixes | default({}, true), false)) }}
     _vd_sn_url: >-
       {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
@@ -122,7 +122,7 @@
     validate_certs: "{{ servicenow_validate_certs | default(true) }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"
-    status_code: [200, 401, 403, 404]
+    status_code: [200, 400, 401, 403, 404]
   register: _vd_get
   check_mode: false
 
@@ -132,10 +132,18 @@
       - _vd_get.status == 200
       - (_vd_get.json.result | default([])) | length == 1
     fail_msg: >-
-      {{ ('ServiceNow refused the read (HTTP ' ~ _vd_get.status ~ '): the ServiceNow API account needs read access to the '
+      {%- set own = 'vm_deploy_ticket_table' if vm_deploy_ticket_table | default('', true)
+                    else ('vm_deploy_ticket_prefixes' if vm_deploy_ticket_prefixes | default({}, true) else '') -%}
+      {{ ('ServiceNow has no table "' ~ _vd_table ~ '" (' ~ (_vd_get.json.error.message | default('HTTP 400')) ~ ').'
+          ~ ((' It comes from ' ~ own ~ ': leave it empty - the job asks ServiceNow which table a ticket is in. Or name the table'
+              ~ ' as ServiceNow does: change_request (a change), change_task (a change task), incident, sc_task, sc_req_item.') if own else ''))
+         if _vd_get.status == 400 else
+         ('ServiceNow refused the read (HTTP ' ~ _vd_get.status ~ '): the ServiceNow API account needs read access to the '
           ~ _vd_table ~ ' table. ' ~ (_vd_get.json.error.message | default('')))
          if _vd_get.status != 200 else
-         ('No ' ~ _vd_table ~ ' ticket ' ~ _vd_number ~ ' in ServiceNow.') }}
+         ('No ' ~ _vd_table ~ ' ticket ' ~ _vd_number ~ ' in ServiceNow.'
+          ~ (' vm_deploy_ticket_table (' ~ _vd_table ~ ') is set on the template: it applies to every ticket - leave it empty, the job'
+             ~ ' finds the table of each ticket by itself.' if vm_deploy_ticket_table | default('', true) else '')) }}
     quiet: true
 
 # the parent (e.g. the change a task belongs to): more of the request, under the ticket's own lines

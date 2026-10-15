@@ -11,7 +11,47 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
+**Contents:** [ad_report](#ad_report), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
+
+## ad_report
+
+File: `roles/ad_report/defaults/main.yml`
+
+> Active Directory health report (playbooks/ad_health_report.yml). Read-only: a PowerShell script on every domain controller (WinRM, the Windows Machine credential) and one more on one DC per domain. The account needs to read AD and run dcdiag / repadmin on the DCs: see docs/ACTIVE_DIRECTORY.md.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ad_report_hours` | `24` | ---- Changes ------------------------------------------------------------------------------------ the changes of the last this-many hours (match it to the schedule: a daily job = 24) |
+| `ad_event_hours` | `24` | the event log entries of the last this-many hours |
+| `ad_security_events` | `true` | read each DC's Security log for WHO made a change (needs auditing of account and security group management) |
+| `ad_max_events` | `2000` | read at most this many entries per event log and DC |
+| `ad_changes_max` | `500` | look at most at this many changed objects per kind (created, changed accounts, GPO links) |
+| `ad_privileged_groups_extra` | `[DnsAdmins]` | Privileged groups watched besides the built-in ones (Domain / Enterprise / Schema Admins, Administrators, Account / Server / Print / Backup Operators, Group Policy Creator Owners, Key Admins, Cert Publishers): names or SIDs of this domain's groups. |
+| `ad_groups_should_be_empty` | `[]` | privileged groups that must have no member, e.g. [Schema Admins] - amber when they have one |
+| `ad_privileged_change_severity` | `warning` | a member added to / removed from a privileged group: warning, critical or info |
+| `ad_schema_change_severity` | `warning` | the schema version changed: warning, critical or info |
+| `ad_dc_change_severity` | `info` | a domain controller added or removed: warning, critical or info |
+| `ad_dcdiag_skip` | `[SystemLog]` | ---- What is read on each DC --------------------------------------------------------------------- dcdiag tests to skip (SystemLog fails on any error in the System log: the Events table covers it) |
+| `ad_dcdiag_dns` | `true` | also dcdiag's DNS tests that only read (basic, forwarders, delegation, record registration) |
+| `ad_trust_verify` | `true` | verify outbound and two-way trusts (nltest /sc_verify) |
+| `ad_repl_warn_hours` | `6` | ---- Thresholds: at or above "warn" = amber, at or above "crit" = red ------------------------------ a replication link with no success for this long (inter-site schedules: keep above their interval) |
+| `ad_repl_crit_hours` | `24` | no success for this long (or a failing link) -> red |
+| `ad_repl_queue_warn` | `50` | replication requests waiting in a DC's inbound queue |
+| `ad_time_warn_seconds` | `5` | a DC's clock against the PDC emulator (the PDC: against its NTP source) |
+| `ad_time_crit_seconds` | `60` | clock offset -> red (Kerberos fails at 300) |
+| `ad_time_sync_warn_hours` | `24` | Windows Time last synchronized longer ago than this |
+| `ad_disk_warn_pct` | `15` | free space of the database, log and SYSVOL volumes, % (at or below) |
+| `ad_disk_crit_pct` | `5` | free % -> red |
+| `ad_cert_warn_days` | `30` | the LDAPS / KDC certificate expires within this many days |
+| `ad_cert_crit_days` | `7` | expires within this many days -> red |
+| `ad_backup_warn_days` | `7` | the last system-state backup of a partition is older than this |
+| `ad_backup_crit_days` | `30` | older than this -> red (always red past the tombstone lifetime) |
+| `ad_krbtgt_max_days` | `180` | the krbtgt password is older than this -> amber (the STIG asks for 180) |
+| `ad_rid_warn_pct` | `10` | RID pool left, % (at or below) |
+| `ad_rid_crit_pct` | `2` | RID pool left -> red |
+| `ad_no_client_site_warn` | `1` | this many client addresses in no AD subnet -> amber (fewer: blue) |
+| `ad_report_max_rows` | `50` | rows per table (problems first); the job's artifacts have all |
+| `ad_report_fail` | `false` | The job stays green when it finds problems: the report and email say what. true = mark it FAILED when there is a critical finding or a DC could not be read, for workflows. |
 
 ## check_accounts
 
@@ -59,9 +99,10 @@ File: `roles/check_certs/defaults/main.yml`
 | `check_certs_crit_days` | `14` | within this many days (or expired) -> critical |
 | `check_certs_files` | `[]` | Certificate files (PEM) to check. Globs work. Every certificate in a file is checked (a chain file with an expiring intermediate is a problem too). e.g. [/etc/stigman/*.crt, /etc/pki/tls/certs/server.crt] |
 | `check_certs_discover` | `true` | Also look for certificates in the usual places. Files with many certificates are CA bundles (hundreds of roots, noisy) and are skipped unless listed in check_certs_files. |
-| `check_certs_discover_dirs` | `[/etc/pki/tls/certs, /etc/pki/nginx, /etc/nginx, /etc/httpd/conf.d, /etc/stigman]` | the folders searched (two levels deep) for *.crt, *.pem, *.cer |
+| `check_certs_discover_dirs` | `[/etc/pki/tls/certs, /etc/pki/nginx, /etc/nginx, /etc/httpd/conf.d, /etc/stigman, /etc/st…` | the folders searched (two levels deep) for *.crt, *.pem, *.cer (/etc/stigman/nginx/tls: STIG Manager's nginx certificate, three levels down) |
 | `check_certs_discover_exclude` | `'ca-bundle\|ca-certificates\|/localhost\.crt$'` | regular expression: found files whose path matches are skipped |
 | `check_certs_discover_max_per_file` | `10` | a found file with more certificates than this is a CA bundle: skipped |
+| `check_certs_placeholder_subject` | `'(^\|,)O=SomeOrganization(,\|$)'` | Regular expression on the subject of a package's placeholder certificate: postfix's /etc/pki/tls/certs/postfix.pem (O=SomeOrganization), self-signed for a year at install and never renewed. A found one is listed as not checked (no finding, no ticket) and none gets a CSR. A real certificate put in its place is checked;… (all of it: the role file) |
 | `check_certs_endpoints` | `[]` | TLS endpoints, checked FROM this host, e.g. the site's own web server: check_certs_endpoints: - {name: STIG Manager, host: 127.0.0.1, port: 443, servername: stigman.example.mil} |
 | `check_certs_keystores` | `[]` | Java keystores (Tomcat, the ServiceNow MID Server ...). A JKS keystore lists without a password; a PKCS12 one needs it - give the NAME of an environment variable that holds it (set by an AAP credential), never the password itself: check_certs_keystores: - {path: /opt/servicenow/mid/agent/security/agent_keystore, passw… (all of it: the role file) |
 | `check_certs_discover_ports` | `false` | ---- Finding them by themselves (the certificate report turns both on; the health check does not) ---- Listening TCP ports that answer TLS: each probed once, on the address it listens on, with `openssl s_client` (check_certs_probe_timeout seconds each, at most check_certs_discover_ports_max ports). Not these ports: pl… (all of it: the role file) |
@@ -73,6 +114,20 @@ File: `roles/check_certs/defaults/main.yml`
 | `check_certs_discover_keystore_depth` | `5` | how many folder levels deep the search goes |
 | `check_certs_discover_keystore_exclude` | `'/(cacerts\|jssecacerts)$\|/jre/lib/security/\|/lib/security/'` | regular expression: keystore paths skipped (the JDK's trust stores) |
 | `check_certs_discover_keystore_max` | `40` | read at most this many found keystores per host |
+| `cert_skip_hosts` | `[]` | ---- Leaving hosts out (the certificate report and the renewal; not the health check) ---- Hosts whose certificates something else renews - Satellite and its Capsules (satellite-installer, never by hand), appliances - are left out of the certificate report and never get a CSR: listed as not checked, no ticket. Name th… (all of it: the role file) |
+| `cert_skip_groups` | `[sat]` | AAP inventory groups, e.g. [sat] (the health check still watches the Satellite web UI: group_vars/sat.yml) |
+| `cert_renew_dir` | `/etc/pki/tls/renew` | ---- Renewal: a new key and CSR for each certificate file that expires soon (playbooks/cert_renew_csr.yml) ---- The certificates the report flags (within check_certs_warn_days - 30 days or less - or expired) get a new key and a CSR with the same subject and names (subjectAltName), on the host; the CSR is attached to t… (all of it: the role file) |
+| `cert_renew_key_bits` | `2048` | RSA key size, at least 2048 (a bigger old key keeps its size; an EC certificate gets a new key on the same curve) |
+| `cert_renew_digest` | `sha256` | the CSR's signature: sha256, sha384 or sha512 |
+| `cert_renew_max` | `10` | at most this many NEW CSRs per host in one run (the rest come the next run) |
+| `cert_renew_only` | (empty) | regular expression: only certificate files whose path matches (empty = every file), e.g. '^/etc/pki/tls/certs/' |
+| `cert_renew_issuer` | (empty) | regular expression: only certificates whose issuer matches (empty = any CA), e.g. 'O=U\.S\. Government' |
+| `cert_renew_exclude` | `'/(katello\|foreman\|foreman-proxy\|candlepin\|pulp\|puppet\|puppetlabs\|rhsm\|qpid)/\|/etc/pki/(c…` | Certificates something else renews - never a CSR from here. The path (Satellite, Capsule, Puppet, subscription-manager on every registered host) and the issuer (Satellite's own CA, Puppet's CA). Check the report's Where column for your hosts' paths and add yours. |
+| `cert_renew_exclude_issuer` | `'O=Katello\|Puppet CA'` | regular expression on the issuer: Satellite's own CA (O=Katello), Puppet's CA - never a CSR from here |
+| `cert_renew_self_signed` | `false` | Self-signed certificates (made on the host by an application or a person, not by a PKI) are reported and get a ticket, but no CSR - unless this is true: then the PKI is asked for a real certificate in their place (a STIG wants PKI certificates). Never a CA's own certificate (a root: it signs certificates), never one o… (all of it: the role file) |
+| `cert_renew_install_notes` | `/etc/stigman/: >- STIG Manager: put the issued certificate (with its chain) and the new k…` | What to do with the issued certificate when something else deploys the file (a copy by hand would be overwritten): the start of the file's path -> the next step written on the ticket instead of "install it in place of the file". Add your own. |
+| `cert_renew_attach_ext` | `csr` | The CSR's attachment on the ticket: <common name>-<8 characters of the CSR's SHA-256>.<ext> (a new CSR, a new name). An instance that refuses .csr attachments (its allowed extensions): txt. Refused, the CSR goes in a work note. |
+| `cert_renew_attach_type` | `text/plain` | the attachment's Content-Type (a CSR is Base64 text) |
 
 ## check_containers
 
@@ -167,6 +222,21 @@ File: `roles/check_mariadb/defaults/main.yml`
 | `check_mariadb_error_since_days` | `1` | [ERROR] lines in its log this recent |
 | `check_mariadb_disk_warn_pct` | `85` | the filesystem holding the data directory |
 | `check_mariadb_disk_crit_pct` | `95` | % used of the data directory's filesystem -> critical |
+| `check_mariadb_performance` | `true` | ---- PERFORMANCE (all warnings) ---------------------------------------------------------------- false = only the health checks above. Counters that count since the server started (slow queries, temporary tables, joins, lock waits, deadlocks ...) are judged as an average since that start, and only once it has run chec… (all of it: the role file) |
+| `check_mariadb_perf_min_uptime_hours` | `2` | judge the averages since the start only after this many hours |
+| `check_mariadb_slow_per_hour_warn` | `60` | queries slower than long_query_time, per hour |
+| `check_mariadb_tmp_disk_pct_warn` | `25` | % of temporary tables that went to disk (judged after 1000 of them) |
+| `check_mariadb_full_join_per_hour_warn` | `100` | joins without a usable index (Select_full_join), per hour |
+| `check_mariadb_table_lock_wait_pct_warn` | `1` | % of table locks (MyISAM / Aria) that had to wait (judged after 10000) |
+| `check_mariadb_row_lock_avg_ms_warn` | `500` | average InnoDB row lock wait, ms (judged after 100 waits) |
+| `check_mariadb_deadlocks_per_hour_warn` | `1` | InnoDB deadlocks per hour (judged after 10 of them) |
+| `check_mariadb_innodb_waits_per_hour_warn` | `1` | waits for a free buffer pool page / a full log buffer, per hour (after 10) |
+| `check_mariadb_aborted_connects_per_hour_warn` | `60` | failed connection attempts per hour |
+| `check_mariadb_table_open_per_hour_warn` | `600` | tables opened per hour while the table cache is full |
+| `check_mariadb_open_files_warn_pct` | `85` | files open, % of open_files_limit |
+| `check_mariadb_lock_wait_seconds` | `30` | a session waiting this long for a lock, right now |
+| `check_mariadb_long_trx_seconds` | `600` | an InnoDB transaction open this long, right now |
+| `check_mariadb_history_length_warn` | `1000000` | InnoDB history list length (old row versions not yet purged) |
 
 ## check_mounts
 
@@ -355,7 +425,8 @@ File: `roles/podman_discover/defaults/main.yml`
 | `podman_discover_rootless` | `true` | Also look at the containers of users (rootless podman). A user is looked at when a podman process (conmon) runs as them, when they have "linger" on (/var/lib/systemd/linger/NAME), or when they are in /etc/subuid AND have container storage (~/.local/share/containers/storage). Their containers are read AS that user (run… (all of it: the role file) |
 | `podman_discover_users` | `[]` | More users to look at (names), e.g. an application account the rules above miss. |
 | `podman_discover_ignore` | `[]` | Containers to leave out, as regular expressions that must match the WHOLE container name or OWNER/NAME, e.g. ['test-.*'] (every container whose name starts with test-, any owner), ['alice/.*'] (all of alice's containers), ['root/web'] (root's web only). |
-| `podman_discover_quadlet_dirs` | `[/etc/containers/systemd, /usr/share/containers/systemd]` | Where root's Quadlet files are (*.container). A user's are always read from ~/.config/containers/systemd, /etc/containers/systemd/users/UID and /etc/containers/systemd/users. |
+| `podman_discover_quadlet_dirs` | `[/etc/containers/systemd, /usr/share/containers/systemd]` | Where root's Quadlet files are (*.container, and *.kube: a pod from Kubernetes YAML). A user's are always read from ~/.config/containers/systemd, /etc/containers/systemd/users/UID and /etc/containers/systemd/users. |
+| `podman_discover_unit_dirs` | `[/etc/systemd/system, /usr/local/lib/systemd/system]` | Where root's own systemd units are looked for: a *.service that runs podman (`podman generate systemd`, `podman run`, `podman kube play`, `podman pod start`, podman-compose / docker-compose), and the podman-kube@ units enabled there (.wants links). A user's: ~/.config/systemd/user. Packaged units (/usr/lib/systemd/sys… (all of it: the role file) |
 | `podman_discover_timeout` | `60` | Seconds one podman or systemctl call may take before it is given up (reported as a finding). |
 
 ## service_watch
@@ -386,7 +457,7 @@ File: `roles/servicenow/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `servicenow_min_severity` | `warning` | Findings at or above this severity get a ticket: critical \| warning |
+| `servicenow_min_severity` | `warning` | Findings at or above this severity get a ticket: critical \| warning. A ticket already open stays open while its finding is still there, even below this (the certificate renewal opens one for every CSR) |
 | `servicenow_table` | `incident` | the table tickets are opened in (incident) |
 | `servicenow_assignment_group` | (empty) | Values for new incidents. Names work (the API is asked to accept display values), e.g. servicenow_assignment_group: Linux Operations |
 | `servicenow_caller` | (empty) | user name; empty = the API account |
@@ -460,6 +531,7 @@ File: `roles/site_findings/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `site_fail_on` | `[critical, warning]` | Which severities make the job FAIL. A failed job is what sends an AAP workflow down its "on failure" path (open tickets, ask ACT, wait for approval). [] = report only, never fail. |
+| `site_unreachable_fails` | `false` | A host that cannot be reached (switched off, no network, ssh or WinRM refused, its login refused) in the health checks, the certificate report and renewal, database health, the service watch and troubleshoot: listed as NOT REACHED and left out, and the job is not failed for it. It still counts as checked-for, so the S… (all of it: the role file) |
 | `site_syslog` | `true` | One syslog line per finding (tag below), so your log server / SIEM sees them too. |
 | `site_syslog_tag` | `site-health` | the syslog tag those lines carry (to filter on in the SIEM) |
 | `site_eventlog_source` | `site-health` | Windows: one Application event log entry per finding instead of syslog (source below). |
@@ -603,8 +675,8 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_capacity_act_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | seconds the model may take for its answer |
 | `vm_capacity_act_check_url` | `true` | first check that the AAP node can reach the model's URL |
 | `vm_deploy_ticket` | (empty) | ---- Deploy a VM from a ServiceNow ticket (playbooks/vm_deploy_from_ticket.yml) ---- The ticket (survey answer): INC..., TASK..., SCTASK..., RITM..., CHG... - or your instance's own prefixes (INCN..., CHGN...): the job asks ServiceNow which table a ticket is in. The ticket says what to build in 'key: value' lines - in… (all of it: the role file) |
-| `vm_deploy_ticket_table` | (empty) | the ServiceNow table, for a ticket prefix the job does not know (e.g. u_vm_request) |
-| `vm_deploy_ticket_prefixes` | `{}` | Your instance's own number prefixes and their tables, e.g. {INCN: incident, CHGN: change_request}. Rarely needed: for a prefix it does not know, the job asks ServiceNow's task table (and takes INCN as INC, CHGN as CHG when it may not read that table). |
+| `vm_deploy_ticket_table` | (empty) | leave it empty (the job finds each ticket's table); for a table of your own, e.g. u_vm_request - it applies to EVERY ticket |
+| `vm_deploy_ticket_prefixes` | `{}` | Your instance's own number prefixes and their tables, e.g. {INCN: incident, CHGN: change_request}. Rarely needed: for a prefix it does not know, the job asks ServiceNow's task table (and takes INCN as INC, CHGN as CHG when it may not read that table). A table as people say it is understood: change / change request ->… (all of it: the role file) |
 | `vm_deploy_parent_tables` | `[change_request]` | The request may also be on the ticket's parent - e.g. a task (SCTASK, CTASK) whose change holds the requirements: the parent's 'key: value' lines (and, with vm_deploy_plain_words, its plain words) are read too, under the ticket's own (what the ticket says wins). A parent that cannot be read, is closed, or is not ready… (all of it: the role file) |
 | `vm_deploy_parent_fields` | `[change_request, parent]` | The ticket's fields that point to its parent - the first one set is used: a change task's change_request, any ticket's parent (or your instance's own field, e.g. u_change): |
 | `vm_deploy_parent_text_fields` | `[description]` | The parent's fields with the request, in this order (a later one wins), e.g. [description, implementation_plan]; comments and work_notes may be listed too (oldest first). GenAI reads them as well. |

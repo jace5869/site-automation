@@ -28,11 +28,13 @@
 #   accounts     extra UID 0, empty passwords, inactive accounts, NOPASSWD sudo, expiring passwords
 #   certs        certificate files, keystores and TLS endpoints that expire soon
 #   patching     pending (security) updates, reboot needed, days since the last update
-#   mariadb      database health, MariaDB AND MySQL, on the host or in podman containers - only on
+#   mariadb      database health and performance (slow queries, lock waits, open transactions ...),
+#                MariaDB AND MySQL, on the host or in podman containers - only on
 #                hosts in mariadb_hosts / mysql_hosts / database_hosts (or the groups mariadb, mysql),
 #                or that name a container. "mysql" and "database" are other names for the same
 #                check. Only the database? Run playbooks/database_health.yml. docs/MARIADB.md
-#   containers   podman containers, root's and every user's (rootless), found by themselves: down,
+#   containers   podman containers, root's and every user's (rootless), found by themselves (podman ps -a,
+#                Quadlet .container / .kube files, systemd units that run podman, pods, compose): down,
 #                unhealthy, crashed, restart loops, OOM kills, users without linger. Hosts without
 #                podman are skipped. docs/RUNBOOKS.md
 #
@@ -70,6 +72,11 @@
         name: site_findings
         tasks_from: os_guard.yml
 
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+
     - name: Only known checks
       ansible.builtin.assert:
         that: _health_run | difference(_health_sets.all) | length == 0
@@ -92,6 +99,47 @@
       loop: "{{ _health_run }}"
       loop_control:
         loop_var: _site_check
+
+    # One outage, one finding. A container that is down is reported by the containers check
+    # (containers:down / :unhealthy / :crashed / :restarting, with how to start it), so a second
+    # ticket for the same outage is left out and named in that finding:
+    #   - mariadb:down of a database container (the Database health job, database_health.yml,
+    #     still reports it), and
+    #   - the services check's unit-failed / unit-down / unit-flapping of root's unit that runs it.
+    # Only when the checks ran here together.
+    - name: One outage, one finding (a container that is down is reported by the containers check)
+      ansible.builtin.set_fact:
+        site_findings: >-
+          {%- set ids = site_findings | map(attribute='id') | list -%}
+          {%- set drop = {} -%}
+          {%- for d in site_mariadb_down | default([]) -%}
+          {%-   for k in ['containers:down:', 'containers:unhealthy:'] if (k ~ d.owner ~ '/' ~ d.container) in ids -%}
+          {%-     set _ = drop.update({d.id: [k ~ d.owner ~ '/' ~ d.container, 'it is a MariaDB/MySQL database container, so the database is down too']}) -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {%- for c in site_containers | default([]) if c.owner == 'root' and c.unit and 'services' in site_checks_run -%}
+          {%-   for k in ['down', 'unhealthy', 'crashed'] if ('containers:' ~ k ~ ':' ~ c.key) in ids -%}
+          {%-     for s in ['unit-failed:', 'unit-down:'] if (s ~ c.unit) in ids and (s ~ c.unit) not in drop -%}
+          {%-       set _ = drop.update({s ~ c.unit: ['containers:' ~ k ~ ':' ~ c.key, 'the services check sees its systemd unit ' ~ c.unit ~ ' fail too']}) -%}
+          {%-     endfor -%}
+          {%-   endfor -%}
+          {%-   if ('containers:restarting:' ~ c.key) in ids and ('unit-flapping:' ~ c.unit) in ids -%}
+          {%-     set _ = drop.update({'unit-flapping:' ~ c.unit: ['containers:restarting:' ~ c.key, 'the services check sees its systemd unit ' ~ c.unit ~ ' restart too']}) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {%- set out = [] -%}
+          {%- for f in site_findings if f.id not in drop -%}
+          {%-   set notes = [] -%}
+          {%-   for why in drop.values() | selectattr(0, 'equalto', f.id) | map(attribute=1) | unique -%}
+          {%-     set dup = drop | dict2items | selectattr('value.0', 'equalto', f.id) | selectattr('value.1', 'equalto', why) | map(attribute='key') | list -%}
+          {%-     set _ = notes.append(' - ' ~ why ~ ' (' ~ (dup | join(', ')) ~ ' is not reported separately)') -%}
+          {%-   endfor -%}
+          {%-   set _ = out.append(f | combine({'summary': f.summary ~ (notes | join(''))}) if notes else f) -%}
+          {%- endfor -%}
+          {{ out }}
+      when:
+        - "'containers' in site_checks_run"
+        - site_mariadb_down | default([]) | length > 0 or 'services' in site_checks_run
 
     - name: ACT looks at the findings (only with use_act=true)
       ansible.builtin.include_role:

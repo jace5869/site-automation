@@ -30,6 +30,11 @@
   hosts: "{{ target | default('stigman') }}"
   become: true
   gather_facts: false
+  pre_tasks:
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
   tasks:
     - name: Check, record, and self-heal or hand off for approval
       ansible.builtin.include_role:

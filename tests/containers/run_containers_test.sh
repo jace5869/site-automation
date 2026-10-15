@@ -44,7 +44,7 @@ prepare() {  # prepare FIXTURE: a fresh fake host
 hooks() {  # the paths of the fake host (test hooks of the roles) as extra variables
     cat <<EOJ
 {"target": "testhosts", "_pd_now": "$NOW", "_pd_subuid_file": "$H/subuid", "_pd_linger_dir": "$H/linger", "_pd_run_user_dir": "$H/run/user",
- "_pd_users_quadlet_dir": "$H/etc/containers/systemd/users", "_pd_system_unit_dir": "$H/etc/systemd/system",
+ "_pd_users_quadlet_dir": "$H/etc/containers/systemd/users", "podman_discover_unit_dirs": ["$H/etc/systemd/system"],
  "podman_discover_quadlet_dirs": ["$H/etc/containers/systemd", "$H/usr/share/containers/systemd"],
  "_watch_run_user_dir": "$H/run/user", "_watch_users_quadlet_dir": "$H/etc/containers/systemd/users",
  "watch_quadlet_dirs": ["$H/etc/containers/systemd"], "watch_record_file": "$H/incidents.jsonl",
@@ -137,6 +137,25 @@ expect "no podman: no finding" ""
 has "  ... and says so" "skipped: podman is not installed"
 run tests/containers/check.yml -e '{"_pd_podman": "podman-not-installed-here", "check_containers_required": ["web"]}'
 expect "no podman but containers are required: critical" "containers:no-podman"
+# what a unit runs besides one named container: pods (Quadlet .kube, podman-kube@), compose, podman pod
+prepare units
+run tests/containers/check.yml
+expect "units: a down .kube, podman-kube@, compose and pod unit are down; finished oneshot, disabled and podman's tools are not" \
+    "containers:down:alice/notes,containers:down:root/mypod,containers:down:root/podman-kube@-etc-containers-blog.yaml,containers:down:root/shop,containers:down:root/stack2"
+has "  ... a Quadlet .kube is a pod, named as one" "SUMMARY containers:down:root/shop | critical | pod (podman kube play) shop (owner root) should be running (its Quadlet file $H/etc/containers/systemd/shop.kube starts it at boot ([Install] WantedBy=multi-user.target)) but it is not running; its systemd unit shop.service is failed (failed), result exit-code"
+has "  ... a compose project" "SUMMARY containers:down:root/stack2 | critical | compose project stack2 (owner root) should be running (its systemd unit stack2.service is enabled"
+has "  ... a podman pod" "SUMMARY containers:down:root/mypod | critical | podman pod mypod (owner root)"
+has "  ... a user's .kube, as that user" "HINT containers:down:alice/notes | runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user status notes.service"
+has "  ... a running .kube's containers carry its unit, and its [Install] makes them should-run" "DISCOVERED alice/notes,root/api-pod-api,root/manual,root/mypod,root/podman-kube@-etc-containers-blog.yaml,root/shop,root/stack,root/stack2"
+has "  ... should run" "SHOULDRUN alice/notes,root/api-pod-api,root/mypod,root/podman-kube@-etc-containers-blog.yaml,root/shop,root/stack,root/stack2"
+has "  ... a oneshot compose that finished counts as up" "root         stack                      finished"
+readonly_calls "  ... read-only"
+run playbooks/health_check.yml -e '{"health_checks": ["services", "containers"], "check_services_required": []}'
+has "one outage, one finding: the services check's unit-failed of a container unit is folded in" \
+    "the services check sees its systemd unit shop.service fail too (unit-failed:shop.service is not reported separately)"
+hasnt "  ... no separate unit-failed for it" "systemd unit shop.service has FAILED"
+has "  ... a failed unit that runs no container stays the services check's" "systemd unit autoupd.service has FAILED"
+prepare fleet
 run tests/containers/check.yml -e '{"podman_discover_enabled": false}'
 expect "discovery off: no finding" ""
 prepare empty
@@ -149,6 +168,17 @@ has "health_check.yml runs the containers check" "finding(s). Checks run: contai
 hasnt "  ... and it did not break" "could not run"
 run playbooks/health_check.yml -e health_checks=daily --list-tasks
 [ "$rc" -eq 0 ] && ok "daily includes containers (the playbook accepts it)" || bad "health_check.yml --list-tasks failed" 20
+# one outage, one finding: a database container that is down is reported by the containers check
+run playbooks/health_check.yml -e '{"health_checks": ["mariadb", "containers"], "check_mariadb_containers": ["app", "web2", "job"]}'
+cp "$work/out.txt" "$work/dedup.txt"
+has "a down database container: one finding, the containers check's, naming the database" \
+    "container app (owner root) should be running (its systemd unit container-app.service is enabled"
+has "  ... which says the database is down too" "it is a MariaDB/MySQL database container, so the database is down too (mariadb:app:down is not reported separately)"
+has "  ... also when its container is gone" "(mariadb:web2:down is not reported separately)"
+hasnt "  ... no second finding for it" "MariaDB/MySQL is not running (container app"
+has "  ... a stopped database container the containers check does not report keeps its mariadb:down" "[job] MariaDB/MySQL is not running (container job"
+run playbooks/health_check.yml -e '{"health_checks": ["mariadb"], "check_mariadb_containers": ["app", "web2"]}'
+has "the database check alone still reports a down database container" "[app] MariaDB/MySQL is not running (container app"
 
 # ---------------------------------------------------------------- Service watch
 ALICE="runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001"

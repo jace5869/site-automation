@@ -3,7 +3,8 @@
 # keystores, TLS endpoints - and, found by themselves, the listening ports that answer TLS and the
 # Java keystores: cert_report_discover), in ONE table sorted by expiry date - the list to hand to whoever
 # renews certificates. Read-only. Fails when one expires within check_certs_warn_days, so a
-# workflow can open tickets.
+# workflow can open tickets. Hosts in cert_skip_hosts or cert_skip_groups (Satellite) are left out.
+# The CSRs for the ones that expire: playbooks/cert_renew_csr.yml.
 #
 #   ansible-playbook playbooks/cert_report.yml
 #   ansible-playbook playbooks/cert_report.yml -e check_certs_warn_days=60
@@ -21,6 +22,16 @@
       ansible.builtin.include_role:
         name: site_findings
         tasks_from: os_guard.yml
+
+    - name: Not the hosts in cert_skip_hosts or cert_skip_groups (Satellite renews its own certificates)
+      ansible.builtin.include_role:
+        name: check_certs
+        tasks_from: skip.yml
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
   tasks:
     - name: Start
       ansible.builtin.include_role:
@@ -57,13 +68,30 @@
           {%-   for c in hostvars[h].check_certs_inventory | default([]) -%}{%- set _ = rows.append(c) -%}{%- endfor -%}
           {%- endfor -%}
           {%- set skipped = [] -%}
+          {%- for h in ansible_play_hosts_all if hostvars[h].site_host_skipped | default(false) | bool -%}
+          {%-   set _ = skipped.append([h, 'every certificate', 'left out: ' ~ hostvars[h].site_host_skipped_reason | default('')]) -%}
+          {%- endfor -%}
           {%- for h in ansible_play_hosts -%}
           {%-   for c in hostvars[h].check_certs_skipped | default([]) -%}{%- set _ = skipped.append([c.host, c.where, c.reason]) -%}{%- endfor -%}
           {%- endfor -%}
+          {#- the same place and reason on many hosts (postfix's placeholder on every host with postfix): one row -#}
+          {%- set groups = {} -%}{%- set order = [] -%}
+          {%- for s in skipped -%}
+          {%-   set k = s[1] ~ '|' ~ s[2] -%}
+          {%-   if k not in groups -%}{%- set _ = order.append(k) -%}{%- set _ = groups.update({k: [[], s[1], s[2]]}) -%}{%- endif -%}
+          {%-   set _ = groups[k][0].append(s[0]) -%}
+          {%- endfor -%}
+          {%- set grouped = [] -%}
+          {%- for k in order -%}
+          {%-   set hs = groups[k][0] -%}
+          {%-   set _ = grouped.append([hs[:10] | join(', ') ~ (' and ' ~ (hs | length - 10) ~ ' more (' ~ hs | length ~ ' hosts)' if hs | length > 10 else ''),
+                                       groups[k][1], groups[k][2]]) -%}
+          {%- endfor -%}
           {{ [rows | cert_report_section(check_certs_warn_days | default(30) | int, check_certs_notice_days | default(60) | int)]
-             + ([{'title': 'Found but not checked', 'columns': ['Host', 'Where', 'Why'], 'rows': skipped,
+             + ([{'title': 'Found but not checked', 'columns': ['Host', 'Where', 'Why'], 'rows': grouped,
                   'text': 'Keystores that need a password (none is ever guessed: give it in check_certs_keystores with password_env), '
-                          ~ 'or that need keytool.'}] if skipped else []) }}
+                          ~ 'or that need keytool; placeholder certificates a package made at install (postfix makes one); '
+                          ~ 'hosts in cert_skip_hosts or cert_skip_groups.'}] if grouped else []) }}
       run_once: true
 
   post_tasks:

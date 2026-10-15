@@ -1,0 +1,257 @@
+{
+    "dc": {
+        "ad_module": true,
+        "boot": "2026-09-25T06:53:42Z",
+        "certs": [
+            {
+                "dns": [],
+                "not_after": "2026-10-18T06:53:42Z",
+                "purposes": [
+                    "ldaps"
+                ],
+                "subject": "CN=dc02.corp.test",
+                "thumbprint": "CD34"
+            }
+        ],
+        "dcdiag": {
+            "error": "",
+            "exit": 0,
+            "ran": true,
+            "tests": [
+                {
+                    "detail": [],
+                    "result": "passed",
+                    "target": "DC02",
+                    "test": "Connectivity"
+                },
+                {
+                    "detail": [
+                        "[Replications Check,DC02] A recent replication attempt failed:",
+                        "From DC01 to DC02",
+                        "The replication generated an error (8453):",
+                        "Replication access was denied."
+                    ],
+                    "result": "failed",
+                    "target": "DC02",
+                    "test": "Replications"
+                }
+            ]
+        },
+        "dcdiag_dns": {
+            "error": "",
+            "problems": [
+                "Error: no DNS servers reachable",
+                "Warning: forwarder 8.8.8.8 does not answer"
+            ],
+            "ran": true,
+            "tests": [
+                {
+                    "detail": [
+                        "Error: no DNS servers reachable",
+                        "Warning: forwarder 8.8.8.8 does not answer"
+                    ],
+                    "result": "failed",
+                    "target": "corp.test",
+                    "test": "DNS"
+                }
+            ]
+        },
+        "disks": [
+            {
+                "drive": "D:",
+                "free_gb": 1,
+                "free_pct": 2,
+                "path": "D:\\NTDS\\ntds.dit",
+                "what": "database"
+            },
+            {
+                "drive": "D:",
+                "free_gb": 1,
+                "free_pct": 2,
+                "path": "D:\\NTDS",
+                "what": "logs"
+            },
+            {
+                "drive": "C:",
+                "free_gb": 60,
+                "free_pct": 60,
+                "path": "C:\\Windows\\SYSVOL\\sysvol",
+                "what": "sysvol"
+            }
+        ],
+        "domain": "corp.test",
+        "errors": [],
+        "events": [
+            {
+                "count": 1,
+                "id": 5719,
+                "last": "2026-10-15T02:53:42Z",
+                "level": 2,
+                "log": "System",
+                "message": "no domain controller",
+                "source": "NETLOGON"
+            },
+            {
+                "count": 1,
+                "id": 2887,
+                "last": "2026-10-15T03:53:42Z",
+                "level": 3,
+                "log": "Directory Service",
+                "message": "25 unsigned binds",
+                "source": "Microsoft-Windows-ActiveDirectory_DomainService"
+            },
+            {
+                "count": 2,
+                "id": 2213,
+                "last": "2026-10-15T05:53:42Z",
+                "level": 3,
+                "log": "DFS Replication",
+                "message": "The DFS Replication service stopped replication on volume C:. again",
+                "source": "DFSR"
+            }
+        ],
+        "forest": "corp.test",
+        "fqdn": "dc02.corp.test",
+        "fsmo": [],
+        "gc_port": {
+            "error": "",
+            "ok": true
+        },
+        "is_gc": true,
+        "is_rodc": false,
+        "ldap": {
+            "error": "",
+            "gc_ready": true,
+            "ok": true,
+            "synchronized": false
+        },
+        "name": "DC02",
+        "no_client_site": {
+            "clients": [
+                "10.9.0.5 (WS01)",
+                "10.9.0.6 (WS02)"
+            ],
+            "count": 3,
+            "distinct": 2,
+            "error": ""
+        },
+        "os": "Microsoft Windows Server 2022 Standard",
+        "queue": 75,
+        "read_at": "2026-10-15T06:53:42Z",
+        "repl": [
+            {
+                "failures": 12,
+                "last_failure": "2026-10-15T06:47:42Z",
+                "last_success": "2026-10-14T00:53:42Z",
+                "nc": "DC=corp,DC=test",
+                "source": "DC01",
+                "source_site": "HQ",
+                "status": "8453",
+                "transport": "RPC"
+            },
+            {
+                "failures": 3,
+                "last_failure": "",
+                "last_success": "",
+                "nc": "CN=Configuration,DC=corp,DC=test",
+                "source": "DC01",
+                "source_site": "HQ",
+                "status": "1722",
+                "transport": "RPC"
+            }
+        ],
+        "role": "dc",
+        "security": [
+            {
+                "by": "CORP\\admin1",
+                "group": "Domain Admins",
+                "id": 4728,
+                "member": "CN=Mallory,CN=Users,DC=corp,DC=test",
+                "target": "",
+                "time": "2026-10-15T04:53:42Z"
+            },
+            {
+                "by": "CORP\\admin1",
+                "group": "",
+                "id": 4720,
+                "member": "",
+                "target": "mallory",
+                "time": "2026-10-15T03:53:42Z"
+            },
+            {
+                "by": "CORP\\admin1",
+                "group": "",
+                "id": 1102,
+                "member": "",
+                "target": "",
+                "time": "2026-10-15T05:53:42Z"
+            }
+        ],
+        "security_capped": false,
+        "services": [
+            {
+                "name": "NTDS",
+                "start": "Auto",
+                "state": "Running"
+            },
+            {
+                "name": "Netlogon",
+                "start": "Auto",
+                "state": "Running"
+            },
+            {
+                "name": "kdc",
+                "start": "Auto",
+                "state": "Stopped"
+            },
+            {
+                "name": "DNS",
+                "start": "Auto",
+                "state": "Running"
+            },
+            {
+                "name": "DFSR",
+                "start": "Auto",
+                "state": "Running"
+            },
+            {
+                "name": "W32Time",
+                "start": "Auto",
+                "state": "Running"
+            },
+            {
+                "name": "ADWS",
+                "start": "Auto",
+                "state": "Running"
+            },
+            {
+                "name": "IsmServ",
+                "start": "Auto",
+                "state": "Running"
+            },
+            {
+                "name": "LanmanServer",
+                "start": "Auto",
+                "state": "Running"
+            }
+        ],
+        "site": "HQ",
+        "sysvol": {
+            "dfsr_state": 5,
+            "engine": "dfsr",
+            "path": "C:\\Windows\\SYSVOL\\sysvol",
+            "ready": 1,
+            "shares": [
+                "NETLOGON"
+            ]
+        },
+        "time": {
+            "error": "",
+            "last_sync": "2026-10-13T04:53:42Z",
+            "offset": -91.5,
+            "ref": "dc01.corp.test",
+            "source": "dc01.corp.test,0x9",
+            "stratum": "3"
+        }
+    }
+}

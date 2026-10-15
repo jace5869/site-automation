@@ -33,14 +33,21 @@
 ## (hundreds of roots, noisy) and are skipped unless listed in check_certs_files.
 # check_certs_discover: true
 
-## the folders searched (two levels deep) for *.crt, *.pem, *.cer
-# check_certs_discover_dirs: [/etc/pki/tls/certs, /etc/pki/nginx, /etc/nginx, /etc/httpd/conf.d, /etc/stigman]
+## the folders searched (two levels deep) for *.crt, *.pem, *.cer (/etc/stigman/nginx/tls: STIG
+## Manager's nginx certificate, three levels down)
+# check_certs_discover_dirs: [/etc/pki/tls/certs, /etc/pki/nginx, /etc/nginx, /etc/httpd/conf.d, /etc/stigman, /etc/stigman/nginx/tls]
 
 ## regular expression: found files whose path matches are skipped
 # check_certs_discover_exclude: 'ca-bundle|ca-certificates|/localhost\.crt$'
 
 ## a found file with more certificates than this is a CA bundle: skipped
 # check_certs_discover_max_per_file: 10
+
+## Regular expression on the subject of a package's placeholder certificate: postfix's
+## /etc/pki/tls/certs/postfix.pem (O=SomeOrganization), self-signed for a year at install and never
+## renewed. A found one is listed as not checked (no finding, no ticket) and none gets a CSR. A real
+## certificate put in its place is checked; so is a file listed in check_certs_files.
+# check_certs_placeholder_subject: '(^|,)O=SomeOrganization(,|$)'
 
 ## TLS endpoints, checked FROM this host, e.g. the site's own web server: check_certs_endpoints: -
 ## {name: STIG Manager, host: 127.0.0.1, port: 443, servername: stigman.example.mil}
@@ -86,6 +93,18 @@
 ## read at most this many found keystores per host
 # check_certs_discover_keystore_max: 40
 
+## ---- Leaving hosts out (the certificate report and the renewal; not the health check) ---- Hosts
+## whose certificates something else renews - Satellite and its Capsules (satellite-installer, never
+## by hand), appliances - are left out of the certificate report and never get a CSR: listed as not
+## checked, no ticket. Name them, or put them in a group. Both take a list or one string with commas
+## ('sat01*, cap01.example.mil'), so a survey answer works too. host names as in the AAP inventory,
+## any case, * and ? wildcards; a short name matches the full one, e.g. [sat01, '*capsule*']
+# cert_skip_hosts: []
+
+## AAP inventory groups, e.g. [sat] (the health check still watches the Satellite web UI:
+## group_vars/sat.yml)
+# cert_skip_groups: [sat]
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
 ## email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails.
@@ -126,6 +145,15 @@
 ## Which severities make the job FAIL. A failed job is what sends an AAP workflow down its "on
 ## failure" path (open tickets, ask ACT, wait for approval). [] = report only, never fail.
 # site_fail_on: [critical, warning]
+
+## A host that cannot be reached (switched off, no network, ssh or WinRM refused, its login refused)
+## in the health checks, the certificate report and renewal, database health, the service watch and
+## troubleshoot: listed as NOT REACHED and left out, and the job is not failed for it. It still
+## counts as checked-for, so the ServiceNow step opens its "no result" ticket. When NO host is
+## reached (a wrong or expired machine credential looks like this) the job fails. true = a host not
+## reached fails the job, as before. Patching, fixes, deploys and the Windows connection test always
+## fail for it.
+# site_unreachable_fails: false
 
 ## One syslog line per finding (tag below), so your log server / SIEM sees them too.
 # site_syslog: true

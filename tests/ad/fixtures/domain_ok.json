@@ -1,0 +1,211 @@
+{
+    "domain": {
+        "account_changes": [],
+        "backups": [
+            {
+                "last": "2026-10-14T10:53:43Z",
+                "partition": "DC=corp,DC=test"
+            },
+            {
+                "last": "2026-10-14T10:53:43Z",
+                "partition": "CN=Configuration,DC=corp,DC=test"
+            }
+        ],
+        "changes_capped": false,
+        "collector": "dc01.corp.test",
+        "config_changes": [],
+        "config_nc": "CN=Configuration,DC=corp,DC=test",
+        "created": [],
+        "dcs": [
+            {
+                "gc": true,
+                "ip": "10.0.0.1",
+                "name": "dc01.corp.test",
+                "ntds": "CN=NTDS Settings,CN=DC01,CN=Servers,CN=HQ,CN=Sites,CN=Configuration,DC=corp,DC=test",
+                "os": "Windows Server 2022 Standard",
+                "rodc": false,
+                "roles": [
+                    "PDCEmulator",
+                    "RIDMaster",
+                    "SchemaMaster",
+                    "DomainNamingMaster"
+                ],
+                "site": "HQ"
+            },
+            {
+                "gc": true,
+                "ip": "10.0.0.2",
+                "name": "dc02.corp.test",
+                "ntds": "CN=NTDS Settings,CN=DC02,CN=Servers,CN=HQ,CN=Sites,CN=Configuration,DC=corp,DC=test",
+                "os": "Windows Server 2022 Standard",
+                "rodc": false,
+                "roles": [
+                    "InfrastructureMaster"
+                ],
+                "site": "HQ"
+            }
+        ],
+        "deleted": [],
+        "dn": "DC=corp,DC=test",
+        "dns": "corp.test",
+        "dns_srv": [
+            {
+                "error": "",
+                "record": "_ldap._tcp.dc._msdcs.corp.test",
+                "targets": [
+                    "dc01.corp.test",
+                    "dc02.corp.test"
+                ]
+            },
+            {
+                "error": "",
+                "record": "_kerberos._tcp.dc._msdcs.corp.test",
+                "targets": [
+                    "dc01.corp.test",
+                    "dc02.corp.test"
+                ]
+            },
+            {
+                "error": "",
+                "record": "_ldap._tcp.gc._msdcs.corp.test",
+                "targets": [
+                    "dc01.corp.test",
+                    "dc02.corp.test"
+                ]
+            }
+        ],
+        "errors": [],
+        "forest": {
+            "domains": [
+                "corp.test"
+            ],
+            "mode": "Windows2016Forest",
+            "name": "corp.test",
+            "naming_master": "dc01.corp.test",
+            "root_domain": "corp.test",
+            "schema_master": "dc01.corp.test"
+        },
+        "fsmo": [
+            {
+                "holder": "dc01.corp.test",
+                "reachable": true,
+                "role": "PDC emulator"
+            },
+            {
+                "holder": "dc01.corp.test",
+                "reachable": true,
+                "role": "RID master"
+            },
+            {
+                "holder": "dc02.corp.test",
+                "reachable": true,
+                "role": "Infrastructure master"
+            },
+            {
+                "holder": "dc01.corp.test",
+                "reachable": true,
+                "role": "Schema master"
+            },
+            {
+                "holder": "dc01.corp.test",
+                "reachable": true,
+                "role": "Domain naming master"
+            }
+        ],
+        "gpo_deleted": [],
+        "gpo_links": [],
+        "gpos": [
+            {
+                "ad_version": 7,
+                "changed": "2026-07-07T06:53:43Z",
+                "created": "2024-04-28T06:53:43Z",
+                "flags": 0,
+                "folder": true,
+                "guid": "{31B2F340-016D-11D2-945F-00C04FB984F9}",
+                "name": "Default Domain Policy",
+                "sysvol_version": 7
+            }
+        ],
+        "groups": [
+            {
+                "changes": [],
+                "member_names": [
+                    "Administrator"
+                ],
+                "members": 1,
+                "name": "Domain Admins",
+                "sam": "Domain Admins",
+                "sid": "S-1-5-21-1-2-3-512"
+            },
+            {
+                "changes": [],
+                "member_names": [
+                    "Domain Admins",
+                    "Administrator"
+                ],
+                "members": 2,
+                "name": "Administrators",
+                "sam": "Administrators",
+                "sid": "S-1-5-32-544"
+            },
+            {
+                "changes": [],
+                "member_names": [],
+                "members": 0,
+                "name": "DnsAdmins",
+                "sam": "DnsAdmins",
+                "sid": "S-1-5-21-1-2-3-1101"
+            }
+        ],
+        "hours": 24.0,
+        "krbtgt": [
+            {
+                "name": "krbtgt",
+                "pwd_last_set": "2026-09-15T06:53:43Z"
+            }
+        ],
+        "locked_out": [],
+        "mode": "Windows2016Domain",
+        "netbios": "CORP",
+        "orphan_folders": [],
+        "read_at": "2026-10-15T06:53:43Z",
+        "recycle_bin": true,
+        "rid": {
+            "issued": 5600,
+            "total": 1073741823
+        },
+        "schema": {
+            "changed": "2025-09-10T06:53:43Z",
+            "new_objects": [],
+            "version": 88
+        },
+        "schema_nc": "CN=Schema,CN=Configuration,DC=corp,DC=test",
+        "sid": "S-1-5-21-1-2-3",
+        "sites": [
+            {
+                "dcs": 2,
+                "name": "HQ",
+                "subnets": 1
+            }
+        ],
+        "subnets_without_site": [],
+        "sysvol_migration": "Eliminated",
+        "sysvol_read": true,
+        "tombstone_days": 180,
+        "trusts": [],
+        "utdv": [
+            {
+                "dsa": "HQ\\DC01",
+                "last": "2026-10-15T06:53:43Z"
+            },
+            {
+                "dsa": "HQ\\DC02",
+                "last": "2026-10-15T06:47:43Z"
+            },
+            {
+                "dsa": "7a1c5f5e-0000-4000-8000-000000000001",
+                "last": "2025-10-05T06:53:43Z"
+            }
+        ]
+    }
+}

@@ -1,5 +1,7 @@
 # YOUR SETTINGS FOR THE SATELLITE HOSTS (AAP group sat). ACT never fixes anything here, and
-# patching skips these hosts: Satellite is upgraded with satellite-maintain (all.yml).
+# patching skips these hosts: Satellite is upgraded with satellite-maintain (all.yml). The certificate
+# report and the certificate renewal leave them out (cert_skip_groups): Satellite renews its own
+# certificates with satellite-installer. The health check still checks the web UI's certificate below.
 check_disk_overrides:
   /var: {warn: 80, crit: 90}             # Satellite keeps its content (Pulp) under /var
 check_certs_endpoints:

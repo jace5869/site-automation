@@ -83,7 +83,8 @@ def wrap_code(text):
 
 
 def md_table(lines):
-    rows = [[c.strip() for c in l.strip().strip("|").split("|")] for l in lines]
+    # a cell may hold an escaped pipe (\|): it is not a column
+    rows = [[c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", l.strip().strip("|"))] for l in lines]
     header, body = [c.replace("`", "") for c in rows[0]], [r for r in rows[2:]]
     n = len(header)
     # A column is as wide as its longest unbreakable token needs (mono code is wide), and

@@ -1,0 +1,56 @@
+---
+# On each domain controller (playbooks/ad_health_report.yml, second play). Read-only: two PowerShell
+# scripts (files/), run with the built-in `script` module over WinRM - no collection needed.
+#   ad_dc.ps1      on every DC: what it says about itself  -> ad_dc_result
+#   ad_domain.ps1  on one DC per domain (pick.yml)          -> ad_domain_result
+# A DC that cannot be reached is not an error of the job: the report shows it in red.
+- name: AD | what this DC says about itself (read-only)
+  ansible.builtin.script: ad_dc.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'hours': ad_report_hours | float, 'event_hours': ad_event_hours | float, 'dcdiag_skip': ad_dcdiag_skip,
+          'dcdiag_dns': ad_dcdiag_dns | bool, 'security_events': ad_security_events | bool,
+          'max_events': ad_max_events | int} | to_json }}
+  register: _ad_dc_out
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true
+  check_mode: false                     # it only reads: a dry run (Check) shows the real report
+
+- name: AD | its answer
+  ansible.builtin.set_fact:
+    ad_dc_result: >-
+      {{ {'host': inventory_hostname, 'reachable': not (_ad_dc_out.unreachable | default(false)),
+          'error': '' if _ad_line else ((_ad_dc_out.msg | default('') if _ad_dc_out.unreachable | default(false) else '')
+                                        or _ad_err or _ad_dc_out.msg | default('') or 'the script gave no result') | truncate(400),
+          'data': (_ad_line[16:] | from_json).dc if _ad_line else none} }}
+  vars:
+    _ad_line: "{{ _ad_dc_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+    _ad_err: "{{ _ad_dc_out.stderr | default('') | ad_ps_error }}"
+
+- name: AD | the DC that reads each domain
+  ansible.builtin.include_tasks: pick.yml
+
+- name: AD | the domain-wide part (one DC per domain, read-only)
+  ansible.builtin.script: ad_domain.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'hours': ad_report_hours | float, 'changes_max': ad_changes_max | int, 'trust_verify': ad_trust_verify | bool,
+          'privileged_groups': ad_privileged_groups_extra} | to_json }}
+  register: _ad_dom_out
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true
+  check_mode: false
+  when: inventory_hostname in _ad_collectors.values()
+
+- name: AD | the domain's answer
+  ansible.builtin.set_fact:
+    ad_domain_result: >-
+      {{ {'host': inventory_hostname, 'domain': ad_dc_result.data.domain | default('') | lower,
+          'error': '' if _ad_line else (_ad_err or _ad_dom_out.msg | default('') or 'the script gave no result') | truncate(400),
+          'data': (_ad_line[16:] | from_json).domain if _ad_line else none} }}
+  vars:
+    _ad_line: "{{ _ad_dom_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+    _ad_err: "{{ _ad_dom_out.stderr | default('') | ad_ps_error }}"
+  when: inventory_hostname in _ad_collectors.values()

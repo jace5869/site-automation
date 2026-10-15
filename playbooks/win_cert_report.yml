@@ -16,6 +16,11 @@
         name: site_findings
         tasks_from: os_guard.yml
 
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+
   tasks:
     - name: Start
       ansible.builtin.include_role:

@@ -270,6 +270,15 @@
 ## failure" path (open tickets, ask ACT, wait for approval). [] = report only, never fail.
 # site_fail_on: [critical, warning]
 
+## A host that cannot be reached (switched off, no network, ssh or WinRM refused, its login refused)
+## in the health checks, the certificate report and renewal, database health, the service watch and
+## troubleshoot: listed as NOT REACHED and left out, and the job is not failed for it. It still
+## counts as checked-for, so the ServiceNow step opens its "no result" ticket. When NO host is
+## reached (a wrong or expired machine credential looks like this) the job fails. true = a host not
+## reached fails the job, as before. Patching, fixes, deploys and the Windows connection test always
+## fail for it.
+# site_unreachable_fails: false
+
 ## One syslog line per finding (tag below), so your log server / SIEM sees them too.
 # site_syslog: true
 

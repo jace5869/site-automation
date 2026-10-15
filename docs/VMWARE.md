@@ -726,9 +726,10 @@ Requesters who do not know template names or `key: value` lines: switch on **pla
 
 ### What the job does, in order
 
-1. Reads the ticket (`vm_deploy_ticket`: `INC...`, `TASK...`, `SCTASK...`, `RITM...`, `CHG...` - or your
-   instance's own prefixes like `INCN...` / `CHGN...`: the job asks ServiceNow's task table which table the
-   ticket is in).
+1. Reads the ticket (`vm_deploy_ticket`: `INC...`, `TASK...`, `SCTASK...`, `RITM...`, `CHG...`, `CTASK...` - or
+   your instance's own prefixes like `INCN...` / `CHGN...`: the job asks ServiceNow's task table which table the
+   ticket is in). For a change task, give the **task's** number: the job reads the task, then its change
+   for the rest of the request; the change must be approved and in Implement.
 2. Checks: the ticket is open and assigned to `vm_deploy_assignment_group`; the template is in
    `vm_deploy_templates`; the cluster, datastore and folder are allowed; CPU and memory are within
    the caps; the name is valid and **not used in any vCenter** (`vmware_vcenters`). Anything wrong:
@@ -1647,6 +1648,8 @@ the last column says.
 | `No ServiceNow connection: attach the "ServiceNow API" credential` | the template has no ServiceNow credential | add it (Set it up, step 4) |
 | `Give the ticket number: the job got none` | the template has no survey, or it is switched off | the Survey tab: *Ticket number*, variable `vm_deploy_ticket`, text, required - and switch it on |
 | `Which table is INCN0012345 in? ...` | your instance numbers its tickets its own way, and the account may not read the task table (or there is no such ticket) | `vm_deploy_ticket_prefixes: {INCN: incident, CHGN: change_request}` on the template; check the number |
+| `ServiceNow has no table "..."` (before: `HTTP Error 400: Bad Request`, `Invalid table change`) | `vm_deploy_ticket_table` or `vm_deploy_ticket_prefixes` names a table ServiceNow does not have | leave both empty: the job finds each ticket's table. `change`, `change request`, `change task`, `catalog task` are now read as `change_request`, `change_task`, `sc_task` |
+| `No change_request ticket CTASK... in ServiceNow. vm_deploy_ticket_table ... is set` | `vm_deploy_ticket_table` sends every ticket to one table, and this ticket is in another | leave it empty |
 | `the change CHG... (this ticket's parent) is not ready to build: approval is 'Requested', not Approved; state is 'Assess', not Implement` | the change is not approved, or not in Implement (yet, or any more) - nothing was built | approve it / move it to Implement and run the job again; your instance's labels differ (e.g. *Implementation*): put them in `vm_deploy_ready_by_table` |
 | `this ticket (CHG...) is not ready to build: ...` | the job ran on a change itself, which is not approved and in Implement | the same; or run it on the change's task |
 | `... approval is empty, not Approved` | the account may not read the change's approval field, or the table has none | read access to `change_request.approval`; or take `approval` out of `vm_deploy_ready_by_table` |

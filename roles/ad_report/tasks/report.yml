@@ -1,0 +1,25 @@
+---
+# Print the report, publish it as artifacts and email it (report_email_to). Input: _ad_doc (a report
+# in the layout roles/site_email/tasks/main.yml describes).
+- name: AD | the report as job artifacts (ad_report)
+  ansible.builtin.set_stats:
+    data:
+      ad_report:
+        subject: "{{ _ad_doc.title }}"
+        lines: "{{ (_ad_doc | report_text).splitlines() }}"
+
+- name: AD | {{ _ad_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_ad_doc | report_text).splitlines() }}"
+
+- name: AD | email it (report_email_to)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _ad_doc | combine({'footer': 'Read-only: LDAP reads, dcdiag, repadmin, w32tm and the event logs on each domain controller.'}) }}"
+  when: report_email_to | default([]) | length > 0
+
+- name: AD | no email
+  ansible.builtin.debug:
+    msg: "No email: report_email_to is not set (docs/EMAIL_REPORTS.md)."
+  when: report_email_to | default([]) | length == 0

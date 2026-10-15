@@ -17,7 +17,9 @@
 servicenow_assignment_group: YOUR GROUP NAME   # exactly as in ServiceNow
 
 # ---- servicenow ----------------------------------------------------------------------------------
-## Findings at or above this severity get a ticket: critical | warning
+## Findings at or above this severity get a ticket: critical | warning. A ticket already open stays
+## open while its finding is still there, even below this (the certificate renewal opens one for
+## every CSR)
 # servicenow_min_severity: warning
 
 ## the table tickets are opened in (incident)

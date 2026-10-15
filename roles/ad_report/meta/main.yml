@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: ad_report
+  description: "Active Directory health report (read-only): domain controllers, replication, dcdiag, FSMO, SYSVOL, DNS, time, events, and the changes of the last day."
+  license: MIT
+  min_ansible_version: "2.16"
+dependencies: []

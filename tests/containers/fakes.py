@@ -166,6 +166,11 @@ def systemctl(argv):
     o = owner_state(st, owner)
     args = [a for a in argv if a not in ("--user", "--no-pager", "-l", "--plain", "--no-legend")]
     verb, rest = args[0], args[1:]
+    if verb == "--failed":
+        for u, info in sorted(o.get("units", {}).items()):
+            if info.get("ActiveState") == "failed":
+                print("%s loaded failed failed fake unit" % u)
+        return 0
     if verb == "show":
         props, units, i = [], [], 0
         while i < len(rest):

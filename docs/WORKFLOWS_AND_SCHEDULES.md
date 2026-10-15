@@ -76,7 +76,9 @@ certificate days, ...). The check box ends **red** when:
 - it found a problem at or above `site_fail_on` (default: `critical` and `warning`), or
 - ACT (`diagnose`) proposed a fix that waits for a person: `NEEDS APPROVAL ... ACT proposes:
   <commands>`, or
-- a host could not be checked (unreachable, login or sudo failed).
+- a host could not be checked (sudo failed, the job stopped on it), or no host at all could be
+  reached. One host that cannot be reached does not make it red: it is listed as NOT REACHED and gets
+  its "no result" ticket (`site_unreachable_fails: true` = red, as before).
 
 A **Run on fail** link from the check box therefore leads to the approval. **Run on success**
 means the check box ended green; **Run always**, either way.
@@ -99,8 +101,8 @@ The steps in words:
 4. **ServiceNow tickets** boxes, **Run always**, from 1 and from 3.
 
 The approver opens the health check job and reads `ACT | what ACT says` and the red `NEEDS
-APPROVAL` line. If there is no such line (the job is red because of findings ACT had no fix for,
-or an unreachable host), there is nothing to approve: **Deny**. Approving does no harm either: the
+APPROVAL` line. If there is no such line (the job is red because of findings ACT had no fix for),
+there is nothing to approve: **Deny**. Approving does no harm either: the
 apply step skips every host with nothing approved.
 
 **Without approvals:** `site_act_level` = `self-heal` with the fixes you allow in `site_act_allow`.
@@ -301,11 +303,24 @@ security team wants these on their own day.
 Certificates expire on a day, not in a week:
 
 ```text
-[Certificate report]  --Run always-->  [ServiceNow tickets]
+[Certificate report]  --Run always-->  [ServiceNow tickets]  --Run always-->  [Certificate renewal - CSRs]
 ```
 
-**Schedule:** every day 06:30. Set `check_certs_warn_days` (survey) to 30 so tickets start a month
-ahead. The de-duplication keeps it to one ticket per certificate.
+| Step | Template | Answers | Link |
+|---|---|---|---|
+| 1 | Certificate report | | (start) |
+| 2 | ServiceNow tickets | | **Run always**, from 1 |
+| 3 | Certificate renewal - CSRs (optional) | | **Run always**, from 2 |
+
+**Schedule:** every day 06:30. Put `check_certs_warn_days` (survey, 30) on the **workflow**, so every
+step uses the same number. Tickets then start a month ahead. The de-duplication keeps it to one ticket
+per certificate.
+
+**Step 3** makes a new key and a CSR on the host for each certificate file that expires, and attaches
+the CSR to that certificate's ticket from step 2 ([RUNBOOKS.md](RUNBOOKS.md), "Certificate renewal").
+It must be **Run always**: steps 1 and 2 are red on purpose while certificates expire. Hosts in
+`cert_skip_hosts` or `cert_skip_groups` (Satellite) are left out of every step: set them in `all.yml`,
+or on the workflow, so every step gets them.
 
 ### 8. Database watch: MariaDB and MySQL (hourly)
 
@@ -522,6 +537,13 @@ No workflow needed: a schedule on the `NetApp - ONTAP health report` template, e
 06:00 in your time zone ([NETAPP.md](NETAPP.md)). In a workflow with `ontap_report_fail: true`, its
 "On failure" path can open a ticket.
 
+### 24. Active Directory health (daily)
+
+No workflow needed: a schedule on the `Active Directory health report` template, every day at 06:30
+in your time zone, with `ad_report_hours: 24` (the default) so each change is in exactly one report
+([ACTIVE_DIRECTORY.md](ACTIVE_DIRECTORY.md)). In a workflow with `ad_report_fail: true`, its
+"On failure" path can open a ticket.
+
 ## Schedules
 
 **What.** A schedule launches a template or workflow at set times.
@@ -550,6 +572,7 @@ No workflow needed: a schedule on the `NetApp - ONTAP health report` template, e
 | Windows daily health / weekly compliance | 06:15 daily / Monday 07:15 | workflows 12 and 13 |
 | Windows patch | monthly, in the ConfigMgr maintenance window | workflow 14 |
 | VMware daily checks (health, alarms, ACT analysis) | every day 06:00 | workflow 18 |
+| Active Directory health | every day 06:30 | template *Active Directory health report* (24) |
 
 **Notifications** (optional). **Automation Execution → Administration → Notifiers → Create
 notifier** (type *Email*, your mail relay). Then on a template or workflow → **Notifications** tab

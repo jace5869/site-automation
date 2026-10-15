@@ -199,6 +199,18 @@ checks. Findings do not fail this job.
 | Playbook | `playbooks/win_cert_report.yml` |
 | Survey | none |
 
+### Active Directory health report
+
+For the domain controllers (group `win_dc`): one report for the whole domain - replication, dcdiag,
+FSMO, SYSVOL, DNS, time, and what changed in the last day. It needs an account with administrator
+rights on the DCs, in a credential of its own: [ACTIVE_DIRECTORY.md](ACTIVE_DIRECTORY.md).
+
+| Field | Value |
+|---|---|
+| Playbook | `playbooks/ad_health_report.yml` |
+| Credentials | `Windows DCs (WinRM)` |
+| Variables | `report_email_to: ad-team@yoursite.mil` |
+
 ## Step 7. Workflows and schedules
 
 These are the same as for Linux, with the Windows templates. The full list, with every step and
@@ -390,4 +402,5 @@ A few defaults worth knowing:
 - ACT in the Windows jobs: `use_act` on the Windows health check and troubleshoot (explain,
   propose fixes for approval), like on Linux. ACT is already on the servers (above).
 - Service watch for Windows services and IIS application pools.
-- Checks for domain controllers, IIS and SQL Server.
+- Checks for IIS and SQL Server. (Domain controllers have their own report:
+  [ACTIVE_DIRECTORY.md](ACTIVE_DIRECTORY.md).)

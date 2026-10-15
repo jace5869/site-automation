@@ -1,0 +1,133 @@
+{
+ "_comment": "Health check: what a unit runs besides one named container - a Quadlet .kube (down, and one running whose containers carry its label), an enabled podman-kube@ instance, compose projects (a oneshot that finished, one that failed, one not enabled), a podman pod unit, podman's own tools (left out), a user's .kube; and a failed unit the services check also reports.",
+ "users": {
+  "alice": {
+   "uid": 1001,
+   "home": "home/alice",
+   "linger": 1,
+   "runtime": 1,
+   "storage": 1,
+   "subuid": 1
+  }
+ },
+ "owners": {
+  "root": {
+   "containers": [
+    {
+     "name": "api-pod-api",
+     "state": "running",
+     "unit": "api.service"
+    }
+   ],
+   "units": {
+    "shop.service": {
+     "LoadState": "loaded",
+     "ActiveState": "failed",
+     "SubState": "failed",
+     "Result": "exit-code",
+     "UnitFileState": "generated",
+     "WantedBy": "multi-user.target",
+     "Type": "notify",
+     "ExecStart": "{ path=/usr/bin/podman ; argv[]=/usr/bin/podman kube play --replace --service-container=true /etc/containers/shop.yaml ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }"
+    },
+    "api.service": {
+     "LoadState": "loaded",
+     "ActiveState": "active",
+     "SubState": "running",
+     "UnitFileState": "generated",
+     "WantedBy": "multi-user.target",
+     "Type": "notify",
+     "ExecStart": "{ path=/usr/bin/podman ; argv[]=/usr/bin/podman kube play --replace --service-container=true /etc/containers/api.yaml ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }"
+    },
+    "podman-kube@-etc-containers-blog.yaml.service": {
+     "LoadState": "loaded",
+     "ActiveState": "failed",
+     "SubState": "failed",
+     "Result": "exit-code",
+     "UnitFileState": "enabled",
+     "Type": "notify",
+     "ExecStart": "{ path=/usr/bin/podman ; argv[]=/usr/bin/podman kube play --replace --service-container=true /etc/containers/blog.yaml ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }"
+    },
+    "stack.service": {
+     "LoadState": "loaded",
+     "ActiveState": "inactive",
+     "SubState": "dead",
+     "Result": "success",
+     "UnitFileState": "enabled",
+     "Type": "oneshot",
+     "InactiveExitTimestampMonotonic": "123456789",
+     "ExecStart": "{ path=/usr/bin/podman-compose ; argv[]=/usr/bin/podman-compose -f /srv/stack/compose.yml up -d ; }"
+    },
+    "stack2.service": {
+     "LoadState": "loaded",
+     "ActiveState": "failed",
+     "SubState": "failed",
+     "Result": "exit-code",
+     "UnitFileState": "enabled",
+     "Type": "simple",
+     "ExecStart": "{ path=/usr/bin/podman-compose ; argv[]=/usr/bin/podman-compose -f /srv/stack2/compose.yml up ; }"
+    },
+    "manual.service": {
+     "LoadState": "loaded",
+     "ActiveState": "inactive",
+     "SubState": "dead",
+     "UnitFileState": "disabled",
+     "Type": "simple",
+     "ExecStart": "{ path=/usr/bin/podman ; argv[]=/usr/bin/podman compose -f /srv/manual/compose.yml up ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }"
+    },
+    "mypod.service": {
+     "LoadState": "loaded",
+     "ActiveState": "inactive",
+     "SubState": "dead",
+     "UnitFileState": "enabled",
+     "Type": "forking",
+     "InactiveExitTimestampMonotonic": "0",
+     "ExecStart": "{ path=/usr/bin/podman ; argv[]=/usr/bin/podman pod start mypod ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }"
+    },
+    "restartall.service": {
+     "LoadState": "loaded",
+     "ActiveState": "inactive",
+     "SubState": "dead",
+     "UnitFileState": "enabled",
+     "Type": "oneshot",
+     "ExecStart": "{ path=/usr/bin/podman ; argv[]=/usr/bin/podman start --all --filter restart-policy=always ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }"
+    },
+    "autoupd.service": {
+     "LoadState": "loaded",
+     "ActiveState": "failed",
+     "SubState": "failed",
+     "Result": "exit-code",
+     "UnitFileState": "static",
+     "Type": "oneshot",
+     "ExecStart": "{ path=/usr/bin/podman ; argv[]=/usr/bin/podman auto-update ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }"
+    }
+   }
+  },
+  "alice": {
+   "containers": [],
+   "units": {
+    "notes.service": {
+     "LoadState": "loaded",
+     "ActiveState": "inactive",
+     "SubState": "dead",
+     "UnitFileState": "generated",
+     "WantedBy": "default.target",
+     "Type": "notify",
+     "ExecStart": "{ path=/usr/bin/podman ; argv[]=/usr/bin/podman kube play --replace --service-container=true /home/alice/notes.yaml ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }"
+    }
+   }
+  }
+ },
+ "files": {
+  "etc/containers/systemd/shop.kube": "[Kube]\nYaml=/etc/containers/shop.yaml\n\n[Install]\nWantedBy=multi-user.target\n",
+  "etc/containers/systemd/api.kube": "[Kube]\nYaml=/etc/containers/api.yaml\n\n[Install]\nWantedBy=multi-user.target\n",
+  "etc/systemd/system/multi-user.target.wants/podman-kube@-etc-containers-blog.yaml.service": "",
+  "etc/systemd/system/stack.service": "[Service]\nType=oneshot\nExecStart=/usr/bin/podman-compose -f /srv/stack/compose.yml up -d\n",
+  "etc/systemd/system/stack2.service": "[Service]\nExecStart=/usr/bin/podman-compose -f /srv/stack2/compose.yml up\n",
+  "etc/systemd/system/manual.service": "[Service]\nExecStart=/usr/bin/podman compose -f /srv/manual/compose.yml up\n",
+  "etc/systemd/system/mypod.service": "[Service]\nType=forking\nExecStart=/usr/bin/podman pod start mypod\n",
+  "etc/systemd/system/restartall.service": "[Service]\nType=oneshot\nExecStart=/usr/bin/podman start --all --filter restart-policy=always\n",
+  "etc/systemd/system/autoupd.service": "[Service]\nType=oneshot\nExecStart=/usr/bin/podman auto-update\n",
+  "home/alice/.config/containers/systemd/notes.kube": "[Kube]\nYaml=/home/alice/notes.yaml\n\n[Install]\nWantedBy=default.target\n"
+ }
+}

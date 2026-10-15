@@ -7,7 +7,8 @@
 # and SN_PASSWORD in the job's environment. Without it, nothing is sent: the job prints what it
 # WOULD have opened (a safe way to try it out).
 
-# Findings at or above this severity get a ticket: critical | warning
+# Findings at or above this severity get a ticket: critical | warning. A ticket already open stays open
+# while its finding is still there, even below this (the certificate renewal opens one for every CSR)
 servicenow_min_severity: warning
 
 servicenow_table: incident               # the table tickets are opened in (incident)

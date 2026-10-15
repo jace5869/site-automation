@@ -89,14 +89,21 @@
 ## (hundreds of roots, noisy) and are skipped unless listed in check_certs_files.
 # check_certs_discover: true
 
-## the folders searched (two levels deep) for *.crt, *.pem, *.cer
-# check_certs_discover_dirs: [/etc/pki/tls/certs, /etc/pki/nginx, /etc/nginx, /etc/httpd/conf.d, /etc/stigman]
+## the folders searched (two levels deep) for *.crt, *.pem, *.cer (/etc/stigman/nginx/tls: STIG
+## Manager's nginx certificate, three levels down)
+# check_certs_discover_dirs: [/etc/pki/tls/certs, /etc/pki/nginx, /etc/nginx, /etc/httpd/conf.d, /etc/stigman, /etc/stigman/nginx/tls]
 
 ## regular expression: found files whose path matches are skipped
 # check_certs_discover_exclude: 'ca-bundle|ca-certificates|/localhost\.crt$'
 
 ## a found file with more certificates than this is a CA bundle: skipped
 # check_certs_discover_max_per_file: 10
+
+## Regular expression on the subject of a package's placeholder certificate: postfix's
+## /etc/pki/tls/certs/postfix.pem (O=SomeOrganization), self-signed for a year at install and never
+## renewed. A found one is listed as not checked (no finding, no ticket) and none gets a CSR. A real
+## certificate put in its place is checked; so is a file listed in check_certs_files.
+# check_certs_placeholder_subject: '(^|,)O=SomeOrganization(,|$)'
 
 ## TLS endpoints, checked FROM this host, e.g. the site's own web server: check_certs_endpoints: -
 ## {name: STIG Manager, host: 127.0.0.1, port: 443, servername: stigman.example.mil}
@@ -175,10 +182,16 @@
 ## ['alice/.*'] (all of alice's containers), ['root/web'] (root's web only).
 # podman_discover_ignore: []
 
-## Where root's Quadlet files are (*.container). A user's are always read from
-## ~/.config/containers/systemd, /etc/containers/systemd/users/UID and
+## Where root's Quadlet files are (*.container, and *.kube: a pod from Kubernetes YAML). A user's
+## are always read from ~/.config/containers/systemd, /etc/containers/systemd/users/UID and
 ## /etc/containers/systemd/users.
 # podman_discover_quadlet_dirs: [/etc/containers/systemd, /usr/share/containers/systemd]
+
+## Where root's own systemd units are looked for: a *.service that runs podman (`podman generate
+## systemd`, `podman run`, `podman kube play`, `podman pod start`, podman-compose / docker-compose),
+## and the podman-kube@ units enabled there (.wants links). A user's: ~/.config/systemd/user.
+## Packaged units (/usr/lib/systemd/system) are podman's own tools and are not looked at.
+# podman_discover_unit_dirs: [/etc/systemd/system, /usr/local/lib/systemd/system]
 
 ## Seconds one podman or systemctl call may take before it is given up (reported as a finding).
 # podman_discover_timeout: 60
@@ -361,6 +374,55 @@
 
 ## % used of the data directory's filesystem -> critical
 # check_mariadb_disk_crit_pct: 95
+
+## ---- PERFORMANCE (all warnings) ----------------------------------------------------------------
+## false = only the health checks above. Counters that count since the server started (slow queries,
+## temporary tables, joins, lock waits, deadlocks ...) are judged as an average since that start,
+## and only once it has run check_mariadb_perf_min_uptime_hours (cold caches right after a start are
+## normal). Old transactions, lock waits, purge lag and open files are judged as they are now.
+# check_mariadb_performance: true
+
+## judge the averages since the start only after this many hours
+# check_mariadb_perf_min_uptime_hours: 2
+
+## queries slower than long_query_time, per hour
+# check_mariadb_slow_per_hour_warn: 60
+
+## % of temporary tables that went to disk (judged after 1000 of them)
+# check_mariadb_tmp_disk_pct_warn: 25
+
+## joins without a usable index (Select_full_join), per hour
+# check_mariadb_full_join_per_hour_warn: 100
+
+## % of table locks (MyISAM / Aria) that had to wait (judged after 10000)
+# check_mariadb_table_lock_wait_pct_warn: 1
+
+## average InnoDB row lock wait, ms (judged after 100 waits)
+# check_mariadb_row_lock_avg_ms_warn: 500
+
+## InnoDB deadlocks per hour (judged after 10 of them)
+# check_mariadb_deadlocks_per_hour_warn: 1
+
+## waits for a free buffer pool page / a full log buffer, per hour (after 10)
+# check_mariadb_innodb_waits_per_hour_warn: 1
+
+## failed connection attempts per hour
+# check_mariadb_aborted_connects_per_hour_warn: 60
+
+## tables opened per hour while the table cache is full
+# check_mariadb_table_open_per_hour_warn: 600
+
+## files open, % of open_files_limit
+# check_mariadb_open_files_warn_pct: 85
+
+## a session waiting this long for a lock, right now
+# check_mariadb_lock_wait_seconds: 30
+
+## an InnoDB transaction open this long, right now
+# check_mariadb_long_trx_seconds: 600
+
+## InnoDB history list length (old row versions not yet purged)
+# check_mariadb_history_length_warn: 1000000
 
 # ---- check_mounts --------------------------------------------------------------------------------
 ## filesystem types counted as network mounts (checked for hangs and fullness)

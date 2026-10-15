@@ -9,6 +9,9 @@
 #      SHOW REPLICA STATUS (MySQL 8.0.22+, 8.4) or SHOW SLAVE STATUS (older MySQL); and MySQL Group
 #      Replication members (performance_schema.replication_group_members) when a group is configured
 #   4. recent [ERROR] lines in its error log, and how full its data disk is
+#   5. performance (check_mariadb_performance): slow queries, temporary tables on disk, joins without
+#      an index, lock waits and deadlocks, transactions left open, purge lag, table cache, open files
+#      (plugins/filter/mariadb_filters.py)
 
 - name: MariaDB | running? which client? which image?
   ansible.builtin.shell: |
@@ -84,9 +87,15 @@
       SHOW GLOBAL STATUS WHERE Variable_name IN
       ('Uptime','Threads_connected','Threads_running','Max_used_connections','Connection_errors_max_connections',
       'Innodb_buffer_pool_reads','Innodb_buffer_pool_read_requests','wsrep_cluster_size','wsrep_local_state_comment',
-      'wsrep_ready','wsrep_cluster_status');
+      'wsrep_ready','wsrep_cluster_status',
+      'Questions','Slow_queries','Created_tmp_tables','Created_tmp_disk_tables','Select_full_join','Table_locks_waited',
+      'Table_locks_immediate','Innodb_row_lock_waits','Innodb_row_lock_time','Innodb_row_lock_time_avg',
+      'Innodb_row_lock_time_max','Innodb_deadlocks','Innodb_history_list_length','Innodb_buffer_pool_wait_free',
+      'Innodb_log_waits','Aborted_connects','Open_tables','Opened_tables','Open_files');
       SHOW GLOBAL VARIABLES WHERE Variable_name IN
-      ('max_connections','datadir','log_error','version','version_comment','wsrep_on','group_replication_group_name');
+      ('max_connections','datadir','log_error','version','version_comment','wsrep_on','group_replication_group_name',
+      'long_query_time','slow_query_log','slow_query_log_file','tmp_table_size','max_heap_table_size','table_open_cache',
+      'open_files_limit','performance_schema','innodb_log_buffer_size');
       SELECT 'L', ID, CONCAT_WS('|', USER, IFNULL(DB, '-'), TIME, IFNULL(STATE, '-'), COMMAND)
       FROM information_schema.PROCESSLIST WHERE COMMAND NOT IN ('Sleep', 'Daemon', 'Binlog Dump', 'Binlog Dump GTID',
       'Slave_IO', 'Slave_SQL', 'Slave_worker') AND USER NOT IN ('system user', 'event_scheduler')
@@ -100,6 +109,39 @@
   failed_when: false
   check_mode: false
   when: _mdb_running | bool
+
+# PERFORMANCE, what is happening now (check_mariadb_performance): InnoDB transactions open too long
+# (T), transactions waiting for a row lock (R), sessions waiting for a table / metadata / global
+# lock (W), and two InnoDB counters (M: purge lag, deadlocks - MySQL has no status variable for
+# them). Who / which database / how long only, never the query text. --force: a statement the
+# account may not run (INNODB_TRX needs PROCESS) does not stop the others; what ran is used.
+- name: MariaDB | performance query (transactions and lock waits now)
+  ansible.builtin.command:
+    argv: "{{ _mdb_cmd + ['--force', '-N', '-B', '-e', _mdb_perf_sql] }}"
+    stdin: "{{ lookup('ansible.builtin.env', 'MARIADB_MONITOR_PASSWORD') if _mdb_pw_set | bool else omit }}"
+    chdir: /
+  vars:
+    _mdb_perf_sql: >-
+      SELECT 'T', t.trx_mysql_thread_id, CONCAT_WS('|', TIMESTAMPDIFF(SECOND, t.trx_started, NOW()), t.trx_state,
+      t.trx_rows_locked, t.trx_rows_modified, IFNULL(p.USER, '-'), IFNULL(p.DB, '-'), IFNULL(p.COMMAND, '-'))
+      FROM information_schema.INNODB_TRX t LEFT JOIN information_schema.PROCESSLIST p ON p.ID = t.trx_mysql_thread_id
+      WHERE t.trx_started < NOW() - INTERVAL {{ check_mariadb_long_trx_seconds | int }} SECOND ORDER BY t.trx_started LIMIT 10;
+      SELECT 'R', COUNT(*), IFNULL(MAX(TIMESTAMPDIFF(SECOND, trx_wait_started, NOW())), 0)
+      FROM information_schema.INNODB_TRX WHERE trx_state = 'LOCK WAIT';
+      SELECT 'W', ID, CONCAT_WS('|', USER, IFNULL(DB, '-'), TIME, IFNULL(STATE, '-')) FROM information_schema.PROCESSLIST
+      WHERE COMMAND NOT IN ('Sleep', 'Daemon') AND (STATE LIKE 'Waiting for%lock%' OR STATE = 'Locked')
+      AND TIME >= {{ check_mariadb_lock_wait_seconds | int }} ORDER BY TIME DESC LIMIT 10;
+      SELECT 'M', NAME, COUNT FROM information_schema.INNODB_METRICS
+      WHERE NAME IN ('trx_rseg_history_len', 'lock_deadlocks') AND TIME_ENABLED IS NOT NULL
+  environment: "{{ _mdb_podman_env }}"
+  no_log: true                # stdin carries the password (the registered result is still used below)
+  become: "{{ true if _mdb_run_as | default('') else omit }}"
+  become_user: "{{ _mdb_run_as | default(omit, true) }}"
+  register: _mdb_perf_q
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: _mdb_running | bool and _mdb_q.rc | default(1) == 0 and check_mariadb_performance | bool
 
 - name: MariaDB | the status numbers
   ansible.builtin.set_fact:
@@ -373,6 +415,27 @@
       {%- endif -%}
       {{ f }}
 
+- name: MariaDB | performance findings (check_mariadb_performance)
+  ansible.builtin.set_fact:
+    _mdb_perf: >-
+      {{ _mdb.S | mariadb_perf(_mdb_perf_q.stdout_lines | default([]), {
+           'sql': ((('sudo -u ' ~ _mdb_run_as ~ ' ') if _mdb_run_as | default('') else '') ~ 'podman exec -it ' ~ _mdb_c ~ ' ' if _mdb_c else '')
+                  ~ (_mdb_p.client | default('mysql' if _mdb_label | default('') == 'MySQL' else 'mariadb', true) | basename)
+                  ~ ((' -u ' ~ _mdb_user ~ ' -p') if _mdb_user else ''),
+           'min_uptime_hours': check_mariadb_perf_min_uptime_hours, 'slow_per_hour_warn': check_mariadb_slow_per_hour_warn,
+           'tmp_disk_pct_warn': check_mariadb_tmp_disk_pct_warn, 'full_join_per_hour_warn': check_mariadb_full_join_per_hour_warn,
+           'table_lock_wait_pct_warn': check_mariadb_table_lock_wait_pct_warn, 'row_lock_avg_ms_warn': check_mariadb_row_lock_avg_ms_warn,
+           'deadlocks_per_hour_warn': check_mariadb_deadlocks_per_hour_warn, 'innodb_waits_per_hour_warn': check_mariadb_innodb_waits_per_hour_warn,
+           'aborted_connects_per_hour_warn': check_mariadb_aborted_connects_per_hour_warn,
+           'table_open_per_hour_warn': check_mariadb_table_open_per_hour_warn, 'open_files_warn_pct': check_mariadb_open_files_warn_pct,
+           'lock_wait_seconds': check_mariadb_lock_wait_seconds, 'long_trx_seconds': check_mariadb_long_trx_seconds,
+           'history_length_warn': check_mariadb_history_length_warn}) }}
+  when: _mdb_running | bool and _mdb_q.rc | default(1) == 0 and check_mariadb_performance | bool
+
+- name: MariaDB | the findings, with the performance findings
+  ansible.builtin.set_fact:
+    _mdb_findings: "{{ _mdb_findings + (_mdb_perf.findings if _mdb_running | bool and _mdb_q.rc | default(1) == 0 and check_mariadb_performance | bool else []) }}"
+
 # With several instances on one host each finding says which one (ids stay unique: the same
 # problem in two containers is two findings, and two tickets are not merged into one).
 - name: MariaDB | add them to this host's findings
@@ -387,6 +450,15 @@
       {%- endfor -%}
       {{ out }}
 
+# A database CONTAINER that is down: playbooks/health_check.yml reports it once - as the containers
+# check's containers:down (with how to start it) - when that check runs in the same job.
+- name: MariaDB | remember a database container that is down
+  ansible.builtin.set_fact:
+    site_mariadb_down: >-
+      {{ site_mariadb_down | default([]) + [{'id': ('mariadb:' ~ _mdb_c ~ ':down') if _mdb_instances | length > 1 else 'mariadb:down',
+                                             'container': _mdb_c, 'owner': _mdb_run_as | default('', true) or 'root'}] }}
+  when: _mdb_c | length > 0 and not (_mdb_running | bool)
+
 - name: MariaDB | status
   ansible.builtin.debug:
     msg: >-
@@ -396,5 +468,6 @@
       {{ _mdb.S.THREADS_CONNECTED | default('?') }}/{{ _mdb.V.MAX_CONNECTIONS | default('?') }} connections,
       {{ _mdb.S.THREADS_RUNNING | default('?') }} running, {{ _mdb.L | length }} long queries,
       replication connections {{ _mdb_repl_rows | length }}{{ ', Galera' if _mdb.V.WSREP_ON | default('OFF') == 'ON' else '' }}{{
-      (', Group Replication ' ~ (_mdb_group_rows | length) ~ ' members') if _mdb.V.GROUP_REPLICATION_GROUP_NAME | default('') else '' }}
+      (', Group Replication ' ~ (_mdb_group_rows | length) ~ ' members') if _mdb.V.GROUP_REPLICATION_GROUP_NAME | default('') else '' }}{{
+      ('; ' ~ _mdb_perf.line) if check_mariadb_performance | bool else '' }}
   when: _mdb_q.rc | default(1) == 0

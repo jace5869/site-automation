@@ -14,6 +14,12 @@ import re
 # ticket number prefix -> ServiceNow table
 TABLES = {"INC": "incident", "SCTASK": "sc_task", "TASK": "task", "RITM": "sc_req_item", "CHG": "change_request",
           "CTASK": "change_task", "REQ": "sc_request"}
+# a table as people write it in a setting -> ServiceNow's name for it ("change" is no ServiceNow table)
+TABLE_NAMES = {"change": "change_request", "changes": "change_request", "change request": "change_request",
+               "change requests": "change_request", "chg": "change_request", "change task": "change_task",
+               "change tasks": "change_task", "ctask": "change_task", "catalog task": "sc_task", "sctask": "sc_task",
+               "requested item": "sc_req_item", "ritm": "sc_req_item", "request": "sc_request", "req": "sc_request",
+               "incidents": "incident", "inc": "incident"}
 
 # what a ticket may set, and the other names people write for it
 # (no bare "name" or "server": a ticket's "Name: Jane Doe" is the requester, not the VM)
@@ -94,6 +100,14 @@ def vm_deploy_ready(record, table, ready=None, what=""):
             % (who.strip(), "; ".join(bad)))
 
 
+def vm_deploy_table_name(name):
+    """A table as people write it -> ServiceNow's name: 'change' or 'Change Request' -> 'change_request',
+    'change task' -> 'change_task', 'catalog task' -> 'sc_task'. Any other name (a real table, your own
+    u_vm_request) is kept as it is."""
+    s = str(name or "").strip()
+    return TABLE_NAMES.get(re.sub(r"[\s_-]+", " ", s.lower()).strip(), s)
+
+
 def vm_deploy_table(number, prefixes=None, guess=True):
     """'INC0012345' -> 'incident', 'SCTASK0001' -> 'sc_task'. prefixes: the site's own ({INCN: incident}),
     before the standard ones. guess: a prefix that starts with a known one is taken as that table
@@ -104,7 +118,7 @@ def vm_deploy_table(number, prefixes=None, guess=True):
         return ""
     pre = m.group(1).upper()
     known = dict(TABLES)
-    known.update({str(k).strip().upper(): str(v).strip() for k, v in (prefixes or {}).items() if str(k).strip() and str(v).strip()})
+    known.update({str(k).strip().upper(): vm_deploy_table_name(v) for k, v in (prefixes or {}).items() if str(k).strip() and str(v).strip()})
     if pre in known:
         return known[pre]
     if guess:
@@ -1353,7 +1367,7 @@ def vm_deploy_poll_pick(records, opts=None):
         if why:
             skipped.append({"number": num, "why": why})
         else:
-            pick.append({"number": num, "sys_id": r.get("sys_id", ""), "table": o.get("table") or vm_deploy_table(num),
+            pick.append({"number": num, "sys_id": r.get("sys_id", ""), "table": vm_deploy_table_name(o.get("table")) or vm_deploy_table(num),
                          "short_description": str(r.get("short_description") or "")})
     return {"pick": pick, "skipped": skipped}
 
@@ -1458,7 +1472,7 @@ def vm_deploy_finder(datacenters, specs=None):
 
 class FilterModule(object):
     def filters(self):
-        return {"vm_deploy_table": vm_deploy_table, "vm_deploy_spec": vm_deploy_spec, "vm_deploy_check": vm_deploy_check,
+        return {"vm_deploy_table": vm_deploy_table, "vm_deploy_table_name": vm_deploy_table_name, "vm_deploy_spec": vm_deploy_spec, "vm_deploy_check": vm_deploy_check,
                 "vm_deploy_spec_text": vm_deploy_spec_text, "vm_deploy_ticket_text": vm_deploy_ticket_text,
                 "vm_deploy_genai_task": vm_deploy_genai_task, "vm_deploy_genai_parse": vm_deploy_genai_parse,
                 "vm_deploy_proposal_note": vm_deploy_proposal_note, "vm_deploy_find_proposal": vm_deploy_find_proposal,

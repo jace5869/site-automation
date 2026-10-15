@@ -36,7 +36,7 @@ fails=0
 cols="${VMWARE_COLLECTIONS:-}"
 if [ -z "$cols" ]; then
     cols="$work/collections"
-    ansible-galaxy collection install -q -r "$here/requirements.yml" -p "$cols" >/dev/null || { echo "ABORT - could not install vmware.vmware"; exit 1; }
+    ansible-galaxy collection install -r "$here/requirements.yml" -p "$cols" >/dev/null || { echo "ABORT - could not install vmware.vmware"; exit 1; }
 fi
 cat > "$work/inv.yml" <<EOI
 all:
@@ -679,6 +679,13 @@ run "a change as the ticket itself, not approved: refused (dry run)" fail vm_dep
     -- "this ticket ($chg7) is not ready to build: approval is 'Requested', not Approved"
 run "...vm_deploy_ready_by_table: {} - no such check (dry run)" ok vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$chg7" -e "$rules" \
     -e '{"vm_deploy_ready_by_table": {}}' -- "chgapp07 ready to build in DC0_C0 - dry run"
+# the table named as people say it: "change" is no ServiceNow table (HTTP 400 "Invalid table change" before)
+run "vm_deploy_ticket_table: change - read as change_request (dry run)" ok vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$chg7" -e "$rules" \
+    -e '{"vm_deploy_ready_by_table": {}, "vm_deploy_ticket_table": "change"}' -- "chgapp07 ready to build in DC0_C0 - dry run"
+run "vm_deploy_ticket_prefixes: {CHG: Change Request} - read as change_request (dry run)" ok vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$chg7" \
+    -e "$rules" -e '{"vm_deploy_ready_by_table": {}, "vm_deploy_ticket_prefixes": {"CHG": "Change Request"}}' -- "chgapp07 ready to build in DC0_C0 - dry run"
+run "a table ServiceNow does not have: said plainly, where it comes from" fail vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$chg7" -e "$rules" \
+    -e '{"vm_deploy_ticket_table": "nosuchtable"}' -- 'ServiceNow has no table \"nosuchtable\" (Invalid table nosuchtable). It comes from vm_deploy_ticket_table: leave it empty'
 run "deploy from a ticket: not a ticket number" fail vm_deploy_from_ticket.yml -e vm_deploy_ticket=app01 -e "$rules" -- "Give the ticket number"
 # a site's own number prefix (INCN...): the job asks ServiceNow's task table which table the ticket is in
 incn="$(NEWTICKET_NUMBER=INCN0012345 newticket $'vm_name: appincn01\ntemplate: rhel9-gold')"

@@ -1,0 +1,202 @@
+{
+    "dc": {
+        "ad_module": true,
+        "boot": "2026-09-25T06:53:41Z",
+        "certs": [
+            {
+                "dns": [
+                    "dc01.corp.test"
+                ],
+                "not_after": "2027-05-03T06:53:41Z",
+                "purposes": [
+                    "ldaps",
+                    "kdc"
+                ],
+                "subject": "CN=dc01.corp.test",
+                "thumbprint": "AB12"
+            }
+        ],
+        "dcdiag": {
+            "error": "",
+            "exit": 0,
+            "ran": true,
+            "tests": [
+                {
+                    "detail": [],
+                    "result": "passed",
+                    "target": "DC01",
+                    "test": "Connectivity"
+                },
+                {
+                    "detail": [],
+                    "result": "passed",
+                    "target": "DC01",
+                    "test": "Replications"
+                },
+                {
+                    "detail": [],
+                    "result": "passed",
+                    "target": "corp.test",
+                    "test": "LocatorCheck"
+                }
+            ]
+        },
+        "dcdiag_dns": {
+            "error": "",
+            "problems": [],
+            "ran": true,
+            "tests": [
+                {
+                    "detail": [],
+                    "result": "passed",
+                    "target": "corp.test",
+                    "test": "DNS"
+                }
+            ]
+        },
+        "disks": [
+            {
+                "drive": "D:",
+                "free_gb": 40,
+                "free_pct": 80,
+                "path": "D:\\NTDS\\ntds.dit",
+                "what": "database"
+            },
+            {
+                "drive": "D:",
+                "free_gb": 40,
+                "free_pct": 80,
+                "path": "D:\\NTDS",
+                "what": "logs"
+            },
+            {
+                "drive": "C:",
+                "free_gb": 60,
+                "free_pct": 60,
+                "path": "C:\\Windows\\SYSVOL\\sysvol",
+                "what": "sysvol"
+            }
+        ],
+        "domain": "corp.test",
+        "errors": [],
+        "events": [],
+        "forest": "corp.test",
+        "fqdn": "dc01.corp.test",
+        "fsmo": [
+            "PDCEmulator",
+            "RIDMaster"
+        ],
+        "gc_port": {
+            "error": "",
+            "ok": true
+        },
+        "is_gc": true,
+        "is_rodc": false,
+        "ldap": {
+            "error": "",
+            "gc_ready": true,
+            "ok": true,
+            "synchronized": true
+        },
+        "name": "DC01",
+        "no_client_site": {
+            "clients": [],
+            "count": 0,
+            "distinct": 0,
+            "error": ""
+        },
+        "os": "Microsoft Windows Server 2022 Standard",
+        "queue": 0,
+        "read_at": "2026-10-15T06:53:41Z",
+        "repl": [
+            {
+                "failures": 0,
+                "last_failure": "",
+                "last_success": "2026-10-15T06:41:41Z",
+                "nc": "DC=corp,DC=test",
+                "source": "DC02",
+                "source_site": "HQ",
+                "status": "0",
+                "transport": "RPC"
+            },
+            {
+                "failures": 0,
+                "last_failure": "",
+                "last_success": "2026-10-15T06:35:41Z",
+                "nc": "CN=Configuration,DC=corp,DC=test",
+                "source": "DC02",
+                "source_site": "HQ",
+                "status": "0",
+                "transport": "RPC"
+            }
+        ],
+        "role": "pdc",
+        "security": [],
+        "services": [
+            {
+                "name": "NTDS",
+                "start": "Auto",
+                "state": "Running"
+            },
+            {
+                "name": "Netlogon",
+                "start": "Auto",
+                "state": "Running"
+            },
+            {
+                "name": "kdc",
+                "start": "Auto",
+                "state": "Running"
+            },
+            {
+                "name": "DNS",
+                "start": "Auto",
+                "state": "Running"
+            },
+            {
+                "name": "DFSR",
+                "start": "Auto",
+                "state": "Running"
+            },
+            {
+                "name": "W32Time",
+                "start": "Auto",
+                "state": "Running"
+            },
+            {
+                "name": "ADWS",
+                "start": "Auto",
+                "state": "Running"
+            },
+            {
+                "name": "IsmServ",
+                "start": "Auto",
+                "state": "Running"
+            },
+            {
+                "name": "LanmanServer",
+                "start": "Auto",
+                "state": "Running"
+            }
+        ],
+        "site": "HQ",
+        "sysvol": {
+            "dfsr_state": 4,
+            "engine": "dfsr",
+            "path": "C:\\Windows\\SYSVOL\\sysvol",
+            "ready": 1,
+            "shares": [
+                "SYSVOL",
+                "NETLOGON"
+            ]
+        },
+        "time": {
+            "error": "",
+            "last_sync": "2026-10-15T06:23:41Z",
+            "offset": 0.015,
+            "ref": "ntp.corp.test",
+            "source": "ntp.corp.test,0x8",
+            "stratum": "2"
+        }
+    }
+}

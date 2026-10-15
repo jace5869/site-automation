@@ -5,7 +5,8 @@ The database client answers as MariaDB, MySQL 8.0.36 or MySQL 5.7 (from the imag
 mariadb | mysql8 | mysql84 | mysql57). It accepts only the replication statement its engine really has
 (SHOW ALL SLAVES STATUS / SHOW REPLICA STATUS / SHOW SLAVE STATUS), so a wrong choice shows as a finding.
 $FAKE_REPL = none | ok | broken | lag; $FAKE_GROUP = none | ok | bad; $FAKE_DENY=1 refuses the login;
-$FAKE_REPL_DENY=1 refuses the replication query. Not a podman: only what the check needs."""
+$FAKE_REPL_DENY=1 refuses the replication query; $FAKE_PERF = busy | quiet | deny (a server with performance
+problems, one without, one whose account may not read INNODB_TRX). Not a podman: only what the check needs."""
 import os
 import sys
 
@@ -38,7 +39,33 @@ def client(c, joined):
         rows.append("wsrep_on\tOFF" if eng == "mariadb" else "")
         if os.environ.get("FAKE_GROUP", "none") != "none" and eng != "mariadb":
             rows.append("group_replication_group_name\taaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        # $FAKE_PERF=busy: a server with performance problems (500000 s = 139 h up)
+        if os.environ.get("FAKE_PERF") == "busy":
+            rows += ["Questions\t50000000", "Slow_queries\t70000", "long_query_time\t2.000000", "slow_query_log\tOFF",
+                     "Created_tmp_tables\t100000", "Created_tmp_disk_tables\t60000", "tmp_table_size\t16777216",
+                     "max_heap_table_size\t16777216", "Select_full_join\t200000", "Innodb_row_lock_waits\t5000",
+                     "Innodb_row_lock_time\t10000000", "Innodb_row_lock_time_max\t50000", "Open_files\t950",
+                     "open_files_limit\t1000", "performance_schema\tON"]
+            if eng == "mariadb":
+                rows += ["Innodb_deadlocks\t900", "Innodb_history_list_length\t2500000"]
+        elif os.environ.get("FAKE_PERF") == "quiet":
+            rows += ["Questions\t5000000", "Slow_queries\t3", "Created_tmp_tables\t100000", "Created_tmp_disk_tables\t100",
+                     "Open_files\t40", "open_files_limit\t32768", "Innodb_row_lock_waits\t2", "Innodb_row_lock_time\t20"]
         print("\n".join(r for r in rows if r))
+        return 0
+    if "INNODB_TRX" in joined:
+        perf = os.environ.get("FAKE_PERF", "")
+        if perf == "busy":
+            print("T\t42\t3600|RUNNING|120|7|app|shop|Sleep\nT\t43\t900|LOCK WAIT|1|0|app|shop|Query")
+            print("R\t2\t95")
+            print("W\t51\tetl|shop|400|Waiting for table metadata lock")
+            if eng != "mariadb":
+                print("M\ttrx_rseg_history_len\t2500000\nM\tlock_deadlocks\t900")
+        else:
+            print("R\t0\t0")
+        if perf == "deny":
+            sys.stderr.write("ERROR 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s)\n")
+            return 1
         return 0
     if "replication_group_members" in joined:
         if os.environ.get("FAKE_GROUP") == "ok":

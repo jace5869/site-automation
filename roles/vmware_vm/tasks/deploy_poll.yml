@@ -18,7 +18,9 @@
     _vp_sn_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
     _vp_job: "{{ ('AAP job ' ~ awx_job_id) if awx_job_id is defined else 'AAP' }}"
     _vp_dry: "{{ ansible_check_mode or vm_deploy_poll_dry_run | bool }}"
-    _vp_tables: "{{ (vm_deploy_poll_tables | replace(',', ' ')).split() if vm_deploy_poll_tables is string else vm_deploy_poll_tables }}"
+    _vp_tables: >-
+      {{ ((vm_deploy_poll_tables.split(',') if ',' in vm_deploy_poll_tables else vm_deploy_poll_tables.split())
+          if vm_deploy_poll_tables is string else vm_deploy_poll_tables) | map('trim') | select | map('vm_deploy_table_name') | list }}
     _vp_q: >-
       {{ {'assignment_group': vm_deploy_assignment_group, 'prefix': vm_deploy_poll_prefix, 'query': vm_deploy_poll_query,
           'states': vm_deploy_poll_states} | vm_deploy_poll_query }}

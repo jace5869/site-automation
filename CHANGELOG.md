@@ -1,5 +1,122 @@
 # Changelog
 
+## 0.15.0 — 2026-10-15
+
+**Updating without scripts:** paste `site-automation-0.15.0-changed-since-0.14.1.zip` as it is (or
+`...-changed-since-0.14.0.zip` from 0.14.0). Both leave out `playbooks/group_vars`: only a comment changed in
+the example `sat.yml`. Then add two job templates:
+*Active Directory health report* (`playbooks/ad_health_report.yml`, docs/ACTIVE_DIRECTORY.md, "Set it up") and, for
+the certificate renewal, *Certificate renewal - CSRs* (`playbooks/cert_renew_csr.yml`, docs/SETUP_AAP.md)
+as step 3 of workflow 7 *Certificate watch* (docs/WORKFLOWS_AND_SCHEDULES.md).
+
+- **Active Directory health report** (`playbooks/ad_health_report.yml`, role `ad_report`, docs/ACTIVE_DIRECTORY.md):
+  read-only, on every domain controller of the Windows inventory (group `win_dc`) over WinRM, and one coloured
+  report for the whole domain, problems first, emailed (`report_email_to`). Per DC: LDAP and the global
+  catalog answering (and synchronized), the DC services, dcdiag (the tests that only read; DNS without the
+  test that writes a record), inbound replication with what each error code means and the queue, SYSVOL
+  (shares, SysvolReady, DFSR state, FRS), time against the PDC emulator (the PDC against its NTP source), the
+  events that matter on a DC (2042, lingering objects, DFSR 2213 / 4012, LDAP signing 2887, Netlogon, KDC,
+  time ...), clients in no site (`netlogon.log`), the free space of the database / log / SYSVOL volumes, the
+  LDAPS and KDC certificates. Per domain (read on the PDC emulator when it is in the job): functional levels,
+  FSMO holders (still a DC? answering?), replication from every DC (up-to-dateness vector - also the DCs not
+  in the inventory), the last backup of each partition, tombstone lifetime, Recycle Bin, RID pool, krbtgt
+  password age, the SRV records of every DC, trusts (verified), sites and subnets. And **what changed** in
+  the last `ad_report_hours` (24): privileged group members added / removed, accounts created, deleted,
+  enabled, disabled, locked, unlocked, GPOs created / changed / deleted and their links, GPO versions in AD
+  against SYSVOL, the schema, sites, subnets, site links and DCs, trusts, the Security log cleared. *When* and
+  *on which DC* come from AD's replication metadata (no audit policy needed), *by whom* from that DC's
+  Security log. Every DC asks only itself: no second hop, no delegation or CredSSP. Stays green unless
+  `ad_report_fail: true`; a DC that cannot be reached is red in the report and does not stop the job. The
+  scripts run in Windows PowerShell 5.1 and 7 and in Constrained Language Mode. Tested with made-up domains
+  (`tests/windows/test_ad_collect.ps1`, `tests/test_ad.py`, `tests/ad/run_ad_test.sh`); not yet against a
+  real domain.
+- **Health check - one outage, one finding:** a MariaDB / MySQL **container** that is down was reported twice
+  when the Health check ran both `mariadb` and `containers` (the daily set does): `containers:down` and
+  `mariadb:down` - two tickets for one outage. Now only the containers finding is kept (it says how the
+  container is run and how to start it), and its summary says the database is down too. `mariadb:down`
+  stays when the containers check does not report that container, and in the *Database health* job. The
+  same for the `services` check: root's systemd unit that runs a container that is down no longer gives a
+  second `unit-failed:UNIT` (or `unit-down` / `unit-flapping`) finding; the containers finding names it.
+  docs/RUNBOOKS.md, "containers, database, service watch: which one does what".
+- **Containers check - pods and compose projects:** besides `podman ps -a`, Quadlet `.container` files and
+  units that run one named container, it now finds Quadlet **`.kube`** files and enabled **`podman-kube@`**
+  units (`podman kube play`), units that run **`podman pod start`**, **podman-compose / `podman compose` /
+  docker-compose**, and `podman run` without `--name`. Each is checked by its unit (`containers:down:OWNER/UNIT`
+  when it should run and its unit is not active; a `Type=oneshot` unit that finished successfully counts as
+  up). New setting `podman_discover_unit_dirs` (`/etc/systemd/system`, `/usr/local/lib/systemd/system`; a
+  user's `~/.config/systemd/user` as before). Podman's own tools (auto-update, podman-restart, the API
+  service) are left out. Service watch still watches containers only.
+- **MariaDB / MySQL - performance** (`check_mariadb_performance`, on by default, all warnings): slow queries
+  per hour, temporary tables on disk, joins without an index, table lock waits, average row lock wait,
+  deadlocks, buffer pool / log buffer waits, failed connection attempts, a full table cache (averages since
+  the server started, judged after `check_mariadb_perf_min_uptime_hours`), and, as they are now: sessions
+  waiting for a lock, transactions left open (idle ones named), purge lag (history list length) and open
+  files. Who / which database / how long only, never query text. Each limit is a setting; the status line
+  prints the numbers. Logic in `plugins/filter/mariadb_filters.py` (tests/test_mariadb_perf.py). Tested
+  against the fake server only.
+- **VM deploy - a table named as people say it.** `vm_deploy_ticket_table: change` (or `{CHGN: change}` in
+  `vm_deploy_ticket_prefixes`) failed with `HTTP Error 400: Bad Request ... Invalid table change`: ServiceNow
+  calls it `change_request`. `change`, `change request`, `change task`, `catalog task`, `requested item` are
+  now read as `change_request`, `change_task`, `sc_task`, `sc_req_item`, there and in `vm_deploy_poll_tables`. A table ServiceNow
+  does not have says so in plain words and where it came from; a ticket not found while
+  `vm_deploy_ticket_table` is set says that the setting sends every ticket to that one table.
+- **A host that cannot be reached no longer fails the job** (`site_unreachable_fails: false`), in the
+  health checks (Linux and Windows), the certificate reports, the certificate renewal, database health,
+  the service watch and troubleshoot. It is listed as `NOT REACHED - <why>` and left out, and the
+  others run as usual. It still counts as targeted, so the ServiceNow step opens its "no result" ticket.
+  When no host at all is reached (a wrong or expired machine credential), the job fails.
+  `site_unreachable_fails: true` fails it for one host, as before. Patching, the ACT and service fixes,
+  the STIG Manager deploy and the Windows connection test still fail for a host they cannot reach.
+  Before, one switched-off server turned the job red (exit 4), and in the ACT workflow it asked for an
+  approval with nothing to approve.
+- **Certificate renewal - the CSRs** (`playbooks/cert_renew_csr.yml`, step 3 of workflow 7 *Certificate
+  watch*). For each certificate file the certificate report flags (30 days or less, or expired:
+  `check_certs_warn_days`), it makes a new key and a CSR on the host. The CSR has the same subject and names (subjectAltName); RSA is at least 2048 bits, EC stays on the
+  same curve. It works with OpenSSL 1.1.1 and 3.x, in FIPS mode, and is checked before it is kept.
+  - The CSR is attached to the certificate's ServiceNow incident (the one the watch opened, or a new one),
+    with a work note: the certificate, where it is, the names, where the new key is, what to do next.
+    Every CSR gets an incident, whatever `servicenow_min_severity` says.
+  - The key never leaves the host (`cert_renew_dir`, 0600).
+  - A run again reuses the pending CSR and adds nothing to the ticket.
+  - Never renewed: Satellite, Capsule and subscription-manager certificates (`cert_renew_exclude`,
+    `cert_renew_exclude_issuer`), CA certificates, keystores, and ports with no file. Each is listed with
+    the reason.
+  - Self-signed certificates get a CSR only with `cert_renew_self_signed: true`, for the PKI to issue a
+    real certificate in their place. Never a CA's own certificate (a root), never one only for localhost,
+    never postfix's placeholder (below).
+  - One certificate with tickets for several places (a file and its port): the CSR goes on one, and
+    the others get a note saying which.
+  - `cert_renew_install_notes`: another next step for files something else deploys. The default covers
+    STIG Manager: the issued certificate and the new key go in the AAP *TLS certificate* credential, then
+    *STIG Manager - deploy*.
+  - A refused attachment puts the CSR in the work note.
+- **The certificate report leaves Satellite out**: Satellite renews its own certificates with
+  `satellite-installer`. Name its hosts in `cert_skip_hosts` (any case, `*` and `?` wildcards, short
+  names) or put them in a group of `cert_skip_groups` (default `[sat]`). Both take a list or a string
+  with commas. These hosts are listed as not checked and get no "no result" ticket. The health check
+  still checks them.
+- **postfix's placeholder certificate is no longer a finding.** postfix makes
+  `/etc/pki/tls/certs/postfix.pem` when it is installed (subject `O=SomeOrganization`), self-signed for
+  one year and never renewed. On every host with postfix it expired a year after the install, so the
+  health check and the certificate report flagged it, and the watch opened a ticket per host. A found
+  certificate whose subject matches `check_certs_placeholder_subject` is now listed as not checked, and
+  never gets a CSR. A real certificate put in its place is checked as before.
+- The certificate report's **Found but not checked** table: the same place and reason on several hosts is
+  one row (the first 10 hosts are named, then how many more).
+- The ServiceNow tickets step builds its correlation IDs with a filter (`site_correlation_id`). The IDs
+  are the same as before, so open tickets are still found.
+- **STIG Manager's nginx certificate file is found** (`/etc/stigman/nginx/tls`, added to
+  `check_certs_discover_dirs`). Before, it sat one level too deep for the search, so only the port
+  showed it, and it could not be renewed. The health check and the certificate report on STIG Manager
+  hosts now also list the file.
+- **The ServiceNow tickets step no longer notes or resolves a ticket whose finding is still there but
+  below `servicenow_min_severity`** (with `critical`: a finding that went from critical to warning). Before,
+  it wrote "passes again", or resolved the ticket with `servicenow_resolve_cleared: true`. Now the ticket
+  stays open until the check passes. The same keeps a certificate renewal ticket (warning) open.
+- The four site-automation PDFs are rebuilt for 0.15.0; the setup guide has the Active Directory chapter.
+- PDFs: a table cell holding a `|` (a regular expression such as `check_certs_discover_exclude`) no longer
+  splits into extra columns. The Settings Reference's `check_certs` table was unreadable because of it.
+
 ## 0.14.1 — 2026-10-14
 
 - **VM deploy - a change must be approved and in Implement** (`vm_deploy_ready_by_table`, on by default:

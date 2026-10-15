@@ -1,0 +1,323 @@
+{
+    "domain": {
+        "account_changes": [
+            {
+                "change": "disabled",
+                "class": "user",
+                "dc": "DC01",
+                "name": "carol",
+                "time": "2026-10-15T05:53:43Z"
+            },
+            {
+                "change": "unlocked",
+                "class": "user",
+                "dc": "DC02",
+                "name": "dave",
+                "time": "2026-10-15T04:53:43Z"
+            }
+        ],
+        "backups": [
+            {
+                "last": "2026-10-14T10:53:43Z",
+                "partition": "DC=corp,DC=test"
+            },
+            {
+                "last": "2026-10-14T10:53:43Z",
+                "partition": "CN=Configuration,DC=corp,DC=test"
+            }
+        ],
+        "changes_capped": false,
+        "collector": "dc01.corp.test",
+        "config_changes": [
+            {
+                "change": "created",
+                "class": "subnet",
+                "name": "10.9.0.0/24",
+                "time": "2026-10-15T05:53:43Z"
+            },
+            {
+                "change": "created",
+                "class": "nTDSDSA",
+                "name": "DC03",
+                "time": "2026-10-14T22:53:43Z"
+            }
+        ],
+        "config_nc": "CN=Configuration,DC=corp,DC=test",
+        "created": [
+            {
+                "class": "user",
+                "dn": "CN=Mallory,CN=Users,DC=corp,DC=test",
+                "name": "mallory",
+                "time": "2026-10-15T03:53:43Z"
+            },
+            {
+                "class": "computer",
+                "dn": "CN=WS99,OU=PCs,DC=corp,DC=test",
+                "name": "WS99$",
+                "time": "2026-10-15T02:53:43Z"
+            }
+        ],
+        "dcs": [
+            {
+                "gc": true,
+                "ip": "10.0.0.1",
+                "name": "dc01.corp.test",
+                "ntds": "CN=NTDS Settings,CN=DC01,CN=Servers,CN=HQ,CN=Sites,CN=Configuration,DC=corp,DC=test",
+                "os": "Windows Server 2022 Standard",
+                "rodc": false,
+                "roles": [
+                    "PDCEmulator",
+                    "RIDMaster",
+                    "SchemaMaster",
+                    "DomainNamingMaster"
+                ],
+                "site": "HQ"
+            },
+            {
+                "gc": true,
+                "ip": "10.0.0.2",
+                "name": "dc02.corp.test",
+                "ntds": "CN=NTDS Settings,CN=DC02,CN=Servers,CN=HQ,CN=Sites,CN=Configuration,DC=corp,DC=test",
+                "os": "Windows Server 2022 Standard",
+                "rodc": false,
+                "roles": [
+                    "InfrastructureMaster"
+                ],
+                "site": "HQ"
+            }
+        ],
+        "deleted": [
+            {
+                "class": "user",
+                "name": "bob",
+                "parent": "OU=Staff,DC=corp,DC=test",
+                "time": "2026-10-15T00:53:43Z"
+            }
+        ],
+        "dn": "DC=corp,DC=test",
+        "dns": "corp.test",
+        "dns_srv": [
+            {
+                "error": "",
+                "record": "_ldap._tcp.dc._msdcs.corp.test",
+                "targets": [
+                    "dc01.corp.test"
+                ]
+            },
+            {
+                "error": "_kerberos._tcp.dc._msdcs.corp.test : DNS name does not exist",
+                "record": "_kerberos._tcp.dc._msdcs.corp.test",
+                "targets": []
+            },
+            {
+                "error": "",
+                "record": "_ldap._tcp.gc._msdcs.corp.test",
+                "targets": [
+                    "dc01.corp.test",
+                    "dc02.corp.test"
+                ]
+            }
+        ],
+        "errors": [
+            "group NoSuchGroup: Cannot find an object with identity: 'NoSuchGroup'"
+        ],
+        "forest": {
+            "domains": [
+                "corp.test"
+            ],
+            "mode": "Windows2016Forest",
+            "name": "corp.test",
+            "naming_master": "dc01.corp.test",
+            "root_domain": "corp.test",
+            "schema_master": "dc01.corp.test"
+        },
+        "fsmo": [
+            {
+                "holder": "dc01.corp.test",
+                "reachable": true,
+                "role": "PDC emulator"
+            },
+            {
+                "holder": "dc01.corp.test",
+                "reachable": true,
+                "role": "RID master"
+            },
+            {
+                "holder": "dc09.corp.test",
+                "reachable": false,
+                "role": "Infrastructure master"
+            },
+            {
+                "holder": "dc01.corp.test",
+                "reachable": true,
+                "role": "Schema master"
+            },
+            {
+                "holder": "dc01.corp.test",
+                "reachable": true,
+                "role": "Domain naming master"
+            }
+        ],
+        "gpo_deleted": [],
+        "gpo_links": [
+            {
+                "dc": "DC01",
+                "links": [
+                    "{31B2F340-016D-11D2-945F-00C04FB984F9}"
+                ],
+                "target": "OU=Staff,DC=corp,DC=test",
+                "time": "2026-10-15T05:53:43Z"
+            }
+        ],
+        "gpos": [
+            {
+                "ad_version": 7,
+                "changed": "2026-07-07T06:53:43Z",
+                "created": "2024-04-28T06:53:43Z",
+                "flags": 0,
+                "folder": true,
+                "guid": "{31B2F340-016D-11D2-945F-00C04FB984F9}",
+                "name": "Default Domain Policy",
+                "sysvol_version": 5
+            },
+            {
+                "ad_version": 1,
+                "changed": "2026-10-15T04:53:43Z",
+                "created": "2026-10-15T04:53:43Z",
+                "flags": 0,
+                "folder": false,
+                "guid": "{11111111-2222-3333-4444-555555555555}",
+                "name": "New Policy",
+                "sysvol_version": null
+            }
+        ],
+        "groups": [
+            {
+                "changes": [
+                    {
+                        "action": "added",
+                        "dc": "DC02",
+                        "member": "CN=Mallory,CN=Users,DC=corp,DC=test",
+                        "time": "2026-10-15T04:53:43Z"
+                    },
+                    {
+                        "action": "removed",
+                        "dc": "DC01",
+                        "member": "CN=Old Admin,CN=Users,DC=corp,DC=test",
+                        "time": "2026-10-15T01:53:43Z"
+                    }
+                ],
+                "member_names": [
+                    "Administrator",
+                    "Mallory"
+                ],
+                "members": 2,
+                "name": "Domain Admins",
+                "sam": "Domain Admins",
+                "sid": "S-1-5-21-1-2-3-512"
+            },
+            {
+                "changes": [],
+                "member_names": [
+                    "Domain Admins",
+                    "Administrator"
+                ],
+                "members": 2,
+                "name": "Administrators",
+                "sam": "Administrators",
+                "sid": "S-1-5-32-544"
+            },
+            {
+                "changes": [],
+                "member_names": [],
+                "members": 0,
+                "name": "DnsAdmins",
+                "sam": "DnsAdmins",
+                "sid": "S-1-5-21-1-2-3-1101"
+            }
+        ],
+        "hours": 24.0,
+        "krbtgt": [
+            {
+                "name": "krbtgt",
+                "pwd_last_set": "2024-11-14T07:53:43Z"
+            },
+            {
+                "name": "krbtgt_12345",
+                "pwd_last_set": "2026-10-05T06:53:43Z"
+            }
+        ],
+        "locked_out": [
+            "erin"
+        ],
+        "mode": "Windows2016Domain",
+        "netbios": "CORP",
+        "orphan_folders": [
+            "{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}"
+        ],
+        "read_at": "2026-10-15T06:53:44Z",
+        "recycle_bin": false,
+        "rid": {
+            "issued": 1060000000,
+            "total": 1073741823
+        },
+        "schema": {
+            "changed": "2026-10-15T03:53:43Z",
+            "new_objects": [
+                {
+                    "class": "attributeSchema",
+                    "name": "msExampleAttr",
+                    "time": "2026-10-15T03:53:43Z"
+                }
+            ],
+            "version": 88
+        },
+        "schema_nc": "CN=Schema,CN=Configuration,DC=corp,DC=test",
+        "sid": "S-1-5-21-1-2-3",
+        "sites": [
+            {
+                "dcs": 2,
+                "name": "HQ",
+                "subnets": 1
+            },
+            {
+                "dcs": 0,
+                "name": "Branch",
+                "subnets": 0
+            }
+        ],
+        "subnets_without_site": [
+            "10.9.0.0/24"
+        ],
+        "sysvol_migration": "Start",
+        "sysvol_read": true,
+        "tombstone_days": null,
+        "trusts": [
+            {
+                "changed": "2026-10-15T04:53:43Z",
+                "created": "2026-10-15T04:53:43Z",
+                "direction": "BiDirectional",
+                "forest": true,
+                "name": "partner.test",
+                "quarantined": false,
+                "selective": false,
+                "type": "Uplevel",
+                "verify": "Trusted DC Connection Status Status = 1311 0x51f ERROR_NO_LOGON_SERVERS / Trust Verification Status = 1311 0x51f ERROR_NO_LOGON_SERVERS"
+            }
+        ],
+        "utdv": [
+            {
+                "dsa": "HQ\\DC01",
+                "last": "2026-10-15T06:53:43Z"
+            },
+            {
+                "dsa": "HQ\\DC02",
+                "last": "2026-10-15T06:47:43Z"
+            },
+            {
+                "dsa": "7a1c5f5e-0000-4000-8000-000000000001",
+                "last": "2025-10-05T06:53:43Z"
+            }
+        ]
+    }
+}

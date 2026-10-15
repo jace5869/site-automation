@@ -321,6 +321,18 @@ Weekly: one table of every certificate on every host, soonest expiry first.
 | Credentials | `Linux ssh (sudo)` (+ `Keystore password` if you use it) |
 | Survey: `check_certs_warn_days` | *Integer*. "Warn this many days before expiry". Default `30` |
 
+### Certificate renewal - CSRs
+
+A new key and a CSR on the host for each certificate file that expires, with the CSR attached to the
+certificate's ServiceNow incident (step 3 of workflow 7; [RUNBOOKS.md](RUNBOOKS.md), "Certificate renewal").
+
+| Field | Value |
+|---|---|
+| Playbook | `playbooks/cert_renew_csr.yml` |
+| Credentials | `Linux ssh (sudo)`, `ServiceNow API` (+ `Keystore password` if the certificate report uses it) |
+| Variables | `servicenow_assignment_group: <your PKI or Linux team>`: who gets a ticket this job opens (a certificate with no ticket yet). `cert_skip_hosts: [<your Satellite and Capsules>]` if they are not in a group `sat`. `cert_renew_self_signed: true` for CSRs for self-signed certificates too (never postfix's placeholder). Better in `all.yml`, so the certificate report gets the same |
+| Job type | try it as **Check** first: it makes and sends nothing |
+
 ### POA&M status
 
 Weekly. Runs on the controller and reads `poam/poam.csv` from the project.

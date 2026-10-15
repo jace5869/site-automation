@@ -1,0 +1,59 @@
+---
+# On the AAP side (playbooks/ad_health_report.yml, last play): the report from what every DC and
+# each domain's reading DC answered (collect.yml), in plugins/filter/ad_filters.py. Printed, emailed
+# (report_email_to) and published as job artifacts (ad_health). Green unless ad_report_fail.
+- name: AD | the answers of the domain controllers
+  ansible.builtin.set_fact:
+    _ad_dcs: "{{ groups['all'] | map('extract', hostvars) | selectattr('ad_dc_result', 'defined') | map(attribute='ad_dc_result') | list }}"
+    _ad_domains: "{{ groups['all'] | map('extract', hostvars) | selectattr('ad_domain_result', 'defined') | map(attribute='ad_domain_result') | list }}"
+
+- name: AD | some domain controller answered
+  ansible.builtin.assert:
+    that: _ad_dcs | length > 0
+    fail_msg: >-
+      No domain controller was read: the job ran on no Windows host of the target ({{ target | default('win_dc') }}).
+      Put the DCs in the group win_dc of the Windows inventory, or set target.
+    quiet: true
+
+# one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: AD | the report
+  ansible.builtin.set_fact:
+    _ad: >-
+      {{ _ad_dcs | ad_report(_ad_domains, {
+           'hours': ad_report_hours | float, 'event_hours': ad_event_hours | float,
+           'repl_warn_hours': ad_repl_warn_hours | float, 'repl_crit_hours': ad_repl_crit_hours | float,
+           'repl_queue_warn': ad_repl_queue_warn | int,
+           'time_warn_seconds': ad_time_warn_seconds | float, 'time_crit_seconds': ad_time_crit_seconds | float,
+           'time_sync_warn_hours': ad_time_sync_warn_hours | float,
+           'disk_warn_pct': ad_disk_warn_pct | float, 'disk_crit_pct': ad_disk_crit_pct | float,
+           'cert_warn_days': ad_cert_warn_days | float, 'cert_crit_days': ad_cert_crit_days | float,
+           'backup_warn_days': ad_backup_warn_days | float, 'backup_crit_days': ad_backup_crit_days | float,
+           'krbtgt_max_days': ad_krbtgt_max_days | float, 'rid_warn_pct': ad_rid_warn_pct | float, 'rid_crit_pct': ad_rid_crit_pct | float,
+           'no_client_site_warn': ad_no_client_site_warn | int, 'groups_should_be_empty': ad_groups_should_be_empty,
+           'privileged_change_severity': ad_privileged_change_severity, 'schema_change_severity': ad_schema_change_severity,
+           'dc_change_severity': ad_dc_change_severity, 'dcdiag_skip': ad_dcdiag_skip, 'changes_max': ad_changes_max | int,
+           'max_rows': ad_report_max_rows | int, 'now': ad_report_now | default('')}) }}
+
+- name: AD | the report to print and email
+  ansible.builtin.set_fact:
+    _ad_doc: "{{ _ad.report }}"
+
+- name: AD | report
+  ansible.builtin.include_tasks: report.yml
+
+- name: AD | the findings as job artifacts (ad_health)
+  ansible.builtin.set_stats:
+    data:
+      ad_health: >-
+        {{ {'dcs': _ad.dcs, 'domains': _ad.domains, 'critical': _ad.critical, 'warning': _ad.warning, 'problems': _ad.problems} }}
+
+- name: AD | no critical finding, every DC read
+  ansible.builtin.assert:
+    that:
+      - _ad.critical | int == 0
+      - _ad.dcs | rejectattr('read') | list | length == 0
+    fail_msg: >-
+      {{ _ad.critical }} critical finding(s), {{ _ad.dcs | rejectattr('read') | list | length }} DC(s) not read
+      (the report is above). ad_report_fail: false makes this a report only.
+    quiet: true
+  when: ad_report_fail | bool

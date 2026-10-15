@@ -47,6 +47,18 @@ class Tables(unittest.TestCase):
         self.assertEqual(d.vm_deploy_table("INCN0012345", {"incn": "u_vm_request"}, False), "u_vm_request")
         self.assertEqual(d.vm_deploy_table("VMR0000123", {"VMR": "u_vm_request"}), "u_vm_request")
 
+    def test_table_names_as_people_write_them(self):
+        # "change" is no ServiceNow table: a change request is change_request (HTTP 400 "Invalid table change" before)
+        self.assertEqual([d.vm_deploy_table_name(x) for x in ("change", "Change Request", "change-request", "change_request", "Change Task",
+                                                              "CTASK", "catalog task", "requested item", "incident", "task", "u_vm_request", "", None)],
+                         ["change_request", "change_request", "change_request", "change_request", "change_task",
+                          "change_task", "sc_task", "sc_req_item", "incident", "task", "u_vm_request", "", ""])
+        # in the site's own prefixes too, and so for a parent: CHGN -> change -> change_request, which is read
+        self.assertEqual(d.vm_deploy_table("CHGN0001234", {"CHGN": "change"}, False), "change_request")
+        ref = d.vm_deploy_parent_ref({"change_request": "CHGN0000042"},
+                                     {"fields": ["change_request"], "tables": ["change_request"], "prefixes": {"CHGN": "Change"}})
+        self.assertEqual((ref["table"], ref["read"]), ("change_request", True))
+
 
 class Spec(unittest.TestCase):
     def test_description_then_comments_newest_wins(self):

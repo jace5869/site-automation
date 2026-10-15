@@ -81,7 +81,11 @@
                                ~ (fs | map(attribute='check') | unique | join(', ')) ~ ')') -%}
       {%- endfor -%}
       {%- for h in ansible_play_hosts_all | difference(ansible_play_hosts) | sort -%}
-      {%-   set _ = out.append(h ~ ': NO REPORT (unreachable, or the job failed on it before the checks ran)') -%}
+      {%-   if hostvars[h].site_host_unreached | default('') -%}
+      {%-     set _ = out.append(h ~ ': NOT REACHED - ' ~ hostvars[h].site_host_unreached) -%}
+      {%-   else -%}
+      {%-     set _ = out.append(h ~ ': NO REPORT (unreachable, or the job failed on it before the checks ran)') -%}
+      {%-   endif -%}
       {%- endfor -%}
       {{ out }}
   run_once: true

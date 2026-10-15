@@ -43,8 +43,11 @@ jobs:
           python tests/test_filters.py
           python tests/test_vmware_modules.py
           python tests/test_ontap.py
+          python tests/test_ad.py
+          python tests/test_mariadb_perf.py
           python tests/test_capacity.py
           python tests/test_vm_deploy.py
+          python tests/test_cert_csr.py
       - name: The real ACT in the alarms analysis mode (piped evidence, masked names, the answer read back)
         run: python tests/test_alarm_act_contract.py
       - name: docs/VARIABLES_REFERENCE.md is generated from the roles and is up to date
@@ -59,6 +62,10 @@ jobs:
         run: |
           bash tests/findings/run_findings_test.sh
           PATH=/tmp/ac216/bin:$PATH bash tests/findings/run_findings_test.sh
+      - name: A host that cannot be reached - listed, the job not failed (current ansible-core and 2.16)
+        run: |
+          bash tests/findings/run_unreachable_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/findings/run_unreachable_test.sh
       - name: MariaDB check, host and podman containers (fake podman; current ansible-core and 2.16)
         run: |
           bash tests/mariadb/run_mariadb_test.sh
@@ -71,6 +78,10 @@ jobs:
         run: |
           bash tests/email/run_email_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/email/run_email_test.sh
+      - name: Active Directory health report, the Ansible side with made-up DCs (current ansible-core and 2.16)
+        run: |
+          bash tests/ad/run_ad_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/ad/run_ad_test.sh
       - name: NetApp ONTAP health report against a fake ONTAP REST API (current ansible-core and 2.16)
         run: |
           bash tests/netapp/run_netapp_test.sh
@@ -97,6 +108,10 @@ jobs:
         run: |
           bash tests/certs/run_certs_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/certs/run_certs_test.sh
+      - name: Certificate renewal - CSRs on the ServiceNow tickets (test CA, fake ServiceNow; current ansible-core and 2.16)
+        run: |
+          bash tests/certs/run_cert_renew_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/certs/run_cert_renew_test.sh
       - name: Credential types and inventory are valid YAML
         run: |
           python - <<'PY'
@@ -118,6 +133,8 @@ jobs:
           if ($bad) { exit 1 }
       - name: Windows checks with test data (PowerShell 7 on Linux, normal and constrained)
         run: pwsh -NoProfile -File tests/windows/test_win_checks.ps1
+      - name: Active Directory report scripts with made-up domains (PowerShell 7 on Linux, normal and constrained)
+        run: pwsh -NoProfile -File tests/windows/test_ad_collect.ps1
       - name: Windows patching, simulated (stand-in ConfigMgr client and restart)
         run: bash tests/windows/patch_sim/run_patch_sim.sh
       - name: No private keys or obvious secrets committed
@@ -148,6 +165,12 @@ jobs:
       - name: With test data - PowerShell 7
         shell: pwsh
         run: pwsh -NoProfile -File tests/windows/test_win_checks.ps1
+      - name: Active Directory report scripts with made-up domains - Windows PowerShell 5.1
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows/test_ad_collect.ps1
+      - name: Active Directory report scripts with made-up domains - PowerShell 7
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/windows/test_ad_collect.ps1
       - name: For real on this runner - Windows PowerShell 5.1
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows/test_win_checks_real.ps1
@@ -214,6 +237,10 @@ jobs:
           /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_troubleshoot.yml -e ts_area=overview | tee /tmp/3.out || fail=1
           /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_cert_report.yml | tee /tmp/4.out
           grep -q 'DAYS  EXPIRES' /tmp/4.out || { echo 'FAIL: no certificate table'; fail=1; }
+          # not a DC: the AD report's script must still answer over WinRM, and the report say what it could not read
+          /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/ad_health_report.yml -e target=winrunner | tee /tmp/5.out || fail=1
+          grep -q 'DCs read: 1 of 1' /tmp/5.out || { echo 'FAIL: the AD script gave no answer'; fail=1; }
+          grep -q 'ActiveDirectory PowerShell module' /tmp/5.out || { echo 'FAIL: the AD report does not say the module is missing'; fail=1; }
           exit $fail
       - name: The findings reached the Windows Application event log
         shell: powershell

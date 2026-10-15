@@ -84,7 +84,8 @@
                             ~ (c.unit_active or 'unknown') ~ ((' (' ~ c.unit_sub ~ ')') if c.unit_sub else '')
                             ~ ((', result ' ~ c.unit_result) if c.unit_result not in ['', 'success'] else '')
                             ~ ('; systemd has no such unit loaded' if c.unit_load == 'not-found' else '')) if c.unit else '' -%}
-      {%-   set stopped = ('it does not exist' if c.state == 'missing'
+      {%-   set stopped = ('it is not running' if c.kind | default('container') != 'container'
+                          else 'it does not exist' if c.state == 'missing'
                           else ('it exited with code ' ~ c.exit_code ~ ((', ' ~ ago) if ago else '')
                                 ~ (' (killed by the out-of-memory killer)' if c.oom_killed else ''))
                                 if c.state in ['exited', 'stopped']
@@ -93,37 +94,37 @@
       {%-   if is_down -%}
       {%-     set _ = down_keys.append(c.key) -%}
       {%-     set _ = f.append({'check': 'containers', 'id': 'containers:down:' ~ c.key, 'severity': 'critical',
-                                'summary': 'container ' ~ who ~ ' should be running (' ~ c.why ~ ') but '
+                                'summary': (c.what | default('container')) ~ ' ' ~ who ~ ' should be running (' ~ c.why ~ ') but '
                                            ~ (stopped if not c.running else 'its unit failed while the container still runs')
                                            ~ (('; ' ~ unit_says) if unit_says else ''),
                                 'hint': look | join('; ')}) -%}
       {%-   elif c.running and c.health == 'unhealthy' -%}
       {%-     set _ = f.append({'check': 'containers', 'id': 'containers:unhealthy:' ~ c.key, 'severity': 'critical',
-                                'summary': 'container ' ~ who ~ ' is running but its healthcheck reports unhealthy'
+                                'summary': (c.what | default('container')) ~ ' ' ~ who ~ ' is running but its healthcheck reports unhealthy'
                                            ~ (('; ' ~ unit_says) if unit_says else ''),
                                 'hint': ([c.run_as ~ 'podman inspect ' ~ c.name] + look) | join('; ')}) -%}
       {%-   elif not c.running and c.state in ['exited', 'stopped'] and (c.exit_code | int) != 0
                  and (c.exited_at | int) > 0 and age <= window -%}
       {%-     set _ = f.append({'check': 'containers', 'id': 'containers:crashed:' ~ c.key, 'severity': 'warning',
-                                'summary': 'container ' ~ who ~ ' stopped with an error: ' ~ stopped
+                                'summary': (c.what | default('container')) ~ ' ' ~ who ~ ' stopped with an error: ' ~ stopped
                                            ~ ' (not reported as down: ' ~ c.why ~ ')',
                                 'hint': look | join('; ')}) -%}
       {%-   elif not c.running and c.unit and c.unit_active == 'failed' -%}
       {%-     set _ = f.append({'check': 'containers', 'id': 'containers:crashed:' ~ c.key, 'severity': 'warning',
-                                'summary': 'container ' ~ who ~ ': ' ~ unit_says ~ ' (not reported as down: ' ~ c.why ~ ')',
+                                'summary': (c.what | default('container')) ~ ' ' ~ who ~ ': ' ~ unit_says ~ ' (not reported as down: ' ~ c.why ~ ')',
                                 'hint': look | join('; ')}) -%}
       {%-   endif -%}
       {%-   set restarts = [c.restart_count | int, c.unit_restarts | int] | max -%}
       {%-   if restarts > limit or c.state == 'restarting' -%}
       {%-     set _ = f.append({'check': 'containers', 'id': 'containers:restarting:' ~ c.key, 'severity': 'warning',
-                                'summary': 'container ' ~ who ~ ' has restarted ' ~ restarts ~ ' times'
+                                'summary': (c.what | default('container')) ~ ' ' ~ who ~ ' has restarted ' ~ restarts ~ ' times'
                                            ~ ((' (its unit ' ~ c.unit ~ ': ' ~ c.unit_restarts ~ ')') if (c.unit_restarts | int) > 0 else '')
                                            ~ ' - a restart loop: it keeps stopping',
                                 'hint': look | join('; ')}) -%}
       {%-   endif -%}
       {%-   if c.oom_killed and not is_down and (c.running or (c.exited_at | int) <= 0 or age <= window) -%}
       {%-     set _ = f.append({'check': 'containers', 'id': 'containers:oom:' ~ c.key, 'severity': 'warning',
-                                'summary': 'container ' ~ who ~ ' was killed by the out-of-memory killer'
+                                'summary': (c.what | default('container')) ~ ' ' ~ who ~ ' was killed by the out-of-memory killer'
                                            ~ ((' ' ~ ago) if ago and not c.running else '') ~ ': it needs more memory, or its memory limit is too low',
                                 'hint': ([c.run_as ~ 'podman inspect ' ~ c.name] + look) | join('; ')}) -%}
       {%-   endif -%}
@@ -134,7 +135,7 @@
       {%-   set rn = r.split('/', 1)[1] if '/' in r else r -%}
       {%-   set m = [] -%}
       {%-   for c in site_containers if (not ro or c.owner == ro)
-             and rn in [c.name, c.unit | regex_replace('[.]service$', ''), c.quadlet_file | basename | regex_replace('[.]container$', '')] -%}
+             and rn in [c.name, c.unit | regex_replace('[.]service$', ''), c.quadlet_file | basename | regex_replace('[.](container|kube)$', '')] -%}
       {%-     set _ = m.append(c) -%}
       {%-   endfor -%}
       {%-   set ro_uid = site_podman.users | selectattr('name', 'equalto', ro) | map(attribute='uid') | first | default('UID') -%}

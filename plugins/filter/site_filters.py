@@ -73,6 +73,9 @@ vm_snapshot_plan   what the snapshot cleanup deletes: the old ones, or after an 
 vm_snap_row        a snapshot as a row of the snapshot report's tables.
 cert_report_section every certificate as the certificate report's table, coloured (expired red,
                    within the warning days amber, within the notice days blue).
+site_correlation_id the correlation ID of a finding's ServiceNow ticket (one ticket per problem per
+                   host): the tickets step and the certificate renewal find the same ticket.
+                       {{ finding.id | site_correlation_id(host, finding.check, servicenow_correlation_prefix) }}
 vm_snap_vm_key     a snapshot's VM, unique across vCenters (vCenter / moid).
 
 host_ids           the names and addresses inventory hosts can be recognised by (inventory name
@@ -82,6 +85,7 @@ host_ids           the names and addresses inventory hosts can be recognised by 
 import csv
 import datetime
 import fnmatch
+import hashlib
 import json
 import io
 import re
@@ -221,8 +225,11 @@ def _show_blocks(lines):
 
 
 def _quadlet(path, lines):
-    stem = path.rsplit("/", 1)[-1]
-    stem = stem[:-len(".container")] if stem.endswith(".container") else stem
+    """A Quadlet file: NAME.container (one container) or NAME.kube (a pod from Kubernetes YAML, run
+    by `podman kube play`; its containers are named POD-CONTAINER, so the file names none)."""
+    base = path.rsplit("/", 1)[-1]
+    kind = "kube" if base.endswith(".kube") else "container"
+    stem = base.rsplit(".", 1)[0] if base.endswith((".container", ".kube")) else base
     section, name, image, service, install = "", "", "", "", []
     for line in lines:
         t = line.strip()
@@ -236,24 +243,30 @@ def _quadlet(path, lines):
             name = value
         elif section == "Container" and key == "Image":
             image = value
-        elif section == "Container" and key == "ServiceName":
+        elif section == "Kube" and key == "Yaml":
+            image = value
+        elif section in ("Container", "Kube") and key == "ServiceName":
             service = value
         elif section == "Install" and key in ("WantedBy", "RequiredBy", "UpheldBy") and value:
             install.append(key + "=" + value)
-    name = (name or "systemd-%N").replace("%N", stem)
+    name = stem if kind == "kube" else (name or "systemd-%N").replace("%N", stem)
     unit = service or stem
     unit = unit if unit.endswith(".service") else unit + ".service"
-    return {"path": path, "stem": stem, "unit": unit, "name": name, "image": image, "install": install}
+    return {"path": path, "stem": stem, "unit": unit, "name": name, "image": image, "install": install, "kind": kind}
+
+
+def _exec_args(execstart):
+    """The podman arguments of a unit's ExecStart ([] = it does not run podman itself)."""
+    m = re.search(r"argv\[\]=\S*podman\s+([^;]*)", execstart or "")
+    if not m:
+        return []
+    args = m.group(1).split()
+    return args[1:] if args[:1] == ["container"] else args
 
 
 def _exec_name(execstart):
     """The container a unit's ExecStart runs: `podman run ... --name NAME` or `podman start NAME`."""
-    m = re.search(r"argv\[\]=\S*podman\s+([^;]*)", execstart or "")
-    if not m:
-        return ""
-    args = m.group(1).split()
-    if args[:1] == ["container"]:
-        args = args[1:]
+    args = _exec_args(execstart)
     if args[:1] in (["run"], ["create"]):
         for i, a in enumerate(args):
             if a.startswith("--name="):
@@ -262,8 +275,42 @@ def _exec_name(execstart):
                 return args[i + 1]
         return ""
     if args[:1] == ["start"]:
+        if "--all" in args or "-a" in args:       # podman-restart.service: every container, not one
+            return ""
         rest = [a for a in args[1:] if not a.startswith("-")]
         return rest[-1] if rest else ""
+    return ""
+
+
+# What a unit that runs podman but names no container starts, from its ExecStart:
+# kind -> the words used for it. Podman's own tools (auto-update, the API service, podman-restart,
+# prune and cleanup jobs) start nothing that should keep running: they are left out.
+_UNIT_KINDS = {"kube": "pod (podman kube play)", "pod": "podman pod", "compose": "compose project",
+               "unit": "podman unit", "container": "container"}
+_PODMAN_TOOLS = ("auto-update", "system", "healthcheck", "image", "images", "volume", "network", "pull",
+                 "rm", "rmi", "stop", "kill", "events", "info", "version", "login", "logout", "untag", "tag", "save",
+                 "load", "export", "import", "generate", "cp", "wait", "unshare", "machine", "secret")
+
+
+def _exec_kind(execstart):
+    """kube, pod, compose or unit for a unit that runs podman (but no named container); '' when it
+    runs one of podman's own tools, or not podman at all."""
+    ex = str(execstart or "")
+    if re.search(r"argv\[\]=\S*(podman-compose|docker-compose)\b", ex):
+        return "compose"
+    args = _exec_args(ex)
+    if not args:
+        return ""
+    if args[:2] in (["kube", "play"], ["play", "kube"]):
+        return "kube"
+    if args[:1] == ["compose"]:
+        return "compose"
+    if args[:1] == ["pod"] and args[1:2] in (["start"], ["create"], ["restart"]):
+        return "pod"
+    if args[:1] == ["start"] and ("--all" in args or "-a" in args):
+        return ""
+    if args[:1] in (["run"], ["create"], ["start"]):
+        return "unit"
     return ""
 
 
@@ -361,7 +408,7 @@ def podman_discovery(results, ignore=None):
             if len(parts) >= 3 and parts[2].strip() and parts[2].strip() != "<no value>":
                 label_unit[parts[0].strip()] = parts[2].strip()
         quad_by_unit = dict((q["unit"], q) for q in quadlets)
-        quad_by_name = dict((q["name"], q) for q in quadlets)
+        quad_by_name = dict((q["name"], q) for q in quadlets if q["kind"] == "container")
         exec_unit = {}
         for path in unitfiles:
             u = path.rsplit("/", 1)[-1]
@@ -371,9 +418,11 @@ def podman_discovery(results, ignore=None):
 
         entries = []
 
-        def add(name, cid, image, state, running, exit_code, exited_at, oom, health, policy, restarts, unit, how, quadlet):
+        def add(name, cid, image, state, running, exit_code, exited_at, oom, health, policy, restarts, unit, how, quadlet,
+                kind="container"):
             info = show.get(unit, {}) if unit else {}
             e = {"owner": owner, "uid": uid, "run_as": run_as, "key": owner + "/" + name, "name": name,
+                 "kind": kind, "what": _UNIT_KINDS.get(kind, "container"),
                  "id": cid[:12], "image": image, "state": state, "running": running, "exit_code": exit_code,
                  "exited_at": exited_at, "oom_killed": oom, "health": health, "restart_policy": policy,
                  "restart_count": restarts, "unit": unit, "unit_scope": ("user" if rootless else "system") if unit else "",
@@ -384,6 +433,18 @@ def podman_discovery(results, ignore=None):
             e["should_run"], e["why"] = _should_run(e, quadlet, info)
             e["ignored"] = any(p.fullmatch(name) or p.fullmatch(owner + "/" + name) for p in pats)
             entries.append(e)
+
+        def unit_only(name, unit, how, quadlet, kind, source):
+            """An entry for a unit, not a container: up while its unit is active. A oneshot unit that
+            finished successfully since boot (`podman-compose up -d`) also counts as up: its
+            containers run on without it."""
+            info = show.get(unit, {})
+            active = info.get("ActiveState", "")
+            done = (info.get("Type") == "oneshot" and active == "inactive" and info.get("Result", "success") == "success"
+                    and _int(info.get("InactiveExitTimestampMonotonic"), 0) > 0)
+            running = active == "active" or done
+            state = "running" if active == "active" else ("finished" if done else (active or "unknown"))
+            add(name, "", source, state, running, 0, 0, False, "", "", 0, unit, how, quadlet, kind)
 
         for p in ps:
             if not isinstance(p, dict) or p.get("IsInfra"):
@@ -422,6 +483,11 @@ def podman_discovery(results, ignore=None):
         have_units = set(e["unit"] for e in entries if e["unit"])
         have_names = set(e["name"] for e in entries)
         for q in quadlets:
+            if q["kind"] == "kube":                 # its containers are POD-NAME: a container called like the file is another one
+                if q["unit"] not in have_units:
+                    unit_only(q["name"] if q["name"] not in have_names else q["unit"], q["unit"], "quadlet", q, "kube", q["image"])
+                    have_units.add(q["unit"])
+                continue
             if q["unit"] in have_units or q["name"] in have_names:
                 continue
             add(q["name"], "", q["image"], "missing", False, 0, 0, False, "", "", 0, q["unit"], "quadlet", q)
@@ -431,6 +497,20 @@ def podman_discovery(results, ignore=None):
             if u in have_units or n in have_names:
                 continue
             add(n, "", "", "missing", False, 0, 0, False, "", "", 0, u, "unit-file", None)
+            have_units.add(u)
+            have_names.add(n)
+        # A unit that runs podman but names no single container - a pod from Kubernetes YAML
+        # (podman-kube@.service, `podman kube play`), `podman pod start`, a compose project, `podman
+        # run` without --name - is checked by its unit: its containers' names are not known from
+        # it, and they usually exist only while it runs.
+        for path in sorted(unitfiles):
+            u = path.rsplit("/", 1)[-1]
+            info = show.get(u) or {}
+            kind = "kube" if u.startswith("podman-kube@") else _exec_kind(info.get("ExecStart", ""))
+            if u in have_units or not kind or (kind == "unit" and _exec_name(info.get("ExecStart", ""))):
+                continue
+            n = _stem(u)
+            unit_only(n if n not in have_names else u, u, "unit-file", None, kind, "")
             have_units.add(u)
             have_names.add(n)
         containers.extend(sorted(entries, key=lambda e: e["name"]))
@@ -456,7 +536,10 @@ def watch_targets(static, discovered=None, discover=True, skipped=None):
     (or two users) can each have a container called nginx. A user discovery could not read (no
     /run/user/UID) who has units that should start at boot is added as one entry, OWNER/*
     (whole_user): their containers cannot run now, and the check says so."""
-    disc = [c for c in (discovered or []) if isinstance(c, dict) and not c.get("ignored")]
+    # containers only: a pod or compose project that a unit runs (kind kube, pod, compose, unit) is
+    # reported by the Health check, but service watch inspects containers by name
+    disc = [c for c in (discovered or []) if isinstance(c, dict) and not c.get("ignored")
+            and c.get("kind", "container") == "container"]
     out, used, used_disc = [], set(), set()
     for s in static or []:
         s = {"name": s} if not isinstance(s, dict) else s
@@ -948,6 +1031,14 @@ def cert_report_section(certs, warn_days=30, notice_days=60):
     return out
 
 
+def site_correlation_id(finding_id, host, check, prefix="site-health"):
+    """<prefix>:<sha1(host)[:8]>:<check>:<sha1(finding id)[:12]> - the same problem on the same host
+    always gives the same ID (roles/servicenow/tasks/tickets.yml, cert_csr.yml)."""
+    def sha1(text):
+        return hashlib.sha1(str(text).encode("utf-8")).hexdigest()
+    return "%s:%s:%s:%s" % (prefix, sha1(host)[:8], check, sha1(finding_id)[:12])
+
+
 def vm_snap_vm_key(x):
     """A snapshot's VM, unique across vCenters: 'vc01.example.mil/vm-42' (a moid repeats in every vCenter)."""
     x = x or {}
@@ -1083,5 +1174,6 @@ class FilterModule(object):
                 "watch_allow_patterns": watch_allow_patterns, "vm_facts": vm_facts, "vm_where": vm_where, "vm_ds_row": vm_ds_row, "host_ids": host_ids,
                 "vc_short": vc_short, "act_is_chat_reply": act_is_chat_reply, "vm_dc_label": vm_dc_label, "vm_vcenters_read": vm_vcenters_read, "vm_vcenter_report": vm_vcenter_report,
                 "vm_snapshot_split": vm_snapshot_split, "vm_snapshot_plan": vm_snapshot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "cert_report_section": cert_report_section,
+                "site_correlation_id": site_correlation_id,
                 "human_size": human_size, "name_matches": name_matches,
                 "report_text": report_text, "findings_report": findings_report}

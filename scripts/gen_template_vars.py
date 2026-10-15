@@ -30,7 +30,11 @@ WIN_CHECKS = "win_check_*"
 # (run_check.yml picks them by name at run time), and the lines to fill in first
 TEMPLATES = {
     "act_fix_approved.yml": ("Apply approved ACT fix", "Machine", LINUX_CHECKS, ""),
+    "ad_health_report.yml": ("Active Directory health report", "Machine (Windows)", "", ""),
     "cert_report.yml": ("Certificate report", "Machine (Keystore password: optional)", "check_certs", ""),
+    "cert_renew_csr.yml": ("Certificate renewal - CSRs", "Machine, ServiceNow API (Keystore password: optional)", "check_certs", """\
+servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job opens (a certificate with no ticket yet)
+"""),
     "database_health.yml": ("Database health - MariaDB / MySQL", "Machine, MariaDB monitor (optional)", "check_mariadb", ""),
     "esxi_security.yml": ("ESXi - security settings", "VMware vCenter", "", ""),
     "health_check.yml": ("Health check", "Machine (ACT model key with use_act)", LINUX_CHECKS, """\

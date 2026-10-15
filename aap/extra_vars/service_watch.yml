@@ -137,10 +137,16 @@
 ## ['alice/.*'] (all of alice's containers), ['root/web'] (root's web only).
 # podman_discover_ignore: []
 
-## Where root's Quadlet files are (*.container). A user's are always read from
-## ~/.config/containers/systemd, /etc/containers/systemd/users/UID and
+## Where root's Quadlet files are (*.container, and *.kube: a pod from Kubernetes YAML). A user's
+## are always read from ~/.config/containers/systemd, /etc/containers/systemd/users/UID and
 ## /etc/containers/systemd/users.
 # podman_discover_quadlet_dirs: [/etc/containers/systemd, /usr/share/containers/systemd]
+
+## Where root's own systemd units are looked for: a *.service that runs podman (`podman generate
+## systemd`, `podman run`, `podman kube play`, `podman pod start`, podman-compose / docker-compose),
+## and the podman-kube@ units enabled there (.wants links). A user's: ~/.config/systemd/user.
+## Packaged units (/usr/lib/systemd/system) are podman's own tools and are not looked at.
+# podman_discover_unit_dirs: [/etc/systemd/system, /usr/local/lib/systemd/system]
 
 ## Seconds one podman or systemctl call may take before it is given up (reported as a finding).
 # podman_discover_timeout: 60
@@ -192,3 +198,13 @@
 ## 200,000 tokens a minute per key: a fleet run with many hosts at once gets HTTP 429 (too many
 ## requests).
 # site_act_concurrency: 3
+
+# ---- site_findings - usually in all.yml ----------------------------------------------------------
+## A host that cannot be reached (switched off, no network, ssh or WinRM refused, its login refused)
+## in the health checks, the certificate report and renewal, database health, the service watch and
+## troubleshoot: listed as NOT REACHED and left out, and the job is not failed for it. It still
+## counts as checked-for, so the ServiceNow step opens its "no result" ticket. When NO host is
+## reached (a wrong or expired machine credential looks like this) the job fails. true = a host not
+## reached fails the job, as before. Patching, fixes, deploys and the Windows connection test always
+## fail for it.
+# site_unreachable_fails: false

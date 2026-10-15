@@ -22,9 +22,16 @@ podman_discover_users: []
 # ['alice/.*'] (all of alice's containers), ['root/web'] (root's web only).
 podman_discover_ignore: []
 
-# Where root's Quadlet files are (*.container). A user's are always read from
-# ~/.config/containers/systemd, /etc/containers/systemd/users/UID and /etc/containers/systemd/users.
+# Where root's Quadlet files are (*.container, and *.kube: a pod from Kubernetes YAML). A user's
+# are always read from ~/.config/containers/systemd, /etc/containers/systemd/users/UID and
+# /etc/containers/systemd/users.
 podman_discover_quadlet_dirs: [/etc/containers/systemd, /usr/share/containers/systemd]
+
+# Where root's own systemd units are looked for: a *.service that runs podman (`podman generate
+# systemd`, `podman run`, `podman kube play`, `podman pod start`, podman-compose / docker-compose),
+# and the podman-kube@ units enabled there (.wants links). A user's: ~/.config/systemd/user.
+# Packaged units (/usr/lib/systemd/system) are podman's own tools and are not looked at.
+podman_discover_unit_dirs: [/etc/systemd/system, /usr/local/lib/systemd/system]
 
 # Seconds one podman or systemctl call may take before it is given up (reported as a finding).
 podman_discover_timeout: 60

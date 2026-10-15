@@ -22,7 +22,7 @@ REPO = os.environ.get("SITE_AUTOMATION_DIR") or (
     os.path.dirname(os.path.dirname(_HERE)) if os.path.isfile(os.path.join(_HERE, "..", "START_HERE.md"))
     else sys.exit("build_ops_guide.py: cannot find the site-automation repository; "
                   "run the script from <repo>/docs/pdf or set SITE_AUTOMATION_DIR=<repo>"))
-SA_VERSION = "0.14.1"
+SA_VERSION = "0.15.0"
 DOCS = [  # (file, chapter title)
     ("docs/START_HERE.md", "Start here: the pieces and how they fit"),
     ("docs/SETUP_AAP.md", "Setting up AAP, step by step"),
@@ -39,6 +39,7 @@ DOCS = [  # (file, chapter title)
     ("docs/SECRETS.md", "Secrets: where they live"),
     ("docs/APPROVED_COMMANDS.md", "Approved commands: what ACT may run by itself"),
     ("docs/MARIADB.md", "The MariaDB and MySQL check, step by step"),
+    ("docs/ACTIVE_DIRECTORY.md", "Active Directory health report"),
 ]
 CRED_TYPES = ["servicenow_api.yml", "mariadb_monitor.yml", "keystore_password.yml",
               "stigman_api.yml", "act_model_key.yml", "act_genai_beta_key.yml",
@@ -277,14 +278,16 @@ def inline(text):
 
 
 def md_table(lines):
-    rows = [[inline(c.strip()) for c in l.strip().strip("|").split("|")] for l in lines]
+    # a cell may hold an escaped pipe (\|, e.g. a regular expression): it is not a column
+    rows = [[inline(c.strip().replace("\\|", "|")) for c in re.split(r"(?<!\\)\|", l.strip().strip("|"))] for l in lines]
     header, body = [c.replace("`", "") for c in rows[0]], [r for r in rows[2:]]
     n = len(header)
     body = [r + [""] * (n - len(r)) for r in body]
     lens = []
     for c in range(n):
         cells = [re.sub(r"\*\*", "", r[c]) for r in [header] + body]
-        longest = max(len(t) for cell in cells for t in re.split(r"\s+", cell.replace("`", " ")) if t)
+        # one long unbroken value (a regular expression, a URL) must not take the whole width: it wraps
+        longest = min(40, max(len(t) for cell in cells for t in re.split(r"\s+", cell.replace("`", " ")) if t))
         content = max(len(cell.replace("`", "")) for cell in cells)
         lens.append(max(longest * 2.4, min(content, 55), 10))
     widths = [l / sum(lens) for l in lens]

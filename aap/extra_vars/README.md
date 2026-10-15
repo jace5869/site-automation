@@ -13,7 +13,9 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Job template | Playbook | File |
 |---|---|---|
 | ACT for Windows - install | `playbooks/win_act_install.yml` | [win_act_install.yml](win_act_install.yml) |
+| Active Directory health report | `playbooks/ad_health_report.yml` | [ad_health_report.yml](ad_health_report.yml) |
 | Apply approved ACT fix | `playbooks/act_fix_approved.yml` | [act_fix_approved.yml](act_fix_approved.yml) |
+| Certificate renewal - CSRs | `playbooks/cert_renew_csr.yml` | [cert_renew_csr.yml](cert_renew_csr.yml) |
 | Certificate report | `playbooks/cert_report.yml` | [cert_report.yml](cert_report.yml) |
 | Database health - MariaDB / MySQL | `playbooks/database_health.yml` | [database_health.yml](database_health.yml) |
 | ESXi - security settings | `playbooks/esxi_security.yml` | [esxi_security.yml](esxi_security.yml) |

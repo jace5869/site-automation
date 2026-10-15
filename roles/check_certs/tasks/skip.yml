@@ -1,0 +1,35 @@
+---
+# Hosts named in cert_skip_hosts (wildcards) or in a group of cert_skip_groups are left out of the
+# certificate report and the renewal - listed as not checked, no ticket (site_host_skipped: the
+# findings start leaves them out of the targeted hosts, so the ServiceNow step does not open a
+# "no result" ticket for them). For hosts whose certificates something else renews: Satellite and
+# its Capsules (satellite-installer), appliances. Include it in pre_tasks, after the OS guard.
+- name: Certs | left out - a host in cert_skip_hosts or cert_skip_groups
+  ansible.builtin.set_fact:
+    site_host_skipped: true
+    site_host_skipped_reason: >-
+      {{ (((['named in cert_skip_hosts (' ~ _skip_hit | join(', ') ~ ')'] if _skip_hit else [])
+      + (['in group ' ~ _skip_in | join(', ') ~ ' (cert_skip_groups)'] if _skip_in else [])) | join(' and '))
+      ~ ' - its certificates are renewed some other way' }}
+  vars:
+    # a list, or one string as a survey gives it: 'sat01*, cap01.example.mil'
+    _skip_hosts: "{{ (cert_skip_hosts | replace(',', ' ')).split() if cert_skip_hosts is string else cert_skip_hosts | default([], true) }}"
+    _skip_groups: "{{ (cert_skip_groups | replace(',', ' ')).split() if cert_skip_groups is string else cert_skip_groups | default([], true) }}"
+    # any case, * and ? wildcards; the inventory name or its short name (sat01 matches sat01.example.mil)
+    _skip_hit: >-
+      {%- set out = [] -%}
+      {%- for p in _skip_hosts if inventory_hostname | name_matches([p]) or inventory_hostname_short | name_matches([p]) -%}
+      {%-   set _ = out.append(p) -%}
+      {%- endfor -%}
+      {{ out }}
+    _skip_in: "{{ group_names | intersect(_skip_groups) }}"
+  when: _skip_hit | length > 0 or _skip_in | length > 0
+
+- name: Certs | why it is left out
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: left out - {{ site_host_skipped_reason }}"
+  when: site_host_skipped | default(false) | bool
+
+- name: Certs | skip it
+  ansible.builtin.meta: end_host
+  when: site_host_skipped | default(false) | bool

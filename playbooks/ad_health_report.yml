@@ -1,0 +1,53 @@
+---
+# ACTIVE DIRECTORY HEALTH REPORT. Read-only: every domain controller of the Windows inventory
+# (group win_dc, or target) runs a PowerShell script over WinRM that reads what it says about itself
+# - LDAP and global catalog answering, the DC services, dcdiag (the tests that only read), inbound
+# replication (repadmin /showrepl) and its queue, SYSVOL (shares, DFSR), time against the PDC
+# emulator, the event logs that matter on a DC, clients in no site, the disks of its database, the
+# LDAPS / KDC certificates, and who made changes (the Security log). One DC per domain (the PDC
+# emulator when it is here) also reads the domain: functional levels, FSMO role holders, replication
+# from every DC (up-to-dateness), backups, tombstone lifetime, Recycle Bin, RID pool, krbtgt, DNS SRV
+# records, trusts, sites - and the CHANGES of the last ad_report_hours: privileged group members
+# added / removed, accounts created, deleted, enabled, disabled, unlocked, GPOs created / changed /
+# deleted and their links, schema and configuration (sites, subnets, site links, DCs).
+# One coloured report for every domain, problems first, emailed (report_email_to). Stays green
+# unless ad_report_fail: true. A DC that cannot be reached is shown in red, the others still report.
+# In AAP: the Windows inventory, the Windows Machine credential (an account that may read AD and run
+# dcdiag / repadmin on the DCs). docs/ACTIVE_DIRECTORY.md
+#   ansible-playbook playbooks/ad_health_report.yml -i <windows inventory>
+#   ansible-playbook playbooks/ad_health_report.yml -e target=dc01.example.mil -e ad_report_hours=168
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('win_dc') }}"
+
+- name: Active Directory - read the domain controllers
+  hosts: "{{ target | default('win_dc') }}"
+  gather_facts: false
+  vars:
+    site_os: windows
+  pre_tasks:
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  tasks:
+    - name: Read this DC (and, on one DC per domain, the domain)
+      ansible.builtin.include_role:
+        name: ad_report
+        tasks_from: collect.yml
+
+- name: Active Directory health report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Active Directory health report
+      ansible.builtin.include_role:
+        name: ad_report

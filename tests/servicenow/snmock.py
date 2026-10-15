@@ -18,6 +18,9 @@ A ticket whose short description has "[mock:no-close]": a PATCH of its state ans
 policy); "[mock:keep-state]": answers 200 but keeps the state (a business rule). A PATCH with
 sysparm_fields answers with those fields of the record.
 SNMOCK_HIDE_JOURNAL=1: journal fields always come back empty (an account that cannot read them).
+Attachments: POST /api/now/attachment/file?table_name&table_sys_id&file_name (the raw file as the
+body, its Content-Type kept), GET /api/now/attachment?sysparm_query=table_sys_id=..^file_name=..
+SNMOCK_NO_ATTACH=1: an attachment is refused (403, as an instance that does not allow the extension).
 Usage: snmock.py PORT   (requests appended to $SNMOCK_LOG as JSON lines)
 """
 import base64
@@ -32,6 +35,7 @@ USERS = {"api": ("goodpw", True), "ro": ("goodpw", False)}
 GROUPS = [{"sys_id": "g1", "name": "Linux Operations", "active": "true"}]
 SYSUSERS = [{"sys_id": "u1", "user_name": "svc_aap", "active": "true"}]
 INCIDENTS = {}
+ATTACHMENTS = []
 COUNTER = [10000]
 LOG = os.environ.get("SNMOCK_LOG", "snmock.jsonl")
 STATE_LABEL = {"1": "New", "2": "In Progress", "6": "Resolved", "7": "Closed"}
@@ -150,8 +154,12 @@ class H(BaseHTTPRequestHandler):
 
     def handle_any(self, method):
         n = int(self.headers.get("Content-Length", "0") or 0)
-        body = json.loads(self.rfile.read(n) or b"{}") if n else {}
         url = urllib.parse.urlparse(self.path)
+        raw = self.rfile.read(n) if n else b""
+        if url.path.startswith("/api/now/attachment"):
+            body = {"raw": raw.decode("utf-8", "replace"), "content_type": self.headers.get("Content-Type", "")}
+        else:
+            body = json.loads(raw or b"{}") if n else {}
         q = dict(urllib.parse.parse_qsl(url.query))
         parts = url.path.strip("/").split("/")          # api now table <table> [sys_id]
         user = self._user()
@@ -173,6 +181,8 @@ class H(BaseHTTPRequestHandler):
     def route(self, method, parts, q, body, user):
         if user is None:
             return fail("User Not Authenticated", "Required to provide Auth information", 401)
+        if parts[:3] == ["api", "now", "attachment"]:
+            return self.attachment(method, parts, q, body, user)
         if parts[:3] != ["api", "now", "table"] or len(parts) < 4:
             return 404, {"error": {"message": "Requested URI does not represent any resource"}}
         table = parts[3]
@@ -246,6 +256,26 @@ class H(BaseHTTPRequestHandler):
             if q.get("sysparm_fields"):
                 return 200, {"result": pick({k: v for k, v in rec.items() if not k.startswith("_")}, q["sysparm_fields"])}
             return 200, {"result": {"number": rec["number"], "state": rec["state"]}}
+        return 405, {"error": {"message": "Method not allowed"}}
+
+    def attachment(self, method, parts, q, body, user):
+        if method == "GET" and len(parts) == 3:
+            rows = [a for a in ATTACHMENTS if matches(a, q.get("sysparm_query", ""))]
+            rows = rows[:int(q.get("sysparm_limit", "10000"))]
+            return 200, {"result": [pick(a, q.get("sysparm_fields")) for a in rows]}
+        if method == "POST" and parts[3:] == ["file"]:
+            if not user[1]:
+                return fail("Operation Failed", "ACL Exception Insert Failed due to security constraints", 403)
+            if os.environ.get("SNMOCK_NO_ATTACH") == "1":
+                return fail("Operation Failed", "File extension not allowed: %s" % q.get("file_name", "").rpartition(".")[2], 403)
+            rec = INCIDENTS.get(q.get("table_sys_id"))
+            if rec is None or rec.get("_table", "incident") != q.get("table_name"):
+                return 400, {"error": {"message": "Invalid table or record"}}
+            a = {"sys_id": uuid.uuid4().hex, "table_name": q["table_name"], "table_sys_id": q["table_sys_id"],
+                 "file_name": q.get("file_name", ""), "content_type": body.get("content_type", ""),
+                 "size_bytes": str(len(body.get("raw", "")))}
+            ATTACHMENTS.append(a)
+            return 201, {"result": a}
         return 405, {"error": {"message": "Method not allowed"}}
 
 

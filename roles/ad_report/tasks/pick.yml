@@ -1,0 +1,26 @@
+---
+# One DC per domain reads the domain-wide part: the PDC emulator when it is in this job and answered,
+# otherwise the first DC of that domain whose LDAP answered. Sets _ad_collectors {domain: host} on
+# every host of the play (run_once). Input: ad_dc_result on each host.
+- name: AD | one DC per domain reads the domain-wide part
+  ansible.builtin.set_fact:
+    _ad_collectors: >-
+      {%- set by = {} -%}
+      {%- set pdc = {} -%}
+      {%- for h in ansible_play_hosts_all if hostvars[h].ad_dc_result is defined and hostvars[h].ad_dc_result.data -%}
+      {%-   set d = hostvars[h].ad_dc_result.data -%}
+      {%-   set dom = d.domain | default('') | lower -%}
+      {%-   if dom and (d.ldap | default({})).ok | default(false) -%}
+      {%-     if dom not in by -%}{%- set _ = by.update({dom: h}) -%}{%- endif -%}
+      {%-     if d.role | default('') == 'pdc' -%}{%- set _ = pdc.update({dom: h}) -%}{%- endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ by | combine(pdc) }}
+  run_once: true
+
+- name: AD | who reads which domain
+  ansible.builtin.debug:
+    msg: >-
+      {{ (_ad_collectors | dict2items | map(attribute='key') | zip(_ad_collectors | dict2items | map(attribute='value'))
+          | map('join', ': read by ') | list) or ['No DC answered: the domain-wide part is not read.'] }}
+  run_once: true

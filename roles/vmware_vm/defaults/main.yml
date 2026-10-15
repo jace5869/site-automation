@@ -235,10 +235,11 @@ vm_capacity_act_check_url: true          # first check that the AAP node can rea
 #   vm_name: app01   template: rhel9-gold   cpu: 4   memory_gb: 16   (cluster, datastore, folder,
 #   datacenter, vcenter, domain, customization_spec, notes: optional). docs/VMWARE.md
 vm_deploy_ticket: ""
-vm_deploy_ticket_table: ""               # the ServiceNow table, for a ticket prefix the job does not know (e.g. u_vm_request)
+vm_deploy_ticket_table: ""               # leave it empty (the job finds each ticket's table); for a table of your own, e.g. u_vm_request - it applies to EVERY ticket
 # Your instance's own number prefixes and their tables, e.g. {INCN: incident, CHGN: change_request}.
 # Rarely needed: for a prefix it does not know, the job asks ServiceNow's task table (and takes INCN
-# as INC, CHGN as CHG when it may not read that table).
+# as INC, CHGN as CHG when it may not read that table). A table as people say it is understood:
+# change / change request -> change_request, change task -> change_task, catalog task -> sc_task.
 vm_deploy_ticket_prefixes: {}
 # The request may also be on the ticket's parent - e.g. a task (SCTASK, CTASK) whose change holds the
 # requirements: the parent's 'key: value' lines (and, with vm_deploy_plain_words, its plain words) are read

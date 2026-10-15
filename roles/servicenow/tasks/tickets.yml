@@ -33,7 +33,7 @@
                                   'hint': 'see the AAP job output for this host', 'act': {}, 'job': awx_job_id | default(''), 'time': ''}) -%}
       {%- endfor -%}
       {%- for i in items -%}
-      {%-   set _ = i.update({'cid': servicenow_correlation_prefix ~ ':' ~ (i.host | hash('sha1'))[:8] ~ ':' ~ i.check ~ ':' ~ (i.id | hash('sha1'))[:12]}) -%}
+      {%-   set _ = i.update({'cid': i.id | site_correlation_id(i.host, i.check, servicenow_correlation_prefix)}) -%}
       {%- endfor -%}
       {{ items }}
 
@@ -167,11 +167,18 @@
       check_mode: false         # only reads
       when: servicenow_note_cleared | bool or servicenow_resolve_cleared | bool
 
+    # a finding still there below servicenow_min_severity has not cleared: its ticket stays open (the
+    # certificate renewal opens one at warning for every CSR, whatever servicenow_min_severity says)
     - name: ServiceNow | problems that cleared (their check ran again and passed)
       ansible.builtin.set_fact:
         _sn_cleared: >-
           {%- set out = [] -%}
           {%- set current = _sn_items | map(attribute='cid') | list -%}
+          {%- for host in site_health | default({}) -%}
+          {%-   for f in site_health[host].findings | default([]) -%}
+          {%-     set _ = current.append(f.id | site_correlation_id(host, f.check, servicenow_correlation_prefix)) -%}
+          {%-   endfor -%}
+          {%- endfor -%}
           {%- for r in _sn_open.results | default([]) if r.json is defined -%}
           {%-   set ran = (site_health[r.item].checks | default([])) + ['reachability'] -%}
           {%-   for t in r.json.result if t.correlation_id not in current and t.correlation_id.split(':')[2] in ran -%}

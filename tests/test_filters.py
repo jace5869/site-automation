@@ -201,6 +201,60 @@ class PodmanDiscovery(unittest.TestCase):
         self.assertTrue(w["should_run"])                                  # wanted by multi-user.target
         self.assertIn("wanted by multi-user.target", w["why"])
 
+    def test_kube_quadlet_and_units_without_a_named_container(self):
+        ex = "{ path=/usr/bin/podman ; argv[]=/usr/bin/podman %s ; }"
+        api = ps_entry("api-pod-api", labels={"PODMAN_SYSTEMD_UNIT": "api.service"})
+        stray = ps_entry("shop", state="exited", exit_code=0, exited_at=NOW - 60)     # not the .kube's
+        quads = {"/etc/containers/systemd/shop.kube": ["[Kube]", "Yaml=/etc/containers/shop.yaml", "[Install]", "WantedBy=multi-user.target"],
+                 "/etc/containers/systemd/api.kube": ["[Kube]", "Yaml=/etc/containers/api.yaml", "[Install]", "WantedBy=multi-user.target"]}
+        show = {"shop.service": {"LoadState": "loaded", "ActiveState": "failed", "Result": "exit-code", "UnitFileState": "generated"},
+                "api.service": {"LoadState": "loaded", "ActiveState": "active", "UnitFileState": "generated"},
+                "podman-kube@-srv-blog.yaml.service": {"LoadState": "loaded", "ActiveState": "inactive", "UnitFileState": "enabled",
+                                                       "ExecStart": ex % "kube play --replace /srv/blog.yaml"},
+                "stack.service": {"LoadState": "loaded", "ActiveState": "inactive", "Type": "oneshot", "Result": "success",
+                                  "InactiveExitTimestampMonotonic": "5", "UnitFileState": "enabled",
+                                  "ExecStart": "{ path=/usr/bin/podman-compose ; argv[]=/usr/bin/podman-compose up -d ; }"},
+                "never.service": {"LoadState": "loaded", "ActiveState": "inactive", "Type": "oneshot", "Result": "success",
+                                  "InactiveExitTimestampMonotonic": "0", "UnitFileState": "enabled", "ExecStart": ex % "compose up -d"},
+                "mypod.service": {"LoadState": "loaded", "ActiveState": "active", "UnitFileState": "enabled", "ExecStart": ex % "pod start mypod"},
+                "anon.service": {"LoadState": "loaded", "ActiveState": "failed", "UnitFileState": "enabled", "ExecStart": ex % "run --rm img"},
+                "restart.service": {"LoadState": "loaded", "ActiveState": "inactive", "UnitFileState": "enabled",
+                                    "ExecStart": ex % "start --all --filter restart-policy=always"},
+                "upd.service": {"LoadState": "loaded", "ActiveState": "failed", "UnitFileState": "static", "ExecStart": ex % "auto-update"}}
+        units = ["/etc/systemd/system/multi-user.target.wants/podman-kube@-srv-blog.yaml.service"] + [
+            "/etc/systemd/system/%s.service" % u for u in ("stack", "never", "mypod", "anon", "restart", "upd")]
+        out = owner_output([api, stray], [inspect_entry(api), inspect_entry(stray)], quadlets=quads, unitfiles=units, show=show)
+        got = by_key(f.podman_discovery([result("root", 0, out)])["containers"])
+        self.assertEqual(sorted(got), ["root/anon", "root/api-pod-api", "root/mypod", "root/never",
+                                       "root/podman-kube@-srv-blog.yaml", "root/shop", "root/shop.service", "root/stack"])
+        a = got["root/api-pod-api"]                         # the running .kube's container: its unit and [Install]
+        self.assertEqual((a["unit"], a["how"], a["kind"], a["should_run"]), ("api.service", "quadlet", "container", True))
+        self.assertEqual((got["root/shop"]["kind"], got["root/shop"]["unit"]), ("container", ""))   # the stray one
+        shop = got["root/shop.service"]
+        self.assertEqual((shop["kind"], shop["what"], shop["state"], shop["running"], shop["should_run"]),
+                         ("kube", "pod (podman kube play)", "failed", False, True))
+        self.assertEqual(shop["image"], "/etc/containers/shop.yaml")
+        blog = got["root/podman-kube@-srv-blog.yaml"]
+        self.assertEqual((blog["kind"], blog["running"], blog["should_run"]), ("kube", False, True))
+        self.assertEqual((got["root/stack"]["kind"], got["root/stack"]["state"], got["root/stack"]["running"]), ("compose", "finished", True))
+        self.assertEqual((got["root/never"]["state"], got["root/never"]["running"]), ("inactive", False))   # oneshot never started
+        self.assertEqual((got["root/mypod"]["kind"], got["root/mypod"]["running"]), ("pod", True))
+        self.assertEqual(got["root/anon"]["kind"], "unit")
+
+    def test_exec_kind_and_name(self):
+        ex = "{ path=/usr/bin/podman ; argv[]=/usr/bin/podman %s ; }"
+        self.assertEqual(f._exec_name(ex % "start --all --filter restart-policy=always"), "")
+        self.assertEqual(f._exec_name(ex % "container run -d --name=web img"), "web")
+        for args, kind in (("kube play x.yaml", "kube"), ("play kube x.yaml", "kube"), ("pod start p", "pod"), ("compose up", "compose"),
+                           ("run --rm img", "unit"), ("auto-update", ""), ("system service", ""), ("start -a", ""), ("pull img", "")):
+            self.assertEqual(f._exec_kind(ex % args), kind, args)
+        self.assertEqual(f._exec_kind("{ path=/usr/local/bin/docker-compose ; argv[]=/usr/local/bin/docker-compose up ; }"), "compose")
+        self.assertEqual(f._exec_kind("{ path=/usr/bin/sleep ; argv[]=/usr/bin/sleep 1 ; }"), "")
+
+    def test_service_watch_leaves_out_what_is_not_a_container(self):
+        disc_ = [dict(disc("root", 0, "shop", "shop.service"), kind="kube"), disc("root", 0, "web", "web.service")]
+        self.assertEqual([t["key"] for t in f.watch_targets([], disc_)], ["root/web"])
+
     def test_ignore_full_match_name_or_owner(self):
         res = []
         for owner, uid in (("root", 0), ("alice", 1001)):

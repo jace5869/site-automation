@@ -1,0 +1,45 @@
+---
+# A host that cannot be reached - switched off, no network, ssh or WinRM refused, its login refused - is
+# listed as NOT REACHED and left out of the run, and the job is not failed for it
+# (site_unreachable_fails: false). A check playbook still counts it as targeted (start.yml), so the
+# ServiceNow step opens its "no result" ticket. When no host at all is reached, the job fails: a wrong or
+# expired machine credential looks like that. A host lost later in the job still fails it.
+# Include it in pre_tasks, right after os_guard.yml (a host of the other OS is never contacted).
+- name: Reach the host
+  ansible.builtin.raw: echo reached      # no Python, no module: Linux and Windows alike
+  become: false
+  changed_when: false
+  check_mode: false
+  ignore_unreachable: true
+  register: _site_reach
+
+- name: Reached?
+  ansible.builtin.set_fact:
+    site_host_unreached: >-
+      {{ ((_site_reach.msg | default('', true) | string | trim | replace('\n', ' ')) or 'unreachable')
+         if _site_reach.unreachable | default(false) else '' }}
+
+- name: No host could be reached - check the machine credential
+  ansible.builtin.fail:
+    msg: >-
+      No host could be reached ({{ site_host_unreached }}). When every host fails, look first at the
+      template's machine credential (user, password or key, expired?) and at the network from AAP to the hosts.
+  when:
+    - site_host_unreached | length > 0
+    - ansible_play_hosts | map('extract', hostvars, 'site_host_unreached') | select('equalto', '') | list | length == 0
+
+- name: Not reached - the job goes on without it
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: NOT REACHED - {{ site_host_unreached }}. Left out of this run; the job is not
+      failed for it (site_unreachable_fails: true fails it).
+  when: site_host_unreached | length > 0 and not site_unreachable_fails | bool
+
+- name: Not reached - fail it (site_unreachable_fails)
+  ansible.builtin.fail:
+    msg: "{{ inventory_hostname }}: NOT REACHED - {{ site_host_unreached }}"
+  when: site_host_unreached | length > 0 and site_unreachable_fails | bool
+
+- name: Leave it out
+  ansible.builtin.meta: end_host
+  when: site_host_unreached | length > 0

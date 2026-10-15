@@ -123,6 +123,24 @@ scenario "MySQL and MariaDB side by side, each labelled" 'a mariadb:11 running\n
 FAKE_REPL=broken scenario "two engines, one broken: ids carry the container name" 'a mariadb:11 running\nb mysql:8 running\n' '{"check_mariadb_containers":["a","b"]}' \
     "mariadb:a:replica:default,mariadb:b:replica:default"
 
+# ---- performance --------------------------------------------------------------------------------
+PERF="mariadb:full-joins,mariadb:lock-waits,mariadb:long-transactions,mariadb:open-files,mariadb:purge-lag,mariadb:row-locks,mariadb:slow-queries,mariadb:tmp-disk"
+FAKE_PERF=busy scenario "MariaDB with performance problems: each one found" "$RUN" '{"check_mariadb_container":"mariadb"}' \
+    "$(echo "$PERF,mariadb:deadlocks" | tr ',' '\n' | sort | paste -sd,)" "a query is slow when it runs longer than long_query_time (2 s). The slow query log is OFF"
+FAKE_PERF=busy scenario "MySQL: deadlocks and purge lag from INNODB_METRICS" "$MY" '{"check_mariadb_container":"db"}' \
+    "$(echo "$PERF,mariadb:deadlocks" | tr ',' '\n' | sort | paste -sd,)" "2,500,000 old row versions wait to be purged"
+FAKE_PERF=busy scenario "  ... an idle transaction left open is named" "$RUN" '{"check_mariadb_container":"mariadb"}' \
+    "$(echo "$PERF,mariadb:deadlocks" | tr ',' '\n' | sort | paste -sd,)" "1 of them sit idle (Sleep): the application opened a transaction and did not commit it"
+FAKE_PERF=busy scenario "  ... a metadata lock wait is shown with who and how long, never the query" "$RUN" '{"check_mariadb_container":"mariadb"}' \
+    "$(echo "$PERF,mariadb:deadlocks" | tr ',' '\n' | sort | paste -sd,)" "id 51: etl / shop / 400 s / Waiting for table metadata lock"
+FAKE_PERF=busy scenario "  ... the status line has the numbers" "$RUN" '{"check_mariadb_container":"mariadb"}' \
+    "$(echo "$PERF,mariadb:deadlocks" | tr ',' '\n' | sort | paste -sd,)" "performance since start, 6 days: 100 queries/s, 504 slow/h, 60% temporary tables on disk"
+FAKE_PERF=busy scenario "check_mariadb_performance false: none of them" "$RUN" '{"check_mariadb_container":"mariadb","check_mariadb_performance":false}' ""
+FAKE_PERF=busy scenario "limits are settings" "$RUN" '{"check_mariadb_container":"mariadb","check_mariadb_slow_per_hour_warn":1000,"check_mariadb_tmp_disk_pct_warn":70,"check_mariadb_full_join_per_hour_warn":10000,"check_mariadb_row_lock_avg_ms_warn":5000,"check_mariadb_deadlocks_per_hour_warn":100,"check_mariadb_open_files_warn_pct":99,"check_mariadb_history_length_warn":5000000,"check_mariadb_lock_wait_seconds":1000,"check_mariadb_long_trx_seconds":3600}' \
+    "mariadb:long-transactions"
+FAKE_PERF=quiet scenario "a healthy busy server: no performance finding" "$RUN" '{"check_mariadb_container":"mariadb"}' ""
+FAKE_PERF=deny scenario "INNODB_TRX refused: no finding, the rest still read" "$RUN" '{"check_mariadb_container":"mariadb"}' "" "0 lock wait(s) now"
+
 # ---- which hosts the check runs on -----------------------------------------------------------
 # A server installed on the host (/bin/sh stands in for /usr/sbin/mariadbd): the host's own database.
 for g in mysql_hosts database_hosts; do

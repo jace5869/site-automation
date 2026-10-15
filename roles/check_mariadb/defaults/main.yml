@@ -63,3 +63,24 @@ check_mariadb_bufferpool_hit_warn: 95    # % of reads served from memory (only j
 check_mariadb_error_since_days: 1        # [ERROR] lines in its log this recent
 check_mariadb_disk_warn_pct: 85          # the filesystem holding the data directory
 check_mariadb_disk_crit_pct: 95          # % used of the data directory's filesystem -> critical
+
+# ---- PERFORMANCE (all warnings) ----------------------------------------------------------------
+# false = only the health checks above. Counters that count since the server started (slow queries,
+# temporary tables, joins, lock waits, deadlocks ...) are judged as an average since that start, and
+# only once it has run check_mariadb_perf_min_uptime_hours (cold caches right after a start are
+# normal). Old transactions, lock waits, purge lag and open files are judged as they are now.
+check_mariadb_performance: true
+check_mariadb_perf_min_uptime_hours: 2       # judge the averages since the start only after this many hours
+check_mariadb_slow_per_hour_warn: 60         # queries slower than long_query_time, per hour
+check_mariadb_tmp_disk_pct_warn: 25          # % of temporary tables that went to disk (judged after 1000 of them)
+check_mariadb_full_join_per_hour_warn: 100   # joins without a usable index (Select_full_join), per hour
+check_mariadb_table_lock_wait_pct_warn: 1    # % of table locks (MyISAM / Aria) that had to wait (judged after 10000)
+check_mariadb_row_lock_avg_ms_warn: 500      # average InnoDB row lock wait, ms (judged after 100 waits)
+check_mariadb_deadlocks_per_hour_warn: 1     # InnoDB deadlocks per hour (judged after 10 of them)
+check_mariadb_innodb_waits_per_hour_warn: 1  # waits for a free buffer pool page / a full log buffer, per hour (after 10)
+check_mariadb_aborted_connects_per_hour_warn: 60  # failed connection attempts per hour
+check_mariadb_table_open_per_hour_warn: 600  # tables opened per hour while the table cache is full
+check_mariadb_open_files_warn_pct: 85        # files open, % of open_files_limit
+check_mariadb_lock_wait_seconds: 30          # a session waiting this long for a lock, right now
+check_mariadb_long_trx_seconds: 600          # an InnoDB transaction open this long, right now
+check_mariadb_history_length_warn: 1000000   # InnoDB history list length (old row versions not yet purged)

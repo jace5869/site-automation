@@ -82,8 +82,8 @@
             # what should start for them at boot, read here (as root) for users that are not checked:
             # Quadlet files with an [Install] section, and enabled user units
             w=0
-            for f in $(find "$home/.config/containers/systemd" "$usersd/$uid" -type f -name '*.container' 2>/dev/null) \
-                     $(find "$usersd" -maxdepth 1 -type f -name '*.container' 2>/dev/null); do
+            for f in $(find "$home/.config/containers/systemd" "$usersd/$uid" -type f \( -name '*.container' -o -name '*.kube' \) 2>/dev/null) \
+                     $(find "$usersd" -maxdepth 1 -type f \( -name '*.container' -o -name '*.kube' \) 2>/dev/null); do
               grep -q '^[[:space:]]*\[Install\]' "$f" 2>/dev/null && w=$((w + 1))
             done
             w=$((w + $(find "$home/.config/systemd/user" -mindepth 2 -maxdepth 2 -path '*.wants/*' -name '*.service' 2>/dev/null | wc -l)))
@@ -158,24 +158,30 @@
           sysctl() { $T systemctl "$@"; }
           quadlets() {
             for d in {{ podman_discover_quadlet_dirs | map('quote') | join(' ') }}; do
-              [ -d "$d" ] && find "$d" -path "$d/users" -prune -o -type f -name '*.container' -print 2>/dev/null
+              [ -d "$d" ] && find "$d" -path "$d/users" -prune -o -type f \( -name '*.container' -o -name '*.kube' \) -print 2>/dev/null
             done
           }
           unitfiles() {
-            grep -l -s -E '^Environment=.*PODMAN_SYSTEMD_UNIT|^ExecStart=.*podman' {{ _pd_system_unit_dir | default('/etc/systemd/system') | quote }}/*.service
+            for d in {{ podman_discover_unit_dirs | map('quote') | join(' ') }}; do
+              [ -d "$d" ] || continue
+              grep -l -s -E '^Environment=.*PODMAN_SYSTEMD_UNIT|^ExecStart=.*podman' "$d"/*.service
+              # podman-kube@<yaml>.service: the instance is only named where it is enabled (a .wants link)
+              find "$d" -mindepth 2 -maxdepth 2 -path '*.wants/podman-kube@*.service' 2>/dev/null
+            done
           }
           {% else %}
           as_owner() { $T runuser -u {{ _pd_owner.name | quote }} -- env XDG_RUNTIME_DIR=/run/user/{{ _pd_owner.uid | int }} "$@"; }
           sysctl() { as_owner systemctl --user "$@"; }
           usersd={{ _pd_users_quadlet_dir | default('/etc/containers/systemd/users') | quote }}
           quadlets() {
-            as_owner find {{ (_pd_owner.home ~ '/.config/containers/systemd') | quote }} -type f -name '*.container' 2>/dev/null
-            find "$usersd/{{ _pd_owner.uid | int }}" -type f -name '*.container' 2>/dev/null
-            find "$usersd" -maxdepth 1 -type f -name '*.container' 2>/dev/null
+            as_owner find {{ (_pd_owner.home ~ '/.config/containers/systemd') | quote }} -type f \( -name '*.container' -o -name '*.kube' \) 2>/dev/null
+            find "$usersd/{{ _pd_owner.uid | int }}" -type f \( -name '*.container' -o -name '*.kube' \) 2>/dev/null
+            find "$usersd" -maxdepth 1 -type f \( -name '*.container' -o -name '*.kube' \) 2>/dev/null
           }
           unitfiles() {
             as_owner find {{ (_pd_owner.home ~ '/.config/systemd/user') | quote }} -maxdepth 1 -type f -name '*.service' 2>/dev/null |
               while read -r f; do as_owner grep -l -s -E '^Environment=.*PODMAN_SYSTEMD_UNIT|^ExecStart=.*podman' "$f"; done
+            as_owner find {{ (_pd_owner.home ~ '/.config/systemd/user') | quote }} -mindepth 2 -maxdepth 2 -path '*.wants/podman-kube@*.service' 2>/dev/null
           }
           {% endif %}
           sec() { printf '\n@@@ %s\n' "$*"; }
@@ -203,9 +209,9 @@
           done <<< "$lst"
           for f in $(quadlets | sort -u); do
             sec quadlet "$f"
-            as_owner grep -E '^[[:space:]]*(\[[A-Za-z]+\]|(ContainerName|ServiceName|Image|WantedBy|RequiredBy|UpheldBy)[[:space:]]*=)' "$f"
+            as_owner grep -E '^[[:space:]]*(\[[A-Za-z]+\]|(ContainerName|ServiceName|Image|Yaml|WantedBy|RequiredBy|UpheldBy)[[:space:]]*=)' "$f"
             sn=$(as_owner sed -n 's/^[[:space:]]*ServiceName[[:space:]]*=[[:space:]]*//p' "$f" | tail -n 1 | tr -d '[:space:]')
-            units="$units $(basename "$f" .container).service ${sn:+${sn%.service}.service}"
+            b=$(basename "$f"); units="$units ${b%.*}.service ${sn:+${sn%.service}.service}"
           done
           for f in $(unitfiles | sort -u); do
             sec unitfile "$f"
@@ -213,7 +219,7 @@
           done
           units=$(printf '%s\n' $units | sort -u | tr '\n' ' ')
           if [ -n "${units// /}" ]; then
-            out=$(sysctl show -p Id,LoadState,ActiveState,SubState,Result,UnitFileState,NRestarts,ExecStart,WantedBy,RequiredBy,UpheldBy $units 2>&1); rc=$?
+            out=$(sysctl show -p Id,LoadState,ActiveState,SubState,Result,UnitFileState,NRestarts,ExecStart,WantedBy,RequiredBy,UpheldBy,Type,InactiveExitTimestampMonotonic $units 2>&1); rc=$?
             sec show $rc
             printf '%s\n' "$out"
           fi

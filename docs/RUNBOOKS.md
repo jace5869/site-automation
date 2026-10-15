@@ -20,6 +20,19 @@ could not run: ...`, id `<check>:check-error`) and the other checks still run. T
 the host even when `site_fail_on` is `[critical]` (a check that did not run is not a healthy
 result); only `site_fail_on: []` never fails.
 
+**A host that cannot be reached** (switched off, no network, ssh or WinRM refused, its login refused)
+does not fail the job. It is listed as `NOT REACHED - <why>` and left out; the other hosts are
+checked as usual. It still counts as checked-for, so the ServiceNow step opens its "no result" ticket.
+The same goes for the certificate report and renewal, database health, the service watch and
+troubleshoot, Linux and Windows. Two cases still fail the job:
+
+- **no host at all is reached**: that is what a wrong or expired machine credential looks like;
+- `site_unreachable_fails: true`: a host not reached fails the job, as before.
+
+Patching, the ACT and service fixes, the STIG Manager deploy and the Windows connection test always
+fail for a host they cannot reach: a workflow must not go on as if it had been patched or fixed.
+A host lost later in a job (it went down halfway) still fails it.
+
 **All settings** of this job, with their defaults: [site_findings](VARIABLES_REFERENCE.md#site_findings).
 
 ### disk
@@ -253,6 +266,33 @@ container is used. **How to set it up, step by step, and how to verify it: [MARI
 | `3 [ERROR] line(s) in the MariaDB log` | errors in its log in the last day (latest shown) | read them |
 | `the MariaDB data directory is on a filesystem 93% full` | MariaDB stops writing when it fills | disk space |
 
+**Performance** (all warnings; `check_mariadb_performance: false` turns them off). Counters that
+count since the server started are judged as an average since then, and only after it has run
+`check_mariadb_perf_min_uptime_hours` (2): cold caches right after a start are normal. Old
+transactions, lock waits, purge lag and open files are judged as they are now. The job's status
+line prints the numbers either way: `performance since start, 6 days: 100 queries/s, 3 slow/h, 4%
+temporary tables on disk, ...`.
+
+| Finding | Means | Usually |
+|---|---|---|
+| `mariadb:slow-queries`: `504 slow queries per hour ...` | queries slower than `long_query_time`, on average since the start | the slow query log (the finding says whether it is on) or `performance_schema` (the `look:` query lists the costliest statements) shows which; an index or a rewrite |
+| `mariadb:tmp-disk`: `60% of the temporary tables ... went to disk` | sorts and GROUP BYs spill to disk | `tmp_table_size` and `max_heap_table_size` (the smaller one counts); TEXT/BLOB columns always spill |
+| `mariadb:full-joins`: `1,440 joins per hour ... read a whole table` | joins with no usable index | the DBA adds the index; they get slower as the tables grow |
+| `mariadb:table-locks` | MyISAM / Aria tables locked as a whole are busy | convert them to InnoDB (the `look:` query lists them) |
+| `mariadb:row-locks`: `queries waited on average 2,000 ms for a row ...` | transactions wait for each other's row locks | long transactions, or many writers on the same rows |
+| `mariadb:deadlocks` | InnoDB rolled back one transaction of each deadlock | the application's order of updates; `SHOW ENGINE INNODB STATUS` shows the latest |
+| `mariadb:lock-waits`: `waiting for a lock for 30 s or longer right now ...` | sessions blocked NOW (metadata, table or row locks; who / db / seconds / state, never the query) | the session holding the lock: usually an open transaction or an `ALTER TABLE`. The owner decides before any `KILL` |
+| `mariadb:long-transactions`: `2 transaction(s) open longer than 600 s ...` | transactions left open hold their locks and stop purge; `idle (Sleep)` = the application never committed | the application owner; a connection pool that does not commit |
+| `mariadb:purge-lag`: `2,500,000 old row versions wait to be purged` | InnoDB history list length: reads slow down, undo grows | the long transaction above |
+| `mariadb:open-files` | close to `open_files_limit` | raise `open_files_limit` (and the unit's `LimitNOFILE`) |
+| `mariadb:table-cache` | the table cache is full and tables are reopened all the time | `table_open_cache` |
+| `mariadb:bufferpool-wait`, `mariadb:log-waits` | InnoDB waited for a free buffer pool page / a full log buffer | `innodb_buffer_pool_size` / `innodb_log_buffer_size` |
+| `mariadb:aborted-connects` | many failed connection attempts per hour | wrong passwords, a health probe that does not log in, or a scan |
+
+The performance query reads `information_schema.INNODB_TRX` (needs `PROCESS`, which the
+monitoring account already has) and `INNODB_METRICS`; without the privilege those findings are
+simply not made, the rest still are.
+
 **Logging in** (the full steps are in [MARIADB.md](MARIADB.md#4-the-login-the-mariadb-monitor-credential)). Without a credential, the check logs in as root through the local socket. That
 is MariaDB's default for a host install on RHEL (no password needed with sudo); MySQL's root
 usually has a password. **A database in a container usually gives root a password** (the official images do), and the check then reports
@@ -299,6 +339,17 @@ purpose: no finding. A Quadlet or `--new` unit removes its container while the u
 so the check also reads the Quadlet files and unit files: a container that should run but does
 not exist at all is found too (state `missing`).
 
+**Pods and compose projects too.** Some units start several containers whose names the unit does
+not say: a Quadlet `.kube` file or a `podman-kube@` unit (`podman kube play` of Kubernetes YAML), a
+unit that runs `podman pod start`, `podman-compose` / `podman compose` / `docker-compose`, or
+`podman run` without `--name`. Each such unit is a row of its own (the name of the unit, kind
+`pod`, `compose project` ...), and it is down when its unit is not active. A `Type=oneshot` unit
+that finished successfully since boot (`podman-compose up -d`) counts as up: its containers run on
+without it. Root's units are read from `podman_discover_unit_dirs` (`/etc/systemd/system`,
+`/usr/local/lib/systemd/system`), a user's from `~/.config/systemd/user`. Podman's own tools
+(`podman-auto-update`, `podman-restart`, the API service) are left out. The containers of a
+running pod are listed as containers when they carry the unit's label (Quadlet sets it).
+
 The output has a table of what was found:
 
 ```text
@@ -331,6 +382,7 @@ Every finding names the owner, and its `look:` command runs as that owner (paste
 | `podman_discover_enabled` | `true` | `false` = do not look for containers (the check says `skipped`) |
 | `podman_discover_rootless` | `true` | also look at users' containers |
 | `podman_discover_users` | `[]` | more users to look at, e.g. `[appsvc]` when the rules above miss one |
+| `podman_discover_unit_dirs` | `[/etc/systemd/system, /usr/local/lib/systemd/system]` | where root's own units that run podman are looked for (a user's: `~/.config/systemd/user`) |
 | `podman_discover_ignore` | `[]` | containers to leave out: regular expressions that must match the **whole** name or `OWNER/NAME`, e.g. `['test-.*', 'alice/.*', 'root/scratch']` |
 | `check_containers_required` | `[]` | containers that must exist and run: a name (any owner) or `OWNER/NAME`, e.g. `[stigman-api, alice/web]` |
 | `check_containers_recent_hours` | `24` | how recent a crash must be to be reported |
@@ -342,6 +394,37 @@ that host; compare the table with `sudo podman ps -a` and, for a user,
 uses the same way of finding containers ([SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md)).
 
 **All settings** of this check, with their defaults: [check_containers](VARIABLES_REFERENCE.md#check_containers), [podman_discover](VARIABLES_REFERENCE.md#podman_discover).
+
+### containers, database, service watch: which one does what
+
+Three jobs look at podman containers. They find the containers the same way
+(`roles/podman_discover`), but each answers a different question:
+
+| | **containers** (Health check) | **mariadb** (Health check, or *Database health* alone) | **Service watch** |
+|---|---|---|---|
+| Asks | is every container alive and stable? | is the database *inside* working, and fast? | something is down: why, and what fixes it |
+| Looks at | every container, pod and compose project (`podman ps -a`, Quadlet files, systemd units): down, unhealthy, crashed, restart loops, OOM kills, linger | connections, long queries, replication, Galera / Group Replication, its log, its disk, and performance (slow queries, lock waits, open transactions ...) | the containers that should run: down or unhealthy |
+| Then | a finding (a ticket) | a finding (a ticket) | ACT's root cause and a recommended fix, which waits for approval (`watch_mode: approval`, the default) |
+| Run it | daily, every host | daily with the Health check; hourly alone for the database team | from its AAP workflow, when you want a diagnosis and a fix to approve (on demand, or on a schedule for the hosts that matter) |
+
+**One outage, one finding.** When a database container is down and both checks run in the same
+Health check, the outage is reported once: as `containers:down` (or `:unhealthy`), whose summary
+then says *it is a MariaDB/MySQL database container, so the database is down too (mariadb:down is
+not reported separately)*. The containers check has the better finding for that: how the container
+is run and how to start it. The database check still reports `mariadb:down` when the containers
+check does not (it is not running in the same job, or it does not report that container - one
+that has no unit and no restart policy, so nothing says it should run), and the *Database health*
+template always reports it.
+
+The same goes for the **services** check: root's systemd unit that runs a container (or a pod)
+that is down is reported by the containers check, and the services check's `unit-failed:UNIT` (or
+`unit-down` / `unit-flapping`) for that unit is left out and named in that finding (*the services
+check sees its systemd unit web.service fail too (unit-failed:web.service is not reported
+separately)*). A failed unit that runs no container stays the services check's.
+
+Service watch and the Health check can both see the same container down: the watch acts on it
+(within minutes), the Health check records it (once a day). On hosts where Service watch runs, a
+daily `containers:down` for a watched container usually means the watch could not bring it back.
 
 ## Troubleshoot (`playbooks/troubleshoot.yml`)
 
@@ -398,7 +481,118 @@ The weekly health check (`certs` in `health_checks`) does not search by itself, 
 tickets for certificates nobody listed; set `check_certs_discover_ports` / `_keystores: true` on it
 when you want that.
 
-**All settings** of this job, with their defaults: [check_certs](VARIABLES_REFERENCE.md#check_certs).
+**Placeholders:** postfix makes its own certificate when it is installed,
+`/etc/pki/tls/certs/postfix.pem` (subject `O=SomeOrganization, OU=SomeOrganizationalUnit, C=--`),
+self-signed for one year and never renewed. On every host with postfix it expires a year after the
+install. A found one is listed under **Found but not checked** (one row for all the hosts) and is never
+a finding, a ticket or a CSR, in the report and in the health check (`check_certs_placeholder_subject`).
+A real certificate put in its place (a host that relays mail) has a real subject, so it is checked and
+renewed. A ticket already open for a placeholder gets the usual "passes again" note on the next run
+(resolved with `servicenow_resolve_cleared`).
+
+**Left out:** hosts whose certificates something else renews, such as Satellite and its Capsules
+(`satellite-installer`, never by hand). They are listed under **Found but not checked** and get no ticket.
+Name them in either setting, or both; each takes a list or one string with commas:
+
+| Setting | Leaves out | Example |
+|---|---|---|
+| `cert_skip_hosts` | hosts by name, as in the AAP inventory: any case, `*` and `?` wildcards, a short name matches the full one | `[sat01, '*capsule*']` or `sat01, *capsule*` |
+| `cert_skip_groups` | every host in these AAP inventory groups (default `[sat]`) | `[sat, appliances]` |
+
+Set them in the template's Variables, or in `all.yml` so the report and the renewal both get them.
+The health check still checks these hosts (with `[sat]`: the Satellite web UI's certificate,
+`playbooks/group_vars/sat.yml`).
+
+## Certificate renewal: the CSRs (`playbooks/cert_renew_csr.yml`)
+
+For every certificate **file** the certificate report flags (it expires in 30 days or less,
+`check_certs_warn_days`, or has expired), the job makes a new private key and a certificate signing
+request (CSR) on the host. It attaches the CSR to the certificate's ServiceNow incident.
+The three use the same window: the report flags, the CSR is made and the incident is opened at 30 days.
+Change it on the workflow (`check_certs_warn_days`) and all three follow. The PKI person submits the CSR and attaches
+the issued certificate to the same ticket. Installing the new certificate is still done by a person:
+this job changes nothing a service uses.
+
+**Per certificate:**
+
+1. It reads the certificate file: the subject and the names (subjectAltName: DNS, IP, email, URI).
+2. It makes a new key on the host and a CSR with exactly the same subject and names, signed with
+   `cert_renew_digest` (sha256).
+   - RSA keys are at least `cert_renew_key_bits` (2048); a bigger old key keeps its size.
+   - An EC certificate gets a new key on the same curve.
+   - It uses the `openssl` command, so it works on RHEL 8 (OpenSSL 1.1.1) and RHEL 9 (3.x), in FIPS mode.
+3. It checks the CSR before keeping it: the CSR verifies, its key is the new key, and its subject and
+   names are exactly the old certificate's. If not, it keeps nothing and says "make this CSR by hand".
+4. It keeps the files in `cert_renew_dir` (`/etc/pki/tls/renew`, made 0700):
+   - `<name>-<8 characters>.key` (0600);
+   - the `.csr`;
+   - a `.json` with where it came from, the old serial and expiry, and the AAP job.
+
+   The key never leaves the host and never appears in the job output.
+5. It finds the certificate's open incident, or opens one. The incident is the one *Certificate watch*
+   opened, found by the same correlation ID (workflow 7). It attaches the CSR (`<common name>-<8 characters>.csr`)
+   and adds a work note: the certificate, where it is, who issued it, the names, where the new key is,
+   and the next steps. Every CSR gets a ticket, whatever `servicenow_min_severity` says: critical
+   (14 days or less, `check_certs_crit_days`, or expired) or warning (15 to 30 days).
+
+**Run again:**
+- The pending key and CSR are reused, so the CSR the PKI already has stays valid.
+- A CSR already on its ticket is not attached again. A daily run adds nothing until the certificate changes.
+- Once the new certificate is installed, the old one is no longer flagged.
+- The folder keeps its files until you remove them.
+
+**One certificate in several places** (its file, a chain file, served on a port) gets one CSR, and the
+work note lists every place. The watch opens a ticket for each place; the CSR goes on one of them, and
+each of the others gets a work note saying which ticket has the CSR.
+
+**A certificate served on a port** is renewed through its file. The job finds the file when it is in
+`check_certs_files` or in one of the folders the report searches (`check_certs_discover_dirs`, two
+levels deep: `/etc/pki/tls/certs`, `/etc/pki/nginx`, `/etc/nginx`, `/etc/httpd/conf.d`, `/etc/stigman`,
+and `/etc/stigman/nginx/tls` where *STIG Manager - deploy* puts nginx's certificate). A file anywhere
+else: add its path to `check_certs_files`. To see what the job would do with a certificate that is not
+expiring yet, run it with **Check**, a **Limit** of that host and `check_certs_warn_days: 400`: it says
+"would make the CSR" or why not, and changes nothing.
+
+**Step 3 of the next steps** says to install the issued certificate in place of the file. When
+something else deploys that file, a copy by hand is overwritten, so `cert_renew_install_notes` writes
+another step 3 for paths that start with a given folder. The default covers STIG Manager
+(`/etc/stigman/`): put the issued certificate and the new key in the AAP credential *TLS certificate*,
+then run *STIG Manager - deploy*. Add your own: `{'/opt/app/certs/': 'App: ...'}`.
+
+**Never renewed here** (each listed in the job output with the reason):
+
+| What | Why |
+|---|---|
+| a host in `cert_skip_hosts` or `cert_skip_groups` (`[sat]`) | Satellite renews its own certificates with `satellite-installer`; left out of the certificate report too |
+| a path matching `cert_renew_exclude` | something else renews it: Satellite and Capsule (katello, foreman, candlepin, pulp, puppet), and subscription-manager on every registered host (`/etc/rhsm`, `/etc/pki/consumer`, `entitlement`, `product`). Check the report's *Where* column and add your own paths |
+| issued by a CA matching `cert_renew_exclude_issuer` (`O=Katello`, `Puppet CA`) | Satellite's or Puppet's own CA |
+| a CA certificate in a chain file | a CA has no CSR from you: put the CA's new certificate in the chain file |
+| a self-signed certificate (unless `cert_renew_self_signed: true`) | it does not come from a PKI. With the setting on, it gets a CSR, so the PKI issues a real certificate in its place (a STIG wants PKI certificates); `cert_renew_issuer` does not apply to it |
+| a CA's own certificate (a root: key usage *Certificate Sign*) | a CA has no CSR from you, even with `cert_renew_self_signed` |
+| a self-signed certificate only for `localhost` | a PKI issues no certificate for it, even with `cert_renew_self_signed` |
+| a package's placeholder: postfix's `postfix.pem` (subject `O=SomeOrganization`, `check_certs_placeholder_subject`) | not a real certificate: a PKI issues nothing for that subject, even with `cert_renew_self_signed`. A found one is not even checked |
+| served on a port, with no file found | add its file to `check_certs_files`, and it is renewed |
+| in a Java keystore or a PKCS12 file | make its CSR with the keystore's own tool (`keytool -certreq`) |
+| not matching `cert_renew_only` / `cert_renew_issuer` | your filters, e.g. DoD PKI only: `cert_renew_issuer: 'O=U\.S\. Government'` |
+
+A certificate whose CSR cannot be made fails the job with the reason, for example a subject openssl
+cannot write back, or a kind of name it cannot copy. The other certificates are still done.
+
+**Earlier than 30 days:** the CSR comes when the certificate report flags the certificate. For a longer
+PKI round trip, set `check_certs_warn_days: 60`, as a survey on the workflow, so the report, the
+tickets and the CSRs use the same number.
+
+**Attachment refused:** some instances only allow some file extensions. The CSR then goes in the work
+note instead, and the job fails and says so. Allow the extension, or set `cert_renew_attach_ext: txt`.
+The ServiceNow account needs to add attachments to incidents (the `itil` role does).
+
+**Try it first:**
+- Run with **Check** (`--check`): it lists what it would make and attach, and writes nothing on the
+  hosts or in ServiceNow.
+- Without the ServiceNow API credential, the job prints each CSR so you can copy it by hand.
+
+**All settings** of this job, with their defaults: [check_certs](VARIABLES_REFERENCE.md#check_certs)
+(`cert_skip_hosts`, `cert_skip_groups`, `cert_renew_*`).
 
 ## POA&M status (`playbooks/poam_status.yml`)
 
@@ -434,9 +628,13 @@ A workflow step after a check. For each finding at or above `servicenow_min_seve
   and configuration item from the settings.
 - **an open ticket exists** → it adds a work note `Still failing at ...`
   (`servicenow_note_repeats`).
-- **a host that was targeted but never reported** → a ticket too (unreachable, login failed).
+- **a host that was targeted but never reported** → a ticket too (not reached, login failed). The
+  check job stays green for a host it could not reach (`site_unreachable_fails`); this ticket is
+  where it shows.
 - **a problem that cleared** (its check ran again and passed) → a work note on its ticket, or it
-  resolves it with `servicenow_resolve_cleared: true`.
+  resolves it with `servicenow_resolve_cleared: true`. A finding still there, but below
+  `servicenow_min_severity`, has not cleared: its ticket stays open (a certificate renewal ticket at
+  warning, for one).
 
 Tickets are matched by a correlation ID (`site-health:<host>:<check>:<finding>`, hashed), never
 by text, so the same problem always updates the same ticket. Without the ServiceNow API credential

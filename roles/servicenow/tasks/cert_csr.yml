@@ -1,0 +1,310 @@
+---
+# CERTIFICATE RENEWAL, the ServiceNow step (playbooks/cert_renew_csr.yml), on the controller: each CSR
+# the hosts made (hostvars[host].cert_renew_result, roles/check_certs/tasks/csr.yml) is attached to the
+# certificate's open incident - the one the Certificate watch workflow opened (same correlation ID as
+# the tickets step), or a new one whatever servicenow_min_severity says - with a work note: the
+# certificate, the names, where the new key is, what to do next. Once attached, a run again changes
+# nothing on the ticket. Never the key: only the CSR.
+# Without the ServiceNow API credential, the job prints the CSRs to copy by hand.
+
+- name: Certificate renewal | connection (from the ServiceNow API credential)
+  ansible.builtin.set_fact:
+    _sn_url: >-
+      {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+    _sn_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    _sn_now: "{{ now(utc=true).strftime('%Y-%m-%d %H:%M UTC') }}"
+
+- name: Certificate renewal | the CSRs the hosts made, and the tickets they belong to
+  ansible.builtin.set_fact:
+    _csr_items: >-
+      {%- set out = [] -%}
+      {%- for h in groups['all'] | sort if hostvars[h].cert_renew_result is defined -%}
+      {%-   set r = hostvars[h].cert_renew_result -%}
+      {%-   for c in r.certs if c.status in ['made', 'exists', 'would make'] -%}
+      {%-     set _ = out.append(c | combine({'host': r.host, 'inventory_host': h, 'content_type': r.content_type,
+                                               'cids': c.ids | map('site_correlation_id', r.host, 'certs', servicenow_correlation_prefix) | list})) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    _csr_not_made: >-
+      {%- set out = [] -%}
+      {%- for h in groups['all'] | sort if hostvars[h].cert_renew_result is defined -%}
+      {%-   for c in hostvars[h].cert_renew_result.certs if c.status not in ['made', 'exists', 'would make'] -%}
+      {%-     set _ = out.append(c.status | upper ~ ' | ' ~ hostvars[h].cert_renew_result.host ~ ' | ' ~ c.wheres | join(' ; ') ~ ' | ' ~ c.reason) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {%- for h in groups['all'] | sort if hostvars[h].site_host_unreached | default('') -%}
+      {%-   set _ = out.append('NOT REACHED | ' ~ h ~ ' | every certificate | ' ~ hostvars[h].site_host_unreached ~ ' - its CSRs come on a later run') -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Certificate renewal | not renewed here (and why)
+  ansible.builtin.debug:
+    msg: "{{ _csr_not_made }}"
+  when: _csr_not_made | length > 0
+
+- name: Certificate renewal | nothing to attach
+  ansible.builtin.debug:
+    msg: No certificate file expires within the warning days, or all of them were left out (see above).
+  when: _csr_items | length == 0
+
+- name: Certificate renewal | NOT CONNECTED - the CSRs to hand to the PKI (attach the ServiceNow API credential to put them on the tickets)
+  ansible.builtin.debug:
+    msg: "{{ ([item.host ~ ': ' ~ item.subject ~ ' (expires ' ~ item.expires ~ ') - ' ~ item.file_name ~ ' - names: ' ~ (item.sans | join(', ') or 'none')]
+              + (item.csr | default('(check mode: not made)')).splitlines()) }}"
+  loop: "{{ _csr_items }}"
+  loop_control:
+    label: "{{ item.host }}: {{ item.file_name }}"
+  when: not _sn_url
+
+- name: Certificate renewal | talk to the instance
+  when: _sn_url | length > 0 and _csr_items | length > 0
+  vars:
+    _sn_nl: "\n"
+  block:
+    - name: Certificate renewal | the certificate's open ticket (opened by the Certificate watch, or by an earlier run)
+      ansible.builtin.uri:
+        url: >-
+          {{ _sn_url }}/api/now/table/{{ servicenow_table }}?sysparm_limit=20&sysparm_fields=sys_id,number,correlation_id&sysparm_query={{
+          ('correlation_idIN' ~ item.cids | join(',') ~ '^active=true') | urlencode }}
+        method: GET
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: "{{ _csr_items }}"
+      loop_control:
+        label: "{{ item.host }}: {{ item.file_name }}"
+      register: _csr_found
+      check_mode: false         # only reads
+
+    - name: Certificate renewal | open a ticket for a certificate that has none
+      ansible.builtin.uri:
+        url: "{{ _sn_url }}/api/now/table/{{ servicenow_table }}?sysparm_input_display_value=true&sysparm_fields=sys_id,number"
+        method: POST
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        body_format: json
+        body: >-
+          {%- set i = r.item -%}
+          {%- set b = {
+                'short_description': ('[' ~ servicenow_correlation_prefix ~ '] ' ~ i.host ~ ': ' ~ _csr_summary) | truncate(158),
+                'description': 'Found by an automated check (Ansible Automation Platform' ~ ((', job ' ~ awx_job_id) if awx_job_id is defined else '')
+                               ~ ', ' ~ _sn_now ~ ').' ~ _sn_nl ~ _sn_nl ~ 'Host: ' ~ i.host ~ _sn_nl ~ 'Check: certs' ~ _sn_nl
+                               ~ 'Severity: ' ~ i.severity ~ _sn_nl ~ 'Finding: ' ~ _csr_summary ~ _sn_nl ~ _sn_nl
+                               ~ 'A certificate signing request (CSR) for its renewal is attached: ' ~ i.file_name ~ ' (see the work notes).',
+                'urgency': servicenow_urgency[i.severity],
+                'impact': servicenow_impact[i.severity],
+                'correlation_id': i.cids[0],
+                'correlation_display': servicenow_correlation_prefix} -%}
+          {%- if servicenow_assignment_group -%}{%- set _ = b.update({'assignment_group': servicenow_assignment_group}) -%}{%- endif -%}
+          {%- if servicenow_caller -%}{%- set _ = b.update({'caller_id': servicenow_caller}) -%}{%- endif -%}
+          {%- if servicenow_category -%}{%- set _ = b.update({'category': servicenow_category}) -%}{%- endif -%}
+          {%- if servicenow_set_ci | bool and i.inventory_host in groups['all'] -%}{%- set _ = b.update({'cmdb_ci': i.inventory_host}) -%}{%- endif -%}
+          {{ b | combine(servicenow_fields) | to_json }}
+        status_code: [200, 201]
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      vars:
+        _csr_summary: >-
+          {{ 'certificate ' ~ r.item.subject ~ ' in ' ~ r.item.wheres[0] ~ ' '
+             ~ (('EXPIRED ' ~ (r.item.days | int | abs) ~ ' days ago') if r.item.days | int < 0 else ('expires in ' ~ r.item.days ~ ' days'))
+             ~ ' (' ~ r.item.expires ~ ')' }}
+      loop: "{{ _csr_found.results | selectattr('json.result', 'defined') | rejectattr('json.result') | list }}"
+      loop_control:
+        loop_var: r
+        label: "{{ r.item.host }}: {{ r.item.file_name }}"
+      register: _csr_new
+
+    - name: Certificate renewal | each CSR with its ticket
+      ansible.builtin.set_fact:
+        _csr_tickets: >-
+          {%- set out = [] -%}
+          {%- for r in _csr_found.results if r.json.result is defined -%}
+          {%-   set t = {} -%}
+          {%-   for cid in r.item.cids if not t -%}
+          {%-     for x in r.json.result if x.correlation_id == cid and not t -%}{%- set _ = t.update(x | combine({'new': false})) -%}{%- endfor -%}
+          {%-   endfor -%}
+          {%-   for n in _csr_new.results | default([]) if not t and n.json.result is defined and n.r.item.file_name == r.item.file_name
+                                                          and n.r.item.host == r.item.host -%}
+          {%-     set _ = t.update(n.json.result | combine({'new': true})) -%}
+          {%-   endfor -%}
+          {%-   if t -%}
+          {%-     set others = r.json.result | rejectattr('sys_id', 'equalto', t.sys_id) | list -%}
+          {%-     set _ = out.append(r.item | combine({'ticket': t | combine({'others': others})})) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Certificate renewal | is the CSR already on its ticket?
+      ansible.builtin.uri:
+        url: >-
+          {{ _sn_url }}/api/now/attachment?sysparm_limit=1&sysparm_fields=sys_id,file_name&sysparm_query={{
+          ('table_sys_id=' ~ item.ticket.sys_id ~ '^file_name=' ~ item.file_name) | urlencode }}
+        method: GET
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: "{{ _csr_tickets | rejectattr('ticket.new') | list }}"
+      loop_control:
+        label: "{{ item.ticket.number }}: {{ item.file_name }}"
+      register: _csr_attached
+      check_mode: false         # only reads
+
+    - name: Certificate renewal | the CSRs to attach (not on their ticket yet)
+      ansible.builtin.set_fact:
+        _csr_todo: >-
+          {%- set there = [] -%}
+          {%- for a in _csr_attached.results | default([]) if (a.json.result | default([])) | length > 0 -%}
+          {%-   set _ = there.append(a.item.ticket.sys_id ~ '/' ~ a.item.file_name) -%}
+          {%- endfor -%}
+          {%- set out = [] -%}
+          {%- for t in _csr_tickets if t.csr is defined and (t.ticket.sys_id ~ '/' ~ t.file_name) not in there -%}
+          {%-   set _ = out.append(t) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Certificate renewal | attach the CSR to its ticket
+      ansible.builtin.uri:
+        url: >-
+          {{ _sn_url }}/api/now/attachment/file?table_name={{ servicenow_table | urlencode }}&table_sys_id={{
+          item.ticket.sys_id | urlencode }}&file_name={{ item.file_name | urlencode }}
+        method: POST
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers:
+          Accept: application/json
+          Content-Type: "{{ item.content_type }}"
+        body: "{{ item.csr }}"
+        body_format: raw
+        status_code: [200, 201]
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: "{{ _csr_todo }}"
+      loop_control:
+        label: "{{ item.ticket.number }}: {{ item.file_name }}"
+      register: _csr_upload
+      failed_when: false        # refused (an extension the instance does not allow ...): the CSR goes in the work note instead
+
+    - name: Certificate renewal | a work note - the certificate, the new key, what to do next (the CSR itself when the attachment was refused)
+      ansible.builtin.uri:
+        url: "{{ _sn_url }}/api/now/table/{{ servicenow_table }}/{{ u.item.ticket.sys_id }}"
+        method: PATCH
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        body_format: json
+        body:
+          work_notes: >-
+            {%- set i = u.item -%}
+            {%- set ok = u.status | default(0) in [200, 201] -%}
+            {%- set nl = _sn_nl -%}
+            {%- set hints = [] -%}
+            {%- for start, note in (cert_renew_install_notes | default({}, true)).items() -%}
+            {%-   if i.wheres | select('match', start | regex_escape) | list and note not in hints -%}{%- set _ = hints.append(note | trim) -%}{%- endif -%}
+            {%- endfor -%}
+            {{ 'Certificate renewal (AAP' ~ ((' job ' ~ awx_job_id) if awx_job_id is defined else '') ~ ', ' ~ _sn_now ~ '): '
+               ~ ('a certificate signing request (CSR) is attached: ' ~ i.file_name if ok else
+                  'the CSR could not be attached (' ~ _csr_why ~ ') - it is at the end of this note') ~ nl ~ nl
+               ~ 'Host: ' ~ i.host ~ nl
+               ~ 'Certificate: ' ~ i.subject ~ nl
+               ~ 'Expires: ' ~ i.expires ~ ((' (EXPIRED ' ~ (i.days | int | abs) ~ ' days ago)') if i.days | int < 0 else (' (in ' ~ i.days ~ ' days)')) ~ nl
+               ~ 'Found in: ' ~ i.wheres | join(' ; ') ~ nl
+               ~ 'Issued by: ' ~ i.issuer ~ nl
+               ~ 'Names (subjectAltName) in the CSR, the same as now: ' ~ (i.sans | join(', ') or 'none') ~ nl
+               ~ 'New key: ' ~ i.key ~ ', made on the host - this job never copies or sends it: ' ~ i.key_path ~ ' (the CSR: ' ~ i.csr_path ~ ')' ~ nl
+               ~ (('It was self-signed: the PKI issues a real certificate in its place (it may set the subject by its own rules).' ~ nl)
+                  if i.self_signed | default(false) else '') ~ nl
+               ~ 'Next:' ~ nl
+               ~ '1. Submit the CSR to the PKI for a server certificate (the same subject and names).' ~ nl
+               ~ '2. Attach the issued certificate (Base64 .cer / .crt) and its chain to this ticket.' ~ nl
+               ~ '3. ' ~ (hints | join(' ') if hints else 'Install it with the new key in place of the file(s) above, and restart or reload the service that uses it.')
+               ~ ((nl ~ nl ~ i.csr) if not ok else '') }}
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      vars:
+        _csr_why: >-
+          {{ 'HTTP ' ~ u.status | default('?') ~ ((': ' ~ u.json.error.message | default('') ~ (' - ' ~ u.json.error.detail if u.json.error.detail | default('') else ''))
+             if u.json.error is defined else (': ' ~ u.msg | default('') | truncate(200))) }}
+      loop: "{{ _csr_upload.results | default([]) }}"
+      loop_control:
+        loop_var: u
+        label: "{{ u.item.ticket.number }}: {{ u.item.file_name }}"
+
+    # one certificate found in two places (a file and the port that serves it) has a ticket for each:
+    # the others say where its CSR is - once, when the CSR is attached
+    - name: Certificate renewal | the certificate's other open tickets - where its CSR is
+      ansible.builtin.uri:
+        url: "{{ _sn_url }}/api/now/table/{{ servicenow_table }}/{{ o.1.sys_id }}"
+        method: PATCH
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        body_format: json
+        body:
+          work_notes: >-
+            Certificate renewal (AAP{{ (' job ' ~ awx_job_id) if awx_job_id is defined else '' }}, {{ _sn_now }}): the same certificate
+            ({{ o.0.item.subject }}, found in {{ o.0.item.wheres | join(' ; ') }}) is renewed on {{ o.0.item.ticket.number }}:
+            its CSR and the next steps are there.
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: "{{ _csr_upload.results | default([]) | subelements('item.ticket.others', skip_missing=true) }}"
+      loop_control:
+        loop_var: o
+        label: "{{ o.1.number }} -> {{ o.0.item.ticket.number }}"
+
+    - name: Certificate renewal | DRY RUN - what it would do (nothing was sent to ServiceNow)
+      ansible.builtin.debug:
+        msg: >-
+          {%- set out = ['DRY RUN (Check mode): no key or CSR was made, and nothing was created or changed in ServiceNow.'] -%}
+          {%- for r in _csr_found.results -%}
+          {%-   set t = r.json.result | default([]) -%}
+          {%-   set _ = out.append(r.item.host ~ ' | ' ~ r.item.file_name ~ ' | '
+                                   ~ ('would make the CSR, and ' if r.item.status == 'would make' else 'CSR already made, ')
+                                   ~ (('would attach it to ' ~ t[0].number) if t else 'would open a ticket and attach it')) -%}
+          {%- endfor -%}
+          {{ out }}
+      when: ansible_check_mode
+
+    - name: Certificate renewal | summary
+      ansible.builtin.debug:
+        msg: >-
+          {%- set out = [] -%}
+          {%- for t in _csr_tickets -%}
+          {%-   set u = (_csr_upload.results | default([]) | selectattr('item.file_name', 'equalto', t.file_name)
+                         | selectattr('item.ticket.sys_id', 'equalto', t.ticket.sys_id) | list) -%}
+          {%-   set what = ('attached' if u[0].status | default(0) in [200, 201] else 'NOT attached (refused: the CSR is in the work note)') if u else 'already attached' -%}
+          {%-   set _ = out.append(t.ticket.number ~ (' (new)' if t.ticket.new else '') ~ ' | ' ~ t.host ~ ' | ' ~ t.file_name ~ ' | ' ~ what) -%}
+          {%- endfor -%}
+          {{ out or ['nothing attached'] }}
+      when: not ansible_check_mode
+
+    - name: Certificate renewal | fail when a CSR could not be attached (its work note has it)
+      ansible.builtin.fail:
+        msg: >-
+          {{ _csr_upload.results | rejectattr('status', 'in', [200, 201]) | map(attribute='item.file_name') | join(', ') }}: the attachment was refused
+          (HTTP {{ (_csr_upload.results | rejectattr('status', 'in', [200, 201]) | first).status | default('?') }}) - each CSR is in its ticket's work note.
+          If the instance does not allow that file extension, allow it, or set cert_renew_attach_ext: txt.
+      when: not ansible_check_mode and (_csr_upload.results | default([]) | rejectattr('status', 'in', [200, 201]) | list | length > 0)
+
+- name: Certificate renewal | fail when a CSR could not be made (the reason is above)
+  ansible.builtin.fail:
+    msg: "{{ _csr_not_made | select('match', '^FAILED') | list | join(' || ') }}"
+  when: _csr_not_made | select('match', '^FAILED') | list | length > 0

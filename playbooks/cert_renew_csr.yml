@@ -1,0 +1,64 @@
+---
+# CERTIFICATE RENEWAL - THE CSRs. For every certificate FILE the certificate report flags (expires within
+# check_certs_warn_days - 30 days or less - or expired) on every Linux host: a new private key and a
+# certificate signing request (CSR) with the same subject and names, made on the host (cert_renew_dir);
+# the CSR is attached to the certificate's ServiceNow incident - the one the Certificate watch opened, or
+# a new one, whatever servicenow_min_severity says - with a work note saying what to do next. The key
+# never leaves the host. A run again reuses the pending CSR and changes nothing on the ticket. Nothing in
+# use is changed: installing the issued certificate is a later step, by a person.
+#
+# Not renewed (listed, with why): hosts in cert_skip_hosts or cert_skip_groups (Satellite), certificates
+# served on a port or kept in a keystore with no file found, CA certificates (a chain, a root),
+# self-signed ones (unless cert_renew_self_signed), paths and issuers something else renews
+# (cert_renew_exclude / cert_renew_exclude_issuer: Satellite, subscription-manager, Puppet). A host that
+# cannot be reached is listed as NOT REACHED and does not fail the job (site_unreachable_fails).
+#
+# Credentials: Machine (sudo) and ServiceNow API. Without the ServiceNow credential, the job prints the
+# CSRs to hand to the PKI. Run it with Check first: it makes nothing and sends nothing.
+#
+#   [Certificate report] --Run always--> [ServiceNow tickets] --Run always--> [Certificate renewal - CSRs]
+#
+#   ansible-playbook playbooks/cert_renew_csr.yml --check
+#   ansible-playbook playbooks/cert_renew_csr.yml -e check_certs_warn_days=60
+- name: Certificate renewal - a new key and CSR on each host
+  hosts: "{{ target | default('all') }}"
+  become: true
+  gather_facts: false
+  vars:
+    # the same certificates the certificate report finds
+    check_certs_discover_ports: "{{ cert_report_discover | default(true) }}"
+    check_certs_discover_keystores: "{{ cert_report_discover | default(true) }}"
+  pre_tasks:
+    - name: Linux hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: Not the hosts in cert_skip_hosts or cert_skip_groups (Satellite renews its own certificates)
+      ansible.builtin.include_role:
+        name: check_certs
+        tasks_from: skip.yml
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  tasks:
+    - name: Find and read the certificates
+      ansible.builtin.include_role:
+        name: check_certs
+
+    - name: A new key and CSR for each certificate file that expires soon
+      ansible.builtin.include_role:
+        name: check_certs
+        tasks_from: csr.yml
+
+- name: Certificate renewal - the CSRs on the ServiceNow tickets
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Attach each CSR to its certificate's ticket
+      ansible.builtin.include_role:
+        name: servicenow
+        tasks_from: cert_csr.yml

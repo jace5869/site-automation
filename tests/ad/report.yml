@@ -1,0 +1,40 @@
+---
+# tests/ad/run_ad_test.sh: the AD report's Ansible side with the collectors' answers taken from
+# tests/ad/fixtures instead of real DCs - which DC reads each domain (pick.yml), the report
+# (roles/ad_report/tasks/main.yml), its email and artifacts, ad_report_fail.
+# dc01 is the PDC (dc_ok), dc02 a broken DC (dc_broken), dc03 cannot be reached; fixture_domain
+# names the domain-wide answer (domain_ok / domain_changes).
+- name: The DCs answer (from the fixtures)
+  hosts: dcs
+  gather_facts: false
+  tasks:
+    - name: What each DC said about itself
+      ansible.builtin.set_fact:
+        ad_dc_result: >-
+          {{ {'host': inventory_hostname, 'reachable': false, 'error': 'ntlm: the specified credentials were rejected by the server', 'data': none}
+             if fixture == 'unreachable' else
+             {'host': inventory_hostname, 'reachable': true, 'error': '',
+              'data': (lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/' ~ fixture ~ '.json') | from_json).dc} }}
+
+    - name: Who reads the domain
+      ansible.builtin.include_role:
+        name: ad_report
+        tasks_from: pick.yml
+
+    - name: The domain-wide answer (on the reading DC)
+      ansible.builtin.set_fact:
+        ad_domain_result: >-
+          {{ {'host': inventory_hostname, 'domain': 'corp.test', 'error': '',
+              'data': (lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/' ~ fixture_domain ~ '.json') | from_json).domain} }}
+      when: inventory_hostname in _ad_collectors.values()
+
+- name: The report
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # ages are measured from when the fixtures were "read", not from today (as tests/test_ad.py)
+    ad_report_now: "{{ (lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/dc_ok.json') | from_json).dc.read_at }}"
+  tasks:
+    - name: Active Directory health report
+      ansible.builtin.include_role:
+        name: ad_report

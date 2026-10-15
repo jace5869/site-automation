@@ -7,6 +7,7 @@
 # With check_certs_discover_ports / _keystores (the certificate report turns them on) it also finds
 # the listening ports that answer TLS, and the Java keystores on the host:
 #   SKIP|<where>|<why it was not checked>   (listed in the report, not a finding)
+# A found file's placeholder certificate (check_certs_placeholder_subject: postfix's) is a SKIP line too.
 
 - name: Certs | find and read certificates
   ansible.builtin.shell: |
@@ -19,8 +20,9 @@
     export LC_ALL=C
     echo "NOW|$(date +%s)"
     tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-    one_file() {   # $1 = file, $2 = max certificates (0 = no limit)
-      local f=$1 max=$2 n c end subj
+    placeholder={{ check_certs_placeholder_subject | quote }}
+    one_file() {   # $1 = file, $2 = max certificates (0 = no limit), $3 = 1: found by the search (not listed)
+      local f=$1 max=$2 disc=${3:-0} n c end subj
       [ -r "$f" ] || { echo "ERR|$f|not readable"; return; }
       n=$(grep -c 'BEGIN CERTIFICATE' "$f" 2>/dev/null)
       [ "${n:-0}" -gt 0 ] || return
@@ -30,7 +32,10 @@
       for c in "$tmp"/c.*; do
         end=$(openssl x509 -noout -enddate -in "$c" 2>/dev/null | cut -d= -f2-)
         subj=$(openssl x509 -noout -subject -nameopt RFC2253 -in "$c" 2>/dev/null | sed 's/^subject=//; s/|/ /g')
-        if [ -n "$end" ]; then echo "CERT|$f|$subj|$(date -d "$end" +%s)"; else echo "ERR|$f|a certificate block openssl cannot read"; fi
+        if [ -z "$end" ]; then echo "ERR|$f|a certificate block openssl cannot read"
+        elif [ "$disc" = 1 ] && [ -n "$placeholder" ] && grep -qE -- "$placeholder" <<< "$subj"; then
+          echo "SKIP|$f|a placeholder certificate a package made at install (postfix makes one, for a year; its subject matches check_certs_placeholder_subject): not checked - a real certificate put in its place is"
+        else echo "CERT|$f|$subj|$(date -d "$end" +%s)"; fi
       done
     }
     explicit=""
@@ -44,7 +49,7 @@
       grep -vE {{ check_certs_discover_exclude | quote }} | sort |
       while IFS= read -r f; do
         grep -qxF "$f" <<< "$explicit" && continue
-        one_file "$f" {{ check_certs_discover_max_per_file | int }}
+        one_file "$f" {{ check_certs_discover_max_per_file | int }} 1
       done
     {% endif %}
     {% for e in check_certs_endpoints %}
@@ -161,8 +166,9 @@
       {%-   set c = line.split('|', 3) -%}
       {%-   set exp = c[3] | int -%}
       {%-   set _ = out.append({'host': inventory_hostname, 'where': c[1], 'subject': c[2],
-                                'expires': '%Y-%m-%d' | strftime(exp) if exp > 0 else '?',
-                                'days': (((exp - now) / 86400) | round(0, 'floor') | int) if exp > 0 else -99999}) -%}
+                                'expires': '%Y-%m-%d' | strftime(exp) if exp > 0 else '?', 'end': exp,
+                                'days': (((exp - now) / 86400) | round(0, 'floor') | int) if exp > 0 else -99999,
+                                'id': 'cert:' ~ c[1] ~ ':' ~ c[2] | truncate(80, true, '')}) -%}
       {%- endfor -%}
       {{ out | sort(attribute='days') }}
 
@@ -192,7 +198,7 @@
       {%- set f = [] -%}
       {%- for c in check_certs_inventory if c.days <= check_certs_warn_days | int -%}
       {%-   set when = ('EXPIRED ' ~ (c.days | abs) ~ ' days ago' if c.days < 0 else 'expires in ' ~ c.days ~ ' days') ~ ' (' ~ c.expires ~ ')' -%}
-      {%-   set _ = f.append({'check': 'certs', 'id': 'cert:' ~ c.where ~ ':' ~ c.subject | truncate(80, true, ''),
+      {%-   set _ = f.append({'check': 'certs', 'id': c.id,
                               'severity': 'critical' if c.days <= check_certs_crit_days | int else 'warning',
                               'summary': 'certificate ' ~ c.subject ~ ' in ' ~ c.where ~ ' ' ~ when,
                               'hint': _certs_hint(c.where)}) -%}
