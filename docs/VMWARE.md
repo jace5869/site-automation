@@ -19,7 +19,7 @@ System Center Orchestrator):
 | VM - alarms report | `playbooks/vm_alarm_report.yml` | read-only: the triggered alarms on vCenter, datacenters, clusters and hosts; the alarms that fired in the last 24 hours (also the ones that cleared since); hosts not connected; the last 24 hours' failed logins, VM shutdowns / HA restarts and other errors and warnings; configuration issues - coloured by severity |
 | VM - alarms ACT analysis | `playbooks/vm_alarm_act_analysis.yml` | read-only: the same problems, with ACT's likely cause, fix and confidence for each. ACT runs on the AAP side, never on the hosts |
 | VM - capacity planning | `playbooks/vm_capacity_report.yml` | read-only: overall and per cluster - CPU, memory (also with a host down), vCPUs per core, VMs that still fit, hosts recommended, datastores - with growth from vCenter's own history and the days until each limit; optionally GenAI's estimate next to it |
-| VM - deploy from ServiceNow ticket | `playbooks/vm_deploy_from_ticket.yml` | builds the VM - or VMs, one per name, the same size - a ServiceNow ticket asks for, from a template - checked against your rules, placed by site, name rule or free room, the result on the ticket. Best run in its workflow (propose, approval, build) |
+| VM - deploy from ServiceNow ticket | `playbooks/vm_deploy_from_ticket.yml` | builds the VM - or VMs, one per name - a ServiceNow ticket asks for, from a template - checked against your rules, placed by site, name rule or free room, the result on the ticket. Best run in its workflow (propose, approval, build) |
 | VM - deploy settings finder | `playbooks/vm_deploy_inventory.yml` | read-only: every vCenter's datacenters, clusters, templates, datastores, folders and networks, by the names the deploy's settings use - with the lines to paste into the deploy template's Variables |
 | VM - pick up deploy tickets | `playbooks/vm_deploy_poll.yml` | on a schedule: finds new VM request tickets in ServiceNow and starts the deploy workflow for each. Builds nothing itself; the approval stays |
 | VM - VMs created report | `playbooks/vm_created_report.yml` | read-only: how many VMs were created in the last 7 days and each one - when, by whom, how (cloned, deployed from a template, new), the ticket when the AAP deploy built it, where, its size - by person and by day, and the ones created and deleted since. Schedule it weekly (e.g. Fridays at noon) |
@@ -648,11 +648,12 @@ approval between them:
 
  ── workflow step 1: PROPOSE (the deploy job, vm_deploy_phase: propose) ──────────────────────
  3. AAP → ServiceNow: reads the ticket
- 4. AAP → GenAI:      "what does this ticket ask for?"           (plain words only; key: value
- 5. GenAI → AAP:      name, template, CPU, memory, disks, site    lines skip 4-6)
-                      - each with the ticket's own words
- 6. AAP checks every value really is in the ticket
-       questions?  → AAP → ServiceNow: questions to the requester (a comment); the workflow STOPS
+ 4. AAP → GenAI:      "copy out what this ticket asks for"       (plain words only; key: value
+ 5. GenAI → AAP:      names, OS as written, CPU, memory, disks    lines skip 4-6)
+                      - each with the ticket's own words; no decisions, no questions
+ 6. AAP checks every value really is in the ticket, and finds the template from the OS words
+       something AAP needs is missing?  → AAP → ServiceNow: its questions to the requester (a comment);
+                                          the workflow STOPS
  7. AAP checks the rules (templates, site, caps, a free name, the group) and finds the cluster and
     datastore (read-only)
  8. AAP → ServiceNow: "[AAP] GenAI proposal" + "[AAP] Checked - ready to build: ... it would go to ..."
@@ -680,12 +681,13 @@ is traced to the ticket and within the rules; questions or a refusal still stop 
 |---|---|---|
 | **ServiceNow** | holds the request; shows the job's notes and questions | - |
 | **AAP** (this job) | reads the ticket, checks everything, writes the notes, **builds the VM in vCenter**, reports | builds anything the rules do not allow, or without a "Deploying" note on the ticket |
-| **GenAI** (ACT, evidence mode) | **reads the ticket text and turns it into values** (name, template, CPU, memory, disks, site), quoting the words each comes from | builds or changes anything, runs a command, sees a password or a credential, sees vCenter, chooses a cluster or datastore, decides whether to build |
+| **GenAI** (ACT, evidence mode) | **copies the ticket text out as values** (names, the OS as written, CPU, memory, disks, site), quoting the words each comes from | builds or changes anything, runs a command, sees a password or a credential, sees vCenter, chooses a template version, a cluster or datastore, asks the requester, decides whether to build |
 | **vCenter** | does what AAP asks: clone, size, customize, power on | - |
 | **The operator / approver** | launches the workflow; reads the proposal and approves (or denies) in AAP | - |
 
-**GenAI only interprets text into values.** It answers once, in run 1, with values and quotes; AAP
-checks each quote is really in the ticket and each value against the rules, and writes the result on
+**GenAI only copies text out as values.** It answers once, in run 1, with values and quotes; AAP
+checks each quote is really in the ticket, turns the OS words into a template by its own rules, and
+checks each value against the rules, and writes the result on
 the ticket for a person to see. Every action - the notes on the ticket and everything in vCenter - is
 done by AAP, with the VMware vCenter and ServiceNow credentials, which GenAI never sees. Run 2 builds
 from what is written on the ticket, not from a new GenAI answer.
@@ -704,7 +706,7 @@ memory_gb: 16
 
 | Key | Meaning | Not given |
 |---|---|---|
-| `vm_name` | the VM's name in vCenter and its host name - or **several names** (`vm_name: web01, web02`): one VM each, the same size (below) | **required** |
+| `vm_name` | the VM's name in vCenter and its host name - or **several names** (`vm_name: web01, web02`): one VM each (below) | **required** |
 | `template` | the template, by its name in vCenter | **required** |
 | `cpu`, `memory_gb` | vCPUs, memory in GB | the template's |
 | `disks_gb` | disk sizes in GB, system disk first: `disks_gb: 120, 200` grows disk 1 to 120 GB (never shrinks it) and adds one 200 GB disk (thin) | the template's disks |
@@ -749,8 +751,9 @@ The network is the template's: the template's adapter is on your staging VLAN, a
 
 ### Several VMs on one ticket
 
-One ticket may ask for several VMs **of the same size**: one VM per name, the template, CPU, memory,
-disks and folder the same for each.
+One ticket may ask for several VMs: one VM per name, the template, CPU, memory, disks and folder the
+same for each - unless each server has a line of its own that says its own (*A change laid out per
+server*, below).
 
 ```
 I need 2 vms created named web-test01 and web-test02
@@ -918,10 +921,29 @@ vm_deploy_sites:
 
 The ticket says `site: SiteA` (upper / lower case does not matter) - or nothing, when the ticket's
 **Location** field is one of the site names. The site's values fill in what the ticket does not say
-(over `vm_deploy_defaults`); a `cluster:` the ticket names itself still wins, within the allow-lists.
-With sites set up, a ticket that names no site is refused (`vm_deploy_site_required: false` uses
-`vm_deploy_defaults` instead). Any setting can go in a site: `cluster`, `datastore`, `folder`,
-`vcenter`, `datacenter`, `domain`, `cpu`, `memory_gb`.
+(over `vm_deploy_defaults` and the name rules); a `cluster:` the ticket names itself still wins, within
+the allow-lists. With sites set up, a ticket that names no site is refused (`vm_deploy_site_required:
+false` uses `vm_deploy_defaults` instead). Any setting can go in a site: `cluster`, `datastore`,
+`folder`, `vcenter`, `datacenter`, `domain`, `cpu`, `memory_gb`.
+
+**The place as people write it.** With plain words on, a site's name in the ticket's text picks it
+(any case, the spaces optional: `Site Two`, `SiteTwo`, `site-two`) - and so do the words you list for
+it, for every other way people write the place:
+
+```yaml
+vm_deploy_plain_sites:
+  "north campus": SiteA          # "Location: North Campus" (also "NorthCampus") is SiteA
+  "nc": SiteA
+  "site b": SiteB
+```
+
+A change that lists its servers one per line puts each VM at the site **its own line** names
+(`... / ab01web05 / ... Location: North Campus`). The ticket's Location field is read through the same
+words.
+
+**A site in another vCenter** (`vcenter: vc02.yoursite.mil`): that vCenter must be in `vmware_vcenters`
+(the job's vCenter credential works there too: one account for all), and the template must be there under
+the same name. Give the site its own `cluster` (and `datacenter` when the names repeat across vCenters).
 
 ### Name rules: the VM's name picks the cluster
 
@@ -942,6 +964,14 @@ vm_deploy_name_rules:
   among), `datastore` (or `datastores: [..]`), `folder`, `vcenter` ... - or `site:` a name from
   `vm_deploy_sites`. A `cluster:` the ticket gives itself, or a site it names, still wins.
 - With a name rule matched, the ticket needs no site (even with `vm_deploy_site_required`).
+- **A name used at several sites** (the code in the name is the same at two places): `sites:` lists them,
+  and the ticket must say which - by a site's name or its words (`vm_deploy_plain_sites`), on the VM's
+  own line, or the ticket's Location field. Never a guess: with no site, or one not listed, it is a
+  question - *"the ticket does not say where ab01xy05 goes - SiteA or SiteB: write it on its line, e.g.
+  'Location: SiteA'"*. Keep the placement (`vcenter`, `cluster` ...) in the sites, not in the rule:
+  `- {match: "*XY05*", sites: [SiteA, SiteB]}`.
+- A rule's placement (`vcenter`, `datacenter`, `cluster`, `datastore`, `folder`) is never used for a VM
+  that its site, or the ticket, puts in another vCenter.
 - The cluster must still be allowed (`vm_deploy_clusters`, when you set that list).
 - Datastore: the rule's, else the site's or `vm_deploy_datastores` candidates, else the template's -
   and when the template's datastore is not on that cluster, the cluster's own datastore with the most
@@ -979,12 +1009,12 @@ Hi, please build a Red Hat 9 server named ab01web05, medium size, for the new po
 
 | What | Read from | Your setting |
 |---|---|---|
-| the template | **the operating system as people write it** - found from the template names in `vm_deploy_templates`, nothing to set: a template named *Windows 2022 Standard Template* is found by `Windows 2022`, `Windows Server 2022`, `Server 2022`, `Win2022`; *rhel9-gold* by `RHEL 9`, `RHEL 9.4`, `Red Hat 9`, `Red Hat Enterprise Linux 9` (also Rocky, Alma, CentOS, Oracle Linux, Ubuntu, Debian, SLES). Two allowed templates for the same OS (a PXE and a Gold Windows 2022): a question. Also the words you list (`vm_deploy_plain_templates`), the template's own name and its short names (`vm_deploy_template_aliases`). Any case; `-`, `_` or nothing between the words; up to two other words between them | `vm_deploy_templates` with the templates' **exact names** (a pattern like `Windows 20*` has no OS to read: list the names, or use `vm_deploy_plain_templates`) |
-| CPU and memory | a size word (`small`, `medium`, `large`), and numbers next to their unit: `4 vCPU`, `4 cores`, `CPU - 4`, `Processors: 4`, `2 sockets, 2 cores per socket` (= 4), `16 GB RAM`, `4 gigs of ram`, `RAM - 16GB`, `Memory (GB): 16`, `16384 MB of memory` - a bare `16 GB` is not read | `vm_deploy_plain_sizes` |
-| disks | `storage 180gb and 50gb`, `storage 180GB disk and 50gb disk`, `a 180GB disk and a 50GB disk`, `Disk 1: 100 GB` / `Disk 2: 200 GB`, `C: 100GB` / `D: 200GB`, `a 100GB OS disk and a 200GB data disk`, `hard drive 80 gigs`, `disks 1TB + 500gb` - disk 1 first (below) | - |
+| the template | **the operating system as people write it** - found from the template names in `vm_deploy_templates`, nothing to set: a template named *Windows 2022 Standard Template* is found by `Windows 2022`, `Windows Server 2022`, `Server 2022`, `Win2022`; *rhel9-gold* by `RHEL 9`, `RHEL 9.4`, `Red Hat 9`, `Red Hat Enterprise Linux 9` (also Rocky, Alma, CentOS, Oracle Linux, Ubuntu, Debian, SLES). Windows Server by its year alone: `Server 2025`, `a new 2025 VM`, `2022 servers` (not `SQL Server 2019`). An OS no template is for (`Server 2025`, only a 2022 template) is a question that names it - never another version. Two allowed templates for the same OS (a PXE and a Gold Windows 2022): a question. Also the words you list (`vm_deploy_plain_templates`), the template's own name and its short names (`vm_deploy_template_aliases`). Any case; `-`, `_` or nothing between the words; up to two other words between them | `vm_deploy_templates` with the templates' **exact names** (a pattern like `Windows 20*` has no OS to read: list the names, or use `vm_deploy_plain_templates`) |
+| CPU and memory | a size word (`small`, `medium`, `large`), and numbers next to their unit: `4 vCPU`, `4 cores`, `CPU - 4`, `Processors: 4`, `2 sockets, 2 cores per socket` (= 4), `CPU : CORE.4`, `16 GB RAM`, `4 gigs of ram`, `RAM - 16GB`, `RAM : 16 GB.`, `Memory (GB): 16`, `16384 MB of memory` - a bare `16 GB` is not read | `vm_deploy_plain_sizes` |
+| disks | `storage 180gb and 50gb`, `storage 180GB disk and 50gb disk`, `a 180GB disk and a 50GB disk`, `Disk 1: 100 GB` / `Disk 2: 200 GB`, `C: 100GB` / `D: 200GB`, `HDD'S C: /120`, `Disks: C: 100, D: 200` (a drive letter after a disk word: GB when no unit), `a 100GB OS disk and a 200GB data disk`, `hard drive 80 gigs`, `disks 1TB + 500gb` - disk 1 first (below) | - |
 | the folder | `the Web-Servers folder`, `folder: Linux/New`, `in folder App`, `the "App Servers" folder` (a name with spaces in quotes) | - |
-| the VM's name | `named ab01web05`, `called ...`, `hostname: ...`, `server name ...`; several: `named web01 and web02`, `named web01, web02 and web03`, `2 VMs: web01 and web02` (how many, when said, must match: above) - or else the one word that fits a name rule (`vm_deploy_name_rules`; longer than the rule's own letters, so a site code alone is not a name). Web and email addresses are skipped | the requester gives it |
-| the site | a site's name (`vm_deploy_sites`) as a word of its own | - |
+| the VM's name | `named ab01web05`, `called ...`, `hostname: ...`, `server name ...`; several: `named web01 and web02`, `named web01, web02 and web03`, `2 VMs: web01 and web02` (how many, when said, must match: above), `spin up new 2025 VM / web01`, `new VM: web01`, `build server - web01` (each name written so is a new VM: two such lines, two VMs) - or else the one word that fits a name rule (`vm_deploy_name_rules`; longer than the rule's own letters, so a site code alone is not a name). Web and email addresses are skipped | the requester gives it |
+| the site | a site's name (`vm_deploy_sites`) as a word of its own - any case, the spaces optional (`SiteTwo` = `Site Two`) - or the words you list for it; with one server per line, each line's own | `vm_deploy_plain_sites` |
 
 ```yaml
 vm_deploy_plain_words: true
@@ -1027,6 +1057,28 @@ Then run the workflow again (the pickup does not take a ticket twice).
   lines and words say wins over GenAI: GenAI fills only what is still open.
 - A value is never read across a line break: `memory` at the end of one line and `180gb` on the next
   are not "180 GB of memory".
+- **A change laid out per server** - the servers only in its description, one line each - is read as
+  it is: launch the job with the change's **task** (the one assigned to your group); the task's text is
+  read with the change's under it.
+
+  ```
+  1.  Build new web tier :  ab01web05 (front end)
+  a.  Platform team : spin up new 2025 VM / ab01web05 / CPU :  CORE.4  / RAM : 16 GB.  / HDD'S C: /120  Location: Site One
+  1.  Build new web tier :  ab01web06
+  a.  Platform team : spin up new 2025 VM / ab01web06 /  CPU :  CORE.4  / RAM : 16 GB.  / HDD'S C: /120 Location: Site Two
+  ```
+
+  = two VMs (`ab01web05, ab01web06`), 4 vCPU, 16 GB, a 120 GB disk 1, Windows Server 2025; each at the
+  site its own line names (`Site One`, `Site Two`: a site's name or its words, `vm_deploy_plain_sites`) -
+  its vCenter and cluster from the site - else placed by its name rule.
+  - **Each line is its VM's own**: CPU, memory, disks, the operating system, the site. Lines that differ
+    build VMs that differ (`ab01web05: 4; ab01web06: 8` in the dry run); a value only one line gives, or
+    one written once for all (above the lines, or below them after a blank line), is for every VM - but
+    never a site: a line with no Location takes none from another line.
+  - Two different values on one line (`CPU : CORE.4 / 8 cpu`) are a question about that VM only.
+  - A later comment or work note with a line for all (`cpu: 8`) wins over every line.
+  - A name rule for a name used at several sites (`sites: [Site One, Site Two]`): a line with no Location,
+    or one no site has, is a question - never the rule's vCenter.
 - Test it like any change: a dry run (**Check**) on a test ticket shows each value and where it came
   from.
 
@@ -1035,6 +1087,13 @@ Then run the workflow again (the pickup does not take a ticket twice).
 With `vm_deploy_genai: true`, a ticket does not need the `key: value` lines. A requester can write
 *"We need a Windows Server 2022 box called winapp05 for SiteA, 8 GB RAM, 2 CPUs, a 120 GB system disk
 and a 200 GB data disk"*, and ACT (GenAI.mil, the same ACT model key credential) reads it.
+
+**GenAI only copies; the job decides.** ACT is asked to copy out what the ticket says - each new VM's
+name, the operating system as written (`Windows Server 2025`), CPU, memory, the disks - with the
+ticket's words for each. It does not choose, judge or ask: a question it adds anyway is only a note in
+the job's report, never sent to the requester. The job finds the template from the OS words by the same
+rules as the plain words, the placement from the name rules or the site, and asks the requester only
+what it needs and cannot read (a name, an OS no template is for, a value it cannot trace to the ticket).
 
 **Propose, approve, build.** In the workflow (below), the propose step has ACT read the ticket (in
 evidence mode: it runs no command, sees no credential and no inventory). The job posts what it read
@@ -1053,7 +1112,7 @@ workflow stops. A value the ticket gives itself (`cpu: 4` in a comment) always w
 | A person approves | the workflow's approval sits between the proposal and the build; the build step builds the proposal posted on the ticket - never a fresh answer, never unseen (`vm_deploy_genai_approval: false` drops the person, for a demo) |
 | The ticket must not change in between | the proposal carries a hash of the ticket text; editing the description or adding a comment voids it: the build step builds nothing, and the workflow is run again from the start |
 | Every value traceable to the ticket | each value comes with the ticket's words it is from; the job checks those words are in the ticket and contain the value (the name word for word, the numbers as written) - anything else is dropped and becomes a question. GenAI's own confidence is not trusted |
-| Templates from a catalog | GenAI may only pick a key of `vm_deploy_template_catalog`, and it must be in `vm_deploy_templates` |
+| The template by the job's rules | the operating system GenAI copies gives the template by the plain words' rules; it may also name a key of `vm_deploy_template_catalog` (optional), which must be in `vm_deploy_templates` - a key for another version than the ticket asks for (2022 for *Server 2025*) is dropped. An OS no template is for is a question, never another version |
 | Same rules as any request | allow-lists, CPU / memory / disk caps, name rules, the group, a free name: what the ticket text asks for ("use 64 CPUs") is refused like a typed request |
 | No placement by GenAI | cluster and datastore come from the site, the defaults or the rules above |
 | Instructions in the ticket are data | the prompt tells the model to ignore them; the two checks above make them harmless anyway |
@@ -1067,7 +1126,7 @@ workflow stops. A value the ticket gives itself (`cpu: 4` in a comment) always w
 
    ```yaml
    vm_deploy_genai: true
-   vm_deploy_template_catalog:
+   vm_deploy_template_catalog:      # optional: when the template names do not say their OS
      win2022-pxe: "Windows Server 2022 (installed over the network by MECM)"
      rhel9-gold: "Red Hat Enterprise Linux 9"
    ```
@@ -1252,10 +1311,10 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
 | `vm_deploy_done_fields_pxe` | `true` | close it also for a network-boot VM (still installing its OS from MECM); `false` = leave that ticket open |
 | `vm_deploy_parent_tables` / `_fields` / `_text_fields` | `[change_request]` / `[change_request, parent]` / `[description]` | read the request from the ticket's parent change too (its lines, and its plain words with `vm_deploy_plain_words`), under the ticket's own |
 | `vm_deploy_ready_by_table` | `{change_request: {approval: Approved, state: Implement}}` | the fields a ticket - or the change it belongs to - must have before anything is built (as the form shows them); checked again right before the build; `{}` = no check |
-| `vm_deploy_ticket_table` | from the prefix | the table, for a ticket number with another prefix |
+| `vm_deploy_ticket_table` | from the prefix | the table for a number whose prefix the job does not know (a table of your own); a known prefix keeps its table - a `CTASK...` is always a change task |
 | `vm_deploy_ticket_prefixes` | `{}` | your instance's own number prefixes, e.g. `{INCN: incident, CHGN: change_request}` - rarely needed: the job asks ServiceNow which table a ticket is in |
 | `vm_deploy_sites` | `{}` | per site: `cluster`, `datastore`, `folder`, `vcenter` ... (a ticket's `site:` or Location picks one) |
-| `vm_deploy_name_rules` | `[]` | the VM's name picks the cluster (or site): `[{match: "*AB01*", cluster: ...}]`, the first match wins |
+| `vm_deploy_name_rules` | `[]` | the VM's name picks the cluster (or site): `[{match: "*AB01*", cluster: ...}]`, the first match wins; `sites: [A, B]` = at either site, the ticket says which |
 | `vm_deploy_site_required` | `true` | with sites set up, a ticket must name its site |
 | `vm_deploy_pxe_templates` | `[]` | empty templates that install their OS themselves - boot from the network (PXE / MECM) or from their CD (kickstart): no customization, MAC and name on the ticket |
 | `vm_deploy_guestinfo` | `true` | a VM from an empty template (`vm_deploy_pxe_templates`) gets `guestinfo.hostname` (the ticket's VM name) and `guestinfo.ticket` as VM settings, for its installer to read (`vmtoolsd --cmd "info-get guestinfo.hostname"`). Without the *Advanced configuration* privilege the VM is still built, with a note |
@@ -1267,10 +1326,11 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
 | `vm_deploy_plain_words` | `false` | read the ticket's own words by your rules (no GenAI): template words, size words, `named ...` |
 | `vm_deploy_plain_templates` | `{}` | the words for each template, e.g. `{"rhel 9": rhel9-gold, "windows 2022": WIN2022-TEMPLATE}` |
 | `vm_deploy_plain_sizes` | `{}` | size words, e.g. `{small: {cpu: 2, memory_gb: 8}, medium: {cpu: 4, memory_gb: 16}}` |
+| `vm_deploy_plain_sites` | `{}` | the words for each site, as people write the place: `{"north campus": SiteA}` (a site's own name counts too) |
 | `vm_deploy_genai` | `false` | GenAI reads requests written in plain words (propose, approve, build) |
 | `vm_deploy_genai_approval` | `true` | a GenAI proposal waits for a person (the workflow's approval); `false` = one run reads, checks and builds |
 | `vm_deploy_phase` | `""` | the workflow's steps: `propose` (read, check, place - build nothing), `build` (build what the ticket says - never ask GenAI); `""` = the job alone |
-| `vm_deploy_template_catalog` | `{}` | the templates GenAI may pick, each with a plain description |
+| `vm_deploy_template_catalog` | `{}` | optional: templates GenAI may name by key (the template's exact name), each with a plain description - the job finds the template from the OS words without it |
 | `vm_deploy_genai_model_timeout` | `site_act_model_timeout` (600) | seconds the model may take |
 
 **All settings** of the VMware jobs, with defaults: [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md#vmware_vm).
@@ -1649,7 +1709,7 @@ the last column says.
 | `Give the ticket number: the job got none` | the template has no survey, or it is switched off | the Survey tab: *Ticket number*, variable `vm_deploy_ticket`, text, required - and switch it on |
 | `Which table is INCN0012345 in? ...` | your instance numbers its tickets its own way, and the account may not read the task table (or there is no such ticket) | `vm_deploy_ticket_prefixes: {INCN: incident, CHGN: change_request}` on the template; check the number |
 | `ServiceNow has no table "..."` (before: `HTTP Error 400: Bad Request`, `Invalid table change`) | `vm_deploy_ticket_table` or `vm_deploy_ticket_prefixes` names a table ServiceNow does not have | leave both empty: the job finds each ticket's table. `change`, `change request`, `change task`, `catalog task` are now read as `change_request`, `change_task`, `sc_task` |
-| `No change_request ticket CTASK... in ServiceNow. vm_deploy_ticket_table ... is set` | `vm_deploy_ticket_table` sends every ticket to one table, and this ticket is in another | leave it empty |
+| `No change_request ticket INCN... in ServiceNow. vm_deploy_ticket_table ... is set` | `vm_deploy_ticket_table` sends every number with a prefix the job does not know to one table, and this ticket is in another | leave it empty (a `CTASK...` or `INC...` number is never sent there) |
 | `the change CHG... (this ticket's parent) is not ready to build: approval is 'Requested', not Approved; state is 'Assess', not Implement` | the change is not approved, or not in Implement (yet, or any more) - nothing was built | approve it / move it to Implement and run the job again; your instance's labels differ (e.g. *Implementation*): put them in `vm_deploy_ready_by_table` |
 | `this ticket (CHG...) is not ready to build: ...` | the job ran on a change itself, which is not approved and in Implement | the same; or run it on the change's task |
 | `... approval is empty, not Approved` | the account may not read the change's approval field, or the table has none | read access to `change_request.approval`; or take `approval` out of `vm_deploy_ready_by_table` |
@@ -1672,10 +1732,15 @@ the last column says.
 | `the ticket does not say which site` | sites are set up, the ticket names none, its Location is not a site, and no name rule fits the name | `site: ...` in a comment; a name rule; or `vm_deploy_site_required: false` |
 | The VM went to the default (or the template's) cluster, not the name rule's | no rule's `match` fits the name (a typo, or `AB01*` when the name starts with other letters) | `*AB01*` (anywhere in the name); check the dry run's `(from name rule ...)` |
 | `site '...' is not one of vm_deploy_sites` | a site name you have not set up | correct the ticket, or add the site |
+| `the ticket does not say where ab01xy05 goes - SiteA or SiteB` | its name rule has `sites:` (a name used at several sites) and its line names no site - or a place no site's name or words match (`Location: N. Campus`, the site's words say `north campus`) | the requester writes the site on the VM's line; or add the way they write it to `vm_deploy_plain_sites` |
+| `ab01xy05 is to go to site SiteC, but its name rule *XY05* is for SiteA or SiteB` | the VM's line (or a `site:` line) names a site its name rule is not for | correct the ticket - or add the site to the rule's `sites` |
+| `for ab01web06: the ticket gives more than one number of CPUs ...` | that VM's own line gives two values (one server per line) | the requester corrects that line, or writes a line for all (`cpu: 4`) |
 | `... ready to build in ... - waiting for the approval` | the propose step (or the job alone with `vm_deploy_genai_approval: true`): by design | approve the workflow (or launch the job again) |
 | `has no GenAI proposal for its text as it is now` | the build step, but the ticket changed after the proposal (or there is none) | run the workflow from the start |
-| `questions for the requester (nothing built)` | GenAI could not trace a value to the ticket, or something is missing | the requester answers in a comment (`memory_gb: 16`); run the job again |
-| `DROPPED (not in the ticket): vm_name ...` | GenAI gave a value the ticket does not contain (made up, or guessed) | nothing: it is a question now |
+| `questions for the requester (nothing built)` | the job could not trace a value GenAI gave to the ticket, or something it needs is missing (GenAI's own questions are only `GENAI NOTE` lines, never sent) | the requester answers in a comment (`memory_gb: 16`); run the job again |
+| `DROPPED: vm_name ...` | GenAI gave a value the ticket does not contain (made up, or guessed) | nothing: it is a question now |
+| `DROPPED: template '...': it is for Windows Server 2022, the ticket asks for Windows Server 2025` | GenAI named a catalog template for another version | nothing: never built; see the next row |
+| `the ticket asks for the operating system Windows Server 2025 (...), and no template here is for it` | no allowed template's name (or `vm_deploy_plain_templates` words) is for that version - the job never builds another one | add a template for it to `vm_deploy_templates` (and `vm_deploy_pxe_templates` when MECM installs it); or, when an existing one is right for it (an empty MECM shell): `vm_deploy_plain_templates: {"server 2025": "<template>"}`; or `template: <name>` on the ticket |
 | `GenAI did not run: ...` | no ACT model key, the model not reachable, or a timeout | the ACT model key credential on the template; see docs/ADDING_ACT.md; or `key: value` lines |
 | `no cluster among ... has room` | automatic placement: every candidate would go over the memory target with a host down | another site / cluster, less memory, or a higher `vm_deploy_mem_target_pct` |
 | `no datastore among ... has room` | every candidate datastore would go over 85 % with the VM | another datastore list, smaller disks |

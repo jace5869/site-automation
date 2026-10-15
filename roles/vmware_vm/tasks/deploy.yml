@@ -13,11 +13,12 @@
 - name: VMware | the ticket and the ServiceNow connection
   ansible.builtin.set_fact:
     _vd_number: "{{ vm_deploy_ticket | default('', true) | string | trim | upper }}"
-    # the table: vm_deploy_ticket_table, else the number's prefix (the standard ones and vm_deploy_ticket_prefixes);
-    # any other prefix (e.g. INCN, CHGN): ServiceNow's task table says (below)
+    # the table: the number's prefix (the standard ones and vm_deploy_ticket_prefixes: a CTASK is a change task
+    # whatever vm_deploy_ticket_table says), else vm_deploy_ticket_table (TASK... too: a table of your own may
+    # number its tickets so); any other prefix (e.g. INCN, CHGN): ServiceNow's task table says (below)
     _vd_table: >-
-      {{ vm_deploy_ticket_table | default('', true) | vm_deploy_table_name
-         or (vm_deploy_ticket | default('', true) | string | vm_deploy_table(vm_deploy_ticket_prefixes | default({}, true), false)) }}
+      {%- set by_prefix = vm_deploy_ticket | default('', true) | string | vm_deploy_table(vm_deploy_ticket_prefixes | default({}, true), false) -%}
+      {{ by_prefix if by_prefix not in ['', 'task'] else (vm_deploy_ticket_table | default('', true) | vm_deploy_table_name or by_prefix) }}
     _vd_sn_url: >-
       {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
       {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
@@ -28,13 +29,14 @@
       {{ {'on': vm_deploy_plain_words | bool, 'templates': vm_deploy_plain_templates | default({}, true),
           'sizes': vm_deploy_plain_sizes | default({}, true), 'allowed': vm_deploy_templates,
           'aliases': vm_deploy_template_aliases | default({}, true), 'name_rules': vm_deploy_name_rules | default([], true),
-          'sites': (vm_deploy_sites | default({}, true)).keys() | list} }}
+          'sites': (vm_deploy_sites | default({}, true)).keys() | list, 'site_words': vm_deploy_plain_sites | default({}, true)} }}
 
 - name: VMware | the plain-words settings have their shape (words -> a template; a size word -> CPU and memory)
   ansible.builtin.assert:
     that:
       - vm_deploy_plain_templates | default({}, true) is mapping
       - vm_deploy_plain_sizes | default({}, true) is mapping
+      - vm_deploy_plain_sites | default({}, true) is mapping
       - vm_deploy_templates | default([], true) is not string and vm_deploy_templates | default([], true) is not mapping
     fail_msg: >-
       {{ ('vm_deploy_plain_templates maps words to a template - e.g. {"server 2022": "' ~ (vm_deploy_templates | default(['<template name>'], true) | first)
@@ -43,6 +45,8 @@
          if vm_deploy_plain_templates | default({}, true) is not mapping else
          ('vm_deploy_plain_sizes maps a size word to CPU and memory - e.g. {small: {cpu: 2, memory_gb: 8}, medium: {cpu: 4, memory_gb: 16}}.')
          if vm_deploy_plain_sizes | default({}, true) is not mapping else
+         ('vm_deploy_plain_sites maps the words for a place to a site of vm_deploy_sites - e.g. {"site two": SiteB, "north campus": SiteA}.')
+         if vm_deploy_plain_sites | default({}, true) is not mapping else
          'vm_deploy_templates is a list of template names (one per line, each starting with "- "), e.g. ["Windows 2022 Template", rhel9-gold].' }}
     quiet: true
 
@@ -98,8 +102,7 @@
          ('Give the ticket number: vm_deploy_ticket (e.g. INC0012345 or SCTASK0012345), not "' ~ _vd_number ~ '".')
          if _vd_number is not match('^[A-Z]{2,8}[0-9]{4,}$') else
          ('Which table is ' ~ _vd_number ~ ' in? ' ~ (_vd_class_why | default('', true) ~ '. ' if _vd_class_why | default('', true) else '')
-          ~ 'Set vm_deploy_ticket_prefixes on the template, e.g. {INCN: incident, CHGN: change_request} '
-          ~ '(or vm_deploy_ticket_table: incident for this ticket).')
+          ~ 'Set vm_deploy_ticket_prefixes on the template, e.g. {INCN: incident, CHGN: change_request}: each prefix its table.')
          if not _vd_table else
          'No ServiceNow connection: attach the "ServiceNow API" credential to this job template (it gives SN_HOST, SN_USERNAME, SN_PASSWORD).' }}
     quiet: true
@@ -132,7 +135,7 @@
       - _vd_get.status == 200
       - (_vd_get.json.result | default([])) | length == 1
     fail_msg: >-
-      {%- set own = 'vm_deploy_ticket_table' if vm_deploy_ticket_table | default('', true)
+      {%- set own = 'vm_deploy_ticket_table' if vm_deploy_ticket_table | default('', true) and _vd_table == (vm_deploy_ticket_table | vm_deploy_table_name)
                     else ('vm_deploy_ticket_prefixes' if vm_deploy_ticket_prefixes | default({}, true) else '') -%}
       {{ ('ServiceNow has no table "' ~ _vd_table ~ '" (' ~ (_vd_get.json.error.message | default('HTTP 400')) ~ ').'
           ~ ((' It comes from ' ~ own ~ ': leave it empty - the job asks ServiceNow which table a ticket is in. Or name the table'
@@ -142,8 +145,9 @@
           ~ _vd_table ~ ' table. ' ~ (_vd_get.json.error.message | default('')))
          if _vd_get.status != 200 else
          ('No ' ~ _vd_table ~ ' ticket ' ~ _vd_number ~ ' in ServiceNow.'
-          ~ (' vm_deploy_ticket_table (' ~ _vd_table ~ ') is set on the template: it applies to every ticket - leave it empty, the job'
-             ~ ' finds the table of each ticket by itself.' if vm_deploy_ticket_table | default('', true) else '')) }}
+          ~ (' vm_deploy_ticket_table (' ~ _vd_table ~ ') is set on the template: a number whose prefix the job does not know'
+             ~ ' (like this one) is looked up there - leave it empty, the job finds the table of each ticket by itself.'
+             if vm_deploy_ticket_table | default('', true) and _vd_table == (vm_deploy_ticket_table | vm_deploy_table_name) else '')) }}
     quiet: true
 
 # the parent (e.g. the change a task belongs to): more of the request, under the ticket's own lines

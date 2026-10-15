@@ -235,7 +235,7 @@ vm_capacity_act_check_url: true          # first check that the AAP node can rea
 #   vm_name: app01   template: rhel9-gold   cpu: 4   memory_gb: 16   (cluster, datastore, folder,
 #   datacenter, vcenter, domain, customization_spec, notes: optional). docs/VMWARE.md
 vm_deploy_ticket: ""
-vm_deploy_ticket_table: ""               # leave it empty (the job finds each ticket's table); for a table of your own, e.g. u_vm_request - it applies to EVERY ticket
+vm_deploy_ticket_table: ""               # leave it empty (the job finds each ticket's table); a table of your own, e.g. u_vm_request: for numbers whose prefix the job does not know (CTASK stays change_task)
 # Your instance's own number prefixes and their tables, e.g. {INCN: incident, CHGN: change_request}.
 # Rarely needed: for a prefix it does not know, the job asks ServiceNow's task table (and takes INCN
 # as INC, CHGN as CHG when it may not read that table). A table as people say it is understood:
@@ -268,9 +268,10 @@ vm_deploy_datastores: []                 # datastores (or datastore clusters) a 
 vm_deploy_folders: []                    # VM folders a ticket may use (paths below the datacenter's VM folder, e.g. Linux/*)
 vm_deploy_max_cpu: 16                    # the most vCPUs a ticket may ask for
 vm_deploy_max_memory_gb: 128             # the most memory a ticket may ask for, in GB
-# A ticket may ask for several VMs of the same size ("2 VMs named web01 and web02", "vm_name: web01,
-# web02", or "Hostnames:" and one name per line): one VM each, built one after the other, the ticket
-# closed when all are built. More names than this: refused, nothing built (the limits above are per VM).
+# A ticket may ask for several VMs ("2 VMs named web01 and web02", "vm_name: web01, web02", or
+# "Hostnames:" and one name per line): one VM each, the same size - or each its own, from a line of its own
+# - built one after the other, the ticket closed when all are built. More names than this: refused, nothing
+# built (the limits above are per VM).
 vm_deploy_max_vms: 10
 # The VM names allowed (a regular expression); e.g. '^[a-z0-9-]{1,15}$' for Windows-safe names.
 vm_deploy_name_regex: '^[A-Za-z0-9][A-Za-z0-9-]{0,62}$'
@@ -280,8 +281,10 @@ vm_deploy_assignment_group: ""
 # What a ticket does not say: e.g. {cluster: PROD-CL01, datastore: DS-CLUSTER-01, folder: Linux/New}.
 # Not set = the template's own cluster, datastore and folder; its CPU and memory.
 vm_deploy_defaults: {}
-# Sites: a ticket's 'site: A' line (or its Location field, when it is one of these names) picks the
-# placement - over vm_deploy_defaults; a cluster / datastore / folder the ticket names itself still wins.
+# Sites: a ticket's 'site: A' line (or its Location field, or with plain words a site's name or its words
+# in vm_deploy_plain_sites - each VM by its own line) picks the placement - over vm_deploy_defaults and the
+# name rules; a cluster / datastore / folder the ticket names itself still wins. A site in another vCenter:
+# its vcenter (in vmware_vcenters, the same account) - and the template there under the same name.
 #   vm_deploy_sites:
 #     SiteA: {cluster: A-PROD-CL01, datastore: A-DSC01, folder: Servers/New}
 #     SiteB: {cluster: B-PROD-CL01, datastore: B-DSC01, folder: Servers/New, vcenter: vc02.yoursite.mil}
@@ -289,11 +292,14 @@ vm_deploy_sites: {}
 vm_deploy_site_required: true            # with sites set up: a ticket must say its site (false = vm_deploy_defaults); a name rule counts too
 # Name rules: the VM's name picks where it goes - the first rule whose 'match' fits the name (* and ?,
 # upper / lower case alike) fills in what the ticket does not say: a cluster (and datastores,
-# folder ...) or a site. The ticket's own lines, and a site the ticket names, still win.
+# folder ...) or a site. The ticket's own lines, and a site the ticket names, still win. A name used at
+# several sites: 'sites' - the ticket must say which (its Location), never a guess; its placement is in
+# vm_deploy_sites. A rule's placement is never used for a VM its site puts in another vCenter.
 #   vm_deploy_name_rules:
 #     - {match: "*AB01*", cluster: CLUSTER-ONE}                   # every name with AB01 in it
 #     - {match: "*CD02*", cluster: CLUSTER-TWO, folder: Servers/New}
 #     - {match: "*EF03*", site: SiteB}                            # or a site from vm_deploy_sites
+#     - {match: "*GH04*", sites: [SiteA, SiteB]}                  # at either site: the ticket says which
 vm_deploy_name_rules: []                 # [{match: "*AB01*", cluster: ...}, ...] - see above
 # Templates with no operating system yet, that install it themselves: they boot from the network (PXE,
 # e.g. an MECM task sequence) or from their CD / ISO (e.g. a kickstart). No guest customization, no
@@ -352,22 +358,33 @@ vm_deploy_done_fields_pxe: true
 # in the text are a question to the requester (a comment). 'key: value' lines still work and win;
 # with vm_deploy_genai also on, GenAI is asked when the words leave the name or template - or a question - open.
 vm_deploy_plain_words: false
-# The words for each template (any case; "windows 2022" also matches "Windows Server 2022"). An
-# allowed template's own name and its short names (vm_deploy_template_aliases) count too. e.g.
+# The words for each template (any case; "windows 2022" also matches "Windows Server 2022", "server 2025"
+# also "a new 2025 VM"). An allowed template's own name and its short names (vm_deploy_template_aliases)
+# count too. An OS no template is for (Server 2025, only a 2022 template) is a question - never another
+# version; to build it from a template whose name says another (an empty MECM shell): {"server 2025": <it>}. e.g.
 #   {"rhel 9": rhel9-gold, "red hat 9": rhel9-gold, "windows 2022": WIN2022-TEMPLATE}
 vm_deploy_plain_templates: {}
 # Size words and what they mean, e.g. {small: {cpu: 2, memory_gb: 8}, medium: {cpu: 4, memory_gb: 16},
 # large: {cpu: 8, memory_gb: 32}}. "4 vCPU" and "16 GB RAM" in the ticket are read too, and win in the same text.
 vm_deploy_plain_sizes: {}
+# The words for each site (vm_deploy_sites), as people write the place - any case, the spaces optional
+# ("Site Two" is also "SiteTwo"). A site's own name counts too. A change that lists its servers one per
+# line ('new VM / ab01web05 / ... Location: Site Two') puts each VM at the site its own line names; the
+# CPU, memory and disks on each line are that VM's too. e.g. {"site two": SiteB, "north campus": SiteA}
+vm_deploy_plain_sites: {}
 
 # ---- GenAI reads a request written in plain words (a proof of concept, off by default) ----
 # When the ticket's own 'key: value' lines do not give vm_name and template: ACT (GenAI, evidence mode,
-# no commands) reads the ticket and proposes the VM - each value with the ticket's words it comes from,
-# or a question to the requester. That run builds NOTHING: it posts the proposal on the ticket. The
+# no commands) copies out what the ticket says - the names, the operating system as written, CPU, memory,
+# disks - each with the ticket's words it comes from. It decides and asks nothing (its own questions are
+# notes in the report): the job finds the template from the OS words by its own rules, and asks the
+# requester (a comment) only what it needs and cannot read. That run builds NOTHING: it posts the proposal on the ticket. The
 # next run builds that proposal (GenAI is not asked again), while the ticket text is unchanged; the
 # ticket's own lines still win. Needs the ACT model key credential on the template. docs/VMWARE.md
 vm_deploy_genai: false
-# The templates GenAI may choose from, each with a plain description it can match the request to:
+# Optional: templates GenAI may name by key, each with a plain description (the key: the template's exact
+# name). Not needed when the templates' names say their OS: the job finds the template from the OS the
+# ticket names. A key for another version than the ticket asks for is dropped. e.g.
 #   {win2022-pxe: "Windows Server 2022 (installed over the network by MECM)", rhel9-gold: "Red Hat Enterprise Linux 9"}
 vm_deploy_template_catalog: {}
 # true: a GenAI proposal waits for a person - the workflow's approval (or a second run) - before it is

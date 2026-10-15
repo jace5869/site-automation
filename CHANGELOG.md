@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.15.1 — 2026-10-15
+
+**Updating without scripts:** paste `site-automation-0.15.1-changed-since-0.15.0.zip` as it is (or
+`...-changed-since-0.14.1.zip` from 0.14.1: it holds all of 0.15.0 too - then also add the two job templates
+0.15.0 lists below). Both leave out `playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. No new
+job template. For servers at several sites on one change: each site in `vm_deploy_sites` with its `vcenter`,
+the ways people write each place in `vm_deploy_plain_sites`, and `sites:` on the name rule (docs/VMWARE.md, *Sites*).
+
+- **VM deploy - each server's own line: its size, its disks, its site.** A change that lists its servers one
+  per line (`spin up new 2025 VM / ab01web05 / CPU : CORE.4 / RAM : 16 GB. / HDD'S C: /120 Location: Site One`,
+  the next line the next server) now builds each VM as its own line says: CPU, memory, disks, the operating
+  system and the site. Before, every VM on a ticket was built the same size, and lines that differed were a
+  question. A value only one line gives, or one written once for all (above the lines, or below them after a
+  blank line), is for every VM - never a site: a line with no Location takes none from another line; a later
+  comment or work note with a line for all (`cpu: 8`) wins over every line; two values on one line are a
+  question about that VM only. A size word on a line (`small`) is that VM's CPU and memory. Several lines under each name (`new VM / web01`, then `CPU: 4`, `RAM: 8 GB`) work too.
+  The dry run shows each VM's own: `cpu: ab01web05: 4; ab01web06: 8`.
+- **VM deploy - the Location picks the site, and so the vCenter.** With plain words on, a site's name in the
+  text (any case, the spaces optional: `Site Two` = `SiteTwo`) - or the words listed for it in the new
+  `vm_deploy_plain_sites` (`{"north campus": SiteA}`), for every other way people write the place - picks
+  the site; on a VM's own line, for that VM. The ticket's Location field and a `site:` line are read through
+  the same words. A name rule for a name used at several sites, `{match: "*XY05*", sites: [SiteA, SiteB]}`:
+  the ticket must say which - no site, or one the rule is not for, is a question (*the ticket does not say
+  where ab01xy05 goes - SiteA or SiteB*), never the rule's vCenter. A rule's placement (`vcenter`,
+  `cluster`, `datastore`, `folder` ...) is never used for a VM its site puts in another vCenter.
+- **VM deploy - a change laid out per server.** A change whose description lists each server on a line
+  of its own - `spin up new 2025 VM / ab01web05 / CPU : CORE.4 / RAM : 16 GB. / HDD'S C: /120` - is read
+  as it is: every name after `new ... VM /` (`new VM:`, `build server -`) is a new VM (two lines, two VMs;
+  before: a question "which are the new VMs?"), `CPU : CORE.4` is 4 vCPUs, `HDD'S C: /120` a 120 GB disk 1
+  (a drive letter after a disk word: GB when no unit; `C: /1 TB` too).
+- **VM deploy - Windows Server by its year.** `Server 2025`, `a new 2025 VM`, `2022 servers` are Windows
+  Server 2025 / 2022 (as `RHEL8` is RHEL 8; not `SQL Server 2019`). An operating system no allowed template
+  is for is now a question that names it - *the ticket asks for the operating system Windows Server 2025
+  ..., and no template here is for it* - and never another version: a template from GenAI or the defaults
+  that names another version does not answer it. To build it from an existing template (an empty MECM
+  shell): `vm_deploy_plain_templates: {"server 2025": "<template>"}`.
+- **VM deploy - GenAI only copies.** ACT is asked to copy out the names, the operating system as written,
+  CPU, memory and disks, each with the ticket's words - not to choose or ask. Its own questions are notes
+  in the report (`GENAI NOTE`), never sent to the requester; the job finds the template from the OS words
+  by its own rules and asks only what it needs. A value quoted from several places (`... spin up new VM /
+  web01 ... new VM / web02`) is traced piece by piece (before: two names on two lines were dropped). A
+  catalog template for another version than the ticket asks is dropped. `vm_deploy_template_catalog` is
+  optional now.
+- **VM deploy - a known ticket prefix wins over `vm_deploy_ticket_table`:** a `CTASK...` is read as a change
+  task even with `vm_deploy_ticket_table: change` (in 0.15.0: looked up in the change table and not found);
+  the setting is for numbers whose prefix the job does not know (`CHGN...`). A ticket not found says the
+  setting sent it there only when it did.
+- The four site-automation PDFs are rebuilt for 0.15.1.
+
 ## 0.15.0 — 2026-10-15
 
 **Updating without scripts:** paste `site-automation-0.15.0-changed-since-0.14.1.zip` as it is (or

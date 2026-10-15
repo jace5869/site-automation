@@ -679,13 +679,19 @@ run "a change as the ticket itself, not approved: refused (dry run)" fail vm_dep
     -- "this ticket ($chg7) is not ready to build: approval is 'Requested', not Approved"
 run "...vm_deploy_ready_by_table: {} - no such check (dry run)" ok vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$chg7" -e "$rules" \
     -e '{"vm_deploy_ready_by_table": {}}' -- "chgapp07 ready to build in DC0_C0 - dry run"
-# the table named as people say it: "change" is no ServiceNow table (HTTP 400 "Invalid table change" before)
-run "vm_deploy_ticket_table: change - read as change_request (dry run)" ok vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$chg7" -e "$rules" \
-    -e '{"vm_deploy_ready_by_table": {}, "vm_deploy_ticket_table": "change"}' -- "chgapp07 ready to build in DC0_C0 - dry run"
-run "vm_deploy_ticket_prefixes: {CHG: Change Request} - read as change_request (dry run)" ok vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$chg7" \
-    -e "$rules" -e '{"vm_deploy_ready_by_table": {}, "vm_deploy_ticket_prefixes": {"CHG": "Change Request"}}' -- "chgapp07 ready to build in DC0_C0 - dry run"
-run "a table ServiceNow does not have: said plainly, where it comes from" fail vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$chg7" -e "$rules" \
+# the table named as people say it: "change" is no ServiceNow table (HTTP 400 "Invalid table change" before);
+# a site's own prefix (CHGN...) goes to vm_deploy_ticket_table, a known one (CTASK...) keeps its table
+chgn="$(newrec change_request '{"number": "CHGN0007001", "short_description": "VM request", "description": "vm_name: chgnapp01\ntemplate: rhel9-gold", "state": "-1", "approval": "approved", "assignment_group": "Linux Operations"}')"
+run "vm_deploy_ticket_table: change - read as change_request (a CHGN... number, dry run)" ok vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$chgn" -e "$rules" -e '{"vm_deploy_ticket_table": "change"}' -- "chgnapp01 ready to build in DC0_C0 - dry run"
+run "vm_deploy_ticket_prefixes: {CHGN: Change Request} - read as change_request (dry run)" ok vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$chgn" -e "$rules" -e '{"vm_deploy_ticket_prefixes": {"CHGN": "Change Request"}}' -- "chgnapp01 ready to build in DC0_C0 - dry run"
+run "a table ServiceNow does not have: said plainly, where it comes from" fail vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$chgn" -e "$rules" \
     -e '{"vm_deploy_ticket_table": "nosuchtable"}' -- 'ServiceNow has no table \"nosuchtable\" (Invalid table nosuchtable). It comes from vm_deploy_ticket_table: leave it empty'
+ct8="$(newrec change_task "{\"short_description\": \"Platform team to deploy VM\", \"description\": \"vm_name: ctapp08\\ntemplate: rhel9-gold\", \"change_request\": \"$chgn\", \"assignment_group\": \"Linux Operations\"}")"
+run "a change task with vm_deploy_ticket_table: change - its CTASK prefix wins: read as a change task, its change as the parent (dry run)" ok \
+    vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$ct8" -e "$rules" -e '{"vm_deploy_ticket_table": "change"}' \
+    -- "Parent: parent $chgn (change_request, field change_request)" "ctapp08 ready to build in DC0_C0 - dry run"
 run "deploy from a ticket: not a ticket number" fail vm_deploy_from_ticket.yml -e vm_deploy_ticket=app01 -e "$rules" -- "Give the ticket number"
 # a site's own number prefix (INCN...): the job asks ServiceNow's task table which table the ticket is in
 incn="$(NEWTICKET_NUMBER=INCN0012345 newticket $'vm_name: appincn01\ntemplate: rhel9-gold')"
@@ -972,9 +978,10 @@ act_says '{"vm_name": {"value": "rhelsrv01", "evidence": "a RHEL 9 server"}, "te
            "cpu": {"value": 4, "evidence": "4 CPUs"}, "questions": ["Which site: SiteA?"]}'
 run "GenAI makes up a name: dropped; the questions go to the requester as a comment; nothing built (red: a workflow stops)" fail \
     vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc6" -e "$genai" -e "$actvars" \
-    -- "questions for the requester (nothing built)" "DROPPED (not in the ticket): vm_name 'rhelsrv01'" "QUESTION: Which site: SiteA?" \
+    -- "questions for the requester (nothing built)" "DROPPED: vm_name 'rhelsrv01'" "GENAI NOTE (not sent to the requester): Which site: SiteA?" \
        "the requester has to answer"
-tail -1 "$work/sn.jsonl" | grep -q '"comments": "\[AAP\] To build this VM' && echo "ok   -   ...a comment the requester sees" || { echo "FAIL -   ...questions comment"; fails=$((fails + 1)); }
+tail -1 "$work/sn.jsonl" | grep -q '"comments": "\[AAP\] To build this VM' && ! tail -1 "$work/sn.jsonl" | grep -q 'Which site' \
+    && echo "ok   -   ...a comment the requester sees - the job's question, not GenAI's" || { echo "FAIL -   ...questions comment"; fails=$((fails + 1)); }
 inc7="$(newticket 'New RHEL 9 server called lnxapp07 for SiteA please, 2 CPUs and 2 GB of RAM')"
 act_says '{"vm_name": {"value": "lnxapp07", "evidence": "called lnxapp07"}, "template": {"value": "rhel9-gold", "evidence": "RHEL 9"},
            "cpu": {"value": 2, "evidence": "2 CPUs"}, "memory_gb": {"value": 2, "evidence": "2 GB of RAM"}, "site": {"value": "SiteA", "evidence": "for SiteA"}}'
@@ -1046,6 +1053,41 @@ inc11="$(newticket $'vm_name: lnxapp11\ntemplate: rhel9-gold\nsite: SiteA\ncpu: 
 run "workflow step 1 with key: value lines (no GenAI needed): checked and placed, nothing built" ok vm_deploy_from_ticket.yml \
     -e vm_deploy_ticket="$inc11" -e "$genai" -e "$actvars" -e vm_deploy_phase=propose -- "lnxapp11 ready to build in DC0_"
 ! VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q '"lnxapp11"' && echo "ok   -   ...no VM before the approval" || { echo "FAIL -   ...built too early"; fails=$((fails + 1)); }
+# a change laid out per server (the servers only in its description), its task to the platform team: names after
+# "new ... VM /", "CPU : CORE.2", "HDD'S C: /120", Windows Server by its year alone - and no 2025 template
+laybody="$("$py" - <<'EOPY'
+import json
+d = ("Approval is required. Steps for the new web tier.\n\n1.  Build new web tier :  ab01lay01 (front end)\n"
+     "a.  Platform team : spin up new 2025 VM / ab01lay01 / CPU :  CORE.2  / RAM : 2 GB.  / HDD'S C: /120  Location: Site One\n\n"
+     "1.  Build new web tier :  ab01lay02\n"
+     "a.  Platform team : spin up new 2025 VM / ab01lay02 /  CPU :  CORE.2  / RAM : 2 GB.  / HDD'S C: /120 Location: Site Two")
+print(json.dumps({"number": "CHGN0007101", "short_description": "Windows Server deployment - Server 2025", "description": d,
+                  "state": "-1", "approval": "approved", "assignment_group": "Change Board"}))
+EOPY
+)"
+chgl="$(newrec change_request "$laybody")"
+ctl="$(newrec change_task "{\"short_description\": \"Platform team to deploy VM (CPU, Storage, Memory, OS image and location)\", \"change_request\": \"$chgl\", \"assignment_group\": \"Linux Operations\"}")"
+layw='{"vm_deploy_plain_words": true, "vm_deploy_templates": ["rhel9-gold", "win2022-pxe"], "vm_deploy_pxe_templates": ["win2022-pxe"],
+       "vm_deploy_name_rules": [{"match": "ab01*", "cluster": "DC0_C0", "datacenter": "DC0"}], "vm_deploy_sites": {}}'
+run "a change laid out per server asking for Server 2025, only a 2022 template: a question naming Windows Server 2025, never the 2022 one (dry run)" \
+    fail vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$ctl" -e "$rules" -e "$layw" \
+    -- "the operating system Windows Server 2025" "no template here is for it"
+run "...with vm_deploy_plain_templates {server 2025: win2022-pxe}: two VMs, 2 vCPU, 2 GB, C: 120 GB, placed by the name rule (dry run)" ok \
+    vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$ctl" -e "$rules" -e "$layw" -e '{"vm_deploy_plain_templates": {"server 2025": "win2022-pxe"}}' \
+    -- "vm_name: ab01lay01, ab01lay02   (from the words 'spin up new 2025 VM / ab01lay01'" "cpu: 2   (from the words 'CPU :  CORE.2'" \
+       "disks_gb: 120   (from the words 'HDD'S C: /120'" "template: win2022-pxe   (from the words" \
+       "2 VMs (ab01lay01, ab01lay02) ready to build - dry run" "ab01lay01: ready to build, cluster DC0_C0" "ab01lay02: ready to build, cluster DC0_C0"
+act_says '{"vm_name": {"value": "ab01lay01, ab01lay02", "evidence": "spin up new 2025 VM / ab01lay01 ... spin up new 2025 VM / ab01lay02"},
+           "os": {"value": "Windows Server 2025", "evidence": "new 2025 VM"}, "template": {"value": "win2022-pxe", "evidence": "new 2025 VM"},
+           "cpu": {"value": 2, "evidence": "CPU :  CORE.2"}, "questions": ["Which vCenter?"]}'
+n5=$(wc -l < "$work/sn.jsonl")
+run "GenAI on, no approval: it names the 2022 template for a Server 2025 change - dropped, the job asks which template, nothing built" fail \
+    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$ctl" -e "$rules" -e "$genai" -e "$actvars" -e "$layw" -e vm_deploy_genai_approval=false \
+    -- "DROPPED: template 'win2022-pxe': it is for Windows Server 2022, the ticket asks for Windows Server 2025" \
+       "GENAI NOTE (not sent to the requester): Which vCenter?" "QUESTION: the ticket asks for the operating system Windows Server 2025"
+sed -n "$((n5 + 1)),\$p" "$work/sn.jsonl" | grep '"comments"' | grep -q 'Windows Server 2025' && ! sed -n "$((n5 + 1)),\$p" "$work/sn.jsonl" | grep -q 'Which vCenter' \
+    && ! VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q '"ab01lay01"' \
+    && echo "ok   -   ...the requester is asked which template; GenAI's note not sent; no VM" || { echo "FAIL -   ...2025 question / built"; fails=$((fails + 1)); }
 # name rules: the VM's name picks the cluster (the template is on DC0_C0; DC0_H0 is a standalone host)
 rules='{"vm_deploy_templates": ["rhel9-*"], "vm_deploy_wait_ip": 3, "vm_deploy_wait_customization": 60,
         "vm_deploy_name_rules": [{"match": "*AB01*", "cluster": "DC0_H0"}, {"match": "*CD02*", "cluster": "DC0_C0"}]}'
@@ -1093,6 +1135,69 @@ for l in open(sys.argv[1]):
             multi += "\n" in v
 print("\n".join(bad))
 sys.exit(0 if not bad and multi >= 5 else 1)
+EOPY
+# ---- a change laid out per server at two sites in two vCenters: each line its own CPU, memory and disks;
+# its Location (a site's name, or its words in vm_deploy_plain_sites) its site - and so its vCenter ----
+VMWARE_PORT=$port2 "$py" - <<'EOPY' || { echo "ABORT - template on the second vCenter"; exit 1; }
+import os, time
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+src = [v for v in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if v.name == "DC0_C0_RP0_VM0"][0]
+t = src.CloneVM_Task(folder=src.parent, name="rhel9-gold", spec=vim.vm.CloneSpec(location=vim.vm.RelocateSpec(), powerOn=False, template=True))
+while t.info.state not in ("success", "error"):
+    time.sleep(0.1)
+assert t.info.state == "success", t.info.error
+EOPY
+twobody="$("$py" - <<'EOPY'
+import json
+d = ("Approval is required. Steps for the new app tier.\n\n"
+     "a.  Platform team : spin up new RHEL 9 VM / ab01xy05a / CPU :  CORE.1  / RAM : 1 GB.  / HDD'S C: /40  Location: North Campus\n\n"
+     "a.  Platform team : spin up new RHEL 9 VM / ab01xy05b / CPU :  CORE.2  / RAM : 2 GB.  / HDD'S C: /60, D: /10 Location: SiteTwo")
+print(json.dumps({"number": "CHGN0007201", "short_description": "New app tier", "description": d,
+                  "state": "-1", "approval": "approved", "assignment_group": "Change Board"}))
+EOPY
+)"
+chgs="$(newrec change_request "$twobody")"
+cts="$(newrec change_task "{\"short_description\": \"Platform team to deploy VM\", \"change_request\": \"$chgs\", \"assignment_group\": \"Linux Operations\"}")"
+twosites="{\"vm_deploy_plain_words\": true, \"vm_deploy_templates\": [\"rhel9-gold\"], \"vm_deploy_assignment_group\": \"Linux Operations\",
+           \"vm_deploy_wait_ip\": 3, \"vm_deploy_wait_customization\": 60, \"vmware_vcenters\": [\"$vc2\"],
+           \"vm_deploy_sites\": {\"Site One\": {\"vcenter\": \"127.0.0.1\", \"cluster\": \"DC0_C0\"}, \"Site Two\": {\"vcenter\": \"$vc2\", \"cluster\": \"DC0_C0\"}},
+           \"vm_deploy_plain_sites\": {\"north campus\": \"Site One\"},
+           \"vm_deploy_name_rules\": [{\"match\": \"ab01xy05*\", \"sites\": [\"Site One\", \"Site Two\"]}]}"
+run "a change laid out per server, a name rule for two sites: each VM its line's size, its Location's vCenter (dry run)" ok \
+    vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$cts" -e "$twosites" \
+    -- "cpu: ab01xy05a: 1; ab01xy05b: 2" "memory_gb: ab01xy05a: 1; ab01xy05b: 2" "disks_gb: ab01xy05a: 40; ab01xy05b: 60, 10" \
+       "site: ab01xy05a: Site One; ab01xy05b: Site Two" "vcenter: ab01xy05a: 127.0.0.1; ab01xy05b: $vc2" \
+       "2 VMs (ab01xy05a, ab01xy05b) ready to build - dry run"
+run "...a Location no site has: a question naming the sites, nothing built (dry run)" fail \
+    vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$cts" -e "$twosites" -e '{"vm_deploy_plain_sites": {}}' \
+    -- "the ticket does not say where ab01xy05a goes - Site One or Site Two: write it on its line, e.g. 'Location: Site One'"
+run "...built: each VM in its own vCenter" ok vm_deploy_from_ticket.yml -e vm_deploy_ticket="$cts" -e "$twosites" \
+    -- "2 VMs (ab01xy05a, ab01xy05b) deployed" "ab01xy05a: deployed" "ab01xy05b: deployed"
+"$py" - "$port" "$port2" <<'EOPY' && echo "ok   -   ...ab01xy05a: 1 vCPU, 1024 MB, 40 GB in the first vCenter; ab01xy05b: 2 vCPU, 2048 MB, 60 + 10 GB in the second" \
+    || { echo "FAIL -   ...the two-site VMs"; fails=$((fails + 1)); }
+import sys
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+
+
+def vms(port):
+    si = SmartConnect(host="127.0.0.1", port=int(port), user="user", pwd="pass", disableSslCertValidation=True)
+    c = si.RetrieveContent()
+    return {x.name: x for x in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view}
+
+
+def shape(v):
+    return (v.config.hardware.numCPU, v.config.hardware.memoryMB,
+            sorted((d.capacityInKB // 1048576 for d in v.config.hardware.device if isinstance(d, vim.vm.device.VirtualDisk)), reverse=True))
+
+
+one, two = vms(sys.argv[1]), vms(sys.argv[2])
+print(shape(one["ab01xy05a"]) if "ab01xy05a" in one else "-", shape(two["ab01xy05b"]) if "ab01xy05b" in two else "-")
+sys.exit(0 if "ab01xy05b" not in one and "ab01xy05a" not in two and shape(one["ab01xy05a"]) == (1, 1024, [40])
+         and shape(two["ab01xy05b"]) == (2, 2048, [60, 10]) else 1)
 EOPY
 unset GENAI_KEY FAKE_ACT_OUT FAKE_ACT_CONFIG
 unset SN_HOST SN_USERNAME SN_PASSWORD

@@ -218,7 +218,8 @@ class GenAI(unittest.TestCase):
             questions=["Which site?"]), self.TEXT, self.OPTS)
         self.assertEqual(g["fields"], {})
         self.assertEqual(len(g["dropped"]), 4)
-        self.assertIn("Which site?", g["questions"])
+        self.assertEqual(g["notes"], ["Which site?"])                            # GenAI's own question: a note, never sent
+        self.assertNotIn("Which site?", g["questions"])
         self.assertTrue(any("vm_name" in q for q in g["questions"]))
 
     def test_an_instruction_in_the_ticket_is_still_capped_by_the_rules(self):
@@ -912,6 +913,8 @@ class TemplateWords(unittest.TestCase):
         self.assertIn("fit more than one template (Win2022-PXE, Windows 2022 Gold): which one?", q[0])
         t, q = self.tpl("Windows 2019, named ab01app01")
         self.assertIsNone(t)
+        self.assertIn("the operating system Windows Server 2019 (the words 'Windows 2019', in the description), and no template here is for it", q[0])
+        t, q = self.tpl("a new VM named ab01app01")
         self.assertIn("e.g. 'windows 2022'", q[0])
 
     def test_a_template_line_in_plain_words(self):
@@ -1039,6 +1042,186 @@ class SeveralVMs(unittest.TestCase):
         self.assertEqual(prop["fields"]["vm_name"], "web01, web02")
         c = d.vm_deploy_check(d.vm_deploy_spec(rec, {}, prop, None), rec, dict(self.OPTS, templates=["rhel9-*"]))
         self.assertEqual(c["names"], ["web01", "web02"])
+
+
+
+class ChangeLayout(unittest.TestCase):
+    """A change laid out per server (the servers only in its description, one line each), read through its task;
+    Windows Server by its year alone; an OS no template is for is a question, never another version."""
+    RULES = [{"match": "*AB01*", "cluster": "c1", "datacenter": "dc1", "vcenter": "vc1.example.mil"}]
+    DESC = ("Approval is required. Steps for the new web tier.\n\n"
+            "1.  Build new web tier :  AB01WEBV00 (front end)\n"
+            "a.  Platform team : spin up new 2025 VM / AB01WEBV00 / CPU :  CORE.4  / RAM : 16 GB.  / HDD'S C: /120  Location: Site One\n\n"
+            "1.  Build new web tier :  AB01WEB01\n"
+            "a.  Platform team : spin up new 2025 VM / AB01WEB01 /  CPU :  CORE.4  / RAM : 16 GB.  / HDD'S C: /120 Location: Site Two")
+    TASK = {"number": "CTASK0001234", "active": "true", "assignment_group": "Platforms",
+            "short_description": "Platform team to deploy VM (CPU, Storage, Memory, OS image and location)", "description": ""}
+    PARENT = {"number": "CHGN0001234", "read": True,
+              "pieces": [("short description", "Windows Server deployment - Server 2025"), ("description", DESC)]}
+
+    def words(self, plain=None, allowed=("Windows 2022 Test VM",)):
+        return {"on": True, "templates": plain or {}, "sizes": {}, "allowed": list(allowed), "aliases": {}, "name_rules": self.RULES, "sites": []}
+
+    def check(self, s):
+        return d.vm_deploy_check(s, self.TASK, {"templates": ["Windows 2022 Test VM"], "name_rules": self.RULES, "max_cpu": 32,
+                                                "max_memory_gb": 128, "assignment_group": "Platforms"})
+
+    def test_two_vms_their_size_and_the_2025_question(self):
+        s = d.vm_deploy_spec(self.TASK, {}, None, self.words(), self.PARENT)
+        self.assertEqual(s["spec"], {"cpu": 4, "memory_gb": 16, "vm_name": "AB01WEBV00, AB01WEB01", "disks_gb": [120]})
+        self.assertEqual(len(s["questions"]), 1)
+        self.assertIn("the operating system Windows Server 2025 (the words '2025 VM', in the parent CHGN0001234 description), "
+                      "and no template here is for it (Windows 2022 Test VM)", s["questions"][0])
+        self.assertIn('vm_deploy_plain_templates: {"server 2025": "<template>"}', s["questions"][0])
+        c = self.check(s)
+        self.assertEqual(c["names"], ["AB01WEBV00", "AB01WEB01"])
+        self.assertEqual([v["spec"]["vcenter"] for v in c["vms"]], ["vc1.example.mil"] * 2)
+
+    def test_the_words_named_for_2025_answer_both_forms(self):
+        for plain in ({"server 2025": "Windows 2022 Test VM"}, {"windows server 2025": "Windows 2022 Test VM"}):
+            s = d.vm_deploy_spec(self.TASK, {}, None, self.words(plain), self.PARENT)
+            self.assertEqual((s["spec"].get("template"), s["questions"]), ("Windows 2022 Test VM", []), plain)
+            self.assertEqual(self.check(s)["problems"], [])
+
+    def test_a_template_from_genai_or_the_defaults_never_answers_it(self):
+        for prop, dflt in (({"fields": {"template": "Windows 2022 Test VM"}, "header": "x"}, {}), (None, {"template": "Windows 2022 Test VM"})):
+            s = d.vm_deploy_spec(self.TASK, dflt, prop, self.words(), self.PARENT)
+            self.assertEqual(s["spec"]["template"], "Windows 2022 Test VM")
+            self.assertTrue(any("Windows Server 2025" in q for q in s["questions"]))
+            self.assertTrue(any("Windows Server 2025" in p for p in self.check(s)["problems"]))
+        own = dict(self.TASK, description="template: Windows 2022 Test VM")          # the ticket's own line does
+        self.assertEqual(d.vm_deploy_spec(own, {}, None, self.words(), self.PARENT)["questions"], [])
+
+    def test_windows_by_its_year_and_what_is_not_an_os(self):
+        allowed = ("Windows 2022 Test VM", "rhel9-gold")
+        for text, want in (("spin up new 2022 VM / ab01web05", "Windows 2022 Test VM"), ("two 2022 servers named ab01web05 and ab01web06",
+                           "Windows 2022 Test VM"), ("a RHEL 9 VM named ab01db05 for SQL Server 2019", "rhel9-gold"),
+                           ("in 2025 the server ab01web03 was retired; a RHEL 9 VM named ab01web05", "rhel9-gold")):
+            s = d.vm_deploy_spec({"number": "INC1", "description": text}, {}, None, self.words(allowed=allowed))
+            self.assertEqual((s["spec"].get("template"), s["questions"]), (want, []), text)
+        s = d.vm_deploy_spec({"number": "INC1", "description": "a RHEL8 VM named ab01web05"}, {}, None, self.words(allowed=allowed))
+        self.assertIn("the operating system RHEL 8", s["questions"][0])
+
+    def test_cpu_and_disks_as_written_here(self):
+        for text, cpu, disks in (("CPU : CORE.4 / HDD C: /1 TB", 4, [1024]), ("cores.2, Disks: C: 100, D: 200", 2, [100, 200]),
+                                 ("CPU: core 8, HDD'S C: /120 D: /50", 8, [120, 50])):
+            w = d.vm_deploy_words({"description": "named ab01web05, rhel 9\n" + text}, self.words(allowed=("rhel9-gold",)))
+            self.assertEqual((w["spec"].get("cpu"), w["spec"].get("disks_gb")), (cpu, disks), text)
+
+    def test_genai_copies_the_os_and_the_job_picks_the_template(self):
+        text = d.vm_deploy_ticket_text(self.TASK, self.PARENT)
+        cat = {"win2022-pxe": "Windows Server 2022 (installed by MECM)"}
+        base = {"vm_name": {"value": "AB01WEBV00, AB01WEB01",
+                            "evidence": "spin up new 2025 VM / AB01WEBV00 ... spin up new 2025 VM / AB01WEB01"},
+                "os": {"value": "Windows Server 2025", "evidence": "Server 2025"}, "cpu": {"value": 4, "evidence": "CPU :  CORE.4"},
+                "questions": ["Which vCenter?"]}
+        g = d.vm_deploy_genai_parse(answer(**base), text, {"catalog": cat, "words": self.words()})
+        self.assertEqual(g["fields"], {"vm_name": "AB01WEBV00, AB01WEB01", "cpu": 4})     # names quoted from two places
+        self.assertEqual((g["os"], g["notes"]), ("Windows Server 2025", ["Which vCenter?"]))
+        self.assertIn("the operating system Windows Server 2025", g["questions"][0])
+        g = d.vm_deploy_genai_parse(answer(template={"value": "win2022-pxe", "evidence": "Server 2025"}, **base), text,
+                                    {"catalog": cat, "words": self.words()})
+        self.assertNotIn("template", g["fields"])                                        # a 2022 key for a 2025 ticket
+        self.assertIn("template 'win2022-pxe': it is for Windows Server 2022, the ticket asks for Windows Server 2025", g["dropped"])
+        g = d.vm_deploy_genai_parse(answer(template={"value": "win2022-pxe", "evidence": "Server 2025"}, **base), text,
+                                    {"catalog": cat, "words": self.words({"server 2025": "Windows 2022 Test VM"})})
+        self.assertEqual((g["fields"]["template"], g["questions"]), ("Windows 2022 Test VM", []))   # the words you set decide
+        self.assertNotIn("questions", d.vm_deploy_genai_task({"catalog": {}}).split("BEGIN_ACT_ANALYSIS")[-1])
+
+
+class PerLine(unittest.TestCase):
+    """Each server's own line: its CPU, memory, disks and site are its own; its site (a Location, by the
+    site's name or its words - vm_deploy_plain_sites) picks its vCenter; a name rule for several sites
+    never guesses one."""
+    SITES = {"Site One": {"vcenter": "vc1.example.mil", "cluster": "c1"}, "Site Two": {"vcenter": "vc2.example.mil", "cluster": "c2"}}
+    RULES = [{"match": "*XY05*", "sites": ["Site One", "Site Two"], "vcenter": "vc1.example.mil", "cluster": "c1", "folder": "Servers"}]
+    WORDS = {"north campus": "Site One", "s2": "Site Two"}
+    TASK = {"number": "CTASK0001235", "active": "true", "assignment_group": "Platforms", "short_description": "Platform team to deploy VM"}
+    LINE = "a.  Platform team : spin up new 2025 VM / %s / CPU :  CORE.%s  / RAM : %s GB.  / HDD'S C: /%s %s\n"
+
+    def parent(self, *lines):
+        return {"number": "CHGN0001235", "read": True, "pieces": [("description", "Steps for the new web tier.\n\n" + "\n".join(lines))]}
+
+    def words(self):
+        return {"on": True, "templates": {"server 2025": "win2025-pxe"}, "sizes": {"small": {"cpu": 2, "memory_gb": 4}},
+                "allowed": ["win2025-pxe"], "aliases": {}, "name_rules": self.RULES, "sites": list(self.SITES), "site_words": self.WORDS}
+
+    def run_(self, parent=None, task=None, defaults=None):
+        s = d.vm_deploy_spec(task or self.TASK, defaults or {}, None, self.words(), parent)
+        c = d.vm_deploy_check(s, task or self.TASK, {"templates": ["win2025-pxe"], "name_rules": self.RULES, "sites": self.SITES,
+                                                     "site_words": self.WORDS, "max_cpu": 32, "max_memory_gb": 128,
+                                                     "assignment_group": "Platforms"})
+        return s, c, dict((v["spec"]["vm_name"], v["spec"]) for v in c["vms"])
+
+    def test_each_line_its_own_size_disks_and_vcenter(self):
+        s, c, vm = self.run_(self.parent(self.LINE % ("AB01XY05A", 4, 16, 120, "Location: Site One"),
+                                         self.LINE % ("AB01XY05B", 8, 32, "200, D: /100", "Location: SiteTwo")))
+        self.assertEqual((s["questions"], c["problems"]), ([], []))
+        a, b = vm["AB01XY05A"], vm["AB01XY05B"]
+        self.assertEqual((a["cpu"], a["memory_gb"], a["disks_gb"], a["site"], a["vcenter"], a["cluster"]), (4, 16, [120], "Site One", "vc1.example.mil", "c1"))
+        self.assertEqual((b["cpu"], b["memory_gb"], b["disks_gb"], b["site"], b["vcenter"], b["cluster"]), (8, 32, [200, 100], "Site Two", "vc2.example.mil", "c2"))
+        self.assertEqual(a.get("folder"), "Servers")
+        self.assertNotIn("folder", b)               # the rule's folder is for its own vCenter, not the other site's
+        self.assertEqual(c["spec"]["cpu"], "AB01XY05A: 4; AB01XY05B: 8")
+        self.assertIn("CORE.8", c["vms"][1]["sources"]["cpu"])
+
+    def test_the_same_size_on_both_lines_each_at_its_site(self):
+        s, c, vm = self.run_(self.parent(self.LINE % ("AB01XY05A", 4, 16, 120, "Location: North Campus"),
+                                         self.LINE % ("AB01XY05B", 4, 16, 120, "Location: S2")))
+        self.assertEqual((s["spec"]["cpu"], s["spec"]["memory_gb"], c["problems"]), (4, 16, []))
+        self.assertEqual([vm[n]["vcenter"] for n in ("AB01XY05A", "AB01XY05B")], ["vc1.example.mil", "vc2.example.mil"])
+
+    def test_no_or_an_unknown_location_is_a_question_never_the_rules_vcenter(self):
+        s, c, vm = self.run_(self.parent(self.LINE % ("AB01XY05A", 4, 16, 120, ""), self.LINE % ("AB01XY05B", 4, 16, 120, "Location: Elsewhere")))
+        self.assertEqual(c["problems"], ["the ticket does not say where AB01XY05A goes - Site One or Site Two: write it on its line, e.g. "
+                                         "'Location: Site One'", "the ticket does not say where AB01XY05B goes - Site One or Site Two: write "
+                                         "it on its line, e.g. 'Location: Site One'"])
+        self.assertNotIn("vcenter", vm["AB01XY05A"])
+        # one line with a Location, the other without: never the other line's site
+        s, c, vm = self.run_(self.parent(self.LINE % ("AB01XY05A", 4, 16, 120, ""), self.LINE % ("AB01XY05B", 4, 16, 120, "Location: S2")))
+        self.assertEqual(c["problems"], ["the ticket does not say where AB01XY05A goes - Site One or Site Two: write it on its line, e.g. "
+                                         "'Location: Site One'"])
+        self.assertEqual((vm["AB01XY05B"]["site"], "site" in vm["AB01XY05A"]), ("Site Two", False))
+
+    def test_a_site_outside_the_rules_sites(self):
+        sites = dict(self.SITES, **{"Site Three": {"vcenter": "vc3.example.mil"}})
+        s = d.vm_deploy_spec(self.TASK, {}, None, dict(self.words(), sites=list(sites)), self.parent(
+            self.LINE % ("AB01XY05A", 4, 16, 120, "Location: Site Three"), self.LINE % ("AB01XY05B", 4, 16, 120, "Location: Site One")))
+        c = d.vm_deploy_check(s, self.TASK, {"templates": ["win2025-pxe"], "name_rules": self.RULES, "sites": sites})
+        self.assertEqual(c["problems"], ["AB01XY05A is to go to site Site Three, but its name rule *XY05* is for Site One or Site Two "
+                                         "(vm_deploy_name_rules)"])
+
+    def test_a_later_line_for_all_wins_a_line_in_the_same_text_does_not(self):
+        p = self.parent(self.LINE % ("AB01XY05A", 4, 16, 120, "Location: Site One"), self.LINE % ("AB01XY05B", 6, 32, 120, "Location: Site Two"))
+        later = dict(self.TASK, comments="2026-10-15 10:00:00 - Requester (Additional comments)\ncpu: 8\n")
+        s, c, vm = self.run_(p, later)
+        self.assertEqual((vm["AB01XY05A"]["cpu"], vm["AB01XY05B"]["cpu"], vm["AB01XY05B"]["memory_gb"]), (8, 8, 32))
+        block = {"number": "CHGN0001236", "read": True, "pieces": [("description", "new VM / AB01XY05A\nCPU: 4\nRAM: 8 GB\nLocation: Site One\n"
+                                                                    "new VM / AB01XY05B\nCPU: 6\nRAM: 12 GB\nLocation: Site Two\n\n"
+                                                                    "Both Server 2025, disk 100 GB")]}
+        s, c, vm = self.run_(block)
+        self.assertEqual(c["problems"], [])
+        self.assertEqual([(vm[n]["cpu"], vm[n]["memory_gb"], vm[n]["disks_gb"], vm[n]["template"]) for n in ("AB01XY05A", "AB01XY05B")],
+                         [(4, 8, [100], "win2025-pxe"), (6, 12, [100], "win2025-pxe")])
+
+    def test_two_numbers_on_one_line_ask_about_that_vm_only(self):
+        s, c, vm = self.run_(self.parent(self.LINE % ("AB01XY05A", 4, 16, 120, "Location: Site One"),
+                                         self.LINE % ("AB01XY05B", "6 / 8 cpu", 32, 120, "Location: Site Two")))
+        self.assertEqual(c["problems"], ["for AB01XY05B: the ticket gives more than one number of CPUs ('8 cpu', 'CPU :  CORE.6', in the parent "
+                                         "CHGN0001235 description): how many?"])
+        self.assertEqual(vm["AB01XY05A"]["cpu"], 4)
+
+    def test_a_size_word_on_a_line_and_the_location_field(self):
+        p = {"number": "CHGN0001237", "read": True, "pieces": [("description", "new VM / AB01XY05A - small, Site One\n"
+                                                                    "new VM / AB01XY05B - 8 cpu 16 gb ram, Site Two\nServer 2025")]}
+        s, c, vm = self.run_(p)
+        self.assertEqual([(vm[n]["cpu"], vm[n]["memory_gb"]) for n in ("AB01XY05A", "AB01XY05B")], [(2, 4), (8, 16)])
+        task = dict(self.TASK, description="2 new Server 2025 VMs named AB01XY05A and AB01XY05B, 4 cpu, 8 gb ram", location="North Campus")
+        s, c, vm = self.run_(None, task)
+        self.assertEqual((c["problems"], vm["AB01XY05B"]["site"], vm["AB01XY05B"]["vcenter"]), ([], "Site One", "vc1.example.mil"))
+        self.assertEqual(d._site_find("north campus", ["NorthCampus"]), "NorthCampus")
+        self.assertEqual(d._site_find("NorthCampus", ["North Campus"]), "North Campus")
+        self.assertIsNone(d._site_find("the site a", ["SiteA", "SiteB"]))
 
 
 if __name__ == "__main__":

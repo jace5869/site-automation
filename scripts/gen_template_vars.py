@@ -73,7 +73,7 @@ vm_deploy_name_rules:                             # the VM's name picks the clus
                                                   # datacenter / vcenter: only when not the template's own
 ## VM names: 63 characters by default, and Windows is held to 15 on its own - no vm_deploy_name_regex needed
 # vm_deploy_genai: true                           # optional, needs the ACT model key credential: requests in plain words
-# vm_deploy_template_catalog:                     # what GenAI may pick, in plain words
+# vm_deploy_template_catalog:                     # optional: templates GenAI may name, in plain words
 #   TEMPLATE-NAME: "Windows Server 2022 (installed over the network by MECM)"
 report_email_to: approvers@yoursite.mil           # the approver reads the plan in this email
 """),

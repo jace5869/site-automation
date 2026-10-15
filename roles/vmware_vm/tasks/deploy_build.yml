@@ -14,7 +14,7 @@
            'templates': vm_deploy_templates, 'clusters': vm_deploy_clusters, 'datastores': vm_deploy_datastores,
            'folders': vm_deploy_folders, 'max_cpu': vm_deploy_max_cpu | int, 'max_memory_gb': vm_deploy_max_memory_gb | float,
            'name_regex': vm_deploy_name_regex, 'assignment_group': vm_deploy_assignment_group,
-           'sites': vm_deploy_sites, 'site_required': vm_deploy_site_required | bool, 'pxe_templates': vm_deploy_pxe_templates,
+           'sites': vm_deploy_sites, 'site_words': vm_deploy_plain_sites | default({}, true), 'site_required': vm_deploy_site_required | bool, 'pxe_templates': vm_deploy_pxe_templates,
            'name_rules': vm_deploy_name_rules,
            'template_aliases': vm_deploy_template_aliases, 'template_specs': vm_deploy_template_specs,
            'max_disks': vm_deploy_max_disks | int, 'max_disk_gb': vm_deploy_max_disk_gb | float,
@@ -23,7 +23,7 @@
     # the VMs an earlier run built for this ticket (its own notes): left as they are when the job runs again
     _vd_built: "{{ _vd_rec | vm_deploy_built }}"
 
-- name: VMware | one VM, or several (one per name, the same size)
+- name: VMware | one VM, or several (one per name)
   ansible.builtin.set_fact:
     _vd_multi: "{{ _vd.vms | length > 1 }}"
 
