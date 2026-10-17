@@ -4,6 +4,7 @@ ticket parsed, the rules) and the pure parts of roles/vmware_vm/library/site_vmw
 Run: python3 tests/test_vm_deploy.py"""
 import importlib.util
 import os
+import re
 import sys
 import unittest
 
@@ -1328,6 +1329,117 @@ class PerLine(unittest.TestCase):
         self.assertEqual(d._site_find("north campus", ["NorthCampus"]), "NorthCampus")
         self.assertEqual(d._site_find("NorthCampus", ["North Campus"]), "North Campus")
         self.assertIsNone(d._site_find("the site a", ["SiteA", "SiteB"]))
+
+
+class GroupByTable(unittest.TestCase):
+    """vm_deploy_assignment_group_by_table: the ticket launched, by its table - e.g. a change in any group,
+    its tasks still those of vm_deploy_assignment_group"""
+
+    def test_a_table_it_names_any_group(self):
+        for v in ("", None, []):                        # "", a YAML key with nothing after it, an empty list
+            g = d.vm_deploy_group_for("change_request", {"change_request": v}, ["Linux Operations"])
+            self.assertEqual(g["groups"], [])
+            self.assertEqual(g["setting"], "vm_deploy_assignment_group_by_table (change_request)")
+
+    def test_its_tables_as_people_write_them(self):
+        self.assertEqual(d.vm_deploy_group_for("change_request", {"change": ""}, "Linux Operations")["groups"], [])
+        self.assertEqual(d.vm_deploy_group_for("change_request", {"Change Request": ["Change Board", "Linux Operations"]},
+                                               "Linux Operations")["groups"], ["Change Board", "Linux Operations"])
+
+    def test_another_table_keeps_the_group(self):
+        g = d.vm_deploy_group_for("change_task", {"change_request": ""}, "Linux Operations")
+        self.assertEqual(g, {"groups": ["Linux Operations"], "setting": "vm_deploy_assignment_group"})
+        self.assertEqual(d.vm_deploy_group_for("change_request", {}, "['Linux Operations', 'Windows Team']")["groups"],
+                         ["Linux Operations", "Windows Team"])
+        self.assertEqual(d.vm_deploy_group_for("", {"": ""}, "Linux Operations")["groups"], ["Linux Operations"])
+
+    def test_the_check(self):
+        rec = dict(REC, number="CHG0001234", assignment_group="Change Board")
+        check = lambda g: d.vm_deploy_check(d.vm_deploy_spec(rec), rec, dict(
+            RULES, assignment_group=g["groups"], assignment_group_setting=g["setting"]))["problems"]
+        self.assertEqual(check(d.vm_deploy_group_for("change_request", {"change_request": ""}, "Linux Operations")), [])
+        self.assertIn("the ticket is assigned to 'Change Board', not to 'Linux Operations' (vm_deploy_assignment_group)",
+                      check(d.vm_deploy_group_for("change_request", {}, "Linux Operations")))
+        self.assertIn("the ticket is assigned to 'Change Board', not to 'Windows Team' (vm_deploy_assignment_group_by_table (change_request))",
+                      check(d.vm_deploy_group_for("change_request", {"change": "Windows Team"}, "Linux Operations")))
+
+
+class GuideExamples(unittest.TestCase):
+    """docs/VM_DEPLOY_GUIDE.md (and its PDF): its configurations are YAML of settings that exist, and its
+    example requests are read the way it says"""
+    GUIDE = os.path.join(HERE, "..", "docs", "VM_DEPLOY_GUIDE.md")
+    DEFAULTS = os.path.join(HERE, "..", "roles", "vmware_vm", "defaults", "main.yml")
+
+    def setUp(self):
+        with open(self.GUIDE, encoding="utf-8") as fh:
+            self.text = fh.read()
+        self.yaml = [yaml.safe_load(b) for b in re.findall(r"```yaml\n(.*?)```", self.text, re.S)]
+
+    def test_the_configurations(self):
+        with open(self.DEFAULTS, encoding="utf-8") as fh:
+            defaults = yaml.safe_load(fh)
+        self.assertGreaterEqual(len(self.yaml), 9)
+        for block in self.yaml:
+            self.assertIsInstance(block, dict)
+            for k in block:
+                if k.startswith("vm_deploy_"):
+                    self.assertIn(k, defaults, "the guide sets %s, which the role does not have" % k)
+        # the change is never closed by them
+        for block in self.yaml:
+            self.assertNotIn("change_request", block.get("vm_deploy_done_fields_by_table") or {})
+            self.assertFalse(block.get("vm_deploy_done_fields"))
+
+    def test_every_setting_has_an_example(self):
+        """docs/vm_deploy_examples.yml: one entry per vm_deploy_* setting, its example of the default's type,
+        on one line (the PDF reads it line by line), and every setting of the standard setup marked so"""
+        with open(self.DEFAULTS, encoding="utf-8") as fh:
+            defaults = {k: v for k, v in yaml.safe_load(fh).items() if k.startswith("vm_deploy_")}
+        path = os.path.join(HERE, "..", "docs", "vm_deploy_examples.yml")
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        ex = yaml.safe_load(text)
+        self.assertEqual(sorted(ex), sorted(defaults))
+        kind = lambda v: "number" if isinstance(v, (int, float)) and not isinstance(v, bool) else type(v).__name__
+        for name, e in ex.items():
+            self.assertEqual(sorted(e), ["example", "level", "when"], name)
+            self.assertIn(e["level"], ("standard", "often", "rarely"), name)
+            self.assertTrue(str(e["when"]).strip(), name)
+            self.assertNotEqual(e["example"], defaults[name], "%s: the example is the default" % name)
+            if not str(defaults[name]).startswith("{{"):
+                self.assertEqual(kind(e["example"]), kind(defaults[name]), name)
+            line = re.search(r"^%s:\n(?:  \w+: .*\n)*?  example: (.*)$" % name, text, re.M)
+            self.assertIsNotNone(line, "%s: its example on one line" % name)
+            self.assertEqual(yaml.safe_load(line.group(1)), e["example"], name)
+        standard = [b for b in self.yaml if "vm_deploy_close_tasks" in b and "vm_deploy_notes_tasks_query" in b][0]
+        for k in standard:
+            if k.startswith("vm_deploy_"):
+                self.assertEqual(ex[k]["level"], "standard", "%s is in the standard setup" % k)
+        self.assertFalse(standard["vm_deploy_close_tasks"])
+        self.assertNotIn("change_request", standard["vm_deploy_done_fields_by_table"])
+
+    def test_the_requests(self):
+        cfg = [b for b in self.yaml if "vm_deploy_sites" in b][0]
+        sites, site_words = cfg["vm_deploy_sites"], cfg["vm_deploy_plain_sites"]
+        allowed = ["rhel9-gold", "WIN2025-TEMPLATE"]
+        words = {"on": True, "templates": {}, "sizes": {}, "allowed": allowed, "aliases": {}, "name_rules": [],
+                 "sites": list(sites), "site_words": site_words}
+        opts = dict(RULES, templates=allowed, clusters=[], sites=sites, site_words=site_words, max_cpu=16, max_memory_gb=128,
+                    max_disks=5, assignment_group="Server Team")
+        section = self.text.split("## What the requester writes")[1].split("\n## ")[0]
+        asks = re.findall(r"```text\n(.*?)```", section, re.S)
+        self.assertEqual(len(asks), 3)
+        want = [  # name, template, cpu, memory, disks, site
+            [("ab01web05", "rhel9-gold", 4, 16, [120, 200], "SiteA"), ("ab01web06", "rhel9-gold", 4, 16, [120, 200], "SiteA")],
+            [("ab01web05", "rhel9-gold", 4, 16, [120, 200], "SiteA"), ("ab01web06", "rhel9-gold", 4, 16, [120, 200], "SiteA")],
+            [("ab01web05", "WIN2025-TEMPLATE", 4, 16, [120], "SiteA"), ("ab01web06", "WIN2025-TEMPLATE", 8, 32, [120], "SiteB")]]
+        for ask, vms in zip(asks, want):
+            rec = {"number": "CTASK0001235", "description": ask, "short_description": "VM request", "active": "true",
+                   "assignment_group": "Server Team"}
+            out = d.vm_deploy_check(d.vm_deploy_spec(rec, {}, None, words, None), rec, opts)
+            self.assertEqual(out["problems"], [], ask)
+            got = [tuple(v["spec"].get(k) for k in ("vm_name", "template", "cpu", "memory_gb", "disks_gb", "site")) for v in out["vms"]]
+            self.assertEqual(got, vms, ask)
+            self.assertEqual([v["spec"]["vcenter"] for v in out["vms"]], [sites[s[5]]["vcenter"] for s in vms])
 
 
 if __name__ == "__main__":

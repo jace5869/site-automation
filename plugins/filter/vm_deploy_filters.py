@@ -109,6 +109,17 @@ def vm_deploy_table_name(name):
     return TABLE_NAMES.get(re.sub(r"[\s_-]+", " ", s.lower()).strip(), s)
 
 
+def vm_deploy_group_for(table, by_table=None, groups=None):
+    """The groups a ticket of this table must be assigned to -> {'groups': [names] ([] = any group),
+    'setting': the setting they come from}. by_table (vm_deploy_assignment_group_by_table): {table: one
+    group, a list, or "" / nothing = any group}, its tables as people write them ('change'); a table it
+    does not name: groups (vm_deploy_assignment_group)."""
+    for k, v in (by_table.items() if isinstance(by_table, dict) else []):
+        if vm_deploy_table_name(k) == vm_deploy_table_name(table) and str(table or "").strip():
+            return {"groups": _groups(v), "setting": "vm_deploy_assignment_group_by_table (%s)" % vm_deploy_table_name(k)}
+    return {"groups": _groups(groups), "setting": "vm_deploy_assignment_group"}
+
+
 def vm_deploy_table(number, prefixes=None, guess=True):
     """'INC0012345' -> 'incident', 'SCTASK0001' -> 'sc_task'. prefixes: the site's own ({INCN: incident}),
     before the standard ones. guess: a prefix that starts with a known one is taken as that table
@@ -1082,9 +1093,10 @@ def vm_deploy_check(parsed, record=None, opts=None):
     the site's placement filled in, pxe true for a network-boot template), 'sources', 'problems': [why
     it is refused], 'vms': [{'spec', 'sources'}: one per VM], 'names': [the VMs' names]}. opts:
     templates (required allow-list), clusters, datastores, folders (allow-lists, [] = any), max_cpu,
-    max_memory_gb, name_regex, assignment_group, sites ({site: {cluster, datastore, folder, vcenter,
-    datacenter, domain ...}}), site_required, pxe_templates, template_aliases ({short name: template}),
-    template_specs ({template pattern: customization specification}), max_vms, ready
+    max_memory_gb, name_regex, assignment_group (assignment_group_setting: the setting it comes from, for
+    the message), sites ({site: {cluster, datastore, folder, vcenter, datacenter, domain ...}}), site_required,
+    pxe_templates, template_aliases ({short name: template}), template_specs ({template pattern:
+    customization specification}), max_vms, ready
     (vm_deploy_ready_by_table) and table (the ticket's table): the fields the ticket must have.
 
     Several names (vm_name 'web01, web02'): one VM each, the same size - but what a VM's own line says
@@ -1205,8 +1217,9 @@ def _check_one(parsed, record=None, opts=None):
             problems.append(why)
     groups = _groups(o.get("assignment_group"))
     if not _group_ok(r.get("assignment_group"), groups):
-        problems.append("the ticket is assigned to %r, not to %s (vm_deploy_assignment_group)"
-                        % (_ref(r.get("assignment_group")) or "nobody", " or ".join(repr(g) for g in groups)))
+        problems.append("the ticket is assigned to %r, not to %s (%s)"
+                        % (_ref(r.get("assignment_group")) or "nobody", " or ".join(repr(g) for g in groups),
+                           o.get("assignment_group_setting") or "vm_deploy_assignment_group"))
     words = bool((parsed or {}).get("words"))
     problems += list((parsed or {}).get("questions") or [])
     for k in ("vm_name", "template"):
@@ -1881,7 +1894,7 @@ def vm_deploy_finder(datacenters, specs=None):
 
 class FilterModule(object):
     def filters(self):
-        return {"vm_deploy_table": vm_deploy_table, "vm_deploy_table_name": vm_deploy_table_name, "vm_deploy_spec": vm_deploy_spec, "vm_deploy_check": vm_deploy_check,
+        return {"vm_deploy_table": vm_deploy_table, "vm_deploy_table_name": vm_deploy_table_name, "vm_deploy_group_for": vm_deploy_group_for, "vm_deploy_spec": vm_deploy_spec, "vm_deploy_check": vm_deploy_check,
                 "vm_deploy_spec_text": vm_deploy_spec_text, "vm_deploy_ticket_text": vm_deploy_ticket_text,
                 "vm_deploy_genai_task": vm_deploy_genai_task, "vm_deploy_genai_parse": vm_deploy_genai_parse,
                 "vm_deploy_proposal_note": vm_deploy_proposal_note, "vm_deploy_find_proposal": vm_deploy_find_proposal,

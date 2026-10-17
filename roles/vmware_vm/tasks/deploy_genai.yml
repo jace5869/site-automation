@@ -49,7 +49,7 @@
       {{ (_vd_rec | vm_deploy_spec(vm_deploy_defaults, {'fields': _vd_g.fields, 'header': 'this run'}, _vd_words, _vd_parent)) | vm_deploy_check(_vd_rec, {
            'templates': vm_deploy_templates, 'clusters': vm_deploy_clusters, 'datastores': vm_deploy_datastores,
            'folders': vm_deploy_folders, 'max_cpu': vm_deploy_max_cpu | int, 'max_memory_gb': vm_deploy_max_memory_gb | float,
-           'name_regex': vm_deploy_name_regex, 'assignment_group': vm_deploy_assignment_group,
+           'name_regex': vm_deploy_name_regex, 'assignment_group': _vd_grp.groups, 'assignment_group_setting': _vd_grp.setting,
            'sites': vm_deploy_sites, 'site_words': vm_deploy_plain_sites | default({}, true), 'site_required': vm_deploy_site_required | bool, 'pxe_templates': vm_deploy_pxe_templates,
            'name_rules': vm_deploy_name_rules,
            'template_aliases': vm_deploy_template_aliases, 'template_specs': vm_deploy_template_specs,

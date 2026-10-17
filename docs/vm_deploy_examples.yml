@@ -1,0 +1,284 @@
+# Every vm_deploy_* setting of the VM deploy job (and of the scheduled pickup) with an example value and
+# when you would set it. The VM Deploy Guide PDF shows each one next to its default and what it does
+# (roles/vmware_vm/defaults/main.yml); tests/test_vm_deploy.py checks every setting has one, of the
+# default's type.
+#   level: standard - in the guide's standard setup: set it
+#          often    - set it when "when" describes your site
+#          rarely   - leave the default unless you have that case
+# The names are examples (example.mil, SiteA, *AB01*, CHG0001234): yours go in AAP, never here.
+---
+# ---- the ticket ----
+vm_deploy_ticket:
+  level: standard
+  example: CHG0001234
+  when: the survey's one question - the operator types the change's number at launch; never set on the template
+vm_deploy_ticket_table:
+  level: rarely
+  example: u_vm_request
+  when: a table of your own whose number prefix the job does not know
+vm_deploy_ticket_prefixes:
+  level: rarely
+  example: {CHGN: change_request, INCN: incident}
+  when: your instance numbers tickets with its own prefixes and the API account may not read the task table
+vm_deploy_parent_tables:
+  level: rarely
+  example: [change_request, sc_req_item]
+  when: a catalog task whose requested item (RITM) holds the request - with request_item in vm_deploy_parent_fields
+vm_deploy_parent_fields:
+  level: rarely
+  example: [change_request, request_item, parent]
+  when: the field that points to the parent is another one (a catalog task's request_item, a field of your own)
+vm_deploy_parent_text_fields:
+  level: often
+  example: [description, implementation_plan, comments]
+  when: launched with the task, and the change keeps the request in its implementation plan, or answers come as comments on it
+vm_deploy_parent_wins:
+  level: often
+  example: true
+  when: launched with the task, and the task repeats the change's request (maybe wrongly) - the change's description wins
+vm_deploy_notes_also:
+  level: standard
+  example: [parent, tasks]
+  when: every note on the change and on its task - whichever of the two numbers you launch with
+vm_deploy_notes_tasks_query:
+  level: standard
+  example: "short_descriptionLIKEto deploy"
+  when: which of the change's tasks get the notes (and are closed), by their words - copy it from the change task list's filter
+vm_deploy_close_tasks:
+  level: standard
+  example: true
+  when: the one switch - launched with the change, close its task when every VM is built; false = your team closes it
+vm_deploy_ready_by_table:
+  level: rarely
+  example: {change_request: {approval: Approved, state: [Implement, Scheduled]}}
+  when: your change states have other labels, or a scheduled change may be built too
+
+# ---- what a ticket may ask for ----
+vm_deploy_templates:
+  level: standard
+  example: [rhel9-gold, WIN2022-TEMPLATE]
+  when: always - only these templates are ever deployed (* and ? allowed)
+vm_deploy_clusters:
+  level: often
+  example: ["PROD-CL*"]
+  when: limit the clusters a ticket may name - and let the job choose among them when nothing names one
+vm_deploy_datastores:
+  level: often
+  example: ["DSC-PROD*"]
+  when: limit the datastores (or datastore clusters) - and let the job choose among them
+vm_deploy_folders:
+  level: rarely
+  example: ["Servers/*"]
+  when: limit the VM folders a ticket may name
+vm_deploy_max_cpu:
+  level: often
+  example: 8
+  when: a lower cap than 16 vCPUs per VM
+vm_deploy_max_memory_gb:
+  level: often
+  example: 64
+  when: a lower cap than 128 GB per VM
+vm_deploy_max_vms:
+  level: rarely
+  example: 4
+  when: fewer VMs per ticket than 10
+vm_deploy_name_regex:
+  level: rarely
+  example: '^[A-Za-z]{2}[0-9]{2}[A-Za-z0-9-]{1,11}$'
+  when: your naming standard - here two letters, two digits, then up to 11 more (15 in all, as Windows allows)
+vm_deploy_assignment_group:
+  level: standard
+  example: Server Team
+  when: only tickets (and the change's tasks) of this group; "" = any group - the task then found by its words alone (the standard setup)
+vm_deploy_assignment_group_by_table:
+  level: often
+  example: {change_request: ""}
+  when: with vm_deploy_assignment_group set - the change itself may be any group's, its task still your group's
+
+# ---- where it goes ----
+vm_deploy_defaults:
+  level: standard
+  example: {template: rhel9-gold, cpu: 2, memory_gb: 8, cluster: PROD-CL01, datastore: DSC-PROD, folder: Servers/New}
+  when: what a ticket leaves out - template, size and place included; what the ticket says still wins
+vm_deploy_sites:
+  level: often
+  example: {SiteA: {cluster: A-CL01, datastore: A-DS01, folder: Servers/New}, SiteB: {vcenter: vc02.example.mil, cluster: B-CL01, datastore: B-DS01, folder: Servers/New}}
+  when: several places to build - the ticket's site line or its Location picks one
+vm_deploy_site_required:
+  level: rarely
+  example: false
+  when: with sites set up - a ticket that names no site gets vm_deploy_defaults instead of a refusal
+vm_deploy_name_rules:
+  level: often
+  example: [{match: "*AB01*", site: SiteA}, {match: "*XY05*", cluster: B-CL01}]
+  when: the VM's name says where it goes (a site code in the name)
+vm_deploy_pxe_templates:
+  level: often
+  example: ["WIN20*-PXE"]
+  when: empty templates that install their OS from the network (MECM) or a CD - no customization, the MAC on the ticket
+vm_deploy_guestinfo:
+  level: rarely
+  example: false
+  when: the vCenter account lacks Advanced configuration, and the installer reads no guestinfo anyway
+vm_deploy_template_aliases:
+  level: rarely
+  example: {win2022: "Windows 2022 Standard Template - Site 1", rhel9: rhel9-gold}
+  when: long template names - tickets and GenAI write the short one
+vm_deploy_template_specs:
+  level: standard
+  example: {"WIN2022*": Win2022-Sysprep}
+  when: every Windows template that is not network-boot - its Sysprep specification (password, domain)
+vm_deploy_max_disks:
+  level: rarely
+  example: 3
+  when: fewer disks per VM than 5 (disk 1 included)
+vm_deploy_max_disk_gb:
+  level: rarely
+  example: 1024
+  when: a smaller biggest disk than 2 TB
+vm_deploy_max_total_disk_gb:
+  level: rarely
+  example: 2048
+  when: less disk per VM in all than 4 TB
+vm_deploy_mem_target_pct:
+  level: rarely
+  example: 70
+  when: automatic placement keeps more memory free (a cluster fits while it stays under this, a host down)
+vm_deploy_failover_hosts:
+  level: rarely
+  example: 2
+  when: plan for two hosts down when choosing a cluster (large clusters)
+vm_deploy_datastore_max_used_pct:
+  level: rarely
+  example: 80
+  when: automatic placement keeps more datastore space free
+
+# ---- the build ----
+vm_deploy_domain:
+  level: often
+  example: example.mil
+  when: the DNS domain Linux VMs get from guest customization
+vm_deploy_customize:
+  level: rarely
+  example: false
+  when: the template sets itself up (cloud-init) - vCenter sets no host name or DHCP
+vm_deploy_power_on:
+  level: rarely
+  example: false
+  when: someone checks the VM before it is switched on
+vm_deploy_wait_customization:
+  level: rarely
+  example: 1800
+  when: a slow Sysprep (Windows joining the domain)
+vm_deploy_wait_ip:
+  level: rarely
+  example: 1200
+  when: slow DHCP on the staging network
+
+# ---- closing ----
+vm_deploy_done_fields:
+  level: rarely
+  example: {state: "6", close_code: "Solution provided", close_notes: "VM deployed"}
+  when: "NEVER with changes - it closes every ticket without its own entry, a change too; for incidents prefer vm_deploy_done_fields_by_table {incident: ...}"
+vm_deploy_done_fields_by_table:
+  level: standard
+  example: {change_task: {state: "3", close_code: successful, close_notes: "VM deployed by AAP"}}
+  when: how a task is closed (your instance's values) - launched with the change, used only with vm_deploy_close_tasks
+vm_deploy_done_fields_issues_by_table:
+  level: standard
+  example: {change_task: {close_code: successful_issues}}
+  when: another close code when the VMs are built but something did not finish (no IP address in time ...)
+vm_deploy_done_fields_pxe:
+  level: often
+  example: false
+  when: a network-boot VM's task stays open until someone checks the MECM install
+
+# ---- plain words (no GenAI) ----
+vm_deploy_plain_words:
+  level: often
+  example: true
+  when: "requesters write sentences, or one line per server, instead of 'key: value' lines"
+vm_deploy_plain_templates:
+  level: often
+  example: {"red hat 9": rhel9-gold, "windows 2022": WIN2022-TEMPLATE, "server 2025": WIN2025-PXE}
+  when: with plain words - the words for each template
+vm_deploy_plain_sizes:
+  level: often
+  example: {small: {cpu: 2, memory_gb: 8}, medium: {cpu: 4, memory_gb: 16}, large: {cpu: 8, memory_gb: 32}}
+  when: with plain words - "a medium server" means a size
+vm_deploy_plain_sites:
+  level: often
+  example: {"north campus": SiteA, "south campus": SiteB}
+  when: with sites - the ways people write each place (its Location)
+
+# ---- GenAI (a proof of concept) ----
+vm_deploy_genai:
+  level: rarely
+  example: true
+  when: plain-words tickets the rules cannot read - needs the ACT model key credential
+vm_deploy_genai_in_check:
+  level: rarely
+  example: true
+  when: a dry run shows GenAI's proposal too (and still writes nothing)
+vm_deploy_template_catalog:
+  level: rarely
+  example: {WIN2022-PXE: "Windows Server 2022 (installed over the network by MECM)"}
+  when: GenAI on, and template names that do not say their OS
+vm_deploy_genai_approval:
+  level: rarely
+  example: false
+  when: a demo with GenAI and no person in between - one run reads, checks and builds
+vm_deploy_phase:
+  level: rarely
+  example: propose
+  when: set by the approval workflow's nodes (propose, then build) - never on the template
+vm_deploy_genai_model_timeout:
+  level: rarely
+  example: 900
+  when: a slow model
+
+# ---- the scheduled pickup (playbooks/vm_deploy_poll.yml - on its own template) ----
+vm_deploy_poll_enabled:
+  level: rarely
+  example: false
+  when: the pickup's off switch - the schedule runs and picks up nothing
+vm_deploy_poll_tables:
+  level: often
+  example: [change_task]
+  when: pick up change tasks rather than incidents
+vm_deploy_poll_prefix:
+  level: often
+  example: ""
+  when: the tickets are found by vm_deploy_poll_query, not by how their short description starts
+vm_deploy_poll_query:
+  level: often
+  example: "change_request.approval=approved^change_request.state=-1"
+  when: change tasks whose change is approved and in Implement (copy your own from the list's filter)
+vm_deploy_poll_states:
+  level: rarely
+  example: ["1", "-5"]
+  when: pick up tasks in other states too (your instance's values; -5 = Pending out of the box)
+vm_deploy_poll_max:
+  level: rarely
+  example: 5
+  when: more tickets started per run
+vm_deploy_poll_scan:
+  level: rarely
+  example: 200
+  when: many tickets in the queue
+vm_deploy_poll_workflow:
+  level: rarely
+  example: "VM - deploy (workflow, test)"
+  when: your deploy workflow has another name
+vm_deploy_poll_dry_run:
+  level: often
+  example: true
+  when: the first week - only list what it would pick up
+vm_deploy_poll_claim_fields:
+  level: often
+  example: {state: "2"}
+  when: move a ticket picked up to In Progress (your instance's value)
+vm_deploy_poll_aap_ca_path:
+  level: rarely
+  example: /etc/pki/ca-trust/source/anchors/site-ca.pem
+  when: AAP's HTTPS certificate is from your own CA, which the execution environment does not trust

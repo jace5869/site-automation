@@ -37,6 +37,7 @@
       - vm_deploy_plain_templates | default({}, true) is mapping
       - vm_deploy_plain_sizes | default({}, true) is mapping
       - vm_deploy_plain_sites | default({}, true) is mapping
+      - vm_deploy_assignment_group_by_table | default({}, true) is mapping
       - vm_deploy_templates | default([], true) is not string and vm_deploy_templates | default([], true) is not mapping
     fail_msg: >-
       {{ ('vm_deploy_plain_templates maps words to a template - e.g. {"server 2022": "' ~ (vm_deploy_templates | default(['<template name>'], true) | first)
@@ -47,6 +48,8 @@
          if vm_deploy_plain_sizes | default({}, true) is not mapping else
          ('vm_deploy_plain_sites maps the words for a place to a site of vm_deploy_sites - e.g. {"site two": SiteB, "north campus": SiteA}.')
          if vm_deploy_plain_sites | default({}, true) is not mapping else
+         ('vm_deploy_assignment_group_by_table maps a table to its groups - e.g. {change_request: ""}: a change may be assigned to any group.')
+         if vm_deploy_assignment_group_by_table | default({}, true) is not mapping else
          'vm_deploy_templates is a list of template names (one per line, each starting with "- "), e.g. ["Windows 2022 Template", rhel9-gold].' }}
     quiet: true
 
@@ -187,6 +190,9 @@
 - name: VMware | the ticket, its parent, and a GenAI proposal on it (vm_deploy_genai)
   ansible.builtin.set_fact:
     _vd_rec: "{{ _vd_get.json.result[0] }}"
+    # the groups the ticket launched must be assigned to: its table's in vm_deploy_assignment_group_by_table
+    # (e.g. a change: any group), else vm_deploy_assignment_group - which still finds the change's tasks
+    _vd_grp: "{{ _vd_table | vm_deploy_group_for(vm_deploy_assignment_group_by_table | default({}, true), vm_deploy_assignment_group) }}"
     _vd_parent: >-
       {{ _vd_pref | vm_deploy_parent_read(_vd_pget, vm_deploy_parent_text_fields, vm_deploy_ready_by_table | default({}, true),
                                           vm_deploy_parent_wins | default(false) | bool) }}
@@ -224,16 +230,27 @@
 - name: VMware | the notes go to {{ ([_vd_number] + _vd_also | map(attribute='number') | list) | join(', ') }}
   ansible.builtin.debug:
     msg: >-
-      {{ ['Notes on ' ~ _vd_number ~ ((' and ' ~ _vd_also | map(attribute='number') | join(', ')) if _vd_also else '')
-          ~ '; only ' ~ _vd_number ~ ' is closed (vm_deploy_done_fields).']
+      {{ ['Notes on ' ~ _vd_number ~ ((' and ' ~ _vd_also | map(attribute='number') | join(', ')) if _vd_also else '') ~ '. '
+          ~ _vd_number ~ (' is closed when every VM is built' if _vd_own_close | length > 0 else ' is never closed (no close values for ' ~ _vd_table ~ ')')
+          ~ ('; its tasks found are closed too (vm_deploy_close_tasks)' if vm_deploy_close_tasks | default(false) | bool and _vd_table == 'change_request'
+             else ('; its tasks found are left open (vm_deploy_close_tasks: false)' if _vd_table == 'change_request' and 'tasks' in _vd_also_want else ''))
+          ~ '.']
          + (['The tasks of ' ~ _vd_number ~ ' could not be read (HTTP ' ~ _vd_tasks_get.status | default('?') ~ '): the notes are on the change only.']
             if _vd_tasks_q | length > 0 and (_vd_tasks_get.status | default(0)) != 200 else [])
-         + (['No open task of ' ~ _vd_number ~ ' for ' ~ (vm_deploy_assignment_group if vm_deploy_assignment_group is string
-                                                           else vm_deploy_assignment_group | join(', ')) ~ ': the notes are on the change only.']
+         + (['No open task of ' ~ _vd_number ~ ' matches '
+             ~ ([('group ' ~ (vm_deploy_assignment_group if vm_deploy_assignment_group is string else vm_deploy_assignment_group | join(', ')))
+                 if vm_deploy_assignment_group | default('', true) | length > 0 else '',
+                 (vm_deploy_notes_tasks_query | default('', true)) | trim] | select | join(' and '))
+             ~ ': the notes are on the change only' ~ (', no task is closed' if vm_deploy_close_tasks | default(false) | bool else '') ~ '.']
             if _vd_tasks_q | length > 0 and (_vd_tasks_get.status | default(0)) == 200 and (_vd_tasks_get.json.result | default([])) | length == 0 else [])
          + (["vm_deploy_notes_also asks for the change's tasks, but there is no vm_deploy_assignment_group or vm_deploy_notes_tasks_query"
              ~ ' to find them by: the notes are on the change only.']
             if _vd_table == 'change_request' and 'tasks' in _vd_also_want and _vd_tasks_q | length == 0 else []) }}
+  vars:
+    # what closes the ticket launched: its table's entry, else vm_deploy_done_fields (deploy_build.yml, _vd_done)
+    _vd_own_close: >-
+      {{ ((vm_deploy_done_fields_by_table | default({}, true))[_vd_table] if _vd_table in (vm_deploy_done_fields_by_table | default({}, true))
+          else vm_deploy_done_fields) | default({}, true) }}
   when: _vd_also_want | length > 0
 
 - name: VMware | what GenAI would read, and the ticket's own lines (its parent's under them)

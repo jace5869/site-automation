@@ -661,7 +661,7 @@ chg7="$(newrec change_request '{"short_description": "Staging servers", "descrip
 ct7="$(newrec change_task "{\"short_description\": \"Task to deploy a staging VM\", \"description\": \"vm_name: wrong01\ncpu: 1\", \"change_request\": \"$chg7\", \"assignment_group\": \"Linux Operations\"}")"
 run "vm_deploy_parent_wins: the change's lines over its task's description (dry run); the notes would go on both" ok vm_deploy_from_ticket.yml --check \
     -e vm_deploy_ticket="$ct7" -e "$rules" -e "$both" \
-    -- "vm_name: cwapp01   (from parent $chg7 description)" "cpu: 2   (from parent $chg7 description)" "Notes on $ct7 and $chg7; only $ct7 is closed"
+    -- "vm_name: cwapp01   (from parent $chg7 description)" "cpu: 2   (from parent $chg7 description)" "Notes on $ct7 and $chg7. $ct7 is closed when every VM is built."
 n1=$(wc -l < "$work/sn.jsonl")
 run "built from the task: every note on the task and on its change, only the task closed" ok vm_deploy_from_ticket.yml \
     -e vm_deploy_ticket="$ct7" -e "$rules" -e "$both" -- "VM deploy $ct7: cwapp01 deployed"
@@ -685,7 +685,7 @@ ct8="$(newrec change_task "{\"short_description\": \"Task to deploy a staging VM
 ct8b="$(newrec change_task "{\"short_description\": \"Open the firewall\", \"change_request\": \"$chg8\", \"assignment_group\": \"Linux Operations\"}")"
 n1=$(wc -l < "$work/sn.jsonl")
 run "launched with the change (a web front end): its deploy task gets every note too, not closed" ok vm_deploy_from_ticket.yml \
-    -e vm_deploy_ticket="$chg8" -e "$rules" -e "$both" -- "Notes on $chg8 and $ct8; only $chg8 is closed" "VM deploy $chg8: cwapp02 deployed"
+    -e vm_deploy_ticket="$chg8" -e "$rules" -e "$both" -- "Notes on $chg8 and $ct8. $chg8 is never closed (no close values for change_request); its tasks found are left open (vm_deploy_close_tasks: false)." "VM deploy $chg8: cwapp02 deployed"
 "$py" - "$work/sn.jsonl" "$n1" "$sn_port" "$ct8" "$ct8b" <<'EOPY' && echo "ok   -   ...the deploy task has the notes; the other task none; neither closed" || { echo "FAIL -   ...notes on the change's task"; fails=$((fails + 1)); }
 import base64, json, sys, urllib.request
 lines = [json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):]]
@@ -717,7 +717,72 @@ sys.exit(0 if (vi["state"], other["state"], change["state"]) == ("3", "1", "-1")
 EOPY
 chg9="$(newrec change_request '{"short_description": "No task", "description": "vm_name: cwapp03\ntemplate: rhel9-gold", "state": "-1", "approval": "approved", "assignment_group": "Linux Operations"}')"
 run "launched with a change that has no deploy task: the notes on the change only, and it says so" ok vm_deploy_from_ticket.yml --check \
-    -e vm_deploy_ticket="$chg9" -e "$rules" -e "$both" -- "No open task of $chg9 for Linux Operations: the notes are on the change only."
+    -e vm_deploy_ticket="$chg9" -e "$rules" -e "$both" -- "No open task of $chg9 matches group Linux Operations and short_descriptionLIKEto deploy: the notes are on the change only."
+# ---- launched with a change of another group (vm_deploy_assignment_group_by_table): any group on the change;
+# its task of vm_deploy_assignment_group gets every note and is closed, another group's task is left alone
+anyg='{"vm_deploy_notes_also": ["parent", "tasks"], "vm_deploy_close_tasks": true,
+       "vm_deploy_done_fields_by_table": {"change_task": {"state": "3", "close_notes": "VM deployed by AAP"}}}'
+chg11="$(newrec change_request '{"short_description": "Staging server five", "description": "vm_name: cwapp05\ntemplate: rhel9-gold\ncpu: 2\nmemory_gb: 4", "state": "-1", "approval": "approved", "assignment_group": "Change Board"}')"
+ct11="$(newrec change_task "{\"short_description\": \"Deploy the VM\", \"change_request\": \"$chg11\", \"assignment_group\": \"Linux Operations\"}")"
+ct11b="$(newrec change_task "{\"short_description\": \"Deploy the VM\", \"change_request\": \"$chg11\", \"assignment_group\": \"Change Board\"}")"
+run "launched with a change of another group: refused, the setting named (dry run)" fail vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$chg11" -e "$rules" -e "$anyg" \
+    -- "the ticket is assigned to 'Change Board', not to 'Linux Operations' (vm_deploy_assignment_group)"
+run "...vm_deploy_assignment_group_by_table {change: ''}: a change of any group (dry run); the notes would go on its task of the group" ok \
+    vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$chg11" -e "$rules" -e "$anyg" -e '{"vm_deploy_assignment_group_by_table": {"change": ""}}' \
+    -- "Notes on $chg11 and $ct11. $chg11 is never closed (no close values for change_request); its tasks found are closed too (vm_deploy_close_tasks)." "vm_name: cwapp05   (from description)"
+n1=$(wc -l < "$work/sn.jsonl")
+run "...built: every note on the change and on its task of the group, that task closed" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$chg11" -e "$rules" -e "$anyg" -e '{"vm_deploy_assignment_group_by_table": {"change_request": ""}}' \
+    -- "VM deploy $chg11: cwapp05 deployed" "Task $ct11 closed: close_notes = VM deployed by AAP, state = 3"
+"$py" - "$work/sn.jsonl" "$n1" "$sn_port" "$chg11" "$ct11" "$ct11b" <<'EOPY' && echo "ok   -   ...the change: the notes, still open; its task of the group: the notes, closed (3); the other group's task: nothing" || { echo "FAIL -   ...a change of any group"; fails=$((fails + 1)); }
+import base64, json, sys, urllib.request
+lines = [json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):]]
+h = {"Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode()}
+get = lambda t, n: json.load(urllib.request.urlopen(urllib.request.Request(
+    "http://127.0.0.1:%s/api/now/table/%s?sysparm_query=number=%s" % (sys.argv[3], t, n), headers=h)))["result"][0]
+change, task, other = get("change_request", sys.argv[4]), get("change_task", sys.argv[5]), get("change_task", sys.argv[6])
+on = lambda t, r: [l["body"] for l in lines if l["method"] == "PATCH" and l["path"].startswith("/api/now/table/%s/%s" % (t, r["sys_id"]))]
+first = lambda t, r: [b.get("work_notes", "").splitlines()[0] for b in on(t, r) if b.get("work_notes")]
+ok = (all(set(b) <= {"work_notes", "comments"} for b in on("change_request", change))
+      and "[AAP] Deploying this VM (AAP job 4711 by operator1):" in first("change_request", change)
+      and "[AAP] VM cwapp05 deployed (AAP job 4711 by operator1)." in first("change_request", change)
+      and "[AAP] VM cwapp05 deployed (AAP job 4711 by operator1)." in first("change_task", task)
+      and not on("change_task", other) and (change["state"], task["state"], other["state"]) == ("-1", "3", "1"))
+print(change["state"], task["state"], other["state"], first("change_request", change), first("change_task", task), len(on("change_task", other)))
+sys.exit(0 if ok else 1)
+EOPY
+run "...a change task of another group is still refused: the setting is for changes only (dry run)" fail vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$ct11b" -e "$rules" -e "$anyg" -e '{"vm_deploy_assignment_group_by_table": {"change_request": ""}}' \
+    -- "the ticket is assigned to 'Change Board', not to 'Linux Operations' (vm_deploy_assignment_group)"
+# ---- the standard setup (docs/VM_DEPLOY_GUIDE.md): launched with the change of any group, its task found by its
+# words alone (no vm_deploy_assignment_group), the notes on both; the task left open - or closed with the one switch
+std='{"vm_deploy_templates": ["rhel9-*"], "vm_deploy_assignment_group": "", "vm_deploy_wait_ip": 3, "vm_deploy_wait_customization": 60,
+      "vm_deploy_notes_also": ["parent", "tasks"], "vm_deploy_notes_tasks_query": "short_descriptionLIKEwill deploy the VM",
+      "vm_deploy_done_fields_by_table": {"change_task": {"state": "3", "close_code": "successful", "close_notes": "VM deployed by AAP"}}}'
+chg13="$(newrec change_request '{"short_description": "Two staging servers", "description": "vm_name: cwapp13\ntemplate: rhel9-gold\ncpu: 2\nmemory_gb: 4", "state": "-1", "approval": "approved", "assignment_group": "Change Board"}')"
+ct13="$(newrec change_task "{\"short_description\": \"The server team will deploy the VM\", \"change_request\": \"$chg13\", \"assignment_group\": \"Linux Operations\"}")"
+ct13b="$(newrec change_task "{\"short_description\": \"Open the firewall\", \"change_request\": \"$chg13\", \"assignment_group\": \"Linux Operations\"}")"
+run "the standard setup: a change of any group, its task found by its words; the change never closed, the task left open" ok \
+    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$chg13" -e "$std" \
+    -- "Notes on $chg13 and $ct13. $chg13 is never closed (no close values for change_request); its tasks found are left open (vm_deploy_close_tasks: false)." \
+       "VM deploy $chg13: cwapp13 deployed"
+chg14="$(newrec change_request '{"short_description": "One more staging server", "description": "vm_name: cwapp14\ntemplate: rhel9-gold\ncpu: 2\nmemory_gb: 4", "state": "-1", "approval": "approved", "assignment_group": "Change Board"}')"
+ct14="$(newrec change_task "{\"short_description\": \"The server team will deploy the VM\", \"change_request\": \"$chg14\", \"assignment_group\": \"Linux Operations\"}")"
+run "...vm_deploy_close_tasks: true - the same, and the task closed when the VM is built" ok \
+    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$chg14" -e "$std" -e vm_deploy_close_tasks=true \
+    -- "its tasks found are closed too (vm_deploy_close_tasks)." "Task $ct14 closed:"
+"$py" - "$sn_port" "$chg13" "$ct13" "$ct13b" "$chg14" "$ct14" <<'EOPY' && echo "ok   -   ...the changes still open; the first task open with the notes, the other task untouched; the second task closed" || { echo "FAIL -   ...the standard setup"; fails=$((fails + 1)); }
+import base64, json, sys, urllib.request
+h = {"Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode()}
+get = lambda t, n: json.load(urllib.request.urlopen(urllib.request.Request(
+    "http://127.0.0.1:%s/api/now/table/%s?sysparm_query=number=%s&sysparm_display_value=false" % (sys.argv[1], t, n), headers=h)))["result"][0]
+c13, t13, o13, c14, t14 = (get("change_request", sys.argv[2]), get("change_task", sys.argv[3]), get("change_task", sys.argv[4]),
+                           get("change_request", sys.argv[5]), get("change_task", sys.argv[6]))
+states = (c13["state"], t13["state"], o13["state"], c14["state"], t14["state"])
+print(states, t14.get("close_code"))
+sys.exit(0 if states == ("-1", "1", "1", "-1", "3") and t14.get("close_code") == "successful" else 1)
+EOPY
 # ---- a change task: built only while its change is approved and in Implement (vm_deploy_ready_by_table),
 # the change's plain words read under the task's own, the task closed 'successful with issues' when something did not finish
 setrec() {  # setrec TABLE NUMBER JSON-BODY

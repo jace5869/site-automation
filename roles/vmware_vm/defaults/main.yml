@@ -293,6 +293,11 @@ vm_deploy_name_regex: '^[A-Za-z0-9][A-Za-z0-9-]{0,62}$'
 # Only tickets assigned to this group (its name as ServiceNow shows it), or to one of a list of
 # groups (["Group A", "Group B"]); "" = any group (the pickup needs one).
 vm_deploy_assignment_group: ""
+# The same for the ticket the job is launched with, by its table - in place of vm_deploy_assignment_group
+# for that table; "" = any group. e.g. {change_request: ""}: launched with a change, the change may be
+# assigned to any group (it must still be approved: vm_deploy_ready_by_table); its tasks that get the
+# notes (vm_deploy_notes_also, vm_deploy_close_tasks) are still those of vm_deploy_assignment_group.
+vm_deploy_assignment_group_by_table: {}
 # What a ticket does not say: e.g. {cluster: PROD-CL01, datastore: DS-CLUSTER-01, folder: Linux/New}.
 # Not set = the template's own cluster, datastore and folder; its CPU and memory.
 vm_deploy_defaults: {}

@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.15.5 — 2026-10-17
+
+**Updating without scripts:** paste `site-automation-0.15.5-changed-since-0.15.1.zip` as it is (on 0.15.1
+or 0.15.4). It leaves out `playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. No new job
+template. The new setting is off by default. A new PDF: the VM Deploy Guide - start with its standard setup.
+
+**VM deploy - a change of any group**
+
+- **Launched with a change, the change may be any group's** (`vm_deploy_assignment_group_by_table:
+  {change_request: ""}`). A change is often assigned to whoever owns it (a change board, another team),
+  not to the team that builds the VMs. Before, a change launched by itself was refused (*the ticket is
+  assigned to 'Change Board', not to 'Linux Operations'*) unless that group was added to
+  `vm_deploy_assignment_group` - which let every ticket of that group through. The change must still be
+  approved and in Implement (`vm_deploy_ready_by_table`).
+- Its task that gets the notes and is closed (`vm_deploy_notes_also: [tasks]`, `vm_deploy_close_tasks`) is
+  still found by `vm_deploy_assignment_group`; another group's task under the change is left alone. A
+  ticket of any other table launched by itself (a change task, an incident) must still be your group's.
+- The setting takes one group, a list, or `""` (any group) per table, in place of
+  `vm_deploy_assignment_group` for that table; its tables as people write them (`change`). A refusal
+  names the setting it came from.
+
+**A VM Deploy Guide (PDF)**
+
+- `docs/pdf/Site-Automation-VM-Deploy-Guide.pdf` (from `docs/VM_DEPLOY_GUIDE.md`): the VM deploy job on its
+  own. How a run flows (drawn), which number to launch with - the change or its task - and what each reads,
+  checks, notes and closes; *Closing the task: pick one* (closed by hand, closed when every VM is built, with
+  issues, network-boot VMs left open, the change never closed); where the notes go; where the VM goes and
+  which source wins; seven ready-made configurations; what the requester writes; testing; the messages and
+  what to do. Its appendix lists every `vm_deploy_*` setting with its default and its whole comment, read
+  from `roles/vmware_vm/defaults/main.yml`.
+- **Start here: the standard setup** - its first section: launched with the change (any group's), every
+  note on the change and on its task (found by its words), one switch (`vm_deploy_close_tasks`) for
+  whether the job closes the task, the change never closed - and what you can leave alone for now. Also:
+  *Leaving things out: the defaults* (a template, a size and a site by default, not only a place),
+  *Report first, then build* (Check, the approval workflow, GenAI), *What GenAI does - and when it does
+  nothing*, and *Where the logic lives* (each file, and each decision by its function).
+- **An example for every setting:** `docs/vm_deploy_examples.yml` gives each `vm_deploy_*` setting an
+  example value, when you would set it, and whether it is part of the standard setup, to set when needed,
+  or to leave as is. The guide's last chapter shows them next to each default.
+- `tests/test_vm_deploy.py` reads the guide's example requests through the parser, so the guide says what
+  the job does; every setting has an example of its type, and the standard setup's are marked so.
+
+**VM deploy - the job says what it closes**
+
+- Its output now says what closes, not only where the notes go: *"Notes on CHG0001234 and CTASK0001235.
+  CHG0001234 is never closed (no close values for change_request); its tasks found are left open
+  (vm_deploy_close_tasks: false)."* - or *"...closed too (vm_deploy_close_tasks)"*.
+- A change with no task that matches says what it looked for - the group, the words, or both: *"No open
+  task of CHG... matches short_descriptionLIKEto deploy: the notes are on the change only"* (it said *"for
+  : ..."* when only the words were set).
+
 ## 0.15.4 — 2026-10-16
 
 Everything since 0.15.1 in one release (there is no 0.15.2 or 0.15.3).

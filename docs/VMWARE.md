@@ -636,6 +636,11 @@ runs no command (as in "The ACT analysis" above: the same key, URL, proxy and CA
 ticket, checks the request against the rules you set in AAP, writes on the ticket what it builds,
 builds it, and writes the result - with the VM's IP address - on the ticket.
 
+> **The short version.** [VM_DEPLOY_GUIDE.md](VM_DEPLOY_GUIDE.md) - also a PDF, `docs/pdf/Site-Automation-VM-Deploy-Guide.pdf` -
+> puts the decisions in one place: a standard setup to start with, which number to launch with, what closes
+> the task, where the notes go, where the VM goes, ready-made configurations, where the logic lives - and
+> every `vm_deploy_*` setting with its default, an example and when to set it.
+
 ### How it flows, step by step
 
 The operator launches **one workflow**, `VM - deploy from ServiceNow ticket (workflow)`, with the
@@ -915,6 +920,7 @@ vm_deploy_parent_wins: true                 # the change's description wins over
 vm_deploy_parent_text_fields: [description, comments]   # an answer written as a comment on the change counts too
 vm_deploy_notes_also: [parent, tasks]       # every note on the change too - or, launched with the change, on its task
 vm_deploy_notes_tasks_query: "short_descriptionLIKEto deploy"   # which of the change's tasks (with vm_deploy_assignment_group)
+vm_deploy_assignment_group_by_table: {change_request: ""}   # launched with the change: it may be any group's
 ```
 
 - **The change wins:** the task's short description and description are read first, then the change's -
@@ -927,7 +933,8 @@ vm_deploy_notes_tasks_query: "short_descriptionLIKEto deploy"   # which of the c
   - launched with the **change** (e.g. from a web front end through AAP's API): on the change's open tasks
     assigned to `vm_deploy_assignment_group` and matching `vm_deploy_notes_tasks_query` (`tasks`), when
     there are any - none found: the notes are on the change only, and the job says so.
-  The job says where its notes go: *"Notes on CTASK0010009 and CHG0030010; only CTASK0010009 is closed"*.
+  The job says where its notes go and what it closes: *"Notes on CTASK0010009 and CHG0030010. CTASK0010009
+  is closed when every VM is built."*
 - Only the ticket the job was launched with is **closed** (`vm_deploy_done_fields_by_table`) - and, launched
   with the **change**, its task too with `vm_deploy_close_tasks: true`: the tasks found as above are
   closed by the `change_task` entry, when every VM is built (*Task CTASK... closed: ...* in the report;
@@ -935,9 +942,12 @@ vm_deploy_notes_tasks_query: "short_descriptionLIKEto deploy"   # which of the c
   `change_request` out of `vm_deploy_done_fields_by_table`, and `vm_deploy_done_fields: {}` (it is for
   every table without an entry - a change too). A note the other ticket does not take (the ServiceNow
   account cannot update `change_request`) is a warning in the job, not a failure.
-- Launched with the **change**, the change itself must pass the rules for a ticket: assigned to
-  `vm_deploy_assignment_group` (or leave that empty on the template used this way), approved and in
-  Implement. A task that has a note of AAP's on it is never picked up by the schedule, so a change built
+- Launched with the **change**, the change itself must pass the rules for a ticket: approved and in
+  Implement, and assigned to `vm_deploy_assignment_group` - or to **any group** with
+  `vm_deploy_assignment_group_by_table: {change_request: ""}` (a change is often assigned to whoever owns
+  it, not to your team). Its tasks that get the notes are still found by `vm_deploy_assignment_group`
+  (keep it set), and a ticket launched by itself of any other table (a change task, an incident) must still
+  be your group's. A task that has a note of AAP's on it is never picked up by the schedule, so a change built
   this way is not built again from its task.
 
 **Test it, step by step** (a test change and a test template):
@@ -1347,6 +1357,7 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
 | `vm_deploy_max_cpu` / `vm_deploy_max_memory_gb` | `16` / `128` | caps |
 | `vm_deploy_name_regex` | letters, digits, `-` | the names allowed (`'^[a-z0-9-]{1,15}$'` for Windows-safe names) |
 | `vm_deploy_assignment_group` | `""` (any) | only tickets assigned to this group - or to one of a list: `["Group A", "Group B"]` |
+| `vm_deploy_assignment_group_by_table` | `{}` | the same for a ticket of one table, in its place: `{change_request: ""}` = launched with a change, any group (its tasks: still `vm_deploy_assignment_group`'s) |
 | `vm_deploy_domain` | `localdomain` | the DNS domain Linux customization sets |
 | `vm_deploy_customize` / `vm_deploy_power_on` | `true` / `true` | guest customization; power on |
 | `vm_deploy_wait_customization` / `vm_deploy_wait_ip` | `900` / `600` | seconds to wait for each |
@@ -1804,7 +1815,7 @@ the last column says.
 | `No incident ticket INC... in ServiceNow` | a wrong number, or the account cannot see it | check the number; the account needs read access to that table |
 | `ServiceNow refused the read (HTTP 403)` | the account may not read that table | give it read access (e.g. the itil role) |
 | `REFUSED: template '...' is not in vm_deploy_templates` | a template you have not allowed | add it to `vm_deploy_templates`, or correct the ticket |
-| `REFUSED: the ticket is assigned to ...` | not your team's ticket | reassign it, or `vm_deploy_assignment_group` |
+| `REFUSED: the ticket is assigned to ...` | not your team's ticket | reassign it, or `vm_deploy_assignment_group`; a change launched by itself, any group: `vm_deploy_assignment_group_by_table: {change_request: ""}` |
 | `the ticket does not say vm_name` | no `vm_name:` line | the requester adds a comment `vm_name: ...` |
 | `Nothing was built: ServiceNow refused the work note` | the account cannot update that table | give it write access to work notes; nothing was built, by design |
 | `a VM named ... already exists in vCenter ...` | the name is taken (or the job ran twice) | another name in a comment, or nothing to do |
