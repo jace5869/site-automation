@@ -44,7 +44,7 @@ sign() {  # sign NAME DAYS KEYOPTS SUBJECT SAN [CA]  -> pki/NAME.crt
     q req -new $keyopt -nodes -keyout "$name.key" -out "$name.csr" -utf8 ${MULTI:-} -subj "$subj" "${ext[@]}"
     q x509 -req -in "$name.csr" -CA "$ca.crt" -CAkey "$ca.key" -CAcreateserial -days "$days" -out "pki/$name.crt" -copy_extensions copy
 }
-sign web01 20 "-newkey rsa:3072" "/C=US/O=U.S. Government/OU=DoD/OU=PKI/OU=TEST/CN=web01.example.mil" "DNS:web01.example.mil,DNS:web.example.mil,IP:10.1.2.3"
+sign web01 20 "-newkey rsa:3072" "/C=US/O=U.S. Government/OU=DoD/OU=PKI/OU=TEST/CN=web01.example.mil" "DNS:web01.example.mil,DNS:web.example.mil,IP:192.0.2.3"
 sign app01 10 "-newkey rsa:2048" "/C=US/O=Smith, Jones \\+ Co/OU=Ünit #1 \$x 'q' \"d\"/CN=app01.example.mil" "DNS:app01.example.mil"
 MULTI=-multivalue-rdn sign mv01 15 "-newkey rsa:2048" "/C=US/O=Test/CN=mv01.example.mil+UID=mv01" ""
 sign ec01 20 "-newkey ec -pkeyopt ec_paramgen_curve:P-384" "/C=US/O=U.S. Government/CN=ec01.example.mil" "DNS:ec01.example.mil"
@@ -208,7 +208,7 @@ web = [n for n in notes if "web01.example.mil" in n["body"]["work_notes"] and "C
 if not web: errs.append("no web01 note")
 else:
     t = web[0]["body"]["work_notes"]
-    for want in ["/pki/web01.crt ; ", "/pki/web01-fullchain.pem", "web (https://127.0.0.1:", "DNS:web01.example.mil, DNS:web.example.mil, IP:10.1.2.3",
+    for want in ["/pki/web01.crt ; ", "/pki/web01-fullchain.pem", "web (https://127.0.0.1:", "DNS:web01.example.mil, DNS:web.example.mil, IP:192.0.2.3",
                  "New key: RSA 3072-bit, made on the host", "Next:", "1. Submit the CSR"]:
         if want not in t: errs.append("web01 note lacks %r" % want)
     if "3. Install it with the new key in place of the file(s) above" not in t: errs.append("web01 note: the usual step 3")

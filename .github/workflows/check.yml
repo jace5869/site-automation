@@ -33,6 +33,8 @@ jobs:
           for pb in playbooks/*.yml; do
             ANSIBLE_ROLES_PATH=roles:vendor/act/ansible/roles /tmp/ac216/bin/ansible-playbook --syntax-check "$pb"
           done
+      - name: Nothing of a real site - only placeholder host names (example.mil) and documentation IP addresses
+        run: python tests/check_public.py
       - name: Lint (yamllint + ansible-lint, production profile)
         run: |
           pip install yamllint ansible-lint

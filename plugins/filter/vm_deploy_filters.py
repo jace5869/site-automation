@@ -528,7 +528,8 @@ def vm_deploy_words(record, opts=None):
     memory_gb}}), name_patterns (the name rules' match patterns), sites (site names), site_words ({words:
     site}), number (the ticket's own number, never a VM name), before ([(label, text)]: read before the
     ticket's own text - e.g. its parent change's, so the ticket's own words win; numbers: more ticket
-    numbers that are never a VM name). The text is read in order (short description, description,
+    numbers that are never a VM name), head ([(label, text)]: read before 'before' - the ticket's own
+    short description and description when its parent's text wins over them). The text is read in order (short description, description,
     comments and work notes oldest first): a later piece that says it once wins; two different answers
     in the piece that says it last are a question. VMs on lines of their own ('new VM / web01 / CPU 4 ...',
     the next line 'new VM / web02 / CPU 8 ...'): each line's values are that VM's (vms), the rest of the
@@ -680,7 +681,7 @@ def vm_deploy_words(record, opts=None):
                else frozenset(v))
         return sig(a) == sig(b)
 
-    before = [(str(lab), _NOISE.sub(" ", str(t or ""))) for lab, t in (o.get("before") or []) if str(t or "").strip()]
+    before = [(str(lab), _NOISE.sub(" ", str(t or ""))) for lab, t in (o.get("head") or []) + (o.get("before") or []) if str(t or "").strip()]
     for idx, (label, text) in enumerate(before + _words_pieces(record)):
         found = read(text)
         # how many VMs the piece asks for ("2 vms", "both servers"): two different numbers = not said
@@ -935,7 +936,8 @@ def vm_deploy_spec(record, defaults=None, proposal=None, words=None, parent=None
     wins. words (vm_deploy_words' opts, or None): the plain words - the parent's text first, then the
     ticket's own, which wins - come after the proposal and before the lines. parent
     (vm_deploy_parent_read): the 'key: value' lines of the parent ticket (e.g. the change a task belongs
-    to) come after those and before the ticket's own lines. -> {'spec': {...},
+    to) come after those and before the ticket's own lines - with parent.wins (vm_deploy_parent_wins),
+    after the ticket's short description and description, before its comments and work notes. -> {'spec': {...},
     'sources': {key: where it came from}, 'questions': [...] (plain-words questions for what is still
     open), 'words': whether plain words were read, 'vms': {name: {'spec', 'sources'}}: each VM's own
     values, from its own line (vm_deploy_check puts them over 'spec' for that VM)}"""
@@ -950,10 +952,18 @@ def vm_deploy_spec(record, defaults=None, proposal=None, words=None, parent=None
     wq, count, vms, vms_at = {}, None, {}, {}
     if words is not None and words.get("on", True) is False:
         words = None
+    # the parent's text wins over the ticket's short description and description (vm_deploy_parent_wins):
+    # those are read first, then the parent's; the ticket's comments and work notes (newer, an answer) still win
+    pnum = (parent or {}).get("number", "")
+    own = _own_pieces(r)
+    wins = bool((parent or {}).get("wins")) and bool((parent or {}).get("pieces"))
+    head = [x for x in own if x[1] in ("", "description")] if wins else []
+    rest = [x for x in own if x not in head]
     if words is not None:
-        pnum = (parent or {}).get("number", "")
-        w = vm_deploy_words(r, dict(words, number=words.get("number") or r.get("number") or "", numbers=[pnum],
-                                    before=[("the parent %s %s" % (pnum, label), text) for label, text in (parent or {}).get("pieces") or []]))
+        wr = dict(r, short_description="", description="") if head else r
+        w = vm_deploy_words(wr, dict(words, number=words.get("number") or r.get("number") or "", numbers=[pnum],
+                                     head=[(lab, t) for lab, _, t in head],
+                                     before=[("the parent %s %s" % (pnum, label), text) for label, text in (parent or {}).get("pieces") or []]))
         for k, v in w["spec"].items():
             spec[k], sources[k] = v, w["sources"][k]
         wq, count = dict(w["questions"]), w.get("count")
@@ -974,13 +984,10 @@ def vm_deploy_spec(record, defaults=None, proposal=None, words=None, parent=None
     # header's date is not parsed (its format is the API account's), so a work note and a comment on the
     # same ticket apply in this order: comments, then work notes
     piece = 0
-    for label, text in (parent or {}).get("pieces") or []:
-        if not str(text or "").strip():
-            continue
-        for k, v in _pairs(text):
-            line(k, v, "parent %s %s" % ((parent or {}).get("number", ""), label), piece)
-        piece += 1
-    for _, where, text in _own_pieces(r):
+    order = [(where, text) for _, where, text in head]
+    order += [("parent %s %s" % (pnum, label), text) for label, text in (parent or {}).get("pieces") or [] if str(text or "").strip()]
+    order += [(where, text) for _, where, text in rest]
+    for where, text in order:
         if where:                               # the short description: its words only, no lines
             for k, v in _pairs(text):
                 line(k, v, where, piece)
@@ -1306,12 +1313,13 @@ def vm_deploy_parent_ref(record, opts=None):
     return {"read": False, "note": "no parent ticket (looked at the fields %s)" % ", ".join(fields)}
 
 
-def vm_deploy_parent_read(ref, result=None, text_fields=None, ready=None):
+def vm_deploy_parent_read(ref, result=None, text_fields=None, ready=None, wins=False):
     """The parent ticket as read (ref from vm_deploy_parent_ref, result: the registered GET of it) ->
     ref + {'pieces': [(label, text)] in reading order - the text_fields in their order (comments and
     work notes: oldest first, not this job's own) -, 'state', 'problem': why nothing may be built (it
     could not be read, is not there, is closed, or is not ready: ready = vm_deploy_ready_by_table, e.g.
-    a change not yet approved and in Implement)}. Not to be read: ref as it is, without pieces."""
+    a change not yet approved and in Implement), 'sys_id', 'wins' (its text wins over the ticket's
+    description: vm_deploy_parent_wins)}. Not to be read: ref as it is, without pieces."""
     out = dict(ref or {})
     if not out.get("read"):
         return out
@@ -1329,6 +1337,8 @@ def vm_deploy_parent_read(ref, result=None, text_fields=None, ready=None):
         return out
     p = rows[0]
     out["state"] = _ref(p.get("state"))
+    out["sys_id"] = _ref(p.get("sys_id"))
+    out["wins"] = bool(wins)
     if str(p.get("active", "true")).lower() not in ("true", "1"):
         out["problem"] = "the parent ticket %s is closed (state %s): nothing is built for it" % (num, out["state"] or "?")
     else:
@@ -1348,6 +1358,52 @@ def vm_deploy_parent_read(ref, result=None, text_fields=None, ready=None):
         used += [f] if len(pieces) > n else []
     out["pieces"] = pieces
     out["note"] = "%s - read: %s" % (out.get("note") or num, ", ".join(used) if used else "nothing (%s empty)" % ", ".join(wanted))
+    return out
+
+
+def vm_deploy_tasks_query(change_sys_id, opts=None):
+    """The ServiceNow query for a change's own tasks that get this job's notes too (vm_deploy_notes_also:
+    tasks) -> '' when there is nothing to ask. opts: assignment_group (one name or a list: only the
+    tasks of the group), query (an extra encoded query, ANDed in - e.g. short_descriptionLIKEto
+    deploy; ^NQ is dropped: it would bypass the change). Neither: '' (never every task of the change)."""
+    o = opts or {}
+    sid = str(change_sys_id or "").strip()
+    if not re.match(r"^[0-9a-f]{32}$", sid):
+        return ""
+    groups = _groups(o.get("assignment_group"))
+    extra = str(o.get("query") or "").strip().strip("^")
+    if re.search(r"\^NQ", "^" + extra, re.I):
+        extra = ""
+    if not groups and not extra:                # never every task of the change
+        return ""
+    parts = ([extra] if extra else []) + ["change_request=" + sid, "active=true"]
+    if len(groups) == 1:
+        parts.append("assignment_group.name=" + groups[0])
+    elif groups:
+        parts.append("assignment_group.nameIN" + ",".join(groups))
+    return "^".join(parts + ["ORDERBYnumber"])
+
+
+def vm_deploy_note_also(also, ticket=None, parent=None, tasks=None):
+    """The other tickets that get each of this job's notes too -> [{'table', 'sys_id', 'number'}]. also:
+    vm_deploy_notes_also - 'parent' (the change a task belongs to, when it was read), 'tasks' (when the
+    ticket is a change: its own open tasks of the group, from the GET of vm_deploy_tasks_query). ticket:
+    the ticket itself ({sys_id}), never twice. Closing is never copied: only the ticket is closed."""
+    want = set(str(x).strip().lower() for x in ([also] if isinstance(also, str) else (also or [])) if str(x).strip())
+    p, seen, out = parent or {}, set([str((ticket or {}).get("sys_id") or "")]), []
+
+    def add(table, sid, number):
+        sid = str(sid or "").strip()
+        if table and sid and sid not in seen:
+            seen.add(sid)
+            out.append({"table": table, "sys_id": sid, "number": str(number or "")})
+    if "parent" in want and p.get("pieces") is not None and p.get("sys_id"):
+        add(p.get("table"), p.get("sys_id"), p.get("number"))
+    if "tasks" in want:
+        res = tasks or {}
+        rows = ((res.get("json") or {}).get("result") or []) if res.get("status") == 200 else []
+        for t in rows:
+            add("change_task", _ref(t.get("sys_id")), _ref(t.get("number")))
     return out
 
 
@@ -1388,7 +1444,9 @@ def vm_deploy_ticket_text(record, parent=None):
                 out += ["%s%s:" % (label, (" " + head) if head else ""), body]
     pieces = (parent or {}).get("pieces") or []
     if pieces:
-        out += ["", "The parent ticket %s (more of the request; this ticket's own lines win):" % parent.get("number", "")]
+        out += ["", ("The parent ticket %s (the request: it wins over this ticket's description; a comment or work note "
+                     "on this ticket wins over it):" if parent.get("wins") else
+                     "The parent ticket %s (more of the request; this ticket's own lines win):") % parent.get("number", "")]
         for label, text in pieces:
             out += ["%s:" % label[:1].upper() + label[1:], text]
     return "\n".join(out).strip()
@@ -1830,5 +1888,6 @@ class FilterModule(object):
                 "vm_deploy_name_rule": vm_deploy_name_rule, "vm_deploy_poll_query": vm_deploy_poll_query,
                 "vm_deploy_poll_pick": vm_deploy_poll_pick, "vm_deploy_poll_claimed": vm_deploy_poll_claimed,
                 "vm_deploy_finder": vm_deploy_finder, "vm_deploy_parent_ref": vm_deploy_parent_ref,
-                "vm_deploy_parent_read": vm_deploy_parent_read, "vm_deploy_close_result": vm_deploy_close_result,
+                "vm_deploy_parent_read": vm_deploy_parent_read, "vm_deploy_tasks_query": vm_deploy_tasks_query,
+                "vm_deploy_note_also": vm_deploy_note_also, "vm_deploy_close_result": vm_deploy_close_result,
                 "vm_deploy_built": vm_deploy_built}

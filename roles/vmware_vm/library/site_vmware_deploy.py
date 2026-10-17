@@ -60,7 +60,7 @@ vm:
   returned: always
   sample: {name: app01, moid: vm-1042, vcenter: vc01.example.mil, datacenter: DC1, cluster: CL1, host: esx03.example.mil,
            datastore: ds01, folder: /DC1/vm/Linux, template: rhel9-gold, cpu: 4, memory_gb: 16, power: poweredOn,
-           customization: succeeded, hostname: app01, ip: 10.1.20.15, created: true}
+           customization: succeeded, hostname: app01, ip: 203.0.113.15, created: true}
 notes:
   description: Things to know (a network adapter not connected at power on, no IP yet ...).
   type: list
@@ -159,6 +159,41 @@ def _match(name, patterns):
     return any(fnmatch.fnmatchcase(str(name).lower(), str(p).strip().lower()) for p in patterns or [] if str(p).strip())
 
 
+def find_cluster(want, clusters, hosts=(), vcenters=(), datacenter=""):
+    """The cluster named `want` among the datacenter's, pure: clusters [names], hosts [(host name, its
+    cluster's name)], vcenters [names] -> (the cluster's name or None, a note or the error). The exact
+    name first; else the one written in other case (when only one is). Not found: what the name is
+    instead (a vCenter, an ESXi host, the datacenter) and the clusters there are."""
+    w = str(want or "").strip()
+    if w in clusters:
+        return w, ""
+    same = sorted({c for c in clusters if c.lower() == w.lower()})
+    if len(same) == 1:
+        return same[0], "cluster %s is written %r in vCenter" % (w, same[0])
+    def same_host(a, b):                       # a name, with or without its domain (and a vCenter's :port)
+        a, b = str(a or "").strip().lower(), str(b or "").strip().lower()
+        b = b.split(":")[0] if b.count(":") == 1 else b
+        if not a or not b:
+            return False
+        named = not re.match(r"^[\d.:]+$", b)   # an IP address only as it is
+        return a == b or (named and a.split(".")[0] == b.split(".")[0])
+    lw = w.lower()
+    why = ""
+    if any(same_host(lw, v) for v in vcenters or []):
+        why = "%s is a vCenter, not a cluster" % w
+    elif lw == str(datacenter or "").lower():
+        why = "%s is the datacenter, not a cluster" % w
+    else:
+        on = [c for h, c in hosts or [] if same_host(lw, h)]
+        if on:
+            why = "%s is an ESXi host%s, not a cluster" % (w, (" in cluster %s" % on[0]) if on[0] else "")
+    there = ("the clusters there: %s" % ", ".join(sorted(clusters, key=str.lower))) if clusters else "it has no cluster"
+    msg = "no cluster named %s in datacenter %s%s - %s. The job's output shows where the cluster came from: " \
+          "'cluster: ...   (from ...)' (a ticket line, vm_deploy_defaults, vm_deploy_sites or vm_deploy_name_rules)" \
+          % (w, datacenter, (": " + why) if why else "", there)
+    return None, msg
+
+
 def rank_clusters(clusters, need_mem, target_pct=80.0, failover=1):
     """Automatic placement, pure: clusters [{name, hosts: [{mem, used, ok}]}] (bytes; ok = connected and
     not in maintenance) -> ranked [{name, pct_after, fits, why}], the most room first. A cluster's
@@ -219,6 +254,14 @@ def plan_disks(existing, wanted_gb):
             break
         adds.append((ctrl, free.pop(0), int(gb) * 1024 * 1024))
     return grow, adds, problems
+
+
+def new_disks(adds):
+    """The added disks, pure: adds [(controller key, unit, kb)] (plan_disks) -> [{key, controllerKey, unitNumber,
+    capacityInKB}]. Each new device gets its own temporary key, negative (-101, -102 ...): vCenter refuses two
+    new devices with the same key ('Cannot add multiple devices using the same device key') - left unset, every
+    one is 0."""
+    return [{"key": -101 - i, "controllerKey": ctrl, "unitNumber": unit, "capacityInKB": kb} for i, (ctrl, unit, kb) in enumerate(adds)]
 
 
 def is_windows(guest_id):
@@ -384,10 +427,15 @@ def main():
         vm["disks_gb"] = [(grow[1] if grow and i == 0 else kb) // 1048576 for i, (_, kb, _, _) in enumerate(existing)] + [kb // 1048576 for _, _, kb in adds]
         placement = {}
         if p["cluster"]:
-            crs = [c for c in _all(content, vim.ComputeResource, dc.hostFolder) if c.name == p["cluster"]]
-            if not crs:
-                module.fail_json(msg="no cluster named %s in datacenter %s" % (p["cluster"], dc.name), vm=vm, notes=notes)
-            cr = crs[0]
+            allcr = _all(content, vim.ComputeResource, dc.hostFolder)
+            found, why = find_cluster(p["cluster"], [c.name for c in allcr],
+                                      [(h.name, c.name if isinstance(c, vim.ClusterComputeResource) else "") for c in allcr for h in (c.host or [])],
+                                      names, dc.name)
+            if not found:
+                module.fail_json(msg=why, vm=vm, notes=notes)
+            if why:
+                notes.append(why)
+            cr = [c for c in allcr if c.name == found][0]
         elif p["cluster_candidates"]:
             cands = [c for c in _all(content, vim.ComputeResource, dc.hostFolder) if _match(c.name, p["cluster_candidates"])]
             info = [{"name": c.name, "obj": c, "hosts": [{"mem": h.summary.hardware.memorySize or 0,
@@ -549,9 +597,9 @@ def main():
                 d1.capacityInKB = grow[1]
                 d1.capacityInBytes = grow[1] * 1024
                 changes.append(vim.vm.device.VirtualDeviceSpec(operation="edit", device=d1))
-            for ctrl, unit, kb in adds:
+            for nd in new_disks(adds):
                 changes.append(vim.vm.device.VirtualDeviceSpec(operation="add", fileOperation="create", device=vim.vm.device.VirtualDisk(
-                    controllerKey=ctrl, unitNumber=unit, capacityInKB=kb,
+                    key=nd["key"], controllerKey=nd["controllerKey"], unitNumber=nd["unitNumber"], capacityInKB=nd["capacityInKB"],
                     backing=vim.vm.device.VirtualDisk.FlatVer2BackingInfo(diskMode="persistent", thinProvisioned=True, fileName=""))))
             cfg.deviceChange = changes
             if grow and not pxe:

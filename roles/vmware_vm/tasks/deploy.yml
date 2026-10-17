@@ -177,11 +177,64 @@
   check_mode: false
   when: _vd_pref.read | bool
 
+- name: VMware | which other tickets get the notes (vm_deploy_notes_also, vm_deploy_close_tasks)
+  ansible.builtin.set_fact:
+    # closing the change's tasks finds them the same way, and gives them the notes too
+    _vd_also_want: >-
+      {{ ((vm_deploy_notes_also | default([], true)) if vm_deploy_notes_also | default([], true) is not string else [vm_deploy_notes_also])
+         + (['tasks'] if vm_deploy_close_tasks | default(false) | bool else []) }}
+
 - name: VMware | the ticket, its parent, and a GenAI proposal on it (vm_deploy_genai)
   ansible.builtin.set_fact:
     _vd_rec: "{{ _vd_get.json.result[0] }}"
-    _vd_parent: "{{ _vd_pref | vm_deploy_parent_read(_vd_pget, vm_deploy_parent_text_fields, vm_deploy_ready_by_table | default({}, true)) }}"
+    _vd_parent: >-
+      {{ _vd_pref | vm_deploy_parent_read(_vd_pget, vm_deploy_parent_text_fields, vm_deploy_ready_by_table | default({}, true),
+                                          vm_deploy_parent_wins | default(false) | bool) }}
     _vd_prop: "{{ _vd_get.json.result[0] | vm_deploy_find_proposal }}"
+    _vd_tasks_q: >-
+      {{ (_vd_get.json.result[0].sys_id | vm_deploy_tasks_query({'assignment_group': vm_deploy_assignment_group,
+                                                                 'query': vm_deploy_notes_tasks_query | default('', true)}))
+         if _vd_table == 'change_request' and 'tasks' in _vd_also_want else '' }}
+
+# a change launched by itself (e.g. from a web front end): its own open tasks of the group get the notes too
+- name: VMware | the change's tasks that get the notes too (vm_deploy_notes_also - tasks)
+  ansible.builtin.uri:
+    url: >-
+      {{ _vd_sn_url }}/api/now/table/change_task?sysparm_exclude_reference_link=true&sysparm_limit=10&sysparm_fields=sys_id,number&sysparm_query={{
+      _vd_tasks_q | urlencode }}
+    method: GET
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  register: _vd_tasks_get
+  check_mode: false
+  when: _vd_tasks_q | length > 0
+
+- name: VMware | where the notes go (the ticket; vm_deploy_notes_also - its change, or the change's tasks)
+  ansible.builtin.set_fact:
+    _vd_also: >-
+      {{ _vd_also_want | vm_deploy_note_also(_vd_get.json.result[0], _vd_parent,
+                                                                        _vd_tasks_get if _vd_tasks_q | length > 0 else {}) }}
+
+- name: VMware | the notes go to {{ ([_vd_number] + _vd_also | map(attribute='number') | list) | join(', ') }}
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['Notes on ' ~ _vd_number ~ ((' and ' ~ _vd_also | map(attribute='number') | join(', ')) if _vd_also else '')
+          ~ '; only ' ~ _vd_number ~ ' is closed (vm_deploy_done_fields).']
+         + (['The tasks of ' ~ _vd_number ~ ' could not be read (HTTP ' ~ _vd_tasks_get.status | default('?') ~ '): the notes are on the change only.']
+            if _vd_tasks_q | length > 0 and (_vd_tasks_get.status | default(0)) != 200 else [])
+         + (['No open task of ' ~ _vd_number ~ ' for ' ~ (vm_deploy_assignment_group if vm_deploy_assignment_group is string
+                                                           else vm_deploy_assignment_group | join(', ')) ~ ': the notes are on the change only.']
+            if _vd_tasks_q | length > 0 and (_vd_tasks_get.status | default(0)) == 200 and (_vd_tasks_get.json.result | default([])) | length == 0 else [])
+         + (["vm_deploy_notes_also asks for the change's tasks, but there is no vm_deploy_assignment_group or vm_deploy_notes_tasks_query"
+             ~ ' to find them by: the notes are on the change only.']
+            if _vd_table == 'change_request' and 'tasks' in _vd_also_want and _vd_tasks_q | length == 0 else []) }}
+  when: _vd_also_want | length > 0
 
 - name: VMware | what GenAI would read, and the ticket's own lines (its parent's under them)
   ansible.builtin.set_fact:

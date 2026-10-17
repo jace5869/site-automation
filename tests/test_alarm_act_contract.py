@@ -27,9 +27,9 @@ DATA = {"vcenter": "vcsa01.corp.example.mil", "read_at": "2026-10-07T12:00:00Z",
         "hosts": [{"name": "esx07.corp.example.mil", "moid": "host-7", "cluster": "PRODCL", "datacenter": "DCEAST", "connection": "connected",
                    "power": "poweredOn", "maintenance": False, "version": "8.0.2", "build": "1", "vendor": "Dell", "model": "R750", "status": "red"}],
         "events": [{"key": i, "time": "2026-10-07T0%d:00:00Z" % i, "type": "BadUsernameSessionEvent", "group": "login", "severity": "warning",
-                    "category": "info", "message": "Cannot login svc_scan@10.44.5.6", "user": "", "login_user": "svc_scan", "ip": "10.44.5.6",
+                    "category": "info", "message": "Cannot login svc_scan@203.0.113.46", "user": "", "login_user": "svc_scan", "ip": "203.0.113.46",
                     "host": "esx07.corp.example.mil", "vm": "", "cluster": "PRODCL", "datacenter": "DCEAST"} for i in range(1, 4)]}
-REAL = ("esx07", "corp.example.mil", "10.44.5.6", "PRODCL", "DCEAST")
+REAL = ("esx07", "corp.example.mil", "203.0.113.46", "PRODCL", "DCEAST")
 
 
 class ActEvidenceContract(unittest.TestCase):

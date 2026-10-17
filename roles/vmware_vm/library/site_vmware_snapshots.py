@@ -34,7 +34,7 @@ snapshots:
   description: One entry per snapshot.
   type: list
   returned: success
-  sample: [{vm: web01, moid: vm-42, vcenter: vc01.example.mil, datacenter: DC1, folder: /DC1/vm/Linux, hostname: web01.example.mil, ip: 10.1.2.3,
+  sample: [{vm: web01, moid: vm-42, vcenter: vc01.example.mil, datacenter: DC1, folder: /DC1/vm/Linux, hostname: web01.example.mil, ip: 192.0.2.3,
             power: poweredOn, name: before-patch,
             id: 7, description: "CHG123", taken_by: "CORP\\jdoe", created: "2026-10-01T12:00:00Z", age_days: 4.8, size_gb: 12.4,
             quiesced: false, memory: false, current: true, depth: 0}]

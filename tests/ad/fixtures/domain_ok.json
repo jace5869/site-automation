@@ -19,7 +19,7 @@
         "dcs": [
             {
                 "gc": true,
-                "ip": "10.0.0.1",
+                "ip": "192.0.2.1",
                 "name": "dc01.corp.test",
                 "ntds": "CN=NTDS Settings,CN=DC01,CN=Servers,CN=HQ,CN=Sites,CN=Configuration,DC=corp,DC=test",
                 "os": "Windows Server 2022 Standard",
@@ -34,7 +34,7 @@
             },
             {
                 "gc": true,
-                "ip": "10.0.0.2",
+                "ip": "192.0.2.2",
                 "name": "dc02.corp.test",
                 "ntds": "CN=NTDS Settings,CN=DC02,CN=Servers,CN=HQ,CN=Sites,CN=Configuration,DC=corp,DC=test",
                 "os": "Windows Server 2022 Standard",

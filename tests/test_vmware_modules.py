@@ -126,17 +126,17 @@ class AlarmEvents(unittest.TestCase):
         self.assertEqual(al.classify("BadUsernameSessionEvent", "info", login_types=[]), (None, None))   # list emptied
 
     def test_login_parts(self):
-        self.assertEqual(al.login_parts("Cannot login svc_scan@10.1.2.3"), ("svc_scan", "10.1.2.3"))
-        self.assertEqual(al.login_parts("", "u1", "10.0.0.1"), ("u1", "10.0.0.1"))
-        self.assertEqual(al.login_parts("Login failed", args={"userName": "a@vsphere.local", "client": "10.0.0.9"}),
-                         ("a@vsphere.local", "10.0.0.9"))
+        self.assertEqual(al.login_parts("Cannot login svc_scan@192.0.2.3"), ("svc_scan", "192.0.2.3"))
+        self.assertEqual(al.login_parts("", "u1", "192.0.2.1"), ("u1", "192.0.2.1"))
+        self.assertEqual(al.login_parts("Login failed", args={"userName": "a@vsphere.local", "client": "192.0.2.9"}),
+                         ("a@vsphere.local", "192.0.2.9"))
         self.assertEqual(al.login_parts("no address here"), ("", ""))
 
     def test_event_record(self):
-        r = al.event_record({"key": 1, "type": "BadUsernameSessionEvent", "message": "", "login_user": "svc", "ip": "10.9.9.9",
+        r = al.event_record({"key": 1, "type": "BadUsernameSessionEvent", "message": "", "login_user": "svc", "ip": "192.0.2.99",
                              "host": "esx01", "time": "2026-10-05T03:52:47Z"})
         self.assertEqual((r["group"], r["severity"], r["message"], r["login_user"], r["ip"]),
-                         ("login", "warning", "Cannot login svc@10.9.9.9", "svc", "10.9.9.9"))
+                         ("login", "warning", "Cannot login svc@192.0.2.99", "svc", "192.0.2.99"))
         r = al.event_record({"key": 2, "type": "HostConnectionLostEvent", "host": "esx02", "message": None})
         self.assertEqual((r["group"], r["severity"], r["message"]), ("connection", "critical", "Host esx02 lost its connection to vCenter"))
         self.assertIsNone(al.event_record({"key": 3, "type": "VmPoweredOnEvent", "category": "info"}))
@@ -300,14 +300,14 @@ class EsxiSecurity(unittest.TestCase):
         self.assertEqual(es.fault_text(RuntimeError("x  y")), "RuntimeError: x y")
 
     def test_pick_hosts(self):
-        hs = [{"name": "esx01.corp.mil", "cluster": "PROD", "datacenter": "DC1"}, {"name": "esx02.corp.mil", "cluster": "LAB", "datacenter": "DC1"},
-              {"name": "esx03.corp.mil", "cluster": "PROD", "datacenter": "DC2"}]
-        self.assertEqual([h["name"] for h in es.pick_hosts(hs)[0]], ["esx01.corp.mil", "esx02.corp.mil", "esx03.corp.mil"])
-        self.assertEqual([h["name"] for h in es.pick_hosts(hs, names=["ESX0[12]"])[0]], ["esx01.corp.mil", "esx02.corp.mil"])
-        self.assertEqual([h["name"] for h in es.pick_hosts(hs, clusters=["prod"], datacenter="DC1")[0]], ["esx01.corp.mil"])
+        hs = [{"name": "esx01.corp.example.mil", "cluster": "PROD", "datacenter": "DC1"}, {"name": "esx02.corp.example.mil", "cluster": "LAB", "datacenter": "DC1"},
+              {"name": "esx03.corp.example.mil", "cluster": "PROD", "datacenter": "DC2"}]
+        self.assertEqual([h["name"] for h in es.pick_hosts(hs)[0]], ["esx01.corp.example.mil", "esx02.corp.example.mil", "esx03.corp.example.mil"])
+        self.assertEqual([h["name"] for h in es.pick_hosts(hs, names=["ESX0[12]"])[0]], ["esx01.corp.example.mil", "esx02.corp.example.mil"])
+        self.assertEqual([h["name"] for h in es.pick_hosts(hs, clusters=["prod"], datacenter="DC1")[0]], ["esx01.corp.example.mil"])
         picked, excluded = es.pick_hosts(hs, exclude=["esx02"])
         self.assertEqual(([h["name"] for h in picked], [h["name"] for h in excluded]),
-                         (["esx01.corp.mil", "esx03.corp.mil"], ["esx02.corp.mil"]))
+                         (["esx01.corp.example.mil", "esx03.corp.example.mil"], ["esx02.corp.example.mil"]))
 
 
 class _NS(object):

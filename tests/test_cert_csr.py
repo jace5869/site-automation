@@ -44,7 +44,7 @@ class Subject(unittest.TestCase):
 
     def test_encoded_value_refused(self):
         with self.assertRaises(m.CertError):
-            m.parse_rfc2253("CN=x,1.2.3.4=#0403616263")
+            m.parse_rfc2253("CN=x,1.2.3.4=#0403616263")   # public-ok: an OID, not an address
 
     def test_config_escape(self):
         self.assertEqual(m.conf_escape("a$b#c\"d'e\\f"), "a\\$b\\#c\\\"d\\'e\\\\f")
@@ -56,7 +56,7 @@ class Text(unittest.TestCase):
                 Public-Key: (3072 bit)
         X509v3 extensions:
             X509v3 Subject Alternative Name:
-                DNS:web01.example.mil, DNS:web.example.mil, IP Address:10.1.2.3, IP Address:::1, email:ops@example.mil
+                DNS:web01.example.mil, DNS:web.example.mil, IP Address:192.0.2.3, IP Address:::1, email:ops@example.mil
             X509v3 Basic Constraints: critical
                 CA:FALSE
 """
@@ -67,7 +67,7 @@ class Text(unittest.TestCase):
 """
 
     def test_names(self):
-        self.assertEqual(m.parse_sans(self.OSSL3), ["DNS:web01.example.mil", "DNS:web.example.mil", "IP:10.1.2.3", "IP:::1", "email:ops@example.mil"])
+        self.assertEqual(m.parse_sans(self.OSSL3), ["DNS:web01.example.mil", "DNS:web.example.mil", "IP:192.0.2.3", "IP:::1", "email:ops@example.mil"])
         self.assertEqual(m.parse_sans("no names here"), [])
 
     def test_a_name_kind_that_cannot_be_written_back(self):
@@ -89,7 +89,7 @@ class Text(unittest.TestCase):
         self.assertEqual(m.host_names("CN=localhost", ["DNS:localhost", "IP:127.0.0.1"]), [])
         self.assertEqual(m.host_names("CN=localhost.localdomain", ["DNS:localhost6", "IP:::1"]), [])
         self.assertEqual(m.host_names("CN=self01.example.mil", []), ["self01.example.mil"])
-        self.assertEqual(m.host_names("CN=localhost", ["DNS:web.example.mil", "IP:10.1.2.3"]), ["web.example.mil", "10.1.2.3"])
+        self.assertEqual(m.host_names("CN=localhost", ["DNS:web.example.mil", "IP:192.0.2.3"]), ["web.example.mil", "192.0.2.3"])
 
     def test_file_name(self):
         self.assertEqual(m.safe_name("web01.example.mil"), "web01.example.mil")

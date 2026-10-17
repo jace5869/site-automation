@@ -45,12 +45,12 @@ all:
   children:
     aap:
       hosts:
-        aap01.example.mil: {ansible_host: 10.0.0.5}
+        aap01.example.mil: {ansible_host: 192.0.2.5}
 EOI
 printf 'all:\n  hosts:\n    localhost: {ansible_connection: local, ansible_python_interpreter: %s}\n' "$py" > "$work/inv-noaap.yml"
 # the AAP host under another name (only its IP matches the VM), and by name only (no ansible_host)
-sed 's/aap01.example.mil: {ansible_host: 10.0.0.5}/aapnode.example.mil: {ansible_host: 10.0.0.5}/' "$work/inv.yml" > "$work/inv-ip.yml"
-sed 's/aap01.example.mil: {ansible_host: 10.0.0.5}/AAP01: {}/' "$work/inv.yml" > "$work/inv-name.yml"
+sed 's/aap01.example.mil: {ansible_host: 192.0.2.5}/aapnode.example.mil: {ansible_host: 192.0.2.5}/' "$work/inv.yml" > "$work/inv-ip.yml"
+sed 's/aap01.example.mil: {ansible_host: 192.0.2.5}/AAP01: {}/' "$work/inv.yml" > "$work/inv-name.yml"
 
 fresh() {  # a new simulator with the test VMs (tests/vmware/vcsim.py setup)
     "$engine" rm -f "$name" >/dev/null 2>&1
@@ -189,7 +189,7 @@ check "  ...adapter 2 untouched" DC0_H0_VM1 "sorted((n['type'].split('Virtual')[
 # (vcsim cannot store secure boot ON; that case is in tests/test_filters.py)
 run "secure boot report: EFI with secure boot off and BIOS listed apart, job stays green (report only by default)" ok vm_secure_boot_report.yml \
     -- "SECURE BOOT OFF (fix: power the VM off" "  DC0_C0_RP0_VM0  folder /DC0/vm  on DC0_C0_H" "BIOS FIRMWARE (fix:" \
-       "  DC0_H0_VM0  folder /DC0/vm  on DC0_H0  guest aap01.example.mil 10.0.0.5  (poweredOn" "  dup  folder /DC0/vm/other" \
+       "  DC0_H0_VM0  folder /DC0/vm  on DC0_H0  guest aap01.example.mil 192.0.2.5  (poweredOn" "  dup  folder /DC0/vm/other" \
        "6 VM(s) (templates not counted): 0 EFI with secure boot, 2 EFI with secure boot OFF, 4 BIOS"
 run "secure boot report with vm_secure_boot_fail: true: the job fails, for workflows" fail vm_secure_boot_report.yml -e vm_secure_boot_fail=true -- "EFI with secure boot OFF" "vm_secure_boot_fail: false makes this a report only"
 grep -q '"secure_boot_off": \[' "$work/out.txt" && grep -A3 '"secure_boot_off"' "$work/out.txt" | grep -q '"name": "DC0_C0_RP0_VM0"' \
@@ -198,7 +198,7 @@ grep -q '"secure_boot_off": \[' "$work/out.txt" && grep -A3 '"secure_boot_off"' 
     && echo "ok   -   ...the lists are job artifacts (vm_secure_boot, vm_report)" \
     || { echo "FAIL -   ...artifacts"; sed -n '/CUSTOM STATS/,$p' "$work/out.txt" | head -30; fails=$((fails + 1)); }
 run "secure boot report for named VMs only" ok vm_secure_boot_report.yml -e vm_names=DC0_H0_VM1 \
-    -- "1 VM(s) (templates not counted): 0 EFI with secure boot, 1 EFI with secure boot OFF, 0 BIOS" "  DC0_H0_VM1  folder /DC0/vm  on DC0_H0  guest web01.example.mil 10.0.0.20"
+    -- "1 VM(s) (templates not counted): 0 EFI with secure boot, 1 EFI with secure boot OFF, 0 BIOS" "  DC0_H0_VM1  folder /DC0/vm  on DC0_H0  guest web01.example.mil 192.0.2.20"
 
 # ---- snapshot report and cleanup (DC0_C0_RP0_VM1: baseline, multi; DC0_H0_VM0 = AAP: aap-snap; "later" = 5 days on) --
 later=$(( $(date +%s) + 5 * 86400 ))
@@ -275,7 +275,7 @@ print(b.get_content() if b is not None and b.get_content_subtype() == sys.argv[1
 [ -n "$eml" ] && getpart plain "$eml" > "$body" && getpart html "$eml" > "$work/body.html"
 if [ -n "$eml" ] && grep -q "Subject: \[AAP\] VMware secure boot report: 6 VM(s) to fix" "$eml" \
    && grep -q "^Secure boot OFF (EFI firmware) (2)" "$body" && grep -q "^BIOS firmware (4)" "$body" \
-   && grep -Eq "^DC0_H0_VM0 +/DC0/vm +DC0_H0 +aap01.example.mil +10.0.0.5 +poweredOn +otherGuest$" "$body" \
+   && grep -Eq "^DC0_H0_VM0 +/DC0/vm +DC0_H0 +aap01.example.mil +192.0.2.5 +poweredOn +otherGuest$" "$body" \
    && grep -Eq "^dup +/DC0/vm/other " "$body" \
    && grep -q "^AAP job 4711, started by operator1" "$body" && ! grep -qF '\n' "$body" && grep -q "X-Envelope-To: ops@example.mil,vmteam@example.mil" "$eml" \
    && grep -q "BIOS firmware" "$work/body.html" && grep -q ">DC0_C0_RP0_VM1<" "$work/body.html" && grep -q ">/DC0/vm/other<" "$work/body.html"; then
@@ -357,7 +357,7 @@ if [ "$(nmail)" = $((n0 + 1)) ] && subject "$eml" | grep -q "^\[AAP\] VMware ala
    && grep -q 'bgcolor="#fee2e2"' "$work/al.html" && grep -q 'bgcolor="#b91c1c"[^>]*>CRITICAL<' "$work/al.html" \
    && grep -q 'bgcolor="#fef3c7"' "$work/al.html" && grep -q 'bgcolor="#b45309"[^>]*>WARNING<' "$work/al.html" \
    && grep -q ">DC0_C0_H2<" "$work/al.html" && grep -q ">disconnected<" "$work/al.html" \
-   && grep -Eq "^CRITICAL +DC0_C0_H2 +disconnected" "$work/al.txt" && grep -Eq "^WARNING +user +10.9.9.9 +DC0_C0_H0 +3 " "$work/al.txt" \
+   && grep -Eq "^CRITICAL +DC0_C0_H2 +disconnected" "$work/al.txt" && grep -Eq "^WARNING +user +192.0.2.99 +DC0_C0_H0 +3 " "$work/al.txt" \
    && grep -Eq "^INFO +Host +DC0_C0_H0 +Host error +1 +0 .* cleared +DC0_C0 +DC0" "$work/al.txt" && grep -q 'bgcolor="#dbeafe"' "$work/al.html"; then
     echo "ok   -   ...the email: red and amber rows, the severity cells filled, a text copy"
 else
@@ -372,7 +372,7 @@ items = [{"id": "P1", "cause": "The host was disconnected in vCenter.", "evidenc
           "fix": "Right-click the host, Connection, Connect.", "confidence": 92},
          {"id": "P2", "cause": "A short management network outage.", "evidence": "HostConnectionLostEvent",
           "fix": "Check the vmk0 uplinks.", "confidence": "55%"},
-         {"id": "P3", "cause": "A service account with an old password.", "evidence": "3 failed logins from 10.9.9.9",
+         {"id": "P3", "cause": "A service account with an old password.", "evidence": "3 failed logins from 192.0.2.99",
           "fix": "Update its password.", "confidence": "low"}]
 answer = json.dumps({"overall": "Reconnect DC0_C0_H2 first.", "items": items}, indent=1)
 json.dump({"summary": "Analysis below.\nBEGIN_ACT_ANALYSIS\n" + answer + "\nEND_ACT_ANALYSIS"}, open(sys.argv[1], "w"))
@@ -546,6 +546,27 @@ import json, sys
 n = json.loads(sys.stdin.read())["body"]["work_notes"].splitlines()
 sys.exit(0 if n[0].startswith("[AAP] VM not deployed (") and n[1].startswith("- template ") and n[-1].startswith("To fix it:") else 1)' \
     && echo "ok   -   ...the work note says why: a header, one problem per line, what to do" || { echo "FAIL -   ...refusal note"; fails=$((fails + 1)); }
+incd="$(newticket $'vm_name: app94\ntemplate: rhel9-gold\ndisks_gb: 120, 30, 40')"
+run "three disks: disk 1 grown, two new disks added in one change (each its own device key)" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$incd" -e "$rules" -- "app94 deployed" "2 disk(s) added (thin): 30, 40 GB"
+VMWARE_PORT=$port "$py" - <<'EOPY' && echo "ok   -   ...app94 has disks 120 + 30 + 40 GB" || { echo "FAIL -   ...three disks"; fails=$((fails + 1)); }
+import os, sys
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+v = [x for x in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if x.name == "app94"][0]
+disks = sorted((d.unitNumber, d.capacityInKB // 1048576) for d in v.config.hardware.device if isinstance(d, vim.vm.device.VirtualDisk))
+print(disks)
+sys.exit(0 if [gb for _, gb in disks] == [120, 30, 40] else 1)
+EOPY
+incc="$(newticket $'vm_name: app91\ntemplate: rhel9-gold\ncluster: 127.0.0.1')"
+run "a cluster that is the vCenter's name: refused, saying so and naming the clusters there" fail vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$incc" -e "$rules" \
+    -- "no cluster named 127.0.0.1 in datacenter DC0: 127.0.0.1 is a vCenter, not a cluster - the clusters there: DC0_C0" "(from ...)"
+incc="$(newticket $'vm_name: app92\ntemplate: rhel9-gold\ncluster: dc0_c0')"
+run "a cluster written in other case: found, with a note" ok vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$incc" -e "$rules" \
+    -- "cluster dc0_c0 is written 'DC0_C0' in vCenter" "ready to build in DC0_C0 - dry run"
 run "deploy from a ticket: built - 4 vCPU and 8 GB (the comment wins), host name by customization, the result on the ticket" ok \
     vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc" -e "$rules" -e "$mail" \
     -- "VM deploy $inc: app01 deployed, no IP yet" "Customization" "succeeded" "no IPv4 address within 3 s" "emailed"
@@ -633,6 +654,70 @@ run "a task whose change is closed: refused, nothing built" fail vm_deploy_from_
 sct4="$(newrec sc_task "{\"short_description\": \"VM request\", \"description\": \"vm_name: chgapp04\ntemplate: rhel9-gold\", \"parent\": \"$inc\", \"assignment_group\": \"Linux Operations\"}")"
 run "a parent that is not a change (an incident): not read" ok vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$sct4" -e "$rules" \
     -- "Parent: parent $inc (incident, field parent): not read - only a parent in change_request (vm_deploy_parent_tables)" "vm_name: chgapp04   (from description)"
+# ---- the change wins over its task's description (vm_deploy_parent_wins); the notes on both (vm_deploy_notes_also)
+both='{"vm_deploy_parent_wins": true, "vm_deploy_notes_also": ["parent", "tasks"], "vm_deploy_notes_tasks_query": "short_descriptionLIKEto deploy",
+       "vm_deploy_done_fields_by_table": {"change_task": {"state": "3", "close_notes": "VM deployed by AAP"}}}'
+chg7="$(newrec change_request '{"short_description": "Staging servers", "description": "vm_name: cwapp01\ntemplate: rhel9-gold\ncpu: 2\nmemory_gb: 4", "state": "-1", "approval": "approved", "assignment_group": "Linux Operations"}')"
+ct7="$(newrec change_task "{\"short_description\": \"Task to deploy a staging VM\", \"description\": \"vm_name: wrong01\ncpu: 1\", \"change_request\": \"$chg7\", \"assignment_group\": \"Linux Operations\"}")"
+run "vm_deploy_parent_wins: the change's lines over its task's description (dry run); the notes would go on both" ok vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$ct7" -e "$rules" -e "$both" \
+    -- "vm_name: cwapp01   (from parent $chg7 description)" "cpu: 2   (from parent $chg7 description)" "Notes on $ct7 and $chg7; only $ct7 is closed"
+n1=$(wc -l < "$work/sn.jsonl")
+run "built from the task: every note on the task and on its change, only the task closed" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$ct7" -e "$rules" -e "$both" -- "VM deploy $ct7: cwapp01 deployed"
+"$py" - "$work/sn.jsonl" "$n1" "$sn_port" "$ct7" "$chg7" <<'EOPY' && echo "ok   -   ...the change has the Deploying and the deployed notes, no state change; the task is closed" || { echo "FAIL -   ...notes on the change"; fails=$((fails + 1)); }
+import base64, json, sys, urllib.request
+lines = [json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):]]
+h = {"Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode()}
+get = lambda t, n: json.load(urllib.request.urlopen(urllib.request.Request(
+    "http://127.0.0.1:%s/api/now/table/%s?sysparm_query=number=%s" % (sys.argv[3], t, n), headers=h)))["result"][0]
+task, change = get("change_task", sys.argv[4]), get("change_request", sys.argv[5])
+on_chg = [l["body"] for l in lines if l["method"] == "PATCH" and l["path"].startswith("/api/now/table/change_request/" + change["sys_id"])]
+notes = [b.get("work_notes", "") for b in on_chg]
+ok = (on_chg and all(set(b) <= {"work_notes", "comments"} for b in on_chg)
+      and any(n.startswith("[AAP] Deploying this VM") for n in notes) and any(n.startswith("[AAP] VM cwapp01 deployed") for n in notes)
+      and task["state"] == "3" and change["state"] == "-1")
+print(task["state"], change["state"], [n.splitlines()[0] for n in notes])
+sys.exit(0 if ok else 1)
+EOPY
+chg8="$(newrec change_request '{"short_description": "Staging server two", "description": "vm_name: cwapp02\ntemplate: rhel9-gold\ncpu: 2\nmemory_gb: 4", "state": "-1", "approval": "approved", "assignment_group": "Linux Operations"}')"
+ct8="$(newrec change_task "{\"short_description\": \"Task to deploy a staging VM\", \"change_request\": \"$chg8\", \"assignment_group\": \"Linux Operations\"}")"
+ct8b="$(newrec change_task "{\"short_description\": \"Open the firewall\", \"change_request\": \"$chg8\", \"assignment_group\": \"Linux Operations\"}")"
+n1=$(wc -l < "$work/sn.jsonl")
+run "launched with the change (a web front end): its deploy task gets every note too, not closed" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$chg8" -e "$rules" -e "$both" -- "Notes on $chg8 and $ct8; only $chg8 is closed" "VM deploy $chg8: cwapp02 deployed"
+"$py" - "$work/sn.jsonl" "$n1" "$sn_port" "$ct8" "$ct8b" <<'EOPY' && echo "ok   -   ...the deploy task has the notes; the other task none; neither closed" || { echo "FAIL -   ...notes on the change's task"; fails=$((fails + 1)); }
+import base64, json, sys, urllib.request
+lines = [json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):]]
+h = {"Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode()}
+get = lambda t, n: json.load(urllib.request.urlopen(urllib.request.Request(
+    "http://127.0.0.1:%s/api/now/table/%s?sysparm_query=number=%s" % (sys.argv[3], t, n), headers=h)))["result"][0]
+vi, other = get("change_task", sys.argv[4]), get("change_task", sys.argv[5])
+on = lambda r: [l["body"] for l in lines if l["method"] == "PATCH" and l["path"].startswith("/api/now/table/change_task/" + r["sys_id"])]
+notes = [b.get("work_notes", "") for b in on(vi)]
+ok = (any(n.startswith("[AAP] VM cwapp02 deployed") for n in notes) and all(set(b) <= {"work_notes", "comments"} for b in on(vi))
+      and not on(other) and vi["state"] == "1" and other["state"] == "1")
+print(vi["state"], [n.splitlines()[0] for n in notes], len(on(other)))
+sys.exit(0 if ok else 1)
+EOPY
+chg10="$(newrec change_request '{"short_description": "Staging server three", "description": "vm_name: cwapp04\ntemplate: rhel9-gold\ncpu: 2\nmemory_gb: 4", "state": "-1", "approval": "approved", "assignment_group": "Linux Operations"}')"
+ct10="$(newrec change_task "{\"short_description\": \"Task to deploy a staging VM\", \"change_request\": \"$chg10\", \"assignment_group\": \"Linux Operations\"}")"
+ct10b="$(newrec change_task "{\"short_description\": \"Open the firewall\", \"change_request\": \"$chg10\", \"assignment_group\": \"Linux Operations\"}")"
+run "vm_deploy_close_tasks: launched with the change, its deploy task closed the way a change task is - not the change" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$chg10" -e "$rules" -e "$both" -e vm_deploy_close_tasks=true \
+    -- "VM deploy $chg10: cwapp04 deployed" "Task $ct10 closed: close_notes = VM deployed by AAP, state = 3"
+"$py" - "$sn_port" "$ct10" "$ct10b" "$chg10" <<'EOPY' && echo "ok   -   ...the deploy task closed (3), the other task and the change still open" || { echo "FAIL -   ...closing the change's task"; fails=$((fails + 1)); }
+import base64, json, sys, urllib.request
+h = {"Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode()}
+get = lambda t, n: json.load(urllib.request.urlopen(urllib.request.Request(
+    "http://127.0.0.1:%s/api/now/table/%s?sysparm_query=number=%s" % (sys.argv[1], t, n), headers=h)))["result"][0]
+vi, other, change = get("change_task", sys.argv[2]), get("change_task", sys.argv[3]), get("change_request", sys.argv[4])
+print(vi["state"], other["state"], change["state"])
+sys.exit(0 if (vi["state"], other["state"], change["state"]) == ("3", "1", "-1") else 1)
+EOPY
+chg9="$(newrec change_request '{"short_description": "No task", "description": "vm_name: cwapp03\ntemplate: rhel9-gold", "state": "-1", "approval": "approved", "assignment_group": "Linux Operations"}')"
+run "launched with a change that has no deploy task: the notes on the change only, and it says so" ok vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$chg9" -e "$rules" -e "$both" -- "No open task of $chg9 for Linux Operations: the notes are on the change only."
 # ---- a change task: built only while its change is approved and in Implement (vm_deploy_ready_by_table),
 # the change's plain words read under the task's own, the task closed 'successful with issues' when something did not finish
 setrec() {  # setrec TABLE NUMBER JSON-BODY
@@ -1030,6 +1115,30 @@ act_says_raw 'I am ready. What task would you like me to do?'
 run "GenAI answers like a chat: nothing built, and the job shows what it answered" fail vm_deploy_from_ticket.yml \
     -e vm_deploy_ticket="$inc14" -e "$genai" -e "$actvars" -e vm_deploy_phase=propose \
     -- "GenAI did not read the ticket" "WHAT GENAI ANSWERED (the job could not read it): I am ready. What task would you like me to do?"
+# a dry run (Check) asks GenAI only with vm_deploy_genai_in_check - and writes nothing on the ticket
+inc15="$(newticket 'Please build a RHEL 9 server called lnxapp15 for SiteA, 2 CPUs, 2 GB of RAM')"
+act_says '{"vm_name": {"value": "lnxapp15", "evidence": "called lnxapp15"}, "template": {"value": "rhel9-gold", "evidence": "RHEL 9"},
+           "cpu": {"value": 2, "evidence": "2 CPUs"}, "memory_gb": {"value": 2, "evidence": "2 GB of RAM"}, "site": {"value": "SiteA", "evidence": "for SiteA"}}'
+rm -f "$work/act/fake-act-stdin.txt"
+run "GenAI on, a dry run (Check): GenAI not asked (vm_deploy_genai_in_check off)" ok vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$inc15" -e "$genai" -e "$actvars" -- "GenAI would read the ticket (dry run: not asked)"
+[ ! -e "$work/act/fake-act-stdin.txt" ] && echo "ok   -   ...ACT was not called" || { echo "FAIL -   ...ACT called in Check"; fails=$((fails + 1)); }
+n0=$(wc -l < "$work/sn.jsonl")
+run "vm_deploy_genai_in_check: a dry run asks GenAI, shows the proposal and where it would go" ok vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$inc15" -e "$genai" -e "$actvars" -e vm_deploy_genai_in_check=true \
+    -- "vm_name: lnxapp15   (from GenAI proposal (this run))" "lnxapp15 ready to build in DC0_" "dry run"
+[ -e "$work/act/fake-act-stdin.txt" ] && [ "$(sed -n "$((n0 + 1)),\$p" "$work/sn.jsonl" | grep -c '"PATCH"')" = 0 ] \
+    && ! VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q '"lnxapp15"' \
+    && echo "ok   -   ...ACT was asked; nothing written on the ticket, no VM" || { echo "FAIL -   ...GenAI in Check"; fails=$((fails + 1)); }
+inc16="$(newticket 'please build me a RHEL 9 server with 4 CPUs')"
+act_says '{"vm_name": {"value": "rhelsrv16", "evidence": "a RHEL 9 server"}, "template": {"value": "rhel9-gold", "evidence": "RHEL 9"},
+           "cpu": {"value": 4, "evidence": "4 CPUs"}, "questions": []}'
+n0=$(wc -l < "$work/sn.jsonl")
+run "vm_deploy_genai_in_check, questions: shown, not sent" ok vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$inc16" -e "$genai" -e "$actvars" -e vm_deploy_genai_in_check=true \
+    -- "dry run: GenAI read the ticket - questions for the requester (not sent)" "DROPPED: vm_name 'rhelsrv16'" "nothing was written on the ticket"
+[ "$(sed -n "$((n0 + 1)),\$p" "$work/sn.jsonl" | grep -c '"PATCH"')" = 0 ] \
+    && echo "ok   -   ...no comment to the requester" || { echo "FAIL -   ...a dry run wrote on the ticket"; fails=$((fails + 1)); }
 # lines give the name and template, plain words the rest - and the disks in words: GenAI is asked for what is open
 inc9="$(newticket $'VM request\r\nvm_name: lnxapp09\r\ntemplate: rhel9-gold\r\nsite: SiteA\r\n2 cpus\r\n2gb of memory\r\n120gb disk\r\n50gb disk')"
 act_says '{"vm_name": {"value": "lnxapp09", "evidence": "vm_name: lnxapp09"}, "template": {"value": "rhel9-gold", "evidence": "template: rhel9-gold"},

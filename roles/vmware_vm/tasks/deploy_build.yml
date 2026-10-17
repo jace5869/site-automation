@@ -36,6 +36,19 @@
          + (_vd.spec | vm_deploy_spec_text(_vd.sources))
          + (_vd.problems | map('regex_replace', '^', 'REFUSED: ') | list) }}
 
+- name: VMware | refused - say why on the ticket - the note
+  ansible.builtin.set_fact:
+    _vd_b_refused: >-
+      {%- set items = _vd.problems | map('regex_replace', '^', '- ') | list -%}
+      {{ {'comments': (['[AAP] We cannot build this VM yet (' ~ _vd_job ~ '):'] + items
+                       + ['Please answer with a comment on this ticket.']) | join(_vd_nl)}
+         if vm_deploy_plain_words | bool else
+         {'work_notes': (['[AAP] VM not deployed (' ~ _vd_job ~ '):'] + items
+                         + ["To fix it: add a comment with the corrected values (e.g. 'memory_gb: 32') and run the job again."]) | join(_vd_nl)} }}
+  vars:
+    _vd_nl: "\n"
+  when: _vd.problems | length > 0 and not ansible_check_mode
+
 - name: VMware | refused - say why on the ticket
   ansible.builtin.uri:
     url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
@@ -47,13 +60,7 @@
     body_format: json
     # with plain words, the questions are for the requester: a comment (requesters see comments, not work notes)
     # one problem per line, under a header line
-    body: >-
-      {%- set items = _vd.problems | map('regex_replace', '^', '- ') | list -%}
-      {{ {'comments': (['[AAP] We cannot build this VM yet (' ~ _vd_job ~ '):'] + items
-                       + ['Please answer with a comment on this ticket.']) | join(_vd_nl)}
-         if vm_deploy_plain_words | bool else
-         {'work_notes': (['[AAP] VM not deployed (' ~ _vd_job ~ '):'] + items
-                         + ["To fix it: add a comment with the corrected values (e.g. 'memory_gb: 32') and run the job again."]) | join(_vd_nl)} }}
+    body: "{{ _vd_b_refused }}"
     validate_certs: "{{ servicenow_validate_certs | default(true) }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"
@@ -62,11 +69,27 @@
   failed_when: false
   when: _vd.problems | length > 0 and not ansible_check_mode
 
+- name: VMware | refused - say why on the ticket - the same on the other tickets (vm_deploy_notes_also)
+  ansible.builtin.include_tasks: deploy_note_also.yml
+  vars:
+    _vd_also_bodies: "{{ [_vd_b_refused] }}"
+  when: _vd_also | default([]) | length > 0 and (_vd.problems | length > 0 and not ansible_check_mode)
+
 - name: VMware | the request passes the rules
   ansible.builtin.assert:
     that: _vd.problems | length == 0
     fail_msg: "Not deployed: {{ _vd.problems | join('; ') }}"
     quiet: true
+
+- name: VMware | the ticket records what is being built, before anything is built - the note
+  ansible.builtin.set_fact:
+    _vd_b_deploying:
+      work_notes: >-
+        {{ ([('[AAP] Deploying ' ~ _vd.vms | length ~ ' VMs, one after the other (' if _vd_multi | bool else '[AAP] Deploying this VM (')
+             ~ _vd_job ~ '):'] + (_vd.spec | vm_deploy_spec_text)) | join(_vd_nl) }}
+  vars:
+    _vd_nl: "\n"
+  when: not ansible_check_mode and not _vd_plan_only | bool
 
 - name: VMware | the ticket records what is being built, before anything is built
   ansible.builtin.uri:
@@ -77,10 +100,7 @@
     force_basic_auth: true
     headers: {Accept: application/json}
     body_format: json
-    body:
-      work_notes: >-
-        {{ ([('[AAP] Deploying ' ~ _vd.vms | length ~ ' VMs, one after the other (' if _vd_multi | bool else '[AAP] Deploying this VM (')
-             ~ _vd_job ~ '):'] + (_vd.spec | vm_deploy_spec_text)) | join(_vd_nl) }}
+    body: "{{ _vd_b_deploying }}"
     validate_certs: "{{ servicenow_validate_certs | default(true) }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"
@@ -89,6 +109,12 @@
     _vd_nl: "\n"
   register: _vd_note1
   when: not ansible_check_mode and not _vd_plan_only | bool
+
+- name: VMware | the ticket records what is being built, before anything is built - the same on the other tickets (vm_deploy_notes_also)
+  ansible.builtin.include_tasks: deploy_note_also.yml
+  vars:
+    _vd_also_bodies: "{{ [_vd_b_deploying] }}"
+  when: _vd_also | default([]) | length > 0 and (not ansible_check_mode and not _vd_plan_only | bool)
 
 - name: VMware | the ticket took the note (no VM without a record on its ticket)
   ansible.builtin.assert:
@@ -168,16 +194,9 @@
          if not ansible_check_mode and not _vd_plan_only | bool and _vd_all_ok | bool
             and (vm_deploy_done_fields_pxe | default(true) | bool or not _vd.spec.pxe | default(false) | bool) else {} }}
 
-- name: VMware | the result on the ticket{{ ' - one note per VM' if _vd_multi | bool else '' }}
-  ansible.builtin.uri:
-    url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
-    method: PATCH
-    url_username: "{{ _vd_sn_user }}"
-    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
-    force_basic_auth: true
-    headers: {Accept: application/json}
-    body_format: json
-    body: >-
+- name: VMware | the result on the ticket{{ ' - one note per VM' if _vd_multi | bool else '' }} - the note
+  ansible.builtin.set_fact:
+    _vd_b_result: >-
       {%- set v = _vd_r.vm | default({}) -%}
       {%- set sp = _vd_r._vd_i.spec -%}
       {%- set nth = (' - ' ~ (_vd_n + 1) ~ ' of ' ~ _vd_res | length) if _vd_multi | bool else '' -%}
@@ -211,6 +230,26 @@
                        + notes -%}
       {%- endif -%}
       {{ {'work_notes': lines | join(_vd_nl)} }}
+  vars:
+    _vd_nl: "\n"                       # a real newline: '\n' inside {{ }} in a >- block reaches ServiceNow as a backslash and n
+  loop: "{{ _vd_res }}"
+  loop_control:
+    loop_var: _vd_r
+    index_var: _vd_n
+    label: "{{ _vd_r._vd_i.spec.vm_name }}"
+  register: _vd_b_result_all
+  when: not ansible_check_mode
+
+- name: VMware | the result on the ticket{{ ' - one note per VM' if _vd_multi | bool else '' }}
+  ansible.builtin.uri:
+    url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
+    method: PATCH
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body: "{{ _vd_b_result_all.results[_vd_n].ansible_facts._vd_b_result }}"
     validate_certs: "{{ servicenow_validate_certs | default(true) }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"
@@ -225,17 +264,16 @@
   register: _vd_note2
   when: not ansible_check_mode
 
+- name: VMware | the result on the ticket{{ ' - one note per VM' if _vd_multi | bool else '' }} - the same on the other tickets (vm_deploy_notes_also)
+  ansible.builtin.include_tasks: deploy_note_also.yml
+  vars:
+    _vd_also_bodies: "{{ _vd_b_result_all.results | default([]) | selectattr('ansible_facts', 'defined') | map(attribute='ansible_facts._vd_b_result') | list }}"
+  when: _vd_also | default([]) | length > 0 and (not ansible_check_mode)
+
 # several VMs, not all built: what was and what was not, in one note - the ticket stays open
-- name: VMware | several VMs, not all built - say so on the ticket
-  ansible.builtin.uri:
-    url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
-    method: PATCH
-    url_username: "{{ _vd_sn_user }}"
-    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
-    force_basic_auth: true
-    headers: {Accept: application/json}
-    body_format: json
-    body: >-
+- name: VMware | several VMs, not all built - say so on the ticket - the note
+  ansible.builtin.set_fact:
+    _vd_b_partial: >-
       {%- set lines = ['[AAP] ' ~ (_vd_res | length - _vd_bad | length) ~ ' of ' ~ _vd_res | length ~ ' VMs built (' ~ _vd_job
                        ~ '); this ticket stays open:'] -%}
       {%- for r in _vd_res -%}
@@ -245,6 +283,20 @@
       {%- set _ = lines.append('To fix it: fix what the NOT deployed note says and run the job again - the VMs built are left as they are, '
                                ~ 'the others are built.') -%}
       {{ {'work_notes': lines | join(_vd_nl)} }}
+  vars:
+    _vd_nl: "\n"
+  when: _vd_multi | bool and not _vd_all_ok | bool and not ansible_check_mode and not _vd_plan_only | bool
+
+- name: VMware | several VMs, not all built - say so on the ticket
+  ansible.builtin.uri:
+    url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
+    method: PATCH
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body: "{{ _vd_b_partial }}"
     validate_certs: "{{ servicenow_validate_certs | default(true) }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"
@@ -253,6 +305,12 @@
     _vd_nl: "\n"
   failed_when: false
   when: _vd_multi | bool and not _vd_all_ok | bool and not ansible_check_mode and not _vd_plan_only | bool
+
+- name: VMware | several VMs, not all built - say so on the ticket - the same on the other tickets (vm_deploy_notes_also)
+  ansible.builtin.include_tasks: deploy_note_also.yml
+  vars:
+    _vd_also_bodies: "{{ [_vd_b_partial] }}"
+  when: _vd_also | default([]) | length > 0 and (_vd_multi | bool and not _vd_all_ok | bool and not ansible_check_mode and not _vd_plan_only | bool)
 
 - name: VMware | the result notes ServiceNow did not take
   ansible.builtin.set_fact:
@@ -285,6 +343,17 @@
   ansible.builtin.set_fact:
     _vd_closed: "{{ (_vd_close | vm_deploy_close_result(_vd_done)) if _vd_done | length > 0 else {} }}"
 
+- name: VMware | not closed - say so on the ticket - the note
+  ansible.builtin.set_fact:
+    _vd_b_notclosed:
+      work_notes: >-
+        {{ ['[AAP] The ' ~ ('VMs are' if _vd_multi | bool else 'VM is') ~ ' built, but this ticket could not be closed (' ~ _vd_job ~ '):',
+            '- ' ~ _vd_closed.why,
+            'Close it by hand. (What the job sets to close it: vm_deploy_done_fields_by_table on the deploy template.)'] | join(_vd_nl) }}
+  vars:
+    _vd_nl: "\n"
+  when: _vd_closed | length > 0 and not _vd_closed.ok | bool
+
 - name: VMware | not closed - say so on the ticket
   ansible.builtin.uri:
     url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
@@ -294,11 +363,7 @@
     force_basic_auth: true
     headers: {Accept: application/json}
     body_format: json
-    body:
-      work_notes: >-
-        {{ ['[AAP] The ' ~ ('VMs are' if _vd_multi | bool else 'VM is') ~ ' built, but this ticket could not be closed (' ~ _vd_job ~ '):',
-            '- ' ~ _vd_closed.why,
-            'Close it by hand. (What the job sets to close it: vm_deploy_done_fields_by_table on the deploy template.)'] | join(_vd_nl) }}
+    body: "{{ _vd_b_notclosed }}"
     validate_certs: "{{ servicenow_validate_certs | default(true) }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"
@@ -307,6 +372,100 @@
     _vd_nl: "\n"
   failed_when: false
   when: _vd_closed | length > 0 and not _vd_closed.ok | bool
+
+- name: VMware | not closed - say so on the ticket - the same on the other tickets (vm_deploy_notes_also)
+  ansible.builtin.include_tasks: deploy_note_also.yml
+  vars:
+    _vd_also_bodies: "{{ [_vd_b_notclosed] }}"
+  when: _vd_also | default([]) | length > 0 and (_vd_closed | length > 0 and not _vd_closed.ok | bool)
+
+# launched with a change (e.g. from a web front end): its task gets the notes (vm_deploy_notes_also: tasks)
+# and, with vm_deploy_close_tasks, is closed the way a change task is (vm_deploy_done_fields_by_table) -
+# never the change itself unless the table's own entry says so
+- name: VMware | what closes the change's tasks (vm_deploy_close_tasks)
+  ansible.builtin.set_fact:
+    _vd_tclose: >-
+      {{ _vd_also | default([]) | selectattr('table', 'equalto', 'change_task') | list
+         if vm_deploy_close_tasks | default(false) | bool and _vd_table == 'change_request' else [] }}
+    _vd_tdone: >-
+      {%- set base = (vm_deploy_done_fields_by_table | default({}, true))['change_task'] | default({}, true) -%}
+      {%- set extra = (vm_deploy_done_fields_issues_by_table | default({}, true))['change_task'] | default({}, true)
+                      if _vd_issues | length > 0 and base | length > 0 else {} -%}
+      {{ base | combine(extra)
+         if not ansible_check_mode and not _vd_plan_only | bool and _vd_all_ok | bool
+            and (vm_deploy_done_fields_pxe | default(true) | bool or not _vd.spec.pxe | default(false) | bool) else {} }}
+
+- name: VMware | close the change's tasks ({{ _vd_tclose | map(attribute='number') | join(', ') }})
+  ansible.builtin.uri:
+    url: >-
+      {{ _vd_sn_url }}/api/now/table/change_task/{{ _vd_t.sys_id }}?sysparm_exclude_reference_link=true&sysparm_fields={{
+      _vd_tdone.keys() | list | join(',') | urlencode }}
+    method: PATCH
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body: "{{ _vd_tdone }}"
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  loop: "{{ _vd_tclose }}"
+  loop_control:
+    loop_var: _vd_t
+    label: "{{ _vd_t.number }}"
+  register: _vd_tclose_res
+  failed_when: false
+  when: _vd_tclose | length > 0 and _vd_tdone | length > 0
+
+- name: VMware | did the change's tasks close?
+  ansible.builtin.set_fact:
+    _vd_tclosed: >-
+      {%- set out = [] -%}
+      {%- for r in _vd_tclose_res.results | default([]) if r._vd_t is defined and not r.skipped | default(false) -%}
+      {%-   set _ = out.append(dict(r | vm_deploy_close_result(_vd_tdone), number=r._vd_t.number, sys_id=r._vd_t.sys_id)) -%}
+      {%- endfor -%}
+      {{ out }}
+    _vd_tlines: >-
+      {{ (['WARNING: vm_deploy_close_tasks is on, but vm_deploy_done_fields_by_table has no change_task entry: the tasks of the change are left open']
+            if _vd_tclose | length > 0 and not ansible_check_mode and not _vd_plan_only | bool and _vd_all_ok | bool
+               and ((vm_deploy_done_fields_by_table | default({}, true))['change_task'] | default({}, true)) | length == 0 else []) }}
+
+- name: VMware | what the report says about the change's tasks
+  ansible.builtin.set_fact:
+    _vd_tlines: >-
+      {{ _vd_tlines
+         + (_vd_tclosed | selectattr('ok') | map(attribute='number') | map('regex_replace', '^', 'Task ')
+            | map('regex_replace', '$', ' closed: ' ~ (_vd_tdone | dictsort | map('join', ' = ') | join(', '))) | list)
+         + (_vd_tclosed | rejectattr('ok') | map(attribute='number') | zip(_vd_tclosed | rejectattr('ok') | map(attribute='why'))
+            | map('join', ' was NOT closed: ') | map('regex_replace', '^', 'WARNING: task ') | list) }}
+
+- name: VMware | a task not closed - say so on it
+  ansible.builtin.uri:
+    url: "{{ _vd_sn_url }}/api/now/table/change_task/{{ _vd_t.sys_id }}"
+    method: PATCH
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body:
+      work_notes: >-
+        {{ ['[AAP] The ' ~ ('VMs are' if _vd_multi | bool else 'VM is') ~ ' built (change ' ~ _vd_rec.number ~ '), but this task could not be closed ('
+            ~ _vd_job ~ '):', '- ' ~ _vd_t.why,
+            'Close it by hand. (What the job sets to close it: vm_deploy_done_fields_by_table, change_task, on the deploy template.)'] | join(_vd_nl) }}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  vars:
+    _vd_nl: "\n"
+  loop: "{{ _vd_tclosed | rejectattr('ok') | list }}"
+  loop_control:
+    loop_var: _vd_t
+    label: "{{ _vd_t.number }}"
+  failed_when: false
 
 - name: VMware | deploy report
   ansible.builtin.include_tasks: report.yml
@@ -333,7 +492,8 @@
          + (['WARNING: the result could not be written on the ticket (HTTP ' ~ _vd_note_bad | first ~ ')']
             if not ansible_check_mode and _vd_note_bad | length > 0 else [])
          + (['Ticket closed: ' ~ _vd_done | dictsort | map('join', ' = ') | join(', ')] if _vd_closed.ok | default(false) else [])
-         + (['WARNING: the ticket was NOT closed: ' ~ _vd_closed.why] if _vd_closed and not _vd_closed.ok | default(true) else []) }}
+         + (['WARNING: the ticket was NOT closed: ' ~ _vd_closed.why] if _vd_closed and not _vd_closed.ok | default(true) else [])
+         + _vd_tlines | default([]) }}
     _vm_report_doc: >-
       {%- set sp = _vd.sources -%}
       {%- set req = [] -%}
@@ -404,7 +564,8 @@
          + (['WARNING: ' ~ _vd_note_bad | length ~ ' result note(s) could not be written on the ticket (HTTP ' ~ _vd_note_bad | first ~ ')']
             if not ansible_check_mode and _vd_note_bad | length > 0 else [])
          + (['Ticket closed: ' ~ _vd_done | dictsort | map('join', ' = ') | join(', ')] if _vd_closed.ok | default(false) else [])
-         + (['WARNING: the ticket was NOT closed: ' ~ _vd_closed.why] if _vd_closed and not _vd_closed.ok | default(true) else []) }}
+         + (['WARNING: the ticket was NOT closed: ' ~ _vd_closed.why] if _vd_closed and not _vd_closed.ok | default(true) else [])
+         + _vd_tlines | default([]) }}
     _vm_report_doc: >-
       {%- set sp = _vd.sources -%}
       {%- set req = [] -%}
@@ -466,6 +627,9 @@
             'error': _vd_bad | map(attribute='msg', default='') | join('; '), 'dry_run': ansible_check_mode,
             'built': not _vd_dry | bool and _vd_all_ok | bool, 'waiting_for_approval': _vd_plan_only | bool,
             'closed': _vd_closed.ok | default(false), 'close_error': _vd_closed.why | default(''), 'parent': _vd_parent.number | default(''),
+            'notes_also': _vd_also | default([]) | map(attribute='number') | list,
+            'tasks_closed': _vd_tclosed | default([]) | selectattr('ok') | map(attribute='number') | list,
+            'tasks_not_closed': _vd_tclosed | default([]) | rejectattr('ok') | map(attribute='number') | list,
             'issues': _vd_issues, 'vms': vms} }}
 
 - name: VMware | the VM was deployed{{ ' - every one' if _vd_multi | bool else '' }}

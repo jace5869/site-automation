@@ -253,6 +253,21 @@ vm_deploy_parent_fields: [change_request, parent]
 # The parent's fields with the request, in this order (a later one wins), e.g. [description,
 # implementation_plan]; comments and work_notes may be listed too (oldest first). GenAI reads them as well.
 vm_deploy_parent_text_fields: [description]
+# true = the parent's text (the change's description) wins over the ticket's own short description and
+# description (a change task that repeats the request, maybe wrongly): those are only read for what the
+# change does not say. A comment or work note on the ticket still wins - newer, e.g. an answer.
+vm_deploy_parent_wins: false
+# Every note and comment this job writes on the ticket goes on these too (closing never does: only the
+# ticket itself is closed): parent = the change a task belongs to (when it was read); tasks = when the
+# job is launched with a change, its open change tasks assigned to vm_deploy_assignment_group (and
+# matching vm_deploy_notes_tasks_query). e.g. [parent, tasks]: the change and its task both get them,
+# whichever the job is launched with. A note ServiceNow refuses there is a warning, not a failure.
+vm_deploy_notes_also: []
+# An extra ServiceNow query for the change's tasks that get the notes, e.g. "short_descriptionLIKEto deploy" ("" = the group's)
+vm_deploy_notes_tasks_query: ""
+# Launched with a change: also close its tasks found that way (with vm_deploy_done_fields_by_table's
+# change_task entry, when every VM is built) - the change itself is not closed by this. They get the notes too.
+vm_deploy_close_tasks: false
 # Before anything is built, a ticket of these tables - the ticket itself, or the parent it belongs to (a
 # change task's change) - must have these fields: one value or a list (any of them), written as the
 # ticket's form shows them (upper / lower case ignored). Checked by the dry run, the propose step AND
@@ -321,7 +336,7 @@ vm_deploy_template_aliases: {}
 # that is not network-boot needs one (Sysprep: administrator password, domain or workgroup), e.g.
 #   {"Windows 2022*": Win2022-Sysprep-Domain}. Linux templates need none (the job's own DHCP one).
 vm_deploy_template_specs: {}
-vm_deploy_max_disks: 4                   # disks a ticket may ask for (disks_gb: 100, 200 = disk 1 grown to 100 GB, one 200 GB disk added)
+vm_deploy_max_disks: 5                   # disks a ticket may ask for, disk 1 included (disks_gb: 100, 200 = disk 1 grown to 100 GB, one 200 GB disk added)
 vm_deploy_max_disk_gb: 2048              # the biggest disk a ticket may ask for, in GB
 vm_deploy_max_total_disk_gb: 4096        # all its disks together, in GB
 # Automatic placement - when the ticket, its site and vm_deploy_defaults name no cluster / datastore:
@@ -382,6 +397,9 @@ vm_deploy_plain_sites: {}
 # next run builds that proposal (GenAI is not asked again), while the ticket text is unchanged; the
 # ticket's own lines still win. Needs the ACT model key credential on the template. docs/VMWARE.md
 vm_deploy_genai: false
+# A dry run (Check) asks GenAI too (true): it shows GenAI's proposal and where the VM would go, and writes
+# nothing on the ticket - no proposal note, no questions to the requester. false = Check only says GenAI would be asked.
+vm_deploy_genai_in_check: false
 # Optional: templates GenAI may name by key, each with a plain description (the key: the template's exact
 # name). Not needed when the templates' names say their OS: the job finds the template from the OS the
 # ticket names. A key for another version than the ticket asks for is dropped. e.g.

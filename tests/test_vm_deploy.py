@@ -285,6 +285,18 @@ class GenAI(unittest.TestCase):
                      "3130 GB of disks in all is more than vm_deploy_max_total_disk_gb (3000)"):
             self.assertIn(want, c["problems"])
 
+    def test_five_disks_by_default_more_when_raised(self):
+        import yaml
+        here = os.path.dirname(os.path.abspath(__file__))
+        dflt = yaml.safe_load(open(os.path.join(here, "..", "roles", "vmware_vm", "defaults", "main.yml")))["vm_deploy_max_disks"]
+        self.assertEqual(dflt, 5)
+        five = {"active": "true", "description": "vm_name: a1\ntemplate: rhel9-gold\ndisks_gb: 120, 100, 50, 50, 50"}
+        six = dict(five, description=five["description"] + ", 50")
+        check = lambda rec, n: d.vm_deploy_check(d.vm_deploy_spec(rec), rec, dict(RULES, assignment_group="", max_disks=n))["problems"]
+        self.assertEqual(check(five, dflt), [])
+        self.assertIn("6 disks is more than vm_deploy_max_disks (5)", check(six, dflt))
+        self.assertEqual(check(six, 8), [])                     # vm_deploy_max_disks: 8 on the template
+
 
 class Placement(unittest.TestCase):
     G = 1024 ** 3
@@ -321,8 +333,35 @@ class Placement(unittest.TestCase):
 
 class ModuleParts(unittest.TestCase):
     def test_pick_ipv4(self):
-        self.assertEqual(m.pick_ipv4(["fe80::1", "169.254.3.4", "10.1.20.15", "10.1.20.16"]), "10.1.20.15")
+        self.assertEqual(m.pick_ipv4(["fe80::1", "169.254.3.4", "203.0.113.15", "203.0.113.16"]), "203.0.113.15")
         self.assertEqual(m.pick_ipv4(["fe80::1", ""]), "")
+
+    def test_new_disks_each_their_own_key(self):
+        grow, adds, _ = m.plan_disks([(2000, 60 * 1048576, 1000, 0)], [120, 100, 50])
+        nd = m.new_disks(adds)
+        self.assertEqual([(d["key"], d["controllerKey"], d["unitNumber"], d["capacityInKB"] // 1048576) for d in nd],
+                         [(-101, 1000, 1, 100), (-102, 1000, 2, 50)])
+        self.assertEqual(len({d["key"] for d in nd}), len(nd))     # vCenter: 'Cannot add multiple devices using the same device key'
+        self.assertTrue(all(d["key"] < 0 for d in nd))
+
+    def test_find_cluster(self):
+        cl = ["CL01", "Mgmt"]
+        hosts = [("esx01.example.mil", "CL01"), ("esx09.example.mil", "")]
+        self.assertEqual(m.find_cluster("CL01", cl, hosts, ["vc1"], "DC1"), ("CL01", ""))
+        self.assertEqual(m.find_cluster("cl01", cl, hosts, ["vc1"], "DC1")[0], "CL01")   # other case: found, with a note
+        found, why = m.find_cluster("vc02.example.mil", cl, hosts, ["vc02.example.mil"], "DC01")
+        self.assertIsNone(found)
+        self.assertIn("vc02.example.mil is a vCenter, not a cluster", why)
+        self.assertIn("the clusters there: CL01, Mgmt", why)
+        self.assertIn("(from ...)", why)
+        self.assertIn("is a vCenter", m.find_cluster("VC02", cl, hosts, ["vc02.example.mil"], "D")[1])  # its short name
+        self.assertIn("is an ESXi host in cluster CL01", m.find_cluster("esx01", cl, hosts, [], "D")[1])
+        self.assertIn("is the datacenter", m.find_cluster("DC01", cl, hosts, [], "DC01")[1])
+        self.assertIn("it has no cluster", m.find_cluster("x", [], [], [], "D")[1])
+        self.assertIn("is a vCenter", m.find_cluster("vc01", cl, [], ["VC01.example.mil:8443"], "D")[1])
+        self.assertNotIn("vCenter", m.find_cluster("192", cl, [], ["192.0.2.3"], "D")[1].split(" - ")[0])   # an IP: only as it is
+        self.assertIsNone(m.find_cluster("Cl01", ["CL01", "cl01"], [], [], "D")[0])   # two in other case: not a guess
+        self.assertIsNone(m.find_cluster("CL01X", ["CL01"], [], [], "D")[0])
 
     def test_windows(self):
         self.assertTrue(m.is_windows("windows2019srv_64Guest"))
@@ -571,7 +610,7 @@ class PlainWords(unittest.TestCase):
 
     def test_a_request_in_plain_words(self):
         p = self.spec(_wt("Hi, please build a Red Hat 9 server named ab01web05, medium size, for the portal. "
-                          "Thanks, Jane (jane.doe@ab01mail.mil, https://wiki/ab01page)"))
+                          "Thanks, Jane (jane.doe@mail.example.mil, https://wiki/ab01page)"))
         self.assertEqual(p["spec"], {"template": "rhel9-gold", "cpu": 4, "memory_gb": 16, "vm_name": "ab01web05"})
         self.assertEqual(p["questions"], [])
         self.assertEqual(p["sources"]["template"], "the words 'red hat 9' in the description")
@@ -755,6 +794,73 @@ class ParentTicket(unittest.TestCase):
         t = d.vm_deploy_ticket_text(self.TASK, self.read(self.CHG))
         self.assertIn("The parent ticket CHG0030001", t)
         self.assertIn("vm_name: app09", t)
+
+
+class ChangeWins(unittest.TestCase):
+    """vm_deploy_parent_wins: the change's description wins over its task's short description and description
+    (a task that repeats the request, maybe wrongly); a comment or work note on the task still wins.
+    vm_deploy_notes_also: the same notes on the change, or on the change's own tasks."""
+    SID = "0123456789abcdef0123456789abcdef"
+    TASK = {"number": "CTASK0010009", "sys_id": "f" * 32, "active": "true", "assignment_group": "Server Team",
+            "short_description": "Task to deploy a staging VM", "description": "vm_name: wrong01\ncpu: 2\nmemory_gb: 8",
+            "comments": "", "work_notes": "", "change_request": "CHG0030010", "parent": ""}
+    CHG = {"number": "CHG0030010", "sys_id": SID, "active": "true", "state": "Implement",
+           "description": "vm_name: right01\ntemplate: rhel9-gold\ncpu: 4"}
+
+    def read(self, wins, chg=None):
+        ref = d.vm_deploy_parent_ref(self.TASK, PARENT_OPTS)
+        return d.vm_deploy_parent_read(ref, {"status": 200, "json": {"result": [chg or self.CHG]}}, ["description"], None, wins)
+
+    def test_the_change_wins_the_task_fills_the_gaps(self):
+        r = d.vm_deploy_spec(self.TASK, {}, None, None, self.read(True))
+        self.assertEqual(r["spec"], {"vm_name": "right01", "template": "rhel9-gold", "cpu": "4", "memory_gb": "8"})
+        self.assertEqual((r["sources"]["vm_name"], r["sources"]["memory_gb"]), ("parent CHG0030010 description", "description"))
+        # off (the default): the task wins, as before
+        r = d.vm_deploy_spec(self.TASK, {}, None, None, self.read(False))
+        self.assertEqual((r["spec"]["vm_name"], r["spec"]["cpu"]), ("wrong01", "2"))
+
+    def test_a_comment_on_the_task_still_wins(self):
+        task = dict(self.TASK, comments="2026-10-16 09:00:00 - Jane (Additional comments)\ncpu: 8\n\n")
+        r = d.vm_deploy_spec(task, {}, None, None, self.read(True))
+        self.assertEqual((r["spec"]["cpu"], r["spec"]["vm_name"]), ("8", "right01"))
+
+    def test_an_empty_change_leaves_the_task_as_it_is(self):
+        r = d.vm_deploy_spec(self.TASK, {}, None, None, self.read(True, dict(self.CHG, description="")))
+        self.assertEqual(r["spec"]["vm_name"], "wrong01")
+
+    def test_plain_words_the_change_wins(self):
+        words = {"on": True, "templates": {}, "sizes": {}, "allowed": ["rhel9-gold"], "aliases": {}, "name_rules": [], "sites": []}
+        task = dict(self.TASK, description="Please build a RHEL 9 server named wrong01 with 2 vCPU")
+        chg = dict(self.CHG, description="Please build a RHEL 9 server named right01 with 4 vCPU")
+        r = d.vm_deploy_spec(task, {}, None, words, self.read(True, chg))
+        self.assertEqual((r["spec"]["vm_name"], r["spec"]["cpu"], r["questions"]), ("right01", 4, []))
+        self.assertIn("parent CHG0030010", r["sources"]["vm_name"])
+        r = d.vm_deploy_spec(task, {}, None, words, self.read(False, chg))
+        self.assertEqual(r["spec"]["vm_name"], "wrong01")
+
+    def test_genai_is_told_which_wins(self):
+        self.assertIn("it wins over this ticket's description", d.vm_deploy_ticket_text(self.TASK, self.read(True)))
+        self.assertIn("this ticket's own lines win", d.vm_deploy_ticket_text(self.TASK, self.read(False)))
+
+    def test_where_the_notes_go(self):
+        par = self.read(True)
+        self.assertEqual(d.vm_deploy_note_also(["parent"], self.TASK, par), [{"table": "change_request", "sys_id": self.SID, "number": "CHG0030010"}])
+        self.assertEqual(d.vm_deploy_note_also([], self.TASK, par), [])
+        self.assertEqual(d.vm_deploy_note_also(["parent"], self.TASK, {"read": False}), [])      # no change read: none
+        # a change launched by itself: its tasks found
+        tasks = {"status": 200, "json": {"result": [{"sys_id": "a" * 32, "number": "CTASK0010011"}, {"sys_id": self.SID, "number": "x"}]}}
+        self.assertEqual(d.vm_deploy_note_also(["parent", "tasks"], self.CHG, {"read": False}, tasks),
+                         [{"table": "change_task", "sys_id": "a" * 32, "number": "CTASK0010011"}])   # never the ticket itself
+        self.assertEqual(d.vm_deploy_note_also("tasks", self.CHG, {}, {"status": 403, "json": {}}), [])
+
+    def test_the_tasks_query(self):
+        self.assertEqual(d.vm_deploy_tasks_query(self.SID, {"assignment_group": "Server Team", "query": "short_descriptionLIKEto deploy"}),
+                         "short_descriptionLIKEto deploy^change_request=%s^active=true^assignment_group.name=Server Team^ORDERBYnumber" % self.SID)
+        self.assertEqual(d.vm_deploy_tasks_query(self.SID, {"assignment_group": ["A", "B"]}),
+                         "change_request=%s^active=true^assignment_group.nameINA,B^ORDERBYnumber" % self.SID)
+        self.assertEqual(d.vm_deploy_tasks_query(self.SID, {}), "")                     # never every task of the change
+        self.assertEqual(d.vm_deploy_tasks_query("CHG0030010", {"assignment_group": "A"}), "")
+        self.assertEqual(d.vm_deploy_tasks_query(self.SID, {"query": "a=b^NQactive=true"}), "")
 
 
 class ChangeReady(unittest.TestCase):

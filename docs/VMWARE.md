@@ -803,7 +803,8 @@ web03`, `2 VMs: web01 and web02`.
 
 A common setup: the **change request** holds the requirements and is approved; the team gets a
 **change task** (a CTASK - or an SCTASK) that may or may not repeat them; the task is what the job runs
-on, and only the task is closed when the VMs are up. The change itself is never written to.
+on, and only the task is closed when the VMs are up. The change itself is never written to - unless you
+ask for the notes on it too (`vm_deploy_notes_also`, below); it is never closed.
 
 1. Someone raises the change, the request in its description - in plain words like any ticket (with
    `vm_deploy_plain_words`), or `key: value` lines.
@@ -860,7 +861,7 @@ vm_deploy_done_fields: {}        # every other table (an incident): left open
 ```
 
 - The ticket's **table** picks the entry (`sc_task`, `change_task`, `incident` ...), also with your own
-  number prefixes. The change itself is never written to.
+  number prefixes. The change itself is never closed (and has no notes unless `vm_deploy_notes_also`).
 - **Successful with issues:** every VM is built, but something did not finish - no IPv4 address within
   `vm_deploy_wait_ip`, no customization result, the guest's host name not applied, a network adapter not
   connected at power on, `guestinfo` not set. The task's work notes say what. (A network-boot VM's
@@ -889,6 +890,11 @@ vm_deploy_poll_states: ["1"]            # the task's own state VALUES to pick up
   approved (`approved`) and in Implement (`-1`) are picked up. These are **values**, not labels: build
   the filter in the change task list (*Change request.Approval* is *Approved* ...), then right-click the
   filter and *Copy query*.
+- Tasks that do not start with one phrase, e.g. *Task to deploy a staging VM*: no prefix, and
+  the words in the query - `LIKE` is *contains* (any case), `^OR` adds another wording:
+  `vm_deploy_poll_prefix: ""` and `vm_deploy_poll_query: "short_descriptionLIKEto deploy^ORshort_descriptionLIKEdeploy VM^change_request.approval=approved^change_request.state=-1"`.
+  Search for a phrase, not a short word alone: `LIKE` also finds it inside other words (`app` is in
+  *h**app**y*).
 - `vm_deploy_poll_states` are the **task's** state values: a change task in a state your instance added
   (e.g. one shown as *Implementation*) has its own value - copy it the same way.
 - Run it once with `vm_deploy_poll_dry_run: true` (or Check): it lists what it would pick up.
@@ -900,6 +906,39 @@ approval - the change was approved for its words, not for GenAI's reading of the
 **One change task for all the change's VMs** works as it is. With **one task per VM**, give each task its
 own `vm_name:` line: otherwise each task reads every name from the change, and the second task is refused
 (the names are taken).
+
+**The change wins, and the notes go on both** - when the specs are in the change's description and the
+task may repeat them (maybe wrongly), or say nothing:
+
+```yaml
+vm_deploy_parent_wins: true                 # the change's description wins over the task's description
+vm_deploy_parent_text_fields: [description, comments]   # an answer written as a comment on the change counts too
+vm_deploy_notes_also: [parent, tasks]       # every note on the change too - or, launched with the change, on its task
+vm_deploy_notes_tasks_query: "short_descriptionLIKEto deploy"   # which of the change's tasks (with vm_deploy_assignment_group)
+```
+
+- **The change wins:** the task's short description and description are read first, then the change's -
+  which wins where both say something. The task fills in only what the change does not say. A comment or
+  work note on the task still wins over the change (newer: an answer, a correction). The dry run says where
+  each value came from (`cpu: 4   (from parent CHG0030010 description)`). Off (the default): the task wins.
+- **The notes on both:** every note and comment the job writes - checked / ready to build, deploying, each
+  VM deployed or not, the questions, a GenAI proposal - goes on the ticket **and**:
+  - launched with the **change task** (the schedule's pickup): on its change (`parent`);
+  - launched with the **change** (e.g. from a web front end through AAP's API): on the change's open tasks
+    assigned to `vm_deploy_assignment_group` and matching `vm_deploy_notes_tasks_query` (`tasks`), when
+    there are any - none found: the notes are on the change only, and the job says so.
+  The job says where its notes go: *"Notes on CTASK0010009 and CHG0030010; only CTASK0010009 is closed"*.
+- Only the ticket the job was launched with is **closed** (`vm_deploy_done_fields_by_table`) - and, launched
+  with the **change**, its task too with `vm_deploy_close_tasks: true`: the tasks found as above are
+  closed by the `change_task` entry, when every VM is built (*Task CTASK... closed: ...* in the report;
+  one that does not close gets a note saying so). The change is closed only by an entry of its own: keep
+  `change_request` out of `vm_deploy_done_fields_by_table`, and `vm_deploy_done_fields: {}` (it is for
+  every table without an entry - a change too). A note the other ticket does not take (the ServiceNow
+  account cannot update `change_request`) is a warning in the job, not a failure.
+- Launched with the **change**, the change itself must pass the rules for a ticket: assigned to
+  `vm_deploy_assignment_group` (or leave that empty on the template used this way), approved and in
+  Implement. A task that has a note of AAP's on it is never picked up by the schedule, so a change built
+  this way is not built again from its task.
 
 **Test it, step by step** (a test change and a test template):
 
@@ -1153,6 +1192,12 @@ The same workflow works for tickets with `key: value` lines: step 1 then only ch
 false` - one run reads, checks and builds. With `vm_deploy_genai_approval: true` and no workflow,
 the job proposes and stops; launching it again builds the posted proposal.
 
+**A dry run (Check) with GenAI:** by default Check does not ask GenAI (it says *GenAI would read the
+ticket (dry run: not asked)*). With `vm_deploy_genai_in_check: true` on the template (or as an extra
+variable), Check asks it too and shows its proposal - each value with the ticket's words, what was
+dropped, the questions it would send - and where the VM would go. It writes nothing on the ticket: no
+proposal note, no comment to the requester; a real run asks GenAI again.
+
 The ticket text goes to the model (GenAI.mil): only use it for tickets whose text may go there.
 
 ### Empty templates: network boot to MECM, or boot from a CD (kickstart)
@@ -1309,6 +1354,10 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
 | `vm_deploy_done_fields_by_table` | `{}` | the same per table, in place of `vm_deploy_done_fields` for it: `{change_task: {state: "3", close_code: successful, close_notes: "VM deployed by AAP"}}` - close the task, never the change ("A change request: its task does the work") |
 | `vm_deploy_done_fields_issues_by_table` | `{}` | over those when every VM is built but something did not finish (no IP in time, no customization result ...): `{change_task: {close_code: successful_issues}}` |
 | `vm_deploy_done_fields_pxe` | `true` | close it also for a network-boot VM (still installing its OS from MECM); `false` = leave that ticket open |
+| `vm_deploy_parent_wins` | `false` | the change's description wins over its task's short description and description (a comment or work note on the task still wins) |
+| `vm_deploy_notes_also` | `[]` | every note on these too: `parent` (the change of a task), `tasks` (launched with a change: its open tasks of the group); never closed |
+| `vm_deploy_close_tasks` | `false` | launched with a change: close its tasks found for the notes, by `vm_deploy_done_fields_by_table`'s `change_task` entry - never the change |
+| `vm_deploy_notes_tasks_query` | `""` | which of the change's tasks get the notes, e.g. `short_descriptionLIKEto deploy` (with `vm_deploy_assignment_group`) |
 | `vm_deploy_parent_tables` / `_fields` / `_text_fields` | `[change_request]` / `[change_request, parent]` / `[description]` | read the request from the ticket's parent change too (its lines, and its plain words with `vm_deploy_plain_words`), under the ticket's own |
 | `vm_deploy_ready_by_table` | `{change_request: {approval: Approved, state: Implement}}` | the fields a ticket - or the change it belongs to - must have before anything is built (as the form shows them); checked again right before the build; `{}` = no check |
 | `vm_deploy_ticket_table` | from the prefix | the table for a number whose prefix the job does not know (a table of your own); a known prefix keeps its table - a `CTASK...` is always a change task |
@@ -1320,7 +1369,7 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
 | `vm_deploy_guestinfo` | `true` | a VM from an empty template (`vm_deploy_pxe_templates`) gets `guestinfo.hostname` (the ticket's VM name) and `guestinfo.ticket` as VM settings, for its installer to read (`vmtoolsd --cmd "info-get guestinfo.hostname"`). Without the *Advanced configuration* privilege the VM is still built, with a note |
 | `vm_deploy_template_aliases` | `{}` | short names for long template names: `{win2022: "Windows 2022 Standard Template - Site 1"}` - the ticket (and GenAI's catalog) may write `win2022`. A template's own name in other case or spacing is matched too |
 | `vm_deploy_template_specs` | `{}` | the customization specification per template (names or patterns): `{"Windows 2022*": Win2022-Sysprep}` - a Windows template that is not network-boot needs one |
-| `vm_deploy_max_disks` / `vm_deploy_max_disk_gb` / `vm_deploy_max_total_disk_gb` | `4` / `2048` / `4096` | disk caps: how many, the biggest one, all together |
+| `vm_deploy_max_disks` / `vm_deploy_max_disk_gb` / `vm_deploy_max_total_disk_gb` | `5` / `2048` / `4096` | disk caps: how many (disk 1 included), the biggest one, all together - e.g. `vm_deploy_max_disks: 8` on the template |
 | `vm_deploy_mem_target_pct` / `vm_deploy_failover_hosts` | `80` / `1` | automatic placement: a cluster fits when memory with this VM and that many hosts down stays under the % |
 | `vm_deploy_datastore_max_used_pct` | `85` | automatic placement: a datastore fits when it stays under this % with the VM at its full size |
 | `vm_deploy_plain_words` | `false` | read the ticket's own words by your rules (no GenAI): template words, size words, `named ...` |
@@ -1328,6 +1377,7 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
 | `vm_deploy_plain_sizes` | `{}` | size words, e.g. `{small: {cpu: 2, memory_gb: 8}, medium: {cpu: 4, memory_gb: 16}}` |
 | `vm_deploy_plain_sites` | `{}` | the words for each site, as people write the place: `{"north campus": SiteA}` (a site's own name counts too) |
 | `vm_deploy_genai` | `false` | GenAI reads requests written in plain words (propose, approve, build) |
+| `vm_deploy_genai_in_check` | `false` | a dry run (Check) asks GenAI too and shows its proposal and where the VM would go - nothing written on the ticket |
 | `vm_deploy_genai_approval` | `true` | a GenAI proposal waits for a person (the workflow's approval); `false` = one run reads, checks and builds |
 | `vm_deploy_phase` | `""` | the workflow's steps: `propose` (read, check, place - build nothing), `build` (build what the ticket says - never ask GenAI); `""` = the job alone |
 | `vm_deploy_template_catalog` | `{}` | optional: templates GenAI may name by key (the template's exact name), each with a plain description - the job finds the template from the OS words without it |
@@ -1449,6 +1499,37 @@ for a category or a catalog item, and use `vm_deploy_poll_query`).
 | `NOT STARTED: ... AAP did not start it` | the reason is on the ticket too; fix the workflow (its templates, inventory, credentials), then start it by hand with that ticket number - the pickup does not try a ticket twice |
 | a ticket is never picked up | the job's output lists every ticket it read and why it skipped it; a ticket not listed at all did not match the query (the `Query:` line): its group, its state, its short description |
 | `only the oldest 100 were read` | tickets AAP already has stay New and count too: set `vm_deploy_poll_claim_fields: {state: "2"}`, or resolve them |
+
+### Launch it from another tool (AAP's API)
+
+A web front end (or any tool that can send HTTPS) starts the **workflow** with the change's (or the
+task's) number - the only answer of its survey; the request stays on the ticket, the tool needs no
+ServiceNow or vCenter access:
+
+```http
+POST https://<aap>/api/controller/v2/workflow_job_templates/<id>/launch/        (AAP 2.4: /api/v2/...)
+Authorization: Bearer <a token of an AAP user that may only Execute this workflow>
+Content-Type: application/json
+
+{"extra_vars": {"vm_deploy_ticket": "CHG0031234"}}
+```
+
+AAP answers `201` with the workflow job's `id`. With the survey on, AAP drops every variable that is
+not one of its questions: the tool cannot change the rules. What the tool reads back:
+
+| What | Where |
+|---|---|
+| running, waiting, successful, failed | `GET .../workflow_jobs/<id>/` (`status`) |
+| each step and its job (propose, the approval, build); the approval waits as `workflow_approval`, `pending` | `GET .../workflow_jobs/<id>/workflow_nodes/` |
+| the result, as data: `artifacts.vm_deploy` - `ticket`, `built`, `waiting_for_approval`, `ok`, `error`, `spec` and `sources`, `vms` (each: name, `ok`, `error`, and `vm`: vCenter, datacenter, cluster, IP, MAC, disks, power) | `GET .../jobs/<job id>/` |
+| the report as text, as the job prints it: `artifacts.vm_report.lines` | the same |
+| the whole output | `GET .../jobs/<job id>/stdout/?format=txt` |
+| approve or deny the plan (an AAP user allowed to approve) | `POST .../workflow_approvals/<id>/approve/` (`/deny/`) |
+
+The ticket's work notes stay the record (with `vm_deploy_notes_also: [parent, tasks]`, on the change and
+its task). A request the rules refuse fails its job with the reason in the output (*Not deployed: ...*)
+and on the ticket. A workflow cannot run as Check: for a preview, launch the job template
+`VM - deploy from ServiceNow ticket` with `"job_type": "check"` (Prompt on launch for Job type).
 
 ## ESXi security settings (every night): SSH off, timeouts, lockdown
 
@@ -1742,6 +1823,7 @@ the last column says.
 | `DROPPED: template '...': it is for Windows Server 2022, the ticket asks for Windows Server 2025` | GenAI named a catalog template for another version | nothing: never built; see the next row |
 | `the ticket asks for the operating system Windows Server 2025 (...), and no template here is for it` | no allowed template's name (or `vm_deploy_plain_templates` words) is for that version - the job never builds another one | add a template for it to `vm_deploy_templates` (and `vm_deploy_pxe_templates` when MECM installs it); or, when an existing one is right for it (an empty MECM shell): `vm_deploy_plain_templates: {"server 2025": "<template>"}`; or `template: <name>` on the ticket |
 | `GenAI did not run: ...` | no ACT model key, the model not reachable, or a timeout | the ACT model key credential on the template; see docs/ADDING_ACT.md; or `key: value` lines |
+| `no cluster named X in datacenter Y: X is a vCenter, not a cluster - the clusters there: ...` (or *an ESXi host*, *the datacenter*) | the cluster setting names something else: often the vCenter's name in `cluster:` | the job's output shows where it came from (`cluster: X   (from ...)`: a ticket line, `vm_deploy_defaults`, `vm_deploy_sites`, `vm_deploy_name_rules`); put one of the clusters listed there (vSphere Client, *Hosts and Clusters*), or no cluster at all - the template's own. A name written in other case is found (with a note) |
 | `no cluster among ... has room` | automatic placement: every candidate would go over the memory target with a host down | another site / cluster, less memory, or a higher `vm_deploy_mem_target_pct` |
 | `no datastore among ... has room` | every candidate datastore would go over 85 % with the VM | another datastore list, smaller disks |
 | `disk 1 cannot shrink` | `disks_gb` asks for a smaller first disk than the template's | the first size at least the template's |

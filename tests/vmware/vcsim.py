@@ -4,7 +4,7 @@
   vcsim.py setup   give the simulator's VMs what the tests need
   vcsim.py state   print every VM as JSON: power, snapshots (name, description), notes, adapters
   vcsim.py events  post the events the alarms report reads, and disconnect host DC0_C0_H2: 3 failed
-                   logins of svc_scan from 10.9.9.9 on DC0_C0_H0, DC0_C0_H1 lost its connection, a
+                   logins of svc_scan from 192.0.2.99 on DC0_C0_H0, DC0_C0_H1 lost its connection, a
                    guest shutdown of DC0_H0_VM1, a host warning on DC0_H0, and the alarm "Host error"
                    on DC0_C0_H0 turned red and back to green (vcsim cannot trigger alarms:
                    tests/test_filters.py covers triggered ones)
@@ -13,7 +13,7 @@
                    retreat mode, host DC0_C1_H1 disconnected
 
 Setup (vcsim's default inventory: DC0_H0_VM0/1, DC0_C0_RP0_VM0/1; port groups DC0_DVPG0/1, VM Network):
-  DC0_H0_VM0      the AAP server: guest host name aap01.example.mil, IP 10.0.0.5, Tools running, a
+  DC0_H0_VM0      the AAP server: guest host name aap01.example.mil, IP 192.0.2.5, Tools running, a
                   snapshot "aap-snap" (the snapshot cleanup must never delete it)
   DC0_H0_VM1      web01: Tools running, EFI, a second adapter (VM Network), a snapshot
                   "baseline" (vcsim leaves out the snapshot property of a VM with none, where vCenter
@@ -72,10 +72,10 @@ def setx(v, **kv):
 
 def setup():
     aap = vm("DC0_H0_VM0")
-    setx(aap, guest__hostName="aap01.example.mil", guest__ipAddress="10.0.0.5", guest__toolsRunningStatus="guestToolsRunning")
+    setx(aap, guest__hostName="aap01.example.mil", guest__ipAddress="192.0.2.5", guest__toolsRunningStatus="guestToolsRunning")
     WaitForTask(aap.CreateSnapshot_Task(name="aap-snap", description="", memory=False, quiesce=False))
     web = vm("DC0_H0_VM1")
-    setx(web, guest__hostName="web01.example.mil", guest__ipAddress="10.0.0.20", guest__toolsRunningStatus="guestToolsRunning")
+    setx(web, guest__hostName="web01.example.mil", guest__ipAddress="192.0.2.20", guest__toolsRunningStatus="guestToolsRunning")
     net = [n for n in content.viewManager.CreateContainerView(content.rootFolder, [vim.Network], True).view if n.name == "VM Network"][0]
     nic = vim.vm.device.VirtualVmxnet3(key=-1, backing=vim.vm.device.VirtualEthernetCard.NetworkBackingInfo(network=net, deviceName=net.name))
     WaitForTask(web.ReconfigVM_Task(vim.vm.ConfigSpec(
@@ -155,7 +155,7 @@ def events():
                     computeResource=vim.event.ComputeResourceEventArgument(name=h.parent.name, computeResource=h.parent))
     for i in range(3):
         em.PostEvent(vim.event.BadUsernameSessionEvent(key=0, chainId=0, createdTime=now - datetime.timedelta(minutes=10 - i),
-                                                       userName="svc_scan", ipAddress="10.9.9.9", **where(hosts["DC0_C0_H0"])))
+                                                       userName="svc_scan", ipAddress="192.0.2.99", **where(hosts["DC0_C0_H0"])))
     em.PostEvent(vim.event.HostConnectionLostEvent(key=0, chainId=0, createdTime=now, userName="", **where(hosts["DC0_C0_H1"])))
     web = vm("DC0_H0_VM1")
     em.PostEvent(vim.event.VmGuestShutdownEvent(key=0, chainId=0, createdTime=now, userName="VSPHERE.LOCAL\\admin",

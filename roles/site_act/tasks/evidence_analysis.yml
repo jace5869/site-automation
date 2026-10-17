@@ -4,7 +4,7 @@
 # model's URL. Used by the VMware alarms ACT analysis and the vSphere capacity planning.
 # Input:  _ea_evidence (text), _ea_task (the prompt, asking for the BEGIN_ACT_ANALYSIS JSON),
 #         _ea_items (list with id), _ea_names (names ACT masks), _ea_model_timeout (seconds),
-#         _ea_check_url (bool)
+#         _ea_check_url (bool), _ea_in_check (bool: ask ACT in a dry run (Check) too - it only reads)
 # Output: _ea_ran (bool), _ea_parsed (act_analysis_parse), _ea_reason (why not / what failed),
 #         _ea_raw (ACT's answer), _ea_model, _ea_url
 - name: ACT | settings (provider, model, URL; the key comes from the job's credential)
@@ -31,12 +31,12 @@
   register: _ea_reach
   failed_when: false
   check_mode: false
-  when: _site_act_key_ok | bool and _ea_check_url | default(true) | bool and not ansible_check_mode
+  when: _site_act_key_ok | bool and _ea_check_url | default(true) | bool and (not ansible_check_mode or _ea_in_check | default(false) | bool)
 
 - name: ACT | can ACT run?
   ansible.builtin.set_fact:
     _ea_why_not: >-
-      {%- if ansible_check_mode -%}
+      {%- if ansible_check_mode and not _ea_in_check | default(false) | bool -%}
       A dry run (Check): ACT was not called. It would analyze the {{ _ea_items | length }} item(s) below.
       {%- elif not _site_act_key_ok | bool -%}
       This job has no API key for provider {{ site_act_provider }}: attach {{ _site_act_key_hint }} to the job template.
@@ -52,11 +52,14 @@
     state: directory
     suffix: .act
   register: _ea_dir
+  check_mode: false                  # only ACT's own temporary folder; in Check only with _ea_in_check (_ea_why_not otherwise)
   when: not _ea_why_not
 
 - name: ACT | analyze the {{ _ea_items | length }} item(s) - evidence mode, ACT runs no command
   ansible.builtin.include_role:
     name: act_triage
+    apply:
+      check_mode: false                # it only reads the evidence and asks the model; in Check only with _ea_in_check
   vars:
     act_triage_builtin_checks: false            # those check the machine ACT runs on: here the execution environment
     act_triage_always: true
@@ -80,6 +83,7 @@
   ansible.builtin.file:
     path: "{{ _ea_dir.path }}"
     state: absent
+  check_mode: false
   when: _ea_dir.path is defined
 
 - name: ACT | what ACT said

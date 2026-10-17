@@ -95,7 +95,7 @@ def client(c, joined):
         print("        %s: %s" % ("Replica_IO_Running" if new else "Slave_IO_Running", io))
         print("       %s: %s" % ("Replica_SQL_Running" if new else "Slave_SQL_Running", sql))
         print("    %s: %s" % ("Seconds_Behind_Source" if new else "Seconds_Behind_Master", lag))
-        print("Last_IO_Error: %s" % ("error connecting to source 'repl@10.0.0.1:3306'" if io != "Yes" else ""))
+        print("Last_IO_Error: %s" % ("error connecting to source 'repl@192.0.2.1:3306'" if io != "Yes" else ""))
         return 0
     return 0
 

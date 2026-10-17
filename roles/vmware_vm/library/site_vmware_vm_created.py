@@ -36,7 +36,7 @@ created:
   sample: [{vm: web01, moid: vm-1042, vcenter: vc01.example.mil, datacenter: DC1, created: "2026-10-14T15:02:11Z", by: "VSPHERE.LOCAL\\svc_aap",
             how: "deployed from template rhel9-gold", ticket: INC0012345, template: rhel9-gold, aap: true, deleted: false, removed: "",
             folder: /DC1/vm/Linux, cluster: CL1, host: esx03.example.mil, guest_os: "Red Hat Enterprise Linux 9 (64-bit)",
-            cpu: 4, memory_gb: 16, disk_gb: 150, power: poweredOn, ip: 10.1.20.15}]
+            cpu: 4, memory_gb: 16, disk_gb: 150, power: poweredOn, ip: 203.0.113.15}]
 since:
   description: The start of the window (UTC).
   type: str

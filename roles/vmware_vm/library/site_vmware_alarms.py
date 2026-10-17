@@ -71,7 +71,7 @@ events:
   type: list
   returned: success
   sample: [{key: 4711, time: "2026-10-05T03:52:47Z", type: BadUsernameSessionEvent, group: login, severity: warning,
-            category: warning, message: "Cannot login svc_scan@10.1.2.3", user: "", login_user: svc_scan, ip: 10.1.2.3,
+            category: warning, message: "Cannot login svc_scan@192.0.2.3", user: "", login_user: svc_scan, ip: 192.0.2.3,
             host: esx01.example.mil, vm: "", cluster: CL1, datacenter: DC1}]
 '''
 
@@ -154,7 +154,7 @@ def classify(type_id, category, user="", login_types=None, connection_types=None
 
 def login_parts(message, user="", ip="", args=None):
     """(user name, source address) of a failed login: from the event's fields or arguments, else its
-    message ("Cannot login user@10.1.2.3")."""
+    message ("Cannot login user@192.0.2.3")."""
     args = args or {}
     u = str(args.get("userName") or args.get("user") or user or "")
     a = str(args.get("client") or args.get("ipAddress") or args.get("ip") or ip or "")

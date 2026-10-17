@@ -41,14 +41,14 @@
             "error": "",
             "problems": [
                 "Error: no DNS servers reachable",
-                "Warning: forwarder 8.8.8.8 does not answer"
+                "Warning: forwarder 192.0.2.53 does not answer"
             ],
             "ran": true,
             "tests": [
                 {
                     "detail": [
                         "Error: no DNS servers reachable",
-                        "Warning: forwarder 8.8.8.8 does not answer"
+                        "Warning: forwarder 192.0.2.53 does not answer"
                     ],
                     "result": "failed",
                     "target": "corp.test",
@@ -128,8 +128,8 @@
         "name": "DC02",
         "no_client_site": {
             "clients": [
-                "10.9.0.5 (WS01)",
-                "10.9.0.6 (WS02)"
+                "198.51.100.5 (WS01)",
+                "198.51.100.6 (WS02)"
             ],
             "count": 3,
             "distinct": 2,

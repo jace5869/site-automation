@@ -32,7 +32,7 @@
             {
                 "change": "created",
                 "class": "subnet",
-                "name": "10.9.0.0/24",
+                "name": "198.51.100.0/24",
                 "time": "2026-10-15T05:53:43Z"
             },
             {
@@ -60,7 +60,7 @@
         "dcs": [
             {
                 "gc": true,
-                "ip": "10.0.0.1",
+                "ip": "192.0.2.1",
                 "name": "dc01.corp.test",
                 "ntds": "CN=NTDS Settings,CN=DC01,CN=Servers,CN=HQ,CN=Sites,CN=Configuration,DC=corp,DC=test",
                 "os": "Windows Server 2022 Standard",
@@ -75,7 +75,7 @@
             },
             {
                 "gc": true,
-                "ip": "10.0.0.2",
+                "ip": "192.0.2.2",
                 "name": "dc02.corp.test",
                 "ntds": "CN=NTDS Settings,CN=DC02,CN=Servers,CN=HQ,CN=Sites,CN=Configuration,DC=corp,DC=test",
                 "os": "Windows Server 2022 Standard",
@@ -287,7 +287,7 @@
             }
         ],
         "subnets_without_site": [
-            "10.9.0.0/24"
+            "198.51.100.0/24"
         ],
         "sysvol_migration": "Start",
         "sysvol_read": true,

@@ -427,18 +427,18 @@ class VmFacts(unittest.TestCase):
                           "deviceInfo": {"label": "Network adapter 2", "summary": "VM Network"},
                           "backing": {"_vimtype": "vim.vm.device.VirtualEthernetCard.NetworkBackingInfo",
                                       "deviceName": "VM Network", "network": "vim.Network:network-7"}}]}},
-          "guest": {"hostName": "WEB01.example.mil", "ipAddress": "10.1.2.3", "toolsRunningStatus": "guestToolsRunning",
-                    "net": [{"ipAddress": ["10.1.2.3", "fe80::1"]}]}}
+          "guest": {"hostName": "WEB01.example.mil", "ipAddress": "192.0.2.3", "toolsRunningStatus": "guestToolsRunning",
+                    "net": [{"ipAddress": ["192.0.2.3", "fe80::1"]}]}}
 
     def test_record(self):
         r = f.vm_facts(self.VM, {"moid": "vm-42", "hw_folder": "/DC1/vm/web", "hw_esxi_host": "esx01"})
         self.assertEqual((r["moid"], r["datacenter"], r["folder"], r["esxi_host"], r["ip"]),
-                         ("vm-42", "DC1", "/DC1/vm/web", "esx01", "10.1.2.3"))
+                         ("vm-42", "DC1", "/DC1/vm/web", "esx01", "192.0.2.3"))
         self.assertEqual(f.vm_facts(self.VM, {"hw_folder": "/Sites/East/DC2/vm"})["datacenter"], "DC2")
         self.assertIsNone(f.vm_facts(self.VM)["datacenter"])
         self.assertEqual((r["name"], r["power"], r["firmware"], r["secure_boot"], r["template"]),
                          ("Web01.example.mil", "poweredOn", "efi", True, False))
-        self.assertEqual(r["ids"], ["10.1.2.3", "fe80::1", "web01"])
+        self.assertEqual(r["ids"], ["192.0.2.3", "fe80::1", "web01"])
         self.assertEqual([(n["index"], n["adapter_type"], n["network"], n["kind"]) for n in r["nics"]],
                          [(1, "vmxnet3", "dvportgroup-12", "dvs"), (2, "e1000e", "network-7", "standard")])
 
@@ -449,7 +449,7 @@ class VmFacts(unittest.TestCase):
 
     def test_where(self):
         r = f.vm_facts(self.VM, {"hw_folder": "/DC1/vm/web", "hw_esxi_host": "esx01"})
-        self.assertEqual(f.vm_where(r), "Web01.example.mil  folder /DC1/vm/web  on esx01  guest WEB01.example.mil 10.1.2.3  (poweredOn, )".replace("(poweredOn, )", "(poweredOn, ?)"))
+        self.assertEqual(f.vm_where(r), "Web01.example.mil  folder /DC1/vm/web  on esx01  guest WEB01.example.mil 192.0.2.3  (poweredOn, )".replace("(poweredOn, )", "(poweredOn, ?)"))
         self.assertEqual(f.vm_where({"name": "x"}), "x  (?, ?)")
 
     def test_ds_row(self):
@@ -460,8 +460,8 @@ class VmFacts(unittest.TestCase):
         self.assertEqual(f.vm_ds_row(dict(d, maintenance="inMaintenance"))[-1], "maintenance")
 
     def test_host_ids(self):
-        hv = {"aap01.example.mil": {"ansible_host": "10.0.0.5"}, "aap02": {}}
-        self.assertEqual(f.host_ids(["aap01.example.mil", "aap02"], hv), ["10.0.0.5", "aap01", "aap02"])
+        hv = {"aap01.example.mil": {"ansible_host": "192.0.2.5"}, "aap02": {}}
+        self.assertEqual(f.host_ids(["aap01.example.mil", "aap02"], hv), ["192.0.2.5", "aap01", "aap02"])
         self.assertEqual(f.host_ids([], hv), [])
         self.assertEqual(f.host_ids(["AAP03.example.mil"]), ["aap03"])
 
@@ -526,12 +526,12 @@ class Snapshots(unittest.TestCase):
          {"vm": "DC01", "moid": "vm-5", "id": 1, "name": "pre", "description": "", "age_days": 20.0, "size_gb": 1.0},
          {"vm": "files01", "moid": "vm-6", "id": 1, "name": "big", "description": "", "age_days": 30.0, "size_gb": 1500.0},
          {"vm": "aapvm", "moid": "vm-7", "id": 1, "name": "s", "description": "", "age_days": 10.0, "size_gb": 1.0,
-          "hostname": "aap01.example.mil", "ip": "10.0.0.5"},
+          "hostname": "aap01.example.mil", "ip": "192.0.2.5"},
          {"vm": "odd", "moid": "vm-8", "id": 1, "name": "s", "description": "", "age_days": 10.0, "size_gb": None}]
     RX = "(?i)keep|do.?not.?delete"
 
     def test_split(self):
-        r = f.vm_snapshot_split(self.S, 3, self.RX, ["dc*", "vcsa01"], ["aap01", "10.0.0.5"], 1024)
+        r = f.vm_snapshot_split(self.S, 3, self.RX, ["dc*", "vcsa01"], ["aap01", "192.0.2.5"], 1024)
         self.assertEqual([x["vm"] for x in r["all"]][:3], ["db01", "files01", "DC01"])
         self.assertEqual([(x["vm"], x["id"]) for x in r["old"]], [("web01", 1), ("app02", 3)])
         self.assertEqual({x["vm"]: x["reason"] for x in r["held"]}, {
@@ -606,14 +606,14 @@ class Snapshots(unittest.TestCase):
         st = [{"name": "vc01.example.mil", "ok": True, "error": "", "note": ""},
               {"name": "VC01", "ok": True, "error": "", "note": "the same vCenter as vc01.example.mil: read once"},
               {"name": "vc02.example.mil:8443", "ok": True, "error": "", "note": "vCenter vc02 has no datacenter named DC9"},
-              {"name": "10.1.2.3", "ok": False, "error": "Could not connect to vCenter 10.1.2.3: timed out", "note": ""}]
+              {"name": "192.0.2.3", "ok": False, "error": "Could not connect to vCenter 192.0.2.3: timed out", "note": ""}]
         self.assertEqual(f.vm_vcenters_read(st), ["vc01.example.mil", "vc02.example.mil:8443"])
-        self.assertEqual([f.vc_short(x) for x in ("vc01.example.mil", "vc02.example.mil:8443", "10.1.2.3")], ["vc01", "vc02:8443", "10.1.2.3"])
+        self.assertEqual([f.vc_short(x) for x in ("vc01.example.mil", "vc02.example.mil:8443", "192.0.2.3")], ["vc01", "vc02:8443", "192.0.2.3"])
         self.assertEqual(f.vm_dc_label({"vcenter": "vc02.example.mil", "datacenter": "DC1"}, True), "vc02 / DC1")
         self.assertEqual(f.vm_dc_label({"vcenter": "vc02.example.mil", "datacenter": "DC1"}), "DC1")
         doc = f.vm_vcenter_report({"title": "VMware datastore report: all 4 below 85% used", "status": "ok", "sections": [{"title": "All"}]}, st)
         self.assertEqual((doc["title"], doc["status"]), ("VMware datastore report: all 4 below 85% used - 1 vCenter(s) not read", "critical"))
-        self.assertEqual(doc["sections"][0]["rows"], [["10.1.2.3", "Could not connect to vCenter 10.1.2.3: timed out"]])
+        self.assertEqual(doc["sections"][0]["rows"], [["192.0.2.3", "Could not connect to vCenter 192.0.2.3: timed out"]])
         self.assertEqual(len(doc["sections"]), 2)
         self.assertEqual(f.vm_vcenter_report({"title": "x"}, st[:3]), {"title": "x"})
         self.assertEqual(f.vm_ds_row({"name": "ds1", "vcenter": "vc02.example.mil", "datacenter": "DC1"}, True)[1], "vc02 / DC1")
@@ -642,7 +642,7 @@ class VmwareAlarms(unittest.TestCase):
                    {"name": "esx03", "moid": "host-3", "cluster": "CL1", "datacenter": "DC1", "connection": "connected", "power": "poweredOn",
                     "maintenance": True, "version": "8.0.2", "build": "1", "vendor": "Dell", "model": "R750", "status": "green"}],
          "events": [{"key": i, "time": "2026-10-07T0%d:00:00Z" % i, "type": "BadUsernameSessionEvent", "group": "login", "severity": "warning",
-                     "category": "info", "message": "Cannot login svc_scan@10.9.9.9", "user": "", "login_user": "svc_scan", "ip": "10.9.9.9",
+                     "category": "info", "message": "Cannot login svc_scan@192.0.2.99", "user": "", "login_user": "svc_scan", "ip": "192.0.2.99",
                      "host": "esx01", "vm": "", "cluster": "CL1", "datacenter": "DC1"} for i in range(1, 4)]
                    + [{"key": 10, "time": "2026-10-07T05:00:00Z", "type": "HostNotRespondingEvent", "group": "connection", "severity": "critical",
                        "category": "error", "message": "Host esx02 is not responding", "user": "", "login_user": "", "ip": "", "host": "esx02",
@@ -660,7 +660,7 @@ class VmwareAlarms(unittest.TestCase):
     def test_groups(self):
         g = va.vm_alarm_groups(self.D, {"login_critical": 3})
         self.assertEqual([(x["user"], x["ip"], x["where"], x["count"], x["severity"], _t(x["first"]), _t(x["last"])) for x in g["logins"]],
-                         [("svc_scan", "10.9.9.9", "esx01", 3, "critical", "01", "03")])
+                         [("svc_scan", "192.0.2.99", "esx01", 3, "critical", "01", "03")])
         self.assertEqual([(c["host"], c["state"], c["events"], c["severity"]) for c in g["connection"]], [("esx02", "notResponding", 1, "critical")])
         self.assertEqual([e["vm"] for e in g["vm"]], ["db01", "app01"])                        # newest first
         self.assertEqual([(x["type"], x["count"], x["message"]) for x in g["other"]], [("esx.problem.storage.latency", 2, "latency 101 ms")])
@@ -681,7 +681,7 @@ class VmwareAlarms(unittest.TestCase):
                            "power": "poweredOn", "maintenance": False, "version": "8.0.2", "build": "1", "vendor": "", "model": "",
                            "status": "green", "vcenter": "vc02.example.mil"})
         d["events"].append({"key": 1, "time": "2026-10-07T09:00:00Z", "type": "BadUsernameSessionEvent", "group": "login", "severity": "warning",
-                            "category": "info", "message": "Cannot login", "user": "", "login_user": "bob", "ip": "10.1.1.1", "host": "", "vm": "",
+                            "category": "info", "message": "Cannot login", "user": "", "login_user": "bob", "ip": "203.0.113.1", "host": "", "vm": "",
                             "cluster": "", "datacenter": "", "vcenter": "vc02.example.mil"})
         r = va.vm_alarm_report(d, {"login_critical": 10})
         self.assertIn("vCenters vc01.example.mil, vc02.example.mil", r["subtitle"])

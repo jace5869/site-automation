@@ -1,5 +1,68 @@
 # Changelog
 
+## 0.15.4 — 2026-10-16
+
+Everything since 0.15.1 in one release (there is no 0.15.2 or 0.15.3).
+
+**Updating without scripts:** paste `site-automation-0.15.4-changed-since-0.15.1.zip` as it is. It leaves
+out `playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. No new job template. Every new
+setting is off (or as before) by default; for the change to win and the notes on the change, add to the
+deploy template's Variables: `vm_deploy_parent_wins: true`, `vm_deploy_notes_also: [parent]` (docs/VMWARE.md,
+*The change wins, and the notes go on both*).
+
+**VM deploy - building**
+
+- **Two or more added disks no longer fail in vCenter.** A request for more disks than the template has
+  (`C: /120`, `D: /100`, `E: ...`) failed right after the clone with *A specified parameter was not
+  correct: deviceChange[1].device.key - Cannot add multiple devices using the same device key*: every new
+  disk went with the key 0. Each new disk now has its own temporary key. The VMs a failed run left behind
+  (cloned, not resized) are still in vCenter: delete them before running the job again.
+- **Up to 5 disks by default** (was 4), disk 1 included: `vm_deploy_max_disks`. More is refused before
+  anything is built (*6 disks is more than vm_deploy_max_disks (5)*); raise it on the deploy template,
+  e.g. `vm_deploy_max_disks: 8`.
+- **A cluster that is not there says what it is instead:** *no cluster named vc01.example.mil in
+  datacenter DC1: vc01.example.mil is a vCenter, not a cluster - the clusters there: CL01, CL02* (or *an
+  ESXi host in cluster CL01*, *the datacenter*), and where to find the source of the value in the output
+  (`cluster: ...   (from ...)`). A cluster name written in other case is found, with a note (before: not
+  found).
+
+**VM deploy - the change and its tasks**
+
+- **The change wins over its task** (`vm_deploy_parent_wins: true`): the change's description wins over
+  the change task's short description and description (a task that repeats the request, maybe wrongly);
+  the task fills in only what the change does not say. A comment or work note on the task still wins (an
+  answer, a correction). Plain words, `key: value` lines and GenAI's text all follow it. Off by default:
+  the task wins, as before.
+- **The notes on the change and its task** (`vm_deploy_notes_also`): every note and comment the job
+  writes (ready to build, deploying, deployed or not, the questions, a GenAI proposal) goes on the ticket
+  and also on its change (`parent`) - or, launched with a change, on the change's open tasks of
+  `vm_deploy_assignment_group` matching `vm_deploy_notes_tasks_query` (`tasks`), when there are any. Only
+  the ticket launched is closed. A note the other ticket refuses is a warning.
+- **Launched with a change, close its task** (`vm_deploy_close_tasks: true`): the change's tasks found as
+  above are closed by `vm_deploy_done_fields_by_table`'s `change_task` entry when every VM is built; the
+  change itself is not. The `vm_deploy` artifact lists `notes_also`, `tasks_closed`, `tasks_not_closed`.
+
+**VM deploy - GenAI**
+
+- **A dry run (Check) can ask GenAI** (`vm_deploy_genai_in_check: true`): Check shows GenAI's proposal -
+  each value with the ticket's words, what was dropped, the questions it would send - and where the VM
+  would go. It writes nothing on the ticket (no proposal note, no comment to the requester); a real run
+  asks GenAI again. Off by default: Check says *GenAI would read the ticket (dry run: not asked)*, as
+  before.
+
+**Docs**
+
+- **Placeholders only:** every host name in the examples and tests is a placeholder (`example.mil`)
+  and every IP address is from the documentation ranges (`192.0.2.x`, `198.51.100.x`, `203.0.113.x`).
+  `tests/check_public.py` checks it in CI and on each commit, together with an optional list of a
+  site's own words kept outside the repository (docs/SECRETS.md).
+- docs/VMWARE.md, *Launch it from another tool (AAP's API)*: starting the workflow from a web front end
+  with a change or change task number, and what it reads back (status, the approval, the `vm_deploy`
+  artifacts).
+- docs/VMWARE.md, *Picked up by the schedule*: change tasks marked by words inside the short description
+  (*Task to deploy a staging VM*) - `vm_deploy_poll_prefix: ""` and `short_descriptionLIKEto deploy` in `vm_deploy_poll_query`.
+- The four site-automation PDFs are rebuilt for 0.15.4.
+
 ## 0.15.1 — 2026-10-15
 
 **Updating without scripts:** paste `site-automation-0.15.1-changed-since-0.15.0.zip` as it is (or

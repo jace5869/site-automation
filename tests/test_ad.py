@@ -230,7 +230,7 @@ class Helpers(unittest.TestCase):
         self.assertEqual(af.age_text(100), "4 days")
 
     def test_ps_error(self):
-        clixml = '#< CLIXML\r\n<Objs Version="1.1.0.1"><S S="Error">dcdiag.exe : The term_x000D__x000A_</S><S S="Error">is not recognized_x000D__x000A_</S></Objs>'
+        clixml = '#< CLIXML\r\n<Objs Version="1.1.0.1"><S S="Error">dcdiag.exe : The term_x000D__x000A_</S><S S="Error">is not recognized_x000D__x000A_</S></Objs>'   # public-ok: a CLIXML version
         self.assertEqual(af.ps_error(clixml), "dcdiag.exe : The term is not recognized")
 
 

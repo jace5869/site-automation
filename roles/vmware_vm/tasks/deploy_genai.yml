@@ -17,6 +17,8 @@
 #      step: in the workflow, "ready to build" and the approval; without an approval
 #      (vm_deploy_genai_approval: false), built in this run. The workflow's build step (or a later
 #      run) builds the posted proposal without asking GenAI again, while the ticket text is unchanged.
+#   A dry run (Check) asks GenAI only with vm_deploy_genai_in_check: it shows the proposal and where it
+#   would go, and writes nothing on the ticket (no proposal, no questions): a real run asks again.
 - name: VMware | GenAI reads the ticket - evidence mode, ACT runs no command
   ansible.builtin.include_role:
     name: site_act
@@ -31,6 +33,7 @@
     _ea_names: []
     _ea_model_timeout: "{{ vm_deploy_genai_model_timeout }}"
     _ea_check_url: true
+    _ea_in_check: "{{ vm_deploy_genai_in_check | default(false) | bool }}"
 
 - name: VMware | what GenAI read, checked against the ticket
   ansible.builtin.set_fact:
@@ -73,6 +76,16 @@
          + (['WHAT GENAI ANSWERED (the job could not read it): ' ~ (_ea_raw | default('') | truncate(2000))]
             if _vd_g.error and _ea_ran | default(false) | bool else []) }}
 
+- name: VMware | questions to the requester (a comment - requesters see comments, not work notes) - the note
+  ansible.builtin.set_fact:
+    _vd_b_questions:
+      comments: >-
+        {{ (['[AAP] To build this VM we need a few details. Please add a comment with the answers, one per line - for example "memory_gb: 16":']
+            + (_vd_g.questions | map('regex_replace', '^', '- ') | list)) | join(_vd_nl) }}
+  vars:
+    _vd_nl: "\n"                       # a real newline ('\n' inside {{ }} in a >- block stays a backslash and n)
+  when: _vd_g_ask | bool and not ansible_check_mode
+
 - name: VMware | questions to the requester (a comment - requesters see comments, not work notes)
   ansible.builtin.uri:
     url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_table }}/{{ _vd_rec.sys_id }}"
@@ -82,10 +95,7 @@
     force_basic_auth: true
     headers: {Accept: application/json}
     body_format: json
-    body:
-      comments: >-
-        {{ (['[AAP] To build this VM we need a few details. Please add a comment with the answers, one per line - for example "memory_gb: 16":']
-            + (_vd_g.questions | map('regex_replace', '^', '- ') | list)) | join(_vd_nl) }}
+    body: "{{ _vd_b_questions }}"
     validate_certs: "{{ servicenow_validate_certs | default(true) }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"
@@ -94,6 +104,25 @@
     _vd_nl: "\n"                       # a real newline ('\n' inside {{ }} in a >- block stays a backslash and n)
   register: _vd_gnote_q
   when: _vd_g_ask | bool and not ansible_check_mode
+
+- name: VMware | questions to the requester (a comment - requesters see comments, not work notes) - the same on the other tickets (vm_deploy_notes_also)
+  ansible.builtin.include_tasks: deploy_note_also.yml
+  vars:
+    _vd_also_bodies: "{{ [_vd_b_questions] }}"
+  when: _vd_also | default([]) | length > 0 and (_vd_g_ask | bool and not ansible_check_mode)
+
+- name: VMware | the proposal on the ticket (a work note, read back by the build run) - the note
+  ansible.builtin.set_fact:
+    _vd_b_proposal:
+      work_notes: >-
+        {{ (_vd_g | vm_deploy_proposal_note(_vd_digest, _vd_job,
+              'Building it now (no approval step: vm_deploy_genai_approval is off).'
+              if _vd_phase == '' and not vm_deploy_genai_approval | bool and _vd_gc.problems | length == 0 else ''))
+           ~ ((_vd_nl ~ 'The build would refuse it now:' ~ _vd_nl ~ (_vd_gc.problems | map('regex_replace', '^', '- ') | join(_vd_nl)))
+              if _vd_gc.problems else '') }}
+  vars:
+    _vd_nl: "\n"
+  when: _ea_ran | default(false) | bool and not _vd_g.error and not _vd_g_ask | bool and not ansible_check_mode
 
 - name: VMware | the proposal on the ticket (a work note, read back by the build run)
   ansible.builtin.uri:
@@ -104,13 +133,7 @@
     force_basic_auth: true
     headers: {Accept: application/json}
     body_format: json
-    body:
-      work_notes: >-
-        {{ (_vd_g | vm_deploy_proposal_note(_vd_digest, _vd_job,
-              'Building it now (no approval step: vm_deploy_genai_approval is off).'
-              if _vd_phase == '' and not vm_deploy_genai_approval | bool and _vd_gc.problems | length == 0 else ''))
-           ~ ((_vd_nl ~ 'The build would refuse it now:' ~ _vd_nl ~ (_vd_gc.problems | map('regex_replace', '^', '- ') | join(_vd_nl)))
-              if _vd_gc.problems else '') }}
+    body: "{{ _vd_b_proposal }}"
     validate_certs: "{{ servicenow_validate_certs | default(true) }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout | default(30) }}"
@@ -119,6 +142,12 @@
     _vd_nl: "\n"
   register: _vd_gnote_p
   when: _ea_ran | default(false) | bool and not _vd_g.error and not _vd_g_ask | bool and not ansible_check_mode
+
+- name: VMware | the proposal on the ticket (a work note, read back by the build run) - the same on the other tickets (vm_deploy_notes_also)
+  ansible.builtin.include_tasks: deploy_note_also.yml
+  vars:
+    _vd_also_bodies: "{{ [_vd_b_proposal] }}"
+  when: _vd_also | default([]) | length > 0 and (_ea_ran | default(false) | bool and not _vd_g.error and not _vd_g_ask | bool and not ansible_check_mode)
 
 # a clean proposal goes on to the check / build step, which reports; here only what stops
 - name: VMware | GenAI proposal report (it stops here)
@@ -129,17 +158,21 @@
       {{ (_vd_gnote_q.status | default(0)) == 200 or (_vd_gnote_p.status | default(0)) == 200 }}
     _vm_report_subject: >-
       {{ 'VM deploy ' ~ _vd_rec.number ~ ': '
-         ~ ('GenAI would read the ticket (dry run: not asked)' if ansible_check_mode else
+         ~ ('GenAI would read the ticket (dry run: not asked)' if ansible_check_mode and not _ea_ran | default(false) | bool else
             ('GenAI did not run' if _vd_g.error else
-             ('questions for the requester (nothing built)' if _vd_g_ask | bool else
-              'GenAI proposal posted - the rules refuse it (nothing built)'))) }}
+             ('dry run: GenAI read the ticket - questions for the requester (not sent)' if _vd_g_ask | bool and ansible_check_mode else
+              ('questions for the requester (nothing built)' if _vd_g_ask | bool else
+               ('dry run: GenAI read the ticket - the rules refuse it' if ansible_check_mode else
+                'GenAI proposal posted - the rules refuse it (nothing built)'))))) }}
     _vm_report_lines: >-
       {{ [_vm_report_subject | trim] + (_vd_g.fields | vm_deploy_spec_text)
          + (['ERROR: ' ~ _vd_g.error] if _vd_g.error else [])
          + (_vd_g.dropped | map('regex_replace', '^', 'DROPPED: ') | list) + (_vd_g.questions | map('regex_replace', '^', 'QUESTION: ') | list)
          + (_vd_g.notes | default([]) | map('regex_replace', '^', 'GENAI NOTE (not sent to the requester): ') | list)
          + (_vd_gc.problems | map('regex_replace', '^', 'THE BUILD WOULD REFUSE: ') | list)
-         + (['WARNING: ServiceNow did not take the note'] if not ansible_check_mode and not _vd_g.error and not _vd_written | bool else []) }}
+         + (['WARNING: ServiceNow did not take the note'] if not ansible_check_mode and not _vd_g.error and not _vd_written | bool else [])
+         + (['A dry run (Check): nothing was written on the ticket and nothing built - a real run asks GenAI again.']
+            if ansible_check_mode and _ea_ran | default(false) | bool else []) }}
     _vm_report_doc: >-
       {%- set rows = [] -%}
       {%- if _vd_g.os | default('') -%}{%- set _ = rows.append(['os (as written)', _vd_g.os, '']) -%}{%- endif -%}
@@ -148,7 +181,9 @@
       {%-   set _ = rows.append([f, (v | join(', ')) if v is iterable and v is not string else v, _vd_g.evidence[f] | default('')]) -%}
       {%- endfor -%}
       {%- set sections = [{'title': 'What GenAI read (each value with the words of the ticket it comes from)', 'columns': ['Setting', 'Value', 'From the ticket'],
-                           'rows': rows, 'text': 'Nothing was built in this run. The next run builds this, as long as the ticket text does not change.'}] -%}
+                           'rows': rows, 'text': ('A dry run (Check): nothing was written on the ticket and nothing built - a real run asks GenAI again.'
+                                                  if ansible_check_mode else
+                                                  'Nothing was built in this run. The next run builds this, as long as the ticket text does not change.')}] -%}
       {%- if _vd_g.questions -%}{%- set _ = sections.append({'title': 'Questions for the requester', 'status': 'warning', 'lines': _vd_g.questions}) -%}{%- endif -%}
       {%- if _vd_g.dropped -%}{%- set _ = sections.append({'title': 'Dropped: not traceable to the ticket, or for another version', 'status': 'warning', 'lines': _vd_g.dropped}) -%}{%- endif -%}
       {%- if _vd_g.notes | default([]) -%}{%- set _ = sections.append({'title': "GenAI's own notes (not sent to the requester)", 'lines': _vd_g.notes}) -%}{%- endif -%}

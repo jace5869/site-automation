@@ -55,12 +55,17 @@ def state_label(rec):
 
 
 def matches(rec, query):
-    """The encoded-query subset the playbooks use, joined by ^: a=b, aSTARTSWITHb (any case), aINb,c,
+    """The encoded-query subset the playbooks use, joined by ^: a=b, aSTARTSWITHb and aLIKEb (any case), aINb,c,
     active=true, a.name=b (a reference by its name: the mock keeps names), ref.field=b (parent /
     change_request: that field of the ticket the reference holds), ORDERBY... (ignored: the records are
     kept oldest first)."""
     for cond in [c for c in query.split("^") if c]:
         if cond.startswith("ORDERBY"):
+            continue
+        if "LIKE" in cond and "=" not in cond.partition("LIKE")[0]:
+            field, _, value = cond.partition("LIKE")
+            if value.lower() not in str(rec.get(field, "")).lower():
+                return False
             continue
         if "STARTSWITH" in cond:
             field, _, value = cond.partition("STARTSWITH")
@@ -83,7 +88,10 @@ def matches(rec, query):
             if (not closed(rec)) != (value == "true"):
                 return False
         elif str(rec.get(field, "")) != value:
-            return False
+            # a reference compared with a sys_id (change_request=<sys_id>): the mock keeps the number
+            ref = next((x for x in INCIDENTS.values() if rec.get(field) and x.get("number") == rec.get(field)), {})
+            if not (len(value) == 32 and ref.get("sys_id") == value):
+                return False
     return True
 
 

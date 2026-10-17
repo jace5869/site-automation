@@ -67,7 +67,7 @@ switch ($Scenario) {
         $M.cim.Win32_Service = @(O @{ Name = 'W32Time'; State = 'Running'; StartMode = 'Auto'; ExitCode = 0 })
         $M.cim.Win32_ComputerSystem = @(O @{ PartOfDomain = $true; DomainRole = 3; Domain = 'corp.test' })
         $M.exe['w32tm.exe /query /status'] = @('Leap Indicator: 0(no warning)', 'Stratum: 4', 'Source: dc01.corp.test,0x9', ('Last Successful Sync Time: ' + $now.AddDays(-2).ToString()))
-        $M.exe['w32tm.exe /stripchart /computer:dc01.corp.test /samples:1 /dataonly'] = @('Tracking dc01.corp.test [10.0.0.1:123].', 'The current time is 9/28/2026 12:00:00 PM.', '12:00:00, +06.5000000s')
+        $M.exe['w32tm.exe /stripchart /computer:dc01.corp.test /samples:1 /dataonly'] = @('Tracking dc01.corp.test [192.0.2.1:123].', 'The current time is 9/28/2026 12:00:00 PM.', '12:00:00, +06.5000000s')
     }
     'time_stopped' {
         $M.cim.Win32_Service = @(O @{ Name = 'W32Time'; State = 'Stopped'; StartMode = 'Manual'; ExitCode = 0 })
@@ -75,7 +75,7 @@ switch ($Scenario) {
     'network' {
         $cfg = @{ dns_names = @('good.test', 'bad.test'); tcp = @(@{ name = 'closed port'; host = '127.0.0.1'; port = 1 }); secure_channel = $true; timeout_ms = 2000 }
         $M.cim.Win32_ComputerSystem = @(O @{ PartOfDomain = $true; DomainRole = 3; Domain = 'corp.test' })
-        $M.cim.Win32_NetworkAdapterConfiguration = @(O @{ IPEnabled = $true; DefaultIPGateway = $null; DNSServerSearchOrder = @('10.0.0.1') })
+        $M.cim.Win32_NetworkAdapterConfiguration = @(O @{ IPEnabled = $true; DefaultIPGateway = $null; DNSServerSearchOrder = @('192.0.2.1') })
         $M.dnsFail = @('bad.test')
         $M.exe['nltest.exe /sc_query:corp.test'] = @('Flags: 0', 'Trusted DC Name', 'Trusted DC Connection Status Status = 1311 0x51f ERROR_NO_LOGON_SERVERS', 'The command completed successfully')
         $M.tnc = $false
@@ -83,7 +83,7 @@ switch ($Scenario) {
     'network_ok' {
         $cfg = @{ dns_names = @('good.test'); secure_channel = $true }
         $M.cim.Win32_ComputerSystem = @(O @{ PartOfDomain = $true; DomainRole = 3; Domain = 'corp.test' })
-        $M.cim.Win32_NetworkAdapterConfiguration = @(O @{ IPEnabled = $true; DefaultIPGateway = @('10.0.0.254'); DNSServerSearchOrder = @('10.0.0.1') })
+        $M.cim.Win32_NetworkAdapterConfiguration = @(O @{ IPEnabled = $true; DefaultIPGateway = @('192.0.2.254'); DNSServerSearchOrder = @('192.0.2.1') })
         $M.dnsFail = @()
         $M.exe['nltest.exe /sc_query:corp.test'] = @('Flags: 30 HAS_IP  HAS_TIMESERV', 'Trusted DC Name \\dc01.corp.test', 'Trusted DC Connection Status Status = 0 0x0 NERR_Success', 'The command completed successfully')
     }

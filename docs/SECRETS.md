@@ -106,6 +106,13 @@ can extract every secret that template uses. Therefore:
 - `.pre-commit-config.yaml` runs **gitleaks** on each commit (`pre-commit install`).
 - The inventory in `inventories/example/` holds placeholders only; the real inventory lives in
   your work Git or as an AAP inventory.
+- **No real host names or addresses either.** Every name in the repository is a placeholder
+  (`vc01.example.mil`, `smtp.yoursite.mil`), every IP address is from the ranges kept for
+  documentation (`192.0.2.x`, `198.51.100.x`, `203.0.113.x`), and the README and the changelog talk
+  about features, never about one site. `tests/check_public.py` checks it in CI and on each commit.
+  Your own site's words (a site code, a vCenter's name, a team, a ticket title) go in
+  `~/.config/site-automation/private-words`, one per line, on the machine you commit from: they are
+  looked for too, and the file never enters the repository.
 - If a secret is ever committed: rotate it first, then remove it from history. Removing it
   from history alone is not enough, because clones and caches keep it.
 

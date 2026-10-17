@@ -1,0 +1,33 @@
+---
+# DEPLOY: the same note (or comment) on the other tickets of the request - vm_deploy_notes_also: the
+# change a task belongs to, or a change's own tasks (_vd_also, deploy.yml). Input: _vd_also_bodies, a
+# list of the bodies just sent to the ticket ({work_notes: ...} or {comments: ...}). Only notes and
+# comments are copied, never a close. A refusal there is a warning: the ticket itself has the note.
+- name: VMware | the same note on {{ _vd_also | map(attribute='number') | join(', ') }}
+  ansible.builtin.uri:
+    url: "{{ _vd_sn_url }}/api/now/table/{{ _vd_x.1.table }}/{{ _vd_x.1.sys_id }}"
+    method: PATCH
+    url_username: "{{ _vd_sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body: "{{ _vd_x.0 | dict2items | selectattr('key', 'in', ['work_notes', 'comments']) | items2dict }}"
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 400, 401, 403, 404]
+  loop: "{{ _vd_also_bodies | product(_vd_also) | list }}"
+  loop_control:
+    loop_var: _vd_x
+    label: "{{ _vd_x.1.number }}"
+  register: _vd_also_res
+  failed_when: false
+
+- name: VMware | a note the other tickets did not take
+  ansible.builtin.debug:
+    msg: >-
+      {{ _vd_also_res.results | default([]) | rejectattr('status', 'equalto', 200)
+         | map(attribute='_vd_x') | map(attribute=1) | map(attribute='number') | unique
+         | map('regex_replace', '^(.*)$', 'WARNING: ServiceNow did not take the note on \1 - the ServiceNow API account needs to update it') | list }}
+  when: _vd_also_res.results | default([]) | rejectattr('status', 'equalto', 200) | list | length > 0

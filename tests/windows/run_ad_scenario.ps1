@@ -59,7 +59,7 @@ function Base-Dc {
     $FAKE.exe['repadmin.exe /queue DC01'] = @('Repadmin: running command /queue against full DC localhost', 'Queue contains 0 items.')
     $FAKE.exe['w32tm.exe /query /status'] = @('Leap Indicator: 0(no warning)', 'Stratum: 2 (secondary reference - syncd by (S)NTP)',
         'Source: ntp.corp.test,0x8', ('Last Successful Sync Time: ' + (T 0.5)))
-    $FAKE.exe['w32tm.exe /stripchart /computer:ntp.corp.test /samples:1 /dataonly'] = @('Tracking ntp.corp.test [10.0.0.9:123].', '12:00:00, +00.0150000s')
+    $FAKE.exe['w32tm.exe /stripchart /computer:ntp.corp.test /samples:1 /dataonly'] = @('Tracking ntp.corp.test [192.0.2.9:123].', '12:00:00, +00.0150000s')
     $FAKE.paths = @('/win/debug/netlogon.log')
     $FAKE.files['/win/debug/netlogon.log'] = @('10/14 01:00:00 [SESSION] CORP: something else')
     $FAKE.certs = @(O @{ HasPrivateKey = $true; Subject = 'CN=dc01.corp.test'; Thumbprint = 'AB12'; NotAfter = $now.AddDays(200)
@@ -75,9 +75,9 @@ function Base-Domain {
     $FAKE.forest = O @{ Name = 'corp.test'; ForestMode = 'Windows2016Forest'; RootDomain = 'corp.test'; Domains = @('corp.test')
         SchemaMaster = 'dc01.corp.test'; DomainNamingMaster = 'dc01.corp.test' }
     $FAKE.dcs = @(
-        (O @{ HostName = 'dc01.corp.test'; Site = 'HQ'; IPv4Address = '10.0.0.1'; IsGlobalCatalog = $true; IsReadOnly = $false; OperatingSystem = 'Windows Server 2022 Standard'
+        (O @{ HostName = 'dc01.corp.test'; Site = 'HQ'; IPv4Address = '192.0.2.1'; IsGlobalCatalog = $true; IsReadOnly = $false; OperatingSystem = 'Windows Server 2022 Standard'
                 NTDSSettingsObjectDN = (Ntds 'DC01'); OperationMasterRoles = @('PDCEmulator', 'RIDMaster', 'SchemaMaster', 'DomainNamingMaster') }),
-        (O @{ HostName = 'dc02.corp.test'; Site = 'HQ'; IPv4Address = '10.0.0.2'; IsGlobalCatalog = $true; IsReadOnly = $false; OperatingSystem = 'Windows Server 2022 Standard'
+        (O @{ HostName = 'dc02.corp.test'; Site = 'HQ'; IPv4Address = '192.0.2.2'; IsGlobalCatalog = $true; IsReadOnly = $false; OperatingSystem = 'Windows Server 2022 Standard'
                 NTDSSettingsObjectDN = (Ntds 'DC02'); OperationMasterRoles = @('InfrastructureMaster') }))
     $FAKE.tnc = @{ 'dc01.corp.test' = $true; 'dc02.corp.test' = $true }
     $FAKE.adobj[$schNc] = O @{ objectVersion = 88; DistinguishedName = $schNc }
@@ -98,7 +98,7 @@ function Base-Domain {
         '_ldap._tcp.gc._msdcs.corp.test' = @('dc01.corp.test', 'dc02.corp.test') }
     $FAKE.trusts = @()
     $FAKE.sites = @(O @{ Name = 'HQ' })
-    $FAKE.subnets = @(O @{ Name = '10.0.0.0/24'; Site = "CN=HQ,CN=Sites,$cfgNc" })
+    $FAKE.subnets = @(O @{ Name = '192.0.2.0/24'; Site = "CN=HQ,CN=Sites,$cfgNc" })
     $FAKE.groups['S-1-5-21-1-2-3-512'] = O @{ Name = 'Domain Admins'; SamAccountName = 'Domain Admins'; SID = 'S-1-5-21-1-2-3-512'
         DistinguishedName = "CN=Domain Admins,CN=Users,$dom"; member = @("CN=Administrator,CN=Users,$dom") }
     $FAKE.groups['S-1-5-32-544'] = O @{ Name = 'Administrators'; SamAccountName = 'Administrators'; SID = 'S-1-5-32-544'
@@ -134,7 +134,7 @@ switch ($Scenario) {
             '            From DC01 to DC02', '            The replication generated an error (8453):', '            Replication access was denied.',
             '         ......................... DC02 failed test Replications')
         $FAKE.exe['dcdiag.exe /s:DC02 /test:DNS /DnsBasic /DnsForwarders /DnsDelegation /DnsRecordRegistration'] = @(
-            '      Starting test: DNS', '         Error: no DNS servers reachable', '         Warning: forwarder 8.8.8.8 does not answer',
+            '      Starting test: DNS', '         Error: no DNS servers reachable', '         Warning: forwarder 192.0.2.53 does not answer',
             '         ......................... corp.test failed test DNS')
         $FAKE.exe['repadmin.exe /showrepl DC02 /csv'] = @(
             'showrepl_COLUMNS,Destination DSA Site,Destination DSA,Naming Context,Source DSA Site,Source DSA,Transport Type,Number of Failures,Last Failure Time,Last Success Time,Last Failure Status',
@@ -145,10 +145,10 @@ switch ($Scenario) {
         $FAKE.exe['w32tm.exe /stripchart /computer:dc01.corp.test /samples:1 /dataonly'] = @('Tracking dc01.corp.test.', '12:00:00, -91.5000000s')
         $FAKE.domain = O @{ PDCEmulator = 'dc01.corp.test' }
         $FAKE.files['/win/debug/netlogon.log'] = @(
-            ($now.AddHours(-2).ToString('MM/dd HH:mm:ss') + ' [SITE] CORP: NO_CLIENT_SITE: WS01 10.9.0.5'),
-            ($now.AddHours(-1).ToString('MM/dd HH:mm:ss') + ' [SITE] CORP: NO_CLIENT_SITE: WS01 10.9.0.5'),
-            ($now.AddHours(-1).ToString('MM/dd HH:mm:ss') + ' [SITE] CORP: NO_CLIENT_SITE: WS02 10.9.0.6'),
-            ($now.AddDays(-5).ToString('MM/dd HH:mm:ss') + ' [SITE] CORP: NO_CLIENT_SITE: OLD 10.9.0.99'))
+            ($now.AddHours(-2).ToString('MM/dd HH:mm:ss') + ' [SITE] CORP: NO_CLIENT_SITE: WS01 198.51.100.5'),
+            ($now.AddHours(-1).ToString('MM/dd HH:mm:ss') + ' [SITE] CORP: NO_CLIENT_SITE: WS01 198.51.100.5'),
+            ($now.AddHours(-1).ToString('MM/dd HH:mm:ss') + ' [SITE] CORP: NO_CLIENT_SITE: WS02 198.51.100.6'),
+            ($now.AddDays(-5).ToString('MM/dd HH:mm:ss') + ' [SITE] CORP: NO_CLIENT_SITE: OLD 198.51.100.99'))
         $FAKE.certs = @(O @{ HasPrivateKey = $true; Subject = 'CN=dc02.corp.test'; Thumbprint = 'CD34'; NotAfter = $now.AddDays(3)
                 EnhancedKeyUsageList = @(O @{ ObjectId = '1.3.6.1.5.5.7.3.1' }); DnsNameList = @() })
         $FAKE.events = @(
@@ -194,7 +194,7 @@ switch ($Scenario) {
         $FAKE.exe['nltest.exe /sc_verify:partner.test'] = @('Flags: b0 HAS_IP  HAS_TIMESERV', 'Trusted DC Name \\pdc.partner.test',
             'Trusted DC Connection Status Status = 1311 0x51f ERROR_NO_LOGON_SERVERS', 'Trust Verification Status = 1311 0x51f ERROR_NO_LOGON_SERVERS')
         $FAKE.sites = @((O @{ Name = 'HQ' }), (O @{ Name = 'Branch' }))
-        $FAKE.subnets = @((O @{ Name = '10.0.0.0/24'; Site = "CN=HQ,CN=Sites,$cfgNc" }), (O @{ Name = '10.9.0.0/24'; Site = $null }))
+        $FAKE.subnets = @((O @{ Name = '192.0.2.0/24'; Site = "CN=HQ,CN=Sites,$cfgNc" }), (O @{ Name = '198.51.100.0/24'; Site = $null }))
         $FAKE.meta["CN=Domain Admins,CN=Users,$dom"] = @(
             (O @{ IsLinkValue = $true; AttributeValue = "CN=Administrator,CN=Users,$dom"; LastOriginatingChangeTime = $now.AddDays(-300)
                     LastOriginatingDeleteTime = [datetime]'1601-01-01'; LastOriginatingChangeDirectoryServerIdentity = (Ntds 'DC01') }),
@@ -214,7 +214,7 @@ switch ($Scenario) {
                     (O @{ ObjectClass = 'user'; sAMAccountName = 'carol'; DistinguishedName = "CN=Carol,OU=Staff,$dom"; userAccountControl = 514; lockoutTime = 0; whenCreated = $now.AddDays(-100) }),
                     (O @{ ObjectClass = 'user'; sAMAccountName = 'dave'; DistinguishedName = "CN=Dave,OU=Staff,$dom"; userAccountControl = 512; lockoutTime = 0; whenCreated = $now.AddDays(-100) })) },
             @{ match = '(objectClass=site)(objectClass=subnet)'; base = $cfgNc; items = @(
-                    (O @{ ObjectClass = 'subnet'; Name = '10.9.0.0/24'; DistinguishedName = "CN=10.9.0.0/24,CN=Subnets,CN=Sites,$cfgNc"; whenCreated = $now.AddHours(-1); whenChanged = $now.AddHours(-1) }),
+                    (O @{ ObjectClass = 'subnet'; Name = '198.51.100.0/24'; DistinguishedName = "CN=198.51.100.0/24,CN=Subnets,CN=Sites,$cfgNc"; whenCreated = $now.AddHours(-1); whenChanged = $now.AddHours(-1) }),
                     (O @{ ObjectClass = 'nTDSDSA'; Name = 'NTDS Settings'; DistinguishedName = (Ntds 'DC03'); whenCreated = $now.AddHours(-8); whenChanged = $now.AddHours(-8) })) },
             @{ match = '(objectClass=organizationalUnit)(objectClass=domainDNS))(whenChanged'; items = @(
                     O @{ DistinguishedName = "OU=Staff,$dom"; gPLink = '[LDAP://cn={31B2F340-016D-11D2-945F-00C04FB984F9},cn=policies,cn=system,DC=corp,DC=test;0]' }) })

@@ -130,7 +130,7 @@ def dn_lines(rdns):
 
 
 def parse_sans(text, what='certificate'):
-    """The subjectAltName entries of `openssl x509|req -text` -> ['DNS:a', 'IP:10.0.0.1', ...]."""
+    """The subjectAltName entries of `openssl x509|req -text` -> ['DNS:a', 'IP:192.0.2.1', ...]."""
     lines = text.splitlines()
     for n, line in enumerate(lines):
         if 'X509v3 Subject Alternative Name' in line and n + 1 < len(lines):

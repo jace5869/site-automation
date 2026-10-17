@@ -70,7 +70,7 @@ $cases = @(
             'RID pool almost used'      = { param($r) $r.rid.issued -eq 1060000000 }
             'SRV: one missing, one not resolved' = { param($r) @($r.dns_srv[0].targets).Count -eq 1 -and $r.dns_srv[1].error -ne '' }
             'trust does not verify'     = { param($r) $r.trusts[0].verify -match '1311' }
-            'site without DC and subnet, subnet without site' = { param($r) @($r.sites | Where-Object { $_.name -eq 'Branch' -and $_.dcs -eq 0 -and $_.subnets -eq 0 }).Count -eq 1 -and @($r.subnets_without_site)[0] -eq '10.9.0.0/24' }
+            'site without DC and subnet, subnet without site' = { param($r) @($r.sites | Where-Object { $_.name -eq 'Branch' -and $_.dcs -eq 0 -and $_.subnets -eq 0 }).Count -eq 1 -and @($r.subnets_without_site)[0] -eq '198.51.100.0/24' }
             'Domain Admins: 1 added, 1 removed, on which DC' = { param($r) $c = @(@($r.groups | Where-Object { $_.name -eq 'Domain Admins' })[0].changes); $c.Count -eq 2 -and @($c | Where-Object { $_.action -eq 'added' -and $_.dc -eq 'DC02' }).Count -eq 1 -and @($c | Where-Object { $_.action -eq 'removed' }).Count -eq 1 }
             'created: a user and a computer' = { param($r) @($r.created).Count -eq 2 }
             'deleted: bob'              = { param($r) @($r.deleted).Count -eq 1 -and $r.deleted[0].name -eq 'bob' }
