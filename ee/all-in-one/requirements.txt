@@ -1,0 +1,13 @@
+# Python libraries the collections do not bring themselves (ansible-builder adds theirs).
+# Windows over WinRM (ansible.windows, community.windows, microsoft.ad modules, site-automation's Windows jobs)
+pywinrm[kerberos]
+requests-kerberos
+requests-ntlm          # NTLM: not on a FIPS host (no MD4); Kerberos is the way there
+pypsrp[kerberos]       # the psrp connection, an alternative to winrm
+# Active Directory from the EE itself, over LDAP (microsoft.ad brings sansldap, pyspnego, dnspython)
+ldap3                  # pure Python: your own scripts, no compiler
+# SQL Server (community.general.mssql_db, mssql_script)
+pymssql
+# Linux and general
+jmespath               # the json_query filter
+dnspython              # the community.general.dig lookup

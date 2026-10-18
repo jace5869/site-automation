@@ -1986,6 +1986,82 @@ def vm_deploy_finder(datacenters, specs=None):
     return {"paste": paste, "fields": fields, "warnings": warnings}
 
 
+# ---- the service picked at launch (vm_deploy_service): its words for the VM's notes, its AAP inventory and group
+SERVICE_KEYS = ("inventory", "group", "note", "name")
+
+
+def vm_deploy_service_pick(service, services, name_pattern="{name}", lowercase=True):
+    """The service the launcher picked, from vm_deploy_services: {name, note, inventory, group, host_name,
+    lowercase, problems}. No service: name "" (nothing to do). No services set up: the service's name is the
+    note, nothing joins an inventory. Set up: the service must be one of them (any case) - a mistake of whoever
+    launched the job, refused before anything is read or built."""
+    s = str(service if service is not None else "").strip()
+    out = {"name": "", "note": "", "inventory": "", "group": "", "host_name": str(name_pattern or "{name}"),
+           "lowercase": bool(lowercase), "problems": []}
+    if not s:
+        return out
+    if services in (None, ""):
+        services = {}
+    if not isinstance(services, dict):
+        out["problems"].append("vm_deploy_services maps each service to its inventory, group and note - e.g. "
+                               "{sql: {inventory: Windows servers, group: win_sql, note: SQL Server}} - not a list")
+        return out
+    if not services:
+        out.update(name=s, note="Service: %s." % s.rstrip("."))
+        return out
+    keys = dict((str(k).strip().lower(), k) for k in services)
+    k = keys.get(s.lower())
+    if k is None:
+        out["problems"].append("service %s is not one of vm_deploy_services (%s): launch again with one of those"
+                               % (s, ", ".join(sorted(str(x) for x in services))))
+        return out
+    e = services[k]
+    e = {} if e is None else ({"note": e} if isinstance(e, str) else e)
+    if not isinstance(e, dict):
+        out["problems"].append("vm_deploy_services: %s must be {inventory: ..., group: ..., note: ...}, not %r" % (k, e))
+        return out
+    bad = sorted(str(x) for x in e if str(x) not in SERVICE_KEYS)
+    if bad:
+        out["problems"].append("vm_deploy_services: %s has %s - a service takes %s" % (k, ", ".join(bad), ", ".join(SERVICE_KEYS)))
+    inv, grp = str(e.get("inventory") or "").strip(), str(e.get("group") or "").strip()
+    if grp and not inv:
+        out["problems"].append("vm_deploy_services: %s has a group (%s) but no inventory: name the inventory the group is in" % (k, grp))
+    note = str(e.get("note") or "").strip()
+    pattern = str(e.get("name") or name_pattern or "{name}").strip()
+    if "{name}" not in pattern:
+        out["problems"].append('the name a VM gets in the inventory must hold {name} (the VM\'s name), e.g. "{name}.yoursite.mil" - not %r' % pattern)
+    out.update(name=str(k), note=note or "Service: %s." % str(k).rstrip("."), inventory=inv, group=grp, host_name=pattern)
+    return out
+
+
+def vm_deploy_inventory_host(vm_name, svc):
+    """The name a VM gets in the AAP inventory: the service's pattern with {name} = the VM's name
+    (lower case unless vm_deploy_inventory_lowercase is false)."""
+    svc = svc or {}
+    n = str(svc.get("host_name") or "{name}").replace("{name}", str(vm_name or "").strip())
+    return n.lower() if svc.get("lowercase", True) else n
+
+
+def vm_deploy_inventory_text(r):
+    """One line for the ticket and the report: what happened to a VM in its AAP inventory (site_aap_inventory's
+    result for it)."""
+    r = r or {}
+    where = "AAP inventory %s%s" % (r.get("inventory", "?"), (", group %s" % r["group"]) if r.get("group") else "")
+    name = r.get("name") or r.get("vm") or "?"
+    h, g = r.get("host", ""), r.get("in_group", "")
+    if not r.get("ok"):
+        return "%s: NOT added - %s. Add %s by hand" % (where, (r.get("error") or "unknown error").rstrip("."), name)
+    if h == "would be added":
+        return "%s: would be added as %s" % (where, name)
+    if g == "would join":
+        return "%s: %s is in the inventory already, and would join the group" % (where, name)
+    if h == "added":
+        return "%s: added as %s" % (where, name)
+    if g == "joined":
+        return "%s: %s was in the inventory already, and joined the group" % (where, name)
+    return "%s: %s is in it already" % (where, name)
+
+
 class FilterModule(object):
     def filters(self):
         return {"vm_deploy_table": vm_deploy_table, "vm_deploy_table_name": vm_deploy_table_name, "vm_deploy_group_for": vm_deploy_group_for, "vm_deploy_spec": vm_deploy_spec, "vm_deploy_check": vm_deploy_check,
@@ -1997,4 +2073,6 @@ class FilterModule(object):
                 "vm_deploy_finder": vm_deploy_finder, "vm_deploy_parent_ref": vm_deploy_parent_ref,
                 "vm_deploy_parent_read": vm_deploy_parent_read, "vm_deploy_tasks_query": vm_deploy_tasks_query,
                 "vm_deploy_note_also": vm_deploy_note_also, "vm_deploy_close_result": vm_deploy_close_result,
-                "vm_deploy_built": vm_deploy_built, "vm_deploy_checked_digest": vm_deploy_checked_digest}
+                "vm_deploy_built": vm_deploy_built, "vm_deploy_checked_digest": vm_deploy_checked_digest,
+                "vm_deploy_service_pick": vm_deploy_service_pick, "vm_deploy_inventory_host": vm_deploy_inventory_host,
+                "vm_deploy_inventory_text": vm_deploy_inventory_text}

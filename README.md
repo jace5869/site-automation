@@ -53,6 +53,8 @@ own `playbooks/group_vars/all.yml` keeps its old settings until you comment them
 | [docs/HOW_IT_FITS_TOGETHER.md](docs/HOW_IT_FITS_TOGETHER.md) | how code, inventory, variables, credentials and surveys fit; a setting's way from YAML to a host; updating the repository at work safely |
 | [docs/SETUP_AAP.md](docs/SETUP_AAP.md) | the setup, step by step: Git, credentials, project, inventory, templates, ServiceNow |
 | [docs/VMWARE.md](docs/VMWARE.md) | the VMware jobs: the collection the execution environment needs, the vCenter account and credential, one template per job with its survey |
+| [docs/VM_DEPLOY_GUIDE.md](docs/VM_DEPLOY_GUIDE.md) | the VM deploy from a ServiceNow ticket, complete: setting it up in AAP step by step, how a run works, what requesters write, where the VM goes, configurations to copy, every message with what to do, every setting (also a PDF) |
+| [docs/EXECUTION_ENVIRONMENT.md](docs/EXECUTION_ENVIRONMENT.md) | one execution environment for everything (Linux, Windows and Active Directory, VMware, NetApp, MySQL / MariaDB / SQL Server, Cisco, ServiceNow): build it from `ee/all-in-one/`, check it, add it to AAP; AD as an inventory (also a PDF) |
 | [docs/ACTIVE_DIRECTORY.md](docs/ACTIVE_DIRECTORY.md) | the Active Directory health report: the account it needs, the template, every section (and where "when", "which DC" and "by whom" come from), settings and troubleshooting |
 | [docs/NETAPP.md](docs/NETAPP.md) | the NetApp ONTAP health report: the read-only ONTAP account, the credential, the template, every section, settings and troubleshooting |
 | [docs/EMAIL_REPORTS.md](docs/EMAIL_REPORTS.md) | emailed reports: which jobs email, setting it up, green or red when a report finds problems, the look, adding email to a playbook |

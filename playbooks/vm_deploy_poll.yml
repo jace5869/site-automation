@@ -7,7 +7,7 @@
 # approval and builds. Check (or vm_deploy_poll_dry_run: true) = list what it would pick up only.
 # Runs on the AAP side: attach the "ServiceNow API" and a "Red Hat Ansible Automation Platform"
 # credential (an AAP user with Execute on the workflow); no Limit.
-# docs/VMWARE.md, "Pick up tickets automatically (a schedule)"
+# docs/VM_DEPLOY_GUIDE.md, "The scheduled pickup"
 #   ansible-playbook playbooks/vm_deploy_poll.yml -e '{"vm_deploy_assignment_group": "Windows Operations"}'
 - name: Pick up VM request tickets from ServiceNow
   hosts: localhost

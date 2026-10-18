@@ -53,6 +53,9 @@
          'vm_deploy_templates is a list of template names (one per line, each starting with "- "), e.g. ["Windows 2022 Template", rhel9-gold].' }}
     quiet: true
 
+- name: VMware | the service picked at launch - its words for the VM's notes, its AAP inventory (vm_deploy_service)
+  ansible.builtin.include_tasks: deploy_service.yml
+
 # a prefix the job does not know (a site's own, like INCN or CHGN): every ticket is a task, and the
 # task table names its real table (sys_class_name). Read-only, so also in a dry run.
 - name: VMware | which table is {{ _vd_number }} in? (ServiceNow's task table says)

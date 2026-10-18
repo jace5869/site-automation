@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.15.6 — 2026-10-18
+
+**Updating without scripts:** paste `site-automation-0.15.6-changed-since-0.15.5.zip` as it is (from
+0.15.1 to 0.15.4: `site-automation-0.15.6-changed-since-0.15.1.zip`). Both leave out
+`playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. No new job template; the deploy
+template (or its workflow) may get a second, optional survey question. New settings, all off or empty by
+default: `vm_deploy_service`, `vm_deploy_services`, `vm_deploy_inventory_name`,
+`vm_deploy_inventory_lowercase`, `vm_deploy_aap_ca_path`. **A launch without a service runs exactly as in
+0.15.5.** The VM Deploy Guide is now the whole guide to the deploy - start there. New: an all-in-one
+execution environment to build (`ee/all-in-one/`, its own PDF).
+
+**VM deploy - the server's service (optional): its words in the VM's notes, its AAP inventory and group**
+
+- A second survey question, *Service* (`vm_deploy_service`, multiple choice, **not required**): what the
+  new server is for (`sql`, `dc`, `web` ...), picked by whoever launches the deploy. Every VM of the ticket
+  gets it. Left empty, nothing of this happens; the scheduled pickup starts the workflow without it.
+- `vm_deploy_services` maps each service to an AAP inventory and group, and to the words for the VM's
+  notes: `{sql: {inventory: Windows servers, group: win_sql, note: SQL Server}}`. The words go after the
+  deploy sentence in the VM's notes (the VMs created report still reads that sentence); the ticket's mark
+  stays on its own line.
+- With an inventory, each VM joins it right after its own build, before its note on the ticket: looked up
+  first (a run again adds nothing twice), added by its name (`vm_deploy_inventory_name`, e.g.
+  `"{name}.yoursite.mil"`), with `deployed_ticket`, `deployed_service`, `deployed_on`, `deployed_ip` -
+  never `ansible_host`. The result note on the ticket, the report and the job's artifacts say what
+  happened. A dry run and the propose step only read.
+- Checked before the ticket is read or written: a service not in the list, an inventory or group not in
+  AAP (the job never creates one), a smart or constructed inventory, two inventories of the same name, an
+  AAP user without the Admin role, no AAP credential - refused, nothing built. A source with Overwrite on
+  that fills the inventory: a warning.
+- AAP not taking the host after the build is a WARNING on the ticket and in the report, never a failure:
+  the VM is built and the ticket closed as usual.
+- Needs, only for a service with an inventory: a "Red Hat Ansible Automation Platform" credential on the
+  deploy template whose user has the Admin role on those inventories (not the pickup's user).
+
+**The all-in-one execution environment** (new: `ee/all-in-one/`, `docs/EXECUTION_ENVIRONMENT.md`, a PDF)
+
+- One EE for everything: Linux (`ansible.posix`, `community.general`, `containers.podman`, the RHEL
+  System Roles ...), Windows and Active Directory (`ansible.windows`, `microsoft.ad`, WinRM with Kerberos),
+  VMware (`vmware.vmware`), NetApp (`netapp.ontap`), MySQL / MariaDB (`ansible.mysql`) and SQL Server
+  (`pymssql`), Cisco (`ansible.netcommon`, `cisco.ios`, `cisco.nxos`, `cisco.asa`), ServiceNow
+  (`servicenow.itsm`) - and every site-automation job.
+- The ansible-builder files, ready to build from your automation hub: your CA certificates go in its trust
+  store (`ca/`), Kerberos to Active Directory works from a FIPS host (AD's AES-SHA1 keys allowed, never RC4
+  or DES), the hub token is given at build time and is not in the image, `ee-check` inside the image says
+  what it has.
+- The guide: building it, checking it, adding it to AAP, Active Directory from it (AD as an AAP inventory
+  with the `microsoft.ad.ldap` plugin, AD on a domain controller over WinRM), a first task for databases,
+  Cisco and ServiceNow, what to do when the build fails.
+
+**VM Deploy Guide - the complete guide to the deploy**
+
+- `docs/VM_DEPLOY_GUIDE.md` and its PDF now hold all of it, in nine chapters: what it does and the standard
+  setup; **setting it up in AAP step by step** - the execution environment, the vCenter role and its
+  privileges, the credentials, the settings finder, the job template and its survey, the first runs, the
+  approval workflow, the scheduled pickup, the server's service, launching from AAP's API; how a run works;
+  what the requester writes; where the VM goes; ready-made configurations; **every message, with what to
+  do**; where the logic lives; every setting with its default, an example and when to set it.
+- The deploy chapter of `docs/VMWARE.md` (and so of the Ops Runbooks guide PDF) moved there: one copy, no
+  two that drift apart. `VMWARE.md` keeps a short pointer under the same headings.
+- Corrected: the guide said the build step builds a change as it was edited during the approval. It builds
+  only what was approved (since 0.15.5): a ticket changed while the approval waited is not built.
+
 ## 0.15.5 — 2026-10-18
 
 **Updating without scripts:** paste `site-automation-0.15.5-changed-since-0.15.4.zip` as it is (from

@@ -5,7 +5,8 @@
 # before the next VM: a job stopped between two VMs leaves each VM it built with its note.
 # Input: _vd_i (the VM: spec, sources), _vd_n (its place), _vd_pre (true = only check it in vCenter,
 # read-only: deploy_build.yml checks every VM before the first is built).
-# Out: _vd_res (+ this VM's result, with _vd_i), _vd_pre_res, _vd_note_status, _vd_ds_planned.
+# Out: _vd_res (+ this VM's result, with _vd_i), _vd_pre_res, _vd_note_status, _vd_ds_planned; with a service's
+# inventory, _vd_reg_hosts / _vd_inv / _vd_inv_bad (deploy_register.yml).
 - name: >-
     VMware | {{ 'check' if _vd_pre | default(false) | bool else 'deploy' }} {{ _vd_i.spec.vm_name }} from {{ _vd_i.spec.template
     }}{{ ' - nothing is built: where it would go' if _vd_dry | bool else '' }}
@@ -23,6 +24,7 @@
     memory_mb: "{{ ((_vd_i.spec.memory_gb | default(0) | float) * 1024) | int }}"
     annotation: >-
       {{ ('Deployed from ' ~ _vd_i.spec.template ~ ' for ' ~ _vd_rec.number ~ ' by ' ~ _vd_job ~ ', ' ~ now(utc=true).strftime('%Y-%m-%d') ~ ' UTC.'
+          ~ ((' ' ~ _vd_svc.note) if (_vd_svc | default({})).note | default('') else '')
           ~ ((' ' ~ _vd_i.spec.notes) if _vd_i.spec.notes is defined else '')) | truncate(1000) }}
     domain: "{{ _vd_i.spec.domain | default(vm_deploy_domain, true) }}"
     customization_spec: "{{ _vd_i.spec.customization_spec | default('') }}"
@@ -70,6 +72,14 @@
          if v.datastore | default('') and v.need_gb | default(0) | float > 0 and not _vd_one.failed | default(false) else _vd_ds_planned }}
   when: not _vd_pre | default(false) | bool
 
+# its service's AAP inventory (vm_deploy_services): it joins right after its build - before its note, which says so
+- name: VMware | {{ _vd_i.spec.vm_name }} - joins its service's AAP inventory (vm_deploy_service)
+  ansible.builtin.include_tasks: deploy_register.yml
+  when:
+    - not _vd_pre | default(false) | bool
+    - not _vd_one.failed | default(false)
+    - (_vd_svc | default({})).inventory | default('') | length > 0
+
 - name: VMware | {{ _vd_i.spec.vm_name }} - the result on the ticket - the note
   ansible.builtin.set_fact:
     _vd_b_result: >-
@@ -80,13 +90,16 @@
       {%- set size = v.cpu | default('?') ~ ' vCPU, ' ~ v.memory_gb | default('?') ~ ' GB memory, disks '
                      ~ (v.disks_gb | default([]) | join(' + ') or '?') ~ ' GB' -%}
       {%- set notes = (['Notes:'] + _vd_r.notes | map('regex_replace', '^', '- ') | list) if _vd_r.notes | default([]) else [] -%}
+      {%- set svc = (_vd_svc | default({})).name | default('') -%}
+      {%- set inv = [_vd_inv[sp.vm_name] | vm_deploy_inventory_text] if sp.vm_name in _vd_inv | default({}) else [] -%}
       {%- if _vd_plan_only | bool and not _vd_r.failed | default(false) -%}
       {%-   set lines = [('[AAP] Checked - VM ' ~ sp.vm_name ~ nth ~ ' - ready to build after the approval (' if _vd_multi | bool
                           else '[AAP] Checked - ready to build after the approval (') ~ _vd_job ~ ', ticket text ' ~ _vd_digest ~ '):']
                        + (sp | vm_deploy_spec_text)
                        + ['It would go to:', '- vCenter: ' ~ v.vcenter | default('') ~ ', datacenter ' ~ v.datacenter | default(''),
                           '- Cluster: ' ~ v.cluster | default(''), '- Datastore: ' ~ v.datastore | default(''), '- Folder: ' ~ v.folder | default(''),
-                          '- Size: ' ~ size] + notes
+                          '- Size: ' ~ size]
+                       + (['- Service: ' ~ svc] if svc else []) + (inv | map('regex_replace', '^', '- ') | list) + notes
                        + (['Each VM is placed at the build, after the ones before it: where they go may differ from this.']
                           if _vd_multi | bool and _vd_n + 1 == total else []) -%}
       {%- elif not _vd_r.failed | default(false) -%}
@@ -101,7 +114,8 @@
                           'vCenter: ' ~ v.vcenter | default('') ~ ', datacenter ' ~ v.datacenter | default(''),
                           'Cluster: ' ~ v.cluster | default('') ~ ', host ' ~ v.host | default(''),
                           'Datastore: ' ~ v.datastore | default(''), 'Folder: ' ~ v.folder | default(''),
-                          'Size: ' ~ size, 'Power: ' ~ v.power | default('')] + notes -%}
+                          'Size: ' ~ size, 'Power: ' ~ v.power | default('')]
+                       + (['Service: ' ~ svc] if svc else []) + inv + notes -%}
       {%- else -%}
       {%-   set lines = ['[AAP] VM ' ~ sp.vm_name ~ ' NOT deployed (' ~ _vd_job ~ ')' ~ nth ~ ':', '- ' ~ _vd_r.msg | default('unknown error')]
                        + (['The VM exists in vCenter (partly set up), marked for this ticket: run the job again to finish it, or delete it.']

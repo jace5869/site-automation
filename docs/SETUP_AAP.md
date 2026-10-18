@@ -414,7 +414,8 @@ Only inside the approval workflow ([ADDING_ACT.md](ADDING_ACT.md)). Create it wh
 
 They run against vCenter, not your hosts, and have their own setup: the VMware execution
 environment, a vCenter credential, one template per job. Follow [VMWARE.md](VMWARE.md); the
-emails are in [EMAIL_REPORTS.md](EMAIL_REPORTS.md).
+emails are in [EMAIL_REPORTS.md](EMAIL_REPORTS.md). The VM deploy from a ServiceNow ticket has a guide
+of its own, setup included: [VM_DEPLOY_GUIDE.md](VM_DEPLOY_GUIDE.md).
 
 ### NetApp ONTAP health report
 

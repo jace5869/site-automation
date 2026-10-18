@@ -3,6 +3,7 @@
 ticket parsed, the rules) and the pure parts of roles/vmware_vm/library/site_vmware_deploy.py.
 Run: python3 tests/test_vm_deploy.py"""
 import importlib.util
+import json
 import os
 import re
 import sys
@@ -20,6 +21,7 @@ sys.modules["ansible.module_utils.site_vcenters"] = _mu
 _spec.loader.exec_module(_mu)
 import vm_deploy_filters as d  # noqa: E402
 import site_vmware_deploy as m  # noqa: E402
+import site_aap_inventory as ai  # noqa: E402
 
 # as the Table API returns them with sysparm_display_value=true: journal fields newest first
 REC = {"sys_id": "abc", "number": "INC0010001", "state": "In Progress", "active": "true", "assignment_group": "Linux Operations",
@@ -1600,6 +1602,178 @@ class GuideExamples(unittest.TestCase):
             got = [tuple(v["spec"].get(k) for k in ("vm_name", "template", "cpu", "memory_gb", "disks_gb", "site")) for v in out["vms"]]
             self.assertEqual(got, vms, ask)
             self.assertEqual([v["spec"]["vcenter"] for v in out["vms"]], [sites[s[5]]["vcenter"] for s in vms])
+
+
+class Service(unittest.TestCase):
+    """vm_deploy_service picked at launch: vm_deploy_service_pick, the name in the inventory, the line on the ticket."""
+    SVCS = {"sql": {"inventory": "Windows servers", "group": "win_sql", "note": "SQL Server"},
+            "Web": {"inventory": "Linux servers", "group": "web"},
+            "test": "Test server - delete after 30 days", "bare": None}
+
+    def test_none_picked(self):
+        s = d.vm_deploy_service_pick("", self.SVCS)
+        self.assertEqual((s["name"], s["inventory"], s["problems"]), ("", "", []))
+        self.assertEqual(d.vm_deploy_service_pick(None, {})["name"], "")
+
+    def test_no_services_set_up_notes_only(self):
+        s = d.vm_deploy_service_pick(" scanner ", {})
+        self.assertEqual((s["name"], s["note"], s["inventory"], s["problems"]), ("scanner", "Service: scanner.", "", []))
+
+    def test_picked_any_case(self):
+        s = d.vm_deploy_service_pick("SQL", self.SVCS)
+        self.assertEqual((s["name"], s["note"], s["inventory"], s["group"]), ("sql", "SQL Server", "Windows servers", "win_sql"))
+        w = d.vm_deploy_service_pick("web", self.SVCS)
+        self.assertEqual((w["name"], w["note"], w["group"]), ("Web", "Service: Web.", "web"))
+
+    def test_note_only_entries(self):
+        self.assertEqual(d.vm_deploy_service_pick("test", self.SVCS)["note"], "Test server - delete after 30 days")
+        b = d.vm_deploy_service_pick("bare", self.SVCS)
+        self.assertEqual((b["note"], b["inventory"], b["problems"]), ("Service: bare.", "", []))
+
+    def test_unknown_refused_naming_the_choices(self):
+        p = d.vm_deploy_service_pick("sqll", self.SVCS)["problems"]
+        self.assertEqual(len(p), 1)
+        self.assertIn("service sqll is not one of vm_deploy_services (Web, bare, sql, test)", p[0])
+
+    def test_bad_shapes(self):
+        self.assertIn("not a list", d.vm_deploy_service_pick("sql", ["sql"])["problems"][0])
+        self.assertIn("a service takes inventory, group, note, name",
+                      d.vm_deploy_service_pick("x", {"x": {"inventroy": "A"}})["problems"][0])
+        self.assertIn("has a group (g) but no inventory", d.vm_deploy_service_pick("x", {"x": {"group": "g"}})["problems"][0])
+        self.assertIn("must hold {name}", d.vm_deploy_service_pick("x", {"x": {"inventory": "A", "name": "srv.example.mil"}})["problems"][0])
+        self.assertIn("must be {inventory", d.vm_deploy_service_pick("x", {"x": ["A"]})["problems"][0])
+
+    def test_inventory_name(self):
+        s = d.vm_deploy_service_pick("sql", self.SVCS, "{name}.yoursite.mil")
+        self.assertEqual(d.vm_deploy_inventory_host("SQL01", s), "sql01.yoursite.mil")
+        s = d.vm_deploy_service_pick("sql", {"sql": {"inventory": "W", "name": "{name}.corp.example.mil"}}, "{name}.yoursite.mil", False)
+        self.assertEqual(d.vm_deploy_inventory_host("SQL01", s), "SQL01.corp.example.mil")   # the service's own name wins; case kept
+
+    def test_ticket_line(self):
+        base = {"name": "app01", "vm": "APP01", "inventory": "Linux servers", "group": "web", "ok": True, "error": ""}
+        t = d.vm_deploy_inventory_text
+        self.assertEqual(t(dict(base, host="added", in_group="joined")), "AAP inventory Linux servers, group web: added as app01")
+        self.assertEqual(t(dict(base, host="would be added", in_group="would join")), "AAP inventory Linux servers, group web: would be added as app01")
+        self.assertEqual(t(dict(base, host="already there", in_group="joined")),
+                         "AAP inventory Linux servers, group web: app01 was in the inventory already, and joined the group")
+        self.assertEqual(t(dict(base, host="already there", in_group="already in it")), "AAP inventory Linux servers, group web: app01 is in it already")
+        self.assertEqual(t(dict(base, group="", host="added", in_group="")), "AAP inventory Linux servers: added as app01")
+        self.assertEqual(t(dict(base, ok=False, error="AAP refused (HTTP 403): no.")),
+                         "AAP inventory Linux servers, group web: NOT added - AAP refused (HTTP 403): no. Add app01 by hand")
+
+
+class AapInventory(unittest.TestCase):
+    """roles/vmware_vm/library/site_aap_inventory.py against the fake AAP (tests/servicenow/aapmock.py), in this process."""
+
+    def setUp(self):
+        import tempfile
+        import threading
+        from http.server import ThreadingHTTPServer
+        for k in ("AAPMOCK_LEGACY", "AAPMOCK_OVERWRITE", "AAPMOCK_INV_FAIL", "AAPMOCK_INV_GARBLE"):
+            os.environ.pop(k, None)
+        self.tmp = tempfile.mkdtemp()
+        os.environ["AAPMOCK_INV_LOG"] = os.path.join(self.tmp, "inv.jsonl")
+        spec = importlib.util.spec_from_file_location("aapmock_%d" % id(self), os.path.join(HERE, "servicenow", "aapmock.py"))
+        self.mock = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mock)                  # fresh inventories for each test
+        self.mock.INV_LOG = os.environ["AAPMOCK_INV_LOG"]
+        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), self.mock.H)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.env = {"CONTROLLER_HOST": "http://127.0.0.1:%d" % self.srv.server_port, "CONTROLLER_USERNAME": "admin",
+                    "CONTROLLER_PASSWORD": "goodpw"}
+
+    def tearDown(self):
+        import shutil
+        self.srv.shutdown()
+        self.srv.server_close()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def api(self, **env):
+        a = ai.Api(ai.connection(dict(self.env, **env)))
+        return a, a.probe()
+
+    def log(self):
+        p = os.environ["AAPMOCK_INV_LOG"]
+        if not os.path.exists(p):
+            return []
+        with open(p) as f:
+            return [json.loads(x) for x in f]
+
+    def test_connection_from_the_credential(self):
+        c = ai.connection({"AAP_HOSTNAME": "aap.example.mil", "AAP_TOKEN": "t", "AAP_VALIDATE_CERTS": "false"})
+        self.assertEqual((c["host"], c["login"], c["verify"]), ("https://aap.example.mil", "token", False))
+        c = ai.connection({"CONTROLLER_HOST": "https://a/", "TOWER_HOST": "b", "CONTROLLER_USERNAME": "u", "CONTROLLER_PASSWORD": "p"})
+        self.assertEqual((c["host"], c["login"], c["verify"]), ("https://a", "password", True))
+        self.assertEqual(ai.Api(ai.connection({})).probe(), ai.NO_CREDENTIAL)
+
+    def test_probe(self):
+        a, why = self.api()
+        self.assertEqual((why, a.base), ("", "api/controller/v2/"))
+        os.environ["AAPMOCK_LEGACY"] = "1"
+        a, why = self.api()
+        self.assertEqual((why, a.base), ("", "api/v2/"))
+        self.assertIn("AAP refused the login (HTTP 401)", self.api(CONTROLLER_PASSWORD="bad")[1])
+        self.assertIn("AAP did not answer at http://127.0.0.1:9", self.api(CONTROLLER_HOST="http://127.0.0.1:9")[1])
+
+    def test_check(self):
+        a, _ = self.api()
+        self.assertEqual(ai.check(a, [{"inventory": "Linux servers", "group": "web"}, {"inventory": "8", "group": ""}]), ([], []))
+        probs, _ = ai.check(a, [{"inventory": "Linux servers", "group": "nope"}, {"inventory": "Nope"}, {"inventory": "All servers"},
+                                {"inventory": "Read only"}, {"inventory": "Twice"}])
+        self.assertIn("inventory Linux servers has no group nope: create it", probs[0])
+        self.assertIn("no inventory Nope that the AAP user can see", probs[1])
+        self.assertIn("All servers is a constructed inventory", probs[2])
+        self.assertIn("may not change inventory Read only: give it the Admin role", probs[3])
+        self.assertIn("2 inventories are named Twice (organizations Org A, Org B): name it by its ID", probs[4])
+        os.environ["AAPMOCK_OVERWRITE"] = "1"
+        _, notes = ai.check(a, [{"inventory": "Linux servers", "group": "web"}])
+        self.assertIn("inventory Linux servers is filled by source core file with Overwrite on", notes[0])
+        self.assertIn("(group web, when it comes from the source)", notes[0])
+
+    def test_add_then_again(self):
+        a, _ = self.api()
+        hosts = [{"name": "app01", "vm": "APP01", "inventory": "Linux servers", "group": "web", "description": "Built for INC1",
+                  "variables": {"deployed_ticket": "INC1", "deployed_ip": "192.0.2.10"}},
+                 {"name": "old01", "inventory": "Linux servers", "group": "db"}]
+        r = ai.add(a, hosts, False)
+        self.assertEqual([(x["vm"], x["host"], x["in_group"], x["ok"]) for x in r],
+                         [("APP01", "added", "joined", True), ("old01", "already there", "joined", True)])
+        added = [x for x in self.log() if "added" in x]
+        self.assertEqual([(x["added"], x["variables"]["deployed_ip"]) for x in added], [("app01", "192.0.2.10")])
+        r = ai.add(a, hosts, False)                         # a run again: nothing added twice
+        self.assertEqual([(x["host"], x["in_group"]) for x in r], [("already there", "already in it"), ("already there", "already in it")])
+        self.assertEqual(len(self.log()), 3)
+
+    def test_add_dry_run_writes_nothing(self):
+        a, _ = self.api()
+        r = ai.add(a, [{"name": "app02", "inventory": "Linux servers", "group": "web"}, {"name": "old01", "inventory": "Linux servers",
+                                                                                         "group": "db"}], True)
+        self.assertEqual([(x["host"], x["in_group"]) for x in r], [("would be added", "would join"), ("already there", "would join")])
+        self.assertEqual(self.log(), [])
+
+    def test_add_refused(self):
+        os.environ["AAPMOCK_INV_FAIL"] = "1"
+        a, _ = self.api()
+        r = ai.add(a, [{"name": "app03", "inventory": "Linux servers", "group": "web"}, {"name": "x", "inventory": "Nope"}], False)
+        self.assertFalse(r[0]["ok"])
+        self.assertIn("AAP refused to add it to inventory Linux servers (HTTP 403): You do not have permission", r[0]["error"])
+        self.assertIn("no inventory Nope", r[1]["error"])
+
+    def test_add_not_json_or_no_ca_never_raises(self):
+        os.environ["AAPMOCK_INV_GARBLE"] = "1"
+        a, _ = self.api()
+        r = ai.add(a, [{"name": "app04", "inventory": "Linux servers", "group": "web"}], False)
+        self.assertFalse(r[0]["ok"])
+        self.assertIn("not AAP's (HTTP 200, not JSON)", r[0]["error"])
+        b = ai.Api(ai.connection(dict(self.env, CONTROLLER_HOST="https://aap.example.mil")), ca_path="/nonexistent/ca.pem")
+        self.assertEqual(b.probe(), "the CA file /nonexistent/ca.pem (vm_deploy_aap_ca_path) is not there")
+
+    def test_one_host_surprise_never_stops_the_others(self):
+        a, _ = self.api()
+        r = ai.add(a, [{"name": None, "inventory": "Linux servers"}, {"name": "app05", "inventory": "Linux servers", "group": "web"}], False)
+        self.assertFalse(r[0]["ok"])
+        self.assertIn("unexpected answer from AAP", r[0]["error"])
+        self.assertEqual((r[1]["host"], r[1]["in_group"], r[1]["ok"]), ("added", "joined", True))
 
 
 if __name__ == "__main__":

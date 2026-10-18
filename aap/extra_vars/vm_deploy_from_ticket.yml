@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "VM - deploy from ServiceNow ticket"
 #   playbook:    playbooks/vm_deploy_from_ticket.yml
-#   credentials: VMware vCenter, ServiceNow API, ACT model key
+#   credentials: VMware vCenter, ServiceNow API, ACT model key (Red Hat Ansible Automation Platform with vm_deploy_services inventories)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -26,6 +26,8 @@ vm_deploy_name_rules:                             # the VM's name picks the clus
 # vm_deploy_genai: true                           # optional, needs the ACT model key credential: requests in plain words
 # vm_deploy_template_catalog:                     # optional: templates GenAI may name, in plain words
 #   TEMPLATE-NAME: "Windows Server 2022 (installed over the network by MECM)"
+# vm_deploy_services:                             # optional: the survey's "Service" choices - each VM built joins its
+#   SERVICE-NAME: {inventory: INVENTORY-NAME, group: GROUP-NAME, note: "WORDS FOR THE VM NOTES"}   # AAP inventory
 report_email_to: approvers@yoursite.mil           # the approver reads the plan in this email
 
 # ---- vmware_vm -----------------------------------------------------------------------------------
@@ -46,7 +48,7 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 ## (INCN..., CHGN...): the job asks ServiceNow which table a ticket is in. The ticket says what to
 ## build in 'key: value' lines - in its description, or in a comment / work note (a newer one
 ## overrides): vm_name: app01 template: rhel9-gold cpu: 4 memory_gb: 16 (cluster, datastore, folder,
-## datacenter, vcenter, domain, customization_spec, notes: optional). docs/VMWARE.md
+## datacenter, vcenter, domain, customization_spec, notes: optional). docs/VM_DEPLOY_GUIDE.md
 # vm_deploy_ticket: ""
 
 ## leave it empty (the job finds each ticket's table); a table of your own, e.g. u_vm_request: for
@@ -261,6 +263,25 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 ## checks the install.
 # vm_deploy_done_fields_pxe: true
 
+## ---- The server's service, picked at launch: words in the VM's notes, an AAP inventory and group
+## ---- What the new server is for, picked by whoever launches the deploy: a survey question
+## (multiple choice, NOT required - the scheduled pickup starts the workflow without it), e.g. sql
+## or dc. Every VM of the ticket gets it. "" = none. Its words go in each VM's notes in vCenter;
+## with an inventory in vm_deploy_services, each VM built joins that AAP inventory and group.
+# vm_deploy_service: ""
+
+## The name a VM gets in the inventory: write it the way your inventory already names servers, or
+## the same server shows up twice in AAP. {name} = the VM's name, e.g. "{name}.yoursite.mil". A
+## service's own name: wins (e.g. {inventory: Windows servers, name: "{name}.corp.yoursite.mil"}).
+# vm_deploy_inventory_name: "{name}"
+
+## the inventory name in lower case (APP01 -> app01); false = as the ticket writes it
+# vm_deploy_inventory_lowercase: true
+
+## a CA file for AAP's own HTTPS certificate ("" = vm_deploy_poll_aap_ca_path, else what the
+## execution environment trusts)
+# vm_deploy_aap_ca_path: ""
+
 ## ---- A request in plain words, without GenAI (off by default) ---- true = also read the ticket's
 ## own words, by the rules below, so a requester can write "a Red Hat 9 server named ab01web05,
 ## medium" instead of 'key: value' lines. Never a guess: two different answers in the text are a
@@ -306,6 +327,9 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 
 ## seconds the model may take for its answer
 # vm_deploy_genai_model_timeout: "{{ site_act_model_timeout | default(600) }}"
+
+## a CA file for AAP's own HTTPS certificate ("" = what the execution environment trusts)
+# vm_deploy_poll_aap_ca_path: ""
 
 # ---- servicenow ----------------------------------------------------------------------------------
 ## check the instance's HTTPS certificate (see servicenow_ca_path)

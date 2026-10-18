@@ -233,7 +233,7 @@ vm_capacity_act_check_url: true          # first check that the AAP node can rea
 # prefixes (INCN..., CHGN...): the job asks ServiceNow which table a ticket is in. The ticket says what to build in
 # 'key: value' lines - in its description, or in a comment / work note (a newer one overrides):
 #   vm_name: app01   template: rhel9-gold   cpu: 4   memory_gb: 16   (cluster, datastore, folder,
-#   datacenter, vcenter, domain, customization_spec, notes: optional). docs/VMWARE.md
+#   datacenter, vcenter, domain, customization_spec, notes: optional). docs/VM_DEPLOY_GUIDE.md
 vm_deploy_ticket: ""
 vm_deploy_ticket_table: ""               # leave it empty (the job finds each ticket's table); a table of your own, e.g. u_vm_request: for numbers whose prefix the job does not know (CTASK stays change_task)
 # Your instance's own number prefixes and their tables, e.g. {INCN: incident, CHGN: change_request}.
@@ -391,6 +391,30 @@ vm_deploy_done_fields_issues_by_table: {}
 # Also for a VM from a network-boot template (vm_deploy_pxe_templates), which is powered on and still
 # installing its OS from MECM when the job ends. false = that ticket stays open for whoever checks the install.
 vm_deploy_done_fields_pxe: true
+# ---- The server's service, picked at launch: words in the VM's notes, an AAP inventory and group ----
+# What the new server is for, picked by whoever launches the deploy: a survey question (multiple choice,
+# NOT required - the scheduled pickup starts the workflow without it), e.g. sql or dc. Every VM of the
+# ticket gets it. "" = none. Its words go in each VM's notes in vCenter; with an inventory in
+# vm_deploy_services, each VM built joins that AAP inventory and group.
+vm_deploy_service: ""
+# The services the survey offers: each one's AAP inventory and group, and the words for the VM's notes
+# (note: left out = "Service: <its name>."). {} = any service is only written in the notes.
+#   vm_deploy_services:
+#     sql:  {inventory: Windows servers, group: win_sql, note: SQL Server}
+#     dc:   {inventory: Windows servers, group: win_dc, note: Domain controller}
+#     web:  {inventory: Linux servers, group: web}
+#     test: {note: Test server - delete after 30 days}                       # the notes only
+# A service with an inventory needs a "Red Hat Ansible Automation Platform" credential on the deploy
+# template, whose AAP user has the Admin role on that inventory. The inventory and the group must
+# exist - the job never creates them, it refuses (before anything is built) and says what to create.
+# A service that is not listed is refused the same way: the survey's choices must be these names.
+vm_deploy_services: {}
+# The name a VM gets in the inventory: write it the way your inventory already names servers, or the
+# same server shows up twice in AAP. {name} = the VM's name, e.g. "{name}.yoursite.mil". A service's
+# own name: wins (e.g. {inventory: Windows servers, name: "{name}.corp.yoursite.mil"}).
+vm_deploy_inventory_name: "{name}"
+vm_deploy_inventory_lowercase: true      # the inventory name in lower case (APP01 -> app01); false = as the ticket writes it
+vm_deploy_aap_ca_path: ""                # a CA file for AAP's own HTTPS certificate ("" = vm_deploy_poll_aap_ca_path, else what the execution environment trusts)
 # ---- A request in plain words, without GenAI (off by default) ----
 # true = also read the ticket's own words, by the rules below, so a requester can write "a Red Hat 9
 # server named ab01web05, medium" instead of 'key: value' lines. Never a guess: two different answers
@@ -419,7 +443,7 @@ vm_deploy_plain_sites: {}
 # notes in the report): the job finds the template from the OS words by its own rules, and asks the
 # requester (a comment) only what it needs and cannot read. That run builds NOTHING: it posts the proposal on the ticket. The
 # next run builds that proposal (GenAI is not asked again), while the ticket text is unchanged; the
-# ticket's own lines still win. Needs the ACT model key credential on the template. docs/VMWARE.md
+# ticket's own lines still win. Needs the ACT model key credential on the template. docs/VM_DEPLOY_GUIDE.md
 vm_deploy_genai: false
 # A dry run (Check) asks GenAI too (true): it shows GenAI's proposal and where the VM would go, and writes
 # nothing on the ticket - no proposal note, no questions to the requester. false = Check only says GenAI would be asked.
@@ -445,7 +469,7 @@ vm_deploy_genai_model_timeout: "{{ site_act_model_timeout | default(600) }}"   #
 # "[AAP] Picked up ..." on it. A ticket with any note of AAP's on it is never picked up again.
 # Nothing is built by this job: the workflow reads, checks, asks for the approval and builds.
 # Needs the "ServiceNow API" credential and a "Red Hat Ansible Automation Platform" credential (an
-# AAP user that may only start that workflow). docs/VMWARE.md, "Pick up tickets automatically"
+# AAP user that may only start that workflow). docs/VM_DEPLOY_GUIDE.md, "The scheduled pickup"
 vm_deploy_poll_enabled: true             # false = the job runs, picks up nothing and says so (the off switch)
 vm_deploy_poll_tables: [incident]        # the ServiceNow tables to look in: incident, sc_task, task ...
 vm_deploy_poll_prefix: "VM request"      # a VM request's short description starts with this ("" = mark them by vm_deploy_poll_query)

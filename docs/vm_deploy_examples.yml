@@ -209,6 +209,28 @@ vm_deploy_done_fields_pxe:
   example: false
   when: a network-boot VM's task stays open until someone checks the MECM install
 
+# ---- the service picked at launch: words in the VM's notes, an AAP inventory and group ----
+vm_deploy_service:
+  level: often
+  example: sql
+  when: a survey question (multiple choice, not required) whose choices are the names in vm_deploy_services; never set on the template
+vm_deploy_services:
+  level: often
+  example: {sql: {inventory: Windows servers, group: win_sql, note: SQL Server}, web: {inventory: Linux servers, group: web}}
+  when: each new server should join its AAP inventory and group, and say what it is in its vCenter notes
+vm_deploy_inventory_name:
+  level: often
+  example: "{name}.yoursite.mil"
+  when: your inventory names servers by their full DNS name - write it the same way, or a server shows up twice
+vm_deploy_inventory_lowercase:
+  level: rarely
+  example: false
+  when: your inventory keeps the names in capitals, as the ticket writes them
+vm_deploy_aap_ca_path:
+  level: rarely
+  example: /etc/pki/ca-trust/source/anchors/yoursite-ca.pem
+  when: AAP's own HTTPS certificate is from a CA the execution environment does not trust (and the pickup's vm_deploy_poll_aap_ca_path is not set)
+
 # ---- plain words (no GenAI) ----
 vm_deploy_plain_words:
   level: often

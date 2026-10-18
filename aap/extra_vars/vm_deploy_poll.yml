@@ -23,7 +23,7 @@ vm_deploy_assignment_group: YOUR GROUP NAME       # REQUIRED: only this group's 
 ## (INCN..., CHGN...): the job asks ServiceNow which table a ticket is in. The ticket says what to
 ## build in 'key: value' lines - in its description, or in a comment / work note (a newer one
 ## overrides): vm_name: app01 template: rhel9-gold cpu: 4 memory_gb: 16 (cluster, datastore, folder,
-## datacenter, vcenter, domain, customization_spec, notes: optional). docs/VMWARE.md
+## datacenter, vcenter, domain, customization_spec, notes: optional). docs/VM_DEPLOY_GUIDE.md
 # vm_deploy_ticket: ""
 
 ## ---- Pick up VM request tickets on a schedule (playbooks/vm_deploy_poll.yml) ---- Every run (an
@@ -33,7 +33,7 @@ vm_deploy_assignment_group: YOUR GROUP NAME       # REQUIRED: only this group's 
 ## Picked up ..." on it. A ticket with any note of AAP's on it is never picked up again. Nothing is
 ## built by this job: the workflow reads, checks, asks for the approval and builds. Needs the
 ## "ServiceNow API" credential and a "Red Hat Ansible Automation Platform" credential (an AAP user
-## that may only start that workflow). docs/VMWARE.md, "Pick up tickets automatically" false = the
+## that may only start that workflow). docs/VM_DEPLOY_GUIDE.md, "The scheduled pickup" false = the
 ## job runs, picks up nothing and says so (the off switch)
 # vm_deploy_poll_enabled: true
 

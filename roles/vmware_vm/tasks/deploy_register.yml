@@ -1,0 +1,44 @@
+---
+# ONE VM JOINS ITS SERVICE'S AAP INVENTORY AND GROUP (deploy_build_one.yml includes it right after the VM's
+# build, before its note; the service: deploy_service.yml). A VM an earlier run built (or finished) too -
+# looked up first, so a run again never adds a server twice. Its variables (set only when the host is
+# new): deployed_ticket, deployed_service, deployed_on, deployed_ip (when it has one - never ansible_host:
+# AAP connects by the name, as for every other server). A dry run and the propose step only read, and say
+# what would happen. A VM AAP does not take is a WARNING on its note and in the report - never a
+# failure: the VM is built, and the ticket is closed as usual.
+# Input: _vd_one (the VM's build result), _vd_i, _vd_svc. Out: _vd_reg_hosts, _vd_inv, _vd_inv_bad (+ this VM).
+- name: "VMware | {{ _vd_i.spec.vm_name }} joins AAP inventory {{ _vd_svc.inventory }}{{ (', group ' ~ _vd_svc.group) if _vd_svc.group else ''
+    }}{{ ' - read only: what it would do' if _vd_dry | bool else '' }}"
+  site_aap_inventory:
+    action: add
+    hosts: >-
+      {%- set v = _vd_one.vm | default({}) -%}
+      {%- set hv = {'deployed_ticket': _vd_rec.number, 'deployed_service': _vd_svc.name, 'deployed_on': now(utc=true).strftime('%Y-%m-%d')} -%}
+      {%- if v.ip | default('') -%}{%- set _ = hv.update({'deployed_ip': v.ip}) -%}{%- endif -%}
+      {{ [{'name': _vd_i.spec.vm_name | vm_deploy_inventory_host(_vd_svc), 'vm': _vd_i.spec.vm_name,
+           'inventory': _vd_svc.inventory, 'group': _vd_svc.group,
+           'description': ('Built by ' ~ _vd_job ~ ' for ' ~ _vd_rec.number ~ ' - ' ~ _vd_svc.note) | truncate(500),
+           'variables': hv}] }}
+    ca_path: "{{ vm_deploy_aap_ca_path | default('', true) or vm_deploy_poll_aap_ca_path | default('', true) }}"
+  register: _vd_reg
+  check_mode: "{{ _vd_dry | bool }}"
+  ignore_errors: true                    # the VM is built: a step that breaks is a WARNING, never a stop
+
+# its result - or, when the step itself broke: not added, add it by hand
+- name: VMware | {{ _vd_i.spec.vm_name }} - in AAP
+  ansible.builtin.set_fact:
+    _vd_reg_one: >-
+      {{ _vd_reg.hosts[0] if not _vd_reg.failed | default(false) and _vd_reg.hosts | default([]) | length == 1 else
+         {'name': _vd_i.spec.vm_name | vm_deploy_inventory_host(_vd_svc), 'vm': _vd_i.spec.vm_name, 'inventory': _vd_svc.inventory,
+          'group': _vd_svc.group, 'host': '', 'in_group': '', 'ok': false,
+          'error': 'the step that adds it failed: ' ~ (_vd_reg.msg | default('no result') | string | truncate(300))} }}
+
+- name: VMware | {{ _vd_i.spec.vm_name }} - in AAP, with the others
+  ansible.builtin.set_fact:
+    _vd_reg_hosts: "{{ _vd_reg_hosts | default([]) + [_vd_reg_one] }}"
+    _vd_inv: "{{ _vd_inv | default({}) | combine({_vd_i.spec.vm_name: _vd_reg_one}) }}"
+    _vd_inv_bad: "{{ _vd_inv_bad | default([]) + ([] if _vd_reg_one.ok | bool else [_vd_reg_one]) }}"
+
+- name: VMware | {{ _vd_i.spec.vm_name }} - in AAP
+  ansible.builtin.debug:
+    msg: "{{ _vd_reg_one | vm_deploy_inventory_text }}"

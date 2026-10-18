@@ -1,0 +1,47 @@
+---
+# THE SERVICE picked at launch (vm_deploy_service, e.g. a survey question; deploy.yml includes this
+# before the ticket is read): its words go in each VM's notes (deploy_build.yml); with an inventory in
+# vm_deploy_services, each VM built joins that AAP inventory and group (deploy_register.yml). A service
+# that is not set up is the launcher's mistake, never a question for the requester: refused here,
+# before anything is written on the ticket. The inventory and group are read from AAP in every mode -
+# a dry run and the propose step too - so a name that is not there stops the job before the build.
+- name: VMware | the service picked at launch (vm_deploy_service, vm_deploy_services)
+  ansible.builtin.set_fact:
+    _vd_svc: >-
+      {{ vm_deploy_service | default('', true) | vm_deploy_service_pick(vm_deploy_services | default({}, true),
+                                                                       vm_deploy_inventory_name | default('{name}', true),
+                                                                       vm_deploy_inventory_lowercase | default(true) | bool) }}
+
+- name: VMware | the service is one of vm_deploy_services
+  ansible.builtin.assert:
+    that: _vd_svc.problems | length == 0
+    fail_msg: "Nothing was built or written on the ticket: {{ _vd_svc.problems | join('; ') }}"
+    quiet: true
+
+- name: VMware | AAP inventory {{ _vd_svc.inventory }}{{ (', group ' ~ _vd_svc.group) if _vd_svc.group else '' }} is there, and takes hosts (read only)
+  site_aap_inventory:
+    action: check
+    targets: [{inventory: "{{ _vd_svc.inventory }}", group: "{{ _vd_svc.group }}"}]
+    ca_path: "{{ vm_deploy_aap_ca_path | default('', true) or vm_deploy_poll_aap_ca_path | default('', true) }}"
+  register: _vd_svc_check
+  check_mode: false
+  when: _vd_svc.inventory | length > 0
+
+- name: VMware | the inventory can take the new VMs
+  ansible.builtin.assert:
+    that: _vd_svc_check.problems | length == 0
+    fail_msg: >-
+      Nothing was built or written on the ticket - service {{ _vd_svc.name }} (vm_deploy_services):
+      {{ _vd_svc_check.problems | join('; ') }}
+    quiet: true
+  when: _vd_svc.inventory | length > 0
+
+- name: VMware | the service
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['Service ' ~ _vd_svc.name ~ ': "' ~ _vd_svc.note ~ '" goes in the notes of each VM built'
+          ~ ((', and each VM built joins AAP inventory ' ~ _vd_svc.inventory ~ ((', group ' ~ _vd_svc.group) if _vd_svc.group else '')
+              ~ ' as ' ~ ('VM-NAME' | vm_deploy_inventory_host(_vd_svc)) | replace('vm-name', 'VM-NAME') ~ '.')
+             if _vd_svc.inventory else ' (no inventory for it in vm_deploy_services).')]
+         + (_vd_svc_check.notes | default([]) | map('regex_replace', '^', 'WARNING: ') | list) }}
+  when: _vd_svc.name | length > 0

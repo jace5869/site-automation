@@ -1,0 +1,7 @@
+# System packages (RPMs) the collections do not bring themselves (ansible-builder adds theirs).
+# [compile] = only while building; the rest stays in the image.
+krb5-workstation [platform:rpm]       # kinit / klist: check Kerberos inside the EE
+openssh-clients [platform:rpm]
+sshpass [platform:rpm]                # password SSH (network devices that need it)
+iputils [platform:rpm]                # ping, for troubleshooting from the EE
+bind-utils [platform:rpm]             # dig / nslookup: check DNS (the domain controllers' SRV records)

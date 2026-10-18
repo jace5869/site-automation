@@ -62,7 +62,8 @@ servicenow_assignment_group: YOUR GROUP NAME   # exactly as in ServiceNow
     "vm_alarm_report.yml": ("VM - alarms report", "VMware vCenter", "", ""),
     "vm_capacity_report.yml": ("VM - capacity planning", "VMware vCenter (ACT model key with vm_capacity_act)", "", ""),
     "vm_datastore_report.yml": ("VM - datastore report", "VMware vCenter", "", ""),
-    "vm_deploy_from_ticket.yml": ("VM - deploy from ServiceNow ticket", "VMware vCenter, ServiceNow API, ACT model key", "", """\
+    "vm_deploy_from_ticket.yml": ("VM - deploy from ServiceNow ticket", "VMware vCenter, ServiceNow API, ACT model key "
+                                  "(Red Hat Ansible Automation Platform with vm_deploy_services inventories)", "", """\
 # ---- fill these in first (the CAPITALS) ------------------------------------------------------
 vm_deploy_templates: [TEMPLATE-NAME]              # REQUIRED: only these templates are ever deployed
 vm_deploy_pxe_templates: [TEMPLATE-NAME]          # empty ones (MECM network boot or a kickstart CD); [] for none
@@ -75,6 +76,8 @@ vm_deploy_name_rules:                             # the VM's name picks the clus
 # vm_deploy_genai: true                           # optional, needs the ACT model key credential: requests in plain words
 # vm_deploy_template_catalog:                     # optional: templates GenAI may name, in plain words
 #   TEMPLATE-NAME: "Windows Server 2022 (installed over the network by MECM)"
+# vm_deploy_services:                             # optional: the survey's "Service" choices - each VM built joins its
+#   SERVICE-NAME: {inventory: INVENTORY-NAME, group: GROUP-NAME, note: "WORDS FOR THE VM NOTES"}   # AAP inventory
 report_email_to: approvers@yoursite.mil           # the approver reads the plan in this email
 """),
     "vm_created_report.yml": ("VM - VMs created report", "VMware vCenter", "", ""),

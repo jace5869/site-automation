@@ -1456,6 +1456,125 @@ sys.exit(0 if "ab01xy05b" not in one and "ab01xy05a" not in two and shape(one["a
          and shape(two["ab01xy05b"]) == (2, 2048, [60, 10]) else 1)
 EOPY
 unset GENAI_KEY FAKE_ACT_OUT FAKE_ACT_CONFIG
+# ---- the service picked at launch (vm_deploy_service): words in the VM's notes, each VM built joins its AAP
+# inventory and group (a fake AAP: tests/servicenow/aapmock.py - inventory "Linux servers" has a source with Overwrite on)
+aap_port=$((port + 43)); aap_port2=$((port + 44))
+AAPMOCK_LOG="$work/aap.jsonl" AAPMOCK_INV_LOG="$work/inv.jsonl" AAPMOCK_OVERWRITE=1 "$py" "$repo/tests/servicenow/aapmock.py" "$aap_port" >/dev/null 2>&1 &
+aap_pid=$!
+AAPMOCK_LOG="$work/aap2.jsonl" AAPMOCK_INV_LOG="$work/inv2.jsonl" AAPMOCK_INV_FAIL=1 "$py" "$repo/tests/servicenow/aapmock.py" "$aap_port2" >/dev/null 2>&1 &
+aap_pid2=$!
+for p_ in $aap_port $aap_port2; do for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$p_") 2>/dev/null && break; sleep 0.1; done; done
+svcs='{"vm_deploy_services": {"web": {"inventory": "Linux servers", "group": "web", "note": "Web server for the test."},
+       "nogrp": {"inventory": "Linux servers", "group": "nope"}, "test": {"note": "Test box."}}, "vm_deploy_inventory_name": "{name}.example.mil"}'
+export CONTROLLER_HOST="http://127.0.0.1:$aap_port" CONTROLLER_USERNAME=admin CONTROLLER_PASSWORD=goodpw
+nsn() { wc -l < "$work/sn.jsonl"; }
+ninv() { cat "$work/inv.jsonl" 2>/dev/null | wc -l; }
+patches_since() { tail -n +"$(($1 + 1))" "$work/sn.jsonl" | grep -c '"PATCH"'; }
+svc1="$(newticket $'vm_name: svc01\ntemplate: rhel9-gold')"
+n1=$(nsn)
+run "service: one not in vm_deploy_services - refused before the ticket is read or written" fail vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$svc1" -e "$rules" -e "$svcs" -e vm_deploy_service=webb \
+    -- "Nothing was built or written on the ticket: service webb is not one of vm_deploy_services (nogrp, test, web)"
+run "service: its group is not in the AAP inventory - refused before anything is built or written, saying what to create" fail \
+    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$svc1" -e "$rules" -e "$svcs" -e vm_deploy_service=nogrp \
+    -- "service nogrp (vm_deploy_services): inventory Linux servers has no group nope: create it in AAP"
+(unset CONTROLLER_HOST; run "service with an inventory, no AAP credential: refused before anything is built" fail vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$svc1" -e "$rules" -e "$svcs" -e vm_deploy_service=web \
+    -- 'No AAP connection: attach a credential of type \"Red Hat Ansible Automation Platform\"') || fails=$((fails + 1))
+[ "$(patches_since "$n1")" = 0 ] && echo "ok   -   ...nothing written on the ticket" || { echo "FAIL -   ...a refused service wrote on the ticket"; fails=$((fails + 1)); }
+run "service, dry run: what it would do in AAP, the Overwrite warning; nothing added" ok vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$svc1" -e "$rules" -e "$svcs" -e vm_deploy_service=WEB \
+    -- "AAP inventory Linux servers, group web: would be added as svc01.example.mil" \
+       "WARNING: inventory Linux servers is filled by source core file with Overwrite on" 'Service: web - in the VM notes: \"Web server for the test.\"'
+[ "$(ninv)" = 0 ] && echo "ok   -   ...nothing added in AAP" || { echo "FAIL -   ...the dry run added to AAP"; fails=$((fails + 1)); }
+n1=$(nsn)
+run "service web: svc01 built, its notes say the service, it joins AAP inventory Linux servers, group web" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$svc1" -e "$rules" -e "$svcs" -e vm_deploy_service=web \
+    -- "VM deploy $svc1: svc01 deployed" "AAP inventory Linux servers, group web: added as svc01.example.mil"
+"$py" - "$work/inv.jsonl" "$svc1" <<'EOPY' && echo "ok   -   ...AAP: added with its ticket and service, then joined the group" || { echo "FAIL -   ...AAP inventory"; cat "$work/inv.jsonl"; fails=$((fails + 1)); }
+import json, sys
+log = [json.loads(l) for l in open(sys.argv[1])]
+a = log[0]
+sys.exit(0 if len(log) == 2 and a["added"] == "svc01.example.mil" and a["inventory"] == 7 and a["variables"]["deployed_ticket"] == sys.argv[2]
+         and a["variables"]["deployed_service"] == "web" and "ansible_host" not in a["variables"] and a["description"].startswith("Built by AAP job 4711")
+         and log[1]["joined"] == "web" else 1)
+EOPY
+VMWARE_PORT=$port "$py" - "$svc1" <<'EOPY' && echo "ok   -   ...the VM's notes: the deploy sentence first (the VMs created report reads it), the service, the ticket's mark" || { echo "FAIL -   ...VM notes"; fails=$((fails + 1)); }
+import os, re, sys
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+v = [x for x in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if x.name == "svc01"][0]
+a = v.config.annotation or ""
+m = re.match(r"^Deployed from (?P<template>.+?) for (?P<ticket>\S+) by ", a)
+print(a)
+sys.exit(0 if m and m.group("ticket") == sys.argv[1] and m.group("template") == "rhel9-gold" and " UTC. Web server for the test." in a
+         and re.search(r"\[site-automation ticket=%s state=built\]$" % re.escape(sys.argv[1]), a) else 1)
+EOPY
+"$py" - "$work/sn.jsonl" "$n1" <<'EOPY' && echo "ok   -   ...the ticket's result note says the service and the AAP inventory" || { echo "FAIL -   ...result note"; fails=$((fails + 1)); }
+import json, sys
+notes = [json.loads(l)["body"].get("work_notes", "") for l in list(open(sys.argv[1]))[int(sys.argv[2]):] if '"PATCH"' in l]
+r = [n for n in notes if n.startswith("[AAP] VM svc01 deployed")]
+sys.exit(0 if r and "\nService: web\nAAP inventory Linux servers, group web: added as svc01.example.mil" in r[-1] else 1)
+EOPY
+n2=$(ninv)
+run "service web, the same ticket again: svc01 left as it is, already in AAP - nothing added twice" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$svc1" -e "$rules" -e "$svcs" -e vm_deploy_service=web \
+    -- "AAP inventory Linux servers, group web: svc01.example.mil is in it already"
+[ "$(ninv)" = "$n2" ] && echo "ok   -   ...nothing added in AAP" || { echo "FAIL -   ...added twice"; fails=$((fails + 1)); }
+svc2="$(newticket $'vm_name: svc02, app01\ntemplate: rhel9-gold')"
+n2=$(ninv)
+run "service, two VMs, vCenter refuses one (its name exists): nothing built, nothing added in AAP" fail vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$svc2" -e "$rules" -e "$svcs" -e vm_deploy_service=web \
+    -- "Nothing was built: app01: a VM named app01 already exists"
+[ "$(ninv)" = "$n2" ] && echo "ok   -   ...nothing added in AAP" || { echo "FAIL -   ...added though nothing was built"; fails=$((fails + 1)); }
+svc5="$(newticket $'vm_name: svc02, svc05\ntemplate: rhel9-gold')"
+n1=$(nsn)
+run "service, two VMs: each joins AAP right after its build, each note says so" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$svc5" -e "$rules" -e "$svcs" -e vm_deploy_service=web \
+    -- "svc02 - AAP inventory Linux servers, group web: added as svc02.example.mil" "svc05 - AAP inventory Linux servers, group web: added as svc05.example.mil"
+"$py" - "$work/sn.jsonl" "$n1" <<'EOPY' && echo "ok   -   ...each VM's note has its own AAP line" || { echo "FAIL -   ...per-VM notes"; fails=$((fails + 1)); }
+import json, sys
+notes = [json.loads(l)["body"].get("work_notes", "") for l in list(open(sys.argv[1]))[int(sys.argv[2]):] if '"PATCH"' in l]
+ok = all(any(n.startswith("[AAP] VM %s deployed" % v) and "\nAAP inventory Linux servers, group web: added as %s.example.mil" % v in n for n in notes)
+         for v in ("svc02", "svc05"))
+sys.exit(0 if ok else 1)
+EOPY
+svc6="$(newticket $'vm_name: svc06\ntemplate: rhel9-gold')"
+n1=$(nsn); n2=$(ninv)
+run "service, the workflow's propose step: the plan note says where it would go in AAP; nothing built, nothing added" ok \
+    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$svc6" -e "$rules" -e "$svcs" -e vm_deploy_service=web -e vm_deploy_phase=propose \
+    -- "would be added as svc06.example.mil"
+"$py" - "$work/sn.jsonl" "$n1" <<'EOPY' && echo "ok   -   ...the plan note" || { echo "FAIL -   ...plan note"; fails=$((fails + 1)); }
+import json, sys
+notes = [json.loads(l)["body"].get("work_notes", "") for l in list(open(sys.argv[1]))[int(sys.argv[2]):] if '"PATCH"' in l]
+sys.exit(0 if any(n.startswith("[AAP] Checked") and "\n- Service: web\n- AAP inventory Linux servers, group web: would be added as svc06.example.mil" in n
+                  for n in notes) else 1)
+EOPY
+if [ "$(ninv)" = "$n2" ] && ! state svc06 "1" >/dev/null 2>&1; then echo "ok   -   ...nothing built or added"; else echo "FAIL -   ...the propose step built or added"; fails=$((fails + 1)); fi
+svc3="$(newticket $'vm_name: svc03\ntemplate: rhel9-gold')"
+CONTROLLER_HOST="http://127.0.0.1:$aap_port2" run "service, AAP refuses the host (HTTP 403): the VM is built, the ticket closed, a WARNING says add it by hand" ok \
+    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$svc3" -e "$rules" -e "$svcs" -e vm_deploy_service=web \
+    -e '{"vm_deploy_done_fields": {"state": "6", "close_notes": "VM deployed"}}' \
+    -- "VM deploy $svc3: svc03 deployed" "WARNING: AAP inventory Linux servers, group web: NOT added - AAP refused to add it to inventory Linux servers (HTTP 403)" \
+       "Add svc03.example.mil by hand" "Ticket closed: close_notes = VM deployed, state = 6"
+"$py" - "$work/sn.jsonl" "$svc3" <<'EOPY' && echo "ok   -   ...said on the ticket, and the ticket closed after it" || { echo "FAIL -   ...403 note / close"; fails=$((fails + 1)); }
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if '"PATCH"' in l]
+rows = rows[-3:]
+note = [r for r in rows if "NOT added - AAP refused" in r["body"].get("work_notes", "")]
+close = [r for r in rows if r["body"].get("state") == "6"]
+sys.exit(0 if note and close and rows.index(note[0]) < rows.index(close[0]) else 1)
+EOPY
+svc4="$(newticket $'vm_name: svc04\ntemplate: rhel9-gold')"
+(unset CONTROLLER_HOST; run "service with the notes only (no inventory): no AAP credential needed" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$svc4" -e "$rules" -e "$svcs" -e vm_deploy_service=test -- "VM deploy $svc4: svc04 deployed" 'Service: test - in the VM notes: \"Test box.\"') \
+    || fails=$((fails + 1))
+check "  ...its notes have the service's words after the deploy sentence" svc04 "'UTC. Test box.\\n[site-automation ticket=' in v['annotation']" "True"
+kill "$aap_pid" "$aap_pid2" 2>/dev/null
+unset CONTROLLER_HOST CONTROLLER_USERNAME CONTROLLER_PASSWORD
+
 unset SN_HOST SN_USERNAME SN_PASSWORD
 kill "$sn_pid" 2>/dev/null
 

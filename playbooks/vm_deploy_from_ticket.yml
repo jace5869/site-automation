@@ -5,7 +5,7 @@
 # ticket what it builds, deploys the template (host name and DHCP by guest customization), and
 # writes the result - IP address included - on the ticket. Check = a dry run: builds nothing.
 # Runs on the AAP side: attach the "VMware vCenter" and "ServiceNow API" credentials; no Limit.
-# docs/VMWARE.md, "Deploy a VM from a ServiceNow ticket"
+# docs/VM_DEPLOY_GUIDE.md (also a PDF: docs/pdf/Site-Automation-VM-Deploy-Guide.pdf)
 #   ansible-playbook playbooks/vm_deploy_from_ticket.yml -e vm_deploy_ticket=INC0012345
 - name: Deploy a VM from a ServiceNow ticket
   hosts: localhost

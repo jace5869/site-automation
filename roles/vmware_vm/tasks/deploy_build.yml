@@ -210,6 +210,9 @@
     _vd_res: []
     _vd_note_status: []
     _vd_ds_planned: {}
+    _vd_reg_hosts: []                  # each VM in its service's AAP inventory (deploy_register.yml)
+    _vd_inv: {}
+    _vd_inv_bad: []
 
 - name: VMware | deploy {{ _vd.spec.vm_name }}
   ansible.builtin.include_tasks: deploy_build_one.yml
@@ -438,6 +441,22 @@
     label: "{{ _vd_t.number }}"
   failed_when: false
 
+- name: VMware | what the report says about the service and its AAP inventory
+  ansible.builtin.set_fact:
+    _vd_svc_lines: >-
+      {%- set sv = _vd_svc | default({}) -%}
+      {%- set out = [] -%}
+      {%- if sv.name | default('') -%}
+      {%-   set _ = out.append('Service: ' ~ sv.name ~ ' - in the VM notes: "' ~ sv.note ~ '"') -%}
+      {%- endif -%}
+      {%- for h in _vd_reg_hosts | default([]) -%}
+      {%-   set _ = out.append(('' if h.ok else 'WARNING: ') ~ (h.vm ~ ' - ' if _vd_multi | bool else '') ~ (h | vm_deploy_inventory_text)) -%}
+      {%- endfor -%}
+      {%- for n in (_vd_svc_check | default({})).notes | default([]) -%}
+      {%-   set _ = out.append('WARNING: ' ~ n) -%}
+      {%- endfor -%}
+      {{ out }}
+
 - name: VMware | deploy report
   ansible.builtin.include_tasks: report.yml
   when: not _vd_multi | bool
@@ -462,6 +481,7 @@
          + (_vd_vm.notes | default([]) | map('regex_replace', '^', 'NOTE: ') | list)
          + (['WARNING: the result could not be written on the ticket (HTTP ' ~ _vd_note_bad | first ~ ')']
             if not ansible_check_mode and _vd_note_bad | length > 0 else [])
+         + _vd_svc_lines
          + (['Ticket closed: ' ~ _vd_done | dictsort | map('join', ' = ') | join(', ')] if _vd_closed.ok | default(false) else [])
          + (['WARNING: the ticket was NOT closed: ' ~ _vd_closed.why] if _vd_closed and not _vd_closed.ok | default(true) else [])
          + _vd_tlines | default([]) }}
@@ -490,6 +510,10 @@
       {%- if _vd_vm.notes | default([]) -%}
       {%-   set _ = sections.append({'title': 'Notes', 'status': 'warning', 'lines': _vd_vm.notes}) -%}
       {%- endif -%}
+      {%- if _vd_svc_lines -%}
+      {%-   set _ = sections.append({'title': 'Service and AAP inventory', 'status': 'warning' if _vd_svc_lines | select('match', 'WARNING: ') | list else 'ok',
+                                     'lines': _vd_svc_lines}) -%}
+      {%- endif -%}
       {%- if _vd_closed -%}
       {%-   set _ = sections.append({'title': 'The ticket', 'status': 'ok' if _vd_closed.ok else 'warning',
                                      'lines': ['Closed: ' ~ _vd_done | dictsort | map('join', ' = ') | join(', ')] if _vd_closed.ok
@@ -497,7 +521,8 @@
       {%- endif -%}
       {{ {'title': _vm_report_subject | trim,
           'status': 'info' if _vd_dry | bool and _vd_ok | bool else ('critical' if not _vd_ok | bool
-                    else ('warning' if _vd_vm.notes | default([]) or (_vd_closed and not _vd_closed.ok | default(true)) else 'ok')),
+                    else ('warning' if _vd_vm.notes | default([]) or (_vd_closed and not _vd_closed.ok | default(true))
+                                       or _vd_svc_lines | select('match', 'WARNING: ') | list else 'ok')),
           'subtitle': 'Ticket ' ~ _vd_rec.number ~ ' - ' ~ _vd_job,
           'summary': [{'label': 'VM', 'value': _vd.spec.vm_name},
                       {'label': 'IP address', 'value': _vd_v.ip | default('', true) or '-', 'status': 'ok' if _vd_v.ip | default('') else ''},
@@ -534,6 +559,7 @@
       {{ out + (_vd.spec | vm_deploy_spec_text(_vd.sources))
          + (['WARNING: ' ~ _vd_note_bad | length ~ ' result note(s) could not be written on the ticket (HTTP ' ~ _vd_note_bad | first ~ ')']
             if not ansible_check_mode and _vd_note_bad | length > 0 else [])
+         + _vd_svc_lines
          + (['Ticket closed: ' ~ _vd_done | dictsort | map('join', ' = ') | join(', ')] if _vd_closed.ok | default(false) else [])
          + (['WARNING: the ticket was NOT closed: ' ~ _vd_closed.why] if _vd_closed and not _vd_closed.ok | default(true) else [])
          + _vd_tlines | default([]) }}
@@ -569,6 +595,10 @@
       {%- if notes -%}
       {%-   set _ = sections.append({'title': 'Notes', 'status': 'warning', 'lines': notes}) -%}
       {%- endif -%}
+      {%- if _vd_svc_lines -%}
+      {%-   set _ = sections.append({'title': 'Service and AAP inventory', 'status': 'warning' if _vd_svc_lines | select('match', 'WARNING: ') | list else 'ok',
+                                     'lines': _vd_svc_lines}) -%}
+      {%- endif -%}
       {%- if _vd_closed -%}
       {%-   set _ = sections.append({'title': 'The ticket', 'status': 'ok' if _vd_closed.ok else 'warning',
                                      'lines': ['Closed: ' ~ _vd_done | dictsort | map('join', ' = ') | join(', ')] if _vd_closed.ok
@@ -576,7 +606,8 @@
       {%- endif -%}
       {{ {'title': _vm_report_subject | trim,
           'status': 'info' if _vd_dry | bool and _vd_all_ok | bool else ('critical' if not _vd_all_ok | bool
-                    else ('warning' if notes or (_vd_closed and not _vd_closed.ok | default(true)) else 'ok')),
+                    else ('warning' if notes or (_vd_closed and not _vd_closed.ok | default(true))
+                                       or _vd_svc_lines | select('match', 'WARNING: ') | list else 'ok')),
           'subtitle': 'Ticket ' ~ _vd_rec.number ~ ' - ' ~ _vd_job,
           'summary': [{'label': 'VMs', 'value': _vd_res | length},
                       {'label': 'Deployed' if not _vd_dry | bool else 'Ready', 'value': _vd_nok ~ ' of ' ~ _vd_res | length,
@@ -591,7 +622,8 @@
         {%- for r in _vd_res -%}
         {%-   set _ = vms.append({'name': r._vd_i.spec.vm_name, 'spec': r._vd_i.spec, 'vm': r.vm | default({}), 'notes': r.notes | default([]),
                                   'ok': not r.failed | default(false), 'error': r.msg | default('') if r.failed | default(false) else '',
-                                  'existing': (r.vm | default({})).existing | default(false)}) -%}
+                                  'existing': (r.vm | default({})).existing | default(false),
+                                  'aap_inventory': (_vd_inv | default({}))[r._vd_i.spec.vm_name] | default({})}) -%}
         {%- endfor -%}
         {{ {'ticket': _vd_rec.number, 'table': _vd_table, 'spec': _vd.spec, 'sources': _vd.sources,
             'vm': _vd_vm.vm | default({}), 'notes': _vd_vm.notes | default([]), 'ok': _vd_all_ok | bool,
@@ -601,7 +633,11 @@
             'notes_also': _vd_also | default([]) | map(attribute='number') | list,
             'tasks_closed': _vd_tclosed | default([]) | selectattr('ok') | map(attribute='number') | list,
             'tasks_not_closed': _vd_tclosed | default([]) | rejectattr('ok') | map(attribute='number') | list,
-            'issues': _vd_issues, 'vms': vms} }}
+            'issues': _vd_issues, 'vms': vms,
+            'service': {'name': (_vd_svc | default({})).name | default(''), 'note': (_vd_svc | default({})).note | default(''),
+                        'inventory': (_vd_svc | default({})).inventory | default(''), 'group': (_vd_svc | default({})).group | default(''),
+                        'not_added': _vd_inv_bad | default([]) | map(attribute='vm') | list,
+                        'warnings': (_vd_svc_check | default({})).notes | default([])}} }}
 
 - name: VMware | the VM was deployed{{ ' - every one' if _vd_multi | bool else '' }}
   ansible.builtin.assert:

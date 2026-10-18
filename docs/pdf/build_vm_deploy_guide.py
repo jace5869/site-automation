@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Build "Site Automation - VM Deploy Guide" (PDF): the VM deploy job on its own - the standard setup,
-the flow, which ticket to launch with, what closes the task, where the notes go and the VM is placed,
-ready-made configurations (docs/VM_DEPLOY_GUIDE.md) - and every vm_deploy_* setting with its default, its
-whole comment (roles/vmware_vm/defaults/main.yml, read by scripts/gen_variable_reference.py's parser) and
-an example with when to set it (docs/vm_deploy_examples.yml).
+"""Build "Site Automation - VM Deploy Guide" (PDF): the VM deploy job, complete - the standard setup,
+setting it up in AAP step by step (the EE, the vCenter role, the credentials, the job template and its
+survey, the approval workflow, the scheduled pickup, the server's service), how a run works, what the
+requester writes, where the VM goes, ready-made configurations, troubleshooting, where the logic lives
+(docs/VM_DEPLOY_GUIDE.md: each top-level "# " heading is a chapter) - and every vm_deploy_* setting with
+its default, its whole comment (roles/vmware_vm/defaults/main.yml, read by
+scripts/gen_variable_reference.py's parser) and an example with when to set it (docs/vm_deploy_examples.yml).
 
     python3 build_vm_deploy_guide.py [output.pdf]
 """
@@ -23,8 +25,8 @@ LEVELS = {"standard": ("Standard setup", GREEN), "often": ("Set when needed", TE
 
 class VmDeployDoc(g.OpsDoc):
     cover_title = "VM Deploy Guide"
-    cover_lines = ("VMs from a ServiceNow ticket with AAP: the flow, the settings",
-                   "that decide it, and ready-made configurations")
+    cover_lines = ("VMs from a ServiceNow ticket with AAP: set it up step by step,",
+                   "how a run works, what to do when it goes wrong, every setting")
     cover_meta = "Site Automation - for the deploy template's owners"
     header_title = "Site Automation  -  VM Deploy Guide"
     pdf_title = "Site Automation - VM Deploy Guide"
@@ -166,12 +168,12 @@ def settings_table(rows, ex):
     return t
 
 
-def appendix_settings():
+def appendix_settings(number):
     h2 = copy.copy(ST["h2"])            # the same style (the contents list reads its name), not kept
     h2.keepWithNext = 0                 # with the long table after it: CondPageBreak keeps them together
     ex = examples()
     std = [n for n, e in ex.items() if e["level"] == "standard"]
-    story = [PageBreak()] + section("2. Every VM deploy setting: its default, an example, when to set it", [P(
+    story = [PageBreak()] + section("%d. Every VM deploy setting: its default, an example, when to set it" % number, [P(
         "Every `vm_deploy_*` setting of the deploy job and of the scheduled pickup, in the order of "
         "`roles/vmware_vm/defaults/main.yml`: the value it has when you set nothing, the whole comment the "
         "file has for it, an example (`docs/vm_deploy_examples.yml`) and when you would set it. The other "
@@ -190,17 +192,37 @@ def appendix_settings():
     return story
 
 
+FIRST_CHAPTER = "What it does, and the standard setup"
+
+
+def chapters(text):
+    """docs/VM_DEPLOY_GUIDE.md -> [(title, its markdown)]: each top-level '# ' heading outside a code
+    block starts a chapter (a '# label' line inside a YAML block does not)."""
+    out, fence = [], False
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith("```"):
+            fence = not fence
+        if not fence and line.startswith("# "):
+            out.append([line[2:].strip(), ""])
+        if out:
+            out[-1][1] += line
+    out[0][0] = FIRST_CHAPTER
+    return out
+
+
 def build():
     story = [Spacer(1, 3.55 * inch), P(
-        "**What this is.** The VM deploy job on its own: the standard setup to start with, how a run flows, "
-        "which ticket number to launch with, what closes the change task (and what never closes the change), "
-        "where the notes go, how the VM's place is chosen, configurations to copy, where the logic lives - "
-        "and every setting with its default, an example and when to set it.", "lead"),
+        "**What this is.** The VM deploy job, complete: the standard setup to start with; setting it up in "
+        "AAP step by step - the execution environment, the vCenter role, the credentials, the job template "
+        "and its survey, the approval workflow, the scheduled pickup, the server's service and its AAP "
+        "inventory; how a run works; what requesters write; where each VM goes; configurations to copy; "
+        "what to do when something goes wrong - and every setting with its default, an example and when "
+        "to set it.", "lead"),
         space(4),
         callout("note", "How to read it", [
-            "New to it: *Start here: the standard setup*, then a dry run (Check) on a test change. More "
-            "than that: *Ready-made configurations*. Setting up the templates in AAP: the *Operations "
-            "Runbooks Setup Guide*, VMware chapter.",
+            "New to it: chapter 1 (*Start here: the standard setup*), then chapter 2, *Set it up in AAP, "
+            "step by step*, in order - each step says what you should see. A message to fix: *When "
+            "something goes wrong*.",
             "Rendered from `docs/VM_DEPLOY_GUIDE.md` and `roles/vmware_vm/defaults/main.yml` in the "
             "site-automation repository (version %s)."
             % g.SA_VERSION]),
@@ -210,8 +232,10 @@ def build():
     story += [toc, PageBreak()]
     text = open("%s/%s" % (g.REPO, GUIDE), encoding="utf-8").read()
     text = re.sub(r"<!--(?!\s*figure:).*?-->\s*", "", text, flags=re.S)   # editors' notes; figures stay
-    story += g.render(text, "1. The VM deploy job: flow, settings, configurations")
-    story += appendix_settings()
+    parts = chapters(text)
+    for n, (title, part) in enumerate(parts, 1):
+        story += g.render(part, "%d. %s" % (n, title))
+    story += appendix_settings(len(parts) + 1)
     VmDeployDoc(OUT).multiBuild(story)
     print("wrote", OUT)
 

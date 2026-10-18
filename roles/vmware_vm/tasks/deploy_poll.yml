@@ -173,7 +173,7 @@
 - name: VMware | AAP can start the workflow (nothing is picked up otherwise)
   ansible.builtin.assert:
     that: not _vp_wf.error
-    fail_msg: "Nothing was picked up: {{ _vp_wf.error }}. docs/VMWARE.md, \"Pick up tickets automatically\""
+    fail_msg: "Nothing was picked up: {{ _vp_wf.error }}. docs/VM_DEPLOY_GUIDE.md, \"The scheduled pickup\""
     quiet: true
   when: not _vp_dry | bool
 

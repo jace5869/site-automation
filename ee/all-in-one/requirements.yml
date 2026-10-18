@@ -1,0 +1,32 @@
+---
+# The Ansible collections of the all-in-one execution environment (ee/all-in-one, docs/EXECUTION_ENVIRONMENT.md).
+# "certified" = Red Hat Automation Hub (also in a Private Automation Hub that syncs it); "community" = Galaxy
+# (a Private Automation Hub needs its community repository synced for these). ansible-builder reads each
+# collection's own Python and system needs: they are not repeated in requirements.txt / bindep.txt.
+# After the first good build, pin each one to the version it got (ansible-galaxy collection list).
+collections:
+  # ---- Linux ----
+  - name: ansible.posix                 # certified: acl, firewalld, mount, sysctl, selinux ...
+  - name: ansible.utils                 # certified: ipaddr filters, validate, cli_parse
+  - name: community.general             # community: hundreds of modules (ldap_*, mssql_*, nmcli, ...)
+  - name: community.crypto              # community: certificates, CSRs, keys
+  - name: containers.podman             # community: podman containers, pods, Quadlet
+  - name: redhat.rhel_system_roles      # certified (Automation Hub only): RHEL System Roles
+  # ---- Windows and Active Directory ----
+  - name: ansible.windows               # certified: the core Windows modules
+  - name: microsoft.ad                  # certified: AD objects, users, groups - and the LDAP inventory plugin
+  - name: community.windows             # community: more Windows modules
+  # ---- VMware ----
+  - name: vmware.vmware                 # certified: vCenter (site-automation's VMware jobs need >= 2.11)
+    version: ">=2.11.0"
+  # ---- NetApp ----
+  - name: netapp.ontap                  # certified: ONTAP REST modules
+  # ---- Databases ----
+  - name: ansible.mysql                 # certified: MySQL and MariaDB (was community.mysql)
+  # ---- Cisco and network ----
+  - name: ansible.netcommon             # certified: network_cli, netconf, httpapi connections
+  - name: cisco.ios                     # certified: IOS / IOS-XE
+  - name: cisco.nxos                    # certified: Nexus
+  - name: cisco.asa                     # certified: ASA firewalls
+  # ---- ServiceNow ----
+  - name: servicenow.itsm               # certified: tickets, and the CMDB inventory plugin (servicenow.itsm.now)

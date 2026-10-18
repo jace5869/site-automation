@@ -136,7 +136,7 @@ def fault_text(e):
         ui = PRIVILEGES.get(pid, "")
         moid = getattr(obj, "_moId", "") if obj is not None else ""
         why = (" - the template is encrypted (it has a vTPM, or encrypted disks): its deploy needs the Cryptographic operations "
-               "privileges in docs/VMWARE.md" if pid.startswith("Cryptographer.") else
+               "privileges in docs/VM_DEPLOY_GUIDE.md" if pid.startswith("Cryptographer.") else
                # every role has System.View: lacking it means no permission on that object at all
                (" - the account has no role on that object at all (every role, Read-only too, includes this one): its permission "
                 "is set on a parent without Propagate to children, or the object has its own (e.g. No access)"

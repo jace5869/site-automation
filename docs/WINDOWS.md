@@ -80,6 +80,9 @@ not. **The Windows connection test tells you**: its first part runs inside the E
       - requests-ntlm
   ```
 
+- or build the all-in-one EE: it has these, Kerberos for a FIPS host, and the VMware, NetApp,
+  database and Cisco collections too ([EXECUTION_ENVIRONMENT.md](EXECUTION_ENVIRONMENT.md)).
+
 ## Step 3. The credential
 
 **Automation Execution → Infrastructure → Credentials → Create credential**:
