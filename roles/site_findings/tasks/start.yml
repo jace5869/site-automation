@@ -4,6 +4,7 @@
   ansible.builtin.set_fact:
     site_findings: []
     site_checks_run: []
+    site_checks_failed: []
 
 # Once per run: which hosts were targeted. The ServiceNow step compares this with the hosts that
 # reported, so a host that never reported (unreachable, sudo failed) is not mistaken for healthy.

@@ -661,7 +661,7 @@ chg7="$(newrec change_request '{"short_description": "Staging servers", "descrip
 ct7="$(newrec change_task "{\"short_description\": \"Task to deploy a staging VM\", \"description\": \"vm_name: wrong01\ncpu: 1\", \"change_request\": \"$chg7\", \"assignment_group\": \"Linux Operations\"}")"
 run "vm_deploy_parent_wins: the change's lines over its task's description (dry run); the notes would go on both" ok vm_deploy_from_ticket.yml --check \
     -e vm_deploy_ticket="$ct7" -e "$rules" -e "$both" \
-    -- "vm_name: cwapp01   (from parent $chg7 description)" "cpu: 2   (from parent $chg7 description)" "Notes on $ct7 and $chg7; only $ct7 is closed"
+    -- "vm_name: cwapp01   (from parent $chg7 description)" "cpu: 2   (from parent $chg7 description)" "Notes on $ct7 and $chg7. $ct7 is closed when every VM is built."
 n1=$(wc -l < "$work/sn.jsonl")
 run "built from the task: every note on the task and on its change, only the task closed" ok vm_deploy_from_ticket.yml \
     -e vm_deploy_ticket="$ct7" -e "$rules" -e "$both" -- "VM deploy $ct7: cwapp01 deployed"
@@ -685,7 +685,7 @@ ct8="$(newrec change_task "{\"short_description\": \"Task to deploy a staging VM
 ct8b="$(newrec change_task "{\"short_description\": \"Open the firewall\", \"change_request\": \"$chg8\", \"assignment_group\": \"Linux Operations\"}")"
 n1=$(wc -l < "$work/sn.jsonl")
 run "launched with the change (a web front end): its deploy task gets every note too, not closed" ok vm_deploy_from_ticket.yml \
-    -e vm_deploy_ticket="$chg8" -e "$rules" -e "$both" -- "Notes on $chg8 and $ct8; only $chg8 is closed" "VM deploy $chg8: cwapp02 deployed"
+    -e vm_deploy_ticket="$chg8" -e "$rules" -e "$both" -- "Notes on $chg8 and $ct8. $chg8 is never closed (no close values for change_request); its tasks found are left open (vm_deploy_close_tasks: false)." "VM deploy $chg8: cwapp02 deployed"
 "$py" - "$work/sn.jsonl" "$n1" "$sn_port" "$ct8" "$ct8b" <<'EOPY' && echo "ok   -   ...the deploy task has the notes; the other task none; neither closed" || { echo "FAIL -   ...notes on the change's task"; fails=$((fails + 1)); }
 import base64, json, sys, urllib.request
 lines = [json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):]]
@@ -717,7 +717,72 @@ sys.exit(0 if (vi["state"], other["state"], change["state"]) == ("3", "1", "-1")
 EOPY
 chg9="$(newrec change_request '{"short_description": "No task", "description": "vm_name: cwapp03\ntemplate: rhel9-gold", "state": "-1", "approval": "approved", "assignment_group": "Linux Operations"}')"
 run "launched with a change that has no deploy task: the notes on the change only, and it says so" ok vm_deploy_from_ticket.yml --check \
-    -e vm_deploy_ticket="$chg9" -e "$rules" -e "$both" -- "No open task of $chg9 for Linux Operations: the notes are on the change only."
+    -e vm_deploy_ticket="$chg9" -e "$rules" -e "$both" -- "No open task of $chg9 matches group Linux Operations and short_descriptionLIKEto deploy: the notes are on the change only."
+# ---- launched with a change of another group (vm_deploy_assignment_group_by_table): any group on the change;
+# its task of vm_deploy_assignment_group gets every note and is closed, another group's task is left alone
+anyg='{"vm_deploy_notes_also": ["parent", "tasks"], "vm_deploy_close_tasks": true,
+       "vm_deploy_done_fields_by_table": {"change_task": {"state": "3", "close_notes": "VM deployed by AAP"}}}'
+chg11="$(newrec change_request '{"short_description": "Staging server five", "description": "vm_name: cwapp05\ntemplate: rhel9-gold\ncpu: 2\nmemory_gb: 4", "state": "-1", "approval": "approved", "assignment_group": "Change Board"}')"
+ct11="$(newrec change_task "{\"short_description\": \"Deploy the VM\", \"change_request\": \"$chg11\", \"assignment_group\": \"Linux Operations\"}")"
+ct11b="$(newrec change_task "{\"short_description\": \"Deploy the VM\", \"change_request\": \"$chg11\", \"assignment_group\": \"Change Board\"}")"
+run "launched with a change of another group: refused, the setting named (dry run)" fail vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$chg11" -e "$rules" -e "$anyg" \
+    -- "the ticket is assigned to 'Change Board', not to 'Linux Operations' (vm_deploy_assignment_group)"
+run "...vm_deploy_assignment_group_by_table {change: ''}: a change of any group (dry run); the notes would go on its task of the group" ok \
+    vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$chg11" -e "$rules" -e "$anyg" -e '{"vm_deploy_assignment_group_by_table": {"change": ""}}' \
+    -- "Notes on $chg11 and $ct11. $chg11 is never closed (no close values for change_request); its tasks found are closed too (vm_deploy_close_tasks)." "vm_name: cwapp05   (from description)"
+n1=$(wc -l < "$work/sn.jsonl")
+run "...built: every note on the change and on its task of the group, that task closed" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$chg11" -e "$rules" -e "$anyg" -e '{"vm_deploy_assignment_group_by_table": {"change_request": ""}}' \
+    -- "VM deploy $chg11: cwapp05 deployed" "Task $ct11 closed: close_notes = VM deployed by AAP, state = 3"
+"$py" - "$work/sn.jsonl" "$n1" "$sn_port" "$chg11" "$ct11" "$ct11b" <<'EOPY' && echo "ok   -   ...the change: the notes, still open; its task of the group: the notes, closed (3); the other group's task: nothing" || { echo "FAIL -   ...a change of any group"; fails=$((fails + 1)); }
+import base64, json, sys, urllib.request
+lines = [json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):]]
+h = {"Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode()}
+get = lambda t, n: json.load(urllib.request.urlopen(urllib.request.Request(
+    "http://127.0.0.1:%s/api/now/table/%s?sysparm_query=number=%s" % (sys.argv[3], t, n), headers=h)))["result"][0]
+change, task, other = get("change_request", sys.argv[4]), get("change_task", sys.argv[5]), get("change_task", sys.argv[6])
+on = lambda t, r: [l["body"] for l in lines if l["method"] == "PATCH" and l["path"].startswith("/api/now/table/%s/%s" % (t, r["sys_id"]))]
+first = lambda t, r: [b.get("work_notes", "").splitlines()[0] for b in on(t, r) if b.get("work_notes")]
+ok = (all(set(b) <= {"work_notes", "comments"} for b in on("change_request", change))
+      and "[AAP] Deploying this VM (AAP job 4711 by operator1):" in first("change_request", change)
+      and "[AAP] VM cwapp05 deployed (AAP job 4711 by operator1)." in first("change_request", change)
+      and "[AAP] VM cwapp05 deployed (AAP job 4711 by operator1)." in first("change_task", task)
+      and not on("change_task", other) and (change["state"], task["state"], other["state"]) == ("-1", "3", "1"))
+print(change["state"], task["state"], other["state"], first("change_request", change), first("change_task", task), len(on("change_task", other)))
+sys.exit(0 if ok else 1)
+EOPY
+run "...a change task of another group is still refused: the setting is for changes only (dry run)" fail vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$ct11b" -e "$rules" -e "$anyg" -e '{"vm_deploy_assignment_group_by_table": {"change_request": ""}}' \
+    -- "the ticket is assigned to 'Change Board', not to 'Linux Operations' (vm_deploy_assignment_group)"
+# ---- the standard setup (docs/VM_DEPLOY_GUIDE.md): launched with the change of any group, its task found by its
+# words alone (no vm_deploy_assignment_group), the notes on both; the task left open - or closed with the one switch
+std='{"vm_deploy_templates": ["rhel9-*"], "vm_deploy_assignment_group": "", "vm_deploy_wait_ip": 3, "vm_deploy_wait_customization": 60,
+      "vm_deploy_notes_also": ["parent", "tasks"], "vm_deploy_notes_tasks_query": "short_descriptionLIKEwill deploy the VM",
+      "vm_deploy_done_fields_by_table": {"change_task": {"state": "3", "close_code": "successful", "close_notes": "VM deployed by AAP"}}}'
+chg13="$(newrec change_request '{"short_description": "Two staging servers", "description": "vm_name: cwapp13\ntemplate: rhel9-gold\ncpu: 2\nmemory_gb: 4", "state": "-1", "approval": "approved", "assignment_group": "Change Board"}')"
+ct13="$(newrec change_task "{\"short_description\": \"The server team will deploy the VM\", \"change_request\": \"$chg13\", \"assignment_group\": \"Linux Operations\"}")"
+ct13b="$(newrec change_task "{\"short_description\": \"Open the firewall\", \"change_request\": \"$chg13\", \"assignment_group\": \"Linux Operations\"}")"
+run "the standard setup: a change of any group, its task found by its words; the change never closed, the task left open" ok \
+    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$chg13" -e "$std" \
+    -- "Notes on $chg13 and $ct13. $chg13 is never closed (no close values for change_request); its tasks found are left open (vm_deploy_close_tasks: false)." \
+       "VM deploy $chg13: cwapp13 deployed"
+chg14="$(newrec change_request '{"short_description": "One more staging server", "description": "vm_name: cwapp14\ntemplate: rhel9-gold\ncpu: 2\nmemory_gb: 4", "state": "-1", "approval": "approved", "assignment_group": "Change Board"}')"
+ct14="$(newrec change_task "{\"short_description\": \"The server team will deploy the VM\", \"change_request\": \"$chg14\", \"assignment_group\": \"Linux Operations\"}")"
+run "...vm_deploy_close_tasks: true - the same, and the task closed when the VM is built" ok \
+    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$chg14" -e "$std" -e vm_deploy_close_tasks=true \
+    -- "its tasks found are closed too (vm_deploy_close_tasks)." "Task $ct14 closed:"
+"$py" - "$sn_port" "$chg13" "$ct13" "$ct13b" "$chg14" "$ct14" <<'EOPY' && echo "ok   -   ...the changes still open; the first task open with the notes, the other task untouched; the second task closed" || { echo "FAIL -   ...the standard setup"; fails=$((fails + 1)); }
+import base64, json, sys, urllib.request
+h = {"Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode()}
+get = lambda t, n: json.load(urllib.request.urlopen(urllib.request.Request(
+    "http://127.0.0.1:%s/api/now/table/%s?sysparm_query=number=%s&sysparm_display_value=false" % (sys.argv[1], t, n), headers=h)))["result"][0]
+c13, t13, o13, c14, t14 = (get("change_request", sys.argv[2]), get("change_task", sys.argv[3]), get("change_task", sys.argv[4]),
+                           get("change_request", sys.argv[5]), get("change_task", sys.argv[6]))
+states = (c13["state"], t13["state"], o13["state"], c14["state"], t14["state"])
+print(states, t14.get("close_code"))
+sys.exit(0 if states == ("-1", "1", "1", "-1", "3") and t14.get("close_code") == "successful" else 1)
+EOPY
 # ---- a change task: built only while its change is approved and in Implement (vm_deploy_ready_by_table),
 # the change's plain words read under the task's own, the task closed 'successful with issues' when something did not finish
 setrec() {  # setrec TABLE NUMBER JSON-BODY
@@ -839,18 +904,18 @@ EOPY
 incp="$(newticket $'Server names:\r\n- multi03\r\n- multi04\r\nRHEL 9, 2 cpus, 4gb ram')"
 close6='{"vm_deploy_done_fields": {"state": "6", "close_notes": "VMs deployed by AAP"}}'
 n3=$(wc -l < "$work/sn.jsonl")
-run "two VMs, one name taken: the other built, the job fails, the ticket stays open and says what to do" fail vm_deploy_from_ticket.yml \
+run "two VMs, one name taken: every VM checked in vCenter first - none built, the ticket says why" fail vm_deploy_from_ticket.yml \
     -e vm_deploy_ticket="$incp" -e "$rules" -e "$words" -e "$close6" \
-    -- "1 of 2 deployed - the ticket stays open" "multi03: deployed" "multi04: NOT deployed - a VM named multi04 already exists" \
-       "1 of 2 VMs not deployed: multi04: a VM named multi04 already exists"
-"$py" - "$work/sn.jsonl" "$n3" <<'EOPY' && echo "ok   -   ...notes: multi03 deployed, multi04 NOT deployed, '1 of 2 VMs built' with each one's result; not closed" || { echo "FAIL -   ...partial notes"; fails=$((fails + 1)); }
-import json, sys
+    -- "Nothing was built: multi04: a VM named multi04 already exists"
+vstate="VMWARE_PORT=$port $py $here/vcsim.py state"
+"$py" - "$work/sn.jsonl" "$n3" "$vstate" <<'EOPY' && echo "ok   -   ...one note: nothing built, multi04 and why; multi03 not in vCenter; not closed" || { echo "FAIL -   ...nothing built note"; fails=$((fails + 1)); }
+import json, subprocess, sys
 rows = [json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):] if '"PATCH"' in l]
 notes = [r["body"].get("work_notes", "") for r in rows]
-s = [n for n in notes if n.startswith("[AAP] 1 of 2 VMs built (")]
-sys.exit(0 if any(n.startswith("[AAP] VM multi03 deployed (") for n in notes) and any(n.startswith("[AAP] VM multi04 NOT deployed (") for n in notes)
-         and s and "\n- multi03: built\n- multi04: NOT deployed - a VM named multi04" in s[0] and s[0].splitlines()[-1].startswith("To fix it:")
-         and not any(r["body"].get("state") == "6" for r in rows) else 1)
+s = [n for n in notes if n.startswith("[AAP] Nothing was built (")]
+names = list(json.loads(subprocess.check_output(sys.argv[3], shell=True)))
+sys.exit(0 if s and "1 of 2 cannot be:\n- multi04: a VM named multi04 already exists" in s[0] and "multi03" not in names
+         and not any(n.startswith("[AAP] Deploying") for n in notes) and not any(r["body"].get("state") == "6" for r in rows) else 1)
 EOPY
 VMWARE_PORT=$port "$py" - <<'EOPY' || { echo "ABORT - multi04 delete"; exit 1; }
 import os, time
@@ -864,9 +929,82 @@ while t.info.state not in ("success", "error"):
     time.sleep(0.1)
 assert t.info.state == "success", t.info.error
 EOPY
-run "...the name freed, run again: multi03 left as it is, multi04 built, the ticket closed" ok vm_deploy_from_ticket.yml \
+run "...the name freed, run again: both built, the ticket closed" ok vm_deploy_from_ticket.yml \
     -e vm_deploy_ticket="$incp" -e "$rules" -e "$words" -e "$close6" \
-    -- "2 VMs (multi03, multi04) deployed" "multi03: already built (left as it is)" "multi04: deployed" "Ticket closed: close_notes = VMs deployed by AAP"
+    -- "2 VMs (multi03, multi04) deployed" "multi03: deployed" "multi04: deployed" "Ticket closed: close_notes = VMs deployed by AAP"
+VMWARE_PORT=$port "$py" "$here/vcsim.py" state | "$py" -c "import json,sys; v=json.load(sys.stdin)['multi04'][0]; sys.exit(0 if '[site-automation ticket=$incp state=built]' in v['annotation'] else 1)" \
+    && echo "ok   -   ...each VM marked for its ticket in its notes (state=built)" || { echo "FAIL -   ...the ticket mark"; fails=$((fails + 1)); }
+# a job of three VMs that stopped after the first two: one built (no result note), one cloned and not finished
+incs="$(newticket $'Server names:\r\n- rsm01\r\n- rsm02\r\n- rsm03\r\nRHEL 9, 2 cpus, 4gb ram')"
+VMWARE_PORT=$port "$py" - "$incs" <<'EOPY' || { echo "ABORT - the earlier run's VMs"; exit 1; }
+import os, sys, time
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+wait = lambda t: [time.sleep(0.1) for _ in iter(lambda: t.info.state in ("success", "error"), True)] and None or t.info.result
+src = [v for v in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if v.name == "DC0_C0_RP0_VM1"][0]
+for name, state in (("rsm01", "built"), ("rsm02", "building")):
+    note = "Deployed from rhel9-gold for %s by an earlier job.\n[site-automation ticket=%s state=%s]" % (sys.argv[1], sys.argv[1], state)
+    new = wait(src.CloneVM_Task(folder=src.parent, name=name, spec=vim.vm.CloneSpec(location=vim.vm.RelocateSpec(), powerOn=False)))
+    wait(new.ReconfigVM_Task(spec=vim.vm.ConfigSpec(annotation=note)))
+    if state == "built":
+        wait(new.PowerOnVM_Task())
+    elif new.runtime.powerState == "poweredOn":
+        wait(new.PowerOffVM_Task())
+EOPY
+nr=$(wc -l < "$work/sn.jsonl")
+run "three VMs, run again after a job stopped: the one built left, the one started finished, the third built - the ticket closed" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$incs" -e "$rules" -e "$words" -e "$close6" \
+    -- "3 VMs (rsm01, rsm02, rsm03) deployed" "rsm01: already built (left as it is)" "rsm02: deployed" "rsm03: deployed" \
+       "picked up rsm02 where an earlier run of this ticket stopped" "Ticket closed: close_notes = VMs deployed by AAP"
+"$py" - "$work/sn.jsonl" "$nr" "$vstate" "$incs" <<'EOPY' && echo "ok   -   ...the work notes say where it picked up; rsm02 powered on and marked built" || { echo "FAIL -   ...resume notes"; fails=$((fails + 1)); }
+import json, subprocess, sys
+rows = [json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):] if '"PATCH"' in l]
+notes = [r["body"].get("work_notes", "") for r in rows]
+dep = [n for n in notes if n.startswith("[AAP] Deploying 3 VMs")]
+vms = dict((k, v[0]) for k, v in json.loads(subprocess.check_output(sys.argv[3], shell=True)).items())
+ok = (dep and "Picking up where an earlier run for this ticket stopped:\n- rsm01: built already - left as it is\n"
+              "- rsm02: started, not finished - finished in place\n- rsm03: to build" in dep[0]
+      and any(n.startswith("[AAP] VM rsm01 deployed (") and "Built by an earlier run for this ticket: left as it is." in n for n in notes)
+      and any(n.startswith("[AAP] VM rsm02 deployed (") and "Picked up where an earlier run for this ticket stopped" in n for n in notes)
+      and any(n.startswith("[AAP] VM rsm03 deployed (") for n in notes)
+      and vms["rsm02"]["power"] == "poweredOn" and "[site-automation ticket=%s state=built]" % sys.argv[4] in vms["rsm02"]["annotation"])
+print([(n.splitlines() or [""])[0] for n in notes], vms["rsm02"]["power"])
+sys.exit(0 if ok else 1)
+EOPY
+# vm_deploy_resume: false - the VM's mark is not enough (only the ticket's own note, as before 0.15.5)
+inct="$(newticket $'vm_name: rsm09\ntemplate: rhel9-gold')"
+VMWARE_PORT=$port "$py" - "$inct" <<'EOPY' || { echo "ABORT - rsm09"; exit 1; }
+import os, sys, time
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+wait = lambda t: [time.sleep(0.1) for _ in iter(lambda: t.info.state in ("success", "error"), True)] and None or t.info.result
+src = [v for v in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if v.name == "DC0_C0_RP0_VM1"][0]
+new = wait(src.CloneVM_Task(folder=src.parent, name="rsm09", spec=vim.vm.CloneSpec(location=vim.vm.RelocateSpec(), powerOn=False)))
+wait(new.ReconfigVM_Task(spec=vim.vm.ConfigSpec(annotation="x\n[site-automation ticket=%s state=built]" % sys.argv[1])))
+EOPY
+run "vm_deploy_resume: false - a VM marked for the ticket, no note on it: refused" fail vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$inct" -e "$rules" -e vm_deploy_resume=false -- "a VM named rsm09 already exists"
+run "...on (the default): the same VM left as it is" ok vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$inct" -e "$rules" -- "built by an earlier run for this ticket (the VM's notes say so): left as it is"
+# datastores by the VM's name (vm_deploy_datastore_rules): SQL servers on theirs, the others never there (dry runs)
+incq1="$(newticket $'vm_name: ab01sql01\ntemplate: rhel9-gold')"
+run "a SQL server goes on a datastore its rule names - chosen among them, the least used first" ok vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$incq1" -e "$rules" -e '{"vm_deploy_datastore_rules": [{"match": ["*SQL*", "*DBV*"], "datastores": ["LocalDS_*"]}]}' \
+    -- "datastores: LocalDS_*   (from datastore rule *SQL*, *DBV*)" "datastore chosen: LocalDS_0"
+run "...and none of them on its cluster: not built anywhere else" fail vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$incq1" -e "$rules" -e '{"vm_deploy_datastore_rules": [{"match": "*SQL*", "datastores": "*SQL*"}]}' \
+    -- "no datastore among *SQL* of"
+incq2="$(newticket $'vm_name: ab01app07\ntemplate: rhel9-gold')"
+run "a VM no rule matches never goes on a datastore kept for the rule's VMs" fail vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$incq2" -e "$rules" -e '{"vm_deploy_datastore_rules": [{"match": "*SQL*", "datastores": ["LocalDS_*"]}]}' \
+    -- "the template's datastore LocalDS_0 is kept for other VMs" "(not LocalDS_*)"
+run "vm_deploy_datastore_balance: a VM nothing places goes on the least used of its cluster's datastores" ok vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$incq2" -e "$rules" -e vm_deploy_datastore_balance=true \
+    -- "datastores: *   (from vm_deploy_datastore_balance (the cluster's least used))" "datastore chosen: LocalDS_0"
 incq="$(newticket $'2 vms named multi05, RHEL 9, 2 cpus, 4gb ram')"
 run "two VMs asked, one name given: a question to the requester, nothing built" fail vm_deploy_from_ticket.yml \
     -e vm_deploy_ticket="$incq" -e "$rules" -e "$words" -- "REFUSED: the ticket asks for 2 VMs ('2 vms', in the description) but names 1 (multi05)"
@@ -933,6 +1071,15 @@ run "plain words: the workflow's propose step reads the words, checks and places
 run "plain words: the build step builds the same VM (template from 'red hat 9', 2 vCPU and 2 GB from 'medium')" ok vm_deploy_from_ticket.yml \
     -e vm_deploy_ticket="$incw" -e "$rules" -e "$words" -e vm_deploy_phase=build -- "lnxwords01 deployed" \
        "cpu: 2   (from size 'medium'" "memory_gb: 2   (from size 'medium'" "template: rhel9-gold   (from the words 'red hat 9'"
+# the approval is for the ticket as the propose step checked it: changed after it, the build step builds nothing
+incx="$(newticket 'Hi, please build a Red Hat 9 server named lnxwords03, medium size. Thanks, Jane')"
+run "plain words: propose step for lnxwords03" ok vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$incx" -e "$rules" -e "$words" -e vm_deploy_phase=propose -- "lnxwords03 ready to build in"
+setrec incident "$incx" '{"comments": "vm_name: lnxother03\ntemplate: rhel9-gold\ncpu: 4"}'
+run "...a comment added after the approval: the build step builds nothing, says the ticket changed" fail vm_deploy_from_ticket.yml \
+    -e vm_deploy_ticket="$incx" -e "$rules" -e "$words" -e vm_deploy_phase=build -- "was changed after the approval"
+VMWARE_PORT=$port "$py" "$here/vcsim.py" state | grep -q -e '"lnxother03"' -e '"lnxwords03"' \
+    && { echo "FAIL -   ...built after a change"; fails=$((fails + 1)); } || echo "ok   -   ...nothing built"
 incq="$(newticket 'Red Hat 9, small or medium, named lnxwords02')"
 run "plain words: two sizes - never a guess: a question, nothing built" fail vm_deploy_from_ticket.yml \
     -e vm_deploy_ticket="$incq" -e "$rules" -e "$words" -- "the ticket names more than one size ('small', 'medium'"
@@ -1029,8 +1176,8 @@ good='{"vm_name": {"value": "winapp05", "evidence": "called winapp05"}, "templat
        "questions": []}'
 chg5="$(newrec change_request '{"short_description": "Build", "description": "vm_name: chgapp05\ntemplate: rhel9-gold", "state": "-1", "approval": "approved"}')"
 sct5="$(newrec sc_task "{\"short_description\": \"Please build the server of the change\", \"parent\": \"$chg5\", \"assignment_group\": \"Linux Operations\"}")"
-run "GenAI on, a task whose change gives the name and template: no GenAI needed (the build step goes on)" ok vm_deploy_from_ticket.yml --check \
-    -e vm_deploy_ticket="$sct5" -e "$genai" -e "$actvars" -e '{"vm_deploy_sites": {}, "vm_deploy_phase": "build"}' \
+run "GenAI on, a task whose change gives the name and template: no GenAI needed (the propose step goes on)" ok vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$sct5" -e "$genai" -e "$actvars" -e '{"vm_deploy_sites": {}, "vm_deploy_phase": "propose"}' \
     -- "vm_name: chgapp05   (from parent $chg5 description)" "template: rhel9-gold   (from parent $chg5 description)"
 inc5="$(newticket 'Hi team, we need a new Windows Server 2022 box called winapp05 for SiteA with 2 GB of RAM, 2 CPUs and a 120 GB system disk plus a 200 GB data disk. Thanks, Jane')"
 act_says "$good"

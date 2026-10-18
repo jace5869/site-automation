@@ -18,7 +18,8 @@ is what a workflow reacts to. A template that only emails its report to people: 
 keeps the job green ([EMAIL_REPORTS.md](EMAIL_REPORTS.md)). A check that itself breaks becomes a warning finding (`the X check
 could not run: ...`, id `<check>:check-error`) and the other checks still run. That finding fails
 the host even when `site_fail_on` is `[critical]` (a check that did not run is not a healthy
-result); only `site_fail_on: []` never fails.
+result); only `site_fail_on: []` never fails. Its ServiceNow incidents from earlier runs stay open: a check that did not
+run to its end clears nothing it found before (no "passes again" note, nothing resolved).
 
 **A host that cannot be reached** (switched off, no network, ssh or WinRM refused, its login refused)
 does not fail the job. It is listed as `NOT REACHED - <why>` and left out; the other hosts are

@@ -1,5 +1,133 @@
 # Changelog
 
+## 0.15.5 — 2026-10-18
+
+**Updating without scripts:** paste `site-automation-0.15.5-changed-since-0.15.4.zip` as it is (from
+0.15.1, 0.15.2, 0.15.3 or 0.15.4: `site-automation-0.15.5-changed-since-0.15.1.zip`). Both leave out
+`playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. No new job template. New settings
+(all optional): `vm_deploy_datastore_rules`, `vm_deploy_datastore_balance`, `vm_deploy_resume` (on),
+`vm_deploy_notes_tasks_limit`, `vm_deploy_assignment_group_by_table`. **Changed:** a change task now wins
+over its change, and a comment over a work note, also between plain words and `key: value` lines - with
+`vm_deploy_parent_wins: true` set, check that it is still what you want (docs/VMWARE.md, *What wins*). A
+new PDF: the VM Deploy Guide - start with its standard setup.
+
+**VM deploy - a job that stopped picks up where it stopped**
+
+- **Run again, it finishes the job.** Each VM carries its ticket in its notes from the clone on
+  (`[site-automation ticket=NUMBER state=building]`, `state=built` once it is done). Run again for the same
+  ticket - after a VM failed, the job was cancelled or timed out - a VM it built is left as it is (even when
+  its result note never reached the ticket), a VM it cloned and did not finish is finished in place (the
+  CPU, memory and disks it lacks, the customization, the power on - never cloned again), the rest are built.
+  The work notes say which (*"Picking up where an earlier run for this ticket stopped: ..."*). A VM is
+  marked built only once its customization result is in; one whose customization failed
+  (`state=failed`) is refused, never taken as built. `vm_deploy_resume: false` keeps the way of earlier
+  releases (only a VM the ticket's own note names is left as it is).
+- **Each VM's result is written as soon as it is done**, not after the last VM: a job stopped between two
+  VMs leaves every VM it built with its note.
+- **Several VMs: every one is checked in vCenter before the first is built** (read-only: the name, the
+  template, cluster, datastore, folder, the customization). One refused = none built, as the docs said:
+  *"[AAP] Nothing was built: ... 1 of 3 cannot be: - web03: a VM named web03 already exists"*.
+
+**VM deploy - which text wins**
+
+- From the least to the most: the parent change, the ticket's short description and description, its
+  work notes, its comments. **The change task wins over its change, a comment over a work note.** A `key:
+  value` line and plain words are ranked by where they are written, not how: a task's plain words now win
+  over a `key: value` line in its change (before: any line won over any words), and two answers in the
+  place that wins are a question. `vm_deploy_parent_wins: true` still puts the change over the task's
+  description.
+
+**VM deploy - placement**
+
+- **Datastores by location, the least used first.** `vm_deploy_datastore_balance: true`: a VM nothing else
+  places goes on the least used shared datastore of its cluster (the cluster its site, name rule or ticket
+  picks), not the template's. The VMs of one ticket spread out: each counts what the ones before it put
+  on a datastore.
+- **Datastores by the VM's name** (`vm_deploy_datastore_rules`), e.g. SQL servers on the SQL datastores:
+  `[{match: ["*SQL*", "*DBSE*", "*DBV*"], datastores: ["*SQL*"]}]`. Those VMs go on the least used of their
+  rule's datastores (over a site's or the defaults' datastore); every other VM never goes there, even when
+  it is the template's own.
+- **A folder path is that path.** `folder: Test/App` that is not there was taken as the only other folder
+  named `App` (e.g. `Production/App`); now it is refused. A name alone (`App`) still finds the one folder
+  of that name. The folder the VM goes in must be one of `vm_deploy_folders` (when set) - the template's
+  own too, when the ticket, its site and the defaults give none.
+
+**VM deploy - safety**
+
+- **The build step builds what was approved.** The propose step's *"[AAP] Checked - ready to build"* note
+  carries the ticket text's hash (the change's too); the workflow's build step builds nothing when the
+  ticket changed after it (*"was changed after the approval"*) - with or without GenAI. Before, a ticket
+  given complete `key: value` lines after the approval was built as changed.
+- **GenAI's template and site must fit the words they quote.** A template whose quote names neither it nor
+  the operating system it is for, one for another operating system than the ticket asks for, and a site
+  its quote does not name are dropped - even when they are allowed and the quote is in the ticket.
+- **A question is never settled by a guess.** When the place that wins says two things (*"4 vCPU, or maybe
+  8 vCPU"*), an earlier size word, a default or GenAI's value no longer answers it: the requester is asked.
+  Disks the words cannot lay out (*"120gb disk"*, *"50gb disk"*) are still GenAI's to list, disk 1 first,
+  when it is on; a default never answers them.
+- **The approval covers the Location too.** The ticket's Location field (it can pick the site) is part of
+  the ticket text the approval and GenAI's proposal are for: changed after the approval, the build step
+  builds nothing.
+- **Notes on a change's tasks:** up to `vm_deploy_notes_tasks_limit` (50, was a silent 10) - more is a
+  warning.
+
+**VM deploy - a change of any group**
+
+- **Launched with a change, the change may be any group's** (`vm_deploy_assignment_group_by_table:
+  {change_request: ""}`). A change is often assigned to whoever owns it (a change board, another team),
+  not to the team that builds the VMs. Before, a change launched by itself was refused (*the ticket is
+  assigned to 'Change Board', not to 'Linux Operations'*) unless that group was added to
+  `vm_deploy_assignment_group` - which let every ticket of that group through. The change must still be
+  approved and in Implement (`vm_deploy_ready_by_table`).
+- Its task that gets the notes and is closed (`vm_deploy_notes_also: [tasks]`, `vm_deploy_close_tasks`) is
+  still found by `vm_deploy_assignment_group`; another group's task under the change is left alone. A
+  ticket of any other table launched by itself (a change task, an incident) must still be your group's.
+- The setting takes one group, a list, or `""` (any group) per table, in place of
+  `vm_deploy_assignment_group` for that table; its tables as people write them (`change`). A refusal
+  names the setting it came from.
+
+**A VM Deploy Guide (PDF)**
+
+- `docs/pdf/Site-Automation-VM-Deploy-Guide.pdf` (from `docs/VM_DEPLOY_GUIDE.md`): the VM deploy job on its
+  own. How a run flows (drawn), which number to launch with - the change or its task - and what each reads,
+  checks, notes and closes; *Closing the task: pick one* (closed by hand, closed when every VM is built, with
+  issues, network-boot VMs left open, the change never closed); where the notes go; where the VM goes and
+  which source wins; seven ready-made configurations; what the requester writes; testing; the messages and
+  what to do. Its appendix lists every `vm_deploy_*` setting with its default and its whole comment, read
+  from `roles/vmware_vm/defaults/main.yml`.
+- **Start here: the standard setup** - its first section: launched with the change (any group's), every
+  note on the change and on its task (found by its words), one switch (`vm_deploy_close_tasks`) for
+  whether the job closes the task, the change never closed - and what you can leave alone for now. Also:
+  *Leaving things out: the defaults* (a template, a size and a site by default, not only a place),
+  *Report first, then build* (Check, the approval workflow, GenAI), *What GenAI does - and when it does
+  nothing*, and *Where the logic lives* (each file, and each decision by its function).
+- **An example for every setting:** `docs/vm_deploy_examples.yml` gives each `vm_deploy_*` setting an
+  example value, when you would set it, and whether it is part of the standard setup, to set when needed,
+  or to leave as is. The guide's last chapter shows them next to each default.
+- `tests/test_vm_deploy.py` reads the guide's example requests through the parser, so the guide says what
+  the job does; every setting has an example of its type, and the standard setup's are marked so.
+
+**VM deploy - the job says what it closes**
+
+- Its output now says what closes, not only where the notes go: *"Notes on CHG0001234 and CTASK0001235.
+  CHG0001234 is never closed (no close values for change_request); its tasks found are left open
+  (vm_deploy_close_tasks: false)."* - or *"...closed too (vm_deploy_close_tasks)"*.
+- A change with no task that matches says what it looked for - the group, the words, or both: *"No open
+  task of CHG... matches short_descriptionLIKEto deploy: the notes are on the change only"* (it said *"for
+  : ..."* when only the words were set).
+
+**Health checks and ServiceNow**
+
+- **A check that could not run clears nothing.** A check that broke (its `<check>:check-error` finding)
+  no longer marks the incidents it opened before as cleared ("passes again", or resolved with
+  `servicenow_resolve_cleared`): they stay open until the check runs to its end again.
+
+**Docs**
+
+- docs/VMWARE.md: *What wins*, *Run it again: it picks up where it stopped*, datastores by location and by
+  name, the new messages in Troubleshooting.
+- The five site-automation PDFs are rebuilt for 0.15.5 (the VM Deploy Guide is new).
+
 ## 0.15.4 — 2026-10-16
 
 Everything since 0.15.1 in one release (there is no 0.15.2 or 0.15.3).

@@ -57,6 +57,7 @@
         {{ {site_report_name | default(inventory_hostname): {
               'status': 'healthy' if site_findings | length == 0 else 'findings',
               'checks': site_checks_run,
+              'checks_failed': site_checks_failed | default([]),
               'findings': site_findings,
               'act': site_act_result | default({}),
               'time': now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ'),

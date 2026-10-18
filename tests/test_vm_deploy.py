@@ -4,6 +4,7 @@ ticket parsed, the rules) and the pure parts of roles/vmware_vm/library/site_vmw
 Run: python3 tests/test_vm_deploy.py"""
 import importlib.util
 import os
+import re
 import sys
 import unittest
 
@@ -158,6 +159,82 @@ CAT = {"win2022-pxe": "Windows Server 2022 (MECM)", "rhel9-gold": "RHEL 9"}
 def answer(**fields):
     import json as _j
     return "Here it is.\nBEGIN_ACT_ANALYSIS\n" + _j.dumps(fields) + "\nEND_ACT_ANALYSIS"
+
+
+class DatastoreRules(unittest.TestCase):
+    """vm_deploy_datastore_rules: SQL servers on the SQL datastores, the others never there; the least used first."""
+    DR = [{"match": ["*SQL*", "*DBSE*", "*DBV*"], "datastores": ["*SQL*"]}]
+
+    def check(self, name, extra=None, opts=None, sources=None):
+        spec = dict({"vm_name": name, "template": "rhel9-gold"}, **(extra or {}))
+        o = dict(RULES, name_regex=r"^[A-Za-z0-9-]+$", assignment_group="", datastore_rules=self.DR, **(opts or {}))
+        return d.vm_deploy_check({"spec": spec, "sources": sources or {}}, {"active": "true"}, o)
+
+    def test_a_sql_server_goes_on_the_sql_datastores(self):
+        for name in ("ab01sql01", "AB01DBSE02", "ab01dbv03"):
+            c = self.check(name)
+            self.assertEqual((c["spec"]["datastores"], c["problems"]), (["*SQL*"], []), name)
+            self.assertNotIn("_datastore_exclude", c["spec"])
+        # over a site's (or the defaults') own datastore
+        c = self.check("ab01sql01", {"datastore": "A-DS01"}, sources={"datastore": "site SiteA"})
+        self.assertEqual((c["spec"].get("datastore"), c["spec"]["datastores"]), (None, ["*SQL*"]))
+        # a datastore the ticket names itself must be one of them
+        c = self.check("ab01sql01", {"datastore": "A-DS01"}, sources={"datastore": "description"})
+        self.assertIn("ab01sql01 goes on a datastore *SQL* (vm_deploy_datastore_rules: *SQL*, *DBSE*, *DBV*): A-DS01 is not one", c["problems"])
+        self.assertEqual(self.check("ab01sql01", {"datastore": "A-SQL01"}, sources={"datastore": "description"})["problems"], [])
+
+    def test_the_others_never_go_there(self):
+        c = self.check("ab01app01")
+        self.assertEqual((c["spec"]["_datastore_exclude"], c["problems"]), (["*SQL*"], []))
+        self.assertNotIn("_datastore_exclude", "\n".join(d.vm_deploy_spec_text(c["spec"])))    # not shown as part of the request
+        c = self.check("ab01app01", {"datastore": "A-SQL01"}, sources={"datastore": "description"})
+        self.assertTrue(any("A-SQL01 is kept for other VMs" in q for q in c["problems"]))
+
+    def test_balance_chooses_among_the_clusters_datastores(self):
+        self.assertEqual(self.check("ab01app01", opts={"datastore_balance": True})["spec"]["datastores"], ["*"])
+        self.assertNotIn("datastores", self.check("ab01app01")["spec"])                      # off: the template's, as before
+        c = self.check("ab01app01", {"datastore": "A-DS01"}, opts={"datastore_balance": True}, sources={"datastore": "site SiteA"})
+        self.assertEqual((c["spec"]["datastore"], "datastores" in c["spec"]), ("A-DS01", False))   # a site's datastore stays
+
+
+class GenAIEvidence(unittest.TestCase):
+    """An allowed value with a real quote is not enough: the quote must support the value (template, site)."""
+    TEXT = "Please build a Windows Server 2025 VM named ab01app01 for SiteA, 4 vCPU."
+    CAT = {"win2022-gold": "Windows Server 2022", "win2025-gold": "Windows Server 2025"}
+
+    def parse(self, **fields):
+        base = {"vm_name": {"value": "ab01app01", "evidence": "named ab01app01"}}
+        return d.vm_deploy_genai_parse(answer(**dict(base, **fields)), self.TEXT, {"catalog": self.CAT, "sites": ["SiteA", "SiteB"]})
+
+    def test_a_template_for_another_os_is_dropped_even_without_os(self):
+        g = self.parse(template={"value": "win2022-gold", "evidence": "Windows Server 2025"})
+        self.assertNotIn("template", g["fields"])
+        self.assertIn("template 'win2022-gold': it is for Windows Server 2022, the ticket asks for Windows Server 2025", g["dropped"])
+        g = self.parse(template={"value": "win2022-gold", "evidence": "4 vCPU"})       # a quote with no OS: the ticket's own
+        self.assertNotIn("template", g["fields"])
+        g = self.parse(template={"value": "win2025-gold", "evidence": "Windows Server 2025"})
+        self.assertEqual(g["fields"]["template"], "win2025-gold")
+
+    def test_a_template_nothing_supports_is_dropped(self):
+        text = "Build a VM named ab01app01 with 4 vCPU."                      # no operating system at all
+        g = d.vm_deploy_genai_parse(answer(vm_name={"value": "ab01app01", "evidence": "named ab01app01"},
+                                           template={"value": "win2025-gold", "evidence": "4 vCPU"}), text, {"catalog": self.CAT})
+        self.assertNotIn("template", g["fields"])
+        self.assertTrue(any("evidence names neither the template nor its operating system" in x for x in g["dropped"]))
+        g = d.vm_deploy_genai_parse(answer(template={"value": "win2025-gold", "evidence": "use win2025-gold"}),
+                                    "Please use win2025-gold.", {"catalog": self.CAT})          # its name, quoted
+        self.assertEqual(g["fields"]["template"], "win2025-gold")
+
+    def test_the_location_is_part_of_what_is_approved(self):
+        rec = {"short_description": "VM", "description": "vm_name: ab01app01", "location": "SiteA"}
+        self.assertIn("Location: SiteA", d.vm_deploy_ticket_text(rec))
+        self.assertNotEqual(d.vm_deploy_ticket_text(rec), d.vm_deploy_ticket_text(dict(rec, location="SiteB")))
+
+    def test_a_site_its_quote_does_not_name_is_dropped(self):
+        g = self.parse(site={"value": "SiteB", "evidence": "for SiteA"})
+        self.assertNotIn("site", g["fields"])
+        self.assertIn("site 'SiteB': its evidence does not name the site SiteB", g["dropped"])
+        self.assertEqual(self.parse(site={"value": "sitea", "evidence": "for SiteA"})["fields"]["site"], "SiteA")
 
 
 class NameRules(unittest.TestCase):
@@ -343,6 +420,41 @@ class ModuleParts(unittest.TestCase):
                          [(-101, 1000, 1, 100), (-102, 1000, 2, 50)])
         self.assertEqual(len({d["key"] for d in nd}), len(nd))     # vCenter: 'Cannot add multiple devices using the same device key'
         self.assertTrue(all(d["key"] < 0 for d in nd))
+
+    def test_the_ticket_mark_on_the_vm(self):
+        a = m.with_mark("Deployed from rhel9-gold for CTASK0010009 by job 12.", "CTASK0010009", "building")
+        self.assertTrue(a.endswith("\n[site-automation ticket=CTASK0010009 state=building]"))
+        self.assertEqual(m.read_mark(a, "ctask0010009"), "building")
+        b = m.with_mark(a, "CTASK0010009", "built")                       # the mark replaced, never two
+        self.assertEqual((b.count("[site-automation"), m.read_mark(b, "CTASK0010009")), (1, "built"))
+        self.assertEqual(m.read_mark(b, "CTASK001000"), "")                # never a longer number that starts with it
+        self.assertEqual(m.read_mark("Deployed from x for CTASK0010009 by job 12.", "CTASK0010009"), "legacy")
+        self.assertEqual(m.read_mark("Deployed from x for CTASK00100091 by job 12.", "CTASK0010009"), "")
+        self.assertEqual(m.read_mark(m.with_mark("", "CHG1", "built"), "CTASK0010009"), "")   # another ticket's VM
+        self.assertEqual(m.read_mark("anything", ""), "")
+        # an older release's notes: only its own wording - never the number written anywhere else
+        self.assertEqual(m.read_mark("Maintenance tracked in CTASK0010009, do not touch", "CTASK0010009"), "")
+        self.assertEqual(m.read_mark("Deployed from rhel9-gold for CHG1 by job 3. See CTASK0010009", "CTASK0010009"), "")
+        self.assertEqual(m.read_mark(m.with_mark("x", "CTASK0010009", "failed"), "CTASK0010009"), "failed")
+
+    def test_a_vm_picked_up_gets_only_what_it_lacks(self):
+        tpl = [(2000, 60 * 1048576, 1000, 0)]
+        # cloned, nothing set yet: disk 1 grown, two disks added
+        grow, adds, _ = m.plan_resume(tpl, tpl, [120, 30, 40])
+        self.assertEqual((grow[1] // 1048576, [kb // 1048576 for _, _, kb in adds]), (120, [30, 40]))
+        # sized already (disk 1 grown, both disks there): nothing more
+        done = [(2000, 120 * 1048576, 1000, 0), (2001, 30 * 1048576, 1000, 1), (2002, 40 * 1048576, 1000, 2)]
+        self.assertEqual(m.plan_resume(tpl, done, [120, 30, 40]), (None, [], []))
+        # one of two added: the other, on a free unit
+        half = done[:2]
+        grow, adds, _ = m.plan_resume(tpl, half, [120, 30, 40])
+        self.assertEqual((grow, adds), (None, [(1000, 2, 40 * 1048576)]))
+
+    def test_the_folder_found_must_be_allowed(self):
+        self.assertTrue(m.folder_ok("Test/App", "App", ["Test/*"]))
+        self.assertFalse(m.folder_ok("Production/App", "App", ["Test/*"]))     # the same name elsewhere: refused
+        self.assertTrue(m.folder_ok("Production/App", "App", ["App"]))         # a pattern without /: the folder's name
+        self.assertTrue(m.folder_ok("Anything", "Anything", []))
 
     def test_find_cluster(self):
         cl = ["CL01", "Mgmt"]
@@ -653,9 +765,21 @@ class PlainWords(unittest.TestCase):
         # GenAI's proposal is below the words: the words' template stays, GenAI's name fills the gap
         p = self.spec(_wt("a rhel 8 server, small"), proposal={"fields": {"vm_name": "ab01app01", "template": "rhel9-gold"}, "header": "x"})
         self.assertEqual((p["spec"]["template"], p["spec"]["vm_name"]), ("rhel8-gold", "ab01app01"))
-        # an open question disappears when another source answers it
+        # a question of the ticket's own words is never settled by GenAI's pick - only by the ticket (a line, a comment)
         p = self.spec(_wt("RHEL 9 or RHEL 8, named ab01db01"), proposal={"fields": {"template": "rhel8-gold"}, "header": "x"})
-        self.assertEqual(p["questions"], [])
+        self.assertNotIn("template", p["spec"])
+        self.assertTrue(any("more than one operating system" in q for q in p["questions"]))
+        p = self.spec(_wt("RHEL 9 or RHEL 8, named ab01db01\ntemplate: rhel8-gold"))
+        self.assertEqual((p["spec"]["template"], p["questions"]), ("rhel8-gold", []))
+
+    def test_genai_lays_out_the_disks_the_words_could_not(self):
+        t = _wt("rhel 9 named ab01web11\n120gb disk\n50gb disk")
+        self.assertTrue(any("more than one size for disk 1" in q for q in self.spec(t)["questions"]))
+        p = self.spec(t, proposal={"fields": {"disks_gb": [120, 50]}, "header": "x"})
+        self.assertEqual((p["spec"]["disks_gb"], p["questions"]), ([120, 50], []))
+        p = d.vm_deploy_spec(t, {"disks_gb": [60]}, None, WORDS)           # a default never answers it
+        self.assertNotIn("disks_gb", p["spec"])
+        self.assertTrue(any("more than one size for disk 1" in q for q in p["questions"]))
 
     def test_one_value_is_never_read_across_two_lines(self):
         p = self.spec(_wt("VM request\r\nrhel 9 named ab01web10\r\n12 cpus\r\n32gb of memory\r\n180gb hard disk\r\n50gb second hard disk"))
@@ -838,9 +962,46 @@ class ChangeWins(unittest.TestCase):
         r = d.vm_deploy_spec(task, {}, None, words, self.read(False, chg))
         self.assertEqual(r["spec"]["vm_name"], "wrong01")
 
+    WORDS = {"on": True, "templates": {}, "sizes": {}, "allowed": ["rhel9-gold"], "aliases": {}, "name_rules": [], "sites": []}
+
+    def test_the_source_wins_not_the_way_it_is_written(self):
+        # the change in plain words, the task with lines: the change wins with parent_wins - its lines no longer beat it
+        chg = dict(self.CHG, description="Please build a RHEL 9 server named right01 with 4 vCPU")
+        r = d.vm_deploy_spec(self.TASK, {}, None, self.WORDS, self.read(True, chg))
+        self.assertEqual((r["spec"]["vm_name"], r["spec"]["cpu"], r["spec"]["memory_gb"]), ("right01", 4, "8"))
+        # the default (the task wins): the change's lines no longer beat the task's plain words either
+        task = dict(self.TASK, description="Please build a RHEL 9 server named right02 with 6 vCPU")
+        r = d.vm_deploy_spec(task, {}, None, self.WORDS, self.read(False))
+        self.assertEqual((r["spec"]["vm_name"], r["spec"]["cpu"], r["spec"]["template"]), ("right02", 6, "rhel9-gold"))
+        self.assertIn("the description", r["sources"]["vm_name"])
+
+    def test_a_later_piece_that_cannot_say_is_a_question(self):
+        task = dict(self.TASK, description="Please build it with 4 vCPU, or maybe 8 vCPU")
+        r = d.vm_deploy_spec(task, {}, None, self.WORDS, self.read(False))     # the change's 'cpu: 4' line does not answer it
+        self.assertNotIn("cpu", r["spec"])
+        self.assertTrue(any("more than one number of CPUs" in q for q in r["questions"]))
+
+    def test_a_later_question_takes_back_a_size_word_and_a_default(self):
+        words = dict(self.WORDS, sizes={"small": {"cpu": 2, "memory_gb": 4}})
+        task = dict(self.TASK, description="a small RHEL 9 server named right03",
+                    comments="2026-10-17 09:00:00 - Jane (Additional comments)\n4 vCPU, or maybe 8 vCPU\n\n")
+        r = d.vm_deploy_spec(task, {"cpu": 1}, None, words, self.read(False, dict(self.CHG, description="")))
+        self.assertNotIn("cpu", r["spec"])
+        self.assertTrue(any("more than one number of CPUs" in q for q in r["questions"]))
+
+    def test_a_comment_wins_over_a_work_note(self):
+        later = "2026-10-18 09:00:00 - Ops (Work notes)\ncpu: 2\n\n"
+        earlier = "2026-10-17 09:00:00 - Jane (Additional comments)\ncpu: 8\n\n"
+        task = dict(self.TASK, work_notes=later, comments=earlier)
+        r = d.vm_deploy_spec(task, {}, None, None, self.read(False))
+        self.assertEqual(r["spec"]["cpu"], "8")
+        self.assertTrue(r["sources"]["cpu"].startswith("comment"))
+        r = d.vm_deploy_spec(task, {}, None, self.WORDS, self.read(False))    # with plain words too
+        self.assertEqual(r["spec"]["cpu"], "8")
+
     def test_genai_is_told_which_wins(self):
         self.assertIn("it wins over this ticket's description", d.vm_deploy_ticket_text(self.TASK, self.read(True)))
-        self.assertIn("this ticket's own lines win", d.vm_deploy_ticket_text(self.TASK, self.read(False)))
+        self.assertIn("this ticket's own text wins over it):\nDescription:\n", d.vm_deploy_ticket_text(self.TASK, self.read(False)))
 
     def test_where_the_notes_go(self):
         par = self.read(True)
@@ -1192,7 +1353,7 @@ class ChangeLayout(unittest.TestCase):
     def test_a_template_from_genai_or_the_defaults_never_answers_it(self):
         for prop, dflt in (({"fields": {"template": "Windows 2022 Test VM"}, "header": "x"}, {}), (None, {"template": "Windows 2022 Test VM"})):
             s = d.vm_deploy_spec(self.TASK, dflt, prop, self.words(), self.PARENT)
-            self.assertEqual(s["spec"]["template"], "Windows 2022 Test VM")
+            self.assertNotIn("template", s["spec"])                                  # never another version instead
             self.assertTrue(any("Windows Server 2025" in q for q in s["questions"]))
             self.assertTrue(any("Windows Server 2025" in p for p in self.check(s)["problems"]))
         own = dict(self.TASK, description="template: Windows 2022 Test VM")          # the ticket's own line does
@@ -1328,6 +1489,117 @@ class PerLine(unittest.TestCase):
         self.assertEqual(d._site_find("north campus", ["NorthCampus"]), "NorthCampus")
         self.assertEqual(d._site_find("NorthCampus", ["North Campus"]), "North Campus")
         self.assertIsNone(d._site_find("the site a", ["SiteA", "SiteB"]))
+
+
+class GroupByTable(unittest.TestCase):
+    """vm_deploy_assignment_group_by_table: the ticket launched, by its table - e.g. a change in any group,
+    its tasks still those of vm_deploy_assignment_group"""
+
+    def test_a_table_it_names_any_group(self):
+        for v in ("", None, []):                        # "", a YAML key with nothing after it, an empty list
+            g = d.vm_deploy_group_for("change_request", {"change_request": v}, ["Linux Operations"])
+            self.assertEqual(g["groups"], [])
+            self.assertEqual(g["setting"], "vm_deploy_assignment_group_by_table (change_request)")
+
+    def test_its_tables_as_people_write_them(self):
+        self.assertEqual(d.vm_deploy_group_for("change_request", {"change": ""}, "Linux Operations")["groups"], [])
+        self.assertEqual(d.vm_deploy_group_for("change_request", {"Change Request": ["Change Board", "Linux Operations"]},
+                                               "Linux Operations")["groups"], ["Change Board", "Linux Operations"])
+
+    def test_another_table_keeps_the_group(self):
+        g = d.vm_deploy_group_for("change_task", {"change_request": ""}, "Linux Operations")
+        self.assertEqual(g, {"groups": ["Linux Operations"], "setting": "vm_deploy_assignment_group"})
+        self.assertEqual(d.vm_deploy_group_for("change_request", {}, "['Linux Operations', 'Windows Team']")["groups"],
+                         ["Linux Operations", "Windows Team"])
+        self.assertEqual(d.vm_deploy_group_for("", {"": ""}, "Linux Operations")["groups"], ["Linux Operations"])
+
+    def test_the_check(self):
+        rec = dict(REC, number="CHG0001234", assignment_group="Change Board")
+        check = lambda g: d.vm_deploy_check(d.vm_deploy_spec(rec), rec, dict(
+            RULES, assignment_group=g["groups"], assignment_group_setting=g["setting"]))["problems"]
+        self.assertEqual(check(d.vm_deploy_group_for("change_request", {"change_request": ""}, "Linux Operations")), [])
+        self.assertIn("the ticket is assigned to 'Change Board', not to 'Linux Operations' (vm_deploy_assignment_group)",
+                      check(d.vm_deploy_group_for("change_request", {}, "Linux Operations")))
+        self.assertIn("the ticket is assigned to 'Change Board', not to 'Windows Team' (vm_deploy_assignment_group_by_table (change_request))",
+                      check(d.vm_deploy_group_for("change_request", {"change": "Windows Team"}, "Linux Operations")))
+
+
+class GuideExamples(unittest.TestCase):
+    """docs/VM_DEPLOY_GUIDE.md (and its PDF): its configurations are YAML of settings that exist, and its
+    example requests are read the way it says"""
+    GUIDE = os.path.join(HERE, "..", "docs", "VM_DEPLOY_GUIDE.md")
+    DEFAULTS = os.path.join(HERE, "..", "roles", "vmware_vm", "defaults", "main.yml")
+
+    def setUp(self):
+        with open(self.GUIDE, encoding="utf-8") as fh:
+            self.text = fh.read()
+        self.yaml = [yaml.safe_load(b) for b in re.findall(r"```yaml\n(.*?)```", self.text, re.S)]
+
+    def test_the_configurations(self):
+        with open(self.DEFAULTS, encoding="utf-8") as fh:
+            defaults = yaml.safe_load(fh)
+        self.assertGreaterEqual(len(self.yaml), 9)
+        for block in self.yaml:
+            self.assertIsInstance(block, dict)
+            for k in block:
+                if k.startswith("vm_deploy_"):
+                    self.assertIn(k, defaults, "the guide sets %s, which the role does not have" % k)
+        # the change is never closed by them
+        for block in self.yaml:
+            self.assertNotIn("change_request", block.get("vm_deploy_done_fields_by_table") or {})
+            self.assertFalse(block.get("vm_deploy_done_fields"))
+
+    def test_every_setting_has_an_example(self):
+        """docs/vm_deploy_examples.yml: one entry per vm_deploy_* setting, its example of the default's type,
+        on one line (the PDF reads it line by line), and every setting of the standard setup marked so"""
+        with open(self.DEFAULTS, encoding="utf-8") as fh:
+            defaults = {k: v for k, v in yaml.safe_load(fh).items() if k.startswith("vm_deploy_")}
+        path = os.path.join(HERE, "..", "docs", "vm_deploy_examples.yml")
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        ex = yaml.safe_load(text)
+        self.assertEqual(sorted(ex), sorted(defaults))
+        kind = lambda v: "number" if isinstance(v, (int, float)) and not isinstance(v, bool) else type(v).__name__
+        for name, e in ex.items():
+            self.assertEqual(sorted(e), ["example", "level", "when"], name)
+            self.assertIn(e["level"], ("standard", "often", "rarely"), name)
+            self.assertTrue(str(e["when"]).strip(), name)
+            self.assertNotEqual(e["example"], defaults[name], "%s: the example is the default" % name)
+            if not str(defaults[name]).startswith("{{"):
+                self.assertEqual(kind(e["example"]), kind(defaults[name]), name)
+            line = re.search(r"^%s:\n(?:  \w+: .*\n)*?  example: (.*)$" % name, text, re.M)
+            self.assertIsNotNone(line, "%s: its example on one line" % name)
+            self.assertEqual(yaml.safe_load(line.group(1)), e["example"], name)
+        standard = [b for b in self.yaml if "vm_deploy_close_tasks" in b and "vm_deploy_notes_tasks_query" in b][0]
+        for k in standard:
+            if k.startswith("vm_deploy_"):
+                self.assertEqual(ex[k]["level"], "standard", "%s is in the standard setup" % k)
+        self.assertFalse(standard["vm_deploy_close_tasks"])
+        self.assertNotIn("change_request", standard["vm_deploy_done_fields_by_table"])
+
+    def test_the_requests(self):
+        cfg = [b for b in self.yaml if "vm_deploy_sites" in b][0]
+        sites, site_words = cfg["vm_deploy_sites"], cfg["vm_deploy_plain_sites"]
+        allowed = ["rhel9-gold", "WIN2025-TEMPLATE"]
+        words = {"on": True, "templates": {}, "sizes": {}, "allowed": allowed, "aliases": {}, "name_rules": [],
+                 "sites": list(sites), "site_words": site_words}
+        opts = dict(RULES, templates=allowed, clusters=[], sites=sites, site_words=site_words, max_cpu=16, max_memory_gb=128,
+                    max_disks=5, assignment_group="Server Team")
+        section = self.text.split("## What the requester writes")[1].split("\n## ")[0]
+        asks = re.findall(r"```text\n(.*?)```", section, re.S)
+        self.assertEqual(len(asks), 3)
+        want = [  # name, template, cpu, memory, disks, site
+            [("ab01web05", "rhel9-gold", 4, 16, [120, 200], "SiteA"), ("ab01web06", "rhel9-gold", 4, 16, [120, 200], "SiteA")],
+            [("ab01web05", "rhel9-gold", 4, 16, [120, 200], "SiteA"), ("ab01web06", "rhel9-gold", 4, 16, [120, 200], "SiteA")],
+            [("ab01web05", "WIN2025-TEMPLATE", 4, 16, [120], "SiteA"), ("ab01web06", "WIN2025-TEMPLATE", 8, 32, [120], "SiteB")]]
+        for ask, vms in zip(asks, want):
+            rec = {"number": "CTASK0001235", "description": ask, "short_description": "VM request", "active": "true",
+                   "assignment_group": "Server Team"}
+            out = d.vm_deploy_check(d.vm_deploy_spec(rec, {}, None, words, None), rec, opts)
+            self.assertEqual(out["problems"], [], ask)
+            got = [tuple(v["spec"].get(k) for k in ("vm_name", "template", "cpu", "memory_gb", "disks_gb", "site")) for v in out["vms"]]
+            self.assertEqual(got, vms, ask)
+            self.assertEqual([v["spec"]["vcenter"] for v in out["vms"]], [sites[s[5]]["vcenter"] for s in vms])
 
 
 if __name__ == "__main__":

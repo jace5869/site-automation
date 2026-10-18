@@ -17,6 +17,11 @@ description:
     computer name set to the host name), powers it on, and waits for vCenter's customization result
     and for an IPv4 address from VMware Tools.
   - Check mode resolves everything (template, cluster, datastore, folder) and builds nothing.
+  - The VM carries its ticket in its notes from the clone on ([site-automation ticket=NUMBER
+    state=building]; state=built once it is up and its customization result is in, state=failed when
+    that failed). Run again for the same ticket, a VM it built is left as it is, one it started and did
+    not finish (cloned, not yet powered on) is finished where it is, one whose customization failed is
+    refused - the job picks up where it stopped.
   - vCenter's address and account come from VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD (and
     VMWARE_PORT), as a "VMware vCenter" credential in AAP gives them.
 options:
@@ -38,7 +43,11 @@ options:
   memory_mb: {description: Memory in MB; 0 = as the template., type: int, default: 0}
   annotation: {description: The VM's notes., type: str, default: ''}
   existing_ok: {description: "An earlier run built this VM for the ticket (the ticket's own note says so): when a VM with the name exists and its notes name the ticket, it is reported as it is and nothing is built (a ticket of several VMs run again after one failed). Off = an existing name is refused.", type: bool, default: false}
-  ticket: {description: The ticket's number - with existing_ok, the existing VM's notes must name it., type: str, default: ''}
+  ticket: {description: "The ticket's number: written in the new VM's notes (the mark a run of the same ticket finds again); with existing_ok, the existing VM's notes must name it.", type: str, default: ''}
+  resume: {description: "A VM with the name whose notes carry this ticket's mark: built (state=built) - reported as it is; started by an earlier run and not finished (state=building) - finished where it is; its customization failed (state=failed) - refused. false = only existing_ok (the ticket's note) leaves one as it is.", type: bool, default: true}
+  folders_allowed: {description: "The folders a VM may go in (vm_deploy_folders; * and ?): the folder found is checked against them - a path below the VM folder, or a name for a pattern without /.", type: list, elements: str, default: []}
+  datastore_exclude: {description: "Datastores never chosen for this VM (names; * and ?) - e.g. the ones kept for SQL servers.", type: list, elements: str, default: []}
+  datastore_planned: {description: "GB already planned on datastores by the VMs before this one in the same run ({name: GB}): counted as used, so the VMs of one ticket spread out.", type: dict, default: {}}
   hostname: {description: The guest's host name; empty = name., type: str, default: ''}
   domain: {description: The DNS domain for Linux customization., type: str, default: localdomain}
   customization_spec: {description: A customization specification in vCenter (needed for Windows templates)., type: str, default: ''}
@@ -264,6 +273,51 @@ def new_disks(adds):
     return [{"key": -101 - i, "controllerKey": ctrl, "unitNumber": unit, "capacityInKB": kb} for i, (ctrl, unit, kb) in enumerate(adds)]
 
 
+MARK = re.compile(r"\[site-automation ticket=(\S+) state=(building|built|failed)\]")
+
+
+def with_mark(annotation, ticket, state):
+    """The VM's notes with the ticket's mark at the end (any earlier mark replaced)."""
+    text = MARK.sub("", str(annotation or "")).rstrip()
+    return ((text + "\n") if text else "") + "[site-automation ticket=%s state=%s]" % (ticket, state)
+
+
+def read_mark(annotation, ticket):
+    """What a VM's notes say about the ticket -> 'built' / 'building' / 'failed' (its mark: built and checked; cloned,
+    not finished; built, its customization failed), 'legacy' (the notes an older release wrote: 'Deployed from
+    TEMPLATE for NUMBER by ...' - never the number written anywhere else), '' (another ticket's, or none). The
+    number exactly, never a longer one that starts with it."""
+    t, a = str(ticket or "").strip().lower(), str(annotation or "")
+    if not t:
+        return ""
+    for num, state in MARK.findall(a):
+        if num.lower() == t:
+            return state
+    if MARK.search(a):
+        return ""
+    return "legacy" if re.match(r"deployed from \S.* for %s by " % re.escape(t), a.strip().lower()) else ""
+
+
+def plan_resume(template_disks, vm_disks, wanted_gb):
+    """A VM an earlier run cloned and did not finish: the disks still to do -> plan_disks' (grow, adds, problems)
+    against the VM's own disks. The disks it has beyond the template's are the ones added already."""
+    if not wanted_gb:
+        return None, [], []
+    done = max(0, len(vm_disks) - len(template_disks))
+    return plan_disks(vm_disks, [wanted_gb[0]] + list(wanted_gb[1 + done:]))
+
+
+def folder_ok(path, name, patterns):
+    """The folder found is one of patterns (vm_deploy_folders): its path below the VM folder ('Linux/App'), or its
+    name for a pattern without '/'. No patterns: any."""
+    pats = [str(x).strip().strip("/") for x in patterns or [] if str(x).strip()]
+    if not pats:
+        return True
+    rel = str(path or "").strip("/")
+    return any(fnmatch.fnmatchcase(rel.lower(), x.lower()) or ("/" not in x and fnmatch.fnmatchcase(str(name).lower(), x.lower()))
+               for x in pats)
+
+
 def is_windows(guest_id):
     return str(guest_id or "").lower().startswith("win")
 
@@ -341,6 +395,9 @@ def main():
                            cpu=dict(type="int", default=0), memory_mb=dict(type="int", default=0),
                            annotation=dict(type="str", default=""), hostname=dict(type="str", default=""),
                            existing_ok=dict(type="bool", default=False), ticket=dict(type="str", default=""),
+                           resume=dict(type="bool", default=True), folders_allowed=dict(type="list", elements="str", default=[]),
+                           datastore_exclude=dict(type="list", elements="str", default=[]),
+                           datastore_planned=dict(type="dict", default={}),
                            domain=dict(type="str", default="localdomain"), customization_spec=dict(type="str", default=""),
                            customize=dict(type="bool", default=True), power_on=dict(type="bool", default=True),
                            boot_from_network=dict(type="bool", default=False), guestinfo=dict(type="dict", default={}),
@@ -371,8 +428,9 @@ def main():
         notes.append(text)
         issues.append(text)
     sessions = {}
+    again, again_vc = None, ""                  # a VM an earlier run of this ticket started and did not finish
     try:
-        # 1. the name is free in every vCenter; the template is in exactly one (or the one named)
+        # 1. the name is free in every vCenter - or it is this ticket's VM (its mark); the template is in exactly one
         templates, loose = [], []
         for n in names:
             try:
@@ -386,11 +444,21 @@ def main():
                     vname, is_t = v.name, bool(v.config and v.config.template)
                 except vmodl.fault.ManagedObjectNotFound:
                     continue
-                if vname == p["name"] and not is_t and p["existing_ok"] and p["ticket"].strip() \
-                        and p["ticket"].strip().lower() in str(v.config.annotation or "").lower():
+                st = read_mark(v.config.annotation, p["ticket"]) if vname == p["name"] and not is_t else ""
+                on = st and str(v.runtime.powerState) == "poweredOn"
+                if not p["resume"]:                 # off: only the ticket's own note says it was built (as before)
+                    st = "built" if st and p["existing_ok"] else ""
+                if st == "failed":
+                    module.fail_json(msg="a VM named %s is in vCenter %s: an earlier run of this ticket built it, and its guest "
+                                         "customization failed - check it (vCenter > the VM > Monitor > Events), then delete it "
+                                         "and run the job again" % (p["name"], n), vm=vm, notes=notes)
+                if st == "built" or (st == "legacy" and (p["existing_ok"] or on)):
                     module.exit_json(changed=False, vm=_existing(n, v, p["template"]),
-                                     notes=["built by an earlier run for this ticket (its work note says so, and the VM's notes name "
-                                            "the ticket): left as it is"], issues=[])
+                                     notes=["built by an earlier run for this ticket (%s): left as it is"
+                                            % ("the VM's notes say so" if st == "built" else "the VM's notes name the ticket")], issues=[])
+                if st in ("building", "legacy") and p["resume"]:
+                    again, again_vc = v, n
+                    continue
                 if vname == p["name"]:
                     module.fail_json(msg="a VM named %s already exists in vCenter %s (%s): nothing was built"
                                          % (p["name"], n, "a template" if is_t else _folder_path(v.parent)), vm=vm, notes=notes)
@@ -408,6 +476,9 @@ def main():
             module.fail_json(msg="template %s is in %s: name the vCenter (vcenter: ...) or the datacenter in the ticket"
                                  % (p["template"], ", ".join("%s / %s" % (n, _datacenter(t).name) for n, t in templates)), vm=vm, notes=notes)
         vc, tpl = templates[0]
+        if again is not None and again_vc.lower() != vc.lower():
+            module.fail_json(msg="the VM %s an earlier run started for this ticket is in vCenter %s, its template in %s: nothing was done"
+                                 % (p["name"], again_vc, vc), vm=vm, notes=notes)
         vm["template"] = tpl.name
         content = sessions[vc].RetrieveContent()
         dc = _datacenter(tpl)
@@ -419,107 +490,152 @@ def main():
         need_mem = (p["memory_mb"] or tpl.config.hardware.memoryMB) * 1048576
         tdisks = [d for d in tpl.config.hardware.device if isinstance(d, vim.vm.device.VirtualDisk)]
         existing = [(d.key, d.capacityInKB, d.controllerKey, d.unitNumber) for d in tdisks]
-        grow, adds, dprob = plan_disks(existing, p["disks_gb"])
+        if again is not None:
+            vdisks = [(d.key, d.capacityInKB, d.controllerKey, d.unitNumber) for d in again.config.hardware.device
+                      if isinstance(d, vim.vm.device.VirtualDisk)]
+            grow, adds, dprob = plan_resume(existing, vdisks, p["disks_gb"])
+            existing = vdisks
+        else:
+            grow, adds, dprob = plan_disks(existing, p["disks_gb"])
         if dprob:
             module.fail_json(msg="; ".join(dprob), vm=vm, notes=notes)
         disk_kb = sum(kb for _, kb, _, _ in existing) + ((grow[1] - existing[0][1]) if grow else 0) + sum(kb for _, _, kb in adds)
         need_disk = disk_kb * 1024 + need_mem
         vm["disks_gb"] = [(grow[1] if grow and i == 0 else kb) // 1048576 for i, (_, kb, _, _) in enumerate(existing)] + [kb // 1048576 for _, _, kb in adds]
         placement = {}
-        if p["cluster"]:
-            allcr = _all(content, vim.ComputeResource, dc.hostFolder)
-            found, why = find_cluster(p["cluster"], [c.name for c in allcr],
-                                      [(h.name, c.name if isinstance(c, vim.ClusterComputeResource) else "") for c in allcr for h in (c.host or [])],
-                                      names, dc.name)
-            if not found:
-                module.fail_json(msg=why, vm=vm, notes=notes)
-            if why:
-                notes.append(why)
-            cr = [c for c in allcr if c.name == found][0]
-        elif p["cluster_candidates"]:
-            cands = [c for c in _all(content, vim.ComputeResource, dc.hostFolder) if _match(c.name, p["cluster_candidates"])]
-            info = [{"name": c.name, "obj": c, "hosts": [{"mem": h.summary.hardware.memorySize or 0,
-                                                            "used": (h.summary.quickStats.overallMemoryUsage or 0) * 1048576,
-                                                            "ok": str(h.runtime.connectionState) == "connected" and not h.runtime.inMaintenanceMode}
-                                                           for h in (c.host or [])]} for c in cands]
-            ranked = rank_clusters(info, need_mem, p["mem_target_pct"], p["failover_hosts"])
-            placement["clusters"] = ["%s: %s%s" % (r["name"], r["why"], "" if r["fits"] else " - does not fit") for r in ranked[:5]]
-            if not ranked or not ranked[0]["fits"]:
-                module.fail_json(msg="no cluster among %s has room for %d GB more memory: %s" % (", ".join(p["cluster_candidates"]), need_mem // 1073741824,
-                                 "; ".join(placement.get("clusters") or ["none matches in datacenter " + dc.name])), vm=vm, notes=notes)
-            cr = [c["obj"] for c in info if c["name"] == ranked[0]["name"]][0]
-            notes.append("cluster chosen: %s" % placement["clusters"][0])
-        else:
-            host = tpl.runtime.host
-            cr = host.parent if host is not None else None
-            if cr is None:
-                module.fail_json(msg="the template %s has no host: name a cluster" % p["template"], vm=vm, notes=notes)
-        pool = cr.resourcePool
-        if p["datastore"]:
-            dss = [d for d in _all(content, vim.Datastore, dc.datastoreFolder) if d.name == p["datastore"]]
-            pods = [d for d in _all(content, vim.StoragePod, dc.datastoreFolder) if d.name == p["datastore"]]
-            if dss:
-                ds = dss[0]
-            elif pods:
-                kids = [d for d in pods[0].childEntity if isinstance(d, vim.Datastore) and d.summary.accessible]
-                if not kids:
-                    module.fail_json(msg="datastore cluster %s has no accessible datastore" % p["datastore"], vm=vm, notes=notes)
-                ds = sorted(kids, key=lambda d: d.summary.freeSpace, reverse=True)[0]
-                notes.append("datastore cluster %s: put on %s (the most free space)" % (p["datastore"], ds.name))
-            else:
-                module.fail_json(msg="no datastore or datastore cluster named %s in datacenter %s" % (p["datastore"], dc.name), vm=vm, notes=notes)
-        else:
-            ds = tpl.datastore[0] if tpl.datastore else None
-        ds_cands = p["datastore_candidates"]
-        if not p["datastore"] and not ds_cands and ds is not None and cr.host and not any(m.key in set(cr.host) for m in (ds.host or [])):
-            # the template's datastore is not on the chosen cluster (a name rule or a site picked
-            # another one): choose among that cluster's own datastores, by the same rules
-            ds_cands = ["*"]
-            notes.append("the template's datastore %s is not on %s: chose among %s's own datastores" % (ds.name, cr.name, cr.name))
-        if not p["datastore"] and ds_cands:
-            mine = set(cr.host or [])
-            cands = [d for d in _all(content, vim.Datastore, dc.datastoreFolder) if _match(d.name, ds_cands)
-                     and any(m.key in mine for m in (d.host or []))]
-            info = [{"name": d.name, "obj": d, "capacity": d.summary.capacity, "free": d.summary.freeSpace,
-                     "ok": bool(d.summary.accessible) and str(d.summary.maintenanceMode or "normal") == "normal",
-                     "shared": bool(d.summary.multipleHostAccess) or len(d.host or []) >= 2 or len(mine) == 1} for d in cands]
-            ranked = rank_datastores(info, need_disk, p["datastore_max_used_pct"])
-            placement["datastores"] = ["%s: %s%s" % (r["name"], r["why"], "" if r["fits"] else " - does not fit") for r in ranked[:5]]
-            if not ranked or not ranked[0]["fits"]:
-                module.fail_json(msg="no datastore among %s of %s has room for %d GB: %s" % (", ".join(ds_cands), cr.name,
-                                 need_disk // 1073741824, "; ".join(placement.get("datastores") or ["none matches, mounted by " + cr.name])),
-                                 vm=vm, notes=notes)
-            ds = [d["obj"] for d in info if d["name"] == ranked[0]["name"]][0]
-            notes.append("datastore chosen: %s" % placement["datastores"][0])
-        if ds is None:
-            module.fail_json(msg="the template %s has no datastore: name one" % p["template"], vm=vm, notes=notes)
-        mounted = [m.key for m in (ds.host or [])]
-        hosts = list(cr.host or [])
-        if hosts and not any(h in mounted for h in hosts):
-            module.fail_json(msg="datastore %s is not mounted on any host of %s" % (ds.name, cr.name), vm=vm, notes=notes)
-        # a standalone host, or a cluster without DRS, needs the host named: a connected one, not in
-        # maintenance, that mounts the datastore, with the most free memory
         target = None
-        drs = isinstance(cr, vim.ClusterComputeResource) and bool(getattr(getattr(cr.configurationEx, "drsConfig", None), "enabled", False))
-        if not drs:
-            ok = [h for h in hosts if h in mounted and str(h.runtime.connectionState) == "connected" and not h.runtime.inMaintenanceMode]
-            if not ok:
-                module.fail_json(msg="no host of %s is connected, out of maintenance and mounts datastore %s" % (cr.name, ds.name), vm=vm, notes=notes)
-            free = lambda h: (h.summary.hardware.memorySize or 0) - (h.summary.quickStats.overallMemoryUsage or 0) * 1024 * 1024
-            target = sorted(ok, key=free, reverse=True)[0]
-        if p["folder"]:
-            folder = _find_folder(dc, p["folder"])
-            if folder is None:
-                cand = [f for f in _all(content, vim.Folder, dc.vmFolder) if f.name == str(p["folder"]).strip("/").split("/")[-1]]
-                if len(cand) == 1:
-                    folder = cand[0]
-                else:
-                    module.fail_json(msg="no VM folder %s in datacenter %s%s" % (p["folder"], dc.name,
-                                     " (several have that name: give its path)" if cand else ""), vm=vm, notes=notes)
+        if again is not None:                   # an earlier run's VM: finished where it is
+            host = again.runtime.host
+            cr = host.parent if host is not None else None
+            if cr is None or not again.datastore:
+                module.fail_json(msg="the VM %s an earlier run started has no host or datastore in vCenter: delete it and run the job again"
+                                     % p["name"], vm=vm, notes=notes)
+            pool, ds, folder = again.resourcePool or cr.resourcePool, again.datastore[0], again.parent
+            notes.append("picked up %s where an earlier run of this ticket stopped (it was cloned, not finished): finishing it in "
+                         "place - cluster %s, datastore %s" % (p["name"], cr.name, ds.name))
+            vm["resumed"] = True
         else:
-            folder = tpl.parent
+            if p["cluster"]:
+                allcr = _all(content, vim.ComputeResource, dc.hostFolder)
+                found, why = find_cluster(p["cluster"], [c.name for c in allcr],
+                                          [(h.name, c.name if isinstance(c, vim.ClusterComputeResource) else "") for c in allcr for h in (c.host or [])],
+                                          names, dc.name)
+                if not found:
+                    module.fail_json(msg=why, vm=vm, notes=notes)
+                if why:
+                    notes.append(why)
+                cr = [c for c in allcr if c.name == found][0]
+            elif p["cluster_candidates"]:
+                cands = [c for c in _all(content, vim.ComputeResource, dc.hostFolder) if _match(c.name, p["cluster_candidates"])]
+                info = [{"name": c.name, "obj": c, "hosts": [{"mem": h.summary.hardware.memorySize or 0,
+                                                                "used": (h.summary.quickStats.overallMemoryUsage or 0) * 1048576,
+                                                                "ok": str(h.runtime.connectionState) == "connected" and not h.runtime.inMaintenanceMode}
+                                                               for h in (c.host or [])]} for c in cands]
+                ranked = rank_clusters(info, need_mem, p["mem_target_pct"], p["failover_hosts"])
+                placement["clusters"] = ["%s: %s%s" % (r["name"], r["why"], "" if r["fits"] else " - does not fit") for r in ranked[:5]]
+                if not ranked or not ranked[0]["fits"]:
+                    module.fail_json(msg="no cluster among %s has room for %d GB more memory: %s" % (", ".join(p["cluster_candidates"]), need_mem // 1073741824,
+                                     "; ".join(placement.get("clusters") or ["none matches in datacenter " + dc.name])), vm=vm, notes=notes)
+                cr = [c["obj"] for c in info if c["name"] == ranked[0]["name"]][0]
+                notes.append("cluster chosen: %s" % placement["clusters"][0])
+            else:
+                host = tpl.runtime.host
+                cr = host.parent if host is not None else None
+                if cr is None:
+                    module.fail_json(msg="the template %s has no host: name a cluster" % p["template"], vm=vm, notes=notes)
+            pool = cr.resourcePool
+            if p["datastore"]:
+                dss = [d for d in _all(content, vim.Datastore, dc.datastoreFolder) if d.name == p["datastore"]]
+                pods = [d for d in _all(content, vim.StoragePod, dc.datastoreFolder) if d.name == p["datastore"]]
+                if dss:
+                    ds = dss[0]
+                elif pods:
+                    kids = [d for d in pods[0].childEntity if isinstance(d, vim.Datastore) and d.summary.accessible]
+                    if not kids:
+                        module.fail_json(msg="datastore cluster %s has no accessible datastore" % p["datastore"], vm=vm, notes=notes)
+                    ds = sorted(kids, key=lambda d: d.summary.freeSpace, reverse=True)[0]
+                    notes.append("datastore cluster %s: put on %s (the most free space)" % (p["datastore"], ds.name))
+                else:
+                    module.fail_json(msg="no datastore or datastore cluster named %s in datacenter %s" % (p["datastore"], dc.name), vm=vm, notes=notes)
+            else:
+                ds = tpl.datastore[0] if tpl.datastore else None
+            excl = p["datastore_exclude"]
+            if p["datastore"] and ds is not None and _match(ds.name, excl):
+                module.fail_json(msg="datastore %s is kept for other VMs (vm_deploy_datastore_rules): %s may not go on it"
+                                     % (ds.name, p["name"]), vm=vm, notes=notes)
+            ds_cands = p["datastore_candidates"]
+            if not p["datastore"] and not ds_cands and ds is not None and _match(ds.name, excl):
+                # the template's own datastore is kept for other VMs (e.g. SQL servers): choose among the cluster's others
+                ds_cands = ["*"]
+                notes.append("the template's datastore %s is kept for other VMs (vm_deploy_datastore_rules): chose among %s's others"
+                             % (ds.name, cr.name))
+            if not p["datastore"] and not ds_cands and ds is not None and cr.host and not any(m.key in set(cr.host) for m in (ds.host or [])):
+                # the template's datastore is not on the chosen cluster (a name rule or a site picked
+                # another one): choose among that cluster's own datastores, by the same rules
+                ds_cands = ["*"]
+                notes.append("the template's datastore %s is not on %s: chose among %s's own datastores" % (ds.name, cr.name, cr.name))
+            if not p["datastore"] and ds_cands:
+                mine = set(cr.host or [])
+                cands = [d for d in _all(content, vim.Datastore, dc.datastoreFolder) if _match(d.name, ds_cands)
+                         and not _match(d.name, excl) and any(m.key in mine for m in (d.host or []))]
+                # the space the VMs before this one in the same run take there counts as used: they spread out
+                planned = dict((str(k).lower(), float(v or 0) * 1073741824) for k, v in (p["datastore_planned"] or {}).items())
+                info = [{"name": d.name, "obj": d, "capacity": d.summary.capacity,
+                         "free": (d.summary.freeSpace or 0) - planned.get(d.name.lower(), 0),
+                         "ok": bool(d.summary.accessible) and str(d.summary.maintenanceMode or "normal") == "normal",
+                         "shared": bool(d.summary.multipleHostAccess) or len(d.host or []) >= 2 or len(mine) == 1} for d in cands]
+                ranked = rank_datastores(info, need_disk, p["datastore_max_used_pct"])
+                placement["datastores"] = ["%s: %s%s" % (r["name"], r["why"], "" if r["fits"] else " - does not fit") for r in ranked[:5]]
+                if not ranked or not ranked[0]["fits"]:
+                    module.fail_json(msg="no datastore among %s%s of %s has room for %d GB: %s" % (
+                                     ", ".join(ds_cands), (" (not %s)" % ", ".join(excl)) if excl else "", cr.name,
+                                     need_disk // 1073741824, "; ".join(placement.get("datastores") or ["none matches, mounted by " + cr.name])),
+                                     vm=vm, notes=notes)
+                ds = [d["obj"] for d in info if d["name"] == ranked[0]["name"]][0]
+                notes.append("datastore chosen: %s" % placement["datastores"][0])
+            if ds is None:
+                module.fail_json(msg="the template %s has no datastore: name one" % p["template"], vm=vm, notes=notes)
+            mounted = [m.key for m in (ds.host or [])]
+            hosts = list(cr.host or [])
+            if hosts and not any(h in mounted for h in hosts):
+                module.fail_json(msg="datastore %s is not mounted on any host of %s" % (ds.name, cr.name), vm=vm, notes=notes)
+            # a standalone host, or a cluster without DRS, needs the host named: a connected one, not in
+            # maintenance, that mounts the datastore, with the most free memory
+            target = None
+            drs = isinstance(cr, vim.ClusterComputeResource) and bool(getattr(getattr(cr.configurationEx, "drsConfig", None), "enabled", False))
+            if not drs:
+                ok = [h for h in hosts if h in mounted and str(h.runtime.connectionState) == "connected" and not h.runtime.inMaintenanceMode]
+                if not ok:
+                    module.fail_json(msg="no host of %s is connected, out of maintenance and mounts datastore %s" % (cr.name, ds.name), vm=vm, notes=notes)
+                free = lambda h: (h.summary.hardware.memorySize or 0) - (h.summary.quickStats.overallMemoryUsage or 0) * 1024 * 1024
+                target = sorted(ok, key=free, reverse=True)[0]
+            if p["folder"]:
+                folder = _find_folder(dc, p["folder"])
+                bare = "/" not in str(p["folder"]).strip("/")
+                if folder is None and bare:             # a name alone: the one folder of that name anywhere below
+                    cand = [f for f in _all(content, vim.Folder, dc.vmFolder) if f.name == str(p["folder"]).strip("/")]
+                    if len(cand) == 1:
+                        folder = cand[0]
+                    else:
+                        module.fail_json(msg="no VM folder %s in datacenter %s%s" % (p["folder"], dc.name,
+                                         " (several have that name: give its path)" if cand else ""), vm=vm, notes=notes)
+                elif folder is None:                    # a path is that path - never another folder of the same name
+                    module.fail_json(msg="no VM folder %s in datacenter %s (a path is looked up as it is, from the VM folder down)"
+                                         % (p["folder"], dc.name), vm=vm, notes=notes)
+                rel = _folder_path(folder)[len("/%s/vm" % dc.name):].strip("/")
+                if not folder_ok(rel, folder.name, p["folders_allowed"]):
+                    module.fail_json(msg="VM folder %s (found for %s) is not one of vm_deploy_folders (%s): nothing was built"
+                                         % (rel, p["folder"], ", ".join(p["folders_allowed"])), vm=vm, notes=notes)
+            else:
+                folder = tpl.parent
+                rel = _folder_path(folder)[len("/%s/vm" % dc.name):].strip("/")
+                if not folder_ok(rel, folder.name, p["folders_allowed"]):
+                    module.fail_json(msg="no folder given, and the template's folder %s is not one of vm_deploy_folders (%s): give one - "
+                                         "the ticket's folder: line, its site or vm_deploy_defaults" % (rel or "/", ", ".join(p["folders_allowed"])),
+                                     vm=vm, notes=notes)
         if placement:
             vm["placement"] = placement
+        vm["need_gb"] = 0 if again is not None else round(need_disk / 1073741824.0, 1)
         vm.update(cluster=cr.name, datastore=ds.name, folder=_folder_path(folder),
                   cpu=p["cpu"] or tpl.config.hardware.numCPU,
                   memory_gb=round((p["memory_mb"] or tpl.config.hardware.memoryMB) / 1024.0, 1), hostname=hostname)
@@ -578,54 +694,64 @@ def main():
         if module.check_mode:
             module.exit_json(changed=True, vm=vm, notes=notes, issues=issues)
 
-        # 4. build: clone powered off, size, customize, power on
-        spec = vim.vm.CloneSpec(location=vim.vm.RelocateSpec(pool=pool, datastore=ds, host=target), powerOn=False, template=False)
-        new = _wait(tpl.CloneVM_Task(folder=folder, name=p["name"], spec=spec), p["task_timeout"], "the clone")
+        # 4. build: clone powered off (the ticket's mark in its notes from the start), size, customize, power on -
+        # or finish the VM an earlier run of this ticket cloned and did not finish
+        mark = (lambda state: with_mark(p["annotation"], p["ticket"], state)) if p["ticket"].strip() else (lambda state: p["annotation"])
+        if again is None:
+            spec = vim.vm.CloneSpec(location=vim.vm.RelocateSpec(pool=pool, datastore=ds, host=target), powerOn=False, template=False,
+                                    config=vim.vm.ConfigSpec(annotation=mark("building")) if p["ticket"].strip() else None)
+            new = _wait(tpl.CloneVM_Task(folder=folder, name=p["name"], spec=spec), p["task_timeout"], "the clone")
+        else:
+            new = again
         vm.update(created=True, moid=new._moId)
-        cfg = vim.vm.ConfigSpec()
-        if p["cpu"]:
-            cfg.numCPUs = p["cpu"]
-        if p["memory_mb"]:
-            cfg.memoryMB = p["memory_mb"]
-        if p["annotation"]:
-            cfg.annotation = p["annotation"]
-        changes = []
-        if grow or adds:
-            ndisks = {d.key: d for d in new.config.hardware.device if isinstance(d, vim.vm.device.VirtualDisk)}
-            if grow:
-                d1 = ndisks.get(grow[0]) or sorted(ndisks.values(), key=lambda d: (d.controllerKey, d.unitNumber))[0]
-                d1.capacityInKB = grow[1]
-                d1.capacityInBytes = grow[1] * 1024
-                changes.append(vim.vm.device.VirtualDeviceSpec(operation="edit", device=d1))
-            for nd in new_disks(adds):
-                changes.append(vim.vm.device.VirtualDeviceSpec(operation="add", fileOperation="create", device=vim.vm.device.VirtualDisk(
-                    key=nd["key"], controllerKey=nd["controllerKey"], unitNumber=nd["unitNumber"], capacityInKB=nd["capacityInKB"],
-                    backing=vim.vm.device.VirtualDisk.FlatVer2BackingInfo(diskMode="persistent", thinProvisioned=True, fileName=""))))
-            cfg.deviceChange = changes
-            if grow and not pxe:
-                notes.append("disk 1 was grown to %d GB: grow its partition and filesystem in the guest (Linux: growpart, then "
-                             "xfs_growfs / resize2fs; Windows: Disk Management > Extend Volume)" % (grow[1] // 1048576))
-            if adds:
-                notes.append("%d disk(s) added (thin): %s GB - partition and format them in the guest" % (
-                    len(adds), ", ".join(str(kb // 1048576) for _, _, kb in adds)))
-        if p["cpu"] or p["memory_mb"] or p["annotation"] or changes:
-            _wait(new.ReconfigVM_Task(spec=cfg), 600, "setting CPU, memory and disks")
-        # guestinfo on its own: a role without Advanced configuration loses only this, not the VM's size
-        info = dict((str(k), str(v)) for k, v in (p["guestinfo"] or {}).items() if v not in (None, ""))
-        if info:
-            try:
-                _wait(new.ReconfigVM_Task(spec=vim.vm.ConfigSpec(extraConfig=[
-                    vim.option.OptionValue(key="guestinfo." + k, value=v) for k, v in sorted(info.items())])), 600, "setting guestinfo")
-                vm["guestinfo"] = info
-            except (vmodl.MethodFault, RuntimeError) as e:
-                info = {}
-                issue("guestinfo (the name for the installer) was not set: %s - grant the vCenter role Virtual machine > "
-                      "Change configuration > Advanced configuration; the name is on the ticket" % fault_text(e))
-        if cspec is not None:
-            _wait(new.CustomizeVM_Task(spec=cspec), 600, "the guest customization")
-            vm["customization"] = "applied (not yet run)"
+        info = {}
+        if str(new.runtime.powerState) == "poweredOn":       # an earlier run got as far as the power on: its result is read
+            notes.append("it was already powered on by the earlier run: its result is read as it is")
+        else:
+            cfg = vim.vm.ConfigSpec()
+            if p["cpu"]:
+                cfg.numCPUs = p["cpu"]
+            if p["memory_mb"]:
+                cfg.memoryMB = p["memory_mb"]
+            if p["annotation"] or p["ticket"].strip():
+                cfg.annotation = mark("building")
+            changes = []
+            if grow or adds:
+                ndisks = {d.key: d for d in new.config.hardware.device if isinstance(d, vim.vm.device.VirtualDisk)}
+                if grow:
+                    d1 = ndisks.get(grow[0]) or sorted(ndisks.values(), key=lambda d: (d.controllerKey, d.unitNumber))[0]
+                    d1.capacityInKB = grow[1]
+                    d1.capacityInBytes = grow[1] * 1024
+                    changes.append(vim.vm.device.VirtualDeviceSpec(operation="edit", device=d1))
+                for nd in new_disks(adds):
+                    changes.append(vim.vm.device.VirtualDeviceSpec(operation="add", fileOperation="create", device=vim.vm.device.VirtualDisk(
+                        key=nd["key"], controllerKey=nd["controllerKey"], unitNumber=nd["unitNumber"], capacityInKB=nd["capacityInKB"],
+                        backing=vim.vm.device.VirtualDisk.FlatVer2BackingInfo(diskMode="persistent", thinProvisioned=True, fileName=""))))
+                cfg.deviceChange = changes
+                if grow and not pxe:
+                    notes.append("disk 1 was grown to %d GB: grow its partition and filesystem in the guest (Linux: growpart, then "
+                                 "xfs_growfs / resize2fs; Windows: Disk Management > Extend Volume)" % (grow[1] // 1048576))
+                if adds:
+                    notes.append("%d disk(s) added (thin): %s GB - partition and format them in the guest" % (
+                        len(adds), ", ".join(str(kb // 1048576) for _, _, kb in adds)))
+            if p["cpu"] or p["memory_mb"] or p["annotation"] or p["ticket"].strip() or changes:
+                _wait(new.ReconfigVM_Task(spec=cfg), 600, "setting CPU, memory and disks")
+            # guestinfo on its own: a role without Advanced configuration loses only this, not the VM's size
+            info = dict((str(k), str(v)) for k, v in (p["guestinfo"] or {}).items() if v not in (None, ""))
+            if info:
+                try:
+                    _wait(new.ReconfigVM_Task(spec=vim.vm.ConfigSpec(extraConfig=[
+                        vim.option.OptionValue(key="guestinfo." + k, value=v) for k, v in sorted(info.items())])), 600, "setting guestinfo")
+                    vm["guestinfo"] = info
+                except (vmodl.MethodFault, RuntimeError) as e:
+                    info = {}
+                    issue("guestinfo (the name for the installer) was not set: %s - grant the vCenter role Virtual machine > "
+                          "Change configuration > Advanced configuration; the name is on the ticket" % fault_text(e))
+            if cspec is not None:
+                _wait(new.CustomizeVM_Task(spec=cspec), 600, "the guest customization")
+                vm["customization"] = "applied (not yet run)"
         started = time.time()
-        if p["power_on"]:
+        if p["power_on"] and str(new.runtime.powerState) != "poweredOn":
             _wait(new.PowerOnVM_Task(), 600, "power on")
         vm["host"] = new.runtime.host.name if new.runtime.host is not None else ""
         vm["power"] = str(new.runtime.powerState)
@@ -673,6 +799,13 @@ def main():
             if vm["guest_hostname"] and vm["guest_hostname"].split(".")[0].lower() != hostname.lower():
                 issue("the guest reports host name %s, not %s: the customization did not apply it" % (vm["guest_hostname"], hostname))
         vm["power"] = str(new.runtime.powerState)
+        # the result is known: built (a run of this ticket again leaves it) - or its customization failed (refused then)
+        if p["ticket"].strip():
+            done = "failed" if vm["customization"].startswith("FAILED") else "built"
+            try:
+                _wait(new.ReconfigVM_Task(spec=vim.vm.ConfigSpec(annotation=mark(done))), 600, "marking the VM " + done)
+            except (vmodl.MethodFault, RuntimeError) as e:
+                issue("the VM's notes could not be marked %s (%s): a run of this ticket again would finish it again" % (done, fault_text(e)))
     except Exception as e:                      # noqa: BLE001
         module.fail_json(msg=("The VM %s was created, then: %s" % (p["name"], fault_text(e))) if vm.get("created")
                          else "Nothing was built: %s" % fault_text(e), vm=vm, notes=notes)

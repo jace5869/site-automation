@@ -105,8 +105,13 @@ PLAYBOOK=playbooks/servicenow_tickets.yml scenario "tickets: a finding opens an 
 expect "tickets: opened" '"opened: INC0010001"'
 PLAYBOOK=playbooks/servicenow_tickets.yml scenario "tickets: the same finding again" 2 $((port + 2)) api goodpw -e "$finding"
 expect "tickets: updated, not duplicated" '"updated: INC0010001"'
+# the disk check could not run this time (its check-error finding): the /var incident has not cleared
+errored='{"site_health": {"web01": {"findings": [{"check": "disk", "id": "disk:check-error", "severity": "warning", "summary": "the disk check could not run"}], "checks": ["disk"], "checks_failed": ["disk"]}}, "site_health_targets": ["web01"], "servicenow_resolve_cleared": true}'
+PLAYBOOK=playbooks/servicenow_tickets.yml scenario "tickets: the check could not run" 2 $((port + 2)) api goodpw -e "$errored"
+if grep -qF 'resolved: INC0010001' "$work/out.txt"; then echo "FAIL - tickets: a check that could not run resolved its old incident"; fails=$((fails + 1))
+else echo "ok   - tickets: a check that could not run clears nothing it found before"; fi
 PLAYBOOK=playbooks/servicenow_tickets.yml scenario "tickets: the problem cleared" 0 $((port + 2)) api goodpw -e "$clear"
-expect "tickets: resolved" '"resolved: INC0010001"'
+expect "tickets: resolved - the old one and the check-error one, once the check runs again" '"resolved: INC0010001, INC0010002"'
 
 # ---- VM request pickup (vm_deploy_poll.yml): ServiceNow -> the deploy workflow in a fake AAP ----------
 start_mock $((port + 3))

@@ -68,7 +68,7 @@ own `playbooks/group_vars/all.yml` keeps its old settings until you comment them
 | [docs/DRY_RUNS.md](docs/DRY_RUNS.md) | dry runs (Job type Check): what each template does in one, where to set it, examples |
 | [docs/SECRETS.md](docs/SECRETS.md) | where every secret lives |
 | [docs/SERVICE_WATCH_DEMO.md](docs/SERVICE_WATCH_DEMO.md) | the service-watch demo |
-| [docs/pdf/](docs/pdf/README.md) | **PDFs** of the guides: the runbooks setup guide, the service-watch demo, the ACT guides and leadership briefs |
+| [docs/pdf/](docs/pdf/README.md) | **PDFs** of the guides: the runbooks setup guide, the VM deploy guide, the service-watch demo, the ACT guides and leadership briefs |
 
 ## Layout
 

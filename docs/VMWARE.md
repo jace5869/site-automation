@@ -636,6 +636,11 @@ runs no command (as in "The ACT analysis" above: the same key, URL, proxy and CA
 ticket, checks the request against the rules you set in AAP, writes on the ticket what it builds,
 builds it, and writes the result - with the VM's IP address - on the ticket.
 
+> **The short version.** [VM_DEPLOY_GUIDE.md](VM_DEPLOY_GUIDE.md) - also a PDF, `docs/pdf/Site-Automation-VM-Deploy-Guide.pdf` -
+> puts the decisions in one place: a standard setup to start with, which number to launch with, what closes
+> the task, where the notes go, where the VM goes, ready-made configurations, where the logic lives - and
+> every `vm_deploy_*` setting with its default, an example and when to set it.
+
 ### How it flows, step by step
 
 The operator launches **one workflow**, `VM - deploy from ServiceNow ticket (workflow)`, with the
@@ -711,7 +716,7 @@ memory_gb: 16
 | `cpu`, `memory_gb` | vCPUs, memory in GB | the template's |
 | `disks_gb` | disk sizes in GB, system disk first: `disks_gb: 120, 200` grows disk 1 to 120 GB (never shrinks it) and adds one 200 GB disk (thin) | the template's disks |
 | `site` | which site: its cluster, datastore, folder (and vCenter) come from `vm_deploy_sites` | the ticket's **Location** field, when it is one of the sites |
-| `cluster`, `datastore`, `folder` | where it goes (`folder` as a path: `Linux/App`; `datastore` may be a datastore cluster) - overrides the site's | the site's, else `vm_deploy_defaults`, else the template's own |
+| `cluster`, `datastore`, `folder` | where it goes (`datastore` may be a datastore cluster) - overrides the site's. `folder` as a path below the VM folder (`Linux/App`) is that path exactly; a name alone (`App`) is the one folder of that name; the folder the VM goes in - the template's too, when none is given - must be one of `vm_deploy_folders` (when you set that list) | the site's, else `vm_deploy_defaults`, else the template's own |
 | `domain` | the DNS domain set in the guest (Linux) | `vm_deploy_domain` |
 | `customization_spec` | a customization specification from vCenter (**needed for Windows**) | Linux: none needed |
 | `vcenter`, `datacenter` | which one, when the template exists in several | found by the job |
@@ -726,6 +731,22 @@ Other lines (a greeting, `Name: Jane Doe`) are ignored. Upper and lower case do 
 Requesters who do not know template names or `key: value` lines: switch on **plain words**
 (`vm_deploy_plain_words`, next section, no GenAI) and/or GenAI (`vm_deploy_genai`, below).
 
+**What wins** when two places give a value, from the least to the most:
+
+| | Wins over the ones above it |
+|---|---|
+| 1 | the parent - the **change** a change task belongs to (its description) |
+| 2 | the ticket's **short description** (plain words only) and **description** |
+| 3 | the ticket's **work notes**, oldest first |
+| 4 | the ticket's **comments**, oldest first |
+
+So the **change task wins over its change**, and a **comment wins over a work note** (a requester's
+answer over a team member's note). A `key: value` line and plain words are ranked the same way: where
+it is written decides, not how - the task's *"named web02 with 6 vCPU"* wins over the change's
+`vm_name: web01` line. Two answers in the place that wins (*"4 vCPU, or maybe 8 vCPU"*) are a question,
+never an earlier place's value. `vm_deploy_parent_wins: true` moves the change above the task's
+short description and description (rows 1 and 2 swap); the task's work notes and comments still win.
+
 ### What the job does, in order
 
 1. Reads the ticket (`vm_deploy_ticket`: `INC...`, `TASK...`, `SCTASK...`, `RITM...`, `CHG...`, `CTASK...` - or
@@ -734,16 +755,19 @@ Requesters who do not know template names or `key: value` lines: switch on **pla
    for the rest of the request; the change must be approved and in Implement.
 2. Checks: the ticket is open and assigned to `vm_deploy_assignment_group`; the template is in
    `vm_deploy_templates`; the cluster, datastore and folder are allowed; CPU and memory are within
-   the caps; the name is valid and **not used in any vCenter** (`vmware_vcenters`). Anything wrong:
-   a work note on the ticket says what, and nothing is built.
+   the caps; the name is valid and **not used in any vCenter** (`vmware_vcenters`) - or it is this
+   ticket's own VM from an earlier run (below). Anything wrong: a work note on the ticket says what,
+   and nothing is built. Several VMs: every one is checked in vCenter before the first is built.
 3. Writes **"[AAP] Deploying this VM"** with the exact request on the ticket - and builds nothing if
    ServiceNow refuses that note.
-4. Clones the template (powered off), sets CPU, memory and the VM's notes (the ticket number), applies
+4. Clones the template (powered off) with the ticket's mark in the VM's notes
+   (`[site-automation ticket=CTASK0010009 state=building]`), sets CPU, memory and disks, applies
    **guest customization** (Linux: host name = `vm_name`, every network adapter on DHCP; Windows: the
    named customization specification, its computer name set to `vm_name`), powers it on.
 5. Waits for vCenter's customization result (`vm_deploy_wait_customization`, 900 s) and for an IPv4
    address from VMware Tools (`vm_deploy_wait_ip`, 600 s).
-6. Writes **"[AAP] VM app01 deployed"** on the ticket: IP address, customization result, where it went,
+6. Marks the VM built in its notes (`state=built`; `state=failed` when its customization failed), and writes
+   **"[AAP] VM app01 deployed"** on the ticket: IP address, customization result, where it went,
    size. On a failure: what failed, and whether a (partly set up) VM exists.
 7. Closes the ticket, when you set what closes it (`vm_deploy_done_fields_by_table`, below).
 
@@ -771,7 +795,10 @@ web03`, `2 VMs: web01 and web02`.
 
 - **Each VM is checked on its own**: its name (valid, not used in any vCenter), its name rule (so two
   names may go to two clusters), the caps (`vm_deploy_max_cpu` ... are per VM). One VM refused = none
-  is built: the ticket says why.
+  is built: the ticket says why. That holds in vCenter too: **every VM is checked there before the
+  first is built** (read-only: its name is free, its template, cluster, datastore and folder are there,
+  its customization is set up) - *"[AAP] Nothing was built: ... 1 of 3 cannot be: - web03: a VM named
+  web03 already exists"*.
 - **How many** - `2 VMs`, `two servers`, `both servers`, `3 virtual machines` - must match the names:
   *"2 VMs named web01"* is a question to the requester, nothing is built. A range (`web01 to web05`,
   `web01-05`) is never expanded: a question too - every name is written out.
@@ -780,15 +807,42 @@ web03`, `2 VMs: web01 and web02`.
 - **Built one after the other.** Each VM is placed after the ones before it are there, so automatic
   placement sees them. The dry run and the propose step show where each would go as if alone: the
   build may place them differently.
-- **On the ticket:** "[AAP] Deploying 2 VMs, one after the other", then one note per VM ("[AAP] VM
-  web01 deployed (...) - 1 of 2."). The ticket is **closed only when every VM is built**.
+- **On the ticket:** "[AAP] Deploying 2 VMs, one after the other", then one note per VM, written as
+  soon as that VM is done ("[AAP] VM web01 deployed (...) - 1 of 2."). The ticket is **closed only when
+  every VM is built**.
 - **One fails, the others are still built.** The ticket stays open with a note per VM and one that sums
   it up: *"[AAP] 1 of 2 VMs built; this ticket stays open: - web01: built - web02: NOT deployed - ..."*.
-  Fix the cause and **run the job again**: the VMs already built are left as they are (the ticket's
-  own note says so and the VM's notes name the ticket), the others are built, and the ticket is closed.
-  This works for a one-VM ticket too: run it again and the VM it built is reported, not refused (and
-  the ticket closed, when close fields are set) - to build a test VM again, delete it in vCenter first. A
-  VM of that name that the ticket did not build is still refused.
+  Fix the cause and **run the job again**: it picks up where it stopped (next).
+
+#### Run it again: it picks up where it stopped
+
+A job that stopped part way - a VM failed, the job was cancelled or timed out, AAP restarted - is run
+again for the same ticket, and **picks up where it stopped**. Each VM carries its ticket in its notes
+from the clone on (`[site-automation ticket=CTASK0010009 state=building]`, then `state=built` once it is
+up and its customization result is in), so the job knows its own VMs even when a result note never
+reached the ticket:
+
+| The VM in vCenter | Run again |
+|---|---|
+| marked **built** for this ticket | left as it is: reported with its IP address |
+| marked **building** for this ticket (cloned, not finished) | **finished where it is**: the CPU, memory and disks it still lacks, the customization, the power on - never cloned again (already powered on: its result is read) |
+| not there | built |
+| there, but not this ticket's (another ticket's mark, or none) | refused, nothing built: *a VM named web02 already exists* |
+
+The work notes say which: *"[AAP] Deploying 3 VMs ... Picking up where an earlier run for this ticket
+stopped: - web01: built already - left as it is - web02: started, not finished - finished in place -
+web03: to build"*, then each VM's own note (*"Picked up where an earlier run for this ticket stopped:
+finished in place."*). The ticket is closed once all of them are built.
+
+- One VM tickets work the same: run again, the VM it built is reported, not refused (and the ticket
+  closed, when close fields are set). To build a test VM again, delete it in vCenter first.
+- VMs built by an earlier release (no mark; their notes begin *"Deployed from TEMPLATE for CTASK0010009 by"* -
+  the ticket's number written anywhere else does not count):
+  powered on or with the ticket's *"[AAP] VM web01 deployed"* note - left as they are; powered off -
+  finished in place.
+- Built, but its **guest customization failed** (`state=failed`): refused - check it, delete it, run again.
+- `vm_deploy_resume: false`: the way of earlier releases - a VM the ticket's own *"[AAP] VM web01 deployed"*
+  note names is left as it is; any other VM with the name is refused, and one started is never finished.
 - The PXE / MECM case works the same: each VM gets its own MAC address on its own note.
 - **The job takes as long as all its VMs.** A template with guest customization waits up to
   `vm_deploy_wait_customization` (900 s) and `vm_deploy_wait_ip` (600 s) **per VM**: ten such VMs can
@@ -907,27 +961,31 @@ approval - the change was approved for its words, not for GenAI's reading of the
 own `vm_name:` line: otherwise each task reads every name from the change, and the second task is refused
 (the names are taken).
 
-**The change wins, and the notes go on both** - when the specs are in the change's description and the
-task may repeat them (maybe wrongly), or say nothing:
+**The notes on both, and which wins.** By default the **task wins over its change** (*What wins*, above):
+the change's description gives the request, the task's own text corrects it. When the task may repeat
+the request wrongly, let the change win instead:
 
 ```yaml
-vm_deploy_parent_wins: true                 # the change's description wins over the task's description
+vm_deploy_parent_wins: true                 # only if the change must win over the task's description (default: the task wins)
 vm_deploy_parent_text_fields: [description, comments]   # an answer written as a comment on the change counts too
 vm_deploy_notes_also: [parent, tasks]       # every note on the change too - or, launched with the change, on its task
 vm_deploy_notes_tasks_query: "short_descriptionLIKEto deploy"   # which of the change's tasks (with vm_deploy_assignment_group)
+vm_deploy_assignment_group_by_table: {change_request: ""}   # launched with the change: it may be any group's
 ```
 
-- **The change wins:** the task's short description and description are read first, then the change's -
-  which wins where both say something. The task fills in only what the change does not say. A comment or
-  work note on the task still wins over the change (newer: an answer, a correction). The dry run says where
-  each value came from (`cpu: 4   (from parent CHG0030010 description)`). Off (the default): the task wins.
+- **Which wins:** off (the default), the change is read first and the task's text wins over it. On, the
+  task's short description and description are read first, then the change's - which wins where both say
+  something; the task fills in only what the change does not say. Either way a work note on the task wins
+  over both, and a comment over a work note. The dry run says where each value came from (`cpu: 4   (from
+  parent CHG0030010 description)`).
 - **The notes on both:** every note and comment the job writes - checked / ready to build, deploying, each
   VM deployed or not, the questions, a GenAI proposal - goes on the ticket **and**:
   - launched with the **change task** (the schedule's pickup): on its change (`parent`);
   - launched with the **change** (e.g. from a web front end through AAP's API): on the change's open tasks
     assigned to `vm_deploy_assignment_group` and matching `vm_deploy_notes_tasks_query` (`tasks`), when
     there are any - none found: the notes are on the change only, and the job says so.
-  The job says where its notes go: *"Notes on CTASK0010009 and CHG0030010; only CTASK0010009 is closed"*.
+  The job says where its notes go and what it closes: *"Notes on CTASK0010009 and CHG0030010. CTASK0010009
+  is closed when every VM is built."*
 - Only the ticket the job was launched with is **closed** (`vm_deploy_done_fields_by_table`) - and, launched
   with the **change**, its task too with `vm_deploy_close_tasks: true`: the tasks found as above are
   closed by the `change_task` entry, when every VM is built (*Task CTASK... closed: ...* in the report;
@@ -935,9 +993,12 @@ vm_deploy_notes_tasks_query: "short_descriptionLIKEto deploy"   # which of the c
   `change_request` out of `vm_deploy_done_fields_by_table`, and `vm_deploy_done_fields: {}` (it is for
   every table without an entry - a change too). A note the other ticket does not take (the ServiceNow
   account cannot update `change_request`) is a warning in the job, not a failure.
-- Launched with the **change**, the change itself must pass the rules for a ticket: assigned to
-  `vm_deploy_assignment_group` (or leave that empty on the template used this way), approved and in
-  Implement. A task that has a note of AAP's on it is never picked up by the schedule, so a change built
+- Launched with the **change**, the change itself must pass the rules for a ticket: approved and in
+  Implement, and assigned to `vm_deploy_assignment_group` - or to **any group** with
+  `vm_deploy_assignment_group_by_table: {change_request: ""}` (a change is often assigned to whoever owns
+  it, not to your team). Its tasks that get the notes are still found by `vm_deploy_assignment_group`
+  (keep it set), and a ticket launched by itself of any other table (a change task, an incident) must still
+  be your group's. A task that has a note of AAP's on it is never picked up by the schedule, so a change built
   this way is not built again from its task.
 
 **Test it, step by step** (a test change and a test template):
@@ -1013,8 +1074,8 @@ vm_deploy_name_rules:
   that its site, or the ticket, puts in another vCenter.
 - The cluster must still be allowed (`vm_deploy_clusters`, when you set that list).
 - Datastore: the rule's, else the site's or `vm_deploy_datastores` candidates, else the template's -
-  and when the template's datastore is not on that cluster, the cluster's own datastore with the most
-  room (shared, under 85 % with the VM).
+  and when the template's datastore is not on that cluster, the cluster's own least used datastore
+  (shared, under 85 % with the VM). `vm_deploy_datastore_rules` (SQL servers) wins over all of them.
 - The dry run (Check) shows it: `cluster: YOUR-CLUSTER-FOR-AB01   (from name rule *AB01*)`.
 
 ### Automatic placement: the job picks the cluster and datastore
@@ -1028,14 +1089,39 @@ chooses one by rules - never from all of vCenter, only among explicit candidates
   (`vm_deploy_failover_hosts`) - it must stay under `vm_deploy_mem_target_pct` (80 %).
 - **Datastore:** shared, accessible, not in maintenance, mounted by that cluster, and under
   `vm_deploy_datastore_max_used_pct` (85 %) with the VM at its **full** size (thin disks counted full).
+  The **least used first**: the one that is the least full with the VM on it. The VMs of one ticket
+  spread out - each counts what the ones before it in the same run put on a datastore.
 - The ticket note and the report give the ranking: `cluster chosen: PROD-A2: memory 61.3% used with
-  this VM and 1 host down (target 80%)`.
+  this VM and 1 host down (target 80%)`, `datastore chosen: A-DS-03: 41.2% used with this VM (at most 85%)`.
 
 ```yaml
 vm_deploy_sites:
   SiteA: {clusters: [A-PROD-*], datastores: [A-DS-*], folder: Servers/New}
   SiteB: {clusters: [B-PROD-*], datastores: [B-DS-*], folder: Servers/New, vcenter: vc02.yoursite.mil}
 ```
+
+**By location, the least used first - for every VM.** The location picks the cluster (a site, a name
+rule, the ticket); the datastore is then the least used of that cluster's. Without datastore lists,
+switch on `vm_deploy_datastore_balance: true`: a VM nothing else places goes on the least used shared
+datastore of its cluster (instead of the template's own). A site's or a rule's single `datastore:` still
+puts it there.
+
+**SQL servers on their own datastores** (`vm_deploy_datastore_rules`): the VM's name picks its datastores.
+
+```yaml
+vm_deploy_datastore_rules:
+  - {match: ["*SQL*", "*DBSE*", "*DBV*"], datastores: ["*SQL*"]}   # e.g. ab01sql01, AB01DBSE02, ab01dbv03
+vm_deploy_datastore_balance: true                                   # every other VM: the least used of its cluster's
+```
+
+- The **first** rule whose `match` fits the name (`*` and `?`, any case) gives the datastores the VM goes
+  on: the least used of them on its cluster. That wins over a site's, a name rule's or
+  `vm_deploy_defaults`' datastore; a `datastore:` the ticket writes itself must be one of them (else a
+  question: *"ab01sql01 goes on a datastore \*SQL\* ...: A-DS01 is not one"*).
+- A VM **no rule matches never goes on a datastore a rule names** - they are kept for those VMs, even when
+  it is the template's own (then: the least used of the cluster's others).
+- None of them on the VM's cluster, or none with room: nothing is built - *"no datastore among \*SQL\* of
+  A-PROD-CL01 has room for 140 GB"*. The check in vCenter before the build finds that, for every VM.
 
 ### Requests in plain words, without GenAI
 
@@ -1115,7 +1201,7 @@ Then run the workflow again (the pickup does not take a ticket twice).
     one written once for all (above the lines, or below them after a blank line), is for every VM - but
     never a site: a line with no Location takes none from another line.
   - Two different values on one line (`CPU : CORE.4 / 8 cpu`) are a question about that VM only.
-  - A later comment or work note with a line for all (`cpu: 8`) wins over every line.
+  - A comment or work note with a line for all (`cpu: 8`) wins over every line (a comment over a work note).
   - A name rule for a name used at several sites (`sites: [Site One, Site Two]`): a line with no Location,
     or one no site has, is a question - never the rule's vCenter.
 - Test it like any change: a dry run (**Check**) on a test ticket shows each value and where it came
@@ -1149,8 +1235,8 @@ workflow stops. A value the ticket gives itself (`cpu: 4` in a comment) always w
 |---|---|
 | Off by default | `vm_deploy_genai: false`; the `key: value` lines work without GenAI |
 | A person approves | the workflow's approval sits between the proposal and the build; the build step builds the proposal posted on the ticket - never a fresh answer, never unseen (`vm_deploy_genai_approval: false` drops the person, for a demo) |
-| The ticket must not change in between | the proposal carries a hash of the ticket text; editing the description or adding a comment voids it: the build step builds nothing, and the workflow is run again from the start |
-| Every value traceable to the ticket | each value comes with the ticket's words it is from; the job checks those words are in the ticket and contain the value (the name word for word, the numbers as written) - anything else is dropped and becomes a question. GenAI's own confidence is not trusted |
+| The ticket must not change in between | the proposal - and, with or without GenAI, the propose step's *"[AAP] Checked - ready to build"* note - carries a hash of the ticket text (the change's too); editing the description or adding a comment voids it: the build step builds nothing (*"was changed after the approval"*), and the workflow is run again from the start |
+| Every value traceable to the ticket | each value comes with the ticket's words it is from; the job checks those words are in the ticket and support the value: the name word for word, the numbers as written, the **site named in its words**, the **template for the operating system its words (or, when they name none, the ticket) ask for** - anything else is dropped and becomes a question. GenAI's own confidence is not trusted |
 | The template by the job's rules | the operating system GenAI copies gives the template by the plain words' rules; it may also name a key of `vm_deploy_template_catalog` (optional), which must be in `vm_deploy_templates` - a key for another version than the ticket asks for (2022 for *Server 2025*) is dropped. An OS no template is for is a question, never another version |
 | Same rules as any request | allow-lists, CPU / memory / disk caps, name rules, the group, a free name: what the ticket text asks for ("use 64 CPUs") is refused like a typed request |
 | No placement by GenAI | cluster and datastore come from the site, the defaults or the rules above |
@@ -1347,6 +1433,7 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
 | `vm_deploy_max_cpu` / `vm_deploy_max_memory_gb` | `16` / `128` | caps |
 | `vm_deploy_name_regex` | letters, digits, `-` | the names allowed (`'^[a-z0-9-]{1,15}$'` for Windows-safe names) |
 | `vm_deploy_assignment_group` | `""` (any) | only tickets assigned to this group - or to one of a list: `["Group A", "Group B"]` |
+| `vm_deploy_assignment_group_by_table` | `{}` | the same for a ticket of one table, in its place: `{change_request: ""}` = launched with a change, any group (its tasks: still `vm_deploy_assignment_group`'s) |
 | `vm_deploy_domain` | `localdomain` | the DNS domain Linux customization sets |
 | `vm_deploy_customize` / `vm_deploy_power_on` | `true` / `true` | guest customization; power on |
 | `vm_deploy_wait_customization` / `vm_deploy_wait_ip` | `900` / `600` | seconds to wait for each |
@@ -1354,10 +1441,11 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
 | `vm_deploy_done_fields_by_table` | `{}` | the same per table, in place of `vm_deploy_done_fields` for it: `{change_task: {state: "3", close_code: successful, close_notes: "VM deployed by AAP"}}` - close the task, never the change ("A change request: its task does the work") |
 | `vm_deploy_done_fields_issues_by_table` | `{}` | over those when every VM is built but something did not finish (no IP in time, no customization result ...): `{change_task: {close_code: successful_issues}}` |
 | `vm_deploy_done_fields_pxe` | `true` | close it also for a network-boot VM (still installing its OS from MECM); `false` = leave that ticket open |
-| `vm_deploy_parent_wins` | `false` | the change's description wins over its task's short description and description (a comment or work note on the task still wins) |
+| `vm_deploy_parent_wins` | `false` | `true`: the change's description wins over its task's short description and description (the task's work notes and comments still win); `false`: the task wins over its change |
 | `vm_deploy_notes_also` | `[]` | every note on these too: `parent` (the change of a task), `tasks` (launched with a change: its open tasks of the group); never closed |
 | `vm_deploy_close_tasks` | `false` | launched with a change: close its tasks found for the notes, by `vm_deploy_done_fields_by_table`'s `change_task` entry - never the change |
 | `vm_deploy_notes_tasks_query` | `""` | which of the change's tasks get the notes, e.g. `short_descriptionLIKEto deploy` (with `vm_deploy_assignment_group`) |
+| `vm_deploy_notes_tasks_limit` | `50` | the most change tasks that get the notes (and are closed); a change with more: a warning, the first ones only |
 | `vm_deploy_parent_tables` / `_fields` / `_text_fields` | `[change_request]` / `[change_request, parent]` / `[description]` | read the request from the ticket's parent change too (its lines, and its plain words with `vm_deploy_plain_words`), under the ticket's own |
 | `vm_deploy_ready_by_table` | `{change_request: {approval: Approved, state: Implement}}` | the fields a ticket - or the change it belongs to - must have before anything is built (as the form shows them); checked again right before the build; `{}` = no check |
 | `vm_deploy_ticket_table` | from the prefix | the table for a number whose prefix the job does not know (a table of your own); a known prefix keeps its table - a `CTASK...` is always a change task |
@@ -1372,6 +1460,9 @@ artifacts as `vm_deploy_inventory.paste`). It changes nothing.
 | `vm_deploy_max_disks` / `vm_deploy_max_disk_gb` / `vm_deploy_max_total_disk_gb` | `5` / `2048` / `4096` | disk caps: how many (disk 1 included), the biggest one, all together - e.g. `vm_deploy_max_disks: 8` on the template |
 | `vm_deploy_mem_target_pct` / `vm_deploy_failover_hosts` | `80` / `1` | automatic placement: a cluster fits when memory with this VM and that many hosts down stays under the % |
 | `vm_deploy_datastore_max_used_pct` | `85` | automatic placement: a datastore fits when it stays under this % with the VM at its full size |
+| `vm_deploy_datastore_rules` | `[]` | datastores by the VM's name, e.g. `[{match: ["*SQL*", "*DBSE*", "*DBV*"], datastores: ["*SQL*"]}]`: those VMs on the least used of them, every other VM never there |
+| `vm_deploy_datastore_balance` | `false` | `true`: a VM nothing else places goes on the least used shared datastore of its cluster (not the template's) |
+| `vm_deploy_resume` | `true` | run again for the same ticket: its VMs built are left, one started is finished in place (the ticket's mark in the VM's notes); `false`: a VM with the name is refused |
 | `vm_deploy_plain_words` | `false` | read the ticket's own words by your rules (no GenAI): template words, size words, `named ...` |
 | `vm_deploy_plain_templates` | `{}` | the words for each template, e.g. `{"rhel 9": rhel9-gold, "windows 2022": WIN2022-TEMPLATE}` |
 | `vm_deploy_plain_sizes` | `{}` | size words, e.g. `{small: {cpu: 2, memory_gb: 8}, medium: {cpu: 4, memory_gb: 16}}` |
@@ -1804,7 +1895,7 @@ the last column says.
 | `No incident ticket INC... in ServiceNow` | a wrong number, or the account cannot see it | check the number; the account needs read access to that table |
 | `ServiceNow refused the read (HTTP 403)` | the account may not read that table | give it read access (e.g. the itil role) |
 | `REFUSED: template '...' is not in vm_deploy_templates` | a template you have not allowed | add it to `vm_deploy_templates`, or correct the ticket |
-| `REFUSED: the ticket is assigned to ...` | not your team's ticket | reassign it, or `vm_deploy_assignment_group` |
+| `REFUSED: the ticket is assigned to ...` | not your team's ticket | reassign it, or `vm_deploy_assignment_group`; a change launched by itself, any group: `vm_deploy_assignment_group_by_table: {change_request: ""}` |
 | `the ticket does not say vm_name` | no `vm_name:` line | the requester adds a comment `vm_name: ...` |
 | `Nothing was built: ServiceNow refused the work note` | the account cannot update that table | give it write access to work notes; nothing was built, by design |
 | `a VM named ... already exists in vCenter ...` | the name is taken (or the job ran twice) | another name in a comment, or nothing to do |
@@ -1818,6 +1909,10 @@ the last column says.
 | `for ab01web06: the ticket gives more than one number of CPUs ...` | that VM's own line gives two values (one server per line) | the requester corrects that line, or writes a line for all (`cpu: 4`) |
 | `... ready to build in ... - waiting for the approval` | the propose step (or the job alone with `vm_deploy_genai_approval: true`): by design | approve the workflow (or launch the job again) |
 | `has no GenAI proposal for its text as it is now` | the build step, but the ticket changed after the proposal (or there is none) | run the workflow from the start |
+| `was changed after the approval` / `has no "[AAP] Checked - ready to build" note` | the build step: the ticket (or its change) changed after the propose step checked it, or that step ran with an older release | run the workflow from the start |
+| `Nothing was built: ... 1 of 3 cannot be: - web03: ...` | several VMs: one fails the check in vCenter (name taken, no template, no datastore with room ...) - none is built | fix that one (or the ticket), run again |
+| `goes on a datastore *SQL* ...: A-DS01 is not one` / `is kept for other VMs` | `vm_deploy_datastore_rules`: the ticket names a datastore the VM's rule does not allow, or one kept for other VMs | drop the `datastore:` line (the job picks the least used of the allowed ones) |
+| `no VM folder Test/App in datacenter DC1 (a path is looked up as it is ...)` / `is not one of vm_deploy_folders` | a folder path is that path exactly (never another folder of the same name); the folder found must be allowed | write the path as in vCenter, below the VM folder |
 | `questions for the requester (nothing built)` | the job could not trace a value GenAI gave to the ticket, or something it needs is missing (GenAI's own questions are only `GENAI NOTE` lines, never sent) | the requester answers in a comment (`memory_gb: 16`); run the job again |
 | `DROPPED: vm_name ...` | GenAI gave a value the ticket does not contain (made up, or guessed) | nothing: it is a question now |
 | `DROPPED: template '...': it is for Windows Server 2022, the ticket asks for Windows Server 2025` | GenAI named a catalog template for another version | nothing: never built; see the next row |

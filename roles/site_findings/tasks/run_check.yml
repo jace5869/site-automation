@@ -24,3 +24,5 @@
                           ~ (ansible_failed_result.msg | default('unknown error') | string | truncate(300)),
                'hint': ''}] }}
         site_checks_run: "{{ (site_checks_run + [_site_check]) | unique }}"
+        # it did not finish: what it found before is not known to have cleared (servicenow tickets.yml)
+        site_checks_failed: "{{ (site_checks_failed | default([]) + [_site_check]) | unique }}"

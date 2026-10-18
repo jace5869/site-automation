@@ -109,6 +109,17 @@ def vm_deploy_table_name(name):
     return TABLE_NAMES.get(re.sub(r"[\s_-]+", " ", s.lower()).strip(), s)
 
 
+def vm_deploy_group_for(table, by_table=None, groups=None):
+    """The groups a ticket of this table must be assigned to -> {'groups': [names] ([] = any group),
+    'setting': the setting they come from}. by_table (vm_deploy_assignment_group_by_table): {table: one
+    group, a list, or "" / nothing = any group}, its tables as people write them ('change'); a table it
+    does not name: groups (vm_deploy_assignment_group)."""
+    for k, v in (by_table.items() if isinstance(by_table, dict) else []):
+        if vm_deploy_table_name(k) == vm_deploy_table_name(table) and str(table or "").strip():
+            return {"groups": _groups(v), "setting": "vm_deploy_assignment_group_by_table (%s)" % vm_deploy_table_name(k)}
+    return {"groups": _groups(groups), "setting": "vm_deploy_assignment_group"}
+
+
 def vm_deploy_table(number, prefixes=None, guess=True):
     """'INC0012345' -> 'incident', 'SCTASK0001' -> 'sc_task'. prefixes: the site's own ({INCN: incident}),
     before the standard ones. guess: a prefix that starts with a known one is taken as that table
@@ -475,12 +486,13 @@ def _fixed(pattern):
 
 
 def _own_pieces(record):
-    """The ticket's own text in reading order: short description, description, then the comments and
-    work notes oldest first (not this job's own) -> [(label for the words, label for its lines - '' for the
-    short description, whose lines are not read - text)]."""
+    """The ticket's own text in reading order, the one that wins last: short description, description, the
+    work notes, then the comments, each oldest first (not this job's own) - a comment wins over a work
+    note -> [(label for the words, label for its lines - '' for the short description, whose lines are not
+    read - text)]."""
     r = record or {}
     out = [("the short description", "", r.get("short_description")), ("the description", "description", r.get("description"))]
-    for field, label, short in (("comments", "a comment", "comment"), ("work_notes", "a work note", "work note")):
+    for field, label, short in (("work_notes", "a work note", "work note"), ("comments", "a comment", "comment")):
         for head, body in journal_entries(r.get(field)):
             if not body.startswith(OWN):
                 out.append(("%s%s" % (label, (" " + head) if head else ""), ("%s %s" % (short, head)) if head else short, body))
@@ -809,7 +821,7 @@ def vm_deploy_words(record, opts=None):
             else:
                 state["vm:" + key] = (own, label, idx)
 
-    spec, sources, questions = {}, {}, {}
+    spec, sources, questions, at = {}, {}, {}, {}
     count = None
     if "count" in state:
         found, label, _ = state.pop("count")
@@ -856,16 +868,20 @@ def vm_deploy_words(record, opts=None):
                                     % (found["?range"], label))
             continue
         val, src, q = settle(key, found, label)
-        if q:
+        if q:                                   # a later piece that cannot say which: the question, never an earlier value
+            for k2 in (("cpu", "memory_gb") if key == "size" else (key,)):
+                spec.pop(k2, None)
+                sources.pop(k2, None)
+                at[k2] = state[key][2]
             questions[key if key != "size" else "cpu"] = q
             continue
         if key == "size":
             for k2 in ("cpu", "memory_gb"):
                 if sizes[val].get(k2) not in (None, ""):
-                    spec[k2], sources[k2] = sizes[val][k2], "size '%s' (%s)" % (val, src)
+                    spec[k2], sources[k2], at[k2] = sizes[val][k2], "size '%s' (%s)" % (val, src), state[key][2]
                     questions.pop(k2, None)
         else:
-            spec[key], sources[key] = val, src
+            spec[key], sources[key], at[key] = val, src, state[key][2]
             questions.pop(key, None)
     # each VM's own line: what it says over what the rest of the text says - unless a later piece says it for all
     vms, vms_at = {}, {}
@@ -907,7 +923,7 @@ def vm_deploy_words(record, opts=None):
         spec.pop("vm_name")
         sources.pop("vm_name", None)
     if "disks" in state:                        # the last piece that names disks
-        d, label, _ = state["disks"]
+        d, label, at["disks_gb"] = state["disks"]
         if d["value"]:
             spec["disks_gb"], sources["disks_gb"] = d["value"], "the words %s in %s" % (d["words"], label)
         else:
@@ -919,7 +935,7 @@ def vm_deploy_words(record, opts=None):
                 if str(tpl or "").strip():
                     first.setdefault(str(tpl).strip(), str(ph))
         questions.setdefault("_template_hint", "write it, e.g. %s" % " or ".join("'%s'" % p for p in list(first.values())[:4]))
-    return {"spec": spec, "sources": sources, "questions": questions, "count": count, "vms": vms, "vms_at": vms_at}
+    return {"spec": spec, "sources": sources, "questions": questions, "count": count, "vms": vms, "vms_at": vms_at, "at": at}
 
 
 def _count_question(count, names):
@@ -949,7 +965,7 @@ def vm_deploy_spec(record, defaults=None, proposal=None, words=None, parent=None
     for k, v in ((proposal or {}).get("fields") or {}).items():
         if v not in (None, "", []):
             spec[k], sources[k] = v, "GenAI proposal (%s)" % ((proposal or {}).get("header") or "work note")
-    wq, count, vms, vms_at = {}, None, {}, {}
+    wq, count, vms, vms_at, w_at = {}, None, {}, {}, {}
     if words is not None and words.get("on", True) is False:
         words = None
     # the parent's text wins over the ticket's short description and description (vm_deploy_parent_wins):
@@ -968,9 +984,23 @@ def vm_deploy_spec(record, defaults=None, proposal=None, words=None, parent=None
             spec[k], sources[k] = v, w["sources"][k]
         wq, count = dict(w["questions"]), w.get("count")
         vms, vms_at = copy.deepcopy(w.get("vms") or {}), dict(w.get("vms_at") or {})
+        w_at = dict(w.get("at") or {})
+        # what the words could not settle (a question) is never settled by a default or a GenAI value - only by a
+        # 'key: value' line in that piece or a later one. Except GenAI's disks: it copies every disk the ticket
+        # lists, the system disk first - what the words could not lay out ('120gb disk', '50gb disk'), not a pick
+        for k in [k for k in wq if not k.startswith(("_", "vm:")) and k in w_at and k not in w["spec"]]:
+            if k == "disks_gb" and str(sources.get(k, "")).startswith("GenAI"):
+                continue
+            for k2 in (("cpu", "memory_gb") if k == "cpu" and "memory_gb" in w_at and "memory_gb" not in w["spec"] else (k,)):
+                spec.pop(k2, None)
+                sources.pop(k2, None)
 
     def line(k, v, where, piece):
-        """a 'key: value' line: over the plain words - and over each VM's own line when it comes in a later piece"""
+        """a 'key: value' line: over the plain words of its own piece and the ones before it (a later piece's
+        words win: the ticket over its parent, a comment over a work note) - and over each VM's own line when
+        it comes in a later piece"""
+        if piece < w_at.get(k, -1):
+            return
         spec[k], sources[k] = v, where
         if k in vms_at and piece > vms_at[k]:
             for one in vms.values():
@@ -979,10 +1009,9 @@ def vm_deploy_spec(record, defaults=None, proposal=None, words=None, parent=None
             for q in [q for q in wq if q.startswith("vm:") and q.endswith(":" + k)]:
                 wq.pop(q)
             vms_at.pop(k)
-    # the pieces in the plain words' order: the parent's, then the ticket's own (_own_pieces);
-    # comments and work notes come as two lists: merged by their order in each (oldest first) - the
-    # header's date is not parsed (its format is the API account's), so a work note and a comment on the
-    # same ticket apply in this order: comments, then work notes
+    # the pieces in the plain words' order, the one that wins last: the parent's, then the ticket's own
+    # (_own_pieces: short description, description, work notes, comments) - a 'key: value' line and plain
+    # words alike: the later piece wins, whichever way it is written
     piece = 0
     order = [(where, text) for _, where, text in head]
     order += [("parent %s %s" % (pnum, label), text) for label, text in (parent or {}).get("pieces") or [] if str(text or "").strip()]
@@ -1082,9 +1111,10 @@ def vm_deploy_check(parsed, record=None, opts=None):
     the site's placement filled in, pxe true for a network-boot template), 'sources', 'problems': [why
     it is refused], 'vms': [{'spec', 'sources'}: one per VM], 'names': [the VMs' names]}. opts:
     templates (required allow-list), clusters, datastores, folders (allow-lists, [] = any), max_cpu,
-    max_memory_gb, name_regex, assignment_group, sites ({site: {cluster, datastore, folder, vcenter,
-    datacenter, domain ...}}), site_required, pxe_templates, template_aliases ({short name: template}),
-    template_specs ({template pattern: customization specification}), max_vms, ready
+    max_memory_gb, name_regex, assignment_group (assignment_group_setting: the setting it comes from, for
+    the message), sites ({site: {cluster, datastore, folder, vcenter, datacenter, domain ...}}), site_required,
+    pxe_templates, template_aliases ({short name: template}), template_specs ({template pattern:
+    customization specification}), max_vms, ready
     (vm_deploy_ready_by_table) and table (the ticket's table): the fields the ticket must have.
 
     Several names (vm_name 'web01, web02'): one VM each, the same size - but what a VM's own line says
@@ -1142,6 +1172,47 @@ def _together(vms):
         if any(srcs):
             src[k] = "; ".join(sorted(set(x for x in srcs if x)))
     return spec, src
+
+
+def _pats(value):
+    """A pattern or a list of them (a string may list several: 'a, b') -> [patterns]."""
+    vals = value if isinstance(value, (list, tuple)) else str(value or "").split(",")
+    return [str(x).strip() for x in vals if str(x or "").strip()]
+
+
+_CONFIG_SRC = ("default", "site ", "name rule")
+
+
+def _datastore_rules(spec, sources, o, problems):
+    """Which datastores the VM may go on, by its name (opts datastore_rules: [{match, datastores}], e.g. SQL servers on
+    the SQL datastores): the first rule whose match fits the name gives its datastores - automatic placement chooses
+    among them, the least used first, over a site's or the defaults' datastore; a datastore the ticket names itself
+    must be one of them. A VM no rule matches never goes on a datastore a rule names (_datastore_exclude). opts
+    datastore_balance: a VM nothing else places chooses among all its cluster's datastores, the least used first."""
+    name = str(spec.get("vm_name") or "")
+    rules = [x for x in o.get("datastore_rules") or [] if isinstance(x, dict) and _pats(x.get("datastores")) and _pats(x.get("match"))]
+    rule = next((x for x in rules if name and _allowed(name, _pats(x.get("match")))), None)
+    own = spec.get("datastore") and not str(sources.get("datastore", "")).startswith(_CONFIG_SRC)
+    if rule:
+        pats, src = _pats(rule["datastores"]), "datastore rule %s" % ", ".join(_pats(rule["match"]))
+        if own and not _allowed(spec["datastore"], pats):
+            problems.append("%s goes on a datastore %s (vm_deploy_datastore_rules: %s): %s is not one"
+                            % (name, " or ".join(pats), ", ".join(_pats(rule["match"])), spec["datastore"]))
+        elif not own:
+            spec.pop("datastore", None)
+            sources.pop("datastore", None)
+            spec["datastores"], sources["datastores"] = pats, src
+        return
+    kept = []
+    for x in rules:
+        kept += [d for d in _pats(x["datastores"]) if d not in kept]
+    if kept:
+        spec["_datastore_exclude"] = kept
+        if spec.get("datastore") and _allowed(spec["datastore"], kept):
+            problems.append("datastore %s is kept for other VMs (vm_deploy_datastore_rules: %s): %s may not go on it"
+                            % (spec["datastore"], ", ".join(kept), name or "this VM"))
+    if not spec.get("datastore") and not spec.get("datastores") and not o.get("datastores") and o.get("datastore_balance"):
+        spec["datastores"], sources["datastores"] = ["*"], "vm_deploy_datastore_balance (the cluster's least used)"
 
 
 def _check_one(parsed, record=None, opts=None):
@@ -1205,8 +1276,9 @@ def _check_one(parsed, record=None, opts=None):
             problems.append(why)
     groups = _groups(o.get("assignment_group"))
     if not _group_ok(r.get("assignment_group"), groups):
-        problems.append("the ticket is assigned to %r, not to %s (vm_deploy_assignment_group)"
-                        % (_ref(r.get("assignment_group")) or "nobody", " or ".join(repr(g) for g in groups)))
+        problems.append("the ticket is assigned to %r, not to %s (%s)"
+                        % (_ref(r.get("assignment_group")) or "nobody", " or ".join(repr(g) for g in groups),
+                           o.get("assignment_group_setting") or "vm_deploy_assignment_group"))
     words = bool((parsed or {}).get("words"))
     problems += list((parsed or {}).get("questions") or [])
     for k in ("vm_name", "template"):
@@ -1230,6 +1302,7 @@ def _check_one(parsed, record=None, opts=None):
             problems.append("no template may be deployed yet: list the allowed ones in vm_deploy_templates")
         elif not _allowed(spec["template"], o.get("templates")):
             problems.append("template %r is not in vm_deploy_templates (%s)" % (spec["template"], ", ".join(o["templates"])))
+    _datastore_rules(spec, sources, o, problems)
     for k, lk in (("cluster", "clusters"), ("datastore", "datastores"), ("folder", "folders")):
         if spec.get(k) and o.get(lk) and not _allowed(spec[k], o[lk]):
             problems.append("%s %r is not in vm_deploy_%s (%s)" % (k, spec[k], lk, ", ".join(o[lk])))
@@ -1272,6 +1345,8 @@ def vm_deploy_spec_text(spec, sources=None):
     order = list(KEYS)
     out = []
     for k in sorted(spec or {}, key=lambda x: order.index(x) if x in order else 99):
+        if str(k).startswith("_"):              # the job's own (e.g. _datastore_exclude): not part of the request
+            continue
         v = spec[k]
         v = ", ".join(str(x) for x in v) if isinstance(v, (list, tuple)) else v
         out.append("%s: %s%s" % (k, v, ("   (from %s)" % sources[k]) if sources and sources.get(k) else ""))
@@ -1437,7 +1512,10 @@ def vm_deploy_ticket_text(record, parent=None):
     and every comment and work note that is not this job's own ([AAP] ...), oldest first. With a
     parent read (vm_deploy_parent_read): its requirements text after it."""
     r = record or {}
-    out = ["Short description: " + str(r.get("short_description") or "").strip(), "Description:", str(r.get("description") or "").strip()]
+    out = ["Short description: " + str(r.get("short_description") or "").strip()]
+    if _ref(r.get("location")).strip():          # it can pick the site: part of what is approved
+        out.append("Location: " + _ref(r.get("location")).strip())
+    out += ["Description:", str(r.get("description") or "").strip()]
     for field, label in (("comments", "Comment"), ("work_notes", "Work note")):
         for head, body in journal_entries(r.get(field)):
             if not body.startswith(OWN):
@@ -1446,9 +1524,9 @@ def vm_deploy_ticket_text(record, parent=None):
     if pieces:
         out += ["", ("The parent ticket %s (the request: it wins over this ticket's description; a comment or work note "
                      "on this ticket wins over it):" if parent.get("wins") else
-                     "The parent ticket %s (more of the request; this ticket's own lines win):") % parent.get("number", "")]
+                     "The parent ticket %s (more of the request; this ticket's own text wins over it):") % parent.get("number", "")]
         for label, text in pieces:
-            out += ["%s:" % label[:1].upper() + label[1:], text]
+            out += ["%s:" % (label[:1].upper() + label[1:]), text]
     return "\n".join(out).strip()
 
 
@@ -1569,7 +1647,7 @@ def vm_deploy_genai_parse(raw, ticket_text, opts=None):
         val, ev = item.get("value"), _norm(item.get("evidence"))
         if val in (None, "", []):
             continue
-        why = ""
+        why, ask = "", True
         parts = [x.strip() for x in re.split(r"\s*(?:\.\.\.|\u2026)\s*", ev) if x.strip()]
         if not parts or any(x not in text for x in parts):
             why = "its evidence is not in the ticket"
@@ -1581,8 +1659,18 @@ def vm_deploy_genai_parse(raw, ticket_text, opts=None):
                 val = ", ".join(vs)
         elif f == "template":
             k = cat.get(str(val).strip().lower())
+            # the template must be for the operating system its evidence names - or, when the evidence
+            # names none, one the ticket asks for: an allowed template is not proof it is the one asked
+            got = set(_os_asked("%s %s" % (k, (o.get("catalog") or {}).get(k, "")))) if k is not None else set()
+            asked = set(_os_asked(item.get("evidence"))) or set(_os_asked(ticket_text))
+            desc = _norm((o.get("catalog") or {}).get(k, "")) if k is not None else ""
+            named = k is not None and (str(k).lower() in ev or (desc and desc in ev))
             if k is None:
                 why = "not one of vm_deploy_template_catalog"
+            elif asked and got and not asked & got:     # the job picks it from the OS below (its own words), or asks
+                why, ask = "it is for %s, the ticket asks for %s" % (", ".join(sorted(got)), ", ".join(sorted(asked))), False
+            elif not named and not (asked & got):       # nothing in the ticket supports it: never a template by default
+                why = "its evidence names neither the template nor its operating system"
             else:
                 val = k
         elif f == "folder":
@@ -1592,9 +1680,12 @@ def vm_deploy_genai_parse(raw, ticket_text, opts=None):
             else:
                 val = v
         elif f == "site":
-            k = sites.get(str(val).strip().lower()) or _site_find(val, list(sites.values()), (o.get("words") or {}).get("site_words"))
+            sw = (o.get("words") or {}).get("site_words")
+            k = sites.get(str(val).strip().lower()) or _site_find(val, list(sites.values()), sw)
             if k is None:
                 why = "not one of vm_deploy_sites"
+            elif _site_find(item.get("evidence"), list(sites.values()), sw) != k:      # the quote must name that site
+                why = "its evidence does not name the site %s" % k
             else:
                 val = k
         else:
@@ -1613,7 +1704,8 @@ def vm_deploy_genai_parse(raw, ticket_text, opts=None):
                     val = [int(v) if v == int(v) else v for v in vals] if f == "disks_gb" else (int(vals[0]) if vals[0] == int(vals[0]) else vals[0])
         if why:
             out["dropped"].append("%s %r: %s" % (f, val, why))
-            out["questions"].append("Please confirm %s: add a line '%s: ...' to the ticket." % (f.replace("_gb", " (GB)"), f))
+            if ask:
+                out["questions"].append("Please confirm %s: add a line '%s: ...' to the ticket." % (f.replace("_gb", " (GB)"), f))
         else:
             out["fields"][f] = val
             out["evidence"][f] = str(item.get("evidence") or "").strip()
@@ -1678,6 +1770,21 @@ def vm_deploy_find_proposal(record):
                     v = mm.group(2).strip()
                     fields[mm.group(1)] = [int(float(x)) for x in re.findall(r"\d+(?:\.\d+)?", v)] if mm.group(1) == "disks_gb" else v
             found = {"digest": m.group(1) if m else "", "header": head or "work note", "fields": fields}
+    return found
+
+
+CHECKED = "[AAP] Checked - "          # the propose step's note: what the approval is for (its ticket text's digest)
+
+
+def vm_deploy_checked_digest(record):
+    """The digest of the ticket text the newest 'Checked - ready to build after the approval' note was written for
+    (the workflow's propose step) -> 'sha256:...', or '' (none, or one from an older release without it). The build
+    step builds only that: a ticket changed after it (a new comment, an edited description) is checked again."""
+    found = ""
+    for _, body in journal_entries((record or {}).get("work_notes")):
+        if body.startswith(CHECKED):
+            m = re.search(r"ticket text ([\w:]+)", body.splitlines()[0])
+            found = m.group(1) if m else ""
     return found
 
 
@@ -1881,7 +1988,7 @@ def vm_deploy_finder(datacenters, specs=None):
 
 class FilterModule(object):
     def filters(self):
-        return {"vm_deploy_table": vm_deploy_table, "vm_deploy_table_name": vm_deploy_table_name, "vm_deploy_spec": vm_deploy_spec, "vm_deploy_check": vm_deploy_check,
+        return {"vm_deploy_table": vm_deploy_table, "vm_deploy_table_name": vm_deploy_table_name, "vm_deploy_group_for": vm_deploy_group_for, "vm_deploy_spec": vm_deploy_spec, "vm_deploy_check": vm_deploy_check,
                 "vm_deploy_spec_text": vm_deploy_spec_text, "vm_deploy_ticket_text": vm_deploy_ticket_text,
                 "vm_deploy_genai_task": vm_deploy_genai_task, "vm_deploy_genai_parse": vm_deploy_genai_parse,
                 "vm_deploy_proposal_note": vm_deploy_proposal_note, "vm_deploy_find_proposal": vm_deploy_find_proposal,
@@ -1890,4 +1997,4 @@ class FilterModule(object):
                 "vm_deploy_finder": vm_deploy_finder, "vm_deploy_parent_ref": vm_deploy_parent_ref,
                 "vm_deploy_parent_read": vm_deploy_parent_read, "vm_deploy_tasks_query": vm_deploy_tasks_query,
                 "vm_deploy_note_also": vm_deploy_note_also, "vm_deploy_close_result": vm_deploy_close_result,
-                "vm_deploy_built": vm_deploy_built}
+                "vm_deploy_built": vm_deploy_built, "vm_deploy_checked_digest": vm_deploy_checked_digest}

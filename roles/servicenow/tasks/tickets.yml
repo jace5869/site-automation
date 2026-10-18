@@ -169,6 +169,7 @@
 
     # a finding still there below servicenow_min_severity has not cleared: its ticket stays open (the
     # certificate renewal opens one at warning for every CSR, whatever servicenow_min_severity says)
+    # a check that could not run to its end (its :check-error finding) clears nothing it found before
     - name: ServiceNow | problems that cleared (their check ran again and passed)
       ansible.builtin.set_fact:
         _sn_cleared: >-
@@ -180,7 +181,8 @@
           {%-   endfor -%}
           {%- endfor -%}
           {%- for r in _sn_open.results | default([]) if r.json is defined -%}
-          {%-   set ran = (site_health[r.item].checks | default([])) + ['reachability'] -%}
+          {%-   set ran = (site_health[r.item].checks | default([]) | reject('in', site_health[r.item].checks_failed | default([])) | list)
+                         + ['reachability'] -%}
           {%-   for t in r.json.result if t.correlation_id not in current and t.correlation_id.split(':')[2] in ran -%}
           {%-     set _ = out.append({'host': r.item, 'sys_id': t.sys_id, 'number': t.number}) -%}
           {%-   endfor -%}
