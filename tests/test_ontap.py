@@ -85,6 +85,74 @@ class Collector(unittest.TestCase):
         res = oc.collect(Down([]), [{"key": "a", "path": "/api/a"}, {"key": "b", "path": "/api/b"}])
         self.assertEqual((res["reachable"], res["error"], res["data"]), (False, "timed out", {}))
 
+    def test_a_slow_table_is_that_tables_problem_not_the_clusters(self):
+        class Slow(FakeClient):
+            def get(self, url):
+                if "/api/slow" in url:
+                    raise oc.Unreachable("timed out", "timeout")
+                return FakeClient.get(self, url)
+        qs = [{"key": "a", "path": "/api/a"}, {"key": "slow", "path": "/api/slow"}, {"key": "b", "path": "/api/b"}]
+        res = oc.collect(Slow([{"n": 1}]), qs)
+        self.assertTrue(res["reachable"])
+        self.assertIn("no answer within", res["data"]["slow"]["error"])
+        self.assertEqual(res["data"]["b"]["records"], [{"n": 1}])
+        # two slow in a row: the cluster is down after all
+        qs = [{"key": "a", "path": "/api/a"}, {"key": "s1", "path": "/api/slow1"}, {"key": "s2", "path": "/api/slow2"}]
+        res = oc.collect(Slow([{"n": 1}]), qs)
+        self.assertFalse(res["reachable"])
+        self.assertIn("ontap_timeout: 120", res["error"])
+
+    def test_the_first_request_timing_out_means_unreachable(self):
+        class Down(FakeClient):
+            def get(self, url):
+                raise oc.Unreachable("timed out", "timeout")
+        res = oc.collect(Down([]), [{"key": "a", "path": "/api/a"}, {"key": "b", "path": "/api/b"}])
+        self.assertFalse(res["reachable"])
+        self.assertIn("firewall", res["error"])
+
+    def test_a_timeout_is_asked_once_more(self):
+        import socket
+        calls = []
+
+        class Resp(object):
+            def getcode(self):
+                return 200
+
+            def read(self):
+                return b'{"records": []}'
+
+        class Opener(object):
+            def open(self, req, timeout=None):
+                calls.append(1)
+                if len(calls) == 1:
+                    raise oc.URLError(socket.timeout("timed out"))
+                return Resp()
+        c = oc.Client("https://c1", "u", "p", None, 5, opener=Opener())
+        self.assertEqual(c.get("/api/cluster")[0], 200)
+        self.assertEqual(len(calls), 2)
+
+    def test_why_a_cluster_cannot_be_read(self):
+        import socket
+        import ssl
+        self.assertEqual(oc.kind_of(oc.URLError(socket.gaierror(-2, "Name or service not known"))), "dns")
+        self.assertEqual(oc.kind_of(oc.URLError(ConnectionRefusedError(111, "Connection refused"))), "refused")
+        self.assertEqual(oc.kind_of(oc.URLError(ssl.SSLError(1, "[SSL: UNSAFE_LEGACY_RENEGOTIATION_DISABLED] unsafe legacy renegotiation disabled"))), "tls")
+        self.assertIn("ontap_tls_legacy: true", oc.explain("[SSL: UNSAFE_LEGACY_RENEGOTIATION_DISABLED] x", "tls", "c1", 30))
+        self.assertIn("ontap_ca_path", oc.explain("[SSL: CERTIFICATE_VERIFY_FAILED] x", "tls", "c1", 30))
+        self.assertIn("-k skips", oc.explain("[SSL: CERTIFICATE_VERIFY_FAILED] x", "tls", "c1", 30))
+        self.assertIn("IP address", oc.explain("Name or service not known", "dns", "c1", 30))
+        old = dict(os.environ)
+        try:
+            os.environ.pop("no_proxy", None)
+            os.environ.pop("NO_PROXY", None)
+            os.environ["https_proxy"] = "http://proxy.example.mil:3128"
+            self.assertIn("add the cluster to no_proxy", oc.explain("timed out", "timeout", "c1.example.mil", 30))
+            os.environ["no_proxy"] = ".example.mil"
+            self.assertNotIn("proxy", oc.explain("timed out", "timeout", "c1.example.mil", 30))
+        finally:
+            os.environ.clear()
+            os.environ.update(old)
+
     def test_get_only(self):
         sent = []
 

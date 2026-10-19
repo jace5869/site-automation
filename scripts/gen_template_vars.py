@@ -98,6 +98,9 @@ vm_deploy_assignment_group: YOUR GROUP NAME       # REQUIRED: only this group's 
     "vm_vlan.yml": ("VM - change VLAN", "VMware vCenter", "", ""),
     "win_act_install.yml": ("ACT for Windows - install", "Machine (Windows)", "", ""),
     "win_cert_report.yml": ("Windows certificate report", "Machine (Windows)", "win_check_certs", ""),
+    "win_cert_renew_csr.yml": ("Windows certificate renewal - CSRs", "Machine (Windows), ServiceNow API", "win_check_certs", """\
+servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job opens (a certificate with no ticket yet)
+"""),
     "win_connection_test.yml": ("Windows connection test", "Machine (Windows)", "", ""),
     "win_health_check.yml": ("Windows health check", "Machine (Windows)", WIN_CHECKS, ""),
     "win_patch.yml": ("Windows patch", "Machine (Windows)", "", ""),

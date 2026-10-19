@@ -334,6 +334,9 @@ with the CSR attached to the certificate's ServiceNow incident (step 3 of workfl
 | Variables | `servicenow_assignment_group: <your PKI or Linux team>`: who gets a ticket this job opens (a certificate with no ticket yet). `cert_skip_hosts: [<your Satellite and Capsules>]` if they are not in a group `sat` (left out of the report too). `cert_renew_skip_hosts: [<IdM, AAP ...>]` for servers renewed by hand: reported, never a CSR. `cert_renew_self_signed: true` for CSRs for self-signed certificates too (never postfix's placeholder). `cert_renew_attach_ext: txt` when your instance refuses `.csr` attachments (a refused one is tried as `.txt` anyway). Better in `all.yml`, so the certificate report gets the same |
 | Job type | try it as **Check** first: it makes and sends nothing |
 
+**Windows:** *Windows certificate renewal - CSRs* (`playbooks/win_cert_renew_csr.yml`) does the same on
+Windows servers with `certreq`, with the Windows machine credential: [WINDOWS.md](WINDOWS.md#windows-certificate-renewal---csrs).
+
 ### POA&M status
 
 Weekly. Runs on the controller and reads `poam/poam.csv` from the project.

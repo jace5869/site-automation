@@ -10,7 +10,8 @@ ontap_clusters: []
 # or set false.
 ontap_validate_certs: true
 ontap_ca_path: ""                        # the CA file (PEM) the clusters' certificates are checked with; empty = the execution environment's own trust
-ontap_timeout: 30                        # seconds for one request
+ontap_timeout: 30                        # seconds for one request (no answer: asked once more)
+ontap_tls_legacy: false                  # true = connect to older ONTAP whose TLS the execution environment refuses (UNSAFE_LEGACY_RENEGOTIATION_DISABLED, KEY_TOO_SMALL, SHA-1)
 
 # Thresholds (used %, hours, days, seconds): at or above "warn" = amber, at or above "crit" = red.
 ontap_volume_warn_pct: 85

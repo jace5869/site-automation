@@ -1,0 +1,77 @@
+---
+# WINDOWS CERTIFICATE RENEWAL, on the server (playbooks/win_cert_renew_csr.yml), after main.yml found
+# the certificates (check_certs_inventory). The ones the report flags - within win_check_certs_warn_days,
+# or expired - that are the server's own (not a trust store's) get a new key and a CSR with the same
+# subject and names (files/win_cert_csr.ps1: certreq -new -machine). The key stays on the server, in the
+# pending request; the CSR (public) goes to the ServiceNow step in cert_renew_result - the same step as
+# for Linux (roles/servicenow/tasks/cert_csr.yml).
+- name: Windows certs | renewal | the certificates that expire within {{ win_check_certs_warn_days }} days, or expired
+  ansible.builtin.set_fact:
+    _win_csr_candidates: >-
+      {%- set out = [] -%}
+      {%- for c in check_certs_inventory if c.days <= win_check_certs_warn_days | int and not c.trust | default(false) -%}
+      {%-   set _ = out.append(c | combine({'severity': 'critical' if c.days <= win_check_certs_crit_days | int else 'warning'})) -%}
+      {%- endfor -%}
+      {{ out }}
+    # cert_renew_skip_hosts / cert_renew_skip_groups: in the report as usual, never a CSR
+    _win_csr_by_hand: >-
+      {%- set hosts = (cert_renew_skip_hosts | replace(',', ' ')).split() if cert_renew_skip_hosts | default([], true) is string
+                      else cert_renew_skip_hosts | default([], true) -%}
+      {%- set groups_ = (cert_renew_skip_groups | replace(',', ' ')).split() if cert_renew_skip_groups | default([], true) is string
+                        else cert_renew_skip_groups | default([], true) -%}
+      {%- set hit = [] -%}
+      {%- for p in hosts if inventory_hostname | name_matches([p]) or inventory_hostname_short | name_matches([p]) -%}{%- set _ = hit.append(p) -%}{%- endfor -%}
+      {%- set inn = group_names | intersect(groups_) -%}
+      {{ ((['named in cert_renew_skip_hosts (' ~ hit | join(', ') ~ ')'] if hit else [])
+         + (['in group ' ~ inn | join(', ') ~ ' (cert_renew_skip_groups)'] if inn else [])) | join(' and ') }}
+
+- name: Windows certs | renewal | a new key and CSR for each certificate (the key stays on this server)
+  ansible.builtin.script: win_cert_csr.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'certs': _win_csr_candidates, 'dir': win_cert_renew_dir, 'key_bits': win_cert_renew_key_bits | int,
+          'digest': win_cert_renew_digest, 'max': win_cert_renew_max | int, 'self_signed': win_cert_renew_self_signed | bool,
+          'issuer': win_cert_renew_issuer, 'exclude_issuer': win_cert_renew_exclude_issuer, 'only': win_cert_renew_only,
+          'exportable': win_cert_renew_exportable | bool, 'file_ext': cert_renew_attach_ext | default('csr'),
+          'check_mode': ansible_check_mode, 'job': awx_job_id | default('') | string} | to_json }}
+  register: _win_csr_out
+  changed_when: (_win_csr.certs | default([]) | selectattr('status', 'equalto', 'made') | list | length) > 0
+  failed_when: _win_csr_line | length == 0
+  check_mode: false                     # the script itself makes nothing in Check (check_mode above)
+  when: _win_csr_candidates | length > 0 and not _win_csr_by_hand
+  vars:
+    _win_csr_line: "{{ _win_csr_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+    _win_csr: "{{ (_win_csr_line[16:] | from_json).facts if _win_csr_line else {} }}"
+
+- name: Windows certs | renewal | the result, for the ServiceNow step
+  ansible.builtin.set_fact:
+    cert_renew_result:
+      host: "{{ site_report_name | default(inventory_hostname) }}"
+      certs: "{{ _by_hand if _win_csr_by_hand else _made }}"
+      content_type: "{{ cert_renew_attach_type | default('text/plain') }}"
+      retry_txt: "{{ cert_renew_attach_retry_txt | default(true) | bool }}"
+  vars:
+    _line: "{{ _win_csr_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+    _made: "{{ ((_line[16:] | from_json).facts.certs | default([])) if _line else [] }}"
+    _by_hand: >-
+      {%- set out = [] -%}
+      {%- for c in _win_csr_candidates -%}
+      {%-   set _ = out.append({'wheres': [c.where], 'ids': [c.id], 'subject': c.subject, 'issuer': '', 'expires': c.expires, 'days': c.days,
+                                'severity': c.severity, 'status': 'skipped',
+                                'reason': 'renewed by hand - the host is ' ~ _win_csr_by_hand ~ ': no CSR'}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Windows certs | renewal | what was done
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for c in cert_renew_result.certs -%}
+      {%-   set head = (c.status | upper) ~ ' | ' ~ c.subject | truncate(70) ~ ' | expires ' ~ c.expires ~ ' | ' ~ c.wheres | join(' ; ') -%}
+      {%-   if c.status in ['made', 'exists', 'would make'] -%}
+      {%-     set _ = out.append(head ~ ' | CSR ' ~ c.csr_path ~ ' (' ~ c.key ~ ' key; names: ' ~ (c.sans | join(', ') or 'none') ~ ')') -%}
+      {%-   else -%}
+      {%-     set _ = out.append(head ~ ' | ' ~ c.reason) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out or ['no certificate expires within ' ~ win_check_certs_warn_days ~ ' days: nothing to renew'] }}

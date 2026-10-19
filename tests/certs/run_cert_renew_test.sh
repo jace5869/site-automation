@@ -74,6 +74,8 @@ q genrsa -out ph.key 2048
 q req -new -key ph.key -x509 -sha256 -days 15 -set_serial 4242 -out ph/postfix.pem \
     -subj "/C=--/ST=SomeState/L=SomeCity/O=SomeOrganization/OU=SomeOrganizationalUnit/CN=mail01.example.mil/emailAddress=root@mail01.example.mil"
 cat pki/web01.crt ca.crt > pki/web01-fullchain.pem
+# a certificate in a home folder (check_certs_discover_extra_dirs): the report only, unless cert_renew_extra_dirs
+sign home01 12 "-newkey rsa:2048" "/C=US/O=Test/CN=home01.example.mil" "DNS:home01.example.mil" && mkdir -p home/jdoe && mv pki/home01.crt home/jdoe/test.crt
 mv pki/tlsonly.crt tlsonly.crt
 for f in pki/web01.crt pki/app01.crt pki/mv01.crt pki/ec01.crt pki/old01.crt pki/later.crt pki/self.crt pki/lh.crt pki/root.crt pki/web01-fullchain.pem etc/rhsm/rhsm01.pem sat/proxy01.crt tlsonly.crt ph/postfix.pem; do
     [ -s "$f" ] || { echo "ABORT - test certificate $f not made"; exit 1; }
@@ -497,5 +499,18 @@ has "renewed by hand: each certificate listed, with why" hand.txt "SKIPPED | CN=
 grep -q '"MADE |\|"EXISTS |\|"WOULD MAKE |' hand.txt && bad "renewed by hand: a CSR was considered" || ok "renewed by hand: no CSR made or reused"
 [ "$(writes $((port + 7)))" = "$before" ] && [ "$(ls renew | wc -l)" = "$files_before" ] && ok "renewed by hand: no key, no CSR, nothing sent to ServiceNow" \
     || bad "renewed by hand: $(( $(writes $((port + 7))) - before )) POST/PATCH, files $files_before -> $(ls renew | wc -l)"
+
+# ---- check_certs_discover_extra_dirs (/home, /root ...): in the report, no CSR unless cert_renew_extra_dirs ----
+# (run puts $vars last: the discovery settings go in it)
+vars_all="$vars"
+vars="${vars%\}}, \"check_certs_discover\": true, \"check_certs_discover_dirs\": [], \"check_certs_discover_extra_dirs\": [\"$work/home\"]}"
+extra="target=web01.example.mil"
+run extra.txt none playbooks/cert_renew_csr.yml --check -e "$extra"; rc=$?
+[ $rc -eq 0 ] && has "a home folder: listed, no CSR" extra.txt "SKIPPED | CN=home01.example.mil" "found in $work/home (check_certs_discover_extra_dirs): in the report, no CSR" \
+    || { bad "a home folder: exit $rc"; tail -20 extra.txt; }
+run extra2.txt none playbooks/cert_renew_csr.yml --check -e "$extra" -e cert_renew_extra_dirs=true; rc=$?
+[ $rc -eq 0 ] && has "a home folder with cert_renew_extra_dirs: true: a CSR" extra2.txt "WOULD MAKE | CN=home01.example.mil" \
+    || { bad "a home folder, cert_renew_extra_dirs: exit $rc"; tail -20 extra2.txt; }
+vars="$vars_all"
 
 if [ "$fails" -eq 0 ]; then echo "ok   - all certificate renewal scenarios passed"; else echo "$fails FAILED"; exit 1; fi

@@ -70,6 +70,16 @@ curl -sk -u svc_aap_ro "https://cluster1.yoursite.mil/api/cluster?fields=version
 
 A short JSON answer with the version means the account, the network and the API are fine.
 
+That `curl` is not the job. The job runs **in the execution environment** (a container on the AAP
+execution node), checks the certificate (`-k` above skips that), and uses the EE's OpenSSL, DNS and
+proxy settings. When the curl works and the report still says **UNREACHABLE**, read the reason on the
+cluster's row: it says which of these it is and what to set. To run the same test the way the job does,
+on the execution node:
+
+```
+podman run --rm -it <your EE image> curl -s -u svc_aap_ro "https://cluster1.yoursite.mil/api/cluster?fields=version"
+```
+
 ### 3. The cluster's certificate
 
 ONTAP's management certificate is often self-signed, or from your own CA. The job checks it by
@@ -137,7 +147,8 @@ Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for e
 | `ontap_report_max_rows` | `50` | rows per table |
 | `ontap_snapshot_top` | `25` | volumes in the snapshot space table |
 | `ontap_report_fail` | `false` | `true` = the job shows **failed** on a critical finding or a cluster not read (for a workflow) |
-| `ontap_timeout` | `30` | seconds for one request |
+| `ontap_timeout` | `30` | seconds for one request (no answer: asked once more) |
+| `ontap_tls_legacy` | `false` | connect to older ONTAP whose TLS the EE refuses (see Troubleshooting) |
 
 **All settings** of this job, with their defaults: [ontap_report](VARIABLES_REFERENCE.md#ontap_report).
 
@@ -147,7 +158,11 @@ Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for e
 |---|---|---|
 | `No ONTAP account: attach a credential of type "NetApp ONTAP"` | the template has no NetApp ONTAP credential | add it (Before you start, step 4) |
 | `ontap_clusters is empty` | no cluster listed | `ontap_clusters: [...]` in the template's Variables |
-| A cluster **UNREACHABLE** with `timed out` or `Connection refused` | the AAP node cannot reach the cluster on port 443 | a firewall rule from the AAP node to the cluster's management address; test with the `curl` above |
+| A cluster **UNREACHABLE** with `timed out` or `Connection refused` | the AAP node cannot reach the cluster on port 443 (each request is asked twice) | a firewall rule from the AAP execution node to the cluster's management address; test with the `podman run ... curl` above |
+| **UNREACHABLE** ... `it went through the proxy ...` | the EE has `https_proxy` set, and the cluster is not in `no_proxy` | add the clusters (or `.yoursite.mil`) to `no_proxy` in the EE or the job's environment |
+| A table says `no answer within 30 s, asked twice` and the rest of the cluster is there | that one table is slow on a big cluster | `ontap_timeout: 120` |
+| **UNREACHABLE** with `UNSAFE_LEGACY_RENEGOTIATION_DISABLED`, `KEY_TOO_SMALL`, `MD_TOO_WEAK`, `UNSUPPORTED_PROTOCOL` or `HANDSHAKE_FAILURE` | an older ONTAP whose TLS the EE (OpenSSL 3) refuses; curl on a host with another crypto policy still connects | update ONTAP, or `ontap_tls_legacy: true` for those clusters' template |
+| **UNREACHABLE** with `Hostname mismatch` | the cluster is listed by a name (or IP) that is not on its certificate | list it by the name on its certificate |
 | **UNREACHABLE** with `Name or service not known` | the name does not resolve on the AAP node | use the name DNS knows, or the IP address |
 | **UNREACHABLE** with `CERTIFICATE_VERIFY_FAILED` | the cluster's certificate is not trusted | Before you start, step 3 |
 | `the ONTAP account was refused (HTTP 401)` | wrong user or password, the account does not exist on **that** cluster, it is locked, or it lacks the `http` application | create it the same on every cluster (step 1); unlock it (`security login unlock`) |

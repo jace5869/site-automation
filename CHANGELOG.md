@@ -1,5 +1,68 @@
 # Changelog
 
+## 0.15.8 — 2026-10-19
+
+**Updating without scripts:** paste `site-automation-0.15.8-changed-since-0.15.7.zip` as it is (from
+0.15.1 to 0.15.6: `site-automation-0.15.8-changed-since-0.15.1.zip`). Both leave out
+`playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. **New job template:** *Windows
+certificate renewal - CSRs* (`playbooks/win_cert_renew_csr.yml`, optional). New settings:
+`win_check_certs_trust` (the Windows certificate report turns it on), `win_check_certs_trust_skip_stores`,
+`win_cert_renew_*`, `cert_renew_extra_dirs` (off), `ontap_tls_legacy` (off). **Changed:** the Windows
+certificate report reads every machine store, so it may list certificates it missed before; certificates
+found only in `check_certs_discover_extra_dirs` (`/home`, `/root` ...) get no CSR unless
+`cert_renew_extra_dirs: true`.
+
+**Windows certificate report - every machine store**
+
+- Not only Personal, Web Hosting and Remote Desktop: Trusted Root, Intermediate Certification
+  Authorities, Other People and the rest, where *Automatically select the certificate store* puts a
+  `.cer` file. A certificate there **with its private key** is the server's own: checked as before
+  (warning, critical, ticket). One **without** is one the server trusts: in the table as
+  `LocalMachine\Root (Trusted Root Certification Authorities) (trust store)` when it expires within
+  `win_check_certs_notice_days` or expired lately, never a finding or a ticket. Windows' roots that expired
+  long ago are left out. A certificate in use (https binding, WinRM listener, Remote Desktop) is always
+  checked, whatever its store.
+- Never read: `Disallowed`, `AuthRoot` (Windows Update's), `REQUEST` (pending requests) and `SMS` (the MECM
+  client's own): `win_check_certs_trust_skip_stores`. The weekly health check still reads only
+  `win_check_certs_stores`.
+
+**Windows certificate renewal - the CSRs on the tickets**
+
+- `playbooks/win_cert_renew_csr.yml`, after the Windows certificate report's tickets step: for each of the
+  server's own certificates that expires, `certreq -new -machine` makes a new key in the machine key store
+  and a CSR with the same subject, names (DNS, IP, e-mail, URL) and purposes. The key is not exportable
+  and never leaves the server; the CSR goes on the certificate's ServiceNow ticket (the same step as for
+  Linux, `.txt` retry included). The work note says what to do: `certreq -accept -machine` the issued
+  certificate, then the https binding, the WinRM listener or Remote Desktop. A run again reuses the pending
+  request. A newer certificate for the same subject already in the store: no CSR, "use it, then remove the
+  old one".
+- Never: a trust store's certificate, a CA, a self-signed one (unless `win_cert_renew_self_signed`), one
+  only seen on a port, hosts in `cert_renew_skip_hosts` / `_groups`. Names certreq cannot copy (a UPN) fail
+  that one certificate, with what to do. Constrained Language Mode works.
+
+**Certificate renewal (Linux) - the extra folders are for the report**
+
+- A file found only in `check_certs_discover_extra_dirs` (`/home`, `/root` ...) is in the report and gets
+  no CSR: "found in /home (check_certs_discover_extra_dirs): in the report, no CSR".
+  `cert_renew_extra_dirs: true` makes CSRs for them too. A file there that is also under
+  `check_certs_discover_dirs`, or listed in `check_certs_files`, is renewed as before.
+
+**NetApp ONTAP report - why a cluster cannot be read**
+
+- **UNREACHABLE** now says which it is and what to do:
+  - the name does not resolve in the execution environment
+  - nothing on port 443
+  - no answer in time
+  - the request went through `https_proxy` (add the cluster to `no_proxy`)
+  - the certificate is not trusted (a `curl -k` skips that check)
+  - the address is not on the certificate
+  - an older ONTAP whose TLS the EE's OpenSSL 3 refuses: `UNSAFE_LEGACY_RENEGOTIATION_DISABLED`,
+    `KEY_TOO_SMALL`, SHA-1, the protocol. `ontap_tls_legacy: true` connects to those.
+- A request with no answer is asked once more. After the cluster has answered, one slow table is that
+  table's problem ("no answer within 30 s, asked twice - ontap_timeout: 120"), not the whole cluster's.
+- The guide: the `curl` test is not the job (the job runs in the EE, checks the certificate); the same
+  test from the EE with `podman run`.
+
 ## 0.15.7 — 2026-10-19
 
 **Updating without scripts:** paste `site-automation-0.15.7-changed-since-0.15.6.zip` as it is (from

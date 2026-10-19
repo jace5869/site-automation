@@ -31,6 +31,10 @@
     file_ext: "{{ cert_renew_attach_ext }}"
     job: "{{ awx_job_id | default('') | string }}"
     trust_dirs: "{{ check_certs_trust_dirs }}"
+    # check_certs_discover_extra_dirs (/home, /root ...): the report only, unless cert_renew_extra_dirs
+    report_only_dirs: "{{ [] if cert_renew_extra_dirs | bool else check_certs_discover_extra_dirs | default([], true) }}"
+    keep_dirs: "{{ check_certs_discover_dirs }}"
+    keep_files: "{{ check_certs_files }}"
     # a listed keystore's password (an AAP credential), to read its entry: a no_log option, never on a command line
     keystore_passwords: >-
       {%- set out = {} -%}

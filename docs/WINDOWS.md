@@ -18,6 +18,7 @@ also in Constrained Language Mode (see step 5).
 | Windows health check | `playbooks/win_health_check.yml` | the checks below; daily and weekly sets |
 | Windows troubleshoot | `playbooks/win_troubleshoot.yml` | on demand: an admin's first PowerShell commands for one kind of problem |
 | Windows certificate report | `playbooks/win_cert_report.yml` | every certificate on every server, soonest expiry first |
+| Windows certificate renewal - CSRs | `playbooks/win_cert_renew_csr.yml` | for each of the server's own certificates that expires: a new key and a CSR (`certreq`) on the server, the CSR on the certificate's ServiceNow ticket |
 | Windows patch | `playbooks/win_patch.yml` | install what Software Center offers (ConfigMgr); restart only with `automatic_restarts: yes`; prove the server is back |
 | ACT for Windows - install | `playbooks/win_act_install.yml` | put ACT on the servers in `C:\ProgramData\act`, locked down and unblocked; keep it current |
 | ServiceNow tickets, POA&M status | the ones you have | unchanged: they take the Windows results the same way |
@@ -201,6 +202,79 @@ checks. Findings do not fail this job.
 |---|---|
 | Playbook | `playbooks/win_cert_report.yml` |
 | Survey | none |
+
+It reads **every machine store** (`Cert:\LocalMachine\*`), not only Personal, Web Hosting and Remote
+Desktop. *Automatically select the certificate store* puts a `.cer` file in **Trusted Root**,
+**Intermediate Certification Authorities** or **Other People**, so a certificate imported that way is
+found too:
+
+- **With its private key** (the server's own certificate, in an unusual store): checked like the ones
+  in Personal: a warning within 30 days, critical within 7, a ticket.
+- **Without** (a certificate the server trusts): in the table as
+  `LocalMachine\Root (Trusted Root Certification Authorities) (trust store)` when it expires within
+  `win_check_certs_notice_days` (60) or expired in the last `win_check_certs_expired_report_days` (30).
+  Never a finding or a ticket: its CA renews it. The older Windows roots that expired long ago are left
+  out.
+- **In use** (an https binding, the WinRM listener, Remote Desktop): always checked, whatever its store.
+- **Never read:** `Disallowed` (the untrusted certificates), `AuthRoot` (the roots Windows Update
+  keeps), `REQUEST` (pending requests: a CSR's new key) and `SMS` (the MECM client's own certificates,
+  which it renews itself): `win_check_certs_trust_skip_stores`.
+
+`win_check_certs_trust: false` in the template's Variables reads only `win_check_certs_stores`. The
+weekly health check reads only those stores. To list what a server has, on the server:
+`Get-ChildItem Cert:\LocalMachine -Recurse | Where-Object NotAfter -lt (Get-Date).AddDays(60) | Format-List PSParentPath, Subject, NotAfter, HasPrivateKey`.
+
+### Windows certificate renewal - CSRs
+
+| Field | Value |
+|---|---|
+| Playbook | `playbooks/win_cert_renew_csr.yml` |
+| Credentials | the Windows machine credential (an administrator: `certreq -machine` writes to the machine key store), `ServiceNow API` |
+| Variables | `servicenow_assignment_group: <your PKI or Windows team>`: who gets a ticket this job opens (a certificate with no ticket yet) |
+| Job type | try it as **Check** first: it makes and sends nothing |
+
+The Windows twin of the Linux renewal ([RUNBOOKS.md](RUNBOOKS.md), "Certificate renewal"). Put it in
+the weekly workflow after the tickets step, so each CSR lands on the ticket the report opened:
+
+```text
+[Windows certificate report] --Run always--> [ServiceNow tickets] --Run always--> [Windows certificate renewal - CSRs]
+```
+
+For each certificate the report flags (within `win_check_certs_warn_days`, 30 days, or expired) that is
+the server's own: in Personal, Web Hosting or Remote Desktop, or in any machine store with its private key.
+
+1. **On the server**, `certreq -new -machine` makes a new key in the machine key store and a CSR. The CSR
+   has the same subject, names (subjectAltName: DNS, IP, e-mail, URL) and purposes (EKU) as the old
+   certificate. The key is RSA 2048 (`win_cert_renew_key_bits`); a bigger old key keeps its size, and an
+   EC certificate gets a new key on the same curve. The key **cannot be exported**
+   (`win_cert_renew_exportable: false`) and never leaves the server. Until the issued certificate is
+   installed, it waits as a pending request (certlm.msc > *Certificate Enrollment Requests*). The CSR,
+   with its `.inf` and a `.json` saying which certificate it renews, goes in
+   `C:\ProgramData\site-automation\renew` (`win_cert_renew_dir`, administrators and SYSTEM only).
+2. **On the ticket**, the CSR is attached (as for Linux: a refused `.csr` is tried again as `.txt`), with
+   a work note saying what to do. Step 3 of that note is the Windows one:
+   `certreq -accept -machine <issued>.cer` on the server, as an administrator. That pairs the certificate
+   with its key and puts it in Personal. Then use it where the old one is used, and the note says how:
+   - the https binding (IIS Manager, or `netsh http update sslcert`)
+   - the WinRM HTTPS listener AAP connects through (`Set-Item WSMan:\localhost\Listener\...\CertificateThumbprint`)
+   - Remote Desktop
+3. **A run again** finds the pending request and reuses its CSR, so nothing changes on the ticket. Once
+   the new certificate is installed, the old one is passed over: *a newer certificate for the same
+   subject is in the store already: use it, then remove the old one*.
+
+**Never renewed here** (each listed in the job output with the reason):
+
+| What | Why |
+|---|---|
+| a trust store's certificate (Trusted Root, Intermediate CAs, Other People ... without its key) | one the server trusts, not its own: its CA renews it |
+| a CA certificate | a CA has no CSR from you |
+| a self-signed certificate (unless `win_cert_renew_self_signed: true`) | it does not come from a PKI; with the setting on, the PKI issues a real one in its place (never one only for `localhost`) |
+| a certificate seen only on a port (`win_check_certs_endpoints`) | its store is not known: the one in its store gets the CSR |
+| a host in `cert_renew_skip_hosts` / `cert_renew_skip_groups` | renewed by hand: still in the report |
+| issued by `win_cert_renew_exclude_issuer`, not by `win_cert_renew_issuer`, or not matching `win_cert_renew_only` | your filters |
+| names (subjectAltName) with an otherName (a UPN, a GUID) or a directory name | certreq cannot copy them from here: the job fails for that one certificate and says to make it by hand (certlm.msc > the certificate > *All Tasks* > *Advanced Operations*) |
+
+Every setting: [win_check_certs](VARIABLES_REFERENCE.md#win_check_certs) (`win_cert_renew_*`).
 
 ### Active Directory health report
 

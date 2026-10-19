@@ -142,6 +142,11 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 ## e.g. [idm]
 # cert_renew_skip_groups: []
 
+## true = a CSR for certificates found in check_certs_discover_extra_dirs (/home, /root ...) too;
+## false = they are in the report only (a file there also under check_certs_discover_dirs, or listed
+## in check_certs_files, is renewed)
+# cert_renew_extra_dirs: false
+
 ## RSA key size, at least 2048 (a bigger old key keeps its size; an EC certificate gets a new key on
 ## the same curve)
 # cert_renew_key_bits: 2048

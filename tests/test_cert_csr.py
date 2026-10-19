@@ -99,7 +99,7 @@ class Text(unittest.TestCase):
 
 class _Module(object):
     def __init__(self, **params):
-        self.params = dict({"trust_dirs": [], "keystore_passwords": {}}, **params)
+        self.params = dict({"trust_dirs": [], "keystore_passwords": {}, "report_only_dirs": [], "keep_dirs": [], "keep_files": []}, **params)
 
 
 class TrustAndInstall(unittest.TestCase):
@@ -110,6 +110,16 @@ class TrustAndInstall(unittest.TestCase):
             self.assertTrue(r.in_trust(where), where)
         for where in ["/etc/pki/tls/certs/web01.crt", "/srv/anchorsX/test.crt", "TLS port 443, nginx (https://127.0.0.1:443)"]:
             self.assertFalse(r.in_trust(where), where)
+
+    def test_extra_dirs_are_the_report_only(self):
+        r = m.Renewer(_Module(report_only_dirs=["/home", "/root/"], keep_dirs=["/etc/pki/tls/certs", "/home/app/tls"],
+                              keep_files=["/home/svc/*.crt"]))
+        self.assertEqual(r.report_only("/home/jdoe/test.crt"), "/home")
+        self.assertEqual(r.report_only("/root/x.pem"), "/root/")
+        for where in ["/home/app/tls/web.crt", "/home/svc/web.crt", "/etc/pki/tls/certs/web01.crt", "/homeX/a.crt",
+                      "TLS port 443, nginx (https://127.0.0.1:443)"]:
+            self.assertEqual(r.report_only(where), "", where)
+        self.assertEqual(m.Renewer(_Module()).report_only("/home/jdoe/test.crt"), "")      # cert_renew_extra_dirs: true
 
     def test_where_the_issued_certificate_goes(self):
         r = m.Renewer(_Module())

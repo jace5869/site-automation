@@ -83,6 +83,7 @@ cert_renew_dir: /etc/pki/tls/renew       # the new keys (0600) and CSRs, on the 
 # The same forms as cert_skip_hosts / cert_skip_groups (which leave a host out of the report too).
 cert_renew_skip_hosts: []                # e.g. [idm01, 'aap*'], or 'idm01, aap*'
 cert_renew_skip_groups: []               # e.g. [idm]
+cert_renew_extra_dirs: false             # true = a CSR for certificates found in check_certs_discover_extra_dirs (/home, /root ...) too; false = they are in the report only (a file there also under check_certs_discover_dirs, or listed in check_certs_files, is renewed)
 cert_renew_key_bits: 2048                # RSA key size, at least 2048 (a bigger old key keeps its size; an EC certificate gets a new key on the same curve)
 cert_renew_digest: sha256                # the CSR's signature: sha256, sha384 or sha512
 cert_renew_max: 10                       # at most this many NEW CSRs per host in one run (the rest come the next run)

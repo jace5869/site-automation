@@ -68,6 +68,9 @@
 ## a certificate expiring within this many days -> warning (amber in the certificate report)
 # win_check_certs_warn_days: 30
 
+## the certificate report colours these blue (an early heads-up; not a finding)
+# win_check_certs_notice_days: 60
+
 ## within this many days -> critical
 # win_check_certs_crit_days: 7
 
@@ -77,6 +80,15 @@
 
 ## the machine certificate stores read
 # win_check_certs_stores: ['Cert:\LocalMachine\My', 'Cert:\LocalMachine\WebHosting', 'Cert:\LocalMachine\Remote Desktop']
+
+## also every other machine store: Trusted Root, Intermediate CAs, Other People, ... (the
+## certificate report turns it on); with its private key checked as above, without it only listed
+## (trust store)
+# win_check_certs_trust: false
+
+## stores never read: the untrusted certificates, the roots Windows Update keeps, pending requests
+## (a CSR's key), the MECM client's own
+# win_check_certs_trust_skip_stores: ['Disallowed', 'AuthRoot', 'REQUEST', 'SMS']
 
 ## wildcards, e.g. ['CN=localhost*']
 # win_check_certs_ignore_subjects: []

@@ -44,6 +44,9 @@ options:
   file_ext: {description: "The extension of the CSR's attachment name (<common name>-<8 characters of the CSR's SHA-256>.<ext>).", type: str, default: csr}
   job: {description: The AAP job, written in the CSR's info file., type: str, default: ''}
   trust_dirs: {description: "The trust store's folders (check_certs_trust_dirs) - a certificate there never gets a CSR; /etc/pki/ca-trust/ and /usr/share/pki/ca-trust-source/ never do either.", type: list, elements: path, default: []}
+  report_only_dirs: {description: "Folders searched for the report only (check_certs_discover_extra_dirs: /home, /root ...) - a certificate there gets no CSR, unless it is also under O(keep_dirs) or matches O(keep_files).", type: list, elements: path, default: []}
+  keep_dirs: {description: "The usual folders (check_certs_discover_dirs) - renewed even when inside O(report_only_dirs).", type: list, elements: path, default: []}
+  keep_files: {description: "The certificates listed by hand (check_certs_files, wildcards) - always renewed.", type: list, elements: str, default: []}
   keystore_passwords: {description: "Keystore path -> its password (check_certs_keystores with password_env), to read its entry. Never logged.", type: dict, default: {}}
 author: site automation
 '''
@@ -62,6 +65,7 @@ certs:
 
 import base64
 import calendar
+import fnmatch
 import hashlib
 import json
 import os
@@ -401,6 +405,16 @@ class Renewer(object):
         raise CertGone('the port now serves another certificate (replaced since the check)' if served else
                        'the port does not answer now (the service is down?)')
 
+    def report_only(self, where):
+        """The folder of check_certs_discover_extra_dirs this file was found in (the report only), or ''."""
+        path = where
+        if not path.startswith('/'):
+            return ''
+        under = lambda d: path.startswith(d.rstrip('/') + '/')  # noqa: E731
+        if any(fnmatch.fnmatch(path, f) for f in self.p['keep_files'] or []) or any(under(d) for d in self.p['keep_dirs'] or [] if d):
+            return ''
+        return next((d for d in self.p['report_only_dirs'] or [] if d and under(d)), '')
+
     def in_trust(self, where):
         dirs = tuple(d.rstrip('/') + '/' for d in (self.p['trust_dirs'] or []) if d) + TRUST_STORE
         return where.endswith(' (trust store)') or where.startswith(dirs)
@@ -495,6 +509,11 @@ class Renewer(object):
             if self.in_trust(cand['where']):
                 skipped(cand, 'in the trust store (update-ca-trust): a certificate this host trusts, not its own - no CSR. When its CA is'
                               ' renewed, put the new CA certificate in /etc/pki/ca-trust/source/anchors and run update-ca-trust')
+                continue
+            extra = self.report_only(cand['where']) if kind == 'file' else ''
+            if extra:
+                skipped(cand, 'found in %s (check_certs_discover_extra_dirs): in the report, no CSR - cert_renew_extra_dirs: true makes one,'
+                              ' or list the file in check_certs_files' % extra)
                 continue
             if p['exclude'] and re.search(p['exclude'], cand['where']):
                 skipped(cand, 'its path is in cert_renew_exclude (managed by something else, e.g. Satellite or subscription-manager)')
@@ -598,6 +617,9 @@ def main():
             file_ext=dict(type='str', default='csr'),
             job=dict(type='str', default=''),
             trust_dirs=dict(type='list', elements='path', default=[]),
+            report_only_dirs=dict(type='list', elements='path', default=[]),
+            keep_dirs=dict(type='list', elements='path', default=[]),
+            keep_files=dict(type='list', elements='str', default=[]),
             keystore_passwords=dict(type='dict', default={}, no_log=True),
         ),
         supports_check_mode=True,

@@ -3,6 +3,9 @@
 # server (and your TLS endpoints), in ONE table sorted by expiry date, with where each one is
 # used (https binding, WinRM listener, Remote Desktop). Read-only. Fails when one expires within
 # win_check_certs_warn_days (or one in use has expired), so a workflow can open tickets.
+# Every other machine store is read too (win_check_certs_trust): Trusted Root, Intermediate CAs,
+# Other People, ... A certificate there without its private key is one the server trusts: in the
+# table as "(trust store)" when it expires within win_check_certs_notice_days, never a finding.
 #
 #   ansible-playbook playbooks/win_cert_report.yml -i <windows inventory>
 - name: Windows certificate report
@@ -10,6 +13,7 @@
   gather_facts: false
   vars:
     site_os: windows
+    win_check_certs_trust: true          # every machine store (template Variables: win_check_certs_trust: false to read only win_check_certs_stores)
   pre_tasks:
     - name: Windows hosts only
       ansible.builtin.include_role:

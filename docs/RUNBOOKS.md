@@ -492,6 +492,13 @@ within `check_certs_notice_days` (60), the rest plain with a green "ok". Windows
   under **Found but not checked**, with how many. To check each certificate in it, add it to
   `check_certs_files`.
 
+**Windows** (`win_cert_report.yml`): every machine store is read, not only Personal, Web Hosting and
+Remote Desktop: Trusted Root, Intermediate Certification Authorities, Other People, ... (where
+*Automatically select the certificate store* puts a `.cer` file). A certificate there with its private key
+is checked like the others; one without is listed as `... (trust store)` when it expires within
+`win_check_certs_notice_days`, never a finding or a ticket (`win_check_certs_trust`, details in
+[WINDOWS.md](WINDOWS.md#windows-certificate-report)).
+
 The weekly health check (`certs` in `health_checks`) does not search by itself, so it opens no
 tickets for certificates nobody listed; set `check_certs_discover_ports` / `_keystores: true` on it
 when you want that.
@@ -603,6 +610,7 @@ then run *STIG Manager - deploy*. Add your own: `{'/opt/app/certs/': 'App: ...'}
 |---|---|
 | a host in `cert_skip_hosts` or `cert_skip_groups` (`[sat]`) | Satellite renews its own certificates with `satellite-installer`; left out of the certificate report too |
 | a host in `cert_renew_skip_hosts` or `cert_renew_skip_groups` | renewed by hand (IdM, AAP ...): still in the certificate report, and its tickets say no CSR comes from here |
+| a file found only in `check_certs_discover_extra_dirs` (`/home`, `/root` ...), unless `cert_renew_extra_dirs: true` | those folders are searched so the report shows what is there (a test certificate, a copy someone left); a CSR for each would only add work. A file there that is also under `check_certs_discover_dirs`, or listed in `check_certs_files`, is renewed |
 | a path matching `cert_renew_exclude` | something else renews it: Satellite and Capsule (katello, foreman, candlepin, pulp, puppet), and subscription-manager on every registered host (`/etc/rhsm`, `/etc/pki/consumer`, `entitlement`, `product`). Check the report's *Where* column and add your own paths |
 | issued by a CA matching `cert_renew_exclude_issuer` (`O=Katello`, `Puppet CA`) | Satellite's or Puppet's own CA |
 | a CA certificate in a chain file | a CA has no CSR from you: put the CA's new certificate in the chain file |

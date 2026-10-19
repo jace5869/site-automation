@@ -164,6 +164,75 @@ switch ($Scenario) {
                 (O @{ Subject = 'CN=old.corp.test'; Thumbprint = $d; NotAfter = $now.AddDays(-700) }),
                 (O @{ Subject = 'CN=ignore.me'; Thumbprint = $e; NotAfter = $now.AddDays(1) })) }
     }
+    'certs_trust' {
+        # "Automatically select the store": a .cer lands in Trusted Root / Intermediate CAs / Other People
+        $cfg = @{ warn_days = 30; crit_days = 7; expired_report_days = 30; notice_days = 60; stores = @('Cert:\LocalMachine\My'); trust = $true; trust_skip_stores = @('Disallowed', 'AuthRoot', 'REQUEST', 'SMS'); endpoints = @() }
+        $f = 'F' * 40; $g = 'G' * 40; $h = 'ABCD' * 10; $i = '1' * 40; $j = '2' * 40; $k = '3' * 40; $l = '4' * 40
+        $M.exe['netsh.exe http show sslcert'] = @('SSL Certificate bindings:', '', '    IP:port                      : 0.0.0.0:8443', "    Certificate Hash             : $h", '    Application ID               : {4dc3e181-e14b-4a21-b022-59fc669b0914}')
+        $M.certStores = @((O @{ Name = 'My' }), (O @{ Name = 'Root' }), (O @{ Name = 'CA' }), (O @{ Name = 'AddressBook' }), (O @{ Name = 'Disallowed' }), (O @{ Name = 'AuthRoot' }))
+        $M.certs = @{
+            'Cert:\LocalMachine\My'          = @()
+            'Cert:\LocalMachine\Root'        = @(
+                (O @{ Subject = 'CN=test26.corp.test'; Thumbprint = $f; NotAfter = $now.AddDays(26); HasPrivateKey = $false }),
+                (O @{ Subject = 'CN=Old Vendor Root'; Thumbprint = $i; NotAfter = $now.AddDays(-4000); HasPrivateKey = $false }),
+                (O @{ Subject = 'CN=Far Root'; Thumbprint = $j; NotAfter = $now.AddDays(3000); HasPrivateKey = $false }))
+            'Cert:\LocalMachine\CA'          = @(
+                (O @{ Subject = 'CN=keyed.corp.test'; Thumbprint = $g; NotAfter = $now.AddDays(20); HasPrivateKey = $true }),
+                (O @{ Subject = 'CN=bound.corp.test'; Thumbprint = $h; NotAfter = $now.AddDays(3); HasPrivateKey = $false }))
+            'Cert:\LocalMachine\AddressBook' = @(O @{ Subject = 'CN=peer.corp.test'; Thumbprint = $k; NotAfter = $now.AddDays(10); HasPrivateKey = $false })
+            'Cert:\LocalMachine\Disallowed'  = @(O @{ Subject = 'CN=revoked'; Thumbprint = $l; NotAfter = $now.AddDays(1); HasPrivateKey = $true })
+            'Cert:\LocalMachine\AuthRoot'    = @(O @{ Subject = 'CN=wu'; Thumbprint = $l; NotAfter = $now.AddDays(1); HasPrivateKey = $true })
+        }
+    }
+    { $_ -in @('csr', 'csr_check') } {
+        # the renewal (win_cert_csr.ps1): certreq is a stand-in; the CSR folder is a real temporary one
+        $M.fs = Join-Path ([System.IO.Path]::GetTempPath()) ('sa-csr-' + (Get-Random))
+        $null = New-Item -ItemType Directory -Path $M.fs
+        function San([string[]] $names) {
+            $body = @()
+            foreach ($n in $names) {
+                $k, $v = $n -split ':', 2
+                if ($k -eq 'dns') { $b = @([System.Text.Encoding]::ASCII.GetBytes($v)); $body += @(0x82, $b.Count) + $b }
+                elseif ($k -eq 'ip') { $b = @($v -split '\.' | ForEach-Object { [int]$_ }); $body += @(0x87, 4) + $b }
+                elseif ($k -eq 'upn') { $body += @(0xA0, 3, 1, 2, 3) }
+            }
+            return , (@(0x30, $body.Count) + $body)
+        }
+        function Ext([string] $oid, $raw) { return (O @{ Oid = (O @{ Value = $oid }); RawData = $raw }) }
+        function Cert([string] $subject, [string] $tp, [int] $days, $exts, [string] $issuer = 'CN=Test CA, O=Test', $pk = $null) {
+            if ($null -eq $pk) { $pk = O @{ Oid = (O @{ Value = '1.2.840.113549.1.1.1' }); EncodedKeyValue = (O @{ RawData = @(1..270) }) } }
+            return (O @{ Subject = $subject; Issuer = $issuer; Thumbprint = $tp; NotAfter = $now.AddDays($days); HasPrivateKey = $true
+                    Extensions = @($exts); PublicKey = $pk; EnhancedKeyUsageList = @(O @{ ObjectId = '1.3.6.1.5.5.7.3.1' }) })
+        }
+        $t = @{}; foreach ($x in 'web', 'ca', 'self', 'upn', 'pend', 'old', 'new', 'ec', 'big') { $t[$x] = (('{0:X2}' -f $t.Count) * 20) }
+        $ec = O @{ Oid = (O @{ Value = '1.2.840.10045.2.1' }); EncodedParameters = (O @{ RawData = @(0x06, 0x05, 0x2B, 0x81, 0x04, 0x00, 0x22) }) }
+        $big = O @{ Oid = (O @{ Value = '1.2.840.113549.1.1.1' }); EncodedKeyValue = (O @{ RawData = @(1..526) }) }
+        $M.certs = @{
+            'Cert:\LocalMachine\My'      = @(
+                (Cert 'CN=web01.corp.test, O="Smith, Jones", C=US' $t.web 10 @((Ext '2.5.29.17' (San @('dns:web01.corp.test', 'dns:web.corp.test', 'ip:192.0.2.3'))))),
+                (Cert 'CN=Issuing CA, O=Test' $t.ca 10 @((Ext '2.5.29.19' @(0x30, 0x03, 0x01, 0x01, 0xFF)))),
+                (Cert 'CN=self01.corp.test' $t.self 10 @() 'CN=self01.corp.test'),
+                (Cert 'CN=upn.corp.test' $t.upn 10 @((Ext '2.5.29.17' (San @('dns:upn.corp.test', 'upn:x'))))),
+                (Cert 'CN=pend.corp.test' $t.pend 10 @()),
+                (Cert 'CN=old.corp.test' $t.old 10 @()),
+                (Cert 'CN=old.corp.test' $t.new 400 @()),
+                (Cert 'CN=ec.corp.test' $t.ec 10 @() 'CN=Test CA, O=Test' $ec),
+                (Cert 'CN=big.corp.test' $t.big 10 @() 'CN=Test CA, O=Test' $big))
+            'Cert:\LocalMachine\REQUEST' = @(O @{ Thumbprint = ('AB' * 20); Subject = 'CN=pend.corp.test' })
+        }
+        # an earlier run's pending request for pend.corp.test
+        $pcsr = Join-Path $M.fs 'pend.corp.test-earlier.csr'
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath $pcsr -Value "-----BEGIN NEW CERTIFICATE REQUEST-----`r`nPENDING`r`n-----END NEW CERTIFICATE REQUEST-----"
+        ConvertTo-Json @{ request = ('AB' * 20); csr_path = $pcsr } | Microsoft.PowerShell.Management\Set-Content -LiteralPath (Join-Path $M.fs "$($t.pend).json")
+        $cands = @()
+        foreach ($x in 'web', 'ca', 'self', 'upn', 'pend', 'old', 'ec', 'big') {
+            $c = @($M.certs['Cert:\LocalMachine\My'] | Where-Object { $_.Thumbprint -eq $t[$x] })[0]
+            $w = 'LocalMachine\My'; if ($x -eq 'web') { $w += ', used by https 0.0.0.0:443' }
+            $cands += @(@{ id = 'certs:' + $t[$x]; store = 'Cert:\LocalMachine\My'; where = $w; subject = $c.Subject; days = 10; expires = '2026-01-01'; severity = 'warning' })
+        }
+        $cands += @(@{ id = 'certs:tls:127.0.0.1:8443'; store = ''; where = 'TLS app'; subject = 'CN=tls'; days = 5; expires = '2026-01-01'; severity = 'critical' })
+        $cfg = @{ certs = $cands; dir = $M.fs; key_bits = 2048; digest = 'sha256'; max = 10; check_mode = ($Scenario -eq 'csr_check') }
+    }
     'certs_endpoints_clm' {
         $cfg = @{ stores = @(); endpoints = @(@{ name = 'IIS'; host = '127.0.0.1'; port = 443 }) }
         $M.exe['netsh.exe http show sslcert'] = @()
@@ -224,12 +293,23 @@ function Get-MpComputerStatus { if ($null -eq $M.mp) { throw 'not available' } ;
 function Get-NetFirewallProfile { $M.fw }
 function Get-SmbServerConfiguration { if ($null -eq $M.smb) { throw 'no smb' } ; $M.smb }
 function Get-ItemProperty { param([string] $Path, [string] $Name, $ErrorAction) $M.reg[$Path] }
-function Test-Path { param([string] $Path) return ($M.paths -contains $Path) }
+function Test-Path {
+    param([string] $Path, [string] $LiteralPath)
+    $p = $Path; if ($LiteralPath) { $p = $LiteralPath }
+    if ($M.fs -and $p.StartsWith($M.fs)) { return (Microsoft.PowerShell.Management\Test-Path -LiteralPath $p) }
+    if ($p -match '^(Cert:\\.+)\\([0-9A-Fa-f]{40})$') { return [bool](@($M.certs[$Matches[1]] | Where-Object { $_.Thumbprint -eq $Matches[2] }).Count) }
+    return ($M.paths -contains $p)
+}
 function Get-HotFix { $M.hotfix }
 function Get-LocalUser { if ($null -eq $M.users) { throw 'not available' } ; $M.users }
 function Get-LocalGroupMember { if ($M.adminsFail) { throw 'Failed to compare two elements in the array.' } ; $M.admins }
 function Get-ChildItem {
     param([string] $Path, $ErrorAction)
+    if ($Path -eq 'Cert:\LocalMachine') { return $M.certStores }
+    if ($Path -match '^(Cert:\\.+)\\([0-9A-Fa-f]{40})$' -and $M.certs.ContainsKey($Matches[1])) {
+        $hit = @($M.certs[$Matches[1]] | Where-Object { $_.Thumbprint -eq $Matches[2] })
+        if ($hit.Count) { return $hit[0] } ; throw "no certificate $Path"
+    }
     if ($Path -like 'Cert:*') { if ($M.certs -and $M.certs.ContainsKey($Path)) { return $M.certs[$Path] } ; throw "no store $Path" }
     if ($Path -like 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Listener') { return $M.wsman }
     return
@@ -246,7 +326,25 @@ function nltest.exe { Invoke-Exe ('nltest.exe ' + ($args -join ' ')) }
 function auditpol.exe { Invoke-Exe ('auditpol.exe ' + ($args -join ' ')) }
 function netsh.exe { Invoke-Exe ('netsh.exe ' + ($args -join ' ')) }
 function net.exe { Invoke-Exe ('net.exe ' + ($args -join ' ')) }
+function icacls.exe { $global:LASTEXITCODE = 0 }
+# certreq -new -q -machine <inf> <csr>: a CSR file, and a pending request in the REQUEST store
+function certreq.exe {
+    $global:LASTEXITCODE = 0
+    $inf, $csr = $args[-2], $args[-1]
+    $subj = ((Get-Content -LiteralPath $inf) | Where-Object { $_ -like 'Subject = *' }) -replace '^Subject = "(.*)"$', '$1'
+    Microsoft.PowerShell.Management\Set-Content -LiteralPath $csr -Value "-----BEGIN NEW CERTIFICATE REQUEST-----`r`nMADE $subj`r`n-----END NEW CERTIFICATE REQUEST-----"
+    $M.certs['Cert:\LocalMachine\REQUEST'] += @(O @{ Thumbprint = (('{0:X2}' -f (0x80 + $M.certs['Cert:\LocalMachine\REQUEST'].Count)) * 20); Subject = $subj })
+    'CertReq: Request Created'
+}
 # ---- run the check ---------------------------------------------------------------------------
 $env:SITE_CHECK_CONFIG = ConvertTo-Json -InputObject $cfg -Depth 6 -Compress
 if ($Clm) { $ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage' }
-& $Script
+try { & $Script }
+finally {
+    if ($M.fs) {
+        # what certreq was given, for the tests; then the temporary folder goes
+        foreach ($f in @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $M.fs -Filter '*.inf')) { '###INF### ' + $f.Name + ' ' + ((Get-Content -LiteralPath $f.FullName) -join '|') }
+        '###FILES### ' + (@(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $M.fs | ForEach-Object { $_.Name }) -join ' ')
+        Remove-Item -LiteralPath $M.fs -Recurse -Force
+    }
+}

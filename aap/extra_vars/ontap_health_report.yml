@@ -28,8 +28,12 @@
 ## environment's own trust
 # ontap_ca_path: ""
 
-## seconds for one request
+## seconds for one request (no answer: asked once more)
 # ontap_timeout: 30
+
+## true = connect to older ONTAP whose TLS the execution environment refuses
+## (UNSAFE_LEGACY_RENEGOTIATION_DISABLED, KEY_TOO_SMALL, SHA-1)
+# ontap_tls_legacy: false
 
 ## Thresholds (used %, hours, days, seconds): at or above "warn" = amber, at or above "crit" = red.
 # ontap_volume_warn_pct: 85

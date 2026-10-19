@@ -30,6 +30,7 @@ own `playbooks/group_vars/all.yml` keeps its old settings until you comment them
 | Troubleshoot | `playbooks/troubleshoot.yml` | on demand: the first commands an admin runs for a kind of problem (disk, performance, service, network, SELinux, fapolicyd, login, time, logs, MariaDB / MySQL), each explained, plus the matching checks |
 | Certificate report | `playbooks/cert_report.yml` | every certificate on every host (files, keystores, TLS endpoints) in one table, soonest expiry first; Satellite left out (`cert_skip_hosts`, `cert_skip_groups`) |
 | Certificate renewal - CSRs | `playbooks/cert_renew_csr.yml` | for each certificate file that expires: a new key and a CSR (same subject and names) on the host, the CSR attached to the certificate's ServiceNow incident; never Satellite's or subscription-manager's certificates |
+| Windows certificate renewal - CSRs | `playbooks/win_cert_renew_csr.yml` | the same on Windows servers: a new key and CSR with `certreq`, on the certificate's ServiceNow ticket; the key stays on the server |
 | POA&M status | `playbooks/poam_status.yml` | overdue / due-soon POA&M items from `poam/poam.csv`; optional STIG Manager cross-check for open CAT I/II findings with no POA&M item |
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | workflow step: one incident per finding, updated (not duplicated) on later runs, noted or resolved when it clears |
 | ServiceNow health | `playbooks/servicenow_health.yml` | the instance answers its API; MID Servers up and validated |

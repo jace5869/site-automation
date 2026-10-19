@@ -1,0 +1,65 @@
+---
+# WINDOWS CERTIFICATE RENEWAL - THE CSRs. For every certificate the Windows certificate report flags
+# (expires within win_check_certs_warn_days - 30 days or less - or expired) that is the server's own -
+# in Personal, Web Hosting, Remote Desktop, or any machine store with its private key: a new key and a
+# certificate signing request (CSR) with the same subject, names and purposes, made on the server by
+# certreq -new -machine. The CSR is attached to the certificate's ServiceNow incident - the one the
+# Windows certificate report's tickets step opened, or a new one - with a work note saying what to do
+# next (certreq -accept -machine the issued certificate, then the binding: IIS, WinRM, Remote Desktop).
+# The key never leaves the server (win_cert_renew_exportable: false). A run again reuses the pending
+# request and changes nothing on the ticket. Nothing in use is changed.
+#
+# Not renewed (listed, with why): a trust store's certificates (Trusted Root, Intermediate CAs, Other
+# People - not the server's own), CA certificates, self-signed ones (unless win_cert_renew_self_signed),
+# hosts renewed by hand (cert_renew_skip_hosts / cert_renew_skip_groups), a certificate only seen on a
+# port (win_check_certs_endpoints). A server that cannot be reached is listed as NOT REACHED.
+#
+# Credentials: Machine (Windows, an administrator) and ServiceNow API. Without the ServiceNow credential,
+# the job prints the CSRs to hand to the PKI. Run it with Check first: it makes nothing and sends nothing.
+#
+#   [Windows certificate report] --Run always--> [ServiceNow tickets] --Run always--> [Windows certificate renewal - CSRs]
+#
+#   ansible-playbook playbooks/win_cert_renew_csr.yml -i <windows inventory> --check
+- name: Windows certificate renewal - a new key and CSR on each server
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  vars:
+    site_os: windows
+    win_check_certs_trust: true          # the same certificates the Windows certificate report finds
+  pre_tasks:
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  tasks:
+    - name: Start
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: start.yml
+
+    - name: Find and read the certificates
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: run_check.yml
+      vars:
+        _site_check: certs
+
+    - name: A new key and CSR for each certificate that expires soon
+      ansible.builtin.include_role:
+        name: win_check_certs
+        tasks_from: csr.yml
+
+- name: Windows certificate renewal - the CSRs on the ServiceNow tickets
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Attach each CSR to its certificate's ticket
+      ansible.builtin.include_role:
+        name: servicenow
+        tasks_from: cert_csr.yml

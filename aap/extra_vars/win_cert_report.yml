@@ -31,6 +31,15 @@
 ## the machine certificate stores read
 # win_check_certs_stores: ['Cert:\LocalMachine\My', 'Cert:\LocalMachine\WebHosting', 'Cert:\LocalMachine\Remote Desktop']
 
+## also every other machine store: Trusted Root, Intermediate CAs, Other People, ... (the
+## certificate report turns it on); with its private key checked as above, without it only listed
+## (trust store)
+# win_check_certs_trust: false
+
+## stores never read: the untrusted certificates, the roots Windows Update keeps, pending requests
+## (a CSR's key), the MECM client's own
+# win_check_certs_trust_skip_stores: ['Disallowed', 'AuthRoot', 'REQUEST', 'SMS']
+
 ## wildcards, e.g. ['CN=localhost*']
 # win_check_certs_ignore_subjects: []
 

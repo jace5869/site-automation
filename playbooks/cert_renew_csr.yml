@@ -9,7 +9,8 @@
 # The key never leaves the host. A run again reuses the pending CSR and changes nothing on the ticket.
 # Nothing in use is changed: installing the issued certificate is a later step, by a person.
 #
-# Not renewed (listed, with why): hosts in cert_skip_hosts or cert_skip_groups (Satellite), the trust
+# Not renewed (listed, with why): files found only in check_certs_discover_extra_dirs (/home, /root:
+# the report only, unless cert_renew_extra_dirs), hosts in cert_skip_hosts or cert_skip_groups (Satellite), the trust
 # store (certificates the host trusts, not its own), a keystore's trusted entries, CA certificates (a
 # chain, a root), self-signed ones (unless cert_renew_self_signed), paths and issuers something else
 # renews (cert_renew_exclude / cert_renew_exclude_issuer: Satellite, subscription-manager, Puppet). A host

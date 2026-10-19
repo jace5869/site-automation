@@ -27,6 +27,7 @@ $cases = @(
     @('accounts', 'accounts', @{ 'accounts:guest' = 'critical'; 'accounts:password-age:Administrator' = 'warning'; 'accounts:inactive:svc_old' = 'warning'; 'accounts:admin:CORP\jdoe' = 'warning' }),
     @('accounts', 'accounts_dc', @{}),
     @('certs', 'certs', @{ ('certs:' + ('A' * 40)) = 'critical'; ('certs:' + ('B' * 40)) = 'critical'; ('certs:' + ('C' * 40)) = 'warning' }),
+    @('certs', 'certs_trust', @{ ('certs:' + ('G' * 40)) = 'warning'; ('certs:' + ('ABCD' * 10)) = 'critical' }),
     @('patching', 'patching', @{ 'patching:reboot' = 'warning'; 'patching:age' = 'critical' }),
     @('patching', 'patching_ok', @{})
 )
@@ -60,6 +61,65 @@ foreach ($clm in @($false, $true)) {
             foreach ($f in @($r.findings)) { if ($f) { Write-Host "       [$($f.severity)] $($f.id): $($f.summary)" } }
         }
         else { Write-Host "ok   - $label ($($got.Count) finding(s))" }
+    }
+}
+# The trust stores: listed when they expire soon, never a finding; the long-expired and far-off ones left out
+foreach ($clm in @($false, $true)) {
+    $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner, '-Script', (Script 'certs'), '-Scenario', 'certs_trust')
+    if ($clm) { $a += '-Clm' }
+    $out = @(& $shell @a 2>&1 | ForEach-Object { [string]$_ })
+    $count++
+    $line = @($out | Where-Object { $_ -like '###SITE-JSON### *' }) | Select-Object -Last 1
+    $bad = @()
+    if (-not $line) { $bad += 'no result line' }
+    else {
+        $inv = @((ConvertFrom-Json -InputObject $line.Substring(16)).facts.inventory)
+        $w = @{}
+        foreach ($c in $inv) { $w[[string]$c.subject] = [string]$c.where }
+        $want = @{ 'CN=test26.corp.test' = 'LocalMachine\Root (Trusted Root Certification Authorities) (trust store)'
+            'CN=peer.corp.test' = 'LocalMachine\AddressBook (Other People) (trust store)'
+            'CN=keyed.corp.test' = 'LocalMachine\CA (Intermediate Certification Authorities), with its private key'
+            'CN=bound.corp.test' = 'LocalMachine\CA (Intermediate Certification Authorities), used by https 0.0.0.0:8443' }
+        foreach ($k in $want.Keys) { if ($w[$k] -ne $want[$k]) { $bad += "$k where '$($w[$k])', expected '$($want[$k])'" } }
+        foreach ($k in $w.Keys) { if (-not $want.ContainsKey($k)) { $bad += "$k should not be listed" } }
+    }
+    $label = 'certs/certs_trust inventory' + $(if ($clm) { ' (constrained)' } else { '' })
+    if ($bad.Count) { $fail++; Write-Host "FAIL - $label : $($bad -join '; ')" } else { Write-Host "ok   - $label" }
+}
+# The renewal (win_cert_csr.ps1): what gets a CSR, what does not and why, what certreq is given
+foreach ($scen in 'csr', 'csr_check') {
+    foreach ($clm in @($false, $true)) {
+        $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner, '-Script', (Join-Path $root 'roles/win_check_certs/files/win_cert_csr.ps1'), '-Scenario', $scen)
+        if ($clm) { $a += '-Clm' }
+        $out = @(& $shell @a 2>&1 | ForEach-Object { [string]$_ })
+        $count++
+        $label = "certs/$scen" + $(if ($clm) { ' (constrained)' } else { '' })
+        $bad = @()
+        $line = @($out | Where-Object { $_ -like '###SITE-JSON### *' }) | Select-Object -Last 1
+        if (-not $line) { $fail++; Write-Host "FAIL - $label : no result line"; $out | Select-Object -Last 8 | ForEach-Object { Write-Host "       $_" }; continue }
+        $got = @{}
+        foreach ($c in @((ConvertFrom-Json -InputObject $line.Substring(16)).facts.certs)) { $got[[string]$c.subject] = $c }
+        $made = $(if ($scen -eq 'csr') { 'made' } else { 'would make' })
+        $want = @{ 'CN=web01.corp.test, O="Smith, Jones", C=US' = $made; 'CN=Issuing CA, O=Test' = 'skipped'; 'CN=self01.corp.test' = 'skipped'
+            'CN=upn.corp.test' = 'failed'; 'CN=pend.corp.test' = 'exists'; 'CN=old.corp.test' = 'skipped'; 'CN=ec.corp.test' = $made
+            'CN=big.corp.test' = $made; 'CN=tls' = 'skipped' }
+        foreach ($k in $want.Keys) { if ([string]$got[$k].status -ne $want[$k]) { $bad += "$k is '$($got[$k].status)', expected $($want[$k]) ($($got[$k].reason))" } }
+        $web = $got['CN=web01.corp.test, O="Smith, Jones", C=US']
+        if ((@($web.sans) -join ',') -ne 'web01.corp.test,web.corp.test,192.0.2.3') { $bad += "web01 names: $(@($web.sans) -join ',')" }
+        if ($web.install -notmatch 'certreq -accept -machine' -or $web.install -notmatch 'https binding 0.0.0.0:443') { $bad += "web01 install: $($web.install)" }
+        if ($got['CN=pend.corp.test'].csr -notmatch '^-----BEGIN CERTIFICATE REQUEST-----\nPENDING') { $bad += 'the pending CSR was not reused' }
+        if ($got['CN=old.corp.test'].reason -notmatch 'a newer certificate') { $bad += 'old: ' + $got['CN=old.corp.test'].reason }
+        if ($got['CN=self01.corp.test'].reason -notmatch 'win_cert_renew_self_signed') { $bad += 'self: ' + $got['CN=self01.corp.test'].reason }
+        $inf = (@($out | Where-Object { $_ -like '###INF### *' }) -join "`n")
+        if ($scen -eq 'csr') {
+            if ($web.file_name -notmatch '^web01\.corp\.test-[0-9a-f]{8}\.csr$') { $bad += "web01 file name $($web.file_name)" }
+            foreach ($t in 'Subject = "CN=web01.corp.test, O=""Smith, Jones"", C=US"', 'MachineKeySet = TRUE', '_continue_ = "dns=web.corp.test&"', '_continue_ = "ipaddress=192.0.2.3&"',
+                'Exportable = FALSE', 'KeyAlgorithm = ECDSA_P384', 'KeyLength = 4096', 'OID=1.3.6.1.5.5.7.3.1') {
+                if (-not $inf.Contains($t)) { $bad += "certreq was not given: $t" }
+            }
+        }
+        elseif ($inf) { $bad += 'Check mode made a request' }
+        if ($bad.Count) { $fail++; Write-Host "FAIL - $label : $($bad -join '; ')" } else { Write-Host "ok   - $label" }
     }
 }
 # Constrained Language Mode: TLS endpoints are reported as not checkable, not as an error

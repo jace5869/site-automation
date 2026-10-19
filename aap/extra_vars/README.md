@@ -48,6 +48,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | [vm_snapshot_cleanup.yml](vm_snapshot_cleanup.yml) |
 | VM - snapshot report | `playbooks/vm_snapshot_report.yml` | [vm_snapshot_report.yml](vm_snapshot_report.yml) |
 | VM - VMs created report | `playbooks/vm_created_report.yml` | [vm_created_report.yml](vm_created_report.yml) |
+| Windows certificate renewal - CSRs | `playbooks/win_cert_renew_csr.yml` | [win_cert_renew_csr.yml](win_cert_renew_csr.yml) |
 | Windows certificate report | `playbooks/win_cert_report.yml` | [win_cert_report.yml](win_cert_report.yml) |
 | Windows connection test | `playbooks/win_connection_test.yml` | [win_connection_test.yml](win_connection_test.yml) |
 | Windows health check | `playbooks/win_health_check.yml` | [win_health_check.yml](win_health_check.yml) |

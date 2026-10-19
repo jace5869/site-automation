@@ -10,6 +10,7 @@
     validate_certs: "{{ ontap_validate_certs | bool }}"
     ca_path: "{{ ontap_ca_path | default(omit, true) }}"
     timeout: "{{ ontap_timeout | int }}"
+    tls_legacy: "{{ ontap_tls_legacy | bool }}"
   register: _ontap_read
   check_mode: false                     # it only reads: a dry run (Check) shows the real report
 

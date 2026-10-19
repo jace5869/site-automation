@@ -1,5 +1,9 @@
 # site-automation - Windows check: certs (roles/win_check_certs, run by playbooks/win_health_check.yml).
 # Certificates in the machine stores (and which are in use), TLS endpoints: expired or expiring.
+# With trust on (the certificate report turns it on): every other machine store too - Trusted Root,
+# Intermediate CAs, Other People, ... (where "Automatically select the store" puts a .cer file).
+# A certificate there with its private key is the server's own and checked like the others; one
+# without is one the server trusts: listed in the report, never a finding.
 # Read-only: it changes nothing on the server.
 # ---- common to every site-automation Windows check (keep identical in all of them) -----------
 # Settings arrive as JSON in $env:SITE_CHECK_CONFIG (the role's defaults and your inventory).
@@ -28,7 +32,10 @@ function Write-Result {
 $warn = [int](Get-Setting 'warn_days' 30)
 $crit = [int](Get-Setting 'crit_days' 7)
 $expiredDays = [int](Get-Setting 'expired_report_days' 30)
+$notice = [int](Get-Setting 'notice_days' 60)
 $ignore = @(Get-Setting 'ignore_subjects' @())
+$trustOn = [bool](Get-Setting 'trust' $false)
+$trustSkip = @(Get-Setting 'trust_skip_stores' @('Disallowed', 'AuthRoot', 'REQUEST', 'SMS'))
 $now = Get-Date
 # Which certificates are in use: https bindings (IIS, WSUS, ...), the WinRM HTTPS listener AAP
 # connects through, and Remote Desktop.
@@ -48,20 +55,43 @@ try {
 }
 catch { }
 $inv = @()
-function Add-Cert([string] $Subject, [datetime] $NotAfter, [string] $Where, [string] $Id, [bool] $InUse, [string] $Hint) {
+function Add-Cert([string] $Subject, [datetime] $NotAfter, [string] $Where, [string] $Id, [bool] $InUse, [string] $Hint, [bool] $Trust = $false, [string] $Store = '') {
     $days = ($NotAfter - $script:now).Days
     if ($NotAfter -lt $script:now -and $days -ge 0) { $days = -1 }
     $exp = $NotAfter.ToString('yyyy-MM-dd')
-    $script:inv += @(@{ subject = $Subject; expires = $exp; days = $days; where = $Where })
+    if ($Trust) {
+        # a certificate the server trusts: in the report when it expires soon or expired lately, never a finding
+        # (Trusted Root holds dozens from Windows, some long expired)
+        if ($days -le $script:notice -and (-$days) -le $script:expiredDays) { $script:inv += @(@{ subject = $Subject; expires = $exp; days = $days; where = $Where; trust = $true; id = $Id; store = $Store }) }
+        return
+    }
+    # id, store: what the renewal (win_cert_csr.ps1) needs to find it again
+    $script:inv += @(@{ subject = $Subject; expires = $exp; days = $days; where = $Where; trust = $false; id = $Id; store = $Store; in_use = $InUse })
     if ($NotAfter -lt $script:now) {
         if ($InUse -or (-$days) -le $script:expiredDays) { Add-Finding $Id 'critical' "certificate $Subject ($Where) EXPIRED on $exp" $Hint }
     }
     elseif ($days -le $script:crit) { Add-Finding $Id 'critical' "certificate $Subject ($Where) expires on $exp, in $days days" $Hint }
     elseif ($days -le $script:warn) { Add-Finding $Id 'warning' "certificate $Subject ($Where) expires on $exp, in $days days" $Hint }
 }
-foreach ($st in @(Get-Setting 'stores' @('Cert:\LocalMachine\My', 'Cert:\LocalMachine\WebHosting', 'Cert:\LocalMachine\Remote Desktop'))) {
+$own = @(Get-Setting 'stores' @('Cert:\LocalMachine\My', 'Cert:\LocalMachine\WebHosting', 'Cert:\LocalMachine\Remote Desktop'))
+$stores = @()
+foreach ($st in $own) { $stores += @(@{ path = [string]$st; trust = $false }) }
+if ($trustOn) {
+    foreach ($s in @(Get-ChildItem -Path 'Cert:\LocalMachine' -ErrorAction SilentlyContinue)) {
+        $p = 'Cert:\LocalMachine\' + [string]$s.Name
+        if ($own -contains $p -or $trustSkip -contains [string]$s.Name) { continue }
+        $stores += @(@{ path = $p; trust = $true })
+    }
+}
+# the names certlm.msc shows
+$storeNames = @{ Root = 'Trusted Root Certification Authorities'; CA = 'Intermediate Certification Authorities'
+    AddressBook = 'Other People'; TrustedPeople = 'Trusted People'; TrustedPublisher = 'Trusted Publishers' }
+foreach ($st in $stores) {
     $certs = @()
-    try { $certs = @(Get-ChildItem -Path ([string]$st) -ErrorAction Stop) } catch { continue }
+    try { $certs = @(Get-ChildItem -Path $st.path -ErrorAction Stop) } catch { continue }
+    $short = ($st.path -replace '^Cert:\\', '')
+    $leaf = ($short -replace '^.*\\', '')
+    if ($storeNames.ContainsKey($leaf)) { $short = $short + ' (' + $storeNames[$leaf] + ')' }
     foreach ($c in $certs) {
         if ($null -eq $c.NotAfter) { continue }
         $subj = [string]$c.Subject
@@ -70,10 +100,14 @@ foreach ($st in @(Get-Setting 'stores' @('Cert:\LocalMachine\My', 'Cert:\LocalMa
         foreach ($p in $ignore) { if ($subj -like [string]$p) { $skip = $true } }
         if ($skip) { continue }
         $tp = ([string]$c.Thumbprint).ToUpper()
-        $where = ([string]$st -replace '^Cert:\\', '')
+        $where = $short
+        $trust = $st.trust
+        # in a trust store with its private key: the server's own certificate, put in the wrong store
+        if ($trust -and $c.HasPrivateKey) { $trust = $false; $where = $where + ', with its private key' }
         $use = $false
-        if ($bound.ContainsKey($tp)) { $where = $where + ', used by ' + $bound[$tp]; $use = $true }
-        Add-Cert $subj ([datetime]$c.NotAfter) $where "certs:$tp" $use "Get-ChildItem $st\$tp | Format-List Subject, Issuer, NotAfter, Thumbprint; certlm.msc"
+        if ($bound.ContainsKey($tp)) { $where = $where + ', used by ' + $bound[$tp]; $use = $true; $trust = $false }
+        if ($trust) { $where = $where + ' (trust store)' }
+        Add-Cert $subj ([datetime]$c.NotAfter) $where "certs:$tp" $use "Get-ChildItem '$($st.path)\$tp' | Format-List Subject, Issuer, NotAfter, Thumbprint, HasPrivateKey; certlm.msc" $trust $st.path
     }
 }
 # TLS endpoints: the certificate a client actually gets (needs full .NET, not Constrained Language)

@@ -413,8 +413,11 @@ tickets step is the same template as for Linux: it runs on AAP itself.
 ```text
 [Windows health check]        --Run always-->  [ServiceNow tickets]
  health_checks = weekly
-[Windows certificate report]  --Run always-->  [ServiceNow tickets]
+[Windows certificate report]  --Run always-->  [ServiceNow tickets]  --Run always-->  [Windows certificate renewal - CSRs]
 ```
+
+The last step is optional: a CSR for each of the server's own certificates that expires, on its ticket
+([WINDOWS.md](WINDOWS.md#windows-certificate-renewal---csrs)).
 
 **Schedule:** Mondays 07:15.
 

@@ -122,6 +122,7 @@ File: `roles/check_certs/defaults/main.yml`
 | `cert_renew_dir` | `/etc/pki/tls/renew` | ---- Renewal: a new key and CSR for each certificate that expires soon (playbooks/cert_renew_csr.yml) ---- The certificates the report flags (within check_certs_warn_days - 30 days or less - or expired) get a new key and a CSR with the same subject and names (subjectAltName), on the host; the CSR is attached to the ce… (all of it: the role file) |
 | `cert_renew_skip_hosts` | `[]` | Hosts whose certificates are renewed by hand (IdM, AAP ...): in the certificate report and its tickets as usual - each ticket says it is renewed by hand - but the renewal makes no CSR for them (listed, with why). The same forms as cert_skip_hosts / cert_skip_groups (which leave a host out of the report too). e.g. [idm… (all of it: the role file) |
 | `cert_renew_skip_groups` | `[]` | e.g. [idm] |
+| `cert_renew_extra_dirs` | `false` | true = a CSR for certificates found in check_certs_discover_extra_dirs (/home, /root ...) too; false = they are in the report only (a file there also under check_certs_discover_dirs, or listed in check_certs_files, is renewed) |
 | `cert_renew_key_bits` | `2048` | RSA key size, at least 2048 (a bigger old key keeps its size; an EC certificate gets a new key on the same curve) |
 | `cert_renew_digest` | `sha256` | the CSR's signature: sha256, sha384 or sha512 |
 | `cert_renew_max` | `10` | at most this many NEW CSRs per host in one run (the rest come the next run) |
@@ -358,7 +359,8 @@ File: `roles/ontap_report/defaults/main.yml`
 | `ontap_clusters` | `[]` | The clusters' management addresses (names or IPs), e.g. [cluster1.yoursite.mil, cluster2.yoursite.mil]. The credential's account must exist on each of them. |
 | `ontap_validate_certs` | `true` | Check the clusters' HTTPS certificates. ONTAP's own certificate is often self-signed: then put its CA in ontap_ca_path (a file in the project, e.g. "{{ playbook_dir }}/files/ca/ontap-ca.pem"), or set false. |
 | `ontap_ca_path` | (empty) | the CA file (PEM) the clusters' certificates are checked with; empty = the execution environment's own trust |
-| `ontap_timeout` | `30` | seconds for one request |
+| `ontap_timeout` | `30` | seconds for one request (no answer: asked once more) |
+| `ontap_tls_legacy` | `false` | true = connect to older ONTAP whose TLS the execution environment refuses (UNSAFE_LEGACY_RENEGOTIATION_DISABLED, KEY_TOO_SMALL, SHA-1) |
 | `ontap_volume_warn_pct` | `85` | Thresholds (used %, hours, days, seconds): at or above "warn" = amber, at or above "crit" = red. |
 | `ontap_volume_crit_pct` | `90` | volume used % -> red |
 | `ontap_aggr_warn_pct` | `85` | aggregate used % -> amber |
@@ -806,8 +808,19 @@ File: `roles/win_check_certs/defaults/main.yml`
 | `win_check_certs_crit_days` | `7` | within this many days -> critical |
 | `win_check_certs_expired_report_days` | `30` | an expired certificate NOT in use is a finding for this many days after it expired; older ones only in the report |
 | `win_check_certs_stores` | `['Cert:\LocalMachine\My', 'Cert:\LocalMachine\WebHosting', 'Cert:\LocalMachine\Remote Des…` | the machine certificate stores read |
+| `win_check_certs_trust` | `false` | also every other machine store: Trusted Root, Intermediate CAs, Other People, ... (the certificate report turns it on); with its private key checked as above, without it only listed (trust store) |
+| `win_check_certs_trust_skip_stores` | `['Disallowed', 'AuthRoot', 'REQUEST', 'SMS']` | stores never read: the untrusted certificates, the roots Windows Update keeps, pending requests (a CSR's key), the MECM client's own |
 | `win_check_certs_ignore_subjects` | `[]` | wildcards, e.g. ['CN=localhost*'] |
 | `win_check_certs_endpoints` | `[]` | TLS services whose certificate a client actually gets, e.g. win_check_certs_endpoints: - {name: IIS, host: 127.0.0.1, port: 443, servername: web01.yoursite.mil} |
+| `win_cert_renew_dir` | `'C:\ProgramData\site-automation\renew'` | ---- Renewal: a new key and CSR for each certificate that expires soon (playbooks/win_cert_renew_csr.yml) ---- The certificates the Windows certificate report flags (within win_check_certs_warn_days, or expired) that are the server's own - not a trust store's - get a new key and a CSR with the same subject, names and… (all of it: the role file) |
+| `win_cert_renew_key_bits` | `2048` | RSA key size, at least 2048 (a bigger old key keeps its size; an EC certificate gets a new key on the same curve) |
+| `win_cert_renew_digest` | `sha256` | the CSR's signature: sha256, sha384 or sha512 |
+| `win_cert_renew_max` | `10` | at most this many NEW CSRs per server in one run (the rest come the next run) |
+| `win_cert_renew_self_signed` | `false` | true = a self-signed certificate gets a CSR too, for the PKI to issue a real one in its place (never one only for localhost) |
+| `win_cert_renew_issuer` | (empty) | regular expression: only certificates whose issuer matches (empty = any CA), e.g. 'O=U\.S\. Government' |
+| `win_cert_renew_exclude_issuer` | (empty) | regular expression: certificates whose issuer matches are never renewed here (renewed by their own tool) |
+| `win_cert_renew_only` | (empty) | regular expression on the certificate's place, e.g. 'used by https' (empty = every one) |
+| `win_cert_renew_exportable` | `false` | true = the new key can be exported (to move it to another server); false keeps it on this one |
 
 ## win_check_disk
 
