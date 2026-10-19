@@ -4,6 +4,8 @@
 # Intermediate CAs, Other People, ... (where "Automatically select the store" puts a .cer file).
 # A certificate there with its private key is the server's own and checked like the others; one
 # without is one the server trusts: listed in the report, never a finding.
+# Remote Desktop's certificates are left out unless remote_desktop is on (win_check_certs_remote_desktop):
+# the Remote Desktop store, the one RDP uses, and those for Remote Desktop only (Windows or the GPO renews them).
 # Read-only: it changes nothing on the server.
 # ---- common to every site-automation Windows check (keep identical in all of them) -----------
 # Settings arrive as JSON in $env:SITE_CHECK_CONFIG (the role's defaults and your inventory).
@@ -36,10 +38,12 @@ $notice = [int](Get-Setting 'notice_days' 60)
 $ignore = @(Get-Setting 'ignore_subjects' @())
 $trustOn = [bool](Get-Setting 'trust' $false)
 $trustSkip = @(Get-Setting 'trust_skip_stores' @('Disallowed', 'AuthRoot', 'REQUEST', 'SMS'))
+$rdpOn = [bool](Get-Setting 'remote_desktop' $false)
 $now = Get-Date
 # Which certificates are in use: https bindings (IIS, WSUS, ...), the WinRM HTTPS listener AAP
-# connects through, and Remote Desktop.
+# connects through, and Remote Desktop (with remote_desktop on).
 $bound = @{}
+$rdpTp = ''
 $ipport = ''
 foreach ($l in @(& netsh.exe http show sslcert 2>&1 | ForEach-Object { [string]$_ })) {
     if ($l -match '^\s*(IP:port|Hostname:port|Central Certificate Store)\s*:\s*(.+?)\s*$') { $ipport = $Matches[2] }
@@ -51,9 +55,12 @@ foreach ($k in @(Get-ChildItem -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVe
 }
 try {
     $rdp = Get-CimInstance -Namespace 'root\cimv2\TerminalServices' -ClassName Win32_TSGeneralSetting -Filter "TerminalName='RDP-Tcp'" -ErrorAction Stop
-    if ($rdp.SSLCertificateSHA1Hash) { $bound[([string]$rdp.SSLCertificateSHA1Hash).ToUpper()] = 'Remote Desktop' }
+    if ($rdp.SSLCertificateSHA1Hash) { $rdpTp = ([string]$rdp.SSLCertificateSHA1Hash).ToUpper() }
 }
 catch { }
+if ($rdpTp -and $rdpOn -and -not $bound.ContainsKey($rdpTp)) { $bound[$rdpTp] = 'Remote Desktop' }
+# Remote Desktop Authentication: the extended key usage of the RDP certificate template
+$rdpEku = '1.3.6.1.4.1.311.54.1.2'
 $inv = @()
 function Add-Cert([string] $Subject, [datetime] $NotAfter, [string] $Where, [string] $Id, [bool] $InUse, [string] $Hint, [bool] $Trust = $false, [string] $Store = '') {
     $days = ($NotAfter - $script:now).Days
@@ -74,12 +81,14 @@ function Add-Cert([string] $Subject, [datetime] $NotAfter, [string] $Where, [str
     elseif ($days -le $script:warn) { Add-Finding $Id 'warning' "certificate $Subject ($Where) expires on $exp, in $days days" $Hint }
 }
 $own = @(Get-Setting 'stores' @('Cert:\LocalMachine\My', 'Cert:\LocalMachine\WebHosting', 'Cert:\LocalMachine\Remote Desktop'))
+if (-not $rdpOn) { $own = @($own | Where-Object { [string]$_ -notmatch '\\Remote Desktop$' }) }
 $stores = @()
 foreach ($st in $own) { $stores += @(@{ path = [string]$st; trust = $false }) }
 if ($trustOn) {
     foreach ($s in @(Get-ChildItem -Path 'Cert:\LocalMachine' -ErrorAction SilentlyContinue)) {
         $p = 'Cert:\LocalMachine\' + [string]$s.Name
         if ($own -contains $p -or $trustSkip -contains [string]$s.Name) { continue }
+        if (-not $rdpOn -and [string]$s.Name -eq 'Remote Desktop') { continue }
         $stores += @(@{ path = $p; trust = $true })
     }
 }
@@ -100,6 +109,12 @@ foreach ($st in $stores) {
         foreach ($p in $ignore) { if ($subj -like [string]$p) { $skip = $true } }
         if ($skip) { continue }
         $tp = ([string]$c.Thumbprint).ToUpper()
+        if (-not $rdpOn -and -not $bound.ContainsKey($tp)) {
+            # the one Remote Desktop uses, or one for Remote Desktop only: left out
+            if ($tp -eq $rdpTp) { continue }
+            $ekus = @($c.EnhancedKeyUsageList | ForEach-Object { [string]$_.ObjectId } | Where-Object { $_ })
+            if ($ekus.Count -gt 0 -and @($ekus | Where-Object { $_ -ne $rdpEku }).Count -eq 0) { continue }
+        }
         $where = $short
         $trust = $st.trust
         # in a trust store with its private key: the server's own certificate, put in the wrong store

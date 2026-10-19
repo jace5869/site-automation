@@ -12,6 +12,7 @@ win_check_certs_expired_report_days: 30  # an expired certificate NOT in use is 
 win_check_certs_stores: ['Cert:\LocalMachine\My', 'Cert:\LocalMachine\WebHosting', 'Cert:\LocalMachine\Remote Desktop']  # the machine certificate stores read
 win_check_certs_trust: false             # also every other machine store: Trusted Root, Intermediate CAs, Other People, ... (the certificate report turns it on); with its private key checked as above, without it only listed (trust store)
 win_check_certs_trust_skip_stores: ['Disallowed', 'AuthRoot', 'REQUEST', 'SMS']  # stores never read: the untrusted certificates, the roots Windows Update keeps, pending requests (a CSR's key), the MECM client's own
+win_check_certs_remote_desktop: false    # false = Remote Desktop's certificates are left out of the report and the renewal (Windows or the GPO renews them): the Remote Desktop store, the one RDP uses, those for Remote Desktop only; true = checked like the others
 win_check_certs_ignore_subjects: []     # wildcards, e.g. ['CN=localhost*']
 # TLS services whose certificate a client actually gets, e.g.
 #   win_check_certs_endpoints:

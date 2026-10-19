@@ -184,6 +184,24 @@ switch ($Scenario) {
             'Cert:\LocalMachine\AuthRoot'    = @(O @{ Subject = 'CN=wu'; Thumbprint = $l; NotAfter = $now.AddDays(1); HasPrivateKey = $true })
         }
     }
+    { $_ -in @('certs_rdp', 'certs_rdp_on') } {
+        # Remote Desktop: its own store, the certificate RDP uses, one for Remote Desktop only - left out unless remote_desktop
+        $cfg = @{ warn_days = 30; crit_days = 7; expired_report_days = 30; notice_days = 60; stores = @('Cert:\LocalMachine\My', 'Cert:\LocalMachine\Remote Desktop'); trust = $true; trust_skip_stores = @('Disallowed', 'AuthRoot', 'REQUEST', 'SMS'); remote_desktop = ($Scenario -eq 'certs_rdp_on'); endpoints = @() }
+        $r = '5' * 40; $u = '6' * 40; $o = '7' * 40; $w = '8' * 40; $x = '9' * 40
+        $M.exe['netsh.exe http show sslcert'] = @('SSL Certificate bindings:', '', '    IP:port                      : 0.0.0.0:443', "    Certificate Hash             : $x", '    Application ID               : {4dc3e181-e14b-4a21-b022-59fc669b0914}')
+        $M.cim.Win32_TSGeneralSetting = @(O @{ TerminalName = 'RDP-Tcp'; SSLCertificateSHA1Hash = $u })
+        $M.certStores = @((O @{ Name = 'My' }), (O @{ Name = 'Remote Desktop' }), (O @{ Name = 'Root' }))
+        $rdpEku = @(O @{ ObjectId = '1.3.6.1.4.1.311.54.1.2' })
+        $M.certs = @{
+            'Cert:\LocalMachine\My'             = @(
+                (O @{ Subject = 'CN=rdpused.corp.test'; Thumbprint = $u; NotAfter = $now.AddDays(10) }),
+                (O @{ Subject = 'CN=rdponly.corp.test'; Thumbprint = $o; NotAfter = $now.AddDays(10); EnhancedKeyUsageList = $rdpEku }),
+                (O @{ Subject = 'CN=web01.corp.test'; Thumbprint = $w; NotAfter = $now.AddDays(10); EnhancedKeyUsageList = @((O @{ ObjectId = '1.3.6.1.5.5.7.3.1' }), $rdpEku[0]) }),
+                (O @{ Subject = 'CN=bound.corp.test'; Thumbprint = $x; NotAfter = $now.AddDays(10); EnhancedKeyUsageList = $rdpEku }))
+            'Cert:\LocalMachine\Remote Desktop' = @(O @{ Subject = 'CN=SRV01'; Thumbprint = $r; NotAfter = $now.AddDays(10); HasPrivateKey = $true })
+            'Cert:\LocalMachine\Root'           = @()
+        }
+    }
     { $_ -in @('csr', 'csr_check') } {
         # the renewal (win_cert_csr.ps1): certreq is a stand-in; the CSR folder is a real temporary one
         $M.fs = Join-Path ([System.IO.Path]::GetTempPath()) ('sa-csr-' + (Get-Random))
@@ -294,9 +312,10 @@ function Get-NetFirewallProfile { $M.fw }
 function Get-SmbServerConfiguration { if ($null -eq $M.smb) { throw 'no smb' } ; $M.smb }
 function Get-ItemProperty { param([string] $Path, [string] $Name, $ErrorAction) $M.reg[$Path] }
 function Test-Path {
-    param([string] $Path, [string] $LiteralPath)
+    param([string] $Path, [string] $LiteralPath, [string] $PathType = 'Any')
     $p = $Path; if ($LiteralPath) { $p = $LiteralPath }
-    if ($M.fs -and $p.StartsWith($M.fs)) { return (Microsoft.PowerShell.Management\Test-Path -LiteralPath $p) }
+    # -PathType too: Windows PowerShell 5.1's Get-FileHash is a script that asks Test-Path -PathType Container
+    if ($M.fs -and $p.StartsWith($M.fs)) { return (Microsoft.PowerShell.Management\Test-Path -LiteralPath $p -PathType $PathType) }
     if ($p -match '^(Cert:\\.+)\\([0-9A-Fa-f]{40})$') { return [bool](@($M.certs[$Matches[1]] | Where-Object { $_.Thumbprint -eq $Matches[2] }).Count) }
     return ($M.paths -contains $p)
 }

@@ -86,6 +86,35 @@ foreach ($clm in @($false, $true)) {
     $label = 'certs/certs_trust inventory' + $(if ($clm) { ' (constrained)' } else { '' })
     if ($bad.Count) { $fail++; Write-Host "FAIL - $label : $($bad -join '; ')" } else { Write-Host "ok   - $label" }
 }
+# Remote Desktop: left out of the report (and so of the renewal) unless remote_desktop is on
+$rdpWant = @{
+    certs_rdp    = @{ 'CN=web01.corp.test' = 'LocalMachine\My'; 'CN=bound.corp.test' = 'LocalMachine\My, used by https 0.0.0.0:443' }
+    certs_rdp_on = @{ 'CN=web01.corp.test' = 'LocalMachine\My'; 'CN=bound.corp.test' = 'LocalMachine\My, used by https 0.0.0.0:443'
+        'CN=rdpused.corp.test' = 'LocalMachine\My, used by Remote Desktop'; 'CN=rdponly.corp.test' = 'LocalMachine\My'; 'CN=SRV01' = 'LocalMachine\Remote Desktop' }
+}
+foreach ($scen in 'certs_rdp', 'certs_rdp_on') {
+    foreach ($clm in @($false, $true)) {
+        $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner, '-Script', (Script 'certs'), '-Scenario', $scen)
+        if ($clm) { $a += '-Clm' }
+        $out = @(& $shell @a 2>&1 | ForEach-Object { [string]$_ })
+        $count++
+        $line = @($out | Where-Object { $_ -like '###SITE-JSON### *' }) | Select-Object -Last 1
+        $bad = @()
+        if (-not $line) { $bad += 'no result line' }
+        else {
+            $r = ConvertFrom-Json -InputObject $line.Substring(16)
+            $w = @{}
+            foreach ($c in @($r.facts.inventory)) { $w[[string]$c.subject] = [string]$c.where }
+            $want = $rdpWant[$scen]
+            foreach ($k in $want.Keys) { if ($w[$k] -ne $want[$k]) { $bad += "$k where '$($w[$k])', expected '$($want[$k])'" } }
+            foreach ($k in $w.Keys) { if (-not $want.ContainsKey($k)) { $bad += "$k should not be listed" } }
+            $n = @($r.findings | Where-Object { $_ }).Count
+            if ($n -ne $want.Count) { $bad += "$n finding(s), expected $($want.Count)" }
+        }
+        $label = "certs/$scen" + $(if ($clm) { ' (constrained)' } else { '' })
+        if ($bad.Count) { $fail++; Write-Host "FAIL - $label : $($bad -join '; ')" } else { Write-Host "ok   - $label" }
+    }
+}
 # The renewal (win_cert_csr.ps1): what gets a CSR, what does not and why, what certreq is given
 foreach ($scen in 'csr', 'csr_check') {
     foreach ($clm in @($false, $true)) {

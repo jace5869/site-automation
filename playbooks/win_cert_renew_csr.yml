@@ -1,11 +1,12 @@
 ---
 # WINDOWS CERTIFICATE RENEWAL - THE CSRs. For every certificate the Windows certificate report flags
 # (expires within win_check_certs_warn_days - 30 days or less - or expired) that is the server's own -
-# in Personal, Web Hosting, Remote Desktop, or any machine store with its private key: a new key and a
+# in Personal, Web Hosting, or any machine store with its private key: a new key and a
 # certificate signing request (CSR) with the same subject, names and purposes, made on the server by
 # certreq -new -machine. The CSR is attached to the certificate's ServiceNow incident - the one the
 # Windows certificate report's tickets step opened, or a new one - with a work note saying what to do
-# next (certreq -accept -machine the issued certificate, then the binding: IIS, WinRM, Remote Desktop).
+# next (certreq -accept -machine the issued certificate, then the binding: IIS, WinRM). Remote Desktop's
+# certificates are not in the report, so no CSR (win_check_certs_remote_desktop: true for both).
 # The key never leaves the server (win_cert_renew_exportable: false). A run again reuses the pending
 # request and changes nothing on the ticket. Nothing in use is changed.
 #

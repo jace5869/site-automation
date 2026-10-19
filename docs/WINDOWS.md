@@ -215,7 +215,12 @@ found too:
   `win_check_certs_notice_days` (60) or expired in the last `win_check_certs_expired_report_days` (30).
   Never a finding or a ticket: its CA renews it. The older Windows roots that expired long ago are left
   out.
-- **In use** (an https binding, the WinRM listener, Remote Desktop): always checked, whatever its store.
+- **In use** (an https binding, the WinRM listener): always checked, whatever its store.
+- **Remote Desktop: left out.** Windows (or your GPO's autoenrollment) renews these itself, so they are
+  not in the report, the findings or the renewal: the **Remote Desktop** store (the self-signed one RDP
+  makes), the certificate RDP uses, and one whose only purpose is *Remote Desktop Authentication*. One
+  also used by an https binding or WinRM is still checked. `win_check_certs_remote_desktop: true` checks
+  them like the others (weekly health check too).
 - **Never read:** `Disallowed` (the untrusted certificates), `AuthRoot` (the roots Windows Update
   keeps), `REQUEST` (pending requests: a CSR's new key) and `SMS` (the MECM client's own certificates,
   which it renews itself): `win_check_certs_trust_skip_stores`.
@@ -241,7 +246,9 @@ the weekly workflow after the tickets step, so each CSR lands on the ticket the 
 ```
 
 For each certificate the report flags (within `win_check_certs_warn_days`, 30 days, or expired) that is
-the server's own: in Personal, Web Hosting or Remote Desktop, or in any machine store with its private key.
+the server's own: in Personal or Web Hosting, or in any machine store with its private key. Remote
+Desktop's certificates are not in the report, so they get no CSR (`win_check_certs_remote_desktop: true`
+puts them in both).
 
 1. **On the server**, `certreq -new -machine` makes a new key in the machine key store and a CSR. The CSR
    has the same subject, names (subjectAltName: DNS, IP, e-mail, URL) and purposes (EKU) as the old
@@ -257,7 +264,7 @@ the server's own: in Personal, Web Hosting or Remote Desktop, or in any machine 
    with its key and puts it in Personal. Then use it where the old one is used, and the note says how:
    - the https binding (IIS Manager, or `netsh http update sslcert`)
    - the WinRM HTTPS listener AAP connects through (`Set-Item WSMan:\localhost\Listener\...\CertificateThumbprint`)
-   - Remote Desktop
+   - Remote Desktop (with `win_check_certs_remote_desktop: true`)
 3. **A run again** finds the pending request and reuses its CSR, so nothing changes on the ticket. Once
    the new certificate is installed, the old one is passed over: *a newer certificate for the same
    subject is in the store already: use it, then remove the old one*.
@@ -269,6 +276,7 @@ the server's own: in Personal, Web Hosting or Remote Desktop, or in any machine 
 | a trust store's certificate (Trusted Root, Intermediate CAs, Other People ... without its key) | one the server trusts, not its own: its CA renews it |
 | a CA certificate | a CA has no CSR from you |
 | a self-signed certificate (unless `win_cert_renew_self_signed: true`) | it does not come from a PKI; with the setting on, the PKI issues a real one in its place (never one only for `localhost`) |
+| Remote Desktop's (its store, the one RDP uses, one only for Remote Desktop), unless `win_check_certs_remote_desktop: true` | Windows or the GPO renews them; not in the report |
 | a certificate seen only on a port (`win_check_certs_endpoints`) | its store is not known: the one in its store gets the CSR |
 | a host in `cert_renew_skip_hosts` / `cert_renew_skip_groups` | renewed by hand: still in the report |
 | issued by `win_cert_renew_exclude_issuer`, not by `win_cert_renew_issuer`, or not matching `win_cert_renew_only` | your filters |

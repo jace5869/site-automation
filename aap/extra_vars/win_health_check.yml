@@ -90,6 +90,11 @@
 ## (a CSR's key), the MECM client's own
 # win_check_certs_trust_skip_stores: ['Disallowed', 'AuthRoot', 'REQUEST', 'SMS']
 
+## false = Remote Desktop's certificates are left out of the report and the renewal (Windows or the
+## GPO renews them): the Remote Desktop store, the one RDP uses, those for Remote Desktop only; true
+## = checked like the others
+# win_check_certs_remote_desktop: false
+
 ## wildcards, e.g. ['CN=localhost*']
 # win_check_certs_ignore_subjects: []
 

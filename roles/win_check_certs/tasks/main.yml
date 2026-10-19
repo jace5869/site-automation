@@ -8,7 +8,7 @@
       {{ {'warn_days': win_check_certs_warn_days, 'crit_days': win_check_certs_crit_days,
           'expired_report_days': win_check_certs_expired_report_days, 'stores': win_check_certs_stores,
           'notice_days': win_check_certs_notice_days, 'trust': win_check_certs_trust | bool,
-          'trust_skip_stores': win_check_certs_trust_skip_stores,
+          'trust_skip_stores': win_check_certs_trust_skip_stores, 'remote_desktop': win_check_certs_remote_desktop | bool,
           'ignore_subjects': win_check_certs_ignore_subjects, 'endpoints': win_check_certs_endpoints} | to_json }}
   register: _win_check_out
   changed_when: false

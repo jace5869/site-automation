@@ -497,7 +497,8 @@ Remote Desktop: Trusted Root, Intermediate Certification Authorities, Other Peop
 *Automatically select the certificate store* puts a `.cer` file). A certificate there with its private key
 is checked like the others; one without is listed as `... (trust store)` when it expires within
 `win_check_certs_notice_days`, never a finding or a ticket (`win_check_certs_trust`, details in
-[WINDOWS.md](WINDOWS.md#windows-certificate-report)).
+[WINDOWS.md](WINDOWS.md#windows-certificate-report)). Remote Desktop's certificates are left out of the
+report and the renewal (Windows renews them): `win_check_certs_remote_desktop: true` puts them in.
 
 The weekly health check (`certs` in `health_checks`) does not search by itself, so it opens no
 tickets for certificates nobody listed; set `check_certs_discover_ports` / `_keystores: true` on it

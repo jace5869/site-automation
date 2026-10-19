@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.15.10 — 2026-10-19
+
+**Updating without scripts:** paste `site-automation-0.15.10-changed-since-0.15.9.zip` as it is (from
+0.15.1 to 0.15.8: `site-automation-0.15.10-changed-since-0.15.1.zip`). Both leave out
+`playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. No template changes.
+
+**Windows certificate report and renewal: Remote Desktop's certificates are left out.** Windows (or the
+GPO's autoenrollment) renews them itself, so they are no longer in the report, the findings, the tickets
+or the CSRs: the Remote Desktop store (the self-signed certificate RDP makes), the certificate RDP uses,
+and one whose only purpose is Remote Desktop Authentication. One also used by an https binding or the
+WinRM listener is still checked. New setting `win_check_certs_remote_desktop` (false);
+`true` checks them like the others, in the weekly health check too. docs/WINDOWS.md, "Windows
+certificate report".
+
+**Tests:** the Windows CSR tests pass on Windows PowerShell 5.1 too (the test harness, not the job).
+
 ## 0.15.9 — 2026-10-19
 
 **Updating without scripts:** paste `site-automation-0.15.9-changed-since-0.15.8.zip` as it is (from
