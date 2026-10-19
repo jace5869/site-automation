@@ -1,0 +1,21 @@
+---
+# VMWARE CERTIFICATE REPORT - weekly. Every certificate of vCenter (its Machine SSL certificate) and of
+# every ESXi host connected to it, in one table sorted by expiry (expired red, within
+# vmware_cert_warn_days amber), the hosts that could not be read, and for each certificate due what the
+# renewal (playbooks/vmware_cert_renew.yml) would do. Read-only: never ServiceNow, never a CSR, even with
+# the ServiceNow credential attached. Printed and emailed (report_email_to). The same settings as the
+# renewal: vmware_cert_warn_days, vmware_cert_only, vmware_cert_esxi.
+#
+# Credential: "VMware vCenter" (read-only is enough). Runs on the AAP side against vCenter; no Limit.
+# docs/VMWARE.md, "Certificates of vCenter and the ESXi hosts".
+#   ansible-playbook playbooks/vmware_cert_report.yml
+#   ansible-playbook playbooks/vmware_cert_report.yml -e vmware_cert_warn_days=200
+- name: VMware certificate report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The certificates of vCenter and its ESXi hosts - the report only
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: cert_report.yml

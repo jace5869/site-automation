@@ -1,0 +1,80 @@
+---
+# VMWARE CERTIFICATE RENEWAL (playbooks/vmware_cert_renew.yml), on the controller against vCenter: the
+# certificates of vCenter (its Machine SSL certificate) and of its ESXi hosts; for each one that expires
+# within vmware_cert_warn_days a ServiceNow incident (the ServiceNow tickets step: opened, noted while it
+# lasts, noted - or resolved - once the certificate is renewed), and a CSR made where the key stays -
+# vCenter, or the host - attached to the incident with what to do next (roles/servicenow cert_csr.yml).
+# A CSR is made once: the incident is its record (cert_on_ticket.yml) - a second one would replace the
+# key that waits for the issued certificate. Installing that certificate is a later step, by a person.
+# Signed by vCenter's own CA (VMCA): the incident says to renew it in vCenter, no CSR (vmware_cert_vmca_csr).
+# Check (a dry run) makes no CSR and sends nothing: it reads, and says what it would do.
+# The report alone: cert_report.yml. Shared: cert_read.yml (read, which are due), cert_out.yml (the report).
+- name: VMware certs | read the certificates, and which are due
+  ansible.builtin.include_tasks: cert_read.yml
+
+- name: "VMware certs | the incidents{{ ' - DRY RUN, nothing is sent' if ansible_check_mode else '' }}"
+  ansible.builtin.include_role:
+    name: servicenow
+    tasks_from: tickets.yml
+  vars:
+    _sn_health_in: "{{ _vcert.health }}"
+    _sn_targets_in: []
+    servicenow_min_severity: warning        # an incident for every certificate due, whatever the site's level
+    servicenow_fail_when_findings: false    # the CSRs come next; this job fails only when something did not work
+  when: _vcert.health | length > 0
+
+- name: VMware certs | each due certificate's incident, and the CSRs already on them
+  ansible.builtin.include_role:
+    name: servicenow
+    tasks_from: cert_on_ticket.yml
+  vars:
+    _csr_check_in: >-
+      {%- set out = [] -%}
+      {%- for c in _vcert.due -%}
+      {%-   set _ = out.append({'id': c.id, 'host': c.name, 'check': 'vmware_certs',
+                               'prefix': c.name ~ ('-machine-ssl' if c.kind == 'vcenter' else '') ~ '-', 'csr': c.renew == 'csr'}) -%}
+      {%- endfor -%}
+      {{ out }}
+  when: _vcert_sn and _vcert.due | length > 0
+
+- name: "VMware certs | make the CSRs - the key is made and kept by vCenter or the host{{ ' - DRY RUN, none is made' if ansible_check_mode else '' }}"
+  site_vmware_certs:
+    action: csr
+    vcenters: []
+    items: >-
+      {%- set out = [] -%}
+      {%- for c in _vcert_todo -%}{%- set _ = out.append({'vcenter': c.vcenter, 'kind': c.kind, 'name': c.name}) -%}{%- endfor -%}
+      {{ out }}
+    fields: "{{ vmware_cert_csr_fields | default({}, true) }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _vcert_made
+  vars:
+    _vcert_todo: >-
+      {{ _vcert.due | selectattr('renew', 'equalto', 'csr') | rejectattr('id', 'in', (cert_csr_on_ticket | default({})).keys() | list) | list
+         if vmware_cert_make_csr | bool and (_vcert_sn or vmware_cert_csr_without_servicenow | bool) else [] }}
+  when: _vcert_todo | length > 0
+
+- name: VMware certs | each due certificate - its CSR, or why none
+  ansible.builtin.set_fact:
+    _vcert_result: >-
+      {{ _vcert.due | vmware_cert_csr_result(_vcert_made.made | default([]), {
+           'on_ticket': cert_csr_on_ticket | default({}), 'make_csr': vmware_cert_make_csr | bool, 'connected': _vcert_sn,
+           'without_servicenow': vmware_cert_csr_without_servicenow | bool, 'check_mode': ansible_check_mode,
+           'ext': cert_renew_attach_ext | default('csr', true), 'content_type': cert_renew_attach_type | default('text/plain', true),
+           'retry_txt': cert_renew_attach_retry_txt | default(true) | bool}) }}
+
+- name: VMware certs | the report
+  ansible.builtin.include_tasks: cert_out.yml
+
+- name: VMware certs | attach each CSR to its incident, with what to do next
+  ansible.builtin.include_role:
+    name: servicenow
+    tasks_from: cert_csr.yml
+  vars:
+    _csr_results_in: "{{ [_vcert_result] }}"
+  when: _vcert.due | length > 0
+
+- name: VMware certs | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vcert_read.vcenters }}"

@@ -58,6 +58,10 @@ servicenow_assignment_group: YOUR GROUP NAME   # exactly as in ServiceNow
 """),
     "stigman_deploy.yml": ("STIG Manager - deploy", "Machine, STIG Manager database, TLS certificate", "", ""),
     "troubleshoot.yml": ("Troubleshoot", "Machine", "", ""),
+    "vmware_cert_report.yml": ("VMware - certificate report", "VMware vCenter", "", ""),
+    "vmware_cert_renew.yml": ("VMware - certificate renewal", "VMware vCenter, ServiceNow API", "", """\
+servicenow_assignment_group: YOUR GROUP NAME   # who gets the incidents (exactly as in ServiceNow)
+"""),
     "vm_alarm_act_analysis.yml": ("VM - alarms ACT analysis", "VMware vCenter, ACT model key", "", ""),
     "vm_alarm_report.yml": ("VM - alarms report", "VMware vCenter", "", ""),
     "vm_capacity_report.yml": ("VM - capacity planning", "VMware vCenter (ACT model key with vm_capacity_act)", "", ""),

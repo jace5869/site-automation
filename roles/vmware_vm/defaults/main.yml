@@ -193,6 +193,41 @@ esxi_security_lockdown_exception_users: []
 # The email (report_email_to): true = only when a host was changed or failed; false = every run.
 esxi_security_email_only_if_changed: true
 
+# ---- VMware certificate renewal (playbooks/vmware_cert_renew.yml), e.g. every week ----
+
+# A certificate of vCenter (its Machine SSL certificate, the one its web pages show) or of an ESXi host
+# that expires within this many days (or has expired) is due: a ServiceNow incident, and a CSR made
+# where its key stays - vCenter, or the host - attached to the incident with what to do next.
+# To try the job on certificates that are years from expiring, raise it for one run (e.g. 3650: every
+# certificate is due) with vmware_cert_only naming one host, and vmware_cert_make_csr: false first.
+# Each incident says the number used. Afterwards, a run with the real number notes those incidents
+# as cleared (with servicenow_resolve_cleared: true, resolves them).
+vmware_cert_warn_days: 30
+vmware_cert_crit_days: 7                 # within this many days (or expired) the incident is critical, else warning
+vmware_cert_esxi: true                   # the ESXi hosts' certificates too; false = vCenter's only
+# Only these vCenters and hosts: names, any case, * and ? allowed, the short name matches too - e.g. one
+# host to try the job on. [] = every vCenter of the job and every host connected to it.
+vmware_cert_only: []
+# false = the incidents only, no CSR. A CSR is made once per certificate: the incident is its record,
+# and a second CSR would replace the key that waits on vCenter or the host for the issued certificate.
+vmware_cert_make_csr: true
+# A certificate signed by vCenter's own CA (VMCA - how vCenter gives ESXi hosts their certificates unless
+# told otherwise) is renewed in vCenter (its Renew button): its incident says so, and no CSR is made.
+# true = a CSR for those too, to replace them with certificates of your PKI.
+vmware_cert_vmca_csr: false
+# Issuers taken as VMCA besides VMCA's own root (CN=CA with DC=..., or OU=VMware Engineering): any case,
+# * and ? allowed, e.g. ['*O=vc01.yoursite.mil*'].
+vmware_cert_vmca_issuers: []
+# vCenter's CSR: its subject and names are the current certificate's. vCenter's API wants an
+# organization, organization unit, locality, state and country - one the certificate does not have
+# goes empty. Set any of them here (the PKI sets the subject by its own rules anyway), e.g.
+#   vmware_cert_csr_fields: {organization: U.S. Government, organization_unit: DoD, country: US, key_size: 3072}
+# (key_size: vCenter's default is 3072 bits). An ESXi host makes its CSR with its own name.
+vmware_cert_csr_fields: {}
+# Without the ServiceNow API credential no CSR is made (nothing would record it: the next run would make
+# another one). true = make them anyway, and print them in the job output.
+vmware_cert_csr_without_servicenow: false
+
 # ---- vSphere capacity planning (playbooks/vm_capacity_report.yml) ----
 
 vm_capacity_clusters: []                 # only these clusters (names; * and ? allowed); [] = every cluster

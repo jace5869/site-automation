@@ -3,7 +3,7 @@
 # from tests/netapp/fixture.py): every section with a problem in it, an older-ONTAP field fallback
 # (reduced detail), a cluster whose login is refused, one that cannot be reached, the email (colours),
 # the artifacts, GET only (the fake logs every request), no credential, no clusters, a dry run,
-# ontap_report_fail.
+# ontap_report_fail, a slow request that runs out of time (the rest still read).
 #   bash tests/netapp/run_netapp_test.sh            (ANSIBLE_PLAYBOOK=... to pick one)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -22,9 +22,10 @@ printf 'all:\n  hosts:\n    localhost: {ansible_connection: local, ansible_pytho
 wait_port() { for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && return; sleep 0.1; done; echo "ABORT - port $1"; exit 1; }
 "$py" "$here/fake_ontap.py" "$port" "$work/c1.json" "$work/c1.log" & pids+=($!)
 "$py" "$here/fake_ontap.py" $((port + 1)) "$work/c2.json" "$work/c2.log" & pids+=($!)
+FAKE_ONTAP_SLOW=/api/support/ems/events=4 "$py" "$here/fake_ontap.py" $((port + 5)) "$work/c1.json" "$work/c5.log" & pids+=($!)
 mkdir -p "$work/mail"
 "$py" "$repo/tests/email/fake_smtp.py" $((port + 3)) "$work/mail" 2>/dev/null & pids+=($!)
-wait_port "$port"; wait_port $((port + 1)); wait_port $((port + 3))
+wait_port "$port"; wait_port $((port + 1)); wait_port $((port + 3)); wait_port $((port + 5))
 clusters="{\"ontap_clusters\": [\"http://127.0.0.1:$port\", \"http://127.0.0.1:$((port + 1))\", \"http://127.0.0.1:$((port + 2))\"]}"
 mail="{\"report_email_to\": \"storage@example.mil\", \"report_email_from\": \"aap@example.mil\", \"report_email_smtp_host\": \"127.0.0.1\",
        \"report_email_smtp_port\": $((port + 3)), \"report_email_security\": \"none\"}"
@@ -88,5 +89,11 @@ run "ontap_report_fail: true marks the job failed on critical findings, for work
     -e ontap_report_fail=true -- "critical finding(s)" "ontap_report_fail: false makes this a report only"
 run "a healthy-looking threshold change: volumes from 96% are not listed" ok -e "{\"ontap_clusters\": [\"http://127.0.0.1:$port\"]}" \
     -e ontap_volume_warn_pct=96 -e ontap_volume_crit_pct=99 -- "Volumes 96% full or more"
+run "a slow request (the event log) runs out of time: listed, the rest of the cluster still read" ok \
+    -e "{\"ontap_clusters\": [\"http://127.0.0.1:$((port + 5))\"]}" -e ontap_timeout=2 \
+    -- "could not read ems - no answer within 2 s, asked twice - ontap_timeout: 120 gives it longer" \
+       "/127.0.0.1:$((port + 5)): ems " "s - NO ANSWER in time" "cluster1-02  DOWN" "vol_full"
+grep -q "/api/storage/volumes" "$work/c5.log" && echo "ok   -   ...the requests after it were still sent" \
+    || { echo "FAIL -   ...stopped at the slow request"; fails=$((fails + 1)); }
 
 if [ "$fails" -eq 0 ]; then echo "ok   - all NetApp scenarios passed"; else echo "$fails FAILED"; exit 1; fi

@@ -4,6 +4,14 @@
 #   site_health          {host: {status, checks, findings, act, time, job}}
 #   site_health_targets  every host the check job targeted
 # A host that was targeted but never reported (unreachable, sudo failed) gets a ticket too.
+# A job that checks and opens its tickets itself (the VMware certificate renewal) hands its own results
+# as _sn_health_in / _sn_targets_in: a site_health from an earlier workflow step never mixes in. A host
+# whose result has reach: false (not a host the job logs in to) never clears a reachability ticket.
+
+- name: ServiceNow | the check results
+  ansible.builtin.set_fact:
+    _sn_health: "{{ _sn_health_in if _sn_health_in is defined else site_health | default({}) }}"
+    _sn_targets: "{{ _sn_targets_in | default([]) if _sn_health_in is defined else site_health_targets | default([]) }}"
 
 - name: ServiceNow | connection (from the ServiceNow API credential)
   ansible.builtin.set_fact:
@@ -18,7 +26,7 @@
   ansible.builtin.set_fact:
     _sn_items: >-
       {%- set items = [] -%}
-      {%- set health = site_health | default({}) -%}
+      {%- set health = _sn_health -%}
       {%- for host in health | sort -%}
       {%-   set h = health[host] -%}
       {%-   for f in h.findings | default([]) if f.severity in _sn_levels -%}
@@ -27,7 +35,7 @@
                                     'job': h.job | default(''), 'time': h.time | default('')}) -%}
       {%-   endfor -%}
       {%- endfor -%}
-      {%- for host in (site_health_targets | default([])) | difference(health.keys() | list) | sort -%}
+      {%- for host in _sn_targets | difference(health.keys() | list) | sort -%}
       {%-   set _ = items.append({'host': host, 'check': 'reachability', 'id': 'no-report', 'severity': 'critical',
                                   'summary': 'the health check got no result from this host (unreachable, login or sudo failed, or the job stopped early)',
                                   'hint': 'see the AAP job output for this host', 'act': {}, 'job': awx_job_id | default(''), 'time': ''}) -%}
@@ -42,7 +50,7 @@
 # job was launched on its own. Fail - a green workflow here would hide a broken schedule.
 - name: ServiceNow | the check step's results reached this job
   ansible.builtin.assert:
-    that: (site_health | default({})) | length > 0 or (site_health_targets | default([])) | length > 0
+    that: _sn_health | length > 0 or _sn_targets | length > 0
     fail_msg: >-
       No check results reached this job. The check step before it failed before checking any
       host (read that job's output: credential, project sync, execution environment, or a survey
@@ -163,7 +171,7 @@
         validate_certs: "{{ servicenow_validate_certs }}"
         ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
         timeout: "{{ servicenow_timeout }}"
-      loop: "{{ (site_health | default({})).keys() | list | sort }}"
+      loop: "{{ _sn_health.keys() | list | sort }}"
       register: _sn_open
       check_mode: false         # only reads
       when: servicenow_note_cleared | bool or servicenow_resolve_cleared | bool
@@ -176,14 +184,14 @@
         _sn_cleared: >-
           {%- set out = [] -%}
           {%- set current = _sn_items | map(attribute='cid') | list -%}
-          {%- for host in site_health | default({}) -%}
-          {%-   for f in site_health[host].findings | default([]) -%}
+          {%- for host in _sn_health -%}
+          {%-   for f in _sn_health[host].findings | default([]) -%}
           {%-     set _ = current.append(f.id | site_correlation_id(host, f.check, servicenow_correlation_prefix)) -%}
           {%-   endfor -%}
           {%- endfor -%}
           {%- for r in _sn_open.results | default([]) if r.json is defined -%}
-          {%-   set ran = (site_health[r.item].checks | default([]) | reject('in', site_health[r.item].checks_failed | default([])) | list)
-                         + ['reachability'] -%}
+          {%-   set ran = (_sn_health[r.item].checks | default([]) | reject('in', _sn_health[r.item].checks_failed | default([])) | list)
+                         + (['reachability'] if _sn_health[r.item].reach | default(true) else []) -%}
           {%-   for t in r.json.result if t.correlation_id not in current and t.correlation_id.split(':')[2] in ran -%}
           {%-     set _ = out.append({'host': r.item, 'sys_id': t.sys_id, 'number': t.number}) -%}
           {%-   endfor -%}

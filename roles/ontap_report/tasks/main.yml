@@ -14,6 +14,17 @@
   register: _ontap_read
   check_mode: false                     # it only reads: a dry run (Check) shows the real report
 
+- name: "NetApp | the requests that took over 10 seconds, or got no answer (ontap_timeout: {{ ontap_timeout }} s for one)"
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for c in _ontap_read.clusters -%}
+      {%-   for k, d in c.data.items() if d.seconds | default(0) >= 10 or 'asked twice' in d.error | default('') -%}
+      {%-     set _ = out.append(c.address ~ ': ' ~ k ~ ' ' ~ d.seconds | default('?') ~ ' s' ~ (' - NO ANSWER in time' if 'asked twice' in d.error else '')) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out or ['none: every request answered within 10 seconds'] }}
+
 # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
 - name: NetApp | the report
   ansible.builtin.set_fact:

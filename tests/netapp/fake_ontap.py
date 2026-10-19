@@ -7,14 +7,18 @@ FIXTURE: {"user": "...", "password": "...", "fail": {"/api/path": 500}, "paths":
 {"fields": [allowed field names], "records": [...], "supports_ignore": false (= refuses
 ignore_unknown_fields, like ONTAP 9.10)}, ...}}. Like ONTAP: a field it does not know in
 fields= is HTTP 400 (fields=* always works); pages of max_records with _links.next; a wrong login is
-HTTP 401; any method but GET is HTTP 405 and is written to LOG (the tests check nothing but GET came)."""
+HTTP 401; any method but GET is HTTP 405 and is written to LOG (the tests check nothing but GET came).
+FAKE_ONTAP_SLOW=/api/path=SECONDS[,...]: that path answers only after SECONDS (a busy cluster)."""
 import base64
 import http.server
 import json
+import os
 import sys
+import time
 from urllib.parse import parse_qs, urlencode, urlparse
 
 port, fixture, log = int(sys.argv[1]), json.load(open(sys.argv[2])), sys.argv[3]
+slow = dict((x.split("=")[0], float(x.split("=")[1])) for x in os.environ.get("FAKE_ONTAP_SLOW", "").split(",") if "=" in x)
 
 
 def known(field, allowed):
@@ -50,6 +54,8 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.reply(401, {"error": {"message": "not authorized", "code": "6"}})
         u = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        if u.path in slow:
+            time.sleep(slow[u.path])
         if u.path in fixture.get("fail", {}):
             return self.reply(fixture["fail"][u.path], {"error": {"message": "internal error", "code": "1"}})
         ep = fixture["paths"].get(u.path)

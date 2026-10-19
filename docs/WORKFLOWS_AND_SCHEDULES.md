@@ -535,6 +535,13 @@ No workflow needed: a schedule on `VM - VMs created report`, every Friday at 12:
 (Repeat frequency *Week*, on *Friday*). It reports the VMs created in the 7 days up to the run
 ([VMWARE.md](VMWARE.md), "VMs created").
 
+### 25. vCenter and ESXi certificates (weekly)
+
+No workflow needed: the `VMware - certificate renewal` template opens the incidents and attaches the
+CSRs itself. A schedule on it, e.g. every Monday at 07:00 in your time zone - and, if you want the list
+by email without tickets, one on `VMware - certificate report` ([VMWARE.md](VMWARE.md),
+"Certificates of vCenter and the ESXi hosts").
+
 ### 21. NetApp ONTAP health (daily)
 
 No workflow needed: a schedule on the `NetApp - ONTAP health report` template, e.g. every day at
@@ -577,6 +584,7 @@ in your time zone, with `ad_report_hours: 24` (the default) so each change is in
 | Windows patch | monthly, in the ConfigMgr maintenance window | workflow 14 |
 | VMware daily checks (health, alarms, ACT analysis) | every day 06:00 | workflow 18 |
 | Active Directory health | every day 06:30 | template *Active Directory health report* (24) |
+| vCenter and ESXi certificates | Monday 07:00 | template *VMware - certificate renewal* (25) |
 
 **Notifications** (optional). **Automation Execution → Administration → Notifiers → Create
 notifier** (type *Email*, your mail relay). Then on a template or workflow → **Notifications** tab

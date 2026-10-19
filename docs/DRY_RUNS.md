@@ -48,6 +48,8 @@ line-by-line changes it would make to files, for example in STIG Manager's confi
 | VM - alarms ACT analysis | reads vCenter and lists the problems it would give ACT (`A dry run (Check): ACT was not called`). ACT is not called, no email is sent |
 | NetApp - ONTAP health report | as usual: it only reads (GET requests), and prints the same report. No email is sent |
 | VM - capacity planning | as usual: it only reads. With `vm_capacity_act`, ACT is not called (`ACT did not run: A dry run`). No email |
+| VMware - certificate report | as usual: only read (it never talks to ServiceNow). No email is sent |
+| VMware - certificate renewal | reads every certificate and the incidents, then lists what it would do (`would open: ...`, `would make the CSR, and would attach it to INC...`). **No CSR is made** (vCenter and the hosts keep any key waiting), nothing is sent to ServiceNow, no email |
 | ESXi - security settings | reads every host's SSH service, timeouts and lockdown mode and lists what it would change (`ESXi security settings (dry run): 3 of 40 host(s) would change`). **No host is changed**, no email is sent |
 | VM - snapshot cleanup | lists what it would delete (`WOULD DELETE ...`), deletes nothing, sends no email. In the approval workflow: set the cleanup step's Job type to Check (docs/VMWARE.md, "Dry run") |
 

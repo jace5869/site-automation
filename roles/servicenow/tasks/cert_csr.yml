@@ -6,6 +6,8 @@
 # certificate, the names, where the new key is, what to do next. Once attached, a run again changes
 # nothing on the ticket. Never the key: only the CSR.
 # Without the ServiceNow API credential, the job prints the CSRs to copy by hand.
+# A job that makes its CSRs elsewhere (the VMware certificate renewal: on vCenter and the ESXi hosts) hands
+# them as _csr_results_in: [{host, check, content_type, retry_txt, certs}], the same as cert_renew_result.
 
 - name: Certificate renewal | connection (from the ServiceNow API credential)
   ansible.builtin.set_fact:
@@ -15,23 +17,38 @@
     _sn_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
     _sn_now: "{{ now(utc=true).strftime('%Y-%m-%d %H:%M UTC') }}"
 
-- name: Certificate renewal | the CSRs the hosts made, and the tickets they belong to
+- name: Certificate renewal | the CSRs made (by the hosts, or handed over)
+  ansible.builtin.set_fact:
+    _csr_results: >-
+      {%- set out = [] -%}
+      {%- if _csr_results_in is defined -%}
+      {%-   for r in _csr_results_in -%}{%- set _ = out.append(r | combine({'inventory_host': r.inventory_host | default(r.host)})) -%}{%- endfor -%}
+      {%- else -%}
+      {%-   for h in groups['all'] | sort if hostvars[h].cert_renew_result is defined -%}
+      {%-     set _ = out.append(hostvars[h].cert_renew_result | combine({'inventory_host': h})) -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {{ out }}
+
+- name: Certificate renewal | the CSRs, and the tickets they belong to
   ansible.builtin.set_fact:
     _csr_items: >-
       {%- set out = [] -%}
-      {%- for h in groups['all'] | sort if hostvars[h].cert_renew_result is defined -%}
-      {%-   set r = hostvars[h].cert_renew_result -%}
+      {%- for r in _csr_results -%}
       {%-   for c in r.certs if c.status in ['made', 'exists', 'would make'] -%}
-      {%-     set _ = out.append(c | combine({'host': r.host, 'inventory_host': h, 'content_type': r.content_type, 'retry_txt': r.retry_txt | default(true),
-                                               'cids': c.ids | map('site_correlation_id', r.host, 'certs', servicenow_correlation_prefix) | list})) -%}
+      {%-     set _ = out.append(c | combine({'host': r.host, 'inventory_host': r.inventory_host, 'content_type': r.content_type,
+                                               'retry_txt': r.retry_txt | default(true), 'check': r.check | default('certs'),
+                                               'cids': c.ids | map('site_correlation_id', c.host | default(r.host), r.check | default('certs'),
+                                                                   servicenow_correlation_prefix) | list}
+                                              | combine({'host': c.host, 'inventory_host': c.host} if c.host is defined else {}))) -%}
       {%-   endfor -%}
       {%- endfor -%}
       {{ out }}
     _csr_not_made: >-
       {%- set out = [] -%}
-      {%- for h in groups['all'] | sort if hostvars[h].cert_renew_result is defined -%}
-      {%-   for c in hostvars[h].cert_renew_result.certs if c.status not in ['made', 'exists', 'would make'] -%}
-      {%-     set _ = out.append(c.status | upper ~ ' | ' ~ hostvars[h].cert_renew_result.host ~ ' | ' ~ c.wheres | join(' ; ') ~ ' | ' ~ c.reason) -%}
+      {%- for r in _csr_results -%}
+      {%-   for c in r.certs if c.status not in ['made', 'exists', 'would make'] -%}
+      {%-     set _ = out.append(c.status | upper ~ ' | ' ~ c.host | default(r.host) ~ ' | ' ~ c.wheres | join(' ; ') ~ ' | ' ~ c.reason) -%}
       {%-   endfor -%}
       {%- endfor -%}
       {%- for h in groups['all'] | sort if hostvars[h].site_host_unreached | default('') -%}
@@ -96,7 +113,7 @@
           {%- set b = {
                 'short_description': ('[' ~ servicenow_correlation_prefix ~ '] ' ~ i.host ~ ': ' ~ _csr_summary) | truncate(158),
                 'description': 'Found by an automated check (Ansible Automation Platform' ~ ((', job ' ~ awx_job_id) if awx_job_id is defined else '')
-                               ~ ', ' ~ _sn_now ~ ').' ~ _sn_nl ~ _sn_nl ~ 'Host: ' ~ i.host ~ _sn_nl ~ 'Check: certs' ~ _sn_nl
+                               ~ ', ' ~ _sn_now ~ ').' ~ _sn_nl ~ _sn_nl ~ 'Host: ' ~ i.host ~ _sn_nl ~ 'Check: ' ~ i.check ~ _sn_nl
                                ~ 'Severity: ' ~ i.severity ~ _sn_nl ~ 'Finding: ' ~ _csr_summary ~ _sn_nl ~ _sn_nl
                                ~ 'A certificate signing request (CSR) for its renewal is attached: ' ~ i.file_name ~ ' (see the work notes).',
                 'urgency': servicenow_urgency[i.severity],
@@ -270,8 +287,10 @@
                ~ 'Expires: ' ~ i.expires ~ ((' (EXPIRED ' ~ (i.days | int | abs) ~ ' days ago)') if i.days | int < 0 else (' (in ' ~ i.days ~ ' days)')) ~ nl
                ~ 'Found in: ' ~ i.wheres | join(' ; ') ~ nl
                ~ 'Issued by: ' ~ i.issuer ~ nl
-               ~ 'Names (subjectAltName) in the CSR, the same as now: ' ~ (i.sans | join(', ') or 'none') ~ nl
-               ~ 'New key: ' ~ i.key ~ ', made on the host - this job never copies or sends it: ' ~ i.key_path ~ ' (the CSR: ' ~ i.csr_path ~ ')' ~ nl
+               ~ (('Subject in the CSR: ' ~ i.csr_subject ~ nl) if i.csr_subject | default('') else '')
+               ~ 'Names (subjectAltName) in the CSR' ~ (', the same as now' if i.sans_same | default(true) else '') ~ ': ' ~ (i.sans | join(', ') or 'none') ~ nl
+               ~ ('New key: ' ~ i.key_note if i.key_note | default('') else
+                  'New key: ' ~ i.key ~ ', made on the host - this job never copies or sends it: ' ~ i.key_path ~ ' (the CSR: ' ~ i.csr_path ~ ')') ~ nl
                ~ (('It was self-signed: the PKI issues a real certificate in its place (it may set the subject by its own rules).' ~ nl)
                   if i.self_signed | default(false) else '') ~ nl
                ~ 'Next:' ~ nl
@@ -323,8 +342,9 @@
           {%- for r in _csr_found.results -%}
           {%-   set t = r.json.result | default([]) -%}
           {%-   set _ = out.append(r.item.host ~ ' | ' ~ r.item.file_name ~ ' | '
-                                   ~ ('would make the CSR, and ' if r.item.status == 'would make' else 'CSR already made, ')
-                                   ~ (('would attach it to ' ~ t[0].number) if t else 'would open a ticket and attach it')) -%}
+                                   ~ (r.item.already if r.item.already is defined else
+                                      ('would make the CSR, and ' if r.item.status == 'would make' else 'CSR already made, ')
+                                      ~ (('would attach it to ' ~ t[0].number) if t else 'would open a ticket and attach it'))) -%}
           {%- endfor -%}
           {{ out }}
       when: ansible_check_mode

@@ -1,0 +1,31 @@
+---
+# VMware certificates, the shared report (cert_report.yml, cert_renew.yml): printed, emailed
+# (report_email_to), published as artifacts (vmware_certs). Input: _vcert, _vcert_read, _vcert_result;
+# _vcert_report_only (the report job: what the renewal would do, no ticket column).
+- name: VMware certs | the report
+  ansible.builtin.set_fact:
+    _vcert_doc: >-
+      {{ _vcert | vmware_cert_report(_vcert_result, _vcert_read.not_checked,
+                                     _vcert.certs | cert_report_section(vmware_cert_warn_days | int, [vmware_cert_warn_days | int * 2, 60] | max),
+                                     {'warn_days': vmware_cert_warn_days | int, 'check_mode': ansible_check_mode,
+                                      'tickets': cert_csr_tickets | default({}), 'report_only': _vcert_report_only | default(false)}) }}
+
+- name: VMware certs | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_vcenters: "{{ _vcert_read.vcenters }}"
+    _vm_report_doc: "{{ _vcert_doc }}"
+    _vm_report_subject: "{{ _vcert_doc.title }}"
+    _vm_report_lines: "{{ (_vcert_doc | report_text).splitlines() }}"
+
+- name: VMware certs | the result as job artifacts (vmware_certs)
+  ansible.builtin.set_stats:
+    data:
+      vmware_certs:
+        dry_run: "{{ ansible_check_mode }}"
+        warn_days: "{{ vmware_cert_warn_days | int }}"
+        due: >-
+          {{ _vcert_result.certs | map(attribute='host') | zip(_vcert_result.certs | map(attribute='days'),
+             _vcert_result.certs | map(attribute='status')) | map('join', ' | ') | list }}
+        not_checked: "{{ _vcert_read.not_checked }}"
+        vcenters: "{{ _vcert_read.vcenters }}"

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for the pure parts of roles/vmware_vm/library (needs ansible-core importable, not
 pyVmomi or a vCenter): python3 tests/test_vmware_modules.py"""
+import json
 import os
 import sys
 import unittest
@@ -18,6 +19,7 @@ import site_vmware_alarms as al  # noqa: E402
 import site_vmware_esxi_security as es  # noqa: E402
 import site_vmware_health as hl  # noqa: E402
 import site_vmware_vm_created as vc  # noqa: E402
+import site_vmware_certs as vcert  # noqa: E402
 
 G = 1024 ** 3
 
@@ -366,6 +368,159 @@ class HealthFacts(unittest.TestCase):
                    hardwareStatusInfo=None)
         self.assertEqual([x["name"] for x in hl.bad_sensors(only)], ["VMware Rollup Health State"])
         self.assertEqual(hl.bad_sensors(None), [])
+
+
+def _self_signed(cn, days=30, sans=(), extra=()):
+    """A key and a self-signed certificate (PEM) for the tests."""
+    import datetime as dt
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)] + [x509.NameAttribute(o, v) for o, v in extra])
+    now = dt.datetime.now(dt.timezone.utc)
+    b = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key()).serial_number(1)
+         .not_valid_before(now - dt.timedelta(days=1)).not_valid_after(now + dt.timedelta(days=days, hours=1)))
+    if sans:
+        b = b.add_extension(x509.SubjectAlternativeName([x509.DNSName(n) for n in sans]), critical=False)
+    cert = b.sign(key, hashes.SHA256())
+    return (key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL, serialization.NoEncryption()),
+            cert.public_bytes(serialization.Encoding.PEM), cert.public_bytes(serialization.Encoding.DER))
+
+
+class _FakeVcenterApi(object):
+    """vCenter's REST API, just the session and tls-csr, over HTTPS in this process. mode: api (vCenter 7+),
+    rest (6.7: /api is 404), forbidden (tls-csr 403), none (no certificate API: 404)."""
+
+    def __init__(self, mode="api"):
+        import http.server
+        import ssl
+        import tempfile
+        import threading
+        self.mode, self.calls = mode, []
+        key, pem, _ = _self_signed("localhost", 5, ["localhost"])
+        d = tempfile.mkdtemp()
+        for f, data in (("k.pem", key), ("c.pem", pem)):
+            with open(os.path.join(d, f), "wb") as fh:
+                fh.write(data)
+        api = self
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _send(self, code, body):
+                raw = json.dumps(body).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n)) if n else None
+                api.calls.append(("POST", self.path, body, self.headers.get("vmware-api-session-id")))
+                old = api.mode == "rest"
+                if self.path == ("/rest/com/vmware/cis/session" if old else "/api/session"):
+                    ok = self.headers.get("Authorization") == "Basic " + __import__("base64").b64encode(b"user:pass").decode()
+                    return self._send(200, {"value": "tok1"} if old else "tok1") if ok else self._send(401, {})
+                if self.path == ("/rest" if old else "/api") + vcert.CSR_PATH and api.mode != "none":
+                    if self.headers.get("vmware-api-session-id") != "tok1":
+                        return self._send(401, {})
+                    if api.mode == "forbidden":
+                        return self._send(403, {"error_type": "UNAUTHORIZED", "messages": [{"default_message": "Permission denied."}]})
+                    spec = body["spec"] if old else body
+                    _, _, _ = spec["common_name"], spec["organization"], spec["subject_alt_name"]
+                    csr = "-----BEGIN CERTIFICATE REQUEST-----\nfor %s\n-----END CERTIFICATE REQUEST-----\n" % spec["common_name"]
+                    return self._send(200, {"value": {"csr": csr}} if old else {"csr": csr})
+                self._send(404, {})
+
+            def do_DELETE(self):
+                api.calls.append(("DELETE", self.path, None, self.headers.get("vmware-api-session-id")))
+                self._send(200, {})
+
+        self.httpd = http.server.HTTPServer(("127.0.0.1", 0), H)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(os.path.join(d, "c.pem"), os.path.join(d, "k.pem"))
+        self.httpd.socket = ctx.wrap_socket(self.httpd.socket, server_side=True)
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+class VmwareCerts(unittest.TestCase):
+    """site_vmware_certs: the certificate read from the TLS handshake, vCenter's CSR call."""
+
+    def setUp(self):
+        os.environ.update(VMWARE_USER="user", VMWARE_PASSWORD="pass")
+
+    def test_cert_record(self):
+        from cryptography.x509.oid import NameOID
+        _, _, der = _self_signed("vc01.example.mil", 12, ["vc01.example.mil", "vc01"],
+                                 [(NameOID.ORGANIZATIONAL_UNIT_NAME, "PKI"), (NameOID.ORGANIZATION_NAME, "Example"), (NameOID.COUNTRY_NAME, "US")])
+        r = vcert.cert_record(der)
+        self.assertEqual(r["days"], 12)
+        self.assertEqual(r["sans"], ["vc01.example.mil", "vc01"])
+        self.assertTrue(r["self_signed"])
+        self.assertTrue(r["subject"].startswith("C=US,O=Example,OU=PKI,CN=vc01.example.mil") or "CN=vc01.example.mil" in r["subject"])
+        spec = vcert.csr_spec(r, "vc01.example.mil", {"locality": "Norfolk", "key_size": "3072", "country": ""})
+        self.assertEqual((spec["common_name"], spec["organization"], spec["organization_unit"], spec["country"], spec["locality"],
+                          spec["state_or_province"], spec["key_size"]), ("vc01.example.mil", "Example", "PKI", "US", "Norfolk", "", 3072))
+        self.assertEqual(spec["subject_alt_name"], ["vc01.example.mil", "vc01"])
+        self.assertEqual(vcert.csr_spec({"parts": [], "sans": []}, "vc02")["subject_alt_name"], ["vc02"])
+
+    def test_dn(self):
+        self.assertEqual(vcert.dn_pairs("CN=a, OU=b\\, c, O=d"), [("CN", "a"), ("OU", "b, c"), ("O", "d")])
+        self.assertTrue(vcert.same_dn("CN=esx01, O=Example", "o=Example,CN=ESX01"))
+        self.assertFalse(vcert.same_dn("CN=esx01", "CN=CA, DC=vsphere"))
+        self.assertFalse(vcert.same_dn("", ""))
+
+    def test_tls_der_reads_any_certificate(self):
+        api = _FakeVcenterApi()
+        try:
+            r = vcert.cert_record(vcert.tls_der("127.0.0.1", api.port, 5))
+            self.assertEqual((r["subject"], r["days"]), ("CN=localhost", 5))
+        finally:
+            api.close()
+
+    def _csr(self, mode):
+        api = _FakeVcenterApi(mode)
+        try:
+            a = vcert.Api("127.0.0.1", api.port, False, 5)
+            a.login("vc01")
+            try:
+                return a.tls_csr("vc01", {"common_name": "vc01.example.mil", "organization": "", "subject_alt_name": ["vc01.example.mil"]}), api.calls
+            finally:
+                a.logout()
+        finally:
+            api.close()
+
+    def test_vcenter_csr_api(self):
+        csr, calls = self._csr("api")
+        self.assertIn("for vc01.example.mil", csr)
+        self.assertEqual([c[:2] for c in calls], [("POST", "/api/session"), ("POST", "/api" + vcert.CSR_PATH), ("DELETE", "/api/session")])
+        self.assertEqual(calls[1][2]["common_name"], "vc01.example.mil")      # /api: the body is the spec itself
+
+    def test_vcenter_csr_rest_67(self):
+        csr, calls = self._csr("rest")
+        self.assertIn("for vc01.example.mil", csr)
+        self.assertEqual(calls[-2][1], "/rest" + vcert.CSR_PATH)
+        self.assertEqual(calls[-2][2]["spec"]["common_name"], "vc01.example.mil")   # /rest: {"spec": ...}
+        self.assertEqual(calls[-1][:2], ("DELETE", "/rest/com/vmware/cis/session"))
+
+    def test_vcenter_csr_refused_and_missing(self):
+        with self.assertRaisesRegex(RuntimeError, r"refused to make the CSR \(HTTP 403: Permission denied\.\).*CAAdmins"):
+            self._csr("forbidden")
+        with self.assertRaisesRegex(RuntimeError, r"has no certificate API .*HTTP 404.*6\.7 Update 2"):
+            self._csr("none")
+        os.environ["VMWARE_PASSWORD"] = "wrong"
+        with self.assertRaisesRegex(RuntimeError, r"refused the login to its API \(HTTP 401\)"):
+            self._csr("api")
 
 
 if __name__ == "__main__":

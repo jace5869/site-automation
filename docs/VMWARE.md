@@ -24,6 +24,8 @@ System Center Orchestrator):
 | VM - pick up deploy tickets | `playbooks/vm_deploy_poll.yml` | on a schedule: finds new VM request tickets in ServiceNow and starts the deploy workflow for each. Builds nothing itself; the approval stays |
 | VM - VMs created report | `playbooks/vm_created_report.yml` | read-only: how many VMs were created in the last 7 days and each one - when, by whom, how (cloned, deployed from a template, new), the ticket when the AAP deploy built it, where, its size - by person and by day, and the ones created and deleted since. Schedule it weekly (e.g. Fridays at noon) |
 | ESXi - security settings | `playbooks/esxi_security.yml` | on every ESXi host: SSH off, the shell timeouts at 600 s, lockdown mode normal. Changes only what differs, so it can run every night and puts back whatever drifted |
+| VMware - certificate report | `playbooks/vmware_cert_report.yml` | read-only: every certificate of vCenter and its ESXi hosts, soonest expiry first, and for each one due what the renewal would do. Never ServiceNow, never a CSR |
+| VMware - certificate renewal | `playbooks/vmware_cert_renew.yml` | the certificates of vCenter and every ESXi host: each one that expires within 30 days gets a ServiceNow incident, and a CSR - made where its key stays, by vCenter or the host - attached to it with what to do next. The days can be raised to try it on certificates years from expiring |
 
 They run on the AAP side and talk to vCenter. They never log in to the VMs.
 
@@ -85,6 +87,8 @@ A service account with a vCenter role that has only what the jobs need:
 | notes | Virtual machine > Change configuration > Set annotation |
 | change VLAN | Virtual machine > Change configuration > Modify device settings, and Network > Assign network on the port groups |
 | ESXi security settings | Host > Configuration > Security profile and firewall (the SSH service), Advanced settings (the timeouts), Change settings (lockdown mode and its exception users). If one is missing, the job's error names it (e.g. `lacks the privilege Host.Config.Settings`) |
+| certificate renewal: an ESXi host's CSR | Certificates > Manage certificates, on the hosts. If it is missing, the job's error names it |
+| certificate renewal: vCenter's CSR | Certificate Management (`CertificateManagement.Manage` and `CertificateManagement.Administer`), in a role given as a **Global Permission** - or the account in the single sign-on group **CAAdmins** (Administration > Single Sign On > Users and Groups > Groups > CAAdmins > Add members), as the vSphere Client's own CSR needs; administrator@vsphere.local has it |
 | all (to read), and the alarms report | Read-only, which every vCenter role includes |
 
 Give it the role on the folders or clusters of the VMs these jobs may touch, and nowhere else.
@@ -742,6 +746,150 @@ SSH as it is.
 | `esxi_security_exclude_hosts` | `[]` | never these hosts |
 | `vmware_datacenter` | (all) | one datacenter only |
 
+## Certificates of vCenter and the ESXi hosts: incidents and CSRs (weekly)
+
+Two jobs, with the same settings:
+
+| Template | Playbook | Credentials | What it does |
+|---|---|---|---|
+| `VMware - certificate report` | `playbooks/vmware_cert_report.yml` | VMware vCenter | **the report only**: every certificate, soonest expiry first, and for each one due what the renewal would do. Never ServiceNow, never a CSR - even with the ServiceNow credential attached. Printed and emailed |
+| `VMware - certificate renewal` | `playbooks/vmware_cert_renew.yml` | VMware vCenter, ServiceNow API | the same report, **and** an incident and a CSR for each certificate due (below) |
+
+**No inventory of hosts.** Both run on the AAP side and talk to vCenter only: each host's certificate is
+read through vCenter, and its CSR is made through vCenter's API - no SSH, no ESXi account. vCenter's own
+certificate is read on its address, port 443. The template needs an inventory picked (any one); leave
+**Limit** empty - pick hosts with `vmware_cert_only`.
+
+The renewal, `playbooks/vmware_cert_renew.yml` (template `VMware - certificate renewal`):
+
+1. It reads **vCenter's certificate** - its Machine SSL certificate, the one its web pages show -
+   and the certificate of **every ESXi host** connected to it (`vmware_cert_esxi: false`: vCenter's
+   only). Reading changes nothing.
+2. Each certificate that expires within **`vmware_cert_warn_days`** (30) - or has expired - is
+   **due**, and gets a **ServiceNow incident**: critical within `vmware_cert_crit_days` (7), else
+   warning, whatever `servicenow_min_severity` says.
+3. For each due certificate, a **CSR** (certificate signing request) is made **where its key
+   stays** and attached to the incident, with a work note: the certificate, the names in the CSR,
+   and what to do next.
+   - **vCenter** makes its own, through its API - the same as the vSphere Client's *Generate
+     Certificate Signing Request*. The subject and names are the current certificate's. The new
+     key stays in vCenter's certificate store.
+   - **An ESXi host** makes its own - the same as the vSphere Client's *Generate CSR using FQDN*.
+     The new key stays on the host.
+4. While a certificate is due, each run adds a note to its incident. Once it is renewed, the next
+   run notes the incident as cleared (`servicenow_resolve_cleared: true` resolves it).
+
+**Nothing in use is changed.** A CSR only makes a new key that waits: vCenter and the hosts keep
+their certificates, no service restarts. Installing the issued certificate is a later step, by a person,
+as the work note says (that step does restart vCenter's services before 8.0 Update 2; a host may need a
+reconnect). It is emailed (`report_email_to`), and a dry run (Check) makes no CSR and sends nothing.
+
+**One incident per certificate.** 15 hosts due: 15 incidents, each with its own CSR and steps, all for
+`servicenow_assignment_group`. A run again adds a work note to the same incident - never a second
+incident or a second CSR for the same certificate. A renewed certificate's incident is noted as cleared
+(resolved with `servicenow_resolve_cleared: true`); when it comes due again years later, that is a new incident.
+
+| The certificate | Incident | CSR | The work note says (step 3) |
+|---|---|---|---|
+| vCenter's, signed by your PKI (or self-signed) | yes | made by vCenter | Administration > Certificate Management > Machine SSL Certificate > Import and Replace Certificate > *Replace with external CA certificate where CSR is generated from vCenter Server (private key embedded)*: the issued certificate, and the CA chain. A snapshot first; vCenter HA off |
+| An ESXi host's, signed by your PKI (or self-signed) | yes | made by the host | ESXi 8.0 Update 3 and later: the CA chain in vCenter's Trusted Root Certificates, `vpxd.certmgmt.mode` = `custom`, then the host > Configure > System > Certificate > Manage with External CA > Import and Replace > *Replace with external CA certificate where CSR is generated by ESXi (Private key embedded)* |
+| Signed by vCenter's own CA (VMCA - how vCenter gives hosts their certificates unless told otherwise) | yes: it says to renew it in vCenter (its **Renew**) | none (`vmware_cert_vmca_csr: true`: one, to replace it with a certificate of your PKI) | - |
+
+**One CSR per renewal.** vCenter and each host keep **one** waiting key: a second CSR replaces it,
+and the certificate the PKI issues for the first one no longer fits. So the job makes a CSR once.
+Before it makes one, it looks at the certificate's incident: a CSR attached, or in a work note (when
+ServiceNow refused the attachment) - and then it makes none. For the same reason, **make no CSR in
+the vSphere Client** while the PKI signs this one. A CSR lost? Close the incident: the next run
+opens a new one, with a new CSR. Without the ServiceNow credential nothing would record the CSR, so
+none is made (`vmware_cert_csr_without_servicenow: true` makes them and prints them).
+
+### Try it on certificates that are years from expiring
+
+Every certificate you have is far from expiring, and you cannot add one that is not. Raise
+`vmware_cert_warn_days` for a run: with `200`, every certificate that expires within 200 days is
+due (`3650`: within 10 years). It is one number for both: the report's amber, and the renewal's incident
+and CSR. Each incident says the number it was opened with (`Due: it expires within
+vmware_cert_warn_days (200 days)`).
+
+0. **The report of every host:** the `VMware - certificate report` template with
+   `vmware_cert_warn_days: 200` - every certificate, and what the renewal would do for each one due.
+   Nothing is sent anywhere but the email.
+1. **Dry run.** Launch with Job type **Check** and these Variables:
+
+   ```yaml
+   vmware_cert_warn_days: 200
+   vmware_cert_only: [esx01.yoursite.mil]       # one host; e.g. [esx01, esx02] or ["esx0*"]; your vCenter by its name
+   ```
+
+   The output says what it would do: `would open: esx01.yoursite.mil: ESXi host certificate ...`
+   and `would make the CSR, and would open a ticket and attach it`.
+2. **The incident only.** The same Variables plus `vmware_cert_make_csr: false`, Job type **Run**.
+   One incident, for that host.
+3. **With the CSR.** Remove `vmware_cert_make_csr: false` and run again. The host makes the CSR; it
+   is attached to the same incident with the work note. Run it once more: no second CSR (`CSR on
+   the ticket already`). Pick a host whose certificate is not being renewed right now: its CSR
+   replaces any CSR the host already had waiting.
+4. **vCenter.** The same with `vmware_cert_only: [vc01.yoursite.mil]`. vCenter's CSR needs the
+   account's certificate rights ("Before you start", step 2). One vCenter first.
+5. **Clean up.** Run without those lines (back to 30 days) and with
+   `servicenow_resolve_cleared: true`: the test incidents are noted and resolved. Leave none open -
+   an open test incident would be used again when that certificate really comes due.
+
+### Set it up
+
+1. **The vCenter account**: the certificate rows in "Before you start", step 2.
+2. **Templates > Create template > Create job template** - the report first:
+   - Name: `VMware - certificate report`. Playbook: `playbooks/vmware_cert_report.yml`. Inventory: any.
+     Execution environment: your VMware one. Credentials: your **VMware vCenter** credential only
+   - Variables: `report_email_to: vmteam@yoursite.mil`. Tick **Prompt on launch** next to **Variables**. Save.
+   - Schedule it weekly if you like (Monday 07:00): the list to hand to whoever renews certificates.
+
+   Then the renewal - **Create job template** again:
+   - Name: `VMware - certificate renewal`
+   - Inventory: any (e.g. your VMware one). Project: site-automation. Playbook: `playbooks/vmware_cert_renew.yml`
+   - Execution environment: your VMware one. Credentials: your **VMware vCenter** credential and
+     your **ServiceNow API** credential
+   - Tick **Prompt on launch** next to **Job type** and next to **Variables** (to try it)
+   - Variables: `servicenow_assignment_group: YOUR GROUP NAME` (who gets the incidents) and
+     `report_email_to: vmteam@yoursite.mil` - the rest: [aap/extra_vars/vmware_cert_renew.yml](../aap/extra_vars/vmware_cert_renew.yml)
+   - Save.
+   - Optional - the days asked at launch instead of typed into Variables: the template's **Survey**
+     tab > **Create question**, three times, then switch the survey **on**:
+
+     | Question | Answer variable name | Answer type | Default | Required |
+     |---|---|---|---|---|
+     | Days to expiry (raise it to try the job) | `vmware_cert_warn_days` | Integer | `30` | yes |
+     | Only these vCenters or hosts (empty = all) | `vmware_cert_only` | Text | (empty) | no |
+     | Make the CSRs | `vmware_cert_make_csr` | Multiple choice (single select): `true`, `false` | `true` | yes |
+
+     A schedule runs with the defaults (30, all, true).
+3. **Try it**, as above.
+4. **Every week:** the template's **Schedules** tab > **Create schedule**, e.g. every Monday at
+   07:00 in your time zone. 30 days gives four runs before a certificate expires; the incident is
+   open from the first.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `vmware_cert_warn_days` | `30` | a certificate that expires within this many days is due. Raise it to try the job |
+| `vmware_cert_crit_days` | `7` | within this many days (or expired) the incident is critical |
+| `vmware_cert_only` | `[]` (all) | only these vCenters and hosts (names, `*` and `?` allowed; the short name works) |
+| `vmware_cert_make_csr` | `true` | `false` = the incidents only |
+| `vmware_cert_esxi` | `true` | `false` = vCenter's certificate only |
+| `vmware_cert_vmca_csr` | `false` | `true` = a CSR also for a certificate signed by VMCA |
+| `vmware_cert_vmca_issuers` | `[]` | more issuers to take as VMCA (`*` and `?` allowed) |
+| `vmware_cert_csr_fields` | `{}` | subject fields for vCenter's CSR (`organization`, `organization_unit`, `locality`, `state_or_province`, `country`, `key_size`) over the current certificate's |
+| `vmware_cert_csr_without_servicenow` | `false` | `true` = make the CSRs without the ServiceNow credential, and print them |
+
+The attachment's name and type are the Linux renewal's settings: `cert_renew_attach_ext` (`csr`;
+`txt` for an instance that refuses `.csr`) and `cert_renew_attach_retry_txt`.
+
+### Whoever gets the incident
+
+1. Submit the attached CSR to the PKI for a server certificate (the same names).
+2. Attach the issued certificate (Base64 `.cer` / `.crt`) and its chain to the incident.
+3. Install it as the work note says. The next run reads the new certificate and notes the incident
+   as cleared.
+
 ## Email the report
 
 Every VMware job can email its result: the secure boot report its whole list, the other jobs what
@@ -897,6 +1045,25 @@ the last column says.
 | SSH is off again on a host you opened for support | the nightly run did its job | `esxi_security_exclude_hosts` while the case is open |
 | The ESXi Shell stays on, and the report does not mention it | `esxi_security_shell: ""` is set somewhere (leave it as it is) | remove it: the default is `disabled` |
 | Every night's email lists the same host as changed | something turns the setting back every day (a host profile, a script, a person) | find what it is: two tools fighting over one setting |
+
+### Certificate renewal
+
+| You see | It means | Do |
+|---|---|---|
+| `vCenter X refused to make the CSR (HTTP 403 ...)` | the account may read vCenter but not make its certificates | give it Certificate Management as a Global Permission, or add it to CAAdmins ("Before you start", step 2); or make that one CSR in the vSphere Client and attach it to the incident by hand |
+| `vCenter X refused the login to its API (HTTP 401)` | the credential's user name (`name@domain`) or password | fix the VMware vCenter credential |
+| `the vCenter account lacks the privilege Certificate.Manage` (an ESXi host's CSR) | the role misses Certificates > Manage certificates | add it to the role, on the hosts |
+| `vCenter X has no certificate API` | vCenter older than 6.7 Update 2 | make the CSR in the vSphere Client and attach it to the incident by hand |
+| `vCenter X did not make the CSR (HTTP 400: ...)` naming a field | vCenter wants a subject field the certificate does not have | set it in `vmware_cert_csr_fields` (the PKI sets the subject by its own rules anyway) |
+| `the attachment was refused ... as a .txt file too` | the instance does not take `.csr` or `.txt` attachments | the CSR is in the incident's work note, to copy from there; the next run makes no other. To have them attached: allow `.csr` or `.txt` on the instance, or `cert_renew_attach_ext` |
+| `no ServiceNow API credential: the CSR is made only with its ticket` | the template has no ServiceNow credential | attach it; or `vmware_cert_csr_without_servicenow: true` to have the CSRs printed |
+| `vm_cert_warn_days: not a setting of this job` | a setting named like the other VMware jobs' (`vm_...`): it would be ignored, and the job would run at 30 days | the settings start with `vmware_cert_`: `vmware_cert_warn_days`, `vmware_cert_only` |
+| The report says `within vmware_cert_warn_days (30)` though you set another number | a survey question for `vmware_cert_warn_days` (its answer, default 30, wins over the Variables box), or the name misspelt | change the survey's default, or the name |
+| `vmware_cert_only (...) matches none of the vCenters and hosts read` | a typo, or a host of another vCenter | the names as the vSphere Client shows them; add the vCenter to `vmware_vcenters` |
+| A host under **Not checked**, `not connected` | it is not connected to vCenter | reconnect it; the next run reads it |
+| `CSR on the ticket already`, but the PKI lost the CSR | the incident has its CSR | close the incident: the next run opens a new one with a new CSR |
+| An incident says to renew in vCenter (VMCA), but your hosts use your PKI's certificates | that host still has the certificate vCenter gave it | `vmware_cert_vmca_csr: true` makes a CSR for it, to replace it with one of your PKI |
+| Test incidents still open | they were opened with the days raised | run with the real days and `servicenow_resolve_cleared: true`, or close them |
 
 ### Deploy from a ServiceNow ticket
 

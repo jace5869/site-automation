@@ -6,7 +6,8 @@
 # dry runs, duplicate and unknown names, no credential; the alarms report (posted events, a
 # disconnected host, an alarm that fired and cleared) and its ACT analysis (a fake ACT:
 # tests/containers/fake_act.py); the ESXi security settings; capacity planning (with and without
-# GenAI's estimate); the health report (a third simulator with 2 datacenters).
+# GenAI's estimate); the health report (a third simulator with 2 datacenters); the certificate renewal of vCenter
+# and its hosts (the days raised, one host, incidents and CSRs in a fake ServiceNow, no second CSR, a refused attachment).
 #   bash tests/vmware/run_vmware_test.sh
 # Needs: podman or docker; a python with pyVmomi and the vSphere Automation SDK (pip install pyvmomi
 # vmware-vcenter; VMWARE_TEST_PYTHON=... to pick it); the vmware.vmware collection (installed into a
@@ -1614,5 +1615,95 @@ RUN_PORT=$port3 run "health report as a dry run (Check): the same report" ok vm_
 RUN_PORT=$port3 run "health report of two vCenters with the same datacenter names: nothing mixed up" ok vm_health_report.yml \
     -e "{\"vmware_vcenters\": [\"$vc2\"]}" \
     -- "VMware health report: 2 critical, 4 warning(s) - 3 datacenter(s), 5 cluster(s), 14 host(s)" "$vc2 / DC0" "127.0.0.1 / DC1"
+
+# ---- VMware certificate renewal: vCenter's and the hosts' certificates (vcsim's expire in 2084 - the days
+# to expiry raised to make them due, as a site tries the job), the incidents and the CSRs in a fake ServiceNow.
+# DC0_C0_H2 may be disconnected by now (the alarms report's events): the hosts used are DC0_H0, DC0_C0_H0, DC0_C0_H1 ----
+csn_port=$((port + 45)); csn_port2=$((port + 46))
+SNMOCK_LOG="$work/csn.jsonl" "$py" "$repo/tests/servicenow/snmock.py" "$csn_port" >/dev/null 2>&1 &
+csn_pid=$!
+SNMOCK_NO_ATTACH=1 SNMOCK_LOG="$work/csn2.jsonl" "$py" "$repo/tests/servicenow/snmock.py" "$csn_port2" >/dev/null 2>&1 &
+csn_pid2=$!
+for p_ in $csn_port $csn_port2; do for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$p_") 2>/dev/null && break; sleep 0.1; done; done
+touch "$work/csn.jsonl" "$work/csn2.jsonl"
+cn() { wc -l < "$work/${1:-csn}.jsonl"; }
+sent_since() {  # sent_since LOG LINE METHOD PATH-START: how many such requests after that line
+    tail -n +"$(($2 + 1))" "$work/$1.jsonl" | "$py" -c "import json,sys; print(sum(1 for l in sys.stdin if json.loads(l)['method'] == '$3' and json.loads(l)['path'].startswith('$4')))"
+}
+run "VMware certificates, no ServiceNow credential, 30 days: every certificate read, none due" ok vmware_cert_renew.yml \
+    -- "VMware certificates: 0 due within 30 days, of " "ESXi host DC0_C0_H0 (vCenter 127.0.0.1)" "vCenter 127.0.0.1 (Machine SSL certificate, https://127.0.0.1:$port)"
+export SN_HOST="http://127.0.0.1:$csn_port" SN_USERNAME=api SN_PASSWORD=goodpw
+n1=$(cn)
+run "the certificate REPORT, every host, the days raised, the ServiceNow credential there: what the renewal would do, nothing sent" ok \
+    vmware_cert_report.yml -e vmware_cert_warn_days=30000 \
+    -- "VMware certificate report: " "due within 30000 days, of " "Due within 30000 days - what the renewal would do" \
+       "open an incident, and make a CSR on the host" "open an incident, and make a CSR on vCenter" "The report only: nothing was sent to ServiceNow"
+[ "$(sent_since csn "$n1" GET /)$(sent_since csn "$n1" POST /)$(sent_since csn "$n1" PATCH /)" = 000 ] && ! grep -q "make the CSRs" "$work/out.txt" \
+    && echo "ok   -   ...not one request to ServiceNow, no CSR" || { echo "FAIL -   ...the report talked to ServiceNow"; fails=$((fails + 1)); }
+run "...the report of one host, 30 days" ok vmware_cert_report.yml -e vmware_cert_only=DC0_H0 -- "VMware certificate report: 0 due within 30 days, of 1"
+run "...with ServiceNow, 30 days: no incident" ok vmware_cert_renew.yml -- "No findings at or above warning."
+[ "$(sent_since csn "$n1" POST /)" = 0 ] && echo "ok   -   ...nothing opened" || { echo "FAIL -   ...opened at 30 days"; fails=$((fails + 1)); }
+cdays='{"vmware_cert_warn_days": 30000, "vmware_cert_only": "dc0_h0"}'
+run "VMware certificates, dry run with the days raised (every one due) and one host: what it would do, nothing sent" ok vmware_cert_renew.yml --check \
+    -e "$cdays" -- "would open: DC0_H0: ESXi host certificate" "DC0_H0 | DC0_H0.csr | would make the CSR, and would open a ticket and attach it" \
+    "VMware certificates (dry run): 1 due within 30000 days, of 1" "Left out (vmware_cert_only)"
+[ "$(sent_since csn "$n1" POST /)$(sent_since csn "$n1" PATCH /)" = 00 ] && echo "ok   -   ...nothing sent" || { echo "FAIL -   ...the dry run sent"; fails=$((fails + 1)); }
+run "...the incident only (vmware_cert_make_csr: false): opened, no CSR made" ok vmware_cert_renew.yml -e "$cdays" -e vmware_cert_make_csr=false \
+    -- "opened: INC" "SKIPPED | DC0_H0 | ESXi host DC0_H0 (vCenter 127.0.0.1) | vmware_cert_make_csr: false - the incident only"
+"$py" - "$work/csn.jsonl" "$n1" <<'EOPY' && echo "ok   -   ...one incident: the host, check vmware_certs, the days used, where to look" || { echo "FAIL -   ...the incident"; fails=$((fails + 1)); }
+import json, sys
+rows = [json.loads(l) for l in list(open(sys.argv[1]))[int(sys.argv[2]):]]
+new = [r["body"] for r in rows if r["method"] == "POST" and r["path"] == "/api/now/table/incident"]
+d = new[0]["description"] if len(new) == 1 else ""
+sys.exit(0 if new[0]["short_description"].startswith("[site-health] DC0_H0: ESXi host certificate") and "Check: vmware_certs" in d
+         and "vmware_cert_warn_days (30000 days)" in d and "Configure > System > Certificate" in d and ":vmware_certs:" in new[0]["correlation_id"]
+         and not [r for r in rows if r["path"].startswith("/api/now/attachment/file")] else 1)
+EOPY
+n1=$(cn)
+run "...then with the CSR: the host makes it, it is attached to the same incident with what to do next" ok vmware_cert_renew.yml -e "$cdays" \
+    -- "updated: INC" "| DC0_H0 | DC0_H0-" ".csr | attached" "CSR made"
+"$py" - "$work/csn.jsonl" "$n1" <<'EOPY' && echo "ok   -   ...the CSR attached, the work note: the host keeps the key, ESXi's install steps" || { echo "FAIL -   ...CSR attachment / note"; fails=$((fails + 1)); }
+import json, re, sys
+rows = [json.loads(l) for l in list(open(sys.argv[1]))[int(sys.argv[2]):]]
+att = [r for r in rows if r["method"] == "POST" and r["path"] == "/api/now/attachment/file"]
+notes = [r["body"].get("work_notes", "") for r in rows if r["method"] == "PATCH"]
+note = [n for n in notes if n.startswith("Certificate renewal")]
+sys.exit(0 if len(att) == 1 and re.match(r"^DC0_H0-[0-9a-f]{8}\.csr$", att[0]["query"]["file_name"]) and "BEGIN CERTIFICATE REQUEST" in att[0]["body"]["raw"]
+         and not [r for r in rows if r["method"] == "POST" and r["path"] == "/api/now/table/incident"]
+         and note and "New key: made by the host and kept on it" in note[0] and "CSR is generated by ESXi (Private key embedded)" in note[0]
+         and "vpxd.certmgmt.mode to custom" in note[0] else 1)
+EOPY
+n1=$(cn)
+run "...again: its CSR is on the incident - no second CSR (it would replace the key that waits)" ok vmware_cert_renew.yml -e "$cdays" \
+    -- "already attached" "CSR on the ticket already"
+grep -q "make the CSRs.*\]" "$work/out.txt" && grep -A1 "make the CSRs" "$work/out.txt" | grep -q skipping && [ "$(sent_since csn "$n1" POST /api/now/attachment)" = 0 ] \
+    && echo "ok   -   ...no CSR made, nothing attached" || { echo "FAIL -   ...a second CSR"; fails=$((fails + 1)); }
+n1=$(cn)
+run "...back to 30 days: the test incident is noted as cleared" ok vmware_cert_renew.yml -- "noted as cleared: INC"
+[ "$(sent_since csn "$n1" POST /)" = 0 ] && echo "ok   -   ...nothing opened" || { echo "FAIL -   ...opened at 30 days"; fails=$((fails + 1)); }
+run "VMCA-signed (vmware_cert_vmca_issuers): an incident that says renew it in vCenter, no CSR" ok vmware_cert_renew.yml \
+    -e '{"vmware_cert_warn_days": 30000, "vmware_cert_only": "DC0_C0_H1", "vmware_cert_vmca_issuers": ["*acme co*"]}' \
+    -- "opened: INC" "SKIPPED | DC0_C0_H1 | ESXi host DC0_C0_H1 (vCenter 127.0.0.1) | signed by vCenter's own CA (VMCA): renew it in" "VMCA (vCenter's own CA)"
+run "vCenter's own certificate: the simulator has no certificate API - the job fails, saying so (its incident is open)" fail vmware_cert_renew.yml \
+    -e '{"vmware_cert_warn_days": 30000, "vmware_cert_only": "127.0.0.1"}' \
+    -- "opened: INC" "vCenter 127.0.0.1 has no certificate API" "Machine SSL Certificate > Generate Certificate Signing Request"
+SN_HOST="http://127.0.0.1:$csn_port2" run "the attachment refused (as .csr and as .txt): the CSR goes in the work note, the job fails" fail \
+    vmware_cert_renew.yml -e '{"vmware_cert_warn_days": 30000, "vmware_cert_only": "DC0_C0_H0"}' -- "the attachment was refused (HTTP 403), as a .txt file too"
+n1=$(cn csn2)
+SN_HOST="http://127.0.0.1:$csn_port2" run "...again: the CSR in the work note counts - no second CSR" ok vmware_cert_renew.yml \
+    -e '{"vmware_cert_warn_days": 30000, "vmware_cert_only": "DC0_C0_H0"}' -- "CSR on the ticket already"
+[ "$(sent_since csn2 "$n1" POST /api/now/attachment)" = 0 ] && echo "ok   -   ...nothing attached again" || { echo "FAIL -   ...a second CSR"; fails=$((fails + 1)); }
+(unset SN_HOST; run "no ServiceNow credential, certificates due: no CSR (nothing would record it)" ok vmware_cert_renew.yml -e "$cdays" \
+    -- "NOT CONNECTED - what would be opened" "no ServiceNow API credential: the CSR is made only with its ticket") || fails=$((fails + 1))
+(unset SN_HOST; run "...vmware_cert_csr_without_servicenow: true makes it and prints it" ok vmware_cert_renew.yml -e "$cdays" \
+    -e vmware_cert_csr_without_servicenow=true -- "NOT CONNECTED - the CSRs to hand to the PKI" "BEGIN CERTIFICATE REQUEST") || fails=$((fails + 1))
+run "a near-miss setting name (vm_cert_warn_days): refused before anything is read, naming the right one" fail vmware_cert_report.yml \
+    -e vm_cert_warn_days=498 -- "vm_cert_warn_days: not a setting of this job" "vmware_cert_warn_days"
+run "vmware_cert_only that matches nothing: refused, nothing sent" fail vmware_cert_renew.yml -e vmware_cert_only=nosuchhost \
+    -- "vmware_cert_only (nosuchhost) matches none of the vCenters and hosts read"
+(unset SN_HOST; RUN_PORT=$port3 run "a host that is not connected: listed as not checked, the job stays green" ok vmware_cert_renew.yml \
+    -- "1 not checked" "DC0_C1_H1" "not connected (disconnected)") || fails=$((fails + 1))
+unset SN_HOST SN_USERNAME SN_PASSWORD
+kill "$csn_pid" "$csn_pid2" 2>/dev/null
 
 if [ "$fails" -eq 0 ]; then echo "ok   - all VMware scenarios passed"; else echo "$fails FAILED"; exit 1; fi

@@ -1,0 +1,19 @@
+---
+# VMWARE CERTIFICATE REPORT (playbooks/vmware_cert_report.yml), on the controller against vCenter: every
+# certificate of vCenter and its ESXi hosts, soonest expiry first, the ones due within vmware_cert_warn_days
+# with what the renewal (cert_renew.yml) would do for each. Read-only: never ServiceNow, never a CSR.
+- name: VMware certs | read the certificates, and which are due
+  ansible.builtin.include_tasks: cert_read.yml
+
+- name: VMware certs | each due certificate - what the renewal would do
+  ansible.builtin.set_fact:
+    _vcert_result: "{{ _vcert.due | vmware_cert_csr_result([], {'report_only': true}) }}"
+    _vcert_report_only: true
+
+- name: VMware certs | the report
+  ansible.builtin.include_tasks: cert_out.yml
+
+- name: VMware certs | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vcert_read.vcenters }}"

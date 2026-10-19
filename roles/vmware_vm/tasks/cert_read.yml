@@ -1,0 +1,48 @@
+---
+# VMware certificates, the shared first part (cert_report.yml, cert_renew.yml): read the certificates of
+# vCenter and its ESXi hosts, and which are due (vmware_cert_warn_days, vmware_cert_only) -> _vcert_read,
+# _vcert (plugins/filter/vmware_cert_filters.py vmware_cert_plan), _vcert_sn (a ServiceNow credential).
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+# vm_cert_warn_days (the vm_ of the other VMware jobs) would be ignored without a word: the job would run
+# at 30 days - stop before anything is read, and say the name
+- name: VMware certs | no setting with a near-miss name (vm_cert_..., vmware_certs_...)
+  ansible.builtin.assert:
+    that: _vcert_typos | length == 0
+    fail_msg: >-
+      {{ _vcert_typos | join(', ') }}: not a setting of this job, so it would be ignored - the settings start with
+      vmware_cert_ (e.g. vmware_cert_warn_days, vmware_cert_only). Rename it in the template's Variables (or survey).
+      Nothing was read or sent.
+    quiet: true
+  vars:
+    _vcert_typos: "{{ lookup('ansible.builtin.varnames', '^vm_certs?_', '^vmware_certs_', wantlist=True) | sort }}"
+
+- name: VMware certs | read the certificates of vCenter and its ESXi hosts
+  site_vmware_certs:
+    action: read
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    esxi: "{{ vmware_cert_esxi | bool }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _vcert_read
+  check_mode: false             # only reads: a dry run reads too
+
+- name: VMware certs | which are due, and what each one gets
+  ansible.builtin.set_fact:
+    _vcert: >-
+      {{ _vcert_read.certs | vmware_cert_plan({
+           'warn_days': vmware_cert_warn_days | int, 'crit_days': vmware_cert_crit_days | int, 'only': _vcert_only,
+           'vmca_issuers': vmware_cert_vmca_issuers | default([], true), 'vmca_csr': vmware_cert_vmca_csr | bool,
+           'job': awx_job_id | default(''), 'time': now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ')}) }}
+    _vcert_sn: "{{ lookup('ansible.builtin.env', 'SN_HOST') | trim | length > 0 }}"
+    _vcert_only_list: "{{ _vcert_only }}"
+  vars:
+    _vcert_only: "{{ (vmware_cert_only | replace(',', ' ')).split() if vmware_cert_only is string else vmware_cert_only | default([], true) }}"
+
+- name: VMware certs | vmware_cert_only names a vCenter or host that was read
+  ansible.builtin.assert:
+    that: _vcert.certs | length > 0 or _vcert_read.certs | length == 0
+    fail_msg: >-
+      vmware_cert_only ({{ _vcert_only_list | join(', ') }}) matches none of the vCenters and hosts read:
+      {{ _vcert.left_out | join(', ') }}. Nothing was sent to ServiceNow.
+    quiet: true

@@ -147,7 +147,7 @@ Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for e
 | `ontap_report_max_rows` | `50` | rows per table |
 | `ontap_snapshot_top` | `25` | volumes in the snapshot space table |
 | `ontap_report_fail` | `false` | `true` = the job shows **failed** on a critical finding or a cluster not read (for a workflow) |
-| `ontap_timeout` | `30` | seconds for one request (no answer: asked once more) |
+| `ontap_timeout` | `30` | seconds for one request (no answer: asked once more). The job output lists every request that took over 10 seconds, to pick a number |
 | `ontap_tls_legacy` | `false` | connect to older ONTAP whose TLS the EE refuses (see Troubleshooting) |
 
 **All settings** of this job, with their defaults: [ontap_report](VARIABLES_REFERENCE.md#ontap_report).

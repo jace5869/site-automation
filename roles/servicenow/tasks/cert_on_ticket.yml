@@ -1,0 +1,76 @@
+---
+# VMWARE CERTIFICATE RENEWAL, before a CSR is made (roles/vmware_vm/tasks/cert_renew.yml): each due
+# certificate's open ticket, and whether its CSR is on it already - attached (a file whose name starts
+# with the certificate's), or in a work note (the attachment was refused). vCenter and an ESXi host keep
+# one pending key: a second CSR replaces the key of the first, the one the PKI may be signing. So a CSR
+# is made once, and its ticket is the record of it. Reads only - in a dry run too.
+# Input: _csr_check_in [{id (the finding's), host, check, prefix (of the CSR's file name), csr: true when it would get a CSR}].
+# Output: cert_csr_tickets {id: ticket number}, cert_csr_on_ticket {id: 'INC0010001 (attached: x.csr)'}.
+
+- name: Certificate renewal | connection (from the ServiceNow API credential)
+  ansible.builtin.set_fact:
+    _sn_url: >-
+      {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+    _sn_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+
+- name: Certificate renewal | each certificate's open ticket, with its work notes
+  ansible.builtin.uri:
+    url: >-
+      {{ _sn_url }}/api/now/table/{{ servicenow_table }}?sysparm_limit=5&sysparm_display_value=true&sysparm_exclude_reference_link=true&sysparm_fields=sys_id,number,correlation_id,work_notes&sysparm_query={{
+      ('correlation_id=' ~ (item.id | site_correlation_id(item.host, item.check, servicenow_correlation_prefix)) ~ '^active=true') | urlencode }}
+    method: GET
+    url_username: "{{ _sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  loop: "{{ _csr_check_in }}"
+  loop_control:
+    label: "{{ item.id }}"
+  register: _cot_found
+  check_mode: false             # only reads
+  when: _sn_url | length > 0
+
+- name: Certificate renewal | the CSR attached to it?
+  ansible.builtin.uri:
+    url: >-
+      {{ _sn_url }}/api/now/attachment?sysparm_limit=1&sysparm_fields=file_name&sysparm_query={{
+      ('table_sys_id=' ~ r.json.result[0].sys_id ~ '^file_nameSTARTSWITH' ~ r.item.prefix) | urlencode }}
+    method: GET
+    url_username: "{{ _sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  loop: "{{ _cot_found.results | default([]) | selectattr('json.result', 'defined') | selectattr('json.result') | selectattr('item.csr') | list }}"
+  loop_control:
+    loop_var: r
+    label: "{{ r.json.result[0].number }}: {{ r.item.prefix }}*"
+  register: _cot_att
+  check_mode: false             # only reads
+  when: _sn_url | length > 0
+
+- name: Certificate renewal | the tickets, and the CSRs already on them
+  ansible.builtin.set_fact:
+    cert_csr_tickets: >-
+      {%- set out = {} -%}
+      {%- for r in _cot_found.results | default([]) if (r.json.result | default([])) | length > 0 -%}
+      {%-   set _ = out.update({r.item.id: r.json.result[0].number}) -%}
+      {%- endfor -%}
+      {{ out }}
+    cert_csr_on_ticket: >-
+      {%- set out = {} -%}
+      {%- for a in _cot_att.results | default([]) if a.json is defined -%}
+      {%-   set t = a.r.json.result[0] -%}
+      {%-   if (a.json.result | default([])) | length > 0 -%}
+      {%-     set _ = out.update({a.r.item.id: t.number ~ ' (attached: ' ~ a.json.result[0].file_name ~ ')'}) -%}
+      {%-   elif 'BEGIN CERTIFICATE REQUEST' in t.work_notes | default('') or 'certificate signing request (CSR) is attached' in t.work_notes | default('') -%}
+      {%-     set _ = out.update({a.r.item.id: t.number ~ ' (in a work note)'}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}

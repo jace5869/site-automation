@@ -11,6 +11,7 @@ import site_filters as f  # noqa: E402
 import vmware_alarm_filters as va  # noqa: E402
 import esxi_filters as ef  # noqa: E402
 import vmware_health_filters as vh  # noqa: E402
+import vmware_cert_filters as vcf  # noqa: E402
 
 
 class FromCsv(unittest.TestCase):
@@ -1046,6 +1047,117 @@ class VmAlarmHistory(unittest.TestCase):
 
 def _t(iso):
     return iso[11:13]
+
+
+class VmwareCerts(unittest.TestCase):
+    """The VMware certificate renewal: which certificates are due, their findings, their CSR status."""
+    VMCA = "CN=CA, DC=vsphere, DC=local, C=US, ST=California, O=vc01.example.mil, OU=VMware Engineering"
+    PKI = "CN=Example Issuing CA 1, OU=PKI, O=Example, C=US"
+
+    def certs(self):
+        return [{"vcenter": "vc01.example.mil", "kind": "vcenter", "name": "vc01.example.mil", "port": 443, "subject": "CN=vc01.example.mil,O=Example",
+                 "issuer": self.PKI, "sans": ["vc01.example.mil"], "not_after": "2026-11-01 00:00 UTC", "expires": "2026-11-01", "days": 12,
+                 "self_signed": False},
+                {"vcenter": "vc01.example.mil", "kind": "esxi", "name": "esx01.example.mil", "subject": "CN=esx01.example.mil", "issuer": self.VMCA,
+                 "not_after": "2026-10-20 00:00 UTC", "expires": "2026-10-20", "days": 1, "self_signed": False},
+                {"vcenter": "vc01.example.mil", "kind": "esxi", "name": "esx02.example.mil", "subject": "CN=esx02.example.mil", "issuer": self.PKI,
+                 "not_after": "2029-01-01 00:00 UTC", "expires": "2029-01-01", "days": 805, "self_signed": False},
+                {"vcenter": "vc01.example.mil", "kind": "esxi", "name": "esx03.example.mil", "subject": "CN=esx03", "issuer": "CN=esx03",
+                 "not_after": "2026-09-01 00:00 UTC", "expires": "2026-09-01", "days": -48, "self_signed": True}]
+
+    def test_vmca(self):
+        self.assertTrue(vcf.vmware_cert_vmca(self.VMCA))
+        self.assertTrue(vcf.vmware_cert_vmca("CN=CA,DC=corp,DC=local,C=US"))        # another SSO domain
+        self.assertFalse(vcf.vmware_cert_vmca(self.PKI))
+        self.assertFalse(vcf.vmware_cert_vmca("CN=Corp-Issuing-CA, DC=corp, DC=example"))   # an AD CS CA has DCs too, not CN=CA
+        self.assertTrue(vcf.vmware_cert_vmca("CN=Our VMCA, O=vc01.example.mil", ["*o=vc01.example.mil*"]))
+
+    def test_plan(self):
+        p = vcf.vmware_cert_plan(self.certs(), {"warn_days": 30, "crit_days": 7, "job": 4711})
+        self.assertEqual([c["name"] for c in p["due"]], ["esx03.example.mil", "esx01.example.mil", "vc01.example.mil"])
+        by = dict((c["name"], c) for c in p["certs"])
+        self.assertEqual(by["vc01.example.mil"]["renew"], "csr")
+        self.assertEqual(by["esx01.example.mil"]["renew"], "vmca")
+        self.assertEqual(by["esx03.example.mil"]["renew"], "csr")           # self-signed: a CSR, to get a real one
+        self.assertEqual(by["esx02.example.mil"]["renew"], "")
+        self.assertEqual(by["esx01.example.mil"]["severity"], "critical")
+        self.assertEqual(by["vc01.example.mil"]["severity"], "warning")
+        self.assertEqual(by["vc01.example.mil"]["id"], "vmware-cert:vcenter:vc01.example.mil:2026-11-01")   # a renewed certificate: a new id
+        # every name read is in the tickets step's input - also esx02, with no finding - so a renewed certificate's ticket clears
+        self.assertEqual(sorted(p["health"]), ["esx01.example.mil", "esx02.example.mil", "esx03.example.mil", "vc01.example.mil"])
+        h = p["health"]["esx02.example.mil"]
+        self.assertEqual((h["findings"], h["checks"], h["reach"]), ([], ["vmware_certs"], False))
+        f3 = p["health"]["esx03.example.mil"]["findings"][0]
+        self.assertIn("EXPIRED 48 days ago", f3["summary"])
+        self.assertIn("vmware_cert_warn_days (30 days)", f3["note"])
+        self.assertIn("Renew", p["health"]["esx01.example.mil"]["findings"][0]["note"])
+        self.assertIn("openssl s_client -connect vc01.example.mil:443", p["health"]["vc01.example.mil"]["findings"][0]["hint"])
+
+    def test_plan_test_days_and_only(self):
+        p = vcf.vmware_cert_plan(self.certs(), {"warn_days": 3650, "only": ["ESX02"]})
+        self.assertEqual([c["name"] for c in p["due"]], ["esx02.example.mil"])
+        self.assertEqual(list(p["health"]), ["esx02.example.mil"])
+        self.assertEqual(sorted(p["left_out"]), ["esx01.example.mil", "esx03.example.mil", "vc01.example.mil"])
+        self.assertIn("(3650 days)", p["due"][0]["finding"]["note"])
+        p = vcf.vmware_cert_plan(self.certs(), {"warn_days": 30, "vmca_csr": True})
+        self.assertEqual([c["renew"] for c in p["due"]], ["csr", "csr", "csr"])
+
+    def test_csr_result(self):
+        due = vcf.vmware_cert_plan(self.certs(), {"warn_days": 30})["due"]
+        made = [{"vcenter": "vc01.example.mil", "kind": "vcenter", "name": "vc01.example.mil", "csr": "-----BEGIN CERTIFICATE REQUEST-----\nx\n",
+                 "csr_subject": "CN=vc01.example.mil", "csr_names": ["vc01.example.mil"], "error": ""},
+                {"vcenter": "vc01.example.mil", "kind": "esxi", "name": "esx03.example.mil", "csr": "", "error": "the vCenter account lacks the privilege Certificate.Manage"}]
+        r = vcf.vmware_cert_csr_result(due, made, {"connected": True, "ext": "csr"})
+        self.assertEqual((r["check"], r["content_type"], r["retry_txt"]), ("vmware_certs", "text/plain", True))
+        by = dict((c["host"], c) for c in r["certs"])
+        self.assertEqual(by["vc01.example.mil"]["status"], "made")
+        self.assertRegex(by["vc01.example.mil"]["file_name"], r"^vc01\.example\.mil-machine-ssl-[0-9a-f]{8}\.csr$")
+        self.assertTrue(by["vc01.example.mil"]["sans_same"])
+        self.assertIn("VECS", by["vc01.example.mil"]["key_note"])
+        self.assertIn("Machine SSL Certificate > Import and Replace Certificate", by["vc01.example.mil"]["install"])
+        self.assertEqual((by["esx03.example.mil"]["status"], by["esx03.example.mil"]["reason"]), ("failed", made[1]["error"]))
+        self.assertEqual(by["esx01.example.mil"]["status"], "skipped")
+        self.assertIn("VMCA", by["esx01.example.mil"]["reason"])
+        # its CSR on the ticket already: never a second one
+        r = vcf.vmware_cert_csr_result(due, [], {"connected": True, "on_ticket": {due[2]["id"]: "INC0010001 (attached: vc01.example.mil-machine-ssl-1a2b3c4d.csr)"}})
+        vc = [c for c in r["certs"] if c["host"] == "vc01.example.mil"][0]
+        self.assertEqual((vc["status"], vc["file_name"]), ("exists", "vc01.example.mil-machine-ssl-1a2b3c4d.csr"))
+        self.assertNotIn("csr", vc)
+        # no ServiceNow: no CSR (nothing would record it), unless asked; incidents only; a dry run
+        r = vcf.vmware_cert_csr_result(due, [], {"connected": False})
+        self.assertTrue(all(c["status"] == "skipped" for c in r["certs"]))
+        self.assertIn("no ServiceNow API credential", [c for c in r["certs"] if c["host"] == "vc01.example.mil"][0]["reason"])
+        r = vcf.vmware_cert_csr_result(due, [], {"connected": True, "make_csr": False})
+        self.assertIn("vmware_cert_make_csr: false", [c for c in r["certs"] if c["host"] == "vc01.example.mil"][0]["reason"])
+        r = vcf.vmware_cert_csr_result(due, [], {"connected": True, "check_mode": True})
+        self.assertEqual([c["status"] for c in r["certs"]], ["would make", "skipped", "would make"])
+
+    def test_report(self):
+        p = vcf.vmware_cert_plan(self.certs(), {"warn_days": 30})
+        r = vcf.vmware_cert_csr_result(p["due"], [], {"connected": True, "check_mode": True})
+        doc = vcf.vmware_cert_report(p, r, [{"vcenter": "vc01.example.mil", "name": "esx09.example.mil", "why": "not connected (notResponding)"}],
+                                     {"title": "All certificates", "rows": []}, {"warn_days": 30, "check_mode": True,
+                                                                                  "tickets": {p["due"][0]["id"]: "INC0010009"}})
+        self.assertEqual(doc["title"], "VMware certificates (dry run): 3 due within 30 days (1 expired), of 4, 1 not checked")
+        self.assertEqual(doc["status"], "critical")
+        due = doc["sections"][0]
+        self.assertEqual(due["rows"][0][4], "INC0010009")
+        self.assertEqual(due["rows"][0][5], "would make a CSR (dry run)")
+        self.assertEqual(doc["sections"][-1]["rows"], [["esx09.example.mil", "vc01.example.mil", "not connected (notResponding)"]])
+
+    def test_report_only(self):
+        p = vcf.vmware_cert_plan(self.certs(), {"warn_days": 30})
+        r = vcf.vmware_cert_csr_result(p["due"], [], {"report_only": True, "connected": True})
+        self.assertEqual(set(c["status"] for c in r["certs"]), {"skipped"})
+        self.assertIn("the report only", r["certs"][0]["reason"])
+        doc = vcf.vmware_cert_report(p, r, [], None, {"warn_days": 30, "report_only": True})
+        self.assertEqual(doc["title"], "VMware certificate report: 3 due within 30 days (1 expired), of 4")
+        due = doc["sections"][0]
+        self.assertEqual(due["columns"][-1], "VMware - certificate renewal would")
+        self.assertEqual([row[-1] for row in due["rows"]], ["open an incident, and make a CSR on the host",
+                                                           "open an incident: renew it in vCenter (VMCA), no CSR",
+                                                           "open an incident, and make a CSR on vCenter"])
+        self.assertNotIn("CSRs made", [s["label"] for s in doc["summary"]])
 
 
 if __name__ == "__main__":

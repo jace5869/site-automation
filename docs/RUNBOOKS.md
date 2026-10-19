@@ -540,6 +540,9 @@ request (CSR) on the host: a certificate in a file (text or binary), one served 
 keystore. It attaches the CSR to the certificate's ServiceNow incident. The renewal sends no email:
 the CSR goes on the ticket (ServiceNow's own notifications tell its assignment group). Making a CSR
 changes nothing in use: the old certificate works until it expires.
+vCenter's and the ESXi hosts' certificates have a job of their own, which opens the incidents and makes the CSRs
+on vCenter and the hosts: `VMware - certificate renewal` - and a report of them alone, `VMware - certificate report`
+([VMWARE.md](VMWARE.md), "Certificates of vCenter and the ESXi hosts").
 The three use the same window: the report flags, the CSR is made and the incident is opened at 30 days.
 Change it on the workflow (`check_certs_warn_days`) and all three follow. The PKI person submits the CSR and attaches
 the issued certificate to the same ticket. Installing the new certificate is still done by a person:

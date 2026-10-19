@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.15.9 — 2026-10-19
+
+**Updating without scripts:** paste `site-automation-0.15.9-changed-since-0.15.8.zip` as it is (from
+0.15.1 to 0.15.7: `site-automation-0.15.9-changed-since-0.15.1.zip`). Both leave out
+`playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. **New job templates (optional):**
+*VMware - certificate report* (`playbooks/vmware_cert_report.yml`) and *VMware - certificate renewal*
+(`playbooks/vmware_cert_renew.yml`). The NetApp report's job output lists its slow requests. Nothing else
+changes how a job runs.
+
+**New job templates: `VMware - certificate report` and `VMware - certificate renewal`**
+(`playbooks/vmware_cert_report.yml`, `playbooks/vmware_cert_renew.yml`; their Variables in
+`aap/extra_vars/`). Both read vCenter's certificate (its Machine SSL certificate) and every connected
+ESXi host's, through vCenter only - no inventory of hosts. The report lists them, soonest expiry first,
+and what the renewal would do for each one due; it never talks to ServiceNow and never makes a CSR. The
+renewal: each one that expires within `vmware_cert_warn_days` (30) gets a ServiceNow incident, and a CSR
+made where its key stays - vCenter (its certificate API) or the host - attached to the incident with what
+to do next: the vSphere Client's own import steps for vCenter or for ESXi 8.0 Update 3. A CSR is made
+once: before it makes one, the job looks for one on the incident (attached, or in a work note), because a
+second CSR would replace the key that waits for the issued certificate. Signed by vCenter's own CA
+(VMCA): the incident says to renew it in vCenter, no CSR (`vmware_cert_vmca_csr`). To try it on
+certificates years from expiring: `vmware_cert_warn_days: 3650` with `vmware_cert_only` naming one host,
+and `vmware_cert_make_csr: false` for the incident only - each incident says the days it used; a run with
+the real days and `servicenow_resolve_cleared: true` resolves the test ones. New settings:
+`vmware_cert_warn_days`, `vmware_cert_crit_days`, `vmware_cert_esxi`, `vmware_cert_only`,
+`vmware_cert_make_csr`, `vmware_cert_vmca_csr`, `vmware_cert_vmca_issuers`, `vmware_cert_csr_fields`,
+`vmware_cert_csr_without_servicenow`. Making vCenter's CSR needs Certificate Management as a Global
+Permission (or the account in CAAdmins); a host's, the privilege Certificates > Manage certificates. One
+incident per certificate; a run again notes the same incident, never a second CSR.
+docs/VMWARE.md, "Certificates of vCenter and the ESXi hosts".
+
+**NetApp ONTAP health report:** the job output lists the requests that took over 10 seconds, or got no
+answer, with their seconds - to pick `ontap_timeout`.
+
 ## 0.15.8 — 2026-10-19
 
 **Updating without scripts:** paste `site-automation-0.15.8-changed-since-0.15.7.zip` as it is (from

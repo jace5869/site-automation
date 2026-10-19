@@ -268,12 +268,14 @@ def run_query(client, q):
 
 
 def collect(client, queries):
-    """Every query of one cluster -> {reachable, error, data}."""
+    """Every query of one cluster -> {reachable, error, data}; each query's result has the seconds it took."""
     res = {"address": client.address, "reachable": True, "error": "", "data": {}}
     answered, slow = False, 0
     for q in queries:
+        started = time.time()
         try:
             res["data"][q["key"]] = run_query(client, q)
+            res["data"][q["key"]]["seconds"] = round(time.time() - started, 1)
             answered, slow = True, 0
         except Unreachable as e:
             # the cluster answered before: one slow table is that table's problem, not the cluster's
@@ -281,7 +283,8 @@ def collect(client, queries):
                 slow += 1
                 res["data"][q["key"]] = {"records": [], "error": "no answer within %s s, asked twice - ontap_timeout: 120 "
                                          "gives it longer" % getattr(client, "timeout", "?"),
-                                         "reduced": "", "truncated": False, "at": time.time()}
+                                         "reduced": "", "truncated": False, "at": time.time(),
+                                         "seconds": round(time.time() - started, 1)}
                 continue
             res["reachable"] = False
             res["error"] = explain(str(e), e.kind, client.address, getattr(client, "timeout", "?"))

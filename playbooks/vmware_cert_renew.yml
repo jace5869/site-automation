@@ -1,0 +1,30 @@
+---
+# VMWARE CERTIFICATE RENEWAL - weekly. The certificates of vCenter (its Machine SSL certificate) and of
+# every ESXi host connected to it: each one that expires within vmware_cert_warn_days (30) - or has
+# expired - gets a ServiceNow incident, and a CSR made where its key stays (vCenter, or the host),
+# attached to the incident with what to do next: submit it to the PKI, attach the issued certificate,
+# install it (the steps for vCenter or for the host are in the work note). Installing it is a later
+# step, by a person: nothing in use is changed. A CSR is made once - the incident is its record.
+# Signed by vCenter's own CA (VMCA): the incident says to renew it in vCenter, no CSR. Once a
+# certificate is renewed, the next run notes its incident (servicenow_resolve_cleared: resolves it).
+# One incident per certificate. The report alone, without ServiceNow: playbooks/vmware_cert_report.yml.
+#
+# To try it: vmware_cert_warn_days 3650 makes every certificate due; vmware_cert_only names one host;
+# vmware_cert_make_csr false opens the incident only. Run it with Check first: it makes nothing and
+# sends nothing.
+#
+# Credentials: "VMware vCenter" (for vCenter's CSR, an account with Certificate Management as a Global
+# Permission, or in CAAdmins; for a host's, Certificates > Manage certificates) and "ServiceNow API".
+# Emailed (report_email_to). Runs on the AAP side against vCenter; no Limit.
+# docs/VMWARE.md, "Certificates of vCenter and the ESXi hosts".
+#   ansible-playbook playbooks/vmware_cert_renew.yml --check
+#   ansible-playbook playbooks/vmware_cert_renew.yml -e vmware_cert_warn_days=3650 -e vmware_cert_only=esx01 -e vmware_cert_make_csr=false
+- name: VMware certificate renewal
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The certificates of vCenter and its ESXi hosts - the incidents and the CSRs
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: cert_renew.yml
