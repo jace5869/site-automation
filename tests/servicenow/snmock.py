@@ -21,6 +21,8 @@ SNMOCK_HIDE_JOURNAL=1: journal fields always come back empty (an account that ca
 Attachments: POST /api/now/attachment/file?table_name&table_sys_id&file_name (the raw file as the
 body, its Content-Type kept), GET /api/now/attachment?sysparm_query=table_sys_id=..^file_name=..
 SNMOCK_NO_ATTACH=1: an attachment is refused (403, as an instance that does not allow the extension).
+SNMOCK_ATTACH_TXT_ONLY=1: an attachment whose name does not end in .txt is refused (400 "Invalid file type:
+text/plain", as an instance that checks the type against the name).
 Usage: snmock.py PORT   (requests appended to $SNMOCK_LOG as JSON lines)
 """
 import base64
@@ -276,6 +278,8 @@ class H(BaseHTTPRequestHandler):
                 return fail("Operation Failed", "ACL Exception Insert Failed due to security constraints", 403)
             if os.environ.get("SNMOCK_NO_ATTACH") == "1":
                 return fail("Operation Failed", "File extension not allowed: %s" % q.get("file_name", "").rpartition(".")[2], 403)
+            if os.environ.get("SNMOCK_ATTACH_TXT_ONLY") == "1" and not q.get("file_name", "").endswith(".txt"):
+                return 400, {"error": {"message": "Invalid file type: %s" % body.get("content_type", "")}}
             rec = INCIDENTS.get(q.get("table_sys_id"))
             if rec is None or rec.get("_table", "incident") != q.get("table_name"):
                 return 400, {"error": {"message": "Invalid table or record"}}

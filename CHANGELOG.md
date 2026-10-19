@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.15.7 — 2026-10-19
+
+**Updating without scripts:** paste `site-automation-0.15.7-changed-since-0.15.6.zip` as it is (from
+0.15.1 to 0.15.5: `site-automation-0.15.7-changed-since-0.15.1.zip`). Both leave out
+`playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. No new job template. New settings:
+`check_certs_discover_extra_dirs` (empty), `check_certs_discover_trust` / `check_certs_trust_dirs` (the
+report turns it on), `cert_renew_attach_retry_txt` (on), `cert_renew_skip_hosts` / `cert_renew_skip_groups`
+(empty). **Changed:** the renewal now makes CSRs for
+certificates served on a port or kept in a keystore too, and the certificate checks read binary (DER)
+files and names in any case - the weekly health check may find certificates it missed before.
+
+**Certificates - found where they are**
+
+- Text (PEM) and binary (DER) certificate files are both read, the names in any case: `.crt`, `.CRT`,
+  `.pem`, `.cer`, `.der`. A binary one used to be passed over without a word; its finding's command says
+  `-inform DER` (RHEL 8's OpenSSL does not guess it).
+- `check_certs_discover_extra_dirs`: more folders to search, added to the usual ones (no need to repeat
+  them), e.g. `[/home, /root]` - two levels deep, so `/home/you/x.crt` is found.
+- A found file with more than 10 certificates (a bundle) is listed under *Found but not checked*, with
+  how many, instead of passed over; `check_certs_files` checks each one in it.
+- **The trust store** (`/etc/pki/ca-trust/source/anchors`, `check_certs_trust_dirs`): the certificate
+  report lists every file in it - whatever its name, text or binary - with its date, as
+  `... (trust store)`. Never a finding, a ticket or a CSR: a certificate there is one the host trusts, not
+  its own, and its CA renews it (put the CA's new certificate there and run `update-ca-trust`). The health
+  check does not read it.
+
+**Certificate renewal - a CSR wherever the certificate is**
+
+- **Served on a port, its file not found:** the CSR is made from the certificate the port serves (asked
+  again by the host's name, the address, then the certificate's own name). Step 3 on the ticket: find where
+  that service keeps its certificate and key, and replace both. Making a CSR changes nothing in use.
+- **In a keystore** (a JKS entry, a PKCS12 file - with its password from `check_certs_keystores`): the CSR
+  for the entry that has a key, and step 3 gives the commands that put the new key and the issued
+  certificate in the keystore under the same alias. Never for the keystore's CA (its chain) or a trusted
+  entry (`trustedCertEntry`).
+- **A binary (DER) file:** the CSR as for any file; step 3 says to convert the issued certificate to DER.
+- **Never the trust store**, even listed in `check_certs_files`: "a certificate this host trusts, not its
+  own - no CSR".
+- **Renewed by hand** (`cert_renew_skip_hosts`, `cert_renew_skip_groups` - IdM, AAP, any server its own
+  tool renews): still in the certificate report, and the Certificate watch's tickets say *Renewed by hand
+  ... the certificate renewal job makes no CSR for it*; the renewal lists its certificates and makes no key
+  or CSR. `cert_skip_hosts` still leaves a host out of the report too (Satellite).
+- **An attachment refused** (`Invalid file type: text/plain`, `File extension not allowed: csr`): the CSR
+  is attached again as `<name>.txt`, text/plain (`cert_renew_attach_retry_txt: false` turns this off); the
+  work note names the file. Refused again, it goes in the work note as before, and the job fails and says
+  what to allow on the instance. A run again finds the CSR under either name. `cert_renew_attach_ext: txt`
+  names every CSR `.txt` from the start.
+
+**VM Deploy Guide - MECM**
+
+- The task sequence deployment: **Required**, available to **Only media and PXE**, on a collection of only
+  the new VMs. The guide said *Configuration Manager clients, media and PXE*: with Required, that runs it
+  on every client in the collection and installs it again. An Available deployment waits at the console
+  for a key - F12 on a BIOS VM, Enter (*Press ENTER for network boot service*) on an EFI one; a row for it
+  under *When something goes wrong*.
+
 ## 0.15.6 — 2026-10-18
 
 **Updating without scripts:** paste `site-automation-0.15.6-changed-since-0.15.5.zip` as it is (from

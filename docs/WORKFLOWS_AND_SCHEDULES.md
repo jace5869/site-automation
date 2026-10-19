@@ -316,7 +316,8 @@ Certificates expire on a day, not in a week:
 step uses the same number. Tickets then start a month ahead. The de-duplication keeps it to one ticket
 per certificate.
 
-**Step 3** makes a new key and a CSR on the host for each certificate file that expires, and attaches
+**Step 3** makes a new key and a CSR on the host for each certificate that expires (in a file, on a port,
+in a keystore - never the trust store's), and attaches
 the CSR to that certificate's ticket from step 2 ([RUNBOOKS.md](RUNBOOKS.md), "Certificate renewal").
 It must be **Run always**: steps 1 and 2 are red on purpose while certificates expire. Hosts in
 `cert_skip_hosts` or `cert_skip_groups` (Satellite) are left out of every step: set them in `all.yml`,

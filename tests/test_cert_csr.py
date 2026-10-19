@@ -97,5 +97,36 @@ class Text(unittest.TestCase):
         self.assertEqual(m.safe_name("../../etc"), "etc")
 
 
+class _Module(object):
+    def __init__(self, **params):
+        self.params = dict({"trust_dirs": [], "keystore_passwords": {}}, **params)
+
+
+class TrustAndInstall(unittest.TestCase):
+    def test_trust_store_never_renewed(self):
+        r = m.Renewer(_Module(trust_dirs=["/srv/anchors"]))
+        for where in ["/etc/pki/ca-trust/source/anchors/dod.crt", "/usr/share/pki/ca-trust-source/anchors/x.pem",
+                      "/srv/anchors/test.crt", "/srv/anchors/test.crt (trust store)"]:
+            self.assertTrue(r.in_trust(where), where)
+        for where in ["/etc/pki/tls/certs/web01.crt", "/srv/anchorsX/test.crt", "TLS port 443, nginx (https://127.0.0.1:443)"]:
+            self.assertFalse(r.in_trust(where), where)
+
+    def test_where_the_issued_certificate_goes(self):
+        r = m.Renewer(_Module())
+        entry = {"key_path": "/etc/pki/tls/renew/web01-1.key", "der": False}
+        self.assertEqual(r.install(dict(entry, srcs=[("file", "/etc/pki/tls/certs/web01.crt"), ("tls", "TLS port 443 (https://h:443)")])), "")
+        der = r.install(dict(entry, der=True, srcs=[("file", "/etc/pki/tls/certs/Web 01.CER")]))
+        self.assertIn("binary (DER)", der)
+        self.assertIn("-outform DER -out '/etc/pki/tls/certs/Web 01.CER'", der)
+        ks = r.install(dict(entry, srcs=[("keystore", "/opt/app/app.jks (alias tomcat)"), ("tls", "TLS port 8443 (https://h:8443)")]))
+        self.assertIn("in place of alias tomcat", ks)
+        self.assertIn("keytool -importkeystore -srckeystore /root/tomcat-new.p12", ks)
+        self.assertTrue(ks.index("cp -p /opt/app/app.jks /opt/app/app.jks.bak") < ks.index("keytool -importkeystore"))
+        self.assertNotIn("keytool -delete", ks)       # never the working entry gone before the new one is in
+        self.assertIn("-inkey /etc/pki/tls/renew/web01-1.key", ks)
+        self.assertIn("openssl pkcs12 -export", r.install(dict(entry, srcs=[("keystore", "/opt/app/bundle.p12")])))
+        self.assertIn("only the port serves it", r.install(dict(entry, srcs=[("tls", "TLS port 8443, java (https://h:8443)")])))
+
+
 if __name__ == "__main__":
     unittest.main()

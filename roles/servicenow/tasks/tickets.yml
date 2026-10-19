@@ -23,7 +23,7 @@
       {%-   set h = health[host] -%}
       {%-   for f in h.findings | default([]) if f.severity in _sn_levels -%}
       {%-     set _ = items.append({'host': host, 'check': f.check, 'id': f.id, 'severity': f.severity,
-                                    'summary': f.summary, 'hint': f.hint | default(''), 'act': h.act | default({}),
+                                    'summary': f.summary, 'hint': f.hint | default(''), 'note': f.note | default(''), 'act': h.act | default({}),
                                     'job': h.job | default(''), 'time': h.time | default('')}) -%}
       {%-   endfor -%}
       {%- endfor -%}
@@ -119,6 +119,7 @@
           {{ 'Found by an automated check (Ansible Automation Platform' ~ ((', job ' ~ i.job) if i.job else '') ~ ', ' ~ (i.time or _sn_now) ~ ').' ~ nl ~ nl
              ~ 'Host: ' ~ i.host ~ nl ~ 'Check: ' ~ i.check ~ nl ~ 'Severity: ' ~ i.severity ~ nl ~ 'Finding: ' ~ i.summary ~ nl
              ~ (('Look further with: ' ~ i.hint ~ nl) if i.hint else '')
+             ~ (('Note: ' ~ i.note ~ nl) if i.note | default('') else '')
              ~ ((nl ~ 'ACT (GenAI) analysis - ' ~ i.act.level | default('') ~ ', ' ~ i.act.status | default('') ~ ':' ~ nl ~ i.act.summary | default('') ~ nl
                  ~ (('Proposed fix (waits for approval in AAP): ' ~ (i.act.proposed | join(' ; ')) ~ nl) if i.act.proposed | default([]) else ''))
                 if i.act.summary | default('') else '') }}

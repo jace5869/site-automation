@@ -2,9 +2,13 @@
 # Certificate renewal (playbooks/cert_renew_csr.yml) against a fake ServiceNow
 # (tests/servicenow/snmock.py): certificates signed by a test CA - a server certificate (in its own file,
 # in a chain file and served on a port: one CSR), one with commas, quotes and accents in its subject, one
-# with a two-value RDN, an EC one, one expired 5 days ago - and the ones never renewed: the CA in the
-# chain, a self-signed one, one under a subscription-manager path, one issued by Satellite's CA, one
-# served on a port with no file, one not expiring. Hosts left out (no CSR, no ticket): one in group sat,
+# with a two-value RDN, an EC one, one expired 5 days ago, one served on a port with no file (read from
+# the port; its ticket says to find where the service keeps it) - and the ones never renewed: the CA in
+# the chain, a self-signed one, one under a subscription-manager path, one issued by Satellite's CA, one
+# not expiring. Then (10) a JKS keystore entry and a PKCS12 with a password (read from the keystore; the
+# ticket says how to put it back), a binary (DER) .CER file, and never: the keystore's CA and its
+# trusted entry, a certificate in the trust store. And (11) a host renewed by hand (cert_renew_skip_hosts):
+# its ticket says so, the renewal lists its certificates and makes no CSR. Hosts left out (no CSR, no ticket): one in group sat,
 # two named in cert_skip_hosts (a wildcard, a short name). Then: the dry run makes and sends nothing; the
 # CSRs come out with the old subject and names and a new key (0600, never in the output); the CSR lands on
 # the ticket the Certificate watch opened, or on a new one; a run again changes nothing; a refused
@@ -90,8 +94,10 @@ start_mock "$port"
 start_mock $((port + 1)) SNMOCK_NO_ATTACH=1
 start_mock $((port + 2))
 start_mock $((port + 3))
-for p in "$tls1" "$tls2" "$port" $((port + 1)) $((port + 2)) $((port + 3)); do for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null && break; sleep 0.1; done; done
-: > "requests-$port.jsonl"; : > "requests-$((port + 1)).jsonl"; : > "requests-$((port + 2)).jsonl"; : > "requests-$((port + 3)).jsonl"   # the readiness checks above
+start_mock $((port + 5)) SNMOCK_ATTACH_TXT_ONLY=1
+start_mock $((port + 6)) SNMOCK_ATTACH_TXT_ONLY=1
+for p in "$tls1" "$tls2" "$port" $((port + 1)) $((port + 2)) $((port + 3)) $((port + 5)) $((port + 6)); do for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null && break; sleep 0.1; done; done
+for p in "$port" $((port + 1)) $((port + 2)) $((port + 3)) $((port + 5)) $((port + 6)); do : > "requests-$p.jsonl"; done   # the readiness checks above
 
 cat > inv.yml <<EOF
 all:
@@ -158,11 +164,10 @@ has "never renewed, each with why" real.txt \
     "TEST ROOT CA 3,OU=PKI,OU=DoD,O=U.S. Government,C=US | expires" "a CA certificate (part of a chain)" \
     "CN=self01.example.mil | expires" "self-signed (made on the host" "cert_renew_self_signed: true makes one" \
     "CN=Test Root CA,O=Test,C=US | expires" "a CA's own certificate (a root: it signs certificates)" \
-    "its path is in cert_renew_exclude" "issued by CN=sat.example.mil,OU=SomeOrgUnit,O=Katello" \
-    "tlsonly (https://127.0.0.1:$tls2) | served on a port, and no certificate file with it was found"
+    "its path is in cert_renew_exclude" "issued by CN=sat.example.mil,OU=SomeOrgUnit,O=Katello"
 grep -qE '"(MADE|EXISTS|WOULD MAKE|SKIPPED|FAILED) [|].*later[.]example[.]mil' real.txt && bad "a certificate not expiring was considered" || ok "a certificate that does not expire soon: left alone"
 n="$(ls renew/*.csr 2>/dev/null | wc -l)"
-[ "$n" = 5 ] && ok "5 CSRs: web01 (file, chain file and port: one), app01, mv01, ec01, old01 (expired)" || bad "$n CSRs: $(ls renew)"
+[ "$n" = 6 ] && ok "6 CSRs: web01 (file, chain file and port: one), app01, mv01, ec01, old01 (expired), tlsonly (a port alone)" || bad "$n CSRs: $(ls renew)"
 [ "$(stat -c %a renew)" = 700 ] && ok "the folder is 0700" || bad "folder mode $(stat -c %a renew)"
 perm=$(stat -c %a renew/*.key | sort -u | tr '\n' ' ')
 [ "$perm" = "600 " ] && ok "the keys are 0600" || bad "key modes: $perm"
@@ -178,11 +183,18 @@ for name in web01 app01 mv01 ec01 old01; do
     [ "$(openssl req -in "$csr" -noout -pubkey)" != "$(openssl x509 -in pki/$name.crt -noout -pubkey)" ] || { bad "$name: the old key was reused"; continue; }
     ok "$name: the CSR verifies, the same subject and names, a NEW key that matches it"
 done
+csr="$(ls renew/tlsonly.example.mil-*.csr 2>/dev/null | head -1)"
+if [ -n "$csr" ] && openssl req -in "$csr" -noout -verify >/dev/null 2>&1 \
+   && [ "$(openssl req -in "$csr" -noout -subject -nameopt RFC2253 | sed 's/^subject=//')" = "$(subj tlsonly.crt)" ] \
+   && [ "$(sans req "$csr")" = "$(sans x509 tlsonly.crt)" ] \
+   && [ "$(openssl req -in "$csr" -noout -pubkey)" = "$(openssl pkey -in "${csr%.csr}.key" -pubout)" ]; then
+    ok "tlsonly (served on a port, no file): its CSR read from the port - the same subject and names, a new key"
+else bad "tlsonly: its CSR ($csr)"; fi
 openssl pkey -in renew/web01.example.mil-*.key -noout -text 2>/dev/null | grep -q "Private-Key: (3072 bit" && ok "web01: a 3072-bit old key keeps its size" || bad "web01 key size"
 openssl pkey -in renew/app01.example.mil-*.key -noout -text 2>/dev/null | grep -q "Private-Key: (2048 bit" && ok "app01: RSA 2048 (cert_renew_key_bits)" || bad "app01 key size"
 openssl pkey -in renew/ec01.example.mil-*.key -noout -text 2>/dev/null | grep -q "secp384r1" && ok "ec01: an EC key on the same curve (P-384)" || bad "ec01 key curve"
 grep -q '"aap_job"' renew/web01.example.mil-*.json && ok "an info file next to each CSR" || bad "info file"
-"$py" - "requests-$port.jsonl" "$work" <<'EOPY' && ok "ServiceNow: web01's CSR on the watch's file ticket (file, chain and port), the port ticket says where; 4 new tickets, 5 attachments, 5 notes" || bad "ServiceNow requests (above)"
+"$py" - "requests-$port.jsonl" "$work" <<'EOPY' && ok "ServiceNow: web01's CSR on the watch's file ticket (file, chain and port), the port ticket says where; 5 new tickets, 6 attachments, 6 notes; tlsonly's step 3: find where the service keeps it" || bad "ServiceNow requests (above)"
 import json, sys
 reqs = [json.loads(l) for l in open(sys.argv[1])]
 inc = [r for r in reqs if r["method"] == "POST" and r["path"] == "/api/now/table/incident"]
@@ -191,11 +203,13 @@ allnotes = [r for r in reqs if r["method"] == "PATCH" and "Certificate renewal" 
 notes = [r for r in allnotes if "\nCertificate: " in r["body"]["work_notes"]]
 pointer = [r for r in allnotes if "is renewed on" in r["body"]["work_notes"]]
 errs = []
-if len(inc) != 6: errs.append("%d incidents opened (2 by the watch + 4)" % len(inc))
+if len(inc) != 7: errs.append("%d incidents opened (2 by the watch + 5)" % len(inc))
 if len(pointer) != 1 or "web01.example.mil" not in pointer[0]["body"]["work_notes"] or "web (https://127.0.0.1:" not in pointer[0]["body"]["work_notes"]:
     errs.append("the port ticket's note: %s" % pointer)
-if len(att) != 5: errs.append("%d attachments" % len(att))
-if len(notes) != 5: errs.append("%d work notes" % len(notes))
+if len(att) != 6: errs.append("%d attachments" % len(att))
+if len(notes) != 6: errs.append("%d work notes" % len(notes))
+tls = [n["body"]["work_notes"] for n in notes if "Certificate: CN=tlsonly.example.mil" in n["body"]["work_notes"]]
+if not tls or "3. Its certificate file was not found on the host - only the port serves it" not in tls[0]: errs.append("tlsonly note: not the port's step 3")
 names = sorted(a["query"]["file_name"] for a in att)
 if not all(n.endswith(".csr") for n in names): errs.append("names %s" % names)
 for a in att:
@@ -252,23 +266,60 @@ has "a lost key: said" remade.txt "MADE | CN=mv01.example.mil" "attached" "alrea
 # ---- 4. an instance that refuses the attachment: the CSR goes in the work note, the job fails ----
 run refused.txt $((port + 1)) playbooks/cert_renew_csr.yml; rc=$?
 [ $rc -eq 2 ] && ok "attachment refused: the job fails" || { bad "attachment refused: exit $rc"; tail -20 refused.txt; }
-has "attachment refused: says why and where the CSR is" refused.txt "the attachment was refused" "set cert_renew_attach_ext: txt"
+has "attachment refused: says why and where the CSR is" refused.txt "the attachment was refused" "as a .txt file too" "glide.attachment.extensions"
 "$py" - "requests-$((port + 1)).jsonl" <<'EOPY' && ok "attachment refused: each work note carries the CSR and the server's reason" || bad "refused: work notes"
 import json, sys
 notes = [json.loads(l)["body"].get("work_notes", "") for l in open(sys.argv[1])]
 notes = [n for n in notes if "Certificate renewal" in str(n)]
-ok = len(notes) == 5 and all("-----BEGIN CERTIFICATE REQUEST-----" in n and "File extension not allowed: csr" in n for n in notes)
+ok = len(notes) == 6 and all("-----BEGIN CERTIFICATE REQUEST-----" in n and "File extension not allowed: csr" in n
+                              and "refused as a .txt file too" in n for n in notes)
+sys.exit(0 if ok else 1)
+EOPY
+
+# ---- 4a. an instance that refuses the .csr as text/plain (HTTP 400 "Invalid file type: text/plain"): attached
+# again as .txt - the job passes, the note names the .txt; a run again attaches nothing more ----
+run txtonly.txt $((port + 5)) playbooks/cert_renew_csr.yml; rc=$?
+[ $rc -eq 0 ] && ok "a .csr refused (Invalid file type): exit 0" || { bad "a .csr refused: exit $rc"; tail -20 txtonly.txt; }
+has "a .csr refused: attached as .txt, and says so" txtonly.txt "attached as web01.example.mil-" ".txt (refused as web01.example.mil-"
+"$py" - "requests-$((port + 5)).jsonl" <<'EOPY' && ok "a .csr refused: 6 CSRs attached as .txt (text/plain), each note names its .txt, no CSR text in a note" || bad "a .csr refused: ServiceNow"
+import json, sys
+reqs = [json.loads(l) for l in open(sys.argv[1])]
+att = [r for r in reqs if r["method"] == "POST" and r["path"] == "/api/now/attachment/file"]
+txt = [r["query"]["file_name"] for r in att if r["query"]["file_name"].endswith(".txt")]
+notes = [r["body"]["work_notes"] for r in reqs if r["method"] == "PATCH" and "\nCertificate: " in str(r["body"].get("work_notes", ""))]
+ok = (len(att) == 12 and len(txt) == 6 and len(notes) == 6
+      and all(r["body"]["content_type"] == "text/plain" for r in att if r["query"]["file_name"].endswith(".txt"))
+      and all(".txt" in n.split("\n")[0] and "BEGIN CERTIFICATE REQUEST" not in n for n in notes))
+if not ok: print(len(att), txt, [n.split("\n")[0] for n in notes])
+sys.exit(0 if ok else 1)
+EOPY
+before="$(writes $((port + 5)))"
+run txtonly2.txt $((port + 5)) playbooks/cert_renew_csr.yml; rc=$?
+[ $rc -eq 0 ] && [ "$(writes $((port + 5)))" = "$before" ] && ok "a .csr refused, run again: the .txt is found - nothing new sent" \
+    || { bad "a .csr refused, run again: exit $rc, $(( $(writes $((port + 5))) - before )) new POST/PATCH"; tail -20 txtonly2.txt; }
+
+# ---- 4a2. the same instance, cert_renew_attach_retry_txt false: no .txt try - the CSR in the work note, the job fails ----
+run noretry.txt $((port + 6)) playbooks/cert_renew_csr.yml -e cert_renew_attach_retry_txt=false; rc=$?
+[ $rc -eq 2 ] && ok "retry off: the job fails" || { bad "retry off: exit $rc"; tail -20 noretry.txt; }
+has "retry off: says so" noretry.txt "the attachment was refused (HTTP 400)" "cert_renew_attach_retry_txt: true tries each one again as .txt"
+"$py" - "requests-$((port + 6)).jsonl" <<'EOPY' && ok "retry off: no .txt sent; each work note carries the CSR and 'Invalid file type: text/plain'" || bad "retry off: ServiceNow"
+import json, sys
+reqs = [json.loads(l) for l in open(sys.argv[1])]
+att = [r["query"]["file_name"] for r in reqs if r["method"] == "POST" and r["path"] == "/api/now/attachment/file"]
+notes = [r["body"]["work_notes"] for r in reqs if r["method"] == "PATCH" and "\nCertificate: " in str(r["body"].get("work_notes", ""))]
+ok = (len(att) == 6 and not [a for a in att if a.endswith(".txt")] and len(notes) == 6
+      and all("BEGIN CERTIFICATE REQUEST" in n and "Invalid file type: text/plain" in n and ".txt file too" not in n for n in notes))
 sys.exit(0 if ok else 1)
 EOPY
 
 # ---- 4b. servicenow_min_severity critical: still a ticket for every CSR (30 days or less, and expired) ----
 run critical.txt $((port + 2)) playbooks/cert_renew_csr.yml -e servicenow_min_severity=critical; rc=$?
 [ $rc -eq 0 ] && ok "min severity critical: exit 0" || { bad "min severity critical: exit $rc"; tail -20 critical.txt; }
-"$py" - "requests-$((port + 2)).jsonl" <<'EOPY' && ok "min severity critical: a ticket for each of the 5 CSRs (web01 and ec01, 19 days, too)" || bad "min severity critical: tickets"
+"$py" - "requests-$((port + 2)).jsonl" <<'EOPY' && ok "min severity critical: a ticket for each of the 6 CSRs (web01, ec01 and tlsonly, 19 days, too)" || bad "min severity critical: tickets"
 import json, sys
 reqs = [json.loads(l) for l in open(sys.argv[1])]
 inc = [r["body"]["short_description"] for r in reqs if r["method"] == "POST" and r["path"] == "/api/now/table/incident"]
-ok = len(inc) == 5 and all(any(n in t for t in inc) for n in ["web01", "app01", "mv01", "ec01", "old01"])
+ok = len(inc) == 6 and all(any(n in t for t in inc) for n in ["web01", "app01", "mv01", "ec01", "old01", "tlsonly"])
 sys.exit(0 if ok else 1)
 EOPY
 
@@ -328,13 +379,13 @@ if [ -n "$csr" ] && openssl req -in "$csr" -noout -verify >/dev/null 2>&1 \
     ok "self-signed on: self01's CSR verifies, the same subject, a NEW key that matches it"
 else bad "self-signed on: self01's CSR ($csr)"; fi
 ls renew/localhost-* renew/Test* >/dev/null 2>&1 && bad "self-signed on: a CSR for the root CA or localhost" || ok "self-signed on: no CSR for the root CA or localhost"
-"$py" - "requests-$((port + 3)).jsonl" <<'EOPY' && ok "self-signed on: its ticket has the CSR and a note saying it was self-signed (6 CSRs in all)" || bad "self-signed on: ServiceNow"
+"$py" - "requests-$((port + 3)).jsonl" <<'EOPY' && ok "self-signed on: its ticket has the CSR and a note saying it was self-signed (7 CSRs in all)" || bad "self-signed on: ServiceNow"
 import json, sys
 reqs = [json.loads(l) for l in open(sys.argv[1])]
 att = [r for r in reqs if r["method"] == "POST" and r["path"] == "/api/now/attachment/file"]
 notes = [r["body"].get("work_notes", "") for r in reqs if r["method"] == "PATCH"]
 own = [n for n in notes if "Certificate: CN=self01.example.mil" in n]
-ok = len(att) == 6 and own and "It was self-signed: the PKI issues a real certificate in its place" in own[0] \
+ok = len(att) == 7 and own and "It was self-signed: the PKI issues a real certificate in its place" in own[0] \
      and not [n for n in notes if "It was self-signed" in n and "CN=self01" not in n]
 sys.exit(0 if ok else 1)
 EOPY
@@ -348,5 +399,103 @@ vars="$vars0"
 has "placeholder: listed, its reason given" placeholder.txt "SKIPPED | emailAddress=root@mail01.example.mil,CN=mail01.example.mil" \
     "a placeholder certificate a package made at install"
 ls renew/mail01* >/dev/null 2>&1 && bad "placeholder: a CSR was made for it" || ok "placeholder: no CSR"
+
+# ---- 10. a JKS keystore entry and a PKCS12 with a password (read from the keystore), a binary (DER)
+# .CER file; never: the keystore's CA (its chain), its trusted entry, a certificate in the trust store ----
+if command -v keytool >/dev/null; then
+    mkdir -p ks bin anchors
+    for c in "jks01 DNS:jks01.example.mil" "partner01 " "p12web DNS:p12web.example.mil" "der01 DNS:der01.example.mil" "anchor01 "; do
+        set -- $c
+        sign "$1" 20 "-newkey rsa:2048" "/C=US/O=U.S. Government/CN=$1.example.mil" "${2:-}" && mv "pki/$1.crt" "$1.crt"
+    done
+    mv anchor01.crt anchors/anchor01.crt
+    q pkcs12 -export -in jks01.crt -inkey jks01.key -certfile ca.crt -name tomcat -out jks01.p12 -passout pass:changeit
+    keytool -importkeystore -srckeystore jks01.p12 -srcstoretype PKCS12 -srcstorepass changeit -destkeystore ks/app.jks \
+        -deststoretype JKS -deststorepass changeit -noprompt >/dev/null 2>&1
+    keytool -importcert -noprompt -alias partner -file partner01.crt -keystore ks/app.jks -storepass changeit >/dev/null 2>&1
+    q pkcs12 -export -in p12web.crt -inkey p12web.key -certfile ca.crt -name web -out ks/locked.p12 -passout pass:s3cret
+    q x509 -in der01.crt -outform DER -out bin/der01.CER
+    start_mock $((port + 4))
+    for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$((port + 4))") 2>/dev/null && break; sleep 0.1; done
+    : > "requests-$((port + 4)).jsonl"
+    vars0="$vars"
+    vars="{\"check_certs_discover\": false, \"cert_report_discover\": false, \"site_fail_on\": [],
+           \"check_certs_files\": [\"$work/bin/*.CER\", \"$work/anchors/*.crt\"], \"check_certs_trust_dirs\": [\"$work/anchors\"],
+           \"check_certs_keystores\": [{\"path\": \"$work/ks/app.jks\"}, {\"path\": \"$work/ks/locked.p12\", \"password_env\": \"TEST_KS_PW\"}],
+           \"cert_renew_dir\": \"$work/renew10\", \"servicenow_assignment_group\": \"Linux Operations\", \"cert_skip_hosts\": \"CAP0*, edge01\"}"
+    export TEST_KS_PW=s3cret
+    run stores.txt $((port + 4)) playbooks/cert_renew_csr.yml; rc=$?
+    unset TEST_KS_PW
+    vars="$vars0"
+    [ $rc -eq 0 ] && ok "keystores, DER: exit 0" || { bad "keystores, DER: exit $rc"; tail -30 stores.txt; }
+    has "keystores, DER: CSRs for the JKS entry, the PKCS12 entry and the binary file" stores.txt \
+        "MADE | CN=jks01.example.mil" "app.jks (alias tomcat)" "MADE | CN=p12web.example.mil" "locked.p12 (alias web)" "MADE | CN=der01.example.mil"
+    has "never: the keystore's CA, its trusted entry, the trust store" stores.txt \
+        "a CA certificate (part of a chain)" "CN=partner01.example.mil" "without its key (one the program trusts)" \
+        "CN=anchor01.example.mil" "in the trust store (update-ca-trust): a certificate this host trusts, not its own - no CSR"
+    for name in jks01 p12web der01; do
+        csr="$(ls renew10/$name.example.mil-*.csr 2>/dev/null | head -1)"
+        if [ -n "$csr" ] && openssl req -in "$csr" -noout -verify >/dev/null 2>&1 \
+           && [ "$(openssl req -in "$csr" -noout -subject -nameopt RFC2253 | sed 's/^subject=//')" = "$(subj $name.crt)" ] \
+           && [ "$(openssl req -in "$csr" -noout -pubkey)" = "$(openssl pkey -in "${csr%.csr}.key" -pubout)" ] \
+           && [ "$(openssl req -in "$csr" -noout -pubkey)" != "$(openssl x509 -in $name.crt -noout -pubkey)" ]; then
+            ok "$name: the CSR verifies, the same subject, a NEW key that matches it"
+        else bad "$name: its CSR ($csr)"; fi
+    done
+    ls renew10/partner01* renew10/anchor01* renew10/TEST* >/dev/null 2>&1 && bad "a CSR for the trusted entry, the trust store or the CA" || ok "no CSR for the trusted entry, the trust store or the CA"
+    grep -q "s3cret" stores.txt "requests-$((port + 4)).jsonl" && bad "the keystore password in the output or sent" || ok "the keystore password: never in the output or sent"
+    "$py" - "requests-$((port + 4)).jsonl" <<'EOPY' && ok "ServiceNow: 3 CSRs; step 3 says how to put it in the keystore (alias), or to convert to DER" || bad "keystores, DER: ServiceNow"
+import json, sys
+reqs = [json.loads(l) for l in open(sys.argv[1])]
+att = [r for r in reqs if r["method"] == "POST" and r["path"] == "/api/now/attachment/file"]
+notes = [r["body"].get("work_notes", "") for r in reqs if r["method"] == "PATCH" and "\nCertificate: " in str(r["body"].get("work_notes", ""))]
+def note(cn):
+    n = [t for t in notes if "Certificate: CN=%s" % cn in t]
+    return n[0] if n else ""
+errs = []
+if len(att) != 3: errs.append("%d attachments" % len(att))
+j = note("jks01.example.mil")
+if "3. Put the new key and the issued certificate in the keystore" not in j or "in place of alias tomcat" not in j or "keytool -importkeystore" not in j:
+    errs.append("jks01 step 3: %s" % j[-400:])
+w = note("p12web.example.mil")
+if "in place of alias web" not in w: errs.append("p12web step 3: %s" % w[-400:])
+d = note("der01.example.mil")
+if "The file is binary (DER): convert the issued certificate first - openssl x509 -in <issued certificate> -outform DER -out" not in d:
+    errs.append("der01 step 3: %s" % d[-400:])
+print("\n".join(errs)); sys.exit(1 if errs else 0)
+EOPY
+else
+    ok "keystores, DER: SKIPPED - no keytool (a Java JDK) here"
+fi
+
+# ---- 11. a host renewed by hand (cert_renew_skip_hosts): its ticket says so (the finding's note); the renewal
+# lists its certificates - no key, no CSR, nothing sent ----
+start_mock $((port + 7))
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$((port + 7))") 2>/dev/null && break; sleep 0.1; done
+: > "requests-$((port + 7)).jsonl"
+"$py" - "$work" "$web_subj" > health11.json <<'EOPY'
+import json, sys
+w, s = sys.argv[1], sys.argv[2]
+note = ("Renewed by hand: this host is named in cert_renew_skip_hosts (web01) - the certificate renewal job makes no CSR for it."
+        " Renew it the way its product says.")
+f = [{"check": "certs", "id": "cert:%s/pki/web01.crt:%s" % (w, s), "severity": "warning", "note": note,
+      "summary": "certificate %s in %s/pki/web01.crt expires in 19 days" % (s, w), "hint": ""}]
+print(json.dumps({"site_health": {"web01.example.mil": {"status": "findings", "checks": ["certs"], "findings": f}},
+                  "site_health_targets": ["web01.example.mil"], "servicenow_fail_when_findings": False}))
+EOPY
+run watch11.txt $((port + 7)) playbooks/servicenow_tickets.yml -e @"$work/health11.json"
+"$py" - "requests-$((port + 7)).jsonl" <<'EOPY' && ok "renewed by hand: the ticket's description carries the note" || bad "renewed by hand: the ticket's description"
+import json, sys
+inc = [json.loads(l)["body"] for l in open(sys.argv[1]) if '"/api/now/table/incident"' in l and '"POST"' in l]
+sys.exit(0 if inc and "\nNote: Renewed by hand: this host is named in cert_renew_skip_hosts (web01)" in inc[0].get("description", "") else 1)
+EOPY
+before="$(writes $((port + 7)))"; files_before="$(ls renew | wc -l)"
+run hand.txt $((port + 7)) playbooks/cert_renew_csr.yml -e cert_renew_skip_hosts=web01; rc=$?
+[ $rc -eq 0 ] && ok "renewed by hand: exit 0" || { bad "renewed by hand: exit $rc"; tail -20 hand.txt; }
+has "renewed by hand: each certificate listed, with why" hand.txt "SKIPPED | CN=web01.example.mil" \
+    "renewed by hand - the host is named in cert_renew_skip_hosts (web01): no CSR (its ticket says so)" "SKIPPED | CN=app01.example.mil"
+grep -q '"MADE |\|"EXISTS |\|"WOULD MAKE |' hand.txt && bad "renewed by hand: a CSR was considered" || ok "renewed by hand: no CSR made or reused"
+[ "$(writes $((port + 7)))" = "$before" ] && [ "$(ls renew | wc -l)" = "$files_before" ] && ok "renewed by hand: no key, no CSR, nothing sent to ServiceNow" \
+    || bad "renewed by hand: $(( $(writes $((port + 7))) - before )) POST/PATCH, files $files_before -> $(ls renew | wc -l)"
 
 if [ "$fails" -eq 0 ]; then echo "ok   - all certificate renewal scenarios passed"; else echo "$fails FAILED"; exit 1; fi

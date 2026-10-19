@@ -1,20 +1,21 @@
 ---
 # CERTIFICATE RENEWAL, on the host (playbooks/cert_renew_csr.yml), after main.yml found the
 # certificates (check_certs_inventory). The ones the report flags - within check_certs_warn_days, or
-# expired - get a new key and a CSR with the same subject and names, in cert_renew_dir. The key never
-# leaves the host; the CSR (public) goes to the ServiceNow step in cert_renew_result.
+# expired - get a new key and a CSR with the same subject and names, in cert_renew_dir: in a file,
+# served on a port, or in a keystore (never the trust store's). The key never leaves the host; the CSR
+# (public) goes to the ServiceNow step in cert_renew_result.
 - name: Certs | renewal | the certificates that expire within {{ check_certs_warn_days }} days, or expired
   ansible.builtin.set_fact:
     _csr_candidates: >-
       {%- set out = [] -%}
-      {%- for c in check_certs_inventory if c.days <= check_certs_warn_days | int -%}
+      {%- for c in check_certs_inventory if c.days <= check_certs_warn_days | int and not c.trust | default(false) -%}
       {%-   set kind = 'tls' if ' (https://' in c.where else ('keystore' if ' (alias ' in c.where
                        or c.where is search('[.](p12|pfx|jks|keystore)$', ignorecase=true) else 'file') -%}
       {%-   set _ = out.append(c | combine({'kind': kind, 'severity': 'critical' if c.days <= check_certs_crit_days | int else 'warning'})) -%}
       {%- endfor -%}
       {{ out }}
 
-- name: Certs | renewal | a new key and CSR for each certificate file (the key stays on this host)
+- name: Certs | renewal | a new key and CSR for each certificate - file, port or keystore (the key stays on this host)
   site_cert_csr:
     certs: "{{ _csr_candidates }}"
     dir: "{{ cert_renew_dir }}"
@@ -29,15 +30,34 @@
     placeholder: "{{ check_certs_placeholder_subject }}"
     file_ext: "{{ cert_renew_attach_ext }}"
     job: "{{ awx_job_id | default('') | string }}"
+    trust_dirs: "{{ check_certs_trust_dirs }}"
+    # a listed keystore's password (an AAP credential), to read its entry: a no_log option, never on a command line
+    keystore_passwords: >-
+      {%- set out = {} -%}
+      {%- for k in check_certs_keystores if k.password_env | default('') -%}
+      {%-   set _ = out.update({k.path: lookup('ansible.builtin.env', k.password_env)}) -%}
+      {%- endfor -%}
+      {{ out | to_json }}
   register: _csr
-  when: _csr_candidates | length > 0
+  when: _csr_candidates | length > 0 and not check_certs_by_hand
 
 - name: Certs | renewal | the result, for the ServiceNow step
   ansible.builtin.set_fact:
     cert_renew_result:
       host: "{{ site_report_name | default(inventory_hostname) }}"
-      certs: "{{ _csr.certs | default([]) }}"
+      certs: "{{ _csr_by_hand if check_certs_by_hand else _csr.certs | default([]) }}"
       content_type: "{{ cert_renew_attach_type }}"
+      retry_txt: "{{ cert_renew_attach_retry_txt | bool }}"
+  vars:
+    # a host renewed by hand (cert_renew_skip_hosts / _groups): each certificate listed, no CSR
+    _csr_by_hand: >-
+      {%- set out = [] -%}
+      {%- for c in _csr_candidates -%}
+      {%-   set _ = out.append({'wheres': [c.where], 'ids': [c.id], 'subject': c.subject, 'issuer': '', 'expires': c.expires, 'days': c.days,
+                                'severity': c.severity, 'status': 'skipped',
+                                'reason': 'renewed by hand - the host is ' ~ check_certs_by_hand ~ ': no CSR (its ticket says so)'}) -%}
+      {%- endfor -%}
+      {{ out }}
 
 - name: Certs | renewal | what was done
   ansible.builtin.debug:

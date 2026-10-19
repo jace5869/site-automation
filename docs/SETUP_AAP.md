@@ -323,14 +323,15 @@ Weekly: one table of every certificate on every host, soonest expiry first.
 
 ### Certificate renewal - CSRs
 
-A new key and a CSR on the host for each certificate file that expires, with the CSR attached to the
-certificate's ServiceNow incident (step 3 of workflow 7; [RUNBOOKS.md](RUNBOOKS.md), "Certificate renewal").
+A new key and a CSR on the host for each certificate that expires (in a file, on a port, in a keystore),
+with the CSR attached to the certificate's ServiceNow incident (step 3 of workflow 7;
+[RUNBOOKS.md](RUNBOOKS.md), "Certificate renewal"). It sends no email.
 
 | Field | Value |
 |---|---|
 | Playbook | `playbooks/cert_renew_csr.yml` |
 | Credentials | `Linux ssh (sudo)`, `ServiceNow API` (+ `Keystore password` if the certificate report uses it) |
-| Variables | `servicenow_assignment_group: <your PKI or Linux team>`: who gets a ticket this job opens (a certificate with no ticket yet). `cert_skip_hosts: [<your Satellite and Capsules>]` if they are not in a group `sat`. `cert_renew_self_signed: true` for CSRs for self-signed certificates too (never postfix's placeholder). Better in `all.yml`, so the certificate report gets the same |
+| Variables | `servicenow_assignment_group: <your PKI or Linux team>`: who gets a ticket this job opens (a certificate with no ticket yet). `cert_skip_hosts: [<your Satellite and Capsules>]` if they are not in a group `sat` (left out of the report too). `cert_renew_skip_hosts: [<IdM, AAP ...>]` for servers renewed by hand: reported, never a CSR. `cert_renew_self_signed: true` for CSRs for self-signed certificates too (never postfix's placeholder). `cert_renew_attach_ext: txt` when your instance refuses `.csr` attachments (a refused one is tried as `.txt` anyway). Better in `all.yml`, so the certificate report gets the same |
 | Job type | try it as **Check** first: it makes and sends nothing |
 
 ### POA&M status

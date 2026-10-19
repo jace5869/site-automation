@@ -29,17 +29,23 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 # check_certs_files: []
 
 ## Also look for certificates in the usual places. Files with many certificates are CA bundles
-## (hundreds of roots, noisy) and are skipped unless listed in check_certs_files.
+## (hundreds of roots, noisy) and are skipped unless listed in check_certs_files. Text (PEM) and
+## binary (DER) certificates are both read; the names in any case (.crt, .CRT, .Pem ...).
 # check_certs_discover: true
 
-## the folders searched (two levels deep) for *.crt, *.pem, *.cer (/etc/stigman/nginx/tls: STIG
-## Manager's nginx certificate, three levels down)
+## the folders searched (two levels deep) for *.crt, *.pem, *.cer, *.der (/etc/stigman/nginx/tls:
+## STIG Manager's nginx certificate, three levels down)
 # check_certs_discover_dirs: [/etc/pki/tls/certs, /etc/pki/nginx, /etc/nginx, /etc/httpd/conf.d, /etc/stigman, /etc/stigman/nginx/tls]
+
+## more folders searched the same way, added to the ones above (no need to repeat them), e.g.
+## [/home, /root, /opt/app/certs]
+# check_certs_discover_extra_dirs: []
 
 ## regular expression: found files whose path matches are skipped
 # check_certs_discover_exclude: 'ca-bundle|ca-certificates|/localhost\.crt$'
 
-## a found file with more certificates than this is a CA bundle: skipped
+## a found file with more certificates than this is a CA bundle: listed as not checked (list it in
+## check_certs_files to check each)
 # check_certs_discover_max_per_file: 10
 
 ## Regular expression on the subject of a package's placeholder certificate: postfix's
@@ -92,6 +98,16 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 ## read at most this many found keystores per host
 # check_certs_discover_keystore_max: 40
 
+## The host's trust store: the CA certificates it trusts, put in by update-ca-trust (the DoD roots
+## ...). Every file in these folders, whatever its name. The certificate report lists them with
+## their dates - never a finding, a ticket or a CSR: a CA renews its own certificate (put its new
+## one in the folder and run update-ca-trust), and a certificate there is not this host's own. The
+## report turns this on.
+# check_certs_discover_trust: false
+
+## the folders read (not the folders below them)
+# check_certs_trust_dirs: [/etc/pki/ca-trust/source/anchors]
+
 ## ---- Leaving hosts out (the certificate report and the renewal; not the health check) ---- Hosts
 ## whose certificates something else renews - Satellite and its Capsules (satellite-installer, never
 ## by hand), appliances - are left out of the certificate report and never get a CSR: listed as not
@@ -104,16 +120,27 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 ## group_vars/sat.yml)
 # cert_skip_groups: [sat]
 
-## ---- Renewal: a new key and CSR for each certificate file that expires soon
+## ---- Renewal: a new key and CSR for each certificate that expires soon
 ## (playbooks/cert_renew_csr.yml) ---- The certificates the report flags (within
 ## check_certs_warn_days - 30 days or less - or expired) get a new key and a CSR with the same
 ## subject and names (subjectAltName), on the host; the CSR is attached to the certificate's
-## ServiceNow incident (a new one if none is open, whatever servicenow_min_severity says). Only
-## certificate FILES: one served on a port or kept in a keystore is listed, not renewed; CA
-## certificates (a chain), self-signed ones (unless cert_renew_self_signed) and placeholders
-## (check_certs_placeholder_subject) never get a CSR. the new keys (0600) and CSRs, on the host (the
-## folder is made 0700); the key never leaves the host
+## ServiceNow incident (a new one if none is open, whatever servicenow_min_severity says). A
+## certificate file, one served on a port (read from the port) and one in a keystore (its entry with
+## a key) all get one; the ticket says where to install it. Never: CA certificates (a chain), self-
+## signed ones (unless cert_renew_self_signed), placeholders (check_certs_placeholder_subject), the
+## trust store (check_certs_trust_dirs, /etc/pki/ca-trust/: certificates this host trusts, not its
+## own). the new keys (0600) and CSRs, on the host (the folder is made 0700); the key never leaves
+## the host
 # cert_renew_dir: /etc/pki/tls/renew
+
+## Hosts whose certificates are renewed by hand (IdM, AAP ...): in the certificate report and its
+## tickets as usual - each ticket says it is renewed by hand - but the renewal makes no CSR for them
+## (listed, with why). The same forms as cert_skip_hosts / cert_skip_groups (which leave a host out
+## of the report too). e.g. [idm01, 'aap*'], or 'idm01, aap*'
+# cert_renew_skip_hosts: []
+
+## e.g. [idm]
+# cert_renew_skip_groups: []
 
 ## RSA key size, at least 2048 (a bigger old key keeps its size; an EC certificate gets a new key on
 ## the same curve)
@@ -125,8 +152,8 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 ## at most this many NEW CSRs per host in one run (the rest come the next run)
 # cert_renew_max: 10
 
-## regular expression: only certificate files whose path matches (empty = every file), e.g.
-## '^/etc/pki/tls/certs/'
+## regular expression: only certificates whose place matches - a file's path, a keystore's path,
+## 'TLS port 8443, ...' (empty = every one), e.g. '^/etc/pki/tls/certs/'
 # cert_renew_only: ''
 
 ## regular expression: only certificates whose issuer matches (empty = any CA), e.g. 'O=U\.S\.
@@ -159,12 +186,17 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 #     is overwritten by the next deploy.
 
 ## The CSR's attachment on the ticket: <common name>-<8 characters of the CSR's SHA-256>.<ext> (a
-## new CSR, a new name). An instance that refuses .csr attachments (its allowed extensions): txt.
-## Refused, the CSR goes in a work note.
+## new CSR, a new name). An instance that refuses .csr attachments (its allowed extensions, or
+## "Invalid file type: text/plain"): txt names every CSR .txt from the start. Refused, it is tried
+## again as .txt (cert_renew_attach_retry_txt); refused again, the CSR goes in the ticket's work
+## note and the job fails, to be seen.
 # cert_renew_attach_ext: csr
 
 ## the attachment's Content-Type (a CSR is Base64 text)
 # cert_renew_attach_type: text/plain
+
+## a refused attachment is tried again as <name>.txt (text/plain); false: straight to the work note
+# cert_renew_attach_retry_txt: true
 
 # ---- servicenow ----------------------------------------------------------------------------------
 ## the table tickets are opened in (incident)

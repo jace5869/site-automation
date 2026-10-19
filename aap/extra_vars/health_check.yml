@@ -91,17 +91,23 @@
 # check_certs_files: []
 
 ## Also look for certificates in the usual places. Files with many certificates are CA bundles
-## (hundreds of roots, noisy) and are skipped unless listed in check_certs_files.
+## (hundreds of roots, noisy) and are skipped unless listed in check_certs_files. Text (PEM) and
+## binary (DER) certificates are both read; the names in any case (.crt, .CRT, .Pem ...).
 # check_certs_discover: true
 
-## the folders searched (two levels deep) for *.crt, *.pem, *.cer (/etc/stigman/nginx/tls: STIG
-## Manager's nginx certificate, three levels down)
+## the folders searched (two levels deep) for *.crt, *.pem, *.cer, *.der (/etc/stigman/nginx/tls:
+## STIG Manager's nginx certificate, three levels down)
 # check_certs_discover_dirs: [/etc/pki/tls/certs, /etc/pki/nginx, /etc/nginx, /etc/httpd/conf.d, /etc/stigman, /etc/stigman/nginx/tls]
+
+## more folders searched the same way, added to the ones above (no need to repeat them), e.g.
+## [/home, /root, /opt/app/certs]
+# check_certs_discover_extra_dirs: []
 
 ## regular expression: found files whose path matches are skipped
 # check_certs_discover_exclude: 'ca-bundle|ca-certificates|/localhost\.crt$'
 
-## a found file with more certificates than this is a CA bundle: skipped
+## a found file with more certificates than this is a CA bundle: listed as not checked (list it in
+## check_certs_files to check each)
 # check_certs_discover_max_per_file: 10
 
 ## Regular expression on the subject of a package's placeholder certificate: postfix's
@@ -153,6 +159,25 @@
 
 ## read at most this many found keystores per host
 # check_certs_discover_keystore_max: 40
+
+## The host's trust store: the CA certificates it trusts, put in by update-ca-trust (the DoD roots
+## ...). Every file in these folders, whatever its name. The certificate report lists them with
+## their dates - never a finding, a ticket or a CSR: a CA renews its own certificate (put its new
+## one in the folder and run update-ca-trust), and a certificate there is not this host's own. The
+## report turns this on.
+# check_certs_discover_trust: false
+
+## the folders read (not the folders below them)
+# check_certs_trust_dirs: [/etc/pki/ca-trust/source/anchors]
+
+## Hosts whose certificates are renewed by hand (IdM, AAP ...): in the certificate report and its
+## tickets as usual - each ticket says it is renewed by hand - but the renewal makes no CSR for them
+## (listed, with why). The same forms as cert_skip_hosts / cert_skip_groups (which leave a host out
+## of the report too). e.g. [idm01, 'aap*'], or 'idm01, aap*'
+# cert_renew_skip_hosts: []
+
+## e.g. [idm]
+# cert_renew_skip_groups: []
 
 # ---- check_containers ----------------------------------------------------------------------------
 ## Containers that MUST exist and run on these hosts: a container name, or OWNER/NAME for one owner

@@ -7,7 +7,11 @@
 # With check_certs_discover_ports / _keystores (the certificate report turns them on) it also finds
 # the listening ports that answer TLS, and the Java keystores on the host:
 #   SKIP|<where>|<why it was not checked>   (listed in the report, not a finding)
-# A found file's placeholder certificate (check_certs_placeholder_subject: postfix's) is a SKIP line too.
+# A found file's placeholder certificate (check_certs_placeholder_subject: postfix's) is a SKIP line too,
+# and so is a found file with more certificates than check_certs_discover_max_per_file (a bundle).
+# With check_certs_discover_trust (the report turns it on): the host's trust store (update-ca-trust):
+#   TRUST|<where>|<subject>|<expiry>   (listed in the report: never a finding, never a CSR)
+# A binary (DER) certificate file is read too:  DER|<where>  (the hint then says -inform DER)
 
 - name: Certs | find and read certificates
   ansible.builtin.shell: |
@@ -21,21 +25,31 @@
     echo "NOW|$(date +%s)"
     tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
     placeholder={{ check_certs_placeholder_subject | quote }}
-    one_file() {   # $1 = file, $2 = max certificates (0 = no limit), $3 = 1: found by the search (not listed)
-      local f=$1 max=$2 disc=${3:-0} n c end subj
+    # $1 = file, $2 = max certificates (0 = no limit), $3 = 1: found by the search (not listed),
+    # $4 = CERT, or TRUST for the trust store (listed in the report: no finding, no CSR)
+    one_file() {
+      local f=$1 max=$2 disc=${3:-0} kind=${4:-CERT} rd=$1 n c end subj
       [ -r "$f" ] || { echo "ERR|$f|not readable"; return; }
       n=$(grep -c 'BEGIN CERTIFICATE' "$f" 2>/dev/null)
-      [ "${n:-0}" -gt 0 ] || return
-      [ "$max" -gt 0 ] && [ "$n" -gt "$max" ] && return
+      if [ "${n:-0}" -eq 0 ]; then
+        # binary (DER): one certificate, read with -inform DER (OpenSSL 1.1.1 on RHEL 8 does not guess it)
+        rd="$tmp"/der.pem
+        openssl x509 -inform DER -in "$f" -out "$rd" 2>/dev/null || return
+        n=1; echo "DER|$f"
+      fi
+      if [ "$max" -gt 0 ] && [ "$n" -gt "$max" ]; then
+        [ "$disc" = 1 ] && echo "SKIP|$f|a bundle of $n certificates (more than check_certs_discover_max_per_file, $max): not checked - list it in check_certs_files to check each certificate in it"
+        return
+      fi
       rm -f "$tmp"/c.*
-      awk -v d="$tmp" '/-----BEGIN CERTIFICATE-----/ {k++; w=1} w {print > (d "/c." k)} /-----END CERTIFICATE-----/ {w=0}' "$f"
+      awk -v d="$tmp" '/-----BEGIN CERTIFICATE-----/ {k++; w=1} w {print > (d "/c." k)} /-----END CERTIFICATE-----/ {w=0}' "$rd"
       for c in "$tmp"/c.*; do
         end=$(openssl x509 -noout -enddate -in "$c" 2>/dev/null | cut -d= -f2-)
         subj=$(openssl x509 -noout -subject -nameopt RFC2253 -in "$c" 2>/dev/null | sed 's/^subject=//; s/|/ /g')
         if [ -z "$end" ]; then echo "ERR|$f|a certificate block openssl cannot read"
         elif [ "$disc" = 1 ] && [ -n "$placeholder" ] && grep -qE -- "$placeholder" <<< "$subj"; then
           echo "SKIP|$f|a placeholder certificate a package made at install (postfix makes one, for a year; its subject matches check_certs_placeholder_subject): not checked - a real certificate put in its place is"
-        else echo "CERT|$f|$subj|$(date -d "$end" +%s)"; fi
+        else echo "$kind|$f|$subj|$(date -d "$end" +%s)"; fi
       done
     }
     explicit=""
@@ -45,11 +59,20 @@
     [ $found = 1 ] || echo "ERR|{{ p }}|no such file"
     {% endfor %}
     {% if check_certs_discover | bool %}
-    find {{ check_certs_discover_dirs | map('quote') | join(' ') }} -maxdepth 2 -type f \( -name '*.crt' -o -name '*.pem' -o -name '*.cer' \) 2>/dev/null |
-      grep -vE {{ check_certs_discover_exclude | quote }} | sort |
+    find {{ (check_certs_discover_dirs + check_certs_discover_extra_dirs | default([], true)) | map('quote') | join(' ') }} -maxdepth 2 -type f \
+      \( -iname '*.crt' -o -iname '*.pem' -o -iname '*.cer' -o -iname '*.der' \) 2>/dev/null |
+      grep -vE {{ check_certs_discover_exclude | quote }} | sort -u |
       while IFS= read -r f; do
         grep -qxF "$f" <<< "$explicit" && continue
         one_file "$f" {{ check_certs_discover_max_per_file | int }} 1
+      done
+    {% endif %}
+    {% if check_certs_discover_trust | bool %}
+    # the trust store: every file, whatever its name (update-ca-trust reads them all) - listed, never a finding or a CSR
+    find {{ check_certs_trust_dirs | map('quote') | join(' ') }} -maxdepth 1 -type f 2>/dev/null | sort -u |
+      while IFS= read -r f; do
+        grep -qxF "$f" <<< "$explicit" && continue
+        one_file "$f" {{ check_certs_discover_max_per_file | int }} 1 TRUST
       done
     {% endif %}
     {% for e in check_certs_endpoints %}
@@ -162,13 +185,16 @@
     check_certs_inventory: >-
       {%- set now = (_certs.stdout_lines | select('match', '^NOW[|]') | first | default('NOW|0')).split('|')[1] | int -%}
       {%- set out = [] -%}
-      {%- for line in _certs.stdout_lines if line.startswith('CERT|') -%}
+      {%- for line in _certs.stdout_lines if line.startswith('CERT|') or line.startswith('TRUST|') -%}
       {%-   set c = line.split('|', 3) -%}
       {%-   set exp = c[3] | int -%}
-      {%-   set _ = out.append({'host': inventory_hostname, 'where': c[1], 'subject': c[2],
+      {%-   set trust = c[0] == 'TRUST' -%}
+      {%-   set where = c[1] ~ (' (trust store)' if trust else '') -%}
+      {%-   set _ = out.append({'host': inventory_hostname, 'where': where, 'subject': c[2],
                                 'expires': '%Y-%m-%d' | strftime(exp) if exp > 0 else '?', 'end': exp,
                                 'days': (((exp - now) / 86400) | round(0, 'floor') | int) if exp > 0 else -99999,
-                                'id': 'cert:' ~ c[1] ~ ':' ~ c[2] | truncate(80, true, '')}) -%}
+                                'trust': trust, 'der': ('DER|' ~ c[1]) in _certs.stdout_lines,
+                                'id': 'cert:' ~ where ~ ':' ~ c[2] | truncate(80, true, '')}) -%}
       {%- endfor -%}
       {{ out | sort(attribute='days') }}
 
@@ -182,26 +208,45 @@
       {%- endfor -%}
       {{ out }}
 
+- name: Certs | renewed by hand on this host? (cert_renew_skip_hosts / cert_renew_skip_groups - reported, never a CSR)
+  ansible.builtin.set_fact:
+    check_certs_by_hand: >-
+      {{ ((['named in cert_renew_skip_hosts (' ~ _hand_hit | join(', ') ~ ')'] if _hand_hit else [])
+         + (['in group ' ~ _hand_in | join(', ') ~ ' (cert_renew_skip_groups)'] if _hand_in else [])) | join(' and ') }}
+  vars:
+    # a list, or one string as a survey gives it: 'idm01, aap*'
+    _hand_hosts: "{{ (cert_renew_skip_hosts | replace(',', ' ')).split() if cert_renew_skip_hosts is string else cert_renew_skip_hosts | default([], true) }}"
+    _hand_groups: "{{ (cert_renew_skip_groups | replace(',', ' ')).split() if cert_renew_skip_groups is string else cert_renew_skip_groups | default([], true) }}"
+    _hand_hit: >-
+      {%- set out = [] -%}
+      {%- for p in _hand_hosts if inventory_hostname | name_matches([p]) or inventory_hostname_short | name_matches([p]) -%}
+      {%-   set _ = out.append(p) -%}
+      {%- endfor -%}
+      {{ out }}
+    _hand_in: "{{ group_names | intersect(_hand_groups) }}"
+
 - name: Certs | findings
   ansible.builtin.set_fact:
     _certs_findings: >-
-      {%- macro _certs_hint(w) -%}
+      {%- macro _certs_hint(w, der) -%}
       {%-   if ' (https://' in w -%}
       {%-     set hp = w.split(' (https://')[1][:-1] -%}
       {{-     'echo | timeout 10 openssl s_client -connect ' ~ (hp | quote) ~ ' 2>/dev/null | openssl x509 -noout -subject -issuer -dates' -}}
       {%-   elif ' (alias ' in w -%}
       {{-     'keytool -list -v -keystore ' ~ (w.split(' (alias ')[0] | quote) ~ ' </dev/null 2>/dev/null | grep -E "Alias name|Owner|until"' -}}
       {%-   else -%}
-      {{-     'openssl x509 -noout -subject -issuer -dates -in ' ~ (w | quote) -}}
+      {{-     'openssl x509 ' ~ ('-inform DER ' if der else '') ~ '-noout -subject -issuer -dates -in ' ~ (w | quote) -}}
       {%-   endif -%}
       {%- endmacro -%}
       {%- set f = [] -%}
-      {%- for c in check_certs_inventory if c.days <= check_certs_warn_days | int -%}
+      {%- for c in check_certs_inventory if c.days <= check_certs_warn_days | int and not c.trust | default(false) -%}
       {%-   set when = ('EXPIRED ' ~ (c.days | abs) ~ ' days ago' if c.days < 0 else 'expires in ' ~ c.days ~ ' days') ~ ' (' ~ c.expires ~ ')' -%}
       {%-   set _ = f.append({'check': 'certs', 'id': c.id,
                               'severity': 'critical' if c.days <= check_certs_crit_days | int else 'warning',
                               'summary': 'certificate ' ~ c.subject ~ ' in ' ~ c.where ~ ' ' ~ when,
-                              'hint': _certs_hint(c.where)}) -%}
+                              'hint': _certs_hint(c.where, c.der | default(false)),
+                              'note': ('Renewed by hand: this host is ' ~ check_certs_by_hand ~ ' - the certificate renewal job makes'
+                                       ~ ' no CSR for it. Renew it the way its product says.') if check_certs_by_hand else ''}) -%}
       {%- endfor -%}
       {%- for line in _certs.stdout_lines if line.startswith('ERR|') -%}
       {%-   set c = line.split('|', 2) -%}

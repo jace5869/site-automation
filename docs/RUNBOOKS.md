@@ -217,10 +217,13 @@ To stop auditd recording that account at all (a host change, not part of the hea
 | `... in STIG Manager (https://127.0.0.1:443) expires in ...` | the certificate a TLS endpoint serves | the service's certificate, even if the file on disk was already replaced (restart the service) |
 | `... in /opt/.../agent_keystore (alias mid) expires in ...` | a Java keystore entry | renew in the keystore (MID Server: ServiceNow's procedure) |
 | `could not check the certificate in X` | unreadable file, endpoint not answering, or a PKCS12 keystore without its password | fix the path, or add the Keystore password credential |
+| a certificate file is not in the report at all | its folder is not searched (a home folder, an application's own folder), or it is a bundle of more than 10 certificates (listed under *Found but not checked*) | add the folder to `check_certs_discover_extra_dirs` (two levels deep: `[/home, /root]` finds `/home/you/x.crt`), or the file to `check_certs_files` |
 
-What it looks at: `check_certs_files` (globs), the usual directories (`check_certs_discover_dirs`,
-skipping CA bundles), `check_certs_endpoints`, `check_certs_keystores`. For a PKCS12 keystore, name
-the variable that holds the password (`password_env: KEYSTORE_PASSWORD`), never the password.
+What it looks at: `check_certs_files` (globs), the usual directories (`check_certs_discover_dirs`, plus
+your own in `check_certs_discover_extra_dirs`; skipping CA bundles), `check_certs_endpoints`,
+`check_certs_keystores`. Text (PEM) and binary (DER) certificate files both, the names in any case
+(`.crt`, `.CRT`, `.pem`, `.cer`, `.der`). For a PKCS12 keystore, name the variable that holds the
+password (`password_env: KEYSTORE_PASSWORD`), never the password.
 
 **All settings** of this check, with their defaults: [check_certs](VARIABLES_REFERENCE.md#check_certs).
 
@@ -478,6 +481,17 @@ within `check_certs_notice_days` (60), the rest plain with a green "ok". Windows
   `check_certs_keystores` with `password_env` and a *Keystore password* credential. The JDK's own
   trust stores (`cacerts`) are skipped.
 
+- **The trust store:** every file in `check_certs_trust_dirs` (`/etc/pki/ca-trust/source/anchors`,
+  where `update-ca-trust` takes the CA certificates the host trusts, such as the DoD roots), whatever its
+  name, text or binary. Shown as `/etc/pki/ca-trust/source/anchors/DoD_Root_CA_3.crt (trust store)`,
+  with its date and colour, but **never a finding, a ticket or a CSR**. A certificate there is not this
+  host's own: its CA renews it. When it does, put the CA's new certificate in that folder and run
+  `update-ca-trust`. The system bundle `update-ca-trust` builds from it (`/etc/pki/tls/certs/ca-bundle.crt`)
+  is never read: it holds hundreds of public roots.
+- **Bundles:** a found file with more than 10 certificates (`check_certs_discover_max_per_file`) is listed
+  under **Found but not checked**, with how many. To check each certificate in it, add it to
+  `check_certs_files`.
+
 The weekly health check (`certs` in `health_checks`) does not search by itself, so it opens no
 tickets for certificates nobody listed; set `check_certs_discover_ports` / `_keystores: true` on it
 when you want that.
@@ -504,11 +518,21 @@ Set them in the template's Variables, or in `all.yml` so the report and the rene
 The health check still checks these hosts (with `[sat]`: the Satellite web UI's certificate,
 `playbooks/group_vars/sat.yml`).
 
+**Reported, but renewed by hand** - IdM, AAP, any server whose certificates are put in place by its own
+tool: name it in `cert_renew_skip_hosts` (or its group in `cert_renew_skip_groups`), not in
+`cert_skip_hosts`. It stays in the report, and the Certificate watch still opens its tickets, each one
+saying *Renewed by hand: this host is named in cert_renew_skip_hosts (idm01) - the certificate renewal
+job makes no CSR for it*. The renewal lists its certificates with that reason and makes no key, no CSR.
+The same forms: a list or one string with commas, any case, `*` and `?`, short names.
+
 ## Certificate renewal: the CSRs (`playbooks/cert_renew_csr.yml`)
 
-For every certificate **file** the certificate report flags (it expires in 30 days or less,
+For every certificate the certificate report flags (it expires in 30 days or less,
 `check_certs_warn_days`, or has expired), the job makes a new private key and a certificate signing
-request (CSR) on the host. It attaches the CSR to the certificate's ServiceNow incident.
+request (CSR) on the host: a certificate in a file (text or binary), one served on a port, one in a
+keystore. It attaches the CSR to the certificate's ServiceNow incident. The renewal sends no email:
+the CSR goes on the ticket (ServiceNow's own notifications tell its assignment group). Making a CSR
+changes nothing in use: the old certificate works until it expires.
 The three use the same window: the report flags, the CSR is made and the incident is opened at 30 days.
 Change it on the workflow (`check_certs_warn_days`) and all three follow. The PKI person submits the CSR and attaches
 the issued certificate to the same ticket. Installing the new certificate is still done by a person:
@@ -516,7 +540,9 @@ this job changes nothing a service uses.
 
 **Per certificate:**
 
-1. It reads the certificate file: the subject and the names (subjectAltName: DNS, IP, email, URI).
+1. It reads the certificate: the subject and the names (subjectAltName: DNS, IP, email, URI) - from its
+   file (a binary, DER, file too), from the port that serves it, or from its keystore entry (the entry
+   with a key; a keystore password from `check_certs_keystores`).
 2. It makes a new key on the host and a CSR with exactly the same subject and names, signed with
    `cert_renew_digest` (sha256).
    - RSA keys are at least `cert_renew_key_bits` (2048); a bigger old key keeps its size.
@@ -546,11 +572,22 @@ this job changes nothing a service uses.
 work note lists every place. The watch opens a ticket for each place; the CSR goes on one of them, and
 each of the others gets a work note saying which ticket has the CSR.
 
-**A certificate served on a port** is renewed through its file. The job finds the file when it is in
-`check_certs_files` or in one of the folders the report searches (`check_certs_discover_dirs`, two
-levels deep: `/etc/pki/tls/certs`, `/etc/pki/nginx`, `/etc/nginx`, `/etc/httpd/conf.d`, `/etc/stigman`,
-and `/etc/stigman/nginx/tls` where *STIG Manager - deploy* puts nginx's certificate). A file anywhere
-else: add its path to `check_certs_files`. To see what the job would do with a certificate that is not
+**Where the issued certificate goes** - step 3 of the next steps on the ticket:
+
+| The certificate is | Step 3 says |
+|---|---|
+| in a file | install it with the new key in place of the file |
+| in a binary (DER) file | the same, converted first: `openssl x509 -in <issued> -outform DER -out <file>` |
+| in a Java keystore or a PKCS12 file | the commands that put the new key and the issued certificate in the keystore, under the same alias, after a copy of the keystore (`cp -p <keystore> <keystore>.bak`, `openssl pkcs12 -export`, `keytool -importkeystore`) |
+| served on a port, its file not found | find where that service keeps its certificate and key, and replace both |
+
+**A certificate served on a port** is matched to its file when the file is in `check_certs_files` or in
+one of the folders the report searches (`check_certs_discover_dirs`, two levels deep: `/etc/pki/tls/certs`,
+`/etc/pki/nginx`, `/etc/nginx`, `/etc/httpd/conf.d`, `/etc/stigman`, and `/etc/stigman/nginx/tls`
+where *STIG Manager - deploy* puts nginx's certificate, plus `check_certs_discover_extra_dirs`). Its
+file not found, it gets its CSR from the port, and the ticket says to find the file. Add the file to
+`check_certs_files` and the next CSR names it. Certificates of services that renew their own (AAP's
+internal CA, for one) are left out by their issuer: `cert_renew_exclude_issuer`. To see what the job would do with a certificate that is not
 expiring yet, run it with **Check**, a **Limit** of that host and `check_certs_warn_days: 400`: it says
 "would make the CSR" or why not, and changes nothing.
 
@@ -565,6 +602,7 @@ then run *STIG Manager - deploy*. Add your own: `{'/opt/app/certs/': 'App: ...'}
 | What | Why |
 |---|---|
 | a host in `cert_skip_hosts` or `cert_skip_groups` (`[sat]`) | Satellite renews its own certificates with `satellite-installer`; left out of the certificate report too |
+| a host in `cert_renew_skip_hosts` or `cert_renew_skip_groups` | renewed by hand (IdM, AAP ...): still in the certificate report, and its tickets say no CSR comes from here |
 | a path matching `cert_renew_exclude` | something else renews it: Satellite and Capsule (katello, foreman, candlepin, pulp, puppet), and subscription-manager on every registered host (`/etc/rhsm`, `/etc/pki/consumer`, `entitlement`, `product`). Check the report's *Where* column and add your own paths |
 | issued by a CA matching `cert_renew_exclude_issuer` (`O=Katello`, `Puppet CA`) | Satellite's or Puppet's own CA |
 | a CA certificate in a chain file | a CA has no CSR from you: put the CA's new certificate in the chain file |
@@ -572,8 +610,8 @@ then run *STIG Manager - deploy*. Add your own: `{'/opt/app/certs/': 'App: ...'}
 | a CA's own certificate (a root: key usage *Certificate Sign*) | a CA has no CSR from you, even with `cert_renew_self_signed` |
 | a self-signed certificate only for `localhost` | a PKI issues no certificate for it, even with `cert_renew_self_signed` |
 | a package's placeholder: postfix's `postfix.pem` (subject `O=SomeOrganization`, `check_certs_placeholder_subject`) | not a real certificate: a PKI issues nothing for that subject, even with `cert_renew_self_signed`. A found one is not even checked |
-| served on a port, with no file found | add its file to `check_certs_files`, and it is renewed |
-| in a Java keystore or a PKCS12 file | make its CSR with the keystore's own tool (`keytool -certreq`) |
+| in the trust store (`check_certs_trust_dirs`, `/etc/pki/ca-trust/`) | a certificate the host trusts, not its own: its CA renews it. Put the CA's new certificate in the anchors folder and run `update-ca-trust`. Your server's own certificate belongs in `/etc/pki/tls/certs` (its key in `/etc/pki/tls/private`) |
+| a keystore's trusted entry (`trustedCertEntry`), or a certificate in a PKCS12 without its key | one the program trusts, not its own |
 | not matching `cert_renew_only` / `cert_renew_issuer` | your filters, e.g. DoD PKI only: `cert_renew_issuer: 'O=U\.S\. Government'` |
 
 A certificate whose CSR cannot be made fails the job with the reason, for example a subject openssl
@@ -583,9 +621,14 @@ cannot write back, or a kind of name it cannot copy. The other certificates are 
 PKI round trip, set `check_certs_warn_days: 60`, as a survey on the workflow, so the report, the
 tickets and the CSRs use the same number.
 
-**Attachment refused:** some instances only allow some file extensions. The CSR then goes in the work
-note instead, and the job fails and says so. Allow the extension, or set `cert_renew_attach_ext: txt`.
-The ServiceNow account needs to add attachments to incidents (the `itil` role does).
+**Attachment refused:** some instances only allow some file extensions or types (`File extension not
+allowed: csr`, `Invalid file type: text/plain`). A refused CSR is attached again as `<name>.txt`
+(`cert_renew_attach_retry_txt`, on), and the work note names that file. Refused again, the CSR goes in
+the work note instead, and the job fails and says so: copy it from the note, and ask for `.csr` (or
+`.txt`) attachments to be allowed on the instance (`glide.attachment.extensions`). To name every CSR
+`.txt` from the start: `cert_renew_attach_ext: txt`. A run again finds the CSR under either name and
+attaches nothing more. The ServiceNow account needs to add attachments to incidents (the `itil` role
+does).
 
 **Try it first:**
 - Run with **Check** (`--check`): it lists what it would make and attach, and writes nothing on the

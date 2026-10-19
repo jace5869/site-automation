@@ -22,7 +22,7 @@
       {%- for h in groups['all'] | sort if hostvars[h].cert_renew_result is defined -%}
       {%-   set r = hostvars[h].cert_renew_result -%}
       {%-   for c in r.certs if c.status in ['made', 'exists', 'would make'] -%}
-      {%-     set _ = out.append(c | combine({'host': r.host, 'inventory_host': h, 'content_type': r.content_type,
+      {%-     set _ = out.append(c | combine({'host': r.host, 'inventory_host': h, 'content_type': r.content_type, 'retry_txt': r.retry_txt | default(true),
                                                'cids': c.ids | map('site_correlation_id', r.host, 'certs', servicenow_correlation_prefix) | list})) -%}
       {%-   endfor -%}
       {%- endfor -%}
@@ -46,7 +46,7 @@
 
 - name: Certificate renewal | nothing to attach
   ansible.builtin.debug:
-    msg: No certificate file expires within the warning days, or all of them were left out (see above).
+    msg: No certificate expires within the warning days, or all of them were left out (see above).
   when: _csr_items | length == 0
 
 - name: Certificate renewal | NOT CONNECTED - the CSRs to hand to the PKI (attach the ServiceNow API credential to put them on the tickets)
@@ -147,7 +147,8 @@
       ansible.builtin.uri:
         url: >-
           {{ _sn_url }}/api/now/attachment?sysparm_limit=1&sysparm_fields=sys_id,file_name&sysparm_query={{
-          ('table_sys_id=' ~ item.ticket.sys_id ~ '^file_name=' ~ item.file_name) | urlencode }}
+          ('table_sys_id=' ~ item.ticket.sys_id ~ '^file_nameIN' ~ item.file_name ~ ',' ~ (item.file_name | regex_replace('[.][^.]*$', '') ~ '.txt'))
+          | urlencode }}
         method: GET
         url_username: "{{ _sn_user }}"
         url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
@@ -197,7 +198,51 @@
       loop_control:
         label: "{{ item.ticket.number }}: {{ item.file_name }}"
       register: _csr_upload
-      failed_when: false        # refused (an extension the instance does not allow ...): the CSR goes in the work note instead
+      failed_when: false        # refused (an extension the instance does not allow ...): tried as .txt below, else the CSR goes in the work note
+
+    # an instance that refuses the name or the type (HTTP 400 "Invalid file type: text/plain", "File extension
+    # not allowed: csr"): the same CSR again, as a text file - its name ends in .txt (cert_renew_attach_retry_txt)
+    - name: Certificate renewal | refused - attach it again as a text file (.txt)
+      ansible.builtin.uri:
+        url: >-
+          {{ _sn_url }}/api/now/attachment/file?table_name={{ servicenow_table | urlencode }}&table_sys_id={{
+          r.item.ticket.sys_id | urlencode }}&file_name={{ (r.item.file_name | regex_replace('[.][^.]*$', '') ~ '.txt') | urlencode }}
+        method: POST
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers:
+          Accept: application/json
+          Content-Type: text/plain
+        body: "{{ r.item.csr }}"
+        body_format: raw
+        status_code: [200, 201]
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: >-
+        {{ _csr_upload.results | default([]) | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201])
+           | rejectattr('item.file_name', 'match', '.*[.]txt$') | selectattr('item.retry_txt') | list }}
+      loop_control:
+        loop_var: r
+        label: "{{ r.item.ticket.number }}: {{ r.item.file_name | regex_replace('[.][^.]*$', '') }}.txt"
+      register: _csr_retry
+      failed_when: false        # refused again: the CSR goes in the work note
+
+    - name: Certificate renewal | each CSR's attachment - as it is, or as .txt after a refusal
+      ansible.builtin.set_fact:
+        _csr_up: >-
+          {%- set out = [] -%}
+          {%- for u in _csr_upload.results | default([]) -%}
+          {%-   set r = _csr_retry.results | default([]) | selectattr('r', 'defined') | selectattr('r.item.ticket.sys_id', 'equalto', u.item.ticket.sys_id)
+                        | selectattr('r.item.file_name', 'equalto', u.item.file_name) | list -%}
+          {%-   if r and r[0].status | default(0) in [200, 201] -%}
+          {%-     set _ = out.append(u | combine({'status': r[0].status, 'attached_as': u.item.file_name | regex_replace('[.][^.]*$', '') ~ '.txt'})) -%}
+          {%-   else -%}
+          {%-     set _ = out.append(u | combine({'txt_refused': r | length > 0})) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
 
     - name: Certificate renewal | a work note - the certificate, the new key, what to do next (the CSR itself when the attachment was refused)
       ansible.builtin.uri:
@@ -218,7 +263,7 @@
             {%-   if i.wheres | select('match', start | regex_escape) | list and note not in hints -%}{%- set _ = hints.append(note | trim) -%}{%- endif -%}
             {%- endfor -%}
             {{ 'Certificate renewal (AAP' ~ ((' job ' ~ awx_job_id) if awx_job_id is defined else '') ~ ', ' ~ _sn_now ~ '): '
-               ~ ('a certificate signing request (CSR) is attached: ' ~ i.file_name if ok else
+               ~ ('a certificate signing request (CSR) is attached: ' ~ u.attached_as | default(i.file_name) if ok else
                   'the CSR could not be attached (' ~ _csr_why ~ ') - it is at the end of this note') ~ nl ~ nl
                ~ 'Host: ' ~ i.host ~ nl
                ~ 'Certificate: ' ~ i.subject ~ nl
@@ -232,7 +277,8 @@
                ~ 'Next:' ~ nl
                ~ '1. Submit the CSR to the PKI for a server certificate (the same subject and names).' ~ nl
                ~ '2. Attach the issued certificate (Base64 .cer / .crt) and its chain to this ticket.' ~ nl
-               ~ '3. ' ~ (hints | join(' ') if hints else 'Install it with the new key in place of the file(s) above, and restart or reload the service that uses it.')
+               ~ '3. ' ~ (hints | join(' ') if hints else (i.install | default('', true)
+                          or 'Install it with the new key in place of the file(s) above, and restart or reload the service that uses it.'))
                ~ ((nl ~ nl ~ i.csr) if not ok else '') }}
         validate_certs: "{{ servicenow_validate_certs }}"
         ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
@@ -240,8 +286,8 @@
       vars:
         _csr_why: >-
           {{ 'HTTP ' ~ u.status | default('?') ~ ((': ' ~ u.json.error.message | default('') ~ (' - ' ~ u.json.error.detail if u.json.error.detail | default('') else ''))
-             if u.json.error is defined else (': ' ~ u.msg | default('') | truncate(200))) }}
-      loop: "{{ _csr_upload.results | default([]) }}"
+             if u.json.error is defined else (': ' ~ u.msg | default('') | truncate(200))) ~ ('; refused as a .txt file too' if u.txt_refused | default(false) else '') }}
+      loop: "{{ _csr_up }}"
       loop_control:
         loop_var: u
         label: "{{ u.item.ticket.number }}: {{ u.item.file_name }}"
@@ -288,9 +334,10 @@
         msg: >-
           {%- set out = [] -%}
           {%- for t in _csr_tickets -%}
-          {%-   set u = (_csr_upload.results | default([]) | selectattr('item.file_name', 'equalto', t.file_name)
+          {%-   set u = (_csr_up | default([]) | selectattr('item.file_name', 'equalto', t.file_name)
                          | selectattr('item.ticket.sys_id', 'equalto', t.ticket.sys_id) | list) -%}
-          {%-   set what = ('attached' if u[0].status | default(0) in [200, 201] else 'NOT attached (refused: the CSR is in the work note)') if u else 'already attached' -%}
+          {%-   set what = (('attached' ~ ((' as ' ~ u[0].attached_as ~ ' (refused as ' ~ t.file_name ~ ')') if u[0].attached_as is defined else ''))
+                            if u[0].status | default(0) in [200, 201] else 'NOT attached (refused: the CSR is in the work note)') if u else 'already attached' -%}
           {%-   set _ = out.append(t.ticket.number ~ (' (new)' if t.ticket.new else '') ~ ' | ' ~ t.host ~ ' | ' ~ t.file_name ~ ' | ' ~ what) -%}
           {%- endfor -%}
           {{ out or ['nothing attached'] }}
@@ -299,10 +346,14 @@
     - name: Certificate renewal | fail when a CSR could not be attached (its work note has it)
       ansible.builtin.fail:
         msg: >-
-          {{ _csr_upload.results | rejectattr('status', 'in', [200, 201]) | map(attribute='item.file_name') | join(', ') }}: the attachment was refused
-          (HTTP {{ (_csr_upload.results | rejectattr('status', 'in', [200, 201]) | first).status | default('?') }}) - each CSR is in its ticket's work note.
-          If the instance does not allow that file extension, allow it, or set cert_renew_attach_ext: txt.
-      when: not ansible_check_mode and (_csr_upload.results | default([]) | rejectattr('status', 'in', [200, 201]) | list | length > 0)
+          {{ _bad | map(attribute='item.file_name') | join(', ') }}: the attachment was refused (HTTP {{ _bad[0].status | default('?') }}){{
+          ', as a .txt file too' if _bad | selectattr('txt_refused', 'defined') | selectattr('txt_refused') | list else '' }} - each CSR is in its
+          ticket's work note, to copy from there. To have them attached: allow .csr or .txt attachments on the instance (its allowed
+          extensions, glide.attachment.extensions, and the attachment's type), or set cert_renew_attach_ext to one it allows{{
+          ' (cert_renew_attach_retry_txt: true tries each one again as .txt)' if not _bad[0].item.retry_txt | default(true) else '' }}.
+      vars:
+        _bad: "{{ _csr_up | default([]) | rejectattr('status', 'in', [200, 201]) | list }}"
+      when: not ansible_check_mode and (_csr_up | default([]) | rejectattr('status', 'in', [200, 201]) | list | length > 0)
 
 - name: Certificate renewal | fail when a CSR could not be made (the reason is above)
   ansible.builtin.fail:

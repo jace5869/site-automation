@@ -1363,9 +1363,13 @@ On the MECM side, one of the two usual ways:
    Computer Information**: name = `vm_name`, MAC = the one on the ticket) into the collection the task
    sequence is deployed to.
 
-The task sequence deployment is **Required**, available to *Configuration Manager clients, media and
-PXE* (Available would wait for someone to press F12). After it succeeded, MECM does not start it again
-on that computer; to rebuild the same VM: the device in MECM > **Clear Required PXE Deployments**.
+The task sequence deployment is **Required**, made available to **Only media and PXE**, and deployed to
+a collection that holds only the new VMs (the imported computers, or *All Unknown Computers*) - never to
+one with servers in use: a Required deployment that also goes to *Configuration Manager clients* runs on
+every client in its collection and installs it again. An **Available** deployment waits at the VM's
+console for someone to press a key: F12 on a BIOS VM, Enter (*Press ENTER for network boot service*) on
+an EFI one. After it succeeded, MECM does not start it again on that computer; to rebuild the same VM:
+the device in MECM > **Clear Required PXE Deployments**.
 
 **The template, for a network boot:**
 
@@ -1598,6 +1602,7 @@ each step with `VMware |`; the line that failed names the step.
 | Customization `no result within 900 s` | VMware Tools does not run in the template, or cloud-init blocks VMware customization | fix the template; the VM exists - set its host name by hand, or delete it and run again |
 | `no IPv4 address within 600 s` | no DHCP lease on the staging VLAN, or VMware Tools does not run | check DHCP; the IP shows in vCenter when it comes; the VM exists |
 | `the template's ... is not set to connect at power on` | the template's network adapter | tick **Connect at power on** on the template |
+| A network-boot VM waits at *Press ENTER for network boot service* (F12 on a BIOS VM) | the MECM task sequence deployment is **Available**: it waits for a key | make it **Required**, available to **Only media and PXE**, on a collection of only the new VMs (*Empty templates*, "On the MECM side") |
 | A network-boot VM sits at "PXE-E..." / "No boot device" | the VLAN does not reach MECM's PXE, or MECM does not answer this computer | the DHCP / IP helper on the staging VLAN; the computer imported in MECM, or unknown-computer support on the task sequence |
 | `[AAP] 1 of 2 VMs built (...); this ticket stays open` | one VM failed (its own note says why), the others were built | fix the cause and run the job again: the VMs built are left as they are, the rest are built, the ticket is closed |
 

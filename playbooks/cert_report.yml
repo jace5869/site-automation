@@ -1,7 +1,7 @@
 ---
 # CERTIFICATE REPORT - weekly. Every certificate the certs check finds on every host (files,
-# keystores, TLS endpoints - and, found by themselves, the listening ports that answer TLS and the
-# Java keystores: cert_report_discover), in ONE table sorted by expiry date - the list to hand to whoever
+# keystores, TLS endpoints - and, found by themselves, the listening ports that answer TLS, the
+# Java keystores and the trust store: cert_report_discover), in ONE table sorted by expiry date - the list to hand to whoever
 # renews certificates. Read-only. Fails when one expires within check_certs_warn_days, so a
 # workflow can open tickets. Hosts in cert_skip_hosts or cert_skip_groups (Satellite) are left out.
 # The CSRs for the ones that expire: playbooks/cert_renew_csr.yml.
@@ -13,10 +13,12 @@
   become: true
   gather_facts: false
   vars:
-    # the report also finds certificates by itself: listening ports that answer TLS, Java keystores
-    # (the health check's weekly certs check does not: cert_report_discover: false turns it off here too)
+    # the report also finds certificates by itself: listening ports that answer TLS, Java keystores, the
+    # trust store - listed only (the health check's weekly certs check does not: cert_report_discover: false
+    # turns it off here too)
     check_certs_discover_ports: "{{ cert_report_discover | default(true) }}"
     check_certs_discover_keystores: "{{ cert_report_discover | default(true) }}"
+    check_certs_discover_trust: "{{ cert_report_discover | default(true) }}"
   pre_tasks:
     - name: Linux hosts only (Windows servers have their own templates, playbooks/win_*.yml)
       ansible.builtin.include_role:
