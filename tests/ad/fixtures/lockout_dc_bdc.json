@@ -1,0 +1,67 @@
+{
+    "dc": {
+        "capped": [],
+        "domain": "corp.test",
+        "errors": [],
+        "events": [
+            {
+                "by": "",
+                "computer": "",
+                "id": 4771,
+                "ip": "192.0.2.25",
+                "logon_type": null,
+                "package": "",
+                "process": "",
+                "status": "0x18",
+                "sub_status": "",
+                "time": "2026-10-20T18:04:59Z",
+                "user": "jdoe"
+            },
+            {
+                "by": "",
+                "computer": "",
+                "id": 4771,
+                "ip": "192.0.2.25",
+                "logon_type": null,
+                "package": "",
+                "process": "",
+                "status": "0x18",
+                "sub_status": "",
+                "time": "2026-10-20T17:59:59Z",
+                "user": "jdoe"
+            },
+            {
+                "by": "",
+                "computer": "",
+                "id": 4771,
+                "ip": "192.0.2.99",
+                "logon_type": null,
+                "package": "",
+                "process": "",
+                "status": "0x18",
+                "sub_status": "",
+                "time": "2026-10-20T17:56:59Z",
+                "user": "jdoe"
+            }
+        ],
+        "fqdn": "dc02.corp.test",
+        "name": "DC02",
+        "names": {
+            "192.0.2.25": "exch01.corp.test",
+            "192.0.2.99": ""
+        },
+        "read_at": "2026-10-20T18:54:59Z",
+        "role": "dc",
+        "users": [
+            {
+                "bad_password_time": "2026-10-20T18:34:59Z",
+                "bad_pwd_count": 3,
+                "last_logon": "2026-10-19T18:54:59Z",
+                "locked": true,
+                "lockout_time": "2026-10-20T18:34:59Z",
+                "read": true,
+                "sam": "jdoe"
+            }
+        ]
+    }
+}

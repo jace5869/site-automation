@@ -1,0 +1,74 @@
+{
+    "find": {
+        "ad_module": true,
+        "domain": "corp.test",
+        "errors": [],
+        "fqdn": "dc01.corp.test",
+        "locked": [],
+        "locked_total": 0,
+        "name": "DC01",
+        "netbios": "CORP",
+        "pdc": "dc01.corp.test",
+        "policy": {
+            "duration_min": 30.0,
+            "threshold": 5,
+            "window_min": 30.0
+        },
+        "read_at": "2026-10-20T18:54:58Z",
+        "role": "pdc",
+        "users": [
+            {
+                "display": "Jane Doe",
+                "dn": "CN=Jane Doe,OU=Staff,DC=corp,DC=test",
+                "duration_min": null,
+                "enabled": true,
+                "expires": "",
+                "found": true,
+                "here": true,
+                "input": "JDOE@corp.test",
+                "locked": true,
+                "lockout_time": "2026-10-20T18:34:58Z",
+                "password_expired": false,
+                "password_never_expires": false,
+                "password_set": "2026-10-19T18:54:58Z",
+                "policy": "",
+                "sam": "jdoe",
+                "sid": "S-1-5-21-1-2-3-1105",
+                "threshold": null,
+                "upn": "jdoe@corp.test",
+                "window_min": null
+            },
+            {
+                "found": false,
+                "here": true,
+                "input": "nobody"
+            },
+            {
+                "found": false,
+                "here": false,
+                "input": "OTHER\\x"
+            },
+            {
+                "display": "Pat O'Brien",
+                "dn": "CN=Pat O'Brien,OU=Staff,DC=corp,DC=test",
+                "duration_min": null,
+                "enabled": true,
+                "expires": "",
+                "found": true,
+                "here": true,
+                "input": "o'brien",
+                "locked": false,
+                "lockout_time": "",
+                "password_expired": true,
+                "password_never_expires": false,
+                "password_set": "2026-10-15T18:54:58Z",
+                "policy": "",
+                "sam": "o'brien",
+                "sid": "S-1-5-21-1-2-3-1108",
+                "threshold": null,
+                "upn": "",
+                "window_min": null
+            }
+        ]
+    }
+}

@@ -1,0 +1,15 @@
+---
+# Job 2 of the image push workflow: the step after the approval. AAP hands it the plan job's plan
+# (horizon_push_plan); each pool is read again and the push is scheduled only when the pool is still there,
+# not protected and has no push already scheduled or running - exactly the approved image, snapshot, start
+# and log-off policy. It refuses to run on its own. Do not tick "Prompt on launch" for Variables on its template.
+# Runs on the AAP side: attach the "Horizon API" credential. docs/HORIZON.md
+- name: Horizon - push the approved image
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon - push the approved image
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: image_push.yml

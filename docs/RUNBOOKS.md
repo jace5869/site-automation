@@ -774,6 +774,46 @@ setup, every report's sections and troubleshooting are in [VMWARE.md](VMWARE.md)
 
 **All settings** of this job, with their defaults: [vmware_vm](VARIABLES_REFERENCE.md#vmware_vm).
 
+## Account lockout (`playbooks/ad_lockout.yml`)
+
+On demand, for the service desk: give it the account (`jdoe`, `CORP\jdoe`, a UPN), or nothing for
+every account locked out now. Every DC reads its own bad password count and its Security log; the
+report ranks the computers the failed sign-ins came from and says what each one usually is. Setup,
+the audit policy it needs, the survey and the unlock are in
+[ACTIVE_DIRECTORY.md](ACTIVE_DIRECTORY.md#account-lockout).
+
+| You see | Means | Usually |
+|---|---|---|
+| `kept trying after the account was locked out` | that computer still has the old password | it locks out again right after an unlock: fix it first |
+| `tries about every 5 minutes` | a steady pace: a saved password retrying | a service, a scheduled task, a mapped drive or an application on that computer |
+| `is a mail server` | the sign-ins came through Exchange (ActiveSync, Outlook) | a phone with the old password |
+| `The DC did not record which computer` | a server signed in for the user | NPS / RADIUS (Wi-Fi, VPN), Exchange / OWA, a web application |
+| `has a DISCONNECTED session` (with `ad_lockout_check_sources`) | a Remote Desktop session left open | sign it out (`logoff <id>` on that computer) |
+| `No failed sign-in ... the DCs may not audit` | no 4740 / 4771 / 4776 events | the DCs' audit policy, or the Security log rolled over |
+
+**All settings** of this job, with their defaults: [ad_lockout](VARIABLES_REFERENCE.md#ad_lockout).
+
+## Horizon 8 (VDI) (`playbooks/horizon_*.yml`)
+
+The API test, the health and capacity reports, the broken desktops check and its fix after an
+approval, user help for the service desk, the disconnected session cleanup, and the golden image
+push after an approval. They read the Connection Server's REST API; the account, the templates, the
+two workflows and every message are in [HORIZON.md](HORIZON.md).
+
+**All settings** of these jobs, with their defaults: [horizon](VARIABLES_REFERENCE.md#horizon).
+
+## VMware pick lists (`playbooks/vm_pick_refresh.yml`, `vm_snapshot_delete_picked.yml`, `vm_reboot_picked.yml`)
+
+Choose from a list instead of typing VM names: a scheduled refresh writes what may be done right now
+- the snapshots the cleanup could delete, the VMs that may be restarted, or only the hung ones (no
+heartbeat, or VMware Tools not running) - as the choices of a multiple-select survey question. The
+pick jobs find every pick again in vCenter, live, skip what is gone or no longer allowed (with the
+reason), and in their workflow plan first, wait for an approval, then do exactly the plan. Never the
+AAP server or a protected VM; never more than `vm_pick_max` (20) at once. Setup and limits:
+[VMWARE.md](VMWARE.md), "Pick lists".
+
+**All settings** of these jobs (`vm_pick_*`): [vmware_vm](VARIABLES_REFERENCE.md#vmware_vm).
+
 ## Windows hosts
 
 Windows has its own playbooks, checks and troubleshooting areas (for example `updates` and

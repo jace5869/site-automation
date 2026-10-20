@@ -1,0 +1,36 @@
+---
+# On the AAP side (playbooks/ad_lockout.yml): the report from what the DCs (collect.yml) and the source
+# computers (sources.yml) answered, in plugins/filter/ad_lockout_filters.py. Output: _adl - the report,
+# the accounts and the inventory hosts to look on (check).
+- name: Lockout | the answers
+  ansible.builtin.set_fact:
+    _adl_finds: "{{ groups['all'] | map('extract', hostvars) | selectattr('adl_find_result', 'defined') | map(attribute='adl_find_result') | list }}"
+    _adl_dcs: "{{ groups['all'] | map('extract', hostvars) | selectattr('adl_dc_result', 'defined') | map(attribute='adl_dc_result') | list }}"
+    _adl_unlocks: "{{ groups['all'] | map('extract', hostvars) | selectattr('adl_unlock_result', 'defined') | map(attribute='adl_unlock_result') | list }}"
+    _adl_sources: "{{ groups['all'] | map('extract', hostvars) | selectattr('adl_source_result', 'defined') | map(attribute='adl_source_result') | list }}"
+    # the hosts of this inventory, to tell which source computers can be looked on
+    _adl_inventory: >-
+      {%- set out = [] -%}
+      {%- for h in groups['all'] if h != 'localhost' -%}
+      {%-   set _ = out.append({'name': h, 'address': hostvars[h].ansible_host | default('') | string}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Lockout | some domain controller answered
+  ansible.builtin.assert:
+    that: _adl_finds | length > 0
+    fail_msg: >-
+      No domain controller was read: the job ran on no Windows host of the target ({{ target | default('win_dc') }}).
+      Put the DCs in the group win_dc of the Windows inventory, or set target.
+    quiet: true
+
+# one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: Lockout | the report
+  ansible.builtin.set_fact:
+    _adl: >-
+      {{ _adl_finds | ad_lockout_report(_adl_dcs, _adl_unlocks, _adl_sources, {
+           'hours': ad_lockout_hours | float, 'asked': (ad_lockout_user | default('', true) | ad_lockout_names(ad_lockout_max_users | int)).names | length > 0,
+           'unlock': ad_lockout_unlock | bool, 'check_mode': ansible_check_mode,
+           'check_sources': ad_lockout_check_sources | bool, 'check_max': ad_lockout_check_max | int,
+           'exchange_servers': ad_lockout_exchange_servers, 'inventory': _adl_inventory,
+           'max_rows': ad_lockout_max_rows | int, 'now': ad_lockout_now | default('')}) }}

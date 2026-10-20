@@ -1,0 +1,93 @@
+---
+# On each domain controller (playbooks/ad_lockout.yml, second play). Scripts in files/, run with the
+# built-in `script` module over WinRM - no collection needed:
+#   lockout_find.ps1    on every DC: who it is, and (the PDC emulator's answer is used) the accounts to
+#                       look for and the lockout policy                        -> adl_find_result
+#   lockout_dc.ps1      on every DC: its own count of each account's bad passwords, and its Security
+#                       log for the account (where the failed sign-ins came from) -> adl_dc_result
+#   lockout_unlock.ps1  with ad_lockout_unlock, on the PDC emulator: the unlock  -> adl_unlock_result
+# A DC that cannot be reached is not an error of the job: the report lists it.
+- name: Lockout | who this DC is, and the accounts to look for (read-only)
+  ansible.builtin.script: lockout_find.ps1
+  environment:
+    SITE_CHECK_CONFIG: "{{ {'users': _adl_names, 'max_users': ad_lockout_max_users | int} | to_json }}"
+  register: _adl_find_out
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true
+  check_mode: false                     # it only reads: a dry run (Check) shows the real report
+
+- name: Lockout | its answer
+  ansible.builtin.set_fact:
+    adl_find_result: >-
+      {{ {'host': inventory_hostname, 'reachable': not (_adl_find_out.unreachable | default(false)),
+          'error': '' if _adl_line else ((_adl_find_out.msg | default('') if _adl_find_out.unreachable | default(false) else '')
+                                        or _adl_err or _adl_find_out.msg | default('') or 'the script gave no result') | truncate(400),
+          'data': (_adl_line[16:] | from_json).find if _adl_line else none} }}
+  vars:
+    _adl_line: "{{ _adl_find_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+    _adl_err: "{{ _adl_find_out.stderr | default('') | ad_ps_error }}"
+
+- name: Lockout | the DC that reads each domain, and the accounts to look for there
+  ansible.builtin.include_tasks: pick.yml
+
+- name: Lockout | this DC's count of bad passwords, and its Security log (read-only)
+  ansible.builtin.script: lockout_dc.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'users': _adl_mine | map('dict2items') | map('selectattr', 'key', 'in', ['sam', 'upn']) | map('items2dict') | list,
+          'hours': ad_lockout_hours | float, 'max_events': ad_lockout_max_events | int,
+          'resolve_max': ad_lockout_resolve_max | int} | to_json }}
+  vars:
+    _adl_mine: "{{ _adl_tg.by_domain[adl_find_result.data.domain | default('') | lower] | default([]) }}"
+  register: _adl_dc_out
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true
+  check_mode: false
+  when:
+    - adl_find_result.data is not none
+    - _adl_mine | length > 0
+
+- name: Lockout | its answer
+  ansible.builtin.set_fact:
+    # no account to look for in its domain (none locked out): it was read, there was nothing to read
+    adl_dc_result: >-
+      {{ {'host': inventory_hostname, 'reachable': adl_find_result.reachable and not (_adl_dc_out.unreachable | default(false)),
+          'error': adl_find_result.error if adl_find_result.data is none else
+                   ('' if _adl_line or _adl_none | bool else (_adl_err or _adl_dc_out.msg | default('') or 'the script gave no result') | truncate(400)),
+          'data': (_adl_line[16:] | from_json).dc if _adl_line else
+                  ({'name': adl_find_result.data.name | default(''), 'domain': adl_find_result.data.domain | default(''),
+                    'role': adl_find_result.data.role | default(''), 'users': [], 'events': [], 'names': {}, 'capped': [], 'errors': []}
+                   if _adl_none | bool else none)} }}
+  vars:
+    _adl_line: "{{ _adl_dc_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+    _adl_err: "{{ _adl_dc_out.stderr | default('') | ad_ps_error }}"
+    _adl_none: "{{ adl_find_result.data is not none and _adl_dc_out.skipped | default(false) }}"
+
+- name: Lockout | unlock {{ _adl_unlock | map(attribute='sam') | join(', ') }} (ad_lockout_unlock)
+  ansible.builtin.script: lockout_unlock.ps1
+  environment:
+    SITE_CHECK_CONFIG: "{{ {'users': _adl_unlock | map('dict2items') | map('selectattr', 'key', 'in', ['sam', 'dn']) | map('items2dict') | list} | to_json }}"
+  vars:
+    _adl_unlock: "{{ _adl_tg.by_domain[adl_find_result.data.domain | default('') | lower] | default([]) | selectattr('locked') | list }}"
+  register: _adl_unlock_out
+  changed_when: _adl_unlock_out.rc | default(1) == 0
+  failed_when: false
+  when:
+    - ad_lockout_unlock | bool
+    - not ansible_check_mode
+    - adl_find_result.data is not none
+    - inventory_hostname == _adl_pick[adl_find_result.data.domain | default('') | lower] | default('')
+    - _adl_unlock | length > 0
+
+- name: Lockout | the unlock's answer
+  ansible.builtin.set_fact:
+    adl_unlock_result: >-
+      {{ {'host': inventory_hostname, 'domain': adl_find_result.data.domain | lower,
+          'error': '' if _adl_line else (_adl_err or _adl_unlock_out.msg | default('') or 'the unlock gave no result') | truncate(400),
+          'data': (_adl_line[16:] | from_json).unlock if _adl_line else {'unlocked': []}} }}
+  vars:
+    _adl_line: "{{ _adl_unlock_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+    _adl_err: "{{ _adl_unlock_out.stderr | default('') | ad_ps_error }}"
+  when: _adl_unlock_out is defined and _adl_unlock_out.skipped is not defined

@@ -1,0 +1,19 @@
+---
+# VM RESTART - PICKED FROM THE LIST (vCenter). Restarts the VMs picked in the survey (vm_reboot_picks:
+# choices vm_pick_refresh.yml wrote), each found again live and still offered (never the AAP server or a
+# protected VM; with vm_pick_reboot_only_hung, still hung). guest (default) = the operating system restarts
+# itself through VMware Tools; vm_power_mode: hard = a reset (the hung ones). On its own it only lists them
+# (the plan) unless vm_pick_confirm: true; in a workflow: this template, then an approval, then this template
+# again - the second run restarts exactly what the first listed (vm_reboot_pick_plan). Never more than
+# vm_pick_max. Do not tick "Prompt on launch" for Variables on its job template.
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md, "Pick lists"
+#   ansible-playbook playbooks/vm_reboot_picked.yml -e '{"vm_reboot_picks": ["web01 (...) [vc01.example.mil/vm-42]"]}'
+- name: VM restart - picked
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM restart - picked
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: reboot_picked.yml

@@ -1,0 +1,21 @@
+---
+# One action on Horizon: site_horizon act. In a dry run (Check) nothing is sent - each ID says "would".
+# Input: _hz_target (machines | sessions | pool), _hz_verb, _hz_ids, _hz_body ({}), _hz_query ({}).
+# Output: _hz_act.results [{id, ok, status, error}].
+- name: "Horizon | {{ _hz_verb }} {{ _hz_ids | length }} {{ _hz_target }}{{ ' - a dry run, nothing is sent' if ansible_check_mode else '' }}"
+  site_horizon:
+    action: act
+    target: "{{ _hz_target }}"
+    verb: "{{ _hz_verb }}"
+    ids: "{{ _hz_ids }}"
+    body: "{{ _hz_body | default({}) }}"
+    query: "{{ _hz_query | default({}) }}"
+    action_version: "{{ horizon_action_version }}"
+    newest: "{{ horizon_api_newest | int }}"
+    ca_path: "{{ horizon_ca_path }}"
+    timeout: "{{ horizon_timeout | int }}"
+  register: _hz_act
+
+- name: Horizon | gather the results (_hz_all_results)
+  ansible.builtin.set_fact:
+    _hz_all_results: "{{ _hz_all_results | default([]) + _hz_act.results }}"

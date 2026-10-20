@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: horizon
+  description: "VMware Horizon 8 through the Connection Server's REST API: health and capacity reports, broken desktops, user help, disconnected sessions, image push (no collection needed)."
+  license: MIT
+  min_ansible_version: "2.16"
+dependencies: []

@@ -1,0 +1,33 @@
+---
+# CAPACITY REPORT (playbooks/horizon_capacity_report.yml). Read-only: per desktop pool its maximum, its
+# desktops - free, in use (connected or disconnected), broken, other (being made, customized, deleted,
+# maintenance) - its sessions, and how full it is (in use against the maximum): amber at
+# horizon_capacity_warn_pct or with fewer free desktops than its spares, red at horizon_capacity_crit_pct or
+# with none free. Green unless horizon_health_fail.
+- name: Horizon | read the pools, desktops and sessions
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the pools, desktops and sessions
+    _hz_resources: [desktop_pools, machines, sessions]
+
+- name: Horizon | the capacity report
+  ansible.builtin.set_fact:
+    _hz_cap: "{{ _hz | hz_capacity({'warn_pct': horizon_capacity_warn_pct | float, 'crit_pct': horizon_capacity_crit_pct | float}) }}"
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: "{{ _hz_cap.report }}"
+    _hz_footer: "Read-only: the Horizon REST API of {{ _hz_read.url }}."
+
+- name: Horizon | each pool as job artifacts (horizon_capacity)
+  ansible.builtin.set_stats:
+    data:
+      horizon_capacity: "{{ _hz_cap.pools }}"
+
+- name: Horizon | no pool full
+  ansible.builtin.assert:
+    that: _hz_cap.critical | int == 0
+    fail_msg: "{{ _hz_cap.critical }} pool(s) full or nearly (the report is above). horizon_health_fail: false makes this a report only."
+    quiet: true
+  when: horizon_health_fail | bool

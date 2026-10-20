@@ -1,0 +1,17 @@
+{
+    "find": {
+        "ad_module": false,
+        "domain": "corp.test",
+        "errors": [
+            "ActiveDirectory PowerShell module: The specified module 'ActiveDirectory' was not loaded because no valid module file was found."
+        ],
+        "fqdn": "dc01.corp.test",
+        "locked": [],
+        "locked_total": 0,
+        "name": "DC01",
+        "policy": null,
+        "read_at": "2026-10-20T18:54:59Z",
+        "role": "pdc",
+        "users": []
+    }
+}

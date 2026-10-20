@@ -1,0 +1,35 @@
+---
+# Account lockout (playbooks/ad_lockout.yml): is the account locked out, and WHAT is locking it out -
+# the computers its bad passwords came from, from the Security log of every domain controller. Read-only,
+# unless ad_lockout_unlock. A PowerShell script on every DC (WinRM, the Windows Machine credential): the
+# account needs to read the DCs' Security logs - see docs/ACTIVE_DIRECTORY.md, "Account lockout".
+
+# ---- The account ---------------------------------------------------------------------------------
+
+# The account to look at, as the service desk is given it: jdoe, CORP\jdoe or jdoe@corp.example.mil (a
+# survey question, NOT required). Several: one per line, or separated by commas. "" = every account
+# locked out now, each with the computer locking it out.
+ad_lockout_user: ""
+ad_lockout_hours: 24                     # the Security log entries of the last this-many hours (raise it for a lockout of last week)
+ad_lockout_max_users: 25                 # at most this many accounts (asked for, or locked out now) in one run
+# true = unlock the account (on the PDC emulator) after reading - only an account asked for by name, and
+# only when it is locked out. A dry run (Check) says what it would unlock. It locks out again as soon as
+# the source computer tries its old password again: the report says what to fix first.
+ad_lockout_unlock: false
+
+# ---- The source computers -------------------------------------------------------------------------
+
+# true = also look on each source computer that is a host of this job's inventory (Windows, WinRM, the
+# same credential - it needs administrator rights there): services and scheduled tasks running as the
+# account, its sessions (a disconnected Remote Desktop session), processes and mapped drives. Read-only.
+ad_lockout_check_sources: false
+ad_lockout_check_max: 5                  # look on at most this many source computers per account (the worst first)
+# Your mail servers (Exchange / ActiveSync, by name or address, * and ? allowed, e.g. [EXCH*, 192.0.2.25]):
+# bad passwords coming through one of them are a phone or a mail app with the old password.
+ad_lockout_exchange_servers: []
+
+# ---- How much is read ------------------------------------------------------------------------------
+
+ad_lockout_max_events: 2000              # read at most this many Security log entries per account and DC (the newest)
+ad_lockout_resolve_max: 50               # resolve at most this many addresses to names per DC (reverse DNS)
+ad_lockout_max_rows: 50                  # rows per table; the job's artifacts (ad_lockout) have all

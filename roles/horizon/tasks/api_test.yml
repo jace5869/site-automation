@@ -1,0 +1,91 @@
+---
+# API TEST (playbooks/horizon_api_test.yml): the first look at a Horizon, before the other jobs. Read-only.
+#   1 login     the "Horizon API" credential logs in to the Connection Server's REST API
+#   2 paths     each part of the API the jobs read: the path and version that answered (asked newest first,
+#               down to v1), how many records - or why not. "----" = this Horizon release has no such part
+#               (the jobs leave it out); FAIL = it is there and refused (the account's role, docs/HORIZON.md)
+#   3 settings  the settings that name pools, states and actions against what Horizon has
+#   4 user      only with horizon_test_user: that user found as the user-help job finds them
+- name: Horizon API test | log in and ask each path
+  site_horizon:
+    action: test
+    newest: "{{ horizon_api_newest | int }}"
+    page_size: "{{ horizon_page_size | int }}"
+    ca_path: "{{ horizon_ca_path }}"
+    timeout: "{{ horizon_timeout | int }}"
+  register: _hz_t
+  check_mode: false
+
+- name: Horizon API test | 1/4 login - {{ 'FAIL' if _hz_t.login else 'PASS' }}
+  ansible.builtin.debug:
+    msg: "{{ ('FAIL 1 login: ' ~ _hz_t.login) if _hz_t.login else ('PASS 1 login: ' ~ _hz_t.user ~ ' at ' ~ _hz_t.url) }}"
+
+- name: Horizon API test | the login worked
+  ansible.builtin.assert:
+    that: not _hz_t.login
+    fail_msg: "{{ _hz_t.login }}"
+    quiet: true
+
+# one line each: AAP's job output shortens a long list - one task result per path it shows whole
+- name: Horizon API test | 2/4 paths - PASS (path, records) / ---- (not in this release) / FAIL
+  ansible.builtin.debug:
+    msg: "{{ [t] | hz_test_lines | first }}"
+  loop: "{{ _hz_t.tests }}"
+  loop_control:
+    loop_var: t
+    label: "{{ t.name }}"
+
+- name: Horizon API test | read the pools and desktops for the settings
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the pools and desktops
+    _hz_resources: [desktop_pools, machines]
+
+- name: Horizon API test | the settings
+  ansible.builtin.set_fact:
+    _hz_sc: >-
+      {{ _hz | hz_settings_check({'horizon_protected_pools': horizon_protected_pools,
+                                  'horizon_session_cleanup_exclude_pools': horizon_session_cleanup_exclude_pools,
+                                  'horizon_push_pools': horizon_push_pools, 'horizon_broken_states': horizon_broken_states,
+                                  'horizon_fix_actions': horizon_fix_actions | default({}, true),
+                                  'horizon_fix_default_action': horizon_fix_default_action}) }}
+
+- name: Horizon API test | 3/4 settings - {{ 'FAIL' if _hz_sc.errors else ('WARN' if _hz_sc.warnings else 'PASS') }}
+  ansible.builtin.debug:
+    msg: >-
+      {{ [('FAIL' if _hz_sc.errors else ('WARN' if _hz_sc.warnings else 'PASS')) ~ ' 3 settings: ' ~ _hz.pools | length ~ ' pool(s), '
+          ~ _hz.machines | length ~ ' desktop(s)'
+          ~ (' - what to change (playbooks/group_vars/all.yml or the templates):' if _hz_sc.errors or _hz_sc.warnings else '')]
+         + _hz_sc.errors + _hz_sc.warnings + _hz_sc.lines }}
+
+- name: Horizon API test | 4/4 user - find {{ horizon_test_user }}
+  ansible.builtin.include_tasks: user_lookup.yml
+  vars:
+    _hz_who: "{{ horizon_test_user | string | trim }}"
+  when: horizon_test_user | string | trim | length > 0
+
+- name: Horizon API test | 4/4 user - {{ ('FAIL' if _hz_u.problems else 'PASS') if horizon_test_user | string | trim else 'not asked' }}
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('FAIL 4 user: ' ~ _hz_u.problems | join('; ')) if _hz_u.problems else
+         ['PASS 4 user: ' ~ (_hz_u | hz_user_label) ~ (' - found by the name in a session' if not _hz_u.sid else '')
+          ~ ', ' ~ _hz_u.sessions | length ~ ' session(s), ' ~ _hz_u.machines | length ~ ' desktop(s)']
+         + (_hz_u.sessions | map('hz_user_session_line') | list) + (_hz_u.machines | map('hz_user_machine_line') | list) }}
+  when: horizon_test_user | string | trim | length > 0
+
+- name: Horizon API test | the answers as job artifacts (horizon_api_test)
+  ansible.builtin.set_stats:
+    data:
+      horizon_api_test: "{{ {'url': _hz_t.url, 'user': _hz_t.user, 'paths': _hz_t.tests, 'settings': _hz_sc} }}"
+
+- name: Horizon API test | no path refused, the settings fit
+  ansible.builtin.assert:
+    that:
+      - _hz_t.tests | selectattr('status', 'equalto', 'error') | list | length == 0
+      - _hz_sc.errors | length == 0
+      - horizon_test_user | string | trim | length == 0 or _hz_u.problems | length == 0
+    fail_msg: >-
+      {{ (_hz_t.tests | selectattr('status', 'equalto', 'error') | map(attribute='name') | list | length) }} path(s) refused,
+      {{ _hz_sc.errors | length }} setting(s) to change{{ ', the user not found' if horizon_test_user | string | trim and _hz_u.problems else '' }}:
+      the lines above say what.
+    quiet: true

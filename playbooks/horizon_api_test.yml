@@ -1,0 +1,16 @@
+---
+# HORIZON API TEST. Read-only, the first job to run against a Horizon: logs in with the "Horizon API"
+# credential, asks each part of the Connection Server's REST API the other jobs read - newest API version
+# first, down to v1 - and prints which path answered and how many records (or why not), then checks the
+# settings that name pools against the pools Horizon has, and (horizon_test_user) finds one user.
+# Runs on the AAP side: attach the "Horizon API" credential; no inventory needed. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_api_test.yml -e horizon_test_user=jdoe
+- name: Horizon API test
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon API test
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: api_test.yml

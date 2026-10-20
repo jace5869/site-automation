@@ -1,0 +1,19 @@
+---
+# With ad_lockout_check_sources (playbooks/ad_lockout.yml, on the AAP side): the source computers that
+# are hosts of this inventory join the in-memory group adl_sources, each with the accounts to look for
+# (adl_source_users), for the next play (sources.yml). Input: _adl (build.yml).
+- name: Lockout | the source computers to look on
+  ansible.builtin.add_host:
+    name: "{{ item.key }}"
+    groups: adl_sources
+    adl_source_users: "{{ item.value }}"
+  loop: "{{ _adl.check | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}: {{ item.value | map(attribute='sam') | join(', ') }}"
+  changed_when: false
+
+- name: Lockout | looked on
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('Looking on ' ~ _adl.check.keys() | join(', ') ~ ' for what runs as the account.') if _adl.check
+         else 'No source computer is a host of this inventory: nothing to look on (the report says how to check them by hand).' }}

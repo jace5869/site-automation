@@ -1,0 +1,64 @@
+{
+    "find": {
+        "ad_module": true,
+        "domain": "corp.test",
+        "errors": [],
+        "fqdn": "dc01.corp.test",
+        "locked": [
+            {
+                "display": "Jane Doe",
+                "dn": "CN=Jane Doe,OU=Staff,DC=corp,DC=test",
+                "duration_min": null,
+                "enabled": true,
+                "expires": "",
+                "found": true,
+                "here": true,
+                "input": "jdoe",
+                "locked": true,
+                "lockout_time": "2026-10-20T18:34:58Z",
+                "password_expired": false,
+                "password_never_expires": false,
+                "password_set": "2026-10-19T18:54:58Z",
+                "policy": "",
+                "sam": "jdoe",
+                "sid": "S-1-5-21-1-2-3-1105",
+                "threshold": null,
+                "upn": "jdoe@corp.test",
+                "window_min": null
+            },
+            {
+                "display": "Erin",
+                "dn": "CN=Erin,OU=Staff,DC=corp,DC=test",
+                "duration_min": 0.0,
+                "enabled": true,
+                "expires": "",
+                "found": true,
+                "here": true,
+                "input": "erin",
+                "locked": true,
+                "lockout_time": "2026-10-20T17:24:58Z",
+                "password_expired": false,
+                "password_never_expires": false,
+                "password_set": "2026-09-10T18:54:58Z",
+                "policy": "Admins-PSO",
+                "sam": "erin",
+                "sid": "S-1-5-21-1-2-3-1106",
+                "threshold": 3,
+                "upn": "erin@corp.test",
+                "window_min": 15.0
+            }
+        ],
+        "locked_total": 2,
+        "name": "DC01",
+        "netbios": "CORP",
+        "pdc": "dc01.corp.test",
+        "policy": {
+            "duration_min": 30.0,
+            "threshold": 5,
+            "window_min": 30.0
+        },
+        "read_at": "2026-10-20T18:54:58Z",
+        "role": "pdc",
+        "users": []
+    }
+}

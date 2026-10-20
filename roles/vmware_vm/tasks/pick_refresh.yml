@@ -1,0 +1,134 @@
+---
+# REFRESH THE PICK LISTS (vm_pick_refresh.yml, on a schedule): what may be done right now, written as the
+# choices of one multiple-choice question in the survey of each template of vm_pick_snapshot_templates (the
+# snapshots that may be deleted: pick_snapshots.yml) and vm_pick_reboot_templates (the VMs that may be
+# restarted: pick_vms.yml). Whoever launches such a template picks from that list; the job that gets the
+# answer checks every pick again, live. In a workflow only the workflow's own survey is asked: name the
+# workflow job template. Changes nothing in vCenter. As Check (a dry run) it writes no survey either.
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | the templates whose lists to refresh
+  ansible.builtin.set_fact:
+    # a name, or {template: name or ID, kind: job or workflow}; survey text: one per line, or separated by commas
+    _vm_pr_targets: >-
+      {%- set out = [] -%}
+      {%- for what, given, question in [('snapshots', vm_pick_snapshot_templates, vm_pick_snapshot_question),
+                                         ('vms', vm_pick_reboot_templates, vm_pick_reboot_question)] -%}
+      {%-   for t in ((given | snapshot_name_words) if given is string else (given or [])) -%}
+      {%-     set d = t if t is mapping else {'template': t | string | trim} -%}
+      {%-     set _ = out.append({'what': what, 'template': d.template | default('') | string, 'kind': d.kind | default('') | string,
+                                  'question': d.question | default(question) | string}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: VMware | some template to refresh
+  ansible.builtin.assert:
+    that: _vm_pr_targets | length > 0
+    fail_msg: >-
+      Nothing to refresh: name the templates whose survey lists the picks - vm_pick_snapshot_templates (the
+      snapshots to delete) and/or vm_pick_reboot_templates (the VMs to restart). docs/VMWARE.md, "Pick lists".
+    quiet: true
+
+- name: VMware | the snapshots that may be deleted now
+  ansible.builtin.include_tasks: pick_snapshots.yml
+  when: _vm_pr_targets | selectattr('what', 'equalto', 'snapshots') | list | length > 0
+
+- name: VMware | the inventory says which server is AAP (before any VM is offered for a restart)
+  ansible.builtin.include_tasks: guard.yml
+  vars:
+    _vm_found: []
+  when: _vm_pr_targets | selectattr('what', 'equalto', 'vms') | list | length > 0
+
+- name: VMware | the VMs that may be restarted now
+  ansible.builtin.include_tasks: pick_vms.yml
+  when: _vm_pr_targets | selectattr('what', 'equalto', 'vms') | list | length > 0
+
+- name: VMware | the choices
+  ansible.builtin.set_fact:
+    _vm_pr_when: "{{ now(utc=true).strftime('%Y-%m-%d %H:%M') }} UTC"
+    _vm_pr_snap: "{{ _vm_sn.old | vm_pick_snapshot_choices(_vm_sn_multi, vm_pick_max_choices) if _vm_sn is defined else {'choices': [], 'more': 0} }}"
+    _vm_pr_vms: "{{ _vm_pk.offered | map(attribute='choice') | list if _vm_pk is defined else [] }}"
+
+- name: "VMware | write the choices into the surveys{{ ' - read only, what it would change' if ansible_check_mode else '' }}"
+  site_aap_survey:
+    targets: >-
+      {%- set out = [] -%}
+      {%- for t in _vm_pr_targets -%}
+      {%-   set snap = t.what == 'snapshots' -%}
+      {%-   set n = (_vm_pr_snap.choices if snap else _vm_pr_vms) | length -%}
+      {%-   set _ = out.append({'template': t.template, 'kind': t.kind, 'question': t.question, 'multiselect': true,
+                                'choices': _vm_pr_snap.choices if snap else _vm_pr_vms,
+                                'note': 'of ' ~ _vm_pr_when ~ ': ' ~ n ~ (' snapshot(s) that may be deleted' if snap else
+                                        (' hung VM(s)' if vm_pick_reboot_only_hung | bool else ' VM(s) that may be restarted')),
+                                'empty_choice': '(nothing to pick: ' ~ ('no snapshot may be deleted' if snap else
+                                                (('no VM looks hung' if vm_pick_reboot_only_hung | bool else 'no VM may be restarted')))
+                                                ~ ' - list of ' ~ _vm_pr_when ~ ')'}) -%}
+      {%- endfor -%}
+      {{ out }}
+    ca_path: "{{ vm_pick_aap_ca_path }}"
+  register: _vm_pr_set
+
+- name: VMware | pick lists
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_vcenters: "{{ (_vm_snap_read.vcenters | default([])) if _vm_pk_read is not defined else _vm_pk_read.vcenters }}"
+    _vm_report_no_email: true
+    _vm_report_no_email_why: "the pick list refresh never emails (it runs often; its result is in the surveys)."
+    _vm_report_subject: >-
+      VMware pick lists{{ ' (dry run)' if ansible_check_mode else '' }}:
+      {{ (([(_vm_pr_snap.choices | length ~ ' snapshot(s) to delete')] if _vm_sn is defined else [])
+          + ([(_vm_pr_vms | length) ~ (' hung VM(s)' if vm_pick_reboot_only_hung | bool else ' VM(s) to restart')] if _vm_pk is defined else []))
+         | join(', ') }}{{ ' - ' ~ (_vm_pr_set.problems + (_vm_pr_set.results | rejectattr('ok') | list)) | length ~ ' survey(s) NOT updated'
+                           if _vm_pr_set.problems or _vm_pr_set.results | rejectattr('ok') | list else '' }}
+    _vm_report_lines: >-
+      {%- set out = [] -%}
+      {%- for p in _vm_pr_set.problems -%}{%- set _ = out.append('NOT UPDATED: ' ~ p) -%}{%- endfor -%}
+      {%- for r in _vm_pr_set.results -%}
+      {%-   set what = {'job': 'job template', 'workflow': 'workflow job template'}[r.kind] | default('template') ~ ' ' ~ r.template -%}
+      {%-   if not r.ok -%}
+      {%-     set _ = out.append('NOT UPDATED ' ~ what ~ ' (question ' ~ r.question ~ '): ' ~ r.error) -%}
+      {%-   else -%}
+      {%-     set _ = out.append(what ~ ', question ' ~ r.question ~ ': ' ~ r.choices ~ ' choice(s) - '
+                                 ~ (('would change: ' if ansible_check_mode else 'updated: ') ~ r.changes | join(', ') if r.changed else 'unchanged')) -%}
+      {%-   endif -%}
+      {%-   for w in r.warnings -%}{%- set _ = out.append('WARNING: ' ~ w) -%}{%- endfor -%}
+      {%- endfor -%}
+      {%- if _vm_sn is defined -%}
+      {%-   set _ = out.append('Snapshots: ' ~ _vm_pr_snap.choices | length ~ ' offered, oldest first'
+                               ~ ((', at least ' ~ _vm_sn_days ~ ' old') if vm_pick_snapshot_min_age_days | float > 0 else '')
+                               ~ ((' - ' ~ _vm_pr_snap.more ~ ' more not offered (vm_pick_max_choices: ' ~ vm_pick_max_choices ~ ')') if _vm_pr_snap.more else '')
+                               ~ ('; ' ~ _vm_sn.held | length ~ ' held back: ' ~ _vm_sn.held | vm_pick_reasons if _vm_sn.held else '')) -%}
+      {%-   for c in _vm_pr_snap.choices -%}{%- set _ = out.append('  ' ~ c) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if _vm_pk is defined -%}
+      {%-   set _ = out.append('VMs: ' ~ _vm_pr_vms | length ~ ' offered' ~ (' (only the hung ones)' if vm_pick_reboot_only_hung | bool else '')
+                               ~ ((' - ' ~ _vm_pk.more ~ ' more not offered (vm_pick_max_choices: ' ~ vm_pick_max_choices ~ ')') if _vm_pk.more else '')
+                               ~ ('; ' ~ _vm_pk.held | length ~ ' held back: ' ~ _vm_pk.held | vm_pick_reasons if _vm_pk.held else '')
+                               ~ ('; ' ~ _vm_pk.off ~ ' powered off or templates' if _vm_pk.off else '')
+                               ~ ('; ' ~ _vm_pk.out_of_scope ~ ' not among vm_pick_reboot_vms / clusters / folders' if _vm_pk.out_of_scope else '')) -%}
+      {%-   for c in _vm_pr_vms -%}{%- set _ = out.append('  ' ~ c) -%}{%- endfor -%}
+      {%- endif -%}
+      {{ out }}
+
+- name: VMware | the lists as job artifacts (vm_pick_lists)
+  ansible.builtin.set_stats:
+    data:
+      vm_pick_lists: >-
+        {{ {'at': _vm_pr_when, 'snapshots': _vm_pr_snap.choices, 'vms': _vm_pr_vms, 'surveys': _vm_pr_set.results, 'problems': _vm_pr_set.problems} }}
+
+- name: VMware | every survey was updated
+  ansible.builtin.assert:
+    that:
+      - _vm_pr_set.problems | length == 0
+      - _vm_pr_set.results | rejectattr('ok') | list | length == 0
+    fail_msg: >-
+      {{ (_vm_pr_set.problems + (_vm_pr_set.results | rejectattr('ok') | map(attribute='error') | list)) | join('; ') }}.
+      The lists above were not written there: whoever launches that template picks from an old list.
+    quiet: true
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ (_vm_snap_read.vcenters | default([])) if _vm_pk_read is not defined else _vm_pk_read.vcenters }}"

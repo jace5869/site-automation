@@ -1,0 +1,27 @@
+---
+# One user's sessions and desktops: the user from Horizon's view of AD (by login name - or a SID as it is),
+# then the pools, desktops and sessions. Input: _hz_who. Output: _hz (hz_data), _hz_u (hz_user).
+- name: Horizon | the user as Horizon knows them
+  ansible.builtin.set_fact:
+    # CORP\jdoe or jdoe@corp.example.mil -> jdoe
+    _hz_login: >-
+      {{ _hz_who | string | trim | regex_replace('^.*[\\\\]', '') | regex_replace('@.*$', '') }}
+    _hz_is_sid: >-
+      {{ _hz_who | string | trim is match('(?i)^S-1-[0-9]+(-[0-9]+)+$') }}
+
+- name: Horizon | read {{ _hz_who }}'s sessions and desktops
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: "{{ _hz_who }}, the pools, desktops and sessions"
+    # Horizon's AD user search, by login name (and by name, which older API versions take instead)
+    _hz_resources: >-
+      {{ [{'name': 'desktop_pools'}, {'name': 'machines'}, {'name': 'sessions'}, {'name': 'farms'}]
+         + ([{'name': 'ad_users', 'key': 'user:' ~ _hz_who | trim, 'id': _hz_who | trim}] if _hz_is_sid | bool else
+            [{'name': 'ad_users', 'key': 'ad_users:login',
+              'query': {'filter': {'type': 'Equals', 'name': 'login_name', 'value': _hz_login} | to_json}},
+             {'name': 'ad_users', 'key': 'ad_users:name',
+              'query': {'filter': {'type': 'Equals', 'name': 'name', 'value': _hz_login} | to_json}}]) }}
+
+- name: Horizon | {{ _hz_who }}'s sessions and desktops
+  ansible.builtin.set_fact:
+    _hz_u: "{{ _hz | hz_user(_hz_who) }}"

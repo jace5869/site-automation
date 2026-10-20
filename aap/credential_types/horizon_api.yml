@@ -1,0 +1,33 @@
+# Credential type: "Horizon API"
+# Used by playbooks/horizon_*.yml (the Connection Server's REST API, https://<connection-server>/rest/).
+# The account: an AD account with a Horizon administrator role - the least it needs is in docs/HORIZON.md.
+inputs:
+  fields:
+    - id: url
+      type: string
+      label: Connection Server URL
+      help_text: e.g. https://horizon.example.mil (a Connection Server, or the load balancer in front of them)
+    - id: domain
+      type: string
+      label: AD domain
+      help_text: The account's domain, NetBIOS name (e.g. CORP)
+    - id: username
+      type: string
+      label: User name
+      help_text: The account's login name, without the domain (e.g. svc-horizon-aap)
+    - id: password
+      type: string
+      label: Password
+      secret: true
+    - id: verify_ssl
+      type: boolean
+      label: Verify the Connection Server's certificate
+      default: true
+  required: [url, domain, username, password]
+injectors:
+  env:
+    HORIZON_URL: "{{ url }}"
+    HORIZON_DOMAIN: "{{ domain }}"
+    HORIZON_USERNAME: "{{ username }}"
+    HORIZON_PASSWORD: "{{ password }}"
+    HORIZON_VERIFY_SSL: "{{ verify_ssl }}"

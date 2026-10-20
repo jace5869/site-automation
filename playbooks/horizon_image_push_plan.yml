@@ -1,0 +1,19 @@
+---
+# Job 1 of the image push workflow. Read-only: the plan for the approver - push the golden image VM
+# horizon_push_base_vm, snapshot horizon_push_snapshot, to the instant-clone pools horizon_push_pools,
+# starting horizon_push_start ("" = once approved), users WAIT_FOR_LOGOFF or FORCE_LOGOFF. Each pool, the VM and
+# the snapshot are checked in Horizon; a plan with a problem fails here and never reaches the approval. A good
+# plan goes on (set_stats horizon_push_plan) -> approval -> horizon_image_push_approved.yml. A survey on the
+# workflow: the pools, the VM, the snapshot, the start.
+# Runs on the AAP side: attach the "Horizon API" credential. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_image_push_plan.yml -e '{"horizon_push_pools": ["IC-Win11"]}' \
+#     -e horizon_push_base_vm=W11-Gold -e horizon_push_snapshot=v2026-11
+- name: Horizon image push plan
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon image push plan
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: image_push_plan.yml

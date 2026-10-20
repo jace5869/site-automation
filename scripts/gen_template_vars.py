@@ -31,6 +31,11 @@ WIN_CHECKS = "win_check_*"
 TEMPLATES = {
     "act_fix_approved.yml": ("Apply approved ACT fix", "Machine", LINUX_CHECKS, ""),
     "ad_health_report.yml": ("Active Directory health report", "Machine (Windows)", "", ""),
+    "ad_lockout.yml": ("Active Directory - account lockout", "Machine (Windows)", "", """\
+## The survey asks for the account (ad_lockout_user, not required: empty = every account locked out now)
+# ad_lockout_unlock: false                   # true = also unlock it (a survey question: Unlock it? no / yes)
+# ad_lockout_exchange_servers: [EXCH*]       # your mail servers: a phone with the old password
+"""),
     "cert_report.yml": ("Certificate report", "Machine (Keystore password, SQL Server (certificate inventory): optional)", "check_certs", ""),
     "cert_renew_csr.yml": ("Certificate renewal - CSRs", "Machine, ServiceNow API (Keystore password: optional)", "check_certs", """\
 servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job opens (a certificate with no ticket yet)
@@ -42,6 +47,27 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 # health_checks: [daily]
 ## ACT (GenAI) looks at each host with findings (docs/ADDING_ACT.md)
 # use_act: false
+"""),
+    "horizon_api_test.yml": ("Horizon - API test", "Horizon API", "", """\
+# horizon_test_user: jdoe                        # also find this user, as the user-help job does
+"""),
+    "horizon_capacity_report.yml": ("Horizon - capacity report", "Horizon API", "", ""),
+    "horizon_desktops_check.yml": ("Horizon - desktops check", "Horizon API", "", """\
+## In the broken desktops workflow (its first node): hand the list on and wait for the approval
+# horizon_desktops_mode: approval
+"""),
+    "horizon_desktops_fix_approved.yml": ("Horizon - fix the approved desktops", "Horizon API", "", ""),
+    "horizon_health_report.yml": ("Horizon - health report", "Horizon API", "", ""),
+    "horizon_image_push_approved.yml": ("Horizon - push the approved image", "Horizon API", "", ""),
+    "horizon_image_push_plan.yml": ("Horizon - image push plan", "Horizon API", "", """\
+## Usually a survey on the image push workflow: the pools, the golden image VM, its snapshot, the start
+# horizon_push_pools: [POOL-NAME]
+# horizon_push_base_vm: GOLDEN-IMAGE-VM
+# horizon_push_snapshot: SNAPSHOT-NAME
+"""),
+    "horizon_session_cleanup.yml": ("Horizon - session cleanup", "Horizon API", "", ""),
+    "horizon_user_help.yml": ("Horizon - user help", "Horizon API", "", """\
+## A survey: horizon_user (text, required) and horizon_user_action (look, logoff, disconnect, reset, restart, recover)
 """),
     "ontap_health_report.yml": ("NetApp ONTAP health report", "NetApp ONTAP", "", ""),
     "patch_hosts.yml": ("Patch hosts", "Machine", "", ""),
@@ -102,12 +128,18 @@ vm_deploy_assignment_group: YOUR GROUP NAME       # REQUIRED: only this group's 
 # vm_deploy_poll_dry_run: true                    # the first week: list what it would start, start nothing
 """),
     "vm_notes.yml": ("VM - notes", "VMware vCenter", "", ""),
+    "vm_pick_refresh.yml": ("VM - refresh the pick lists", "VMware vCenter, Red Hat Ansible Automation Platform", "", """\
+vm_pick_snapshot_templates: ["VM - delete picked snapshots (workflow)"]   # whose survey lists the snapshots to delete
+vm_pick_reboot_templates: ["VM - restart picked VMs (workflow)"]          # whose survey lists the VMs to restart
+"""),
     "vm_reboot.yml": ("VM - restart", "VMware vCenter", "", ""),
+    "vm_reboot_picked.yml": ("VM - restart picked VMs", "VMware vCenter", "", ""),
     "vm_secure_boot_report.yml": ("VM - secure boot report", "VMware vCenter", "", ""),
     "vm_shutdown.yml": ("VM - shut down", "VMware vCenter", "", ""),
     "vm_snapshot.yml": ("VM - snapshot", "VMware vCenter", "", ""),
     "vm_snapshot_cleanup.yml": ("VM - snapshot cleanup", "VMware vCenter", "", ""),
     "vm_snapshot_delete.yml": ("VM - delete snapshot", "VMware vCenter", "", ""),
+    "vm_snapshot_delete_picked.yml": ("VM - delete picked snapshots", "VMware vCenter", "", ""),
     "vm_snapshot_report.yml": ("VM - snapshot report", "VMware vCenter", "", ""),
     "vm_vlan.yml": ("VM - change VLAN", "VMware vCenter", "", ""),
     "win_act_install.yml": ("ACT for Windows - install", "Machine (Windows)", "", ""),
@@ -122,7 +154,10 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 }
 
 # a setting named in a file every VMware job shares, but read by one playbook only
-ONLY = {"vm_snapshot_cleanup_email_only_if_deleted": ("vm_snapshot_cleanup.yml",)}
+ONLY = {"vm_snapshot_cleanup_email_only_if_deleted": ("vm_snapshot_cleanup.yml",),
+        # the pick lists: the refresh names the answers' variables (its questions), the pick jobs read them
+        "vm_snapshot_picks": ("vm_snapshot_delete_picked.yml",), "vm_reboot_picks": ("vm_reboot_picked.yml",),
+        "vm_pick_max_choices": ("vm_pick_refresh.yml",)}
 
 INCLUDE_ROLE = re.compile(r"(?:include_role|import_role):\s*\n((?:[ \t]+\S.*\n?){1,4})")
 ROLE_NAME = re.compile(r"^\s*name:\s*[\"']?([^\"'\s]+)", re.M)
@@ -212,7 +247,7 @@ def used_settings(playbook, files, settings):
     text = "\n".join(line for p, _ in files for line in read(p).splitlines() if not line.lstrip().startswith("#"))
     used = {n for n in settings if playbook in ONLY.get(n, (playbook,)) and re.search(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(n), text)}
     while True:   # a default made of another setting ({{ site_act_model_timeout }}) brings that one too
-        more = {n for u in used for n in settings if n not in used
+        more = {n for u in used for n in settings if n not in used and playbook in ONLY.get(n, (playbook,))
                 and re.search(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(n), "\n".join(settings[u]["lines"]))}
         if not more:
             return used

@@ -1020,6 +1020,245 @@ def vm_snapshot_plan(old, approved=None, default_vcenter=""):
     return {"todo": todo, "skipped": skipped}
 
 
+# ---- Pick lists (vm_pick_refresh.yml, vm_snapshot_delete_picked.yml, vm_reboot_picked.yml) -------------
+# A survey question lists what may be restarted or deleted now; each choice is readable text that ends with
+# its ID token - [vcenter/vm moid] for a VM, [vcenter/vm moid/snapshot ID] for a snapshot - so the job that
+# gets the answer finds exactly that VM or snapshot again, never one with the same name.
+PICK_TOKEN = re.compile(r"\[(?P<vc>[^\[\]/\s]+)/(?P<moid>[^\[\]/\s]+)(?:/(?P<id>\d+))?\]\s*$")
+PICK_VM = re.compile(r"^(?P<vm>.*) \((?P<detail>[^()]*)\) \[[^\[\]]*\]\s*$")
+PICK_SNAP = re.compile(r'^(?P<vm>.*?): "(?P<name>.*)" \((?P<detail>[^()]*)\) \[[^\[\]]*\]\s*$')
+PICK_EMPTY = "(nothing to pick"
+
+
+def _plain(text):
+    """Text for inside the brackets of a choice: one line, no brackets of its own."""
+    return " ".join(re.sub(r"[()\[\]]", "", str(text or "")).split())
+
+
+def _ago(minutes):
+    if minutes is None:
+        return ""
+    m = float(minutes)
+    if m < 120:
+        return "%d min" % m
+    if m < 48 * 60:
+        return "%.1f hours" % (m / 60)
+    return "%.1f days" % (m / 1440)
+
+
+def vm_pick_snapshot_choices(snaps, multi=False, max_choices=200):
+    """The snapshots that may be deleted (vm_snapshot_split's 'old', oldest first) as survey choices:
+    'web01: "before patch" (12.4 GB, 6.2 days old, taken 2026-10-14 08:12 UTC) [vc01.example.mil/vm-42/7]'.
+    -> {'choices': [...], 'more': how many were left out (max_choices)}"""
+    out = []
+    for x in snaps or []:
+        detail = ["%s" % human_size(x.get("size_gb")), "%s days old" % x.get("age_days", "?"),
+                  "taken %s UTC" % str(x.get("created", "")).replace("T", " ").replace("Z", "")[:16]]
+        if multi and x.get("vcenter"):
+            detail.append(vc_short(x["vcenter"]))
+        out.append('%s: "%s" (%s) [%s/%s/%s]' % (" ".join(str(x.get("vm", "")).split()), " ".join(str(x.get("name", "")).split()),
+                                                  _plain(", ".join(detail)), str(x.get("vcenter", "")).lower(), x.get("moid", ""),
+                                                  x.get("id", "")))
+    n = int(max_choices)
+    return {"choices": out[:n], "more": max(len(out) - n, 0)}
+
+
+def _vm_hung(v, min_minutes):
+    """Why a VM looks hung ('' = it does not): powered on, VMware Tools installed, but no heartbeat (red)
+    or VMware Tools not running - and up for at least min_minutes (a VM still starting has neither yet)."""
+    if v.get("power") != "poweredOn" or v.get("tools") in ("", "toolsNotInstalled"):
+        return ""
+    if v.get("heartbeat") == "red":
+        why = "no heartbeat"
+    elif v.get("tools") == "toolsNotRunning" or v.get("tools_running") == "guestToolsNotRunning":
+        why = "VMware Tools not running"
+    else:
+        return ""
+    if v.get("up_minutes") is not None and float(v["up_minutes"]) < float(min_minutes):
+        return ""
+    return why
+
+
+def vm_pick_ids(v):
+    """A VM's IDs as the guard compares them (guard.yml): its name, guest host name and IP addresses."""
+    v = v or {}
+    ids = [_id(v.get("name")), _id(v.get("hostname"))] + [_id(i) for i in [v.get("ip")] + list(v.get("ips") or [])]
+    return sorted(set(i for i in ids if i))
+
+
+def vm_pick_vms(vms, opts=None):
+    """The VMs that may be restarted (site_vmware_vms), each with the choice that names it, and the ones
+    held back with the reason. opts: names, clusters, folders (only these; * and ?, any case; [] = all),
+    exclude (names), protected_ids (the AAP server and the protected groups' hosts: name, guest name, IP),
+    only_hung, hung_min_minutes, multi (several vCenters), max (choices).
+    Templates and VMs that are not powered on are never offered (counted in 'off').
+    -> {'offered': [vm + choice, hung], 'held': [vm + reason], 'off': n, 'out_of_scope': n, 'more': n}"""
+    o = dict(opts or {})
+    prot = set(o.get("protected_ids") or [])
+    names, clusters, folders = o.get("names") or [], o.get("clusters") or [], o.get("folders") or []
+    offered, held, off, scope = [], [], 0, 0
+    for v in sorted(vms or [], key=lambda x: (str(x.get("name", "")).lower(), str(x.get("vcenter", "")), str(x.get("moid", "")))):
+        if v.get("template") or v.get("power") != "poweredOn":
+            off += 1
+            continue
+        if ((names and not name_matches(v.get("name"), names)) or (clusters and not name_matches(v.get("cluster"), clusters))
+                or (folders and not name_matches(v.get("folder"), folders))):
+            scope += 1
+            continue
+        hung = _vm_hung(v, o.get("hung_min_minutes", 15))
+        if set(vm_pick_ids(v)) & prot:
+            why = "the AAP server or a protected VM (vmware_protected_groups)"
+        elif name_matches(v.get("name"), o.get("exclude")):
+            why = "on the exclusion list (vmware_protected_vms, vm_pick_reboot_exclude_vms)"
+        elif o.get("only_hung") and not hung:
+            why = "not hung: heartbeat %s, VMware Tools %s" % (v.get("heartbeat") or "unknown", v.get("tools") or "unknown")
+        else:
+            state = hung or ("VMware Tools running" if v.get("tools_running") == "guestToolsRunning" else "no VMware Tools running")
+            detail = [state]
+            if v.get("up_minutes") is not None:
+                detail.append("up " + _ago(v["up_minutes"]))
+            detail.append(" / ".join(x for x in (v.get("datacenter"), v.get("cluster")) if x))
+            if o.get("multi") and v.get("vcenter"):
+                detail.append(vc_short(v["vcenter"]))
+            guest = " ".join(x for x in (v.get("hostname"), v.get("ip")) if x)
+            if guest:
+                detail.append("guest " + guest)
+            choice = "%s (%s) [%s/%s]" % (" ".join(str(v.get("name", "")).split()), _plain(", ".join(d for d in detail if d)),
+                                          str(v.get("vcenter", "")).lower(), v.get("moid", ""))
+            offered.append(dict(v, choice=choice, hung=hung))
+            continue
+        held.append(dict(v, reason=why))
+    n = int(o.get("max", 200))
+    return {"offered": offered[:n], "held": held, "off": off, "out_of_scope": scope, "more": max(len(offered) - n, 0)}
+
+
+def vm_pick_reasons(held):
+    """'2 the AAP server..., 1 not hung' - how many were held back, by reason (the reason without its details)."""
+    counts = {}
+    for h in held or []:
+        r = str(h.get("reason", "?")).split(":")[0]
+        counts[r] = counts.get(r, 0) + 1
+    return ", ".join("%d %s" % (n, r) for r, n in sorted(counts.items(), key=lambda x: (-x[1], x[0])))
+
+
+def vm_pick_parse(picks, kind="vm"):
+    """The survey's answer (a list, or text one per line) or an approved plan (a list of dicts) -> the picks:
+    {'picks': [{vcenter, moid, id (snapshots), vm, name (the names the choice showed, '' when not readable),
+    text}], 'bad': [lines that are no choice of a pick list], 'ignored': n (the "nothing to pick" line)}."""
+    if isinstance(picks, str):
+        picks = picks.splitlines()
+    out, bad, ignored, seen = [], [], 0, set()
+    for p in picks or []:
+        if isinstance(p, dict):
+            rec = {"vcenter": str(p.get("vcenter", "")).lower(), "moid": str(p.get("moid", "")), "vm": str(p.get("vm", "")),
+                   "name": str(p.get("name", "")) if kind == "snapshot" else "", "text": str(p.get("text", "") or p.get("vm", ""))}
+            if kind == "snapshot":
+                rec["id"] = str(p.get("id", ""))
+            if not rec["vcenter"] or not rec["moid"] or (kind == "snapshot" and not rec["id"].isdigit()):
+                bad.append(json.dumps(p, sort_keys=True)[:200])
+                continue
+        else:
+            text = " ".join(str(p).split())
+            if not text:
+                continue
+            if text.startswith(PICK_EMPTY):
+                ignored += 1
+                continue
+            m = PICK_TOKEN.search(text)
+            if not m or (kind == "snapshot") != bool(m.group("id")):
+                bad.append(text)
+                continue
+            rec = {"vcenter": m.group("vc").lower(), "moid": m.group("moid"), "vm": "", "name": "", "text": text}
+            if kind == "snapshot":
+                rec["id"] = m.group("id")
+                n = PICK_SNAP.match(text)
+                if n:
+                    rec["vm"], rec["name"] = n.group("vm"), n.group("name")
+            else:
+                n = PICK_VM.match(text)
+                if n:
+                    rec["vm"] = n.group("vm")
+        key = (rec["vcenter"], rec["moid"], rec.get("id", ""))
+        if key not in seen:
+            seen.add(key)
+            out.append(rec)
+    return {"picks": out, "bad": bad, "ignored": ignored}
+
+
+def _same(a, b):
+    return " ".join(str(a or "").split()) == " ".join(str(b or "").split())
+
+
+def _pick_vc(p, read):
+    """The pick's vCenter as this job read it (a name in read, any case), or ''."""
+    return next((r for r in read or [] if str(r).lower() == p["vcenter"]), "")
+
+
+def vm_pick_snapshot_plan(split, picks, vcenters_read):
+    """What a picked-snapshot job deletes: each pick found again live - same vCenter, VM ID and snapshot ID,
+    the same names as its choice showed, still allowed (vm_snapshot_split: not held back).
+    split: vm_snapshot_split's answer for the live snapshots; picks: vm_pick_parse's; vcenters_read: the
+    vCenters the job read. -> {'todo': [live snapshots], 'skipped': [pick + reason]}"""
+    key = lambda x: (str(x.get("vcenter", "")).lower(), str(x.get("moid", "")), str(x.get("id", "")))
+    ok = {key(x): x for x in (split or {}).get("old") or []}
+    held = {key(x): x for x in (split or {}).get("held") or []}
+    every = {key(x): x for x in (split or {}).get("all") or []}
+    todo, skipped = [], []
+    for p in picks or []:
+        k = (p["vcenter"], p["moid"], p.get("id", ""))
+        live = every.get(k)
+        if not _pick_vc(p, vcenters_read):
+            why = "its vCenter %s was not read by this job (vmware_vcenters, or it could not be reached)" % p["vcenter"]
+        elif live is None:
+            why = "no longer there (deleted since the list was made, or the VM is gone)"
+        elif p.get("vm") and not _same(p["vm"], live.get("vm")):
+            why = 'the VM was renamed since the list was made (was "%s", now "%s")' % (p["vm"], live.get("vm"))
+        elif p.get("name") and not _same(p["name"], live.get("name")):
+            why = 'the snapshot was renamed since the list was made (was "%s", now "%s")' % (p["name"], live.get("name"))
+        elif k in held:
+            why = "held back now: " + held[k].get("reason", "?")
+        elif k in ok:
+            todo.append(dict(ok[k], text=p.get("text", "")))
+            continue
+        else:
+            why = "not old enough to be offered (vm_pick_snapshot_min_age_days)"
+        skipped.append(dict(p, reason=why))
+    return {"todo": todo, "skipped": skipped}
+
+
+def vm_pick_reboot_plan(picked, picks, vcenters_read, power_mode="guest"):
+    """What a picked-VM restart does: each pick found again live - same vCenter and VM ID, the same name
+    as its choice showed - and still offered (vm_pick_vms on the live VMs, the same settings as the list);
+    a guest restart needs VMware Tools running. picked: vm_pick_vms's answer for the live VMs (no max);
+    picks: vm_pick_parse's. -> {'todo': [live VMs + text, ids, tools (running or not, as power_check.yml reads it)
+    and tools_status], 'skipped': [pick + reason]}"""
+    key = lambda x: (str(x.get("vcenter", "")).lower(), str(x.get("moid", "")))
+    ok = {key(x): x for x in (picked or {}).get("offered") or []}
+    held = {key(x): x for x in (picked or {}).get("held") or []}
+    todo, skipped = [], []
+    for p in picks or []:
+        k = (p["vcenter"], p["moid"])
+        live = ok.get(k) or held.get(k)
+        if not _pick_vc(p, vcenters_read):
+            why = "its vCenter %s was not read by this job (vmware_vcenters, or it could not be reached)" % p["vcenter"]
+        elif live is None:
+            why = "not offered now: gone, powered off, a template, or no longer among the VMs of the list (vm_pick_reboot_*)"
+        elif p.get("vm") and not _same(p["vm"], live.get("name")):
+            why = 'the VM was renamed since the list was made (was "%s", now "%s")' % (p["vm"], live.get("name"))
+        elif k in held:
+            why = "held back now: " + live.get("reason", "?")
+        elif power_mode == "guest" and live.get("tools_running") != "guestToolsRunning":
+            why = ("VMware Tools is not running in it, so its operating system cannot be asked to restart: pick it again "
+                   "with vm_power_mode hard (a reset - unsaved data is lost)")
+        else:
+            # as guard.yml and power_check.yml read a VM (prepare.yml's records): ids, and tools = whether VMware Tools runs
+            todo.append(dict(live, text=p.get("text", ""), ids=vm_pick_ids(live), tools=live.get("tools_running", ""),
+                             tools_status=live.get("tools", "")))
+            continue
+        skipped.append(dict(p, reason=why))
+    return {"todo": todo, "skipped": skipped}
+
+
 def cert_report_section(certs, warn_days=30, notice_days=60):
     """Every certificate found (check_certs / win_check_certs inventory: days, expires, host, subject,
     where) as the certificate report's table, soonest expiry first, coloured: expired red, within
@@ -1191,7 +1430,9 @@ class FilterModule(object):
                 "watch_targets": watch_targets, "watch_fix_commands": watch_fix_commands,
                 "watch_allow_patterns": watch_allow_patterns, "vm_facts": vm_facts, "vm_where": vm_where, "vm_ds_row": vm_ds_row, "host_ids": host_ids,
                 "vc_short": vc_short, "act_is_chat_reply": act_is_chat_reply, "vm_dc_label": vm_dc_label, "vm_vcenters_read": vm_vcenters_read, "vm_vcenter_report": vm_vcenter_report,
-                "vm_snapshot_split": vm_snapshot_split, "snapshot_name_words": snapshot_name_words, "vm_snapshot_plan": vm_snapshot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "cert_report_section": cert_report_section,
+                "vm_snapshot_split": vm_snapshot_split, "snapshot_name_words": snapshot_name_words, "vm_snapshot_plan": vm_snapshot_plan, "vm_pick_snapshot_choices": vm_pick_snapshot_choices, "vm_pick_vms": vm_pick_vms, "vm_pick_ids": vm_pick_ids,
+                "vm_pick_reasons": vm_pick_reasons, "vm_pick_parse": vm_pick_parse, "vm_pick_snapshot_plan": vm_pick_snapshot_plan,
+                "vm_pick_reboot_plan": vm_pick_reboot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "cert_report_section": cert_report_section,
                 "site_correlation_id": site_correlation_id,
                 "human_size": human_size, "name_matches": name_matches,
                 "report_text": report_text, "findings_report": findings_report}

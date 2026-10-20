@@ -1,0 +1,53 @@
+---
+# The PDC emulator of each domain reads it (else the first DC whose ActiveDirectory module answered):
+# its answer says which accounts every DC of that domain looks for. Sets _adl_pick {domain: host} and
+# _adl_tg (ad_lockout_targets) on every host of the play (run_once). Stops when no DC read its domain,
+# or an account asked for is in no domain. Input: adl_find_result on each host.
+- name: Lockout | the DC that reads each domain, and the accounts there
+  ansible.builtin.set_fact:
+    _adl_pick: "{{ _adl_finds | ad_lockout_pick }}"
+    _adl_tg: "{{ _adl_finds | ad_lockout_targets(_adl_finds | ad_lockout_pick) }}"
+  vars:
+    _adl_finds: "{{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('adl_find_result', 'defined') | map(attribute='adl_find_result') | list }}"
+  run_once: true
+
+- name: Lockout | who reads which domain
+  ansible.builtin.debug:
+    msg: >-
+      {{ (_adl_pick | dict2items | map(attribute='key') | zip(_adl_pick | dict2items | map(attribute='value'))
+          | map('join', ': read by ') | list) or ['No DC answered with its ActiveDirectory module.'] }}
+  run_once: true
+
+- name: Lockout | some DC read its domain
+  ansible.builtin.assert:
+    that: _adl_pick | length > 0
+    fail_msg: >-
+      No domain controller could read its domain (WinRM, or its ActiveDirectory PowerShell module) -
+      {{ _adl_why | join('; ') }}.
+  vars:
+    _adl_why: >-
+      {%- set out = [] -%}
+      {%- for f in ansible_play_hosts_all | map('extract', hostvars) | selectattr('adl_find_result', 'defined') | map(attribute='adl_find_result') -%}
+      {%-   set _ = out.append(f.host ~ ': ' ~ (f.error or ((f.data.errors | default([])) | first | default('not a domain controller')))) -%}
+      {%- endfor -%}
+      {{ out }}
+    quiet: true
+  run_once: true
+
+- name: Lockout | every account asked for is there
+  ansible.builtin.assert:
+    that: _adl_tg.not_found | length == 0
+    fail_msg: >-
+      No account named {{ _adl_tg.not_found | join(', ') }} in {{ _adl_pick.keys() | join(', ') }}
+      (read on {{ _adl_pick.values() | join(', ') }}). Check the spelling - the sign-in name (jdoe), CORP\jdoe or
+      jdoe@{{ (_adl_pick.keys() | list)[0] }} - and, for another domain, put its DCs in the job's inventory too.
+      Nothing was unlocked.
+    quiet: true
+  run_once: true
+
+- name: Lockout | the accounts to look for
+  ansible.builtin.debug:
+    msg: >-
+      {{ (_adl_tg.accounts | map(attribute='netbios') | zip(_adl_tg.accounts | map(attribute='sam')) | map('join', '\\') | list)
+         or ['No account is locked out now.'] }}
+  run_once: true

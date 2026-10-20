@@ -526,6 +526,33 @@ analysis is wanted? Schedule `VM - alarms ACT analysis` on its own: its email li
 
 Click by click, with the survey and the dry run: [VMWARE.md](VMWARE.md), "Snapshots".
 
+### 26. Delete picked snapshots, with approval (on demand)
+
+```text
+(schedule: [VM - refresh the pick lists] every 30 minutes - writes the survey's choices)
+
+survey: tick snapshots  ->  [VM - delete picked snapshots]  --On success-->  [Approval]  --On success-->  [VM - delete picked snapshots]
+                             (plan: what will be deleted)                                               (exactly the plan)
+```
+
+The **same** job template twice. Its survey question `vm_snapshot_picks` (Multiple choice, multiple
+select) is on the **workflow** - inside a workflow only the workflow's survey is asked, and an
+approval takes no input, so the picking is at launch. The first run plans (it never deletes inside a
+workflow), the approval reads that plan, the second run deletes exactly what it listed, each snapshot
+checked again live. Nothing left that can be deleted = the plan step fails and the workflow stops.
+Click by click: [VMWARE.md](VMWARE.md), "Pick lists".
+
+### 27. Restart picked (or hung) VMs, with approval (on demand)
+
+```text
+survey: tick VMs, How  ->  [VM - restart picked VMs]  --On success-->  [Approval]  --On success-->  [VM - restart picked VMs]
+```
+
+As 26, with `vm_reboot_picks` and `vm_power_mode` (`guest` / `hard`) on the workflow's survey. For a
+service desk list of **hung** VMs (no heartbeat, or VMware Tools not running): the refresh with
+`vm_pick_reboot_only_hung: true`, and How = `hard` - a guest restart needs VMware Tools running. Never
+the AAP server or a protected VM, whatever is picked.
+
 ### 20. ESXi security settings (nightly)
 
 No workflow needed: a schedule on the `ESXi - security settings` template, every day at 00:00 in
@@ -564,6 +591,37 @@ in your time zone, with `ad_report_hours: 24` (the default) so each change is in
 ([ACTIVE_DIRECTORY.md](ACTIVE_DIRECTORY.md)). In a workflow with `ad_report_fail: true`, its
 "On failure" path can open a ticket.
 
+## Horizon workflows
+
+The Horizon templates run on the AAP side against a Connection Server: no Limit, the "Horizon API"
+credential ([HORIZON.md](HORIZON.md)).
+
+### 26. Fix broken desktops, with an approval
+
+```text
+[Horizon - desktops check]  --Run on fail-->  [Approval]  --Run on success-->  [Horizon - fix the approved desktops]
+ horizon_desktops_mode: approval
+```
+
+The check fails on purpose when there is a desktop to fix (`NEEDS APPROVAL: ...`), and hands the
+list on. The fix job reads each desktop again and fixes only the approved ones still broken. Click by
+click, and a rehearsal as Check: [HORIZON.md](HORIZON.md). **Schedule:** e.g. every hour in working hours.
+
+### 27. Push a new golden image, with an approval
+
+```text
+[Horizon - image push plan]  --Run on success-->  [Approval]  --Run on success-->  [Horizon - push the approved image]
+```
+
+A survey on the workflow (the pools, the golden image VM, its snapshot, the start, the log-off
+policy). A plan with a problem fails and never reaches the approval ([HORIZON.md](HORIZON.md)).
+
+### 28. Horizon reports and the session cleanup
+
+No workflow needed: schedules on `Horizon - health report` (every day 06:00), `Horizon - capacity
+report` (every Monday 07:00) and `Horizon - session cleanup` (every night 02:00, after a first run
+as Check).
+
 ## Schedules
 
 **What.** A schedule launches a template or workflow at set times.
@@ -594,6 +652,7 @@ in your time zone, with `ad_report_hours: 24` (the default) so each change is in
 | VMware daily checks (health, alarms, ACT analysis) | every day 06:00 | workflow 18 |
 | Active Directory health | every day 06:30 | template *Active Directory health report* (24) |
 | vCenter and ESXi certificates | Monday 07:00 | template *VMware - certificate renewal* (25) |
+| Pick lists (the surveys of workflows 26 and 27) | every 30 minutes | template *VM - refresh the pick lists* |
 
 **Notifications** (optional). **Automation Execution → Administration → Notifiers → Create
 notifier** (type *Email*, your mail relay). Then on a template or workflow → **Notifications** tab

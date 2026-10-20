@@ -1,0 +1,34 @@
+---
+# The account lockout report (playbooks/ad_lockout.yml, last play): printed, published as job artifacts
+# (ad_lockout) and emailed (report_email_to, when set). Input: _adl (build.yml).
+- name: Lockout | {{ _adl.report.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_adl.report | report_text).splitlines() }}"
+
+- name: Lockout | the report and the accounts as job artifacts (ad_lockout)
+  ansible.builtin.set_stats:
+    data:
+      ad_lockout:
+        subject: "{{ _adl.report.title }}"
+        accounts: "{{ _adl.accounts }}"
+        lines: "{{ (_adl.report | report_text).splitlines() }}"
+
+- name: Lockout | email it (report_email_to)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: >-
+      {{ _adl.report | combine({'footer': 'Read-only: the Security logs and account attributes on the domain controllers'
+                                          ~ (', and the unlock (ad_lockout_unlock)' if ad_lockout_unlock | bool else '') ~ '.'}) }}
+  when: report_email_to | default([]) | length > 0
+
+- name: Lockout | every domain controller answered, and the unlock worked
+  ansible.builtin.assert:
+    that:
+      - _adl.dcs_read | int > 0
+      - _adl.accounts | selectattr('unlock_error') | list | length == 0
+    fail_msg: >-
+      {{ ('No domain controller could be read (the report is above). ' if _adl.dcs_read | int == 0 else '')
+         ~ (_adl.accounts | selectattr('unlock_error') | map(attribute='account') | zip(_adl.accounts | selectattr('unlock_error')
+            | map(attribute='unlock_error')) | map('join', ' was NOT unlocked: ') | join('; ')) }}
+    quiet: true

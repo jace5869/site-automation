@@ -1,0 +1,97 @@
+---
+# ACCOUNT LOCKOUT. Is an account locked out, and WHAT is locking it out: every domain controller of the
+# Windows inventory (group win_dc, or target) reads its own count of the account's bad passwords and its
+# Security log - 4740 locked out (the caller computer), 4767 unlocked (by whom), 4771 / 4768 Kerberos
+# failures (the client's address, resolved to a name), 4776 NTLM failures (the workstation), 4625
+# failed logons to the DC - and the report ranks the computers the failed sign-ins came from, with what
+# to do (a phone, a service, a scheduled task, a mapped drive, a disconnected Remote Desktop session).
+# For the service desk: a survey asks for the account (ad_lockout_user: jdoe, CORP\jdoe or a UPN); left
+# empty, the report lists every account locked out now, each with its source.
+#   ad_lockout_unlock: true         also unlock it, on the PDC emulator (an account asked for by name)
+#   ad_lockout_check_sources: true  also look on the source computers that are hosts of this inventory:
+#                                   services, scheduled tasks, sessions, processes, mapped drives (read-only)
+# Read-only otherwise. A dry run (Check) reads and prints the same report and unlocks nothing.
+# In AAP: the Windows inventory, a Windows Machine credential that may read the DCs' Security logs (and
+# unlock accounts, for the unlock). docs/ACTIVE_DIRECTORY.md, "Account lockout"
+#   ansible-playbook playbooks/ad_lockout.yml -i <windows inventory> -e ad_lockout_user=jdoe
+#   ansible-playbook playbooks/ad_lockout.yml -e 'ad_lockout_user=CORP\jdoe' -e ad_lockout_unlock=true
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('win_dc') }}"
+
+    - name: The accounts asked for
+      ansible.builtin.include_role:
+        name: ad_lockout
+        tasks_from: input.yml
+
+- name: Account lockout - read the domain controllers
+  hosts: "{{ target | default('win_dc') }}"
+  gather_facts: false
+  vars:
+    site_os: windows
+  pre_tasks:
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  tasks:
+    - name: Read this DC (and, on the PDC emulator, the accounts to look for; the unlock)
+      ansible.builtin.include_role:
+        name: ad_lockout
+        tasks_from: collect.yml
+
+- name: Account lockout - the source computers to look on
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The source computers of this inventory (ad_lockout_check_sources)
+      when: ad_lockout_check_sources | default(false) | bool
+      block:
+        - name: The report so far
+          ansible.builtin.include_role:
+            name: ad_lockout
+            tasks_from: build.yml
+
+        - name: The source computers to look on
+          ansible.builtin.include_role:
+            name: ad_lockout
+            tasks_from: sources_pick.yml
+
+- name: Account lockout - on the source computers (read-only)
+  hosts: adl_sources
+  gather_facts: false
+  vars:
+    site_os: windows
+  pre_tasks:
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  tasks:
+    - name: What runs as the account here
+      ansible.builtin.include_role:
+        name: ad_lockout
+        tasks_from: sources.yml
+
+- name: Account lockout report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The report
+      ansible.builtin.include_role:
+        name: ad_lockout
+        tasks_from: build.yml
+
+    - name: Print it, publish it, email it
+      ansible.builtin.include_role:
+        name: ad_lockout
+        tasks_from: report.yml

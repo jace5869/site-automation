@@ -1,0 +1,74 @@
+---
+# USER HELP (playbooks/horizon_user_help.yml): a user cannot connect, or their desktop hangs. Shows their
+# sessions (desktop, pool, connected or disconnected, since when, from which client) and their desktops
+# (state, assigned or not) - then, when horizon_user_action asks, does one thing for them:
+#   look        only show (the default)
+#   logoff      log off all their sessions (horizon_session_forced_logoff: a locked one too)
+#   disconnect  disconnect their connected sessions
+#   reset       reset their desktops (like the power button)      restart  restart them (the OS shuts down)
+#   recover     their instant-clone desktops: deleted and made again from the image
+# Never a desktop another user has a session on, nor one in a protected pool (horizon_protected_pools).
+# A dry run (Check) says what it would do. Nothing is emailed.
+- name: Horizon | the user and the action
+  ansible.builtin.assert:
+    that:
+      - horizon_user | string | trim | length > 0
+      - horizon_user_action in ['look', 'logoff', 'disconnect', 'reset', 'restart', 'recover']
+    fail_msg: >-
+      {{ 'Say who: horizon_user (a login name - jdoe, CORP\jdoe, jdoe@corp.example.mil - or a SID).'
+         if horizon_user | string | trim | length == 0 else
+         "horizon_user_action is '" ~ horizon_user_action ~ "': look, logoff, disconnect, reset, restart or recover." }}
+    quiet: true
+
+- name: Horizon | find the user
+  ansible.builtin.include_tasks: user_lookup.yml
+  vars:
+    _hz_who: "{{ horizon_user | string | trim }}"
+
+- name: Horizon | Horizon knows the user
+  ansible.builtin.assert:
+    that: _hz_u.problems | length == 0
+    fail_msg: "{{ _hz_u.problems | join('; ') }}. Nothing was changed."
+    quiet: true
+
+- name: Horizon | {{ horizon_user }} - who, sessions, desktops
+  ansible.builtin.debug:
+    msg: >-
+      {{ [(_hz_u | hz_user_label) ~ ': ' ~ _hz_u.sessions | length ~ ' session(s), ' ~ _hz_u.machines | length ~ ' desktop(s)']
+         + (_hz_u.sessions | map('hz_user_session_line') | list)
+         + (_hz_u.machines | map('hz_user_machine_line') | list)
+         + ([] if _hz_u.sessions or _hz_u.machines else
+            ['No session and no desktop: the user has not connected yet, or is not entitled to a pool (Horizon Console > Inventory > Desktops > the pool > Entitlements).']) }}
+
+- name: Horizon | what {{ horizon_user_action }} acts on
+  ansible.builtin.set_fact:
+    _hz_tg: "{{ _hz_u | hz_user_targets(horizon_user_action, _hz, {'protected_pools': horizon_protected_pools}) }}"
+    _hz_all_results: []
+
+- name: Horizon | {{ horizon_user_action }} for {{ horizon_user }}
+  ansible.builtin.include_tasks: act.yml
+  vars:
+    _hz_target: "{{ _hz_tg.target }}"
+    _hz_verb: "{{ _hz_tg.verb }}"
+    _hz_ids: "{{ _hz_tg.ids }}"
+    _hz_query: "{{ {'forced_logoff': horizon_session_forced_logoff | bool} if _hz_tg.verb == 'logoff' else {} }}"
+  when: _hz_tg.ids | length > 0
+
+- name: Horizon | done
+  ansible.builtin.debug:
+    msg: >-
+      {{ (_hz_all_results | hz_act_lines(_hz_tg.targets, horizon_user_action, ansible_check_mode))
+         + (_hz_tg.held | map(attribute='name') | zip(_hz_tg.held | map(attribute='reason')) | map('join', ': left alone - ') | list)
+         + ([('Nothing to ' ~ horizon_user_action ~ '.')] if not _hz_tg.ids and not _hz_tg.held else []) }}
+  when: horizon_user_action != 'look'
+
+- name: Horizon | the user's sessions and desktops as job artifacts (horizon_user)
+  ansible.builtin.set_stats:
+    data:
+      horizon_user_help: "{{ {'user': _hz_u, 'action': horizon_user_action, 'results': _hz_all_results} }}"
+
+- name: Horizon | Horizon took every action
+  ansible.builtin.assert:
+    that: _hz_all_results | rejectattr('ok') | list | length == 0
+    fail_msg: "Horizon refused {{ _hz_all_results | rejectattr('ok') | list | length }} action(s): the lines above say why."
+    quiet: true

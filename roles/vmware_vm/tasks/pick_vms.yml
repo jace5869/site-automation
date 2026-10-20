@@ -1,0 +1,33 @@
+---
+# THE VMs A PICK LIST MAY OFFER FOR A RESTART, read now (pick_refresh.yml makes the list, reboot_picked.yml
+# checks each pick again): every VM of every vCenter that is powered on and not a template, among
+# vm_pick_reboot_vms / vm_pick_reboot_clusters / vm_pick_reboot_folders ([] = all) - never the AAP server or
+# a protected VM (the rules of guard.yml: the groups aap, aap_hosts and vmware_protected_groups by VM name,
+# guest host name and IP address; vmware_protected_vms), nor vm_pick_reboot_exclude_vms. With
+# vm_pick_reboot_only_hung, only the VMs that look hung: VMware Tools installed, but no heartbeat or Tools not
+# running, up for vm_pick_hung_min_minutes at least. Input: _vm_pk_max (default vm_pick_max_choices).
+# Output: _vm_pk_read, _vm_pk (offered / held / off / out_of_scope / more), _vm_pk_multi.
+- name: VMware | read the VMs now
+  site_vmware_vms:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    now: "{{ _vm_now | default(omit) }}"
+  register: _vm_pk_read
+  check_mode: false
+
+- name: VMware | the VMs that may be picked for a restart
+  ansible.builtin.set_fact:
+    _vm_pk_multi: "{{ _vm_pk_read.vcenters | vm_vcenters_read | length > 1 }}"
+    _vm_pk: >-
+      {{ _vm_pk_read.vms | vm_pick_vms({
+           'names': (vm_pick_reboot_vms | replace(',', ' ')).split() if vm_pick_reboot_vms is string else vm_pick_reboot_vms,
+           'clusters': (vm_pick_reboot_clusters | replace(',', ' ')).split() if vm_pick_reboot_clusters is string else vm_pick_reboot_clusters,
+           'folders': vm_pick_reboot_folders | snapshot_name_words,
+           'exclude': vmware_protected_vms + ((vm_pick_reboot_exclude_vms | replace(',', ' ')).split()
+                                              if vm_pick_reboot_exclude_vms is string else vm_pick_reboot_exclude_vms),
+           'protected_ids': (((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | host_ids(hostvars))
+                            + (vmware_protected_groups | select('in', groups) | map('extract', groups) | flatten | host_ids(hostvars)),
+           'only_hung': vm_pick_reboot_only_hung | bool, 'hung_min_minutes': vm_pick_hung_min_minutes | float,
+           'multi': _vm_pk_read.vcenters | vm_vcenters_read | length > 1,
+           'max': _vm_pk_max | default(vm_pick_max_choices) | int}) }}

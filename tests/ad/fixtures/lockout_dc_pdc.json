@@ -1,0 +1,180 @@
+{
+    "dc": {
+        "capped": [],
+        "domain": "corp.test",
+        "errors": [],
+        "events": [
+            {
+                "by": "",
+                "computer": "",
+                "id": 4771,
+                "ip": "192.0.2.50",
+                "logon_type": null,
+                "package": "",
+                "process": "",
+                "status": "0x12",
+                "sub_status": "",
+                "time": "2026-10-20T18:44:59Z",
+                "user": "jdoe"
+            },
+            {
+                "by": "",
+                "computer": "",
+                "id": 4768,
+                "ip": "192.0.2.50",
+                "logon_type": null,
+                "package": "",
+                "process": "",
+                "status": "0x12",
+                "sub_status": "",
+                "time": "2026-10-20T18:42:59Z",
+                "user": "jdoe"
+            },
+            {
+                "by": "",
+                "computer": "",
+                "id": 4771,
+                "ip": "192.0.2.50",
+                "logon_type": null,
+                "package": "",
+                "process": "",
+                "status": "0x12",
+                "sub_status": "",
+                "time": "2026-10-20T18:39:59Z",
+                "user": "jdoe"
+            },
+            {
+                "by": "",
+                "computer": "PC123",
+                "id": 4740,
+                "ip": "",
+                "logon_type": null,
+                "package": "",
+                "process": "",
+                "status": "",
+                "sub_status": "",
+                "time": "2026-10-20T18:34:59Z",
+                "user": "jdoe"
+            },
+            {
+                "by": "",
+                "computer": "",
+                "id": 4771,
+                "ip": "192.0.2.50",
+                "logon_type": null,
+                "package": "",
+                "process": "",
+                "status": "0x18",
+                "sub_status": "",
+                "time": "2026-10-20T18:34:59Z",
+                "user": "jdoe"
+            },
+            {
+                "by": "",
+                "computer": "",
+                "id": 4771,
+                "ip": "192.0.2.50",
+                "logon_type": null,
+                "package": "",
+                "process": "",
+                "status": "0x18",
+                "sub_status": "",
+                "time": "2026-10-20T18:29:59Z",
+                "user": "jdoe"
+            },
+            {
+                "by": "",
+                "computer": "",
+                "id": 4771,
+                "ip": "192.0.2.50",
+                "logon_type": null,
+                "package": "",
+                "process": "",
+                "status": "0x18",
+                "sub_status": "",
+                "time": "2026-10-20T18:24:59Z",
+                "user": "jdoe"
+            },
+            {
+                "by": "",
+                "computer": "",
+                "id": 4771,
+                "ip": "192.0.2.50",
+                "logon_type": null,
+                "package": "",
+                "process": "",
+                "status": "0x18",
+                "sub_status": "",
+                "time": "2026-10-20T18:19:59Z",
+                "user": "jdoe"
+            },
+            {
+                "by": "",
+                "computer": "PC123",
+                "id": 4776,
+                "ip": "",
+                "logon_type": null,
+                "package": "MICROSOFT_AUTHENTICATION_PACKAGE_V1_0",
+                "process": "",
+                "status": "0xc000006a",
+                "sub_status": "",
+                "time": "2026-10-20T18:14:59Z",
+                "user": "jdoe"
+            },
+            {
+                "by": "",
+                "computer": "WS9",
+                "id": 4625,
+                "ip": "192.0.2.60",
+                "logon_type": 3,
+                "package": "NTLM",
+                "process": "",
+                "status": "0xc000006d",
+                "sub_status": "0xc000006a",
+                "time": "2026-10-20T18:09:59Z",
+                "user": "jdoe"
+            },
+            {
+                "by": "CORP\\helpdesk1",
+                "computer": "",
+                "id": 4767,
+                "ip": "",
+                "logon_type": null,
+                "package": "",
+                "process": "",
+                "status": "",
+                "sub_status": "",
+                "time": "2026-10-20T13:54:59Z",
+                "user": "jdoe"
+            }
+        ],
+        "fqdn": "dc01.corp.test",
+        "name": "DC01",
+        "names": {
+            "192.0.2.50": "pc123.corp.test",
+            "192.0.2.60": ""
+        },
+        "read_at": "2026-10-20T18:54:59Z",
+        "role": "pdc",
+        "users": [
+            {
+                "bad_password_time": "2026-10-20T18:34:59Z",
+                "bad_pwd_count": 5,
+                "last_logon": "2026-10-19T18:54:59Z",
+                "locked": true,
+                "lockout_time": "2026-10-20T18:34:59Z",
+                "read": true,
+                "sam": "jdoe"
+            },
+            {
+                "bad_password_time": "",
+                "bad_pwd_count": 0,
+                "last_logon": "",
+                "locked": true,
+                "lockout_time": "2026-10-20T17:24:59Z",
+                "read": true,
+                "sam": "erin"
+            }
+        ]
+    }
+}

@@ -1,0 +1,51 @@
+---
+# Job 1 of the broken desktops workflow (playbooks/horizon_desktops_check.yml). Read-only: every desktop
+# in a state of horizon_broken_states, and what would fix it (horizon_fix_default_action, horizon_fix_actions)
+# - or why it is held back for a person: a protected pool, an excluded desktop, a user's session on it,
+# recover on a pool that is not instant clones, remove of an assigned desktop, over horizon_fix_max.
+#   horizon_desktops_mode: report    the list, and the job stays green (a schedule)
+#   horizon_desktops_mode: approval  a desktop to fix: the list goes to the fix job (set_stats
+#                                    horizon_desktops_fix) and this job FAILS on purpose, so the workflow
+#                                    takes its "Run on fail" path to the approval step, then
+#                                    horizon_desktops_fix_approved.yml fixes exactly those desktops.
+- name: Horizon | horizon_desktops_mode is report or approval
+  ansible.builtin.assert:
+    that: horizon_desktops_mode in ['report', 'approval']
+    fail_msg: "horizon_desktops_mode is '{{ horizon_desktops_mode }}': report (a list) or approval (the workflow's check)."
+    quiet: true
+
+- name: Horizon | read the pools, desktops and sessions
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the pools, desktops and sessions
+    _hz_resources: [desktop_pools, machines, sessions]
+
+- name: Horizon | the broken desktops
+  ansible.builtin.set_fact:
+    _hz_dk: "{{ _hz | hz_desktops({'protected_pools': horizon_protected_pools, 'broken_states': horizon_broken_states,
+                                        'actions': horizon_fix_actions | default({}, true), 'default_action': horizon_fix_default_action,
+                                        'max': horizon_fix_max | int, 'exclude_machines': horizon_fix_exclude_machines}) }}"
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: "{{ _hz_dk.report }}"
+    _hz_footer: "Read-only: nothing was changed. The fix waits for approval (the broken desktops workflow)."
+
+- name: Horizon | hand the desktops to fix to the approval step and the fix job (set_stats)
+  ansible.builtin.set_stats:
+    data:
+      horizon_desktops_fix: >-
+        {{ {'desktops': _hz_dk.fix, 'checked': now(utc=true).strftime('%Y-%m-%d %H:%M UTC'),
+            'job': awx_job_id | default(''), 'url': _hz_read.url} }}
+    per_host: false
+  when: horizon_desktops_mode == 'approval' and _hz_dk.fix | length > 0
+
+- name: Horizon | NEEDS APPROVAL - {{ _hz_dk.fix | length }} desktop(s) to fix
+  ansible.builtin.fail:
+    msg: >-
+      NEEDS APPROVAL: {{ _hz_dk.fix | length }} broken desktop(s) to fix -
+      {% for x in _hz_dk.fix %}{{ x.name }} ({{ x.state }}: {{ x.action }}){{ ', ' if not loop.last else '' }}{% endfor %}.
+      Approve to fix exactly these (each is checked again first); deny to leave them.
+      {{ (_hz_dk.held | length ~ ' more held back for a person (the report above).') if _hz_dk.held else '' }}
+  when: horizon_desktops_mode == 'approval' and _hz_dk.fix | length > 0

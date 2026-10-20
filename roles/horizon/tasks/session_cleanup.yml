@@ -1,0 +1,73 @@
+---
+# DISCONNECTED SESSIONS (playbooks/horizon_session_cleanup.yml): log off every session disconnected for
+# horizon_session_max_disconnected_hours or more - it holds a desktop no one else can use, and an instant
+# clone is only made fresh at log off. Held back: protected pools and horizon_session_cleanup_exclude_pools,
+# horizon_session_cleanup_exclude_users, a session whose disconnect time Horizon does not give, over
+# horizon_session_cleanup_max. No message is sent first: no one sees a message in a disconnected session.
+# A dry run (Check) or horizon_session_cleanup_report_only: true lists them and logs off none.
+- name: Horizon | read the pools, desktops and sessions
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the pools, desktops and sessions
+    _hz_resources: [desktop_pools, machines, sessions, farms]
+
+- name: Horizon | the disconnected sessions, first look
+  ansible.builtin.set_fact:
+    # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+    _hz_session_opts: >-
+      {{ {'protected_pools': horizon_protected_pools, 'hours': horizon_session_max_disconnected_hours | float,
+          'max': horizon_session_cleanup_max | int, 'exclude_pools': horizon_session_cleanup_exclude_pools,
+          'exclude_users': horizon_session_cleanup_exclude_users, 'now': horizon_now | default('')} }}
+    _hz_main: "{{ _hz }}"
+    _hz_sids: >-
+      {%- set first = _hz | hz_sessions_old({'protected_pools': horizon_protected_pools, 'hours': horizon_session_max_disconnected_hours | float,
+                                              'max': horizon_session_cleanup_max | int, 'exclude_pools': horizon_session_cleanup_exclude_pools,
+                                              'exclude_users': horizon_session_cleanup_exclude_users, 'now': horizon_now | default('')}) -%}
+      {%- set out = [] -%}
+      {%- for x in first.logoff + first.held if x.user_id and x.user == x.user_id and x.user_id not in out -%}
+      {%-   set _ = out.append(x.user_id) -%}
+      {%- endfor -%}
+      {{ out }}
+
+# a session carries the user's SID only (older API versions): one look-up per user, for the report and
+# horizon_session_cleanup_exclude_users
+- name: Horizon | the users' names
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the names of {{ _hz_sids | length }} user(s)
+    _hz_resources: >-
+      {%- set out = [] -%}
+      {%- for sid in _hz_sids[:300] -%}{%- set _ = out.append({'name': 'ad_users', 'key': 'user:' ~ sid, 'id': sid}) -%}{%- endfor -%}
+      {{ out }}
+  when: _hz_sids | length > 0
+
+- name: Horizon | the disconnected sessions to log off
+  ansible.builtin.set_fact:
+    _hz_so: "{{ _hz_main | hz_sessions_old(_hz_session_opts | combine({'names': _hz.user_names if _hz_sids | length > 0 else {}})) }}"
+    _hz: "{{ _hz_main }}"
+    _hz_all_results: []
+
+- name: Horizon | log off {{ _hz_so.logoff | length }} session(s)
+  ansible.builtin.include_tasks: act.yml
+  vars:
+    _hz_target: sessions
+    _hz_verb: logoff
+    _hz_ids: "{{ _hz_so.logoff | map(attribute='id') | list }}"
+    _hz_query: "{{ {'forced_logoff': horizon_session_forced_logoff | bool} }}"
+  when: _hz_so.logoff | length > 0 and not horizon_session_cleanup_report_only | bool
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: >-
+      {%- set done = _hz_all_results | hz_act_lines(_hz_so.logoff, 'log off', ansible_check_mode) -%}
+      {{ _hz_so.report | combine({'sections': _hz_so.report.sections + [{'title': 'Done', 'lines':
+           done or (['Nothing logged off: horizon_session_cleanup_report_only is true.'] if horizon_session_cleanup_report_only | bool and _hz_so.logoff
+                    else ['Nothing to log off.'])}]}) }}
+    _hz_footer: "Sessions disconnected {{ horizon_session_max_disconnected_hours }} hours or more (horizon_session_max_disconnected_hours)."
+
+- name: Horizon | Horizon logged them off
+  ansible.builtin.assert:
+    that: _hz_all_results | rejectattr('ok') | list | length == 0
+    fail_msg: "Horizon refused to log off {{ _hz_all_results | rejectattr('ok') | list | length }} session(s): the report above says why."
+    quiet: true

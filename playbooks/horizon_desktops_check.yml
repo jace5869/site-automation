@@ -1,0 +1,19 @@
+---
+# Job 1 of the broken desktops workflow (or a report on its own). Read-only: every desktop in a broken state
+# (horizon_broken_states: agent unreachable, already used, error, provisioning error...) and what fixes it
+# (recover by default - instant clones made again from the image), or why it is held back for a person.
+#   horizon_desktops_mode: report    a list; the job stays green
+#   horizon_desktops_mode: approval  desktops to fix: the list goes on (set_stats horizon_desktops_fix) and
+#                                    the job FAILS on purpose -> the workflow's "Run on fail" path ->
+#                                    approval -> horizon_desktops_fix_approved.yml
+# Runs on the AAP side: attach the "Horizon API" credential; no inventory needed. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_desktops_check.yml
+- name: Horizon desktops check
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon desktops check
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: desktops_check.yml

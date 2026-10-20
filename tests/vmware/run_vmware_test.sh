@@ -7,7 +7,8 @@
 # disconnected host, an alarm that fired and cleared) and its ACT analysis (a fake ACT:
 # tests/containers/fake_act.py); the ESXi security settings; capacity planning (with and without
 # GenAI's estimate); the health report (a third simulator with 2 datacenters); the certificate renewal of vCenter
-# and its hosts (the days raised, one host, incidents and CSRs in a fake ServiceNow, no second CSR, a refused attachment).
+# and its hosts (the days raised, one host, incidents and CSRs in a fake ServiceNow, no second CSR, a refused attachment);
+# the pick lists (the survey's choices written in a fake AAP, the picked snapshots deleted and VMs restarted, each checked again).
 #   bash tests/vmware/run_vmware_test.sh
 # Needs: podman or docker; a python with pyVmomi and the vSphere Automation SDK (pip install pyvmomi
 # vmware-vcenter; VMWARE_TEST_PYTHON=... to pick it); the vmware.vmware collection (installed into a
@@ -29,7 +30,9 @@ port2=$((port + 7))
 work="$(mktemp -d)"
 smtp_pid=""
 http_pid=""
-cleanup() { "$engine" rm -f "$name" "$name2" "$name3" >/dev/null 2>&1; [ -n "$smtp_pid" ] && kill "$smtp_pid" 2>/dev/null; [ -n "$http_pid" ] && kill "$http_pid" 2>/dev/null; rm -rf "$work"; }
+pick_pid=""
+cleanup() { "$engine" rm -f "$name" "$name2" "$name3" >/dev/null 2>&1; [ -n "$smtp_pid" ] && kill "$smtp_pid" 2>/dev/null; [ -n "$http_pid" ] && kill "$http_pid" 2>/dev/null
+            [ -n "$pick_pid" ] && kill "$pick_pid" 2>/dev/null; rm -rf "$work"; }
 trap cleanup EXIT
 fails=0
 
@@ -272,6 +275,137 @@ run "cleanup confirmed with name words: deletes the patching one only" ok vm_sna
 check "  ...keep-me and app-upgrade remain" DC0_C0_RP0_VM1 "','.join(s['name'] for s in v['snapshots'])" "keep-me,app-upgrade"
 run "  (app-upgrade deleted again, for the checks below)" ok vm_snapshot_delete.yml -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=app-upgrade \
     -- "DC0_C0_RP0_VM1: deleted app-upgrade"
+
+# ---- pick lists: the survey lists what may be restarted / deleted, the pick is checked again live (a fake AAP:
+# tests/servicenow/aapmock.py - job templates 51/52, workflow 61; DC0_H0_VM0 = AAP, keep-me is held back) ----------
+pick_port=$((port + 45))
+AAPMOCK_LOG="$work/pick-aap.jsonl" AAPMOCK_INV_LOG="$work/pick-inv.jsonl" AAPMOCK_SURVEY_LOG="$work/survey.jsonl" \
+    "$py" "$repo/tests/servicenow/aapmock.py" "$pick_port" >/dev/null 2>&1 &
+pick_pid=$!
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$pick_port") 2>/dev/null && break; sleep 0.1; done
+export CONTROLLER_HOST="http://127.0.0.1:$pick_port" CONTROLLER_USERNAME=admin CONTROLLER_PASSWORD=goodpw
+nsurvey() { cat "$work/survey.jsonl" 2>/dev/null | wc -l; }
+# choices KIND ID [N]: the choices of the last survey written for that template, one per line ([N] = only the Nth, from 0)
+choices() {
+    "$py" -c 'import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1])]
+q = [r for r in rows if r["kind"] == sys.argv[2] and r["id"] == int(sys.argv[3])][-1]["spec"]["spec"][0]
+c = q["choices"] if isinstance(q["choices"], list) else q["choices"].split("\n")
+print("\n".join(c) if len(sys.argv) < 5 else c[int(sys.argv[4])])' "$work/survey.jsonl" "$@"
+}
+picklist='{"vm_pick_snapshot_templates": ["VM - delete picked snapshots", {"template": "61", "kind": "workflow"}],
+           "vm_pick_reboot_templates": ["VM - restart picked VMs"]}'
+# (on DC0_C0_RP0_VM1, which keeps keep-me: vcsim cannot take a snapshot of a VM whose snapshots were all deleted)
+run "pick lists: two snapshots of the same name, and a third" ok vm_snapshot.yml -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=pick-a -- "Took snapshot"
+VMWARE_PORT=$port "$py" "$here/vcsim.py" snap DC0_C0_RP0_VM1 pick-a
+run "  (pick-b)" ok vm_snapshot.yml -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=pick-b -- "Took snapshot"
+run "pick lists, a dry run (Check): says what it would write, writes nothing" ok vm_pick_refresh.yml --check -e "$picklist" \
+    -- "VMware pick lists (dry run): 3 snapshot(s) to delete, 2 VM(s) to restart" \
+       "job template VM - delete picked snapshots, question vm_snapshot_picks: 3 choice(s) - would change: 3 choice(s), default cleared" \
+       "workflow job template VM - delete picked snapshots (workflow), question vm_snapshot_picks: 3 choice(s)" \
+       "job template VM - restart picked VMs, question vm_reboot_picks: 2 choice(s) - would change: made multiple select"
+[ "$(nsurvey)" = 0 ] && echo "ok   -   ...no survey written" || { echo "FAIL -   ...the dry run wrote a survey"; fails=$((fails + 1)); }
+run "pick lists: the snapshots that may be deleted and the VMs that may be restarted, written into the surveys" ok vm_pick_refresh.yml -e "$picklist" \
+    -- "VMware pick lists: 3 snapshot(s) to delete, 2 VM(s) to restart" \
+       "Snapshots: 3 offered, oldest first; 2 held back: 1 its name or description says keep, 1 the VM is the AAP server" \
+       'DC0_C0_RP0_VM1: \"pick-a\" (0 MB, 0.0 days old, taken ' \
+       "VMs: 2 offered; 1 held back: 1 the AAP server or a protected VM (vmware_protected_groups); 3 powered off or templates" \
+       "DC0_H0_VM1 (VMware Tools running, DC0, guest web01.example.mil 192.0.2.20) [127.0.0.1/" \
+       "DC0_C0_RP0_VM0 (no VMware Tools running, DC0 / DC0_C0) [127.0.0.1/" "No email: the pick list refresh never emails" '"vm_pick_lists"'
+[ "$(nsurvey)" = 3 ] && [ "$(choices job 51 | grep -c '\[127.0.0.1/vm-[0-9]*/[0-9]*\]$')" = 3 ] && [ "$(choices workflow 61 | grep -c pick-)" = 3 ] \
+    && [ "$(choices job 52 | grep -c '\[127.0.0.1/vm-[0-9]*\]$')" = 2 ] && ! choices job 52 | grep -q DC0_H0_VM0 \
+    && echo "ok   -   ...3 surveys: each choice ends with its vCenter/VM/snapshot, the AAP server never offered" \
+    || { echo "FAIL -   ...surveys"; cat "$work/survey.jsonl" | cut -c1-400; fails=$((fails + 1)); }
+run "pick lists again, nothing new: no choice changed (at most the time of the list)" ok vm_pick_refresh.yml -e "$picklist" \
+    -- "question vm_snapshot_picks: 3 choice(s) - " && ! grep -q "updated: 3 choice" "$work/out.txt" && echo "ok   -   ...the same choices" \
+    || { echo "FAIL -   ...the choices were written again"; fails=$((fails + 1)); }
+run "pick lists: a template that is not there - the others are still written, the job fails and says so" fail vm_pick_refresh.yml \
+    -e '{"vm_pick_snapshot_templates": ["Nope", "VM - delete picked snapshots"]}' \
+    -- "NOT UPDATED template Nope (question vm_snapshot_picks): no job template or workflow job template Nope that the AAP user can see" \
+       "job template VM - delete picked snapshots, question vm_snapshot_picks: 3 choice(s) - "
+run "pick lists: no template named - says which settings" fail vm_pick_refresh.yml -- "Nothing to refresh: name the templates"
+(unset CONTROLLER_HOST; run "pick lists: no AAP credential - says which credential" fail vm_pick_refresh.yml -e "$picklist" \
+    -- 'No AAP connection: attach a credential of type \"Red Hat Ansible Automation Platform\"') || fails=$((fails + 1))
+INV="$work/inv-noaap.yml" run "pick lists: the inventory cannot tell which VM is AAP - no VM is offered" fail vm_pick_refresh.yml -e "$picklist" \
+    -- "cannot tell which VM is the AAP server"
+hb0="$(VMWARE_PORT=$port "$py" -c 'from pyVim.connect import SmartConnect; from pyVmomi import vim
+c = SmartConnect(host="127.0.0.1", port='"$port"', user="u", pwd="p", disableSslCertValidation=True).RetrieveContent()
+v = [x for x in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if x.name == "DC0_H0_VM1"][0]
+print(v.guest.toolsStatus)')"
+VMWARE_PORT=$port "$py" "$here/vcsim.py" guest DC0_H0_VM1 guestHeartbeatStatus=red guest.toolsStatus=toolsOk
+run "pick lists, only the hung VMs: Tools installed but no heartbeat" ok vm_pick_refresh.yml -e "$picklist" -e vm_pick_reboot_only_hung=true \
+    -- "1 hung VM(s)" "VMs: 1 offered (only the hung ones); 2 held back: 1 not hung, 1 the AAP server" "DC0_H0_VM1 (no heartbeat, DC0, guest "
+[ "$(choices job 52)" != "" ] && [ "$(choices job 52 | wc -l)" = 1 ] && echo "ok   -   ...the restart list has the hung VM only" \
+    || { echo "FAIL -   ...hung list"; choices job 52; fails=$((fails + 1)); }
+
+# the snapshot picks: from the job template's list (3 choices); a typed line and a stale one too
+sp="$work/snap-picks.json"
+"$py" -c 'import json, sys; c = sys.stdin.read().splitlines(); json.dump({"vm_snapshot_picks": c + ["web01 typed by hand",
+    "DC0_C0_RP0_VM1: \"gone\" (x) [127.0.0.1/vm-999/9]"]}, open(sys.argv[1], "w"))' "$sp" <<< "$(choices job 51)"
+run "picked snapshots, on their own: the plan only - what would be deleted, the stale and typed ones skipped, nothing deleted" ok \
+    vm_snapshot_delete_picked.yml -e "@$sp" \
+    -- "VMware picked snapshots: would delete 3, 2 skipped (nothing deleted)" 'WOULD DELETE DC0_C0_RP0_VM1: \"pick-a\"' 'WOULD DELETE DC0_C0_RP0_VM1: \"pick-b\"' \
+       "SKIPPED web01 typed by hand - not a choice of the pick list" 'SKIPPED DC0_C0_RP0_VM1: \"gone\" - no longer there' \
+       "run again with vm_pick_confirm: true" '"vm_snapshot_pick_plan"'
+check "  ...all three still there" DC0_C0_RP0_VM1 "','.join(s['name'] for s in v['snapshots'])" "keep-me,pick-a,pick-a,pick-b"
+run "picked snapshots in a workflow, without a plan: vm_pick_confirm is not used - the plan for the approval" ok vm_snapshot_delete_picked.yml \
+    -e "@$sp" -e vm_pick_confirm=true -e awx_workflow_job_id=77 -- "would delete 3 - waiting for the approval" "the plan for the approval"
+check "  ...still there" DC0_C0_RP0_VM1 "len(v['snapshots'])" 4
+run "picked snapshots: more than vm_pick_max - refused" fail vm_snapshot_delete_picked.yml -e "@$sp" -e vm_pick_confirm=true -e vm_pick_max=2 \
+    -- "Refused: 3 snapshots picked - more than vm_pick_max (2)"
+run "picked snapshots, confirmed as a dry run (Check): deletes nothing" ok vm_snapshot_delete_picked.yml --check -e "@$sp" -e vm_pick_confirm=true \
+    -- "would delete 3" "Nothing deleted: a dry run (Check)."
+check "  ...still there" DC0_C0_RP0_VM1 "len(v['snapshots'])" 4
+run "picked snapshots: nothing picked - says so" fail vm_snapshot_delete_picked.yml -- "Nothing picked: pick the snapshots to delete in the survey"
+run "picked snapshots: only the empty list's line - says the list had nothing" fail vm_snapshot_delete_picked.yml \
+    -e '{"vm_snapshot_picks": ["(nothing to pick: no snapshot may be deleted - list of x)"]}' -- "The list had nothing to pick"
+renamed="$(choices job 51 0 | sed 's/: "pick-[ab]"/: "renamed"/')"
+run "picked snapshots: one renamed since the list was made - skipped, nothing to delete: failed" fail vm_snapshot_delete_picked.yml \
+    -e "{\"vm_snapshot_picks\": [\"${renamed//\"/\\\"}\"]}" -e vm_pick_confirm=true -- "the snapshot was renamed since the list was made" \
+       "None of the picks can be deleted now"
+pa1="$(state DC0_C0_RP0_VM1 "[s['id'] for s in v['snapshots'] if s['name'] == 'pick-a'][0]")"
+pa2="$(state DC0_C0_RP0_VM1 "[s['id'] for s in v['snapshots'] if s['name'] == 'pick-a'][1]")"; m1="$(state DC0_C0_RP0_VM1 "v['moid']")"
+aapmoid="$(state DC0_H0_VM0 "v['moid']")"; aapsnap="$(state DC0_H0_VM0 "v['snapshots'][0]['id']")"
+plan="{\"vm_snapshot_pick_plan\": [{\"vm\": \"DC0_C0_RP0_VM1\", \"name\": \"pick-a\", \"vcenter\": \"127.0.0.1\", \"moid\": \"$m1\", \"id\": $pa1},
+       {\"vm\": \"DC0_H0_VM0\", \"name\": \"aap-snap\", \"vcenter\": \"127.0.0.1\", \"moid\": \"$aapmoid\", \"id\": $aapsnap}]}"
+run "picked snapshots after the approval: exactly the plan - one pick-a (not its namesake), never the AAP server's" ok vm_snapshot_delete_picked.yml \
+    -e "$plan" -e "@$sp" -e awx_workflow_job_id=77 \
+    -- "VMware picked snapshots: deleted 1 (approved), 1 skipped" 'DELETED DC0_C0_RP0_VM1: \"pick-a\"' \
+       'SKIPPED DC0_H0_VM0: \"aap-snap\" - held back now: the VM is the AAP server'
+check "  ...the other pick-a is still there" DC0_C0_RP0_VM1 "[s['id'] for s in v['snapshots'] if s['name'] == 'pick-a'] == [$pa2]" "True"
+check "  ...and aap-snap" DC0_H0_VM0 "len(v['snapshots'])" 1
+run "picked snapshots, confirmed on their own: the rest deleted, the one already gone skipped" ok vm_snapshot_delete_picked.yml -e "@$sp" -e vm_pick_confirm=true \
+    -- "VMware picked snapshots: deleted 2, 3 skipped" 'DELETED DC0_C0_RP0_VM1: \"pick-b\"' '"vm_snapshot_picked"'
+check "  ...only keep-me left" DC0_C0_RP0_VM1 "','.join(s['name'] for s in v['snapshots'])" "keep-me"
+
+# the restart picks (DC0_H0_VM1 is hung now: Tools installed, no heartbeat; DC0_C0_RP0_VM0 runs no Tools)
+rp="$work/vm-picks.json"
+run "  (the restart list, every powered-on VM)" ok vm_pick_refresh.yml -e "$picklist" -- "2 VM(s) to restart"
+"$py" -c 'import json, sys; json.dump({"vm_reboot_picks": sys.stdin.read().splitlines()}, open(sys.argv[1], "w"))' "$rp" <<< "$(choices job 52 | grep -v DC0_C0_RP0_VM1)"
+run "picked VMs, a guest restart: the ones without VMware Tools running skipped, saying to use hard" ok vm_reboot_picked.yml -e "@$rp" \
+    -- "VM restart (picked): would restart 1 (guest), 1 skipped (nothing restarted)" "WOULD RESTART (operating system restart through VMware Tools) DC0_H0_VM1" \
+       "SKIPPED DC0_C0_RP0_VM0 - VMware Tools is not running in it" "with vm_power_mode hard"
+run "picked VMs: the AAP server's ID typed in - held back, nothing to restart: failed" fail vm_reboot_picked.yml -e vm_power_mode=hard -e vm_pick_confirm=true \
+    -e "{\"vm_reboot_picks\": [\"DC0_H0_VM0 (x) [127.0.0.1/$aapmoid]\"]}" \
+    -- "SKIPPED DC0_H0_VM0 - held back now: the AAP server or a protected VM" "None of the picks can be restarted now"
+check "  ...the AAP server still on" DC0_H0_VM0 "v['power']" poweredOn
+run "picked VMs, a hard reset, confirmed on their own" ok vm_reboot_picked.yml -e "@$rp" -e vm_power_mode=hard -e vm_pick_confirm=true \
+    -- "VM restart (picked): 2 restarted (hard)" "RESTARTED (hard reset) DC0_H0_VM1" "RESTARTED (hard reset) DC0_C0_RP0_VM0" '"vm_reboot_picked"'
+m0="$(state DC0_C0_RP0_VM0 "v['moid']")"
+rplan="{\"vm_reboot_pick_plan\": [{\"vm\": \"DC0_C0_RP0_VM0\", \"vcenter\": \"127.0.0.1\", \"moid\": \"$m0\", \"power_mode\": \"hard\"}]}"
+run "picked VMs after the approval, but run with another power mode: refused" fail vm_reboot_picked.yml -e "$rplan" -e vm_power_mode=guest \
+    -- "Refused: the approved plan is for a hard restart, this run says vm_power_mode guest"
+run "picked VMs after the approval: exactly the plan" ok vm_reboot_picked.yml -e "$rplan" -e vm_power_mode=hard -e awx_workflow_job_id=78 \
+    -- "VM restart (picked): 1 restarted (hard) (approved)" "RESTARTED (hard reset) DC0_C0_RP0_VM0"
+VMWARE_PORT=$port "$py" "$here/vcsim.py" guest DC0_H0_VM1 guestHeartbeatStatus=green guest.toolsStatus="$hb0" guest.toolsRunningStatus=guestToolsRunning
+run "picked VMs, only the hung ones: DC0_H0_VM1 has its heartbeat back - skipped" fail vm_reboot_picked.yml -e "@$rp" -e vm_power_mode=hard \
+    -e vm_pick_reboot_only_hung=true -e vm_pick_confirm=true -- "SKIPPED DC0_H0_VM1 - held back now: not hung: heartbeat green"
+run "picked VMs: one that is off now - skipped" fail vm_reboot_picked.yml -e vm_pick_confirm=true -e vm_power_mode=hard \
+    -e "{\"vm_reboot_picks\": [\"DC0_C0_RP0_VM1 (x) [127.0.0.1/$(state DC0_C0_RP0_VM1 "v['moid']")]\"]}" -- "not offered now: gone, powered off"
+INV="$work/inv-noaap.yml" run "picked VMs: the inventory cannot tell which VM is AAP - refused" fail vm_reboot_picked.yml -e "@$rp" -e vm_pick_confirm=true \
+    -- "cannot tell which VM is the AAP server"
+kill "$pick_pid" 2>/dev/null
+unset CONTROLLER_HOST CONTROLLER_USERNAME CONTROLLER_PASSWORD
 
 # ---- datastore report (read-only; vcsim's LocalDS_0 is about 1% used) -------------------------------
 run "datastore report, default thresholds: all below 80%, green" ok vm_datastore_report.yml \

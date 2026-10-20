@@ -655,6 +655,101 @@ class Snapshots(unittest.TestCase):
         self.assertFalse(f.name_matches("x", ["", " "]))
 
 
+class PickLists(unittest.TestCase):
+    """The pick lists: survey choices that end with the ID token, read back from the survey's answer, and
+    each pick found again live (plugins/filter/site_filters.py, vm_pick_*)."""
+    SNAP = {"vm": "web01", "moid": "vm-42", "vcenter": "VC01.example.mil", "datacenter": "DC1", "name": "before (patch)",
+            "id": 7, "age_days": 6.2, "size_gb": 12.4, "created": "2026-10-14T08:12:00Z"}
+    VM = {"name": "web01", "moid": "vm-42", "vcenter": "vc01.example.mil", "datacenter": "DC1", "cluster": "PROD-CL01",
+          "folder": "/DC1/vm/Linux", "template": False, "power": "poweredOn", "hostname": "web01.example.mil", "ip": "192.0.2.20",
+          "ips": ["192.0.2.20", "192.0.2.21"], "tools": "toolsOk", "tools_running": "guestToolsRunning", "heartbeat": "green",
+          "up_minutes": 3000}
+
+    def vm(self, **kw):
+        return dict(self.VM, **kw)
+
+    def test_snapshot_choice_round_trip(self):
+        c = f.vm_pick_snapshot_choices([self.SNAP], multi=True)["choices"][0]
+        self.assertEqual(c, 'web01: "before (patch)" (12.4 GB, 6.2 days old, taken 2026-10-14 08:12 UTC, VC01) [vc01.example.mil/vm-42/7]')
+        p = f.vm_pick_parse([c, c], "snapshot")                         # the same pick twice: once
+        self.assertEqual(p["picks"], [{"vcenter": "vc01.example.mil", "moid": "vm-42", "id": "7", "vm": "web01", "name": "before (patch)",
+                                       "text": c}])
+        self.assertEqual(f.vm_pick_snapshot_choices([self.SNAP] * 3, max_choices=2)["more"], 1)
+
+    def test_parse_text_bad_and_empty(self):
+        text = ("(nothing to pick: no snapshot may be deleted - list of 2026-10-20 10:00 UTC)\n\nweb01 typed by hand\n"
+                "web01 (x) [vc01/vm-42]\n")
+        p = f.vm_pick_parse(text, "snapshot")
+        self.assertEqual((p["picks"], p["ignored"]), ([], 1))
+        self.assertEqual(p["bad"], ["web01 typed by hand", "web01 (x) [vc01/vm-42]"])   # a VM's token is no snapshot's
+        p = f.vm_pick_parse(["db (01) (VMware Tools running, up 2.0 days) [vc01/vm-7]"], "vm")
+        self.assertEqual((p["picks"][0]["vm"], p["picks"][0]["moid"]), ("db (01)", "vm-7"))      # brackets in the name stay
+        plan = [{"vm": "web01", "vcenter": "VC01", "moid": "vm-42", "id": 7, "name": "x"}, {"vm": "nope"}]
+        p = f.vm_pick_parse(plan, "snapshot")
+        self.assertEqual(([(x["vcenter"], x["id"]) for x in p["picks"]], len(p["bad"])), ([("vc01", "7")], 1))
+
+    def test_vms_offered_and_held(self):
+        vms = [self.vm(), self.vm(name="aap01", moid="vm-1", hostname="aap01.example.mil", ip="192.0.2.5", ips=[]),
+               self.vm(name="SQL01", moid="vm-2"), self.vm(name="off01", moid="vm-3", power="poweredOff"),
+               self.vm(name="tmpl", moid="vm-4", template=True), self.vm(name="other", moid="vm-5", cluster="DEV")]
+        r = f.vm_pick_vms(vms, {"protected_ids": ["192.0.2.5"], "exclude": ["sql*"], "clusters": ["prod-*"]})
+        self.assertEqual([v["name"] for v in r["offered"]], ["web01"])
+        self.assertEqual(r["offered"][0]["choice"],
+                         "web01 (VMware Tools running, up 2.1 days, DC1 / PROD-CL01, guest web01.example.mil 192.0.2.20) [vc01.example.mil/vm-42]")
+        self.assertEqual(sorted((v["name"], v["reason"].split(" (")[0]) for v in r["held"]),
+                         [("SQL01", "on the exclusion list"), ("aap01", "the AAP server or a protected VM")])
+        self.assertEqual((r["off"], r["out_of_scope"]), (2, 1))
+        self.assertEqual(f.vm_pick_reasons(r["held"]), "1 on the exclusion list (vmware_protected_vms, vm_pick_reboot_exclude_vms), "
+                                                       "1 the AAP server or a protected VM (vmware_protected_groups)")
+        self.assertEqual(f.vm_pick_ids(self.VM), ["192.0.2.20", "192.0.2.21", "web01"])
+
+    def test_only_hung(self):
+        vms = [self.vm(), self.vm(name="hb", moid="vm-6", heartbeat="red", tools_running="guestToolsRunning"),
+               self.vm(name="nt", moid="vm-7", heartbeat="gray", tools="toolsNotRunning", tools_running="guestToolsNotRunning"),
+               self.vm(name="none", moid="vm-8", heartbeat="gray", tools="toolsNotInstalled", tools_running="guestToolsNotRunning"),
+               self.vm(name="booting", moid="vm-9", heartbeat="red", up_minutes=3),
+               self.vm(name="unknown", moid="vm-10", heartbeat="red", up_minutes=None)]
+        r = f.vm_pick_vms(vms, {"only_hung": True, "hung_min_minutes": 15})
+        self.assertEqual([(v["name"], v["hung"]) for v in r["offered"]],
+                         [("hb", "no heartbeat"), ("nt", "VMware Tools not running"), ("unknown", "no heartbeat")])
+        self.assertTrue(r["offered"][0]["choice"].startswith("hb (no heartbeat, up 2.1 days,"))
+        self.assertEqual(sorted(v["name"] for v in r["held"]), ["booting", "none", "web01"])
+
+    def test_snapshot_plan(self):
+        live = dict(self.SNAP, vcenter="vc01.example.mil")
+        held = dict(live, id=8, name="keep me", reason="its name or description says keep")
+        young = dict(live, id=9, name="new")
+        split = {"all": [live, held, young], "old": [live], "held": [held]}
+        tok = lambda i, name="before (patch)", vm="web01": '%s: "%s" (1 GB, 1 days old, taken x) [vc01.example.mil/vm-42/%s]' % (vm, name, i)
+        picks = f.vm_pick_parse([tok(7), tok(8, "keep me"), tok(9, "new"), tok(5),
+                                 '%s: "x" (y) [vc02.example.mil/vm-42/7]' % "web01"], "snapshot")["picks"]
+        plan = f.vm_pick_snapshot_plan(split, picks, ["VC01.example.mil"])
+        self.assertEqual([x["id"] for x in plan["todo"]], [7])
+        self.assertEqual([x["reason"].split(":")[0].split(" (")[0] for x in plan["skipped"]],
+                         ["held back now", "not old enough to be offered", "no longer there", "its vCenter vc02.example.mil was not read by this job"])
+        renamed = f.vm_pick_parse([tok(7, "old name")], "snapshot")["picks"]
+        self.assertIn('the snapshot was renamed since the list was made (was "old name", now "before (patch)")',
+                      f.vm_pick_snapshot_plan(split, renamed, ["vc01.example.mil"])["skipped"][0]["reason"])
+        moved = f.vm_pick_parse([tok(7, vm="web02")], "snapshot")["picks"]
+        self.assertIn('the VM was renamed', f.vm_pick_snapshot_plan(split, moved, ["vc01.example.mil"])["skipped"][0]["reason"])
+
+    def test_reboot_plan(self):
+        vms = [self.vm(), self.vm(name="nt", moid="vm-7", tools_running="guestToolsNotRunning"), self.vm(name="SQL01", moid="vm-2")]
+        picked = f.vm_pick_vms(vms, {"exclude": ["SQL*"]})
+        texts = [v["choice"] for v in picked["offered"]] + ["SQL01 (x) [vc01.example.mil/vm-2]", "gone (x) [vc01.example.mil/vm-99]"]
+        picks = f.vm_pick_parse(texts, "vm")["picks"]
+        plan = f.vm_pick_reboot_plan(picked, picks, ["vc01.example.mil"], "guest")
+        self.assertEqual([x["name"] for x in plan["todo"]], ["web01"])
+        self.assertEqual((plan["todo"][0]["tools"], plan["todo"][0]["tools_status"]), ("guestToolsRunning", "toolsOk"))
+        self.assertEqual(plan["todo"][0]["ids"], ["192.0.2.20", "192.0.2.21", "web01"])
+        self.assertEqual([x["reason"].split(":")[0].split(",")[0] for x in plan["skipped"]],
+                         ["VMware Tools is not running in it", "held back now", "not offered now"])
+        hard = f.vm_pick_reboot_plan(picked, picks, ["vc01.example.mil"], "hard")
+        self.assertEqual([x["name"] for x in hard["todo"]], ["nt", "web01"])
+        renamed = f.vm_pick_parse(["web02 (x) [vc01.example.mil/vm-42]"], "vm")["picks"]
+        self.assertIn('was "web02", now "web01"', f.vm_pick_reboot_plan(picked, renamed, ["vc01.example.mil"])["skipped"][0]["reason"])
+
+
 class VmwareAlarms(unittest.TestCase):
     D = {"vcenter": "vc01", "read_at": "2026-10-07T12:00:00Z", "window_hours": 24.0, "events_capped": False,
          "alarms": [{"entity_type": "host", "entity": "esx01", "moid": "host-1", "cluster": "CL1", "datacenter": "DC1",

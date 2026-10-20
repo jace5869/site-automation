@@ -23,6 +23,7 @@ mail clients that do not show HTML. One email per job run, whatever the number o
 | VM alarms ACT analysis | `vm_alarm_act_analysis.yml` | per problem: ACT's likely cause, evidence, fix and confidence (coloured); what to do first |
 | Active Directory health report | `ad_health_report.yml` | domains, domain controllers, FSMO, replication, dcdiag, DNS, time, events, clients in no site, certificates, trusts, sites, then the day's changes (privileged groups, accounts, GPOs, schema and configuration) - problems first, coloured ([ACTIVE_DIRECTORY.md](ACTIVE_DIRECTORY.md)) |
 | NetApp ONTAP health report | `ontap_health_report.yml` | clusters, nodes, health alerts, events, hardware, disks, network, aggregates, volumes, inodes, snapshots, SnapMirror, SVMs, CIFS, LUNs, certificates - problems first, coloured ([NETAPP.md](NETAPP.md)) |
+| Horizon health report, capacity report, desktops check, session cleanup, image push plan | `horizon_*.yml` | Connection Servers, gateways, vCenter, AD, event database, license, pools; each pool's use; the broken desktops; the sessions logged off; the push plan ([HORIZON.md](HORIZON.md)) |
 | VM capacity planning | `vm_capacity_report.yml` | overall and per cluster: CPU, memory with a host down, vCPUs per core, VMs that fit, hosts recommended, datastores with runways; with GenAI, its estimate next to the math |
 | VMware certificate report | `vmware_cert_report.yml` | every certificate of vCenter and its hosts, soonest expiry first (expired red, due amber), and for each one due what the renewal would do; the hosts not checked |
 | VMware certificate renewal | `vmware_cert_renew.yml` | the certificates due (expired red, the rest amber): the ticket and the CSR of each, or why none; every certificate of vCenter and its hosts, soonest expiry first; the hosts not checked |
@@ -87,6 +88,7 @@ job does when it finds problems:
 | VM capacity planning | **green**; red when GenAI was asked for and could not run | `vm_capacity_fail: true` = red when a cluster or datastore is critical |
 | ESXi security settings | green; **red** when a host could not be set (the email says why) | - |
 | NetApp ONTAP health report | **green**: the report and email say what is wrong | `ontap_report_fail: true` = red on a critical finding or a cluster not read |
+| Horizon health and capacity reports | **green**: the report and email say what is wrong | `horizon_health_fail: true` = red on a critical finding or a full pool |
 | Health checks, certificate reports, database health, POA&M, ServiceNow health | **red** when there are findings: AAP workflows start tickets (and ACT) from that | `site_fail_on: []` = green, report only |
 
 So for a template whose job is to email a report to people, set `site_fail_on: []` and it stays

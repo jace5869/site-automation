@@ -1,5 +1,61 @@
 # Changelog
 
+## 0.17.0 — 2026-10-21
+
+**Updating without scripts:** paste `site-automation-0.17.0-changed-since-0.16.2.zip` as it is (from
+0.15.1 to 0.16.1: `site-automation-0.17.0-changed-since-0.15.1.zip`). Both leave out
+`playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. No setting changes for the jobs you have:
+nothing to change in `all.yml`. New job templates, only for the jobs you want: *Active Directory - account
+lockout*; nine *Horizon* templates and a new credential type, *Horizon API*; *VM - refresh the pick lists*,
+*VM - delete picked snapshots* and *VM - restart picked VMs*. Each template's settings are in
+`aap/extra_vars/`.
+
+**Active Directory account lockout** (`playbooks/ad_lockout.yml`, for the service desk): is an account locked
+out, and which computer is locking it out. Every domain controller reads its own bad password count and its
+Security log (4740 and the caller computer, 4767 by whom, 4771 / 4768 Kerberos with the client's address
+resolved to a name, 4776 NTLM with the workstation, 4625). The report ranks the source computers and says what
+each one usually is: a saved password retrying at a steady pace, a phone through a mail server, a scheduled task,
+a service, a mapped drive, a Remote Desktop session, a server signing in for the user. With no account given it
+lists every account locked out now. Optionally it unlocks the account on the PDC emulator (`ad_lockout_unlock`,
+a dry run in Check), and looks on the source computers that are in the inventory for services, scheduled tasks,
+sessions, processes and mapped drives running as the account (`ad_lockout_check_sources`). Read-only otherwise;
+nothing is emailed unless `report_email_to` is set. docs/ACTIVE_DIRECTORY.md, "Account lockout".
+
+**Horizon 8 (VDI).** Nine job templates through the Connection Server's REST API, run from the AAP side, with a
+new credential type *Horizon API*. Each path's API version is found by asking, newest first, so the Horizon 8
+release does not need to be known in advance: run *Horizon - API test* first - it lists the paths and versions
+your Horizon answered, checks the settings against the pools, and looks up one user.
+- **Reports (read-only):** the health report (Connection Servers, gateways, the vCenter and AD links, the event
+  database, SAML / True SSO, the license, pools that stopped provisioning, broken desktops) and the capacity
+  report (each pool's use against its maximum and spares).
+- **Broken desktops:** check, approval, then fix. Recover by default, restart for `AGENT_ERR_NEED_REBOOT`. A
+  desktop is held back when a session is on it, its pool is protected or not instant clones, removing it would
+  take an assigned user's desktop, or there are more than `horizon_fix_max`. Each desktop is read again after the
+  approval.
+- **User help, for the service desk:** look up a user's sessions and desktops; log off, disconnect, reset,
+  restart or recover only that user's own.
+- **Session cleanup:** logs off sessions disconnected for 8 hours or more (`horizon_session_max_disconnected_hours`).
+- **Golden image push:** plan, approval, then push - instant-clone pools only; the VM and its snapshot are
+  checked in each pool's vCenter.
+- **Safety:** `horizon_protected_pools` holds back pools from every job that changes something; a dry run
+  sends nothing (not even the login); nothing is emailed unless `report_email_to` is set. docs/HORIZON.md.
+
+**VMware pick lists: choose at launch what to restart and which snapshots to delete.** An approval in AAP takes
+no input, and a survey inside a workflow is not asked - so the choice is made at launch, from a multiple-select
+survey question. The scheduled *VM - refresh the pick lists* (`playbooks/vm_pick_refresh.yml`) writes what may
+be done right now as that question's choices, through AAP's API (a "Red Hat Ansible Automation Platform"
+credential): the snapshots the cleanup could delete (its holds apply: protected VMs, excluded VMs, datacenters,
+clusters, size), and the VMs that may be restarted - optionally only the hung ones (VMware Tools installed, no
+heartbeat or Tools not running). Each choice ends with an ID, so same-named VMs or snapshots are never confused.
+*VM - delete picked snapshots* and *VM - restart picked VMs* find every pick again in vCenter, live, skip what is
+gone or no longer allowed (with the reason), and in their workflow plan first, wait for the approval, then do
+exactly the plan. Never the AAP server or a protected VM; never more than `vm_pick_max` (20) at once.
+docs/VMWARE.md, "Pick lists"; the workflows in docs/WORKFLOWS_AND_SCHEDULES.md.
+
+**Tests:** a fake Horizon REST API (`tests/horizon/`), the lockout scripts against a made-up domain (PowerShell 7,
+normal and Constrained Language Mode) and their Ansible side, the pick lists against vcsim and the fake AAP
+(surveys); PDFs rebuilt (the setup guide has the Horizon chapter).
+
 ## 0.16.2 — 2026-10-20
 
 **Updating without scripts:** paste `site-automation-0.16.2-changed-since-0.16.1.zip` as it is (from

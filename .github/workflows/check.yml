@@ -48,11 +48,14 @@ jobs:
           python tests/test_net_certs.py
           python tests/test_ontap.py
           python tests/test_ad.py
+          python tests/test_ad_lockout.py
           python tests/test_mariadb_perf.py
           python tests/test_capacity.py
           python tests/test_vm_deploy.py
           python tests/test_cert_csr.py
           python tests/test_cert_order.py
+          python tests/test_horizon.py
+          python tests/test_aap_survey.py
       - name: The real ACT in the alarms analysis mode (piped evidence, masked names, the answer read back)
         run: python tests/test_alarm_act_contract.py
       - name: docs/VARIABLES_REFERENCE.md is generated from the roles and is up to date
@@ -87,6 +90,10 @@ jobs:
         run: |
           bash tests/ad/run_ad_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/ad/run_ad_test.sh
+      - name: Account lockout, the Ansible side with made-up DCs (current ansible-core and 2.16)
+        run: |
+          bash tests/ad/run_lockout_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/ad/run_lockout_test.sh
       - name: NetApp ONTAP health report against a fake ONTAP REST API (current ansible-core and 2.16)
         run: |
           bash tests/netapp/run_netapp_test.sh
@@ -105,6 +112,10 @@ jobs:
         run: bash tests/linux/run_linux_checks.sh
       - name: update-from-release.sh (bash twin of the PowerShell update test)
         run: bash tests/test_update_from_release.sh
+      - name: Horizon 8 jobs against a fake Horizon REST API (tests/horizon/hzmock.py)
+        run: |
+          bash tests/horizon/run_horizon_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/horizon/run_horizon_test.sh
       - name: ServiceNow test ticket against a fake ServiceNow (current ansible-core and 2.16)
         run: |
           bash tests/servicenow/run_servicenow_test.sh
@@ -153,6 +164,8 @@ jobs:
         run: pwsh -NoProfile -File tests/windows/test_win_checks.ps1
       - name: Active Directory report scripts with made-up domains (PowerShell 7 on Linux, normal and constrained)
         run: pwsh -NoProfile -File tests/windows/test_ad_collect.ps1
+      - name: Account lockout scripts with a made-up domain (PowerShell 7 on Linux, normal and constrained)
+        run: pwsh -NoProfile -File tests/windows/test_lockout_collect.ps1
       - name: Windows patching, simulated (stand-in ConfigMgr client and restart)
         run: bash tests/windows/patch_sim/run_patch_sim.sh
       - name: No private keys or obvious secrets committed
@@ -189,6 +202,18 @@ jobs:
       - name: Active Directory report scripts with made-up domains - PowerShell 7
         shell: pwsh
         run: pwsh -NoProfile -File tests/windows/test_ad_collect.ps1
+      - name: Account lockout scripts with a made-up domain - Windows PowerShell 5.1
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows/test_lockout_collect.ps1
+      - name: Account lockout scripts with a made-up domain - PowerShell 7
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/windows/test_lockout_collect.ps1
+      - name: Account lockout scripts for real on this runner (the Security log query, the source computer) - Windows PowerShell 5.1
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows/test_lockout_real.ps1
+      - name: Account lockout scripts for real on this runner - PowerShell 7
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/windows/test_lockout_real.ps1
       - name: For real on this runner - Windows PowerShell 5.1
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows/test_win_checks_real.ps1
@@ -259,6 +284,10 @@ jobs:
           /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/ad_health_report.yml -e target=winrunner | tee /tmp/5.out || fail=1
           grep -q 'DCs read: 1 of 1' /tmp/5.out || { echo 'FAIL: the AD script gave no answer'; fail=1; }
           grep -q 'ActiveDirectory PowerShell module' /tmp/5.out || { echo 'FAIL: the AD report does not say the module is missing'; fail=1; }
+          # not a DC either: the lockout job's scripts answer over WinRM, and it stops saying why
+          /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/ad_lockout.yml -e target=winrunner -e ad_lockout_user=satest | tee /tmp/6.out
+          grep -q 'No domain controller could read its domain' /tmp/6.out || { echo 'FAIL: the lockout job does not say no DC read its domain'; fail=1; }
+          grep -q 'winrunner: ActiveDirectory PowerShell module' /tmp/6.out || { echo 'FAIL: the lockout script gave no answer'; fail=1; }
           exit $fail
       - name: The findings reached the Windows Application event log
         shell: powershell

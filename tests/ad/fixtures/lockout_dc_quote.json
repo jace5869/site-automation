@@ -1,0 +1,38 @@
+{
+    "dc": {
+        "capped": [],
+        "domain": "corp.test",
+        "errors": [],
+        "events": [
+            {
+                "by": "",
+                "computer": "LAPTOP7",
+                "id": 4776,
+                "ip": "",
+                "logon_type": null,
+                "package": "MICROSOFT_AUTHENTICATION_PACKAGE_V1_0",
+                "process": "",
+                "status": "0xc000006a",
+                "sub_status": "",
+                "time": "2026-10-20T18:50:00Z",
+                "user": "o'brien"
+            }
+        ],
+        "fqdn": "dc01.corp.test",
+        "name": "DC01",
+        "names": {},
+        "read_at": "2026-10-20T18:55:00Z",
+        "role": "pdc",
+        "users": [
+            {
+                "bad_password_time": "2026-10-20T18:50:00Z",
+                "bad_pwd_count": 1,
+                "last_logon": "",
+                "locked": false,
+                "lockout_time": "",
+                "read": true,
+                "sam": "o'brien"
+            }
+        ]
+    }
+}

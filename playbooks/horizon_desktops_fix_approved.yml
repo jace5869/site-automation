@@ -1,0 +1,15 @@
+---
+# Job 2 of the broken desktops workflow: the step after the approval. AAP hands it the check job's list
+# (horizon_desktops_fix); each desktop is read again and fixed only when it is still broken, no session is
+# on it and its pool is not protected - with exactly the approved action. It refuses to run on its own
+# (outside the workflow nothing was approved). Do not tick "Prompt on launch" for Variables on its template.
+# Runs on the AAP side: attach the "Horizon API" credential. docs/HORIZON.md
+- name: Horizon - fix the approved desktops
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon - fix the approved desktops
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: desktops_fix.yml

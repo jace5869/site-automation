@@ -1,0 +1,17 @@
+---
+# HORIZON USER HELP - for the service desk: a user cannot connect, or their desktop hangs. Shows the user's
+# sessions and desktops, then (horizon_user_action) logs off or disconnects their sessions, or resets,
+# restarts or recovers their desktops - never a desktop another user is on, nor a protected pool. A survey:
+# horizon_user (text, required) and horizon_user_action (multiple choice: look, logoff, disconnect, reset,
+# restart, recover). Runs on the AAP side: attach the "Horizon API" credential. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_user_help.yml -e horizon_user=jdoe
+#   ansible-playbook playbooks/horizon_user_help.yml -e horizon_user='CORP\jdoe' -e horizon_user_action=logoff
+- name: Horizon user help
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon user help
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: user_help.yml

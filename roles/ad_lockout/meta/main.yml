@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: ad_lockout
+  description: "Account lockout: is an account locked out, and which computer is locking it out (the DCs' Security logs); optional unlock."
+  license: MIT
+  min_ansible_version: "2.16"
+dependencies: []

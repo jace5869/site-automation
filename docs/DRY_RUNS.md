@@ -47,6 +47,7 @@ line-by-line changes it would make to files, for example in STIG Manager's confi
 | VM - secure boot report, VM datastore report, VM snapshot report, VM alarms report | as usual: only read. No report email is sent |
 | VM - alarms ACT analysis | reads vCenter and lists the problems it would give ACT (`A dry run (Check): ACT was not called`). ACT is not called, no email is sent |
 | NetApp - ONTAP health report | as usual: it only reads (GET requests), and prints the same report. No email is sent |
+| Horizon - every template | reads as usual and says what it would do: `would recover`, `would log off`, the push it would schedule. Nothing is sent to Horizon but reads - not even a login for an action. No email is sent |
 | VM - capacity planning | as usual: it only reads. With `vm_capacity_act`, ACT is not called (`ACT did not run: A dry run`). No email |
 | VMware - certificate report | as usual: only read (it never talks to ServiceNow). No email is sent |
 | VMware - certificate renewal | reads every certificate and the incidents, then lists what it would do (`would open: ...`, `would make the CSR, and would attach it to INC...`). **No CSR is made** (vCenter and the hosts keep any key waiting), nothing is sent to ServiceNow, no email |

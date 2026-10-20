@@ -20,6 +20,7 @@ into **Injector configuration**. Then create one credential of each type per env
 | `smtp_relay.yml` | SMTP relay | any job that emails a report (`report_email_to`; the VMware jobs, `docs/VMWARE.md`) - only when the mail relay needs a login |
 | `netapp_ontap.yml` | NetApp ONTAP | `ontap_health_report.yml` - a read-only account on the clusters (`docs/NETAPP.md`) |
 | `cert_inventory_sql.yml` | SQL Server (certificate inventory) | the certificate reports with `cert_inventory_sql: true` - a login that adds and updates the inventory table (`docs/CERT_INVENTORY.md`) - optional |
+| `horizon_api.yml` | Horizon API | every `horizon_*.yml` job - an AD account with a Horizon administrator role (`docs/HORIZON.md`) |
 
 A job template can have one Machine credential plus one credential of each custom type, so the
 health check can carry Machine + MariaDB monitor + Keystore password + ACT model key at once.

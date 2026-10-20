@@ -1,0 +1,96 @@
+---
+# tests/ad/run_lockout_test.sh: the account lockout job's Ansible side (roles/ad_lockout) with the
+# scripts' answers taken from tests/ad/fixtures/lockout_*.json instead of real DCs - the input checks,
+# which DC reads the domain (pick.yml), the unlock's place, the source computers of the inventory, the
+# report, its email and the job's result. The plays are those of playbooks/ad_lockout.yml.
+# dc01 is the PDC (fixture_find, lockout_dc_pdc), dc02 a DC (lockout_dc_bdc), dc03 cannot be reached;
+# pc123 is a workstation of the inventory (lockout_source_pc).
+- name: Target check
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The accounts asked for
+      ansible.builtin.include_role:
+        name: ad_lockout
+        tasks_from: input.yml
+
+- name: The DCs answer (from the fixtures)
+  hosts: dcs
+  gather_facts: false
+  tasks:
+    - name: Who each DC is, and the accounts to look for
+      ansible.builtin.set_fact:
+        adl_find_result: >-
+          {{ {'host': inventory_hostname, 'reachable': false, 'error': 'ntlm: the specified credentials were rejected by the server', 'data': none}
+             if fixture == 'unreachable' else
+             {'host': inventory_hostname, 'reachable': true, 'error': '',
+              'data': (lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/lockout_' ~ fixture_find ~ '.json') | from_json).find
+                      | combine(find_override | default({}))} }}
+
+    - name: Who reads the domain
+      ansible.builtin.include_role:
+        name: ad_lockout
+        tasks_from: pick.yml
+
+    - name: What each DC read
+      ansible.builtin.set_fact:
+        adl_dc_result: >-
+          {{ {'host': inventory_hostname, 'reachable': adl_find_result.reachable, 'error': adl_find_result.error,
+              'data': none if fixture == 'unreachable' else
+                      (lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/lockout_' ~ fixture ~ '.json') | from_json).dc} }}
+
+    - name: The unlock (on the reading DC, not in a dry run)
+      ansible.builtin.set_fact:
+        adl_unlock_result: >-
+          {{ {'host': inventory_hostname, 'domain': 'corp.test', 'error': '',
+              'data': (lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/lockout_' ~ fixture_unlock ~ '.json') | from_json).unlock} }}
+      when:
+        - ad_lockout_unlock | default(false) | bool
+        - not ansible_check_mode
+        - inventory_hostname == _adl_pick['corp.test']
+        - _adl_tg.by_domain['corp.test'] | default([]) | selectattr('locked') | list | length > 0
+
+- name: The source computers to look on
+  hosts: localhost
+  gather_facts: false
+  vars:
+    ad_lockout_now: "{{ (lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/lockout_dc_pdc.json') | from_json).dc.read_at }}"
+  tasks:
+    - name: The source computers of this inventory (ad_lockout_check_sources)
+      when: ad_lockout_check_sources | default(false) | bool
+      block:
+        - name: The report so far
+          ansible.builtin.include_role:
+            name: ad_lockout
+            tasks_from: build.yml
+
+        - name: The source computers to look on
+          ansible.builtin.include_role:
+            name: ad_lockout
+            tasks_from: sources_pick.yml
+
+- name: On the source computers (from the fixtures)
+  hosts: adl_sources
+  gather_facts: false
+  tasks:
+    - name: What runs as the account there
+      ansible.builtin.set_fact:
+        adl_source_result: >-
+          {{ {'host': inventory_hostname, 'reachable': true, 'error': '',
+              'data': (lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/lockout_' ~ fixture_source ~ '.json') | from_json).source} }}
+
+- name: The report
+  hosts: localhost
+  gather_facts: false
+  vars:
+    ad_lockout_now: "{{ (lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/lockout_dc_pdc.json') | from_json).dc.read_at }}"
+  tasks:
+    - name: The report
+      ansible.builtin.include_role:
+        name: ad_lockout
+        tasks_from: build.yml
+
+    - name: Print it, publish it, email it
+      ansible.builtin.include_role:
+        name: ad_lockout
+        tasks_from: report.yml

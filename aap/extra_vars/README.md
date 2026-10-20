@@ -13,6 +13,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Job template | Playbook | File |
 |---|---|---|
 | ACT for Windows - install | `playbooks/win_act_install.yml` | [win_act_install.yml](win_act_install.yml) |
+| Active Directory - account lockout | `playbooks/ad_lockout.yml` | [ad_lockout.yml](ad_lockout.yml) |
 | Active Directory health report | `playbooks/ad_health_report.yml` | [ad_health_report.yml](ad_health_report.yml) |
 | Apply approved ACT fix | `playbooks/act_fix_approved.yml` | [act_fix_approved.yml](act_fix_approved.yml) |
 | Certificate renewal - CSRs | `playbooks/cert_renew_csr.yml` | [cert_renew_csr.yml](cert_renew_csr.yml) |
@@ -20,6 +21,15 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Database health - MariaDB / MySQL | `playbooks/database_health.yml` | [database_health.yml](database_health.yml) |
 | ESXi - security settings | `playbooks/esxi_security.yml` | [esxi_security.yml](esxi_security.yml) |
 | Health check | `playbooks/health_check.yml` | [health_check.yml](health_check.yml) |
+| Horizon - API test | `playbooks/horizon_api_test.yml` | [horizon_api_test.yml](horizon_api_test.yml) |
+| Horizon - capacity report | `playbooks/horizon_capacity_report.yml` | [horizon_capacity_report.yml](horizon_capacity_report.yml) |
+| Horizon - desktops check | `playbooks/horizon_desktops_check.yml` | [horizon_desktops_check.yml](horizon_desktops_check.yml) |
+| Horizon - fix the approved desktops | `playbooks/horizon_desktops_fix_approved.yml` | [horizon_desktops_fix_approved.yml](horizon_desktops_fix_approved.yml) |
+| Horizon - health report | `playbooks/horizon_health_report.yml` | [horizon_health_report.yml](horizon_health_report.yml) |
+| Horizon - image push plan | `playbooks/horizon_image_push_plan.yml` | [horizon_image_push_plan.yml](horizon_image_push_plan.yml) |
+| Horizon - push the approved image | `playbooks/horizon_image_push_approved.yml` | [horizon_image_push_approved.yml](horizon_image_push_approved.yml) |
+| Horizon - session cleanup | `playbooks/horizon_session_cleanup.yml` | [horizon_session_cleanup.yml](horizon_session_cleanup.yml) |
+| Horizon - user help | `playbooks/horizon_user_help.yml` | [horizon_user_help.yml](horizon_user_help.yml) |
 | NetApp ONTAP health report | `playbooks/ontap_health_report.yml` | [ontap_health_report.yml](ontap_health_report.yml) |
 | Network device certificate renewal | `playbooks/net_cert_renew.yml` | [net_cert_renew.yml](net_cert_renew.yml) |
 | Network device certificate report | `playbooks/net_cert_report.yml` | [net_cert_report.yml](net_cert_report.yml) |
@@ -38,13 +48,16 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VM - capacity planning | `playbooks/vm_capacity_report.yml` | [vm_capacity_report.yml](vm_capacity_report.yml) |
 | VM - change VLAN | `playbooks/vm_vlan.yml` | [vm_vlan.yml](vm_vlan.yml) |
 | VM - datastore report | `playbooks/vm_datastore_report.yml` | [vm_datastore_report.yml](vm_datastore_report.yml) |
+| VM - delete picked snapshots | `playbooks/vm_snapshot_delete_picked.yml` | [vm_snapshot_delete_picked.yml](vm_snapshot_delete_picked.yml) |
 | VM - delete snapshot | `playbooks/vm_snapshot_delete.yml` | [vm_snapshot_delete.yml](vm_snapshot_delete.yml) |
 | VM - deploy from ServiceNow ticket | `playbooks/vm_deploy_from_ticket.yml` | [vm_deploy_from_ticket.yml](vm_deploy_from_ticket.yml) |
 | VM - deploy settings finder | `playbooks/vm_deploy_inventory.yml` | [vm_deploy_inventory.yml](vm_deploy_inventory.yml) |
 | VM - health report | `playbooks/vm_health_report.yml` | [vm_health_report.yml](vm_health_report.yml) |
 | VM - notes | `playbooks/vm_notes.yml` | [vm_notes.yml](vm_notes.yml) |
 | VM - pick up deploy tickets | `playbooks/vm_deploy_poll.yml` | [vm_deploy_poll.yml](vm_deploy_poll.yml) |
+| VM - refresh the pick lists | `playbooks/vm_pick_refresh.yml` | [vm_pick_refresh.yml](vm_pick_refresh.yml) |
 | VM - restart | `playbooks/vm_reboot.yml` | [vm_reboot.yml](vm_reboot.yml) |
+| VM - restart picked VMs | `playbooks/vm_reboot_picked.yml` | [vm_reboot_picked.yml](vm_reboot_picked.yml) |
 | VM - secure boot report | `playbooks/vm_secure_boot_report.yml` | [vm_secure_boot_report.yml](vm_secure_boot_report.yml) |
 | VM - shut down | `playbooks/vm_shutdown.yml` | [vm_shutdown.yml](vm_shutdown.yml) |
 | VM - snapshot | `playbooks/vm_snapshot.yml` | [vm_snapshot.yml](vm_snapshot.yml) |

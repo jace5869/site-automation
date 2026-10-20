@@ -15,6 +15,9 @@ System Center Orchestrator):
 | VM - datastore report | `playbooks/vm_datastore_report.yml` | read-only: every datastore's capacity, free space, used and provisioned %; the ones at 85 / 90 % used listed apart |
 | VM - snapshot report | `playbooks/vm_snapshot_report.yml` | read-only: every snapshot of every VM - name, when taken and by whom, age, size, folder - oldest first; the ones 5 days or older listed apart |
 | VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | deletes the snapshots 5 days or older - never "keep" ones, excluded VMs, datacenters or clusters, the AAP server or ones over 1 TB; or only the patching snapshots (`vm_snapshot_cleanup_name_words`) - then reports what it deleted. Best run in the workflow below, after an approval |
+| VM - refresh the pick lists | `playbooks/vm_pick_refresh.yml` | on a schedule, read-only in vCenter: writes what may be done right now - the snapshots that may be deleted, the VMs that may be restarted (or only the hung ones) - as the choices of a question in the survey of the templates below ("Pick lists") |
+| VM - delete picked snapshots | `playbooks/vm_snapshot_delete_picked.yml` | deletes the snapshots picked in the survey, each checked again live; in its workflow: plan, approval, then exactly the plan |
+| VM - restart picked VMs | `playbooks/vm_reboot_picked.yml` | restarts the VMs picked in the survey (`guest` or `hard`), each checked again live - never the AAP server; in its workflow: plan, approval, then exactly the plan |
 | VM - health report | `playbooks/vm_health_report.yml` | read-only: every datacenter, cluster and host of every vCenter - vSphere HA and DRS working or not (HA agents, failover capacity, DRS recommendations and faults, vCLS retreat mode), hosts not connected or in maintenance, hardware sensors not green, hosts that need a restart, CPU and memory used, configuration issues and alarms - coloured, with what to do for each problem |
 | VM - alarms report | `playbooks/vm_alarm_report.yml` | read-only: the triggered alarms on vCenter, datacenters, clusters and hosts; the alarms that fired in the last 24 hours (also the ones that cleared since); hosts not connected; the last 24 hours' failed logins, VM shutdowns / HA restarts and other errors and warnings; configuration issues - coloured by severity |
 | VM - alarms ACT analysis | `playbooks/vm_alarm_act_analysis.yml` | read-only: the same problems, with ACT's likely cause, fix and confidence for each. ACT runs on the AAP side, never on the hosts |
@@ -386,6 +389,156 @@ Still in force: the age (`vm_snapshot_max_age_days`, 5 - a patching snapshot tak
 in one run. The email's subject says it: `VMware snapshot cleanup: deleted 4 snapshot(s) older than
 5 days whose name has Patching, Patches or Patch (120 GB)`. When the workflow works, the setting can
 stay: the report then lists only the patching snapshots for approval - or set it back to `[]`.
+
+## Pick lists: choose what to restart, which snapshots to delete
+
+The other jobs ask for VM names typed in. Here whoever launches the job **picks from a list** in the
+survey - the snapshots that may be deleted right now, or the VMs that may be restarted (or only the
+ones that look hung) - and ticks the ones to do.
+
+### Why the list needs a job of its own
+
+AAP cannot fill a survey from vCenter when you click Launch: a survey's choices are fixed text,
+saved with the template. And inside a workflow nothing can ask a question halfway: an **approval
+step takes no input** (only Approve or Deny), and the surveys of the job templates inside a
+workflow are **never asked** - only the workflow's own survey, at launch. So the picking happens at
+launch, from a multiple-choice question whose choices a scheduled job keeps current:
+
+```
+ VM - refresh the pick lists     every 30 minutes: reads vCenter, writes what may be done NOW as the
+         (schedule)              choices of the question in the survey of the templates you name
+         .
+         .   later, a person launches:
+         v
+ workflow survey                 ticks the snapshots (or VMs) in the list
+         |
+ 1. PLAN  (the pick job)         finds each pick again in vCenter, live, and lists exactly what will be
+         |                       done - the ones that are gone or no longer allowed are skipped, with
+         |                       the reason. Changes nothing.
+ 2. APPROVAL                     a person reads the plan and clicks Approve or Deny
+         |  (only on Approve)
+ 3. DO IT (the same pick job)    does exactly the plan - checked live once more - nothing else
+```
+
+Each choice is readable text that ends with the item's IDs in brackets, e.g.
+
+```
+DC0_C0_RP0_VM1: "Pre-Patching-Oct" (12.4 GB, 6.2 days old, taken 2026-10-14 08:12 UTC) [vc01.yoursite.mil/vm-42/7]
+web01 (no heartbeat, up 3.2 days, DC1 / PROD-CL01, guest web01.yoursite.mil 192.0.2.20) [vc01.yoursite.mil/vm-42]
+```
+
+The brackets are the vCenter, the VM's ID and (for a snapshot) the snapshot's ID: two snapshots
+with the same name, or two VMs with the same name in different vCenters, are never mixed up.
+
+### What may be picked
+
+| List | Offered | Never offered (counted in the refresh's output, with the reason) |
+|---|---|---|
+| Snapshots | every snapshot the **snapshot cleanup could delete**: the same holds (table "What the cleanup never deletes" above), at least `vm_pick_snapshot_min_age_days` old (0 = any age) | a name or description that says keep, the excluded VMs, datacenters and clusters, `vmware_protected_vms`, the AAP server, bigger than 1 TB. **Not** the name words: they only narrow the automatic cleanup |
+| VMs | every VM that is **powered on**, among `vm_pick_reboot_vms` / `vm_pick_reboot_clusters` / `vm_pick_reboot_folders` (empty = all) | templates, VMs that are off, the AAP server and the protected VMs (the same rules as every restart), `vm_pick_reboot_exclude_vms` |
+| Hung VMs (`vm_pick_reboot_only_hung: true`) | powered on, VMware Tools **installed**, but **no heartbeat** (red in vCenter) or Tools **not running** - and up for `vm_pick_hung_min_minutes` (15) at least | a VM that is still starting (it has neither yet), a VM without VMware Tools (vCenter cannot tell if it is hung) |
+
+A list has at most `vm_pick_max_choices` (200) choices; the refresh's output says how many more
+there were. With nothing to pick, the list has one line `(nothing to pick: ... - list of <time>)`,
+which the pick jobs ignore. The question's description ends with when the list was made, e.g.
+`[pick list of 2026-10-20 10:00 UTC: 12 snapshot(s) that may be deleted]`.
+
+### Set it up (once)
+
+**Step 1 - the pick job templates.** Templates > Create template > Create job template, twice:
+
+| Name | Playbook | Credentials | Job type |
+|---|---|---|---|
+| `VM - delete picked snapshots` | `playbooks/vm_snapshot_delete_picked.yml` | VMware vCenter | tick Prompt on launch (dry runs) |
+| `VM - restart picked VMs` | `playbooks/vm_reboot_picked.yml` | VMware vCenter | tick Prompt on launch (dry runs) |
+
+Inventory: your inventory with the `aap` group. Execution environment: the one with
+`vmware.vmware`. Leave Limit empty. **Do not tick Prompt on launch for Variables** (the step after
+the approval must get its plan from the step before, not from whoever launches). No survey.
+
+**Step 2 - the workflows**, one per list. Templates > Create template > Create workflow job template:
+
+- `VM - delete picked snapshots (workflow)`. **Survey** tab > Create survey question:
+
+  | Question | Answer variable name | Answer type | Required | Choices |
+  |---|---|---|---|---|
+  | Snapshots to delete | `vm_snapshot_picks` | **Multiple choice (multiple select)** | yes | type one placeholder, e.g. `(nothing to pick yet)` - the refresh replaces it |
+
+- `VM - restart picked VMs (workflow)`. **Survey**:
+
+  | Question | Answer variable name | Answer type | Required | Choices / default |
+  |---|---|---|---|---|
+  | VMs to restart | `vm_reboot_picks` | **Multiple choice (multiple select)** | yes | a placeholder, as above |
+  | How | `vm_power_mode` | Multiple choice | yes | `guest`, `hard`; default `guest` (`hard` for the hung list) |
+
+  Switch each survey **on**.
+
+- **Visualizer** of each: (1) **Add step**: Job template `VM - delete picked snapshots` (or
+  `restart picked VMs`). (2) On it, **Add step and link**: **Approval**, e.g. `Do exactly this
+  plan?`, timeout e.g. 4 hours, Run type **Run on success**. (3) On the approval, **Add step and
+  link**: the **same** job template again, Run type **Run on success** - never Run always. Save.
+
+  The first run of the job plans (inside a workflow it never deletes or restarts before an
+  approval, whatever its Variables say); its plan goes to the approval and on to the second run
+  (job artifact `vm_snapshot_pick_plan` / `vm_reboot_pick_plan`), which does exactly that. When
+  nothing that was picked can be done any more, the plan step fails and the workflow stops there.
+
+**Step 3 - who may launch and approve.** On each workflow: User Access > the service desk > role
+**Execute** (launch) and the approvers > role **Approve**.
+
+**Step 4 - the refresh.** One more job template:
+
+- Name: `VM - refresh the pick lists`. Playbook: `playbooks/vm_pick_refresh.yml`.
+- Credentials: **VMware vCenter** and **Red Hat Ansible Automation Platform** (its AAP user needs
+  the **Admin** role on the two workflows - to write their surveys).
+- **Variables** (`aap/extra_vars/vm_pick_refresh.yml` has every setting):
+
+  ```yaml
+  vm_pick_snapshot_templates: ["VM - delete picked snapshots (workflow)"]
+  vm_pick_reboot_templates: ["VM - restart picked VMs (workflow)"]
+  # vm_pick_reboot_only_hung: true        # the restart list: only the hung VMs
+  # vm_pick_reboot_clusters: [PROD-*]     # ... of these clusters
+  ```
+
+  A job template and a workflow with the same name: `{template: "<name or ID>", kind: workflow}`.
+- **Schedules** > every 30 minutes (or what suits you). Run it once by hand first: its output lists
+  every choice it wrote, and what it held back and why.
+
+To have both a list of every VM and a list of only the hung ones, make two refresh templates (one
+with `vm_pick_reboot_only_hung: true`) writing into two workflows.
+
+### Run it
+
+1. Launch the workflow. The survey shows the list as it was at the last refresh (its time is in the
+   question's description). Tick what to do; pick **How** for a restart.
+2. The plan step lists `WOULD DELETE ...` / `WOULD RESTART ...` for each pick that can still be done,
+   and `SKIPPED ... - <reason>` for the others: deleted or renamed since the list was made, held back
+   now, powered off, no longer hung, a guest restart of a VM without VMware Tools running.
+3. The approver reads that plan (the plan step's output) and approves or denies.
+4. On **Approve**: the same checks again, then exactly the plan - `DELETED ...` / `RESTARTED ...`.
+
+Never more than `vm_pick_max` (20) in one run: more picks are refused, nothing done. As **Check**
+(a dry run), no step changes anything.
+
+**Without a workflow:** launch `VM - delete picked snapshots` or `VM - restart picked VMs` on its
+own with a survey of its own (the same question, and name that template in the refresh's settings).
+It only lists the plan, unless `vm_pick_confirm: true` (a survey question "Do it now?", `false` /
+`true`) - then it does the picks at once, with every check above. Inside a workflow
+`vm_pick_confirm` is never used.
+
+### Limits
+
+- **The list is as fresh as the last refresh.** Every pick is checked again, live, before anything
+  is done - a pick that is gone or no longer allowed is skipped, never guessed - but something new
+  since the refresh is not in the list until the next one.
+- **The approval is all or nothing.** The approver approves the whole plan or none of it. To leave
+  one out: Deny, launch again and pick fewer.
+- AAP checks a survey answer against the choices: if the refresh replaced the list while someone had
+  the survey open, AAP may refuse their launch - open the survey again.
+- The heartbeat comes from VMware Tools. A VM without VMware Tools is never in the hung list.
+- Tested against vcsim and a fake AAP (`tests/vmware/run_vmware_test.sh`, `tests/test_aap_survey.py`),
+  not a real AAP survey: run the refresh once by hand and look at the workflow's survey before you
+  schedule it.
 
 ## Health: every datacenter, cluster and host
 
@@ -1072,6 +1225,20 @@ the last column says.
 | `HELD BACK ...: its name has none of: Patching, Patches, Patch` | `vm_snapshot_cleanup_name_words` is set: only those names are cleaned up | nothing, if that is what you want; `[]` = any name |
 | A patching snapshot was not deleted | it is younger than `vm_snapshot_max_age_days` (it waits), its name or description says keep, or the word is only in its **description** (only the name counts) | read its line in the job output: `HELD BACK` gives the reason; a young one is not listed as old at all |
 
+### Pick lists
+
+| You see | It means | Do |
+|---|---|---|
+| `NOT UPDATED ...: its survey has no question whose variable is vm_snapshot_picks` | the workflow's survey has no such question, or its Answer variable name differs | add the question (section "Pick lists", Step 2), or set `vm_pick_snapshot_question` / `vm_pick_reboot_question` to its variable name |
+| `NOT UPDATED ...: the question ... is a text question` | the question is not multiple choice | make it **Multiple choice (multiple select)** |
+| `NOT UPDATED ...: no job template or workflow job template ... that the AAP user can see` | a typo in the name, or the AAP credential's user has no role on it | the name as AAP shows it; the **Admin** role on that template for the user |
+| `2 templates are named ...` | a job template and a workflow share the name | `{template: "<its ID>", kind: workflow}` |
+| `WARNING: the survey of ... is turned off` | the list was written, but nobody is asked | the workflow > Survey > switch it on |
+| `SKIPPED ... - not a choice of the pick list` | a line that does not end with `[vCenter/VM...]` (typed by hand, or from an old list) | pick from the list |
+| `SKIPPED ... - VMware Tools is not running in it` | a guest restart needs VMware Tools | pick it again with How = `hard` |
+| `Refused: the approved plan is for a hard restart, this run says vm_power_mode guest` | the step after the approval got another answer than the plan | nothing was done: launch the workflow again |
+| `None of the picks can be ... now` | everything picked is gone, held back or not allowed now (the reasons are listed) | nothing: the workflow stopped before its approval |
+
 ### ESXi security settings
 
 | You see | It means | Do |
@@ -1195,6 +1362,7 @@ Any number (401, 404, 405) means the way is open. `Could not resolve host`, a ti
   of the same kind of switch work.
 - The guest keeps its IP settings after a VLAN change. A new VLAN usually needs new ones.
 - `vm_names` are exact VM names. To act on many VMs, list them.
+- The pick lists: see "Pick lists" > Limits.
 - Tested against vcsim, VMware's vCenter simulator (`tests/vmware/run_vmware_test.sh`), not against
   a real vCenter. Run each job once as **Check**, then on a test VM, before you use it on real
   servers. The simulator raises no alarms: the alarms report's alarm handling is tested with

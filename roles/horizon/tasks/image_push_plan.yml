@@ -1,0 +1,90 @@
+---
+# Job 1 of the image push workflow (playbooks/horizon_image_push_plan.yml). Read-only: the plan the approver
+# reads - the pools of horizon_push_pools (each an instant-clone pool, not protected, with no push already
+# scheduled or running), the golden image VM horizon_push_base_vm and its snapshot horizon_push_snapshot as
+# Horizon sees them in each pool's vCenter, when it starts, and what happens to the users. A plan with a
+# problem stops here (the job fails, nothing goes to the approval); a good plan goes on to the approval step
+# (set_stats horizon_push_plan), then horizon_image_push_approved.yml schedules exactly that.
+- name: Horizon | read the pools
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the pools
+    _hz_resources: [desktop_pools]
+
+- name: Horizon | the pools to push to
+  ansible.builtin.set_fact:
+    _hz_pp: "{{ _hz | hz_push_pools(horizon_push_pools, {'protected_pools': horizon_protected_pools}) }}"
+    _hz_vcs: "{{ (_hz | hz_push_pools(horizon_push_pools, {'protected_pools': horizon_protected_pools})).pools | map(attribute='vcenter_id') | unique | list }}"
+
+- name: Horizon | the golden image VMs Horizon sees in each vCenter
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the golden image VMs of {{ _hz_vcs | length }} vCenter(s)
+    _hz_resources: >-
+      {%- set out = [] -%}
+      {%- for vc in _hz_vcs -%}{%- set _ = out.append({'name': 'base_vms', 'key': 'base_vms:' ~ vc, 'query': {'vcenter_id': vc}}) -%}{%- endfor -%}
+      {{ out }}
+  when: _hz_vcs | length > 0
+
+- name: Horizon | the golden image VM in each vCenter
+  ansible.builtin.set_fact:
+    _hz_vm_picks: >-
+      {%- set out = {} -%}
+      {%- for vc in _hz_vcs -%}
+      {%-   set _ = out.update({vc: (_hz.raw['base_vms:' ~ vc] | default([])) | hz_pick(horizon_push_base_vm, 'golden image VM')}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Horizon | its snapshots
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the snapshots of {{ horizon_push_base_vm }}
+    _hz_resources: >-
+      {%- set out = [] -%}
+      {%- for vc, vm in _hz_vm_picks.items() if vm.id -%}
+      {%-   set _ = out.append({'name': 'base_snapshots', 'key': 'snapshots:' ~ vc, 'query': {'vcenter_id': vc, 'base_vm_id': vm.id}}) -%}
+      {%- endfor -%}
+      {{ out }}
+  when: _hz_vm_picks.values() | selectattr('id') | list | length > 0
+
+- name: Horizon | the plan
+  ansible.builtin.set_fact:
+    _hz_plan: >-
+      {%- set snaps = {} -%}
+      {%- for vc, vm in _hz_vm_picks.items() if vm.id -%}
+      {%-   set _ = snaps.update({vc: (_hz.raw['snapshots:' ~ vc] | default([])) | hz_pick(horizon_push_snapshot, 'snapshot')}) -%}
+      {%- endfor -%}
+      {{ _hz_pp | hz_push_plan(_hz_vm_picks, snaps, horizon_push_start | hz_push_start(horizon_now | default('')),
+                            {'logoff_policy': horizon_push_logoff_policy, 'stop_on_first_error': horizon_push_stop_on_first_error | bool}) }}
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: >-
+      {{ {'title': 'Horizon image push plan: ' ~ ((_hz_plan.pools | map(attribute='name') | join(', ')) if not _hz_plan.problems else 'NOT READY'),
+          'status': 'critical' if _hz_plan.problems else ('warning' if _hz_plan.warnings else 'info'),
+          'subtitle': _hz_plan.lines | first,
+          'sections': [{'title': 'Pools', 'columns': ['Pool', 'Golden image VM', 'Snapshot'],
+                        'rows': _hz_plan.pools | map(attribute='name') | zip(_hz_plan.pools | map(attribute='parent_vm'),
+                                                                              _hz_plan.pools | map(attribute='snapshot')) | map('list') | list},
+                       {'title': 'Problems - nothing goes to the approval', 'lines': _hz_plan.problems or ['None.']},
+                       {'title': 'For the approver', 'lines': _hz_plan.warnings + _hz_plan.lines}]} }}
+    _hz_footer: "Read-only: nothing was scheduled. The push waits for approval (the image push workflow)."
+
+- name: Horizon | the plan is ready
+  ansible.builtin.assert:
+    that: _hz_plan.problems | length == 0 and _hz_plan.pools | length > 0
+    fail_msg: "Nothing was scheduled and nothing goes to the approval: {{ (_hz_plan.problems or ['no pool to push to']) | join('; ') }}."
+    quiet: true
+
+- name: Horizon | hand the plan to the approval step and the push job (set_stats)
+  ansible.builtin.set_stats:
+    data:
+      horizon_push_plan: >-
+        {{ _hz_plan | combine({'planned': now(utc=true).strftime('%Y-%m-%d %H:%M UTC'), 'job': awx_job_id | default(''),
+                               'url': _hz_read.url}) }}
+    per_host: false
+
+- name: Horizon | waiting for approval
+  ansible.builtin.debug:
+    msg: "{{ ['READY FOR APPROVAL: ' ~ _hz_plan.lines | first] + _hz_plan.warnings }}"

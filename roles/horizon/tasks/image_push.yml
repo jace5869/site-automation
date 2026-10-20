@@ -1,0 +1,66 @@
+---
+# Job 2 of the image push workflow (playbooks/horizon_image_push_approved.yml), after the approval. AAP hands
+# it the plan job's plan (horizon_push_plan, set_stats in image_push_plan.yml). Each pool is read again first
+# and pushed to only when it is still there, not protected and has no push already scheduled or running -
+# with exactly the approved image, snapshot, start (a time that has passed: in a minute) and log-off policy.
+# It refuses to run on its own (outside the workflow nothing was approved). A dry run (Check) schedules nothing.
+- name: Horizon | the approved plan came from the plan job
+  ansible.builtin.assert:
+    that:
+      - horizon_push_plan is defined
+      - horizon_push_plan is mapping
+      - horizon_push_plan.pools | default([]) | length > 0
+    fail_msg: >-
+      Nothing to push: no approved plan (horizon_push_plan) reached this job. It runs only in the image push
+      workflow, after "Horizon - image push plan" and the approval step: docs/HORIZON.md. Do not tick
+      "Prompt on launch" for Variables on this template.
+    quiet: true
+
+- name: Horizon | read the pools again
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the pools, as they are now
+    _hz_resources: [desktop_pools]
+
+- name: Horizon | each pool of the plan, as it is now
+  ansible.builtin.set_fact:
+    _hz_pr: "{{ horizon_push_plan | hz_push_recheck(_hz, {'protected_pools': horizon_protected_pools}) }}"
+    _hz_push_body: "{{ horizon_push_plan | hz_push_body(horizon_now | default('')) }}"
+    _hz_all_results: []
+
+- name: Horizon | schedule the push
+  ansible.builtin.include_tasks: act.yml
+  vars:
+    _hz_target: pool
+    _hz_verb: push-image
+    _hz_ids: "{{ [_hz_pool.id] }}"
+    _hz_body: "{{ _hz_push_body | combine({'parent_vm_id': _hz_pool.parent_vm_id, 'snapshot_id': _hz_pool.snapshot_id}) }}"
+  loop: "{{ _hz_pr.push }}"
+  loop_control:
+    loop_var: _hz_pool
+    label: "{{ _hz_pool.name }}"
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: >-
+      {%- set bad = _hz_all_results | rejectattr('ok') | list | length -%}
+      {{ {'title': 'Horizon image push: ' ~ (((_hz_pr.push | length - bad) ~ ' of ' ~ _hz_pr.push | length ~ ' pool(s) scheduled'
+                                              ~ (' (a dry run)' if ansible_check_mode else '')) if _hz_pr.push else 'nothing scheduled'),
+          'status': 'critical' if bad or not _hz_pr.push else 'ok',
+          'subtitle': (horizon_push_plan.pools | first).parent_vm ~ ' / ' ~ (horizon_push_plan.pools | first).snapshot ~ ', starting '
+                      ~ (_hz_push_body.start_time | int | hz_when) ~ ', ' ~ _hz_push_body.logoff_policy,
+          'sections': [{'title': 'Done', 'lines': (_hz_all_results | hz_act_lines(_hz_pr.push, 'push the image', ansible_check_mode)) or ['Nothing.']},
+                       {'title': 'Left alone since the approval', 'columns': ['Pool', 'Why'],
+                        'rows': _hz_pr.skipped | map(attribute='name') | zip(_hz_pr.skipped | map(attribute='reason')) | map('list') | list}]} }}
+    _hz_footer: "The approved plan of job {{ horizon_push_plan.job | default('') }} ({{ horizon_push_plan.planned | default('') }}); each pool was read again first."
+
+- name: Horizon | the push was scheduled
+  ansible.builtin.assert:
+    that:
+      - _hz_pr.push | length > 0
+      - _hz_all_results | rejectattr('ok') | list | length == 0
+    fail_msg: >-
+      {{ ('Horizon refused the push for ' ~ _hz_all_results | rejectattr('ok') | list | length ~ ' pool(s)') if _hz_pr.push
+         else 'Nothing was scheduled: every pool of the plan changed since the approval' }} - the report above says why.
+    quiet: true

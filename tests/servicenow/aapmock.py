@@ -14,6 +14,14 @@ Inventories (the deploy's vm_deploy_services; each host added or group joined ap
   11 and 12 both "Twice" (two organizations). AAPMOCK_OVERWRITE=1: inventory 7 has a source with Overwrite
   on. AAPMOCK_INV_FAIL=1: adding a host answers 403; AAPMOCK_INV_GARBLE=1: a page that is not JSON. State is
   kept while the fake runs.
+
+Surveys (the pick lists, vm_pick_refresh.yml; each survey written appended to $AAPMOCK_SURVEY_LOG):
+  job templates 51 "VM - delete picked snapshots" (vm_snapshot_picks: multiple select, its choices as text one
+  per line - older AAP - and a default), 52 "VM - restart picked VMs" (vm_reboot_picks: single select, and
+  vm_power_mode), 53 "Text question" (vm_snapshot_picks is a text box), 54 "No survey", 55 "Survey off" (a
+  survey that is turned off), 56 "Both" (a workflow is named so too), 57 "Read only" (the user may not change
+  it); workflow job templates 61 "VM - delete picked snapshots (workflow)" (vm_snapshot_picks: multiple select,
+  a list) and 62 "Both". AAPMOCK_SURVEY_FAIL=1: writing a survey answers 400.
 """
 import base64
 import json
@@ -39,6 +47,36 @@ GROUPS = {7: [{"id": 70, "name": "web"}, {"id": 71, "name": "db"}], 8: [{"id": 8
 HOSTS = {7: [{"id": 500, "name": "old01", "variables": "{}"}]}
 MEMBERS = {70: {500}}
 NEXT_HOST = [600]
+SURVEY_LOG = os.environ.get("AAPMOCK_SURVEY_LOG", "aapmock-survey.jsonl")
+
+
+def _tpl(kind, i, name, enabled=True, edit=True):
+    return {"id": i, "name": name, "type": "job_template" if kind == "job" else "workflow_job_template", "survey_enabled": enabled,
+            "summary_fields": {"user_capabilities": {"edit": edit}}}
+
+
+def _q(var, kind, choices=None, default="", required=False):
+    q = {"question_name": var.replace("_", " "), "question_description": "Pick from the list", "variable": var, "type": kind,
+         "required": required, "default": default, "min": None, "max": None}
+    if choices is not None:
+        q["choices"] = choices
+    return q
+
+
+TPLS = {"job": [_tpl("job", 51, "VM - delete picked snapshots"), _tpl("job", 52, "VM - restart picked VMs"),
+                _tpl("job", 53, "Text question"), _tpl("job", 54, "No survey", enabled=False), _tpl("job", 55, "Survey off", enabled=False),
+                _tpl("job", 56, "Both"), _tpl("job", 57, "Read only", edit=False)],
+        "workflow": [_tpl("workflow", 61, "VM - delete picked snapshots (workflow)"), _tpl("workflow", 62, "Both")]}
+SPECS = {("job", 51): {"name": "", "description": "", "spec": [_q("vm_snapshot_picks", "multiselect", "old one\nold two", "old two", True)]},
+         ("job", 52): {"name": "", "description": "", "spec": [_q("vm_reboot_picks", "multiplechoice", ["x"], "x"),
+                                                                _q("vm_power_mode", "multiplechoice", ["guest", "hard"], "guest")]},
+         ("job", 53): {"name": "", "description": "", "spec": [_q("vm_snapshot_picks", "textarea")]},
+         ("job", 54): {},
+         ("job", 55): {"name": "", "description": "", "spec": [_q("vm_reboot_picks", "multiselect", [])]},
+         ("job", 56): {"name": "", "description": "", "spec": [_q("vm_reboot_picks", "multiselect", [])]},
+         ("job", 57): {"name": "", "description": "", "spec": [_q("vm_reboot_picks", "multiselect", [])]},
+         ("workflow", 61): {"name": "", "description": "", "spec": [_q("vm_snapshot_picks", "multiselect", [], "")]},
+         ("workflow", 62): {"name": "", "description": "", "spec": [_q("vm_reboot_picks", "multiselect", [])]}}
 
 
 class H(BaseHTTPRequestHandler):
@@ -80,6 +118,9 @@ class H(BaseHTTPRequestHandler):
         inv = self._inventories(method, rest, q, body)
         if inv is not None:
             return self._send(*inv)
+        sv = self._surveys(method, rest, q, body)
+        if sv is not None:
+            return self._send(*sv)
         if rest == ["workflow_job_templates"] and method == "GET":
             found = [WF] if q.get("name") == WF["name"] else []
             return self._send(200, {"count": len(found), "results": found})
@@ -99,6 +140,38 @@ class H(BaseHTTPRequestHandler):
                 out["ignored_fields"] = {"extra_vars": ev}
             return self._send(201, out)
         return self._send(404, {"detail": "Not found."})
+
+    def _surveys(self, method, rest, q, body):
+        """(status, answer) for the templates' surveys, or None (the deploy's workflow 42 is answered below)."""
+        kinds = {"job_templates": "job", "workflow_job_templates": "workflow"}
+        if not rest or rest[0] not in kinds:
+            return None
+        kind = kinds[rest[0]]
+        if rest[1:] == [] and method == "GET":
+            if kind == "workflow" and q.get("name") == WF["name"]:
+                return None
+            found = [t for t in TPLS[kind] if t["name"] == q.get("name")]
+            return 200, {"count": len(found), "results": found}
+        if len(rest) < 2 or not rest[1].isdigit():
+            return None
+        n = int(rest[1])
+        t = [x for x in TPLS[kind] if x["id"] == n]
+        if not t:
+            return None if (kind, n) == ("workflow", WF["id"]) else (404, {"detail": "Not found."})
+        if rest[2:] == [] and method == "GET":
+            return 200, t[0]
+        if rest[2:] != ["survey_spec"]:
+            return 404, {"detail": "Not found."}
+        if method == "GET":
+            return 200, SPECS[(kind, n)]
+        if not t[0]["summary_fields"]["user_capabilities"]["edit"]:
+            return 403, {"detail": "You do not have permission to perform this action."}
+        if os.environ.get("AAPMOCK_SURVEY_FAIL") == "1":
+            return 400, {"error": "Survey question 1 (vm_snapshot_picks): bad choices."}
+        SPECS[(kind, n)] = body
+        with open(SURVEY_LOG, "a") as f:
+            f.write(json.dumps({"kind": kind, "id": n, "spec": body}) + "\n")
+        return 200, {}
 
     def _inventories(self, method, rest, q, body):
         """(status, answer) for the inventory part of the API, or None."""

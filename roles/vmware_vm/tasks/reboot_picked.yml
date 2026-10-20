@@ -1,0 +1,166 @@
+---
+# RESTART THE VMs PICKED FROM THE LIST (vm_reboot_picked.yml): vm_reboot_picks, the survey's answer - choices
+# pick_refresh.yml wrote, each ending with its [vcenter/VM ID]. Every pick is found again live and must still
+# be offered (pick_vms.yml, the same settings as the list: powered on, never the AAP server or a protected VM;
+# with vm_pick_reboot_only_hung, still hung); a guest restart needs VMware Tools running. One that is not is
+# skipped, with the reason. guard.yml and power_check.yml check the rest again before anything is done.
+#   - plan (on its own, or the first step of a workflow): lists exactly what would be restarted, and how
+#     (vm_power_mode), and hands that on (job artifact vm_reboot_pick_plan); restarts nothing. Nothing left
+#     to restart = failed, so a workflow stops before its approval.
+#   - after the approval (the workflow's next step: vm_reboot_pick_plan from the plan step): only the VMs the
+#     plan listed, the way it said.
+#   - on its own with vm_pick_confirm: true (never inside a workflow): restarts the picks now.
+# Never more than vm_pick_max at once. As Check (a dry run) it restarts nothing.
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | what this run does, and the picks
+  ansible.builtin.set_fact:
+    _vm_rp_mode: >-
+      {{ 'approved' if vm_reboot_pick_plan is defined else
+         ('plan' if awx_workflow_job_id is defined or not vm_pick_confirm | bool else 'confirmed') }}
+    _vm_rp: "{{ (vm_reboot_pick_plan if vm_reboot_pick_plan is defined else vm_reboot_picks) | vm_pick_parse('vm') }}"
+    _vm_rp_approved_mode: "{{ (vm_reboot_pick_plan | map(attribute='power_mode') | unique | list) if vm_reboot_pick_plan is defined else [] }}"
+
+- name: VMware | something was picked
+  ansible.builtin.assert:
+    that: _vm_rp.picks | length > 0
+    fail_msg: >-
+      {{ 'The approved plan lists no VM: nothing to restart.' if _vm_rp_mode == 'approved' else
+         'Nothing picked: pick the VMs to restart in the survey (vm_reboot_picks)'
+         ~ ('; these are no choices of the pick list (no [vCenter/VM] at the end): ' ~ _vm_rp.bad | join(' | ') if _vm_rp.bad else '')
+         ~ ('. The list had nothing to pick when it was last refreshed (vm_pick_refresh.yml).' if _vm_rp.ignored and not _vm_rp.bad else '.') }}
+    quiet: true
+
+- name: VMware | the restart is the one approved
+  ansible.builtin.assert:
+    that: _vm_rp_approved_mode == [vm_power_mode]
+    fail_msg: >-
+      Refused: the approved plan is for a {{ _vm_rp_approved_mode | join(' / ') }} restart, this run says vm_power_mode
+      {{ vm_power_mode }}. Nothing was restarted.
+    quiet: true
+  when: _vm_rp_mode == 'approved'
+
+- name: VMware | the inventory says which server is AAP
+  ansible.builtin.include_tasks: guard.yml
+  vars:
+    _vm_found: []
+
+- name: VMware | the VMs now, and which may be restarted
+  ansible.builtin.include_tasks: pick_vms.yml
+  vars:
+    _vm_pk_max: 1000000                   # every VM: a pick is checked against all of them, not only the first of the list
+
+- name: VMware | each pick found again
+  ansible.builtin.set_fact:
+    _vm_rp_plan: >-
+      {%- set p = _vm_pk | vm_pick_reboot_plan(_vm_rp.picks, _vm_pk_read.vcenters | vm_vcenters_read, vm_power_mode) -%}
+      {%- set bad = [] -%}
+      {%- for b in _vm_rp.bad -%}{%- set _ = bad.append({'text': b, 'vm': '', 'reason': 'not a choice of the pick list (no [vCenter/VM] at its end)'}) -%}{%- endfor -%}
+      {{ p | combine({'skipped': p.skipped + bad}) }}
+    _vm_rp_do: "{{ _vm_rp_mode != 'plan' and not ansible_check_mode }}"
+
+- name: VMware | not more than vm_pick_max ({{ vm_pick_max }}) at once
+  ansible.builtin.assert:
+    that: _vm_rp_plan.todo | length <= vm_pick_max | int
+    fail_msg: >-
+      Refused: {{ _vm_rp_plan.todo | length }} VMs picked - more than vm_pick_max ({{ vm_pick_max }}). Nothing was
+      restarted. Pick fewer, or raise vm_pick_max on purpose.
+    quiet: true
+
+# the same checks as every restart (vm_reboot.yml), on exactly the VMs that will be restarted
+- name: VMware | never the AAP server or a protected VM
+  ansible.builtin.include_tasks: guard.yml
+  vars:
+    _vm_found: "{{ _vm_rp_plan.todo }}"
+
+- name: VMware | each can be restarted
+  ansible.builtin.include_tasks: power_check.yml
+  vars:
+    _vm_power_action: restart
+    _vm_found: "{{ _vm_rp_plan.todo }}"
+
+- name: VMware | restart the picked VMs ({{ vm_power_mode }})
+  vmware.vmware.vm_powerstate:
+    # the VM's own vCenter: its ID (moid) means another VM, or none, in any other vCenter
+    hostname: "{{ item.vcenter.split(':')[0] if item.vcenter.count(':') == 1 else item.vcenter }}"
+    port: "{{ (item.vcenter.split(':')[1] | int) if item.vcenter.count(':') == 1 else omit }}"
+    moid: "{{ item.moid }}"
+    datacenter: "{{ item.datacenter }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    state: "{{ 'reboot-guest' if vm_power_mode == 'guest' else 'restarted' }}"
+  loop: "{{ _vm_rp_plan.todo }}"
+  loop_control:
+    label: "{{ item.name }}{{ ' (' ~ item.vcenter | vc_short ~ ')' if _vm_pk_multi else '' }}"
+  register: _vm_rp_done
+  ignore_errors: true                 # one that fails does not stop the others; the report lists it, the job fails at the end
+  when: _vm_rp_do | bool
+
+- name: VMware | picked VMs
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_vcenters: "{{ _vm_pk_read.vcenters }}"
+    _vm_rp_how: "{{ 'operating system restart through VMware Tools' if vm_power_mode == 'guest' else 'hard reset' }}"
+    _vm_rp_failed: "{{ _vm_rp_done.results | default([]) | selectattr('failed', 'defined') | selectattr('failed') | list }}"
+    _vm_rp_ok: "{{ _vm_rp_done.results | default([]) | rejectattr('skipped', 'defined') | rejectattr('failed') | map(attribute='item') | list }}"
+    _vm_report_subject: >-
+      {%- if not _vm_rp_do | bool -%}
+      VM restart (picked): would restart {{ _vm_rp_plan.todo | length }} ({{ vm_power_mode }}){{ ' - waiting for the approval' if _vm_rp_mode == 'plan' and awx_workflow_job_id is defined else '' }}
+      {{- (', ' ~ _vm_rp_plan.skipped | length ~ ' skipped') if _vm_rp_plan.skipped else '' }} (nothing restarted)
+      {%- else -%}
+      VM restart (picked): {{ _vm_rp_ok | length }} restarted ({{ vm_power_mode }}){{ ' (approved)' if _vm_rp_mode == 'approved' else '' }}
+      {{- (', ' ~ _vm_rp_failed | length ~ ' failed') if _vm_rp_failed else '' }}{{ (', ' ~ _vm_rp_plan.skipped | length ~ ' skipped') if _vm_rp_plan.skipped else '' }}
+      {%- endif -%}
+    _vm_report_lines: >-
+      {%- set out = [] -%}
+      {%- if not _vm_rp_do | bool -%}
+      {%-   set _ = out.append('Nothing restarted: ' ~ ('a dry run (Check).' if ansible_check_mode and _vm_rp_mode != 'plan' else
+                               ('the plan for the approval (the next step restarts exactly these, the same way).' if awx_workflow_job_id is defined else
+                                'the plan - run again with vm_pick_confirm: true to restart them, or use the workflow with its approval.'))) -%}
+      {%-   for x in _vm_rp_plan.todo -%}{%- set _ = out.append('WOULD RESTART (' ~ _vm_rp_how ~ ') ' ~ x.text) -%}{%- endfor -%}
+      {%- else -%}
+      {%-   for x in _vm_rp_ok -%}{%- set _ = out.append('RESTARTED (' ~ _vm_rp_how ~ ') ' ~ x.text) -%}{%- endfor -%}
+      {%-   for r in _vm_rp_failed -%}{%- set _ = out.append('FAILED ' ~ r.item.name ~ ' - ' ~ r.msg | default('?') | truncate(200)) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- for x in _vm_rp_plan.skipped -%}{%- set _ = out.append('SKIPPED ' ~ (x.vm or x.text) ~ ' - ' ~ x.reason) -%}{%- endfor -%}
+      {{ out }}
+
+- name: VMware | the plan, for the approval and the next step (vm_reboot_pick_plan)
+  ansible.builtin.set_stats:
+    data:
+      vm_reboot_pick_plan: >-
+        {%- set out = [] -%}
+        {%- for x in _vm_rp_plan.todo -%}
+        {%-   set _ = out.append({'vm': x.name, 'vcenter': x.vcenter, 'moid': x.moid, 'power_mode': vm_power_mode, 'text': x.text}) -%}
+        {%- endfor -%}
+        {{ out }}
+  when: _vm_rp_mode == 'plan'
+
+- name: VMware | what was done, as job artifacts (vm_reboot_picked)
+  ansible.builtin.set_stats:
+    data:
+      vm_reboot_picked: >-
+        {{ {'mode': _vm_rp_mode, 'power_mode': vm_power_mode,
+            'restarted': _vm_rp_done.results | default([]) | rejectattr('skipped', 'defined') | rejectattr('failed') | map(attribute='item.name') | list
+                         if _vm_rp_do | bool else [],
+            'failed': _vm_rp_done.results | default([]) | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='item.name') | list,
+            'would_restart': [] if _vm_rp_do | bool else _vm_rp_plan.todo | map(attribute='name') | list, 'skipped': _vm_rp_plan.skipped} }}
+
+- name: VMware | something to restart
+  ansible.builtin.assert:
+    that: _vm_rp_plan.todo | length > 0
+    fail_msg: >-
+      None of the picks can be restarted now (the reasons are above): {{ 'nothing goes to the approval.' if _vm_rp_mode == 'plan' else 'nothing was restarted.' }}
+    quiet: true
+  when: _vm_rp_mode != 'approved'
+
+- name: VMware | every restart worked
+  ansible.builtin.assert:
+    that: _vm_rp_done.results | default([]) | selectattr('failed', 'defined') | selectattr('failed') | list | length == 0
+    fail_msg: "Some VMs could not be restarted (the list is above)."
+    quiet: true
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_pk_read.vcenters }}"

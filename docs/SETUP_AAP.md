@@ -449,10 +449,32 @@ environment, a vCenter credential, one template per job. Follow [VMWARE.md](VMWA
 emails are in [EMAIL_REPORTS.md](EMAIL_REPORTS.md). The VM deploy from a ServiceNow ticket has a guide
 of its own, setup included: [VM_DEPLOY_GUIDE.md](VM_DEPLOY_GUIDE.md).
 
+### VMware pick lists (choose what to restart, which snapshots to delete)
+
+Three templates - `VM - refresh the pick lists` (`playbooks/vm_pick_refresh.yml`, scheduled every 30
+minutes, with the **VMware vCenter** and the **Red Hat Ansible Automation Platform** credentials),
+`VM - delete picked snapshots` and `VM - restart picked VMs` - and two workflows (plan, approval, the
+same template again) whose survey has the multiple-select question the refresh fills. The AAP
+credential's user needs the **Admin** role on those workflows. Click by click: [VMWARE.md](VMWARE.md),
+"Pick lists"; the workflows: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md), 26 and 27.
+
 ### NetApp ONTAP health report
 
 It reads the storage clusters' REST API, not your hosts: a read-only ONTAP account, a NetApp
 ONTAP credential, one template. Follow [NETAPP.md](NETAPP.md).
+
+### Active Directory - account lockout
+
+For the service desk: is an account locked out, and which computer is locking it out (the DCs'
+Security logs), with an optional unlock. The Windows inventory and execution environment, an
+account that may read the DCs' Security logs, a survey that asks for the account, **Execute** for
+the service desk team. Follow [ACTIVE_DIRECTORY.md](ACTIVE_DIRECTORY.md#account-lockout).
+
+### Horizon 8 (VDI) jobs
+
+They read a Connection Server's REST API, not your hosts: an AD account with a Horizon role, a
+"Horizon API" credential, one template per job, two workflows with an approval. Follow
+[HORIZON.md](HORIZON.md); run *Horizon - API test* first.
 
 ### Try each one
 

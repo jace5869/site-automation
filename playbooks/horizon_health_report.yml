@@ -1,0 +1,17 @@
+---
+# HORIZON HEALTH REPORT. Read-only: each Connection Server (status, services, certificate, replication),
+# the gateways, vCenter and AD as the Connection Servers see them, the event database, SAML and True SSO,
+# the license, pools that cannot provision or whose image push failed, and the broken desktops by state -
+# problems first. Printed, published as job artifacts (horizon_report, horizon_health), emailed only when
+# report_email_to is set. Stays green unless horizon_health_fail: true.
+# Runs on the AAP side: attach the "Horizon API" credential; no inventory needed. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_health_report.yml
+- name: Horizon health report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon health report
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: health.yml

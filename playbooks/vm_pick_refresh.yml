@@ -1,0 +1,19 @@
+---
+# VM PICK LISTS (vCenter, AAP). Read-only in vCenter: what may be done right now - the snapshots that may be
+# deleted (the snapshot cleanup's holds) and the VMs that may be restarted (powered on, never the AAP server
+# or a protected VM; with vm_pick_reboot_only_hung only the hung ones) - written as the choices of one
+# multiple-choice question in the survey of the templates of vm_pick_snapshot_templates and
+# vm_pick_reboot_templates. Schedule it (e.g. every 30 minutes): whoever launches those templates picks from
+# that list, and the job that gets the answer checks every pick again, live.
+# Runs on the AAP side: attach a "VMware vCenter" credential and a "Red Hat Ansible Automation Platform"
+# credential (its user: the Admin role on those templates); no Limit. docs/VMWARE.md, "Pick lists"
+#   ansible-playbook playbooks/vm_pick_refresh.yml -e '{"vm_pick_snapshot_templates": ["VM - delete picked snapshots"]}'
+- name: VM pick lists
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM pick lists
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: pick_refresh.yml

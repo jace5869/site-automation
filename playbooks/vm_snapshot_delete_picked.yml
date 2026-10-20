@@ -1,0 +1,18 @@
+---
+# VM SNAPSHOT DELETE - PICKED FROM THE LIST (vCenter). Deletes the snapshots picked in the survey
+# (vm_snapshot_picks: choices vm_pick_refresh.yml wrote), each found again live and still allowed (the
+# snapshot cleanup's holds). On its own it only lists them (the plan) unless vm_pick_confirm: true; in a
+# workflow: this template, then an approval, then this template again - the second run deletes exactly what
+# the first listed (vm_snapshot_pick_plan). Never more than vm_pick_max. Do not tick "Prompt on launch" for
+# Variables on its job template.
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md, "Pick lists"
+#   ansible-playbook playbooks/vm_snapshot_delete_picked.yml -e '{"vm_snapshot_picks": ["web01: \"x\" (...) [vc01.example.mil/vm-42/7]"]}'
+- name: VM snapshot delete - picked
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM snapshot delete - picked
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: snapshot_delete_picked.yml

@@ -1,0 +1,69 @@
+---
+# Job 2 of the broken desktops workflow (playbooks/horizon_desktops_fix_approved.yml), after the approval.
+# AAP hands it the check job's list (horizon_desktops_fix, set_stats in desktops_check.yml). Each desktop is
+# read again first and fixed only when it is still broken, no session is on it and its pool is not
+# protected - with exactly the approved action. It refuses to run on its own (outside the workflow nothing
+# was approved). A dry run (Check) says what it would do.
+- name: Horizon | the approved list came from the check job
+  ansible.builtin.assert:
+    that:
+      - horizon_desktops_fix is defined
+      - horizon_desktops_fix is mapping
+      - horizon_desktops_fix.desktops | default([]) | length > 0
+    fail_msg: >-
+      Nothing to fix: no approved list (horizon_desktops_fix) reached this job. It runs only in the broken
+      desktops workflow, after "Horizon - desktops check" (horizon_desktops_mode: approval) and the approval
+      step: docs/HORIZON.md. Do not tick "Prompt on launch" for Variables on this template.
+    quiet: true
+
+- name: Horizon | read the desktops again
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the pools, desktops and sessions, as they are now
+    _hz_resources: [desktop_pools, machines, sessions]
+
+- name: Horizon | each approved desktop, as it is now
+  ansible.builtin.set_fact:
+    _hz_rc: "{{ horizon_desktops_fix | hz_desktops_recheck(_hz, {'protected_pools': horizon_protected_pools,
+                                                                         'broken_states': horizon_broken_states, 'max': horizon_fix_max | int}) }}"
+    _hz_all_results: []
+
+- name: Horizon | fix them, one action at a time
+  ansible.builtin.include_tasks: act.yml
+  vars:
+    _hz_target: machines
+    _hz_verb: "{{ _hz_action }}"
+    _hz_ids: "{{ _hz_rc.act | selectattr('action', 'equalto', _hz_action) | map(attribute='id') | list }}"
+  loop: "{{ _hz_rc.act | map(attribute='action') | unique | list }}"
+  loop_control:
+    loop_var: _hz_action
+
+- name: Horizon | the report
+  ansible.builtin.set_fact:
+    _hz_fixed_doc: >-
+      {%- set lines = [] -%}
+      {%- for x in _hz_rc.act -%}
+      {%-   set r = _hz_all_results | selectattr('id', 'equalto', x.id) | list -%}
+      {%-   set _ = lines.extend((r or [{'id': x.id, 'ok': false, 'error': 'no result'}]) | hz_act_lines([x], x.action ~ ' (it was ' ~ x.state ~ ')', ansible_check_mode)) -%}
+      {%- endfor -%}
+      {%- set bad = _hz_all_results | rejectattr('ok') | list | length -%}
+      {{ {'title': 'Horizon desktops fixed: ' ~ ((_hz_rc.act | length - bad) ~ ' of ' ~ _hz_rc.act | length ~ (' (a dry run)' if ansible_check_mode else '')
+                                                 if _hz_rc.act else 'none - every approved desktop changed since the check'),
+          'status': 'critical' if bad else ('ok' if _hz_rc.act else 'info'),
+          'subtitle': 'approved from the check of ' ~ horizon_desktops_fix.checked | default('?'),
+          'sections': [{'title': 'Done', 'lines': lines or ['Nothing.']},
+                       {'title': 'Left alone since the approval', 'columns': ['Desktop', 'Pool', 'Why'],
+                        'rows': _hz_rc.skipped | map(attribute='name') | zip(_hz_rc.skipped | map(attribute='pool'),
+                                                                              _hz_rc.skipped | map(attribute='reason')) | map('list') | list}]} }}
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: "{{ _hz_fixed_doc }}"
+    _hz_footer: "The approved list of the check job {{ horizon_desktops_fix.job | default('') }}; each desktop was read again first."
+
+- name: Horizon | Horizon took every action
+  ansible.builtin.assert:
+    that: _hz_all_results | rejectattr('ok') | list | length == 0
+    fail_msg: "Horizon refused {{ _hz_all_results | rejectattr('ok') | list | length }} action(s): the report above says why."
+    quiet: true

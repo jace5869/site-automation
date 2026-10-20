@@ -1,0 +1,137 @@
+---
+# DELETE THE SNAPSHOTS PICKED FROM THE LIST (vm_snapshot_delete_picked.yml): vm_snapshot_picks, the survey's
+# answer - choices pick_refresh.yml wrote, each ending with its [vcenter/VM ID/snapshot ID]. Every pick is
+# found again live and must still be allowed (pick_snapshots.yml: the cleanup's holds); one that is gone,
+# renamed or held back now is skipped, with the reason.
+#   - plan (on its own, or the first step of a workflow): lists exactly what would be deleted and hands that
+#     list on (job artifact vm_snapshot_pick_plan); deletes nothing. Nothing left to delete = failed, so a
+#     workflow stops before its approval.
+#   - after the approval (the workflow's next step: vm_snapshot_pick_plan from the plan step): only what the
+#     plan listed and is still allowed - never a pick the approver did not see.
+#   - on its own with vm_pick_confirm: true (never inside a workflow): deletes the picks now.
+# Never more than vm_pick_max at once. As Check (a dry run) it deletes nothing.
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | what this run does, and the picks
+  ansible.builtin.set_fact:
+    _vm_pd_mode: >-
+      {{ 'approved' if vm_snapshot_pick_plan is defined else
+         ('plan' if awx_workflow_job_id is defined or not vm_pick_confirm | bool else 'confirmed') }}
+    _vm_pd: "{{ (vm_snapshot_pick_plan if vm_snapshot_pick_plan is defined else vm_snapshot_picks) | vm_pick_parse('snapshot') }}"
+
+- name: VMware | something was picked
+  ansible.builtin.assert:
+    that: _vm_pd.picks | length > 0
+    fail_msg: >-
+      {{ 'The approved plan lists no snapshot: nothing to delete.' if _vm_pd_mode == 'approved' else
+         'Nothing picked: pick the snapshots to delete in the survey (vm_snapshot_picks)'
+         ~ ('; these are no choices of the pick list (no [vCenter/VM/snapshot] at the end): ' ~ _vm_pd.bad | join(' | ') if _vm_pd.bad else '')
+         ~ ('. The list had nothing to pick when it was last refreshed (vm_pick_refresh.yml).' if _vm_pd.ignored and not _vm_pd.bad else '.') }}
+    quiet: true
+
+- name: VMware | the snapshots now, and which may be deleted
+  ansible.builtin.include_tasks: pick_snapshots.yml
+
+- name: VMware | each pick found again
+  ansible.builtin.set_fact:
+    _vm_pd_plan: >-
+      {%- set p = _vm_sn | vm_pick_snapshot_plan(_vm_pd.picks, _vm_snap_read.vcenters | vm_vcenters_read) -%}
+      {%- set bad = [] -%}
+      {%- for b in _vm_pd.bad -%}{%- set _ = bad.append({'text': b, 'vm': '', 'name': '', 'reason': 'not a choice of the pick list (no [vCenter/VM/snapshot] at its end)'}) -%}{%- endfor -%}
+      {{ p | combine({'skipped': p.skipped + bad}) }}
+    _vm_pd_do: "{{ _vm_pd_mode != 'plan' and not ansible_check_mode }}"
+
+- name: VMware | not more than vm_pick_max ({{ vm_pick_max }}) at once
+  ansible.builtin.assert:
+    that: _vm_pd_plan.todo | length <= vm_pick_max | int
+    fail_msg: >-
+      Refused: {{ _vm_pd_plan.todo | length }} snapshots picked - more than vm_pick_max ({{ vm_pick_max }}). Nothing was
+      deleted. Pick fewer, or raise vm_pick_max on purpose.
+    quiet: true
+
+- name: VMware | delete the picked snapshots
+  vmware.vmware.vm_snapshot:
+    # the VM's own vCenter: its ID (moid) means another VM, or none, in any other vCenter
+    hostname: "{{ item.vcenter.split(':')[0] if item.vcenter.count(':') == 1 else item.vcenter }}"
+    port: "{{ (item.vcenter.split(':')[1] | int) if item.vcenter.count(':') == 1 else omit }}"
+    moid: "{{ item.moid }}"
+    datacenter: "{{ item.datacenter }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    state: absent
+    snapshot_id: "{{ item.id | int }}"
+    timeout: "{{ vm_snapshot_delete_timeout | int }}"
+  loop: "{{ _vm_pd_plan.todo }}"
+  loop_control:
+    label: "{{ item.vm }}{{ ' (' ~ item.vcenter | vc_short ~ ')' if _vm_sn_multi else '' }}: {{ item.name }}"
+  register: _vm_pd_del
+  ignore_errors: true                 # one that fails does not stop the others; the report lists it, the job fails at the end
+  when: _vm_pd_do | bool
+
+- name: VMware | picked snapshots
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_vcenters: "{{ _vm_snap_read.vcenters }}"
+    _vm_pd_failed: "{{ _vm_pd_del.results | default([]) | selectattr('failed', 'defined') | selectattr('failed') | list }}"
+    _vm_pd_done: "{{ _vm_pd_del.results | default([]) | rejectattr('skipped', 'defined') | rejectattr('failed') | map(attribute='item') | list }}"
+    _vm_report_subject: >-
+      {%- if not _vm_pd_do | bool -%}
+      VMware picked snapshots: would delete {{ _vm_pd_plan.todo | length }}{{ ' - waiting for the approval' if _vm_pd_mode == 'plan' and awx_workflow_job_id is defined else '' }}
+      {{- (', ' ~ _vm_pd_plan.skipped | length ~ ' skipped') if _vm_pd_plan.skipped else '' }} (nothing deleted)
+      {%- else -%}
+      VMware picked snapshots: deleted {{ _vm_pd_done | length }}{{ ' (approved)' if _vm_pd_mode == 'approved' else '' }}
+      {{- (', ' ~ _vm_pd_failed | length ~ ' failed') if _vm_pd_failed else '' }}{{ (', ' ~ _vm_pd_plan.skipped | length ~ ' skipped') if _vm_pd_plan.skipped else '' }}
+      {%- endif -%}
+    _vm_report_lines: >-
+      {%- set out = [] -%}
+      {%- if not _vm_pd_do | bool -%}
+      {%-   set _ = out.append('Nothing deleted: ' ~ ('a dry run (Check).' if ansible_check_mode and _vm_pd_mode != 'plan' else
+                               ('the plan for the approval (the next step deletes exactly these).' if awx_workflow_job_id is defined else
+                                'the plan - run again with vm_pick_confirm: true to delete them, or use the workflow with its approval.'))) -%}
+      {%-   for x in _vm_pd_plan.todo -%}{%- set _ = out.append('WOULD DELETE ' ~ x.vm ~ (' (' ~ x.vcenter | vc_short ~ ')' if _vm_sn_multi else '') ~ ': "' ~ x.name ~ '" ' ~ x.age_days ~ ' days, ' ~ x.size_gb | human_size) -%}{%- endfor -%}
+      {%- else -%}
+      {%-   for x in _vm_pd_done -%}{%- set _ = out.append('DELETED ' ~ x.vm ~ (' (' ~ x.vcenter | vc_short ~ ')' if _vm_sn_multi else '') ~ ': "' ~ x.name ~ '" ' ~ x.age_days ~ ' days, ' ~ x.size_gb | human_size) -%}{%- endfor -%}
+      {%-   for r in _vm_pd_failed -%}{%- set _ = out.append('FAILED ' ~ r.item.vm ~ ': "' ~ r.item.name ~ '" - ' ~ r.msg | default('?') | truncate(200)) -%}{%- endfor -%}
+      {%- endif -%}
+      {%- for x in _vm_pd_plan.skipped -%}{%- set _ = out.append('SKIPPED ' ~ (x.vm or x.text) ~ (': "' ~ x.name ~ '"' if x.name else '') ~ ' - ' ~ x.reason) -%}{%- endfor -%}
+      {{ out }}
+
+- name: VMware | the plan, for the approval and the next step (vm_snapshot_pick_plan)
+  ansible.builtin.set_stats:
+    data:
+      vm_snapshot_pick_plan: >-
+        {%- set out = [] -%}
+        {%- for x in _vm_pd_plan.todo -%}
+        {%-   set _ = out.append({'vm': x.vm, 'name': x.name, 'vcenter': x.vcenter, 'moid': x.moid, 'id': x.id, 'created': x.created,
+                                  'size': x.size_gb | human_size, 'text': x.text}) -%}
+        {%- endfor -%}
+        {{ out }}
+  when: _vm_pd_mode == 'plan'
+
+- name: VMware | what was done, as job artifacts (vm_snapshot_picked)
+  ansible.builtin.set_stats:
+    data:
+      vm_snapshot_picked: >-
+        {{ {'mode': _vm_pd_mode, 'deleted': _vm_pd_del.results | default([]) | rejectattr('skipped', 'defined') | rejectattr('failed') | map(attribute='item') | list
+                                            if _vm_pd_do | bool else [],
+            'failed': _vm_pd_del.results | default([]) | selectattr('failed', 'defined') | selectattr('failed') | map(attribute='item') | list,
+            'would_delete': [] if _vm_pd_do | bool else _vm_pd_plan.todo, 'skipped': _vm_pd_plan.skipped} }}
+
+- name: VMware | something to delete
+  ansible.builtin.assert:
+    that: _vm_pd_plan.todo | length > 0
+    fail_msg: >-
+      None of the picks can be deleted now (the reasons are above): {{ 'nothing goes to the approval.' if _vm_pd_mode == 'plan' else 'nothing was deleted.' }}
+    quiet: true
+  when: _vm_pd_mode != 'approved'
+
+- name: VMware | every deletion worked
+  ansible.builtin.assert:
+    that: _vm_pd_del.results | default([]) | selectattr('failed', 'defined') | selectattr('failed') | list | length == 0
+    fail_msg: "Some snapshots could not be deleted (the list is above)."
+    quiet: true
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_snap_read.vcenters }}"

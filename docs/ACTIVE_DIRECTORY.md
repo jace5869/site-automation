@@ -13,6 +13,9 @@ check does) that queries Active Directory, runs `dcdiag` tests that only read, `
 `DnsDynamicUpdate` test (that one writes a test record), and it does not run `repadmin /syncall`,
 `/replicate` or anything else that acts.
 
+A second job, **`playbooks/ad_lockout.yml`**, is for the service desk: is an account locked out,
+and **which computer is locking it out** - see [Account lockout](#account-lockout) at the end.
+
 **No second hop.** Every DC asks only itself (`localhost`). AD is replicated, so the DC that reads
 the domain has every object in its own copy, and the replication metadata says on which DC a change
 was made. So the job works over WinRM with NTLM or Kerberos and needs no delegation or CredSSP.
@@ -176,3 +179,144 @@ Ready to paste, with every setting switched off: [aap/extra_vars/ad_health_repor
   one of its own DCs. Schema and forest-wide FSMO roles are reported by the forest root domain.
 - The report covers what the DCs say about themselves and the domain. It does not test logons from
   clients, and it does not read Azure AD / Entra ID.
+
+## Account lockout
+
+`playbooks/ad_lockout.yml` answers the service desk's question: *is this account locked out, and
+what keeps locking it out?* Give it the account (`jdoe`, `CORP\jdoe` or `jdoe@corp.example.mil`);
+leave it empty and it lists **every account locked out now**, each with its source.
+
+**How it works.** Every DC of the job (the group `win_dc`, or `target`) runs a PowerShell script
+over WinRM that asks only itself, as the health report does:
+
+1. The **PDC emulator** finds the account (or every account locked out now) and the lockout policy
+   that applies to it - the domain's, or its fine-grained password policy.
+2. **Every DC** reads its own `badPwdCount`, last bad password and last logon of the account (these
+   are **not replicated**: each DC counts the bad passwords it was given itself), and its **Security
+   log** of the last `ad_lockout_hours` for the account:
+
+   | Event | What it says | Where it came from |
+   |---|---|---|
+   | 4740 | the account was locked out | *Caller Computer Name* |
+   | 4767 | the account was unlocked | by whom |
+   | 4771 | Kerberos pre-authentication failed (`0x18` = bad password) | the client's address |
+   | 4768 | a Kerberos ticket was refused (`0x12` = asked for while locked out) | the client's address |
+   | 4776 | NTLM credential validation failed (`0xC000006A` = bad password) | the workstation |
+   | 4625 | a logon to the DC failed | workstation, address, logon type, process |
+
+   Each address is resolved to a name (reverse DNS, asked of the DC), so the Kerberos and the NTLM
+   failures of one computer are counted together.
+3. The report ranks the **source computers**: the one that locked it out first, then the most
+   failed sign-ins. For each it says what that usually means, in plain words - a steady pace
+   ("about every 5 minutes") is a saved password retrying, not a person typing; attempts *after* the
+   lock mean it will lock out again right after an unlock; logon type 4 is a scheduled task, 5 a
+   service, 3 a mapped drive or an application, 10 Remote Desktop; a source that is one of your mail
+   servers (`ad_lockout_exchange_servers`) is a phone or a mail app with the old password; an empty
+   caller is a server signing in for the user (Exchange / OWA, NPS / RADIUS for Wi-Fi or VPN, a web
+   application).
+
+The report: **what to do** first, then the account (locked since, enabled, password last set or
+expired), **where the failed sign-ins came from** (source, address, bad passwords, after the lock,
+lockouts, first, last, pace, how, which DCs saw them, whether it is in the inventory), the
+**lockouts and unlocks**, and **each DC**'s own count (an unreachable DC in red). It is printed in the
+job's output, published as artifacts (`ad_lockout`) and emailed when `report_email_to` is set. The
+job stays green: it fails only when no DC could read its domain, an account asked for is in no
+domain (it stops before reading the Security logs), or an unlock was refused.
+
+**Optional:**
+
+- `ad_lockout_unlock: true` unlocks the account on the PDC emulator after reading, and reads it
+  back - only an account asked for by name, and only when it is locked out. A dry run (Check) says
+  *would be unlocked* and changes nothing. The report says it first: it locks out again as soon as
+  the source tries its old password, so fix the source.
+- `ad_lockout_check_sources: true` also looks on each source computer that is a host of the job's
+  inventory (WinRM, the same credential, which needs administrator rights there) for what runs as
+  the account: services (*Log On As*), scheduled tasks (*Run as*), its sessions - a **disconnected**
+  Remote Desktop session keeps the old password - processes, and drives it has mapped. Read-only. A
+  source that is not in the inventory (most workstations) is listed with what to check by hand.
+
+### Before you start
+
+- **The DCs** in the group `win_dc`, as for the health report (step 1 above). Put every DC there:
+  a DC that is not in the job does not show its bad password count or its Security log, and a
+  lockout recorded there is missed.
+- **The audit policy** on the DCs (*Advanced Audit Policy Configuration*, in the Default Domain
+  Controllers Policy): **Account Lockout** (Failure; 4740 is in *Audit User Account Management*,
+  Success), **Kerberos Authentication Service** (Failure: 4771, 4768) and **Credential Validation**
+  (Failure: 4776). The DISA STIG asks for all of them. Without them the report says *No failed
+  sign-in ... the DCs may not audit*.
+- **A Security log big enough** to hold `ad_lockout_hours` of events (on a busy DC 24 h can be 1 GB
+  or more); an older lockout has rolled out of it.
+- **The account** for the job. The health report's account works. A smaller one is enough for
+  this job alone - it only reads, and the unlock is one delegated right:
+  - **Reading the Security log** of the DCs: the built-in group **Event Log Readers** (of the
+    domain: it applies on the DCs), plus **Remote Management Users** for WinRM.
+  - **Reading the accounts**: any domain user can.
+  - **Unlocking** (`ad_lockout_unlock`): *Active Directory Users and Computers*, right-click the OUs of
+    the users > **Delegate Control** > the job's account > *Create a custom task* > *User objects* >
+    the property permissions **Read lockoutTime** and **Write lockoutTime**. Nothing else.
+  - **Looking on the source computers** (`ad_lockout_check_sources`): an administrator of those
+    computers (other users' processes and scheduled tasks are not readable otherwise). Use a
+    separate template with that credential if your DC account must not log on to workstations.
+
+### Set it up for the service desk
+
+1. **Templates > Create template > Create job template:**
+   - Name: `Active Directory - account lockout`
+   - Inventory: `Windows servers`. Playbook: `playbooks/ad_lockout.yml`. Execution environment: your
+     Windows EE. Credentials: the account above.
+   - Variables (ready to paste: [aap/extra_vars/ad_lockout.yml](../aap/extra_vars/ad_lockout.yml)):
+     ```yaml
+     ad_lockout_exchange_servers: [EXCH01, EXCH02]   # your mail servers, if any
+     ```
+   - Leave Limit empty (with no `target` it reads the group `win_dc`). Save.
+2. **Survey** (template > *Survey* > *Add*), then switch the survey **on**:
+   - *Account (jdoe, CORP\jdoe or a UPN; empty = every account locked out now)* - answer variable
+     `ad_lockout_user`, **Text**, **not required**.
+   - *Unlock it?* - answer variable `ad_lockout_unlock`, **Multiple Choice (single select)**, choices
+     `false` and `true`, default `false`, not required. Leave this question out for a "look only"
+     template, and keep the unlock template for the people allowed to unlock.
+   - Optionally *Look on the source computers?* - `ad_lockout_check_sources`, the same way.
+3. **Access** (template > *User Access* / *Team Access*): give the service desk team the **Execute**
+   role only - they launch it and read the output, they cannot change it.
+4. **Try it** on your own account: type a wrong password three times on a test machine, then launch
+   with your name. The source table should show that machine.
+
+### Settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ad_lockout_user` | `""` | the account(s): `jdoe`, `CORP\jdoe`, `jdoe@corp.example.mil`; several separated by commas; empty = every account locked out now |
+| `ad_lockout_hours` | `24` | how far back the Security logs are read |
+| `ad_lockout_unlock` | `false` | `true` = unlock it on the PDC emulator (an account asked for by name, locked out) |
+| `ad_lockout_check_sources` | `false` | `true` = look on the source computers that are hosts of the inventory |
+| `ad_lockout_check_max` | `5` | source computers looked on per account (the worst first) |
+| `ad_lockout_exchange_servers` | `[]` | your mail servers by name or address (`*` and `?` allowed) |
+| `ad_lockout_max_users` | `25` | accounts per run (asked for, or locked out now) |
+| `ad_lockout_max_events` | `2000` | Security log entries read per account and DC (the newest) |
+| `ad_lockout_resolve_max` | `50` | addresses resolved to names per DC |
+| `ad_lockout_max_rows` | `50` | rows per table (the artifacts have all) |
+
+**All settings** of this job, with their defaults: [ad_lockout](VARIABLES_REFERENCE.md#ad_lockout).
+
+### Troubleshooting
+
+| You see | It means | Do |
+|---|---|---|
+| `No account named jdoe in corp.example.mil` | the name is not the sign-in name, or the account is in another domain | the *User logon name (pre-Windows 2000)*, `CORP\jdoe` or the UPN; for another domain, put its DCs in `win_dc` |
+| `No failed sign-in ... the DCs may not audit` | the audit subcategories above are off, or the events have rolled out of the Security log | turn them on; raise the Security log's size; a shorter `ad_lockout_hours` for a fresh lockout |
+| `Security log for jdoe: Attempted to perform an unauthorized operation` under *Not read* | the account may not read the Security log | add it to **Event Log Readers** |
+| A source shown only as an **address** | no reverse DNS (PTR) record for it | look the address up in DHCP; add PTR records |
+| The source is the **DC itself** or the caller is **(not recorded)** | a server signed in for the user: NPS / RADIUS, Exchange, a web application, an LDAP bind | look at that server's own logs (NPS: *Network Policy Server* events 6273) |
+| `NOT unlocked: Insufficient access rights` (the job fails) | the account has no *Write lockoutTime* on that user's OU | delegate it (above); an account in a protected group (Domain Admins) is protected by AdminSDHolder - unlock it by hand |
+| It locks out again right after the unlock | the source still has the old password | fix the source first (the report's *what to do*), then unlock |
+
+### Limits
+
+- Failed sign-ins the DCs of the job did not see are missed: every DC should be in `win_dc`.
+- A sign-in with cached credentials (a laptop off the network) does not reach a DC: it is counted
+  only once the laptop reaches a DC again.
+- Credential Manager entries, saved passwords in applications and phones cannot be read remotely:
+  the report says where to look.
+- One forest at a time per job: a trusted domain's lockouts are on its own DCs (put them in the
+  inventory, or run the job there).

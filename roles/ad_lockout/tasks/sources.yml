@@ -1,0 +1,24 @@
+---
+# On each source computer of this inventory (playbooks/ad_lockout.yml with ad_lockout_check_sources):
+# what runs as the account there - services, scheduled tasks, sessions, processes, mapped drives.
+# Read-only. One that cannot be reached is listed in the report, never an error of the job.
+- name: Lockout | what runs as {{ adl_source_users | map(attribute='sam') | join(', ') }} here (read-only)
+  ansible.builtin.script: lockout_source.ps1
+  environment:
+    SITE_CHECK_CONFIG: "{{ {'users': adl_source_users} | to_json }}"
+  register: _adl_src_out
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true
+  check_mode: false
+
+- name: Lockout | its answer
+  ansible.builtin.set_fact:
+    adl_source_result: >-
+      {{ {'host': inventory_hostname, 'reachable': not (_adl_src_out.unreachable | default(false)),
+          'error': '' if _adl_line else ((_adl_src_out.msg | default('') if _adl_src_out.unreachable | default(false) else '')
+                                        or _adl_err or _adl_src_out.msg | default('') or 'the script gave no result') | truncate(400),
+          'data': (_adl_line[16:] | from_json).source if _adl_line else none} }}
+  vars:
+    _adl_line: "{{ _adl_src_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+    _adl_err: "{{ _adl_src_out.stderr | default('') | ad_ps_error }}"

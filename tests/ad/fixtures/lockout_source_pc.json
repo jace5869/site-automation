@@ -1,0 +1,44 @@
+{
+    "source": {
+        "errors": [],
+        "found": [
+            {
+                "detail": "Backup Agent - Running, Auto",
+                "kind": "service",
+                "name": "BackupAgent",
+                "user": "jdoe"
+            },
+            {
+                "detail": "Sync - Stopped, Manual",
+                "kind": "service",
+                "name": "Sync",
+                "user": "jdoe"
+            },
+            {
+                "detail": "Ready",
+                "kind": "scheduled task",
+                "name": "\\Copy reports",
+                "user": "jdoe"
+            },
+            {
+                "detail": "Disc, idle 1+02:00, logged on 10/19/2026 9:00 AM",
+                "kind": "session",
+                "name": "session 3",
+                "user": "jdoe"
+            },
+            {
+                "detail": "2 running",
+                "kind": "process",
+                "name": "OUTLOOK",
+                "user": "jdoe"
+            },
+            {
+                "detail": "\\\\files\\home\\jdoe",
+                "kind": "mapped drive",
+                "name": "H:",
+                "user": "jdoe"
+            }
+        ],
+        "name": "PC123"
+    }
+}

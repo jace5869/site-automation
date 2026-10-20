@@ -1,0 +1,74 @@
+---
+# VMware Horizon 8 (playbooks/horizon_*.yml): the Connection Server's REST API, from the AAP side, with the
+# "Horizon API" credential (its address, domain, user name and password) - no collection needed. Every job
+# asks each API path at the newest version first, down to v1, so it fits any Horizon 8 release. A dry run
+# (Check) reads and says what it would do; it changes nothing. docs/HORIZON.md
+
+# ---- Connection ---------------------------------------------------------------------------------
+horizon_ca_path: ""                      # a CA file for the Connection Server's HTTPS certificate ("" = what the execution environment trusts)
+horizon_timeout: 60                      # seconds per request
+horizon_page_size: 500                   # records per page when reading pools, desktops and sessions (Horizon's most: 1000)
+horizon_api_newest: 9                    # the newest API version to try (v9 down to v1): the first that answers is used
+horizon_action_version: v1               # the API version of the actions (reset, recover, log off, push image...)
+
+# ---- Pools no job changes -----------------------------------------------------------------------
+# Desktop pools no job fixes, logs off or pushes an image to: names as Horizon Console shows them, * and ?
+# allowed, any case (e.g. [VIP-*, Kiosk]). The reports still show them.
+horizon_protected_pools: []
+
+# ---- Health report (playbooks/horizon_health_report.yml) ----------------------------------------
+horizon_cert_warn_days: 30               # a Connection Server's, gateway's or vCenter's certificate expires within this many days -> amber
+horizon_cert_crit_days: 7                # within this many days (or expired, or not valid) -> red
+horizon_license_warn_days: 60            # the license expires within this many days -> amber
+horizon_report_max_rows: 50              # rows in the problems table (the job's artifacts have all)
+# The health and capacity reports stay green when they find problems: the report says what. true = mark
+# the job FAILED on a critical finding, for workflows and alerts.
+horizon_health_fail: false
+
+# ---- Capacity report (playbooks/horizon_capacity_report.yml) ------------------------------------
+horizon_capacity_warn_pct: 80            # a pool's desktops in use (connected or disconnected) against its maximum, % -> amber
+horizon_capacity_crit_pct: 95            # in use, % -> red (also red: no free desktop left)
+
+# ---- Broken desktops (the desktops check -> approval -> the fix job) ----------------------------
+# A desktop in one of these states takes no user until it is fixed. Left out on purpose: states that pass
+# by themselves (being made, customized, deleted, waiting for the agent at start-up, maintenance).
+horizon_broken_states: [AGENT_UNREACHABLE, AGENT_ERR_DISABLED, AGENT_ERR_INVALID_IP, AGENT_ERR_NEED_REBOOT,
+                        AGENT_ERR_PROTOCOL_FAILURE, AGENT_ERR_DOMAIN_FAILURE, AGENT_CONFIG_ERROR, ALREADY_USED, ERROR,
+                        PROVISIONING_ERROR, UNKNOWN]
+# report = the check lists them and stays green (a schedule). approval = when there is a desktop to fix,
+# the check hands the list on and FAILS on purpose, so the workflow takes its "Run on fail" path to the
+# approval step and then the fix job. Set approval on the workflow's check node.
+horizon_desktops_mode: report
+horizon_fix_default_action: recover      # what fixes a broken desktop: recover (instant clones: deleted and made again from the image), reset, restart, remove, rebuild
+# By state, when another action fits better (e.g. {AGENT_ERR_NEED_REBOOT: restart, PROVISIONING_ERROR: remove}).
+horizon_fix_actions: {AGENT_ERR_NEED_REBOOT: restart}
+horizon_fix_max: 20                      # fix at most this many desktops per run: the rest are listed, the next run takes them
+horizon_fix_exclude_machines: []         # desktops never fixed automatically: names, * and ? allowed (e.g. [W11-TEST-*])
+
+# ---- Disconnected sessions (playbooks/horizon_session_cleanup.yml) ------------------------------
+horizon_session_max_disconnected_hours: 8   # log off a session disconnected for this many hours or more
+horizon_session_cleanup_max: 100         # log off at most this many sessions per run
+horizon_session_cleanup_exclude_pools: []   # pools whose sessions are never logged off: names, * and ? allowed
+horizon_session_cleanup_exclude_users: []   # users never logged off: login names (jdoe or CORP\jdoe) or SIDs
+horizon_session_forced_logoff: true      # log off a locked session too (a disconnected session is usually locked)
+horizon_session_cleanup_report_only: false  # true = list them, log off none (a dry run - Check - does the same)
+
+# ---- User help (playbooks/horizon_user_help.yml) ------------------------------------------------
+horizon_user: ""                         # the user who cannot connect: jdoe, CORP\jdoe, jdoe@corp.example.mil or a SID (a survey question)
+# What to do: look (only show their sessions and desktops), logoff (all their sessions), disconnect (their
+# connected sessions), reset or restart (their desktops), recover (their instant-clone desktops: made again
+# from the image). Never a desktop another user has a session on, nor one in a protected pool.
+horizon_user_action: look
+
+# ---- Image push (the push plan -> approval -> the push job) -------------------------------------
+horizon_push_pools: []                   # the instant-clone pools to push to: names (a survey: one per line, or separated by commas)
+horizon_push_base_vm: ""                 # the golden image VM, as vCenter names it (or its path)
+horizon_push_snapshot: ""                # its snapshot to push: the name, or the path when two have that name (e.g. /2026-10/2026-11)
+# When the push starts: "" = as soon as the approved push job runs; or a time - "2026-11-01 22:00" (UTC)
+# or with an offset, "2026-11-01T22:00-05:00". A time that has passed by the approval starts in a minute.
+horizon_push_start: ""
+horizon_push_logoff_policy: WAIT_FOR_LOGOFF   # WAIT_FOR_LOGOFF (each desktop is replaced when its user logs off) or FORCE_LOGOFF (users are logged off)
+horizon_push_stop_on_first_error: true   # stop the push at the first desktop that fails
+
+# ---- API test (playbooks/horizon_api_test.yml) --------------------------------------------------
+horizon_test_user: ""                    # also look up this user (e.g. jdoe), as the user-help job does

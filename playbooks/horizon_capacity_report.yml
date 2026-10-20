@@ -1,0 +1,15 @@
+---
+# HORIZON CAPACITY REPORT. Read-only: per desktop pool - its maximum, its desktops free, in use, broken and
+# busy, its sessions, how full it is (amber at horizon_capacity_warn_pct or below its spares, red at
+# horizon_capacity_crit_pct or none free). Emailed only when report_email_to is set.
+# Runs on the AAP side: attach the "Horizon API" credential; no inventory needed. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_capacity_report.yml
+- name: Horizon capacity report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon capacity report
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: capacity.yml

@@ -1,0 +1,36 @@
+---
+# HEALTH REPORT (playbooks/horizon_health_report.yml). Read-only: what Horizon says about itself - each
+# Connection Server (status, services, certificate, replication), the gateways (Unified Access Gateways),
+# vCenter and AD as each Connection Server sees them, the event database, SAML and True SSO, the license,
+# pools that cannot provision or whose image failed, and the broken desktops by state. A part this Horizon
+# release does not have is said once (blue), never a failure. Green unless horizon_health_fail.
+- name: Horizon | read the pod
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the Connection Servers, gateways, vCenters, AD domains, event database, license, pools, desktops and sessions
+    _hz_resources: [connection_servers, gateways, virtual_centers, ad_domains, event_database, saml_authenticators, true_sso,
+                    license, desktop_pools, machines, sessions]
+
+- name: Horizon | the health report
+  ansible.builtin.set_fact:
+    _hz_health: "{{ _hz | hz_health({'cert_warn_days': horizon_cert_warn_days | int, 'cert_crit_days': horizon_cert_crit_days | int,
+                                      'license_warn_days': horizon_license_warn_days | int, 'max_rows': horizon_report_max_rows | int,
+                                      'now': horizon_now | default('')}) }}"
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: "{{ _hz_health.report }}"
+    _hz_footer: "Read-only: the Horizon REST API of {{ _hz_read.url }}."
+
+- name: Horizon | the findings as job artifacts (horizon_health)
+  ansible.builtin.set_stats:
+    data:
+      horizon_health: "{{ {'critical': _hz_health.critical, 'warning': _hz_health.warning, 'problems': _hz_health.problems} }}"
+
+- name: Horizon | no critical finding
+  ansible.builtin.assert:
+    that: _hz_health.critical | int == 0
+    fail_msg: "{{ _hz_health.critical }} critical finding(s) (the report is above). horizon_health_fail: false makes this a report only."
+    quiet: true
+  when: horizon_health_fail | bool

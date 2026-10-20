@@ -1,0 +1,27 @@
+---
+# Print the report, publish it as artifacts (horizon_report) and email it (report_email_to - nothing is
+# emailed when it is not set). Input: _hz_doc (a report in the layout roles/site_email/tasks/main.yml describes).
+- name: Horizon | the report as job artifacts (horizon_report)
+  ansible.builtin.set_stats:
+    data:
+      horizon_report:
+        subject: "{{ _hz_doc.title }}"
+        lines: "{{ (_hz_doc | report_text).splitlines() }}"
+
+- name: Horizon | {{ _hz_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_hz_doc | report_text).splitlines() }}"
+
+- name: Horizon | the API paths that answered
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['Read from ' ~ _hz_read.url | default('') ~ ' as ' ~ _hz_read.user | default('') ~ ':']
+         + (_hz.api | dict2items | map(attribute='key') | zip(_hz.api | dict2items | map(attribute='value')) | map('join', ': ') | list) }}
+  when: _hz is defined and _hz_read is defined
+
+- name: Horizon | email it (report_email_to)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _hz_doc | combine({'footer': _hz_footer | default('Horizon REST API of ' ~ _hz_read.url | default(''))}) }}"
+  when: report_email_to | default([]) | length > 0

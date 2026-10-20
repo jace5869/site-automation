@@ -1,0 +1,19 @@
+---
+# Read Horizon: site_horizon (every page of each resource, the newest API version that answers) ->
+# _hz_read (as it answered) and _hz (plugins/filter/horizon_filters.py hz_data: pools, machines, sessions,
+# users as plain records, name maps, raw, api, errors). Read-only, in a dry run too.
+# Input: _hz_resources - names, or {name, key, query, id} (site_horizon's documentation).
+- name: Horizon | read {{ _hz_what | default('') }}
+  site_horizon:
+    action: read
+    resources: "{{ _hz_resources }}"
+    newest: "{{ horizon_api_newest | int }}"
+    page_size: "{{ horizon_page_size | int }}"
+    ca_path: "{{ horizon_ca_path }}"
+    timeout: "{{ horizon_timeout | int }}"
+  register: _hz_read
+  check_mode: false
+
+- name: Horizon | what was read
+  ansible.builtin.set_fact:
+    _hz: "{{ _hz_read | hz_data }}"

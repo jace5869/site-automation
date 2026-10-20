@@ -11,7 +11,26 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [net_certs](#net_certs), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
+**Contents:** [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [horizon](#horizon), [net_certs](#net_certs), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
+
+## ad_lockout
+
+File: `roles/ad_lockout/defaults/main.yml`
+
+> Account lockout (playbooks/ad_lockout.yml): is the account locked out, and WHAT is locking it out - the computers its bad passwords came from, from the Security log of every domain controller. Read-only, unless ad_lockout_unlock. A PowerShell script on every DC (WinRM, the Windows Machine credential): the account needs to read the DCs' Security logs - see docs/ACTIVE_DIRECTORY.md, "Account lockout".
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ad_lockout_user` | (empty) | The account to look at, as the service desk is given it: jdoe, CORP\jdoe or jdoe@corp.example.mil (a survey question, NOT required). Several: one per line, or separated by commas. "" = every account locked out now, each with the computer locking it out. |
+| `ad_lockout_hours` | `24` | the Security log entries of the last this-many hours (raise it for a lockout of last week) |
+| `ad_lockout_max_users` | `25` | at most this many accounts (asked for, or locked out now) in one run |
+| `ad_lockout_unlock` | `false` | true = unlock the account (on the PDC emulator) after reading - only an account asked for by name, and only when it is locked out. A dry run (Check) says what it would unlock. It locks out again as soon as the source computer tries its old password again: the report says what to fix first. |
+| `ad_lockout_check_sources` | `false` | true = also look on each source computer that is a host of this job's inventory (Windows, WinRM, the same credential - it needs administrator rights there): services and scheduled tasks running as the account, its sessions (a disconnected Remote Desktop session), processes and mapped drives. Read-only. |
+| `ad_lockout_check_max` | `5` | look on at most this many source computers per account (the worst first) |
+| `ad_lockout_exchange_servers` | `[]` | Your mail servers (Exchange / ActiveSync, by name or address, * and ? allowed, e.g. [EXCH*, 192.0.2.25]): bad passwords coming through one of them are a phone or a mail app with the old password. |
+| `ad_lockout_max_events` | `2000` | ---- How much is read ------------------------------------------------------------------------------ read at most this many Security log entries per account and DC (the newest) |
+| `ad_lockout_resolve_max` | `50` | resolve at most this many addresses to names per DC (reverse DNS) |
+| `ad_lockout_max_rows` | `50` | rows per table; the job's artifacts (ad_lockout) have all |
 
 ## ad_report
 
@@ -367,6 +386,49 @@ File: `roles/check_time/defaults/main.yml`
 | `check_time_offset_crit` | `5.0` | seconds off -> critical (warning from check_time_offset_warn) |
 | `check_time_min_sources` | `1` | time servers chrony must be able to reach |
 
+## horizon
+
+File: `roles/horizon/defaults/main.yml`
+
+> VMware Horizon 8 (playbooks/horizon_*.yml): the Connection Server's REST API, from the AAP side, with the "Horizon API" credential (its address, domain, user name and password) - no collection needed. Every job asks each API path at the newest version first, down to v1, so it fits any Horizon 8 release. A dry run (Check) reads and says what it would do; it changes nothing. docs/HORIZON.md
+
+| Setting | Default | What it does |
+|---|---|---|
+| `horizon_ca_path` | (empty) | ---- Connection --------------------------------------------------------------------------------- a CA file for the Connection Server's HTTPS certificate ("" = what the execution environment trusts) |
+| `horizon_timeout` | `60` | seconds per request |
+| `horizon_page_size` | `500` | records per page when reading pools, desktops and sessions (Horizon's most: 1000) |
+| `horizon_api_newest` | `9` | the newest API version to try (v9 down to v1): the first that answers is used |
+| `horizon_action_version` | `v1` | the API version of the actions (reset, recover, log off, push image...) |
+| `horizon_protected_pools` | `[]` | ---- Pools no job changes ----------------------------------------------------------------------- Desktop pools no job fixes, logs off or pushes an image to: names as Horizon Console shows them, * and ? allowed, any case (e.g. [VIP-*, Kiosk]). The reports still show them. |
+| `horizon_cert_warn_days` | `30` | ---- Health report (playbooks/horizon_health_report.yml) ---------------------------------------- a Connection Server's, gateway's or vCenter's certificate expires within this many days -> amber |
+| `horizon_cert_crit_days` | `7` | within this many days (or expired, or not valid) -> red |
+| `horizon_license_warn_days` | `60` | the license expires within this many days -> amber |
+| `horizon_report_max_rows` | `50` | rows in the problems table (the job's artifacts have all) |
+| `horizon_health_fail` | `false` | The health and capacity reports stay green when they find problems: the report says what. true = mark the job FAILED on a critical finding, for workflows and alerts. |
+| `horizon_capacity_warn_pct` | `80` | ---- Capacity report (playbooks/horizon_capacity_report.yml) ------------------------------------ a pool's desktops in use (connected or disconnected) against its maximum, % -> amber |
+| `horizon_capacity_crit_pct` | `95` | in use, % -> red (also red: no free desktop left) |
+| `horizon_broken_states` | `[AGENT_UNREACHABLE, AGENT_ERR_DISABLED, AGENT_ERR_INVALID_IP, AGENT_ERR_NEED_REBOOT, AGEN…` | ---- Broken desktops (the desktops check -> approval -> the fix job) ---------------------------- A desktop in one of these states takes no user until it is fixed. Left out on purpose: states that pass by themselves (being made, customized, deleted, waiting for the agent at start-up, maintenance). |
+| `horizon_desktops_mode` | `report` | report = the check lists them and stays green (a schedule). approval = when there is a desktop to fix, the check hands the list on and FAILS on purpose, so the workflow takes its "Run on fail" path to the approval step and then the fix job. Set approval on the workflow's check node. |
+| `horizon_fix_default_action` | `recover` | what fixes a broken desktop: recover (instant clones: deleted and made again from the image), reset, restart, remove, rebuild |
+| `horizon_fix_actions` | `{AGENT_ERR_NEED_REBOOT: restart}` | By state, when another action fits better (e.g. {AGENT_ERR_NEED_REBOOT: restart, PROVISIONING_ERROR: remove}). |
+| `horizon_fix_max` | `20` | fix at most this many desktops per run: the rest are listed, the next run takes them |
+| `horizon_fix_exclude_machines` | `[]` | desktops never fixed automatically: names, * and ? allowed (e.g. [W11-TEST-*]) |
+| `horizon_session_max_disconnected_hours` | `8` | ---- Disconnected sessions (playbooks/horizon_session_cleanup.yml) ------------------------------ log off a session disconnected for this many hours or more |
+| `horizon_session_cleanup_max` | `100` | log off at most this many sessions per run |
+| `horizon_session_cleanup_exclude_pools` | `[]` | pools whose sessions are never logged off: names, * and ? allowed |
+| `horizon_session_cleanup_exclude_users` | `[]` | users never logged off: login names (jdoe or CORP\jdoe) or SIDs |
+| `horizon_session_forced_logoff` | `true` | log off a locked session too (a disconnected session is usually locked) |
+| `horizon_session_cleanup_report_only` | `false` | true = list them, log off none (a dry run - Check - does the same) |
+| `horizon_user` | (empty) | ---- User help (playbooks/horizon_user_help.yml) ------------------------------------------------ the user who cannot connect: jdoe, CORP\jdoe, jdoe@corp.example.mil or a SID (a survey question) |
+| `horizon_user_action` | `look` | What to do: look (only show their sessions and desktops), logoff (all their sessions), disconnect (their connected sessions), reset or restart (their desktops), recover (their instant-clone desktops: made again from the image). Never a desktop another user has a session on, nor one in a protected pool. |
+| `horizon_push_pools` | `[]` | ---- Image push (the push plan -> approval -> the push job) ------------------------------------- the instant-clone pools to push to: names (a survey: one per line, or separated by commas) |
+| `horizon_push_base_vm` | (empty) | the golden image VM, as vCenter names it (or its path) |
+| `horizon_push_snapshot` | (empty) | its snapshot to push: the name, or the path when two have that name (e.g. /2026-10/2026-11) |
+| `horizon_push_start` | (empty) | When the push starts: "" = as soon as the approved push job runs; or a time - "2026-11-01 22:00" (UTC) or with an offset, "2026-11-01T22:00-05:00". A time that has passed by the approval starts in a minute. |
+| `horizon_push_logoff_policy` | `WAIT_FOR_LOGOFF` | WAIT_FOR_LOGOFF (each desktop is replaced when its user logs off) or FORCE_LOGOFF (users are logged off) |
+| `horizon_push_stop_on_first_error` | `true` | stop the push at the first desktop that fails |
+| `horizon_test_user` | (empty) | ---- API test (playbooks/horizon_api_test.yml) -------------------------------------------------- also look up this user (e.g. jdoe), as the user-help job does |
+
 ## net_certs
 
 File: `roles/net_certs/defaults/main.yml`
@@ -683,6 +745,23 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_snapshot_cleanup_max` | `50` | Refuse to delete more than this many snapshots in one run (a typo in the age would otherwise delete them all). Raise it on purpose for a big cleanup. |
 | `vm_snapshot_delete_timeout` | `1800` | seconds to wait for one deletion (vCenter merges it into the disk) |
 | `vm_snapshot_cleanup_email_only_if_deleted` | `false` | The cleanup's email (report_email_to): true = only when it deleted something (or a deletion failed). |
+| `vm_pick_snapshot_templates` | `[]` | vm_pick_refresh.yml (on a schedule) writes what may be done right now as the choices of one multiple-choice question in the survey of these templates: job templates or workflow job templates, by name (or {template: name or ID, kind: job or workflow} when a job template and a workflow share the name). In a workflow onl… (all of it: the role file) |
+| `vm_pick_snapshot_question` | `vm_snapshot_picks` | the question's Answer variable name |
+| `vm_pick_reboot_templates` | `[]` | e.g. ["VM - restart picked VMs (workflow)"] |
+| `vm_pick_reboot_question` | `vm_reboot_picks` | the question's Answer variable name |
+| `vm_pick_max_choices` | `200` | a list never has more choices than this (the rest is counted in the job's output) |
+| `vm_pick_snapshot_min_age_days` | `0` | The snapshots offered: only those the snapshot cleanup could delete (the same holds - a name that says keep, the excluded VMs, datacenters and clusters, the protected VMs and the AAP server, bigger than vm_snapshot_cleanup_max_size_gb; not the name words), at least this many days old. 0 = any age. |
+| `vm_pick_reboot_vms` | `[]` | The VMs offered for a restart: powered on, never the AAP server or a protected VM (vmware_protected_*), among these (names, * and ?, any case; [] = every VM) ... |
+| `vm_pick_reboot_clusters` | `[]` | e.g. [PROD-*] |
+| `vm_pick_reboot_folders` | `[]` | folder paths as vCenter shows them, e.g. ["/DC1/vm/Linux*"] |
+| `vm_pick_reboot_exclude_vms` | `[]` | ... and never these (e.g. [SQL*, DC*]) |
+| `vm_pick_reboot_only_hung` | `false` | true = only the VMs that look hung: VMware Tools installed, but no heartbeat (red) or Tools not running, powered on for vm_pick_hung_min_minutes at least (a VM still starting has neither yet). Restart those with vm_power_mode: hard - a guest restart needs VMware Tools running. |
+| `vm_pick_hung_min_minutes` | `15` | minutes powered on before a VM without a heartbeat counts as hung |
+| `vm_pick_aap_ca_path` | (empty) | a CA file for AAP's own HTTPS certificate ("" = what the execution environment trusts) |
+| `vm_snapshot_picks` | `[]` | The survey's answers (the picked choices: a list, or text one per line). the snapshots to delete |
+| `vm_reboot_picks` | `[]` | the VMs to restart |
+| `vm_pick_confirm` | `false` | vm_snapshot_delete_picked.yml / vm_reboot_picked.yml on their own (not a workflow): true = do it now. false = list exactly what would be done (the plan), and do nothing. Inside a workflow it is never used: the first step plans, the step after the approval does exactly the plan. |
+| `vm_pick_max` | `20` | refuse to restart, or delete, more than this many in one run |
 | `vm_alarm_types` | `[vcenter, datacenter, cluster, host]` | Whose triggered alarms and configuration issues: vcenter, datacenter, cluster, host. Add vm, datastore or network for theirs too (VM alarms can be many). |
 | `vm_alarm_hours` | `24` | The events of the last this-many hours: every error and warning, failed logins, host connection events and VM shutdowns / power-offs / resets / HA restarts. 0 = alarms and host state only. |
 | `vm_alarm_max_events` | `5000` | read at most this many events (the newest) |

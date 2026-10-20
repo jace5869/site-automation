@@ -1,0 +1,13 @@
+{
+    "unlock": {
+        "errors": [],
+        "unlocked": [
+            {
+                "error": "Insufficient access rights to perform the operation",
+                "locked_after": null,
+                "ok": false,
+                "sam": "jdoe"
+            }
+        ]
+    }
+}

@@ -1,0 +1,16 @@
+---
+# HORIZON SESSION CLEANUP. Logs off every session disconnected for horizon_session_max_disconnected_hours
+# (8) or more - it holds a desktop, and an instant clone is only made fresh at log off. Never a protected or
+# excluded pool, nor an excluded user; at most horizon_session_cleanup_max per run. A dry run (Check), or
+# horizon_session_cleanup_report_only: true, lists them and logs off none. A schedule, e.g. every night.
+# Runs on the AAP side: attach the "Horizon API" credential; no inventory needed. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_session_cleanup.yml --check
+- name: Horizon session cleanup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon session cleanup
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: session_cleanup.yml

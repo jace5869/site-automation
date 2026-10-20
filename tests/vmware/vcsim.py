@@ -8,6 +8,9 @@
                    guest shutdown of DC0_H0_VM1, a host warning on DC0_H0, and the alarm "Host error"
                    on DC0_C0_H0 turned red and back to green (vcsim cannot trigger alarms:
                    tests/test_filters.py covers triggered ones)
+  vcsim.py guest VM PROPERTY=VALUE...   set read-only properties of a VM (the pick lists: a hung VM is
+                   guestHeartbeatStatus=red guest.toolsStatus=toolsNotRunning)
+  vcsim.py snap VM NAME   take a snapshot NAME (again: two of the same name - the collection takes a name once)
   vcsim.py health  for the health report, on a simulator started with -dc 2 -cluster 2 -host 2
                    -standalone-host 1: vSphere HA on for DC0_C0 (admission control off), DC1_C0 in vCLS
                    retreat mode, host DC0_C1_H1 disconnected
@@ -186,4 +189,13 @@ def health():
     WaitForTask(hosts["DC0_C1_H1"].DisconnectHost_Task())
 
 
-{"setup": setup, "state": state, "events": events, "health": health}[sys.argv[1]]()
+def guest():
+    WaitForTask(vm(sys.argv[2]).ReconfigVM_Task(vim.vm.ConfigSpec(
+        extraConfig=[vim.option.OptionValue(key="SET." + kv.split("=", 1)[0], value=kv.split("=", 1)[1]) for kv in sys.argv[3:]])))
+
+
+def snap():
+    WaitForTask(vm(sys.argv[2]).CreateSnapshot_Task(name=sys.argv[3], description="", memory=False, quiesce=False))
+
+
+{"setup": setup, "state": state, "events": events, "health": health, "guest": guest, "snap": snap}[sys.argv[1]]()

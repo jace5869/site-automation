@@ -1,0 +1,23 @@
+---
+# THE SNAPSHOTS A PICK LIST MAY OFFER, read now (pick_refresh.yml makes the list, snapshot_delete_picked.yml
+# checks each pick again): every snapshot of every vCenter, and which of them may be deleted - the holds of
+# the snapshot cleanup (snapshot_split.yml: a name or description that says keep, the excluded VMs,
+# datacenters and clusters, vmware_protected_vms, the AAP server, bigger than vm_snapshot_cleanup_max_size_gb
+# or size unknown), at least vm_pick_snapshot_min_age_days old. The name words are not used: they only
+# narrow the automatic cleanup. Output: _vm_snap_read, _vm_sn (all / old = may be picked / held), _vm_sn_multi.
+- name: VMware | read the snapshots now
+  site_vmware_snapshots:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    taken_by: false
+    now: "{{ _vm_now | default(omit) }}"
+  register: _vm_snap_read
+  check_mode: false
+
+- name: VMware | which snapshots may be picked
+  ansible.builtin.include_tasks: snapshot_split.yml
+  vars:
+    _vm_sn_age: "{{ vm_pick_snapshot_min_age_days }}"
+    _vm_sn_age_name: vm_pick_snapshot_min_age_days
+    _vm_sn_words: []

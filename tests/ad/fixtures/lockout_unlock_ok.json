@@ -1,0 +1,13 @@
+{
+    "unlock": {
+        "errors": [],
+        "unlocked": [
+            {
+                "error": "",
+                "locked_after": false,
+                "ok": true,
+                "sam": "jdoe"
+            }
+        ]
+    }
+}

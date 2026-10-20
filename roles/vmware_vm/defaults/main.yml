@@ -100,6 +100,43 @@ vm_snapshot_delete_timeout: 1800         # seconds to wait for one deletion (vCe
 # The cleanup's email (report_email_to): true = only when it deleted something (or a deletion failed).
 vm_snapshot_cleanup_email_only_if_deleted: false
 
+# ---- Pick lists: what to restart, which snapshots to delete - picked at launch, from a survey ----
+
+# vm_pick_refresh.yml (on a schedule) writes what may be done right now as the choices of one multiple-choice
+# question in the survey of these templates: job templates or workflow job templates, by name (or
+# {template: name or ID, kind: job or workflow} when a job template and a workflow share the name). In a
+# workflow only the workflow's own survey is asked: name the workflow. [] = that list is not refreshed.
+# The AAP user of its "Red Hat Ansible Automation Platform" credential needs the Admin role on each.
+vm_pick_snapshot_templates: []           # e.g. ["VM - delete picked snapshots (workflow)"]
+vm_pick_snapshot_question: vm_snapshot_picks   # the question's Answer variable name
+vm_pick_reboot_templates: []             # e.g. ["VM - restart picked VMs (workflow)"]
+vm_pick_reboot_question: vm_reboot_picks       # the question's Answer variable name
+vm_pick_max_choices: 200                 # a list never has more choices than this (the rest is counted in the job's output)
+# The snapshots offered: only those the snapshot cleanup could delete (the same holds - a name that says
+# keep, the excluded VMs, datacenters and clusters, the protected VMs and the AAP server, bigger than
+# vm_snapshot_cleanup_max_size_gb; not the name words), at least this many days old. 0 = any age.
+vm_pick_snapshot_min_age_days: 0
+# The VMs offered for a restart: powered on, never the AAP server or a protected VM (vmware_protected_*),
+# among these (names, * and ?, any case; [] = every VM) ...
+vm_pick_reboot_vms: []
+vm_pick_reboot_clusters: []              # e.g. [PROD-*]
+vm_pick_reboot_folders: []               # folder paths as vCenter shows them, e.g. ["/DC1/vm/Linux*"]
+vm_pick_reboot_exclude_vms: []           # ... and never these (e.g. [SQL*, DC*])
+# true = only the VMs that look hung: VMware Tools installed, but no heartbeat (red) or Tools not running,
+# powered on for vm_pick_hung_min_minutes at least (a VM still starting has neither yet). Restart those with
+# vm_power_mode: hard - a guest restart needs VMware Tools running.
+vm_pick_reboot_only_hung: false
+vm_pick_hung_min_minutes: 15             # minutes powered on before a VM without a heartbeat counts as hung
+vm_pick_aap_ca_path: ""                  # a CA file for AAP's own HTTPS certificate ("" = what the execution environment trusts)
+# The survey's answers (the picked choices: a list, or text one per line).
+vm_snapshot_picks: []                    # the snapshots to delete
+vm_reboot_picks: []                      # the VMs to restart
+# vm_snapshot_delete_picked.yml / vm_reboot_picked.yml on their own (not a workflow): true = do it now.
+# false = list exactly what would be done (the plan), and do nothing. Inside a workflow it is never used:
+# the first step plans, the step after the approval does exactly the plan.
+vm_pick_confirm: false
+vm_pick_max: 20                          # refuse to restart, or delete, more than this many in one run
+
 # ---- Alarms report and its ACT analysis ----
 
 # Whose triggered alarms and configuration issues: vcenter, datacenter, cluster, host. Add vm,
