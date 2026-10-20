@@ -157,8 +157,38 @@ EOPY
     [ "$(grep -c 'crypto pki enroll' "$work/ios.log")" = "$n" ] && ok "...a run again: no second CSR (the incident has it: a new one would replace the waiting key)" \
         || bad "...a run again made another CSR"
     grep -q "PRIVATE KEY" ciscoreal.txt ciscoagain.txt requests.jsonl && bad "a private key in the output or sent" || ok "...no private key anywhere"
+    cisco_ran=1
 else
     echo "skip - the real Cisco CSR (needs paramiko, and the collections cisco.ios and ansible.netcommon)"
+fi
+
+# ---- 7. cert_renew_servicenow: catalog - no incident. A device without a CSR made here: the report only; rtr01's CSR is
+# ordered from the PKI's catalog item, and that request is its record ----
+cport=$((port + 16))
+SNMOCK_LOG="$work/requests-cat.jsonl" "$py" "$repo/tests/servicenow/snmock.py" "$cport" >/dev/null 2>&1 & pids+=($!)
+for _ in $(seq 1 100); do (exec 3<>"/dev/tcp/127.0.0.1/$cport") 2>/dev/null && break; sleep 0.1; done
+: > requests-cat.jsonl
+cat='{"cert_renew_servicenow": "catalog", "cert_renew_catalog_item": "DoD PKI Certificate Request",
+      "cert_renew_catalog_variables": {"requested_for": "jdoe", "contact_method": "email"}}'
+catwrites() { grep -cE '"method": "(POST|PATCH)"' requests-cat.jsonl; }
+(port=$cport; run catdry.txt sn playbooks/net_cert_renew.yml --check -e net_cert_cisco_csr=true -e "$cat")
+[ "$(catwrites)" = 0 ] && has "catalog, dry run: rtr01 would get a CSR, and be ordered - nothing sent" catdry.txt \
+    "rtr01.example.mil | rtr01-$rtr.csr | would make the CSR, and order it" || bad "catalog, dry run: $(catwrites) sent"
+(port=$cport; run catnocsr.txt sn playbooks/net_cert_renew.yml -e "$cat"); rc=$?
+[ $rc -eq 0 ] && [ "$(catwrites)" = 0 ] && ok "catalog, no CSR made here (net_cert_cisco_csr off): no incident, no order - the report only" \
+    || { bad "catalog, no CSR: exit $rc, $(catwrites) sent"; tail -20 catnocsr.txt; }
+if [ "${cisco_ran:-0}" = 1 ]; then
+    n=$(grep -c 'crypto pki enroll' "$work/ios.log")
+    (port=$cport; run catcisco.txt sn playbooks/net_cert_renew.yml -e net_cert_cisco_csr=true -e "$cat"); rc=$?
+    [ $rc -eq 0 ] && [ "$(grep -c 'crypto pki enroll' "$work/ios.log")" = $((n + 1)) ] && has "catalog: rtr01's CSR made on the device and ordered, in the item's CSR question" \
+        catcisco.txt "ORDERED RITM" "| rtr01.example.mil | rtr01-$rtr-" "the CSR is in the request (its question csr_file)" \
+        || { bad "catalog, rtr01: exit $rc"; tail -25 catcisco.txt | sed 's/^/       /'; }
+    grep -q '/table/incident' requests-cat.jsonl && bad "catalog: an incident was opened" || ok "...no incident"
+    n=$(grep -c 'crypto pki enroll' "$work/ios.log"); w=$(catwrites)
+    (port=$cport; run catcisco2.txt sn playbooks/net_cert_renew.yml -e net_cert_cisco_csr=true -e "$cat"); rc=$?
+    [ $rc -eq 0 ] && [ "$(grep -c 'crypto pki enroll' "$work/ios.log")" = "$n" ] && [ "$(catwrites)" = "$w" ] \
+        && has "catalog, a run again: the request is the CSR's record - no second CSR, no second order" catcisco2.txt "ORDERED ALREADY | rtr01.example.mil" \
+        || { bad "catalog, rtr01 again: exit $rc"; tail -20 catcisco2.txt | sed 's/^/       /'; }
 fi
 
 [ "$fails" -eq 0 ] && echo "ok   - all network device certificate scenarios passed" || { echo "$fails FAILED"; exit 1; }

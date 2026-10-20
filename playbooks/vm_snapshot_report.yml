@@ -1,6 +1,6 @@
 ---
 # VM SNAPSHOT REPORT (vCenter). Read-only: every snapshot of every VM - name, taken, age, size,
-# folder - oldest first; the ones vm_snapshot_max_age_days (3) or older listed apart. Emailed
+# folder - oldest first; the ones vm_snapshot_max_age_days (5) or older listed apart. Emailed
 # (report_email_to). In the snapshot cleanup workflow: step 1.
 # Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
 #   ansible-playbook playbooks/vm_snapshot_report.yml

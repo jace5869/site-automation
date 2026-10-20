@@ -542,6 +542,35 @@ class Snapshots(unittest.TestCase):
         # without the size limit an unknown size does not hold a snapshot back
         self.assertIn("odd", [x["vm"] for x in f.vm_snapshot_split(self.S, 3, self.RX)["old"]])
 
+    def test_split_datacenter_and_cluster(self):
+        s = [{"vm": "web01", "moid": "vm-1", "id": 1, "name": "a", "age_days": 9.0, "size_gb": 1.0, "datacenter": "DR-DC", "cluster": "CL1"},
+             {"vm": "sql01", "moid": "vm-2", "id": 1, "name": "a", "age_days": 9.0, "size_gb": 1.0, "datacenter": "DC1", "cluster": "PROD-SQL"},
+             {"vm": "esx", "moid": "vm-3", "id": 1, "name": "a", "age_days": 9.0, "size_gb": 1.0, "datacenter": "DC1", "cluster": ""},
+             {"vm": "app01", "moid": "vm-4", "id": 1, "name": "a", "age_days": 9.0, "size_gb": 1.0, "datacenter": "DC1", "cluster": "CL1"}]
+        r = f.vm_snapshot_split(s, 3, self.RX, [], [], 1024, ["dr-*"], ["*sql*"])
+        self.assertEqual([x["vm"] for x in r["old"]], ["app01", "esx"])   # a standalone host's VM has no cluster to match
+        self.assertEqual({x["vm"]: x["reason"] for x in r["held"]}, {
+            "web01": "its datacenter DR-DC is on the exclusion list", "sql01": "its cluster PROD-SQL is on the exclusion list"})
+        # the excluded VM's own reason comes first; without the lists nothing is held back
+        self.assertEqual(f.vm_snapshot_split(s, 3, self.RX, ["web*"], [], 1024, ["dr-*"])["held"][0]["reason"],
+                         "the VM is on the exclusion list")
+        self.assertEqual(len(f.vm_snapshot_split(s, 3, self.RX, [], [], 1024)["old"]), 4)
+
+    def test_name_words(self):
+        S = [dict(self.S[0], name="Pre-Patching 10/14"), dict(self.S[4], name="PATCHES oct"), dict(self.S[5], vm="dc02", name="patch"),
+             dict(self.S[1], name="patch-new"), dict(self.S[3], name="Patch - keep"), dict(self.S[7], vm="web02", name="before upgrade")]
+        r = f.vm_snapshot_split(S, 3, self.RX, [], [], 1024, name_words=["Patching", "Patches", "Patch"])
+        # any case, anywhere in the name; too young is not old at all; keep and the size limit still win
+        self.assertEqual([x["name"] for x in r["old"]], ["patch", "Pre-Patching 10/14", "PATCHES oct"])
+        self.assertEqual({x["name"]: x["reason"] for x in r["held"]}, {
+            "Patch - keep": "its name or description says keep", "before upgrade": "its name has none of: Patching, Patches, Patch"})
+        # survey text: one per line, or separated by commas; a phrase keeps its spaces
+        self.assertEqual(f.snapshot_name_words("Patching, Patches\nPatch Tuesday\n"), ["Patching", "Patches", "Patch Tuesday"])
+        self.assertEqual(f.vm_snapshot_split(S, 3, self.RX, [], [], 1024, name_words="patching")["old"], [S[0]])
+        # [] (the default), "" or None: any name, as before
+        for none in ([], "", None, [" "]):
+            self.assertEqual(len(f.vm_snapshot_split(S, 3, self.RX, [], [], 1024, name_words=none)["old"]), 4)
+
     def test_plan(self):
         old = f.vm_snapshot_split(self.S, 3, self.RX, [], [], 1024)["old"]
         self.assertEqual(len(f.vm_snapshot_plan(old)["todo"]), 4)

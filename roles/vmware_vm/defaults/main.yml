@@ -71,13 +71,22 @@ vm_datastore_fail: false
 # ---- Snapshot report and cleanup ----
 
 # Snapshots at least this many days old: listed apart by the report, deleted by the cleanup.
-vm_snapshot_max_age_days: 3
+vm_snapshot_max_age_days: 5
 # Never deleted by the cleanup (the report lists them, with the reason):
 # - a snapshot whose name or description matches this
 vm_snapshot_keep_regex: '(?i)keep|do.?not.?delete'
 # - a snapshot of these VMs: names, * and ? allowed (e.g. [DC*, VCSA01, AAP01]). The VMs in
 #   vmware_protected_vms and the AAP server are never cleaned up either.
 vm_snapshot_cleanup_exclude_vms: []
+# - a snapshot of a VM in these vCenter datacenters: names, * and ? allowed, any case (e.g. [DRSITE])
+vm_snapshot_cleanup_exclude_datacenters: []
+# - a snapshot of a VM running in these clusters: names, * and ? allowed, any case (e.g.
+#   [SQL*, MGMT*]). A VM on a host that is in no cluster is not matched.
+vm_snapshot_cleanup_exclude_clusters: []
+# - with words here, a snapshot whose name contains none of them: only a name with one is deleted
+#   (any case; Patch also matches Patching and Patches - and dispatch). E.g. [Patching, Patches, Patch]:
+#   only the patching snapshots. [] = any name. Set it in all.yml, so the report lists the same.
+vm_snapshot_cleanup_name_words: []
 # - a snapshot bigger than this many GB (1024 = 1 TB), or whose size cannot be read: merging a
 #   very big snapshot can take hours and slow the VM - do those by hand, at a quiet time.
 vm_snapshot_cleanup_max_size_gb: 1024

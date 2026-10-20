@@ -6,6 +6,8 @@
 # certificate, the names, where the new key is, what to do next. Once attached, a run again changes
 # nothing on the ticket. Never the key: only the CSR.
 # Without the ServiceNow API credential, the job prints the CSRs to copy by hand.
+# cert_renew_servicenow: catalog - no incident: each CSR is ordered from the PKI's catalog item instead
+# (cert_order.yml).
 # A job that makes its CSRs elsewhere (the VMware certificate renewal: on vCenter and the ESXi hosts) hands
 # them as _csr_results_in: [{host, check, content_type, retry_txt, certs}], the same as cert_renew_result.
 
@@ -75,8 +77,12 @@
     label: "{{ item.host }}: {{ item.file_name }}"
   when: not _sn_url
 
+- name: Certificate renewal | order each CSR from the PKI's catalog item (cert_renew_servicenow catalog)
+  ansible.builtin.include_tasks: cert_order.yml
+  when: _sn_url | length > 0 and _csr_items | length > 0 and cert_renew_servicenow | default('incident') == 'catalog'
+
 - name: Certificate renewal | talk to the instance
-  when: _sn_url | length > 0 and _csr_items | length > 0
+  when: _sn_url | length > 0 and _csr_items | length > 0 and cert_renew_servicenow | default('incident') != 'catalog'
   vars:
     _sn_nl: "\n"
   block:

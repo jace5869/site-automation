@@ -1,0 +1,25 @@
+---
+# SERVICENOW - CATALOG TEST. Run this before the certificate renewals order from your PKI's catalog item
+# (cert_renew_servicenow: catalog): it finds the item, lists its questions by their internal names - what
+# cert_renew_catalog_variables needs - and checks your answers against them. Runs on the controller.
+#
+#   1 item       the API account finds cert_renew_catalog_item in the catalog, and reads it
+#   2 questions  each one: internal name, label, type, mandatory, the table of a reference, the choices
+#   3 settings   cert_renew_catalog_variables against the questions (references looked up to their sys_ids)
+#   4 order      only with servicenow_catalog_test_order: true - one real order with a test CSR, exactly as
+#                the renewal makes it. The PKI gets a request: tell them first, or cancel it.
+#
+# Steps 1-3 only read, in a dry run too. The job is red when the item cannot be found, or a setting does not
+# fit it.
+#
+# Credential: "ServiceNow API" (SN_HOST, SN_USERNAME, SN_PASSWORD) - the account that will order.
+# Step by step: docs/CERT_RENEWAL_CATALOG.md.
+- name: ServiceNow catalog test
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Read the PKI's catalog item, check the settings, and (servicenow_catalog_test_order) order it once
+      ansible.builtin.include_role:
+        name: servicenow
+        tasks_from: catalog_test.yml

@@ -13,8 +13,8 @@ System Center Orchestrator):
 | VM - change VLAN | `playbooks/vm_vlan.yml` | moves one network adapter to another port group (VLAN). The VM's other adapters are not touched |
 | VM - secure boot report | `playbooks/vm_secure_boot_report.yml` | read-only: every VM's firmware and secure boot. Lists BIOS VMs and EFI VMs with secure boot off separately |
 | VM - datastore report | `playbooks/vm_datastore_report.yml` | read-only: every datastore's capacity, free space, used and provisioned %; the ones at 85 / 90 % used listed apart |
-| VM - snapshot report | `playbooks/vm_snapshot_report.yml` | read-only: every snapshot of every VM - name, when taken and by whom, age, size, folder - oldest first; the ones 3 days or older listed apart |
-| VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | deletes the snapshots 3 days or older - never "keep" ones, excluded VMs, the AAP server or ones over 1 TB - then reports what it deleted. Best run in the workflow below, after an approval |
+| VM - snapshot report | `playbooks/vm_snapshot_report.yml` | read-only: every snapshot of every VM - name, when taken and by whom, age, size, folder - oldest first; the ones 5 days or older listed apart |
+| VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | deletes the snapshots 5 days or older - never "keep" ones, excluded VMs, datacenters or clusters, the AAP server or ones over 1 TB; or only the patching snapshots (`vm_snapshot_cleanup_name_words`) - then reports what it deleted. Best run in the workflow below, after an approval |
 | VM - health report | `playbooks/vm_health_report.yml` | read-only: every datacenter, cluster and host of every vCenter - vSphere HA and DRS working or not (HA agents, failover capacity, DRS recommendations and faults, vCLS retreat mode), hosts not connected or in maintenance, hardware sensors not green, hosts that need a restart, CPU and memory used, configuration issues and alarms - coloured, with what to do for each problem |
 | VM - alarms report | `playbooks/vm_alarm_report.yml` | read-only: the triggered alarms on vCenter, datacenters, clusters and hosts; the alarms that fired in the last 24 hours (also the ones that cleared since); hosts not connected; the last 24 hours' failed logins, VM shutdowns / HA restarts and other errors and warnings; configuration issues - coloured by severity |
 | VM - alarms ACT analysis | `playbooks/vm_alarm_act_analysis.yml` | read-only: the same problems, with ACT's likely cause, fix and confidence for each. ACT runs on the AAP side, never on the hosts |
@@ -232,13 +232,13 @@ how many days old it is, how big it is (MB, GB or TB), the VM's folder and the d
 Oldest first. **Every snapshot is in that list, whatever its age** - even one taken an hour ago.
 Then two short lists on top:
 
-- **To delete:** snapshots older than 3 days (`vm_snapshot_max_age_days`).
+- **To delete:** snapshots older than 5 days (`vm_snapshot_max_age_days`).
 - **Held back:** old snapshots the cleanup will never delete, each with the reason.
 
 The email's heading and subject always say the limit, e.g. `VMware snapshot report (older than 2
 days): 4 to delete (310 GB); 23 snapshot(s) on 17 VM(s)`.
 
-**To use 1 or 2 days instead of 3:**
+**To use another number of days than 5:**
 
 | Where | Change |
 |---|---|
@@ -257,8 +257,11 @@ AAP user in their description.
 |---|---|---|
 | A snapshot whose name or description says **keep** or **do not delete** | someone wants it kept | `vm_snapshot_keep_regex` |
 | Any snapshot of the VMs on your do-not-touch list | domain controllers, vCenter, ... | `vm_snapshot_cleanup_exclude_vms: [DC*, VCSA*]` (`*` = anything) |
+| Any snapshot of a VM in a datacenter on your list | a datacenter (DR site, a lab) whose snapshots someone else looks after | `vm_snapshot_cleanup_exclude_datacenters: [DRSITE]` (the datacenter's name in vCenter) |
+| Any snapshot of a VM running in a cluster on your list | a cluster (SQL, management) whose snapshots are done by hand | `vm_snapshot_cleanup_exclude_clusters: [SQL*, MGMT*]` (a VM on a host in no cluster is not matched) |
 | Any snapshot of the VMs in `vmware_protected_vms` | the same protected VMs as for restart | `vmware_protected_vms` |
 | Any snapshot of the AAP server | AAP must never be put at risk by AAP | (always) |
+| With words in `vm_snapshot_cleanup_name_words`: a snapshot whose **name** contains none of them | only the patching snapshots are cleaned up (any case; `Patch` also matches `Patching`, `Patches` - and `dispatch`). Empty (the default) = any name | `vm_snapshot_cleanup_name_words: [Patching, Patches, Patch]` |
 | A snapshot bigger than **1 TB**, or whose size is unknown | merging a huge snapshot can take hours and slow the VM: do it by hand, at a quiet time | `vm_snapshot_cleanup_max_size_gb: 1024` |
 | More than 50 snapshots in one run | a typo in the days would otherwise delete everything | `vm_snapshot_cleanup_max: 50` |
 | Anything that was not on the approved list | the approver only said yes to that list | (always, in the workflow) |
@@ -295,7 +298,7 @@ vm_snapshot_cleanup_exclude_vms: [DC*, VCSA*, AAP*]
 
   | Question | Answer variable name | Answer type | Default |
   |---|---|---|---|
-  | Delete snapshots older than how many days? | `vm_snapshot_max_age_days` | Integer, required, minimum 1 | `3` |
+  | Delete snapshots older than how many days? | `vm_snapshot_max_age_days` | Integer, required, minimum 1 | `5` |
   | Email the reports to | `report_email_to` | Text | your team's address |
 
   The workflow hands these answers to both jobs, so the report and the cleanup use the same days.
@@ -321,7 +324,7 @@ Or launch it by hand.
 
 ### Run it
 
-1. Launch the workflow (or the schedule does). Answer the survey (or keep 3 days).
+1. Launch the workflow (or the schedule does). Answer the survey (or keep 5 days).
 2. The report runs and **emails the list**: what will be deleted, what is held back, and why.
 3. AAP waits at the approval. Open **Automation Execution > Administration > Workflow Approvals**
    (or the workflow job's view) > the approval > **Approve** or **Deny**.
@@ -347,9 +350,42 @@ The cleanup's email can be sent only when something was actually deleted:
 ### Without the workflow
 
 To clean up by hand, make a separate template (not the one in the workflow) on
-`playbooks/vm_snapshot_cleanup.yml` with a survey: `vm_snapshot_max_age_days` (Integer, 3) and
+`playbooks/vm_snapshot_cleanup.yml` with a survey: `vm_snapshot_max_age_days` (Integer, 5) and
 `vm_snapshot_cleanup_confirm` ("Delete them?", Multiple choice `false` / `true`, default `false`).
 With `false` it only lists; with `true` it deletes - with every rule above still in place.
+
+#### Only the patching snapshots, without the approval
+
+Until the workflow's approval works, the cleanup can run on its own, on a schedule, and delete
+**only** the snapshots whose name contains `Patching`, `Patches` or `Patch` - every other snapshot
+is left alone and listed as held back, with the reason `its name has none of: Patching, Patches, Patch`.
+
+1. In `playbooks/group_vars/all.yml` (so the snapshot report lists the same ones as "To delete"):
+
+   ```yaml
+   vm_snapshot_cleanup_name_words: [Patching, Patches, Patch]
+   ```
+
+   Any case matches, anywhere in the name: `Pre-Patching 10/14`, `PATCHES oct`, `patch-web01`. The
+   name only, not the description. `Patch` alone already matches the other two; keep all three if you
+   like the list to say what you mean. A phrase works too: `[Patch Tuesday]`.
+2. Make a separate template (not the one in the workflow): `VM - snapshot cleanup (patching)`,
+   playbook `playbooks/vm_snapshot_cleanup.yml`, credential `VMware vCenter`, **Variables**:
+
+   ```yaml
+   vm_snapshot_cleanup_confirm: true
+   ```
+
+3. **First, a dry run:** launch it with Job type **Check** (tick "Prompt on launch" for Job type).
+   The output and email list `WOULD DELETE ...` for each patching snapshot and `HELD BACK ...` for
+   the others - nothing is deleted. Check the list; then launch it for real, and schedule it (e.g.
+   daily, after the patching window).
+
+Still in force: the age (`vm_snapshot_max_age_days`, 5 - a patching snapshot taken yesterday waits;
+`0` = any age), the keep words, the do-not-touch VMs, the AAP server, the 1 TB limit and at most 50
+in one run. The email's subject says it: `VMware snapshot cleanup: deleted 4 snapshot(s) older than
+5 days whose name has Patching, Patches or Patch (120 GB)`. When the workflow works, the setting can
+stay: the report then lists only the patching snapshots for approval - or set it back to `[]`.
 
 ## Health: every datacenter, cluster and host
 
@@ -748,6 +784,9 @@ SSH as it is.
 
 ## Certificates of vCenter and the ESXi hosts: incidents and CSRs (weekly)
 
+With `cert_renew_servicenow: catalog` there is no incident: each CSR is ordered from your PKI's catalog item,
+and that request is the CSR's record (no second CSR while it is open): [CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md).
+
 Two jobs, with the same settings:
 
 | Template | Playbook | Credentials | What it does |
@@ -1025,10 +1064,12 @@ the last column says.
 |---|---|---|
 | The datastore heading still says 80% | `vm_datastore_warn_pct: 80` is set somewhere (it wins over the default 85) | remove it from `all.yml` and the template's Variables, or set the number you want |
 | `vm_snapshot_max_age_days must be a number of days` | a survey or variable answer like `three` | a number: `1`, `2`, `3` |
-| The snapshot report says 3 days although you set 2 | in the workflow, the **survey answer** wins over the template's Variables | change the survey's answer or its Default (section "Snapshots") |
+| The snapshot report says 3 days although you set 2 (or the default is now 5) | in the workflow, the **survey answer** wins over the template's Variables and the default - a survey made from an earlier release still has Default `3` | change the survey's answer or its Default (section "Snapshots") |
 | `Refused: N snapshots are older than ... - more than vm_snapshot_cleanup_max` | more than 50 at once (often a wrong number of days) | check the days; for a big cleanup on purpose, raise `vm_snapshot_cleanup_max` |
 | `NOT DELETED ...: no longer there, or no longer old enough / now kept` | the snapshot changed between the report and the approval | nothing: it is safe. Run the workflow again |
 | `Taken by` says `unknown` | vCenter no longer keeps the event (often after 30 days) | nothing: the snapshot's description may name the AAP user |
+| `HELD BACK ...: its name has none of: Patching, Patches, Patch` | `vm_snapshot_cleanup_name_words` is set: only those names are cleaned up | nothing, if that is what you want; `[]` = any name |
+| A patching snapshot was not deleted | it is younger than `vm_snapshot_max_age_days` (it waits), its name or description says keep, or the word is only in its **description** (only the name counts) | read its line in the job output: `HELD BACK` gives the reason; a young one is not listed as old at all |
 
 ### ESXi security settings
 

@@ -36,6 +36,7 @@ own `playbooks/group_vars/all.yml` keeps its old settings until you comment them
 | POA&M status | `playbooks/poam_status.yml` | overdue / due-soon POA&M items from `poam/poam.csv`; optional STIG Manager cross-check for open CAT I/II findings with no POA&M item |
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | workflow step: one incident per finding, updated (not duplicated) on later runs, noted or resolved when it clears |
 | ServiceNow health | `playbooks/servicenow_health.yml` | the instance answers its API; MID Servers up and validated |
+| ServiceNow - catalog test | `playbooks/servicenow_catalog_test.yml` | for the certificate renewals ordering the PKI's catalog item (`cert_renew_servicenow: catalog`, no incidents): lists the item's questions by their internal names, checks the settings, and can order it once with a test CSR ([docs/CERT_RENEWAL_CATALOG.md](docs/CERT_RENEWAL_CATALOG.md)) |
 | ServiceNow - test ticket | `playbooks/servicenow_test_ticket.yml` | proves the setup: logs in, checks the assignment group, opens a test incident, reads it back, adds a work note, resolves it; PASS / WARN / FAIL per step with the likely cause ([docs/SERVICENOW_SETUP.md](docs/SERVICENOW_SETUP.md)) |
 | Patch hosts | `playbooks/patch_hosts.yml` | dnf update one host at a time; **no automatic reboot** unless `automatic_restarts: true`; every service back afterwards; never patches AAP or vendor appliances |
 | Apply approved ACT fix | `playbooks/act_fix_approved.yml` | after an approval: runs exactly the approved commands (no model), then the checks run again; as *Check* a dry run |
@@ -62,6 +63,7 @@ own `playbooks/group_vars/all.yml` keeps its old settings until you comment them
 | [docs/NETAPP.md](docs/NETAPP.md) | the NetApp ONTAP health report: the read-only ONTAP account, the credential, the template, every section, settings and troubleshooting |
 | [docs/EMAIL_REPORTS.md](docs/EMAIL_REPORTS.md) | emailed reports: which jobs email, setting it up, green or red when a report finds problems, the look, adding email to a playbook |
 | [docs/SERVICENOW_SETUP.md](docs/SERVICENOW_SETUP.md) | ServiceNow, step by step: the API account to ask for, the instance URL and API calls, firewall / proxy / DoD CA, the credential, a test ticket, and how to verify it in ServiceNow |
+| [docs/CERT_RENEWAL_CATALOG.md](docs/CERT_RENEWAL_CATALOG.md) | the certificate renewals without incidents: each CSR ordered from your PKI's catalog item - finding the item's questions, the settings, the catalog test, what a run does |
 | [docs/USING_YOUR_AAP_INVENTORY.md](docs/USING_YOUR_AAP_INVENTORY.md) | your inventory is already in AAP: the groups to add and which variables go on which group |
 | [docs/VARIABLES.md](docs/VARIABLES.md) | settings (variables): what you can set, where to put it (settings file, AAP Variables box, extra variables), and which place wins; with [docs/VARIABLES_REFERENCE.md](docs/VARIABLES_REFERENCE.md), every setting and its default (generated) |
 | [docs/APPROVED_COMMANDS.md](docs/APPROVED_COMMANDS.md) | how to pre-approve the commands ACT may run by itself, what can never be approved, and how to verify it |

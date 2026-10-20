@@ -1,0 +1,105 @@
+---
+# THE PKI'S CATALOG ITEM (cert_renew_servicenow: catalog), read through the Service Catalog API - the same
+# view of the catalog the API account has on the portal: find cert_renew_catalog_item (its name, or its
+# sys_id), read its questions, check cert_renew_catalog_variables against them, and look up each
+# reference answer given by name (Requested For, Location ...) to its sys_id. Reads only - in a dry run too.
+# Used by the certificate renewal (cert_order.yml, cert_on_order.yml) and the catalog test (catalog_test.yml).
+# Needs _sn_url / _sn_user. Output: _cat {id, name, questions, csr_var, names_var, answers, errors, warnings}.
+
+- name: Catalog | find the item ({{ cert_renew_catalog_item | default('', true) or 'cert_renew_catalog_item is empty' }})
+  ansible.builtin.uri:
+    url: >-
+      {{ _sn_url }}/api/sn_sc/servicecatalog/items?sysparm_limit=100&sysparm_text={{ cert_renew_catalog_item | urlencode }}
+    method: GET
+    url_username: "{{ _sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  register: _cat_search
+  failed_when: false
+  check_mode: false             # only reads
+  when: cert_renew_catalog_item | default('', true) and cert_renew_catalog_item is not match('^[0-9a-f]{32}$')
+
+- name: Catalog | the item's sys_id
+  ansible.builtin.set_fact:
+    _cat_id: >-
+      {%- set want = cert_renew_catalog_item | default('', true) | string | trim -%}
+      {%- if want is match('^[0-9a-f]{32}$') -%}{{ want }}
+      {%- else -%}{{ (_cat_search.json.result | default([]) | selectattr('name', 'defined')
+                      | selectattr('name', 'match', '^' ~ (want | regex_escape) ~ '$', ignorecase=true) | map(attribute='sys_id') | list + [''])[0] }}
+      {%- endif -%}
+    _cat_search_why: >-
+      {%- if not cert_renew_catalog_item | default('', true) -%}cert_renew_catalog_item is empty: set it to the item's name, as the catalog shows it
+      {%- elif _cat_search.status | default(200) != 200 -%}the catalog search answered HTTP {{ _cat_search.status | default('?') }}{{
+            (': ' ~ _cat_search.json.error.message | default('')) if _cat_search.json.error is defined else (': ' ~ _cat_search.msg | default('') | truncate(200)) }}
+      {%- else -%}no catalog item named "{{ cert_renew_catalog_item }}" that the API account can see (found: {{
+            (_cat_search.json.result | default([]) | map(attribute='name') | list | join(', ')) or 'nothing' }}) - its name exactly as the
+            catalog shows it, or its sys_id; and the account must be allowed to order it (the item's "Available for")
+      {%- endif -%}
+
+- name: Catalog | the item's questions
+  ansible.builtin.uri:
+    url: "{{ _sn_url }}/api/sn_sc/servicecatalog/items/{{ _cat_id }}"
+    method: GET
+    url_username: "{{ _sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  register: _cat_item
+  failed_when: false
+  check_mode: false             # only reads
+  when: _cat_id | length > 0
+
+- name: Catalog | the settings against the questions
+  ansible.builtin.set_fact:
+    _cat_chk: >-
+      {{ (_cat_item.json.result.variables | default([]))
+         | cert_catalog_check(cert_renew_catalog_variables | default({}, true), cert_renew_catalog_csr_variable | default('', true),
+                              cert_renew_catalog_names_variable | default('', true)) }}
+  when: _cat_item.json.result is defined
+
+# a reference answered by name: its record, by name (a user: by user name too) - exactly one, or an error
+- name: Catalog | look up each reference answered by name (not a sys_id)
+  ansible.builtin.uri:
+    url: >-
+      {{ _sn_url }}/api/now/table/{{ item.table }}?sysparm_limit=5&sysparm_fields=sys_id,name{{ ',user_name' if item.table == 'sys_user' else '' }}&sysparm_query={{
+      (('user_name=' ~ item.value ~ '^ORname=' ~ item.value) if item.table == 'sys_user' else ('name=' ~ item.value)) | urlencode }}
+    method: GET
+    url_username: "{{ _sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  loop: "{{ _cat_chk.lookups | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}: {{ item.value }} ({{ item.table }})"
+  register: _cat_refs
+  failed_when: false
+  check_mode: false             # only reads
+
+- name: Catalog | the item, its questions, and what is wrong with the settings
+  ansible.builtin.set_fact:
+    _cat: >-
+      {%- set found = [] -%}
+      {%- for r in _cat_refs.results | default([]) if r.item is defined -%}
+      {%-   set _ = found.append(r.item | combine({'rows': r.json.result | default([])})) -%}
+      {%- endfor -%}
+      {%- set chk = (_cat_chk | default({}) | cert_catalog_resolve(found)) if _cat_chk is defined else {} -%}
+      {%- set errors = [] -%}
+      {%- if not _cat_id -%}{%- set _ = errors.append(_cat_search_why | trim) -%}
+      {%- elif _cat_item.json.result is not defined -%}
+      {%-   set _ = errors.append('the item ' ~ _cat_id ~ ' could not be read: HTTP ' ~ _cat_item.status | default('?')
+                               ~ ((': ' ~ _cat_item.json.error.message | default('')) if _cat_item.json.error is defined else '')) -%}
+      {%- endif -%}
+      {{ {'id': _cat_id, 'name': _cat_item.json.result.name | default(cert_renew_catalog_item) if _cat_item.json is defined else cert_renew_catalog_item,
+          'questions': (_cat_item.json.result.variables | default([])) | cert_catalog_questions if _cat_item.json is defined else [],
+          'csr_var': chk.csr_var | default(''), 'names_var': chk.names_var | default(''), 'answers': chk.answers | default({}),
+          'errors': errors + chk.errors | default([]), 'warnings': chk.warnings | default([])} }}

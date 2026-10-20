@@ -8,6 +8,8 @@
 # key that waits for the issued certificate. Installing that certificate is a later step, by a person.
 # Signed by vCenter's own CA (VMCA): the incident says to renew it in vCenter, no CSR (vmware_cert_vmca_csr).
 # Check (a dry run) makes no CSR and sends nothing: it reads, and says what it would do.
+# cert_renew_servicenow: catalog - no incident: each CSR is ordered from the PKI's catalog item, and that
+# request is the CSR's record (cert_on_order.yml, cert_order.yml).
 # The report alone: cert_report.yml. Shared: cert_read.yml (read, which are due), cert_out.yml (the report).
 - name: VMware certs | read the certificates, and which are due
   ansible.builtin.include_tasks: cert_read.yml
@@ -21,17 +23,17 @@
     _sn_targets_in: []
     servicenow_min_severity: warning        # an incident for every certificate due, whatever the site's level
     servicenow_fail_when_findings: false    # the CSRs come next; this job fails only when something did not work
-  when: _vcert.health | length > 0
+  when: _vcert.health | length > 0 and cert_renew_servicenow | default('incident') != 'catalog'
 
-- name: VMware certs | each due certificate's incident, and the CSRs already on them
+- name: VMware certs | each due certificate's incident (or catalog request), and the CSRs already on them
   ansible.builtin.include_role:
     name: servicenow
-    tasks_from: cert_on_ticket.yml
+    tasks_from: "{{ 'cert_on_order.yml' if cert_renew_servicenow | default('incident') == 'catalog' else 'cert_on_ticket.yml' }}"
   vars:
     _csr_check_in: >-
       {%- set out = [] -%}
       {%- for c in _vcert.due -%}
-      {%-   set _ = out.append({'id': c.id, 'host': c.name, 'check': 'vmware_certs',
+      {%-   set _ = out.append({'id': c.id, 'host': c.name, 'check': 'vmware_certs', 'expires': c.not_after | default(''),
                                'prefix': c.name ~ ('-machine-ssl' if c.kind == 'vcenter' else '') ~ '-', 'csr': c.renew == 'csr'}) -%}
       {%- endfor -%}
       {{ out }}

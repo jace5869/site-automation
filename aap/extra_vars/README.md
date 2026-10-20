@@ -27,6 +27,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | POA&M status | `playbooks/poam_status.yml` | [poam_status.yml](poam_status.yml) |
 | Service watch - apply approved fix | `playbooks/service_fix_approved.yml` | [service_fix_approved.yml](service_fix_approved.yml) |
 | Service watch - check | `playbooks/service_watch.yml` | [service_watch.yml](service_watch.yml) |
+| ServiceNow - catalog test | `playbooks/servicenow_catalog_test.yml` | [servicenow_catalog_test.yml](servicenow_catalog_test.yml) |
 | ServiceNow - test ticket | `playbooks/servicenow_test_ticket.yml` | [servicenow_test_ticket.yml](servicenow_test_ticket.yml) |
 | ServiceNow health | `playbooks/servicenow_health.yml` | [servicenow_health.yml](servicenow_health.yml) |
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | [servicenow_tickets.yml](servicenow_tickets.yml) |

@@ -88,6 +88,19 @@ authentication and JSON. These are the only calls the playbooks make:
 | `PATCH /api/now/table/incident/<sys_id>` | add a work note; resolve | test ticket, tickets |
 | `GET /api/now/table/ecc_agent` | MID Servers: up and validated? | health |
 
+With `cert_renew_servicenow: catalog` the certificate renewals order the PKI's catalog item instead of opening
+incidents ([CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md)). Those jobs, and the catalog test, make these calls:
+
+| Method and path | What for |
+|---|---|
+| `GET /api/sn_sc/servicecatalog/items?sysparm_text=<name>`, `GET /api/sn_sc/servicecatalog/items/<sys_id>` | find the item; its questions |
+| `GET /api/now/table/sys_user`, `/cmn_location` (or another reference's table) `?sysparm_query=name=...` | a reference answered by name: its sys_id |
+| `GET /api/now/attachment?sysparm_query=file_nameSTARTSWITH...` | has this certificate's CSR been ordered already? |
+| `GET /api/now/table/sc_req_item/<sys_id>`, `?sysparm_query=request=<sys_id>` | that request's state; the requested item of a new order |
+| `POST /api/now/attachment/file` | the CSR, for the item's attachment question (or on the requested item) |
+| `POST /api/sn_sc/servicecatalog/items/<sys_id>/order_now` | the order |
+| `GET /api/now/attachment/<sys_id>` | is the CSR on the requested item? |
+
 ## Step 3. The network path from AAP
 
 **Which machine talks to ServiceNow.** The ServiceNow jobs run on the **AAP execution node**,

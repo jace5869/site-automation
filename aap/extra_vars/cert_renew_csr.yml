@@ -245,6 +245,42 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 ## seconds for one API request
 # servicenow_timeout: 30
 
+## How the CSRs the certificate renewals make (Linux, Windows, VMware, network devices) go to the
+## PKI. incident: each one is attached to its certificate's incident, with a work note saying what
+## to do next - a person submits it to the PKI. catalog: each one is ordered from your PKI's catalog
+## item (cert_renew_catalog_item) - one request per certificate, the CSR in the item's attachment
+## question; no incident. Set the item's questions below: the "ServiceNow - catalog test" job lists
+## them. docs/CERT_RENEWAL_CATALOG.md
+# cert_renew_servicenow: incident
+
+## The catalog item: its name exactly as the catalog shows it (e.g. "DoD PKI Certificate Request"),
+## or its sys_id.
+# cert_renew_catalog_item: ""
+
+## The item's questions - by their internal names, as the catalog test lists them - and the answers:
+## {name: answer}. A reference (Requested For, Location ...): the record's name, or its sys_id. A
+## choice: its value or its label. In an answer, {host}, {subject}, {names}, {expires}, {issuer} and
+## {where} become the certificate's. e.g. {requested_for: svc_aap_sn, preferred_contact: Email,
+## location: "Building 100"}
+# cert_renew_catalog_variables: {}
+
+## The attachment question that gets the CSR (its internal name). Empty = the item's only attachment
+## question.
+# cert_renew_catalog_csr_variable: ""
+
+## A question that gets the certificate's names (subjectAltName), e.g. a "List any additional SANs"
+## box. Empty = none.
+# cert_renew_catalog_names_variable: ""
+
+## A request closed in one of these states (a requested item's: 4 Closed Incomplete, 7 Closed
+## Skipped - rejected or cancelled) is ordered again on the next run. In any other state - open, in
+## progress, Closed Complete (the PKI issued it: install it) - the certificate is not ordered again.
+# cert_renew_catalog_reorder_states: ["4", "7"]
+
+## Where the CSR is uploaded before the order, for the attachment question (ServiceNow moves it to
+## the request).
+# cert_renew_catalog_upload_table: ZZ_YYsc_cart_item
+
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
 ## A host that cannot be reached (switched off, no network, ssh or WinRM refused, its login refused)
 ## in the health checks, the certificate report and renewal, database health, the service watch and

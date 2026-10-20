@@ -513,4 +513,92 @@ run extra2.txt none playbooks/cert_renew_csr.yml --check -e "$extra" -e cert_ren
     || { bad "a home folder, cert_renew_extra_dirs: exit $rc"; tail -20 extra2.txt; }
 vars="$vars_all"
 
+# ---- 12. cert_renew_servicenow: catalog - each CSR ordered from the PKI's catalog item, no incident ----
+start_mock $((port + 8))
+start_mock $((port + 9)) SNMOCK_SC_KEEP_ATTACHMENT=1
+start_mock $((port + 12)) SNMOCK_SC_REFUSE=1
+start_mock $((port + 13)) SNMOCK_HIDE_ZZYY=1
+for p in $((port + 8)) $((port + 9)) $((port + 12)) $((port + 13)); do for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null && break; sleep 0.1; done; : > "requests-$p.jsonl"; done
+cat_ok='{"cert_renew_servicenow": "catalog", "cert_renew_catalog_item": "dod pki certificate request",
+         "cert_renew_catalog_variables": {"requested_for": "jdoe", "contact_method": "Email", "location": "Building 100", "title_rank": "CTR",
+                                          "dsn": "{host}"},
+         "cert_renew_catalog_names_variable": "additional_sans"}'
+cp=$((port + 8))
+run cat_dry.txt "$cp" playbooks/cert_renew_csr.yml --check -e "$cat_ok"; rc=$?
+[ $rc -eq 0 ] && [ "$(writes "$cp")" = 0 ] && has "catalog, dry run: says what it would order, sends nothing" cat_dry.txt \
+    "DRY RUN (Check mode): nothing was ordered or uploaded. The item: DoD PKI Certificate Request" "would order it" \
+    || { bad "catalog, dry run: exit $rc, $(writes "$cp") POST/PATCH"; tail -20 cat_dry.txt; }
+run cat_real.txt "$cp" playbooks/cert_renew_csr.yml -e "$cat_ok"; rc=$?
+[ $rc -eq 0 ] && ok "catalog: exit 0" || { bad "catalog: exit $rc"; tail -30 cat_real.txt; }
+n="$(grep -cE '"ORDERED RITM[0-9]+ \(REQ[0-9]+\) [|]' cat_real.txt)"
+[ "$n" = 6 ] && ok "catalog: 6 orders - one per certificate (web01 once for its file, chain file and port)" || bad "catalog: $n orders"
+"$py" - "requests-$cp.jsonl" <<'EOPY' && ok "catalog: the answers (choice label -> value, names -> sys_ids, {host}), the CSR in its question and moved to the RITM, the names, no incident" || bad "catalog: the requests (above)"
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1])]
+orders = [r["body"]["variables"] for r in rows if r["path"].endswith("/order_now") and r["status"] == 200]
+ups = [r for r in rows if r["path"] == "/api/now/attachment/file" and r["method"] == "POST"]
+bad = []
+if len(orders) != 6: bad.append("%d orders" % len(orders))
+for v in orders:
+    if (v.get("requested_for"), v.get("contact_method"), v.get("location")[:4], v.get("title_rank")) != ("u2", "email", "loc1", "CTR"):
+        bad.append("answers %s" % v)
+    if not v.get("csr_file") or not v.get("dsn", "").endswith(".example.mil"):
+        bad.append("csr/dsn %s" % v)
+web = [v for v in orders if "web.example.mil" in v.get("additional_sans", "")]
+if len(web) != 1: bad.append("web01's names: %s" % [v.get("additional_sans") for v in orders])
+if len(ups) != 6 or any(u["query"]["table_name"] != "ZZ_YYsc_cart_item" or "-exp20" not in u["query"]["file_name"] for u in ups):
+    bad.append("uploads %s" % [(u["query"]["table_name"], u["query"]["file_name"]) for u in ups])
+if any("/table/incident" in r["path"] and r["method"] != "GET" for r in rows): bad.append("an incident was written")
+print("\n".join(bad))
+sys.exit(1 if bad else 0)
+EOPY
+before="$(writes "$cp")"
+run cat_again.txt "$cp" playbooks/cert_renew_csr.yml -e "$cat_ok"; rc=$?
+[ $rc -eq 0 ] && [ "$(writes "$cp")" = "$before" ] && has "catalog, run again: each found by its CSR - nothing ordered again" cat_again.txt \
+    "ORDERED ALREADY RITM" "(Open) | web01.example.mil" || { bad "catalog, run again: exit $rc, $(( $(writes "$cp") - before )) new"; tail -20 cat_again.txt; }
+# the PKI rejects the request for web01's certificate (Closed Incomplete): the next run orders it again - only it
+# (every certificate of this test is on the host web01: its CSR's name says which)
+ritm="$(grep -oE '"ORDERED RITM[0-9]+ \(REQ[0-9]+\) [|] web01.example.mil [|] web01.example.mil-' cat_real.txt | grep -oE 'RITM[0-9]+')"
+sid="$(curl -s -u api:goodpw "http://127.0.0.1:$cp/api/now/table/sc_req_item?sysparm_query=number=$ritm" | "$py" -c 'import json, sys; print(json.load(sys.stdin)["result"][0]["sys_id"])')"
+curl -s -u api:goodpw -X PATCH -H 'Content-Type: application/json' -d '{"state": "4"}' "http://127.0.0.1:$cp/api/now/table/sc_req_item/$sid" >/dev/null
+before="$(grep -c order_now "requests-$cp.jsonl")"
+run cat_reorder.txt "$cp" playbooks/cert_renew_csr.yml -e "$cat_ok"; rc=$?
+[ $rc -eq 0 ] && [ "$(( $(grep -c order_now "requests-$cp.jsonl") - before ))" = 1 ] && has "catalog: a rejected request (Closed Incomplete) - ordered again, only that one" cat_reorder.txt \
+    "(again: $ritm closed Closed Incomplete) | web01.example.mil | web01.example.mil-" || { bad "catalog, reorder: exit $rc"; grep -E 'ORDERED|FAILED' cat_reorder.txt | head; }
+# an instance that does not move the attachment question's file: the CSR on the RITM itself, found by it the next run
+run cat_keep.txt $((port + 9)) playbooks/cert_renew_csr.yml -e "$cat_ok"; rc=$?
+clips="$(grep -c '"table_name": "sc_req_item"' "requests-$((port + 9)).jsonl")"
+[ $rc -eq 0 ] && [ "$clips" = 6 ] && has "catalog, the file not moved: the CSR attached to each request" cat_keep.txt "the CSR is attached to the request" \
+    || { bad "catalog, not moved: exit $rc, $clips paperclip attachments"; tail -20 cat_keep.txt; }
+before="$(writes $((port + 9)))"
+run cat_keep2.txt $((port + 9)) playbooks/cert_renew_csr.yml -e "$cat_ok"; rc=$?
+[ $rc -eq 0 ] && [ "$(writes $((port + 9)))" = "$before" ] && ok "catalog, the file not moved, run again: found by the attached CSR - nothing new" \
+    || { bad "catalog, not moved, again: exit $rc"; tail -20 cat_keep2.txt; }
+# an instance whose attachment search does not show the attachment question's file: the job sees it would not find
+# its order next time, attaches the CSR to the request too - and the next run finds it (no second order)
+run cat_hidden.txt $((port + 13)) playbooks/cert_renew_csr.yml -e "$cat_ok"; rc=$?
+[ $rc -eq 0 ] && [ "$(grep -c '"table_name": "sc_req_item"' "requests-$((port + 13)).jsonl")" = 6 ] \
+    && has "catalog, a search that hides the question's file: the CSR attached to the request as well" cat_hidden.txt \
+       "the CSR is in the request (its question csr_file), and attached to it" || { bad "catalog, hidden: exit $rc"; tail -20 cat_hidden.txt; }
+before="$(grep -c order_now "requests-$((port + 13)).jsonl")"
+run cat_hidden2.txt $((port + 13)) playbooks/cert_renew_csr.yml -e "$cat_ok"; rc=$?
+[ $rc -eq 0 ] && [ "$(grep -c order_now "requests-$((port + 13)).jsonl")" = "$before" ] \
+    && ok "catalog, a search that hides the question's file, run again: found by the attached CSR - not ordered again" \
+    || { bad "catalog, hidden, again: exit $rc"; tail -20 cat_hidden2.txt; }
+# settings that do not fit the item: the job stops before any order, saying what to change
+before="$(writes "$cp")"
+run cat_bad.txt "$cp" playbooks/cert_renew_csr.yml \
+    -e '{"cert_renew_servicenow": "catalog", "cert_renew_catalog_item": "DoD PKI Certificate Request", "cert_renew_catalog_variables": {"contact_method": "Fax", "colour": "blue", "location": "Building 9"}}'; rc=$?
+[ $rc -eq 2 ] && [ "$(writes "$cp")" = "$before" ] && has "catalog, settings that do not fit: no order, each problem named" cat_bad.txt \
+    "the item has no question colour" "'Fax' is not one of its choices (email = Email, phone = Phone)" \
+    "requested_for (Requested For) is mandatory" "location: no record named 'Building 9' in cmn_location" \
+    || { bad "catalog, bad settings: exit $rc"; tail -20 cat_bad.txt; }
+run cat_noitem.txt "$cp" playbooks/cert_renew_csr.yml -e '{"cert_renew_servicenow": "catalog", "cert_renew_catalog_item": "PKI Request"}'; rc=$?
+[ $rc -eq 2 ] && has "catalog, an item the account cannot find: says so" cat_noitem.txt 'no catalog item named \"PKI Request\" that the API account can see' \
+    || { bad "catalog, no item: exit $rc"; tail -20 cat_noitem.txt; }
+run cat_refused.txt $((port + 12)) playbooks/cert_renew_csr.yml -e "$cat_ok"; rc=$?
+[ $rc -eq 2 ] && has "catalog, the order refused: the job fails with ServiceNow's reason" cat_refused.txt \
+    "FAILED  | web01.example.mil" "the order was refused: HTTP 400: Order could not be placed - the item is not available" \
+    || { bad "catalog, refused: exit $rc"; tail -20 cat_refused.txt; }
+
 if [ "$fails" -eq 0 ]; then echo "ok   - all certificate renewal scenarios passed"; else echo "$fails FAILED"; exit 1; fi

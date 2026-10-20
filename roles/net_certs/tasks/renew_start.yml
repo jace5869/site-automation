@@ -5,6 +5,8 @@
 # the devices). A CSR is made once: the incident is its record (cert_on_ticket.yml) - a second one would
 # replace the key that waits on the device for the issued certificate.
 # Check (a dry run) opens nothing and makes no CSR: it reads, and says what it would do.
+# cert_renew_servicenow: catalog - no incident: each CSR is ordered from the PKI's catalog item, and that
+# request is the CSR's record (cert_on_order.yml, cert_order.yml). A device without a CSR here: the report only.
 - name: Network certs | read the certificates, and which are due
   ansible.builtin.include_tasks: read.yml
 
@@ -17,17 +19,17 @@
     _sn_targets_in: []
     servicenow_min_severity: warning        # an incident for every certificate due, whatever the site's level
     servicenow_fail_when_findings: false    # the CSRs come next; this job fails only when something did not work
-  when: _net.health | length > 0
+  when: _net.health | length > 0 and cert_renew_servicenow | default('incident') != 'catalog'
 
-- name: Network certs | each due certificate's incident, and the CSRs already on them
+- name: Network certs | each due certificate's incident (or catalog request), and the CSRs already on them
   ansible.builtin.include_role:
     name: servicenow
-    tasks_from: cert_on_ticket.yml
+    tasks_from: "{{ 'cert_on_order.yml' if cert_renew_servicenow | default('incident') == 'catalog' else 'cert_on_ticket.yml' }}"
   vars:
     _csr_check_in: >-
       {%- set out = [] -%}
       {%- for c in _net.due if c.renew == 'cisco' -%}
-      {%-   set _ = out.append({'id': c.id, 'host': c.host, 'check': 'net_certs',
+      {%-   set _ = out.append({'id': c.id, 'host': c.host, 'check': 'net_certs', 'expires': c.not_after | default(c.expires | default('')),
                                'prefix': (c.host.split('.')[0] if not c.host.replace('.', '') is match('^[0-9]+$') else c.host) ~ '-' ~ c.port ~ '-',
                                'csr': true}) -%}
       {%- endfor -%}

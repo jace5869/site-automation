@@ -231,6 +231,9 @@ weekly health check reads only those stores. To list what a server has, on the s
 
 ### Windows certificate renewal - CSRs
 
+With `cert_renew_servicenow: catalog` the CSRs are ordered from your PKI's catalog item instead of going on
+incidents: [CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md).
+
 | Field | Value |
 |---|---|
 | Playbook | `playbooks/win_cert_renew_csr.yml` |

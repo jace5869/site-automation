@@ -1,0 +1,417 @@
+---
+# CERTIFICATE RENEWAL, the ServiceNow step with cert_renew_servicenow: catalog (from cert_csr.yml, after it
+# gathered the CSRs: _csr_items): each CSR is ordered from the PKI's catalog item - one request per
+# certificate, the answers from cert_renew_catalog_variables, the CSR in the item's attachment question (the
+# certificate's names in cert_renew_catalog_names_variable). No incident.
+#
+# The order's key is the CSR's name in it: its file name and the expiring certificate's date
+# (web01.example.mil-1a2b3c4d-exp20261114.csr). Before ordering, the job looks for a request carrying it:
+# found open, in progress or Closed Complete, the certificate is not ordered again; found only in
+# cert_renew_catalog_reorder_states (rejected, cancelled), it is ordered again. Once the certificate is
+# replaced, the new one has another date: the next renewal is a new order.
+#
+# The CSR goes to the attachment question this way: uploaded (cert_renew_catalog_upload_table), its
+# attachment named in the order; ServiceNow moves it to the requested item. Not moved there, or no attachment
+# question: it is attached to the requested item (the paperclip) - the PKI sees it either way, and the next
+# run finds the order by it.
+# Dry run (Check): reads the item and the requests already there, says what it would order; orders nothing.
+
+- name: Certificate renewal | the catalog item, its questions, the answers
+  ansible.builtin.include_tasks: catalog_item.yml
+
+- name: Certificate renewal | the catalog settings must fit the item (nothing was ordered)
+  ansible.builtin.fail:
+    msg: >-
+      {{ (['cert_renew_servicenow is catalog, but the order cannot be made: '] + _cat.errors) | join(' | ') }} -
+      the "ServiceNow - catalog test" job lists the item's questions (docs/CERT_RENEWAL_CATALOG.md)
+  when: _cat.errors | length > 0
+
+- name: Certificate renewal | each CSR's name in the order, and the query that finds its order
+  ansible.builtin.set_fact:
+    _co_items: >-
+      {%- set out = [] -%}
+      {%- for i in _csr_items if i.csr is defined -%}
+      {%-   set name = i.file_name | cert_catalog_name(i.expires) -%}
+      {%-   set _ = out.append(i | combine({'key': i.host ~ '|' ~ i.file_name, 'order_name': name,
+                                            'query': (i.file_name | regex_replace('[.][^.]*$', '')) | cert_catalog_query(i.expires, ['sc_req_item'])})) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Certificate renewal | the requests already made for these certificates (by their CSR)
+  ansible.builtin.uri:
+    url: >-
+      {{ _sn_url }}/api/now/attachment?sysparm_limit=20&sysparm_fields=sys_id,file_name,table_name,table_sys_id&sysparm_query={{ item.query | urlencode }}
+    method: GET
+    url_username: "{{ _sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  loop: "{{ _co_items }}"
+  loop_control:
+    label: "{{ item.host }}: {{ item.order_name }}"
+  register: _co_found
+  check_mode: false             # only reads
+
+- name: Certificate renewal | each of those requests - its number and state
+  ansible.builtin.uri:
+    url: "{{ _sn_url }}/api/now/table/{{ item.table }}/{{ item.sys_id }}?sysparm_fields=sys_id,number,state"
+    method: GET
+    url_username: "{{ _sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  loop: >-
+    {%- set out = [] -%}
+    {%- for r in _co_found.results -%}
+    {%-   for a in r.json.result | default([]) -%}
+    {%-     set rec = {'table': a.table_name | regex_replace('^ZZ_YY', ''), 'sys_id': a.table_sys_id} -%}
+    {%-     if rec not in out -%}{%- set _ = out.append(rec) -%}{%- endif -%}
+    {%-   endfor -%}
+    {%- endfor -%}
+    {{ out }}
+  loop_control:
+    label: "{{ item.table }} {{ item.sys_id }}"
+  register: _co_recs
+  failed_when: false            # not readable: counted as an order still there (never a second one by mistake)
+  check_mode: false             # only reads
+
+- name: Certificate renewal | what to order - a certificate without a request, or whose requests were all closed as rejected / cancelled
+  ansible.builtin.set_fact:
+    _co_plan: >-
+      {%- set recs = {} -%}
+      {%- for r in _co_recs.results | default([]) if r.item is defined -%}
+      {%-   set _ = recs.update({r.item.sys_id: r.json.result if r.json.result is defined and r.json.result is mapping
+                                 else {'sys_id': r.item.sys_id, 'number': r.item.table ~ ' ' ~ r.item.sys_id, 'state': '?'}}) -%}
+      {%- endfor -%}
+      {%- set reorder = cert_renew_catalog_reorder_states | default([], true) | map('string') | list -%}
+      {%- set out = [] -%}
+      {%- for r in _co_found.results -%}
+      {%-   set mine = [] -%}
+      {%-   for a in r.json.result | default([]) if a.table_sys_id in recs and recs[a.table_sys_id] not in mine -%}
+      {%-     set _ = mine.append(recs[a.table_sys_id]) -%}
+      {%-   endfor -%}
+      {%-   set keep = mine | rejectattr('state', 'in', reorder) | list -%}
+      {%-   set _ = out.append(r.item | combine({'orders': mine, 'keep': keep[0] | default({}), 'order': keep | length == 0})) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Certificate renewal | DRY RUN - what it would order (nothing was sent to ServiceNow)
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = ['DRY RUN (Check mode): nothing was ordered or uploaded. The item: ' ~ _cat.name ~ ' (' ~ _cat.id ~ ').'] -%}
+      {%- for p in _co_plan -%}
+      {%-   set _ = out.append(p.host ~ ' | ' ~ p.order_name ~ ' | '
+                             ~ ((('ordered already: ' ~ p.keep.number ~ ' (' ~ p.keep.state | cert_catalog_state ~ ')') if not p.order else
+                                 ('would order it' ~ ((' again (' ~ (p.orders | map(attribute='number') | join(', ')) ~ ' closed: '
+                                                      ~ (p.orders | map(attribute='state') | map('cert_catalog_state') | unique | join(', ')) ~ ')') if p.orders else ''))))) -%}
+      {%- endfor -%}
+      {%- for i in _csr_items if i.csr is not defined -%}
+      {%-   set _ = out.append(i.host ~ ' | ' ~ i.file_name ~ ' | ' ~ (i.already if i.already is defined else 'would make the CSR, and order it')) -%}
+      {%- endfor -%}
+      {{ out }}
+  when: ansible_check_mode
+
+- name: Certificate renewal | order
+  when: not ansible_check_mode and _co_plan | selectattr('order') | list | length > 0
+  vars:
+    _co_todo: "{{ _co_plan | selectattr('order') | list }}"
+  block:
+    - name: Certificate renewal | upload each CSR for the item's attachment question ({{ _cat.csr_var or 'none' }})
+      ansible.builtin.uri:
+        # table_sys_id: any 32 hex characters (nothing has to exist there) - SHA-256, as FIPS mode allows no MD5
+        url: >-
+          {{ _sn_url }}/api/now/attachment/file?table_name={{ cert_renew_catalog_upload_table | urlencode }}&table_sys_id={{
+          ((item.key ~ '|' ~ _sn_now ~ '|' ~ (awx_job_id | default(''))) | hash('sha256'))[:32] }}&file_name={{ item.order_name | urlencode }}
+        method: POST
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers:
+          Accept: application/json
+          Content-Type: "{{ item.content_type }}"
+        body: "{{ item.csr }}"
+        body_format: raw
+        status_code: [200, 201]
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: "{{ _co_todo if _cat.csr_var else [] }}"
+      loop_control:
+        label: "{{ item.host }}: {{ item.order_name }}"
+      register: _co_up
+      failed_when: false        # refused (an extension the instance does not allow ...): tried as .txt below
+
+    - name: Certificate renewal | refused - upload it again as a text file (.txt)
+      ansible.builtin.uri:
+        url: >-
+          {{ _sn_url }}/api/now/attachment/file?table_name={{ cert_renew_catalog_upload_table | urlencode }}&table_sys_id={{
+          ((r.item.key ~ '|txt|' ~ _sn_now ~ '|' ~ (awx_job_id | default(''))) | hash('sha256'))[:32] }}&file_name={{
+          (r.item.order_name | regex_replace('[.][^.]*$', '') ~ '.txt') | urlencode }}
+        method: POST
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers:
+          Accept: application/json
+          Content-Type: text/plain
+        body: "{{ r.item.csr }}"
+        body_format: raw
+        status_code: [200, 201]
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: >-
+        {{ _co_up.results | default([]) | selectattr('status', 'defined') | rejectattr('status', 'in', [200, 201])
+           | rejectattr('item.order_name', 'match', '.*[.]txt$') | selectattr('item.retry_txt') | list }}
+      loop_control:
+        loop_var: r
+        label: "{{ r.item.host }}: {{ r.item.order_name | regex_replace('[.][^.]*$', '') }}.txt"
+      register: _co_up_txt
+      failed_when: false
+
+    - name: Certificate renewal | each CSR's attachment for the order (or why there is none)
+      ansible.builtin.set_fact:
+        _co_att: >-
+          {%- set out = {} -%}
+          {%- for u in _co_up.results | default([]) if u.item is defined -%}
+          {%-   set t = _co_up_txt.results | default([]) | selectattr('r', 'defined') | selectattr('r.item.key', 'equalto', u.item.key) | list -%}
+          {%-   if u.status | default(0) in [200, 201] -%}
+          {%-     set _ = out.update({u.item.key: {'id': u.json.result.sys_id, 'name': u.item.order_name}}) -%}
+          {%-   elif t and t[0].status | default(0) in [200, 201] -%}
+          {%-     set _ = out.update({u.item.key: {'id': t[0].json.result.sys_id, 'name': u.item.order_name | regex_replace('[.][^.]*$', '') ~ '.txt'}}) -%}
+          {%-   else -%}
+          {%-     set w = t[0] if t else u -%}
+          {%-     set _ = out.update({u.item.key: {'id': '', 'name': u.item.order_name, 'why': 'the CSR could not be uploaded: HTTP ' ~ w.status | default('?')
+                                     ~ ((': ' ~ w.json.error.message | default('') ~ (' - ' ~ w.json.error.detail if w.json.error.detail | default('') else ''))
+                                        if w.json.error is defined else (': ' ~ w.msg | default('') | truncate(200)))
+                                     ~ ('; refused as a .txt file too' if t else '')}}) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Certificate renewal | order the item - one request per certificate
+      ansible.builtin.uri:
+        url: "{{ _sn_url }}/api/sn_sc/servicecatalog/items/{{ _cat.id }}/order_now"
+        method: POST
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        body_format: json
+        body:
+          sysparm_quantity: "1"
+          variables: "{{ item | cert_catalog_vars(_cat.answers, _cat.csr_var, _co_att[item.key].id | default(''), _cat.names_var) }}"
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: "{{ _co_todo | rejectattr('key', 'in', _co_att | dict2items | rejectattr('value.id') | map(attribute='key') | list) | list }}"
+      loop_control:
+        label: "{{ item.host }}: {{ item.order_name }}"
+      register: _co_ord
+      failed_when: false        # refused (a mandatory answer, a value the item does not take ...): listed, and the job fails
+
+    - name: Certificate renewal | each order's requested item
+      ansible.builtin.uri:
+        url: >-
+          {{ _sn_url }}/api/now/table/sc_req_item?sysparm_limit=1&sysparm_fields=sys_id,number,state&sysparm_query={{
+          ('request=' ~ (o.json.result.request_id | default(o.json.result.sys_id))) | urlencode }}
+        method: GET
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: "{{ _co_ord.results | default([]) | selectattr('json.result', 'defined') | selectattr('status', 'equalto', 200) | list }}"
+      loop_control:
+        loop_var: o
+        label: "{{ o.item.host }}: {{ o.json.result.request_number | default(o.json.result.number | default('?')) }}"
+      register: _co_ritm
+      failed_when: false
+
+    - name: Certificate renewal | is the CSR on its requested item? (ServiceNow moves the attachment question's file there)
+      ansible.builtin.uri:
+        url: "{{ _sn_url }}/api/now/attachment/{{ _co_att[r.o.item.key].id }}"
+        method: GET
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: "{{ _co_ritm.results | default([]) | selectattr('json.result', 'defined') | selectattr('json.result') | list if _cat.csr_var else [] }}"
+      loop_control:
+        loop_var: r
+        label: "{{ r.json.result[0].number }}: {{ _co_att[r.o.item.key].name }}"
+      register: _co_where
+      failed_when: false
+
+    - name: Certificate renewal | the CSR on the requested item itself (the paperclip) - not moved there, or no attachment question
+      ansible.builtin.uri:
+        url: >-
+          {{ _sn_url }}/api/now/attachment/file?table_name=sc_req_item&table_sys_id={{ r.json.result[0].sys_id | urlencode }}&file_name={{
+          (_co_att[r.o.item.key].name | default(r.o.item.order_name)) | urlencode }}
+        method: POST
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers:
+          Accept: application/json
+          Content-Type: "{{ 'text/plain' if (_co_att[r.o.item.key].name | default('')) is match('.*[.]txt$') else r.o.item.content_type }}"
+        body: "{{ r.o.item.csr }}"
+        body_format: raw
+        status_code: [200, 201]
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: >-
+        {%- set moved = [] -%}
+        {%- for w in _co_where.results | default([]) if w.r is defined and w.json.result is defined
+                                                       and w.json.result.table_sys_id | default('') == w.r.json.result[0].sys_id -%}
+        {%-   set _ = moved.append(w.r.o.item.key) -%}
+        {%- endfor -%}
+        {{ _co_ritm.results | default([]) | selectattr('json.result', 'defined') | selectattr('json.result')
+           | rejectattr('o.item.key', 'in', moved) | list }}
+      loop_control:
+        loop_var: r
+        label: "{{ r.json.result[0].number }}: {{ _co_att[r.o.item.key].name | default(r.o.item.order_name) }}"
+      register: _co_clip
+      failed_when: false
+
+    # the next run finds the order by the CSR on it (the query above): an instance whose attachment search does not
+    # show the attachment question's file would get the certificate ordered again every run - so look now, the same way
+    - name: Certificate renewal | will the next run find each order? (the same search it makes)
+      ansible.builtin.uri:
+        url: >-
+          {{ _sn_url }}/api/now/attachment?sysparm_limit=20&sysparm_fields=sys_id,table_sys_id&sysparm_query={{ r.o.item.query | urlencode }}
+        method: GET
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers: {Accept: application/json}
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: >-
+        {{ _co_ritm.results | default([]) | selectattr('json.result', 'defined') | selectattr('json.result')
+           | rejectattr('o.item.key', 'in', _co_clip.results | default([]) | selectattr('r', 'defined') | map(attribute='r.o.item.key') | list) | list }}
+      loop_control:
+        loop_var: r
+        label: "{{ r.json.result[0].number }}"
+      register: _co_seen
+      failed_when: false
+
+    - name: Certificate renewal | not found that way - the CSR on the requested item too (the paperclip), so the next run finds it
+      ansible.builtin.uri:
+        url: >-
+          {{ _sn_url }}/api/now/attachment/file?table_name=sc_req_item&table_sys_id={{ v.r.json.result[0].sys_id | urlencode }}&file_name={{
+          (_co_att[v.r.o.item.key].name | default(v.r.o.item.order_name)) | urlencode }}
+        method: POST
+        url_username: "{{ _sn_user }}"
+        url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+        force_basic_auth: true
+        headers:
+          Accept: application/json
+          Content-Type: "{{ 'text/plain' if (_co_att[v.r.o.item.key].name | default('')) is match('.*[.]txt$') else v.r.o.item.content_type }}"
+        body: "{{ v.r.o.item.csr }}"
+        body_format: raw
+        status_code: [200, 201]
+        validate_certs: "{{ servicenow_validate_certs }}"
+        ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+        timeout: "{{ servicenow_timeout }}"
+      loop: >-
+        {%- set out = [] -%}
+        {%- for v in _co_seen.results | default([]) if v.r is defined -%}
+        {%-   if v.r.json.result[0].sys_id not in (v.json.result | default([]) | map(attribute='table_sys_id') | list) -%}{%- set _ = out.append(v) -%}{%- endif -%}
+        {%- endfor -%}
+        {{ out }}
+      loop_control:
+        loop_var: v
+        label: "{{ v.r.json.result[0].number }}: {{ _co_att[v.r.o.item.key].name | default(v.r.o.item.order_name) }}"
+      register: _co_clip2
+      failed_when: false
+
+- name: Certificate renewal | what was ordered
+  ansible.builtin.set_fact:
+    _co_done: >-
+      {%- set out = [] -%}
+      {%- for p in _co_plan -%}
+      {%-   set row = {'host': p.host, 'name': p.order_name, 'file_name': p.file_name} -%}
+      {%-   if not p.order -%}
+      {%-     set _ = out.append(row | combine({'status': 'ordered already', 'number': p.keep.number, 'state': p.keep.state | cert_catalog_state})) -%}
+      {%-   elif ansible_check_mode -%}
+      {%-     set _ = out.append(row | combine({'status': 'would order'})) -%}
+      {%-   else -%}
+      {%-     set att = (_co_att | default({}))[p.key] | default({}) -%}
+      {%-     set o = (_co_ord.results | default([]) | selectattr('item', 'defined') | selectattr('item.key', 'equalto', p.key) | list + [{}])[0] -%}
+      {%-     set t = (_co_ritm.results | default([]) | selectattr('o', 'defined') | selectattr('o.item.key', 'equalto', p.key) | list + [{}])[0] -%}
+      {%-     set c = (_co_clip.results | default([]) | selectattr('r', 'defined') | selectattr('r.o.item.key', 'equalto', p.key) | list + [{}])[0] -%}
+      {%-     set c2 = (_co_clip2.results | default([]) | selectattr('v', 'defined') | selectattr('v.r.o.item.key', 'equalto', p.key) | list + [{}])[0] -%}
+      {%-     set again = (' (again: ' ~ (p.orders | map(attribute='number') | join(', ')) ~ ' closed '
+                          ~ (p.orders | map(attribute='state') | map('cert_catalog_state') | unique | join(', ')) ~ ')') if p.orders else '' -%}
+      {%-     if att.why is defined -%}
+      {%-       set _ = out.append(row | combine({'status': 'failed', 'why': att.why ~ ' - not ordered'})) -%}
+      {%-     elif o.status | default(0) != 200 -%}
+      {%-       set _ = out.append(row | combine({'status': 'failed', 'why': 'the order was refused: HTTP ' ~ o.status | default('?')
+                                   ~ ((': ' ~ o.json.error.message | default('') ~ (' - ' ~ o.json.error.detail if o.json.error.detail | default('') else ''))
+                                      if o.json.error is defined else (': ' ~ o.msg | default('') | truncate(200)))})) -%}
+      {%-     else -%}
+      {%-       set req = o.json.result.request_number | default(o.json.result.number | default('')) -%}
+      {%-       set ritm = (t.json.result | default([]) + [{}])[0] -%}
+      {%-       set csr_where = ('in the request (its question ' ~ _cat.csr_var ~ ')' ~ (', and attached to it' if c2 else '')) if _cat.csr_var and not c else
+                               ('attached to the request' if c.status | default(0) in [200, 201] else '') -%}
+      {%-       if not ritm -%}
+      {%-         set _ = out.append(row | combine({'status': 'failed', 'number': req,
+                                     'why': 'ordered (' ~ req ~ '), but its requested item could not be read - check the request in ServiceNow, '
+                                            ~ 'and that the CSR is on it (the next run would order it again)'})) -%}
+      {%-       elif c2 and c2.status | default(0) not in [200, 201] -%}
+      {%-         set _ = out.append(row | combine({'status': 'failed', 'number': ritm.number,
+                                     'why': 'ordered (' ~ ritm.number ~ ', ' ~ req ~ '), but the next run would not find it: the attachment search does not show '
+                                            ~ 'the CSR in the request, and attaching it to the request was refused (HTTP ' ~ c2.status | default('?')
+                                            ~ ') - attach ' ~ att.name | default(p.order_name) ~ ' to ' ~ ritm.number ~ ' by hand, or it is ordered again'})) -%}
+      {%-       elif not csr_where -%}
+      {%-         set _ = out.append(row | combine({'status': 'failed', 'number': ritm.number,
+                                     'why': 'ordered (' ~ ritm.number ~ ', ' ~ req ~ '), but the CSR is not on it: HTTP ' ~ c.status | default('?')
+                                            ~ ((': ' ~ c.json.error.message | default('')) if c.json.error is defined else '')
+                                            ~ ' - attach it by hand: ' ~ att.name | default(p.order_name)})) -%}
+      {%-       else -%}
+      {%-         set _ = out.append(row | combine({'status': 'ordered', 'number': ritm.number, 'request': req, 'csr_where': csr_where,
+                                                     'name': att.name | default(p.order_name), 'again': again})) -%}
+      {%-       endif -%}
+      {%-     endif -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Certificate renewal | summary - the requests
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for d in _co_done -%}
+      {%-   if d.status == 'ordered' -%}
+      {%-     set _ = out.append('ORDERED ' ~ d.number ~ ' (' ~ d.request ~ ')' ~ d.again ~ ' | ' ~ d.host ~ ' | ' ~ d.name ~ ' | the CSR is ' ~ d.csr_where) -%}
+      {%-   elif d.status == 'ordered already' -%}
+      {%-     set _ = out.append('ORDERED ALREADY ' ~ d.number ~ ' (' ~ d.state ~ ') | ' ~ d.host ~ ' | ' ~ d.name
+                               ~ (' | the PKI issued it: install it' if d.state == 'Closed Complete' else '')) -%}
+      {%-   elif d.status == 'failed' -%}
+      {%-     set _ = out.append('FAILED ' ~ d.number | default('') ~ ' | ' ~ d.host ~ ' | ' ~ d.name ~ ' | ' ~ d.why) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {%- for i in _csr_items if i.csr is not defined and i.already is defined -%}
+      {%-   set _ = out.append('ORDERED ALREADY | ' ~ i.host ~ ' | ' ~ i.file_name ~ ' | ' ~ i.already) -%}
+      {%- endfor -%}
+      {{ out or ['nothing to order'] }}
+  when: not ansible_check_mode
+
+- name: Certificate renewal | fail when a certificate could not be ordered (each one's reason is above)
+  ansible.builtin.fail:
+    msg: "{{ _co_done | selectattr('status', 'equalto', 'failed') | map(attribute='host') | zip(_co_done | selectattr('status', 'equalto', 'failed') | map(attribute='why')) | map('join', ': ') | join(' || ') }}"
+  when: _co_done | selectattr('status', 'equalto', 'failed') | list | length > 0

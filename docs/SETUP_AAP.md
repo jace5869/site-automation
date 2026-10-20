@@ -377,6 +377,21 @@ step ([SERVICENOW_SETUP.md](SERVICENOW_SETUP.md)). Runs on the controller.
 | Limit | empty, and **no** Prompt on launch (it runs on the controller) |
 | Survey | none |
 
+### ServiceNow - catalog test
+
+Only with `cert_renew_servicenow: catalog` (the certificate renewals order the PKI's catalog item instead of
+opening incidents). It finds `cert_renew_catalog_item`, lists its questions by their internal names and checks
+`cert_renew_catalog_variables` against them, PASS / FAIL per step; `servicenow_catalog_test_order: true` also
+orders it once with a test CSR ([CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md)). Runs on the controller.
+
+| Field | Value |
+|---|---|
+| Playbook | `playbooks/servicenow_catalog_test.yml` |
+| Credentials | `ServiceNow API` (the account that will order) |
+| Variables | `cert_renew_catalog_item: <the item's name or sys_id>` - the rest: [aap/extra_vars/servicenow_catalog_test.yml](../aap/extra_vars/servicenow_catalog_test.yml) |
+| Limit | empty, and **no** Prompt on launch (it runs on the controller) |
+| Survey | none |
+
 ### ServiceNow tickets
 
 Only useful as a workflow step after a check. Runs on the controller.

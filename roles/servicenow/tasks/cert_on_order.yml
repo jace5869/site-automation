@@ -1,0 +1,89 @@
+---
+# VMWARE AND NETWORK DEVICE CERTIFICATE RENEWAL, cert_renew_servicenow: catalog - before a CSR is made: has
+# this certificate been ordered from the PKI's catalog item already? vCenter, an ESXi host and a Cisco device
+# keep one pending key: a second CSR replaces the key of the first, the one the PKI may be signing. So a CSR
+# is made once per certificate, and its request is the record of it: a request carrying a CSR named for this
+# host and this certificate's expiry date (cert_catalog_name), open, in progress or Closed Complete. One
+# closed in cert_renew_catalog_reorder_states (rejected, cancelled) does not count: a new CSR, a new order.
+# The catalog counterpart of cert_on_ticket.yml - the same input and output. Reads only - in a dry run too.
+# Input: _csr_check_in [{id (the finding's), host, check, prefix (of the CSR's file name), csr: true when it
+# would get a CSR, expires}].
+# Output: cert_csr_tickets {id: request number}, cert_csr_on_ticket {id: 'RITM0010001 (attached: x.csr)'}.
+
+- name: Certificate renewal | connection (from the ServiceNow API credential)
+  ansible.builtin.set_fact:
+    _sn_url: >-
+      {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+    _sn_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+
+- name: Certificate renewal | each certificate's requests (by the CSR on them)
+  ansible.builtin.uri:
+    url: >-
+      {{ _sn_url }}/api/now/attachment?sysparm_limit=20&sysparm_fields=sys_id,file_name,table_name,table_sys_id&sysparm_query={{
+      (item.prefix | cert_catalog_query(item.expires | default(''), ['sc_req_item'])) | urlencode }}
+    method: GET
+    url_username: "{{ _sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  loop: "{{ _csr_check_in | selectattr('csr') | list }}"
+  loop_control:
+    label: "{{ item.id }}"
+  register: _coo_found
+  check_mode: false             # only reads
+  when: _sn_url | length > 0
+
+- name: Certificate renewal | each of those requests - its number and state
+  ansible.builtin.uri:
+    url: "{{ _sn_url }}/api/now/table/{{ item.table }}/{{ item.sys_id }}?sysparm_fields=sys_id,number,state"
+    method: GET
+    url_username: "{{ _sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  loop: >-
+    {%- set out = [] -%}
+    {%- for r in _coo_found.results | default([]) -%}
+    {%-   for a in r.json.result | default([]) -%}
+    {%-     set rec = {'table': a.table_name | regex_replace('^ZZ_YY', ''), 'sys_id': a.table_sys_id} -%}
+    {%-     if rec not in out -%}{%- set _ = out.append(rec) -%}{%- endif -%}
+    {%-   endfor -%}
+    {%- endfor -%}
+    {{ out }}
+  loop_control:
+    label: "{{ item.table }} {{ item.sys_id }}"
+  register: _coo_recs
+  failed_when: false            # not readable: counted as an order still there (never a second CSR by mistake)
+  check_mode: false             # only reads
+
+- name: Certificate renewal | the requests, and the CSRs already ordered
+  ansible.builtin.set_fact:
+    cert_csr_tickets: "{{ _coo_map | items2dict(key_name='id', value_name='number') }}"
+    cert_csr_on_ticket: "{{ _coo_map | items2dict(key_name='id', value_name='text') }}"
+  vars:
+    _coo_map: >-
+      {%- set recs = {} -%}
+      {%- for r in _coo_recs.results | default([]) if r.item is defined -%}
+      {%-   set _ = recs.update({r.item.sys_id: r.json.result if r.json.result is defined and r.json.result is mapping
+                                 else {'number': r.item.table ~ ' ' ~ r.item.sys_id, 'state': '?'}}) -%}
+      {%- endfor -%}
+      {%- set reorder = cert_renew_catalog_reorder_states | default([], true) | map('string') | list -%}
+      {%- set out = [] -%}
+      {%- for r in _coo_found.results | default([]) if r.item is defined -%}
+      {%-   set keep = [] -%}
+      {%-   for a in r.json.result | default([]) if a.table_sys_id in recs and recs[a.table_sys_id].state | string not in reorder -%}
+      {%-     set _ = keep.append({'number': recs[a.table_sys_id].number, 'state': recs[a.table_sys_id].state, 'file_name': a.file_name}) -%}
+      {%-   endfor -%}
+      {%-   if keep -%}
+      {%-     set _ = out.append({'id': r.item.id, 'number': keep[0].number,
+                                  'text': keep[0].number ~ ' (' ~ keep[0].state | cert_catalog_state ~ ', attached: ' ~ keep[0].file_name ~ ')'}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}

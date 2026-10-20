@@ -65,7 +65,8 @@ vm_vcenters_read   the vCenters a site_vmware_* module read (its 'vcenters' resu
 vm_vcenter_report  a VMware report with the vCenters that could not be read on top, in red.
 
 vm_snapshot_split  snapshots -> all (oldest first), old (to delete), held (old but never deleted
-                   automatically: keep name, excluded VM, the AAP server, too big - each with a reason).
+                   automatically: keep name, excluded VM / datacenter / cluster, the AAP server, too
+                   big - each with a reason).
 human_size         GB -> '980 MB', '12.4 GB', '1.32 TB'.
 name_matches       does a name match one of these patterns (case-insensitive, * and ? wildcards)?
 vm_snapshot_plan   what the snapshot cleanup deletes: the old ones, or after an approval only the
@@ -950,15 +951,25 @@ def name_matches(name, patterns):
     return any(fnmatch.fnmatchcase(n, str(p).lower()) for p in patterns or [] if str(p).strip())
 
 
+def snapshot_name_words(words):
+    """vm_snapshot_cleanup_name_words as a list: a list as it is, or survey text - one per line, or
+    separated by commas (not spaces: "Patch Tuesday" is one)."""
+    if isinstance(words, str):
+        words = re.split(r"[,\n]", words)
+    return [str(w).strip() for w in words or [] if str(w).strip()]
+
+
 def vm_snapshot_split(snaps, max_age_days, keep_regex="", exclude=None, protected_ids=None, max_size_gb=None,
-                      exclude_datacenters=None, exclude_clusters=None):
+                      exclude_datacenters=None, exclude_clusters=None, name_words=None):
     """Snapshots (site_vmware_snapshots) -> {'all': oldest first, 'old': at least max_age_days old AND
     deletable, 'held': old but never deleted automatically, each with a 'reason'}. Held back: the name
     or description matches keep_regex; the VM matches an exclude pattern; its datacenter or cluster
     matches one of exclude_datacenters / exclude_clusters; the VM is a protected host (its name, guest
-    host name or IP in protected_ids - the AAP server); bigger than max_size_gb, or its size unknown."""
+    host name or IP in protected_ids - the AAP server); name_words given and the name contains none of
+    them (any case: Patch also matches Patching); bigger than max_size_gb, or its size unknown."""
     rx = re.compile(keep_regex) if keep_regex else None
     prot = set(protected_ids or [])
+    words = snapshot_name_words(name_words)
     allsn = sorted(snaps or [], key=lambda x: (-(x.get("age_days") or 0), x.get("vm", ""), x.get("name", "")))
     old, held = [], []
     for x in allsn:
@@ -976,6 +987,8 @@ def vm_snapshot_split(snaps, max_age_days, keep_regex="", exclude=None, protecte
             why = "its cluster %s is on the exclusion list" % x.get("cluster")
         elif ids & prot:
             why = "the VM is the AAP server"
+        elif words and not any(w.lower() in (x.get("name") or "").lower() for w in words):
+            why = "its name has none of: %s" % ", ".join(words)
         elif max_size_gb is not None and size is None:
             why = "its size could not be read"
         elif max_size_gb is not None and float(size) > float(max_size_gb):
@@ -1178,7 +1191,7 @@ class FilterModule(object):
                 "watch_targets": watch_targets, "watch_fix_commands": watch_fix_commands,
                 "watch_allow_patterns": watch_allow_patterns, "vm_facts": vm_facts, "vm_where": vm_where, "vm_ds_row": vm_ds_row, "host_ids": host_ids,
                 "vc_short": vc_short, "act_is_chat_reply": act_is_chat_reply, "vm_dc_label": vm_dc_label, "vm_vcenters_read": vm_vcenters_read, "vm_vcenter_report": vm_vcenter_report,
-                "vm_snapshot_split": vm_snapshot_split, "vm_snapshot_plan": vm_snapshot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "cert_report_section": cert_report_section,
+                "vm_snapshot_split": vm_snapshot_split, "snapshot_name_words": snapshot_name_words, "vm_snapshot_plan": vm_snapshot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "cert_report_section": cert_report_section,
                 "site_correlation_id": site_correlation_id,
                 "human_size": human_size, "name_matches": name_matches,
                 "report_text": report_text, "findings_report": findings_report}

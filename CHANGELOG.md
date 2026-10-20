@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.16.1 — 2026-10-20
+
+**Updating without scripts:** paste `site-automation-0.16.1-changed-since-0.16.0.zip` as it is (from
+0.15.1 to 0.15.10: `site-automation-0.16.1-changed-since-0.15.1.zip`). Both leave out
+`playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. One new job template, *ServiceNow - catalog
+test*, only if you order certificates through the catalog. **A snapshot cleanup workflow's survey keeps its own
+Default:** change it to `5` (below).
+
+**Certificate renewal without incidents - the PKI's catalog item:** with `cert_renew_servicenow: catalog`, the
+certificate renewals (Linux, Windows, VMware, network devices) order your PKI's catalog item - for example *DoD PKI
+Certificate Request* - instead of opening incidents: one request per certificate, your answers
+(`cert_renew_catalog_variables`: references and choices by name or label), the CSR in the item's attachment
+question, the certificate's names in a question you pick. The CSR's name in the order carries the expiring
+certificate's date (`...-exp20261114.csr`): a run again finds the request by it and orders nothing more while it is
+open, in progress or Closed Complete; a request rejected or cancelled (`cert_renew_catalog_reorder_states`) is
+ordered again. vCenter, ESXi hosts and Cisco devices keep one pending key: their request is the CSR's record, as the
+incident was. New job template **ServiceNow - catalog test** (`playbooks/servicenow_catalog_test.yml`): finds the
+item, lists its questions by their internal names, checks the settings, and (`servicenow_catalog_test_order: true`)
+orders it once with a test CSR. The default stays `incident`. docs/CERT_RENEWAL_CATALOG.md.
+
+**VM snapshot cleanup:** snapshots are deleted from **5 days** old by default (was 3:
+`vm_snapshot_max_age_days`). A workflow's survey keeps its own Default: change it to `5` in AAP (the
+workflow > Survey > the question). Two new exclusions: `vm_snapshot_cleanup_exclude_datacenters` and
+`vm_snapshot_cleanup_exclude_clusters` (names, `*` and `?`, any case) - their VMs' snapshots are held
+back, in the report with the reason. The snapshot report reads each VM's cluster for it.
+
+**VM snapshot cleanup: only the snapshots with these words in their name** (new in this release; 0.16.0 and earlier
+ignore the setting and delete every old snapshot) - e.g. only the patching
+snapshots, without the approval workflow: `vm_snapshot_cleanup_name_words: [Patching, Patches, Patch]`
+in `all.yml`, and a cleanup template with `vm_snapshot_cleanup_confirm: true`. Any case, anywhere in
+the name (`Patch` also matches `Patching`); the others are listed as held back, with the reason, and
+never deleted. The age, the keep words, the do-not-touch VMs, the AAP server, the size limit and the
+50-at-once limit still apply. The report and the cleanup's email say the words. `[]` (the default) =
+any name, as before. docs/VMWARE.md, "Only the patching snapshots, without the approval".
+
 ## 0.16.0 — 2026-10-20
 
 **Updating without scripts:** paste `site-automation-0.16.0-changed-since-0.15.10.zip` as it is (from

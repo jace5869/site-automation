@@ -201,17 +201,22 @@ grep -q '"secure_boot_off": \[' "$work/out.txt" && grep -A3 '"secure_boot_off"' 
 run "secure boot report for named VMs only" ok vm_secure_boot_report.yml -e vm_names=DC0_H0_VM1 \
     -- "1 VM(s) (templates not counted): 0 EFI with secure boot, 1 EFI with secure boot OFF, 0 BIOS" "  DC0_H0_VM1  folder /DC0/vm  on DC0_H0  guest web01.example.mil 192.0.2.20"
 
-# ---- snapshot report and cleanup (DC0_C0_RP0_VM1: baseline, multi; DC0_H0_VM0 = AAP: aap-snap; "later" = 5 days on) --
-later=$(( $(date +%s) + 5 * 86400 ))
-run "snapshot report: nothing old yet" ok vm_snapshot_report.yml -- "VMware snapshot report (older than 3 days): nothing to delete; 3 snapshot(s) on 2 VM(s)"
+# ---- snapshot report and cleanup (DC0_C0_RP0_VM1: baseline, multi; DC0_H0_VM0 = AAP: aap-snap; "later" = 7 days on) --
+later=$(( $(date +%s) + 7 * 86400 ))
+run "snapshot report: nothing old yet" ok vm_snapshot_report.yml -- "VMware snapshot report (older than 5 days): nothing to delete; 3 snapshot(s) on 2 VM(s)"
 run "a snapshot to keep (its name says so)" ok vm_snapshot.yml -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=keep-me -- "Took snapshot"
-run "snapshot report five days later: to delete apart, held back apart with the reason, sizes readable" ok vm_snapshot_report.yml -e _vm_now=$later \
-    -- "VMware snapshot report (older than 3 days): 2 to delete (0 MB), 2 held back; 4 snapshot(s) on 2 VM(s)" \
+run "snapshot report seven days later: to delete apart, held back apart with the reason, sizes readable" ok vm_snapshot_report.yml -e _vm_now=$later \
+    -- "VMware snapshot report (older than 5 days): 2 to delete (0 MB), 2 held back; 4 snapshot(s) on 2 VM(s)" \
        "HELD BACK (the VM is the AAP server) DC0_H0_VM0" "HELD BACK (its name or description says keep) DC0_C0_RP0_VM1" \
        "OLD DC0_C0_RP0_VM1" "days old, 0 MB, taken" "jdoe" '"vm_snapshot_cleanup_candidates"' '"held_back"'
 run "exclusion list (wildcards): the VM's snapshots are held back" ok vm_snapshot_report.yml -e _vm_now=$later \
     -e '{"vm_snapshot_cleanup_exclude_vms": ["dc0_c0_*"]}' -- "nothing to delete, 4 held back; 4 snapshot(s) on 2 VM(s)" \
        "HELD BACK (the VM is on the exclusion list) DC0_C0_RP0_VM1"
+run "datacenter exclusion (any case): its VMs' snapshots are held back" ok vm_snapshot_report.yml -e _vm_now=$later \
+    -e '{"vm_snapshot_cleanup_exclude_datacenters": ["dc0"]}' -- "nothing to delete, 4 held back" \
+       "HELD BACK (its datacenter DC0 is on the exclusion list) DC0_C0_RP0_VM1"
+run "cluster exclusion (survey text, wildcards): the snapshots of its VMs are held back" ok vm_snapshot_report.yml -e _vm_now=$later \
+    -e '{"vm_snapshot_cleanup_exclude_clusters": "DC0_C*"}' -- "HELD BACK (its cluster DC0_C0 is on the exclusion list) DC0_C0_RP0_VM1"
 run "vmware_protected_vms is honoured too" ok vm_snapshot_report.yml -e _vm_now=$later -e '{"vmware_protected_vms": ["DC0_C0_RP0_VM?"]}' \
     -- "HELD BACK (the VM is on the exclusion list) DC0_C0_RP0_VM1"
 run "a 1-day limit two days on: the heading says 1 day, every snapshot is old" ok vm_snapshot_report.yml -e _vm_now=$(( $(date +%s) + 2 * 86400 )) \
@@ -221,8 +226,21 @@ run "a limit that is not a number: refused before anything is read as old" fail 
     -- "vm_snapshot_max_age_days must be a number of days"
 run "size limit: bigger than vm_snapshot_cleanup_max_size_gb is held back" ok vm_snapshot_report.yml -e _vm_now=$later -e vm_snapshot_cleanup_max_size_gb=-1 \
     -- "HELD BACK (bigger than"
+# vm_snapshot_cleanup_name_words (read-only here; the deleting run is after the cleanup checks below)
+run "name words: only a name with one of them is to delete (any case), the others held back with the reason" ok vm_snapshot_report.yml \
+    -e _vm_now=$later -e '{"vm_snapshot_cleanup_name_words": ["MULTI"]}' -- "1 to delete (0 MB), 3 held back; 4 snapshot(s) on 2 VM(s)" \
+       "HELD BACK (its name has none of: MULTI) DC0_C0_RP0_VM1" "OLD DC0_C0_RP0_VM1" "OLD = older than 5 days whose name has MULTI"
+run "name words as survey text (commas): the cleanup names them, lists, deletes nothing" ok vm_snapshot_cleanup.yml -e _vm_now=$later \
+    -e '{"vm_snapshot_cleanup_name_words": "Patching, multi"}' \
+    -- "would delete 1 snapshot(s) older than 5 days whose name has Patching or multi (nothing deleted)" 'WOULD DELETE DC0_C0_RP0_VM1: \"multi\"' \
+       'HELD BACK DC0_C0_RP0_VM1: \"baseline\" 0 MB - its name has none of: Patching, multi'
+run "name words, confirmed as a dry run (Check): deletes nothing" ok vm_snapshot_cleanup.yml --check -e _vm_now=$later \
+    -e vm_snapshot_cleanup_confirm=true -e '{"vm_snapshot_cleanup_name_words": ["Patch"]}' \
+    -- "would delete 0 snapshot(s) older than 5 days whose name has Patch (nothing deleted)" "Nothing deleted: a dry run (Check)." \
+       'HELD BACK DC0_C0_RP0_VM1: \"multi\" 0 MB - its name has none of: Patch'
+check "  ...still three" DC0_C0_RP0_VM1 "len(v['snapshots'])" 3
 run "cleanup on its own, not confirmed: lists, deletes nothing, green" ok vm_snapshot_cleanup.yml -e _vm_now=$later \
-    -- "would delete 2 snapshot(s) older than 3 days (nothing deleted)" "WOULD DELETE DC0_C0_RP0_VM1" "HELD BACK DC0_H0_VM0"
+    -- "would delete 2 snapshot(s) older than 5 days (nothing deleted)" "WOULD DELETE DC0_C0_RP0_VM1" "HELD BACK DC0_H0_VM0"
 check "  ...all three still there" DC0_C0_RP0_VM1 "len(v['snapshots'])" 3
 run "cleanup confirmed but more than vm_snapshot_cleanup_max: refused" fail vm_snapshot_cleanup.yml -e _vm_now=$later \
     -e vm_snapshot_cleanup_confirm=true -e vm_snapshot_cleanup_max=1 -- "Refused: 2 snapshots"
@@ -238,13 +256,22 @@ approved="{\"vm_snapshot_cleanup_candidates\": [{\"vm\": \"DC0_C0_RP0_VM1\", \"m
            {\"vm\": \"gone01\", \"moid\": \"vm-999\", \"id\": 1, \"name\": \"old\"},
            {\"vm\": \"DC0_H0_VM0\", \"moid\": \"$aapmoid\", \"id\": $aapsnap, \"name\": \"aap-snap\"}]}"
 run "cleanup after the approval: only the approved snapshot - never the AAP server's, even if listed" ok vm_snapshot_cleanup.yml -e _vm_now=$later \
-    -e "$approved" -- "deleted 1 snapshot(s) older than 3 days" 'DELETED DC0_C0_RP0_VM1: \"multi\"' "NOT DELETED gone01" "NOT DELETED DC0_H0_VM0"
+    -e "$approved" -- "deleted 1 snapshot(s) older than 5 days" 'DELETED DC0_C0_RP0_VM1: \"multi\"' "NOT DELETED gone01" "NOT DELETED DC0_H0_VM0"
 check "  ...baseline (old, not approved) and keep-me remain" DC0_C0_RP0_VM1 "','.join(s['name'] for s in v['snapshots'])" "baseline,keep-me"
 check "  ...the AAP server's snapshot remains" DC0_H0_VM0 "len(v['snapshots'])" 1
 run "cleanup confirmed: deletes the old one, never keep-me or the AAP server's" ok vm_snapshot_cleanup.yml -e _vm_now=$later -e vm_snapshot_cleanup_confirm=true \
     -- "deleted 1 snapshot(s)" 'DELETED DC0_C0_RP0_VM1: \"baseline\"'
 check "  ...only keep-me remains" DC0_C0_RP0_VM1 "','.join(s['name'] for s in v['snapshots'])" "keep-me"
 check "  ...and aap-snap" DC0_H0_VM0 "len(v['snapshots'])" 1
+run "a patching snapshot" ok vm_snapshot.yml -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=Pre-Patching-Oct -- "Took snapshot"
+run "and one that is not" ok vm_snapshot.yml -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=app-upgrade -- "Took snapshot"
+run "cleanup confirmed with name words: deletes the patching one only" ok vm_snapshot_cleanup.yml -e _vm_now=$later -e vm_snapshot_cleanup_confirm=true \
+    -e '{"vm_snapshot_cleanup_name_words": ["Patching", "Patches", "Patch"]}' \
+    -- "deleted 1 snapshot(s) older than 5 days whose name has Patching, Patches or Patch" 'DELETED DC0_C0_RP0_VM1: \"Pre-Patching-Oct\"' \
+       'HELD BACK DC0_C0_RP0_VM1: \"app-upgrade\" 0 MB - its name has none of: Patching, Patches, Patch'
+check "  ...keep-me and app-upgrade remain" DC0_C0_RP0_VM1 "','.join(s['name'] for s in v['snapshots'])" "keep-me,app-upgrade"
+run "  (app-upgrade deleted again, for the checks below)" ok vm_snapshot_delete.yml -e vm_names=DC0_C0_RP0_VM1 -e vm_snapshot_name=app-upgrade \
+    -- "DC0_C0_RP0_VM1: deleted app-upgrade"
 
 # ---- datastore report (read-only; vcsim's LocalDS_0 is about 1% used) -------------------------------
 run "datastore report, default thresholds: all below 80%, green" ok vm_datastore_report.yml \
@@ -296,8 +323,8 @@ run "cleanup again, nothing left to delete: no email" ok vm_snapshot_cleanup.yml
     -e "$mail" -e vm_snapshot_cleanup_email_only_if_deleted=true -- "No email: nothing was deleted"
 run "snapshot report emailed" ok vm_snapshot_report.yml -e _vm_now=$later -e "$mail" -- "emailed"
 eml4="$(ls "$work/mail"/*.eml | sort -V | tail -1)"
-getpart html "$eml4" | grep -q ">keep-me<" && grep -q "Subject: \[AAP\] VMware snapshot report (older than 3 days): " "$eml4" \
-    && getpart html "$eml4" | grep -q "VMware snapshot report (older than 3 days): " && getpart html "$eml4" | grep -q "Older than 3 days, held back" \
+getpart html "$eml4" | grep -q ">keep-me<" && grep -q "Subject: \[AAP\] VMware snapshot report (older than 5 days): " "$eml4" \
+    && getpart html "$eml4" | grep -q "VMware snapshot report (older than 5 days): " && getpart html "$eml4" | grep -q "Older than 5 days, held back" \
     && echo "ok   -   ...the snapshot table in the email, the age limit in the subject and headings" || { echo "FAIL -   ...snapshot email"; fails=$((fails + 1)); }
 run "datastore report emailed" ok vm_datastore_report.yml -e vm_datastore_warn_pct=0.5 -e "$mail" -- "emailed"
 eml3="$(ls "$work/mail"/*.eml | sort -V | tail -1)"
@@ -1718,7 +1745,43 @@ run "vmware_cert_only that matches nothing: refused, nothing sent" fail vmware_c
     -- "vmware_cert_only (nosuchhost) matches none of the vCenters and hosts read"
 (unset SN_HOST; RUN_PORT=$port3 run "a host that is not connected: listed as not checked, the job stays green" ok vmware_cert_renew.yml \
     -- "1 not checked" "DC0_C1_H1" "not connected (disconnected)") || fails=$((fails + 1))
+# cert_renew_servicenow: catalog - the CSR ordered from the PKI's catalog item, no incident; the request is the CSR's record
+csn_port3=$((port + 47))
+SNMOCK_LOG="$work/csn3.jsonl" "$py" "$repo/tests/servicenow/snmock.py" "$csn_port3" >/dev/null 2>&1 &
+csn_pid3=$!
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$csn_port3") 2>/dev/null && break; sleep 0.1; done
+: > "$work/csn3.jsonl"
+export SN_HOST="http://127.0.0.1:$csn_port3"
+ccat='{"vmware_cert_warn_days": 30000, "vmware_cert_only": "DC0_H0", "cert_renew_servicenow": "catalog",
+       "cert_renew_catalog_item": "DoD PKI Certificate Request", "cert_renew_catalog_variables": {"requested_for": "jdoe", "contact_method": "email"}}'
+run "catalog, dry run: it would make the CSR and order it - no incident, nothing sent" ok vmware_cert_renew.yml --check -e "$ccat" \
+    -- "DC0_H0 | DC0_H0.csr | would make the CSR, and order it"
+[ "$(sent_since csn3 0 POST /)$(sent_since csn3 0 PATCH /)" = 00 ] && echo "ok   -   ...nothing sent" || { echo "FAIL -   ...the dry run sent"; fails=$((fails + 1)); }
+run "catalog: the host makes the CSR, it is ordered - one request, the CSR in its question, no incident" ok vmware_cert_renew.yml -e "$ccat" \
+    -- "ORDERED RITM" "| DC0_H0 | DC0_H0-" "the CSR is in the request (its question csr_file)"
+"$py" - "$work/csn3.jsonl" <<'EOPY' && echo "ok   -   ...one order; the CSR named for the host and the certificate's expiry; no incident" || { echo "FAIL -   ...the order"; fails=$((fails + 1)); }
+import json, re, sys
+rows = [json.loads(l) for l in open(sys.argv[1])]
+orders = [r for r in rows if r["path"].endswith("/order_now")]
+ups = [r for r in rows if r["method"] == "POST" and r["path"] == "/api/now/attachment/file"]
+sys.exit(0 if len(orders) == 1 and orders[0]["body"]["variables"].get("csr_file") and len(ups) == 1
+         and re.match(r"^DC0_H0-[0-9a-f]{8}-exp[0-9]{8}\.csr$", ups[0]["query"]["file_name"]) and "BEGIN CERTIFICATE REQUEST" in ups[0]["body"]["raw"]
+         and not [r for r in rows if "/table/incident" in r["path"]] else 1)
+EOPY
+ritm_v="$(grep -oE 'ORDERED RITM[0-9]+' "$work/out.txt" | head -1 | grep -oE 'RITM[0-9]+')"
+n1=$(cn csn3)
+run "catalog, again: its request is the CSR's record - no second CSR, no second order" ok vmware_cert_renew.yml -e "$ccat" \
+    -- "its CSR is on $ritm_v (Open, attached: DC0_H0-" "ORDERED ALREADY | DC0_H0"
+grep -A1 "make the CSRs" "$work/out.txt" | grep -q skipping && [ "$(sent_since csn3 "$n1" POST /)" = 0 ] \
+    && echo "ok   -   ...no CSR made, nothing sent" || { echo "FAIL -   ...a second CSR or order"; fails=$((fails + 1)); }
+sid_v="$(curl -s -u api:goodpw "$SN_HOST/api/now/table/sc_req_item?sysparm_query=number=$ritm_v" | "$py" -c 'import json, sys; print(json.load(sys.stdin)["result"][0]["sys_id"])')"
+curl -s -u api:goodpw -X PATCH -H 'Content-Type: application/json' -d '{"state": "7"}' "$SN_HOST/api/now/table/sc_req_item/$sid_v" >/dev/null
+n1=$(cn csn3)
+run "catalog, its request cancelled (Closed Skipped): a new CSR (a new key on the host), and a new order" ok vmware_cert_renew.yml -e "$ccat" \
+    -- "ORDERED RITM" "| DC0_H0 | DC0_H0-" "the CSR is in the request"
+[ "$(sent_since csn3 "$n1" POST /api/sn_sc/servicecatalog)" = 1 ] && ! grep -q "ORDERED RITM.*$ritm_v" "$work/out.txt" \
+    && echo "ok   -   ...one new order, not the cancelled one" || { echo "FAIL -   ...the new order"; fails=$((fails + 1)); }
 unset SN_HOST SN_USERNAME SN_PASSWORD
-kill "$csn_pid" "$csn_pid2" 2>/dev/null
+kill "$csn_pid" "$csn_pid2" "$csn_pid3" 2>/dev/null
 
 if [ "$fails" -eq 0 ]; then echo "ok   - all VMware scenarios passed"; else echo "$fails FAILED"; exit 1; fi

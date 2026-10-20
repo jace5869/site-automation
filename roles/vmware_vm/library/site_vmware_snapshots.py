@@ -9,7 +9,7 @@ DOCUMENTATION = r'''
 module: site_vmware_snapshots
 short_description: Read the snapshots of every VM in vCenter (read-only)
 description:
-  - Lists every snapshot of every VM (or the VMs of one datacenter): VM, folder, snapshot name,
+  - Lists every snapshot of every VM (or the VMs of one datacenter): VM, folder, cluster, snapshot name,
     description, when it was taken and by whom, its age in days, and the disk space it holds.
   - The size of a snapshot is the space it keeps on the datastore - its memory and state files
     plus the delta disks written after it was taken (as the vSphere client shows it).
@@ -34,7 +34,7 @@ snapshots:
   description: One entry per snapshot.
   type: list
   returned: success
-  sample: [{vm: web01, moid: vm-42, vcenter: vc01.example.mil, datacenter: DC1, folder: /DC1/vm/Linux, hostname: web01.example.mil, ip: 192.0.2.3,
+  sample: [{vm: web01, moid: vm-42, vcenter: vc01.example.mil, datacenter: DC1, folder: /DC1/vm/Linux, cluster: PROD-CL01, hostname: web01.example.mil, ip: 192.0.2.3,
             power: poweredOn, name: before-patch,
             id: 7, description: "CHG123", taken_by: "CORP\\jdoe", created: "2026-10-01T12:00:00Z", age_days: 4.8, size_gb: 12.4,
             quiesced: false, memory: false, current: true, depth: 0}]
@@ -140,6 +140,19 @@ def _folder(obj):
     return "/" + "/".join([dc] + list(reversed(names))) if dc else "/" + "/".join(reversed(names)), dc
 
 
+def _cluster(host, seen):
+    """The name of the cluster an ESXi host is in ('' for a standalone host, or when it cannot be read)."""
+    if host is None:
+        return ""
+    if host._moId not in seen:
+        try:
+            parent = host.parent
+            seen[host._moId] = parent.name if isinstance(parent, vim.ClusterComputeResource) else ""
+        except Exception:
+            seen[host._moId] = ""
+    return seen[host._moId]
+
+
 def _walk(nodes, parent, depth, out, children):
     for n in nodes or []:
         key = n.snapshot._moId
@@ -150,14 +163,14 @@ def _walk(nodes, parent, depth, out, children):
 
 
 def _read(content, p, now, vcenter):
-    out = []
+    out, clusters = [], {}
     view = content.viewManager.CreateContainerView(content.rootFolder, [vim.VirtualMachine], True)
     spec = vmodl.query.PropertyCollector.FilterSpec(
         objectSet=[vmodl.query.PropertyCollector.ObjectSpec(
             obj=view, skip=True,
             selectSet=[vmodl.query.PropertyCollector.TraversalSpec(name="v", path="view", skip=False, type=vim.view.ContainerView)])],
         propSet=[vmodl.query.PropertyCollector.PropertySpec(type=vim.VirtualMachine,
-                                                             pathSet=["name", "snapshot", "runtime.powerState",
+                                                             pathSet=["name", "snapshot", "runtime.powerState", "runtime.host",
                                                                       "guest.hostName", "guest.ipAddress"])])
     for o in content.propertyCollector.RetrieveContents([spec]):
         pr = {x.name: x.val for x in o.propSet}
@@ -190,6 +203,7 @@ def _read(content, p, now, vcenter):
                 created = created.replace(tzinfo=datetime.timezone.utc)
             age = (now - created.timestamp()) / 86400.0
             out.append({"vm": pr.get("name", ""), "moid": vm._moId, "vcenter": vcenter, "datacenter": dc, "folder": folder,
+                        "cluster": _cluster(pr.get("runtime.host"), clusters),
                         "hostname": pr.get("guest.hostName") or "", "ip": pr.get("guest.ipAddress") or "",
                         "power": str(pr.get("runtime.powerState") or ""), "name": n.name, "id": int(n.id),
                         "description": n.description or "", "taken_by": who.get(key, ""),

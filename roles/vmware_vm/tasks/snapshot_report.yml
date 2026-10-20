@@ -2,7 +2,8 @@
 # SNAPSHOT REPORT (read-only): every snapshot of every VM (or of vmware_datacenter) - VM, name,
 # created, age, size, folder, description - oldest first; those vm_snapshot_max_age_days or older
 # listed apart: the ones the cleanup would delete, and the ones it never deletes (keep name, excluded
-# VM, the AAP server, bigger than vm_snapshot_cleanup_max_size_gb) with the reason.
+# VM, the AAP server, a name without vm_snapshot_cleanup_name_words, bigger than
+# vm_snapshot_cleanup_max_size_gb) with the reason.
 # Printed, emailed (report_email_to), and published as artifacts: vm_snapshots, plus the list the
 # cleanup may delete after an approval (vm_snapshot_cleanup_candidates).
 - name: VMware | a vCenter credential is attached
@@ -33,7 +34,7 @@
       VMware snapshot report (older than {{ _vm_sn_days }}): {{ (parts | join(', ') ~ '; ' ~ _vm_sn.all | length ~ ' snapshot(s) on ' ~ _vm_sn_vms ~ ' VM(s)')
                                                               if _vm_sn.all else 'no snapshots' }}
     _vm_report_lines: >-
-      {%- set out = [_vm_sn.all | length ~ ' snapshot(s) on ' ~ _vm_sn_vms ~ ' VM(s), ' ~ _vm_sn_all_gb ~ ' - OLD = older than ' ~ _vm_sn_days] -%}
+      {%- set out = [_vm_sn.all | length ~ ' snapshot(s) on ' ~ _vm_sn_vms ~ ' VM(s), ' ~ _vm_sn_all_gb ~ ' - OLD = older than ' ~ _vm_sn_days ~ _vm_sn_named] -%}
       {%- set held = {} -%}{%- for h in _vm_sn.held -%}{%- set _ = held.update({h | vm_snap_vm_key ~ '#' ~ h.id: h.reason}) -%}{%- endfor -%}
       {%- for x in _vm_sn.all -%}
       {%-   set k = x | vm_snap_vm_key ~ '#' ~ x.id -%}
@@ -46,7 +47,7 @@
       {%- set cols = ['VM', 'Snapshot', 'Taken (UTC)', 'Taken by', 'Age (days)', 'Size', 'Folder', 'Description'] -%}
       {%- set sections = [] -%}
       {%- if _vm_sn.old -%}
-      {%-   set _ = sections.append({'title': 'To delete: older than ' ~ _vm_sn_days, 'status': 'warning', 'columns': cols,
+      {%-   set _ = sections.append({'title': 'To delete: older than ' ~ _vm_sn_days ~ _vm_sn_named, 'status': 'warning', 'columns': cols,
                                      'rows': _vm_sn.old | map('vm_snap_row', _vm_sn_multi) | list,
                                      'text': 'The snapshot cleanup deletes these (in the workflow: after the approval). Old snapshots slow the VM down and fill the datastore.'}) -%}
       {%- endif -%}
@@ -63,6 +64,7 @@
       {%- endif -%}
       {{ {'title': _vm_report_subject | trim, 'status': 'warning' if _vm_sn.old else 'ok',
           'subtitle': 'Every snapshot is listed below, whatever its age; the ones older than ' ~ _vm_sn_days ~ ' are listed apart, for the cleanup'
+                      ~ ((' (it deletes only those' ~ _vm_sn_named ~ ')') if _vm_sn_named else '')
                       ~ (' - datacenter ' ~ vmware_datacenter if vmware_datacenter else ''),
           'summary': [{'label': 'VMs with snapshots', 'value': _vm_sn_vms | int}, {'label': 'Snapshots', 'value': _vm_sn.all | length},
                       {'label': 'Total size', 'value': _vm_sn_all_gb},

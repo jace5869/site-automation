@@ -541,6 +541,11 @@ request (CSR) on the host: a certificate in a file (text or binary), one served 
 keystore. It attaches the CSR to the certificate's ServiceNow incident. The renewal sends no email:
 the CSR goes on the ticket (ServiceNow's own notifications tell its assignment group). Making a CSR
 changes nothing in use: the old certificate works until it expires.
+
+**No incidents, the PKI's catalog item instead:** with `cert_renew_servicenow: catalog` each CSR is
+ordered from your PKI's catalog item (one request per certificate, the CSR in its CSR question):
+[CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md). It applies to the Windows, VMware and network
+device renewals too.
 vCenter's and the ESXi hosts' certificates have a job of their own, which opens the incidents and makes the CSRs
 on vCenter and the hosts: `VMware - certificate renewal` - and a report of them alone, `VMware - certificate report`
 ([VMWARE.md](VMWARE.md), "Certificates of vCenter and the ESXi hosts").

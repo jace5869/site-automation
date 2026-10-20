@@ -56,6 +56,10 @@ sent. An expired, self-signed or untrusted certificate is read like any other.
 
 ## The renewal
 
+With `cert_renew_servicenow: catalog` there is no incident: a CSR made on a Cisco device (`net_cert_cisco_csr`)
+is ordered from your PKI's catalog item, and the other devices are in the report only:
+[CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md).
+
 **The incident only** (the default, `net_cert_cisco_csr: false`): one incident per certificate due, for
 `servicenow_assignment_group`, with the steps: make the CSR on the device (its web interface or CLI - the key
 stays there), have the PKI sign it, import the issued certificate and its chain the way the vendor says. A run

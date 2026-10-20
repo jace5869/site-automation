@@ -533,6 +533,14 @@ File: `roles/servicenow/defaults/main.yml`
 | `servicenow_check_mid` | `true` | servicenow_health.yml: also check the MID Servers (needs read access to the ecc_agent table) |
 | `servicenow_slow_seconds` | `5` | the API answering slower than this -> warning |
 | `servicenow_test_resolve` | `true` | servicenow_test_ticket.yml: resolve the test incident at the end (false = leave it open to look at) |
+| `cert_renew_servicenow` | `incident` | How the CSRs the certificate renewals make (Linux, Windows, VMware, network devices) go to the PKI. incident: each one is attached to its certificate's incident, with a work note saying what to do next - a person submits it to the PKI. catalog: each one is ordered from your PKI's catalog item (cert_renew_catalog_item)… (all of it: the role file) |
+| `cert_renew_catalog_item` | (empty) | The catalog item: its name exactly as the catalog shows it (e.g. "DoD PKI Certificate Request"), or its sys_id. |
+| `cert_renew_catalog_variables` | `{}` | The item's questions - by their internal names, as the catalog test lists them - and the answers: {name: answer}. A reference (Requested For, Location ...): the record's name, or its sys_id. A choice: its value or its label. In an answer, {host}, {subject}, {names}, {expires}, {issuer} and {where} become the certifica… (all of it: the role file) |
+| `cert_renew_catalog_csr_variable` | (empty) | The attachment question that gets the CSR (its internal name). Empty = the item's only attachment question. |
+| `cert_renew_catalog_names_variable` | (empty) | A question that gets the certificate's names (subjectAltName), e.g. a "List any additional SANs" box. Empty = none. |
+| `cert_renew_catalog_reorder_states` | `["4", "7"]` | A request closed in one of these states (a requested item's: 4 Closed Incomplete, 7 Closed Skipped - rejected or cancelled) is ordered again on the next run. In any other state - open, in progress, Closed Complete (the PKI issued it: install it) - the certificate is not ordered again. |
+| `cert_renew_catalog_upload_table` | `ZZ_YYsc_cart_item` | Where the CSR is uploaded before the order, for the attachment question (ServiceNow moves it to the request). |
+| `servicenow_catalog_test_order` | `false` | servicenow_catalog_test.yml: true = also order the item once, with a test CSR - the PKI gets a real request (tell them first, or cancel it). false = only read the item and check the settings. |
 
 ## site_act
 
@@ -664,9 +672,12 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_datastore_warn_pct` | `85` | Used space (% of capacity): a datastore at or above these is listed as a warning / critical. |
 | `vm_datastore_crit_pct` | `90` | a datastore this % used or more is red (critical); amber from vm_datastore_warn_pct |
 | `vm_datastore_fail` | `false` | The job stays green when datastores are full: the report and email say which. true = mark the job FAILED when one is at or above vm_datastore_warn_pct (or inaccessible), for workflows. |
-| `vm_snapshot_max_age_days` | `3` | Snapshots at least this many days old: listed apart by the report, deleted by the cleanup. |
+| `vm_snapshot_max_age_days` | `5` | Snapshots at least this many days old: listed apart by the report, deleted by the cleanup. |
 | `vm_snapshot_keep_regex` | `'(?i)keep\|do.?not.?delete'` | Never deleted by the cleanup (the report lists them, with the reason): - a snapshot whose name or description matches this |
 | `vm_snapshot_cleanup_exclude_vms` | `[]` | - a snapshot of these VMs: names, * and ? allowed (e.g. [DC*, VCSA01, AAP01]). The VMs in vmware_protected_vms and the AAP server are never cleaned up either. |
+| `vm_snapshot_cleanup_exclude_datacenters` | `[]` | - a snapshot of a VM in these vCenter datacenters: names, * and ? allowed, any case (e.g. [DRSITE]) |
+| `vm_snapshot_cleanup_exclude_clusters` | `[]` | - a snapshot of a VM running in these clusters: names, * and ? allowed, any case (e.g. [SQL*, MGMT*]). A VM on a host that is in no cluster is not matched. |
+| `vm_snapshot_cleanup_name_words` | `[]` | - with words here, a snapshot whose name contains none of them: only a name with one is deleted (any case; Patch also matches Patching and Patches - and dispatch). E.g. [Patching, Patches, Patch]: only the patching snapshots. [] = any name. Set it in all.yml, so the report lists the same. |
 | `vm_snapshot_cleanup_max_size_gb` | `1024` | - a snapshot bigger than this many GB (1024 = 1 TB), or whose size cannot be read: merging a very big snapshot can take hours and slow the VM - do those by hand, at a quiet time. |
 | `vm_snapshot_cleanup_confirm` | `false` | The cleanup on its own (not after a workflow approval) deletes only when this is true - e.g. a survey question "Delete them?". false = it lists what it would delete, and deletes nothing. |
 | `vm_snapshot_cleanup_max` | `50` | Refuse to delete more than this many snapshots in one run (a typo in the age would otherwise delete them all). Raise it on purpose for a big cleanup. |

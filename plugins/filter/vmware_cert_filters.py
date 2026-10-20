@@ -156,7 +156,7 @@ def vmware_cert_csr_result(due, made, opts=None):
         elif c.get("renew") == "vmca":
             r["reason"] = "signed by vCenter's own CA (VMCA): renew it in %s" % VMCA_RENEW.get(kind, "vCenter")
         elif c.get("id") in on:
-            m2 = re.search(r"\(attached: (.+)\)$", str(on[c["id"]]))
+            m2 = re.search(r"attached: (.+)\)$", str(on[c["id"]]))
             r.update(status="exists", already="its CSR is on %s already" % on[c["id"]], file_name=m2.group(1) if m2 else r["file_name"])
         elif not o.get("make_csr", True):
             r["reason"] = "vmware_cert_make_csr: false - the incident only"

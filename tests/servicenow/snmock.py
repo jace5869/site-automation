@@ -23,6 +23,17 @@ body, its Content-Type kept), GET /api/now/attachment?sysparm_query=table_sys_id
 SNMOCK_NO_ATTACH=1: an attachment is refused (403, as an instance that does not allow the extension).
 SNMOCK_ATTACH_TXT_ONLY=1: an attachment whose name does not end in .txt is refused (400 "Invalid file type:
 text/plain", as an instance that checks the type against the name).
+GET /api/now/attachment/<sys_id>: one attachment's record. An attachment may go to a ZZ_YY table (an attachment
+question's file) with any table_sys_id: nothing has to exist there.
+Service Catalog API: one item, "DoD PKI Certificate Request" (CATALOG_ID), with the questions of the PKI's form
+(an attachment question for the CSR, references to sys_user / cmn_location, a select box).
+GET /api/sn_sc/servicecatalog/items?sysparm_text=X (items whose name has X), GET .../items/<id> (its questions),
+POST .../items/<id>/order_now {variables}: a mandatory question left empty -> 400; else a request (sc_request,
+REQ...) and its requested item (sc_req_item, RITM..., request = the REQ's sys_id, its answers kept), and the file
+an attachment question names moved to the RITM (ZZ_YYsc_req_item) - SNMOCK_SC_KEEP_ATTACHMENT=1: left where it
+was uploaded (an instance that does not move it). SNMOCK_SC_REFUSE=1: every order refused (400).
+SNMOCK_HIDE_ZZYY=1: an attachment search (GET /api/now/attachment?sysparm_query=...) leaves out the ZZ_YY ones.
+cmn_location: Building 100 (loc1); sys_user also has jdoe (u2, "Jane Doe").
 Usage: snmock.py PORT   (requests appended to $SNMOCK_LOG as JSON lines)
 """
 import base64
@@ -35,7 +46,25 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 USERS = {"api": ("goodpw", True), "ro": ("goodpw", False)}
 GROUPS = [{"sys_id": "g1", "name": "Linux Operations", "active": "true"}]
-SYSUSERS = [{"sys_id": "u1", "user_name": "svc_aap", "active": "true"}]
+SYSUSERS = [{"sys_id": "u1", "user_name": "svc_aap", "name": "AAP Service", "active": "true"},
+            {"sys_id": "u2", "user_name": "jdoe", "name": "Jane Doe", "active": "true"}]
+LOCATIONS = [{"sys_id": "loc1" + "0" * 28, "name": "Building 100"}]
+CATALOG_ID = "c0ffee" + "0" * 26
+CATALOG = {CATALOG_ID: {"sys_id": CATALOG_ID, "name": "DoD PKI Certificate Request",
+                        "short_description": "DoD PKI Certificate request for Servers and Network devices",
+                        "variables": [
+                            {"name": "title_rank", "label": "Title/Rank:", "type": 6, "mandatory": False},
+                            {"name": "requested_for", "label": "Requested For", "type": 31, "mandatory": True},
+                            {"name": "email", "label": "Email:", "type": 6, "mandatory": False},
+                            {"name": "dsn", "label": "DSN:", "type": 6, "mandatory": False},
+                            {"name": "contact_method", "label": "Preferred method of contact", "type": 5, "mandatory": True,
+                             "choices": [{"value": "", "label": "-- None --"}, {"value": "email", "label": "Email"},
+                                         {"value": "phone", "label": "Phone"}]},
+                            {"name": "location", "label": "Location:", "type": 8, "mandatory": False, "reference": "cmn_location"},
+                            {"name": "note", "label": "Please provide the CSR ...", "type": 11, "mandatory": False},
+                            {"name": "csr_file", "label": "Please add CSR", "type": 33, "mandatory": True},
+                            {"name": "additional_sans", "label": "List any additional Subject Alternative Names (SAN)", "type": 2,
+                             "mandatory": False}]}}
 INCIDENTS = {}
 ATTACHMENTS = []
 COUNTER = [10000]
@@ -43,7 +72,8 @@ LOG = os.environ.get("SNMOCK_LOG", "snmock.jsonl")
 STATE_LABEL = {"1": "New", "2": "In Progress", "6": "Resolved", "7": "Closed"}
 TASK_LABEL = {"1": "Open", "2": "Work in Progress", "3": "Closed Complete", "4": "Closed Incomplete", "7": "Closed Skipped",
               "-5": "New", "-4": "Assess", "-3": "Authorize", "-2": "Scheduled", "-1": "Implement", "0": "Review"}
-PREFIX = {"incident": "INC", "sc_task": "SCTASK", "change_request": "CHG", "change_task": "CTASK"}
+PREFIX = {"incident": "INC", "sc_task": "SCTASK", "change_request": "CHG", "change_task": "CTASK", "sc_request": "REQ",
+          "sc_req_item": "RITM"}
 APPROVAL_LABEL = {"approved": "Approved", "requested": "Requested", "not requested": "Not Yet Requested", "rejected": "Rejected"}
 
 
@@ -193,6 +223,8 @@ class H(BaseHTTPRequestHandler):
             return fail("User Not Authenticated", "Required to provide Auth information", 401)
         if parts[:3] == ["api", "now", "attachment"]:
             return self.attachment(method, parts, q, body, user)
+        if parts[:4] == ["api", "sn_sc", "servicecatalog", "items"]:
+            return self.catalog(method, parts[4:], q, body, user)
         if parts[:3] != ["api", "now", "table"] or len(parts) < 4:
             return 404, {"error": {"message": "Requested URI does not represent any resource"}}
         table = parts[3]
@@ -202,8 +234,15 @@ class H(BaseHTTPRequestHandler):
             want = q.get("sysparm_query", "").partition("=")[2]
             return 200, {"result": [g for g in GROUPS if g["name"] == want]}
         if table == "sys_user":
-            want = q.get("sysparm_query", "").partition("=")[2]
+            query = q.get("sysparm_query", "")
+            if "^OR" in query:                          # user_name=x^ORname=x
+                want = [c.partition("=")[2] for c in query.split("^OR")]
+                return 200, {"result": [u for u in SYSUSERS if u["user_name"] == want[0] or u["name"] == want[1]]}
+            want = query.partition("=")[2]
             return 200, {"result": [u for u in SYSUSERS if u["user_name"] == want]}
+        if table == "cmn_location":
+            want = q.get("sysparm_query", "").partition("=")[2]
+            return 200, {"result": [x for x in LOCATIONS if x["name"] == want]}
         if table == "ecc_agent":
             return 200, {"result": []}
         if table == "task" and method == "GET" and not sys_id:
@@ -268,9 +307,49 @@ class H(BaseHTTPRequestHandler):
             return 200, {"result": {"number": rec["number"], "state": rec["state"]}}
         return 405, {"error": {"message": "Method not allowed"}}
 
+    def catalog(self, method, rest, q, body, user):
+        if method == "GET" and not rest:
+            text = q.get("sysparm_text", "").lower()
+            return 200, {"result": [{k: i[k] for k in ("sys_id", "name", "short_description")}
+                                    for i in CATALOG.values() if text in i["name"].lower()]}
+        item = CATALOG.get(rest[0]) if rest else None
+        if item is None:
+            return 404, {"error": {"message": "Catalog item not found", "detail": ""}}
+        if method == "GET" and len(rest) == 1:
+            return 200, {"result": item}
+        if method == "POST" and rest[1:] == ["order_now"]:
+            if not user[1]:
+                return fail("Operation Failed", "ACL Exception: not allowed to order", 403)
+            if os.environ.get("SNMOCK_SC_REFUSE") == "1":
+                return 400, {"error": {"message": "Order could not be placed", "detail": "the item is not available"}}
+            answers = body.get("variables") or {}
+            missing = [v["name"] for v in item["variables"] if v.get("mandatory") and not answers.get(v["name"])]
+            if missing:
+                return 400, {"error": {"message": "Mandatory Variables are required", "detail": ", ".join(missing)}}
+            COUNTER[0] += 1
+            req = {"sys_id": uuid.uuid4().hex, "number": "REQ00%d" % COUNTER[0], "state": "1", "_table": "sc_request"}
+            INCIDENTS[req["sys_id"]] = req
+            COUNTER[0] += 1
+            ritm = {"sys_id": uuid.uuid4().hex, "number": "RITM00%d" % COUNTER[0], "state": "1", "_table": "sc_req_item",
+                    "request": req["sys_id"], "cat_item": item["sys_id"], "_variables": dict(answers),
+                    "short_description": item["name"], "work_notes_list": []}
+            INCIDENTS[ritm["sys_id"]] = ritm
+            for v in item["variables"]:
+                if v["type"] == 33 and answers.get(v["name"]) and os.environ.get("SNMOCK_SC_KEEP_ATTACHMENT") != "1":
+                    for a in ATTACHMENTS:
+                        if a["sys_id"] == answers[v["name"]]:
+                            a.update(table_name="ZZ_YYsc_req_item", table_sys_id=ritm["sys_id"])
+            return 200, {"result": {"sys_id": req["sys_id"], "number": req["number"], "request_number": req["number"],
+                                    "request_id": req["sys_id"], "table": "sc_request"}}
+        return 405, {"error": {"message": "Method not allowed"}}
+
     def attachment(self, method, parts, q, body, user):
+        if method == "GET" and len(parts) == 4:
+            a = next((x for x in ATTACHMENTS if x["sys_id"] == parts[3]), None)
+            return (200, {"result": a}) if a else (404, {"error": {"message": "Record doesn't exist or ACL restricts the record retrieval"}})
         if method == "GET" and len(parts) == 3:
-            rows = [a for a in ATTACHMENTS if matches(a, q.get("sysparm_query", ""))]
+            rows = [a for a in ATTACHMENTS if matches(a, q.get("sysparm_query", ""))
+                    and not (os.environ.get("SNMOCK_HIDE_ZZYY") == "1" and a["table_name"].startswith("ZZ_YY"))]
             rows = rows[:int(q.get("sysparm_limit", "10000"))]
             return 200, {"result": [pick(a, q.get("sysparm_fields")) for a in rows]}
         if method == "POST" and parts[3:] == ["file"]:
@@ -281,7 +360,7 @@ class H(BaseHTTPRequestHandler):
             if os.environ.get("SNMOCK_ATTACH_TXT_ONLY") == "1" and not q.get("file_name", "").endswith(".txt"):
                 return 400, {"error": {"message": "Invalid file type: %s" % body.get("content_type", "")}}
             rec = INCIDENTS.get(q.get("table_sys_id"))
-            if rec is None or rec.get("_table", "incident") != q.get("table_name"):
+            if not q.get("table_name", "").startswith("ZZ_YY") and (rec is None or rec.get("_table", "incident") != q.get("table_name")):
                 return 400, {"error": {"message": "Invalid table or record"}}
             a = {"sys_id": uuid.uuid4().hex, "table_name": q["table_name"], "table_sys_id": q["table_sys_id"],
                  "file_name": q.get("file_name", ""), "content_type": body.get("content_type", ""),
