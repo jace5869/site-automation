@@ -468,8 +468,9 @@ tickets, 1 deleted since)`.
 - **The window** is the last `vm_created_days` (7) days up to the moment the job starts. Run every
   Friday at noon, each report covers about Friday noon to Friday noon (a job that starts a minute late
   moves the window by that minute).
-- **The ticket** comes from the notes the deploy writes on each VM (*"Deployed from ... for INC... by
-  ..."*); a VM built by hand has none. Templates are not counted.
+- **The ticket** comes from the notes the deploy writes on each VM - their first line, *"INC0012345 -
+  built 2026-10-20"*, and *"Template: ..."* under it (VMs built by older releases: *"Deployed from ... for
+  INC... by ..."*); a VM built by hand has none. Templates are not counted.
 
 ### Set up the report, every Friday at noon
 
@@ -1128,7 +1129,7 @@ Every message of the deploy, its workflow and the scheduled pickup, with what to
 | You see | It means | Do |
 |---|---|---|
 | *By* is `unknown` | vCenter no longer has the VM's creation event (it keeps them for a limited time), or the VM was created on a host directly | nothing: the VM still counts, by its creation date |
-| *Ticket* is `-` for a VM the deploy built | its notes in vCenter were edited, so they no longer say *"Deployed from ... for <ticket>"* | nothing for the count; the ticket's own notes say which VM it built |
+| *Ticket* is `-` for a VM the deploy built | its notes in vCenter were edited, so they no longer have the ticket's line (*"<ticket> - built <date>"*) | nothing for the count; the ticket's own notes say which VM it built |
 | a VM restored from a backup is listed | a restore creates a new VM in vCenter | nothing: to vCenter it is new |
 | `vm_created_days must be a number of days` | the setting is not a number | `vm_created_days: 7` |
 

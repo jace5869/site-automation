@@ -466,10 +466,8 @@ The pickup's messages: *When something goes wrong*, *The scheduled pickup*.
 in the second survey question, *Service*. Left empty, nothing of this step happens. Picked, it does two
 things for every VM of the ticket:
 
-- **The VM's notes in vCenter** get the service's words after the deploy sentence: *Deployed from
-  rhel9-gold for CHG0001234 by AAP job 812, 2026-10-18 UTC. SQL Server.* - the ticket's mark
-  (`[site-automation ticket=... state=built]`) stays on its own line under it. (The VMs created report
-  still reads the first sentence.)
+- **The VM's notes in vCenter** get the service's words on a line of their own, under the ticket's line,
+  the template and the job (*Where the notes go*, below): *Service: SQL Server*.
 - **With an inventory**, each VM joins that AAP inventory and group right after its own build, before its
   note on the ticket - a job stopped between two VMs leaves each VM it built in AAP. It is added by its
   name, with `deployed_ticket`, `deployed_service`, `deployed_on` and (when it has one) `deployed_ip` as its
@@ -578,8 +576,8 @@ and on the ticket. A workflow cannot run as Check: for a preview, launch the job
    each VM would go, and writes nothing on the ticket.
 4. **Build.** "[AAP] Deploying ..." on the ticket first (no note = nothing built), then each VM in turn:
    clone, CPU, memory, disks, customization (or network boot), power on, wait for its IP address - then,
-   with a service that has an AAP inventory, the VM joins it. Each VM carries the ticket in its notes from
-   the clone on (`[site-automation ticket=CTASK0001235 state=building]`, then `state=built`): a job that
+   with a service that has an AAP inventory, the VM joins it. Each VM carries the ticket on the first line
+   of its notes from the clone on (*CTASK0001235 - building 2026-10-20*, then *built*): a job that
    stopped is picked up where it stopped.
 5. **Result.** One note per VM, written as soon as that VM is done: "[AAP] VM ab01web05 deployed" with its
    IP (or MAC for a network boot) - and, with a service, the AAP inventory it joined.
@@ -588,10 +586,8 @@ and on the ticket. A workflow cannot run as Check: for a preview, launch the job
 
 **Each VM, in detail:**
 
-- It is cloned from the template, **powered off**, with the ticket's mark in its notes
-  (`[site-automation ticket=CTASK0010009 state=building]`) and the deploy sentence (*Deployed from
-  rhel9-gold for CTASK0010009 by AAP job 812, 2026-10-18 UTC.*, then the service's words when one was
-  picked).
+- It is cloned from the template, **powered off**, with its notes (*Where the notes go*, below): the ticket's
+  line first, *CTASK0010009 - building 2026-10-18*.
 - CPU, memory and disks are set: `disks_gb: 120, 200` grows disk 1 to 120 GB (never shrinks it) and adds
   a 200 GB disk (thin).
 - **Guest customization:** Linux - the host name is the VM's name, every network adapter on DHCP, the
@@ -600,7 +596,8 @@ and on the ticket. A workflow cannot run as Check: for a preview, launch the job
   (*Empty templates*).
 - It is powered on; the job waits for vCenter's customization result (`vm_deploy_wait_customization`,
   900 s) and for an IPv4 address from VMware Tools (`vm_deploy_wait_ip`, 600 s).
-- Its mark becomes `state=built` (`state=failed` when its customization failed), and its note goes on the
+- Its notes' first line becomes *CTASK0010009 - built 2026-10-18* (*failed* when its customization
+  failed), and its note goes on the
   ticket: IP address, customization result, vCenter, cluster, host, datastore, folder, size. On a failure:
   what failed, and whether a (partly set up) VM exists.
 - The network is the template's: its adapter is on your staging VLAN, and so is the new VM.
@@ -847,9 +844,21 @@ Always:
 - A note the other ticket does not take (the account cannot update it) is a warning, not a failure.
 - The requester answers a question with a **comment** on the ticket; a later comment wins over the
   description. Then run the job (or workflow) again.
-- **In vCenter**, each VM's notes say which ticket built it: *Deployed from rhel9-gold for CHG0001234 by
-  AAP job 812, 2026-10-18 UTC.* (+ the service's words), and the mark on its own line. The *VM - VMs created*
-  report reads that sentence.
+- **In vCenter**, each VM's notes say which ticket built it, one line each:
+
+  ```
+  CHG0001234 - built 2026-10-18
+  Template: rhel9-gold
+  AAP job 812 (operator1)
+  Service: SQL Server
+  Notes: the ticket's VM notes
+  ```
+
+  The first line is the ticket's mark: a run of the ticket again finds its VMs by it (*Run it again*,
+  below), and the *VM - VMs created* report reads the ticket and the template from it. *building* while
+  the job builds it, *failed* when its customization failed; the date is the day it was marked (UTC).
+  *Service* and *Notes* only when the ticket has them. Lines you add under them, or above, are kept by
+  vCenter and change nothing; edit the first line and the job no longer knows the VM.
 
 ## Several VMs on one ticket
 
@@ -899,10 +908,11 @@ web03`, `2 VMs: web01 and web02`.
 ## Run it again: it picks up where it stopped
 
 A job that stopped part way - a VM failed, the job was cancelled or timed out, AAP restarted - is run
-again for the same ticket, and **picks up where it stopped**. Each VM carries its ticket in its notes
-from the clone on (`[site-automation ticket=CTASK0010009 state=building]`, then `state=built` once it is
-up and its customization result is in), so the job knows its own VMs even when a result note never
-reached the ticket:
+again for the same ticket, and **picks up where it stopped**. Each VM carries its ticket on the first line
+of its notes from the clone on (*CTASK0010009 - building 2026-10-18*, then *built* once it is up and its
+customization result is in), so the job knows its own VMs even when a result note never reached the
+ticket. VMs built by releases before this one carry *[site-automation ticket=CTASK0010009 state=built]*
+instead - read the same way, and their notes rewritten in the new layout when one is finished:
 
 | The VM in vCenter | Run again |
 |---|---|
@@ -921,7 +931,7 @@ finished in place."*). The ticket is closed once all of them are built.
 - VMs built by an earlier release (no mark; their notes begin *"Deployed from TEMPLATE for CTASK0010009 by"* -
   the ticket's number written anywhere else does not count): powered on or with the ticket's *"[AAP] VM
   web01 deployed"* note - left as they are; powered off - finished in place.
-- Built, but its **guest customization failed** (`state=failed`): refused - check it, delete it, run again.
+- Built, but its **guest customization failed** (marked *failed*): refused - check it, delete it, run again.
 - `vm_deploy_resume: false`: the way of earlier releases - a VM the ticket's own *"[AAP] VM web01 deployed"*
   note names is left as it is; any other VM with the name is refused, and one started is never finished.
 - The PXE / MECM case works the same: each VM gets its own MAC address on its own note.
@@ -1594,7 +1604,7 @@ each step with `VMware |`; the line that failed names the step.
 | `Nothing was built: ServiceNow refused the work note` | the account cannot update that table | give it write access to work notes; nothing was built, by design |
 | `a VM named ... already exists in vCenter ...` | the name is taken by a VM this ticket did not build (its notes do not carry the ticket) | another name in a comment - or nothing to do, when it is the right VM |
 | `a VM named web01 already exists` on a ticket that built it | the VM's notes no longer name the ticket (edited), or the ticket has no "deployed" note for it | check that it is the right VM; delete it to build again, or close the ticket by hand |
-| `an earlier run of this ticket built it, and its guest customization failed` | its mark says `state=failed` | check the VM's events in vCenter, delete it, run the job again |
+| `an earlier run of this ticket built it, and its guest customization failed` | its notes' first line says *failed* | check the VM's events in vCenter, delete it, run the job again |
 | `Nothing was built: ... 1 of 3 cannot be: - web03: ...` | several VMs: one fails the check in vCenter (name taken, no template, no datastore with room ...) - none is built | fix that one (or the ticket), run again |
 | `lacks the privilege VirtualMachine.Provisioning...` (or another) | the vCenter account's role | grant it (*Set it up*, step 2) |
 | `lacks the privilege System.View on host-...` | the account's role is on the cluster without **Propagate to children**, or the host is in a cluster it has no role on | the role on those clusters (and the template's) with **Propagate to children**, or a Global Permission. A host's name for an ID: `https://<vcenter>/mob/?moid=host-...` |

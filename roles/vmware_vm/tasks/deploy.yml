@@ -24,6 +24,7 @@
       {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
     _vd_sn_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
     _vd_job: "{{ ('AAP job ' ~ awx_job_id) if awx_job_id is defined else 'AAP' }}{{ (' by ' ~ awx_user_name) if awx_user_name is defined else '' }}"
+    _vd_job_note: "{{ ('AAP job ' ~ awx_job_id) if awx_job_id is defined else 'ansible-playbook' }}{{ (' (' ~ awx_user_name ~ ')') if awx_user_name is defined else '' }}"
     # the plain-words rules (vm_deploy_plain_words), one dict expression (ansible-core 2.16 keeps its types)
     _vd_words: >-
       {{ {'on': vm_deploy_plain_words | bool, 'templates': vm_deploy_plain_templates | default({}, true),

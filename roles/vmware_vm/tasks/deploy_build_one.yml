@@ -22,10 +22,11 @@
     folders_allowed: "{{ vm_deploy_folders }}"
     cpu: "{{ _vd_i.spec.cpu | default(0) | int }}"
     memory_mb: "{{ ((_vd_i.spec.memory_gb | default(0) | float) * 1024) | int }}"
+    # the VM's notes, one line each - the module puts the ticket's line on top (CTASK0010009 - built 2026-10-20)
     annotation: >-
-      {{ ('Deployed from ' ~ _vd_i.spec.template ~ ' for ' ~ _vd_rec.number ~ ' by ' ~ _vd_job ~ ', ' ~ now(utc=true).strftime('%Y-%m-%d') ~ ' UTC.'
-          ~ ((' ' ~ _vd_svc.note) if (_vd_svc | default({})).note | default('') else '')
-          ~ ((' ' ~ _vd_i.spec.notes) if _vd_i.spec.notes is defined else '')) | truncate(1000) }}
+      {{ (['Template: ' ~ _vd_i.spec.template, _vd_job_note]
+          + (['Service: ' ~ _vd_svc.note] if (_vd_svc | default({})).note | default('') else [])
+          + (['Notes: ' ~ _vd_i.spec.notes | trim] if _vd_i.spec.notes | default('') | trim else [])) | join(_vd_nl) | truncate(1000) }}
     domain: "{{ _vd_i.spec.domain | default(vm_deploy_domain, true) }}"
     customization_spec: "{{ _vd_i.spec.customization_spec | default('') }}"
     disks_gb: "{{ _vd_i.spec.disks_gb | default([]) }}"
@@ -57,6 +58,8 @@
   register: _vd_one
   check_mode: "{{ _vd_dry | bool or _vd_pre | default(false) | bool }}"  # the propose step resolves the placement (read-only) like a dry run
   ignore_errors: true                 # the failure is written on the ticket and reported; the job fails at the end
+  vars:
+    _vd_nl: "\n"                       # a real newline: '\n' inside {{ }} in a >- block stays a backslash and n
 
 - name: VMware | {{ _vd_i.spec.vm_name }} - checked
   ansible.builtin.set_fact:

@@ -97,6 +97,19 @@ class VmCreated(unittest.TestCase):
         gone = rows[0]
         self.assertEqual((gone["deleted"], gone["how"], gone["removed"] != ""), (True, "created new", True))
 
+    def test_the_ticket_and_template_from_the_notes(self):
+        new = "CTASK0010009 - built 2026-10-20\nTemplate: Windows 2022 gold\nAAP job 42 (operator1)\nService: SQL Server"
+        self.assertEqual(vc.aap_note(new), ("CTASK0010009", "Windows 2022 gold"))
+        self.assertEqual(vc.aap_note("CTASK0010009 - building 2026-10-20"), ("CTASK0010009", ""))   # no Template line (edited)
+        self.assertEqual(vc.aap_note("Patched 2026-10-20\n" + new), ("CTASK0010009", "Windows 2022 gold"))  # a line added on top
+        old = "Deployed from rhel9-gold for INC0012345 by AAP job 42 (operator1), 2026-10-09 UTC.\n[site-automation ticket=INC0012345 state=built]"
+        self.assertEqual(vc.aap_note(old), ("INC0012345", "rhel9-gold"))
+        for other in ("", "Web server - built by hand", "db - built 2026-10-20 by Bob", "Template: x"):
+            self.assertIsNone(vc.aap_note(other), other)
+        rows = vc.created_rows([{"moid": "vm-1", "name": "sql01", "created": self.NOW - self.DAY, "template": False, "annotation": new}], [],
+                               self.SINCE, self.NOW)
+        self.assertEqual((rows[0]["ticket"], rows[0]["template"], rows[0]["aap"]), ("CTASK0010009", "Windows 2022 gold", True))
+
     def test_no_events_a_vm_still_counts_by_its_date(self):
         rows = vc.created_rows([{"moid": "vm-1", "name": "a", "created": self.NOW - self.DAY, "template": False, "annotation": ""}], [],
                                self.SINCE, self.NOW)

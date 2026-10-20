@@ -14,7 +14,8 @@ description:
   - Every VM created in the last C(days) days (or in one datacenter): when (the VM's creation date,
     vSphere 6.7 and later; else its creation event), by whom and how (vCenter's events - cloned from a
     VM, deployed from a template, created new), the ticket and template when the AAP deploy built it
-    (its notes say "Deployed from ... for <ticket> by ..."), where it is, its size and power state.
+    (its notes: "<ticket> - built <date>" and "Template: ...", or from older releases "Deployed
+    from ... for <ticket> by ..."), where it is, its size and power state.
   - VMs created in the window and deleted since are listed too, from vCenter's events (vCenter keeps
     them for a limited time, often 30 days).
   - Templates are not VMs here. vCenter's address and account come from VMWARE_HOST, VMWARE_USER,
@@ -66,8 +67,23 @@ except ImportError:
 
 CREATE = ("VmCreatedEvent", "VmClonedEvent", "VmDeployedEvent")
 REMOVE = ("VmRemovedEvent",)
-# the notes the AAP deploy writes on a VM (roles/vmware_vm/tasks/deploy_build.yml)
+# the notes the AAP deploy writes on a VM (roles/vmware_vm/tasks/deploy_build_one.yml, site_vmware_deploy):
+# "CTASK0010009 - built 2026-10-20" then "Template: rhel9-gold"; older releases one sentence,
+# "Deployed from rhel9-gold for CTASK0010009 by ..."
+AAP_STATUS = re.compile(r"^(?P<ticket>\S+) - (?:building|built|failed) \d{4}-\d{2}-\d{2}[ \t]*$", re.M)
+AAP_TEMPLATE = re.compile(r"^Template: (?P<template>.+?)[ \t]*$", re.M)
 AAP_NOTE = re.compile(r"^Deployed from (?P<template>.+?) for (?P<ticket>\S+) by ")
+
+
+def aap_note(annotation):
+    """The ticket and template the AAP deploy wrote in a VM's notes -> (ticket, template), or None (not built by it)."""
+    a = str(annotation or "")
+    m = AAP_STATUS.search(a)
+    if m:
+        t = AAP_TEMPLATE.search(a)
+        return m.group("ticket"), t.group("template") if t else ""
+    m = AAP_NOTE.match(a)
+    return (m.group("ticket"), m.group("template")) if m else None
 
 
 def _iso(t):
@@ -112,10 +128,10 @@ def created_rows(vms, events, since, until):
         t = v.get("created") or first
         if not t or not since <= t < until:
             continue
-        m = AAP_NOTE.match(str(v.get("annotation") or ""))
+        m = aap_note(v.get("annotation"))
         row = dict((k, x) for k, x in v.items() if k not in ("created", "template", "annotation"))
-        row.update(vm=v.get("name", ""), created=_iso(t), by=user, how=how, ticket=m.group("ticket") if m else "",
-                   template=m.group("template") if m else "", aap=bool(m), deleted=False, removed="")
+        row.update(vm=v.get("name", ""), created=_iso(t), by=user, how=how, ticket=m[0] if m else "",
+                   template=m[1] if m else "", aap=bool(m), deleted=False, removed="")
         rows.append((t, row))
     for key, evs in by_vm.items():
         if key in living:

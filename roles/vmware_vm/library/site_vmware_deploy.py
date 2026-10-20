@@ -17,11 +17,12 @@ description:
     computer name set to the host name), powers it on, and waits for vCenter's customization result
     and for an IPv4 address from VMware Tools.
   - Check mode resolves everything (template, cluster, datastore, folder) and builds nothing.
-  - The VM carries its ticket in its notes from the clone on ([site-automation ticket=NUMBER
-    state=building]; state=built once it is up and its customization result is in, state=failed when
-    that failed). Run again for the same ticket, a VM it built is left as it is, one it started and did
-    not finish (cloned, not yet powered on) is finished where it is, one whose customization failed is
-    refused - the job picks up where it stopped.
+  - The VM carries its ticket on the first line of its notes from the clone on (NUMBER - building
+    DATE; built once it is up and its customization result is in, failed when that failed), the
+    annotation under it. Run again for the same ticket, a VM it built is left as it is, one it started
+    and did not finish (cloned, not yet powered on) is finished where it is, one whose customization
+    failed is refused - the job picks up where it stopped. The mark of older releases
+    ([site-automation ticket=NUMBER state=built]) is read the same way.
   - vCenter's address and account come from VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD (and
     VMWARE_PORT), as a "VMware vCenter" credential in AAP gives them.
 options:
@@ -41,10 +42,10 @@ options:
   disks_gb: {description: "Disk sizes in GB: the first grows the template's first disk (never shrinks it), the others are added (thin). Empty = the template's disks.", type: list, elements: int, default: []}
   cpu: {description: vCPUs; 0 = as the template., type: int, default: 0}
   memory_mb: {description: Memory in MB; 0 = as the template., type: int, default: 0}
-  annotation: {description: The VM's notes., type: str, default: ''}
+  annotation: {description: "The VM's notes (with a ticket, under its line: CTASK0010009 - built 2026-10-20).", type: str, default: ''}
   existing_ok: {description: "An earlier run built this VM for the ticket (the ticket's own note says so): when a VM with the name exists and its notes name the ticket, it is reported as it is and nothing is built (a ticket of several VMs run again after one failed). Off = an existing name is refused.", type: bool, default: false}
   ticket: {description: "The ticket's number: written in the new VM's notes (the mark a run of the same ticket finds again); with existing_ok, the existing VM's notes must name it.", type: str, default: ''}
-  resume: {description: "A VM with the name whose notes carry this ticket's mark: built (state=built) - reported as it is; started by an earlier run and not finished (state=building) - finished where it is; its customization failed (state=failed) - refused. false = only existing_ok (the ticket's note) leaves one as it is.", type: bool, default: true}
+  resume: {description: "A VM with the name whose notes carry this ticket's mark: built - reported as it is; started by an earlier run and not finished (building) - finished where it is; its customization failed (failed) - refused. false = only existing_ok (the ticket's note) leaves one as it is.", type: bool, default: true}
   folders_allowed: {description: "The folders a VM may go in (vm_deploy_folders; * and ?): the folder found is checked against them - a path below the VM folder, or a name for a pattern without /.", type: list, elements: str, default: []}
   datastore_exclude: {description: "Datastores never chosen for this VM (names; * and ?) - e.g. the ones kept for SQL servers.", type: list, elements: str, default: []}
   datastore_planned: {description: "GB already planned on datastores by the VMs before this one in the same run ({name: GB}): counted as used, so the VMs of one ticket spread out.", type: dict, default: {}}
@@ -273,27 +274,34 @@ def new_disks(adds):
     return [{"key": -101 - i, "controllerKey": ctrl, "unitNumber": unit, "capacityInKB": kb} for i, (ctrl, unit, kb) in enumerate(adds)]
 
 
+# the ticket's mark in a VM's notes: their first line, "CTASK0010009 - built 2026-10-20" (the VMs created report,
+# site_vmware_vm_created, reads it too); older releases wrote "[site-automation ticket=CTASK0010009 state=built]"
+STATUS = re.compile(r"^(\S+) - (building|built|failed) (\d{4}-\d{2}-\d{2})[ \t]*$", re.M)
 MARK = re.compile(r"\[site-automation ticket=(\S+) state=(building|built|failed)\]")
 
 
-def with_mark(annotation, ticket, state):
-    """The VM's notes with the ticket's mark at the end (any earlier mark replaced)."""
-    text = MARK.sub("", str(annotation or "")).rstrip()
-    return ((text + "\n") if text else "") + "[site-automation ticket=%s state=%s]" % (ticket, state)
+def with_mark(annotation, ticket, state, day=None):
+    """The VM's notes: the ticket's line first (state, and the day - UTC - it was written), the annotation
+    under it; any earlier mark taken out."""
+    lines = [MARK.sub("", ln).rstrip() for ln in str(annotation or "").splitlines() if not STATUS.match(ln)]
+    body = "\n".join(lines).strip("\n")
+    head = "%s - %s %s" % (ticket, state, day or time.strftime("%Y-%m-%d", time.gmtime()))
+    return head + ("\n" + body if body else "")
 
 
 def read_mark(annotation, ticket):
-    """What a VM's notes say about the ticket -> 'built' / 'building' / 'failed' (its mark: built and checked; cloned,
-    not finished; built, its customization failed), 'legacy' (the notes an older release wrote: 'Deployed from
-    TEMPLATE for NUMBER by ...' - never the number written anywhere else), '' (another ticket's, or none). The
-    number exactly, never a longer one that starts with it."""
+    """What a VM's notes say about the ticket -> 'built' / 'building' / 'failed' (its mark, this release's or an older
+    one's: built and checked; cloned, not finished; built, its customization failed), 'legacy' (the notes a release
+    before the marks wrote: 'Deployed from TEMPLATE for NUMBER by ...' - never the number written anywhere else),
+    '' (another ticket's, or none). The number exactly, never a longer one that starts with it."""
     t, a = str(ticket or "").strip().lower(), str(annotation or "")
     if not t:
         return ""
-    for num, state in MARK.findall(a):
+    marks = [(num, state) for num, state, _ in STATUS.findall(a)] + MARK.findall(a)
+    for num, state in marks:
         if num.lower() == t:
             return state
-    if MARK.search(a):
+    if marks:
         return ""
     return "legacy" if re.match(r"deployed from \S.* for %s by " % re.escape(t), a.strip().lower()) else ""
 

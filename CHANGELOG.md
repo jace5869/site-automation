@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.16.2 — 2026-10-20
+
+**Updating without scripts:** paste `site-automation-0.16.2-changed-since-0.16.1.zip` as it is (from
+0.15.1 to 0.16.0: `site-automation-0.16.2-changed-since-0.15.1.zip`). Both leave out
+`playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. No new settings, no new job templates:
+nothing to change in `all.yml` or in AAP.
+
+**VM deploy - the VM's notes in vCenter, one line each.** The deploy wrote one long sentence and a tag
+under it (*Deployed from rhel9-gold for CHG0001234 by AAP job 812 by operator1, 2026-10-18 UTC.* and
+*[site-automation ticket=CHG0001234 state=built]*). Now:
+
+```
+CHG0001234 - built 2026-10-18
+Template: rhel9-gold
+AAP job 812 (operator1)
+Service: SQL Server
+Notes: the ticket's VM notes
+```
+
+The first line is the ticket's mark (*building* while the job builds it, *failed* when its customization
+failed); *Service* and *Notes* only when the ticket has them. Nothing to change: VMs built by earlier
+releases are still found by a run of their ticket again (picked up where it stopped, their notes then
+rewritten in the new layout), and the VMs created report reads the ticket and template from both.
+
 ## 0.16.1 — 2026-10-20
 
 **Updating without scripts:** paste `site-automation-0.16.1-changed-since-0.16.0.zip` as it is (from

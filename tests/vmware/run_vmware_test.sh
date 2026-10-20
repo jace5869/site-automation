@@ -960,8 +960,8 @@ EOPY
 run "...the name freed, run again: both built, the ticket closed" ok vm_deploy_from_ticket.yml \
     -e vm_deploy_ticket="$incp" -e "$rules" -e "$words" -e "$close6" \
     -- "2 VMs (multi03, multi04) deployed" "multi03: deployed" "multi04: deployed" "Ticket closed: close_notes = VMs deployed by AAP"
-VMWARE_PORT=$port "$py" "$here/vcsim.py" state | "$py" -c "import json,sys; v=json.load(sys.stdin)['multi04'][0]; sys.exit(0 if '[site-automation ticket=$incp state=built]' in v['annotation'] else 1)" \
-    && echo "ok   -   ...each VM marked for its ticket in its notes (state=built)" || { echo "FAIL -   ...the ticket mark"; fails=$((fails + 1)); }
+VMWARE_PORT=$port "$py" "$here/vcsim.py" state | "$py" -c "import json,re,sys; v=json.load(sys.stdin)['multi04'][0]; sys.exit(0 if re.match(r'$incp - built \d{4}-\d{2}-\d{2}\nTemplate: ', v['annotation']) else 1)" \
+    && echo "ok   -   ...each VM marked for its ticket on the first line of its notes (built)" || { echo "FAIL -   ...the ticket mark"; fails=$((fails + 1)); }
 # a job of three VMs that stopped after the first two: one built (no result note), one cloned and not finished
 incs="$(newticket $'Server names:\r\n- rsm01\r\n- rsm02\r\n- rsm03\r\nRHEL 9, 2 cpus, 4gb ram')"
 VMWARE_PORT=$port "$py" - "$incs" <<'EOPY' || { echo "ABORT - the earlier run's VMs"; exit 1; }
@@ -986,7 +986,7 @@ run "three VMs, run again after a job stopped: the one built left, the one start
     -e vm_deploy_ticket="$incs" -e "$rules" -e "$words" -e "$close6" \
     -- "3 VMs (rsm01, rsm02, rsm03) deployed" "rsm01: already built (left as it is)" "rsm02: deployed" "rsm03: deployed" \
        "picked up rsm02 where an earlier run of this ticket stopped" "Ticket closed: close_notes = VMs deployed by AAP"
-"$py" - "$work/sn.jsonl" "$nr" "$vstate" "$incs" <<'EOPY' && echo "ok   -   ...the work notes say where it picked up; rsm02 powered on and marked built" || { echo "FAIL -   ...resume notes"; fails=$((fails + 1)); }
+"$py" - "$work/sn.jsonl" "$nr" "$vstate" "$incs" <<'EOPY' && echo "ok   -   ...the work notes say where it picked up; rsm02 (an older release's mark) powered on, its notes in the new layout" || { echo "FAIL -   ...resume notes"; fails=$((fails + 1)); }
 import json, subprocess, sys
 rows = [json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):] if '"PATCH"' in l]
 notes = [r["body"].get("work_notes", "") for r in rows]
@@ -997,7 +997,8 @@ ok = (dep and "Picking up where an earlier run for this ticket stopped:\n- rsm01
       and any(n.startswith("[AAP] VM rsm01 deployed (") and "Built by an earlier run for this ticket: left as it is." in n for n in notes)
       and any(n.startswith("[AAP] VM rsm02 deployed (") and "Picked up where an earlier run for this ticket stopped" in n for n in notes)
       and any(n.startswith("[AAP] VM rsm03 deployed (") for n in notes)
-      and vms["rsm02"]["power"] == "poweredOn" and "[site-automation ticket=%s state=built]" % sys.argv[4] in vms["rsm02"]["annotation"])
+      and vms["rsm02"]["power"] == "poweredOn" and vms["rsm02"]["annotation"].startswith("%s - built " % sys.argv[4])
+      and "[site-automation" not in vms["rsm02"]["annotation"] and "Deployed from" not in vms["rsm02"]["annotation"])
 print([(n.splitlines() or [""])[0] for n in notes], vms["rsm02"]["power"])
 sys.exit(0 if ok else 1)
 EOPY
@@ -1527,7 +1528,7 @@ sys.exit(0 if len(log) == 2 and a["added"] == "svc01.example.mil" and a["invento
          and a["variables"]["deployed_service"] == "web" and "ansible_host" not in a["variables"] and a["description"].startswith("Built by AAP job 4711")
          and log[1]["joined"] == "web" else 1)
 EOPY
-VMWARE_PORT=$port "$py" - "$svc1" <<'EOPY' && echo "ok   -   ...the VM's notes: the deploy sentence first (the VMs created report reads it), the service, the ticket's mark" || { echo "FAIL -   ...VM notes"; fails=$((fails + 1)); }
+VMWARE_PORT=$port "$py" - "$svc1" <<'EOPY' && echo "ok   -   ...the VM's notes: the ticket's line, then the template, the job and the service, one line each" || { echo "FAIL -   ...VM notes"; fails=$((fails + 1)); }
 import os, re, sys
 from pyVim.connect import SmartConnect
 from pyVmomi import vim
@@ -1535,10 +1536,10 @@ si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="u
 c = si.RetrieveContent()
 v = [x for x in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if x.name == "svc01"][0]
 a = v.config.annotation or ""
-m = re.match(r"^Deployed from (?P<template>.+?) for (?P<ticket>\S+) by ", a)
-print(a)
-sys.exit(0 if m and m.group("ticket") == sys.argv[1] and m.group("template") == "rhel9-gold" and " UTC. Web server for the test." in a
-         and re.search(r"\[site-automation ticket=%s state=built\]$" % re.escape(sys.argv[1]), a) else 1)
+lines = a.split("\n")
+print(lines)
+sys.exit(0 if len(lines) == 4 and re.match(r"^%s - built \d{4}-\d{2}-\d{2}$" % re.escape(sys.argv[1]), lines[0])
+         and lines[1:] == ["Template: rhel9-gold", "AAP job 4711 (operator1)", "Service: Web server for the test."] else 1)
 EOPY
 "$py" - "$work/sn.jsonl" "$n1" <<'EOPY' && echo "ok   -   ...the ticket's result note says the service and the AAP inventory" || { echo "FAIL -   ...result note"; fails=$((fails + 1)); }
 import json, sys
@@ -1599,7 +1600,7 @@ svc4="$(newticket $'vm_name: svc04\ntemplate: rhel9-gold')"
 (unset CONTROLLER_HOST; run "service with the notes only (no inventory): no AAP credential needed" ok vm_deploy_from_ticket.yml \
     -e vm_deploy_ticket="$svc4" -e "$rules" -e "$svcs" -e vm_deploy_service=test -- "VM deploy $svc4: svc04 deployed" 'Service: test - in the VM notes: \"Test box.\"') \
     || fails=$((fails + 1))
-check "  ...its notes have the service's words after the deploy sentence" svc04 "'UTC. Test box.\\n[site-automation ticket=' in v['annotation']" "True"
+check "  ...its notes have the service's words on their own line, last" svc04 "v['annotation'].split('\\n')[1:]" "['Template: rhel9-gold', 'AAP job 4711 (operator1)', 'Service: Test box.']"
 kill "$aap_pid" "$aap_pid2" 2>/dev/null
 unset CONTROLLER_HOST CONTROLLER_USERNAME CONTROLLER_PASSWORD
 

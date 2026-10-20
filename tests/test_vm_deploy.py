@@ -424,11 +424,23 @@ class ModuleParts(unittest.TestCase):
         self.assertTrue(all(d["key"] < 0 for d in nd))
 
     def test_the_ticket_mark_on_the_vm(self):
-        a = m.with_mark("Deployed from rhel9-gold for CTASK0010009 by job 12.", "CTASK0010009", "building")
-        self.assertTrue(a.endswith("\n[site-automation ticket=CTASK0010009 state=building]"))
+        body = "Template: rhel9-gold\nAAP job 12 (operator1)\nService: SQL Server"
+        a = m.with_mark(body, "CTASK0010009", "building", "2026-10-20")
+        self.assertEqual(a, "CTASK0010009 - building 2026-10-20\n" + body)     # the ticket's line on top, one line each under it
         self.assertEqual(m.read_mark(a, "ctask0010009"), "building")
-        b = m.with_mark(a, "CTASK0010009", "built")                       # the mark replaced, never two
-        self.assertEqual((b.count("[site-automation"), m.read_mark(b, "CTASK0010009")), (1, "built"))
+        b = m.with_mark(a, "CTASK0010009", "built", "2026-10-21")         # the mark replaced, never two
+        self.assertEqual(b, "CTASK0010009 - built 2026-10-21\n" + body)
+        self.assertEqual(m.read_mark(b, "CTASK0010009"), "built")
+        self.assertRegex(m.with_mark("", "CTASK0010009", "built"), r"^CTASK0010009 - built \d{4}-\d{2}-\d{2}$")   # today, UTC
+        self.assertEqual(m.read_mark("Patched 2026-11-02 by ops\n" + b, "CTASK0010009"), "built")   # a line added on top
+        # an older release's mark: read, and replaced by the new line
+        old = "Deployed from rhel9-gold for CTASK0010009 by job 12.\n[site-automation ticket=CTASK0010009 state=building]"
+        self.assertEqual(m.read_mark(old, "CTASK0010009"), "building")
+        c = m.with_mark(old, "CTASK0010009", "built", "2026-10-21")
+        self.assertEqual(c, "CTASK0010009 - built 2026-10-21\nDeployed from rhel9-gold for CTASK0010009 by job 12.")
+        self.assertEqual(m.read_mark(m.with_mark("x", "CHG1", "built"), "CTASK0010009"), "")   # another ticket's, new mark
+        self.assertEqual(m.read_mark("Deployed from x for CTASK0010009 by job 12.\nCHG1 - built 2026-10-20", "CTASK0010009"), "")
+        self.assertEqual(m.read_mark("CTASK0010009 - built by hand", "CTASK0010009"), "")      # not the mark: no date
         self.assertEqual(m.read_mark(b, "CTASK001000"), "")                # never a longer number that starts with it
         self.assertEqual(m.read_mark("Deployed from x for CTASK0010009 by job 12.", "CTASK0010009"), "legacy")
         self.assertEqual(m.read_mark("Deployed from x for CTASK00100091 by job 12.", "CTASK0010009"), "")
