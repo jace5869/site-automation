@@ -184,6 +184,18 @@ switch ($Scenario) {
             'Cert:\LocalMachine\AuthRoot'    = @(O @{ Subject = 'CN=wu'; Thumbprint = $l; NotAfter = $now.AddDays(1); HasPrivateKey = $true })
         }
     }
+    'certs_meta' {
+        # real certificates (tests/fixtures/pki): what the inventory reads from each - issuer, names, key, tier ...
+        $cfg = @{ warn_days = 30; crit_days = 7; expired_report_days = 30; notice_days = 60; stores = @('Cert:\LocalMachine\My'); endpoints = @() }
+        $pki = Join-Path $PSScriptRoot '..\fixtures\pki'
+        $real = @()
+        foreach ($n in 'root', 'int', 'web', 'self') {
+            $pem = Get-Content -LiteralPath (Join-Path $pki "$n.pem") -Raw
+            $b64 = ($pem -replace '-----[A-Z ]+-----', '' -replace '\s', '')
+            $real += @(New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList (, [Convert]::FromBase64String($b64)))
+        }
+        $M.certs = @{ 'Cert:\LocalMachine\My' = $real }
+    }
     { $_ -in @('certs_rdp', 'certs_rdp_on') } {
         # Remote Desktop: its own store, the certificate RDP uses, one for Remote Desktop only - left out unless remote_desktop
         $cfg = @{ warn_days = 30; crit_days = 7; expired_report_days = 30; notice_days = 60; stores = @('Cert:\LocalMachine\My', 'Cert:\LocalMachine\Remote Desktop'); trust = $true; trust_skip_stores = @('Disallowed', 'AuthRoot', 'REQUEST', 'SMS'); remote_desktop = ($Scenario -eq 'certs_rdp_on'); endpoints = @() }

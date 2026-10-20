@@ -5,6 +5,25 @@
 - name: VMware certs | read the certificates, and which are due
   ansible.builtin.include_tasks: cert_read.yml
 
+- name: VMware certs | certificate inventory - every certificate, for a dashboard (cert_inventory_files, cert_inventory_sql; off by default)
+  ansible.builtin.include_role:
+    name: cert_inventory
+  vars:
+    cert_inventory_source: vmware
+    cert_inventory_warn_days: "{{ vmware_cert_warn_days }}"
+    cert_inventory_crit_days: "{{ vmware_cert_crit_days }}"
+    cert_inventory_hosts: "{{ _vcert_read.certs | map(attribute='name') | unique | list }}"
+    # each one in use: vCenter's Machine SSL certificate, or the ESXi host's own
+    cert_inventory_rows: >-
+      {%- set out = [] -%}
+      {%- for c in _vcert_read.certs -%}
+      {%-   set where = ('vCenter Machine SSL (https://' ~ c.name ~ ':' ~ c.port | default(443) ~ ')') if c.kind == 'vcenter'
+                        else ('ESXi host (vCenter ' ~ c.vcenter ~ ((', cluster ' ~ c.cluster) if c.cluster | default('') else '') ~ ')') -%}
+      {%-   set _ = out.append(c | combine({'host': c.name, 'where': where, 'in_use': true})) -%}
+      {%- endfor -%}
+      {{ out }}
+  when: cert_inventory_files | default(false) | bool or cert_inventory_sql | default(false) | bool
+
 - name: VMware certs | each due certificate - what the renewal would do
   ansible.builtin.set_fact:
     _vcert_result: "{{ _vcert.due | vmware_cert_csr_result([], {'report_only': true}) }}"

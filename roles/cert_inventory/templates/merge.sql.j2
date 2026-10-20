@@ -1,0 +1,27 @@
+-- One report's certificates in, as one JSON parameter (OPENJSON: no value is ever part of the SQL text).
+-- A row seen again: updated, last_seen now. New: added. On a host this report read, a row not seen again: present = 0.
+SET NOCOUNT ON;
+DECLARE @now datetime2(0) = SYSUTCDATETIME();
+DECLARE @j nvarchar(max) = %(records)s;
+DECLARE @in int = (SELECT COUNT(*) FROM OPENJSON(@j));
+MERGE {{ _ci_table }} WITH (HOLDLOCK) AS t
+USING (SELECT * FROM OPENJSON(@j) WITH (
+        id char(64), source nvarchar(16), host nvarchar(255), location nvarchar(1000), subject nvarchar(1000),
+        issuer nvarchar(1000), sans nvarchar(max), not_after date, days int, status nvarchar(16), tier nvarchar(16),
+        trust_store bit, in_use bit, public_key nvarchar(64), sig_alg nvarchar(64), serial nvarchar(128),
+        sha1 varchar(40), sha256 varchar(64), scanned_at datetime2(0), job nvarchar(32))) AS s
+ON t.id = s.id
+WHEN MATCHED THEN UPDATE SET
+    subject = s.subject, issuer = s.issuer, sans = s.sans, not_after = s.not_after, days = s.days, status = s.status,
+    tier = s.tier, trust_store = ISNULL(s.trust_store, 0), in_use = s.in_use, public_key = s.public_key, sig_alg = s.sig_alg,
+    serial = s.serial, sha1 = s.sha1, sha256 = s.sha256, scanned_at = s.scanned_at, job = s.job, last_seen = @now, present = 1
+WHEN NOT MATCHED BY TARGET THEN INSERT
+    (id, source, host, location, subject, issuer, sans, not_after, days, status, tier, trust_store, in_use, public_key,
+     sig_alg, serial, sha1, sha256, scanned_at, job, first_seen, last_seen, present)
+    VALUES (s.id, s.source, s.host, s.location, s.subject, s.issuer, s.sans, s.not_after, s.days, s.status, s.tier,
+     ISNULL(s.trust_store, 0), s.in_use, s.public_key, s.sig_alg, s.serial, s.sha1, s.sha256, s.scanned_at, s.job, @now, @now, 1);
+UPDATE {{ _ci_table }} SET present = 0
+ WHERE source = %(source)s AND present = 1 AND last_seen < @now
+   AND host IN (SELECT value FROM OPENJSON(%(hosts)s));
+DECLARE @gone int = @@ROWCOUNT;
+SELECT @in AS rows_in, @gone AS rows_gone;

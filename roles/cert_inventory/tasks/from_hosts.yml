@@ -1,0 +1,22 @@
+---
+# From a Linux or Windows certificate report (playbooks/cert_report.yml, win_cert_report.yml): every certificate
+# each host's check_certs_inventory holds, then main.yml. Run once, on localhost, before the report step
+# (that step fails the hosts with certificates due, and a play with every host failed runs nothing after it).
+- name: Certificate inventory | every certificate the report read, from every host
+  ansible.builtin.set_fact:
+    cert_inventory_hosts: >-
+      {{ ansible_play_hosts | select('in', hostvars) | list
+         | map('extract', hostvars) | selectattr('check_certs_inventory', 'defined') | map(attribute='inventory_hostname') | list }}
+    cert_inventory_rows: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts if hostvars[h].check_certs_inventory is defined -%}
+      {%-   for c in hostvars[h].check_certs_inventory -%}
+      {#-     a certificate served on a port is in use (Windows says so for each one itself) -#}
+      {%-     set _ = out.append(c | combine({'host': c.host | default(h)},
+                                             {'in_use': true} if c.in_use is not defined and ' (https://' in c.where | default('') else {})) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Certificate inventory | write it
+  ansible.builtin.include_tasks: main.yml

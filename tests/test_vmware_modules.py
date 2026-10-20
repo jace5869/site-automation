@@ -474,6 +474,24 @@ class VmwareCerts(unittest.TestCase):
         self.assertEqual(spec["subject_alt_name"], ["vc01.example.mil", "vc01"])
         self.assertEqual(vcert.csr_spec({"parts": [], "sans": []}, "vc02")["subject_alt_name"], ["vc02"])
 
+
+    def test_cert_record_inventory_fields(self):
+        """The same fields as the Linux and Windows reports (tests/fixtures/pki): fingerprints, serial, key, tier."""
+        import base64 as b64
+        pki = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "pki")
+        want = {"root": ("root", "RSA 3072", "07D72068104FB45E5366A7556CDE5CF5F171342F", "0F965ECAB20EF6EA9F895AA1C292DCD86E14B1D3"),
+                "int": ("intermediate", "EC P-256", "176D43333E4A3290F6E056CBD9DD0C96FB182F6F", "1001"),
+                "web": ("ca-signed", "RSA 2048", "487B8E272CBC7625EE18207F58559BD961FD0561", "2002"),
+                "self": ("self-signed", "EC P-384", "938C3203826F24460951E54C049918E8A6CF5FAF", "293F2F1A9421CDD6DDD13E31C835E8A6D3371238")}
+        for name, (tier, key, sha1, serial) in want.items():
+            with open(os.path.join(pki, name + ".pem")) as f:
+                der = b64.b64decode("".join(x for x in f.read().splitlines() if not x.startswith("-----")))
+            r = vcert.cert_record(der)
+            self.assertEqual((r["tier"], r["key"], r["sha1"], r["serial"]), (tier, key, sha1, serial), name)
+            self.assertEqual(len(r["sha256"]), 64)
+            self.assertTrue(r["sig_alg"], name)
+        r = vcert.cert_record(der)
+        self.assertEqual(r["sha256"], "EEA658E2F979C700DA680A77500100D5CDAF0184EB1CCE7416A3E45645D08833")
     def test_dn(self):
         self.assertEqual(vcert.dn_pairs("CN=a, OU=b\\, c, O=d"), [("CN", "a"), ("OU", "b, c"), ("O", "d")])
         self.assertTrue(vcert.same_dn("CN=esx01, O=Example", "o=Example,CN=ESX01"))

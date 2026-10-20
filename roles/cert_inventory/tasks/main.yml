@@ -1,0 +1,23 @@
+---
+# CERTIFICATE INVENTORY - run on localhost, after a certificate report, with
+#   cert_inventory_source:  linux / windows / vmware / net
+#   cert_inventory_rows:    the report's rows (host, where, subject, issuer, sans, expires, days, trust, in_use,
+#                           key, sig_alg, serial, sha1, sha256, tier ...)
+#   cert_inventory_hosts:   the hosts the report read (the SQL step marks what is gone from them)
+#   cert_inventory_warn_days / _crit_days / _notice_days: the report's own days (the status column)
+# It writes the files (cert_inventory_files) and / or the SQL Server rows (cert_inventory_sql).
+- name: Certificate inventory | the records, the same fields from every report
+  ansible.builtin.set_fact:
+    _ci_records: >-
+      {{ cert_inventory_rows | default([]) | cert_records(cert_inventory_source, cert_inventory_warn_days | default(30),
+         cert_inventory_crit_days | default(7), cert_inventory_notice_days | default(60),
+         now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ'), awx_job_id | default('')) }}
+  when: cert_inventory_files | bool or cert_inventory_sql | bool
+
+- name: Certificate inventory | the files (CSV, JSON)
+  ansible.builtin.include_tasks: files.yml
+  when: cert_inventory_files | bool
+
+- name: Certificate inventory | SQL Server
+  ansible.builtin.include_tasks: sql.yml
+  when: cert_inventory_sql | bool

@@ -1,0 +1,21 @@
+---
+# One certificate on a Cisco IOS / IOS-XE device (library/site_ios_csr.py): key <trustpoint> (RSA
+# net_cert_cisco_key_bits, not exportable; one already there - a run that stopped half way - is used again),
+# trustpoint <trustpoint> (enrollment terminal pem, the old certificate's subject and DNS names), then
+# crypto pki enroll - all in one configuration session; its CSR comes back.
+- name: Network certs | {{ _net_c.trustpoint }} - a new key and its CSR, made on the device
+  site_ios_csr:
+    trustpoint: "{{ _net_c.trustpoint }}"
+    subject: "{{ _net_c.subject }}"
+    names: "{{ _net_c.names }}"
+    key_bits: "{{ net_cert_cisco_key_bits | int }}"
+  register: _net_enroll
+  failed_when: false
+
+- name: Network certs | {{ _net_c.trustpoint }} - the CSR, or why none
+  ansible.builtin.set_fact:
+    _net_cisco_made: >-
+      {{ _net_cisco_made + [{'host': inventory_hostname, 'port': _net_c.port, 'trustpoint': _net_c.trustpoint,
+                             'csr': _net_enroll.csr | default(''),
+                             'error': '' if _net_enroll.csr | default('') else
+                                      ((_net_enroll.msg | default('?') | string) ~ ((': ' ~ _net_enroll.output[-300:]) if _net_enroll.output | default('') else ''))}] }}

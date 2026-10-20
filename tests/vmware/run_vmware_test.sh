@@ -1641,6 +1641,21 @@ run "the certificate REPORT, every host, the days raised, the ServiceNow credent
 [ "$(sent_since csn "$n1" GET /)$(sent_since csn "$n1" POST /)$(sent_since csn "$n1" PATCH /)" = 000 ] && ! grep -q "make the CSRs" "$work/out.txt" \
     && echo "ok   -   ...not one request to ServiceNow, no CSR" || { echo "FAIL -   ...the report talked to ServiceNow"; fails=$((fails + 1)); }
 run "...the report of one host, 30 days" ok vmware_cert_report.yml -e vmware_cert_only=DC0_H0 -- "VMware certificate report: 0 due within 30 days, of 1"
+run "...the certificate inventory files (cert_inventory_files): vCenter and every host, with fingerprints and tier" ok vmware_cert_report.yml \
+    -e cert_inventory_files=true -e "cert_inventory_dir=$work/inventory" -- "certificates (vmware) in $work/inventory/vmware-certificates.csv"
+"$py" - "$work/inventory/vmware-certificates.json" <<'EOPY' && echo "ok   -   ...each record: host, location, issuer, key, sha1, sha256, tier, in use" || { echo "FAIL -   ...the inventory records"; fails=$((fails + 1)); }
+import json, sys
+recs = json.load(open(sys.argv[1]))
+errs = []
+if not any(r["location"].startswith("vCenter Machine SSL") for r in recs): errs.append("no vCenter record")
+if not any(r["location"].startswith("ESXi host (vCenter") for r in recs): errs.append("no ESXi record")
+for r in recs:
+    if r["source"] != "vmware" or not r["host"] or len(r["sha1"]) != 40 or len(r["sha256"]) != 64 or not r["public_key"] \
+       or r["tier"] not in ("root", "intermediate", "ca-signed", "self-signed") or r["in_use"] is not True or not r["sans"] == [x for x in r["sans"] if ":" in x]:
+        errs.append("record: %s" % r); break
+print("\n".join("       " + e for e in errs))
+sys.exit(1 if errs else 0)
+EOPY
 run "...with ServiceNow, 30 days: no incident" ok vmware_cert_renew.yml -- "No findings at or above warning."
 [ "$(sent_since csn "$n1" POST /)" = 0 ] && echo "ok   -   ...nothing opened" || { echo "FAIL -   ...opened at 30 days"; fails=$((fails + 1)); }
 cdays='{"vmware_cert_warn_days": 30000, "vmware_cert_only": "dc0_h0"}'

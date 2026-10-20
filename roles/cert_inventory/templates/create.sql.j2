@@ -1,0 +1,31 @@
+-- The certificate inventory table (roles/cert_inventory, docs/CERT_INVENTORY.md): a row per host, place and
+-- certificate. first_seen / last_seen: the runs that saw it; present = 0: its host was read again and it was not there.
+-- {{ _ci_table }}_current: the rows present now (what a dashboard shows).
+IF OBJECT_ID(N'{{ _ci_table }}', N'U') IS NULL
+CREATE TABLE {{ _ci_table }} (
+    id          char(64)       NOT NULL PRIMARY KEY,   -- sha256 of source|host|location|sha1: the same from run to run
+    source      nvarchar(16)   NOT NULL,               -- linux, windows, vmware, net
+    host        nvarchar(255)  NOT NULL,
+    location    nvarchar(1000) NOT NULL,               -- a file, a store, a port, a keystore alias, a vCenter / ESXi host
+    subject     nvarchar(1000) NULL,
+    issuer      nvarchar(1000) NULL,
+    sans        nvarchar(max)  NULL,                   -- DNS:a; DNS:b; IP:192.0.2.1
+    not_after   date           NULL,
+    days        int            NULL,                   -- days left when it was read (negative: expired)
+    status      nvarchar(16)   NULL,                   -- expired, critical, warning, notice, ok, unknown
+    tier        nvarchar(16)   NULL,                   -- root, intermediate, ca-signed, self-signed
+    trust_store bit            NOT NULL DEFAULT 0,     -- a certificate the host trusts (not its own)
+    in_use      bit            NULL,                   -- bound to a service (Windows, ports, VMware); null = not known
+    public_key  nvarchar(64)   NULL,                   -- RSA 2048, EC P-256 ...
+    sig_alg     nvarchar(64)   NULL,
+    serial      nvarchar(128)  NULL,
+    sha1        varchar(40)    NULL,                   -- Windows' thumbprint
+    sha256      varchar(64)    NULL,
+    scanned_at  datetime2(0)   NULL,                   -- UTC
+    job         nvarchar(32)   NULL,                   -- the AAP job that read it
+    first_seen  datetime2(0)   NOT NULL,
+    last_seen   datetime2(0)   NOT NULL,
+    present     bit            NOT NULL DEFAULT 1
+);
+IF OBJECT_ID(N'{{ _ci_table }}_current', N'V') IS NULL
+    EXEC (N'CREATE VIEW {{ _ci_table }}_current AS SELECT * FROM {{ _ci_table }} WHERE present = 1');

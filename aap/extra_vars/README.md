@@ -21,6 +21,8 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | ESXi - security settings | `playbooks/esxi_security.yml` | [esxi_security.yml](esxi_security.yml) |
 | Health check | `playbooks/health_check.yml` | [health_check.yml](health_check.yml) |
 | NetApp ONTAP health report | `playbooks/ontap_health_report.yml` | [ontap_health_report.yml](ontap_health_report.yml) |
+| Network device certificate renewal | `playbooks/net_cert_renew.yml` | [net_cert_renew.yml](net_cert_renew.yml) |
+| Network device certificate report | `playbooks/net_cert_report.yml` | [net_cert_report.yml](net_cert_report.yml) |
 | Patch hosts | `playbooks/patch_hosts.yml` | [patch_hosts.yml](patch_hosts.yml) |
 | POA&M status | `playbooks/poam_status.yml` | [poam_status.yml](poam_status.yml) |
 | Service watch - apply approved fix | `playbooks/service_fix_approved.yml` | [service_fix_approved.yml](service_fix_approved.yml) |

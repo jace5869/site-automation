@@ -12,6 +12,8 @@
 # With check_certs_discover_trust (the report turns it on): the host's trust store (update-ca-trust):
 #   TRUST|<where>|<subject>|<expiry>   (listed in the report: never a finding, never a CSR)
 # A binary (DER) certificate file is read too:  DER|<where>  (the hint then says -inform DER)
+# After each CERT / TRUST line, what else the certificate says (the inventory, the export):
+#   META|<issuer>|<serial>|<sha1>|<sha256>|<key>|<signature algorithm>|<CA: 1 or 0>|<signs certificates: 1 or 0>|<names (SANs), comma separated>
 
 - name: Certs | find and read certificates
   ansible.builtin.shell: |
@@ -25,6 +27,30 @@
     echo "NOW|$(date +%s)"
     tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
     placeholder={{ check_certs_placeholder_subject | quote }}
+    # $1 = a PEM file with one certificate: its META line
+    meta() {
+      { openssl x509 -noout -issuer -serial -fingerprint -sha1 -nameopt RFC2253 -in "$1" 2>/dev/null
+        openssl x509 -noout -fingerprint -sha256 -text -in "$1" 2>/dev/null; } | awk '
+        /^issuer=/ {is = substr($0, 8); gsub(/[|]/, " ", is)}
+        /^serial=/ {se = substr($0, 8)}
+        tolower($0) ~ /^sha1 fingerprint=/ {s1 = substr($0, 18); gsub(/:/, "", s1)}
+        tolower($0) ~ /^sha256 fingerprint=/ {s2 = substr($0, 20); gsub(/:/, "", s2)}
+        /Signature Algorithm:/ && sa == "" {sa = $0; sub(/.*Signature Algorithm: */, "", sa)}
+        /Public Key Algorithm:/ {ka = $0; sub(/.*Public Key Algorithm: */, "", ka)}
+        /Public-Key: \(/ {kb = $0; sub(/.*\(/, "", kb); sub(/ bit.*/, "", kb)}
+        /ASN1 OID:/ && cv == "" {cv = $NF}
+        /NIST CURVE:/ {cv = $NF}
+        want == "bc" {ca = ($0 ~ /CA:TRUE/) ? 1 : 0; want = ""}
+        want == "ku" {ks = ($0 ~ /Certificate Sign/) ? 1 : 0; want = ""}
+        /X509v3 Key Usage/ {want = "ku"}
+        want == "san" {sn = $0; gsub(/^ +| +$/, "", sn); gsub(/IP Address:/, "IP:", sn); gsub(/[|]/, " ", sn); want = ""}
+        /X509v3 Basic Constraints/ {want = "bc"}
+        /X509v3 Subject Alternative Name/ {want = "san"}
+        END {
+          k = (ka ~ /rsa/) ? "RSA " kb : ((ka ~ /ec/) ? "EC " (cv != "" ? cv : kb) : ka)
+          print "META|" is "|" se "|" s1 "|" s2 "|" k "|" sa "|" (ca == "" ? 0 : ca) "|" (ks == "" ? 0 : ks) "|" sn
+        }'
+    }
     # $1 = file, $2 = max certificates (0 = no limit), $3 = 1: found by the search (not listed),
     # $4 = CERT, or TRUST for the trust store (listed in the report: no finding, no CSR)
     one_file() {
@@ -49,7 +75,7 @@
         if [ -z "$end" ]; then echo "ERR|$f|a certificate block openssl cannot read"
         elif [ "$disc" = 1 ] && [ -n "$placeholder" ] && grep -qE -- "$placeholder" <<< "$subj"; then
           echo "SKIP|$f|a placeholder certificate a package made at install (postfix makes one, for a year; its subject matches check_certs_placeholder_subject): not checked - a real certificate put in its place is"
-        else echo "$kind|$f|$subj|$(date -d "$end" +%s)"; fi
+        else echo "$kind|$f|$subj|$(date -d "$end" +%s)"; meta "$c"; fi
       done
     }
     explicit=""
@@ -81,6 +107,7 @@
       end=$(echo "$pem" | openssl x509 -noout -enddate | cut -d= -f2-)
       subj=$(echo "$pem" | openssl x509 -noout -subject -nameopt RFC2253 | sed 's/^subject=//; s/|/ /g')
       echo "CERT|{{ e.name | default(e.host) }} (https://{{ e.host }}:{{ e.port }})|$subj|$(date -d "$end" +%s)"
+      echo "$pem" > "$tmp"/ep.pem; meta "$tmp"/ep.pem
     else
       echo "ERR|{{ e.name | default(e.host) }} (https://{{ e.host }}:{{ e.port }})|no certificate: not answering, or not TLS"
     fi
@@ -106,9 +133,33 @@
         end=$(echo "$pem" | openssl x509 -noout -enddate | cut -d= -f2-)
         subj=$(echo "$pem" | openssl x509 -noout -subject -nameopt RFC2253 | sed 's/^subject=//; s/|/ /g')
         echo "CERT|TLS port $port${proc:+, $proc} (https://$addr:$port)|$subj|$(date -d "$end" +%s)"
+        echo "$pem" > "$tmp"/ep.pem; meta "$tmp"/ep.pem
       done
     }
     {% endif %}
+    # keytool -list -v: one line per certificate - alias|owner|until|issuer|serial|sha1|sha256|key|signature|CA|signs|names
+    ksawk='function flush() { if (o != "") print a "|" o "|" u "|" is "|" se "|" s1 "|" s2 "|" k "|" sa "|" ca "|" ks "|" sn
+                              o = ""; u = ""; is = ""; se = ""; s1 = ""; s2 = ""; k = ""; sa = ""; ca = 0; ks = 0; sn = ""; want = "" }
+      /^Alias name:/ {flush(); a = substr($0, 13)}
+      /^Owner:/ {flush(); o = substr($0, 8); gsub(/[|]/, " ", o)}
+      /^Issuer:/ {is = substr($0, 9); gsub(/[|]/, " ", is)}
+      /^Serial number:/ {se = toupper(substr($0, 16))}
+      /until: / && u == "" {u = $0; sub(/.*until: /, "", u)}
+      /^[ \t]*SHA1: / && s1 == "" {s1 = $NF; gsub(/:/, "", s1)}
+      /^[ \t]*SHA256: / && s2 == "" {s2 = $NF; gsub(/:/, "", s2)}
+      /^Signature algorithm name:/ {sa = $NF}
+      /^Subject Public Key Algorithm:/ {k = $0; sub(/.*Algorithm: */, "", k); n = k; sub(/-bit.*/, "", n)
+        if (k ~ /RSA/) k = "RSA " n; else if (k ~ /EC/) {c = k; if (sub(/.*[(]/, "", c) && sub(/[)].*/, "", c)) k = "EC " c; else k = "EC " n}}
+      /^BasicConstraints:/ {want = "bc"}
+      want == "bc" && /CA:/ {ca = ($0 ~ /CA:true/) ? 1 : 0; want = ""}
+      /^KeyUsage/ {want = "ku"}
+      want == "ku" && /Key_CertSign/ {ks = 1}
+      want == "ku" && /^]/ {want = ""}
+      /^SubjectAlternativeName/ {want = "san"; next}
+      want == "san" && /^]/ {want = ""}
+      want == "san" && /(DNSName|IPAddress|RFC822Name|URIName): / {v = $0; sub(/^ */, "", v); sub(/DNSName: /, "DNS:", v); sub(/IPAddress: /, "IP:", v)
+        sub(/RFC822Name: /, "email:", v); sub(/URIName: /, "URI:", v); sn = sn (sn == "" ? "" : ", ") v}
+      END {flush()}'
     {% if check_certs_discover_keystores | bool %}
     # Java keystores: files in check_certs_discover_keystore_dirs, and the ones running Java programs
     # name (-Djavax.net.ssl.keyStore=...). Never a guessed password: one that needs a password is
@@ -131,11 +182,12 @@
       listed=""
       if [ -n "$kt" ]; then
         listed=$(timeout 30 "$kt" -list -v -keystore "$ks" </dev/null 2>/dev/null |
-          awk '/^Alias name:/ {a = substr($0, 13)} /^Owner:/ {o = substr($0, 8)} /until: / {sub(/.*until: /, ""); print a "|" o "|" $0}')
+          awk "$ksawk")
       fi
       if [ -n "$listed" ]; then
-        while IFS='|' read -r alias owner until; do
+        while IFS='|' read -r alias owner until is se s1 s2 k sa ca kcs sn; do
           echo "CERT|$ks (alias $alias)|$owner|$(date -d "$until" +%s 2>/dev/null || echo 0)"
+          echo "META|$is|$se|$s1|$s2|$k|$sa|$ca|$kcs|$sn"
         done <<< "$listed"
         continue
       fi
@@ -157,9 +209,10 @@
     {% for k in check_certs_keystores %}
     if [ -r {{ k.path | quote }} ]; then
       timeout 30 keytool -list -v -keystore {{ k.path | quote }} {{ ('-storepass:env ' ~ k.password_env) if k.password_env | default('') else '' }} </dev/null 2>/dev/null |
-        awk '/^Alias name:/ {a = substr($0, 13)} /^Owner:/ {o = substr($0, 8)} /until: / {sub(/.*until: /, ""); print a "|" o "|" $0}' |
-        while IFS='|' read -r alias owner until; do
+        awk "$ksawk" |
+        while IFS='|' read -r alias owner until is se s1 s2 k sa ca kcs sn; do
           echo "CERT|{{ k.path }} (alias $alias)|$owner|$(date -d "$until" +%s 2>/dev/null || echo 0)"
+          echo "META|$is|$se|$s1|$s2|$k|$sa|$ca|$kcs|$sn"
         done
     else
       echo "ERR|{{ k.path }}|keystore not readable"
@@ -185,16 +238,29 @@
     check_certs_inventory: >-
       {%- set now = (_certs.stdout_lines | select('match', '^NOW[|]') | first | default('NOW|0')).split('|')[1] | int -%}
       {%- set out = [] -%}
-      {%- for line in _certs.stdout_lines if line.startswith('CERT|') or line.startswith('TRUST|') -%}
-      {%-   set c = line.split('|', 3) -%}
+      {%- set lines = _certs.stdout_lines -%}
+      {%- for i in range(lines | length) if lines[i].startswith('CERT|') or lines[i].startswith('TRUST|') -%}
+      {%-   set c = lines[i].split('|', 3) -%}
       {%-   set exp = c[3] | int -%}
       {%-   set trust = c[0] == 'TRUST' -%}
       {%-   set where = c[1] ~ (' (trust store)' if trust else '') -%}
+      {#-   the META line right after it: issuer|serial|sha1|sha256|key|signature|CA|signs certificates|names -#}
+      {%-   set m = (lines[i + 1] if i + 1 < lines | length and lines[i + 1].startswith('META|') else 'META|||||||0|0|').split('|', 9) -%}
+      {%-   set self_signed = m[1] != '' and m[1] == c[2] -%}
+      {%-   set is_ca = m[7] == '1' -%}
+      {#-   root: a self-signed CA that signs certificates, or one in the trust store - not a server's own
+              self-signed certificate that openssl req -x509 marks CA:TRUE -#}
+      {%-   set is_root = is_ca and self_signed and (m[8] == '1' or trust) -%}
       {%-   set _ = out.append({'host': inventory_hostname, 'where': where, 'subject': c[2],
                                 'expires': '%Y-%m-%d' | strftime(exp) if exp > 0 else '?', 'end': exp,
                                 'days': (((exp - now) / 86400) | round(0, 'floor') | int) if exp > 0 else -99999,
-                                'trust': trust, 'der': ('DER|' ~ c[1]) in _certs.stdout_lines,
-                                'id': 'cert:' ~ where ~ ':' ~ c[2] | truncate(80, true, '')}) -%}
+                                'trust': trust, 'der': ('DER|' ~ c[1]) in lines,
+                                'id': 'cert:' ~ where ~ ':' ~ c[2] | truncate(80, true, ''),
+                                'issuer': m[1], 'serial': m[2] | upper, 'sha1': m[3] | upper, 'sha256': m[4] | upper,
+                                'key': m[5], 'sig_alg': m[6], 'ca': is_ca, 'self_signed': self_signed,
+                                'sans': m[9].split(', ') | map('trim') | select | list,
+                                'tier': '' if m[1] == '' else ('root' if is_root else ('self-signed' if self_signed
+                                        else ('intermediate' if is_ca else 'ca-signed')))}) -%}
       {%- endfor -%}
       {{ out | sort(attribute='days') }}
 

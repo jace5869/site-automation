@@ -950,12 +950,13 @@ def name_matches(name, patterns):
     return any(fnmatch.fnmatchcase(n, str(p).lower()) for p in patterns or [] if str(p).strip())
 
 
-def vm_snapshot_split(snaps, max_age_days, keep_regex="", exclude=None, protected_ids=None, max_size_gb=None):
+def vm_snapshot_split(snaps, max_age_days, keep_regex="", exclude=None, protected_ids=None, max_size_gb=None,
+                      exclude_datacenters=None, exclude_clusters=None):
     """Snapshots (site_vmware_snapshots) -> {'all': oldest first, 'old': at least max_age_days old AND
     deletable, 'held': old but never deleted automatically, each with a 'reason'}. Held back: the name
-    or description matches keep_regex; the VM matches an exclude pattern; the VM is a protected host
-    (its name, guest host name or IP in protected_ids - the AAP server); bigger than max_size_gb, or
-    its size unknown."""
+    or description matches keep_regex; the VM matches an exclude pattern; its datacenter or cluster
+    matches one of exclude_datacenters / exclude_clusters; the VM is a protected host (its name, guest
+    host name or IP in protected_ids - the AAP server); bigger than max_size_gb, or its size unknown."""
     rx = re.compile(keep_regex) if keep_regex else None
     prot = set(protected_ids or [])
     allsn = sorted(snaps or [], key=lambda x: (-(x.get("age_days") or 0), x.get("vm", ""), x.get("name", "")))
@@ -969,6 +970,10 @@ def vm_snapshot_split(snaps, max_age_days, keep_regex="", exclude=None, protecte
             why = "its name or description says keep"
         elif name_matches(x.get("vm"), exclude):
             why = "the VM is on the exclusion list"
+        elif x.get("datacenter") and name_matches(x.get("datacenter"), exclude_datacenters):
+            why = "its datacenter %s is on the exclusion list" % x.get("datacenter")
+        elif x.get("cluster") and name_matches(x.get("cluster"), exclude_clusters):
+            why = "its cluster %s is on the exclusion list" % x.get("cluster")
         elif ids & prot:
             why = "the VM is the AAP server"
         elif max_size_gb is not None and size is None:

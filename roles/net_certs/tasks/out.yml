@@ -1,0 +1,38 @@
+---
+# Network device certificates, the shared report (report.yml, renew.yml): printed, emailed (report_email_to),
+# published as job artifacts (net_certs). Input: _net, _net_read, _net_result; _net_report_only.
+- name: Network certs | the report
+  ansible.builtin.set_fact:
+    _net_doc: >-
+      {{ _net | net_cert_report(_net_result, _net_read.swept,
+                                _net.certs | cert_report_section(net_cert_warn_days | int, net_cert_notice_days | int),
+                                {'warn_days': net_cert_warn_days | int, 'check_mode': ansible_check_mode,
+                                 'report_only': _net_report_only | default(false)}) }}
+
+- name: Network certs | {{ _net_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_net_doc | report_text).splitlines() }}"
+
+- name: Network certs | the result as job artifacts (net_certs)
+  ansible.builtin.set_stats:
+    data:
+      net_certs:
+        dry_run: "{{ ansible_check_mode }}"
+        warn_days: "{{ net_cert_warn_days | int }}"
+        due: >-
+          {{ _net_result.certs | map(attribute='host') | zip(_net_result.certs | map(attribute='days'),
+             _net_result.certs | map(attribute='status')) | map('join', ' | ') | list }}
+        not_read: "{{ _net.not_read }}"
+        swept: "{{ _net_read.swept }}"
+
+- name: Network certs | email it (report_email_to)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _net_doc }}"
+  when: report_email_to | default([]) | length > 0
+
+- name: Network certs | no email
+  ansible.builtin.debug:
+    msg: "No email: report_email_to is not set (docs/EMAIL_REPORTS.md)."
+  when: report_email_to | default([]) | length == 0

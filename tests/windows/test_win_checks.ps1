@@ -86,6 +86,40 @@ foreach ($clm in @($false, $true)) {
     $label = 'certs/certs_trust inventory' + $(if ($clm) { ' (constrained)' } else { '' })
     if ($bad.Count) { $fail++; Write-Host "FAIL - $label : $($bad -join '; ')" } else { Write-Host "ok   - $label" }
 }
+# What the inventory reads from a certificate (tests/fixtures/pki): issuer, serial, SHA-1 and SHA-256, key, names, tier
+$metaWant = @{
+    'CN=Test Root CA, O=Test PKI, C=US'      = @{ tier = 'root'; key = 'RSA 3072'; sans = ''; sha1 = '07D72068104FB45E5366A7556CDE5CF5F171342F'
+        sha256 = 'EAEC495D8D35C5A18931154768 44DD2961B89C6F859543A9E3158E9DD4B0420C' -replace ' ', ''; serial = '0F965ECAB20EF6EA9F895AA1C292DCD86E14B1D3'; issuer = 'CN=Test Root CA, O=Test PKI, C=US' }
+    'CN=Test Issuing CA, O=Test PKI, C=US'   = @{ tier = 'intermediate'; key = 'EC P-256'; sans = ''; sha1 = '176D43333E4A3290F6E056CBD9DD0C96FB182F6F'
+        sha256 = '6F384CB03A8DB04CCC468BD8A6D33F6B500FB508E0323CCAAEB427B164800055'; serial = '1001'; issuer = 'CN=Test Root CA, O=Test PKI, C=US' }
+    'CN=web01.example.mil, O=Test PKI, C=US' = @{ tier = 'ca-signed'; key = 'RSA 2048'; sans = 'DNS:web01.example.mil, DNS:web.example.mil, IP:192.0.2.10'
+        sha1 = '487B8E272CBC7625EE18207F58559BD961FD0561'; sha256 = '9D4FE442B5105EFD55B528022F310DCFF9255DE764E3222CC7B7BA2F43974DFA'; serial = '2002'; issuer = 'CN=Test Issuing CA, O=Test PKI, C=US' }
+    'CN=self01.example.mil'                  = @{ tier = 'self-signed'; key = 'EC P-384'; sans = 'DNS:self01.example.mil'
+        sha1 = '938C3203826F24460951E54C049918E8A6CF5FAF'; sha256 = 'EEA658E2F979C700DA680A77500100D5CDAF0184EB1CCE7416A3E45645D08833'; serial = '293F2F1A9421CDD6DDD13E31C835E8A6D3371238'; issuer = 'CN=self01.example.mil' }
+}
+foreach ($clm in @($false, $true)) {
+    $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner, '-Script', (Script 'certs'), '-Scenario', 'certs_meta')
+    if ($clm) { $a += '-Clm' }
+    $out = @(& $shell @a 2>&1 | ForEach-Object { [string]$_ })
+    $count++
+    $line = @($out | Where-Object { $_ -like '###SITE-JSON### *' }) | Select-Object -Last 1
+    $bad = @()
+    if (-not $line) { $bad += 'no result line'; $out | Select-Object -Last 5 | ForEach-Object { $bad += $_ } }
+    else {
+        $got = @{}
+        foreach ($c in @((ConvertFrom-Json -InputObject $line.Substring(16)).facts.inventory)) { $got[[string]$c.subject] = $c }
+        foreach ($k in $metaWant.Keys) {
+            $c = $got[$k]
+            if ($null -eq $c) { $bad += "$k not listed"; continue }
+            $w = $metaWant[$k]
+            $have = @{ tier = [string]$c.tier; key = [string]$c.key; sans = (@($c.sans) -join ', '); sha1 = [string]$c.sha1; sha256 = [string]$c.sha256; serial = [string]$c.serial; issuer = [string]$c.issuer }
+            foreach ($f in $w.Keys) { if ($have[$f] -ne $w[$f]) { $bad += "$k ${f}: '$($have[$f])', expected '$($w[$f])'" } }
+            if (-not [string]$c.sig_alg) { $bad += "$k has no signature algorithm" }
+        }
+    }
+    $label = 'certs/certs_meta inventory fields' + $(if ($clm) { ' (constrained)' } else { '' })
+    if ($bad.Count) { $fail++; Write-Host "FAIL - $label : $($bad -join '; ')" } else { Write-Host "ok   - $label" }
+}
 # Remote Desktop: left out of the report (and so of the renewal) unless remote_desktop is on
 $rdpWant = @{
     certs_rdp    = @{ 'CN=web01.corp.test' = 'LocalMachine\My'; 'CN=bound.corp.test' = 'LocalMachine\My, used by https 0.0.0.0:443' }

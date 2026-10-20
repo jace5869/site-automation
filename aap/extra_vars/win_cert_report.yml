@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "Windows certificate report"
 #   playbook:    playbooks/win_cert_report.yml
-#   credentials: Machine (Windows)
+#   credentials: Machine (Windows) (SQL Server (certificate inventory): optional)
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -51,6 +51,43 @@
 ## TLS services whose certificate a client actually gets, e.g. win_check_certs_endpoints: - {name:
 ## IIS, host: 127.0.0.1, port: 443, servername: web01.yoursite.mil}
 # win_check_certs_endpoints: []
+
+# ---- cert_inventory ------------------------------------------------------------------------------
+## ---- files: <source>-certificates.csv and .json (source: linux, windows, vmware, net), replaced
+## each run ---- true = write the files
+# cert_inventory_files: false
+
+## where: on the AAP node the job runs on (a path AAP exposes to jobs: docs/CERT_INVENTORY.md), or
+## on cert_inventory_host
+# cert_inventory_dir: /var/lib/site-automation/cert-inventory
+
+## an inventory host to write them on instead (a file server, or a Linux host with the share
+## mounted); its credential must be on the job template
+# cert_inventory_host: ''
+
+## true = also a dated copy (<source>-certificates-YYYY-MM-DD.csv) next to them, for trends
+# cert_inventory_history: false
+
+## The login comes from the "SQL Server (certificate inventory)" credential
+## (aap/credential_types/cert_inventory_sql.yml). The execution environment needs pymssql and
+## community.general (the all-in-one EE has both). true = add / update the rows
+# cert_inventory_sql: false
+
+## the SQL Server (name or address)
+# cert_inventory_sql_server: ''
+
+## its port
+# cert_inventory_sql_port: 1433
+
+## the database (SQL Server 2016 or later: the rows go in as JSON, OPENJSON)
+# cert_inventory_sql_database: ''
+
+## schema.table
+# cert_inventory_sql_table: dbo.cert_inventory
+
+## true = create the table (and its view <table>_current) when it is not there - the account then
+## needs CREATE TABLE
+# cert_inventory_sql_create: false
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no

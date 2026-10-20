@@ -31,7 +31,7 @@ WIN_CHECKS = "win_check_*"
 TEMPLATES = {
     "act_fix_approved.yml": ("Apply approved ACT fix", "Machine", LINUX_CHECKS, ""),
     "ad_health_report.yml": ("Active Directory health report", "Machine (Windows)", "", ""),
-    "cert_report.yml": ("Certificate report", "Machine (Keystore password: optional)", "check_certs", ""),
+    "cert_report.yml": ("Certificate report", "Machine (Keystore password, SQL Server (certificate inventory): optional)", "check_certs", ""),
     "cert_renew_csr.yml": ("Certificate renewal - CSRs", "Machine, ServiceNow API (Keystore password: optional)", "check_certs", """\
 servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job opens (a certificate with no ticket yet)
 """),
@@ -56,9 +56,15 @@ servicenow_assignment_group: YOUR GROUP NAME   # exactly as in ServiceNow
     "servicenow_tickets.yml": ("ServiceNow tickets", "ServiceNow API", "", """\
 servicenow_assignment_group: YOUR GROUP NAME   # exactly as in ServiceNow
 """),
+    "net_cert_report.yml": ("Network device certificate report", "none - no login to the devices "
+                            "(SQL Server (certificate inventory): optional)", "", ""),
+    "net_cert_renew.yml": ("Network device certificate renewal", "ServiceNow API (Machine for the Cisco devices, network_cli: only with "
+                           "net_cert_cisco_csr)", "", """\
+servicenow_assignment_group: YOUR GROUP NAME   # who gets the incidents (exactly as in ServiceNow)
+"""),
     "stigman_deploy.yml": ("STIG Manager - deploy", "Machine, STIG Manager database, TLS certificate", "", ""),
     "troubleshoot.yml": ("Troubleshoot", "Machine", "", ""),
-    "vmware_cert_report.yml": ("VMware - certificate report", "VMware vCenter", "", ""),
+    "vmware_cert_report.yml": ("VMware - certificate report", "VMware vCenter (SQL Server (certificate inventory): optional)", "", ""),
     "vmware_cert_renew.yml": ("VMware - certificate renewal", "VMware vCenter, ServiceNow API", "", """\
 servicenow_assignment_group: YOUR GROUP NAME   # who gets the incidents (exactly as in ServiceNow)
 """),
@@ -101,7 +107,7 @@ vm_deploy_assignment_group: YOUR GROUP NAME       # REQUIRED: only this group's 
     "vm_snapshot_report.yml": ("VM - snapshot report", "VMware vCenter", "", ""),
     "vm_vlan.yml": ("VM - change VLAN", "VMware vCenter", "", ""),
     "win_act_install.yml": ("ACT for Windows - install", "Machine (Windows)", "", ""),
-    "win_cert_report.yml": ("Windows certificate report", "Machine (Windows)", "win_check_certs", ""),
+    "win_cert_report.yml": ("Windows certificate report", "Machine (Windows) (SQL Server (certificate inventory): optional)", "win_check_certs", ""),
     "win_cert_renew_csr.yml": ("Windows certificate renewal - CSRs", "Machine (Windows), ServiceNow API", "win_check_certs", """\
 servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job opens (a certificate with no ticket yet)
 """),

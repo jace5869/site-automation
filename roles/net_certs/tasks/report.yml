@@ -1,0 +1,14 @@
+---
+# NETWORK DEVICE CERTIFICATE REPORT (playbooks/net_cert_report.yml), on the controller: every certificate the
+# devices present, soonest expiry first, and for each one due what the renewal (renew.yml) would do.
+# Read-only: never ServiceNow, never a CSR, no login to any device.
+- name: Network certs | read the certificates, and which are due
+  ansible.builtin.include_tasks: read.yml
+
+- name: Network certs | each due certificate - what the renewal would do
+  ansible.builtin.set_fact:
+    _net_result: "{{ _net.due | net_cert_csr_result([], {'report_only': true, 'prefix': net_cert_cisco_trustpoint_prefix}) }}"
+    _net_report_only: true
+
+- name: Network certs | the report
+  ansible.builtin.include_tasks: out.yml

@@ -62,18 +62,118 @@ if ($rdpTp -and $rdpOn -and -not $bound.ContainsKey($rdpTp)) { $bound[$rdpTp] = 
 # Remote Desktop Authentication: the extended key usage of the RDP certificate template
 $rdpEku = '1.3.6.1.4.1.311.54.1.2'
 $inv = @()
-function Add-Cert([string] $Subject, [datetime] $NotAfter, [string] $Where, [string] $Id, [bool] $InUse, [string] $Hint, [bool] $Trust = $false, [string] $Store = '') {
+# ---- what else a certificate says (the inventory, the export): read from its bytes - no .NET methods,
+# so Constrained Language too
+$script:at = 0
+function Read-Len($b) {
+    $l = [int]$b[$script:at]; $script:at++
+    if ($l -ge 0x80) {
+        $n = $l - 0x80; $l = 0
+        for ($k = 0; $k -lt $n; $k++) { $l = $l * 256 + [int]$b[$script:at]; $script:at++ }
+    }
+    return $l
+}
+function Get-Ext($c, [string] $Oid) {
+    foreach ($e in @($c.Extensions)) { if ($null -ne $e -and [string]$e.Oid.Value -eq $Oid) { return , @($e.RawData) } }
+    return $null
+}
+# subjectAltName as openssl writes it: DNS:..., IP:..., email:..., URI:...
+function Get-SanList($c) {
+    $out = @()
+    $b = Get-Ext $c '2.5.29.17'
+    if ($null -eq $b -or $b.Count -lt 2 -or [int]$b[0] -ne 0x30) { return , $out }
+    $script:at = 1
+    $len = Read-Len $b
+    $end = $script:at + $len
+    while ($script:at -lt $end) {
+        $tag = [int]$b[$script:at]; $script:at++
+        $l = Read-Len $b
+        $v = @()
+        if ($l -gt 0) { $v = @($b[$script:at..($script:at + $l - 1)]) }
+        $script:at += $l
+        $text = -join @($v | ForEach-Object { [string][char][int]$_ })
+        if ($tag -eq 0x82) { $out += @('DNS:' + $text) }
+        elseif ($tag -eq 0x81) { $out += @('email:' + $text) }
+        elseif ($tag -eq 0x86) { $out += @('URI:' + $text) }
+        elseif ($tag -eq 0x87 -and $l -eq 4) { $out += @('IP:' + (@($v | ForEach-Object { [string][int]$_ }) -join '.')) }
+        elseif ($tag -eq 0x87 -and $l -eq 16) {
+            $g = @(); for ($k = 0; $k -lt 16; $k += 2) { $g += @('{0:x}' -f ([int]$v[$k] * 256 + [int]$v[$k + 1])) }
+            $out += @('IP:' + ($g -join ':'))
+        }
+        elseif ($tag -eq 0xA0) { $out += @('othername') }
+        elseif ($tag -eq 0xA4) { $out += @('DirName') }
+    }
+    return , $out
+}
+function Get-Meta($c) {
+    $issuer = [string]$c.Issuer
+    $subject = [string]$c.Subject
+    $bc = Get-Ext $c '2.5.29.19'
+    # basicConstraints: SEQUENCE { BOOLEAN cA TRUE ... }
+    $ca = ($null -ne $bc -and $bc.Count -ge 5 -and [int]$bc[2] -eq 1 -and [int]$bc[3] -eq 1 -and [int]$bc[4] -ne 0)
+    $self = ($issuer -ne '' -and $issuer -eq $subject)
+    # keyUsage: BIT STRING, keyCertSign = 0x04 of its first byte
+    $ku = Get-Ext $c '2.5.29.15'
+    $signs = ($null -ne $ku -and $ku.Count -ge 4 -and ([int]$ku[3] -band 0x04) -ne 0)
+    $key = ''
+    if ($null -ne $c.PublicKey) {
+        if ([string]$c.PublicKey.Oid.Value -eq '1.2.840.10045.2.1') {
+            $hex = -join @(@($c.PublicKey.EncodedParameters.RawData) | ForEach-Object { '{0:X2}' -f [int]$_ })
+            $key = 'EC P-256'
+            if ($hex -eq '06052B81040022') { $key = 'EC P-384' } elseif ($hex -eq '06052B81040023') { $key = 'EC P-521' }
+        }
+        elseif ([string]$c.PublicKey.Oid.Value -eq '1.2.840.113549.1.1.1') {
+            # the size from the key's length (a modulus of n bits is about n/8 bytes)
+            $n = @($c.PublicKey.EncodedKeyValue.RawData).Count
+            $bits = 1024
+            if ($n -gt 1000) { $bits = 8192 } elseif ($n -gt 500) { $bits = 4096 } elseif ($n -gt 380) { $bits = 3072 } elseif ($n -gt 200) { $bits = 2048 }
+            $key = "RSA $bits"
+        }
+        else { $key = [string]$c.PublicKey.Oid.FriendlyName }
+    }
+    $sha256 = ''
+    $raw = @($c.RawData)
+    if ($raw.Count -gt 0 -and $null -ne $raw[0]) {
+        # SHA-256 of the certificate: Get-FileHash of its bytes in a temporary file (no .NET hashing in Constrained Language)
+        $tmpDir = $env:TEMP
+        if (-not $tmpDir) { $tmpDir = [string](Get-Location) }
+        $f = Join-Path $tmpDir ('sa-cert-' + [string]$c.Thumbprint + '.cer')
+        try {
+            if ($PSVersionTable.PSVersion.Major -ge 6) { Set-Content -LiteralPath $f -Value ([byte[]]$raw) -AsByteStream }
+            else { Set-Content -LiteralPath $f -Value ([byte[]]$raw) -Encoding Byte }
+            $sha256 = [string](Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash
+        }
+        catch { }
+        finally { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+    }
+    # root: a self-signed CA that signs certificates (or one in a trust store, Add-Cert) - not a server's own self-signed one
+    $tier = 'ca-signed'
+    if ($ca -and $self -and $signs) { $tier = 'root' } elseif ($self) { $tier = 'self-signed' } elseif ($ca) { $tier = 'intermediate' }
+    if ($issuer -eq '') { $tier = '' }
+    return @{ issuer = $issuer; serial = ([string]$c.SerialNumber).ToUpper(); sha1 = ([string]$c.Thumbprint).ToUpper(); sha256 = $sha256.ToUpper()
+        key = $key; sig_alg = [string]$c.SignatureAlgorithm.FriendlyName; ca = $ca; signs = $signs; self_signed = $self; sans = (Get-SanList $c); tier = $tier }
+}
+function Add-Cert([string] $Subject, [datetime] $NotAfter, [string] $Where, [string] $Id, [bool] $InUse, [string] $Hint, [bool] $Trust = $false, [string] $Store = '', $Cert = $null) {
     $days = ($NotAfter - $script:now).Days
     if ($NotAfter -lt $script:now -and $days -ge 0) { $days = -1 }
     $exp = $NotAfter.ToString('yyyy-MM-dd')
     if ($Trust) {
         # a certificate the server trusts: in the report when it expires soon or expired lately, never a finding
         # (Trusted Root holds dozens from Windows, some long expired)
-        if ($days -le $script:notice -and (-$days) -le $script:expiredDays) { $script:inv += @(@{ subject = $Subject; expires = $exp; days = $days; where = $Where; trust = $true; id = $Id; store = $Store }) }
+        if ($days -le $script:notice -and (-$days) -le $script:expiredDays) {
+            $e = @{ subject = $Subject; expires = $exp; days = $days; where = $Where; trust = $true; id = $Id; store = $Store }
+            if ($null -ne $Cert) {
+                $m = Get-Meta $Cert; foreach ($k in $m.Keys) { $e[$k] = $m[$k] }
+                if ($e.ca -and $e.self_signed) { $e.tier = 'root' }      # a self-signed CA the server trusts
+            }
+            $script:inv += @($e)
+        }
         return
     }
     # id, store: what the renewal (win_cert_csr.ps1) needs to find it again
-    $script:inv += @(@{ subject = $Subject; expires = $exp; days = $days; where = $Where; trust = $false; id = $Id; store = $Store; in_use = $InUse })
+    $e = @{ subject = $Subject; expires = $exp; days = $days; where = $Where; trust = $false; id = $Id; store = $Store; in_use = $InUse }
+    if ($null -ne $Cert) { $m = Get-Meta $Cert; foreach ($k in $m.Keys) { $e[$k] = $m[$k] } }
+    $script:inv += @($e)
     if ($NotAfter -lt $script:now) {
         if ($InUse -or (-$days) -le $script:expiredDays) { Add-Finding $Id 'critical' "certificate $Subject ($Where) EXPIRED on $exp" $Hint }
     }
@@ -122,7 +222,7 @@ foreach ($st in $stores) {
         $use = $false
         if ($bound.ContainsKey($tp)) { $where = $where + ', used by ' + $bound[$tp]; $use = $true; $trust = $false }
         if ($trust) { $where = $where + ' (trust store)' }
-        Add-Cert $subj ([datetime]$c.NotAfter) $where "certs:$tp" $use "Get-ChildItem '$($st.path)\$tp' | Format-List Subject, Issuer, NotAfter, Thumbprint, HasPrivateKey; certlm.msc" $trust $st.path
+        Add-Cert $subj ([datetime]$c.NotAfter) $where "certs:$tp" $use "Get-ChildItem '$($st.path)\$tp' | Format-List Subject, Issuer, NotAfter, Thumbprint, HasPrivateKey; certlm.msc" $trust $st.path $c
     }
 }
 # TLS endpoints: the certificate a client actually gets (needs full .NET, not Constrained Language)
@@ -147,7 +247,7 @@ elseif ($endpoints.Count -gt 0) {
             $ssl = New-Object System.Net.Security.SslStream($tcp.GetStream(), $false, $cb)
             $ssl.AuthenticateAsClient($sn)
             $x = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($ssl.RemoteCertificate)
-            Add-Cert ([string]$x.Subject) $x.NotAfter "TLS $name" "certs:tls:${h}:$p" $true "Test-NetConnection $h -Port $p"
+            Add-Cert ([string]$x.Subject) $x.NotAfter "TLS $name" "certs:tls:${h}:$p" $true "Test-NetConnection $h -Port $p" $false '' $x
             $ssl.Dispose()
         }
         catch { Add-Finding "certs:tls:${h}:$p" 'warning' "could not read the certificate of $name (${h}:$p): $($_.Exception.Message)" "Test-NetConnection $h -Port $p" }

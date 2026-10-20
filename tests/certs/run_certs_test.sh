@@ -56,6 +56,9 @@ openssl req -x509 -newkey rsa:2048 -nodes -keyout a.key -out home/alice/alice.cr
 openssl req -x509 -newkey rsa:2048 -nodes -keyout r.key -out anchors/Test_Root_CA_9 -days 21 -subj "/C=US/O=U.S. Government/CN=TEST ROOT CA 9" \
     -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign 2>/dev/null
 openssl req -x509 -newkey rsa:2048 -nodes -keyout i.key -outform DER -out anchors/test-int.der -days 300 -subj "/C=US/O=U.S. Government/CN=TEST INT CA 70" 2>/dev/null
+# the shared test certificates (tests/fixtures/pki): what the inventory reads from each
+cp "$repo/tests/fixtures/pki/web.pem" disc/fixture-web.pem; cp "$repo/tests/fixtures/pki/int.pem" disc/fixture-int.pem
+cp "$repo/tests/fixtures/pki/root.pem" anchors/fixture-root.pem
 "$py" "$repo/tests/email/fake_smtp.py" 2525 "$work/mail" >/dev/null 2>&1 & pids+=($!)
 for p in 8443 9000 22 2525; do for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null && break; sleep 0.1; done; done
 rm -f ssh-connections.log           # the readiness check above connected once
@@ -66,7 +69,8 @@ printf 'all:\n  hosts:\n    web01.example.mil: {ansible_connection: local, ansib
 vars="{\"check_certs_discover_dirs\": [\"$work/disc\"], \"check_certs_discover_keystore_dirs\": [\"$work/ks\"], \"site_fail_on\": [],
        \"check_certs_discover_extra_dirs\": [\"$work/home\"], \"check_certs_trust_dirs\": [\"$work/anchors\"], \"cert_renew_skip_hosts\": \"WEB02\",
        \"report_email_to\": \"certs@example.mil\", \"report_email_from\": \"aap@example.mil\", \"report_email_smtp_host\": \"127.0.0.1\",
-       \"report_email_smtp_port\": 2525, \"report_email_security\": \"none\"}"
+       \"report_email_smtp_port\": 2525, \"report_email_security\": \"none\",
+       \"cert_inventory_files\": true, \"cert_inventory_dir\": \"$work/inventory\"}"
 (cd "$repo" && ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_SHOW_CUSTOM_STATS=1 \
     "$ap" -i "$work/inv.yml" playbooks/cert_report.yml -e "$vars") > out.txt 2>&1
 rc=$?
@@ -85,6 +89,38 @@ check "a binary (DER) file named .CER: found and read" "disc/winder.CER" "CN=win
 check "a folder from check_certs_discover_extra_dirs, two levels down: searched" "home/alice/alice.crt" "CN=alice01.example.mil"
 check "the trust store: every file, whatever its name, text or binary - in the report" "anchors/Test_Root_CA_9 (trust store)" "CN=TEST ROOT CA 9" \
     "anchors/test-int.der (trust store)" "CN=TEST INT CA 70"
+"$py" - "$work/inventory/linux-certificates.json" "$work/inventory/linux-certificates.csv" <<'EOPY' && echo "ok   - the inventory files: every certificate with its issuer, names, key, fingerprints and tier (root, intermediate, ca-signed, self-signed)" || { echo "FAIL - the inventory files (above)"; fails=$((fails + 1)); }
+import csv, json, sys
+recs = json.load(open(sys.argv[1]))
+rows = list(csv.DictReader(open(sys.argv[2])))
+errs = []
+if len(rows) != len(recs): errs.append("csv %d rows, json %d" % (len(rows), len(recs)))
+by = {}
+for r in recs:
+    by.setdefault((r["host"], r["location"].rsplit("/", 1)[-1].split(" ")[0]), r)
+want = {
+    "fixture-web.pem": dict(tier="ca-signed", public_key="RSA 2048", sha1="487B8E272CBC7625EE18207F58559BD961FD0561", serial="2002",
+                            sha256="9D4FE442B5105EFD55B528022F310DCFF9255DE764E3222CC7B7BA2F43974DFA", issuer="CN=Test Issuing CA,O=Test PKI,C=US",
+                            sans=["DNS:web01.example.mil", "DNS:web.example.mil", "IP:192.0.2.10"], sig_alg="ecdsa-with-SHA256", trust_store=False),
+    "fixture-int.pem": dict(tier="intermediate", public_key="EC P-256", sha1="176D43333E4A3290F6E056CBD9DD0C96FB182F6F", serial="1001",
+                            sig_alg="sha256WithRSAEncryption"),
+    "fixture-root.pem": dict(tier="root", public_key="RSA 3072", serial="0F965ECAB20EF6EA9F895AA1C292DCD86E14B1D3", trust_store=True),
+}
+for f, w in want.items():
+    r = by.get(("web01.example.mil", f))
+    if not r: errs.append("%s not in the inventory" % f); continue
+    for k, v in w.items():
+        if r.get(k) != v: errs.append("%s %s: %r, expected %r" % (f, k, r.get(k), v))
+tom = [r for r in recs if "(alias tomcat)" in r["location"] and r["host"] == "web01.example.mil"]
+if not tom or tom[0]["tier"] != "self-signed" or tom[0]["public_key"] != "RSA 2048" or len(tom[0]["sha1"]) != 40 or len(tom[0]["sha256"]) != 64:
+    errs.append("the JKS entry: %s" % (tom[:1],))
+port = [r for r in recs if "TLS port 8443" in r["location"]]
+if not port or port[0]["in_use"] is not True or port[0]["tier"] != "self-signed": errs.append("the TLS port: %s" % (port[:1],))
+if any(r["status"] not in ("expired", "critical", "warning", "notice", "ok", "unknown") for r in recs): errs.append("a status")
+if {r["source"] for r in recs} != {"linux"} or len({r["id"] for r in recs}) != len(recs): errs.append("source / ids")
+print("\n".join("       " + e for e in errs))
+sys.exit(1 if errs else 0)
+EOPY
 grep -q "bundle[0-9]*\.example\.mil" out.txt && { echo "FAIL - a certificate of the bundle was checked"; fails=$((fails + 1)); } || echo "ok   - the bundle's certificates: not checked one by one"
 "$py" - out.txt <<'EOPY' && echo "ok   - findings: the DER file (its hint says -inform DER), the home folder's - never the trust store's; a host renewed by hand (cert_renew_skip_hosts) says so on each" || { echo "FAIL - findings (above)"; fails=$((fails + 1)); }
 import json, sys

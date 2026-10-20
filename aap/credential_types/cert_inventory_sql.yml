@@ -1,0 +1,19 @@
+# Credential type: "SQL Server (certificate inventory)"
+# For the certificate reports' SQL Server step (cert_inventory_sql: true, docs/CERT_INVENTORY.md). A SQL
+# login, or DOMAIN\account for Windows authentication (pymssql through FreeTDS). The account needs
+# SELECT, INSERT, UPDATE on the table (and CREATE TABLE, CREATE VIEW once, for cert_inventory_sql_create).
+# The password reaches the job only through its environment, never a command line or an extra variable.
+inputs:
+  fields:
+    - id: username
+      type: string
+      label: SQL Server login
+    - id: password
+      type: string
+      label: Password
+      secret: true
+  required: [username, password]
+injectors:
+  env:
+    CERT_INVENTORY_SQL_USER: "{{ username }}"
+    CERT_INVENTORY_SQL_PASSWORD: "{{ password }}"

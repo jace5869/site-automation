@@ -1,0 +1,54 @@
+---
+# The SQL Server table: a row per host, place and certificate (templates/create.sql.j2), added or updated from
+# this report's records (templates/merge.sql.j2). The login: the "SQL Server (certificate inventory)" credential.
+- name: Certificate inventory | SQL Server settings
+  ansible.builtin.set_fact:
+    _ci_table: "{{ cert_inventory_sql_table }}"
+    _ci_sql_user: "{{ lookup('ansible.builtin.env', 'CERT_INVENTORY_SQL_USER') }}"
+
+- name: Certificate inventory | the SQL Server settings are complete
+  ansible.builtin.assert:
+    that:
+      - cert_inventory_sql_server | default('', true) | length > 0
+      - cert_inventory_sql_database | default('', true) | length > 0
+      - _ci_table is match('^[A-Za-z_][A-Za-z0-9_]*([.][A-Za-z_][A-Za-z0-9_]*)?$')
+      - _ci_sql_user | length > 0
+    fail_msg: >-
+      cert_inventory_sql: true needs cert_inventory_sql_server, cert_inventory_sql_database, a table name of
+      letters, digits and _ (schema.table, now '{{ _ci_table }}'), and the "SQL Server (certificate inventory)"
+      credential on the job template (aap/credential_types/cert_inventory_sql.yml).
+    quiet: true
+
+- name: Certificate inventory | the table, when it is not there (cert_inventory_sql_create)
+  community.general.mssql_script:
+    login_host: "{{ cert_inventory_sql_server }}"
+    login_port: "{{ cert_inventory_sql_port | int }}"
+    login_user: "{{ _ci_sql_user }}"
+    login_password: "{{ lookup('ansible.builtin.env', 'CERT_INVENTORY_SQL_PASSWORD') }}"
+    db: "{{ cert_inventory_sql_database }}"
+    script: "{{ lookup('ansible.builtin.template', 'create.sql.j2') }}"
+  when: cert_inventory_sql_create | bool and not ansible_check_mode
+
+- name: Certificate inventory | add and update the rows ({{ cert_inventory_source }})
+  community.general.mssql_script:
+    login_host: "{{ cert_inventory_sql_server }}"
+    login_port: "{{ cert_inventory_sql_port | int }}"
+    login_user: "{{ _ci_sql_user }}"
+    login_password: "{{ lookup('ansible.builtin.env', 'CERT_INVENTORY_SQL_PASSWORD') }}"
+    db: "{{ cert_inventory_sql_database }}"
+    script: "{{ lookup('ansible.builtin.template', 'merge.sql.j2') }}"
+    params:
+      records: "{{ _ci_records | cert_flat | to_json }}"
+      source: "{{ cert_inventory_source }}"
+      hosts: "{{ cert_inventory_hosts | default([]) | to_json }}"
+  register: _ci_sql
+  when: not ansible_check_mode
+
+- name: Certificate inventory | SQL Server
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('Check mode: nothing written - would send ' ~ _ci_records | length ~ ' certificates (' ~ cert_inventory_source ~ ') to '
+          ~ cert_inventory_sql_server ~ '/' ~ cert_inventory_sql_database ~ ' ' ~ _ci_table) if ansible_check_mode else
+         (_ci_records | length ~ ' certificates (' ~ cert_inventory_source ~ ') in ' ~ cert_inventory_sql_server ~ '/'
+          ~ cert_inventory_sql_database ~ ' ' ~ _ci_table ~ '; no longer found on the hosts read: '
+          ~ (_ci_sql.query_results[-1][-1][0][1] | default('?'))) }}

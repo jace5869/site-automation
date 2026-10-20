@@ -1,0 +1,35 @@
+---
+# NETWORK DEVICE CERTIFICATE RENEWAL, part 3 on localhost: each due certificate - its CSR (from the Cisco
+# devices, part 2), or why none - the report, and each CSR attached to its incident with what to do next.
+- name: Network certs | each due certificate - its CSR, or why none
+  ansible.builtin.set_fact:
+    _net_result: >-
+      {%- set made = [] -%}
+      {%- for h in groups[net_cert_group] | default([]) if hostvars[h]._net_cisco_made is defined -%}
+      {%-   set _ = made.extend(hostvars[h]._net_cisco_made) -%}
+      {%- endfor -%}
+      {{ _net.due | net_cert_csr_result(made, {
+           'on_ticket': cert_csr_on_ticket | default({}), 'connected': _net_sn, 'check_mode': ansible_check_mode,
+           'cisco_csr': net_cert_cisco_csr | bool, 'prefix': net_cert_cisco_trustpoint_prefix,
+           'ext': cert_renew_attach_ext | default('csr', true), 'content_type': cert_renew_attach_type | default('text/plain', true),
+           'retry_txt': cert_renew_attach_retry_txt | default(true) | bool}) }}
+
+- name: Network certs | the report
+  ansible.builtin.include_tasks: out.yml
+
+- name: Network certs | attach each CSR to its incident, with what to do next
+  ansible.builtin.include_role:
+    name: servicenow
+    tasks_from: cert_csr.yml
+  vars:
+    _csr_results_in: "{{ [_net_result] }}"
+  when: _net_result.certs | selectattr('status', 'in', ['made', 'exists', 'would make']) | list | length > 0
+
+- name: Network certs | a CSR that could not be made fails the job (its incident is open, without a CSR)
+  ansible.builtin.assert:
+    that: _net_failed | length == 0
+    fail_msg: "{{ _net_failed | join('; ') }}"
+    quiet: true
+  vars:
+    _net_failed: "{{ _net_result.certs | selectattr('status', 'equalto', 'failed') | map(attribute='host') | zip(_net_result.certs
+                     | selectattr('status', 'equalto', 'failed') | map(attribute='reason')) | map('join', ': ') | list }}"

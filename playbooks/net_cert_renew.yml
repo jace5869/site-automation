@@ -1,0 +1,41 @@
+---
+# NETWORK DEVICE CERTIFICATE RENEWAL - daily, or after the report. For each certificate a network device
+# presents that expires within net_cert_warn_days (30), a ServiceNow incident: critical within
+# net_cert_crit_days, else warning - with the device, port, subject, names, issuer and the steps to renew it
+# on the device. A run again notes the same incident; once the certificate is renewed, the incident is noted
+# as cleared (servicenow_resolve_cleared: true resolves it).
+# net_cert_cisco_csr: true - on a Cisco IOS / IOS-XE device of the inventory (ansible_network_os cisco.ios.ios,
+# its network_cli credential on the template), a new key and a CSR are made on the device and the CSR is
+# attached to the incident; the key never leaves the device. Off (the default): the incident only, for every
+# device. Check (a dry run) reads and says what it would do: no incident, no CSR. docs/NETWORK_CERTS.md.
+#
+#   ansible-playbook playbooks/net_cert_renew.yml -i <inventory with the group net_cert_devices> --check
+- name: Network device certificate renewal - read the certificates, the incidents
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Read, and open or note each certificate's incident
+      ansible.builtin.include_role:
+        name: net_certs
+        tasks_from: renew_start.yml
+
+- name: Network device certificate renewal - a CSR on each Cisco IOS / IOS-XE device due (net_cert_cisco_csr)
+  hosts: "{{ net_cert_group | default('net_cert_devices') }}"
+  gather_facts: false
+  tasks:
+    - name: A new key and its CSR, made on the device
+      ansible.builtin.include_role:
+        name: net_certs
+        tasks_from: cisco_csr.yml
+      when: inventory_hostname in (hostvars['localhost']._net_cisco_todo | default([]) | map(attribute='host') | list)
+
+- name: Network device certificate renewal - the CSRs on the incidents, the report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Attach each CSR to its incident, and report
+      ansible.builtin.include_role:
+        name: net_certs
+        tasks_from: renew_finish.yml

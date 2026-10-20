@@ -1,0 +1,22 @@
+---
+# The files on a Windows host (cert_inventory_host is a Windows file server) - its own file: ansible.windows is
+# only needed when it is used.
+- name: Certificate inventory | the folder
+  delegate_to: "{{ _ci_on }}"
+  ansible.windows.win_file:
+    path: "{{ cert_inventory_dir }}"
+    state: directory
+
+- name: Certificate inventory | the CSV
+  delegate_to: "{{ _ci_on }}"
+  ansible.windows.win_copy:
+    content: "{{ _ci_records | cert_csv }}"
+    dest: "{{ cert_inventory_dir }}\\{{ item }}.csv"
+  loop: "{{ _ci_names }}"
+
+- name: Certificate inventory | the JSON
+  delegate_to: "{{ _ci_on }}"
+  ansible.windows.win_copy:
+    content: "{{ _ci_records | to_nice_json }}\n"
+    dest: "{{ cert_inventory_dir }}\\{{ item }}.json"
+  loop: "{{ _ci_names }}"

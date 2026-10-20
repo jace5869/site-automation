@@ -1,0 +1,48 @@
+---
+# NETWORK DEVICE CERTIFICATE RENEWAL (playbooks/net_cert_renew.yml), part 1 on localhost: read the certificates,
+# open or note one ServiceNow incident per certificate due (the ServiceNow tickets step), and - with
+# net_cert_cisco_csr - which Cisco IOS / IOS-XE devices get a CSR (_net_cisco_todo; part 2, cisco_csr.yml, on
+# the devices). A CSR is made once: the incident is its record (cert_on_ticket.yml) - a second one would
+# replace the key that waits on the device for the issued certificate.
+# Check (a dry run) opens nothing and makes no CSR: it reads, and says what it would do.
+- name: Network certs | read the certificates, and which are due
+  ansible.builtin.include_tasks: read.yml
+
+- name: "Network certs | the incidents{{ ' - DRY RUN, nothing is sent' if ansible_check_mode else '' }}"
+  ansible.builtin.include_role:
+    name: servicenow
+    tasks_from: tickets.yml
+  vars:
+    _sn_health_in: "{{ _net.health }}"
+    _sn_targets_in: []
+    servicenow_min_severity: warning        # an incident for every certificate due, whatever the site's level
+    servicenow_fail_when_findings: false    # the CSRs come next; this job fails only when something did not work
+  when: _net.health | length > 0
+
+- name: Network certs | each due certificate's incident, and the CSRs already on them
+  ansible.builtin.include_role:
+    name: servicenow
+    tasks_from: cert_on_ticket.yml
+  vars:
+    _csr_check_in: >-
+      {%- set out = [] -%}
+      {%- for c in _net.due if c.renew == 'cisco' -%}
+      {%-   set _ = out.append({'id': c.id, 'host': c.host, 'check': 'net_certs',
+                               'prefix': (c.host.split('.')[0] if not c.host.replace('.', '') is match('^[0-9]+$') else c.host) ~ '-' ~ c.port ~ '-',
+                               'csr': true}) -%}
+      {%- endfor -%}
+      {{ out }}
+  when: _net_sn and _net.due | selectattr('renew', 'equalto', 'cisco') | list | length > 0
+
+- name: Network certs | the Cisco devices that get a CSR now (none in a dry run, or without the ServiceNow credential)
+  ansible.builtin.set_fact:
+    _net_cisco_todo: >-
+      {%- set out = [] -%}
+      {%- if not ansible_check_mode and _net_sn -%}
+      {%-   for c in _net.due if c.renew == 'cisco' and c.id not in (cert_csr_on_ticket | default({})) -%}
+      {%-     set _ = out.append({'host': c.host, 'port': c.port, 'id': c.id, 'subject': c.subject | net_cert_ios_subject,
+                                 'names': c.sans | select('match', '^DNS:') | map('regex_replace', '^DNS:', '') | list,
+                                 'trustpoint': c | net_cert_trustpoint(net_cert_cisco_trustpoint_prefix)}) -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {{ out }}

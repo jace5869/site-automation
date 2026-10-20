@@ -1,0 +1,15 @@
+---
+# NETWORK DEVICE CERTIFICATE RENEWAL, part 2 on a Cisco IOS / IOS-XE device (network_cli): for each of its
+# certificates due (hostvars.localhost._net_cisco_todo), a new key and its CSR made on the device - the key
+# never leaves it. -> _net_cisco_made [{host, port, trustpoint, csr | error}].
+- name: Network certs | this device's certificates due
+  ansible.builtin.set_fact:
+    _net_cisco_made: []
+    _net_mine: "{{ hostvars['localhost']._net_cisco_todo | default([]) | selectattr('host', 'equalto', inventory_hostname) | list }}"
+
+- name: Network certs | a key and a CSR on the device, for each one
+  ansible.builtin.include_tasks: cisco_csr_one.yml
+  loop: "{{ _net_mine }}"
+  loop_control:
+    loop_var: _net_c
+    label: "{{ _net_c.trustpoint }} (port {{ _net_c.port }})"

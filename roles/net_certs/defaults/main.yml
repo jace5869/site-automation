@@ -1,0 +1,37 @@
+---
+# NETWORK DEVICE CERTIFICATES (playbooks/net_cert_report.yml, net_cert_renew.yml): the TLS certificate each
+# switch, firewall, printer, iLO / iDRAC, UPS, storage ... presents, read from the controller with a TLS
+# hello - no login to the devices, nothing changed. The renewal: a ServiceNow incident per certificate
+# due; on a Cisco IOS / IOS-XE device, optionally a CSR made on the device (net_cert_cisco_csr).
+
+# ---- which devices ----
+
+net_cert_targets: inventory              # inventory (the hosts of net_cert_group) / subnets (net_cert_subnets) / both
+net_cert_group: net_cert_devices         # the inventory group of the devices; a host's own net_cert_ports / net_cert_address / net_cert_servername override
+net_cert_ports: [443]                    # the ports read (a host's own net_cert_ports wins), e.g. [443, 8443, 636]
+net_cert_subnets: []                     # CIDR ranges to sweep (net_cert_targets: subnets or both), e.g. ['192.0.2.0/24'] - every address, each port in net_cert_ports
+net_cert_exclude: []                     # never connected to: addresses, CIDR ranges, host name patterns (e.g. ['192.0.2.1', 'ups*'])
+net_cert_max_addresses: 4096             # a sweep bigger than this (all subnets together) is refused: a /16 by mistake would take hours
+net_cert_resolve_names: true             # a swept address that answers: its DNS name (PTR) in the report, else the address
+net_cert_timeout: 5                      # seconds for each connection, and each handshake
+net_cert_workers: 32                     # connections at the same time
+net_cert_only: []                        # only these devices (names, wildcards), e.g. ['sw01*'] - to try the renewal on one
+
+# ---- what is due ----
+
+net_cert_warn_days: 30                   # a certificate expiring within this many days is due: a warning incident (amber in the report)
+net_cert_crit_days: 7                    # within this many days (or expired): critical
+net_cert_notice_days: 60                 # the report colours these blue (a heads-up, no incident)
+net_cert_unanswered_finding: false       # true = an inventory device whose port gives no certificate gets an incident too (a warning)
+
+# ---- the renewal: Cisco IOS / IOS-XE, a CSR made on the device (off: an incident only, for every device) ----
+
+# On: for a due certificate of an inventory host with ansible_network_os cisco.ios.ios (and its network_cli
+# credential on the job template), the job makes a key on the device (crypto key generate rsa, not exportable),
+# a trustpoint <prefix>-<expiry> (enrollment terminal) and its CSR (crypto pki enroll), and attaches the CSR to
+# the incident with the steps to import the issued certificate. The device's running configuration gets the
+# trustpoint and the key: write memory is up to you (the incident says so). Other vendors: the incident only.
+
+net_cert_cisco_csr: false                # true = a CSR made on each Cisco IOS / IOS-XE device due (see above); false = the incident only
+net_cert_cisco_key_bits: 2048            # the new RSA key (2048, 3072, 4096)
+net_cert_cisco_trustpoint_prefix: SA-RENEW   # the trustpoint and key label: SA-RENEW-20270131 (the old certificate's expiry)

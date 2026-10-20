@@ -1,0 +1,19 @@
+---
+# NETWORK DEVICE CERTIFICATE REPORT - on demand, or weekly. The TLS certificate each switch, firewall, printer,
+# iLO / iDRAC, UPS, storage ... presents, read from the controller with a TLS hello: no login to the devices,
+# nothing changed. The devices: the inventory group net_cert_devices (net_cert_group) and / or subnets swept
+# (net_cert_targets, net_cert_subnets); the ports: net_cert_ports (443). One table, soonest expiry first,
+# and for each certificate due (net_cert_warn_days) what the renewal (net_cert_renew.yml) would do. Printed and
+# emailed (report_email_to). Never ServiceNow, never a CSR. docs/NETWORK_CERTS.md.
+#
+#   ansible-playbook playbooks/net_cert_report.yml -i <inventory with the group net_cert_devices>
+#   ansible-playbook playbooks/net_cert_report.yml -e net_cert_targets=subnets -e '{"net_cert_subnets": ["192.0.2.0/24"]}'
+- name: Network device certificate report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The certificates of the network devices - the report only
+      ansible.builtin.include_role:
+        name: net_certs
+        tasks_from: report.yml

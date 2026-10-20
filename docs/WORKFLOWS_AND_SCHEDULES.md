@@ -323,6 +323,11 @@ It must be **Run always**: steps 1 and 2 are red on purpose while certificates e
 `cert_skip_hosts` or `cert_skip_groups` (Satellite) are left out of every step: set them in `all.yml`,
 or on the workflow, so every step gets them.
 
+**Network devices:** *Network device certificate renewal* on its own, daily - it reads the devices, opens
+the incidents and emails the report ([NETWORK_CERTS.md](NETWORK_CERTS.md)). **A dashboard:** with
+`cert_inventory_files` or `cert_inventory_sql` in `all.yml`, each certificate report also writes every
+certificate it read ([CERT_INVENTORY.md](CERT_INVENTORY.md)).
+
 ### 8. Database watch: MariaDB and MySQL (hourly)
 
 ```text

@@ -65,6 +65,22 @@
       run_once: true
 
   post_tasks:
+    - name: Certificate inventory - every certificate, for a dashboard (cert_inventory_files, cert_inventory_sql; off by default)
+      ansible.builtin.include_role:
+        name: cert_inventory
+        tasks_from: from_hosts.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        cert_inventory_source: windows
+        cert_inventory_warn_days: "{{ win_check_certs_warn_days | default(30) }}"
+        cert_inventory_crit_days: "{{ win_check_certs_crit_days | default(7) }}"
+        cert_inventory_notice_days: "{{ win_check_certs_notice_days | default(60) }}"
+      run_once: true
+      when: cert_inventory_files | default(false) | bool or cert_inventory_sql | default(false) | bool
+
     - name: Report (fails the hosts with certificates that expire soon)
       ansible.builtin.include_role:
         name: site_findings

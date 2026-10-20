@@ -337,6 +337,19 @@ with the CSR attached to the certificate's ServiceNow incident (step 3 of workfl
 **Windows:** *Windows certificate renewal - CSRs* (`playbooks/win_cert_renew_csr.yml`) does the same on
 Windows servers with `certreq`, with the Windows machine credential: [WINDOWS.md](WINDOWS.md#windows-certificate-renewal---csrs).
 
+### Network device certificate report / renewal
+
+The certificates of switches, firewalls, printers, iLO / iDRAC ... read from the controller: no login to the
+devices. Both run on the controller (Limit empty, **no** Prompt on launch). Report: `playbooks/net_cert_report.yml`,
+no credential. Renewal: `playbooks/net_cert_renew.yml`, `ServiceNow API` (and a Machine credential for the Cisco
+devices with `net_cert_cisco_csr`). The devices, the templates and the settings: [NETWORK_CERTS.md](NETWORK_CERTS.md).
+
+### Certificate inventory (CSV / SQL Server)
+
+Not a template: a setting of every certificate report (`cert_inventory_files`, `cert_inventory_sql`). For the
+SQL Server table, add the *SQL Server (certificate inventory)* credential to each report template:
+[CERT_INVENTORY.md](CERT_INVENTORY.md).
+
 ### POA&M status
 
 Weekly. Runs on the controller and reads `poam/poam.csv` from the project.

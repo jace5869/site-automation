@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [ad_report](#ad_report), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
+**Contents:** [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [net_certs](#net_certs), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
 
 ## ad_report
 
@@ -52,6 +52,25 @@ File: `roles/ad_report/defaults/main.yml`
 | `ad_no_client_site_warn` | `1` | this many client addresses in no AD subnet -> amber (fewer: blue) |
 | `ad_report_max_rows` | `50` | rows per table (problems first); the job's artifacts have all |
 | `ad_report_fail` | `false` | The job stays green when it finds problems: the report and email say what. true = mark it FAILED when there is a critical finding or a DC could not be read, for workflows. |
+
+## cert_inventory
+
+File: `roles/cert_inventory/defaults/main.yml`
+
+> CERTIFICATE INVENTORY: every certificate report (Linux, Windows, VMware, network devices) can also write what it found - every certificate, with the same fields from each - for a dashboard (Power BI ...). Two ways, each on by itself: files (CSV + JSON) and a SQL Server table. A Check run writes nothing. The fields: id, source, host, location, subject, issuer, sans, not_after, days, status, tier (root / intermediate / ca-signed / self-signed), trust_store, in_use, public_key, sig_alg, serial, sha1, sha256, scanned_at, job (docs/CERT_INVENTORY.md).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `cert_inventory_files` | `false` | ---- files: <source>-certificates.csv and .json (source: linux, windows, vmware, net), replaced each run ---- true = write the files |
+| `cert_inventory_dir` | `/var/lib/site-automation/cert-inventory` | where: on the AAP node the job runs on (a path AAP exposes to jobs: docs/CERT_INVENTORY.md), or on cert_inventory_host |
+| `cert_inventory_host` | (empty) | an inventory host to write them on instead (a file server, or a Linux host with the share mounted); its credential must be on the job template |
+| `cert_inventory_history` | `false` | true = also a dated copy (<source>-certificates-YYYY-MM-DD.csv) next to them, for trends |
+| `cert_inventory_sql` | `false` | The login comes from the "SQL Server (certificate inventory)" credential (aap/credential_types/cert_inventory_sql.yml). The execution environment needs pymssql and community.general (the all-in-one EE has both). true = add / update the rows |
+| `cert_inventory_sql_server` | (empty) | the SQL Server (name or address) |
+| `cert_inventory_sql_port` | `1433` | its port |
+| `cert_inventory_sql_database` | (empty) | the database (SQL Server 2016 or later: the rows go in as JSON, OPENJSON) |
+| `cert_inventory_sql_table` | `dbo.cert_inventory` | schema.table |
+| `cert_inventory_sql_create` | `false` | true = create the table (and its view <table>_current) when it is not there - the account then needs CREATE TABLE |
 
 ## check_accounts
 
@@ -347,6 +366,32 @@ File: `roles/check_time/defaults/main.yml`
 | `check_time_offset_warn` | `0.5` | seconds |
 | `check_time_offset_crit` | `5.0` | seconds off -> critical (warning from check_time_offset_warn) |
 | `check_time_min_sources` | `1` | time servers chrony must be able to reach |
+
+## net_certs
+
+File: `roles/net_certs/defaults/main.yml`
+
+> NETWORK DEVICE CERTIFICATES (playbooks/net_cert_report.yml, net_cert_renew.yml): the TLS certificate each switch, firewall, printer, iLO / iDRAC, UPS, storage ... presents, read from the controller with a TLS hello - no login to the devices, nothing changed. The renewal: a ServiceNow incident per certificate due; on a Cisco IOS / IOS-XE device, optionally a CSR made on the device (net_cert_cisco_csr).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `net_cert_targets` | `inventory` | ---- which devices ---- inventory (the hosts of net_cert_group) / subnets (net_cert_subnets) / both |
+| `net_cert_group` | `net_cert_devices` | the inventory group of the devices; a host's own net_cert_ports / net_cert_address / net_cert_servername override |
+| `net_cert_ports` | `[443]` | the ports read (a host's own net_cert_ports wins), e.g. [443, 8443, 636] |
+| `net_cert_subnets` | `[]` | CIDR ranges to sweep (net_cert_targets: subnets or both), e.g. ['192.0.2.0/24'] - every address, each port in net_cert_ports |
+| `net_cert_exclude` | `[]` | never connected to: addresses, CIDR ranges, host name patterns (e.g. ['192.0.2.1', 'ups*']) |
+| `net_cert_max_addresses` | `4096` | a sweep bigger than this (all subnets together) is refused: a /16 by mistake would take hours |
+| `net_cert_resolve_names` | `true` | a swept address that answers: its DNS name (PTR) in the report, else the address |
+| `net_cert_timeout` | `5` | seconds for each connection, and each handshake |
+| `net_cert_workers` | `32` | connections at the same time |
+| `net_cert_only` | `[]` | only these devices (names, wildcards), e.g. ['sw01*'] - to try the renewal on one |
+| `net_cert_warn_days` | `30` | ---- what is due ---- a certificate expiring within this many days is due: a warning incident (amber in the report) |
+| `net_cert_crit_days` | `7` | within this many days (or expired): critical |
+| `net_cert_notice_days` | `60` | the report colours these blue (a heads-up, no incident) |
+| `net_cert_unanswered_finding` | `false` | true = an inventory device whose port gives no certificate gets an incident too (a warning) |
+| `net_cert_cisco_csr` | `false` | On: for a due certificate of an inventory host with ansible_network_os cisco.ios.ios (and its network_cli credential on the job template), the job makes a key on the device (crypto key generate rsa, not exportable), a trustpoint <prefix>-<expiry> (enrollment terminal) and its CSR (crypto pki enroll), and attaches the… (all of it: the role file) |
+| `net_cert_cisco_key_bits` | `2048` | the new RSA key (2048, 3072, 4096) |
+| `net_cert_cisco_trustpoint_prefix` | `SA-RENEW` | the trustpoint and key label: SA-RENEW-20270131 (the old certificate's expiry) |
 
 ## ontap_report
 

@@ -66,7 +66,7 @@ from ansible.module_utils.six.moves.urllib import error as urlerror
 from ansible.module_utils.six.moves.urllib import request as urlrequest
 
 try:
-    from pyVmomi import vim
+    from pyVmomi import vim, vmodl
     HAS_PYVMOMI = True
 except ImportError:
     HAS_PYVMOMI = False
@@ -74,6 +74,8 @@ except ImportError:
 try:
     from cryptography import x509
     from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec, rsa
     HAS_CRYPTO = True
     # subject parts by their OID: what vCenter's tls-csr call takes
     PART = dict((o.dotted_string, n) for o, n in (
@@ -140,8 +142,41 @@ def same_dn(a, b):
     return bool(pa) and sorted((k, v.lower()) for k, v in pa) == sorted((k, v.lower()) for k, v in pb)
 
 
+CURVES = {"secp256r1": "P-256", "secp384r1": "P-384", "secp521r1": "P-521"}
+
+
+def cert_meta(c):
+    """The rest of what a certificate says, for the inventory (the same fields as the Linux and Windows reports):
+    {serial, sha1, sha256, key, sig_alg, ca, tier}."""
+    pk = c.public_key()
+    if isinstance(pk, rsa.RSAPublicKey):
+        key = "RSA %d" % pk.key_size
+    elif isinstance(pk, ec.EllipticCurvePublicKey):
+        key = "EC " + CURVES.get(pk.curve.name, pk.curve.name)
+    else:
+        key = type(pk).__name__.replace("PublicKey", "").lstrip("_")
+    try:
+        ca = bool(c.extensions.get_extension_for_class(x509.BasicConstraints).value.ca)
+    except x509.ExtensionNotFound:
+        ca = False
+    self_signed = c.subject == c.issuer
+    try:
+        signs = bool(c.extensions.get_extension_for_class(x509.KeyUsage).value.key_cert_sign)
+    except x509.ExtensionNotFound:
+        signs = False
+    try:
+        sig = c.signature_algorithm_oid._name
+    except AttributeError:
+        sig = c.signature_algorithm_oid.dotted_string
+    serial = "%X" % c.serial_number
+    return {"serial": ("0" if len(serial) % 2 else "") + serial, "sha1": c.fingerprint(hashes.SHA1()).hex().upper(),
+            "sha256": c.fingerprint(hashes.SHA256()).hex().upper(), "key": key, "sig_alg": sig, "ca": ca,
+            # root: a self-signed CA that signs certificates - not a server's own self-signed one (openssl req -x509 says CA:TRUE)
+            "tier": "root" if ca and self_signed and signs else ("self-signed" if self_signed else ("intermediate" if ca else "ca-signed"))}
+
+
 def cert_record(der, now=None):
-    """A certificate (DER) -> {subject, issuer, sans, not_after, expires, days, self_signed}."""
+    """A certificate (DER) -> {subject, issuer, sans, not_after, expires, days, self_signed}, and cert_meta's fields."""
     c = x509.load_der_x509_certificate(der)
     na = c.not_valid_after_utc if hasattr(c, "not_valid_after_utc") else utc(c.not_valid_after)
     try:
@@ -152,7 +187,7 @@ def cert_record(der, now=None):
     subject, issuer = c.subject.rfc4514_string(), c.issuer.rfc4514_string()
     return {"subject": subject, "issuer": issuer, "sans": sans, "not_after": na.strftime("%Y-%m-%d %H:%M UTC"),
             "expires": na.strftime("%Y-%m-%d"), "days": days_left(na, now), "self_signed": c.subject == c.issuer,
-            "parts": [[PART.get(a.oid.dotted_string, a.oid.dotted_string), a.value] for a in c.subject]}
+            "parts": [[PART.get(a.oid.dotted_string, a.oid.dotted_string), a.value] for a in c.subject], **cert_meta(c)}
 
 
 def tls_der(host, port, timeout):
@@ -319,6 +354,39 @@ def _place(h):
     return cluster, (p.name if p is not None else "")
 
 
+def _host_pems(content, hosts):
+    """{host name: its certificate (PEM)} - config.certificate of every host in one call (not each host's whole
+    configuration). {} when vCenter does not give it: the hosts are still listed, without fingerprints."""
+    try:
+        pc = vmodl.query.PropertyCollector
+        spec = pc.FilterSpec(objectSet=[pc.ObjectSpec(obj=h) for h in hosts],
+                             propSet=[pc.PropertySpec(type=vim.HostSystem, pathSet=["name", "config.certificate"])])
+        out = {}
+        for o in content.propertyCollector.RetrieveContents([spec]):
+            v = dict((p.name, p.val) for p in o.propSet)
+            raw = v.get("config.certificate")
+            if v.get("name") and raw:
+                out[v["name"]] = raw if isinstance(raw, (bytes, bytearray)) else bytes(int(b) & 0xFF for b in raw)
+        return out
+    except Exception:                           # noqa: BLE001
+        return {}
+
+
+def _pem_meta(pem):
+    """A host's PEM certificate -> cert_meta's fields and its names (the inventory); {} when it cannot be read."""
+    try:
+        c = x509.load_pem_x509_certificate(bytes(pem))
+    except Exception:                           # noqa: BLE001
+        return {}
+    m = cert_meta(c)
+    try:
+        ext = c.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+        m["sans"] = [str(n) for n in ext.get_values_for_type(x509.DNSName)] + [str(n) for n in ext.get_values_for_type(x509.IPAddress)]
+    except x509.ExtensionNotFound:
+        pass
+    return m
+
+
 def _read(content, name, esxi, timeout, certs, not_checked):
     host, port = host_port(name)
     try:
@@ -338,6 +406,7 @@ def _read(content, name, esxi, timeout, certs, not_checked):
     finally:
         view.Destroy()
     now = datetime.datetime.now(datetime.timezone.utc)
+    pems = _host_pems(content, hosts)
     for h in sorted(hosts, key=lambda x: x.name):
         try:
             state = str(h.runtime.connectionState)
@@ -356,6 +425,10 @@ def _read(content, name, esxi, timeout, certs, not_checked):
                           "not_after": na.strftime("%Y-%m-%d %H:%M UTC"), "expires": na.strftime("%Y-%m-%d"),
                           "days": days_left(na, now), "self_signed": same_dn(info.subject, info.issuer),
                           "status": str(info.status or ""), "product": ""})
+            # the fingerprints, serial, key and names, from the certificate itself (the inventory)
+            meta = _pem_meta(pems[h.name]) if h.name in pems else {}
+            if meta:
+                certs[-1].update(dict((k, v) for k, v in meta.items() if k != "sans" or not certs[-1]["sans"]))
         except Exception as e:                  # noqa: BLE001
             not_checked.append({"vcenter": name, "kind": "esxi", "name": getattr(h, "name", "?"),
                                 "why": "its certificate could not be read: %s" % fault_text(e)})

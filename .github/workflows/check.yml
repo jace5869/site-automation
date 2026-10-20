@@ -44,6 +44,8 @@ jobs:
         run: |
           python tests/test_filters.py
           python tests/test_vmware_modules.py
+          python tests/test_cert_inventory.py
+          python tests/test_net_certs.py
           python tests/test_ontap.py
           python tests/test_ad.py
           python tests/test_mariadb_perf.py
@@ -114,6 +116,19 @@ jobs:
         run: |
           bash tests/certs/run_cert_renew_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/certs/run_cert_renew_test.sh
+      - name: Network device certificates - report, sweep, incidents, Cisco CSRs (stand-in devices and IOS-XE CLI, fake ServiceNow; current ansible-core and 2.16)
+        run: |
+          pip install paramiko
+          /tmp/ac216/bin/pip -q install paramiko
+          ansible-galaxy collection install cisco.ios ansible.netcommon
+          bash tests/netcerts/run_net_certs_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netcerts/run_net_certs_test.sh
+      - name: Certificate inventory into SQL Server (a real SQL Server 2022 in docker)
+        run: |
+          pip install pymssql
+          ansible-galaxy collection install community.general
+          docker pull -q mcr.microsoft.com/mssql/server:2022-latest
+          CERT_SQL_TEST_RUNTIME=docker bash tests/certinv/run_cert_inventory_sql_test.sh
       - name: Credential types and inventory are valid YAML
         run: |
           python - <<'PY'

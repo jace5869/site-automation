@@ -1,5 +1,7 @@
 # Secrets never live in this repository. These patterns catch the usual accidents.
 *.pem
+# (but the test certificates - certificates only, no keys: tests/fixtures/pki/README.md)
+!tests/fixtures/pki/*.pem
 *.key
 *.p12
 *.pfx

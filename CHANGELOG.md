@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.16.0 — 2026-10-20
+
+**Updating without scripts:** paste `site-automation-0.16.0-changed-since-0.15.10.zip` as it is (from
+0.15.1 to 0.15.9: `site-automation-0.16.0-changed-since-0.15.1.zip`). Both leave out
+`playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. Two new job templates (below) and a new
+credential type, only if you use them; the existing templates are unchanged.
+
+**Certificate inventory, for a dashboard (Power BI ...):** every certificate report - Linux, Windows, VMware and
+the new network device report - can write every certificate it found with the same fields: issuer, names
+(SANs), key, signature algorithm, serial, SHA-1 and SHA-256, whether it is in use, and its tier (root,
+intermediate, CA-signed, self-signed). Two ways, each off by default: `cert_inventory_files` (CSV and JSON, on
+a file server: `cert_inventory_host`) and `cert_inventory_sql` (a SQL Server table: a row per host, place and
+certificate, with first seen, last seen and whether it is still there, and a view of what is there now). New
+credential type *SQL Server (certificate inventory)* (`aap/credential_types/cert_inventory_sql.yml`).
+docs/CERT_INVENTORY.md.
+
+**New job templates: `Network device certificate report` and `Network device certificate renewal`**
+(`playbooks/net_cert_report.yml`, `net_cert_renew.yml`). The certificate each switch, firewall, printer,
+iLO / iDRAC ... presents, read from the controller with a TLS hello - no login to the devices. The devices: an
+inventory group (`net_cert_devices`) and / or subnets swept (`net_cert_targets`, `net_cert_subnets`). The
+renewal opens one ServiceNow incident per certificate due, with the steps to renew it on the device; with
+`net_cert_cisco_csr: true` it also makes the key and CSR on Cisco IOS / IOS-XE devices and attaches the CSR
+(not yet tried on real devices: try it on one first). docs/NETWORK_CERTS.md.
+
+**The Linux and Windows certificate reports** read each certificate's issuer, names, key, fingerprints and
+tier too (for the inventory; the report table is unchanged).
+
 ## 0.15.10 — 2026-10-19
 
 **Updating without scripts:** paste `site-automation-0.15.10-changed-since-0.15.9.zip` as it is (from

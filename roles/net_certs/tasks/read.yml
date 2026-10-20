@@ -1,0 +1,80 @@
+---
+# Network device certificates, the shared first part (report.yml, renew.yml), on localhost: the devices
+# (net_cert_group in the inventory, and / or net_cert_subnets), their certificates (site_net_certs), which
+# are due -> _net_read, _net (net_cert_plan), _net_sn (a ServiceNow credential).
+- name: Network certs | net_cert_targets is inventory, subnets or both
+  ansible.builtin.assert:
+    that:
+      - net_cert_targets in ['inventory', 'subnets', 'both']
+      - net_cert_targets == 'inventory' or _net_subnets | length > 0
+    fail_msg: >-
+      net_cert_targets is '{{ net_cert_targets }}': it takes inventory (the hosts of net_cert_group), subnets
+      (net_cert_subnets, which must then list CIDR ranges) or both. Nothing was read.
+    quiet: true
+  vars:
+    _net_subnets: "{{ (net_cert_subnets | replace(',', ' ')).split() if net_cert_subnets is string else net_cert_subnets | default([], true) }}"
+
+- name: Network certs | the devices of the inventory group (net_cert_group)
+  ansible.builtin.set_fact:
+    _net_targets: >-
+      {%- set out = [] -%}
+      {%- if net_cert_targets in ['inventory', 'both'] -%}
+      {%-   for h in groups[net_cert_group] | default([]) | sort -%}
+      {%-     set v = hostvars[h] -%}
+      {%-     set ports = v.net_cert_ports | default(net_cert_ports) -%}
+      {%-     set _ = out.append({'host': h, 'address': v.net_cert_address | default(v.ansible_host | default(h)),
+                                  'ports': ((ports | replace(',', ' ')).split() if ports is string else ports) | map('int') | list,
+                                  'servername': v.net_cert_servername | default(h)}) -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {{ out }}
+    # the hosts a CSR can be made on: Cisco IOS / IOS-XE (network_cli)
+    _net_cisco_hosts: >-
+      {{ groups[net_cert_group] | default([]) | select('in', hostvars) | list | map('extract', hostvars)
+         | selectattr('ansible_network_os', 'defined') | selectattr('ansible_network_os', 'in', ['cisco.ios.ios', 'ios'])
+         | map(attribute='inventory_hostname') | list }}
+
+- name: Network certs | something to read
+  ansible.builtin.assert:
+    that: _net_targets | length > 0 or net_cert_targets != 'inventory'
+    fail_msg: >-
+      The inventory group {{ net_cert_group }} (net_cert_group) has no hosts in this job's inventory. Put the devices
+      in that group (docs/NETWORK_CERTS.md), or sweep subnets (net_cert_targets: subnets, net_cert_subnets).
+    quiet: true
+
+- name: Network certs | read the certificate of each device and port (a TLS hello from the controller)
+  site_net_certs:
+    targets: "{{ _net_targets }}"
+    subnets: "{{ ((net_cert_subnets | replace(',', ' ')).split() if net_cert_subnets is string else net_cert_subnets | default([], true))
+                 if net_cert_targets in ['subnets', 'both'] else [] }}"
+    ports: "{{ ((net_cert_ports | replace(',', ' ')).split() if net_cert_ports is string else net_cert_ports) | map('int') | list }}"
+    exclude: "{{ net_cert_exclude | default([], true) }}"
+    timeout: "{{ net_cert_timeout | float }}"
+    workers: "{{ net_cert_workers | int }}"
+    max_addresses: "{{ net_cert_max_addresses | int }}"
+    resolve_names: "{{ net_cert_resolve_names | bool }}"
+  register: _net_read
+  check_mode: false             # only reads: a dry run reads too
+
+- name: Network certs | which are due, and what each one gets
+  ansible.builtin.set_fact:
+    _net: >-
+      {{ _net_read.certs | net_cert_plan(_net_read.not_answering, {
+           'warn_days': net_cert_warn_days | int, 'crit_days': net_cert_crit_days | int,
+           'only': (net_cert_only | replace(',', ' ')).split() if net_cert_only is string else net_cert_only | default([], true),
+           'cisco_hosts': _net_cisco_hosts, 'cisco_csr': net_cert_cisco_csr | bool,
+           'unanswered_finding': net_cert_unanswered_finding | bool,
+           'job': awx_job_id | default(''), 'time': now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ')}) }}
+    _net_sn: "{{ lookup('ansible.builtin.env', 'SN_HOST') | trim | length > 0 }}"
+
+- name: Network certs | certificate inventory - every certificate, for a dashboard (cert_inventory_files, cert_inventory_sql; off by default)
+  ansible.builtin.include_role:
+    name: cert_inventory
+  vars:
+    cert_inventory_source: net
+    cert_inventory_rows: "{{ _net.certs | map('combine', {'in_use': true}) | list }}"
+    cert_inventory_hosts: "{{ _net.certs | map(attribute='host') | unique | list }}"
+    cert_inventory_warn_days: "{{ net_cert_warn_days }}"
+    cert_inventory_crit_days: "{{ net_cert_crit_days }}"
+    cert_inventory_notice_days: "{{ net_cert_notice_days }}"
+  when: cert_inventory_files | default(false) | bool or cert_inventory_sql | default(false) | bool

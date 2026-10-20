@@ -1,0 +1,57 @@
+---
+# <source>-certificates.csv and .json in cert_inventory_dir - on the AAP node (an exposed path), or on
+# cert_inventory_host (Linux or Windows). Replaced each run; cert_inventory_history adds a dated copy.
+- name: Certificate inventory | where the files go
+  ansible.builtin.set_fact:
+    _ci_on: "{{ cert_inventory_host | default('', true) or 'localhost' }}"
+    _ci_win: >-
+      {{ (cert_inventory_host | default('', true)) != ''
+         and (hostvars[cert_inventory_host].ansible_connection | default('') in ['winrm', 'psrp']
+              or hostvars[cert_inventory_host].site_os | default('') == 'windows') }}
+    _ci_names: >-
+      {{ [cert_inventory_source ~ '-certificates']
+         + ([cert_inventory_source ~ '-certificates-' ~ now(utc=true).strftime('%Y-%m-%d')] if cert_inventory_history | bool else []) }}
+
+- name: Certificate inventory | cert_inventory_host is in the inventory
+  ansible.builtin.assert:
+    that: _ci_on == 'localhost' or _ci_on in hostvars
+    fail_msg: >-
+      cert_inventory_host '{{ _ci_on }}' is not in this job's inventory: add it (with a credential the job
+      template carries), or leave cert_inventory_host empty to write on the AAP node.
+    quiet: true
+
+- name: Certificate inventory | the files on a Linux host (or the AAP node)
+  when: not _ci_win | bool
+  delegate_to: "{{ _ci_on }}"
+  become: false
+  block:
+    - name: Certificate inventory | the folder
+      ansible.builtin.file:
+        path: "{{ cert_inventory_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Certificate inventory | the CSV
+      ansible.builtin.copy:
+        content: "{{ _ci_records | cert_csv }}"
+        dest: "{{ cert_inventory_dir }}/{{ item }}.csv"
+        mode: "0644"
+      loop: "{{ _ci_names }}"
+
+    - name: Certificate inventory | the JSON
+      ansible.builtin.copy:
+        content: "{{ _ci_records | to_nice_json }}\n"
+        dest: "{{ cert_inventory_dir }}/{{ item }}.json"
+        mode: "0644"
+      loop: "{{ _ci_names }}"
+
+- name: Certificate inventory | the files on a Windows host (a file server)
+  ansible.builtin.include_tasks: files_windows.yml
+  when: _ci_win | bool
+
+- name: Certificate inventory | written
+  ansible.builtin.debug:
+    msg: >-
+      {{ _ci_records | length }} certificates ({{ cert_inventory_source }}) in {{ cert_inventory_dir }}/{{ _ci_names[0] }}.csv
+      and .json on {{ _ci_on }}{{ ' (AAP node: only kept if AAP exposes that path to jobs - docs/CERT_INVENTORY.md)' if _ci_on == 'localhost' else '' }}{{
+      ' - Check mode: nothing written' if ansible_check_mode else '' }}
