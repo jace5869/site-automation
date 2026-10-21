@@ -1,0 +1,128 @@
+---
+# The backup in a git repository (net_config_store: git or both), on the controller: a shallow clone of
+# net_config_git_branch, each device's file compared with what was read, the new and changed ones written,
+# one commit, pushed (once more after a pull when someone pushed in between). Check: compared, nothing written.
+# The login (the "Network config git repository" credential): NET_CONFIG_GIT_KEY_FILE (an SSH key), or
+# NET_CONFIG_GIT_USERNAME + NET_CONFIG_GIT_TOKEN (https) - sent as a header from the environment, never on a
+# command line. Input: _ncf_all. Output: _ncg_res (net_config_backup_result), _ncg_commit, _ncg_where.
+- name: Network config | the repository is set
+  ansible.builtin.assert:
+    that: net_config_git_repo | default('', true) | length > 0
+    fail_msg: >-
+      net_config_git_repo is empty: set it to your private, internal repository for the configurations
+      (ssh://git@git.example.mil/netops/configs.git or https://...), with the "Network config git repository"
+      credential on the template - or keep them on a file share (net_config_store: share).
+    quiet: true
+
+- name: Network config | a work folder
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: .netcfg
+  register: _ncg_tmp
+  check_mode: false
+
+- name: Network config | the backup in git
+  block:
+    - name: Network config | clone the repository
+      ansible.builtin.include_tasks: git_clone.yml
+
+    - name: Network config | the backups kept
+      ansible.builtin.slurp:
+        src: "{{ _ncg_dir }}/{{ net_config_git_path }}/{{ item.host | net_config_file(item.platform) }}"
+      loop: "{{ _ncf_all | selectattr('ok') | list }}"
+      loop_control:
+        label: "{{ item.host }}"
+      register: _ncg_old
+      failed_when: false
+      no_log: true
+
+    - name: Network config | what changed
+      ansible.builtin.set_fact:
+        _ncg_res: >-
+          {%- set old = {} -%}
+          {%- for r in _ncg_old.results | default([]) if r.content is defined -%}
+          {%-   set _ = old.update({r.item.host | net_config_file(r.item.platform): r.content | b64decode}) -%}
+          {%- endfor -%}
+          {{ _ncf_all | net_config_backup_result(old, {'diff_lines': net_config_diff_lines | int}) }}
+      no_log: true
+
+    - name: Network config | the folder {{ net_config_git_path }}
+      ansible.builtin.file:
+        path: "{{ _ncg_dir }}/{{ net_config_git_path }}"
+        state: directory
+        mode: "0755"
+
+    - name: Network config | the new and changed configurations
+      ansible.builtin.copy:
+        content: "{{ item.text }}"
+        dest: "{{ _ncg_dir }}/{{ net_config_git_path }}/{{ item.file }}"
+        mode: "0600"
+      loop: "{{ _ncg_res.devices | selectattr('status', 'in', ['new', 'changed']) | list }}"
+      loop_control:
+        label: "{{ item.host }} ({{ item.status }})"
+      no_log: true
+
+    - name: Network config | commit and push
+      when: not ansible_check_mode and (_ncg_res.counts.new + _ncg_res.counts.changed) > 0
+      block:
+        - name: Network config | stage the files
+          ansible.builtin.command:
+            argv: [git, -C, "{{ _ncg_dir }}", add, --all, --, "{{ net_config_git_path }}"]
+          changed_when: false
+
+        - name: Network config | commit
+          ansible.builtin.command:
+            argv: >-
+              {{ ['git', '-C', _ncg_dir, '-c', 'user.name=' ~ net_config_git_author_name, '-c', 'user.email=' ~ net_config_git_author_email,
+                  'commit', '--quiet', '-m', _ncg_msg] }}
+          vars:
+            _ncg_msg: >-
+              {%- set ch = _ncg_res.devices | selectattr('status', 'equalto', 'changed') | map(attribute='host') | list -%}
+              {%- set nw = _ncg_res.devices | selectattr('status', 'equalto', 'new') | map(attribute='host') | list -%}
+              Backup {{ now(utc=true).strftime('%Y-%m-%d %H:%M UTC') }}: {{ (['%d changed (%s)' | format(ch | length, ch | join(', ')) if ch else '']
+              + ['%d new (%s)' | format(nw | length, nw | join(', ')) if nw else '']) | select | join(', ') | truncate(200) }}{{
+              '\n\nAAP job ' ~ awx_job_id if awx_job_id is defined else '' }}
+          changed_when: true
+          register: _ncg_commit_out
+
+        - name: Network config | push
+          ansible.builtin.command:
+            argv: [git, -C, "{{ _ncg_dir }}", push, --quiet, origin, "HEAD:{{ net_config_git_branch }}"]
+          environment: "{{ _ncg_env }}"
+          register: _ncg_push
+          changed_when: _ncg_push.rc == 0
+          failed_when: false
+
+        - name: Network config | someone pushed in between - pull, and push again
+          when: _ncg_push.rc != 0
+          block:
+            - name: Network config | pull (rebase)
+              ansible.builtin.command:
+                argv: [git, -C, "{{ _ncg_dir }}", -c, "user.name={{ net_config_git_author_name }}", -c, "user.email={{ net_config_git_author_email }}",
+                       pull, --quiet, --rebase, origin, "{{ net_config_git_branch }}"]
+              environment: "{{ _ncg_env }}"
+              changed_when: false
+
+            - name: Network config | push again
+              ansible.builtin.command:
+                argv: [git, -C, "{{ _ncg_dir }}", push, --quiet, origin, "HEAD:{{ net_config_git_branch }}"]
+              environment: "{{ _ncg_env }}"
+              changed_when: true
+
+        - name: Network config | the commit
+          ansible.builtin.command:
+            argv: [git, -C, "{{ _ncg_dir }}", rev-parse, --short=12, HEAD]
+          register: _ncg_head
+          changed_when: false
+
+    - name: Network config | where it is kept
+      ansible.builtin.set_fact:
+        _ncg_commit: "{{ _ncg_head.stdout | default('') }}"
+        _ncg_where: "{{ net_config_git_repo }} ({{ net_config_git_branch }}, {{ net_config_git_path }}/)"
+
+  always:
+    - name: Network config | the work folder removed
+      ansible.builtin.file:
+        path: "{{ _ncg_tmp.path }}"
+        state: absent
+      check_mode: false

@@ -1,0 +1,74 @@
+---
+# NETWORK CONFIG LOAD, part 3 on localhost: each device's result (load_one.yml), the report, the work note on
+# the change request (net_config_change_note), the email; the job fails when a device failed.
+- name: Network config | each device's result
+  ansible.builtin.set_fact:
+    _ncl_all: >-
+      {%- set out = [] -%}
+      {%- for h in _ncl_hosts -%}
+      {%-   set _ = out.append(hostvars[h]._ncl_got | default({'host': h, 'status': 'failed',
+                                'error': 'no result: the device could not be reached or logged in to (see its tasks above), or the job stopped first'})) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Network config | the report
+  ansible.builtin.set_fact:
+    _ncl_doc: >-
+      {{ _ncl_all | net_config_load_report({'mode': net_config_load_mode, 'check_mode': ansible_check_mode,
+                                            'change': (_ncl_change.number ~ ' (' ~ _ncl_change.state ~ ')') if _ncl_change.number else '',
+                                            'source': _ncl_from | default('')}) }}
+
+- name: Network config | {{ _ncl_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_ncl_doc | report_text).splitlines() }}"
+
+- name: Network config | the work note on {{ _ncl_change.number }}
+  ansible.builtin.uri:
+    url: >-
+      {{ (lookup('ansible.builtin.env', 'SN_HOST') if lookup('ansible.builtin.env', 'SN_HOST').startswith('http')
+          else 'https://' ~ lookup('ansible.builtin.env', 'SN_HOST')) | regex_replace('/+$', '') }}/api/now/table/change_request/{{ _ncl_change.sys_id }}
+    method: PATCH
+    url_username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body:
+      work_notes: "{{ _ncl_all | net_config_load_note({'mode': net_config_load_mode, 'job': awx_job_id | default('-')}) }}"
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200]
+  register: _ncl_noted
+  failed_when: false
+  when: >-
+    net_config_change_note | bool and not ansible_check_mode and _ncl_change.sys_id | default('', true) | length > 0
+    and _ncl_all | rejectattr('status', 'equalto', 'unchanged') | list | length > 0
+
+- name: Network config | the work note was not written
+  ansible.builtin.debug:
+    msg: "No work note on {{ _ncl_change.number }}: HTTP {{ _ncl_noted.status | default('?') }} {{ _ncl_noted.msg | default('') }} - the account needs write access to change_request."
+  when: _ncl_noted is not skipped and _ncl_noted.status | default(0) != 200
+
+- name: Network config | the result as job artifacts (net_config_load)
+  ansible.builtin.set_stats:
+    data:
+      net_config_load:
+        dry_run: "{{ ansible_check_mode }}"
+        mode: "{{ net_config_load_mode }}"
+        change: "{{ _ncl_change.number }}"
+        results: "{{ _ncl_all | map(attribute='host') | zip(_ncl_all | map(attribute='status')) | map('join', ': ') | list }}"
+
+- name: Network config | email it (report_email_to)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _ncl_doc }}"
+  when: report_email_to | default([]) | length > 0
+
+- name: Network config | every device done
+  ansible.builtin.assert:
+    that: _ncl_all | selectattr('status', 'equalto', 'failed') | list | length == 0
+    fail_msg: >-
+      Not done on {{ _ncl_all | selectattr('status', 'equalto', 'failed') | map(attribute='host') | join(', ') }} - see the report above.
+    quiet: true

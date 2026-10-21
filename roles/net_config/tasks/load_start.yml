@@ -1,0 +1,192 @@
+---
+# NETWORK CONFIG LOAD (playbooks/net_config_load.yml), part 1 on localhost: what is asked (lines or restore),
+# which devices (net_config_group, net_config_only, the template's Limit; at most net_config_max_devices), the
+# change request (ServiceNow: its state one of net_config_change_states), and for a restore each device's backup
+# (git: net_config_restore_ref, or the newest; share: a dated copy, or the latest).
+# -> _ncl_hosts, _ncl_change {number, sys_id, state}, _ncl_src {host: configuration} (restore).
+- name: Network config | what is asked
+  ansible.builtin.assert:
+    that:
+      - net_config_load_mode in ['lines', 'restore']
+      - net_config_load_mode == 'restore' or (net_config_lines | default([], true) | length > 0) or (net_config_panos_entries | default([], true) | length > 0)
+      - net_config_lines is not string and net_config_parents is not string and net_config_panos_entries is not string
+    fail_msg: >-
+      {{ ("net_config_load_mode is lines or restore, not '" ~ net_config_load_mode ~ "'.") if net_config_load_mode not in ['lines', 'restore'] else
+         'net_config_lines, net_config_parents and net_config_panos_entries are lists (one line per item, each starting with "- ").'
+         if (net_config_lines is string or net_config_parents is string or net_config_panos_entries is string) else
+         'Nothing to load: give net_config_lines (IOS) and / or net_config_panos_entries (PAN-OS) - or net_config_load_mode: restore.' }}
+    quiet: true
+
+- name: Network config | the devices
+  ansible.builtin.set_fact:
+    _ncl_hosts: >-
+      {%- set only = (net_config_only | replace(',', ' ')).split() if net_config_only is string else net_config_only | default([], true) -%}
+      {%- set limited = query('ansible.builtin.inventory_hostnames', ansible_limit | default('all', true)) -%}
+      {%- set out = [] -%}
+      {%- for h in groups[net_config_group] | default([]) if h in limited and (not only or h | name_matches(only)) -%}
+      {%-   set _ = out.append(h) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Network config | between 1 and net_config_max_devices devices
+  ansible.builtin.assert:
+    that: _ncl_hosts | length > 0 and _ncl_hosts | length <= net_config_max_devices | int
+    fail_msg: >-
+      {{ ('No device: the group ' ~ net_config_group ~ ' has none matching net_config_only and the Limit.') if _ncl_hosts | length == 0 else
+         (_ncl_hosts | length ~ ' devices - more than net_config_max_devices (' ~ net_config_max_devices ~ '): a load goes to a few at once.'
+          ~ ' Narrow it (net_config_only, the Limit) or raise net_config_max_devices.') }}
+    quiet: true
+
+- name: Network config | {{ _ncl_hosts | length }} device(s)
+  ansible.builtin.debug:
+    msg: "{{ _ncl_hosts }}"
+
+# ---- the change request ----
+
+- name: Network config | the change request is given
+  ansible.builtin.assert:
+    that: net_config_change | default('', true) | length > 0 or not net_config_require_change | bool or ansible_check_mode
+    fail_msg: >-
+      Give the change request this load belongs to: net_config_change (e.g. CHG0012345), in state
+      {{ net_config_change_states | join(' or ') }}. (A dry run - Check - goes without one.)
+    quiet: true
+
+- name: Network config | read change {{ net_config_change }}
+  ansible.builtin.uri:
+    url: >-
+      {{ (lookup('ansible.builtin.env', 'SN_HOST') if lookup('ansible.builtin.env', 'SN_HOST').startswith('http')
+          else 'https://' ~ lookup('ansible.builtin.env', 'SN_HOST')) | regex_replace('/+$', '') }}/api/now/table/change_request?sysparm_limit=1&sysparm_display_value=true&sysparm_exclude_reference_link=true&sysparm_fields=sys_id,number,state,short_description&sysparm_query={{
+      ('number=' ~ net_config_change) | urlencode }}
+    method: GET
+    url_username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs | default(true) }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) }}"
+    status_code: [200, 401, 403, 404]
+  register: _ncl_chg
+  check_mode: false
+  when: net_config_change | default('', true) | length > 0 and lookup('ansible.builtin.env', 'SN_HOST') | length > 0
+
+- name: Network config | the change request
+  ansible.builtin.set_fact:
+    _ncl_change: >-
+      {%- set r = (_ncl_chg.json.result | default([]))[0] | default({}) if _ncl_chg.status | default(0) == 200 else {} -%}
+      {{ {'number': net_config_change | default('', true), 'sys_id': r.sys_id | default(''), 'state': r.state | default(''),
+          'why': ('' if not net_config_change | default('', true) else
+                  'No ServiceNow connection: attach the "ServiceNow API" credential (SN_HOST, SN_USERNAME, SN_PASSWORD).'
+                  if _ncl_chg.skipped | default(false) or _ncl_chg.status is not defined else
+                  ('ServiceNow refused the read (HTTP ' ~ _ncl_chg.status ~ '): the account needs read access to change_request.')
+                  if _ncl_chg.status != 200 else (r | net_config_change_ok(net_config_change_states, net_config_change)))} }}
+
+- name: Network config | change {{ _ncl_change.number or '(none)' }} may be worked on
+  ansible.builtin.assert:
+    that: not _ncl_change.why or not net_config_require_change | bool
+    fail_msg: "{{ _ncl_change.why }}"
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Network config | the change request (DRY RUN - a real run would stop here)
+  ansible.builtin.debug:
+    msg: "{{ _ncl_change.why or ('Change ' ~ _ncl_change.number ~ ' is ' ~ _ncl_change.state ~ '.') if _ncl_change.number
+             else 'No change request: a real run needs net_config_change.' }}"
+  when: ansible_check_mode
+
+# ---- restore: the backups ----
+
+- name: Network config | the backups to restore
+  when: net_config_load_mode == 'restore'
+  block:
+    - name: Network config | from git
+      when: net_config_store in ['git', 'both']
+      block:
+        - name: Network config | a work folder
+          ansible.builtin.tempfile:
+            state: directory
+            suffix: .netcfg
+          register: _ncg_tmp
+          check_mode: false
+
+        - name: Network config | clone the repository
+          ansible.builtin.include_tasks: git_clone.yml
+          vars:
+            _ncg_shallow: "{{ not net_config_restore_ref | default('', true) }}"
+
+        - name: Network config | the backup {{ net_config_restore_ref }}
+          ansible.builtin.command:
+            argv: [git, -C, "{{ _ncg_dir }}", checkout, --quiet, "{{ net_config_restore_ref }}"]
+          changed_when: false
+          check_mode: false
+          when: net_config_restore_ref | default('', true) | length > 0
+
+        - name: Network config | which commit
+          ansible.builtin.command:
+            argv: [git, -C, "{{ _ncg_dir }}", log, -1, "--format=%h %cd %s", --date=format:%Y-%m-%d %H:%M]
+          register: _ncl_commit
+          changed_when: false
+          check_mode: false
+
+        - name: Network config | each device's backup
+          ansible.builtin.slurp:
+            src: "{{ _ncg_dir }}/{{ net_config_git_path }}/{{ item | net_config_file(hostvars[item].ansible_network_os | default('') | net_config_platform_of(hostvars[item].net_config_platform | default(''))) }}"
+          loop: "{{ _ncl_hosts }}"
+          register: _ncl_gfiles
+          failed_when: false
+          no_log: true
+
+        - name: Network config | where from
+          ansible.builtin.set_fact:
+            _ncl_from: "git {{ net_config_git_repo }} - {{ _ncl_commit.stdout }}"
+      always:
+        - name: Network config | the work folder removed
+          ansible.builtin.file:
+            path: "{{ _ncg_tmp.path }}"
+            state: absent
+          check_mode: false
+          when: _ncg_tmp.path is defined
+
+    - name: Network config | from the share
+      when: net_config_store == 'share'
+      block:
+        - name: Network config | where the share is
+          ansible.builtin.set_fact:
+            _ncs_on: "{{ net_config_share_host | default('', true) or 'localhost' }}"
+            _ncs_sep: >-
+              {{ '\\' if (net_config_share_host | default('', true)) != '' and (hostvars[net_config_share_host].ansible_connection | default('') in ['winrm', 'psrp']
+                 or hostvars[net_config_share_host].site_os | default('') == 'windows') else '/' }}
+
+        - name: Network config | each device's backup
+          ansible.builtin.slurp:
+            src: >-
+              {%- set f = item | net_config_file(hostvars[item].ansible_network_os | default('') | net_config_platform_of(hostvars[item].net_config_platform | default(''))) -%}
+              {%- set p = f | splitext -%}
+              {{ net_config_share_dir }}{{ _ncs_sep }}{{ p[0] }}{{ _ncs_sep }}{{ (p[0] ~ '-' ~ net_config_restore_ref ~ p[1]) if net_config_restore_ref | default('', true) else f }}
+          delegate_to: "{{ _ncs_on | default('localhost') }}"
+          become: false
+          loop: "{{ _ncl_hosts }}"
+          register: _ncl_sfiles
+          failed_when: false
+          no_log: true
+
+        - name: Network config | where from
+          ansible.builtin.set_fact:
+            _ncl_from: "the share {{ net_config_share_dir }} on {{ _ncs_on }} - {{ net_config_restore_ref or 'the latest' }}"
+
+    - name: Network config | the backups read
+      ansible.builtin.set_fact:
+        _ncl_src: >-
+          {%- set out = {} -%}
+          {%- for r in (_ncl_gfiles.results | default([])) + (_ncl_sfiles.results | default([])) if r.content is defined -%}
+          {%-   set _ = out.update({r.item: r.content | b64decode}) -%}
+          {%- endfor -%}
+          {{ out }}
+      no_log: true
+
+    - name: Network config | a backup for each device
+      ansible.builtin.debug:
+        msg: >-
+          {{ _ncl_from }}: {{ (_ncl_hosts | select('in', _ncl_src.keys() | list) | list | length) }} of {{ _ncl_hosts | length }} found{{
+          (' - none for ' ~ (_ncl_hosts | reject('in', _ncl_src.keys() | list) | join(', ')) ~ ' (they are left as they are)')
+          if _ncl_hosts | reject('in', _ncl_src.keys() | list) | list else '' }}

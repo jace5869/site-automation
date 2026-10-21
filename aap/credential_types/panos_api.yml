@@ -1,0 +1,25 @@
+# Credential type: "Palo Alto PAN-OS API"
+# For the network config backup and load (playbooks/net_config_backup.yml, net_config_load.yml,
+# docs/NETWORK_CONFIG.md) on Palo Alto Networks firewalls: their XML API, from the controller. An API key
+# (made on the firewall for an admin role), or a username and password - the job then makes a key from them
+# (sent in a request body, never in a URL). The backup needs a role that may export the configuration; the
+# load one that may change it and commit. It reaches the job only through its environment.
+inputs:
+  fields:
+    - id: api_key
+      type: string
+      label: API key
+      secret: true
+      help_text: An API key - or leave it empty and give a username and password.
+    - id: username
+      type: string
+      label: Username
+    - id: password
+      type: string
+      label: Password
+      secret: true
+injectors:
+  env:
+    PANOS_API_KEY: "{{ api_key | default('') }}"
+    PANOS_USERNAME: "{{ username | default('') }}"
+    PANOS_PASSWORD: "{{ password | default('') }}"

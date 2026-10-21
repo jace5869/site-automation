@@ -1,0 +1,64 @@
+---
+# The repository cloned into the work folder _ncg_tmp (store_git.yml, load_start.yml): how git logs in (the
+# "Network config git repository" credential: NET_CONFIG_GIT_KEY_FILE, or NET_CONFIG_GIT_USERNAME +
+# NET_CONFIG_GIT_TOKEN - a header from the environment, never on a command line), the git server's host keys,
+# then net_config_git_branch (shallow unless _ncg_shallow: false); a new, empty repository gets the branch.
+# Output: _ncg_dir, _ncg_env.
+- name: Network config | how git logs in (from the credential)
+  ansible.builtin.set_fact:
+    _ncg_dir: "{{ _ncg_tmp.path }}/repo"
+    _ncg_env: >-
+      {%- set key = lookup('ansible.builtin.env', 'NET_CONFIG_GIT_KEY_FILE') -%}
+      {%- set user = lookup('ansible.builtin.env', 'NET_CONFIG_GIT_USERNAME') -%}
+      {%- set token = lookup('ansible.builtin.env', 'NET_CONFIG_GIT_TOKEN') -%}
+      {%- set ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=' ~ net_config_git_host_key_checking,
+                     '-o', 'UserKnownHostsFile=' ~ _ncg_tmp.path ~ '/known_hosts'] + (['-o', 'IdentitiesOnly=yes', '-i', key] if key else []) -%}
+      {%- set env = {'GIT_TERMINAL_PROMPT': '0', 'GIT_SSH_COMMAND': ssh | map('quote') | join(' ')} -%}
+      {%- if token -%}
+      {%-   set _ = env.update({'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'http.extraHeader',
+                                'GIT_CONFIG_VALUE_0': 'Authorization: Basic ' ~ ((user or 'git') ~ ':' ~ token) | b64encode}) -%}
+      {%- endif -%}
+      {{ env }}
+  no_log: true
+
+- name: Network config | the git server's host keys (net_config_git_known_hosts)
+  ansible.builtin.copy:
+    content: "{{ net_config_git_known_hosts | default('', true) }}\n"
+    dest: "{{ _ncg_tmp.path }}/known_hosts"
+    mode: "0600"
+  check_mode: false
+
+- name: Network config | clone {{ net_config_git_branch }}
+  ansible.builtin.command:
+    argv: "{{ ['git', 'clone', '--quiet'] + (['--depth', '1'] if _ncg_shallow | default(true) else []) + ['--branch', net_config_git_branch, net_config_git_repo, _ncg_dir] }}"
+  environment: "{{ _ncg_env }}"
+  register: _ncg_clone
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# a new, empty repository, or one without the branch yet: clone what is there, the branch made here
+- name: Network config | clone the repository (no {{ net_config_git_branch }} in it yet)
+  ansible.builtin.command:
+    argv: [git, clone, --quiet, "{{ net_config_git_repo }}", "{{ _ncg_dir }}"]
+  environment: "{{ _ncg_env }}"
+  register: _ncg_clone2
+  changed_when: false
+  when: _ncg_clone.rc != 0 and _ncg_clone.stderr is search('[Rr]emote branch .* not found|not found in upstream')
+  check_mode: false
+
+- name: Network config | the repository was cloned
+  ansible.builtin.assert:
+    that: _ncg_clone.rc == 0 or (_ncg_clone2.rc | default(1)) == 0
+    fail_msg: >-
+      Could not clone {{ net_config_git_repo }}: {{ _ncg_clone.stderr | default('') | regex_replace('\s+', ' ') | truncate(400) }}
+      - the "Network config git repository" credential (an SSH key the server knows, or a username and token),
+      the URL, and the git server's host key (net_config_git_host_key_checking, net_config_git_known_hosts).
+    quiet: true
+
+- name: Network config | the branch {{ net_config_git_branch }} (new)
+  ansible.builtin.command:
+    argv: [git, -C, "{{ _ncg_dir }}", checkout, --quiet, -b, "{{ net_config_git_branch }}"]
+  changed_when: false
+  when: _ncg_clone.rc != 0
+  check_mode: false

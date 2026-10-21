@@ -31,6 +31,8 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Horizon - session cleanup | `playbooks/horizon_session_cleanup.yml` | [horizon_session_cleanup.yml](horizon_session_cleanup.yml) |
 | Horizon - user help | `playbooks/horizon_user_help.yml` | [horizon_user_help.yml](horizon_user_help.yml) |
 | NetApp ONTAP health report | `playbooks/ontap_health_report.yml` | [ontap_health_report.yml](ontap_health_report.yml) |
+| Network config backup | `playbooks/net_config_backup.yml` | [net_config_backup.yml](net_config_backup.yml) |
+| Network config load | `playbooks/net_config_load.yml` | [net_config_load.yml](net_config_load.yml) |
 | Network device certificate renewal | `playbooks/net_cert_renew.yml` | [net_cert_renew.yml](net_cert_renew.yml) |
 | Network device certificate report | `playbooks/net_cert_report.yml` | [net_cert_report.yml](net_cert_report.yml) |
 | Patch hosts | `playbooks/patch_hosts.yml` | [patch_hosts.yml](patch_hosts.yml) |

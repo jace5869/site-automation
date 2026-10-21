@@ -1,0 +1,234 @@
+---
+# NETWORK CONFIG LOAD, part 2 on each device (playbooks/net_config_load.yml): the lines sent, or the backup
+# restored - IOS: ios_config (only the lines not there yet), or the backup copied to the device (scp) and
+# configure replace <file> force, then write memory (net_config_save); PAN-OS: the entries set, or the backup
+# imported, loaded, validated and committed (site_panos_api). Check: what would change, nothing sent.
+# -> _ncl_got {host, platform, status (changed / would change / unchanged / failed), what, lines, error}.
+- name: Network config | {{ inventory_hostname }} - the platform, the backup to restore
+  ansible.builtin.set_fact:
+    _ncf_platform: "{{ ansible_network_os | default('') | net_config_platform_of(net_config_platform | default('')) }}"
+    _ncl_backup: "{{ hostvars['localhost']._ncl_src[inventory_hostname] | default('') if net_config_load_mode == 'restore' else '' }}"
+  no_log: true
+
+- name: Network config | {{ inventory_hostname }} - nothing to do here
+  ansible.builtin.set_fact:
+    _ncl_got: >-
+      {{ {'host': inventory_hostname, 'platform': _ncf_platform, 'status': 'failed',
+          'error': ('which platform? Set ansible_network_os (cisco.ios.ios or paloaltonetworks.panos) or net_config_platform (ios, panos)')
+                   if not _ncf_platform else
+                   ('no backup of this device to restore (' ~ hostvars['localhost']._ncl_from | default('') ~ ')') if net_config_load_mode == 'restore' and not _ncl_backup else
+                   ('no lines for IOS: net_config_lines') if _ncf_platform == 'ios' and net_config_load_mode == 'lines' and not net_config_lines | default([], true) else
+                   ('no entries for PAN-OS: net_config_panos_entries') if _ncf_platform == 'panos' and net_config_load_mode == 'lines' and not net_config_panos_entries | default([], true)
+                   else ''} }}
+
+- name: Network config | {{ inventory_hostname }} - IOS
+  when: _ncf_platform == 'ios' and not _ncl_got.error | default('')
+  block:
+    - name: Network config | {{ inventory_hostname }} - the lines (IOS)
+      cisco.ios.ios_config:
+        lines: "{{ net_config_lines }}"
+        parents: "{{ net_config_parents | default(omit, true) }}"
+        save_when: never
+      register: _ncl_ios
+      ignore_errors: true
+      no_log: true
+      when: net_config_load_mode == 'lines'
+
+    - name: Network config | {{ inventory_hostname }} - the running configuration now (IOS)
+      cisco.ios.ios_command:
+        commands: ["{{ net_config_ios_command }}"]
+      register: _ncl_now
+      ignore_errors: true
+      check_mode: false
+      no_log: true
+      when: net_config_load_mode == 'restore'
+
+    - name: Network config | {{ inventory_hostname }} - what the restore changes (IOS)
+      ansible.builtin.set_fact:
+        _ncl_diff: >-
+          {{ (_ncl_now.stdout | default(['']))[0] | net_config_clean('ios')
+             | net_config_diff(_ncl_backup | net_config_clean('ios'), 'ios', net_config_diff_lines | int, inventory_hostname) }}
+      no_log: true
+      when: net_config_load_mode == 'restore' and not _ncl_now.failed | default(false)
+
+    - name: Network config | {{ inventory_hostname }} - restore on IOS (copy, configure replace)
+      when: net_config_load_mode == 'restore' and not ansible_check_mode and not _ncl_now.failed | default(false) and _ncl_diff.lines | length > 0
+      block:
+        - name: Network config | {{ inventory_hostname }} - the backup as a file here
+          ansible.builtin.tempfile:
+            state: file
+            suffix: .cfg
+          delegate_to: localhost
+          register: _ncl_tmpf
+
+        - name: Network config | {{ inventory_hostname }} - its content
+          ansible.builtin.copy:
+            content: "{{ _ncl_backup }}"
+            dest: "{{ _ncl_tmpf.path }}"
+            mode: "0600"
+          delegate_to: localhost
+          no_log: true
+
+        - name: Network config | {{ inventory_hostname }} - copied to {{ net_config_ios_file }} (scp)
+          ansible.netcommon.net_put:
+            src: "{{ _ncl_tmpf.path }}"
+            dest: "{{ net_config_ios_file }}"
+            protocol: scp
+          register: _ncl_put
+          ignore_errors: true
+
+        - name: Network config | {{ inventory_hostname }} - configure replace
+          cisco.ios.ios_command:
+            commands: ["configure replace {{ net_config_ios_file }} force"]
+          register: _ncl_replace
+          ignore_errors: true
+          when: not _ncl_put.failed | default(false)
+
+        - name: Network config | {{ inventory_hostname }} - the copy deleted
+          cisco.ios.ios_command:
+            commands: ["delete /force {{ net_config_ios_file }}"]
+          failed_when: false      # a copy left behind does no harm; the restore's result is what counts
+          when: not _ncl_put.failed | default(false)
+
+        - name: Network config | {{ inventory_hostname }} - the running configuration after
+          cisco.ios.ios_command:
+            commands: ["{{ net_config_ios_command }}"]
+          register: _ncl_after
+          ignore_errors: true
+          no_log: true
+          when: not _ncl_put.failed | default(false)
+      always:
+        - name: Network config | {{ inventory_hostname }} - the file here removed
+          ansible.builtin.file:
+            path: "{{ _ncl_tmpf.path }}"
+            state: absent
+          delegate_to: localhost
+          when: _ncl_tmpf.path is defined
+
+    - name: Network config | {{ inventory_hostname }} - the result (IOS)
+      ansible.builtin.set_fact:
+        _ncl_got: >-
+          {%- set g = {'host': inventory_hostname, 'platform': 'ios'} -%}
+          {%- if net_config_load_mode == 'lines' -%}
+          {%-   set r = _ncl_ios -%}
+          {%-   set cmds = r.commands | default(r.updates | default([])) -%}
+          {%-   if r.failed | default(false) -%}
+          {%-     set _ = g.update({'status': 'failed', 'error': r.msg | default('?') | string | regex_replace('\s+', ' ') | truncate(300)}) -%}
+          {%-   else -%}
+          {%-     set _ = g.update({'status': ('would change' if ansible_check_mode else 'changed') if cmds else 'unchanged',
+                                    'what': (cmds | length ~ ' line(s)') if cmds else 'every line is there already',
+                                    'lines': cmds | map('net_config_mask', 'ios') | list}) -%}
+          {%-   endif -%}
+          {%- elif _ncl_now.failed | default(false) -%}
+          {%-   set _ = g.update({'status': 'failed', 'error': 'could not read its configuration: ' ~ (_ncl_now.msg | default('?') | string | truncate(300))}) -%}
+          {%- elif not _ncl_diff.lines -%}
+          {%-   set _ = g.update({'status': 'unchanged', 'what': 'it is as the backup already'}) -%}
+          {%- elif ansible_check_mode -%}
+          {%-   set _ = g.update({'status': 'would change', 'what': '+%d / -%d lines' | format(_ncl_diff.added, _ncl_diff.removed), 'lines': _ncl_diff.lines}) -%}
+          {%- else -%}
+          {%-   set why = ('the copy to the device failed (scp - ip scp server enable, privilege 15?): ' ~ (_ncl_put.msg | default('?') | string | truncate(250)))
+                          if _ncl_put.failed | default(false) else
+                          (_ncl_replace.msg | default('?') | string | truncate(300)) if _ncl_replace.failed | default(false) else
+                          ((_ncl_replace.stdout | default(['']))[0] | net_config_ios_replace_ok) -%}
+          {%-   set left = '' if why else ((_ncl_after.stdout | default(['']))[0] | net_config_clean('ios') | net_config_diff(_ncl_backup | net_config_clean('ios'), 'ios', 10)) -%}
+          {%-   set _ = g.update({'status': 'failed' if why else 'changed', 'error': why,
+                                  'what': '' if why else ('+%d / -%d lines' | format(_ncl_diff.added, _ncl_diff.removed)
+                                                          ~ ((' - still different: ' ~ (left.lines | length) ~ ' line(s) (defaults IOS adds itself?)') if left.lines else '')),
+                                  'lines': _ncl_diff.lines}) -%}
+          {%- endif -%}
+          {{ g }}
+
+    - name: Network config | {{ inventory_hostname }} - write memory (net_config_save)
+      cisco.ios.ios_command:
+        commands: [write memory]
+      register: _ncl_save
+      ignore_errors: true
+      when: net_config_save | bool and _ncl_got.status == 'changed' and not ansible_check_mode
+
+    - name: Network config | {{ inventory_hostname }} - saved
+      ansible.builtin.set_fact:
+        _ncl_got: >-
+          {{ _ncl_got | combine({'what': _ncl_got.what ~ (', saved (write memory)' if not _ncl_save.failed | default(false) and '[OK]' in (_ncl_save.stdout | default(['']))[0]
+                                                          else ' - NOT saved: ' ~ (_ncl_save.msg | default((_ncl_save.stdout | default(['?']))[0]) | string | truncate(200)))}) }}
+      when: _ncl_save is not skipped
+
+- name: Network config | {{ inventory_hostname }} - PAN-OS
+  when: _ncf_platform == 'panos' and not _ncl_got.error | default('')
+  block:
+    - name: Network config | {{ inventory_hostname }} - the running configuration now (PAN-OS)
+      site_panos_api:
+        host: "{{ net_config_address | default(ansible_host | default(inventory_hostname)) }}"
+        port: "{{ net_config_panos_port | int }}"
+        api_key: "{{ lookup('ansible.builtin.env', 'PANOS_API_KEY') or omit }}"
+        username: "{{ lookup('ansible.builtin.env', 'PANOS_USERNAME') or omit }}"
+        password: "{{ lookup('ansible.builtin.env', 'PANOS_PASSWORD') or omit }}"
+        action: export
+        validate_certs: "{{ net_config_panos_validate_certs | bool }}"
+        ca_path: "{{ net_config_panos_ca_path or omit }}"
+        timeout: "{{ net_config_timeout | int }}"
+        scheme: "{{ net_config_panos_scheme | default('https') }}"
+      delegate_to: localhost
+      register: _ncl_pnow
+      ignore_errors: true
+      check_mode: false
+      no_log: true
+
+    - name: Network config | {{ inventory_hostname }} - what would change (PAN-OS)
+      ansible.builtin.set_fact:
+        _ncl_diff: >-
+          {{ (_ncl_pnow.config | default('') | net_config_clean('panos')
+              | net_config_diff(_ncl_backup | net_config_clean('panos'), 'panos', net_config_diff_lines | int, inventory_hostname))
+             if net_config_load_mode == 'restore' else {'lines': [], 'added': 0, 'removed': 0} }}
+      no_log: true
+      when: not _ncl_pnow.failed | default(false)
+
+    - name: Network config | {{ inventory_hostname }} - {{ 'restore' if net_config_load_mode == 'restore' else 'the entries' }} (PAN-OS)
+      site_panos_api:
+        host: "{{ net_config_address | default(ansible_host | default(inventory_hostname)) }}"
+        port: "{{ net_config_panos_port | int }}"
+        api_key: "{{ lookup('ansible.builtin.env', 'PANOS_API_KEY') or omit }}"
+        username: "{{ lookup('ansible.builtin.env', 'PANOS_USERNAME') or omit }}"
+        password: "{{ lookup('ansible.builtin.env', 'PANOS_PASSWORD') or omit }}"
+        action: "{{ 'restore' if net_config_load_mode == 'restore' else 'set' }}"
+        entries: "{{ net_config_panos_entries | default([], true) if net_config_load_mode == 'lines' else [] }}"
+        config: "{{ _ncl_backup if net_config_load_mode == 'restore' else omit }}"
+        description: "{{ ('site-automation ' ~ (hostvars['localhost']._ncl_change.number | default('', true)) ~ ' AAP job ' ~ (awx_job_id | default('-'))) | trim | truncate(500) }}"
+        allow_pending: "{{ net_config_panos_allow_pending | bool }}"
+        validate_certs: "{{ net_config_panos_validate_certs | bool }}"
+        ca_path: "{{ net_config_panos_ca_path or omit }}"
+        timeout: "{{ net_config_timeout | int }}"
+        scheme: "{{ net_config_panos_scheme | default('https') }}"
+      delegate_to: localhost
+      register: _ncl_pan
+      ignore_errors: true
+      no_log: true
+      when: not _ncl_pnow.failed | default(false) and (net_config_load_mode == 'lines' or _ncl_diff.lines | length > 0)
+
+    - name: Network config | {{ inventory_hostname }} - the result (PAN-OS)
+      ansible.builtin.set_fact:
+        _ncl_got: >-
+          {%- set g = {'host': inventory_hostname, 'platform': 'panos'} -%}
+          {%- set entries = net_config_panos_entries | default([], true) -%}
+          {%- set shown = [] -%}
+          {%- for e in entries -%}
+          {%-   set _ = shown.append((e.action | default('set')) ~ ' ' ~ e.xpath ~ ((': ' ~ e.element) if e.element is defined else '')) -%}
+          {%- endfor -%}
+          {%- if _ncl_pnow.failed | default(false) -%}
+          {%-   set _ = g.update({'status': 'failed', 'error': 'could not read its configuration: ' ~ (_ncl_pnow.msg | default('?') | string | truncate(300))}) -%}
+          {%- elif net_config_load_mode == 'restore' and not _ncl_diff.lines -%}
+          {%-   set _ = g.update({'status': 'unchanged', 'what': 'it is as the backup already'}) -%}
+          {%- elif _ncl_pan.unchanged | default(false) -%}
+          {%-   set _ = g.update({'status': 'unchanged', 'what': 'every entry is there already - nothing committed'}) -%}
+          {%- elif _ncl_pan.failed | default(false) -%}
+          {%-   set _ = g.update({'status': 'failed', 'error': _ncl_pan.msg | default('?') | string | truncate(400)}) -%}
+          {%- else -%}
+          {%-   set _ = g.update({'status': 'would change' if ansible_check_mode else 'changed',
+                                  'what': (('+%d / -%d lines' | format(_ncl_diff.added, _ncl_diff.removed)) if net_config_load_mode == 'restore' else (entries | length ~ ' entr' ~ ('y' if entries | length == 1 else 'ies')))
+                                          ~ ('' if ansible_check_mode else ', validated and committed' ~ ((' (job ' ~ _ncl_pan.commit.job ~ ')') if _ncl_pan.commit.job | default('') else '')),
+                                  'lines': _ncl_diff.lines if net_config_load_mode == 'restore' else (shown | map('net_config_mask', 'panos') | list)}) -%}
+          {%- endif -%}
+          {{ g }}
+
+- name: Network config | {{ inventory_hostname }} - {{ _ncl_got.status | upper }}
+  ansible.builtin.debug:
+    msg: "{{ _ncl_got.what | default('') or _ncl_got.error }}"

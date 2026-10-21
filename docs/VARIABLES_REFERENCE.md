@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [horizon](#horizon), [net_certs](#net_certs), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
+**Contents:** [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [horizon](#horizon), [net_certs](#net_certs), [net_config](#net_config), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
 
 ## ad_lockout
 
@@ -454,6 +454,51 @@ File: `roles/net_certs/defaults/main.yml`
 | `net_cert_cisco_csr` | `false` | On: for a due certificate of an inventory host with ansible_network_os cisco.ios.ios (and its network_cli credential on the job template), the job makes a key on the device (crypto key generate rsa, not exportable), a trustpoint <prefix>-<expiry> (enrollment terminal) and its CSR (crypto pki enroll), and attaches the… (all of it: the role file) |
 | `net_cert_cisco_key_bits` | `2048` | the new RSA key (2048, 3072, 4096) |
 | `net_cert_cisco_trustpoint_prefix` | `SA-RENEW` | the trustpoint and key label: SA-RENEW-20270131 (the old certificate's expiry) |
+
+## net_config
+
+File: `roles/net_config/defaults/main.yml`
+
+> NETWORK DEVICE CONFIGURATIONS: the backup (playbooks/net_config_backup.yml) keeps each device's running configuration - in a git repository (a commit when one changed) or on a file share (dated copies) - and can open a ServiceNow incident when one changed. The load (playbooks/net_config_load.yml) sends configuration lines, or restores a backup, after an approved change request - always a dry run (Check) first. Cisco IOS / IOS-XE (over its CLI: network_cli, a Machine credential) and Palo Alto Networks PAN-OS (over its XML API from the controller: the "Palo Alto PAN-OS API" credential). docs/NETWORK_CONFIG.md. A backup holds the device's secrets (password hashes, SNMP communities, keys): keep it in a private, internal repository or share only - never in this one.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `net_config_group` | `net_config_devices` | The inventory group of the devices. Each one's platform: ansible_network_os (cisco.ios.ios, paloaltonetworks.panos), or net_config_platform (ios, panos) on the host. |
+| `net_config_only` | `[]` | Only these devices (names, * and ? allowed), e.g. [rtr-lab*] - to try a job on one first. [] = every one. |
+| `net_config_store` | `git` | git (a repository), share (a folder on a file server or the AAP node), or both. |
+| `net_config_git_repo` | (empty) | The repository (ssh://git@git.example.mil/netops/configs.git or https://...). Private and internal: the configurations hold secrets. Its login: the "Network config git repository" credential (an SSH key, or a username and token). |
+| `net_config_git_branch` | `main` | the branch (made when the repository is new and empty) |
+| `net_config_git_path` | `configs` | the folder in the repository: <path>/<device>.cfg (IOS), .xml (PAN-OS) |
+| `net_config_git_author_name` | `site-automation` | the commits' author |
+| `net_config_git_author_email` | `site-automation@localhost` | and its email |
+| `net_config_git_host_key_checking` | `accept-new` | The git server's SSH host key: accept-new (the first connection learns it), or yes (only the keys in net_config_git_known_hosts - lines as in a known_hosts file). |
+| `net_config_git_known_hosts` | (empty) | the git server's host keys (known_hosts lines), for net_config_git_host_key_checking: yes |
+| `net_config_share_dir` | `/var/lib/site-automation/net-config` | The folder for share: on the AAP node (a path AAP exposes to jobs) or on net_config_share_host - <dir>/<device>/<device>.cfg (the latest), and a dated copy beside it each time one changed. |
+| `net_config_share_host` | (empty) | an inventory host to keep them on (Linux, or a Windows file server); its credential on the template |
+| `net_config_share_keep` | `30` | dated copies kept per device (the oldest go) |
+| `net_config_ios_command` | `show running-config` | ---- what is read ---- IOS: the command whose output is kept |
+| `net_config_panos_port` | `443` | PAN-OS: the XML API's HTTPS port |
+| `net_config_panos_validate_certs` | `true` | PAN-OS: check the firewall's certificate |
+| `net_config_panos_ca_path` | (empty) | PAN-OS: a CA bundle (PEM) for that check ('' = the system's) |
+| `net_config_timeout` | `60` | PAN-OS: seconds per request |
+| `net_config_diff_lines` | `60` | lines of a diff shown in the report, the email and an incident (secrets hidden) |
+| `net_config_fail_on_failed` | `true` | the backup job fails (red) when a device could not be backed up |
+| `net_config_tickets` | `false` | true = an incident when a device's configuration changed (one per change, with the diff) and when one could not be backed up (noted as cleared at the next good backup). The "ServiceNow API" credential. |
+| `net_config_ticket_changes` | `true` | an incident for a change |
+| `net_config_ticket_failures` | `true` | an incident for a failed backup |
+| `net_config_load_mode` | `lines` | lines (send configuration lines) or restore (put a device back to a backup). |
+| `net_config_lines` | `[]` | IOS: the lines, as typed in configuration mode, e.g. ["ntp server 192.0.2.123", "banner motd ^Authorized use only^"]; under net_config_parents (e.g. ["interface GigabitEthernet1"]) when they belong to one. |
+| `net_config_parents` | `[]` | IOS: the parent lines the lines go under (e.g. ["interface GigabitEthernet1"]); [] = global configuration |
+| `net_config_panos_entries` | `[]` | PAN-OS: the changes - each {xpath, element, action}: action set (adds or replaces the element's children), edit (replaces the element at the xpath), delete (no element). |
+| `net_config_restore_ref` | (empty) | restore: which backup - git: a commit, tag or branch ('' = the newest); share: a dated copy's file name ('' = the latest). |
+| `net_config_change` | (empty) | The change request the load belongs to (CHG0012345). Its state must be one of net_config_change_states; the job writes on it what it did. A dry run without one only warns. |
+| `net_config_require_change` | `true` | false = a real load without a change request (not recommended) |
+| `net_config_change_states` | `[Implement]` | the change states a load may run in (as ServiceNow shows them) |
+| `net_config_change_note` | `true` | a work note on the change: each device, what was sent, the result |
+| `net_config_save` | `true` | IOS: write memory after a change (false: only the running configuration - a reload undoes it) |
+| `net_config_ios_file` | `flash:site-automation-restore.cfg` | IOS restore: where the backup is copied first (scp; ip scp server enable on the device) |
+| `net_config_panos_allow_pending` | `false` | PAN-OS: change even with someone's uncommitted changes (they would be committed too) |
+| `net_config_max_devices` | `10` | a load to more devices at once is refused (net_config_only, the template's Limit - or raise it) |
 
 ## ontap_report
 

@@ -1,0 +1,99 @@
+---
+# NETWORK CONFIG BACKUP (playbooks/net_config_backup.yml), part 2 on localhost: what each device gave (part 1,
+# read.yml), kept in git and / or on the share, the incidents (net_config_tickets), the report, the email.
+- name: Network config | the devices
+  ansible.builtin.set_fact:
+    _ncf_hosts: >-
+      {%- set only = (net_config_only | replace(',', ' ')).split() if net_config_only is string else net_config_only | default([], true) -%}
+      {%- set out = [] -%}
+      {%- for h in groups[net_config_group] | default([]) if not only or h | name_matches(only) -%}
+      {%-   set _ = out.append(h) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Network config | the group has devices
+  ansible.builtin.assert:
+    that: _ncf_hosts | length > 0
+    fail_msg: >-
+      No device: the inventory group {{ net_config_group }} (net_config_group) {{ 'has none matching net_config_only'
+      if net_config_only | default([], true) else 'is empty or missing' }} in this job's inventory.
+    quiet: true
+
+- name: Network config | what each device gave
+  ansible.builtin.set_fact:
+    _ncf_all: >-
+      {%- set out = [] -%}
+      {%- for h in _ncf_hosts -%}
+      {%-   set _ = out.append(hostvars[h]._ncf_got | default({'host': h, 'platform': hostvars[h]._ncf_platform | default(''), 'ok': false, 'text': '',
+                                'error': 'no result: the device could not be reached or logged in to (see its tasks above), or the job stopped first'})) -%}
+      {%- endfor -%}
+      {{ out }}
+  no_log: true
+
+- name: Network config | net_config_store is git, share or both
+  ansible.builtin.assert:
+    that: net_config_store in ['git', 'share', 'both']
+    fail_msg: "net_config_store is git, share or both - not '{{ net_config_store }}'."
+    quiet: true
+
+- name: Network config | kept in git
+  ansible.builtin.include_tasks: store_git.yml
+  when: net_config_store in ['git', 'both']
+
+- name: Network config | kept on the share
+  ansible.builtin.include_tasks: store_share.yml
+  when: net_config_store in ['share', 'both']
+
+- name: Network config | the result
+  ansible.builtin.set_fact:
+    _ncf_res: "{{ _ncg_res if net_config_store in ['git', 'both'] else _ncs_res }}"
+    _ncf_where: "{{ ([_ncg_where | default('')] if net_config_store in ['git', 'both'] else []) + ([_ncs_where | default('')] if net_config_store in ['share', 'both'] else []) }}"
+  no_log: true
+
+- name: "Network config | the incidents{{ ' - DRY RUN, nothing is sent' if ansible_check_mode else '' }}"
+  ansible.builtin.include_role:
+    name: servicenow
+    tasks_from: tickets.yml
+  vars:
+    _sn_health_in: >-
+      {{ _ncf_res | net_config_backup_findings({'changes': net_config_ticket_changes | bool, 'failures': net_config_ticket_failures | bool,
+                                               'job': awx_job_id | default(''), 'time': now(utc=true).strftime('%Y-%m-%d %H:%M UTC')}) }}
+    _sn_targets_in: []
+    servicenow_min_severity: warning
+    servicenow_fail_when_findings: false
+  when: net_config_tickets | bool
+
+- name: Network config | the report
+  ansible.builtin.set_fact:
+    _ncf_doc: >-
+      {{ _ncf_res | net_config_backup_report({'where': _ncf_where | join(' ; '), 'commit': _ncg_commit | default(''),
+                                              'check_mode': ansible_check_mode}) }}
+
+- name: Network config | {{ _ncf_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_ncf_doc | report_text).splitlines() }}"
+
+- name: Network config | the result as job artifacts (net_config_backup)
+  ansible.builtin.set_stats:
+    data:
+      net_config_backup:
+        dry_run: "{{ ansible_check_mode }}"
+        counts: "{{ _ncf_res.counts }}"
+        changed: "{{ _ncf_res.devices | selectattr('status', 'equalto', 'changed') | map(attribute='host') | list }}"
+        failed: "{{ _ncf_res.devices | selectattr('status', 'equalto', 'failed') | map(attribute='host') | list }}"
+        commit: "{{ _ncg_commit | default('') }}"
+
+- name: Network config | email it (report_email_to)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _ncf_doc }}"
+  when: report_email_to | default([]) | length > 0
+
+- name: Network config | every device backed up
+  ansible.builtin.assert:
+    that: _ncf_res.counts.failed == 0 or not net_config_fail_on_failed | bool
+    fail_msg: >-
+      {{ _ncf_res.counts.failed }} device(s) not backed up: {{ _ncf_res.devices | selectattr('status', 'equalto', 'failed')
+      | map(attribute='host') | join(', ') }} - see "Not backed up" in the report above. Their last good backup is kept.
+    quiet: true

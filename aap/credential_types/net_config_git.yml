@@ -1,0 +1,29 @@
+# Credential type: "Network config git repository"
+# For the network config backup and restore (net_config_store: git, docs/NETWORK_CONFIG.md): the login to
+# the private, internal repository the configurations are kept in. An SSH private key (a deploy key with
+# write access), or - for an https URL - a username and an access token (sent as a header from the job's
+# environment, never on a command line or in the URL). The configurations hold the devices' secrets: the
+# repository must not be readable by more people than the devices' admins.
+inputs:
+  fields:
+    - id: ssh_key
+      type: string
+      label: SSH private key
+      format: ssh_private_key
+      secret: true
+      multiline: true
+      help_text: For an ssh:// (or git@) URL. Leave empty for https.
+    - id: username
+      type: string
+      label: Username (https)
+    - id: token
+      type: string
+      label: Access token (https)
+      secret: true
+injectors:
+  file:
+    template.key: "{{ ssh_key | default('') }}"
+  env:
+    NET_CONFIG_GIT_KEY_FILE: "{{ tower.filename.key if ssh_key | default('') else '' }}"
+    NET_CONFIG_GIT_USERNAME: "{{ username | default('') }}"
+    NET_CONFIG_GIT_TOKEN: "{{ token | default('') }}"

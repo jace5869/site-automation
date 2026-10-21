@@ -1,0 +1,110 @@
+---
+# The backup on a file share (net_config_store: share or both): net_config_share_dir on the AAP node (a path
+# AAP exposes to jobs) or on net_config_share_host (Linux, or a Windows file server). Per device a folder:
+# <device>/<file> (the latest) and, each time it changed, a dated copy beside it (<stem>-YYYYMMDDTHHMMSSZ<ext>);
+# the oldest beyond net_config_share_keep go. Check: compared, nothing written.
+# Input: _ncf_all. Output: _ncs_res (net_config_backup_result), _ncs_where.
+- name: Network config | where the share is
+  ansible.builtin.set_fact:
+    _ncs_on: "{{ net_config_share_host | default('', true) or 'localhost' }}"
+    _ncs_win: >-
+      {{ (net_config_share_host | default('', true)) != ''
+         and (hostvars[net_config_share_host].ansible_connection | default('') in ['winrm', 'psrp']
+              or hostvars[net_config_share_host].site_os | default('') == 'windows') }}
+    _ncs_stamp: "{{ now(utc=true).strftime('%Y%m%dT%H%M%SZ') }}"
+
+- name: Network config | net_config_share_host is in the inventory
+  ansible.builtin.assert:
+    that: _ncs_on == 'localhost' or _ncs_on in hostvars
+    fail_msg: >-
+      net_config_share_host '{{ _ncs_on }}' is not in this job's inventory: add it (with a credential the job
+      template carries), or leave it empty to keep the backups on the AAP node (net_config_share_dir).
+    quiet: true
+
+- name: Network config | the separator of paths there
+  ansible.builtin.set_fact:
+    _ncs_sep: >-
+      {{ '\\' if _ncs_win | bool else '/' }}
+
+- name: Network config | the latest backups kept
+  ansible.builtin.slurp:
+    src: "{{ net_config_share_dir }}{{ _ncs_sep }}{{ (item.host | net_config_file(item.platform) | splitext)[0] }}{{ _ncs_sep }}{{ item.host | net_config_file(item.platform) }}"
+  delegate_to: "{{ _ncs_on }}"
+  become: false
+  loop: "{{ _ncf_all | selectattr('ok') | list }}"
+  loop_control:
+    label: "{{ item.host }}"
+  register: _ncs_old
+  failed_when: false
+  no_log: true
+
+- name: Network config | what changed
+  ansible.builtin.set_fact:
+    _ncs_res: >-
+      {%- set old = {} -%}
+      {%- for r in _ncs_old.results | default([]) if r.content is defined -%}
+      {%-   set _ = old.update({r.item.host | net_config_file(r.item.platform): r.content | b64decode}) -%}
+      {%- endfor -%}
+      {{ _ncf_all | net_config_backup_result(old, {'diff_lines': net_config_diff_lines | int}) }}
+  no_log: true
+
+- name: Network config | the files to write
+  ansible.builtin.set_fact:
+    _ncs_files: >-
+      {%- set out = [] -%}
+      {%- for d in _ncs_res.devices | default([]) if d.status in ['new', 'changed'] -%}
+      {%-   set p = d.file | splitext -%}
+      {%-   set _ = out.extend([{'d': d, 'name': d.file}, {'d': d, 'name': p[0] ~ '-' ~ _ncs_stamp ~ p[1]}]) -%}
+      {%- endfor -%}
+      {{ out }}
+    _ncs_where: "{{ net_config_share_dir }} on {{ _ncs_on }}{{ ' (the AAP node: kept only if AAP exposes that path to jobs)' if _ncs_on == 'localhost' else '' }}"
+  no_log: true
+
+- name: Network config | the files on a Linux host (or the AAP node)
+  when: not _ncs_win | bool
+  delegate_to: "{{ _ncs_on }}"
+  become: false
+  block:
+    - name: Network config | a folder per device
+      ansible.builtin.file:
+        path: "{{ net_config_share_dir }}/{{ (item.file | splitext)[0] }}"
+        state: directory
+        mode: "0700"
+      loop: "{{ _ncs_res.devices | selectattr('status', 'in', ['new', 'changed']) | list }}"
+      loop_control:
+        label: "{{ item.host }}"
+
+    - name: Network config | the latest, and a dated copy
+      ansible.builtin.copy:
+        content: "{{ item.d.text }}"
+        dest: "{{ net_config_share_dir }}/{{ (item.d.file | splitext)[0] }}/{{ item.name }}"
+        mode: "0600"
+      loop: "{{ _ncs_files }}"
+      loop_control:
+        label: "{{ item.d.host }}: {{ item.name }}"
+      no_log: true
+
+    - name: Network config | the dated copies there
+      ansible.builtin.find:
+        paths: "{{ net_config_share_dir }}/{{ (item.file | splitext)[0] }}"
+        patterns: "{{ (item.file | splitext)[0] }}-*{{ (item.file | splitext)[1] }}"
+      loop: "{{ _ncs_res.devices | selectattr('status', 'in', ['new', 'changed']) | list }}"
+      loop_control:
+        label: "{{ item.host }}"
+      register: _ncs_dated
+      when: not ansible_check_mode
+
+    - name: Network config | the oldest beyond net_config_share_keep removed
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: >-
+        {%- set out = [] -%}
+        {%- for r in _ncs_dated.results | default([]) if r.files is defined -%}
+        {%-   set _ = out.extend((r.files | sort(attribute='path', reverse=true) | map(attribute='path') | list)[net_config_share_keep | int:]) -%}
+        {%- endfor -%}
+        {{ out }}
+
+- name: Network config | the files on a Windows file server
+  ansible.builtin.include_tasks: store_share_windows.yml
+  when: _ncs_win | bool

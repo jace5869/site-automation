@@ -1,0 +1,44 @@
+---
+# The backups on a Windows file server (net_config_share_host is one) - its own file: ansible.windows is only
+# needed when it is used. As store_share.yml: a folder per device, the latest and a dated copy, the oldest go.
+- name: Network config | a folder per device
+  delegate_to: "{{ _ncs_on }}"
+  ansible.windows.win_file:
+    path: "{{ net_config_share_dir }}\\{{ (item.file | splitext)[0] }}"
+    state: directory
+  loop: "{{ _ncs_res.devices | selectattr('status', 'in', ['new', 'changed']) | list }}"
+  loop_control:
+    label: "{{ item.host }}"
+
+- name: Network config | the latest, and a dated copy
+  delegate_to: "{{ _ncs_on }}"
+  ansible.windows.win_copy:
+    content: "{{ item.d.text }}"
+    dest: "{{ net_config_share_dir }}\\{{ (item.d.file | splitext)[0] }}\\{{ item.name }}"
+  loop: "{{ _ncs_files }}"
+  loop_control:
+    label: "{{ item.d.host }}: {{ item.name }}"
+  no_log: true
+
+- name: Network config | the dated copies there
+  delegate_to: "{{ _ncs_on }}"
+  ansible.windows.win_find:
+    paths: "{{ net_config_share_dir }}\\{{ (item.file | splitext)[0] }}"
+    patterns: ["{{ (item.file | splitext)[0] }}-*{{ (item.file | splitext)[1] }}"]
+  loop: "{{ _ncs_res.devices | selectattr('status', 'in', ['new', 'changed']) | list }}"
+  loop_control:
+    label: "{{ item.host }}"
+  register: _ncs_dated
+  when: not ansible_check_mode
+
+- name: Network config | the oldest beyond net_config_share_keep removed
+  delegate_to: "{{ _ncs_on }}"
+  ansible.windows.win_file:
+    path: "{{ item }}"
+    state: absent
+  loop: >-
+    {%- set out = [] -%}
+    {%- for r in _ncs_dated.results | default([]) if r.files is defined -%}
+    {%-   set _ = out.extend((r.files | sort(attribute='path', reverse=true) | map(attribute='path') | list)[net_config_share_keep | int:]) -%}
+    {%- endfor -%}
+    {{ out }}

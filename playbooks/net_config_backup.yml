@@ -1,0 +1,31 @@
+---
+# NETWORK CONFIG BACKUP - daily. Each device's running configuration - Cisco IOS / IOS-XE over its CLI
+# (network_cli: a Machine credential that logs in to the devices), Palo Alto PAN-OS over its XML API from the
+# controller (the "Palo Alto PAN-OS API" credential) - kept in a private git repository (one commit when any
+# changed: its history is the record of changes) and / or on a file share (dated copies). The report says what
+# changed, with the diff (secret values hidden); net_config_tickets: true opens a ServiceNow incident for a
+# change and for a device that could not be backed up. Read-only on the devices. Check (a dry run) reads and
+# compares, and writes nothing. docs/NETWORK_CONFIG.md.
+#
+#   ansible-playbook playbooks/net_config_backup.yml -i <inventory with the group net_config_devices> --check
+- name: Network config backup - read each device
+  hosts: "{{ net_config_group | default('net_config_devices') }}"
+  gather_facts: false
+  tasks:
+    - name: The running configuration
+      ansible.builtin.include_role:
+        name: net_config
+        tasks_from: read.yml
+      when: >-
+        not (net_config_only | default([], true))
+        or inventory_hostname | name_matches((net_config_only | replace(',', ' ')).split() if net_config_only is string else net_config_only)
+
+- name: Network config backup - keep them, the report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Keep each device's configuration, and report
+      ansible.builtin.include_role:
+        name: net_config
+        tasks_from: backup.yml

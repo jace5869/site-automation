@@ -92,6 +92,15 @@ servicenow_assignment_group: YOUR GROUP NAME   # exactly as in ServiceNow
                            "net_cert_cisco_csr)", "", """\
 servicenow_assignment_group: YOUR GROUP NAME   # who gets the incidents (exactly as in ServiceNow)
 """),
+    "net_config_backup.yml": ("Network config backup", "Machine for the Cisco devices (network_cli), Palo Alto PAN-OS API, "
+                              "Network config git repository (ServiceNow API: only with net_config_tickets)", "", """\
+net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # your PRIVATE, internal repository (or net_config_store: share)
+"""),
+    "net_config_load.yml": ("Network config load", "Machine for the Cisco devices (network_cli), Palo Alto PAN-OS API, ServiceNow API "
+                            "(Network config git repository: for a restore from git)", "", """\
+net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # the backups' repository (for a restore)
+## net_config_change (the change request, in Implement): a survey question, or the launch's extra variables
+"""),
     "stigman_deploy.yml": ("STIG Manager - deploy", "Machine, STIG Manager database, TLS certificate", "", ""),
     "troubleshoot.yml": ("Troubleshoot", "Machine", "", ""),
     "vmware_cert_report.yml": ("VMware - certificate report", "VMware vCenter (SQL Server (certificate inventory): optional)", "", ""),

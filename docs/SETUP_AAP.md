@@ -344,6 +344,15 @@ devices. Both run on the controller (Limit empty, **no** Prompt on launch). Repo
 no credential. Renewal: `playbooks/net_cert_renew.yml`, `ServiceNow API` (and a Machine credential for the Cisco
 devices with `net_cert_cisco_csr`). The devices, the templates and the settings: [NETWORK_CERTS.md](NETWORK_CERTS.md).
 
+### Network config backup / load
+
+Cisco IOS / IOS-XE (its CLI: a Machine credential that logs in to the devices) and Palo Alto PAN-OS (its XML
+API from the controller: the `Palo Alto PAN-OS API` credential). Backup: `playbooks/net_config_backup.yml`, with
+the `Network config git repository` credential and `net_config_git_repo` - a **private, internal** repository:
+the configurations hold the devices' secrets (or `net_config_store: share`). Load: `playbooks/net_config_load.yml`,
+with `ServiceNow API` - it needs a change request in Implement (`net_config_change`); run it in Check first. The
+devices, the templates and the settings: [NETWORK_CONFIG.md](NETWORK_CONFIG.md).
+
 ### Certificate inventory (CSV / SQL Server)
 
 Not a template: a setting of every certificate report (`cert_inventory_files`, `cert_inventory_sql`). For the

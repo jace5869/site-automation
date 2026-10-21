@@ -1,0 +1,62 @@
+---
+# One device's running configuration (the devices' play of net_config_backup.yml and net_config_load.yml):
+# IOS over its CLI (network_cli), PAN-OS over its XML API from the controller.
+# -> _ncf_got: {host, platform, ok, text, error}. The configuration holds secrets: no_log on every task that
+# has it (a job's output and its events in AAP never show it).
+- name: Network config | {{ inventory_hostname }} - the platform
+  ansible.builtin.set_fact:
+    _ncf_platform: "{{ ansible_network_os | default('') | net_config_platform_of(net_config_platform | default('')) }}"
+
+- name: Network config | {{ inventory_hostname }} - the running configuration (IOS)
+  cisco.ios.ios_command:
+    commands: ["{{ net_config_ios_command }}"]
+  register: _ncf_ios
+  when: _ncf_platform == 'ios'
+  ignore_errors: true
+  ignore_unreachable: true
+  check_mode: false
+  no_log: true
+
+- name: Network config | {{ inventory_hostname }} - the running configuration (PAN-OS, its XML API)
+  site_panos_api:
+    host: "{{ net_config_address | default(ansible_host | default(inventory_hostname)) }}"
+    port: "{{ net_config_panos_port | int }}"
+    api_key: "{{ lookup('ansible.builtin.env', 'PANOS_API_KEY') or omit }}"
+    username: "{{ lookup('ansible.builtin.env', 'PANOS_USERNAME') or omit }}"
+    password: "{{ lookup('ansible.builtin.env', 'PANOS_PASSWORD') or omit }}"
+    action: export
+    validate_certs: "{{ net_config_panos_validate_certs | bool }}"
+    ca_path: "{{ net_config_panos_ca_path or omit }}"
+    timeout: "{{ net_config_timeout | int }}"
+    scheme: "{{ net_config_panos_scheme | default('https') }}"
+  delegate_to: localhost
+  register: _ncf_pan
+  when: _ncf_platform == 'panos'
+  ignore_errors: true
+  check_mode: false
+  no_log: true
+
+- name: Network config | {{ inventory_hostname }} - what was read
+  ansible.builtin.set_fact:
+    _ncf_got: >-
+      {%- if _ncf_platform == 'ios' -%}
+      {%-   set r = _ncf_ios -%}
+      {%-   set ok = not (r.unreachable | default(false)) and not (r.failed | default(false)) and (r.stdout | default([])) | length > 0 -%}
+      {{ {'host': inventory_hostname, 'platform': 'ios', 'ok': ok, 'text': r.stdout[0] if ok else '',
+          'error': '' if ok else ((r.msg | default('no answer') | string) | regex_replace('\s+', ' ') | truncate(300))} }}
+      {%- elif _ncf_platform == 'panos' -%}
+      {%-   set r = _ncf_pan -%}
+      {%-   set ok = not (r.failed | default(false)) and (r.config | default('')) | length > 0 -%}
+      {{ {'host': inventory_hostname, 'platform': 'panos', 'ok': ok, 'text': r.config | default(''),
+          'error': '' if ok else (r.msg | default('no answer') | string | truncate(300))} }}
+      {%- else -%}
+      {{ {'host': inventory_hostname, 'platform': '', 'ok': false, 'text': '',
+          'error': 'which platform? Set ansible_network_os (cisco.ios.ios or paloaltonetworks.panos) or net_config_platform (ios, panos) on the host'} }}
+      {%- endif -%}
+  no_log: true
+
+- name: Network config | {{ inventory_hostname }} - {{ 'read' if _ncf_got.ok else 'NOT read' }}
+  ansible.builtin.debug:
+    msg: >-
+      {{ (_ncf_platform | upper ~ ': ' ~ (_ncf_got.text | length) ~ ' characters read') if _ncf_got.ok
+         else (_ncf_platform | upper ~ ': ' ~ _ncf_got.error) }}

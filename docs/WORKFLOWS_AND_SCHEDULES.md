@@ -332,6 +332,12 @@ the incidents and emails the report ([NETWORK_CERTS.md](NETWORK_CERTS.md)). **A 
 `cert_inventory_files` or `cert_inventory_sql` in `all.yml`, each certificate report also writes every
 certificate it read ([CERT_INVENTORY.md](CERT_INVENTORY.md)).
 
+**Network configurations:** *Network config backup* on a daily schedule - a commit in the backups' repository
+when a device changed, optionally an incident for it. A **load** as a workflow: *[Network config load]* with
+Job type **Check** (prompt on launch, or a second template) → **Approval** → *[Network config load]* **Run**,
+each with the same `net_config_change` and lines: the approver sees the dry run's report - exactly what will be
+sent - before anything is ([NETWORK_CONFIG.md](NETWORK_CONFIG.md)).
+
 ### 8. Database watch: MariaDB and MySQL (hourly)
 
 ```text

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.18.0 — 2026-10-21
+
+**Updating without scripts:** paste `site-automation-0.18.0-changed-since-0.17.2.zip` as it is (from
+0.15.1 to 0.17.1: `site-automation-0.18.0-changed-since-0.15.1.zip`). Both leave out
+`playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. No setting changes for the existing jobs:
+nothing to change in `all.yml`. New job templates and credential types, only if you use them (below); each
+template's settings are in `aap/extra_vars/`.
+
+**New job templates: `Network config backup` and `Network config load`** (`playbooks/net_config_backup.yml`,
+`net_config_load.yml`) for Cisco IOS / IOS-XE (over its CLI) and Palo Alto PAN-OS (over its XML API from the
+controller). The backup keeps each device's running configuration in a private git repository - one commit when
+any changed, so the history is the record of every change - and / or on a file share (the latest and dated
+copies); the report shows each change with its diff, secret values hidden, and `net_config_tickets: true` opens a
+ServiceNow incident for a change and for a device not backed up. The load sends lines (IOS configuration lines,
+PAN-OS changes at an xpath - validated, then committed) or restores a backup (IOS: `configure replace` after an
+SCP copy; PAN-OS: load, validate, commit), only with a change request in Implement, writing what it did on the
+change; tried in Check first, it shows what would change and sends nothing. Two new credential types: *Palo Alto
+PAN-OS API* and *Network config git repository*. The backups hold the devices' secrets: keep them in a private,
+internal repository or share. Tested against stand-in devices, not yet on real ones: try both in Check on one
+lab router and one lab firewall first (`net_config_only`). docs/NETWORK_CONFIG.md.
+
 ## 0.17.2 — 2026-10-21
 
 **Updating without scripts:** paste `site-automation-0.17.2-changed-since-0.17.1.zip` as it is (from 0.17.0:

@@ -1,0 +1,44 @@
+---
+# NETWORK CONFIG LOAD - on request, for an approved change. Run it in Check first: it shows what would change on
+# each device, and sends nothing.
+#   net_config_load_mode: lines  - IOS: net_config_lines (under net_config_parents), only the ones not there yet;
+#                                  PAN-OS: net_config_panos_entries (xpath + element), validated and committed.
+#   net_config_load_mode: restore - each device put back to its backup (net_config_restore_ref: a commit or tag
+#                                  of the git repository, a dated copy on the share; '' = the newest). IOS:
+#                                  configure replace (the backup copied to the device by scp first); PAN-OS:
+#                                  imported, loaded, validated and committed.
+# net_config_change: the change request (state Implement - net_config_change_states); the job writes on it what
+# it did. IOS saves (write memory) after a change unless net_config_save: false. At most net_config_max_devices
+# devices at once. PAN-OS refuses when the firewall has someone's uncommitted changes. docs/NETWORK_CONFIG.md.
+#
+#   ansible-playbook playbooks/net_config_load.yml -i <inventory> --check -e net_config_change=CHG0012345 \
+#     -e '{"net_config_lines": ["ntp server 192.0.2.123"]}' -e net_config_only=rtr-lab01
+- name: Network config load - what is asked, the change request, the backups
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Check the request and the change, read the backups to restore
+      ansible.builtin.include_role:
+        name: net_config
+        tasks_from: load_start.yml
+
+- name: Network config load - each device
+  hosts: "{{ net_config_group | default('net_config_devices') }}"
+  gather_facts: false
+  tasks:
+    - name: Send the lines, or restore the backup
+      ansible.builtin.include_role:
+        name: net_config
+        tasks_from: load_one.yml
+      when: inventory_hostname in hostvars['localhost']._ncl_hosts | default([])
+
+- name: Network config load - the report, the note on the change
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Report, and note it on the change request
+      ansible.builtin.include_role:
+        name: net_config
+        tasks_from: load_finish.yml

@@ -56,6 +56,7 @@ jobs:
           python tests/test_cert_order.py
           python tests/test_horizon.py
           python tests/test_aap_survey.py
+          python tests/test_net_config.py
       - name: The real ACT in the alarms analysis mode (piped evidence, masked names, the answer read back)
         run: python tests/test_alarm_act_contract.py
       - name: docs/VARIABLES_REFERENCE.md is generated from the roles and is up to date
@@ -135,6 +136,12 @@ jobs:
           ansible-galaxy collection install cisco.ios ansible.netcommon
           bash tests/netcerts/run_net_certs_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netcerts/run_net_certs_test.sh
+      - name: Network config backup and load - git, share, ServiceNow, IOS lines and restore (scp + configure replace), PAN-OS commit (stand-in devices; current ansible-core and 2.16)
+        run: |
+          pip install scp
+          /tmp/ac216/bin/pip -q install paramiko scp
+          bash tests/netconfig/run_net_config_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netconfig/run_net_config_test.sh
       - name: Certificate inventory into SQL Server (a real SQL Server 2022 in docker)
         run: |
           pip install pymssql
