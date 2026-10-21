@@ -769,6 +769,19 @@ class PlainWords(unittest.TestCase):
         p = self.spec(_wt("rhel 9 small or medium named ab01web01"))
         self.assertIn("more than one size", p["questions"][0])
 
+    def test_an_os_inside_a_vm_name_is_not_asked_for(self):
+        # CD02RHEL01 is a name, not "RHEL 1": only a word of its own names an operating system
+        words = dict(WORDS, templates={}, allowed=["Windows 2022 - Test VM", "RHEL 9-7 - Test VM"],
+                     aliases={}, name_rules=[{"match": "*CD02*", "cluster": "C3"}])
+        p = self.spec(_wt("1. spin up new windows 2022 VM / CD02APP01 / CPU :  CORE.6  / RAM : 16 GB.\n"
+                          "2. spin up new RHEL 9 VM / CD02RHEL01 /   CPU :  CORE.6  / RAM : 16 GB."), words)
+        self.assertEqual(p["questions"], [])
+        self.assertEqual(p["vms"]["cd02rhel01"]["spec"]["template"], "RHEL 9-7 - Test VM")
+        self.assertEqual(p["vms"]["cd02app01"]["spec"]["template"], "Windows 2022 - Test VM")
+        self.assertEqual(d._os_asked("AB01WIN2022 and CD02RHEL8"), {})
+        self.assertEqual(d._os_asked("RHEL9, win2022 and Windows Server 2025"),
+                         {"RHEL 9": "RHEL9", "Windows Server 2022": "win2022", "Windows Server 2025": "Windows Server 2025"})
+
     def test_a_later_comment_answers(self):
         p = self.spec(_wt("RHEL 9 or RHEL 8, small, named ab01db01", _c("RHEL 8 please")))
         self.assertEqual((p["spec"]["template"], p["questions"]), ("rhel8-gold", []))

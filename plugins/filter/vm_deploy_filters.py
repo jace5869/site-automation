@@ -374,18 +374,18 @@ def _phrase_rx(phrase):
 # "Red Hat Enterprise Linux 9". (Each phrase also matches with words between: _phrase_rx.)
 _OSN = r"[\s_.-]*"
 _OS_NAMES = [
-    (re.compile(r"(?<![a-z])(?:windows|win|ws)%s(?:server%s|srv%s)?(20\d\d|1[01])(?!\d)" % (_OSN, _OSN, _OSN), re.I),
+    (re.compile(r"(?<![a-z0-9])(?:windows|win|ws)%s(?:server%s|srv%s)?(20\d\d|1[01])(?!\d)" % (_OSN, _OSN, _OSN), re.I),
      lambda v: ["windows %s" % v, "win %s" % v] + (["server %s" % v] if len(v) == 4 else [])),
-    (re.compile(r"(?<![a-z])w2k(\d\d)(?!\d)", re.I), lambda v: ["windows 20%s" % v, "win 20%s" % v, "server 20%s" % v, "w2k%s" % v]),
-    (re.compile(r"(?<![a-z])(?:rhel|red%shat|redhat)%s(?:enterprise%slinux%s)?(\d{1,2})(?!\d)" % (_OSN, _OSN, _OSN, _OSN), re.I),
+    (re.compile(r"(?<![a-z0-9])w2k(\d\d)(?!\d)", re.I), lambda v: ["windows 20%s" % v, "win 20%s" % v, "server 20%s" % v, "w2k%s" % v]),
+    (re.compile(r"(?<![a-z0-9])(?:rhel|red%shat|redhat)%s(?:enterprise%slinux%s)?(\d{1,2})(?!\d)" % (_OSN, _OSN, _OSN, _OSN), re.I),
      lambda v: ["rhel %s" % v, "red hat %s" % v, "redhat %s" % v]),
-    (re.compile(r"(?<![a-z])rocky%s(?:linux%s)?(\d{1,2})(?!\d)" % (_OSN, _OSN), re.I), lambda v: ["rocky %s" % v]),
-    (re.compile(r"(?<![a-z])alma(?:linux)?%s(\d{1,2})(?!\d)" % _OSN, re.I), lambda v: ["alma %s" % v, "almalinux %s" % v]),
-    (re.compile(r"(?<![a-z])centos%s(?:stream%s)?(\d{1,2})(?!\d)" % (_OSN, _OSN), re.I), lambda v: ["centos %s" % v]),
-    (re.compile(r"(?<![a-z])(?:oracle%slinux|oel)%s(\d{1,2})(?!\d)" % (_OSN, _OSN), re.I), lambda v: ["oracle linux %s" % v, "oel %s" % v]),
-    (re.compile(r"(?<![a-z])ubuntu%s(\d\d(?:\.\d\d)?)(?!\d)" % _OSN, re.I), lambda v: ["ubuntu %s" % v] + (["ubuntu %s" % v[:2]] if "." in v else [])),
-    (re.compile(r"(?<![a-z])debian%s(\d{1,2})(?!\d)" % _OSN, re.I), lambda v: ["debian %s" % v]),
-    (re.compile(r"(?<![a-z])(?:sles|suse)%s(?:linux%s)?(?:enterprise%s)?(?:server%s)?(\d\d)(?!\d)" % (_OSN, _OSN, _OSN, _OSN), re.I),
+    (re.compile(r"(?<![a-z0-9])rocky%s(?:linux%s)?(\d{1,2})(?!\d)" % (_OSN, _OSN), re.I), lambda v: ["rocky %s" % v]),
+    (re.compile(r"(?<![a-z0-9])alma(?:linux)?%s(\d{1,2})(?!\d)" % _OSN, re.I), lambda v: ["alma %s" % v, "almalinux %s" % v]),
+    (re.compile(r"(?<![a-z0-9])centos%s(?:stream%s)?(\d{1,2})(?!\d)" % (_OSN, _OSN), re.I), lambda v: ["centos %s" % v]),
+    (re.compile(r"(?<![a-z0-9])(?:oracle%slinux|oel)%s(\d{1,2})(?!\d)" % (_OSN, _OSN), re.I), lambda v: ["oracle linux %s" % v, "oel %s" % v]),
+    (re.compile(r"(?<![a-z0-9])ubuntu%s(\d\d(?:\.\d\d)?)(?!\d)" % _OSN, re.I), lambda v: ["ubuntu %s" % v] + (["ubuntu %s" % v[:2]] if "." in v else [])),
+    (re.compile(r"(?<![a-z0-9])debian%s(\d{1,2})(?!\d)" % _OSN, re.I), lambda v: ["debian %s" % v]),
+    (re.compile(r"(?<![a-z0-9])(?:sles|suse)%s(?:linux%s)?(?:enterprise%s)?(?:server%s)?(\d\d)(?!\d)" % (_OSN, _OSN, _OSN, _OSN), re.I),
      lambda v: ["sles %s" % v, "suse %s" % v]),
 ]
 
@@ -397,7 +397,7 @@ _OS_LABELS = [lambda v: ("Windows Server %s" if len(v) == 4 else "Windows %s") %
 # Windows Server by its year alone: "Server 2025", "a new 2025 VM", "2022 servers" (the year right before a VM word) -
 # not "SQL Server 2019" (a product on it), not a year in a sentence ("in 2025 the server")
 _WIN_YEARS = ("2008", "2012", "2016", "2019", "2022", "2025")
-_SERVER_YEAR = re.compile(r"(?<![a-z])server%s(20\d\d)(?!\d)" % _OSN, re.I)
+_SERVER_YEAR = re.compile(r"(?<![a-z0-9])server%s(20\d\d)(?!\d)" % _OSN, re.I)
 _PRODUCT_BEFORE = re.compile(r"(?:sql|exchange|sharepoint|biztalk|skype|lync|project|studio|foundation|dynamics|team)[\s_.-]*$", re.I)
 _YEAR_PHRASE = re.compile(r"(?:windows|win|ws)?[\s_.-]*(?:server|srv)?[\s_.-]*(20\d\d)")
 

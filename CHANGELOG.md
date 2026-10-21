@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.17.2 — 2026-10-21
+
+**Updating without scripts:** paste `site-automation-0.17.2-changed-since-0.17.1.zip` as it is (from 0.17.0:
+`site-automation-0.17.2-changed-since-0.17.0.zip`). Both leave out `playbooks/group_vars`, `playbooks/host_vars`
+and `poam/poam.csv`. No setting changes: nothing to change in `all.yml`, no new job templates.
+
+**VM deploy, plain words: an operating system inside a VM's name is not an operating system asked for.** A
+change listing its servers one per line (`spin up new RHEL 9 VM / ab01rhel01 / CPU : CORE.6 / RAM : 16 GB.`)
+read the name `AB01RHEL01` as *RHEL 1* too: two operating systems on that line, the question *the ticket names
+more than one operating system ('rhel 9', 'RHEL01'): which one?*, and with `vm_deploy_genai: true` the ticket
+went to GenAI instead of being built from its words. An operating system's name now has to start a word of its
+own (`RHEL 9`, `rhel9`, `Windows 2022`, `win2022`); one that follows letters or digits inside a longer word
+(`AB01RHEL01`, `CD02WIN2022`) is part of that word. The template's own name is read the same way. With this, a
+ticket like the one above is read entirely by plain words, every VM with its own template, CPU and memory:
+`vm_deploy_genai` can stay `false`.
+
 ## 0.17.1 — 2026-10-21
 
 **Updating without scripts:** paste `site-automation-0.17.1-changed-since-0.17.0.zip` as it is (from 0.16.2:
