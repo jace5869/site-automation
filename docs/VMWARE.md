@@ -1288,7 +1288,7 @@ Every message of the deploy, its workflow and the scheduled pickup, with what to
 | A runway that jumps from run to run | the trend fit is poor: VMs were moved, snapshots deleted, a datastore grown | read the Trend fit column; use `vm_capacity_trend_days: 60` for a longer, steadier line |
 | `cannot lose a host` | the cluster has as many hosts down (or in maintenance) as it plans to survive | bring hosts back; or set `vm_capacity_failover_hosts: 0` for a cluster that needs no failover |
 | `No cluster matches ...` | a typo in `vm_capacity_clusters` | the cluster's name as the vSphere Client shows it |
-| `ACT did not run: ...` | as for the alarms analysis (key, network, certificate) | the ACT rows above |
+| `ACT did not run: ...` (the report), `ACT did not estimate: ...` (the job's last line) | as for the alarms analysis (key, network, certificate, a reply cut off) | the ACT rows above |
 | Math and GenAI differ a lot | ACT weighed something the line does not (a jump, a limit that comes first) | read ACT's reasoning; plan for the sooner of the two |
 
 ### VMs created report
@@ -1339,6 +1339,7 @@ Every message of the deploy, its workflow and the scheduled pickup, with what to
 | `ACT failed: ...` with `401` or `Unauthorized` | the key is wrong or expired | a new key in the credential |
 | `ACT failed: ...` with `429` or `Too Many Requests` | the key's quota per minute | run it less often, or lower `vm_alarm_act_max_items` |
 | `model turn exceeded the 600s total timeout` (older releases: `90s`, `300s`), often `after a transient provider failure` | the model (or the provider, retrying after an error) took longer than ACT allows for one answer: `site_act_model_timeout`, 600 s | run it again (a provider hiccup passes); `site_act_model_timeout: 900` in `all.yml` (keep `site_act_timeout` above it); fewer items (`vm_alarm_act_max_items: 20`); or a faster model |
+| `ACT failed: ... the reply was cut off after N bytes ... (after 4 attempts)` (before 0.17.1: `ACT failed: crash: IncompleteRead: IncompleteRead(N bytes read)`) | the model's answer was cut off on its way back: the gateway or a proxy closed the connection partway through it. Since 0.17.1 (ACT 0.6.25) ACT asks again, so this means every attempt was cut | run it again (a dropped connection passes); if it keeps failing at about the same size, the answer is too long for something on the way: fewer items (`vm_capacity_act_max_items: 10`, `vm_alarm_act_max_items: 10`); tell the network team the size and how long it took |
 | `ACT produced no result (it timed out after 1200s ...)` | a slow model, or a lot of evidence | `site_act_timeout: 1800`, or `vm_alarm_act_max_items: 20` |
 | `ACT's answer is below as text` | the model did not use the table format | the answer is still in the email. Run it again, or try another model (`site_act_models`) |
 | A row says `ACT gave no answer for this one` | the model skipped that problem | run it again; fewer problems (`vm_alarm_act_max_items`) help a small model |

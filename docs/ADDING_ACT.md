@@ -215,7 +215,8 @@ tests. Nobody has run them against your gateway yet; treat the first run as the 
 
 ### Step 1: check which ACT the project carries
 
-`vendor/act/VERSION` must say `0.6.19` or newer. This release carries **0.6.24** (0.6.24 changes only
+`vendor/act/VERSION` must say `0.6.19` or newer. This release carries **0.6.25** (0.6.25: a model answer cut
+off on its way back is asked again instead of ending ACT; 0.6.24 changes only
 ACT's own example playbook `podman_app_health.yml`: see CHANGELOG.md). It sends the key
 only to an `https://` provider URL (an `http://` URL is refused unless
 `site_act_env: {ACT_ALLOW_HTTP: "1"}`), and more dangerous commands always need a person (see

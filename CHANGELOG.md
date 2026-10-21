@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.17.1 — 2026-10-21
+
+**Updating without scripts:** paste `site-automation-0.17.1-changed-since-0.17.0.zip` as it is (from 0.16.2:
+`site-automation-0.17.1-changed-since-0.16.2.zip`). Both leave out `playbooks/group_vars`, `playbooks/host_vars`
+and `poam/poam.csv`. No setting changes: nothing to change in `all.yml`, no new job templates.
+
+- **ACT 0.6.25** (vendored for Linux and Windows): a model answer cut off on its way back no longer ends ACT.
+  *VMware - capacity planning* with `vm_capacity_act: true` stopped with `ACT did not estimate: ACT failed:
+  crash: IncompleteRead: IncompleteRead(57712 bytes read)`: GenAI.mil's answer was cut off partway through
+  (the connection closed before all of it arrived), and ACT gave up instead of asking again. ACT now asks
+  again, up to 3 more times within `site_act_model_timeout`; when every attempt is cut, the job says so:
+  `the reply was cut off after N bytes: the gateway or a proxy closed the connection before the whole reply
+  arrived (after 4 attempts)`. This is in ACT itself, so it helps every job that runs ACT: the VMware alarms
+  and capacity analyses, the runbooks' `use_act`, service watch. ACT for Windows already asked again; it only
+  bumps its version.
+- docs/VMWARE.md, troubleshooting: the new message and what to do when every attempt is cut at about the same
+  size - the answer is too long for something on the way (fewer items: `vm_capacity_act_max_items: 10`). The
+  capacity row now names both messages, `ACT did not run: ...` (the report) and `ACT did not estimate: ...`
+  (the job's last line).
+
 ## 0.17.0 — 2026-10-21
 
 **Updating without scripts:** paste `site-automation-0.17.0-changed-since-0.16.2.zip` as it is (from

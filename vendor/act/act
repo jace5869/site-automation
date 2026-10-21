@@ -106,7 +106,7 @@ Environment:
   The full list of variables (limits, debug, theme, ...) is in README.md.
 """
 
-ACT_VERSION = "0.6.24"  # bump when delivering; check with: act --version
+ACT_VERSION = "0.6.25"  # bump when delivering; check with: act --version
 
 import argparse
 import codecs
@@ -5855,8 +5855,8 @@ def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_too
                 body = read_sse_stream(resp, timeout, _MODEL_CANCEL)
                 raw = json.dumps(body)
             else:
-                raw = _read_limited(resp, MAX_API_RESPONSE_BYTES, "API response").decode(
-                    "utf-8", "replace")
+                raw = _whole_body(resp, _read_limited(resp, MAX_API_RESPONSE_BYTES,
+                                                      "API response")).decode("utf-8", "replace")
                 if stream and raw.lstrip().startswith("data:"):
                     body = parse_sse_text(raw)        # SSE under another content type
                     raw = json.dumps(body)
@@ -5899,6 +5899,10 @@ def _one_llm_call(messages, timeout, use_json_mode, prefill, model=None, use_too
     except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as e:
         reason = getattr(e, "reason", None) or e
         raise TransientError(f"network error reaching API: {reason}")
+    except http_client_errors() as e:
+        # http.client's own errors are not OSErrors: a reply cut off partway through its
+        # body (IncompleteRead) crashed the whole run instead of being retried (0.6.25).
+        raise TransientError(cut_reply_reason(e))
     if DEBUG:
         safe_raw, _ = model_safe_text(raw[:1500], "API response")
         sys.stderr.write(grey("\n[debug] {0}:{1} raw ({2}B, {3} format, json_mode={4} prefill={5} stream={6}):\n{7}\n".format(
@@ -7415,6 +7419,31 @@ def http_client_errors():
     """http.client's own exception base (IncompleteRead, RemoteDisconnected's cousins)."""
     import http.client
     return http.client.HTTPException
+
+
+def _whole_body(resp, data):
+    """The body, or IncompleteRead when it is shorter than its Content-Length: http.client
+    returns a short read(amt) without an error, and the cut JSON passed for a reply (0.6.25)."""
+    import http.client
+    if getattr(resp, "chunked", False):
+        return data                      # a chunked body that ends early raises by itself
+    try:
+        expected = int(_response_header(resp, "Content-Length"))
+    except ValueError:
+        return data
+    if len(data) < expected:
+        raise http.client.IncompleteRead(data, expected - len(data))
+    return data
+
+
+def cut_reply_reason(e):
+    """Why a reply was not read: for a cut body, how much of it arrived."""
+    import http.client
+    if isinstance(e, http.client.IncompleteRead):
+        more = "" if e.expected is None else ", {0} more expected".format(e.expected)
+        return ("the reply was cut off after {0} bytes{1}: the gateway or a proxy closed the "
+                "connection before the whole reply arrived".format(len(e.partial), more))
+    return "network error reaching API: {0}: {1}".format(type(e).__name__, e)
 
 
 def _probe_post(url, headers, payload, timeout):
