@@ -179,7 +179,7 @@ else echo "FAIL - Check mode changed something"; fails=$((fails + 1)); fi
 rm -f "$work/mail"/*
 run "removal: blocklisted, deleted, cut, moved away - then read again" fail -e "$rmv" -- \
     "OK  $t/etc/tls-ca-bundle.pem: EM DV TLS CA - G3B, emSign ECC Root CA - G3 - blocklisted" \
-    "OK  $t/jdk/lib/security/cacerts: emSign ECC Root CA - G3 - deleted the entries emsign from the keystore (backup: $work/backup/" \
+    "OK  $t/jdk/lib/security/cacerts: emSign ECC Root CA - G3 - deleted the entries emsign from the keystore - restart the Java services that use it (a running JVM keeps the old trust until it restarts) (backup: $work/backup/" \
     "OK  $t/app/truststore.jks: emSign ECC Root CA - G3 - deleted the entries emsign from the keystore" "!truststore.jks (Java cacerts) trusts" \
     "OK  $t/venv/lib/python3.12/site-packages/certifi/cacert.pem: emSign ECC Root CA - G3 - removed the block from the bundle (1 certificates kept)" \
     "OK  $t/app/certs/chain.cer: EM DV TLS CA - G3B - the file is the certificate itself: moved to the backup folder" \
