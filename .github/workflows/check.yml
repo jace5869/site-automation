@@ -287,7 +287,7 @@ jobs:
           cat /tmp/0.out
           /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_connection_test.yml | tee /tmp/1.out || fail=1
           /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_health_check.yml -e health_checks=all -e win_check_disk_warn_pct=1 | tee /tmp/2.out
-          grep -q 'Checks run: disk, services, performance, time, network, eventlog, security, audit, accounts, certs, patching' /tmp/2.out || { echo 'FAIL: not every check ran'; fail=1; }
+          grep -q 'Checks run: disk, services, performance, time, network, eventlog, security, audit, accounts, certs, trust, patching' /tmp/2.out || { echo 'FAIL: not every check ran'; fail=1; }
           if grep -q 'could not run' /tmp/2.out; then echo 'FAIL: a check could not run'; fail=1; fi
           /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_troubleshoot.yml -e ts_area=overview | tee /tmp/3.out || fail=1
           /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_cert_report.yml | tee /tmp/4.out

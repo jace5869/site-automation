@@ -28,7 +28,7 @@
 #   patching     a restart pending for updates, days since the last update
 #
 # Shortcuts: daily = disk services performance time network eventlog
-#            weekly = security audit accounts certs patching
+#            weekly = security audit accounts certs trust patching
 #            all = both
 - name: Windows health check
   hosts: "{{ target | default('all') }}"
