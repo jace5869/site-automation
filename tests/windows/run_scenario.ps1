@@ -424,10 +424,19 @@ function Remove-Item {
     }
     Microsoft.PowerShell.Management\Remove-Item @PSBoundParameters
 }
-function Export-Certificate { param($Cert, [string] $FilePath, [switch] $Force) Microsoft.PowerShell.Management\Set-Content -LiteralPath $FilePath -Value ([byte[]]$Cert.RawData) -AsByteStream; return $FilePath }
+# bytes to and from a file on both PowerShell 5.1 (-Encoding Byte) and 7 (-AsByteStream)
+function Write-Bytes([string] $Path, [byte[]] $Bytes) {
+    if ($PSVersionTable.PSVersion.Major -ge 6) { Microsoft.PowerShell.Management\Set-Content -LiteralPath $Path -Value $Bytes -AsByteStream }
+    else { Microsoft.PowerShell.Management\Set-Content -LiteralPath $Path -Value $Bytes -Encoding Byte }
+}
+function Read-Bytes([string] $Path) {
+    if ($PSVersionTable.PSVersion.Major -ge 6) { return [byte[]](Microsoft.PowerShell.Management\Get-Content -LiteralPath $Path -AsByteStream -ReadCount 0) }
+    return [byte[]](Microsoft.PowerShell.Management\Get-Content -LiteralPath $Path -Encoding Byte -ReadCount 0)
+}
+function Export-Certificate { param($Cert, [string] $FilePath, [switch] $Force) Write-Bytes $FilePath ([byte[]]$Cert.RawData); return $FilePath }
 function Import-Certificate {
     param([string] $FilePath, [string] $CertStoreLocation)
-    $b = [byte[]](Microsoft.PowerShell.Management\Get-Content -LiteralPath $FilePath -AsByteStream -ReadCount 0)
+    $b = [byte[]](Read-Bytes $FilePath)
     $c = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList (, $b)
     if (-not $M.certs.ContainsKey($CertStoreLocation)) { $M.certs[$CertStoreLocation] = @() }
     $M.certs[$CertStoreLocation] += @($c)
@@ -461,7 +470,7 @@ function certutil.exe {
     # -f -decode IN OUT: base64 (the trust check in Constrained Language Mode)
     if ($args[1] -eq '-decode') {
         $b64 = ((Microsoft.PowerShell.Management\Get-Content -LiteralPath $args[2]) -join '') -replace '\s', ''
-        Microsoft.PowerShell.Management\Set-Content -LiteralPath $args[3] -Value ([byte[]][Convert]::FromBase64String($b64)) -AsByteStream
+        Write-Bytes $args[3] ([byte[]][Convert]::FromBase64String($b64))
         $global:LASTEXITCODE = 0
         return 'CertUtil: -decode command completed successfully.'
     }
