@@ -38,8 +38,8 @@
     health_checks: [daily]
     _health_sets:
       daily: [disk, services, performance, time, network, eventlog]
-      weekly: [security, audit, accounts, certs, patching]
-      all: [disk, services, performance, time, network, eventlog, security, audit, accounts, certs, patching]
+      weekly: [security, audit, accounts, certs, trust, patching]
+      all: [disk, services, performance, time, network, eventlog, security, audit, accounts, certs, trust, patching]
     # A survey's multiple-choice answer can arrive as a list or as lines of text, a text answer or an extra
     # variable as "disk, services": accept all of them.
     _health_asked: >-

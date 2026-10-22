@@ -153,6 +153,11 @@ and link"), so they all start together:
 Give each chain **its own** tickets box. A box with two parents gets only one parent's findings:
 the artifacts overwrite each other.
 
+The `weekly` set includes the trust check (a compromised or dropped CA still trusted somewhere on the
+host). For the one table of every store on every host, and vCenter and ESXi, add a fourth chain,
+*Trust store report* -> *ServiceNow tickets*, or run that template on demand
+([TRUST_STORES.md](TRUST_STORES.md)).
+
 **Schedule:** Mondays at 07:00.
 
 ### 3. Patch with checks

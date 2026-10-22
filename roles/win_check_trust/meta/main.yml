@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: win_check_trust
+  description: "Health check: trust stores that still hold a compromised or distrusted CA, and software below the version that dropped it."
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

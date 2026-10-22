@@ -1,0 +1,78 @@
+---
+# TRUST (read-only): which trust stores on the host still hold a certificate authority that was compromised or
+# that the browsers dropped - the system bundles, p11-kit's live view and blocklist, Java cacerts, Python's
+# certifi bundles, Node's built-in roots, the bundles inside running podman containers, certificate files an
+# application carries - and the software with its own trust logic (Go programs, Node, NSS) below the version
+# that fixed it. The list of certificates to look for ships with the check (roles/check_trust/vars/main.yml:
+# October 2026, the eight eMudhra intermediates and their roots); add your own in check_trust_extra. The health
+# check runs it in the weekly set; playbooks/trust_report.yml runs it on every host, vCenter and ESXi too.
+
+# More certificates to look for, besides the shipped list: name, sha256 (the certificate's fingerprint, with or
+# without colons), spki_sha256 (its public key, optional), kind (root / intermediate), severity (critical /
+# warning / notice), why. Get the fingerprints with: openssl x509 -in the.pem -noout -fingerprint -sha256
+check_trust_extra: []                    # e.g. [{name: "Old Corp Root CA", sha256: "AB:CD:...", kind: root, severity: warning, why: "retired January 2026"}] (a date in quotes, "2026-01-31", never bare: YAML would make it a date)
+check_trust_severity: {}                 # another severity for a listed name: {"AAA Certificate Services": warning} once you decide to blocklist it; notice = listed only, no finding
+check_trust_software_severity: warning   # the finding for a program below the fixed version (a Go program, Node, NSS): warning or critical
+
+# The system: the CA bundles every OpenSSL / Go / Python client reads (the ones that exist are read), p11-kit's
+# live view (trust extract: what NSS and GnuTLS clients see, and the blocklist), the blocklist folders.
+check_trust_bundles: [/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem, /etc/pki/ca-trust/extracted/openssl/ca-bundle.trust.crt, /etc/pki/tls/certs/ca-bundle.crt, /etc/pki/tls/cert.pem, /etc/ssl/certs/ca-certificates.crt, /etc/ssl/cert.pem, /etc/ssl/ca-bundle.pem, /var/lib/ca-certificates/ca-bundle.pem]  # the system CA bundles (RHEL, Debian / Ubuntu, Alpine, SUSE); the same file under two names is read once
+check_trust_blocklist_dirs: [/etc/pki/ca-trust/source/blocklist, /usr/share/pki/ca-trust-source/blocklist]  # p11-kit blocklist folders: a certificate there is distrusted (listed as blocked, no finding)
+check_trust_p11kit: true                 # read p11-kit's live anchors and blocklist too (trust extract), when the trust command is there
+check_trust_nss_dirs: [/etc/pki/nssdb, /root/.pki/nssdb, /home/*/.pki/nssdb]  # NSS databases read with certutil (the system's: curl and other NSS clients on older RHEL; root's and each user's: Chrome, Evolution)
+check_trust_ca_certificates_fixed: ''    # the ca-certificates package version that dropped the roots, e.g. '2026.2.82' (empty: not compared - the bundles themselves tell)
+check_trust_nss_fixed: '3.131.1'         # the NSS version that dropped emSign ECC Root CA - G3 (the package nss / libnss3 below it: a finding; empty: not compared)
+
+# Java: every cacerts / jssecacerts under these folders (JDKs, and the keystores of running java programs), read
+# directly (JKS) or with keytool (PKCS12), with the JDK's version.
+check_trust_java: true
+check_trust_java_dirs: [/usr/lib/jvm, /usr/java, /etc/pki/java, /etc/pki/ca-trust/extracted/java, /opt, /usr/local, /srv]  # folders searched for cacerts (seven levels deep)
+
+# Python: every certifi bundle (certifi/cacert.pem: requests, pip, urllib3 ... carry their own roots, not the
+# system's) under these folders - system Python, venvs, applications.
+check_trust_python: true
+check_trust_python_dirs: [/usr/lib, /usr/lib64, /usr/local, /opt, /srv, /var/lib, /root, /home]  # folders searched for certifi/cacert.pem (twelve levels deep)
+
+# Node: its built-in roots (not the system's: Node carries its own, unless started with --use-openssl-ca), and its
+# version against the one that dropped the root, per major line.
+check_trust_node: true
+check_trust_node_paths: [/usr/local/bin/node, /usr/local/node*/bin/node, /opt/*/bin/node, /opt/node*/bin/node, /root/.nvm/versions/node/*/bin/node, /home/*/.nvm/versions/node/*/bin/node]  # where node binaries are (globs); the one in PATH and running ones are found too
+check_trust_node_fixed: {"22": "22.23.4", "24": "24.22.1", "26": "26.12.1"}  # Node's fixed version per major line (an older line than the oldest listed: unsupported, no fix)
+
+# Go: a Go program carries its own certificate verification. Go 1.27.3 / 1.26.10 reject any chain with one of
+# the compromised keys (CVE-2026-111943) - a program built with an older Go has to be rebuilt. The running
+# programs, and the executables under these folders, with the Go version each was built with.
+check_trust_go: true
+check_trust_go_dirs: [/usr/local/bin, /usr/local/sbin, /opt, /srv]  # folders searched for Go programs (four levels deep, executables over 1 MB)
+check_trust_go_fixed: {"1.26": "1.26.10", "1.27": "1.27.3"}  # Go's fixed version per line (a program built with an older line: unsupported - rebuild it with a fixed Go)
+check_trust_go_max: 200                  # at most this many programs looked at per host
+
+# Containers: the CA bundle inside every running podman container (root's and each logged-in user's), read with
+# podman exec - a container image carries its own ca-certificates (Red Hat: UBI images are affected too).
+check_trust_containers: true
+check_trust_containers_max: 30           # at most this many containers per host
+
+# Certificate files an application carries (its own bundle, a copied root): every *.pem, *.crt, *.cer, *.der,
+# cacert*, ca-bundle*, ca-certificates*, and every Java keystore (*.jks, *.keystore, *truststore*; *.p12 / *.pfx
+# with keytool and the default password) under these folders, on the host's own filesystems - only the files
+# with a hit are listed. /etc, /opt, /srv and the home folders by default; add an application's folder.
+check_trust_find_dirs: [/etc, /opt, /srv, /usr/local, /var/lib, /root, /home]  # folders searched for certificate files (every level)
+check_trust_find_max: 2000               # at most this many files read per host
+check_trust_find_exclude: '/(proc|sys|dev)/|/\.cache/|/containers/storage/|/docker/overlay2?/|/ca-trust/extracted/|/ca-trust-source/|^/etc/ssl/certs/|/usr/share/ca-certificates/|/node_modules/.*/test/|/tests/trust/fixtures/'  # regular expression on the path: matching files are skipped (container image layers, the copies update-ca-trust extracts, Debian's per-CA files - the bundles stand for them; this repository's own test certificates on the AAP controller)
+check_trust_timeout: 60                  # seconds for each search and each command (keytool, node, podman exec)
+
+
+# Removal (the Trust store report only, playbooks/trust_report.yml; the VMware trust store report has the same
+# switch): take the listed certificates out of the stores that hold them. OFF by default - a read-only report. Check mode shows what would go and changes nothing.
+# The system trust is blocklisted (RHEL / SUSE: a PEM in the blocklist folder and update-ca-trust; Debian /
+# Ubuntu: the line in /etc/ca-certificates.conf and update-ca-certificates), a Java keystore loses the entry, a
+# certifi or application bundle loses the block, a file that is the certificate itself is moved to the backup
+# folder. A file a package owns is left alone (update the package). Node, Go programs and containers cannot be
+# changed this way (update, rebuild) and stay in the report. docs/TRUST_STORES.md
+check_trust_remove: false                # remove them (true) - or only report (false)
+check_trust_remove_kinds: [system, java, python, file, nssdb]  # which kinds of store to change: system (blocklist), java (every keystore), python (certifi), file (an application's bundle or certificate file), nssdb (certutil -D)
+check_trust_remove_severities: [critical, warning]  # only certificates at these severities go; a notice-level one (AAA Certificate Services) never, unless named here
+check_trust_remove_backup_dir: /var/backups/site-automation/trust  # every file changed is copied here first (a folder per run)
+check_trust_remove_blocklist_dir: ''     # the system blocklist folder; empty = the distribution's (/etc/pki/ca-trust/source/blocklist, SUSE /etc/pki/trust/blacklist)
+check_trust_remove_update_cmd: ''        # the command that rebuilds the system trust after blocklisting; empty = the distribution's (update-ca-trust, update-ca-certificates)
+check_trust_keystore_password: changeit  # the Java keystores' password (keytool's default)

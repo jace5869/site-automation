@@ -102,6 +102,27 @@ net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # the backups' re
 ## net_config_change (the change request, in Implement): a survey question, or the launch's extra variables
 """),
     "stigman_deploy.yml": ("STIG Manager - deploy", "Machine, STIG Manager database, TLS certificate", "", ""),
+    "trust_report.yml": ("Trust store report", "Machine", "check_trust", """\
+## Only the certificates this list names are looked for (roles/check_trust/vars/main.yml ships the October 2026
+## eMudhra set); add your own in check_trust_extra, change a severity in check_trust_severity
+# check_trust_severity: {"AAA Certificate Services": warning}
+## Removal is OFF: the report only reads. check_trust_remove: true (below) takes the listed certificates out
+## of the stores that hold them - run it as Check first (Job type Check: what would go, nothing changed).
+## vCenter and the ESXi hosts: the template "VMware - trust store report" (playbooks/vmware_trust_report.yml)
+"""),
+    "vmware_trust_report.yml": ("VMware - trust store report", "VMware vCenter", "", """\
+## vCenter's trusted root store and each ESXi host's trusted CAs, against the trust check's list (the October
+## 2026 eMudhra set ships with it; add your own in check_trust_extra, change a severity in check_trust_severity)
+# check_trust_extra: []
+# check_trust_severity: {"AAA Certificate Services": warning}
+## false: vCenter only (the ESXi hosts left out)
+# vmware_trust_esxi: true
+## Removal is OFF: the report only reads. true: the chain is deleted from vCenter's trusted roots and each ESXi
+## host's trusted CA list is replaced without it - run it as Check first (Job type Check: what would go, nothing
+## changed). The account needs Certificate Management > Manage. Only certificates at these severities go.
+# check_trust_remove: false
+# check_trust_remove_severities: [critical, warning]
+"""),
     "troubleshoot.yml": ("Troubleshoot", "Machine", "", ""),
     "vmware_cert_report.yml": ("VMware - certificate report", "VMware vCenter (SQL Server (certificate inventory): optional)", "", ""),
     "vmware_cert_renew.yml": ("VMware - certificate renewal", "VMware vCenter, ServiceNow API", "", """\
@@ -158,6 +179,17 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 """),
     "win_connection_test.yml": ("Windows connection test", "Machine (Windows)", "", ""),
     "win_health_check.yml": ("Windows health check", "Machine (Windows)", WIN_CHECKS, ""),
+    "win_trust_report.yml": ("Windows - trust store report", "Machine (Windows)", "win_check_trust", """\
+## The trust check's list (roles/check_trust/vars/main.yml ships the October 2026 eMudhra set); add your own in
+## check_trust_extra, change a severity in check_trust_severity - the same settings as the Linux report
+# check_trust_extra: []
+# check_trust_severity: {"AAA Certificate Services": warning}
+## Removal is OFF: the report only reads. true: the certificate goes into the Disallowed store and out of the
+## store it was in, Java entries are deleted, certifi bundles cut - backups first. Run it as Check first (Job
+## type Check: what would go, nothing changed). Only certificates at these severities go.
+# check_trust_remove: false
+# check_trust_remove_severities: [critical, warning]
+"""),
     "win_patch.yml": ("Windows patch", "Machine (Windows)", "", ""),
     "win_troubleshoot.yml": ("Windows troubleshoot", "Machine (Windows)", "", ""),
 }

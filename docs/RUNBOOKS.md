@@ -10,7 +10,7 @@ printed with a finding is always the first thing to run.
 Runs the checks you pick on each host: a list of names, or the shortcuts:
 
 - `daily` = disk, mounts, services, performance, time, network, logging, mariadb (the database check: MariaDB or MySQL; `mysql` and `database` also pick it), containers (podman containers, rootful and rootless)
-- `weekly` = selinux, fapolicyd, auditd, accounts, certs, patching
+- `weekly` = selinux, fapolicyd, auditd, accounts, certs, trust, patching
 - `all` = both
 
 A host with a finding at a severity in `site_fail_on` (default: critical and warning) fails. That
@@ -226,6 +226,33 @@ your own in `check_certs_discover_extra_dirs`; skipping CA bundles), `check_cert
 password (`password_env: KEYSTORE_PASSWORD`), never the password.
 
 **All settings** of this check, with their defaults: [check_certs](VARIABLES_REFERENCE.md#check_certs).
+
+### trust
+
+Which trust stores on the host still hold a certificate authority that was compromised or that the
+browsers dropped - the list ships with the check (October 2026: the eight eMudhra intermediates and
+their roots; yours in `check_trust_extra`) - and the software that carries its own trust logic.
+Every certificate is matched by its fingerprint and by its public key. [TRUST_STORES.md](TRUST_STORES.md).
+
+| Finding | Means | Usually |
+|---|---|---|
+| `the system trust (tls-ca-bundle.pem and 1 more, ca-certificates ...) trusts emSign ECC Root CA - G3 - ...` | the system bundles still hold a dropped root: every OpenSSL / Go / Python / curl client on the host accepts the compromised chains | update `ca-certificates`; or blocklist it (a copy in `/etc/pki/ca-trust/source/blocklist/`, `update-ca-trust`) |
+| `... trusts EM DV TLS CA - G3B - its private key is computable from the certificate ...` (**critical**) | a compromised intermediate itself is in a store or an application's bundle | take it out; find out who put it there |
+| `2 Python certifi bundles (...) trusts ...` | requests / pip carry their own roots, per environment | `pip install -U 'certifi>=2026.10.19'` in each environment the finding lists |
+| `/usr/lib/jvm/.../cacerts 17.0.9 (Java cacerts) trusts ...` | a JDK's own trust store | update the JDK, or `keytool -delete`; a `cacerts` linked to `/etc/pki/java/cacerts` follows the system trust |
+| `/usr/bin/node (built-in roots) 22.23.1 ... trusts ...`, `Node.js 22.23.1 is below 22.23.4` | Node carries its own roots | update Node, or start it with `--use-openssl-ca` |
+| `container web (root) ... trusts ...` | the image's own bundle | pull or rebuild the image, restart the container |
+| `3 Go programs built with a Go before the fix: ...` | a Go program verifies certificates itself; 1.27.3 / 1.26.10 reject the compromised keys | rebuild each with a fixed Go, or get the vendor's build |
+| `NSS 3.126.0 is below 3.131.1` | the roots NSS carries (Firefox, NSS clients without p11-kit) | update `nss` |
+| `no system CA bundle was read on this host` | none of `check_trust_bundles` exists here | name the host's bundle in `check_trust_bundles` |
+
+A certificate that is in the blocklist is *blocked*: no finding. *AAA Certificate Services* (Sectigo's
+root that cross-signed the compromised intermediates) is a **notice** by default - in the report, no
+finding - because nearly everything chains to it; `check_trust_severity: {"AAA Certificate Services":
+warning}` once you decide to blocklist it. The **Trust store report** (below) shows every store read
+on every host, and vCenter and ESXi.
+
+**All settings** of this check, with their defaults: [check_trust](VARIABLES_REFERENCE.md#check_trust).
 
 ### patching
 
@@ -532,6 +559,38 @@ tool: name it in `cert_renew_skip_hosts` (or its group in `cert_renew_skip_group
 saying *Renewed by hand: this host is named in cert_renew_skip_hosts (idm01) - the certificate renewal
 job makes no CSR for it*. The renewal lists its certificates with that reason and makes no key, no CSR.
 The same forms: a list or one string with commas, any case, `*` and `?`, short names.
+
+## Trust store report (`playbooks/trust_report.yml`)
+
+The trust check on every Linux host, and **one table** of every trust store and program read - the
+system bundles, p11-kit, Java cacerts, Python certifi, Node, podman containers, an application's own
+files, Go programs - with what each holds, worst first: the proof of what was looked at, and the
+checklist of what to update. Read-only - with
+`check_trust_remove: true` it takes the listed certificates out (the system trust blocklisted, Java
+entries deleted, certifi and application bundles cut, every file backed up first; Check mode shows
+the plan) and reads the hosts again. Fails the hosts that (still) hold a compromised or dropped CA, so
+a workflow can open tickets. Emailed (`report_email_to`). Weekly, and on demand when a CA incident is
+announced (add its certificates to `check_trust_extra`). [TRUST_STORES.md](TRUST_STORES.md).
+
+## Windows trust store report (`playbooks/win_trust_report.yml`)
+
+The Windows servers' certificate stores (Trusted Root, Intermediate CAs, the roots Windows Update
+keeps, Trusted Publishers, the connecting account's), every Java `cacerts` and Python `certifi` bundle,
+against the same list as the Linux report; the same tables, worst first, emailed. A certificate in the
+Disallowed store is blocked. `check_trust_remove: true` puts the certificate in the Disallowed store
+(Windows' blocklist, it wins over every other store) and deletes it from the store it was in, deletes
+Java entries, cuts certifi bundles, backups first; Check mode shows what would go. The Windows health
+check's `weekly` set runs the check `trust` too. [TRUST_STORES.md](TRUST_STORES.md#windows).
+
+## VMware trust store report (`playbooks/vmware_trust_report.yml`)
+
+vCenter's trusted root store and each ESXi host's trusted CA certificates, against the same list, from
+the controller with a *VMware vCenter* credential (no inventory; `vmware_vcenters` for several). One
+table, worst first, emailed as the other VMware reports; the job fails when vCenter or a host holds a
+listed certificate. `vmware_trust_esxi: false` reads vCenter only. `check_trust_remove: true` deletes
+the chain from vCenter's trusted roots and replaces each host's trusted CA list without it (Check mode
+shows what would go; the account needs *Certificate Management > Manage*).
+[TRUST_STORES.md](TRUST_STORES.md).
 
 ## Certificate renewal: the CSRs (`playbooks/cert_renew_csr.yml`)
 

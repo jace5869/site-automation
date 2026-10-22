@@ -57,6 +57,7 @@ jobs:
           python tests/test_horizon.py
           python tests/test_aap_survey.py
           python tests/test_net_config.py
+          python tests/test_trust.py
       - name: The real ACT in the alarms analysis mode (piped evidence, masked names, the answer read back)
         run: python tests/test_alarm_act_contract.py
       - name: docs/VARIABLES_REFERENCE.md is generated from the roles and is up to date
@@ -109,6 +110,10 @@ jobs:
         run: |
           bash tests/containers/run_containers_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/containers/run_containers_test.sh
+      - name: Trust check against a made-up host tree (current ansible-core and 2.16)
+        run: |
+          bash tests/trust/run_trust_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/trust/run_trust_test.sh
       - name: Every Linux check runs on this runner (no check-error)
         run: bash tests/linux/run_linux_checks.sh
       - name: update-from-release.sh (bash twin of the PowerShell update test)

@@ -585,6 +585,113 @@
 ## time servers chrony must be able to reach
 # check_time_min_sources: 1
 
+# ---- check_trust ---------------------------------------------------------------------------------
+## More certificates to look for, besides the shipped list: name, sha256 (the certificate's
+## fingerprint, with or without colons), spki_sha256 (its public key, optional), kind (root /
+## intermediate), severity (critical / warning / notice), why. Get the fingerprints with: openssl
+## x509 -in the.pem -noout -fingerprint -sha256 e.g. [{name: "Old Corp Root CA", sha256:
+## "AB:CD:...", kind: root, severity: warning, why: "retired January 2026"}] (a date in quotes,
+## "2026-01-31", never bare: YAML would make it a date)
+# check_trust_extra: []
+
+## another severity for a listed name: {"AAA Certificate Services": warning} once you decide to
+## blocklist it; notice = listed only, no finding
+# check_trust_severity: {}
+
+## the finding for a program below the fixed version (a Go program, Node, NSS): warning or critical
+# check_trust_software_severity: warning
+
+## The system: the CA bundles every OpenSSL / Go / Python client reads (the ones that exist are
+## read), p11-kit's live view (trust extract: what NSS and GnuTLS clients see, and the blocklist),
+## the blocklist folders. the system CA bundles (RHEL, Debian / Ubuntu, Alpine, SUSE); the same file
+## under two names is read once
+# check_trust_bundles: [/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem, /etc/pki/ca-trust/extracted/openssl/ca-bundle.trust.crt, /etc/pki/tls/certs/ca-bundle.crt, /etc/pki/tls/cert.pem, /etc/ssl/certs/ca-certificates.crt, /etc/ssl/cert.pem, /etc/ssl/ca-bundle.pem, /var/lib/ca-certificates/ca-bundle.pem]
+
+## p11-kit blocklist folders: a certificate there is distrusted (listed as blocked, no finding)
+# check_trust_blocklist_dirs: [/etc/pki/ca-trust/source/blocklist, /usr/share/pki/ca-trust-source/blocklist]
+
+## read p11-kit's live anchors and blocklist too (trust extract), when the trust command is there
+# check_trust_p11kit: true
+
+## NSS databases read with certutil (the system's: curl and other NSS clients on older RHEL; root's
+## and each user's: Chrome, Evolution)
+# check_trust_nss_dirs: [/etc/pki/nssdb, /root/.pki/nssdb, /home/*/.pki/nssdb]
+
+## the ca-certificates package version that dropped the roots, e.g. '2026.2.82' (empty: not compared
+## - the bundles themselves tell)
+# check_trust_ca_certificates_fixed: ''
+
+## the NSS version that dropped emSign ECC Root CA - G3 (the package nss / libnss3 below it: a
+## finding; empty: not compared)
+# check_trust_nss_fixed: '3.131.1'
+
+## Java: every cacerts / jssecacerts under these folders (JDKs, and the keystores of running java
+## programs), read directly (JKS) or with keytool (PKCS12), with the JDK's version.
+# check_trust_java: true
+
+## folders searched for cacerts (seven levels deep)
+# check_trust_java_dirs: [/usr/lib/jvm, /usr/java, /etc/pki/java, /etc/pki/ca-trust/extracted/java, /opt, /usr/local, /srv]
+
+## Python: every certifi bundle (certifi/cacert.pem: requests, pip, urllib3 ... carry their own
+## roots, not the system's) under these folders - system Python, venvs, applications.
+# check_trust_python: true
+
+## folders searched for certifi/cacert.pem (twelve levels deep)
+# check_trust_python_dirs: [/usr/lib, /usr/lib64, /usr/local, /opt, /srv, /var/lib, /root, /home]
+
+## Node: its built-in roots (not the system's: Node carries its own, unless started with --use-
+## openssl-ca), and its version against the one that dropped the root, per major line.
+# check_trust_node: true
+
+## where node binaries are (globs); the one in PATH and running ones are found too
+# check_trust_node_paths: [/usr/local/bin/node, /usr/local/node*/bin/node, /opt/*/bin/node, /opt/node*/bin/node, /root/.nvm/versions/node/*/bin/node, /home/*/.nvm/versions/node/*/bin/node]
+
+## Node's fixed version per major line (an older line than the oldest listed: unsupported, no fix)
+# check_trust_node_fixed: {"22": "22.23.4", "24": "24.22.1", "26": "26.12.1"}
+
+## Go: a Go program carries its own certificate verification. Go 1.27.3 / 1.26.10 reject any chain
+## with one of the compromised keys (CVE-2026-111943) - a program built with an older Go has to be
+## rebuilt. The running programs, and the executables under these folders, with the Go version each
+## was built with.
+# check_trust_go: true
+
+## folders searched for Go programs (four levels deep, executables over 1 MB)
+# check_trust_go_dirs: [/usr/local/bin, /usr/local/sbin, /opt, /srv]
+
+## Go's fixed version per line (a program built with an older line: unsupported - rebuild it with a
+## fixed Go)
+# check_trust_go_fixed: {"1.26": "1.26.10", "1.27": "1.27.3"}
+
+## at most this many programs looked at per host
+# check_trust_go_max: 200
+
+## Containers: the CA bundle inside every running podman container (root's and each logged-in
+## user's), read with podman exec - a container image carries its own ca-certificates (Red Hat: UBI
+## images are affected too).
+# check_trust_containers: true
+
+## at most this many containers per host
+# check_trust_containers_max: 30
+
+## Certificate files an application carries (its own bundle, a copied root): every *.pem, *.crt,
+## *.cer, *.der, cacert*, ca-bundle*, ca-certificates*, and every Java keystore (*.jks, *.keystore,
+## *truststore*; *.p12 / *.pfx with keytool and the default password) under these folders, on the
+## host's own filesystems - only the files with a hit are listed. /etc, /opt, /srv and the home
+## folders by default; add an application's folder. folders searched for certificate files (every
+## level)
+# check_trust_find_dirs: [/etc, /opt, /srv, /usr/local, /var/lib, /root, /home]
+
+## at most this many files read per host
+# check_trust_find_max: 2000
+
+## regular expression on the path: matching files are skipped (container image layers, the copies
+## update-ca-trust extracts, Debian's per-CA files - the bundles stand for them; this repository's
+## own test certificates on the AAP controller)
+# check_trust_find_exclude: '/(proc|sys|dev)/|/\.cache/|/containers/storage/|/docker/overlay2?/|/ca-trust/extracted/|/ca-trust-source/|^/etc/ssl/certs/|/usr/share/ca-certificates/|/node_modules/.*/test/|/tests/trust/fixtures/'
+
+## seconds for each search and each command (keytool, node, podman exec)
+# check_trust_timeout: 60
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
 ## email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails.

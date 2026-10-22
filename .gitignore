@@ -20,3 +20,4 @@ secrets.yml
 .ansible/
 __pycache__/
 act-reports/
+!tests/trust/fixtures/*.pem

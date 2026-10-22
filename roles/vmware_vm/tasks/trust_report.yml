@@ -1,0 +1,28 @@
+---
+# VMWARE TRUST STORE REPORT (playbooks/vmware_trust_report.yml): read (trust_read.yml), the report emailed as the
+# other VMware reports (report.yml), the job failed when vCenter or an ESXi host holds a listed certificate.
+- name: VMware trust | read
+  ansible.builtin.include_tasks: trust_read.yml
+
+- name: VMware trust | the report
+  ansible.builtin.set_fact:
+    _trust_vm_doc: "{{ _trust_vmware | trust_vmware_doc(check_trust_severity | default({}, true), ansible_check_mode) }}"
+
+- name: VMware trust | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_vcenters: "{{ _trust_vmware.vcenters }}"
+    _vm_report_doc: "{{ _trust_vm_doc }}"
+    _vm_report_subject: "{{ _trust_vm_doc.title }}"
+    _vm_report_lines: "{{ (_trust_vm_doc | report_text).splitlines() }}"
+
+- name: VMware trust | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _trust_vmware.vcenters }}"
+
+- name: VMware trust | the job fails when vCenter or an ESXi host holds one (or nothing could be read)
+  ansible.builtin.assert:
+    that: _trust_vm_doc.bad | length == 0
+    fail_msg: "{{ _trust_vm_doc.bad | join('; ') }} - the table above has the details."
+    quiet: true

@@ -45,6 +45,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | [servicenow_tickets.yml](servicenow_tickets.yml) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | [stigman_deploy.yml](stigman_deploy.yml) |
 | Troubleshoot | `playbooks/troubleshoot.yml` | [troubleshoot.yml](troubleshoot.yml) |
+| Trust store report | `playbooks/trust_report.yml` | [trust_report.yml](trust_report.yml) |
 | VM - alarms ACT analysis | `playbooks/vm_alarm_act_analysis.yml` | [vm_alarm_act_analysis.yml](vm_alarm_act_analysis.yml) |
 | VM - alarms report | `playbooks/vm_alarm_report.yml` | [vm_alarm_report.yml](vm_alarm_report.yml) |
 | VM - capacity planning | `playbooks/vm_capacity_report.yml` | [vm_capacity_report.yml](vm_capacity_report.yml) |
@@ -68,6 +69,8 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VM - VMs created report | `playbooks/vm_created_report.yml` | [vm_created_report.yml](vm_created_report.yml) |
 | VMware - certificate renewal | `playbooks/vmware_cert_renew.yml` | [vmware_cert_renew.yml](vmware_cert_renew.yml) |
 | VMware - certificate report | `playbooks/vmware_cert_report.yml` | [vmware_cert_report.yml](vmware_cert_report.yml) |
+| VMware - trust store report | `playbooks/vmware_trust_report.yml` | [vmware_trust_report.yml](vmware_trust_report.yml) |
+| Windows - trust store report | `playbooks/win_trust_report.yml` | [win_trust_report.yml](win_trust_report.yml) |
 | Windows certificate renewal - CSRs | `playbooks/win_cert_renew_csr.yml` | [win_cert_renew_csr.yml](win_cert_renew_csr.yml) |
 | Windows certificate report | `playbooks/win_cert_report.yml` | [win_cert_report.yml](win_cert_report.yml) |
 | Windows connection test | `playbooks/win_connection_test.yml` | [win_connection_test.yml](win_connection_test.yml) |

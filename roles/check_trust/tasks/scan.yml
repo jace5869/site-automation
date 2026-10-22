@@ -1,0 +1,35 @@
+---
+# The read itself (main.yml, and again after a removal: remove.yml) -> _trust, check_trust_result, _trust_findings.
+- name: Trust | read every trust store, and the software that carries its own
+  site_trust_scan:
+    known: "{{ _trust_known }}"
+    bundles: "{{ check_trust_bundles }}"
+    blocklist_dirs: "{{ check_trust_blocklist_dirs }}"
+    p11kit: "{{ check_trust_p11kit | bool }}"
+    java: "{{ check_trust_java | bool }}"
+    java_dirs: "{{ check_trust_java_dirs }}"
+    python: "{{ check_trust_python | bool }}"
+    python_dirs: "{{ check_trust_python_dirs }}"
+    node: "{{ check_trust_node | bool }}"
+    node_paths: "{{ check_trust_node_paths }}"
+    node_fixed: "{{ check_trust_node_fixed }}"
+    go: "{{ check_trust_go | bool }}"
+    go_dirs: "{{ check_trust_go_dirs }}"
+    go_fixed: "{{ check_trust_go_fixed }}"
+    go_max: "{{ check_trust_go_max | int }}"
+    nss_fixed: "{{ check_trust_nss_fixed | default('', true) }}"
+    ca_certificates_fixed: "{{ check_trust_ca_certificates_fixed | default('', true) }}"
+    nss_dirs: "{{ check_trust_nss_dirs | default([], true) }}"
+    containers: "{{ check_trust_containers | bool }}"
+    containers_max: "{{ check_trust_containers_max | int }}"
+    find_dirs: "{{ check_trust_find_dirs }}"
+    find_max: "{{ check_trust_find_max | int }}"
+    find_exclude: "{{ check_trust_find_exclude | default('', true) }}"
+    timeout: "{{ check_trust_timeout | int }}"
+  register: _trust
+  check_mode: false             # only reads: a dry run reads too
+
+- name: Trust | what was found, and the findings
+  ansible.builtin.set_fact:
+    check_trust_result: "{{ _trust | trust_result(inventory_hostname, check_trust_severity | default({}, true)) }}"
+    _trust_findings: "{{ _trust | trust_findings(check_trust_severity | default({}, true), check_trust_software_severity) }}"

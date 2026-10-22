@@ -1,0 +1,17 @@
+---
+# WINDOWS TRUST STORES: which still hold a certificate authority that was compromised or that the browsers
+# dropped - the machine certificate stores, the running account's, every Java cacerts and Python certifi bundle
+# found - matched against the trust check's list (roles/check_trust/vars/main.yml, plus check_trust_extra; a
+# severity changed in check_trust_severity). A certificate in the Disallowed store is blocked: listed, no
+# finding. Removal (check_trust_remove: true, on the Windows trust store report): the certificate goes into the
+# Disallowed store and out of the store it was in, Java entries are deleted, certifi bundles cut - each backed
+# up to win_check_trust_backup_dir first. Check mode shows what would go. docs/TRUST_STORES.md
+
+win_check_trust_stores: ['Cert:\LocalMachine\Root', 'Cert:\LocalMachine\CA', 'Cert:\LocalMachine\AuthRoot', 'Cert:\LocalMachine\TrustedPublisher', 'Cert:\LocalMachine\TrustedPeople', 'Cert:\CurrentUser\Root', 'Cert:\CurrentUser\CA']  # the certificate stores read (CurrentUser: the account AAP connects with)
+win_check_trust_block_stores: ['Cert:\LocalMachine\Disallowed', 'Cert:\CurrentUser\Disallowed']  # the Disallowed stores: a certificate there is distrusted (blocked)
+win_check_trust_java: true               # every Java cacerts under the folders below (JKS natively; PKCS12 with the JDK's keytool)
+win_check_trust_java_dirs: ['C:\Program Files\Java', 'C:\Program Files (x86)\Java', 'C:\Program Files\Eclipse Adoptium', 'C:\Program Files\Amazon Corretto', 'C:\Program Files\Zulu', 'C:\Program Files\Microsoft', 'C:\Program Files\RedHat', 'C:\Program Files\Common Files\Oracle']  # folders searched for cacerts (seven levels deep)
+win_check_trust_python: true             # every certifi cacert.pem under the folders below
+win_check_trust_python_dirs: ['C:\Program Files\Python*', 'C:\Program Files (x86)\Python*', 'C:\Python*', 'C:\ProgramData\Anaconda3', 'C:\ProgramData\Miniconda3', 'C:\Users\*\AppData\Local\Programs\Python', 'C:\Program Files\Ansible']  # folders searched for certifi (seven levels deep)
+win_check_trust_backup_dir: 'C:\ProgramData\site-automation\trust-backup'  # the removal's backups: every certificate and file changed, a folder per run
+win_check_trust_timeout: 60              # seconds for keytool

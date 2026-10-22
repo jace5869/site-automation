@@ -1,0 +1,72 @@
+---
+# WINDOWS - TRUST STORE REPORT. Which trust stores on the Windows servers still hold a certificate authority that
+# was compromised or that the browsers dropped (the trust check's list, roles/check_trust/vars/main.yml; your own in
+# check_trust_extra): the machine certificate stores (Trusted Root, Intermediate CAs, the roots Windows Update
+# keeps, Trusted Publishers), the connecting account's, every Java cacerts, every Python certifi bundle. The same
+# tables as the Linux report, worst first, emailed (report_email_to). Read-only, unless check_trust_remove: true -
+# then the certificate goes into the Disallowed store (Windows' blocklist) and out of the store it was in, Java
+# entries are deleted, certifi bundles cut, every one backed up first; Check mode shows what would go. Fails the
+# servers that (still) hold one (a workflow can open tickets). docs/TRUST_STORES.md.
+#
+#   ansible-playbook playbooks/win_trust_report.yml
+#   ansible-playbook playbooks/win_trust_report.yml -e check_trust_remove=true --check
+- name: Windows trust store report
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  vars:
+    site_os: windows
+    site_report_title: Windows trust store report
+  pre_tasks:
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  tasks:
+    - name: Start
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: start.yml
+
+    - name: Read every trust store on the server (and remove, with check_trust_remove)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: run_check.yml
+      vars:
+        _site_check: trust
+
+    - name: Every store on every server, worst first
+      ansible.builtin.debug:
+        msg: >-
+          {%- set out = ['STATUS  HOST  |  WHERE (WHAT, VERSION)  |  HOLDS'] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   for r in hostvars[h].check_trust_result.rows | default([]) -%}
+          {%-     set _ = out.append(r[5] ~ '  ' ~ r[0] ~ '  |  ' ~ r[1] ~ ' (' ~ r[2] ~ (', ' ~ r[3] if r[3] else '') ~ ')  |  ' ~ r[4]) -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+    - name: The tables for the report email
+      ansible.builtin.set_fact:
+        site_report_sections: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | map(attribute='check_trust_result', default={}) | list
+             | trust_report_sections({}, _removed) }}
+      vars:
+        _removed: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts if hostvars[h].check_trust_removed is defined -%}
+          {%-   set _ = out.append(dict(hostvars[h].check_trust_removed, host=h)) -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+  post_tasks:
+    - name: Report (fails the servers that hold a compromised or dropped CA)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml

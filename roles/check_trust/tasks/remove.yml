@@ -1,0 +1,32 @@
+---
+# REMOVE THEM (playbooks/trust_report.yml with check_trust_remove: true, after the scan): the listed certificates
+# are taken out of the stores the scan found them in - the system trust by blocklisting (never by editing the
+# package's bundle), a Java keystore by deleting the entry, a certifi or application bundle by cutting the block
+# out, a file that is the certificate itself by moving it away. Every file changed is copied to
+# check_trust_remove_backup_dir first. Then the host is read again: the findings and the report show what is
+# left (Node, Go programs, containers: not removable, they stay). Check mode shows the plan and changes nothing.
+- name: Trust | Remove the listed certificates from the stores that hold them (check_trust_remove)
+  site_trust_remove:
+    known: "{{ _trust_known }}"
+    stores: "{{ _trust.stores }}"
+    kinds: "{{ check_trust_remove_kinds }}"
+    severities: "{{ check_trust_remove_severities }}"
+    backup_dir: "{{ check_trust_remove_backup_dir }}"
+    blocklist_dir: "{{ check_trust_remove_blocklist_dir | default('', true) }}"
+    update_cmd: "{{ check_trust_remove_update_cmd | default('', true) }}"
+    keystore_password: "{{ check_trust_keystore_password }}"
+    timeout: "{{ check_trust_timeout | int * 2 }}"
+  register: _trust_removed
+
+- name: Trust | What was removed
+  ansible.builtin.debug:
+    msg: "{{ _trust_removed | trust_remove_lines(inventory_hostname) }}"
+
+- name: Trust | Read the host again (the report shows what is left)
+  ansible.builtin.include_tasks: scan.yml
+  when: _trust_removed.actions | default([]) | selectattr('done') | list | length > 0
+
+- name: Trust | The findings are the ones after the removal
+  ansible.builtin.set_fact:
+    site_findings: "{{ (site_findings | default([]) | rejectattr('check', 'equalto', 'trust') | list) + _trust_findings }}"
+    check_trust_removed: "{{ _trust_removed }}"

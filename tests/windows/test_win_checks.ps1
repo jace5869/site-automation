@@ -10,6 +10,7 @@ $shell = (Get-Process -Id $PID).Path
 $fail = 0
 $count = 0
 function Script([string] $Check) { return (Join-Path $root "roles/win_check_$Check/files/win_$Check.ps1") }
+$fsTrust = Join-Path ([System.IO.Path]::GetTempPath()) 'sa-win-trust'      # the trust scenarios' made-up Java and Python folders
 # check, scenario, the finding ids expected (exactly), the severity of each ('' = do not care)
 $cases = @(
     @('disk', 'disk_full', @{ 'disk:C:' = 'warning'; 'disk:D:' = 'critical' }),
@@ -29,6 +30,9 @@ $cases = @(
     @('accounts', 'accounts_dc', @{}),
     @('certs', 'certs', @{ ('certs:' + ('A' * 40)) = 'critical'; ('certs:' + ('B' * 40)) = 'critical'; ('certs:' + ('C' * 40)) = 'warning' }),
     @('certs', 'certs_trust', @{ ('certs:' + ('G' * 40)) = 'warning'; ('certs:' + ('ABCD' * 10)) = 'critical' }),
+    @('trust', 'trust', @{ 'trust:system' = 'critical'; ('trust:java:' + (Join-Path $fsTrust 'java\lib\security\cacerts')) = 'warning'; 'trust:python' = 'warning' }),
+    @('trust', 'trust_remove_dry', @{ 'trust:system' = 'critical'; ('trust:java:' + (Join-Path $fsTrust 'java\lib\security\cacerts')) = 'warning'; 'trust:python' = 'warning' }),
+    @('trust', 'trust_remove', @{ 'trust:python' = 'warning' }),
     @('patching', 'patching', @{ 'patching:reboot' = 'warning'; 'patching:age' = 'critical' }),
     @('patching', 'patching_ok', @{})
 )

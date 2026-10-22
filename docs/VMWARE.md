@@ -843,6 +843,17 @@ AAP's API), how a run works, what requesters write, where each VM goes (sites, n
 placement, empty templates for MECM or kickstart), ready-made configurations, every message and what to
 do, where the logic lives - and every `vm_deploy_*` setting with its default, an example and when to set it.
 
+## Trust stores: vCenter's trusted roots and the ESXi hosts' trusted CAs
+
+The *VMware - trust store report* (`playbooks/vmware_trust_report.yml`, a *VMware vCenter* credential,
+no inventory) reads vCenter's trusted root store (the same list as Administration > Certificates >
+Trusted Root Certificates; the account needs *Certificate Management > Manage* for the API call) and
+each ESXi host's trusted CA certificates (`vmware_trust_esxi: false`: vCenter only), and says which
+hold a compromised or dropped certificate authority - the same list as the trust check on the Linux
+hosts. Read-only; a hit fails the job; emailed as the other VMware reports. With `check_trust_remove:
+true` the chain is deleted from vCenter's trusted roots and each ESXi host's trusted CA list is
+replaced without it (Check mode shows what would go). [TRUST_STORES.md](TRUST_STORES.md).
+
 ## ESXi security settings (every night): SSH off, timeouts, lockdown
 
 One job, `playbooks/esxi_security.yml`, sets these on every ESXi host, through vCenter:

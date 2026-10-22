@@ -192,6 +192,52 @@ switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: th
             'Cert:\LocalMachine\AuthRoot'    = @(O @{ Subject = 'CN=wu'; Thumbprint = $l; NotAfter = $now.AddDays(1); HasPrivateKey = $true })
         }
     }
+    { $_ -in @('trust', 'trust_remove', 'trust_remove_dry') } {
+        # the Windows trust check against real certificates (tests/trust/fixtures): the dropped root and Sectigo's
+        # AAA root in Trusted Root, a compromised intermediate in Intermediate CAs, the root again in AuthRoot (Windows
+        # Update's store), AAA in Disallowed (blocked); a Java cacerts (JKS, made here) with the root; two certifi
+        # bundles (one with the root and AAA, pip's own with the root only) - under a real folder the fakes pass through
+        $fx = Join-Path $PSScriptRoot '..\trust\fixtures'
+        function RealCert([string] $n) {
+            $pem = Get-Content -LiteralPath (Join-Path $fx "$n.pem") -Raw
+            return (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList (, [Convert]::FromBase64String(($pem -replace '-----[A-Z ]+-----', '' -replace '\s', ''))))
+        }
+        $root = RealCert 'emsign-ecc-root-ca-g3'; $aaa = RealCert 'aaa-certificate-services'; $dv = RealCert 'dv-g3b-emudhra'
+        $pem = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\fixtures\pki\root.pem') -Raw
+        $harmless = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList (, [Convert]::FromBase64String(($pem -replace '-----[A-Z ]+-----', '' -replace '\s', '')))
+        # the list, from the role's vars file (name, sha256, spki_sha256, severity, why: one "key: value" per line)
+        $known = @(); $cur = $null
+        foreach ($l in @(Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\roles\check_trust\vars\main.yml'))) {
+            if ($l -match '^\s*-\s+name:\s*(.*)$') { if ($cur) { $known += @($cur) }; $cur = @{ name = $Matches[1].Trim().Trim('"') }; continue }
+            if ($cur -and $l -match '^\s+(sha256|spki_sha256|severity|why|kind):\s*(.*)$') { $cur[$Matches[1]] = $Matches[2].Trim().Trim('"').Trim("'") }
+        }
+        if ($cur) { $known += @($cur) }
+        $fs = Join-Path ([System.IO.Path]::GetTempPath()) 'sa-win-trust'
+        if (Microsoft.PowerShell.Management\Test-Path -LiteralPath $fs) { Microsoft.PowerShell.Management\Remove-Item -LiteralPath $fs -Recurse -Force }
+        foreach ($d in 'java\lib\security', 'py\Lib\site-packages\certifi', 'py\Lib\site-packages\pip\_vendor\certifi', 'backup') { $null = New-Item -ItemType Directory -Path (Join-Path $fs $d) -Force }
+        $rd = [byte[]]$root.RawData
+        $len = [byte[]][System.BitConverter]::GetBytes([int32]$rd.Length)
+        [array]::Reverse($len)                  # big-endian
+        $jks = [System.Collections.Generic.List[byte]]::new()
+        foreach ($part in @(([byte[]]@(0xFE, 0xED, 0xFE, 0xED, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 2, 0, 6)), ([byte[]][char[]]'emsign'), ([byte[]]@(0, 0, 0, 0, 0, 0, 0, 0, 0, 5)), ([byte[]][char[]]'X.509'), $len, $rd, ([byte[]]::new(20)))) { $jks.AddRange([byte[]]$part) }
+        $jks = $jks.ToArray()
+        $jf = Join-Path $fs 'java\lib\security\cacerts'
+        if ($PSVersionTable.PSVersion.Major -ge 6) { Set-Content -LiteralPath $jf -Value $jks -AsByteStream } else { Set-Content -LiteralPath $jf -Value $jks -Encoding Byte }
+        Set-Content -LiteralPath (Join-Path $fs 'java\release') -Value 'JAVA_VERSION="17.0.9"'
+        Set-Content -LiteralPath (Join-Path $fs 'py\Lib\site-packages\certifi\cacert.pem') -Value ((Get-Content -LiteralPath (Join-Path $fx 'emsign-ecc-root-ca-g3.pem') -Raw) + (Get-Content -LiteralPath (Join-Path $fx 'aaa-certificate-services.pem') -Raw))
+        Set-Content -LiteralPath (Join-Path $fs 'py\Lib\site-packages\certifi\__init__.py') -Value '__version__ = "2025.08.03"'
+        Set-Content -LiteralPath (Join-Path $fs 'py\Lib\site-packages\pip\_vendor\certifi\cacert.pem') -Value (Get-Content -LiteralPath (Join-Path $fx 'emsign-ecc-root-ca-g3.pem') -Raw)
+        $M.fs = $fs
+        $cfg = @{ known = $known; stores = @('Cert:\LocalMachine\Root', 'Cert:\LocalMachine\CA', 'Cert:\LocalMachine\AuthRoot', 'Cert:\CurrentUser\Root'); block_stores = @('Cert:\LocalMachine\Disallowed')
+            java = $true; java_dirs = @((Join-Path $fs 'java')); python = $true; python_dirs = @((Join-Path $fs 'py')); backup_dir = (Join-Path $fs 'backup')
+            remove = ($Scenario -ne 'trust'); dry_run = ($Scenario -eq 'trust_remove_dry'); severities = @('critical', 'warning'); keystore_password = 'changeit' }
+        $M.certs = @{
+            'Cert:\LocalMachine\Root'       = @($root, $aaa, $harmless)
+            'Cert:\LocalMachine\CA'         = @($dv, $harmless)
+            'Cert:\LocalMachine\AuthRoot'   = @($root)
+            'Cert:\LocalMachine\Disallowed' = @($aaa)
+        }
+    }
     'certs_meta' {
         # real certificates (tests/fixtures/pki): what the inventory reads from each - issuer, names, key, tier ...
         $cfg = @{ warn_days = 30; crit_days = 7; expired_report_days = 30; notice_days = 60; stores = @('Cert:\LocalMachine\My'); endpoints = @() }
@@ -349,7 +395,13 @@ function Get-HotFix { $M.hotfix }
 function Get-LocalUser { if ($null -eq $M.users) { throw 'not available' } ; $M.users }
 function Get-LocalGroupMember { if ($M.adminsFail) { throw 'Failed to compare two elements in the array.' } ; $M.admins }
 function Get-ChildItem {
-    param([string] $Path, $ErrorAction)
+    param([string] $Path, $ErrorAction, [switch] $Recurse, [int] $Depth, [string] $Filter, [switch] $File, [string] $LiteralPath)
+    $p = $Path; if ($LiteralPath) { $p = $LiteralPath }
+    if ($M.fs -and $p -and $p.StartsWith($M.fs)) {
+        $a = @{ Path = $p; ErrorAction = 'SilentlyContinue' }
+        if ($Recurse) { $a['Recurse'] = $true }; if ($Filter) { $a['Filter'] = $Filter }; if ($File) { $a['File'] = $true }
+        return @(Microsoft.PowerShell.Management\Get-ChildItem @a)
+    }
     if ($Path -eq 'Cert:\LocalMachine') { return $M.certStores }
     if ($Path -match '^(Cert:\\.+)\\([0-9A-Fa-f]{40})$' -and $M.certs.ContainsKey($Matches[1])) {
         $hit = @($M.certs[$Matches[1]] | Where-Object { $_.Thumbprint -eq $Matches[2] })
@@ -358,6 +410,28 @@ function Get-ChildItem {
     if ($Path -like 'Cert:*') { if ($M.certs -and $M.certs.ContainsKey($Path)) { return $M.certs[$Path] } ; throw "no store $Path" }
     if ($Path -like 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Listener') { return $M.wsman }
     return
+}
+# the certificate stores' changes (the trust check's removal): Remove-Item on a store entry, Export-/Import-Certificate
+function Remove-Item {
+    param([string] $Path, [string] $LiteralPath, [switch] $Force, [switch] $Recurse, $ErrorAction)
+    $p = $Path; if ($LiteralPath) { $p = $LiteralPath }
+    if ($p -match '^(Cert:\\.+)\\([0-9A-Fa-f]{40})$') {
+        $st = $Matches[1]; $tp = $Matches[2]
+        if (-not $M.certs.ContainsKey($st)) { throw "no store $st" }
+        $M.certs[$st] = @($M.certs[$st] | Where-Object { $_.Thumbprint -ne $tp })
+        $M.removedCerts += @($p)
+        return
+    }
+    Microsoft.PowerShell.Management\Remove-Item @PSBoundParameters
+}
+function Export-Certificate { param($Cert, [string] $FilePath, [switch] $Force) Microsoft.PowerShell.Management\Set-Content -LiteralPath $FilePath -Value ([byte[]]$Cert.RawData) -AsByteStream; return $FilePath }
+function Import-Certificate {
+    param([string] $FilePath, [string] $CertStoreLocation)
+    $b = [byte[]](Microsoft.PowerShell.Management\Get-Content -LiteralPath $FilePath -AsByteStream -ReadCount 0)
+    $c = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList (, $b)
+    if (-not $M.certs.ContainsKey($CertStoreLocation)) { $M.certs[$CertStoreLocation] = @() }
+    $M.certs[$CertStoreLocation] += @($c)
+    return $c
 }
 function Invoke-Exe([string] $Key) {
     $global:LASTEXITCODE = 0
@@ -383,6 +457,16 @@ function netsh.exe { Invoke-Exe ('netsh.exe ' + ($args -join ' ')) }
 function net.exe { Invoke-Exe ('net.exe ' + ($args -join ' ')) }
 function icacls.exe { $global:LASTEXITCODE = 0 }
 # certreq -new -q -machine <inf> <csr>: a CSR file, and a pending request in the REQUEST store
+function certutil.exe {
+    # -f -decode IN OUT: base64 (the trust check in Constrained Language Mode)
+    if ($args[1] -eq '-decode') {
+        $b64 = ((Microsoft.PowerShell.Management\Get-Content -LiteralPath $args[2]) -join '') -replace '\s', ''
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath $args[3] -Value ([byte[]][Convert]::FromBase64String($b64)) -AsByteStream
+        $global:LASTEXITCODE = 0
+        return 'CertUtil: -decode command completed successfully.'
+    }
+    Invoke-Exe ('certutil.exe ' + ($args -join ' '))
+}
 function certreq.exe {
     $global:LASTEXITCODE = 0
     $inf, $csr = $args[-2], $args[-1]

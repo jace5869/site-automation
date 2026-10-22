@@ -1776,6 +1776,13 @@ if [ "$(nmail)" = $((n0 + 1)) ] && subject "$eml" | grep -q "^\[AAP\] VMware hea
 else
     echo "FAIL -   ...health email"; head -60 "$work/hl.txt"; fails=$((fails + 1))
 fi
+# the trust store report: vcsim has neither the certificate-management REST API nor ListCACertificates, so every
+# store is "not read" and the job fails saying so (a real vCenter answers both); no credential refused
+run "trust store report: nothing readable on vcsim - every store not read, the job fails and says so" fail vmware_trust_report.yml \
+    -- "VMware trust store report: nothing could be read - 0 vCenters, 0 ESXi hosts read" "not read" \
+       "no certificate API on vCenter" "does not implement: ListCACertificates" "nothing could be read:"
+run "trust store report, Check mode with the removal asked: the same, nothing changed" fail vmware_trust_report.yml --check \
+    -e check_trust_remove=true -- "nothing could be read" "changed=0"
 RUN_PORT=$port3 run "health report with vm_health_require_ha: false - HA off is not a warning" ok vm_health_report.yml \
     -e vm_health_require_ha=false -- "VMware health report: 2 critical - 2 datacenter(s), 4 cluster(s), 10 host(s)"
 RUN_PORT=$port3 run "health report of one datacenter (vmware_datacenter)" ok vm_health_report.yml -e vmware_datacenter=DC1 \

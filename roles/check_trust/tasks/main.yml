@@ -1,0 +1,26 @@
+---
+# TRUST. One read-only module (library/site_trust_scan.py, standard library only) reads every trust store it can
+# find on the host and matches each certificate - by its fingerprint, and by its public key - against the list
+# (vars/main.yml check_trust_known + check_trust_extra), and lists the software with its own trust logic:
+#   trust:store:<where>       a store still holds a listed certificate: the worst severity of what it holds
+#                             (critical: a compromised intermediate; warning: a root that was dropped; a
+#                             notice-level one is in the report only). A certificate that is in the blocklist
+#                             (p11-kit) is listed as blocked: no finding.
+#   trust:software:<where>    a Go program built with a Go before the fix, Node or NSS below the fixed version
+#   trust:unreadable          the system bundles could not be read at all
+# The report (playbooks/trust_report.yml) shows every store read with what it holds, and what was not read.
+
+- name: Trust | the list to look for (the shipped one and check_trust_extra)
+  ansible.builtin.set_fact:
+    _trust_known: "{{ check_trust_known + (check_trust_extra | default([], true)) }}"
+
+- name: Trust | Read
+  ansible.builtin.include_tasks: scan.yml
+
+- name: Trust | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _trust_findings }}"
+
+- name: Trust | what was read
+  ansible.builtin.debug:
+    msg: "{{ check_trust_result.lines }}"

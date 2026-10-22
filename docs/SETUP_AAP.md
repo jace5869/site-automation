@@ -321,6 +321,38 @@ Weekly: one table of every certificate on every host, soonest expiry first.
 | Credentials | `Linux ssh (sudo)` (+ `Keystore password` if you use it) |
 | Survey: `check_certs_warn_days` | *Integer*. "Warn this many days before expiry". Default `30` |
 
+### Trust store report
+
+Weekly, and when a CA incident is announced: which trust stores still hold a compromised or dropped
+certificate authority ([TRUST_STORES.md](TRUST_STORES.md)).
+
+| Field | Value |
+|---|---|
+| Playbook | `playbooks/trust_report.yml` |
+| Credentials | `Linux ssh (sudo)` |
+| Variables | `check_trust_extra` for certificates of your own; `check_trust_severity` to change a severity; `check_trust_remove: true` to take the certificates out (run as Check first) |
+
+### VMware - trust store report
+
+vCenter's trusted root store and each ESXi host's trusted CAs, against the same list, on its own.
+
+| Field | Value |
+|---|---|
+| Playbook | `playbooks/vmware_trust_report.yml` |
+| Credentials | `VMware vCenter` |
+| Variables | `aap/extra_vars/vmware_trust_report.yml`: `vmware_trust_esxi: false` for vCenter only; `check_trust_remove: true` to delete (run as Check first) |
+
+### Windows - trust store report
+
+The Windows servers' certificate stores, Java and Python, against the same list (the Windows health
+check's weekly set runs the check `trust` too).
+
+| Field | Value |
+|---|---|
+| Playbook | `playbooks/win_trust_report.yml` |
+| Credentials | `Machine (Windows)` |
+| Variables | `aap/extra_vars/win_trust_report.yml`; `check_trust_remove: true` to put the certificates in Disallowed and delete them (run as Check first) |
+
 ### Certificate renewal - CSRs
 
 A new key and a CSR on the host for each certificate that expires (in a file, on a port, in a keystore),

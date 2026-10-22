@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [horizon](#horizon), [net_certs](#net_certs), [net_config](#net_config), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
+**Contents:** [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [check_trust](#check_trust), [horizon](#horizon), [net_certs](#net_certs), [net_config](#net_config), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
 
 ## ad_lockout
 
@@ -385,6 +385,48 @@ File: `roles/check_time/defaults/main.yml`
 | `check_time_offset_warn` | `0.5` | seconds |
 | `check_time_offset_crit` | `5.0` | seconds off -> critical (warning from check_time_offset_warn) |
 | `check_time_min_sources` | `1` | time servers chrony must be able to reach |
+
+## check_trust
+
+File: `roles/check_trust/defaults/main.yml`
+
+> TRUST (read-only): which trust stores on the host still hold a certificate authority that was compromised or that the browsers dropped - the system bundles, p11-kit's live view and blocklist, Java cacerts, Python's certifi bundles, Node's built-in roots, the bundles inside running podman containers, certificate files an application carries - and the software with its own trust logic (Go programs, Node, NSS) below the version that fixed it. The list of certificates to look for ships with the check (roles/check_trust/vars/main.yml: October 2026, the eight eMudhra intermediates and their roots); add your own in check_trust_extra. The health check runs it in the weekly set; playbooks/trust_report.yml runs it on every host, vCenter and ESXi too.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `check_trust_extra` | `[]` | More certificates to look for, besides the shipped list: name, sha256 (the certificate's fingerprint, with or without colons), spki_sha256 (its public key, optional), kind (root / intermediate), severity (critical / warning / notice), why. Get the fingerprints with: openssl x509 -in the.pem -noout -fingerprint -sha256… (all of it: the role file) |
+| `check_trust_severity` | `{}` | another severity for a listed name: {"AAA Certificate Services": warning} once you decide to blocklist it; notice = listed only, no finding |
+| `check_trust_software_severity` | `warning` | the finding for a program below the fixed version (a Go program, Node, NSS): warning or critical |
+| `check_trust_bundles` | `[/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem, /etc/pki/ca-trust/extracted/openssl/c…` | The system: the CA bundles every OpenSSL / Go / Python client reads (the ones that exist are read), p11-kit's live view (trust extract: what NSS and GnuTLS clients see, and the blocklist), the blocklist folders. the system CA bundles (RHEL, Debian / Ubuntu, Alpine, SUSE); the same file under two names is read once |
+| `check_trust_blocklist_dirs` | `[/etc/pki/ca-trust/source/blocklist, /usr/share/pki/ca-trust-source/blocklist]` | p11-kit blocklist folders: a certificate there is distrusted (listed as blocked, no finding) |
+| `check_trust_p11kit` | `true` | read p11-kit's live anchors and blocklist too (trust extract), when the trust command is there |
+| `check_trust_nss_dirs` | `[/etc/pki/nssdb, /root/.pki/nssdb, /home/*/.pki/nssdb]` | NSS databases read with certutil (the system's: curl and other NSS clients on older RHEL; root's and each user's: Chrome, Evolution) |
+| `check_trust_ca_certificates_fixed` | (empty) | the ca-certificates package version that dropped the roots, e.g. '2026.2.82' (empty: not compared - the bundles themselves tell) |
+| `check_trust_nss_fixed` | `'3.131.1'` | the NSS version that dropped emSign ECC Root CA - G3 (the package nss / libnss3 below it: a finding; empty: not compared) |
+| `check_trust_java` | `true` | Java: every cacerts / jssecacerts under these folders (JDKs, and the keystores of running java programs), read directly (JKS) or with keytool (PKCS12), with the JDK's version. |
+| `check_trust_java_dirs` | `[/usr/lib/jvm, /usr/java, /etc/pki/java, /etc/pki/ca-trust/extracted/java, /opt, /usr/loc…` | folders searched for cacerts (seven levels deep) |
+| `check_trust_python` | `true` | Python: every certifi bundle (certifi/cacert.pem: requests, pip, urllib3 ... carry their own roots, not the system's) under these folders - system Python, venvs, applications. |
+| `check_trust_python_dirs` | `[/usr/lib, /usr/lib64, /usr/local, /opt, /srv, /var/lib, /root, /home]` | folders searched for certifi/cacert.pem (twelve levels deep) |
+| `check_trust_node` | `true` | Node: its built-in roots (not the system's: Node carries its own, unless started with --use-openssl-ca), and its version against the one that dropped the root, per major line. |
+| `check_trust_node_paths` | `[/usr/local/bin/node, /usr/local/node*/bin/node, /opt/*/bin/node, /opt/node*/bin/node, /r…` | where node binaries are (globs); the one in PATH and running ones are found too |
+| `check_trust_node_fixed` | `{"22": "22.23.4", "24": "24.22.1", "26": "26.12.1"}` | Node's fixed version per major line (an older line than the oldest listed: unsupported, no fix) |
+| `check_trust_go` | `true` | Go: a Go program carries its own certificate verification. Go 1.27.3 / 1.26.10 reject any chain with one of the compromised keys (CVE-2026-111943) - a program built with an older Go has to be rebuilt. The running programs, and the executables under these folders, with the Go version each was built with. |
+| `check_trust_go_dirs` | `[/usr/local/bin, /usr/local/sbin, /opt, /srv]` | folders searched for Go programs (four levels deep, executables over 1 MB) |
+| `check_trust_go_fixed` | `{"1.26": "1.26.10", "1.27": "1.27.3"}` | Go's fixed version per line (a program built with an older line: unsupported - rebuild it with a fixed Go) |
+| `check_trust_go_max` | `200` | at most this many programs looked at per host |
+| `check_trust_containers` | `true` | Containers: the CA bundle inside every running podman container (root's and each logged-in user's), read with podman exec - a container image carries its own ca-certificates (Red Hat: UBI images are affected too). |
+| `check_trust_containers_max` | `30` | at most this many containers per host |
+| `check_trust_find_dirs` | `[/etc, /opt, /srv, /usr/local, /var/lib, /root, /home]` | Certificate files an application carries (its own bundle, a copied root): every *.pem, *.crt, *.cer, *.der, cacert*, ca-bundle*, ca-certificates*, and every Java keystore (*.jks, *.keystore, *truststore*; *.p12 / *.pfx with keytool and the default password) under these folders, on the host's own filesystems - only the… (all of it: the role file) |
+| `check_trust_find_max` | `2000` | at most this many files read per host |
+| `check_trust_find_exclude` | `'/(proc\|sys\|dev)/\|/\.cache/\|/containers/storage/\|/docker/overlay2?/\|/ca-trust/extracted/\|…` | regular expression on the path: matching files are skipped (container image layers, the copies update-ca-trust extracts, Debian's per-CA files - the bundles stand for them; this repository's own test certificates on the AAP controller) |
+| `check_trust_timeout` | `60` | seconds for each search and each command (keytool, node, podman exec) |
+| `check_trust_remove` | `false` | Removal (the Trust store report only, playbooks/trust_report.yml; the VMware trust store report has the same switch): take the listed certificates out of the stores that hold them. OFF by default - a read-only report. Check mode shows what would go and changes nothing. The system trust is blocklisted (RHEL / SUSE: a P… (all of it: the role file) |
+| `check_trust_remove_kinds` | `[system, java, python, file, nssdb]` | which kinds of store to change: system (blocklist), java (every keystore), python (certifi), file (an application's bundle or certificate file), nssdb (certutil -D) |
+| `check_trust_remove_severities` | `[critical, warning]` | only certificates at these severities go; a notice-level one (AAA Certificate Services) never, unless named here |
+| `check_trust_remove_backup_dir` | `/var/backups/site-automation/trust` | every file changed is copied here first (a folder per run) |
+| `check_trust_remove_blocklist_dir` | (empty) | the system blocklist folder; empty = the distribution's (/etc/pki/ca-trust/source/blocklist, SUSE /etc/pki/trust/blacklist) |
+| `check_trust_remove_update_cmd` | (empty) | the command that rebuilds the system trust after blocklisting; empty = the distribution's (update-ca-trust, update-ca-certificates) |
+| `check_trust_keystore_password` | `changeit` | the Java keystores' password (keytool's default) |
 
 ## horizon
 
@@ -1120,6 +1162,23 @@ File: `roles/win_check_time/defaults/main.yml`
 | `win_check_time_offset_warn_sec` | `1` | seconds off its time source -> warning |
 | `win_check_time_offset_crit_sec` | `5` | seconds off -> critical |
 | `win_check_time_max_hours_since_sync` | `24` | last successful sync longer ago than this many hours -> finding |
+
+## win_check_trust
+
+File: `roles/win_check_trust/defaults/main.yml`
+
+> WINDOWS TRUST STORES: which still hold a certificate authority that was compromised or that the browsers dropped - the machine certificate stores, the running account's, every Java cacerts and Python certifi bundle found - matched against the trust check's list (roles/check_trust/vars/main.yml, plus check_trust_extra; a severity changed in check_trust_severity). A certificate in the Disallowed store is blocked: listed, no finding. Removal (check_trust_remove: true, on the Windows trust store report): the certificate goes into the Disallowed store and out of the store it was in, Java entries are deleted, certifi bundles cut - each backed up to win_check_trust_backup_dir first. Check mode shows what would go. docs/TRUST_STORES.md
+
+| Setting | Default | What it does |
+|---|---|---|
+| `win_check_trust_stores` | `['Cert:\LocalMachine\Root', 'Cert:\LocalMachine\CA', 'Cert:\LocalMachine\AuthRoot', 'Cert…` | the certificate stores read (CurrentUser: the account AAP connects with) |
+| `win_check_trust_block_stores` | `['Cert:\LocalMachine\Disallowed', 'Cert:\CurrentUser\Disallowed']` | the Disallowed stores: a certificate there is distrusted (blocked) |
+| `win_check_trust_java` | `true` | every Java cacerts under the folders below (JKS natively; PKCS12 with the JDK's keytool) |
+| `win_check_trust_java_dirs` | `['C:\Program Files\Java', 'C:\Program Files (x86)\Java', 'C:\Program Files\Eclipse Adopti…` | folders searched for cacerts (seven levels deep) |
+| `win_check_trust_python` | `true` | every certifi cacert.pem under the folders below |
+| `win_check_trust_python_dirs` | `['C:\Program Files\Python*', 'C:\Program Files (x86)\Python*', 'C:\Python*', 'C:\ProgramD…` | folders searched for certifi (seven levels deep) |
+| `win_check_trust_backup_dir` | `'C:\ProgramData\site-automation\trust-backup'` | the removal's backups: every certificate and file changed, a folder per run |
+| `win_check_trust_timeout` | `60` | seconds for keytool |
 
 ## win_patch
 

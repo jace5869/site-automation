@@ -246,6 +246,62 @@
 ## last successful sync longer ago than this many hours -> finding
 # win_check_time_max_hours_since_sync: 24
 
+# ---- win_check_trust -----------------------------------------------------------------------------
+## the certificate stores read (CurrentUser: the account AAP connects with)
+# win_check_trust_stores: ['Cert:\LocalMachine\Root', 'Cert:\LocalMachine\CA', 'Cert:\LocalMachine\AuthRoot', 'Cert:\LocalMachine\TrustedPublisher', 'Cert:\LocalMachine\TrustedPeople', 'Cert:\CurrentUser\Root', 'Cert:\CurrentUser\CA']
+
+## the Disallowed stores: a certificate there is distrusted (blocked)
+# win_check_trust_block_stores: ['Cert:\LocalMachine\Disallowed', 'Cert:\CurrentUser\Disallowed']
+
+## every Java cacerts under the folders below (JKS natively; PKCS12 with the JDK's keytool)
+# win_check_trust_java: true
+
+## folders searched for cacerts (seven levels deep)
+# win_check_trust_java_dirs: ['C:\Program Files\Java', 'C:\Program Files (x86)\Java', 'C:\Program Files\Eclipse Adoptium', 'C:\Program Files\Amazon Corretto', 'C:\Program Files\Zulu', 'C:\Program Files\Microsoft', 'C:\Program Files\RedHat', 'C:\Program Files\Common Files\Oracle']
+
+## every certifi cacert.pem under the folders below
+# win_check_trust_python: true
+
+## folders searched for certifi (seven levels deep)
+# win_check_trust_python_dirs: ['C:\Program Files\Python*', 'C:\Program Files (x86)\Python*', 'C:\Python*', 'C:\ProgramData\Anaconda3', 'C:\ProgramData\Miniconda3', 'C:\Users\*\AppData\Local\Programs\Python', 'C:\Program Files\Ansible']
+
+## the removal's backups: every certificate and file changed, a folder per run
+# win_check_trust_backup_dir: 'C:\ProgramData\site-automation\trust-backup'
+
+## seconds for keytool
+# win_check_trust_timeout: 60
+
+# ---- check_trust ---------------------------------------------------------------------------------
+## More certificates to look for, besides the shipped list: name, sha256 (the certificate's
+## fingerprint, with or without colons), spki_sha256 (its public key, optional), kind (root /
+## intermediate), severity (critical / warning / notice), why. Get the fingerprints with: openssl
+## x509 -in the.pem -noout -fingerprint -sha256 e.g. [{name: "Old Corp Root CA", sha256:
+## "AB:CD:...", kind: root, severity: warning, why: "retired January 2026"}] (a date in quotes,
+## "2026-01-31", never bare: YAML would make it a date)
+# check_trust_extra: []
+
+## another severity for a listed name: {"AAA Certificate Services": warning} once you decide to
+## blocklist it; notice = listed only, no finding
+# check_trust_severity: {}
+
+## Removal (the Trust store report only, playbooks/trust_report.yml; the VMware trust store report
+## has the same switch): take the listed certificates out of the stores that hold them. OFF by
+## default - a read-only report. Check mode shows what would go and changes nothing. The system
+## trust is blocklisted (RHEL / SUSE: a PEM in the blocklist folder and update-ca-trust; Debian /
+## Ubuntu: the line in /etc/ca-certificates.conf and update-ca-certificates), a Java keystore loses
+## the entry, a certifi or application bundle loses the block, a file that is the certificate itself
+## is moved to the backup folder. A file a package owns is left alone (update the package). Node, Go
+## programs and containers cannot be changed this way (update, rebuild) and stay in the report.
+## docs/TRUST_STORES.md remove them (true) - or only report (false)
+# check_trust_remove: false
+
+## only certificates at these severities go; a notice-level one (AAA Certificate Services) never,
+## unless named here
+# check_trust_remove_severities: [critical, warning]
+
+## the Java keystores' password (keytool's default)
+# check_trust_keystore_password: changeit
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
 ## email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails.

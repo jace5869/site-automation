@@ -27,6 +27,9 @@
 #                back the logs reach, records dropped on the way to the SIEM, rules that hide an account
 #   accounts     extra UID 0, empty passwords, inactive accounts, NOPASSWD sudo, expiring passwords
 #   certs        certificate files, keystores and TLS endpoints that expire soon
+#   trust        trust stores that still hold a compromised or dropped CA (the system bundles, p11-kit, Java
+#                cacerts, Python certifi, Node, podman containers, an application's own files) and software
+#                with its own trust logic (Go programs, Node, NSS) below the fixed version. docs/TRUST_STORES.md
 #   patching     pending (security) updates, reboot needed, days since the last update
 #   mariadb      database health and performance (slow queries, lock waits, open transactions ...),
 #                MariaDB AND MySQL, on the host or in podman containers - only on
@@ -39,7 +42,7 @@
 #                podman are skipped. docs/RUNBOOKS.md
 #
 # Shortcuts: daily = disk mounts services performance time network logging mariadb containers
-#            weekly = selinux fapolicyd auditd accounts certs patching
+#            weekly = selinux fapolicyd auditd accounts certs trust patching
 #            all = both
 #
 # Add ACT (optional, later): -e use_act=true. ACT (GenAI) then looks at each host that has
@@ -53,9 +56,9 @@
     _health_alias: {mysql: mariadb, database: mariadb}
     _health_sets:
       daily: [disk, mounts, services, performance, time, network, logging, mariadb, containers]
-      weekly: [selinux, fapolicyd, auditd, accounts, certs, patching]
+      weekly: [selinux, fapolicyd, auditd, accounts, certs, trust, patching]
       all: [disk, mounts, services, performance, time, network, logging, mariadb, containers,
-            selinux, fapolicyd, auditd, accounts, certs, patching]
+            selinux, fapolicyd, auditd, accounts, certs, trust, patching]
     # A survey's multiple-choice answer can arrive as a list or as lines of text, a text answer or an extra
     # variable as "disk, services": accept all of them.
     _health_asked: >-

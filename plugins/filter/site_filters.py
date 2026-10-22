@@ -1386,7 +1386,9 @@ def report_text(report, footer=""):
 def findings_report(by_host, title, missing=None, checks=None, extra=None):
     """The result of a check run (site_findings on every host) as a report for roles/site_email:
     title with the counts, summary boxes, one findings table (critical first), the hosts that did
-    not report, any extra sections the playbook adds (e.g. every certificate), the healthy hosts."""
+    not report, any extra sections the playbook adds (e.g. every certificate), the healthy hosts. An extra
+    section with top: true goes ABOVE the findings table (what to act on first), and its boxes (label, value,
+    status) join the summary boxes."""
     by_host = by_host or {}
     hosts = sorted(by_host)
     missing = sorted(missing or [])
@@ -1418,7 +1420,10 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
     summary += [box("Critical", crit, "critical"), box("Warning", warn, "warning")]
     if missing:
         summary.append(box("Did not report", len(missing), "warning"))
-    sections = []
+    top = [s for s in extra or [] if s.get("top")]
+    for s in top:
+        summary += list(s.get("boxes") or [])
+    sections = list(top)
     if rows:
         sections.append({"title": "Findings", "status": status,
                          "columns": ([] if single else ["Host"]) + ["Severity", "Check", "Finding", "Look further"],
@@ -1427,7 +1432,7 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
         sections.append({"title": "Did not report", "status": "warning",
                          "text": "Unreachable, or the job failed on them before the checks ran: their health is unknown.",
                          "lines": missing})
-    sections += list(extra or [])
+    sections += [s for s in extra or [] if not s.get("top")]
     healthy = [h for h in hosts if h not in bad]
     if healthy and not single:
         sections.append({"title": "Healthy (%d)" % len(healthy), "text": ", ".join(healthy)})

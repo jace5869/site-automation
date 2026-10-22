@@ -1,0 +1,45 @@
+---
+# WINDOWS TRUST. Runs files/win_trust.ps1 on the server (ansible.builtin.script: no collection needed) with the
+# trust check's list (roles/check_trust/vars/main.yml + check_trust_extra) and the settings from defaults/main.yml,
+# then adds its findings to this host's list. The script's result has the shape of the Linux scan's, so the
+# trust report (playbooks/win_trust_report.yml) uses the same tables. check_trust_remove: true (not a dry run)
+# makes it put the certificates in the Disallowed store and delete them from the store they are in, delete Java
+# entries, cut certifi bundles - backups first.
+- name: Windows trust | the shipped list (roles/check_trust/vars/main.yml)
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../check_trust/vars/main.yml"
+    name: _trust_shipped
+
+- name: Windows trust | check
+  ansible.builtin.script: win_trust.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'known': _trust_shipped.check_trust_known + (check_trust_extra | default([], true)),
+          'stores': win_check_trust_stores, 'block_stores': win_check_trust_block_stores,
+          'java': win_check_trust_java | bool, 'java_dirs': win_check_trust_java_dirs,
+          'python': win_check_trust_python | bool, 'python_dirs': win_check_trust_python_dirs,
+          'remove': check_trust_remove | default(false) | bool, 'dry_run': ansible_check_mode,
+          'severities': check_trust_remove_severities | default(['critical', 'warning']),
+          'severity_overrides': check_trust_severity | default({}, true),
+          'backup_dir': win_check_trust_backup_dir, 'keystore_password': check_trust_keystore_password | default('changeit'),
+          'timeout': win_check_trust_timeout | int} | to_json }}
+  register: _win_check_out
+  changed_when: false
+  failed_when: false
+  check_mode: false             # a dry run reads too (and shows what the removal would do)
+
+- name: Windows trust | findings
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: win_result.yml
+  vars:
+    _win_check: trust
+
+- name: Windows trust | the rows for the trust report
+  ansible.builtin.set_fact:
+    check_trust_result: "{{ win_facts.trust | trust_result(inventory_hostname, check_trust_severity | default({}, true)) }}"
+    check_trust_removed: "{{ win_facts.trust.removed | default(omit) }}"
+
+- name: Windows trust | what was read
+  ansible.builtin.debug:
+    msg: "{{ check_trust_result.lines + ((win_facts.trust.removed | trust_remove_lines(inventory_hostname)) if win_facts.trust.removed is defined else []) }}"

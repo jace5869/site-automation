@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.19.0 — 2026-10-22
+
+**Updating without scripts:** paste `site-automation-0.19.0-changed-since-0.18.1.zip` as it is (from 0.15.1 to
+0.18.0: `site-automation-0.19.0-changed-since-0.15.1.zip`). Both leave out `playbooks/group_vars`,
+`playbooks/host_vars` and `poam/poam.csv`. No setting changes for the existing jobs: nothing to change in `all.yml`.
+Three new job templates (Trust store report, VMware - trust store report, Windows - trust store report), and one
+new check `trust` in the Linux and the Windows health check's `weekly` set (below): the next weekly run reports the
+trust stores that still hold a dropped root - on most hosts, until the `ca-certificates` update is in.
+
+**New check `trust`, new job template `Trust store report`** (`roles/check_trust`, `playbooks/trust_report.yml`),
+for the October 2026 eMudhra (emSign) compromise and the next one: which trust stores still hold a certificate
+authority that was compromised or that the browsers dropped. On every Linux host it reads the system bundles,
+p11-kit's live view and blocklist, every Java `cacerts`, every Python `certifi` bundle (requests, pip, venvs),
+Node's built-in roots, the bundle inside every running podman container (root's and each user's), and the
+certificate files an application carries - matching every certificate by its fingerprint *and by its public key*,
+so a cross-sign nobody listed is found too - and lists the software that carries its own trust logic below the
+version that fixed it: the Go version each Go program was built with (1.27.3 / 1.26.10 reject the compromised
+keys, CVE-2026-111943), Node, NSS; every Java keystore under another name (`*.jks`, `*truststore*`, `*.p12`) and
+the NSS databases (`/etc/pki/nssdb`, `~/.pki/nssdb`, with `certutil`) too. A second template, **VMware - trust store report**
+(`playbooks/vmware_trust_report.yml`, a vCenter credential, no inventory), reads vCenter's trusted root store and
+each ESXi host's trusted CAs against the same list, on its own. A third, **Windows - trust store report**
+(`playbooks/win_trust_report.yml`, `roles/win_check_trust`; the check `trust` in the Windows health check's weekly
+set), reads the Windows servers' certificate stores (Trusted Root, Intermediate CAs, the roots Windows Update keeps,
+Trusted Publishers, the connecting account's), every Java `cacerts` and Python `certifi` bundle - the same list, the
+same tables; a certificate in the Disallowed store is blocked. The list ships with the check (the eight intermediates, their roots,
+the severities); `check_trust_extra` adds your own, `check_trust_severity` changes a severity (Sectigo's *AAA
+Certificate Services*, which cross-signed the eight, is a notice by default: listed, no finding, because nearly
+everything chains to it). One finding per kind of store on a host (the system trust, the certifi bundles, the Go
+programs ...), each with the fix; one table of every store read on every host, worst first, in the email.
+Read-only. `health_checks: [weekly]` runs the check; the report template runs it alone, on demand when a CA
+incident is announced. docs/TRUST_STORES.md.
+
+**Removal, switched off by default:** `check_trust_remove: true` on the Trust store report takes the listed
+certificates out of the stores that hold them - the system trust by blocklisting (RHEL / SUSE: the blocklist
+folder and `update-ca-trust`; Debian / Ubuntu: `/etc/ca-certificates.conf` and `update-ca-certificates`; the
+package's bundle is never edited), a Java keystore by deleting the entry, a certifi or application bundle by
+cutting the block out, a file that is the certificate itself by moving it away; every file changed is copied to
+`/var/backups/site-automation/trust/` first - then reads the hosts again, so the report shows what is left (Node,
+Go programs, containers: update or rebuild). Only certificates at critical and warning go (*AAA Certificate
+Services* at notice never, unless you say so); `check_trust_remove_kinds` narrows it. Check mode shows the plan
+and changes nothing. The same switch on the VMware report deletes the chain from vCenter's trusted roots and
+replaces the ESXi hosts' trusted CA lists without it; on the Windows report it puts the certificate in the
+Disallowed store (Windows' blocklist, it wins over every other store) and deletes it from the store it was in,
+deletes Java entries and cuts certifi bundles, backups first. The repository's own test certificates on the AAP
+controller are left out of the file search (`check_trust_find_exclude`). The report's *Removed* table names what was done and each
+backup.
 ## 0.18.1 — 2026-10-22
 
 **Updating without scripts:** paste `site-automation-0.18.1-changed-since-0.18.0.zip` as it is (from 0.15.1 to

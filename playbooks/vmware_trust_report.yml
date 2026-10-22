@@ -1,0 +1,22 @@
+---
+# VMWARE - TRUST STORE REPORT. vCenter's trusted root store and each ESXi host's trusted CA certificates, matched
+# against the trust check's list (roles/check_trust/vars/main.yml - October 2026, the eight eMudhra intermediates
+# and their roots; your own in check_trust_extra): which still hold a certificate authority that was compromised
+# or that the browsers dropped. From the controller, with a "VMware vCenter" credential on the template - no
+# inventory of hosts needed (vmware_vcenters for several vCenters). Read-only, unless check_trust_remove: true -
+# then the chain is deleted from vCenter's trusted roots and each ESXi host's trusted CA list is replaced without
+# it (Check mode shows what would go). One table, worst first, emailed (report_email_to). The job fails when
+# vCenter or a host (still) holds one. The Linux hosts: playbooks/trust_report.yml. docs/TRUST_STORES.md.
+#
+#   ansible-playbook playbooks/vmware_trust_report.yml
+#   ansible-playbook playbooks/vmware_trust_report.yml -e vmware_trust_esxi=false       # vCenter only
+#   ansible-playbook playbooks/vmware_trust_report.yml -e check_trust_remove=true --check
+- name: VMware trust store report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The report - vCenter's trusted roots and each ESXi host's trusted CAs (and the removal, when asked)
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: trust_report.yml

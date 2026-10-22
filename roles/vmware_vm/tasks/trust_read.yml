@@ -1,0 +1,50 @@
+---
+# TRUST STORES OF VMWARE (playbooks/vmware_trust_report.yml), from the controller: vCenter's trusted root store and
+# each ESXi host's trusted CA certificates, matched against the trust check's list -> _trust_vmware {stores,
+# not_read, vcenters, removed}. Read-only unless check_trust_remove. Needs a "VMware vCenter" credential (vmware_vm
+# credential.yml).
+- name: VMware trust | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+# The shipped list lives in the trust check's role (roles/check_trust/vars/main.yml). It is read from the file:
+# a role's vars are not visible outside it, and this runs from the controller, delegated.
+- name: VMware trust | the shipped list (roles/check_trust/vars/main.yml)
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/../check_trust/vars/main.yml"
+    name: _trust_vm_shipped
+
+- name: VMware trust | the list to look for (the shipped one and check_trust_extra)
+  ansible.builtin.set_fact:
+    _trust_vm_known: "{{ _trust_vm_shipped.check_trust_known + (check_trust_extra | default([], true)) }}"
+
+- name: VMware trust | vCenter's trusted roots and the ESXi hosts' trusted CAs
+  site_vmware_trust:
+    known: "{{ _trust_vm_known }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    esxi: "{{ vmware_trust_esxi | default(true) | bool }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    remove: "{{ check_trust_remove | default(false) | bool }}"
+    severities: "{{ check_trust_remove_severities | default(['critical', 'warning']) }}"
+  register: _trust_vmware
+  check_mode: "{{ ansible_check_mode }}"  # a read either way; with remove, a dry run shows what would go
+
+- name: VMware trust | what was read
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for s in _trust_vmware.stores -%}
+      {%-   set st = s | trust_store_status -%}
+      {%-   set _ = out.append((st | upper if st else 'ok') ~ '  ' ~ s.vcenter ~ ' ' ~ s.kind ~ ' ' ~ s.name ~ ': ' ~ s.count ~ ' certificates'
+                               ~ ((' - ' ~ (s.hits | map(attribute='name') | join(', '))) if s.hits else '')) -%}
+      {%- endfor -%}
+      {%- for n in _trust_vmware.not_read -%}
+      {%-   set _ = out.append('not read  ' ~ n.vcenter ~ ' ' ~ n.kind ~ ' ' ~ n.name ~ ': ' ~ n.why) -%}
+      {%- endfor -%}
+      {%- for v in _trust_vmware.vcenters if v.error -%}
+      {%-   set _ = out.append('vCenter ' ~ v.name ~ ': ' ~ v.error) -%}
+      {%- endfor -%}
+      {%- for r in _trust_vmware.removed | default([]) -%}
+      {%-   set _ = out.append(('WOULD REMOVE  ' if r.planned else ('REMOVED  ' if r.done else 'NOT REMOVED  ')) ~ r.vcenter ~ ' ' ~ r.kind ~ ' ' ~ r.name ~ ': '
+                               ~ (r.names | join(', ')) ~ ' - ' ~ r.action ~ (' - ' ~ r.error if r.error else '')) -%}
+      {%- endfor -%}
+      {{ out or ['nothing read'] }}

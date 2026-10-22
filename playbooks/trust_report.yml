@@ -1,0 +1,86 @@
+---
+# TRUST STORE REPORT - on demand, and weekly. Which trust stores on the Linux hosts still hold a certificate
+# authority that was compromised or that the browsers dropped (the trust check's list: roles/check_trust/vars/
+# main.yml - October 2026, the eight eMudhra intermediates and their roots; your own in check_trust_extra): the
+# system bundles, p11-kit's live view and blocklist, Java cacerts, Python certifi bundles, Node's built-in roots,
+# the bundles inside running podman containers, certificate files an application carries - and the software with
+# its own trust logic (Go programs, Node, NSS) below the version that fixed it. ONE table of every store read,
+# worst first. Read-only, unless check_trust_remove: true - then the listed certificates are taken out of the
+# stores that hold them (the system trust blocklisted, Java entries deleted, certifi and application bundles cut,
+# every file backed up first) and the host is read again. Fails the hosts that (still) hold one (a workflow can
+# open tickets). vCenter and the ESXi hosts: playbooks/vmware_trust_report.yml. docs/TRUST_STORES.md.
+#
+#   ansible-playbook playbooks/trust_report.yml
+#   ansible-playbook playbooks/trust_report.yml -e target=web01.example.mil
+#   ansible-playbook playbooks/trust_report.yml -e '{"check_trust_severity": {"AAA Certificate Services": "warning"}}'
+#   ansible-playbook playbooks/trust_report.yml -e check_trust_remove=true --check     # what would be removed
+#   ansible-playbook playbooks/trust_report.yml -e check_trust_remove=true             # remove them
+- name: Trust store report
+  hosts: "{{ target | default('all') }}"
+  become: true
+  gather_facts: false
+  vars:
+    site_report_title: Trust store report
+  pre_tasks:
+    - name: Linux hosts only (Windows servers have their own templates, playbooks/win_*.yml)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  tasks:
+    - name: Start
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: start.yml
+
+    - name: Read every trust store on the host
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: run_check.yml
+      vars:
+        _site_check: trust
+
+    # OFF by default: check_trust_remove: true takes the listed certificates out (the system trust blocklisted, Java
+    # entries deleted, certifi and application bundles cut, backups first), then reads the host again. Check mode
+    # shows what would go. Node, Go programs and containers stay (update, rebuild).
+    - name: Remove them (check_trust_remove), then read the host again
+      ansible.builtin.include_role:
+        name: check_trust
+        tasks_from: remove.yml
+      when: check_trust_remove | default(false) | bool and _trust is defined and 'trust' not in (site_checks_failed | default([]))
+
+    - name: Every store on every host, worst first
+      ansible.builtin.debug:
+        msg: >-
+          {%- set out = ['STATUS  HOST  |  WHERE (WHAT, VERSION)  |  HOLDS'] -%}
+          {%- for h in ansible_play_hosts -%}
+          {%-   for r in hostvars[h].check_trust_result.rows | default([]) -%}
+          {%-     set _ = out.append(r[5] ~ '  ' ~ r[0] ~ '  |  ' ~ r[1] ~ ' (' ~ r[2] ~ (', ' ~ r[3] if r[3] else '') ~ ')  |  ' ~ r[4]) -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+    - name: The tables for the report email
+      ansible.builtin.set_fact:
+        site_report_sections: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | map(attribute='check_trust_result', default={}) | list
+             | trust_report_sections({}, _removed) }}
+      vars:
+        _removed: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts if hostvars[h].check_trust_removed is defined -%}
+          {%-   set _ = out.append(dict(hostvars[h].check_trust_removed, host=h)) -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+  post_tasks:
+    - name: Report (fails the hosts that hold a compromised or dropped CA)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml
