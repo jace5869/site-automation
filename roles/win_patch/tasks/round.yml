@@ -42,8 +42,10 @@
     - name: "Patch | round {{ _wp_round }} | nothing (more) to install"
       ansible.builtin.set_fact:
         _wp_done: true
+      # a restart flag still set after this job restarted the server (round 2 on) - from other software, or one that
+      # outlives a restart - is not a reason to restart again with nothing to install
       when: (_wp_list.waiting | int) + (_wp_list.errors | int) + (_wp_list.in_progress | int) + (_wp_list.blocked | int) == 0
-            and (_wp_list.restart | int) == 0 and not _wp_list.restart_pending
+            and (_wp_list.restart | int) == 0 and (not _wp_list.restart_pending or _wp_round | int > 1)
 
     - name: "Patch | round {{ _wp_round }} | DRY RUN - would install, nothing is changed"
       ansible.builtin.set_fact:
@@ -94,7 +96,10 @@
         - name: "Patch | round {{ _wp_round }} | where it ended"
           ansible.builtin.set_fact:
             _wp_end: "{{ _wp_poll_raw.stdout_lines | default([]) | site_result }}"
-            _wp_installed_any: true
+            # something was installed (or was installing) - not only a restart flag
+            _wp_installed_any: >-
+              {{ _wp_installed_any | bool or (_wp_inst.started | int) > 0
+                 or ((_wp_list.waiting | int) + (_wp_list.in_progress | int) + (_wp_list.restart | int)) > 0 }}
             _wp_log: "{{ _wp_log + ['Round ' ~ _wp_round ~ ': asked to install ' ~ (_wp_inst.names | join('; ') or 'nothing new (already under way)')] }}"
 
         - name: "Patch | round {{ _wp_round }} | states"
@@ -131,8 +136,9 @@
       ansible.builtin.set_fact:
         _wp_need_restart: >-
           {{ (not _wp_done | bool)
-             and (((_wp_end | default({})).restart | default(0) | int) > 0 or ((_wp_end | default({})).restart_pending | default([]) | length > 0)
-                  or ((_wp_list.restart | int) > 0 or (_wp_list.restart_pending | length > 0))) }}
+             and (((_wp_end | default({})).restart | default(0) | int) > 0 or (_wp_list.restart | int) > 0
+                  or (((_wp_end | default({})).restart_pending | default([]) | length > 0 or _wp_list.restart_pending | length > 0)
+                      and (_wp_round | int == 1 or (_wp_inst | default({})).started | default(0) | int > 0))) }}
         _wp_restart_allowed: >-
           {{ automatic_restarts | bool and group_names | intersect(win_patch_never_reboot_groups) | length == 0 }}
 

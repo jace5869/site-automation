@@ -11,9 +11,15 @@ if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') {
 $cfg = ConvertFrom-Json -InputObject $env:SITE_CHECK_CONFIG
 $dir = [string]$cfg.dir
 $want = ([string]$cfg.sha256).ToUpper()
+# Windows PowerShell 5.1 makes each line a program writes to stderr an error when 2>&1 is used ('Stop' above
+# would end the script there): read them as lines, and let the exit code decide.
 function Invoke-Native([string] $What, [string] $Exe, [string[]] $Arguments) {
-    $out = @(& $Exe @Arguments 2>&1 | ForEach-Object { [string]$_ })
-    if ($LASTEXITCODE -ne 0) { throw ("$What failed (exit $LASTEXITCODE): " + ($out -join ' ')) }
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = -1
+    try { $out = @(& $Exe @Arguments 2>&1 | ForEach-Object { [string]$_ }) }
+    finally { $ErrorActionPreference = $old }
+    if ($global:LASTEXITCODE -ne 0) { throw ("$What failed (exit $($global:LASTEXITCODE)): " + ($out -join ' ')) }
 }
 $parent = Split-Path -Path $dir -Parent
 if ($parent -and -not (Test-Path -LiteralPath $parent)) { $null = New-Item -ItemType Directory -Path $parent -Force }

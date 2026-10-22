@@ -1,0 +1,12 @@
+---
+# The job's Limit (AAP's Limit field, --limit) must take localhost in too: the backup is kept and reported, and the
+# load is checked and reported, on localhost - without it that part is skipped and the job would end green having
+# kept nothing. To try a job on some devices, net_config_only does the same without this.
+- name: Network config | the job's Limit includes localhost
+  ansible.builtin.assert:
+    that: ansible_limit | default('', true) | length == 0 or 'localhost' in query('ansible.builtin.inventory_hostnames', ansible_limit)
+    fail_msg: >-
+      The job's Limit ({{ ansible_limit | default('') }}) leaves out localhost, where this job keeps and reports its
+      work: add ",localhost" to the Limit (e.g. rtr-lab01,localhost), or leave the Limit empty and set net_config_only.
+    quiet: true
+  run_once: true

@@ -257,9 +257,13 @@ snapmoid="$(state DC0_C0_RP0_VM1 "v['moid']")"; multi="$(state DC0_C0_RP0_VM1 "[
 aapmoid="$(state DC0_H0_VM0 "v['moid']")"; aapsnap="$(state DC0_H0_VM0 "v['snapshots'][0]['id']")"
 approved="{\"vm_snapshot_cleanup_candidates\": [{\"vm\": \"DC0_C0_RP0_VM1\", \"moid\": \"$snapmoid\", \"id\": $multi, \"name\": \"multi\"},
            {\"vm\": \"gone01\", \"moid\": \"vm-999\", \"id\": 1, \"name\": \"old\"},
-           {\"vm\": \"DC0_H0_VM0\", \"moid\": \"$aapmoid\", \"id\": $aapsnap, \"name\": \"aap-snap\"}]}"
+           {\"vm\": \"DC0_H0_VM0\", \"moid\": \"$aapmoid\", \"id\": $aapsnap, \"name\": \"aap-snap\"}], \"vm_snapshot_cleanup_candidates_workflow\": \"90\"}"
+run "cleanup with the list of another workflow: refused, nothing deleted" fail vm_snapshot_cleanup.yml -e _vm_now=$later \
+    -e "$approved" -e awx_workflow_job_id=91 -- "did not come from this workflow's own plan step" "Nothing was deleted"
+run "cleanup with a list typed in, outside a workflow: refused" fail vm_snapshot_cleanup.yml -e _vm_now=$later \
+    -e '{"vm_snapshot_cleanup_candidates": [{"vm": "DC0_C0_RP0_VM1", "moid": "x", "id": 1, "name": "multi"}]}' -- "this is no workflow"
 run "cleanup after the approval: only the approved snapshot - never the AAP server's, even if listed" ok vm_snapshot_cleanup.yml -e _vm_now=$later \
-    -e "$approved" -- "deleted 1 snapshot(s) older than 5 days" 'DELETED DC0_C0_RP0_VM1: \"multi\"' "NOT DELETED gone01" "NOT DELETED DC0_H0_VM0"
+    -e "$approved" -e awx_workflow_job_id=90 -- "deleted 1 snapshot(s) older than 5 days" 'DELETED DC0_C0_RP0_VM1: \"multi\"' "NOT DELETED gone01" "NOT DELETED DC0_H0_VM0"
 check "  ...baseline (old, not approved) and keep-me remain" DC0_C0_RP0_VM1 "','.join(s['name'] for s in v['snapshots'])" "baseline,keep-me"
 check "  ...the AAP server's snapshot remains" DC0_H0_VM0 "len(v['snapshots'])" 1
 run "cleanup confirmed: deletes the old one, never keep-me or the AAP server's" ok vm_snapshot_cleanup.yml -e _vm_now=$later -e vm_snapshot_cleanup_confirm=true \
@@ -367,7 +371,8 @@ pa1="$(state DC0_C0_RP0_VM1 "[s['id'] for s in v['snapshots'] if s['name'] == 'p
 pa2="$(state DC0_C0_RP0_VM1 "[s['id'] for s in v['snapshots'] if s['name'] == 'pick-a'][1]")"; m1="$(state DC0_C0_RP0_VM1 "v['moid']")"
 aapmoid="$(state DC0_H0_VM0 "v['moid']")"; aapsnap="$(state DC0_H0_VM0 "v['snapshots'][0]['id']")"
 plan="{\"vm_snapshot_pick_plan\": [{\"vm\": \"DC0_C0_RP0_VM1\", \"name\": \"pick-a\", \"vcenter\": \"127.0.0.1\", \"moid\": \"$m1\", \"id\": $pa1},
-       {\"vm\": \"DC0_H0_VM0\", \"name\": \"aap-snap\", \"vcenter\": \"127.0.0.1\", \"moid\": \"$aapmoid\", \"id\": $aapsnap}]}"
+       {\"vm\": \"DC0_H0_VM0\", \"name\": \"aap-snap\", \"vcenter\": \"127.0.0.1\", \"moid\": \"$aapmoid\", \"id\": $aapsnap}],
+       \"vm_snapshot_pick_plan_workflow\": \"77\"}"
 run "picked snapshots after the approval: exactly the plan - one pick-a (not its namesake), never the AAP server's" ok vm_snapshot_delete_picked.yml \
     -e "$plan" -e "@$sp" -e awx_workflow_job_id=77 \
     -- "VMware picked snapshots: deleted 1 (approved), 1 skipped" 'DELETED DC0_C0_RP0_VM1: \"pick-a\"' \
@@ -392,8 +397,11 @@ check "  ...the AAP server still on" DC0_H0_VM0 "v['power']" poweredOn
 run "picked VMs, a hard reset, confirmed on their own" ok vm_reboot_picked.yml -e "@$rp" -e vm_power_mode=hard -e vm_pick_confirm=true \
     -- "VM restart (picked): 2 restarted (hard)" "RESTARTED (hard reset) DC0_H0_VM1" "RESTARTED (hard reset) DC0_C0_RP0_VM0" '"vm_reboot_picked"'
 m0="$(state DC0_C0_RP0_VM0 "v['moid']")"
-rplan="{\"vm_reboot_pick_plan\": [{\"vm\": \"DC0_C0_RP0_VM0\", \"vcenter\": \"127.0.0.1\", \"moid\": \"$m0\", \"power_mode\": \"hard\"}]}"
-run "picked VMs after the approval, but run with another power mode: refused" fail vm_reboot_picked.yml -e "$rplan" -e vm_power_mode=guest \
+rplan="{\"vm_reboot_pick_plan\": [{\"vm\": \"DC0_C0_RP0_VM0\", \"vcenter\": \"127.0.0.1\", \"moid\": \"$m0\", \"power_mode\": \"hard\"}],
+        \"vm_reboot_pick_plan_workflow\": \"78\"}"
+run "picked VMs, a plan from another workflow: refused" fail vm_reboot_picked.yml -e "$rplan" -e vm_power_mode=hard -e awx_workflow_job_id=79 \
+    -- "did not come from this workflow's own plan step" "Nothing was restarted"
+run "picked VMs after the approval, but run with another power mode: refused" fail vm_reboot_picked.yml -e "$rplan" -e vm_power_mode=guest -e awx_workflow_job_id=78 \
     -- "Refused: the approved plan is for a hard restart, this run says vm_power_mode guest"
 run "picked VMs after the approval: exactly the plan" ok vm_reboot_picked.yml -e "$rplan" -e vm_power_mode=hard -e awx_workflow_job_id=78 \
     -- "VM restart (picked): 1 restarted (hard) (approved)" "RESTARTED (hard reset) DC0_C0_RP0_VM0"
@@ -630,13 +638,15 @@ id1="$(state DC0_C0_RP0_VM1 "[s['id'] for s in v['snapshots'] if s['name'] == 'o
 [ "$m1" = "$m2" ] && echo "ok   -   ...the two VMs have the same ID ($m1): the case to get right" || echo "ok   -   ...(moids differ here: $m1 / $m2)"
 run "snapshot report of both vCenters: one report, each snapshot with its vCenter" ok vm_snapshot_report.yml -e _vm_now=$later -e "$two" \
     -- 'OLD DC0_C0_RP0_VM1 (127.0.0.1): \"old-a\"' 'OLD DC0_C0_RP0_VM1 ('"$vc2"'): \"old-b\"' "\"vcenter\": \"$vc2\""
-approved2="{\"vm_snapshot_cleanup_candidates\": [{\"vm\": \"DC0_C0_RP0_VM1\", \"vcenter\": \"$vc2\", \"moid\": \"$m2\", \"id\": $id2, \"name\": \"old-b\"}]}"
+approved2="{\"vm_snapshot_cleanup_candidates\": [{\"vm\": \"DC0_C0_RP0_VM1\", \"vcenter\": \"$vc2\", \"moid\": \"$m2\", \"id\": $id2, \"name\": \"old-b\"}],
+           \"vm_snapshot_cleanup_candidates_workflow\": \"92\", \"awx_workflow_job_id\": 92}"
 run "cleanup after the approval of vCenter 2's snapshot: deleted there, and only there" ok vm_snapshot_cleanup.yml -e _vm_now=$later -e "$two" \
     -e "$approved2" -- "deleted 1 snapshot(s)" 'DELETED DC0_C0_RP0_VM1 ('"$vc2"'): \"old-b\"'
 check "  ...vCenter 1's VM (same ID) keeps old-a" DC0_C0_RP0_VM1 "','.join(s['name'] for s in v['snapshots'])" "keep-me,old-a"
 got="$(STATE_PORT=$port2 state DC0_C0_RP0_VM1 "','.join(s['name'] for s in v['snapshots'])")"
 [ -z "$got" ] && echo "ok   -   ...vCenter 2's old-b is gone" || { echo "FAIL -   ...vCenter 2 still has [$got]"; fails=$((fails + 1)); }
-approved1="{\"vm_snapshot_cleanup_candidates\": [{\"vm\": \"DC0_C0_RP0_VM1\", \"moid\": \"$m1\", \"id\": $id1, \"name\": \"old-a\"}]}"
+approved1="{\"vm_snapshot_cleanup_candidates\": [{\"vm\": \"DC0_C0_RP0_VM1\", \"moid\": \"$m1\", \"id\": $id1, \"name\": \"old-a\"}],
+           \"vm_snapshot_cleanup_candidates_workflow\": \"93\", \"awx_workflow_job_id\": 93}"
 run "an approval from an older report (no vCenter on it) means the credential's vCenter only" ok vm_snapshot_cleanup.yml --check -e _vm_now=$later \
     -e "$two" -e "$approved1" -- "would delete 1 snapshot(s)" 'WOULD DELETE DC0_C0_RP0_VM1 (127.0.0.1): \"old-a\"'
 run "datastore report of both: each datastore with its vCenter" ok vm_datastore_report.yml -e "$two" -e "$mail" \

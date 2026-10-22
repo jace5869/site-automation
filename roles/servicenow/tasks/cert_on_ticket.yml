@@ -1,11 +1,13 @@
 ---
-# VMWARE CERTIFICATE RENEWAL, before a CSR is made (roles/vmware_vm/tasks/cert_renew.yml): each due
-# certificate's open ticket, and whether its CSR is on it already - attached (a file whose name starts
-# with the certificate's), or in a work note (the attachment was refused). vCenter and an ESXi host keep
-# one pending key: a second CSR replaces the key of the first, the one the PKI may be signing. So a CSR
-# is made once, and its ticket is the record of it. Reads only - in a dry run too.
+# VMWARE AND NETWORK DEVICE CERTIFICATE RENEWAL, before a CSR is made (roles/vmware_vm/tasks/cert_renew.yml,
+# roles/net_certs/tasks/renew_start.yml): each due certificate's tickets, and whether its CSR is on one already -
+# attached (a file whose name starts with the certificate's), or in a work note (the attachment was refused).
+# vCenter, an ESXi host and a Cisco device keep one pending key: a second CSR replaces the key of the first, the
+# one the PKI may be signing. So a CSR is made once, and its ticket is the record of it - also once that ticket is
+# resolved or closed: every ticket of the certificate made in the last cert_renew_csr_memory_days counts, newest
+# first. Reads only - in a dry run too.
 # Input: _csr_check_in [{id (the finding's), host, check, prefix (of the CSR's file name), csr: true when it would get a CSR}].
-# Output: cert_csr_tickets {id: ticket number}, cert_csr_on_ticket {id: 'INC0010001 (attached: x.csr)'}.
+# Output: cert_csr_tickets {id: its open ticket's number}, cert_csr_on_ticket {id: 'INC0010001 (attached: x.csr)'}.
 
 - name: Certificate renewal | connection (from the ServiceNow API credential)
   ansible.builtin.set_fact:
@@ -14,11 +16,12 @@
       {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
     _sn_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
 
-- name: Certificate renewal | each certificate's open ticket, with its work notes
+- name: Certificate renewal | each certificate's tickets of the last cert_renew_csr_memory_days, newest first, with their work notes
   ansible.builtin.uri:
     url: >-
-      {{ _sn_url }}/api/now/table/{{ servicenow_table }}?sysparm_limit=5&sysparm_display_value=true&sysparm_exclude_reference_link=true&sysparm_fields=sys_id,number,correlation_id,work_notes&sysparm_query={{
-      ('correlation_id=' ~ (item.id | site_correlation_id(item.host, item.check, servicenow_correlation_prefix)) ~ '^active=true') | urlencode }}
+      {{ _sn_url }}/api/now/table/{{ servicenow_table }}?sysparm_limit=10&sysparm_display_value=true&sysparm_exclude_reference_link=true&sysparm_fields=sys_id,number,correlation_id,active,work_notes&sysparm_query={{
+      ('correlation_id=' ~ (item.id | site_correlation_id(item.host, item.check, servicenow_correlation_prefix))
+       ~ '^sys_created_on>=javascript:gs.daysAgoStart(' ~ (cert_renew_csr_memory_days | int) ~ ')^ORDERBYDESCsys_created_on') | urlencode }}
     method: GET
     url_username: "{{ _sn_user }}"
     url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
@@ -34,11 +37,11 @@
   check_mode: false             # only reads
   when: _sn_url | length > 0
 
-- name: Certificate renewal | the CSR attached to it?
+- name: Certificate renewal | the CSR attached to one of them?
   ansible.builtin.uri:
     url: >-
-      {{ _sn_url }}/api/now/attachment?sysparm_limit=1&sysparm_fields=file_name&sysparm_query={{
-      ('table_sys_id=' ~ r.json.result[0].sys_id ~ '^file_nameSTARTSWITH' ~ r.item.prefix) | urlencode }}
+      {{ _sn_url }}/api/now/attachment?sysparm_limit=20&sysparm_fields=file_name,table_sys_id&sysparm_query={{
+      ('table_sys_idIN' ~ r.json.result | map(attribute='sys_id') | join(',') ~ '^file_nameSTARTSWITH' ~ r.item.prefix) | urlencode }}
     method: GET
     url_username: "{{ _sn_user }}"
     url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
@@ -57,20 +60,27 @@
 
 - name: Certificate renewal | the tickets, and the CSRs already on them
   ansible.builtin.set_fact:
+    # the open one (the newest, when there are several): where a new CSR goes
     cert_csr_tickets: >-
       {%- set out = {} -%}
-      {%- for r in _cot_found.results | default([]) if (r.json.result | default([])) | length > 0 -%}
-      {%-   set _ = out.update({r.item.id: r.json.result[0].number}) -%}
+      {%- for r in _cot_found.results | default([]) -%}
+      {%-   set open = (r.json.result | default([])) | selectattr('active', 'in', ['true', true]) | list -%}
+      {%-   if open -%}{%- set _ = out.update({r.item.id: open[0].number}) -%}{%- endif -%}
       {%- endfor -%}
       {{ out }}
+    # the newest ticket with the CSR on it, open or not: the CSR is made
     cert_csr_on_ticket: >-
       {%- set out = {} -%}
       {%- for a in _cot_att.results | default([]) if a.json is defined -%}
-      {%-   set t = a.r.json.result[0] -%}
-      {%-   if (a.json.result | default([])) | length > 0 -%}
-      {%-     set _ = out.update({a.r.item.id: t.number ~ ' (attached: ' ~ a.json.result[0].file_name ~ ')'}) -%}
-      {%-   elif 'BEGIN CERTIFICATE REQUEST' in t.work_notes | default('') or 'certificate signing request (CSR) is attached' in t.work_notes | default('') -%}
-      {%-     set _ = out.update({a.r.item.id: t.number ~ ' (in a work note)'}) -%}
-      {%-   endif -%}
+      {%-   set on = (a.json.result | default([])) | map(attribute='table_sys_id') | list -%}
+      {%-   for t in a.r.json.result if a.r.item.id not in out -%}
+      {%-     set closed = '' if t.active | default('true') | string == 'true' else ', resolved since' -%}
+      {%-     if t.sys_id in on -%}
+      {%-       set f = (a.json.result | selectattr('table_sys_id', 'equalto', t.sys_id) | first).file_name -%}
+      {%-       set _ = out.update({a.r.item.id: t.number ~ closed ~ ' (attached: ' ~ f ~ ')'}) -%}
+      {%-     elif 'BEGIN CERTIFICATE REQUEST' in t.work_notes | default('') or 'certificate signing request (CSR) is attached' in t.work_notes | default('') -%}
+      {%-       set _ = out.update({a.r.item.id: t.number ~ closed ~ ' (in a work note)'}) -%}
+      {%-     endif -%}
+      {%-   endfor -%}
       {%- endfor -%}
       {{ out }}

@@ -24,6 +24,7 @@ $cases = @(
     @('security', 'security', @{ 'security:defender-realtime' = 'critical'; 'security:defender-signatures' = 'warning'; 'security:av-service:masvc' = 'critical'; 'security:firewall:Public' = 'critical'; 'security:smb1' = 'critical'; 'security:rdp-nla' = 'warning'; 'security:TLS1.0' = 'warning'; 'security:TLS1.1' = 'warning' }),
     @('security', 'security_passive', @{}),
     @('audit', 'audit', @{ 'audit:policy' = 'warning'; 'audit:log-size:Security' = 'warning'; 'audit:forwarder:SplunkForwarder' = 'critical' }),
+    @('audit', 'audit_fallback', @{ 'audit:policy' = 'warning'; 'audit:log-size:Security' = 'warning'; 'audit:forwarder:SplunkForwarder' = 'critical' }),
     @('accounts', 'accounts', @{ 'accounts:guest' = 'critical'; 'accounts:password-age:Administrator' = 'warning'; 'accounts:inactive:svc_old' = 'warning'; 'accounts:admin:CORP\jdoe' = 'warning' }),
     @('accounts', 'accounts_dc', @{}),
     @('certs', 'certs', @{ ('certs:' + ('A' * 40)) = 'critical'; ('certs:' + ('B' * 40)) = 'critical'; ('certs:' + ('C' * 40)) = 'warning' }),
@@ -171,6 +172,7 @@ foreach ($scen in 'csr', 'csr_check') {
         if ((@($web.sans) -join ',') -ne 'web01.corp.test,web.corp.test,192.0.2.3') { $bad += "web01 names: $(@($web.sans) -join ',')" }
         if ($web.install -notmatch 'certreq -accept -machine' -or $web.install -notmatch 'https binding 0.0.0.0:443') { $bad += "web01 install: $($web.install)" }
         if ($got['CN=pend.corp.test'].csr -notmatch '^-----BEGIN CERTIFICATE REQUEST-----\nPENDING') { $bad += 'the pending CSR was not reused' }
+        if ([string]$got['CN=ec.corp.test'].csr -match 'STALE') { $bad += 'a CSR without a known request was reused' }
         if ($got['CN=old.corp.test'].reason -notmatch 'a newer certificate') { $bad += 'old: ' + $got['CN=old.corp.test'].reason }
         if ($got['CN=self01.corp.test'].reason -notmatch 'win_cert_renew_self_signed') { $bad += 'self: ' + $got['CN=self01.corp.test'].reason }
         $inf = (@($out | Where-Object { $_ -like '###INF### *' }) -join "`n")
@@ -190,5 +192,36 @@ $out = @(& $shell -NoProfile -ExecutionPolicy Bypass -File $runner -Script (Scri
 $count++
 if (($out -join "`n") -match '"id":"certs:endpoints"') { Write-Host 'ok   - certs/endpoints in constrained mode are reported, not an error' }
 else { $fail++; Write-Host 'FAIL - certs/endpoints in constrained mode'; $out | Select-Object -Last 5 | ForEach-Object { Write-Host "       $_" } }
+# The common part is the same in every check (it says so), and its Invoke-Native reads a program that writes to
+# stderr instead of ending the script: Windows PowerShell 5.1 makes those lines errors under 'Stop' when 2>&1 is used.
+$withCommon = @(Get-ChildItem -Path (Join-Path $root 'roles') -Recurse -Filter '*.ps1' | Where-Object {
+        (Get-Content -LiteralPath $_.FullName -Raw) -match 'common to every site-automation Windows check' })
+$parts = @($withCommon | ForEach-Object { [regex]::Match((Get-Content -LiteralPath $_.FullName -Raw),
+            '(?s)# ---- common to every site-automation Windows check.*?# ---- end of the common part').Value } | Sort-Object -Unique)
+$count++
+if ($withCommon.Count -ge 12 -and $parts.Count -eq 1) { Write-Host "ok   - the common part is identical in all $($withCommon.Count) checks" }
+else { $fail++; Write-Host "FAIL - the common part differs between the checks ($($parts.Count) versions in $($withCommon.Count) files)" }
+$fn = [regex]::Match($parts[0], '(?ms)^function Invoke-Native.*?^\}').Value
+$probe = Join-Path ([System.IO.Path]::GetTempPath()) ('invoke-native-' + [guid]::NewGuid().ToString('N') + '.ps1')
+Set-Content -LiteralPath $probe -Encoding UTF8 -Value (@('param([string] $Shell)', "`$ErrorActionPreference = 'Stop'", $fn, @'
+$say = "[Console]::Error.WriteLine('a warning on stderr'); 'line one'; exit "
+$ok = Invoke-Native $Shell @('-NoProfile', '-Command', ($say + '0'))
+$bad = Invoke-Native $Shell @('-NoProfile', '-Command', ($say + '3'))
+$none = Invoke-Native 'no-such-program-here.exe' @('x')
+'###OK### ' + $ok.Code + ' ' + (@($ok.Out) -join '|')
+'###BAD### ' + $bad.Code + ' ' + (@($bad.Out) -join '|')
+'###NONE### ' + $none.Code
+'###STILL-STOP### ' + $ErrorActionPreference
+'@) -join "`n")
+$out = @(& $shell -NoProfile -ExecutionPolicy Bypass -File $probe -Shell $shell 2>&1 | ForEach-Object { [string]$_ })
+Remove-Item -LiteralPath $probe -Force
+$o = $out -join "`n"
+$count++
+$okNative = ($o -match '###OK### 0 .*line one') -and ($o -match '###OK### 0 .*a warning on stderr') -and ($o -match '###BAD### 3 ')
+$okNative = $okNative -and ($o -match '###NONE### -1') -and ($o -match '###STILL-STOP### Stop')
+if ($okNative) {
+    Write-Host 'ok   - Invoke-Native: stderr lines read (exit 0 and 3), a missing program is -1, the script goes on'
+}
+else { $fail++; Write-Host 'FAIL - Invoke-Native'; $out | Select-Object -Last 8 | ForEach-Object { Write-Host "       $_" } }
 if ($fail) { Write-Host "$fail of $count test(s) failed"; exit 1 }
 Write-Host "all $count tests passed"

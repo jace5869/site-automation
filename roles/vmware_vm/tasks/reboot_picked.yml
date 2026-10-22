@@ -22,6 +22,19 @@
     _vm_rp: "{{ (vm_reboot_pick_plan if vm_reboot_pick_plan is defined else vm_reboot_picks) | vm_pick_parse('vm') }}"
     _vm_rp_approved_mode: "{{ (vm_reboot_pick_plan | map(attribute='power_mode') | unique | list) if vm_reboot_pick_plan is defined else [] }}"
 
+- name: VMware | the approved plan is this workflow's own
+  ansible.builtin.assert:
+    that:
+      - awx_workflow_job_id is defined
+      - (vm_reboot_pick_plan_workflow | default('') | string) == (awx_workflow_job_id | string)
+    fail_msg: >-
+      Refused: vm_reboot_pick_plan did not come from this workflow's own plan step (it is from
+      {{ ('workflow job ' ~ vm_reboot_pick_plan_workflow) if vm_reboot_pick_plan_workflow | default('') | string else 'no workflow' }}, this is
+      {{ ('workflow job ' ~ awx_workflow_job_id) if awx_workflow_job_id is defined else 'no workflow' }}). Nothing was restarted.
+      Launch the workflow, and do not tick "Prompt on launch" for Variables on this template.
+    quiet: true
+  when: _vm_rp_mode == 'approved'
+
 - name: VMware | something was picked
   ansible.builtin.assert:
     that: _vm_rp.picks | length > 0
@@ -134,6 +147,8 @@
         {%-   set _ = out.append({'vm': x.name, 'vcenter': x.vcenter, 'moid': x.moid, 'power_mode': vm_power_mode, 'text': x.text}) -%}
         {%- endfor -%}
         {{ out }}
+      # the approved step checks the plan is its own workflow's, not one pasted in or left from another run
+      vm_reboot_pick_plan_workflow: "{{ awx_workflow_job_id | default('') | string }}"
   when: _vm_rp_mode == 'plan'
 
 - name: VMware | what was done, as job artifacts (vm_reboot_picked)

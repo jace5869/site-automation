@@ -38,6 +38,8 @@ net_config_devices:
 - The platform comes from `ansible_network_os`, or set `net_config_platform: ios` / `panos` on the host.
   `net_config_address` connects to another address than `ansible_host` (PAN-OS).
 - `net_config_only: ['rtr-lab*']` limits a run to some devices - to try a job on one first.
+- The template's **Limit** works too, with `localhost` in it (`rtr-lab01,localhost`): the job keeps and reports
+  its work on localhost. A Limit without it is refused before anything runs.
 
 ## The backup
 
@@ -49,7 +51,11 @@ and empty), compares each device with its file - `configs/<device>.cfg` (IOS) or
 `net_config_git_path` - and commits the new and changed ones in **one commit** ("Backup 2026-10-21 06:00 UTC: 2
 changed (rtr01..., fw01...)"), then pushes. Nothing changed: no commit. The git server's SSH host key is learned
 on the first connection (`net_config_git_host_key_checking: accept-new`), or give it
-(`net_config_git_known_hosts`, `net_config_git_host_key_checking: yes`). `git log -p configs/rtr01.example.mil.cfg`
+(`net_config_git_known_hosts`, `net_config_git_host_key_checking: yes`). In an execution environment ssh's own
+`known_hosts` starts empty every job, so `accept-new` learns the key every time and checks nothing: give the key
+(`ssh-keyscan -t ed25519 git.example.mil`, compared with what the git server's admin says) with `yes` - the only
+real check. An https token goes to git as a header in a git config file in the job's work folder (mode 0600,
+deleted at the end), never on a command line or in the environment. `git log -p configs/rtr01.example.mil.cfg`
 is then every change of rtr01, with its date.
 
 **A file share** (`net_config_store: share`, or `both`) - `net_config_share_dir` on the AAP node (only kept if
@@ -143,6 +149,7 @@ The Variables of each: `aap/extra_vars/net_config_backup.yml`, `net_config_load.
 | PAN-OS `Invalid Credential` / `HTTP 403` | the API key or the user (its admin role must allow the XML API: export for the backup, configuration and commit for the load) |
 | `the firewall has uncommitted changes` | someone's changes wait in the candidate: commit or revert them first (the web interface: *Commit* / *Revert Changes*) |
 | `validation failed - nothing committed, the candidate reverted` | the change refers to something that is not there (a zone, an object): fix the entries |
+| `entry 2 of 3 (set /config/...): ... - nothing committed, the candidate reverted` | the firewall refused that entry (a wrong xpath or element); the entries before it were taken back too | fix that entry |
 | `the copy to the device failed (scp ...)` | `ip scp server enable` on the device, the user's privilege 15, the file system (`net_config_ios_file`) |
 | `configure replace failed` | IOS refused the backup (a command this release does not know - a backup from another model or release?); nothing was replaced |
 | `still different: N line(s)` after a restore | IOS added defaults of its own (a newer release): look at the diff in the next backup |

@@ -471,7 +471,7 @@ File: `roles/net_config/defaults/main.yml`
 | `net_config_git_path` | `configs` | the folder in the repository: <path>/<device>.cfg (IOS), .xml (PAN-OS) |
 | `net_config_git_author_name` | `site-automation` | the commits' author |
 | `net_config_git_author_email` | `site-automation@localhost` | and its email |
-| `net_config_git_host_key_checking` | `accept-new` | The git server's SSH host key: accept-new (the first connection learns it), or yes (only the keys in net_config_git_known_hosts - lines as in a known_hosts file). |
+| `net_config_git_host_key_checking` | `accept-new` | The git server's SSH host key: accept-new (the first connection learns it), or yes (only the keys in net_config_git_known_hosts - lines as in a known_hosts file). In an execution environment ssh's own known_hosts is empty every job, so accept-new learns the key each time: only net_config_git_known_hosts + yes really c… (all of it: the role file) |
 | `net_config_git_known_hosts` | (empty) | the git server's host keys (known_hosts lines), for net_config_git_host_key_checking: yes |
 | `net_config_share_dir` | `/var/lib/site-automation/net-config` | The folder for share: on the AAP node (a path AAP exposes to jobs) or on net_config_share_host - <dir>/<device>/<device>.cfg (the latest), and a dated copy beside it each time one changed. |
 | `net_config_share_host` | (empty) | an inventory host to keep them on (Linux, or a Windows file server); its credential on the template |
@@ -641,6 +641,7 @@ File: `roles/servicenow/defaults/main.yml`
 | `servicenow_slow_seconds` | `5` | the API answering slower than this -> warning |
 | `servicenow_test_resolve` | `true` | servicenow_test_ticket.yml: resolve the test incident at the end (false = leave it open to look at) |
 | `cert_renew_servicenow` | `incident` | How the CSRs the certificate renewals make (Linux, Windows, VMware, network devices) go to the PKI. incident: each one is attached to its certificate's incident, with a work note saying what to do next - a person submits it to the PKI. catalog: each one is ordered from your PKI's catalog item (cert_renew_catalog_item)… (all of it: the role file) |
+| `cert_renew_csr_memory_days` | `90` | incident: a CSR on an incident of the certificate made in the last this-many days counts as made - also when that incident was resolved or closed since (the PKI may still be signing it): vCenter, ESXi and Cisco keep one pending key, and a second CSR would replace it. Older: a new CSR (the certificate is due again). |
 | `cert_renew_catalog_item` | (empty) | The catalog item: its name exactly as the catalog shows it (e.g. "DoD PKI Certificate Request"), or its sys_id. |
 | `cert_renew_catalog_variables` | `{}` | The item's questions - by their internal names, as the catalog test lists them - and the answers: {name: answer}. A reference (Requested For, Location ...): the record's name, or its sys_id. A choice: its value or its label. In an answer, {host}, {subject}, {names}, {expires}, {issuer} and {where} become the certifica… (all of it: the role file) |
 | `cert_renew_catalog_csr_variable` | (empty) | The attachment question that gets the CSR (its internal name). Empty = the item's only attachment question. |
@@ -728,7 +729,7 @@ File: `roles/stigman_stack/defaults/main.yml`
 | `stigman_db_schema` | `stigman` | the MySQL database STIG Manager uses |
 | `stigman_db_user` | `stigman` | the MySQL account STIG Manager uses (its password: the credential) |
 | `stigman_mysql_buffer_pool` | `1G` | STIG Manager docs: >= 8G for real deployments |
-| `stigman_ready_retries` | `40` | How long to wait for the API to answer through nginx after (re)starting |
+| `stigman_ready_retries` | `40` | How long to wait after (re)starting: for MySQL to be healthy, then for the API to answer through nginx (each) |
 | `stigman_ready_delay` | `6` | seconds between those tries |
 | `stigman_mysql_root_password` | `"{{ lookup('ansible.builtin.env', 'STIGMAN_MYSQL_ROOT_PASSWORD') }}"` | ---- Secrets: NEVER set these in a vars file or inventory ----------------------------------- They come from AAP credentials (aap/credential_types/*.yml) as environment variables / files on the controller (execution environment). See docs/SECRETS.md. |
 | `stigman_db_password` | `"{{ lookup('ansible.builtin.env', 'STIGMAN_DB_PASSWORD') }}"` | from the credential (STIGMAN_DB_PASSWORD), never set here |

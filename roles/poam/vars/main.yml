@@ -1,0 +1,7 @@
+---
+# The list settings as lists, whatever way they were given: a list, or text from a survey or an extra variable -
+# one per line or separated by commas ("Completed, Risk Accepted"; a status may have spaces). Text compared with
+# `in` would match parts of words.
+_poam_closed: "{{ poam_closed_statuses | snapshot_name_words }}"
+_poam_collections: "{{ poam_stigman_collections | snapshot_name_words }}"
+_poam_severities: "{{ poam_stigman_severities | snapshot_name_words }}"

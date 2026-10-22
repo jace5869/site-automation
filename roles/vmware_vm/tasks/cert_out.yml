@@ -21,11 +21,9 @@
 - name: VMware certs | the result as job artifacts (vmware_certs)
   ansible.builtin.set_stats:
     data:
-      vmware_certs:
-        dry_run: "{{ ansible_check_mode }}"
-        warn_days: "{{ vmware_cert_warn_days | int }}"
-        due: >-
-          {{ _vcert_result.certs | map(attribute='host') | zip(_vcert_result.certs | map(attribute='days'),
-             _vcert_result.certs | map(attribute='status')) | map('join', ' | ') | list }}
-        not_checked: "{{ _vcert_read.not_checked }}"
-        vcenters: "{{ _vcert_read.vcenters }}"
+      # one expression, so dry_run and warn_days stay a boolean and a number on ansible-core 2.16 too
+      vmware_certs: >-
+        {{ {'dry_run': ansible_check_mode, 'warn_days': vmware_cert_warn_days | int,
+            'due': _vcert_result.certs | map(attribute='host') | zip(_vcert_result.certs | map(attribute='days'),
+                   _vcert_result.certs | map(attribute='status')) | map('join', ' | ') | list,
+            'not_checked': _vcert_read.not_checked, 'vcenters': _vcert_read.vcenters} }}

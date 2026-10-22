@@ -73,7 +73,7 @@
 - name: VMware | pick lists
   ansible.builtin.include_tasks: report.yml
   vars:
-    _vm_vcenters: "{{ (_vm_snap_read.vcenters | default([])) if _vm_pk_read is not defined else _vm_pk_read.vcenters }}"
+    _vm_vcenters: "{{ (_vm_pk_read.vcenters | default([])) + (_vm_snap_read.vcenters | default([])) }}"
     _vm_report_no_email: true
     _vm_report_no_email_why: "the pick list refresh never emails (it runs often; its result is in the surveys)."
     _vm_report_subject: >-
@@ -131,4 +131,4 @@
 - name: VMware | every vCenter was read
   ansible.builtin.include_tasks: vcenters_read.yml
   vars:
-    _vm_vcenters: "{{ (_vm_snap_read.vcenters | default([])) if _vm_pk_read is not defined else _vm_pk_read.vcenters }}"
+    _vm_vcenters: "{{ (_vm_pk_read.vcenters | default([])) + (_vm_snap_read.vcenters | default([])) }}"

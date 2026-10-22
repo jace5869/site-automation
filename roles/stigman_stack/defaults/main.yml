@@ -28,7 +28,7 @@ stigman_db_schema: stigman               # the MySQL database STIG Manager uses
 stigman_db_user: stigman                 # the MySQL account STIG Manager uses (its password: the credential)
 stigman_mysql_buffer_pool: 1G                       # STIG Manager docs: >= 8G for real deployments
 
-# How long to wait for the API to answer through nginx after (re)starting
+# How long to wait after (re)starting: for MySQL to be healthy, then for the API to answer through nginx (each)
 stigman_ready_retries: 40
 stigman_ready_delay: 6                   # seconds between those tries
 

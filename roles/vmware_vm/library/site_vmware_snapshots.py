@@ -209,6 +209,8 @@ def _read(content, p, now, vcenter):
                         "description": n.description or "", "taken_by": who.get(key, ""),
                         "created": created.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                         "age_days": round(max(age, 0.0), 1),
+                        # the age to compare with a limit: 6.96 days is not 7 days old (age_days is for reading)
+                        "age_days_exact": round(max(age, 0.0), 6),
                         "size_gb": round(sizes[key] / GB, 2) if key in sizes else None,
                         "quiesced": bool(n.quiesced),
                         "memory": (layouts.get(key, {}).get("memory") if layouts.get(key, {}).get("memory") is not None else -1) >= 0,

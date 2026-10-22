@@ -6,12 +6,12 @@
 # without .service: how each one is run (systemd unit or plain podman) is found by itself. Add
 # `unit: NAME.service` under one only if the job output shows the wrong unit, and `user: NAME`
 # for a container of a user (rootless podman).
+# These are the containers STIG Manager deploy (roles/stigman_stack) makes; Keycloak is your own, elsewhere. A STIG
+# Manager you set up yourself: its container names instead (sudo podman ps -a), e.g. a Keycloak container of its own.
 watch_containers:
-  - name: mysql
-  - name: kcmysql
-  - name: keycloak
-  - name: stigman
-  - name: nginx
+  - name: stigman-mysql
+  - name: stigman-api
+  - name: stigman-nginx
 check_certs_endpoints:                   # the certificate browsers see
   - {name: STIG Manager, host: 127.0.0.1, port: 443}
 # check_certs_files: [/etc/CHANGE-ME/*.crt]   # also check the certificate files, if you like

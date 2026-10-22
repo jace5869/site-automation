@@ -23,6 +23,19 @@
 - name: VMware | which are old, and which of those are never deleted
   ansible.builtin.include_tasks: snapshot_split.yml
 
+- name: VMware | the approved plan is this workflow's own
+  ansible.builtin.assert:
+    that:
+      - awx_workflow_job_id is defined
+      - (vm_snapshot_cleanup_candidates_workflow | default('') | string) == (awx_workflow_job_id | string)
+    fail_msg: >-
+      Refused: vm_snapshot_cleanup_candidates did not come from this workflow's own plan step (it is from
+      {{ ('workflow job ' ~ vm_snapshot_cleanup_candidates_workflow) if vm_snapshot_cleanup_candidates_workflow | default('') | string else 'no workflow' }}, this is
+      {{ ('workflow job ' ~ awx_workflow_job_id) if awx_workflow_job_id is defined else 'no workflow' }}). Nothing was deleted.
+      Launch the workflow, and do not tick "Prompt on launch" for Variables on this template.
+    quiet: true
+  when: vm_snapshot_cleanup_candidates is defined
+
 - name: VMware | what to delete
   ansible.builtin.set_fact:
     _vm_sc: >-

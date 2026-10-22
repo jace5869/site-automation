@@ -43,14 +43,14 @@
       {%-   elif c[0] == 'DNS' and c[1] == 'fail' -%}
       {%-     set _ = f.append({'check': 'network', 'id': 'net:dns:' ~ c[2], 'severity': 'critical',
                                 'summary': c[2] ~ ' does not resolve (DNS)',
-                                'hint': 'getent ahosts ' ~ c[2] ~ '; cat /etc/resolv.conf; dig +short ' ~ c[2] ~ ' 2>/dev/null'}) -%}
+                                'hint': 'getent ahosts ' ~ (c[2] | quote) ~ '; cat /etc/resolv.conf; dig +short ' ~ (c[2] | quote) ~ ' 2>/dev/null'}) -%}
       {%-   elif c[0].startswith('TCP') and c[1] == 'fail' -%}
       {%-     set t = check_network_tcp[c[0][3:] | int] -%}
       {%-     set _ = f.append({'check': 'network', 'id': 'net:tcp:' ~ t.host ~ ':' ~ t.port, 'severity': t.severity | default('critical'),
                                 'summary': (t.name | default(t.host)) ~ ' (' ~ t.host ~ ':' ~ t.port ~ ') does not answer within '
                                            ~ check_network_timeout ~ 's',
-                                'hint': 'getent ahosts ' ~ t.host ~ "; timeout 5 bash -c 'exec 3<>/dev/tcp/" ~ t.host ~ '/' ~ t.port
-                                        ~ "' && echo open; ip route get $(getent ahosts " ~ t.host ~ " | awk 'NR==1 {print $1}')"}) -%}
+                                'hint': 'getent ahosts ' ~ (t.host | quote) ~ "; timeout 5 bash -c 'exec 3<>\"/dev/tcp/$0/$1\"' " ~ (t.host | quote) ~ ' ' ~ (t.port | string | quote)
+                                        ~ " && echo open; ip route get $(getent ahosts " ~ (t.host | quote) ~ " | awk 'NR==1 {print $1}')"}) -%}
       {%-   endif -%}
       {%- endfor -%}
       {{ f }}

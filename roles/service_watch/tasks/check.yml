@@ -157,13 +157,13 @@
     url: "{{ item.url }}"
     timeout: 5
     validate_certs: false
-    status_code: "{{ watch_url_ok_status }}"
+    status_code: "{{ _watch_ok_status }}"
   loop: "{{ _watch_list | selectattr('url', 'defined') | selectattr('url') | list }}"
   loop_control:
     label: "{{ item.key }}: {{ item.url }}"
   register: _watch_http
   failed_when: false
-  until: (_watch_http.status | default(-1) | int) in watch_url_ok_status
+  until: (_watch_http.status | default(-1) | int) in _watch_ok_status
   retries: "{{ _watch_retries | default(0) | int }}"
   delay: "{{ watch_verify_delay | int }}"
 
@@ -279,7 +279,7 @@
       {%-   set code = r.status | default(-1) | int -%}
       {%-   set p = ('HTTP ' ~ code) if code > 0 else ('no answer: ' ~ (r.msg | default('') | regex_replace('^.*Request failed: ', '') | truncate(100))) -%}
       {%-   set _ = pages.update({r.item.url: p}) -%}
-      {%-   if code not in watch_url_ok_status -%}
+      {%-   if code not in _watch_ok_status -%}
       {%-     set _ = f.append(r.item.name ~ ' page ' ~ r.item.url ~ ' -> ' ~ p) -%}
       {%-   endif -%}
       {%- endfor -%}

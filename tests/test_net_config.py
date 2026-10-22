@@ -140,6 +140,39 @@ def free_port():
     return p
 
 
+
+class StoreResults(unittest.TestCase):
+    RES = {"devices": [{"host": "a", "status": "new", "error": ""}, {"host": "b", "status": "changed", "error": ""},
+                       {"host": "c", "status": "unchanged", "error": ""}, {"host": "d", "status": "failed", "error": "no login"}],
+           "counts": {}}
+
+    def test_mark_failed(self):
+        r = f.mark_failed(self.RES, {"*new_changed*": "the commit could not be pushed"})
+        self.assertEqual([d["status"] for d in r["devices"]], ["failed", "failed", "unchanged", "failed"])
+        self.assertEqual(r["devices"][3]["error"], "no login")                         # an earlier error kept
+        self.assertEqual(r["counts"], {"new": 0, "changed": 0, "unchanged": 1, "failed": 3})
+        r = f.mark_failed(self.RES, {"c": "could not read its last backup: denied"})
+        self.assertEqual((r["devices"][2]["status"], r["counts"]["failed"]), ("failed", 2))
+        self.assertEqual(f.mark_failed(self.RES, {})["counts"], {"new": 1, "changed": 1, "unchanged": 1, "failed": 1})
+
+    def test_read_errors(self):
+        res = [{"item": {"host": "a"}, "failed": True, "msg": "file not found: /x/a.cfg"},
+               {"item": {"host": "b"}, "failed": True, "msg": "Path C:\\x\\b.cfg is not found"},
+               {"item": {"host": "c"}, "failed": False, "msg": "Permission denied"},       # failed_when: false clears 'failed'
+               {"item": {"host": "e"}, "skipped": True},
+               {"item": {"host": "d"}, "content": "eA=="}]
+        self.assertEqual(f.read_errors(res), {"c": "could not read its last backup: Permission denied"})
+
+    def test_merge_both(self):
+        share = {"devices": [{"host": "a", "status": "new"}, {"host": "b", "status": "failed", "error": "could not read"},
+                             {"host": "c", "status": "unchanged"}, {"host": "d", "status": "failed", "error": "no login"}]}
+        r = f.merge_results(self.RES, share)
+        self.assertEqual([d["status"] for d in r["devices"]], ["new", "failed", "unchanged", "failed"])
+        self.assertEqual(r["devices"][1]["error"], "share: could not read")
+        self.assertEqual(r["devices"][3]["error"], "git: no login; share: no login")
+        self.assertEqual(r["counts"]["failed"], 2)
+
+
 class PanosModule(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -207,6 +240,61 @@ class PanosModule(unittest.TestCase):
         finally:
             pan.revert()
         self.assertFalse(pan.pending())
+
+
+    def test_half_applied_is_reverted(self):
+        import site_panos_api as m
+        xp = "/config/devices/entry[@name='localhost.localdomain']/deviceconfig/system"
+        pan = m.Pan("127.0.0.1", self.port, username="admin", password="admin", validate_certs=False, scheme="http")
+        entries = [{"xpath": xp, "element": "<login-banner>Half</login-banner>"}, {"xpath": xp, "element": "<broken"},
+                   {"xpath": xp, "element": "<timezone>UTC</timezone>"}]
+        with self.assertRaisesRegex(m.PanError, "entry 2 of 3 .* - nothing committed, the candidate reverted"):
+            m.run(self.p(action="set", entries=entries), scheme="http")
+        self.assertFalse(pan.pending())                                   # nothing left on the candidate
+        self.assertNotIn("Half", m.run(self.p(action="export"), scheme="http")["config"])
+        m.run(self.p(action="set", entries=entries[:1]), check_mode=True, scheme="http")   # a later load is not refused
+
+    def test_check_mode_compares(self):
+        import site_panos_api as m
+        xp = "/config/devices/entry[@name='localhost.localdomain']/deviceconfig/system"
+        banner = [{"xpath": xp, "element": "<domain>compare.example.mil</domain>"}]   # an element no other test reads
+        r = m.run(self.p(action="set", entries=banner), check_mode=True, scheme="http")
+        self.assertFalse(r.get("unchanged", False))                         # not there yet: would change
+        m.run(self.p(action="set", entries=banner), scheme="http")
+        r = m.run(self.p(action="set", entries=banner), check_mode=True, scheme="http")
+        self.assertTrue(r.get("unchanged"))                                 # there already: would change nothing
+        r = m.run(self.p(action="set", entries=banner + [{"xpath": xp + "/nope", "action": "delete"}]), check_mode=True, scheme="http")
+        self.assertTrue(r.get("unchanged"))                                 # deleting what is not there changes nothing
+
+    def test_cannot_reach(self):
+        import site_panos_api as m
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+        try:   # accepts, never answers: a read timeout (socket.timeout, an OSError) is "cannot reach", not a traceback
+            with self.assertRaisesRegex(m.PanError, "cannot reach the firewall"):
+                m.run(self.p(action="export", port=port, timeout=1, api_key="k"), scheme="http")
+        finally:
+            srv.close()
+
+
+class PanosEntryCompare(unittest.TestCase):
+    def test_entry_unchanged(self):
+        try:
+            import site_panos_api as m
+        except ImportError as e:
+            raise unittest.SkipTest("ansible is not importable: %s" % e)
+        now = "<system><login-banner>B</login-banner><timezone>UTC</timezone></system>"
+        self.assertTrue(m.entry_unchanged({"element": "<login-banner>B</login-banner>"}, now))
+        self.assertTrue(m.entry_unchanged({"element": "<timezone> UTC </timezone><login-banner>B</login-banner>"}, now))
+        self.assertFalse(m.entry_unchanged({"element": "<login-banner>C</login-banner>"}, now))
+        self.assertFalse(m.entry_unchanged({"element": "<login-banner>B</login-banner>"}, ""))
+        self.assertTrue(m.entry_unchanged({"action": "edit", "element": now}, now))
+        self.assertFalse(m.entry_unchanged({"action": "edit", "element": "<system><timezone>UTC</timezone></system>"}, now))
+        self.assertTrue(m.entry_unchanged({"action": "delete"}, ""))
+        self.assertFalse(m.entry_unchanged({"action": "delete"}, now))
+        self.assertFalse(m.entry_unchanged({"element": "<broken"}, now))
 
 
 if __name__ == "__main__":

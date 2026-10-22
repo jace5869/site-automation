@@ -39,7 +39,7 @@ function Invoke-CimMethod {
     $s = Get-State
     switch ($MethodName) {
         'TriggerSchedule' { $s.scans = [int]$s.scans + 1; Set-State $s; return [pscustomobject]@{ ReturnValue = 0 } }
-        'DetermineIfRebootPending' { return [pscustomobject]@{ RebootPending = [bool](@($s.updates | Where-Object { [int]$_.EvaluationState -eq 8 }).Count); IsHardRebootPending = $false } }
+        'DetermineIfRebootPending' { return [pscustomobject]@{ RebootPending = ([bool](@($s.updates | Where-Object { [int]$_.EvaluationState -eq 8 }).Count) -or [bool]$s.lingering_reboot); IsHardRebootPending = $false } }
         'InstallUpdates' {
             $ids = @($Arguments.CCMUpdates | ForEach-Object { $_.UpdateID })
             foreach ($u in $s.updates) { if ($ids -contains $u.UpdateID) { $u.EvaluationState = 2 } }

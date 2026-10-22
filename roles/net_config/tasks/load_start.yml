@@ -67,6 +67,7 @@
     timeout: "{{ servicenow_timeout | default(30) }}"
     status_code: [200, 401, 403, 404]
   register: _ncl_chg
+  failed_when: false            # no connection: said below - a dry run goes on with a warning, a real run stops
   check_mode: false
   when: net_config_change | default('', true) | length > 0 and lookup('ansible.builtin.env', 'SN_HOST') | length > 0
 
@@ -77,7 +78,9 @@
       {{ {'number': net_config_change | default('', true), 'sys_id': r.sys_id | default(''), 'state': r.state | default(''),
           'why': ('' if not net_config_change | default('', true) else
                   'No ServiceNow connection: attach the "ServiceNow API" credential (SN_HOST, SN_USERNAME, SN_PASSWORD).'
-                  if _ncl_chg.skipped | default(false) or _ncl_chg.status is not defined else
+                  if _ncl_chg.skipped | default(false) else
+                  ('Could not reach ServiceNow to read ' ~ net_config_change ~ ': ' ~ (_ncl_chg.msg | default('no answer') | string | truncate(200)))
+                  if _ncl_chg.status | default(-1) | int < 0 else
                   ('ServiceNow refused the read (HTTP ' ~ _ncl_chg.status ~ '): the account needs read access to change_request.')
                   if _ncl_chg.status != 200 else (r | net_config_change_ok(net_config_change_states, net_config_change)))} }}
 

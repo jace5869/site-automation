@@ -21,7 +21,7 @@ $GB = 1073741824
 # ---- the scenarios --------------------------------------------------------------------------
 $M = @{ cim = @{}; events = @(); logs = @{}; reg = @{}; paths = @(); exe = @{}; exit = @{} }
 $cfg = @{}
-switch ($Scenario) {
+switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: the audit data without auditpol /backup
     'disk_full' {
         $cfg = @{ warn_pct = 85; crit_pct = 95; ignore = @('E:'); overrides = @(@{ drive = 'F:'; limits = @{ warn = 96; crit = 99 } }) }
         $M.cim.Win32_LogicalDisk = @(
@@ -132,6 +132,14 @@ switch ($Scenario) {
             'SRV01,System,Logon,{0CCE9215-69AE-11D9-BED3-505054503030},Success,',
             'SRV01,System,Credential Validation,{0CCE923F-69AE-11D9-BED3-505054503030},Success and Failure,',
             'SRV01,System,Account Lockout,{0CCE9217-69AE-11D9-BED3-505054503030},Success and Failure,')
+        if ($Scenario -eq 'audit') {
+            # a server in German: the words differ, the numbers (1 Success, 2 Failure, 3 both) do not
+            $M.exe['auditpol.exe /backup'] = @(
+                'Machine Name,Policy Target,Subcategory,Subcategory GUID,Inclusion Setting,Exclusion Setting,Setting Value',
+                'SRV01,System,Anmelden,{0CCE9215-69AE-11D9-BED3-505054503030},Erfolg,,1',
+                'SRV01,System,Ueberpruefung der Anmeldeinformationen,{0CCE923F-69AE-11D9-BED3-505054503030},Erfolg und Fehler,,3',
+                'SRV01,System,Kontosperrung,{0CCE9217-69AE-11D9-BED3-505054503030},Erfolg und Fehler,,3')
+        }
         $M.logs = @{ Security = (O @{ MaximumSizeInBytes = 20971520 }); Application = (O @{ MaximumSizeInBytes = 33554432 }); System = (O @{ MaximumSizeInBytes = 33554432 }) }
         $M.cim.Win32_Service = @()
     }
@@ -254,6 +262,10 @@ switch ($Scenario) {
         $pcsr = Join-Path $M.fs 'pend.corp.test-earlier.csr'
         Microsoft.PowerShell.Management\Set-Content -LiteralPath $pcsr -Value "-----BEGIN NEW CERTIFICATE REQUEST-----`r`nPENDING`r`n-----END NEW CERTIFICATE REQUEST-----"
         ConvertTo-Json @{ request = ('AB' * 20); csr_path = $pcsr } | Microsoft.PowerShell.Management\Set-Content -LiteralPath (Join-Path $M.fs "$($t.pend).json")
+        # an earlier run whose request's thumbprint was not known (request ''): not a pending request - a new CSR
+        $scsr = Join-Path $M.fs 'ec.corp.test-earlier.csr'
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath $scsr -Value "-----BEGIN NEW CERTIFICATE REQUEST-----`r`nSTALE`r`n-----END NEW CERTIFICATE REQUEST-----"
+        ConvertTo-Json @{ request = ''; csr_path = $scsr } | Microsoft.PowerShell.Management\Set-Content -LiteralPath (Join-Path $M.fs "$($t.ec).json")
         $cands = @()
         foreach ($x in 'web', 'ca', 'self', 'upn', 'pend', 'old', 'ec', 'big') {
             $c = @($M.certs['Cert:\LocalMachine\My'] | Where-Object { $_.Thumbprint -eq $t[$x] })[0]
@@ -328,6 +340,8 @@ function Test-Path {
     $p = $Path; if ($LiteralPath) { $p = $LiteralPath }
     # -PathType too: Windows PowerShell 5.1's Get-FileHash is a script that asks Test-Path -PathType Container
     if ($M.fs -and $p.StartsWith($M.fs)) { return (Microsoft.PowerShell.Management\Test-Path -LiteralPath $p -PathType $PathType) }
+    # a store itself exists, as on a server ("Cert:\LocalMachine\REQUEST\" - a request with no thumbprint)
+    if ($p -match '^Cert:\\[^\\]+\\[^\\]+\\?$') { return $M.certs.ContainsKey($p.TrimEnd('\')) }
     if ($p -match '^(Cert:\\.+)\\([0-9A-Fa-f]{40})$') { return [bool](@($M.certs[$Matches[1]] | Where-Object { $_.Thumbprint -eq $Matches[2] }).Count) }
     return ($M.paths -contains $p)
 }
@@ -354,7 +368,17 @@ function Invoke-Exe([string] $Key) {
 }
 function w32tm.exe { Invoke-Exe ('w32tm.exe ' + ($args -join ' ')) }
 function nltest.exe { Invoke-Exe ('nltest.exe ' + ($args -join ' ')) }
-function auditpol.exe { Invoke-Exe ('auditpol.exe ' + ($args -join ' ')) }
+# auditpol /backup /file:<path>: the scenario's backup lines written to that file (none given: it fails)
+function auditpol.exe {
+    if ($args[0] -eq '/backup') {
+        if (-not $M.exe.ContainsKey('auditpol.exe /backup')) { $global:LASTEXITCODE = 1; return 'Error 0x00000005 occurred: Access is denied.' }
+        $file = ([string]$args[1]) -replace '^/file:', ''
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath $file -Value $M.exe['auditpol.exe /backup']
+        $global:LASTEXITCODE = 0
+        return 'The command was successfully executed.'
+    }
+    Invoke-Exe ('auditpol.exe ' + ($args -join ' '))
+}
 function netsh.exe { Invoke-Exe ('netsh.exe ' + ($args -join ' ')) }
 function net.exe { Invoke-Exe ('net.exe ' + ($args -join ' ')) }
 function icacls.exe { $global:LASTEXITCODE = 0 }

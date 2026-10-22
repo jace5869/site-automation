@@ -181,7 +181,8 @@ def read(path):
 
 
 def role_files(role, tasks_from, seen, checks):
-    """Follow one role entry point: its task file, the files it includes, and the role's templates."""
+    """Follow one role entry point: its task file, the files it includes, the role's templates and its vars
+    (vars/main.yml is loaded with the role: a setting read only there is read by the playbook)."""
     if "{{" in role:
         found = []
         for r in sorted(glob.glob(os.path.join(ROOT, "roles", checks))) if checks else []:
@@ -192,7 +193,8 @@ def role_files(role, tasks_from, seen, checks):
     if not os.path.isfile(path):
         path = os.path.join(tdir, (tasks_from or "main") + ".yml")
     found = []
-    extra = sorted(glob.glob(os.path.join(ROOT, "roles", role, "templates", "*")))
+    extra = sorted(glob.glob(os.path.join(ROOT, "roles", role, "templates", "*"))) + \
+        sorted(glob.glob(os.path.join(ROOT, "roles", role, "vars", "main.yml")))
     for p in [path] + extra:
         if os.path.isfile(p) and p not in seen:
             seen.add(p)
@@ -209,7 +211,11 @@ def follow(text, role, seen, checks):
         name = ROLE_NAME.search(block)
         tf = TASKS_FROM.search(block)
         if name:
-            found += role_files(name.group(1), tf.group(1) if tf else None, seen, checks)
+            line = re.search(r"^\s*tasks_from:.*$", block, re.M)
+            picked = re.findall(r"'([A-Za-z0-9_./-]+\.yml)'", line.group(0)) if tf and tf.group(1).startswith("{{") else []
+            # tasks_from: "{{ 'a.yml' if ... else 'b.yml' }}" - either may run: both are read
+            for t in picked or [tf.group(1) if tf else None]:
+                found += role_files(name.group(1), t, seen, checks)
     for m in INCLUDE_TASKS.finditer(text):
         if role:
             found += role_files(role, m.group(1), seen, checks)

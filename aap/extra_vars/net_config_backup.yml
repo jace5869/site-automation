@@ -41,7 +41,9 @@ net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # your PRIVATE, i
 # net_config_git_author_email: site-automation@localhost
 
 ## The git server's SSH host key: accept-new (the first connection learns it), or yes (only the keys
-## in net_config_git_known_hosts - lines as in a known_hosts file).
+## in net_config_git_known_hosts - lines as in a known_hosts file). In an execution environment
+## ssh's own known_hosts is empty every job, so accept-new learns the key each time: only
+## net_config_git_known_hosts + yes really checks it.
 # net_config_git_host_key_checking: accept-new
 
 ## the git server's host keys (known_hosts lines), for net_config_git_host_key_checking: yes

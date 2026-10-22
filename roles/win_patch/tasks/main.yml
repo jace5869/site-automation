@@ -64,6 +64,9 @@
   loop_control:
     loop_var: _wp_round
 
+# until + failed_when: false - when the retries run out the task is NOT failed (ansible-core marks the result failed,
+# but failed_when's False wins: TaskResult.is_failed() returns failed_when_result), so the result task below runs.
+# Checked on ansible-core 2.16 and 2.21; the same holds for every until-task in this repository.
 - name: Patch | the automatic services that ran before run again
   ansible.builtin.script: win_patch.ps1
   environment:

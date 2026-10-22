@@ -73,9 +73,21 @@
   failed_when: false
   check_mode: false
 
+# needs-restarting -r: 0 = no reboot needed, 1 = needed. Anything else (not installed: dnf-utils / yum-utils, or
+# it failed) does not tell - after updates that counts as needed, never as "no reboot".
+- name: Patch | needs-restarting could not tell
+  ansible.builtin.debug:
+    msg: >-
+      needs-restarting -r did not answer (rc {{ _patch_needs.rc | default('?') }}: {{ (_patch_needs.stderr | default('')
+      or _patch_needs.msg | default('')) | truncate(200) }}) - install dnf-utils (RHEL 8/9: dnf-plugins-core; RHEL 7:
+      yum-utils). {{ 'Updates were installed, so a reboot counts as needed.' if _patch_dnf.changed else 'Nothing was updated.' }}
+  when: _patch_needs.rc | default(-1) not in [0, 1]
+
 - name: Patch | decide
   ansible.builtin.set_fact:
-    _patch_reboot_needed: "{{ _patch_needs.rc | default(0) == 1 or patch_reboot == 'always' }}"
+    _patch_reboot_needed: >-
+      {{ _patch_needs.rc | default(-1) == 1 or patch_reboot == 'always'
+         or (_patch_needs.rc | default(-1) not in [0, 1] and _patch_dnf.changed | default(false)) }}
     _patch_reboot_allowed: >-
       {{ automatic_restarts | bool and patch_reboot != 'never'
          and group_names | intersect(_patch_no_reboot) | length == 0 }}

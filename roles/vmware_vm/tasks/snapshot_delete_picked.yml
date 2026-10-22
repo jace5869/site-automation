@@ -20,6 +20,19 @@
          ('plan' if awx_workflow_job_id is defined or not vm_pick_confirm | bool else 'confirmed') }}
     _vm_pd: "{{ (vm_snapshot_pick_plan if vm_snapshot_pick_plan is defined else vm_snapshot_picks) | vm_pick_parse('snapshot') }}"
 
+- name: VMware | the approved plan is this workflow's own
+  ansible.builtin.assert:
+    that:
+      - awx_workflow_job_id is defined
+      - (vm_snapshot_pick_plan_workflow | default('') | string) == (awx_workflow_job_id | string)
+    fail_msg: >-
+      Refused: vm_snapshot_pick_plan did not come from this workflow's own plan step (it is from
+      {{ ('workflow job ' ~ vm_snapshot_pick_plan_workflow) if vm_snapshot_pick_plan_workflow | default('') | string else 'no workflow' }}, this is
+      {{ ('workflow job ' ~ awx_workflow_job_id) if awx_workflow_job_id is defined else 'no workflow' }}). Nothing was deleted.
+      Launch the workflow, and do not tick "Prompt on launch" for Variables on this template.
+    quiet: true
+  when: _vm_pd_mode == 'approved'
+
 - name: VMware | something was picked
   ansible.builtin.assert:
     that: _vm_pd.picks | length > 0
@@ -106,6 +119,8 @@
                                   'size': x.size_gb | human_size, 'text': x.text}) -%}
         {%- endfor -%}
         {{ out }}
+      # the approved step checks the plan is its own workflow's, not one pasted in or left from another run
+      vm_snapshot_pick_plan_workflow: "{{ awx_workflow_job_id | default('') | string }}"
   when: _vm_pd_mode == 'plan'
 
 - name: VMware | what was done, as job artifacts (vm_snapshot_picked)

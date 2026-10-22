@@ -1,0 +1,4 @@
+---
+# watch_url_ok_status as a list of numbers, whatever way it was given: [200, 301], or text ("200, 301" from a survey).
+_watch_ok_status: >-
+  {{ (watch_url_ok_status | regex_findall('[0-9]+') if watch_url_ok_status is string else watch_url_ok_status) | map('int') | list }}

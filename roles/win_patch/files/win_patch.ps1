@@ -115,8 +115,12 @@ switch ($action) {
         $boot = Get-BootTime
         $msg = [string]$cfg.message
         if (-not $msg) { $msg = 'site-automation: restart after installing updates' }
-        $out = @(& shutdown.exe /r /t $delay /d p:2:17 /c $msg 2>&1 | ForEach-Object { [string]$_ })
-        if ($LASTEXITCODE -ne 0) { throw ('shutdown.exe failed (exit ' + $LASTEXITCODE + '): ' + ($out -join ' ')) }
+        # 'Continue' while it runs: Windows PowerShell 5.1 makes its stderr lines errors (2>&1), which 'Stop' would throw
+        $ErrorActionPreference = 'Continue'
+        $global:LASTEXITCODE = -1
+        try { $out = @(& shutdown.exe /r /t $delay /d p:2:17 /c $msg 2>&1 | ForEach-Object { [string]$_ }) }
+        finally { $ErrorActionPreference = 'Stop' }
+        if ($global:LASTEXITCODE -ne 0) { throw ('shutdown.exe failed (exit ' + $global:LASTEXITCODE + '): ' + ($out -join ' ')) }
         Out-Result @{ boot_before = $boot; restart_in_sec = $delay }
     }
     'boot' {

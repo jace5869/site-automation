@@ -1,5 +1,90 @@
 # Changelog
 
+## 0.18.1 — 2026-10-22
+
+**Updating without scripts:** paste `site-automation-0.18.1-changed-since-0.18.0.zip` as it is (from 0.15.1 to
+0.17.2: `site-automation-0.18.1-changed-since-0.15.1.zip`). Both leave out `playbooks/group_vars`,
+`playbooks/host_vars` and `poam/poam.csv`. No new job templates. One new setting (`cert_renew_csr_memory_days`, below); nothing
+to change in `all.yml`. **Your own `playbooks/group_vars/stigman.yml`** is kept by the update: compare its
+`watch_containers` with the corrected list below.
+
+**Fixes from a code review of 0.18.0.** Each with a test that failed before the fix where one could be written.
+
+**Troubleshoot: the target and the service are names only.** `ts_target` (host:port) and `ts_service` are typed by
+a person and went into commands run as root (Linux) or as an administrator (Windows); a quote or `$( )` in them
+could run a command. Now `ts_target` is letters, digits, dots and hyphens with a port, `ts_service` a unit or
+service name; the TCP test takes the host as a quoted argument, and Windows reads the service in single quotes.
+
+**Network config: the git token never goes into the environment.** Ansible puts a task's environment on the
+controller's interpreter command line (visible in `ps` and in verbose job events). The https token now goes to git
+as a header in a git config file in the job's work folder (mode 0600, deleted at the end). Without
+`net_config_git_known_hosts`, ssh's own known_hosts applies; `docs/NETWORK_CONFIG.md` now says that in an execution
+environment `accept-new` learns the key every job and only `net_config_git_known_hosts` with `yes` really checks it.
+
+**Network config: the job's Limit.** The backup counted every device of the group outside the Limit as "not
+backed up" (the job red, an incident each with `net_config_tickets`); it now backs up the Limit's devices only. A
+Limit without `localhost` skipped the part that keeps and reports the backup, and the job ended green having kept
+nothing: the network config jobs and the network certificate renewal now refuse such a Limit and say to add
+`,localhost` (or use `net_config_only` / `net_cert_only`).
+
+**Network config, PAN-OS: nothing left half-applied.** An entry the firewall refused (entry 2 of 3), a failed
+validation or commit, or a timeout left the earlier entries on the candidate - and every later load refused it as
+someone's uncommitted changes. Whatever fails after the first change now reverts the candidate, and the message
+says which entry. A timeout or a dropped connection reads "cannot reach the firewall" (not a module failure). In
+Check, entries that are there already show as unchanged.
+
+**Network config: failures reported, not lost.** A ServiceNow connection error no longer stops a load before its
+report (Check warns, a real run stops with the reason). A push the git server refuses after the retry, a last backup
+that cannot be read (only "not there yet" counts as new - an unreadable file would have been overwritten and its
+diff lost), and with `net_config_store: both` a failure on either store: each fails those devices with the reason,
+in the report, and the job is red at its end.
+
+**Certificate renewal (VMware, network devices): a CSR is made once, also after its incident is resolved.** The
+CSR was looked up on open incidents only: once a person (or auto-close) resolved the incident while the PKI was
+still signing, the next run made a second CSR - a new key on vCenter, the ESXi host or the Cisco device, so the
+certificate issued for the first no longer matched. Every incident of the certificate made in the last
+`cert_renew_csr_memory_days` (90) counts now; the report says "resolved since".
+
+**Linux patching: no "no reboot needed" when it cannot tell.** Without `needs-restarting` (dnf-utils), or when it
+failed, the job read that as no reboot needed. After updates were installed it now counts as needed, and says to
+install dnf-utils.
+
+**VMware: `vmware_protected_vms` given as text.** `-e vmware_protected_vms=AAP01` (or a survey's text) was read as
+its letters, so the protection matched nothing; and the pick lists and snapshot cleanup failed. A name, or names
+separated by commas or spaces, now protect as a list does.
+
+**VMware pick lists and snapshot cleanup: the approval is this workflow's.** The steps after an approval
+(restart the picked VMs, delete the picked snapshots, the snapshot cleanup) took any plan they were given. The plan
+now carries its workflow job's ID, and the step after the approval refuses a plan from another workflow or typed
+in. (Your workflows need no change.)
+
+**Windows: programs that write to stderr.** Under Windows PowerShell 5.1 a line a program (auditpol, net, w32tm,
+nltest, netsh, certreq, shutdown, eventcreate, takeown, icacls) wrote to stderr ended the check with an error
+instead of being read. Each is now run with its output read and its exit code checked, in PowerShell 5.1 and 7.
+
+**Windows: smaller fixes.** The audit policy is read with `auditpol /backup` (numbers), so a server in another
+language is checked right (the words of `/get` were compared with English). A CSR request without a known
+thumbprint is not "pending" (it was reused forever). The ACT folder check ignores a SACL (folders audited for the
+STIG were re-installed every run). Patching restarts a server again only when something was installed: a restart
+flag that a restart does not clear no longer restarts it each round.
+
+**Smaller fixes.** The approved-fix guard also refuses anything piped into a shell, `base64 -d`, `python -c` /
+`perl -e`, `find / -delete`, `rm -rf /etc/*` and `chmod -R 777 /etc`. Health check: `health_checks` as text with
+commas ("disk, services") works. Values from the inventory and from the hosts are quoted in the certificate
+check's script and in the remediation hints (MariaDB, network). POA&M and service watch: their list settings given
+as text work. Service watch appends its incident line (it rewrote the file and dropped a line that was there
+already). STIG Manager deploy restarts a changed unit that is starting, not only one running, and waits
+`stigman_ready_retries` x `stigman_ready_delay` for MySQL too. Snapshot ages are compared unrounded (6.96 days is
+not 7). The VMware report and certificate artifacts and the network config backup artifact keep their numbers and
+true/false on ansible-core 2.16.
+
+**STIG Manager: the containers to watch.** The shipped `playbooks/group_vars/stigman.yml` watched `mysql`,
+`kcmysql`, `keycloak`, `stigman` and `nginx`; STIG Manager deploy makes `stigman-mysql`, `stigman-api` and
+`stigman-nginx` (Keycloak is your own, elsewhere). Fixed in the shipped file; the update keeps your copy.
+
+**Checked, no change:** a retried task with `failed_when: false` is not failed when its retries run out
+(ansible-core 2.16 and 2.21): the result tasks after it run, as written.
+
 ## 0.18.0 — 2026-10-21
 
 **Updating without scripts:** paste `site-automation-0.18.0-changed-since-0.17.2.zip` as it is (from

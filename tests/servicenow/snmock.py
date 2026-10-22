@@ -37,7 +37,9 @@ cmn_location: Building 100 (loc1); sys_user also has jdoe (u2, "Jane Doe").
 Usage: snmock.py PORT   (requests appended to $SNMOCK_LOG as JSON lines)
 """
 import base64
+import datetime
 import json
+import re
 import os
 import sys
 import urllib.parse
@@ -89,10 +91,19 @@ def state_label(rec):
 def matches(rec, query):
     """The encoded-query subset the playbooks use, joined by ^: a=b, aSTARTSWITHb and aLIKEb (any case), aINb,c,
     active=true, a.name=b (a reference by its name: the mock keeps names), ref.field=b (parent /
-    change_request: that field of the ticket the reference holds), ORDERBY... (ignored: the records are
-    kept oldest first)."""
+    change_request: that field of the ticket the reference holds), a>=javascript:gs.daysAgoStart(N) or
+    a>=YYYY-MM-DD HH:MM:SS (a date), ORDERBY... (the records are kept oldest first; ORDERBYDESC turns the
+    result round, in the handler)."""
     for cond in [c for c in query.split("^") if c]:
         if cond.startswith("ORDERBY"):
+            continue
+        if ">=" in cond:
+            field, _, value = cond.partition(">=")
+            m = re.match(r"javascript:gs\.daysAgoStart\((\d+)\)$", value)
+            if m:
+                value = (datetime.datetime.utcnow() - datetime.timedelta(days=int(m.group(1)))).strftime("%Y-%m-%d 00:00:00")
+            if str(rec.get(field, "")) < value:
+                return False
             continue
         if "LIKE" in cond and "=" not in cond.partition("LIKE")[0]:
             field, _, value = cond.partition("LIKE")
@@ -256,6 +267,8 @@ class H(BaseHTTPRequestHandler):
             return 400, {"error": {"message": "Invalid table " + table}}
         if method == "GET" and not sys_id:
             rows = [i for i in INCIDENTS.values() if i.get("_table", "incident") == table and matches(i, q.get("sysparm_query", ""))]
+            if "ORDERBYDESC" in q.get("sysparm_query", ""):
+                rows.reverse()                                  # newest first
             rows = rows[:int(q.get("sysparm_limit", "10000"))]
             disp = q.get("sysparm_display_value") == "true"
             links = q.get("sysparm_exclude_reference_link") != "true"
@@ -273,7 +286,7 @@ class H(BaseHTTPRequestHandler):
                 rec.pop(field, None)
             rec.update({"sys_id": sid, "number": body.get("number") or "%s00%d" % (PREFIX[table], COUNTER[0]), "state": rec.get("state") or "1",
                         "_table": table,
-                        "sys_created_on": "2026-09-29 12:00:00", "work_notes_list": []})
+                        "sys_created_on": datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), "work_notes_list": []})
             journal_add(rec, body, name)
             INCIDENTS[sid] = rec
             return 201, {"result": {"sys_id": sid, "number": rec["number"]}}

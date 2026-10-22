@@ -67,6 +67,10 @@ servicenow_test_resolve: true
 # incident. Set the item's questions below: the "ServiceNow - catalog test" job lists them.
 # docs/CERT_RENEWAL_CATALOG.md
 cert_renew_servicenow: incident
+# incident: a CSR on an incident of the certificate made in the last this-many days counts as made - also when that
+# incident was resolved or closed since (the PKI may still be signing it): vCenter, ESXi and Cisco keep one pending
+# key, and a second CSR would replace it. Older: a new CSR (the certificate is due again).
+cert_renew_csr_memory_days: 90
 # The catalog item: its name exactly as the catalog shows it (e.g. "DoD PKI Certificate Request"), or its sys_id.
 cert_renew_catalog_item: ""
 # The item's questions - by their internal names, as the catalog test lists them - and the answers:

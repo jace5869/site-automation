@@ -215,19 +215,22 @@
 # for the first time just above is never restarted: restarting MySQL during its first-time
 # initialisation can leave a half-built database.
 - name: Units | what changed
+  vars:
+    # running already - or starting (a unit restarting after a failure is "activating"): it must pick up the change
+    _stigman_up: [active, activating, reloading]
   ansible.builtin.set_fact:
     _stigman_restart:
       mysql: >-
-        {{ _stigman_pre.results[0].stdout == 'active'
+        {{ _stigman_pre.results[0].stdout in _stigman_up
            and (_stigman_units.results | selectattr('changed') | map(attribute='item.dest')
                 | select('in', ['stigman-mysql.container']) | list | length > 0) }}
       api: >-
-        {{ _stigman_pre.results[1].stdout == 'active'
+        {{ _stigman_pre.results[1].stdout in _stigman_up
            and ((_stigman_units.results | selectattr('changed') | map(attribute='item.dest')
                  | select('in', ['stigman-api.container']) | list | length > 0)
                 or _stigman_secret_set is changed or _stigman_ca is changed) }}
       nginx: >-
-        {{ _stigman_pre.results[2].stdout == 'active'
+        {{ _stigman_pre.results[2].stdout in _stigman_up
            and ((_stigman_units.results | selectattr('changed') | map(attribute='item.dest')
                  | select('in', ['stigman-nginx.container']) | list | length > 0)
                 or _stigman_nginx_conf is changed or _stigman_cert is changed or _stigman_key is changed) }}
@@ -253,8 +256,8 @@
     argv: [podman, healthcheck, run, stigman-mysql]
   register: _stigman_mysql_health
   until: _stigman_mysql_health.rc == 0
-  retries: 30
-  delay: 5
+  retries: "{{ stigman_ready_retries }}"
+  delay: "{{ stigman_ready_delay }}"
   changed_when: false
   when: not ansible_check_mode
 

@@ -30,7 +30,8 @@ for c in 'reboot' 'sudo shutdown -h now' 'systemctl reboot' 'systemctl --now pow
          'rm -rf /etc && echo done' 'chmod -R 777 / && ls' 'systemctl isolate reboot.target' 'echo b > /proc/sysrq-trigger' 'kexec -e' \
          'runuser -u alice -- reboot' 'runuser -u alice -- env A=b systemctl --user poweroff' \
          'runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user reboot' 'runuser -u alice -- /sbin/shutdown -h now' \
-         'sudo -u alice systemctl --user halt'; do guard refused "$c"; done
+         'sudo -u alice systemctl --user halt' 'rm -rf /etc/*' 'chmod -R 777 /etc' 'find / -name x -delete' \
+         'echo cm0gLXJmIC8= | base64 -d | bash' "python3 -c 'import os; os.system(1)'" "perl -e 'unlink 1'" 'cat x | sudo bash'; do guard refused "$c"; done
 for c in 'systemctl restart httpd' 'systemctl reload nginx' 'journalctl -u httpd --since today' 'rm -f /var/tmp/core.1234' 'rm -rf /var/tmp/old-cache' \
          'dnf clean all' 'podman restart mariadb' 'chmod 640 /etc/foo.conf' 'df -h; du -sh /var/log/*' 'restorecon -Rv /var/www' 'logrotate -f /etc/logrotate.conf' \
          'truncate -s 0 /var/log/big.log' 'kill -HUP 1234' 'echo rebooting soon' 'systemctl status halt-service' \
@@ -39,7 +40,8 @@ for c in 'systemctl restart httpd' 'systemctl reload nginx' 'journalctl -u httpd
          'runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user restart web.service' \
          'runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user reset-failed web.service' \
          'runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user daemon-reload' \
-         'runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 podman start web' 'loginctl enable-linger alice'; do guard allowed "$c"; done
+         'runuser -u alice -- env XDG_RUNTIME_DIR=/run/user/1001 podman start web' 'loginctl enable-linger alice' \
+         'find /var/tmp -name "*.tmp" -delete' 'ps aux | grep sshd' 'chmod 755 /opt/app/bin/run.sh' 'python3 --version'; do guard allowed "$c"; done
 # ---- the report emailed once per job (roles/site_email; tests/email/fake_smtp.py as the relay) ----
 work=$(mktemp -d); relay_pid=""
 trap '[ -n "$relay_pid" ] && kill "$relay_pid" 2>/dev/null; rm -rf "$work"' EXIT

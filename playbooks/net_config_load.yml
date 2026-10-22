@@ -27,6 +27,11 @@
   hosts: "{{ net_config_group | default('net_config_devices') }}"
   gather_facts: false
   tasks:
+    - name: The job's Limit includes localhost
+      ansible.builtin.include_role:
+        name: net_config
+        tasks_from: limit_check.yml
+
     - name: Send the lines, or restore the backup
       ansible.builtin.include_role:
         name: net_config

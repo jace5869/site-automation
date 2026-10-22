@@ -45,7 +45,8 @@
       {%- for r in _ncs_old.results | default([]) if r.content is defined -%}
       {%-   set _ = old.update({r.item.host | net_config_file(r.item.platform): r.content | b64decode}) -%}
       {%- endfor -%}
-      {{ _ncf_all | net_config_backup_result(old, {'diff_lines': net_config_diff_lines | int}) }}
+      {{ _ncf_all | net_config_backup_result(old, {'diff_lines': net_config_diff_lines | int})
+         | net_config_mark_failed(_ncs_old.results | default([]) | net_config_read_errors) }}
   no_log: true
 
 - name: Network config | the files to write

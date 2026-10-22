@@ -1,0 +1,39 @@
+{
+ "client": true,
+ "boot": "2026-09-01T06:00:00",
+ "blocked": false,
+ "scans": 0,
+ "install_calls": 0,
+ "restarts": 0,
+ "services": [
+  {
+   "name": "CcmExec",
+   "state": "Running",
+   "slow": false,
+   "slow_polls": 0
+  },
+  {
+   "name": "W32Time",
+   "state": "Running",
+   "slow": false,
+   "slow_polls": 0
+  },
+  {
+   "name": "SlowSvc",
+   "state": "Running",
+   "slow": true,
+   "slow_polls": 0
+  }
+ ],
+ "updates": [
+  {
+   "UpdateID": "u1",
+   "ArticleID": "5040001",
+   "Name": "2026-09 Cumulative Update (KB5040001)",
+   "EvaluationState": 1,
+   "needs_restart": true
+  }
+ ],
+ "after_restart": [],
+ "lingering_reboot": true
+}

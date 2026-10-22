@@ -655,6 +655,39 @@ class Snapshots(unittest.TestCase):
         self.assertFalse(f.name_matches("x", ["", " "]))
 
 
+    def test_age_compared_unrounded(self):
+        # 6.96 days shows as 7.0 but is not 7 days old yet; 7.0001 is
+        snaps = [{"vm": "a", "moid": "vm-1", "id": 1, "name": "x", "description": "", "age_days": 7.0, "age_days_exact": 6.96, "size_gb": 1.0},
+                 {"vm": "b", "moid": "vm-2", "id": 1, "name": "y", "description": "", "age_days": 7.0, "age_days_exact": 7.0001, "size_gb": 1.0},
+                 {"vm": "c", "moid": "vm-3", "id": 1, "name": "z", "description": "", "age_days": 7.0, "size_gb": 1.0}]   # an older module: age_days
+        self.assertEqual([x["vm"] for x in f.vm_snapshot_split(snaps, 7)["old"]], ["b", "c"])
+
+
+class NameLists(unittest.TestCase):
+    """vmware_protected_vms and the other name settings given as text (a survey, -e x=AAP01) must never be read as
+    the letters of one name: the protection would match nothing."""
+
+    def test_name_list(self):
+        self.assertEqual(f.name_list("AAP01"), ["AAP01"])
+        self.assertEqual(f.name_list("AAP01, VCSA01\nDC*"), ["AAP01", "VCSA01", "DC*"])
+        self.assertEqual(f.name_list(["AAP01", " ", "x"]), ["AAP01", "x"])
+        self.assertEqual(f.name_list(None), [])
+        with self.assertRaises(ValueError):
+            f.name_list({"AAP01": 1})
+
+    def test_name_matches_text(self):
+        self.assertTrue(f.name_matches("aap01", "AAP01"))
+        self.assertTrue(f.name_matches("dc02", "AAP01, DC*"))
+        self.assertFalse(f.name_matches("A", "AAP01"))            # not a letter of it
+        self.assertTrue(f.name_matches("vcsa01", ["AAP01", "vcsa*"]))
+        self.assertFalse(f.name_matches("web01", ""))
+
+    def test_protected_text_in_the_snapshot_split(self):
+        snaps = [{"vm": "AAP01", "moid": "vm-1", "id": 1, "name": "x", "description": "", "age_days": 9.0, "size_gb": 1.0}]
+        r = f.vm_snapshot_split(snaps, 3, "", "AAP01")
+        self.assertEqual((r["old"], [x["reason"] for x in r["held"]]), ([], ["the VM is on the exclusion list"]))
+
+
 class PickLists(unittest.TestCase):
     """The pick lists: survey choices that end with the ID token, read back from the survey's answer, and
     each pick found again live (plugins/filter/site_filters.py, vm_pick_*)."""

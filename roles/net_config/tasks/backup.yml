@@ -1,12 +1,14 @@
 ---
 # NETWORK CONFIG BACKUP (playbooks/net_config_backup.yml), part 2 on localhost: what each device gave (part 1,
-# read.yml), kept in git and / or on the share, the incidents (net_config_tickets), the report, the email.
+# read.yml), kept in git and / or on the share, the incidents (net_config_tickets), the report, the email. Only the
+# devices of the job's Limit (and net_config_only): a device left out by either is not "not backed up".
 - name: Network config | the devices
   ansible.builtin.set_fact:
     _ncf_hosts: >-
       {%- set only = (net_config_only | replace(',', ' ')).split() if net_config_only is string else net_config_only | default([], true) -%}
+      {%- set limited = query('ansible.builtin.inventory_hostnames', ansible_limit | default('all', true)) -%}
       {%- set out = [] -%}
-      {%- for h in groups[net_config_group] | default([]) if not only or h | name_matches(only) -%}
+      {%- for h in groups[net_config_group] | default([]) if h in limited and (not only or h | name_matches(only)) -%}
       {%-   set _ = out.append(h) -%}
       {%- endfor -%}
       {{ out }}
@@ -16,7 +18,8 @@
     that: _ncf_hosts | length > 0
     fail_msg: >-
       No device: the inventory group {{ net_config_group }} (net_config_group) {{ 'has none matching net_config_only'
-      if net_config_only | default([], true) else 'is empty or missing' }} in this job's inventory.
+      if net_config_only | default([], true) else ('has none in the Limit of this job' if ansible_limit | default('', true) else 'is empty or missing') }}
+      in this job's inventory.
     quiet: true
 
 - name: Network config | what each device gave
@@ -46,7 +49,10 @@
 
 - name: Network config | the result
   ansible.builtin.set_fact:
-    _ncf_res: "{{ _ncg_res if net_config_store in ['git', 'both'] else _ncs_res }}"
+    # both: a device is backed up only when both kept it (the report says which store failed)
+    _ncf_res: >-
+      {{ _ncg_res | net_config_merge_results(_ncs_res) if net_config_store == 'both'
+         else (_ncg_res if net_config_store == 'git' else _ncs_res) }}
     _ncf_where: "{{ ([_ncg_where | default('')] if net_config_store in ['git', 'both'] else []) + ([_ncs_where | default('')] if net_config_store in ['share', 'both'] else []) }}"
   no_log: true
 
@@ -76,12 +82,12 @@
 - name: Network config | the result as job artifacts (net_config_backup)
   ansible.builtin.set_stats:
     data:
-      net_config_backup:
-        dry_run: "{{ ansible_check_mode }}"
-        counts: "{{ _ncf_res.counts }}"
-        changed: "{{ _ncf_res.devices | selectattr('status', 'equalto', 'changed') | map(attribute='host') | list }}"
-        failed: "{{ _ncf_res.devices | selectattr('status', 'equalto', 'failed') | map(attribute='host') | list }}"
-        commit: "{{ _ncg_commit | default('') }}"
+      # one expression, so dry_run stays a boolean on ansible-core 2.16 too
+      net_config_backup: >-
+        {{ {'dry_run': ansible_check_mode, 'counts': _ncf_res.counts,
+            'changed': _ncf_res.devices | selectattr('status', 'equalto', 'changed') | map(attribute='host') | list,
+            'failed': _ncf_res.devices | selectattr('status', 'equalto', 'failed') | map(attribute='host') | list,
+            'commit': _ncg_commit | default('')} }}
 
 - name: Network config | email it (report_email_to)
   ansible.builtin.include_role:

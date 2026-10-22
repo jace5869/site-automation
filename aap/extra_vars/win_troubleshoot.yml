@@ -65,7 +65,7 @@
 #   service:
 #     checks: [services]
 #     commands:
-#       - {why: "The service", cmd: "Get-CimInstance Win32_Service -Filter \"Name='{{ _ts_svc }}'\" | Format-List Name, DisplayName, State, StartMode, ExitCode, ServiceSpecificExitCode, ProcessId, StartName, PathName"}
+#       - {why: "The service", cmd: "Get-CimInstance Win32_Service -Filter ('Name=''{{ _ts_svc }}''') | Format-List Name, DisplayName, State, StartMode, ExitCode, ServiceSpecificExitCode, ProcessId, StartName, PathName"}
 #       - {why: "What it depends on, and their state", cmd: "Get-Service -Name '{{ _ts_svc }}' -RequiredServices | Format-Table Name, Status, StartType -AutoSize"}
 #       - {why: "Its recovery settings (what Windows does when it fails)", cmd: "sc.exe qfailure '{{ _ts_svc }}'"}
 #       - {why: "Service Control Manager events about it, last {{ ts_hours }} hours", cmd: "$d = (Get-Service -Name '{{ _ts_svc }}').DisplayName; Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Service Control Manager'; StartTime={{ _ts_since }}} -ErrorAction SilentlyContinue | Where-Object { $_.Message -like \"*$d*\" } | Select-Object -First 15 | Format-Table TimeCreated, Id, Message -Wrap"}

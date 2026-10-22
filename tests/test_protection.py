@@ -92,5 +92,19 @@ for p in sorted((root / "playbooks/group_vars").glob("*.yml")) + [root / "invent
     if p.name == "all.yml":
         check(not live, "playbooks/group_vars/all.yml has no live safety-list lines (single source: role defaults)")
 
+# Troubleshoot: the target and the service a person types go into commands run as root / an administrator -
+# only a host:port and a unit or service name pass (the same regex Ansible's `match` test uses: re.match)
+for f, svc_ok, svc_bad in (("roles/troubleshoot/tasks/main.yml", ["nginx", "stigman-api", "getty@tty1.service"], ["x; id", "$(id)", "a'b"]),
+                           ("roles/win_troubleshoot/tasks/main.yml", ["W3SVC", "MSSQL$SQLEXPRESS", "Print Spooler"], ["x'; Remove-Item C:\\", "$(Get-Date)", 'a"b'])):
+    that = " ".join(load(f)[0]["ansible.builtin.assert"]["that"])
+    tgt = re.search(r"ts_target is match\('([^']+)'\)", that).group(1)
+    svc = re.search(r"ts_service is match\('([^']+)'\)", that).group(1)
+    check(all(re.match(tgt, t) for t in ["ldap.example.mil:636", "192.0.2.10", "db-01.example.mil:3306"])
+          and not any(re.match(tgt, t) for t in ["h';id;'", "x$(id):1", "a b:1", "h`id`", "h;reboot"]),
+          f"{f}: ts_target - a host:port only")
+    check(all(re.match(svc, t) for t in svc_ok) and not any(re.match(svc, t) for t in svc_bad), f"{f}: ts_service - a name only")
+check("bash -c 'exec 3<>\"/dev/tcp/$0/$1\"' {{ ts_target.split(':')[0] | quote }}" in (root / "roles/troubleshoot/defaults/main.yml").read_text(),
+      "roles/troubleshoot: the TCP test takes the host as an argument, quoted - never inside the bash -c script")
+
 print("all checks passed" if not bad else f"{bad} failed")
 sys.exit(1 if bad else 0)

@@ -31,13 +31,13 @@
     state: directory
     mode: "0750"
 
+# appended (lineinfile would rewrite the whole file each time and drop a line that is there already); the line comes
+# on stdin, never on a command line
 - name: Record | append to {{ watch_record_file }}
-  ansible.builtin.lineinfile:
-    path: "{{ watch_record_file }}"
-    line: "{{ _watch_record | to_json }}"
-    insertafter: EOF
-    create: true
-    mode: "0640"
+  ansible.builtin.shell: "umask 027; cat >> {{ watch_record_file | quote }}"
+  args:
+    stdin: "{{ _watch_record | to_json }}"
+  changed_when: true
 
 - name: Record | written to {{ watch_record_file }}
   ansible.builtin.debug:

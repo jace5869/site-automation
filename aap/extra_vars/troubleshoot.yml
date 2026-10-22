@@ -71,7 +71,8 @@
 #       - {why: "What {{ ts_target.split(':')[0] }} resolves to", cmd: "getent ahosts {{ ts_target.split(':')[0] | quote }}"}
 #       - why: "Can we open a TCP connection to {{ ts_target }}?"
 #         cmd: >-
-#           timeout 5 bash -c 'exec 3<>/dev/tcp/{{ ts_target.split(':')[0] }}/{{ ts_target.split(':')[1] | default(443) }}' && echo OPEN || echo 'NO ANSWER (closed, filtered, or no route)'
+#           timeout 5 bash -c 'exec 3<>"/dev/tcp/$0/$1"' {{ ts_target.split(':')[0] | quote }} {{ (ts_target.split(':') + ['443'])[1] | quote }}
+#           && echo OPEN || echo 'NO ANSWER (closed, filtered, or no route)'
 #       - {why: "Which route and interface that traffic takes", cmd: "ip route get $(getent ahosts {{ ts_target.split(':')[0] | quote }} | awk 'NR==1 {print $1}') 2>&1"}
 #       - {why: "Firewall rules on this host", cmd: "firewall-cmd --list-all 2>/dev/null || echo 'firewalld not running'"}
 #       - {why: "Connection counts", cmd: "ss -s"}

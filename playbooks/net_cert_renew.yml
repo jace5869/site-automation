@@ -24,6 +24,16 @@
   hosts: "{{ net_cert_group | default('net_cert_devices') }}"
   gather_facts: false
   tasks:
+    # the incidents and the report are made on localhost: a Limit without it would skip them and end green
+    - name: The job's Limit includes localhost
+      ansible.builtin.assert:
+        that: ansible_limit | default('', true) | length == 0 or 'localhost' in query('ansible.builtin.inventory_hostnames', ansible_limit)
+        fail_msg: >-
+          The job's Limit ({{ ansible_limit | default('') }}) leaves out localhost, where this job reads the certificates and
+          opens the incidents: add ",localhost" to the Limit (e.g. rtr-lab01,localhost), or leave it empty and set net_cert_only.
+        quiet: true
+      run_once: true
+
     - name: A new key and its CSR, made on the device
       ansible.builtin.include_role:
         name: net_certs

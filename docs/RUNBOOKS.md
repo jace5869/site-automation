@@ -742,7 +742,8 @@ packages never updated here). Then:
    Variables). Without it, a host that needs a reboot is listed ("reboot it by hand, or run again
    with automatic_restarts: true"). With it, the job reboots only when `needs-restarting -r` says
    so (`patch_reboot: when_needed`), and **never** hosts in `patch_never_reboot_groups`
-   (`aap_hosts`).
+   (`aap_hosts`). A host without `needs-restarting` (install `dnf-utils`), or where it fails, counts
+   as needing a reboot after updates were installed - the job says so.
 4. After the update (and reboot), **every service that was running before must be running
    again**. If one is not, the host fails and the rollout stops.
 5. Never patches hosts in `no_patch` (vendor appliances), `aap`, `aap_hosts`, `sat`, `netapp` or

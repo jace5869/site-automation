@@ -14,7 +14,9 @@ function Test-Sddl([string] $Sddl, [bool] $NeedProtected) {
     $owner = ''
     if ($Sddl -match '^O:([^:]+?)G:') { $owner = $Matches[1] }
     $dacl = ''
-    if ($Sddl -match 'D:([^()]*)(\(.*)$') { $flags = $Matches[1]; $dacl = $Matches[2] } else { $flags = '' }
+    # the DACL only - its flags and its (ACE)s: a SACL after it (S:..., on folders audited for the STIG) is not
+    # about who has rights
+    if ($Sddl -match 'D:([A-Z]*)((?:\([^)]*\))*)') { $flags = $Matches[1]; $dacl = $Matches[2] } else { $flags = '' }
     $sids = @([regex]::Matches($dacl, '\(([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^)]*)\)') | ForEach-Object { $_.Groups[6].Value })
     $types = @([regex]::Matches($dacl, '\(([^;]*);') | ForEach-Object { $_.Groups[1].Value })
     $others = @($sids | Where-Object { $trusted -notcontains $_ })

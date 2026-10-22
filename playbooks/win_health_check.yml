@@ -40,9 +40,10 @@
       daily: [disk, services, performance, time, network, eventlog]
       weekly: [security, audit, accounts, certs, patching]
       all: [disk, services, performance, time, network, eventlog, security, audit, accounts, certs, patching]
-    # A survey's multiple-choice answer can arrive as a list or as lines of text: accept both.
+    # A survey's multiple-choice answer can arrive as a list or as lines of text, a text answer or an extra
+    # variable as "disk, services": accept all of them.
     _health_asked: >-
-      {{ (health_checks.splitlines() if health_checks is string else health_checks)
+      {{ (health_checks | regex_replace('[,;]', ' ') | split if health_checks is string else health_checks)
          | map('trim') | select | list }}
     _health_run: >-
       {%- set out = [] -%}

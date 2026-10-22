@@ -7,10 +7,11 @@
 # both, a run again none; the job fails for a device not backed up; the job output never shows a secret. The
 # load: a dry run sends nothing and needs no change; a real one needs a change in Implement; the lines sent
 # (IOS only the missing ones, then write memory; PAN-OS validated and committed), the work note on the change
-# with the secrets hidden; a run again changes nothing. The backup then sees the change (incidents with the
+# with the secrets hidden; a run again changes nothing. A job Limit (with localhost) backs up only its devices. The backup then sees the change (incidents with the
 # diff, secrets hidden); a restore to the first commit puts both back (IOS: scp + configure replace, PAN-OS:
 # import, load, commit). The share: the latest and a dated copy, a restore from it. PAN-OS refuses with
-# someone's uncommitted changes, and reverts a change that does not validate. At most net_config_max_devices.
+# someone's uncommitted changes, and reverts a change that does not validate (or an entry it refuses midway). At
+# most net_config_max_devices. A push the git server refuses, and an unreadable last backup, fail those devices.
 #   bash tests/netconfig/run_net_config_test.sh        (ANSIBLE_PLAYBOOK=... to pick one; needs cisco.ios,
 #   ansible.netcommon, paramiko and scp)
 set -u
@@ -141,6 +142,17 @@ rc=$?
 run b4.txt playbooks/net_config_backup.yml -e net_config_fail_on_failed=false
 [ $? -eq 0 ] && ok "...net_config_fail_on_failed: false - the job is green" || bad "net_config_fail_on_failed: false"
 
+# ---- 4b. the job's Limit: only its devices, the others not "not backed up"; a Limit without localhost refused ----
+run b-lim.txt playbooks/net_config_backup.yml --limit 'rtr01*,localhost'
+rc=$?
+[ $rc -eq 0 ] && has "a Limit (rtr01*,localhost): rtr01 only, sw09 / odd01 not counted as failed" b-lim.txt \
+    "Network config backup: 0 changed, 0 new, 1 unchanged, 0 failed" || { bad "backup with a Limit: exit $rc"; tail -20 b-lim.txt | sed 's/^/       /'; }
+lacks "...the devices outside the Limit not in the report" b-lim.txt "sw09.example.mil" "fw01.example.mil"
+run b-lim2.txt playbooks/net_config_backup.yml --limit 'rtr01*'
+[ $? -ne 0 ] && has "a Limit without localhost: refused before anything runs" b-lim2.txt "leaves out localhost" || bad "a Limit without localhost was not refused"
+run l-lim.txt playbooks/net_config_load.yml --check -e '{"net_config_lines": ["ntp server 192.0.2.124"]}' --limit 'rtr01*'
+[ $? -ne 0 ] && has "...the load too" l-lim.txt "leaves out localhost" || bad "load: a Limit without localhost was not refused"
+
 # ---- 5. the load: a dry run needs no change and sends nothing ----
 lines="{\"net_config_lines\": [\"ntp server 192.0.2.124\", \"snmp-server community n3wc0mm RO\"],
         \"net_config_panos_entries\": [{\"xpath\": \"$XP\", \"element\": \"<login-banner>Changed for the test</login-banner>\"}],
@@ -239,6 +251,10 @@ bad_entry="{\"net_config_panos_entries\": [{\"xpath\": \"$XP\", \"element\": \"<
 run p2.txt playbooks/net_config_load.yml -e "$bad_entry" -e "net_config_change=$chg"
 has "PAN-OS, a change that does not validate: nothing committed, the candidate reverted" p2.txt "validation failed - nothing committed, the candidate reverted"
 panapi type=op "cmd=<check><pending-changes></pending-changes></check>" | grep -q '<result>no</result>' && ok "...no change left pending" || bad "a change left pending on fw01"
+half="{\"net_config_panos_entries\": [{\"xpath\": \"$XP\", \"element\": \"<login-banner>Half</login-banner>\"}, {\"xpath\": \"$XP\", \"element\": \"<broken\"}], \"net_config_only\": [\"fw01*\"]}"
+run p3.txt playbooks/net_config_load.yml -e "$half" -e "net_config_change=$chg"
+has "PAN-OS, the firewall refuses entry 2 of 2: the first taken back too" p3.txt "entry 2 of 2" "nothing committed, the candidate reverted"
+panapi type=op "cmd=<check><pending-changes></pending-changes></check>" | grep -q '<result>no</result>' && ok "...nothing left half-applied" || bad "entry 1 left pending on fw01"
 
 # ---- 12. the share: the latest and a dated copy; a restore from it ----
 run s1.txt playbooks/net_config_backup.yml -e "$two" -e net_config_store=share -e "net_config_share_dir=$work/share"
@@ -251,5 +267,30 @@ run s2.txt playbooks/net_config_backup.yml -e "$two" -e net_config_store=share -
 run s3.txt playbooks/net_config_load.yml -e net_config_store=share -e "net_config_share_dir=$work/share" -e "$restore" -e net_config_restore_ref= \
     -e "net_config_change=$chg"
 has "restore from the share: both as they are already" s3.txt "Network config restore: 0 changed, 2 unchanged, 0 failed" "From: the share"
+
+# ---- 13. a push the git server refuses (someone else's push, a protected branch): reported, the job red ----
+git -C "$work/check" pull -q
+git -C "$work/check" rm -q configs/rtr01.example.mil.cfg
+git -C "$work/check" -c user.name=t -c user.email=t@example.mil commit -q -m "rtr01 gone for the test"
+git -C "$work/check" push -q origin HEAD:main
+printf '#!/bin/sh\necho "the branch is protected" >&2\nexit 1\n' > "$work/configs.git/hooks/pre-receive"
+chmod +x "$work/configs.git/hooks/pre-receive"
+before="$(commits)"
+run g1.txt playbooks/net_config_backup.yml -e "$two"
+rc=$?
+[ $rc -ne 0 ] && has "a push refused: rtr01 not backed up, the reason in the report, the job fails" g1.txt \
+    "0 new, 1 unchanged, 1 failed" "the commit could not be pushed" "the branch is protected" "1 device(s) not backed up" \
+    || { bad "a refused push: exit $rc"; tail -20 g1.txt | sed 's/^/       /'; }
+[ "$(commits)" = "$before" ] && ok "...nothing reached the repository" || bad "a commit reached the repository"
+rm -f "$work/configs.git/hooks/pre-receive"
+
+# ---- 14. both stores, the share's last backup unreadable: that device is failed (not "new", its diff lost) ----
+mv "$work/share/fw01.example.mil/fw01.example.mil.xml" "$work/fw01.keep"
+mkdir "$work/share/fw01.example.mil/fw01.example.mil.xml"
+run both1.txt playbooks/net_config_backup.yml -e "$two" -e net_config_store=both -e "net_config_share_dir=$work/share"
+rc=$?
+[ $rc -ne 0 ] && has "both, the share's copy unreadable: fw01 failed, said which store" both1.txt \
+    "share: could not read its last backup" "fw01.example.mil" || { bad "both with an unreadable share copy: exit $rc"; tail -20 both1.txt | sed 's/^/       /'; }
+rmdir "$work/share/fw01.example.mil/fw01.example.mil.xml"; mv "$work/fw01.keep" "$work/share/fw01.example.mil/fw01.example.mil.xml"
 
 [ "$fails" -eq 0 ] && echo "ok   - all network config scenarios passed" || { echo "$fails FAILED"; exit 1; }

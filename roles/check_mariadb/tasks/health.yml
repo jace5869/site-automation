@@ -405,12 +405,12 @@
       {%-     set _ = f.append({'check': 'mariadb', 'id': 'mariadb:errorlog', 'severity': 'warning',
                                 'summary': lg.errors ~ ' [ERROR] line(s) in the ' ~ lbl ~ ' log in the last ' ~ check_mariadb_error_since_days ~ ' day(s); latest: '
                                            ~ (lg.errline[-1] | default('') | truncate(200)),
-                                'hint': (('tail -n 100 ' ~ g.LOG_ERROR ~ ' | grep ERROR') if g.LOG_ERROR | default('') and not _mdb_c else look)}) -%}
+                                'hint': (('tail -n 100 ' ~ (g.LOG_ERROR | quote) ~ ' | grep ERROR') if g.LOG_ERROR | default('') and not _mdb_c else look)}) -%}
       {%-   endif -%}
       {%-   if (lg.diskpct | default('0') | int) >= check_mariadb_disk_warn_pct | int -%}
       {%-     set _ = f.append({'check': 'mariadb', 'id': 'mariadb:disk', 'severity': 'critical' if (lg.diskpct | int) >= check_mariadb_disk_crit_pct | int else 'warning',
                                 'summary': 'the ' ~ lbl ~ ' data directory (' ~ g.DATADIR | default('?') ~ ') is on a filesystem ' ~ lg.diskpct ~ '% full; the database stops writing when it fills',
-                                'hint': 'df -h ' ~ g.DATADIR | default('/var/lib/mysql') ~ '; du -sh ' ~ g.DATADIR | default('/var/lib/mysql') ~ '* 2>/dev/null | sort -h | tail'}) -%}
+                                'hint': 'df -h ' ~ (g.DATADIR | default('/var/lib/mysql') | quote) ~ '; du -sh ' ~ (g.DATADIR | default('/var/lib/mysql') | quote) ~ '* 2>/dev/null | sort -h | tail'}) -%}
       {%-   endif -%}
       {%- endif -%}
       {{ f }}

@@ -23,27 +23,68 @@ function Get-Setting([string] $Name, $Default) {
 function Write-Result {
     '###SITE-JSON### ' + (ConvertTo-Json -InputObject @{ findings = @($script:findings); facts = $script:facts } -Depth 6 -Compress)
 }
+# A program (auditpol, net, w32tm, netsh, certreq ...): its output lines and exit code. Windows PowerShell 5.1
+# makes each line a program writes to stderr an error when 2>&1 is used, and with 'Stop' above that ends the
+# script - here they are lines like the others, and the exit code says whether it worked (-1: it did not start).
+function Invoke-Native([string] $Exe, [string[]] $Arguments) {
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = -1
+    try { $out = @(& $Exe @Arguments 2>&1 | ForEach-Object { [string]$_ }) }
+    catch { $out = @([string]$_) }
+    finally { $ErrorActionPreference = $old }
+    return New-Object -TypeName PSObject -Property @{ Out = $out; Code = $global:LASTEXITCODE }
+}
 # ---- end of the common part --------------------------------------------------------------------
 
 # Audit policy (auditpol, by GUID so it works in any language), event log sizes, log forwarding.
 $required = @(Get-Setting 'subcategories' @())
-$rows = @(& auditpol.exe /get /category:* /r 2>&1 | ForEach-Object { [string]$_ })
-if ($LASTEXITCODE -ne 0) {
-    Add-Finding 'audit:policy' 'warning' ('could not read the audit policy: ' + (($rows -join ' ').Trim())) 'auditpol /get /category:*'
+# auditpol /backup: each subcategory's setting as a number (1 Success, 2 Failure, 3 both) - the same on a server in
+# any language. /get /r says it in words of the server's language: only the fallback.
+$words = @{ 0 = 'No Auditing'; 1 = 'Success'; 2 = 'Failure'; 3 = 'Success and Failure' }
+$have = @{}
+$tmpDir = $env:TEMP
+if (-not $tmpDir) { $tmpDir = $env:TMPDIR }
+if (-not $tmpDir) { $tmpDir = '/tmp' }
+$bk = Join-Path -Path $tmpDir -ChildPath ('site-auditpol-' + $PID + '.csv')
+$ap = Invoke-Native 'auditpol.exe' @('/backup', ('/file:' + $bk))
+if ($ap.Code -eq 0 -and (Test-Path -LiteralPath $bk)) {
+    $lines = @(Get-Content -LiteralPath $bk | Where-Object { $_ -match '\{[0-9A-Fa-f-]{36}\}' })
+    foreach ($r in @($lines | ConvertFrom-Csv -Header 'Machine', 'Target', 'Subcategory', 'Guid', 'Inclusion', 'Exclusion', 'Value')) {
+        $v = 0
+        if ([string]$r.Value -match '^\s*([0-9]+)\s*$') { $v = [int]$Matches[1] }
+        $have[([string]$r.Guid).Trim('{', '}').ToUpper()] = @{ name = [string]$r.Subcategory; bits = $v; setting = $words[$v % 4] }
+    }
+}
+if (Test-Path -LiteralPath $bk) { Remove-Item -LiteralPath $bk -Force -ErrorAction SilentlyContinue }
+$failed = ''
+if ($have.Count -eq 0) {
+    $ap = Invoke-Native 'auditpol.exe' @('/get', '/category:*', '/r')
+    $rows = @($ap.Out)
+    if ($ap.Code -ne 0) { $failed = (($rows -join ' ').Trim()) }
+    else {
+        foreach ($r in @($rows | Where-Object { $_ -match '\{[0-9A-Fa-f-]{36}\}' } | ConvertFrom-Csv -Header 'Machine', 'Target', 'Subcategory', 'Guid', 'Inclusion', 'Exclusion')) {
+            $set = [string]$r.Inclusion
+            $bits = 0
+            if ($set -match 'Success') { $bits += 1 }
+            if ($set -match 'Failure') { $bits += 2 }
+            $have[([string]$r.Guid).Trim('{', '}').ToUpper()] = @{ name = [string]$r.Subcategory; bits = $bits; setting = $set }
+        }
+    }
+}
+if ($failed) {
+    Add-Finding 'audit:policy' 'warning' ('could not read the audit policy: ' + $failed) 'auditpol /get /category:*'
 }
 else {
-    $have = @{}
-    foreach ($r in @($rows | Where-Object { $_ -match '\{[0-9A-Fa-f-]{36}\}' } | ConvertFrom-Csv -Header 'Machine', 'Target', 'Subcategory', 'Guid', 'Inclusion', 'Exclusion')) {
-        $have[([string]$r.Guid).Trim('{', '}').ToUpper()] = @{ name = [string]$r.Subcategory; setting = [string]$r.Inclusion }
-    }
     $gaps = @()
     foreach ($q in $required) {
         $g = ([string]$q.guid).Trim('{', '}').ToUpper()
         $needS = ([string]$q.need) -match 'Success'
         $needF = ([string]$q.need) -match 'Failure'
         $cur = 'not found'
-        if ($have.ContainsKey($g)) { $cur = $have[$g].setting }
-        $ok = (-not $needS -or $cur -match 'Success') -and (-not $needF -or $cur -match 'Failure')
+        $bits = 0
+        if ($have.ContainsKey($g)) { $cur = $have[$g].setting; $bits = [int]$have[$g].bits }
+        $ok = (-not $needS -or ($bits -band 1)) -and (-not $needF -or ($bits -band 2))
         if (-not $ok) { $gaps += @("$($q.name): $cur (needs $($q.need))") }
     }
     $facts.audit_gaps = $gaps

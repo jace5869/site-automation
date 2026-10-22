@@ -6,7 +6,7 @@
 # rtr01, a Cisco IOS router (10 days; its CLI: tests/netcerts/fake_ios.py). The report lists every one, says what the renewal would do, writes the
 # inventory file (cert_inventory_files) and sends nothing. A sweep of 127.0.0.1/32 finds the certificates by
 # itself. The renewal's dry run sends nothing; the real run opens one incident per certificate due (sw01, pr01,
-# rtr01), a run again none more; with net_cert_cisco_csr (dry run) rtr01 would get a CSR, the others the incident only;
+# rtr01), a run again none more (also once its incident is resolved); with net_cert_cisco_csr (dry run) rtr01 would get a CSR, the others the incident only;
 # for real (when cisco.ios, ansible.netcommon and paramiko are there): the key, the trustpoint and crypto pki enroll
 # on rtr01, its CSR on rtr01's incident - and a run again makes no second one.
 #   bash tests/netcerts/run_net_certs_test.sh        (ANSIBLE_PLAYBOOK=... to pick one)
@@ -156,7 +156,19 @@ EOPY
     run ciscoagain.txt sn playbooks/net_cert_renew.yml -e net_cert_cisco_csr=true
     [ "$(grep -c 'crypto pki enroll' "$work/ios.log")" = "$n" ] && ok "...a run again: no second CSR (the incident has it: a new one would replace the waiting key)" \
         || bad "...a run again made another CSR"
-    grep -q "PRIVATE KEY" ciscoreal.txt ciscoagain.txt requests.jsonl && bad "a private key in the output or sent" || ok "...no private key anywhere"
+    # the incident resolved (by a person, or closed automatically) while the PKI still has the CSR: a run again must
+    # still not make a second one - it would replace the key waiting for the certificate
+    "$py" - "$port" <<'EOPY'
+import base64, json, sys, urllib.request
+h = {"Content-Type": "application/json", "Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode()}
+u = "http://127.0.0.1:%s/api/now/table/incident" % sys.argv[1]
+for r in json.load(urllib.request.urlopen(urllib.request.Request(u + "?sysparm_query=short_descriptionLIKErtr01", headers=h)))["result"]:
+    urllib.request.urlopen(urllib.request.Request(u + "/" + r["sys_id"], data=b'{"state": "6"}', method="PATCH", headers=h))
+EOPY
+    run ciscoresolved.txt sn playbooks/net_cert_renew.yml -e net_cert_cisco_csr=true
+    [ "$(grep -c 'crypto pki enroll' "$work/ios.log")" = "$n" ] && has "...its incident resolved since, a run again: still no second CSR, the report says where it is" \
+        ciscoresolved.txt "resolved since" || bad "...after the incident was resolved, a run again made another CSR"
+    grep -q "PRIVATE KEY" ciscoreal.txt ciscoagain.txt ciscoresolved.txt requests.jsonl && bad "a private key in the output or sent" || ok "...no private key anywhere"
     cisco_ran=1
 else
     echo "skip - the real Cisco CSR (needs paramiko, and the collections cisco.ios and ansible.netcommon)"

@@ -23,6 +23,18 @@ function Get-Setting([string] $Name, $Default) {
 function Write-Result {
     '###SITE-JSON### ' + (ConvertTo-Json -InputObject @{ findings = @($script:findings); facts = $script:facts } -Depth 6 -Compress)
 }
+# A program (auditpol, net, w32tm, netsh, certreq ...): its output lines and exit code. Windows PowerShell 5.1
+# makes each line a program writes to stderr an error when 2>&1 is used, and with 'Stop' above that ends the
+# script - here they are lines like the others, and the exit code says whether it worked (-1: it did not start).
+function Invoke-Native([string] $Exe, [string[]] $Arguments) {
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = -1
+    try { $out = @(& $Exe @Arguments 2>&1 | ForEach-Object { [string]$_ }) }
+    catch { $out = @([string]$_) }
+    finally { $ErrorActionPreference = $old }
+    return New-Object -TypeName PSObject -Property @{ Out = $out; Code = $global:LASTEXITCODE }
+}
 # ---- end of the common part --------------------------------------------------------------------
 
 $offWarn = [double](Get-Setting 'offset_warn_sec' 1)
@@ -37,7 +49,8 @@ if ($null -eq $svc -or $svc.State -ne 'Running') {
     Write-Result
     return
 }
-$status = @(& w32tm.exe /query /status 2>&1 | ForEach-Object { [string]$_ })
+$w32 = Invoke-Native 'w32tm.exe' @('/query', '/status')
+$status = @($w32.Out)
 $src = ''
 $lastSync = ''
 foreach ($l in $status) {
@@ -70,7 +83,7 @@ else {
     }
     $peer = ($src -split ',')[0].Trim()
     if ($peer -and $peer -notmatch '\s') {
-        $sc = @(& w32tm.exe /stripchart /computer:$peer /samples:1 /dataonly 2>&1 | ForEach-Object { [string]$_ })
+        $sc = @((Invoke-Native 'w32tm.exe' @('/stripchart', "/computer:$peer", '/samples:1', '/dataonly')).Out)
         $off = $null
         foreach ($l in $sc) { if ($l -match ',\s*([+-]?\d+\.\d+)s\s*$') { $off = [double]$Matches[1] } }
         if ($null -eq $off) { $facts.offset_note = (($sc -join ' ').Trim()) }

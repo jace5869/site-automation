@@ -87,6 +87,8 @@
                                   'size': x.size_gb | human_size}) -%}
         {%- endfor -%}
         {{ out }}
+      # the cleanup after the approval checks the list is its own workflow's (this report as its first step)
+      vm_snapshot_cleanup_candidates_workflow: "{{ awx_workflow_job_id | default('') | string }}"
 
 - name: VMware | every vCenter was read
   ansible.builtin.include_tasks: vcenters_read.yml

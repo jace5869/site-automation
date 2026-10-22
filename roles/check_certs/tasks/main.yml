@@ -15,6 +15,15 @@
 # After each CERT / TRUST line, what else the certificate says (the inventory, the export):
 #   META|<issuer>|<serial>|<sha1>|<sha256>|<key>|<signature algorithm>|<CA: 1 or 0>|<signs certificates: 1 or 0>|<names (SANs), comma separated>
 
+# every value from the inventory goes into the script below quoted; a keystore's password_env is the name of a shell
+# variable, so only a name
+- name: Certs | the keystores' password_env are variable names
+  ansible.builtin.assert:
+    that: check_certs_keystores | selectattr('password_env', 'defined') | map(attribute='password_env') | select
+          | reject('match', '^[A-Za-z_][A-Za-z0-9_]*$') | list | length == 0
+    fail_msg: "check_certs_keystores: password_env must be a variable name (letters, digits, _), e.g. KEYSTORE_PW."
+    quiet: true
+
 - name: Certs | find and read certificates
   ansible.builtin.shell: |
     set -u
@@ -82,7 +91,7 @@
     {% for p in check_certs_files %}
     found=0
     while IFS= read -r f; do found=1; explicit="$explicit$f"$'\n'; one_file "$f" 0; done < <(compgen -G {{ p | quote }})
-    [ $found = 1 ] || echo "ERR|{{ p }}|no such file"
+    [ $found = 1 ] || echo {{ ('ERR|' ~ p ~ '|no such file') | quote }}
     {% endfor %}
     {% if check_certs_discover | bool %}
     find {{ (check_certs_discover_dirs + check_certs_discover_extra_dirs | default([], true)) | map('quote') | join(' ') }} -maxdepth 2 -type f \
@@ -106,10 +115,10 @@
     if [ -n "$pem" ]; then
       end=$(echo "$pem" | openssl x509 -noout -enddate | cut -d= -f2-)
       subj=$(echo "$pem" | openssl x509 -noout -subject -nameopt RFC2253 | sed 's/^subject=//; s/|/ /g')
-      echo "CERT|{{ e.name | default(e.host) }} (https://{{ e.host }}:{{ e.port }})|$subj|$(date -d "$end" +%s)"
+      echo {{ ('CERT|' ~ e.name | default(e.host) ~ ' (https://' ~ e.host ~ ':' ~ e.port ~ ')|') | quote }}"$subj|$(date -d "$end" +%s)"
       echo "$pem" > "$tmp"/ep.pem; meta "$tmp"/ep.pem
     else
-      echo "ERR|{{ e.name | default(e.host) }} (https://{{ e.host }}:{{ e.port }})|no certificate: not answering, or not TLS"
+      echo {{ ('ERR|' ~ e.name | default(e.host) ~ ' (https://' ~ e.host ~ ':' ~ e.port ~ ')|no certificate: not answering, or not TLS') | quote }}
     fi
     {% endfor %}
     {% if check_certs_discover_ports | bool %}
@@ -117,7 +126,7 @@
     # plain databases ... - nor the ones already in check_certs_endpoints), each probed once on the
     # address it is bound to, at most check_certs_discover_ports_max of them
     fqdn=$(hostname -f 2>/dev/null || hostname)
-    skip=" {{ (check_certs_discover_ports_skip + (check_certs_endpoints | map(attribute='port') | list)) | join(' ') }} "
+    skip={{ (' ' ~ (check_certs_discover_ports_skip + (check_certs_endpoints | map(attribute='port') | list)) | join(' ') ~ ' ') | quote }}
     ss -Htlnp 2>/dev/null | awk '{print $4 "\t" $6}' | sort -t$'\t' -k1,1 -u | {
       seen=" "; n=0
       while IFS=$'\t' read -r local procs; do
@@ -170,7 +179,7 @@
         case "$b" in */bin/java) [ -x "${b%/java}/keytool" ] && { kt="${b%/java}/keytool"; break; } ;; esac
       done
     fi
-    explicitks=" {{ check_certs_keystores | map(attribute='path') | join(' ') }} "
+    explicitks={{ (' ' ~ check_certs_keystores | map(attribute='path') | join(' ') ~ ' ') | quote }}
     {
       timeout 120 find {{ check_certs_discover_keystore_dirs | map('quote') | join(' ') }} -maxdepth {{ check_certs_discover_keystore_depth | int }} -type f \
         \( -iname '*.jks' -o -iname '*.keystore' -o -iname '*.p12' -o -iname '*.pfx' \) 2>/dev/null
@@ -211,11 +220,11 @@
       timeout 30 keytool -list -v -keystore {{ k.path | quote }} {{ ('-storepass:env ' ~ k.password_env) if k.password_env | default('') else '' }} </dev/null 2>/dev/null |
         awk "$ksawk" |
         while IFS='|' read -r alias owner until is se s1 s2 k sa ca kcs sn; do
-          echo "CERT|{{ k.path }} (alias $alias)|$owner|$(date -d "$until" +%s 2>/dev/null || echo 0)"
+          echo {{ ('CERT|' ~ k.path ~ ' (alias ') | quote }}"$alias)|$owner|$(date -d "$until" +%s 2>/dev/null || echo 0)"
           echo "META|$is|$se|$s1|$s2|$k|$sa|$ca|$kcs|$sn"
         done
     else
-      echo "ERR|{{ k.path }}|keystore not readable"
+      echo {{ ('ERR|' ~ k.path ~ '|keystore not readable') | quote }}
     fi
     {% endfor %}
     exit 0

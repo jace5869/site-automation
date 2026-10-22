@@ -7,10 +7,14 @@
     that:
       - ts_area in win_ts_areas
       - ts_area != 'service' or ts_service | length > 0
-      - "ts_area != 'network' or ts_target is match('^[^: ]+(:[0-9]+)?$')"
+      # a service name and a host:port only: they go into PowerShell commands run as an administrator
+      # ($ for a SQL Server instance, MSSQL$SQLEXPRESS: every command has it in single quotes, where $ is plain)
+      - "ts_area != 'service' or ts_service is match('^[A-Za-z0-9_.$ -]+$')"
+      - "ts_area != 'network' or ts_target is match('^[A-Za-z0-9.-]+(:[0-9]{1,5})?$')"
     fail_msg: >-
       Area must be one of {{ win_ts_areas.keys() | join(', ') }}; area=service needs ts_service (a
-      service name, e.g. W3SVC), area=network needs ts_target (host:port). Got area={{ ts_area }},
+      service name, e.g. W3SVC: letters, digits, spaces and _ . $ -), area=network needs ts_target (host:port:
+      letters, digits, dots and hyphens, then :port). Got area={{ ts_area }},
       service={{ ts_service }}, target={{ ts_target }}.
     quiet: true
   run_once: true

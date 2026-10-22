@@ -11,7 +11,11 @@ foreach ($f in @($cfg.findings)) {
     if ($f.severity -eq 'critical') { $type = 'ERROR'; $id = 902 }
     $text = ([string]$f.severity).ToUpper() + ' ' + $f.id + ': ' + $f.summary + ' (AAP job ' + $cfg.job + ')'
     if ($text.Length -gt 30000) { $text = $text.Substring(0, 30000) }
-    $null = & eventcreate.exe /L APPLICATION /SO $cfg.source /T $type /ID $id /D $text 2>&1
-    if ($LASTEXITCODE -eq 0) { $n++ }
+    # 'Continue' while it runs: Windows PowerShell 5.1 makes its stderr lines errors (2>&1), which 'Stop' would throw
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = -1
+    try { $null = & eventcreate.exe /L APPLICATION /SO $cfg.source /T $type /ID $id /D $text 2>&1 }
+    finally { $ErrorActionPreference = 'Stop' }
+    if ($global:LASTEXITCODE -eq 0) { $n++ }
 }
 '###SITE-JSON### ' + (ConvertTo-Json -InputObject @{ written = $n } -Compress)

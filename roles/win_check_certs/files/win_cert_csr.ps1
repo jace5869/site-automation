@@ -27,6 +27,18 @@ function Get-Setting([string] $Name, $Default) {
 function Write-Result {
     '###SITE-JSON### ' + (ConvertTo-Json -InputObject @{ findings = @($script:findings); facts = $script:facts } -Depth 6 -Compress)
 }
+# A program (auditpol, net, w32tm, netsh, certreq ...): its output lines and exit code. Windows PowerShell 5.1
+# makes each line a program writes to stderr an error when 2>&1 is used, and with 'Stop' above that ends the
+# script - here they are lines like the others, and the exit code says whether it worked (-1: it did not start).
+function Invoke-Native([string] $Exe, [string[]] $Arguments) {
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = -1
+    try { $out = @(& $Exe @Arguments 2>&1 | ForEach-Object { [string]$_ }) }
+    catch { $out = @([string]$_) }
+    finally { $ErrorActionPreference = $old }
+    return New-Object -TypeName PSObject -Property @{ Out = $out; Code = $global:LASTEXITCODE }
+}
 # ---- end of the common part --------------------------------------------------------------------
 
 $dir = [string](Get-Setting 'dir' 'C:\ProgramData\site-automation\renew')
@@ -195,7 +207,9 @@ foreach ($cand in @(Get-Setting 'certs' @())) {
     if (Test-Path -LiteralPath $info) {
         try {
             $pending = Get-Content -LiteralPath $info -Raw | ConvertFrom-Json
-            if (-not ((Test-Path -LiteralPath ([string]$pending.csr_path)) -and (Test-Path -LiteralPath ("Cert:\LocalMachine\REQUEST\" + [string]$pending.request)))) { $pending = $null }
+            # its request's thumbprint must be known: an empty one would test the REQUEST store itself (always there)
+            $known = ([string]$pending.request -match '^[0-9A-Fa-f]{40}$') -and (Test-Path -LiteralPath ([string]$pending.csr_path))
+            if (-not ($known -and (Test-Path -LiteralPath ("Cert:\LocalMachine\REQUEST\" + [string]$pending.request)))) { $pending = $null }
         }
         catch { $pending = $null }
     }
@@ -207,7 +221,7 @@ foreach ($cand in @(Get-Setting 'certs' @())) {
             if (-not (Test-Path -LiteralPath $dir)) {
                 New-Item -ItemType Directory -Path $dir -Force | Out-Null
                 # administrators and SYSTEM only (the CSRs are public; the folder is kept tidy)
-                $null = & icacls.exe $dir /inheritance:r /grant:r '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-18:(OI)(CI)F' 2>&1
+                $null = Invoke-Native 'icacls.exe' @($dir, '/inheritance:r', '/grant:r', '*S-1-5-32-544:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F')
             }
             $inf = $r.csr_path -replace '\.csr$', '.inf'
             $lines = @('[Version]', 'Signature="$Windows NT$"', '', '[NewRequest]',
@@ -225,8 +239,9 @@ foreach ($cand in @(Get-Setting 'certs' @())) {
             Set-Content -LiteralPath $inf -Value $lines -Encoding Unicode
             $before = @(Get-ChildItem -Path 'Cert:\LocalMachine\REQUEST' -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.Thumbprint })
             if (Test-Path -LiteralPath $r.csr_path) { Remove-Item -LiteralPath $r.csr_path -Force }
-            $out = @(& certreq.exe -new -q -machine $inf $r.csr_path 2>&1 | ForEach-Object { [string]$_ })
-            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $r.csr_path)) { throw ('certreq -new failed: ' + (($out | Where-Object { $_ }) -join ' ')) }
+            $cr = Invoke-Native 'certreq.exe' @('-new', '-q', '-machine', $inf, [string]$r.csr_path)
+            $out = @($cr.Out)
+            if ($cr.Code -ne 0 -or -not (Test-Path -LiteralPath $r.csr_path)) { throw ('certreq -new failed: ' + (($out | Where-Object { $_ }) -join ' ')) }
             $req = @(Get-ChildItem -Path 'Cert:\LocalMachine\REQUEST' -ErrorAction SilentlyContinue | Where-Object { $before -notcontains [string]$_.Thumbprint } | ForEach-Object { [string]$_.Thumbprint })
             ConvertTo-Json -InputObject @{ certificate = $subject; issuer = $issuer; old_thumbprint = $tp; store = $store; expires = $r.expires
                 found_in = @($where); names = @($names); key = $key.text; request = $(if ($req.Count) { $req[0] } else { '' })

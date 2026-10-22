@@ -89,6 +89,9 @@
 ## the error events of the last this-many hours
 # ontap_ems_hours: 24
 
+## read at most this many events per cluster
+# ontap_ems_max: 500
+
 ## rows per table (problems first); the job's artifacts have all
 # ontap_report_max_rows: 50
 

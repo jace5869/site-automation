@@ -3,8 +3,8 @@
 # net_config_git_branch, each device's file compared with what was read, the new and changed ones written,
 # one commit, pushed (once more after a pull when someone pushed in between). Check: compared, nothing written.
 # The login (the "Network config git repository" credential): NET_CONFIG_GIT_KEY_FILE (an SSH key), or
-# NET_CONFIG_GIT_USERNAME + NET_CONFIG_GIT_TOKEN (https) - sent as a header from the environment, never on a
-# command line. Input: _ncf_all. Output: _ncg_res (net_config_backup_result), _ncg_commit, _ncg_where.
+# NET_CONFIG_GIT_USERNAME + NET_CONFIG_GIT_TOKEN (https) - sent as a header from a git config file in the work
+# folder (0600), never on a command line or in the environment. Input: _ncf_all. Output: _ncg_res (net_config_backup_result), _ncg_commit, _ncg_where.
 - name: Network config | the repository is set
   ansible.builtin.assert:
     that: net_config_git_repo | default('', true) | length > 0
@@ -43,7 +43,8 @@
           {%- for r in _ncg_old.results | default([]) if r.content is defined -%}
           {%-   set _ = old.update({r.item.host | net_config_file(r.item.platform): r.content | b64decode}) -%}
           {%- endfor -%}
-          {{ _ncf_all | net_config_backup_result(old, {'diff_lines': net_config_diff_lines | int}) }}
+          {{ _ncf_all | net_config_backup_result(old, {'diff_lines': net_config_diff_lines | int})
+             | net_config_mark_failed(_ncg_old.results | default([]) | net_config_read_errors) }}
       no_log: true
 
     - name: Network config | the folder {{ net_config_git_path }}
@@ -101,13 +102,30 @@
                 argv: [git, -C, "{{ _ncg_dir }}", -c, "user.name={{ net_config_git_author_name }}", -c, "user.email={{ net_config_git_author_email }}",
                        pull, --quiet, --rebase, origin, "{{ net_config_git_branch }}"]
               environment: "{{ _ncg_env }}"
+              register: _ncg_pull
               changed_when: false
+              failed_when: false
 
             - name: Network config | push again
               ansible.builtin.command:
                 argv: [git, -C, "{{ _ncg_dir }}", push, --quiet, origin, "HEAD:{{ net_config_git_branch }}"]
               environment: "{{ _ncg_env }}"
-              changed_when: true
+              register: _ncg_push2
+              changed_when: _ncg_push2.rc == 0
+              failed_when: false
+              when: _ncg_pull.rc == 0
+
+            # not pushed in the end (a conflict, a rejected push): the new and changed devices are not backed up - said in
+            # the report, the job fails at its end ("every device backed up"); the commit stays only in this job
+            - name: Network config | not pushed - the devices it held count as not backed up
+              ansible.builtin.set_fact:
+                _ncg_res: >-
+                  {{ _ncg_res | net_config_mark_failed({'*new_changed*': 'the commit could not be pushed to ' ~ net_config_git_repo ~ ': '
+                     ~ ((_ncg_pull.stderr | default('') if _ncg_pull.rc != 0 else _ncg_push2.stderr | default('')) | regex_replace('\\s+', ' ')
+                        | truncate(300)) ~ ' - run the backup again (untick Concurrent jobs on its template)'}) }}
+                _ncg_unpushed: true
+              when: _ncg_pull.rc != 0 or _ncg_push2.rc | default(1) != 0
+              no_log: true
 
         - name: Network config | the commit
           ansible.builtin.command:
@@ -117,7 +135,7 @@
 
     - name: Network config | where it is kept
       ansible.builtin.set_fact:
-        _ncg_commit: "{{ _ncg_head.stdout | default('') }}"
+        _ncg_commit: "{{ '' if _ncg_unpushed | default(false) else _ncg_head.stdout | default('') }}"
         _ncg_where: "{{ net_config_git_repo }} ({{ net_config_git_branch }}, {{ net_config_git_path }}/)"
 
   always:

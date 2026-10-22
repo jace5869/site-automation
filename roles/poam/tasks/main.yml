@@ -26,7 +26,7 @@
     _poam_open: >-
       {%- set c = poam_columns -%}
       {%- set out = [] -%}
-      {%- for r in _poam_rows if r[c.status] | default('') not in poam_closed_statuses -%}
+      {%- for r in _poam_rows if r[c.status] | default('') not in _poam_closed -%}
       {%-   set _ = out.append({'id': r[c.id], 'weakness': r[c.weakness] | default(''), 'severity': r[c.severity] | default(''),
                                 'status': r[c.status], 'due': r[c.due] | default(''), 'owner': r[c.owner] | default(''),
                                 'vuln_ids': (r[c.vuln_ids] | default('')) | regex_findall('V-[0-9]+'),
@@ -99,8 +99,8 @@
           Authorization: "Bearer {{ _poam_token.json.access_token }}"
         validate_certs: "{{ poam_validate_certs }}"
       loop: >-
-        {{ _poam_cols.json | selectattr('name', 'in', poam_stigman_collections) | list
-           if poam_stigman_collections else _poam_cols.json }}
+        {{ _poam_cols.json | selectattr('name', 'in', _poam_collections) | list
+           if _poam_collections else _poam_cols.json }}
       loop_control:
         label: "{{ item.name }}"
       register: _poam_found
@@ -113,7 +113,7 @@
         _poam_stigman_open: >-
           {%- set out = [] -%}
           {%- for r in _poam_found.results -%}
-          {%-   for x in r.json if x.severity in poam_stigman_severities -%}
+          {%-   for x in r.json if x.severity in _poam_severities -%}
           {%-     set _ = out.append({'collection': r.item.name, 'groupId': x.groupId, 'severity': x.severity,
                                       'title': x.title | default(''), 'assets': x.assetCount | default(0),
                                       'stigs': x.stigs | default([]) | map(attribute='benchmarkId') | list}) -%}

@@ -23,6 +23,18 @@ function Get-Setting([string] $Name, $Default) {
 function Write-Result {
     '###SITE-JSON### ' + (ConvertTo-Json -InputObject @{ findings = @($script:findings); facts = $script:facts } -Depth 6 -Compress)
 }
+# A program (auditpol, net, w32tm, netsh, certreq ...): its output lines and exit code. Windows PowerShell 5.1
+# makes each line a program writes to stderr an error when 2>&1 is used, and with 'Stop' above that ends the
+# script - here they are lines like the others, and the exit code says whether it worked (-1: it did not start).
+function Invoke-Native([string] $Exe, [string[]] $Arguments) {
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = -1
+    try { $out = @(& $Exe @Arguments 2>&1 | ForEach-Object { [string]$_ }) }
+    catch { $out = @([string]$_) }
+    finally { $ErrorActionPreference = $old }
+    return New-Object -TypeName PSObject -Property @{ Out = $out; Code = $global:LASTEXITCODE }
+}
 # ---- end of the common part --------------------------------------------------------------------
 
 $timeout = [int](Get-Setting 'timeout_ms' 3000)
@@ -46,7 +58,8 @@ foreach ($n in @(Get-Setting 'dns_names' @())) {
 }
 # The computer account's trust with the domain ("the trust relationship ... failed" at logon).
 if ($cs.PartOfDomain -and [int]$cs.DomainRole -lt 4 -and (Get-Setting 'secure_channel' $true)) {
-    $out = @(& nltest.exe "/sc_query:$($cs.Domain)" 2>&1 | ForEach-Object { [string]$_ })
+    $nl = Invoke-Native 'nltest.exe' @("/sc_query:$($cs.Domain)")
+    $out = @($nl.Out)
     $text = ($out -join ' ')
     $facts.domain = [string]$cs.Domain
     if ($text -notmatch 'NERR_Success') {

@@ -945,10 +945,23 @@ def human_size(gb):
     return "%.0f MB" % (gb * 1024)
 
 
+def name_list(value):
+    """A list of names as a setting may give it: a list as it is, or text - separated by commas, spaces or line
+    breaks ("AAP01, VCSA01" or "AAP01" alone). Never the letters of one name."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [w for w in re.split(r"[\s,]+", value) if w]
+    if isinstance(value, dict):
+        raise ValueError("a list of names, not a mapping: %r" % (value,))
+    return [str(w).strip() for w in value if str(w).strip()]
+
+
 def name_matches(name, patterns):
-    """Does a name match one of these (case-insensitive; * and ? wildcards, e.g. DC*)?"""
+    """Does a name match one of these (case-insensitive; * and ? wildcards, e.g. DC*)? patterns: a list, or
+    text as name_list reads it."""
     n = str(name or "").lower()
-    return any(fnmatch.fnmatchcase(n, str(p).lower()) for p in patterns or [] if str(p).strip())
+    return any(fnmatch.fnmatchcase(n, str(p).lower()) for p in name_list(patterns))
 
 
 def snapshot_name_words(words):
@@ -973,7 +986,8 @@ def vm_snapshot_split(snaps, max_age_days, keep_regex="", exclude=None, protecte
     allsn = sorted(snaps or [], key=lambda x: (-(x.get("age_days") or 0), x.get("vm", ""), x.get("name", "")))
     old, held = [], []
     for x in allsn:
-        if (x.get("age_days") or 0) < float(max_age_days):
+        age = x.get("age_days_exact") if x.get("age_days_exact") is not None else x.get("age_days")
+        if (age or 0) < float(max_age_days):
             continue
         size = x.get("size_gb")
         ids = {_id(x.get("vm")), _id(x.get("hostname")), _id(x.get("ip"))} - {""}
@@ -1434,5 +1448,5 @@ class FilterModule(object):
                 "vm_pick_reasons": vm_pick_reasons, "vm_pick_parse": vm_pick_parse, "vm_pick_snapshot_plan": vm_pick_snapshot_plan,
                 "vm_pick_reboot_plan": vm_pick_reboot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "cert_report_section": cert_report_section,
                 "site_correlation_id": site_correlation_id,
-                "human_size": human_size, "name_matches": name_matches,
+                "human_size": human_size, "name_matches": name_matches, "name_list": name_list,
                 "report_text": report_text, "findings_report": findings_report}

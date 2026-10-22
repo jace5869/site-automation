@@ -27,7 +27,7 @@
       {{ _vm_snap_read.snapshots
          | vm_snapshot_split(_vm_sn_age | default(vm_snapshot_max_age_days), vm_snapshot_keep_regex,
                              ((vm_snapshot_cleanup_exclude_vms | replace(',', ' ')).split() if vm_snapshot_cleanup_exclude_vms is string
-                              else vm_snapshot_cleanup_exclude_vms) + vmware_protected_vms,
+                              else vm_snapshot_cleanup_exclude_vms) + (vmware_protected_vms | name_list),
                              ((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | host_ids(hostvars),
                              vm_snapshot_cleanup_max_size_gb | float,
                              ((vm_snapshot_cleanup_exclude_datacenters | replace(',', ' ')).split() if vm_snapshot_cleanup_exclude_datacenters is string

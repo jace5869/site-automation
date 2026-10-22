@@ -113,6 +113,54 @@ def backup_result(got, old, opts=None):
     return {"devices": devs, "counts": counts}
 
 
+def _counted(devs):
+    return {"devices": devs, "counts": {k: sum(1 for d in devs if d["status"] == k) for k in ("new", "changed", "unchanged", "failed")}}
+
+
+def mark_failed(res, errors):
+    """res (backup_result) with some devices failed after all: errors {host: why}. '*new_changed*' as a host: every
+    new and changed device (a commit that could not be pushed). The counts again."""
+    errors = errors or {}
+    every = errors.get("*new_changed*")
+    devs = []
+    for d in (res or {}).get("devices") or []:
+        d = dict(d)
+        why = errors.get(d.get("host")) or (every if d.get("status") in ("new", "changed") else None)
+        if why and d.get("status") != "failed":
+            d.update(status="failed", error=why)
+        devs.append(d)
+    return _counted(devs)
+
+
+def read_errors(results, what="its last backup"):
+    """{host: why} for the slurps of the kept backups that failed for another reason than "not there yet" (a
+    device's first backup): an unreadable file must not count as no backup, or it is overwritten and its diff lost."""
+    out = {}
+    for r in results or []:
+        # failed_when: false on the slurp: a failed read has no content and a message, its 'failed' is false
+        if "content" not in r and not r.get("skipped") and (r.get("failed") or r.get("msg")):
+            msg = str(r.get("msg") or "")
+            if not re.search(r"not found|does not exist|no such file", msg, re.I):
+                out[(r.get("item") or {}).get("host", "")] = "could not read %s: %s" % (what, msg[:200] or "unknown error")
+    return out
+
+
+def merge_results(git, share):
+    """net_config_store: both - one result: a device failed when either store failed (both errors said), else as git
+    has it (git is the history)."""
+    by = dict((d.get("host"), d) for d in (share or {}).get("devices") or [])
+    devs = []
+    for d in (git or {}).get("devices") or []:
+        d = dict(d)
+        o = by.get(d.get("host")) or {}
+        if d.get("status") == "failed" or o.get("status") == "failed":
+            errs = [("git: " + d["error"]) if d.get("status") == "failed" and d.get("error") else "",
+                    ("share: " + o.get("error", "")) if o.get("status") == "failed" else ""]
+            d.update(status="failed", error="; ".join(e for e in errs if e) or d.get("error", ""))
+        devs.append(d)
+    return _counted(devs)
+
+
 def backup_report(res, opts=None):
     """The backup's report (roles/site_email layout)."""
     o = opts or {}
@@ -235,4 +283,6 @@ class FilterModule(object):
                 "net_config_mask": mask, "net_config_diff": diff, "net_config_backup_result": backup_result,
                 "net_config_backup_report": backup_report, "net_config_backup_findings": backup_findings,
                 "net_config_change_ok": change_ok, "net_config_ios_replace_ok": ios_replace_ok,
-                "net_config_load_report": load_report, "net_config_load_note": load_note}
+                "net_config_load_report": load_report, "net_config_load_note": load_note,
+                "net_config_mark_failed": mark_failed, "net_config_read_errors": read_errors,
+                "net_config_merge_results": merge_results}

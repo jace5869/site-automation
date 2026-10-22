@@ -29,6 +29,18 @@ function Get-Setting([string] $Name, $Default) {
 function Write-Result {
     '###SITE-JSON### ' + (ConvertTo-Json -InputObject @{ findings = @($script:findings); facts = $script:facts } -Depth 6 -Compress)
 }
+# A program (auditpol, net, w32tm, netsh, certreq ...): its output lines and exit code. Windows PowerShell 5.1
+# makes each line a program writes to stderr an error when 2>&1 is used, and with 'Stop' above that ends the
+# script - here they are lines like the others, and the exit code says whether it worked (-1: it did not start).
+function Invoke-Native([string] $Exe, [string[]] $Arguments) {
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = -1
+    try { $out = @(& $Exe @Arguments 2>&1 | ForEach-Object { [string]$_ }) }
+    catch { $out = @([string]$_) }
+    finally { $ErrorActionPreference = $old }
+    return New-Object -TypeName PSObject -Property @{ Out = $out; Code = $global:LASTEXITCODE }
+}
 # ---- end of the common part --------------------------------------------------------------------
 
 $warn = [int](Get-Setting 'warn_days' 30)
@@ -45,7 +57,7 @@ $now = Get-Date
 $bound = @{}
 $rdpTp = ''
 $ipport = ''
-foreach ($l in @(& netsh.exe http show sslcert 2>&1 | ForEach-Object { [string]$_ })) {
+foreach ($l in @((Invoke-Native 'netsh.exe' @('http', 'show', 'sslcert')).Out)) {
     if ($l -match '^\s*(IP:port|Hostname:port|Central Certificate Store)\s*:\s*(.+?)\s*$') { $ipport = $Matches[2] }
     elseif ($l -match '^\s*Certificate Hash\s*:\s*([0-9a-fA-F]{40})') { $bound[$Matches[1].ToUpper()] = "https $ipport" }
 }

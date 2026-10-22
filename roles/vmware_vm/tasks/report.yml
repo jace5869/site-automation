@@ -9,11 +9,10 @@
 - name: VMware | the result as job artifacts (vm_report)
   ansible.builtin.set_stats:
     data:
-      vm_report:
-        subject: "{{ _vm_report_subject }}"
-        lines: "{{ _vm_report_lines }}"
-        dry_run: "{{ ansible_check_mode }}"
-        vcenters: "{{ _vm_vcenters | default([]) }}"
+      # one expression, so dry_run stays a boolean on ansible-core 2.16 too
+      vm_report: >-
+        {{ {'subject': _vm_report_subject, 'lines': _vm_report_lines, 'dry_run': ansible_check_mode,
+            'vcenters': _vm_vcenters | default([])} }}
 
 - name: VMware | {{ _vm_report_subject }}
   ansible.builtin.debug:

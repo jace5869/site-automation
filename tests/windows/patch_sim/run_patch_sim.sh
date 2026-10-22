@@ -70,6 +70,8 @@ run "maintenance window" state_blocked.json 1 && check "outside a maintenance wi
     "s['restarts'] == 0" "waiting for a maintenance window"
 run "default: no automatic restart" state_two_rounds.json 0 && check "by default: installs, never restarts, says a restart is needed" \
     "s['restarts'] == 0 and s['install_calls'] == 1" "automatic restarts are off"
+run "a restart flag that a restart does not clear" state_lingering.json 0 -e automatic_restarts=true && check "a lingering restart flag: one install, one restart - not a restart per round" \
+    "s['install_calls'] == 1 and s['restarts'] == 1" "Round 1: asked to install 2026-09 Cumulative Update"
 run "no client" state_noclient.json 1 && check "no ConfigMgr client: stops" "s['install_calls'] == 0" "no working ConfigMgr client"
 [ $fail -eq 0 ] && echo "all patch simulations passed"
 exit $fail

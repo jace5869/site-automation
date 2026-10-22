@@ -24,7 +24,7 @@
            'names': (vm_pick_reboot_vms | replace(',', ' ')).split() if vm_pick_reboot_vms is string else vm_pick_reboot_vms,
            'clusters': (vm_pick_reboot_clusters | replace(',', ' ')).split() if vm_pick_reboot_clusters is string else vm_pick_reboot_clusters,
            'folders': vm_pick_reboot_folders | snapshot_name_words,
-           'exclude': vmware_protected_vms + ((vm_pick_reboot_exclude_vms | replace(',', ' ')).split()
+           'exclude': (vmware_protected_vms | name_list) + ((vm_pick_reboot_exclude_vms | replace(',', ' ')).split()
                                               if vm_pick_reboot_exclude_vms is string else vm_pick_reboot_exclude_vms),
            'protected_ids': (((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | host_ids(hostvars))
                             + (vmware_protected_groups | select('in', groups) | map('extract', groups) | flatten | host_ids(hostvars)),

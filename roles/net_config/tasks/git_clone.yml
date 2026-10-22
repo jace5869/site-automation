@@ -1,32 +1,46 @@
 ---
 # The repository cloned into the work folder _ncg_tmp (store_git.yml, load_start.yml): how git logs in (the
 # "Network config git repository" credential: NET_CONFIG_GIT_KEY_FILE, or NET_CONFIG_GIT_USERNAME +
-# NET_CONFIG_GIT_TOKEN - a header from the environment, never on a command line), the git server's host keys,
-# then net_config_git_branch (shallow unless _ncg_shallow: false); a new, empty repository gets the branch.
-# Output: _ncg_dir, _ncg_env.
+# NET_CONFIG_GIT_TOKEN - a header in a git config file in the work folder (0600), never on a command line or in
+# the environment), the git server's host keys, then net_config_git_branch (shallow unless _ncg_shallow: false);
+# a new, empty repository gets the branch. Output: _ncg_dir, _ncg_env (paths and switches only, no secret).
 - name: Network config | how git logs in (from the credential)
   ansible.builtin.set_fact:
     _ncg_dir: "{{ _ncg_tmp.path }}/repo"
     _ncg_env: >-
       {%- set key = lookup('ansible.builtin.env', 'NET_CONFIG_GIT_KEY_FILE') -%}
-      {%- set user = lookup('ansible.builtin.env', 'NET_CONFIG_GIT_USERNAME') -%}
-      {%- set token = lookup('ansible.builtin.env', 'NET_CONFIG_GIT_TOKEN') -%}
-      {%- set ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=' ~ net_config_git_host_key_checking,
-                     '-o', 'UserKnownHostsFile=' ~ _ncg_tmp.path ~ '/known_hosts'] + (['-o', 'IdentitiesOnly=yes', '-i', key] if key else []) -%}
-      {%- set env = {'GIT_TERMINAL_PROMPT': '0', 'GIT_SSH_COMMAND': ssh | map('quote') | join(' ')} -%}
-      {%- if token -%}
-      {%-   set _ = env.update({'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'http.extraHeader',
-                                'GIT_CONFIG_VALUE_0': 'Authorization: Basic ' ~ ((user or 'git') ~ ':' ~ token) | b64encode}) -%}
-      {%- endif -%}
-      {{ env }}
-  no_log: true
+      {%- set ssh = ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=' ~ net_config_git_host_key_checking]
+                    + (['-o', 'UserKnownHostsFile=' ~ _ncg_tmp.path ~ '/known_hosts'] if net_config_git_known_hosts | default('', true) else [])
+                    + (['-o', 'IdentitiesOnly=yes', '-i', key] if key else []) -%}
+      {{ {'GIT_TERMINAL_PROMPT': '0', 'GIT_SSH_COMMAND': ssh | map('quote') | join(' '),
+          'GIT_CONFIG_GLOBAL': _ncg_tmp.path ~ '/gitconfig'} }}
 
+# The token as an http header in the work folder's git config (GIT_CONFIG_GLOBAL, which also reads the user's own
+# ~/.gitconfig): Ansible puts a task's environment on the command line of the controller's interpreter, so the
+# token never goes into the environment.
+- name: Network config | the git login (https token) for this job only
+  ansible.builtin.copy:
+    content: "[include] path = ~/.gitconfig\n{{ _ncg_header }}"
+    dest: "{{ _ncg_tmp.path }}/gitconfig"
+    mode: "0600"
+  vars:
+    _ncg_user: "{{ lookup('ansible.builtin.env', 'NET_CONFIG_GIT_USERNAME') }}"
+    _ncg_token: "{{ lookup('ansible.builtin.env', 'NET_CONFIG_GIT_TOKEN') }}"
+    _ncg_header: >-
+      {{ ('[http] extraHeader = Authorization: Basic ' ~ ((_ncg_user or 'git') ~ ':' ~ _ncg_token) | b64encode)
+         if _ncg_token else '# no token: an SSH key, or no login' }}
+  no_log: true
+  check_mode: false
+
+# Without net_config_git_known_hosts, ssh's own known_hosts applies (in an execution environment that is empty
+# every job: accept-new then learns the key each time - only net_config_git_known_hosts + yes really checks it).
 - name: Network config | the git server's host keys (net_config_git_known_hosts)
   ansible.builtin.copy:
-    content: "{{ net_config_git_known_hosts | default('', true) }}\n"
+    content: "{{ net_config_git_known_hosts }}\n"
     dest: "{{ _ncg_tmp.path }}/known_hosts"
     mode: "0600"
   check_mode: false
+  when: net_config_git_known_hosts | default('', true) | length > 0
 
 - name: Network config | clone {{ net_config_git_branch }}
   ansible.builtin.command:

@@ -15,8 +15,10 @@ description:
   - C(restore) - a saved configuration imported as a named snapshot, loaded as the candidate, validated and
     committed.
   - Before a change, the firewall must have no uncommitted changes (someone else's would be committed with
-    ours): the module refuses (allow_pending overrides). A validation that fails reverts the candidate - nothing
-    is committed. In check mode, set and restore read only - what is there now - and change nothing.
+    ours): the module refuses (allow_pending overrides). Anything that fails after the first change - an entry the
+    firewall refuses, the validation, the commit, a timeout - reverts the candidate: nothing is left half-applied.
+    In check mode, set and restore read only - what is there now - and change nothing; set says unchanged when
+    every entry is there already.
 options:
   host: {description: The firewall's name or address., type: str, required: true}
   port: {description: Its HTTPS port., type: int, default: 443}
@@ -45,12 +47,13 @@ options:
 RETURN = r"""
 config: {description: The running configuration (export)., type: str, returned: action export}
 current: {description: What is at each entry's xpath now (set)., type: list, returned: action set}
-unchanged: {description: The entries were all there already - nothing was committed (set)., type: bool, returned: when so}
+unchanged: {description: The entries were all there already - nothing was (or would be) committed (set)., type: bool, returned: when so}
 validate: {description: The validation job's result and details., type: dict, returned: when validated}
 commit: {description: The commit job's result and details (or "no changes")., type: dict, returned: when committed}
 """
 
 import json
+import socket
 import ssl
 import time
 import uuid
@@ -60,10 +63,14 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.six.moves.urllib.parse import urlencode
 from ansible.module_utils.six.moves.urllib.request import Request, urlopen
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
+from ansible.module_utils.six.moves import http_client
 
 
 class PanError(Exception):
-    pass
+    def __init__(self, msg, details=""):
+        Exception.__init__(self, msg)
+        self.details = details      # said after "... nothing committed, the candidate reverted: "
+
 
 
 class Pan(object):
@@ -106,6 +113,9 @@ class Pan(object):
             raise PanError("HTTP %d from the firewall: %s" % (e.code, msg_of(text) or e.reason))
         except URLError as e:
             raise PanError("cannot reach the firewall: %s" % e.reason)
+        except (OSError, socket.timeout, http_client.HTTPException) as e:
+            # a timeout or a dropped connection while the answer is read
+            raise PanError("cannot reach the firewall: %s" % (str(e) or type(e).__name__))
 
     def call(self, params, keyed=True, body=None, content_type=None):
         text = self.raw(params, body=body, content_type=content_type, keyed=keyed)
@@ -193,6 +203,37 @@ def msg_of(text):
     return "; ".join(lines)
 
 
+def _canon(node):
+    """An element as a comparable value: tag, attributes, text (whitespace trimmed) and children."""
+    return (node.tag, tuple(sorted(node.attrib.items())), (node.text or "").strip(),
+            tuple(_canon(c) for c in node))
+
+
+def _fragments(text):
+    """The top-level elements of an XML fragment (several are allowed)."""
+    return list(ET.fromstring("<x>%s</x>" % text))
+
+
+def entry_unchanged(entry, now):
+    """Would this entry change nothing? now: what is at its xpath (pan.get). set: every element it gives is a child
+    of the node there, exactly; edit: the node is exactly the element; delete: nothing is there. Unsure = it would
+    change."""
+    action = entry.get("action", "set")
+    try:
+        if action == "delete":
+            return not (now or "").strip()
+        if not (now or "").strip():
+            return False
+        have = _fragments(now)
+        want = _fragments(entry.get("element") or "")
+        if action == "edit":
+            return [_canon(n) for n in have] == [_canon(n) for n in want]
+        children = set(_canon(c) for n in have for c in n)
+        return bool(want) and all(_canon(w) in children for w in want)
+    except ET.ParseError:
+        return False
+
+
 def run(p, check_mode=False, scheme="https"):
     pan = Pan(p["host"], p.get("port") or 443, p.get("api_key"), p.get("username"), p.get("password"),
               p.get("validate_certs", True), p.get("ca_path"), p.get("timeout") or 60, scheme=scheme)
@@ -214,33 +255,44 @@ def run(p, check_mode=False, scheme="https"):
             raise PanError("the configuration to restore is not a PAN-OS configuration (it has no <config> root)")
     if check_mode:
         out["pending"] = pan.pending()
+        if action == "set" and all(entry_unchanged(e, c["now"]) for e, c in zip(p.get("entries") or [], out["current"])):
+            out["unchanged"] = True     # every entry is there already: nothing would be committed
         return out
     if pan.pending() and not p.get("allow_pending"):
         raise PanError("the firewall has uncommitted changes (someone else's?) - they would be committed with these. "
                        "Commit or revert them first, or allow_pending")
-    if action == "set":
-        for e in p.get("entries") or []:
-            params = {"type": "config", "action": e.get("action", "set"), "xpath": e["xpath"]}
-            if e.get("action", "set") != "delete":
-                params["element"] = e["element"]
-            pan.call(params)
-    else:
-        name = p.get("file_name") or "site-automation-restore.xml"
-        pan.import_config(name, p["config"])
-        pan.load(name)
-    if action == "set" and not pan.pending():
-        out["unchanged"] = True         # every entry was there already: nothing to validate or commit
-        return out
-    out["changed"] = True
-    out["validate"] = pan.validate(jt)
-    if out["validate"]["result"] != "OK":
-        out["reverted"] = pan.revert()
-        raise PanError("validation failed - nothing committed%s: %s" % (
-            ", the candidate reverted" if out["reverted"] else " (revert the candidate by hand)", "; ".join(out["validate"]["details"])))
-    if p.get("commit", True):
-        out["commit"] = pan.commit(p.get("description") or "", jt)
-        if out["commit"]["result"] != "OK":
-            raise PanError("the commit failed: %s" % "; ".join(out["commit"]["details"]))
+    # from the first change to the commit: whatever fails, the candidate is reverted - never left half-applied
+    # (a later load would then refuse it as someone's uncommitted changes)
+    try:
+        if action == "set":
+            for i, e in enumerate(p.get("entries") or []):
+                params = {"type": "config", "action": e.get("action", "set"), "xpath": e["xpath"]}
+                if e.get("action", "set") != "delete":
+                    params["element"] = e["element"]
+                try:
+                    pan.call(params)
+                except PanError as err:
+                    raise PanError("entry %d of %d (%s %s): %s" % (i + 1, len(p.get("entries") or []), e.get("action", "set"), e["xpath"], err))
+        else:
+            name = p.get("file_name") or "site-automation-restore.xml"
+            pan.import_config(name, p["config"])
+            pan.load(name)
+        if action == "set" and not pan.pending():
+            out["unchanged"] = True         # every entry was there already: nothing to validate or commit
+            return out
+        out["changed"] = True
+        out["validate"] = pan.validate(jt)
+        if out["validate"]["result"] != "OK":
+            raise PanError("validation failed", "; ".join(out["validate"]["details"]))
+        if p.get("commit", True):
+            out["commit"] = pan.commit(p.get("description") or "", jt)
+            if out["commit"]["result"] != "OK":
+                raise PanError("the commit failed", "; ".join(out["commit"]["details"]))
+    except PanError as err:
+        reverted = pan.revert()
+        raise PanError("%s - nothing committed%s%s" % (err, ", the candidate reverted" if reverted else
+                                                        " (the candidate could not be reverted: revert it by hand)",
+                                                        (": " + err.details) if err.details else ""))
     return out
 
 

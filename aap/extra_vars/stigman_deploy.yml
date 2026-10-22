@@ -55,7 +55,8 @@
 ## STIG Manager docs: >= 8G for real deployments
 # stigman_mysql_buffer_pool: 1G
 
-## How long to wait for the API to answer through nginx after (re)starting
+## How long to wait after (re)starting: for MySQL to be healthy, then for the API to answer through
+## nginx (each)
 # stigman_ready_retries: 40
 
 ## seconds between those tries
