@@ -1,13 +1,14 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-"""Send one plain-text email through an SMTP relay - Python standard library only, so it works in
-every execution environment (no collection needed)."""
+"""Send one email through an SMTP relay - plain text, and the same report as HTML with its pictures (a
+logo) when given. Python standard library only, so it works in every execution environment (no
+collection needed)."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 DOCUMENTATION = r'''
 module: site_mail
-short_description: Send a plain-text email through an SMTP relay
+short_description: Send an email (plain text, and HTML with its pictures) through an SMTP relay
 description:
   - Sends one message with Python's smtplib. Encrypted with STARTTLS (default) or SSL; the relay's
     certificate is checked. A login, when the relay needs one, comes from the environment variables
@@ -27,6 +28,12 @@ options:
   subject: {description: Subject line., type: str, required: true}
   body: {description: The text (always sent; what a mail client shows when it does not display HTML)., type: str, required: true}
   html: {description: The same report as HTML. When given, the email carries both versions and the client shows the HTML one., type: str}
+  images:
+    description: "Pictures inside the HTML (a logo): [{cid: name, path: file}] - PNG, JPEG or GIF, attached to the HTML part and
+      shown where it says src=\"cid:name\". Ignored without html."
+    type: list
+    elements: dict
+    default: []
   ca_path: {description: A CA file to trust for the relay's certificate (default - the system's trusted CAs)., type: path}
   timeout: {description: Seconds to wait for the relay., type: int, default: 30}
 author: site automation
@@ -54,6 +61,8 @@ from email.utils import formatdate, make_msgid
 
 from ansible.module_utils.basic import AnsibleModule
 
+IMAGE_TYPES = {'.png': 'png', '.jpg': 'jpeg', '.jpeg': 'jpeg', '.gif': 'gif'}
+
 
 def main():
     module = AnsibleModule(
@@ -67,6 +76,7 @@ def main():
             subject=dict(type='str', required=True),
             body=dict(type='str', required=True),
             html=dict(type='str'),
+            images=dict(type='list', elements='dict', default=[]),
             ca_path=dict(type='path'),
             timeout=dict(type='int', default=30),
         ),
@@ -97,6 +107,18 @@ def main():
         msg.set_content(p['body'])
         if p['html']:
             msg.add_alternative(p['html'], subtype='html')
+            html_part = msg.get_payload()[-1]
+            for img in p['images']:
+                path = str(img.get('path') or '')
+                kind = IMAGE_TYPES.get(os.path.splitext(path)[1].lower())
+                if not kind:
+                    module.fail_json(msg='the picture %s is not a PNG, JPEG or GIF file' % path)
+                try:
+                    with open(path, 'rb') as f:
+                        data = f.read()
+                except (IOError, OSError) as e:
+                    module.fail_json(msg='the picture %s cannot be read: %s' % (path, e))
+                html_part.add_related(data, 'image', kind, cid='<%s>' % img.get('cid'), filename=os.path.basename(path))
     except (ValueError, TypeError) as e:
         module.fail_json(msg='the email could not be built (an address or the subject is not valid): %s' % e)
     context = ssl.create_default_context(cafile=p['ca_path'] or None)

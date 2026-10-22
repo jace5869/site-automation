@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.20.0 — 2026-10-22
+
+**Updating without scripts:** paste `site-automation-0.20.0-changed-since-0.19.0.zip` as it is (from
+0.15.1 to 0.18.1: `site-automation-0.20.0-changed-since-0.15.1.zip`). Both leave out
+`playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. Then **delete the file
+`roles/vmware_vm/module_utils/site_aap.py`**: it moved to `plugins/module_utils/site_aap.py` (with a line
+in `ansible.cfg`), and pasting a zip never deletes. Nothing else to change: the reports look as before
+until you set `report_email_theme`.
+
+**A second look for every report email, with your logo and the job's last runs.** `report_email_theme:
+command` (in `all.yml`, for every report job at once): a dark header with your logo, a small line of text
+(`report_email_header_text`, default *Site automation report*) and the status as a label beside the
+title; under it the job's **last 14 runs as a strip of bars**, oldest first, this run outlined - the colour
+is how each run went, the height its report's first number (VMs checked, snapshots deleted); then the
+numbers in one row and the sections. The runs come from AAP, which keeps every job: attach a **Red Hat
+Ansible Automation Platform** credential to the report templates (the pick lists' one works; its user
+needs at least Read on the template). Without it the email goes out as before, without the strip, and the
+job says why. Each run now keeps its report's status and number as the job artifact `site_report_run`;
+runs from before this release show only green or red. The plain-text copy has the strip as one line.
+`report_email_theme: standard` (the default) is today's look.
+
+**Your logo in the reports** (both looks): `report_logo_file: files/report_logo.png` (=
+`playbooks/files/report_logo.png` in your repository - never in the public one). PNG, JPEG or GIF, about
+160 px tall; it is attached to each email and shown from there, so Outlook shows it without asking, at
+`report_logo_height` (84) pixels. With `scripts/update-from-release`, list the file in `.site-local`.
+docs/EMAIL_REPORTS.md, "The look".
+
 ## 0.19.0 — 2026-10-22
 
 **Updating without scripts:** paste `site-automation-0.19.0-changed-since-0.18.1.zip` as it is (from 0.15.1 to

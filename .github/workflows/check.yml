@@ -58,6 +58,7 @@ jobs:
           python tests/test_aap_survey.py
           python tests/test_net_config.py
           python tests/test_trust.py
+          python tests/test_report_history.py
       - name: The real ACT in the alarms analysis mode (piped evidence, masked names, the answer read back)
         run: python tests/test_alarm_act_contract.py
       - name: docs/VARIABLES_REFERENCE.md is generated from the roles and is up to date

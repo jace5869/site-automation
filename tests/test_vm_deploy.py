@@ -20,7 +20,7 @@ _mu = importlib.util.module_from_spec(_spec)
 sys.modules["ansible.module_utils.site_vcenters"] = _mu
 _spec.loader.exec_module(_mu)
 _spec = importlib.util.spec_from_file_location("ansible.module_utils.site_aap", os.path.join(
-    HERE, "..", "roles", "vmware_vm", "module_utils", "site_aap.py"))
+    HERE, "..", "plugins", "module_utils", "site_aap.py"))
 _aap = importlib.util.module_from_spec(_spec)
 sys.modules["ansible.module_utils.site_aap"] = _aap
 _spec.loader.exec_module(_aap)

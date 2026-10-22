@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""AAP's own API, for the site_aap_* modules (the deploy's inventory, the pick lists' surveys): the address
-and login come from the "Red Hat Ansible Automation Platform" credential's variables. The API path is
-found by asking - api/controller/v2/ (AAP 2.5 and later), else api/v2/. Standard library only."""
+"""AAP's own API, for the site_aap_* modules (the deploy's inventory, the pick lists' surveys) and the
+reports' past runs (roles/site_email: site_report_history): the address and login come from the "Red Hat
+Ansible Automation Platform" credential's variables. The API path is found by asking - api/controller/v2/
+(AAP 2.5 and later), else api/v2/. Standard library only."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 

@@ -3,7 +3,8 @@
 # plain, STARTTLS with the relay's CA, SSL, a login from the SMTP relay credential (environment),
 # a refused login, a refused recipient, a relay without STARTTLS, a login with security none
 # (refused: the password would travel unencrypted), an untrusted certificate, missing settings,
-# survey text recipients, a dry run, and no email at all when report_email_to is empty.
+# survey text recipients, a dry run, no email at all when report_email_to is empty, and the look: the
+# command theme, the logo attached to the email, the strip of past runs from a fake AAP (tests/servicenow/aapmock.py).
 #   bash tests/email/run_email_test.sh            (ANSIBLE_PLAYBOOK=... to pick one)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -104,6 +105,66 @@ PLAYBOOK=send_report.yml send "your own HTML template (report_email_html_templat
     "{\"report_email_to\": [\"ops@example.mil\"], \"report_email_html_template\": \"$work/tpl/mine.html.j2\"}"
 part html "$work/mail/3.eml" | grep -q '<h1>MY LOOK: Test formatted report</h1>' && echo "ok   -   ...the email uses it" \
     || { echo "FAIL -   ...own template"; fails=$((fails + 1)); }
+
+# ---- the look: the command theme, the logo (cid), the strip of past runs from AAP (fake AAP) ----------
+"$py" -c 'import struct, sys, zlib
+w, h = 30, 40
+raw = b"".join(b"\x00" + b"\x10\x30\x90" * w for _ in range(h))
+chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+open(sys.argv[1], "wb").write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+                              + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))' "$work/logo.png"
+aport="${AAP_TEST_PORT:-18026}"
+apid=""
+aap() {  # aap [ENV=VALUE...]: a fresh fake AAP (tests/servicenow/aapmock.py)
+    [ -n "$apid" ] && kill "$apid" 2>/dev/null && wait "$apid" 2>/dev/null
+    env "$@" "$py" "$repo/tests/servicenow/aapmock.py" "$aport" 2>"$work/aap.err" &
+    apid=$!
+    for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$aport") 2>/dev/null && return; sleep 0.1; done
+    echo "ABORT - fake AAP did not start"; cat "$work/aap.err"; exit 1
+}
+cleanup() { [ -n "$pid" ] && kill "$pid" 2>/dev/null; [ -n "$apid" ] && kill "$apid" 2>/dev/null; rm -rf "$work"; }
+check() {  # check NAME COMMAND...: one more check on what the last send produced
+    local name="$1"; shift
+    if "$@"; then echo "ok   -   ...$name"; else echo "FAIL -   ...$name"; fails=$((fails + 1)); fi
+}
+look="\"report_email_to\": [\"ops@example.mil\"], \"report_email_theme\": \"command\", \"report_logo_file\": \"$work/logo.png\""
+relay --tls "$work/cert.pem" "$work/key.pem"
+PLAYBOOK=send_report.yml send "command look with the logo, not in AAP: no strip" ok "{$look}" \
+    "Content-ID: <site-report-logo>" "multipart/related" "Content-Type: image/png"
+part html "$work/mail/1.eml" > "$work/html.txt"
+check "the logo shown from the email itself, at 84 px tall (63 wide)" grep -q 'src="cid:site-report-logo" width="63" height="84"' "$work/html.txt"
+check "the header text, the status" grep -q 'Site automation report &nbsp;<span[^>]*>WARNING</span>' "$work/html.txt"
+check "no strip outside AAP" bash -c "! grep -q 'RUNS</td>' '$work/html.txt'"
+aap
+CONTROLLER_HOST="http://127.0.0.1:$aport" CONTROLLER_USERNAME=admin CONTROLLER_PASSWORD=goodpw ANSIBLE_SHOW_CUSTOM_STATS=1 \
+PLAYBOOK=send_report.yml send "in AAP: the last 13 runs from AAP, then this one" ok \
+    "{$look, \"awx_job_id\": 919, \"awx_job_template_id\": 71, \"report_email_header_text\": \"Ops <team>\"}" \
+    '"site_report_run"'
+part html "$work/mail/2.eml" > "$work/html.txt"; part plain "$work/mail/2.eml" > "$work/plain.txt"
+check "LAST 14 RUNS, 14 bars" bash -c "grep -q 'LAST 14 RUNS' '$work/html.txt' && [ \$(grep -c 'valign=\"bottom\" height=\"40\"' '$work/html.txt') = 14 ]"
+check "this run outlined, the tallest (141 VMs checked)" grep -q 'height="36" bgcolor="#b45309" title="this run - VMs checked 141 - warning"' "$work/html.txt"
+check "an older run without the artifact: how the job ended (failed = red, half height)" \
+    grep -q 'height="18" bgcolor="#b91c1c" title="2026-10-06 06:01 - critical"' "$work/html.txt"
+check "the header text escaped" grep -q 'Ops &lt;team&gt;' "$work/html.txt"
+check "plain text: the runs in one line" grep -qx 'Last 14 runs, oldest first: ok critical unknown ok ok ok ok ok ok ok warning critical ok warning (this run)' "$work/plain.txt"
+check "the artifact for the next run: status and headline number" grep -q '"value": 141' "$work/out.txt"
+aap AAPMOCK_JOBS_FORBID=1
+CONTROLLER_HOST="http://127.0.0.1:$aport" CONTROLLER_USERNAME=admin CONTROLLER_PASSWORD=goodpw \
+PLAYBOOK=send_report.yml send "AAP refuses the jobs: the email goes out without the strip, says why" ok \
+    "{$look, \"awx_job_id\": 919, \"awx_job_template_id\": 71}" "No strip of past runs in the email: AAP refused" "the Read role on the template"
+PLAYBOOK=send_report.yml send "no AAP credential on the template: says so" ok "{$look, \"awx_job_id\": 919, \"awx_job_template_id\": 71}" \
+    "No strip of past runs in the email: no AAP connection"
+[ "$(mails)" = 4 ] && echo "ok   -   ...every one of them emailed" || { echo "FAIL - $(mails) emails, expected 4"; fails=$((fails + 1)); }
+PLAYBOOK=send_report.yml send "the standard look with the logo" ok \
+    "{\"report_email_to\": [\"ops@example.mil\"], \"report_logo_file\": \"$work/logo.png\"}" "Content-ID: <site-report-logo>"
+part html "$work/mail/5.eml" | grep -q 'background:#b45309;color:#ffffff;padding:16px 20px;' && part html "$work/mail/5.eml" | grep -q 'src="cid:site-report-logo"' \
+    && echo "ok   -   ...the status band, the logo in it" || { echo "FAIL -   ...standard look with the logo"; fails=$((fails + 1)); }
+PLAYBOOK=send_report.yml send "a logo file that is not there: sent without it, says so" ok \
+    "{\"report_email_to\": [\"ops@example.mil\"], \"report_email_theme\": \"command\", \"report_logo_file\": \"$work/none.png\"}" \
+    "No logo in the email: $work/none.png is not there"
+check "no picture in it" bash -c "! grep -q 'site-report-logo' '$work/mail/6.eml'"
+PLAYBOOK=send_report.yml send "an unknown look: says which there are" fail '{"report_email_to": ["ops@example.mil"], "report_email_theme": "pulse"}' \
+    "report_email_theme must be standard or command"
 
 relay --tls "$work/cert.pem" "$work/key.pem" --auth "relayuser:s3cret pw"
 SMTP_USERNAME=relayuser SMTP_PASSWORD='s3cret pw' send "login from the SMTP relay credential (environment)" ok \

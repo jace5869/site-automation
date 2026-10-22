@@ -16,6 +16,9 @@
 #       - {title: Alarms, columns: [Severity, Host], rows: [[CRITICAL, esx01]], row_status: [critical], cell_status: [[critical, '']]}
 #     footer: "vCenter vcsa01"                                 # optional; the AAP job line is added
 # or plain text: _report_subject and _report_body.
+# The look: report_email_theme (standard | command), report_logo_file. The command look's strip of past runs
+# reads this template's earlier jobs from AAP (site_report_history); each run keeps its report's status and
+# first plain-number summary value as the job artifact site_report_run, the height of its bar.
 - name: Email | who gets the report
   ansible.builtin.set_fact:
     _email_to: >-
@@ -38,6 +41,65 @@
     quiet: true
   when: _email_to | length > 0
 
+- name: Email | the look (report_email_theme), the logo (report_logo_file)
+  ansible.builtin.set_fact:
+    _email_html: "{{ _report is defined and report_email_html | bool }}"
+    _email_theme: "{{ report_email_theme | default('standard') | string | trim | lower }}"
+    _email_logo_file: >-
+      {%- set f = report_logo_file | default('') | string | trim -%}
+      {{ '' if not f else (f if f.startswith('/') else playbook_dir ~ '/' ~ (f[10:] if f.startswith('playbooks/') else f)) }}
+  when: _email_to | length > 0
+
+- name: Email | report_email_theme is standard or command
+  ansible.builtin.assert:
+    that: _email_theme in ['standard', 'command']
+    fail_msg: "report_email_theme must be standard or command, not '{{ report_email_theme }}' (docs/EMAIL_REPORTS.md, \"The look\")."
+    quiet: true
+  when: _email_to | length > 0 and _email_html | bool
+
+- name: Email | the logo's size
+  ansible.builtin.set_fact:
+    _email_logo_size: "{{ _email_logo_file | image_size(report_logo_height | int) }}"
+  when: _email_to | length > 0 and _email_html | bool and _email_logo_file | length > 0
+
+- name: Email | no logo
+  ansible.builtin.debug:
+    msg: "No logo in the email: {{ _email_logo_file }} is not there, or not a PNG, JPEG or GIF (report_logo_file)."
+  when: _email_to | length > 0 and _email_html | bool and _email_logo_file | length > 0 and _email_logo_size[0] == 0
+
+- name: Email | this job's last runs, from AAP (report_history)
+  site_report_history:
+    job_id: "{{ awx_job_id | default(tower_job_id) | int }}"
+    template_id: "{{ awx_job_template_id | default(tower_job_template_id) | int }}"
+    runs: "{{ report_history_runs | int - 1 }}"
+    ca_path: "{{ report_history_aap_ca_path }}"
+  register: _email_hist
+  check_mode: false                      # read only
+  when: >-
+    _email_to | length > 0 and _email_html | bool and _email_theme == 'command' and report_history | bool
+    and report_history_runs | int > 1 and (awx_job_id | default(tower_job_id | default(''))) | string | length > 0
+    and (awx_job_template_id | default(tower_job_template_id | default(''))) | string | length > 0
+
+- name: Email | no strip of past runs
+  ansible.builtin.debug:
+    msg: "No strip of past runs in the email: {{ _email_hist.why }} (report_history)."
+  when: _email_hist.why | default('') | length > 0
+
+- name: Email | the strip of past runs
+  ansible.builtin.set_fact:
+    _email_runs: "{{ _email_hist.runs | report_runs(_report, report_history_runs | int) if _email_hist.ok | default(false) else [] }}"
+    _email_logo_cid: "{{ 'site-report-logo' if _email_logo_file | length > 0 and (_email_logo_size | default([0]))[0] > 0 else '' }}"
+    _email_template: >-
+      {{ report_email_html_template if report_email_html_template != 'report.html.j2' else
+         ('report_command.html.j2' if _email_theme == 'command' else 'report.html.j2') }}
+  when: _email_to | length > 0 and _email_html | bool
+
+- name: Email | this report, for the next runs' strip (job artifact site_report_run)
+  ansible.builtin.set_stats:
+    data:
+      site_report_run: "{{ _report | report_headline }}"
+  when: _report is defined
+
 - name: Email | the report as text (and HTML)
   ansible.builtin.set_fact:
     _email_footer: >-
@@ -56,8 +118,9 @@
     to: "{{ _email_to }}"
     cc: "{{ _email_cc }}"
     subject: "{{ _email_subject }}"
-    body: "{{ _report | report_text(_email_footer) if _report is defined else _report_body ~ '\n\n--\n' ~ _email_footer }}"
-    html: "{{ lookup('ansible.builtin.template', report_email_html_template) if _report is defined and report_email_html | bool else omit }}"
+    body: "{{ _report | report_text(_email_footer, _email_runs | default([])) if _report is defined else _report_body ~ '\n\n--\n' ~ _email_footer }}"
+    html: "{{ lookup('ansible.builtin.template', _email_template) if _email_html | bool else omit }}"
+    images: "{{ [{'cid': _email_logo_cid, 'path': _email_logo_file}] if _email_html | bool and _email_logo_cid else [] }}"
     ca_path: "{{ report_email_ca_path | default(omit, true) }}"
   when: _email_to | length > 0
   register: _email_sent

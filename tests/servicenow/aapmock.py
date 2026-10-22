@@ -22,6 +22,11 @@ Surveys (the pick lists, vm_pick_refresh.yml; each survey written appended to $A
   survey that is turned off), 56 "Both" (a workflow is named so too), 57 "Read only" (the user may not change
   it); workflow job templates 61 "VM - delete picked snapshots (workflow)" (vm_snapshot_picks: multiple select,
   a list) and 62 "Both". AAPMOCK_SURVEY_FAIL=1: writing a survey answers 400.
+
+Jobs (the reports' strip of past runs, roles/site_email site_report_history): job template 71 "Snapshot cleanup"
+has jobs 901-918 (successful, failed, one canceled, one still running; some with the artifact site_report_run,
+the older ones without), 72 none. The list leaves the artifacts out, as AAP does: each job's own page has them.
+AAPMOCK_JOBS_FORBID=1: the list answers 403 (the user has no Read role on the template).
 """
 import base64
 import json
@@ -48,6 +53,18 @@ HOSTS = {7: [{"id": 500, "name": "old01", "variables": "{}"}]}
 MEMBERS = {70: {500}}
 NEXT_HOST = [600]
 SURVEY_LOG = os.environ.get("AAPMOCK_SURVEY_LOG", "aapmock-survey.jsonl")
+
+
+def _job(i, status, value=None, rstatus=None):
+    j = {"id": i, "job_template": 71, "status": status, "finished": "2026-10-%02dT06:01:12.5Z" % (i - 900), "artifacts": {}}
+    if rstatus:
+        j["artifacts"] = {"site_report_run": {"status": rstatus, "value": value, "label": "Deleted"}, "other": 1}
+    return j
+
+
+JOBS_71 = ([_job(i, "successful") for i in range(901, 906)] + [_job(906, "failed")] + [_job(907, "canceled")]
+           + [_job(i, "successful", i - 905, "ok") for i in range(908, 915)] + [_job(915, "successful", 0, "warning")]
+           + [_job(916, "failed", 2, "critical"), _job(917, "successful", 5, "ok"), _job(918, "running")])
 
 
 def _tpl(kind, i, name, enabled=True, edit=True):
@@ -118,6 +135,9 @@ class H(BaseHTTPRequestHandler):
         inv = self._inventories(method, rest, q, body)
         if inv is not None:
             return self._send(*inv)
+        jb = self._jobs(method, rest, q)
+        if jb is not None:
+            return self._send(*jb)
         sv = self._surveys(method, rest, q, body)
         if sv is not None:
             return self._send(*sv)
@@ -140,6 +160,24 @@ class H(BaseHTTPRequestHandler):
                 out["ignored_fields"] = {"extra_vars": ev}
             return self._send(201, out)
         return self._send(404, {"detail": "Not found."})
+
+    def _jobs(self, method, rest, q):
+        """(status, answer) for jobs/ and jobs/<id>/, or None."""
+        if method != "GET" or not rest or rest[0] != "jobs":
+            return None
+        if len(rest) == 2:
+            found = [j for j in JOBS_71 if str(j["id"]) == rest[1]]
+            return (200, found[0]) if found else (404, {"detail": "Not found."})
+        if os.environ.get("AAPMOCK_JOBS_FORBID") == "1":
+            return 403, {"detail": "You do not have permission to perform this action."}
+        found = [j for j in JOBS_71 if str(j["job_template"]) == q.get("job_template")]
+        if q.get("id__lt"):
+            found = [j for j in found if j["id"] < int(q["id__lt"])]
+        if q.get("status__in"):
+            found = [j for j in found if j["status"] in q["status__in"].split(",")]
+        found.sort(key=lambda j: -j["id"] if q.get("order_by") == "-id" else j["id"])
+        found = found[:int(q.get("page_size", 25))]
+        return 200, {"count": len(found), "results": [{k: v for k, v in j.items() if k != "artifacts"} for j in found]}
 
     def _surveys(self, method, rest, q, body):
         """(status, answer) for the templates' surveys, or None (the deploy's workflow 42 is answered below)."""

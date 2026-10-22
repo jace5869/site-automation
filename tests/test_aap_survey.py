@@ -15,7 +15,7 @@ from http.server import ThreadingHTTPServer
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "roles", "vmware_vm", "library"))
 _spec = importlib.util.spec_from_file_location("ansible.module_utils.site_aap", os.path.join(
-    HERE, "..", "roles", "vmware_vm", "module_utils", "site_aap.py"))
+    HERE, "..", "plugins", "module_utils", "site_aap.py"))
 _aap = importlib.util.module_from_spec(_spec)
 sys.modules["ansible.module_utils.site_aap"] = _aap
 _spec.loader.exec_module(_aap)

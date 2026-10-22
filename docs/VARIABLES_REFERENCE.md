@@ -731,7 +731,14 @@ File: `roles/site_email/defaults/main.yml`
 | `report_email_ca_path` | (empty) | a CA file that signed the relay's certificate (empty = the CAs the execution environment trusts) |
 | `report_email_subject_prefix` | `"[AAP]"` | put before every subject, e.g. "[AAP] Certificate report: ..." |
 | `report_email_html` | `true` | Send a formatted (HTML) version too, for reports that come with one (all VMware jobs). The email always carries a plain-text copy for mail clients that do not show HTML. false = plain text only. |
-| `report_email_html_template` | `report.html.j2` | The look of the HTML version. Your own: copy roles/site_email/templates/report.html.j2 (e.g. to playbooks/files/email/report.html.j2), change it, and set report_email_html_template: "{{ playbook_dir }}/files/email/report.html.j2" |
+| `report_email_theme` | `standard` | The look of the HTML version (docs/EMAIL_REPORTS.md, "The look"): standard = a header band in the report's colour (green, amber, red, blue) with number boxes under it; command = a dark header with your logo and report_email_header_text, the job's last runs as a strip of bars (report_history), the numbers in one row. |
+| `report_email_header_text` | `Site automation report` | command: the small line above the title |
+| `report_logo_file` | (empty) | Your logo in the header (both looks): a PNG, JPEG or GIF in your repository - a path from playbooks/ (files/report_logo.png = playbooks/files/report_logo.png) or a full path. Attached to each email, so keep it small: about 160 px tall, under 100 KB. Updating with scripts/update-from-release: list the file in .site-loc… (all of it: the role file) |
+| `report_logo_height` | `84` | pixels in the email (its width follows) |
+| `report_history` | `true` | command: the job's last runs, read from AAP - attach a "Red Hat Ansible Automation Platform" credential (a user with at least Read on the template) to the template; without it the email goes out without the strip. |
+| `report_history_runs` | `14` | bars in the strip, this run included |
+| `report_history_aap_ca_path` | (empty) | a CA file for AAP's own HTTPS certificate ("" = what the execution environment trusts) |
+| `report_email_html_template` | `report.html.j2` | Your own look instead: copy roles/site_email/templates/report.html.j2 (or report_command.html.j2) to e.g. playbooks/files/email/report.html.j2, change it, and set report_email_html_template: "{{ playbook_dir }}/files/email/report.html.j2" report.html.j2 (the default) = the look report_email_theme picks. |
 
 ## site_findings
 

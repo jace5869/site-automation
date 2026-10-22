@@ -55,6 +55,13 @@ findings_report    the findings of a check run, per host -> a report for roles/s
 report_text        a report (roles/site_email: title, summary, sections with tables or lines) as plain
                    text with aligned columns - the text part of a report email.
                        {{ _report | report_text(footer_line) }}
+report_headline    what the next runs keep of a report (job artifact site_report_run): its status and
+                   first plain-number summary value.
+report_runs        the strip of past runs at the top of a report (report_email_theme: command): the
+                   past runs from AAP and this report -> bars (status, height, text), oldest first.
+                       {{ _email_hist.runs | report_runs(_report, report_history_runs) }}
+image_size         [width, height] of a PNG, GIF or JPEG file, scaled to a height: the report's logo.
+                       {{ report_logo_file | image_size(84) }}
 
 vm_ds_row          a datastore (site_vmware_datastores) as a row of the datastore report's tables
                    (multi = several vCenters: the datacenter cell names the vCenter too).
@@ -1347,14 +1354,17 @@ def _cell(v):
     return "" if v is None else " ".join(str(v).split())
 
 
-def report_text(report, footer=""):
+def report_text(report, footer="", runs=None):
     """A report (roles/site_email: title, subtitle, summary, sections with columns/rows or lines,
-    footer) as plain text, tables in aligned columns."""
+    footer) as plain text, tables in aligned columns. runs: the strip of past runs (report_runs), as one line."""
     r = report or {}
     title = str(r.get("title") or "Report")
     out = [title, "=" * len(title)]
     if r.get("subtitle"):
         out.append(str(r["subtitle"]))
+    if runs:
+        out.append("Last %d runs, oldest first: %s" % (len(runs), " ".join(
+            b["status"] + (" (this run)" if b.get("current") else "") for b in runs)))
     if r.get("summary"):
         out.append("")
         out += ["%s: %s" % (t.get("label", ""), t.get("value", "")) for t in r["summary"]]
@@ -1381,6 +1391,106 @@ def report_text(report, footer=""):
     if footer:
         out.append(str(footer))
     return "\n".join(out) + "\n"
+
+
+# the strip of past runs (report_email_theme: command): a job's own end, when its report did not say
+_RUN_STATUS = {"successful": "ok", "failed": "critical", "error": "critical", "canceled": "unknown"}
+_REPORT_STATUSES = ("ok", "warning", "critical", "info", "unknown")
+
+
+def _plain_number(v):
+    """A number, or a text that is only a number ("4", "1,200"); anything else (212 GB, 98%) is None."""
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return v
+    t = str(v).strip().replace(",", "")
+    if not re.match(r"^-?\d+(\.\d+)?$", t):
+        return None
+    return float(t) if "." in t else int(t)
+
+
+def report_headline(report):
+    """What the next runs keep of this report (the job artifact site_report_run, roles/site_email): its
+    status, and its first summary value that is a plain number with that value's label."""
+    r = report or {}
+    value, label = None, ""
+    for t in r.get("summary") or []:
+        n = _plain_number((t or {}).get("value"))
+        if n is not None:
+            value, label = n, str(t.get("label") or "")
+            break
+    status = str(r.get("status") or "info")
+    return {"status": status if status in _REPORT_STATUSES else "info", "value": value, "label": label}
+
+
+def report_runs(past, report, runs=14, height=36):
+    """The strip of past runs at the top of a report: past (site_report_history's runs, oldest first) and this
+    report, as at most runs bars, oldest first, this run last. Each: status (the report's, else how the job
+    ended - one that failed is red), height in pixels (its headline number against the highest; 4 when it
+    is 0; half when it is not known; all half when no run has a number), text (when, the number, the
+    status) and current."""
+    runs = max(1, int(runs))
+    bars = []
+    for j in (past or [])[-(runs - 1):] if runs > 1 else []:
+        rep = (j or {}).get("report") or {}
+        job = str(j.get("status") or "")
+        st = rep.get("status") if rep.get("status") in _REPORT_STATUSES else _RUN_STATUS.get(job, "unknown")
+        if job in ("failed", "error") and st in ("ok", "info"):
+            st = "critical"
+        when = str(j.get("finished") or "")[:16].replace("T", " ")
+        bars.append({"status": st, "value": _plain_number(rep.get("value")), "label": str(rep.get("label") or ""),
+                     "when": when or "job %s" % j.get("id"), "current": False})
+    cur = report_headline(report)
+    bars.append({"status": cur["status"], "value": cur["value"], "label": cur["label"], "when": "this run", "current": True})
+    top = max([b["value"] for b in bars if b["value"] is not None] or [0])
+    half = max(4, int(height) // 2)
+    for b in bars:
+        v = b["value"]
+        if v is None:
+            b["height"] = half
+        else:
+            b["height"] = 4 if v <= 0 or top <= 0 else 4 + int(round(float(v) / top * (int(height) - 4)))
+        num = ("%s %s" % (b["label"], ("%g" % v) if isinstance(v, float) else v)).strip() if v is not None else ""
+        b["text"] = " - ".join(x for x in (b["when"], num, b["status"]) if x)
+    return bars
+
+
+def image_size(path, height=0):
+    """[width, height] of a PNG, GIF or JPEG file (the report's logo), scaled to height when it is given -
+    Outlook shows a picture at its own size unless the email gives both. [0, 0] when it cannot be read."""
+    import struct
+    try:
+        with open(path, "rb") as f:
+            head = f.read(26)
+            w = h = 0
+            if head[:8] == b"\x89PNG\r\n\x1a\n":
+                w, h = struct.unpack(">II", head[16:24])
+            elif head[:6] in (b"GIF87a", b"GIF89a"):
+                w, h = struct.unpack("<HH", head[6:10])
+            elif head[:2] == b"\xff\xd8":
+                f.seek(2)
+                while True:
+                    b = f.read(1)
+                    while b and b != b"\xff":
+                        b = f.read(1)
+                    while b == b"\xff":
+                        b = f.read(1)
+                    if not b:
+                        break
+                    if b in (b"\xd8", b"\x01") or b"\xd0" <= b <= b"\xd7":
+                        continue
+                    size = struct.unpack(">H", f.read(2))[0]
+                    if b"\xc0" <= b <= b"\xcf" and b not in (b"\xc4", b"\xc8", b"\xcc"):
+                        h, w = struct.unpack(">HH", f.read(5)[1:5])
+                        break
+                    f.seek(size - 2, 1)
+    except (IOError, OSError, struct.error):
+        return [0, 0]
+    if not w or not h:
+        return [0, 0]
+    height = int(height or 0)
+    return [int(round(w * height / float(h))), height] if height else [w, h]
 
 
 def findings_report(by_host, title, missing=None, checks=None, extra=None):
@@ -1454,4 +1564,6 @@ class FilterModule(object):
                 "vm_pick_reboot_plan": vm_pick_reboot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "cert_report_section": cert_report_section,
                 "site_correlation_id": site_correlation_id,
                 "human_size": human_size, "name_matches": name_matches, "name_list": name_list,
-                "report_text": report_text, "findings_report": findings_report}
+                "report_text": report_text, "findings_report": findings_report,
+                "report_headline": report_headline, "report_runs": report_runs,
+                "image_size": image_size}

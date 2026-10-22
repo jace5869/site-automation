@@ -65,6 +65,9 @@
 # report_email_smtp_host: CHANGE-ME.yoursite.mil   # your mail relay
 # report_email_from: CHANGE-ME@yoursite.mil        # the sender
 # report_email_security: starttls                  # starttls (25/587) | ssl (465, with report_email_smtp_port: 465) | none
+# The look of every report email: standard | command (your logo, the job's last runs from AAP - "The look")
+# report_email_theme: command
+# report_logo_file: files/report_logo.png          # = playbooks/files/report_logo.png, in your repository
 
 # ---- The account AAP logs in as -------------------------------------------------------------
 # check_accounts_nopasswd_allowed: [CHANGE-ME-service-account]

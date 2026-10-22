@@ -1,7 +1,8 @@
 {#- A report as an email, in HTML that Outlook shows as intended: tables for the layout, every style
-    inline, no images, no scripts. Input: _report (see roles/site_email/tasks/main.yml), and the
-    footer line _email_footer. Every value is escaped (| e). Your own look: copy this file and point
-    report_email_html_template at the copy. -#}
+    inline, no scripts; the only picture is the site's logo (report_logo_file), attached to the email
+    (cid:). Input: _report (see roles/site_email/tasks/main.yml), the footer line _email_footer, and
+    _email_logo_cid ('' = no logo) with _email_logo_size ([width, height]). Every value is escaped
+    (| e). Your own look: copy this file and point report_email_html_template at the copy. -#}
 {%- set r = _report -%}
 {%- set colour = {'ok': '#15803d', 'warning': '#b45309', 'critical': '#b91c1c', 'info': '#1d4ed8', 'unknown': '#6b7280'} -%}
 {#- a section may colour its rows: row_status (one status per row: a light tint of the whole row) and
@@ -20,9 +21,15 @@
 <tr><td align="center" style="padding:16px 8px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:1000px;background:#ffffff;border:1px solid #d1d5db;font-family:'Segoe UI',Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;color:#111827;">
 <tr><td style="background:{{ band }};color:#ffffff;padding:16px 20px;">
+{%- if _email_logo_cid | default('') %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td valign="middle" style="color:#ffffff;">
+{%- endif %}
 <div style="font-size:20px;font-weight:bold;">{{ r.title | e }}</div>
 {%- if r.subtitle | default('') %}
 <div style="font-size:14px;margin-top:4px;">{{ r.subtitle | e }}</div>
+{%- endif %}
+{%- if _email_logo_cid | default('') %}
+</td><td width="{{ _email_logo_size[0] + 16 }}" align="right" valign="middle" style="padding-left:16px;"><img src="cid:{{ _email_logo_cid }}" width="{{ _email_logo_size[0] }}" height="{{ _email_logo_size[1] }}" alt="" style="display:block;border:0;width:{{ _email_logo_size[0] }}px;height:{{ _email_logo_size[1] }}px;"></td></tr></table>
 {%- endif %}
 </td></tr>
 {%- if r.summary | default([]) %}

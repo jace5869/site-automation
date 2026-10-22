@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Check AAP inventories and groups, and add hosts to them, through AAP's own API: the VMs the
 deploy built join the inventory and group of their service (vm_deploy_services). The address and
-login come from the "Red Hat Ansible Automation Platform" credential's variables (module_utils/site_aap.py).
+login come from the "Red Hat Ansible Automation Platform" credential's variables (plugins/module_utils/site_aap.py).
 Standard library only. Never creates an inventory or a group: a name that is not there is refused, never guessed."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type

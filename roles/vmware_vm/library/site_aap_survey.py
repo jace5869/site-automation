@@ -3,7 +3,7 @@
 """Replace the choices of one multiple-choice question in the survey of AAP job templates or workflow
 job templates, through AAP's own API: the pick lists (vm_pick_refresh.yml) write what may be restarted
 or deleted right now, so whoever launches the template picks from a current list. The address and login
-come from the "Red Hat Ansible Automation Platform" credential's variables (module_utils/site_aap.py).
+come from the "Red Hat Ansible Automation Platform" credential's variables (plugins/module_utils/site_aap.py).
 Standard library only. Never creates a template, a survey or a question: a name that is not there is
 refused, never guessed. The rest of the survey is left as it is."""
 from __future__ import absolute_import, division, print_function
