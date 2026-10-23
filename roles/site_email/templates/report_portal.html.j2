@@ -45,9 +45,11 @@
 <body style="margin:0;padding:0;background:#e7f1ee;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#e7f1ee" style="background:#e7f1ee;background-image:linear-gradient(160deg,#d9f0e7 0%,#e5eff4 55%,#dde8f2 100%);">
 <tr><td align="center" style="padding:22px 12px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:900px;font-family:'Segoe UI',Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;color:{{ ink }};">
+{#- classic desktop Outlook (mso) ignores max-width and sizes each card to its content: a fixed width there #}
+<!--[if mso]><table role="presentation" width="760" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td width="760"><![endif]-->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:900px;font-family:'Segoe UI',Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;color:{{ ink }};">
 <tr><td>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="{{ card }}"><tr><td style="padding:18px 20px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;{{ card }}"><tr><td style="padding:18px 20px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
 {%- if _email_logo_cid | default('') %}
 <td width="{{ _email_logo_size[0] + 14 }}" valign="middle" style="padding-right:14px;"><img src="cid:{{ _email_logo_cid }}" width="{{ _email_logo_size[0] }}" height="{{ _email_logo_size[1] }}" alt="" style="display:block;border:0;width:{{ _email_logo_size[0] }}px;height:{{ _email_logo_size[1] }}px;"></td>
@@ -74,7 +76,7 @@
 {%- set hi = ts in ['warning', 'critical'] or (ts and ts == st) %}
 {%- set v = t.value | string %}
 <td width="25%" valign="top" style="padding:0 {{ '0' if loop.index == 4 else '6px' }} 0 {{ '0' if loop.first else '6px' }};">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="background:#ffffff;border:2px solid {{ pal[ts].fg if hi else edge }};border-radius:18px;box-shadow:0 6px 22px rgba(15,70,52,.08);"><tr><td style="padding:14px 16px 16px 16px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;background:#ffffff;border:2px solid {{ pal[ts].fg if hi else edge }};border-radius:18px;box-shadow:0 6px 22px rgba(15,70,52,.08);"><tr><td style="padding:14px 16px 16px 16px;">
 <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:{{ pal[ts].fg if hi else label }};">{{ t.label | e }}</div>
 <div style="{{ mono }}font-size:{{ '30px' if v | length <= 9 else '18px' }};color:{{ ink }};margin-top:8px;line-height:1.1;word-break:break-word;">{{ v | e }}</div>
 </td></tr></table>
@@ -89,7 +91,7 @@
 {%- if runs %}
 {{ gap(14) }}
 <tr><td>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="{{ card }}"><tr><td style="padding:18px 20px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;{{ card }}"><tr><td style="padding:18px 20px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
 <td style="font-size:10px;font-weight:700;letter-spacing:1.5px;color:{{ label }};">LAST {{ runs | length }} RUN{{ 'S' if runs | length != 1 else '' }}</td>
 <td align="right" style="font-size:12px;color:{{ muted }};">oldest to newest</td>
@@ -125,7 +127,7 @@
 {%- set ss = s.status | default('') %}
 {{ gap(14) }}
 <tr><td>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="{{ card }}"><tr><td style="padding:18px 20px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;{{ card }}"><tr><td style="padding:18px 20px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
 <td style="font-size:17px;font-weight:700;color:{{ ink }};">{{ s.title | e }}
 {%- if s.rows is defined %} &nbsp;<span style="display:inline-block;min-width:28px;text-align:center;border-radius:14px;background:{{ pal[ss].fg if ss in ['warning', 'critical'] else accent }};color:#ffffff;font-size:15px;font-weight:700;line-height:20px;padding:3px 6px;">&nbsp;{{ s.rows | length }}&nbsp;</span>{% endif %}</td>
@@ -183,6 +185,7 @@
 {{ _email_footer | e }}
 </td></tr>
 </table>
+<!--[if mso]></td></tr></table><![endif]-->
 </td></tr>
 </table>
 </body>

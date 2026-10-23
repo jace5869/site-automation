@@ -259,7 +259,8 @@ class PortalLook(unittest.TestCase):
         self.assertIn("LAST 3 RUNS", h)
         self.assertEqual(h.count('valign="bottom" height="48"'), 3)
         self.assertEqual(h.count('bgcolor="#0f1f1a" style="background:#0f1f1a;padding:2px;'), 1)
-        self.assertEqual(h.count("<!--[if mso]>"), h.count("<!--[if !mso]><!-->"))
+        self.assertEqual(h.count("<!--[if mso]>"), h.count("<!--[if !mso]><!-->") + 2)  # + the fixed-width box
+        self.assertIn('<!--[if mso]><table role="presentation" width="760"', h)
         self.assertIn('height="44" bgcolor="#d98a1c" title="this run - Deleted 4 - warning"', h)
         self.assertIn(">Critical</span><!--<![endif]--></td>\n<td style=\"font-size:13px;color:#5b6b66;white-space:nowrap;\">47 h ago</td>", h)
 
