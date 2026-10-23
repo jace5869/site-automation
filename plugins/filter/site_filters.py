@@ -1424,12 +1424,28 @@ def report_headline(report):
     return {"status": status if status in _REPORT_STATUSES else "info", "value": value, "label": label}
 
 
-def report_runs(past, report, runs=14, height=36):
+def _run_ago(finished, now):
+    """How long ago a job finished (AAP's UTC time, e.g. 2026-10-21T06:01:12.5Z): 'N min ago', 'N h ago' up to
+    two days, then 'N days ago'. '' when it cannot be read."""
+    try:
+        t = datetime.datetime.strptime(str(finished)[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return ""
+    mins = max(0, int(((now or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)) - t).total_seconds() // 60))
+    if mins < 60:
+        return "%d min ago" % mins
+    if mins < 48 * 60:
+        return "%d h ago" % (mins // 60)
+    return "%d days ago" % (mins // (24 * 60))
+
+
+def report_runs(past, report, runs=14, height=36, now=None):
     """The strip of past runs at the top of a report: past (site_report_history's runs, oldest first) and this
     report, as at most runs bars, oldest first, this run last. Each: status (the report's, else how the job
     ended - one that failed is red), height in pixels (its headline number against the highest; 4 when it
     is 0; half when it is not known; all half when no run has a number), text (when, the number, the
-    status) and current."""
+    status), ago (how long ago it finished, '' for this run; now = a naive UTC datetime, for tests) and
+    current."""
     runs = max(1, int(runs))
     bars = []
     for j in (past or [])[-(runs - 1):] if runs > 1 else []:
@@ -1440,9 +1456,10 @@ def report_runs(past, report, runs=14, height=36):
             st = "critical"
         when = str(j.get("finished") or "")[:16].replace("T", " ")
         bars.append({"status": st, "value": _plain_number(rep.get("value")), "label": str(rep.get("label") or ""),
-                     "when": when or "job %s" % j.get("id"), "current": False})
+                     "when": when or "job %s" % j.get("id"), "ago": _run_ago(j.get("finished"), now), "current": False})
     cur = report_headline(report)
-    bars.append({"status": cur["status"], "value": cur["value"], "label": cur["label"], "when": "this run", "current": True})
+    bars.append({"status": cur["status"], "value": cur["value"], "label": cur["label"], "when": "this run", "ago": "",
+                 "current": True})
     top = max([b["value"] for b in bars if b["value"] is not None] or [0])
     half = max(4, int(height) // 2)
     for b in bars:

@@ -64,7 +64,7 @@ mail clients that do not show HTML. One email per job run, whatever the number o
 |---|---|---|
 | `report_email_to` / `report_email_cc` | (none) | who gets it; a list, or text with commas |
 | `report_email_html` | `true` | send the formatted version too; `false` = plain text only |
-| `report_email_theme` | `standard` | the look: `standard` or `command` ("The look", below) |
+| `report_email_theme` | `standard` | the look: `standard`, `command` or `portal` ("The look", below) |
 | `report_logo_file` | (none) | your logo in the header, e.g. `files/report_logo.png` |
 | `report_email_html_template` | `report.html.j2` | your own look instead (below) |
 | `report_email_subject_prefix` | `[AAP]` | put before every subject |
@@ -107,9 +107,9 @@ that have a severity, each row is tinted (light red, amber or blue) and the seve
 in its colour, so the problems stand out at a glance. Every value
 from a host or vCenter is escaped, so a VM name cannot add markup to the email.
 
-## The look: standard or command, your logo, the last runs
+## The look: standard, command or portal, your logo, the last runs
 
-`report_email_theme` picks one of two looks, for every report job at once when it is in `all.yml`:
+`report_email_theme` picks one of three looks, for every report job at once when it is in `all.yml`:
 
 - **standard** (the default): the header band in the report's colour, number boxes under it - as
   described above.
@@ -119,27 +119,38 @@ from a host or vCenter is escaped, so a VM name cannot add markup to the email.
   bar's colour is how that run went (green, amber, red; grey = cancelled); its height is the report's
   first plain number (the VMs checked, the snapshots deleted), against the highest of the strip. Then
   the numbers in one row, then the sections.
+- **portal**: white cards on a pale mint background with a dark green accent, like the AAP portal
+  pages. A header card with your logo, `report_email_header_text`, the AAP job and the status as a
+  pill (Successful, Warning, Critical); the numbers as tiles - a tile that is amber or red gets an
+  outline in that colour; a card with **the job's last runs** (the same bars, rounded) and a line
+  `This run Critical, Last run Successful 2 days ago`; then one card per section. New Outlook,
+  Outlook on the web and phones show the rounded cards and shadows; classic desktop Outlook shows the
+  same layout with square corners.
 
 ```yaml
 # playbooks/group_vars/all.yml
-report_email_theme: command
+report_email_theme: command                  # or portal
 report_logo_file: files/report_logo.png      # = playbooks/files/report_logo.png
 ```
 
-**The logo** (both looks): a PNG (best, with a transparent background), JPEG or GIF in your
+**The logo** (every look): a PNG (best, with a transparent background), JPEG or GIF in your
 repository. Put it in `playbooks/files/` and set `report_logo_file` (a path from `playbooks/`, or a
 full path). It is attached to each email and shown from there - Outlook blocks pictures from links -
-so keep it small: about 160 px tall, under 100 KB. It is shown `report_logo_height` (84) pixels tall.
+so keep it small: about 160 px tall, under 100 KB. It is shown `report_logo_height` (84) pixels tall; in the portal look's header card at most 56.
 Your logo belongs in your own repository only. If you update with `scripts/update-from-release`, add
 the line `playbooks/files/report_logo.png` to `.site-local`, or the update deletes it.
 
 **The last runs come from AAP** - a single email has no memory, AAP does. At the end of each run the
 report asks AAP for its template's earlier jobs (the last `report_history_runs` - 14 - with this one).
 For that, attach a credential of type **Red Hat Ansible Automation Platform** to the template: the
-one the pick lists use works ([VMWARE.md](VMWARE.md), "Pick lists"); its user needs at least the **Read** role on the
-template. Without it the email goes out as usual, without the strip, and the job says why: `No strip
+one the pick lists use works ([VMWARE.md](VMWARE.md), "Pick lists"). Its user must be able to see
+the template's jobs: give it **Organization Auditor** on the template's organization (AAP 2.5 and
+later: **Access Management > Users >** the user **> Roles > Assign roles**, resource type
+**Organization**, your organization, **Organization Auditor**). That is read-only and covers every
+template in the organization, also new ones. A role on each template works too (JobTemplate Execute
+includes seeing its jobs, but also lets the user start it). Without it the email goes out as usual, without the strip, and the job says why: `No strip
 of past runs in the email: ...`. Each run keeps its report's status and number in AAP as the job
-artifact `site_report_run`; runs from before 0.19.0 have none, so their bar shows only how the job
+artifact `site_report_run`; runs from before 0.20.0 have none, so their bar shows only how the job
 ended (green or red), half height. `report_history: false` turns the strip off.
 
 The plain-text copy of the email has the strip as one line: `Last 14 runs, oldest first: ok ok
@@ -150,7 +161,7 @@ warning ... critical (this run)`.
 The look is one file, `roles/site_email/templates/report.html.j2` (Jinja and HTML, styles inline
 because Outlook ignores most style sheets). To change it without touching the repository's file:
 
-1. Copy it (or `report_command.html.j2`, the command look) to `playbooks/files/email/report.html.j2` in
+1. Copy it (or `report_command.html.j2` / `report_portal.html.j2`, the other looks) to `playbooks/files/email/report.html.j2` in
    your repository and edit the copy: colours, fonts, a banner line your site requires.
 2. In `all.yml`: `report_email_html_template: "{{ playbook_dir }}/files/email/report.html.j2"`.
 3. Add the line `playbooks/files/email/` to the file `.site-local` at the top of your repository
@@ -217,7 +228,7 @@ The job's output says what happened to the email, in the task `Email | result` (
 | The email shows plain text only | `report_email_html: false`, or a mail gateway removed the HTML part | ask the mail admins whether HTML mail is stripped; the text copy has the same tables |
 | `No logo in the email: ... is not there, or not a PNG, JPEG or GIF` | `report_logo_file` points at nothing (a path from `playbooks/`, e.g. `files/report_logo.png`) | check the path and that the file is committed and synced |
 | `No strip of past runs in the email: no AAP connection` | the template has no AAP credential | attach the "Red Hat Ansible Automation Platform" credential ("The look", above) |
-| `No strip of past runs in the email: AAP refused the list of this template's jobs (HTTP 403)` | the credential's user may not see the template | give that user the Read role on the template |
+| `No strip of past runs in the email: AAP refused the list of this template's jobs (HTTP 403)` | the credential's user may not see the template | give that user Organization Auditor on the template's organization ("The look", above) |
 | `No strip of past runs in the email: AAP refused the login (HTTP 401)` | the credential's user name or password is wrong | fix the credential |
 | The job is red, but the email came | a check report found problems (`site_fail_on`) | by design for ticket workflows; `site_fail_on: []` on email-only templates ("Green or red") |
 

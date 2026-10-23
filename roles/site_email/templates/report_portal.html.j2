@@ -1,0 +1,181 @@
+{#- The "portal" look (report_email_theme: portal): white cards on a pale mint background with a dark green
+    accent - a header card with the site's logo (report_logo_file), report_email_header_text, the AAP job and
+    the status; the summary as number tiles; the job's last runs as a card of rounded bars (report_history:
+    from AAP); then one card per section. Mail programs that draw rounded corners and shadows (new Outlook,
+    Outlook on the web, phones) show the cards; classic desktop Outlook shows the same layout square.
+    Outlook-safe like report.html.j2: tables for the layout, every style inline, the logo attached to the
+    email (cid:), no scripts. Input: _report (see roles/site_email/tasks/main.yml), _email_footer,
+    _email_logo_cid ('' = no logo) and _email_logo_size ([width, height]), _email_runs (report_runs; [] = no
+    strip). Every value is escaped. -#}
+{%- set r = _report -%}
+{%- set pal = {
+    'ok':       {'bar': '#2f9e72', 'fg': '#13734f', 'bg': '#e3f5ec', 'bd': '#bfe6d3', 'word': 'Successful', 'icon': '&#10003;'},
+    'warning':  {'bar': '#d98a1c', 'fg': '#9a5806', 'bg': '#fdf2df', 'bd': '#f3d6a6', 'word': 'Warning', 'icon': '!'},
+    'critical': {'bar': '#d64545', 'fg': '#b42318', 'bg': '#fdeaea', 'bd': '#f5c4c4', 'word': 'Critical', 'icon': '&#215;'},
+    'info':     {'bar': '#4f86d9', 'fg': '#1d4ed8', 'bg': '#e6effd', 'bd': '#c3d5f7', 'word': 'Info', 'icon': 'i'},
+    'unknown':  {'bar': '#a3afab', 'fg': '#4b5753', 'bg': '#eef2f1', 'bd': '#d5ddda', 'word': 'Unknown', 'icon': '?'}} -%}
+{%- set tint = {'ok': '#e9f7f0', 'warning': '#fdf5e6', 'critical': '#fdeeee', 'info': '#ecf2fd', 'unknown': '#f2f5f4'} -%}
+{%- set st = r.status | default('info') if r.status | default('info') in pal else 'info' -%}
+{%- set ink = '#0f1f1a' -%}
+{%- set muted = '#5b6b66' -%}
+{%- set label = '#45534e' -%}
+{%- set accent = '#0f6b4f' -%}
+{%- set edge = '#dde8e4' -%}
+{%- set line = '#e4ece9' -%}
+{%- set mono = "font-family:Consolas,'Cascadia Mono',Menlo,'Courier New',monospace;" -%}
+{%- set card = 'background:#ffffff;border:1px solid ' ~ edge ~ ';border-radius:20px;box-shadow:0 6px 22px rgba(15,70,52,.08);' -%}
+{%- set runs = _email_runs | default([]) -%}
+{%- set job_id = awx_job_id | default(tower_job_id | default('')) | string -%}
+{%- set job_name = awx_job_template_name | default(tower_job_template_name | default('')) | string -%}
+{%- macro pill(k) -%}
+<span style="display:inline-block;border-radius:999px;background:{{ pal[k].bg }};border:1px solid {{ pal[k].bd }};color:{{ pal[k].fg }};font-size:12px;font-weight:600;padding:2px 10px 2px 6px;white-space:nowrap;"><span style="display:inline-block;width:14px;height:14px;line-height:14px;text-align:center;border-radius:7px;background:{{ pal[k].fg }};color:#ffffff;font-size:10px;margin-right:5px;">{{ pal[k].icon }}</span>{{ pal[k].word }}</span>
+{%- endmacro -%}
+{%- macro gap(h) -%}
+<tr><td height="{{ h }}" style="height:{{ h }}px;line-height:{{ h }}px;font-size:0;mso-line-height-rule:exactly;">&nbsp;</td></tr>
+{%- endmacro -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ r.title | e }}</title>
+</head>
+<body style="margin:0;padding:0;background:#e7f1ee;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#e7f1ee" style="background:#e7f1ee;background-image:linear-gradient(160deg,#d9f0e7 0%,#e5eff4 55%,#dde8f2 100%);">
+<tr><td align="center" style="padding:22px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:900px;font-family:'Segoe UI',Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;color:{{ ink }};">
+<tr><td>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="{{ card }}"><tr><td style="padding:18px 20px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+{%- if _email_logo_cid | default('') %}
+<td width="{{ _email_logo_size[0] + 14 }}" valign="middle" style="padding-right:14px;"><img src="cid:{{ _email_logo_cid }}" width="{{ _email_logo_size[0] }}" height="{{ _email_logo_size[1] }}" alt="" style="display:block;border:0;width:{{ _email_logo_size[0] }}px;height:{{ _email_logo_size[1] }}px;"></td>
+{%- endif %}
+<td valign="middle">
+<div style="font-size:18px;font-weight:700;color:{{ ink }};">{{ report_email_header_text | default('Site automation report') | e }}</div>
+<div style="font-size:13px;color:{{ muted }};margin-top:2px;">{{ ('AAP job ' ~ job_id) if job_id else 'Run from the command line' }}{% if job_name %} &middot; {{ job_name | e }}{% endif %}</div>
+</td>
+<td align="right" valign="middle" style="white-space:nowrap;padding-left:10px;">{{ pill(st) }}</td>
+</tr></table>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td height="1" style="height:1px;line-height:1px;font-size:0;border-top:1px solid {{ line }};padding:0;mso-line-height-rule:exactly;">&nbsp;</td></tr></table>
+<div style="font-size:21px;font-weight:700;color:{{ ink }};line-height:1.3;margin-top:12px;">{{ r.title | e }}</div>
+{%- if r.subtitle | default('') %}
+<div style="font-size:14px;color:{{ muted }};margin-top:4px;">{{ r.subtitle | e }}</div>
+{%- endif %}
+</td></tr></table>
+</td></tr>
+{%- for chunk in r.summary | default([]) | batch(4) %}
+{{ gap(14) }}
+<tr><td>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+{%- for t in chunk %}
+{%- set ts = t.status | default('') %}
+{%- set hi = ts in ['warning', 'critical'] or (ts and ts == st) %}
+{%- set v = t.value | string %}
+<td width="25%" valign="top" style="padding:0 {{ '0' if loop.index == 4 else '6px' }} 0 {{ '0' if loop.first else '6px' }};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="background:#ffffff;border:2px solid {{ pal[ts].fg if hi else edge }};border-radius:18px;box-shadow:0 6px 22px rgba(15,70,52,.08);"><tr><td style="padding:14px 16px 16px 16px;">
+<div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:{{ pal[ts].fg if hi else label }};">{{ t.label | e }}</div>
+<div style="{{ mono }}font-size:{{ '30px' if v | length <= 9 else '18px' }};color:{{ ink }};margin-top:8px;line-height:1.1;word-break:break-word;">{{ v | e }}</div>
+</td></tr></table>
+</td>
+{%- endfor %}
+{%- for _ in range(4 - chunk | length) %}
+<td width="25%" style="padding:0 0 0 6px;">&nbsp;</td>
+{%- endfor %}
+</tr></table>
+</td></tr>
+{%- endfor %}
+{%- if runs %}
+{{ gap(14) }}
+<tr><td>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="{{ card }}"><tr><td style="padding:18px 20px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+<td style="font-size:10px;font-weight:700;letter-spacing:1.5px;color:{{ label }};">LAST {{ runs | length }} RUN{{ 'S' if runs | length != 1 else '' }}</td>
+<td align="right" style="font-size:12px;color:{{ muted }};">oldest to newest</td>
+</tr></table>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:10px;"><tr>
+{%- for b in runs %}
+{%- set bc = pal[b.status].bar if b.status in pal else pal.unknown.bar %}
+<td valign="bottom" height="48" style="height:48px;padding:0 3px;" title="{{ b.text | e }}">
+<table role="presentation" width="14" cellpadding="0" cellspacing="0" border="0"><tr>
+<td width="14" height="{{ b.height }}" bgcolor="{{ bc }}" title="{{ b.text | e }}" style="width:14px;height:{{ b.height }}px;background:{{ bc }};border-radius:7px;{{ ('border:2px solid ' ~ ink ~ ';') if b.current else '' }}font-size:0;line-height:0;mso-line-height-rule:exactly;">&nbsp;</td>
+</tr></table>
+</td>
+{%- endfor %}
+</tr></table>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:12px;"><tr>
+<td style="font-size:13px;color:{{ muted }};padding-right:8px;white-space:nowrap;">This run</td><td style="padding-right:18px;">{{ pill(st) }}</td>
+{%- if runs | length > 1 %}
+{%- set prev = runs[-2] %}
+<td style="font-size:13px;color:{{ muted }};padding-right:8px;white-space:nowrap;">Last run</td><td style="padding-right:8px;">{{ pill(prev.status if prev.status in pal else 'unknown') }}</td>
+<td style="font-size:13px;color:{{ muted }};white-space:nowrap;">{{ (prev.ago | default('') or prev.when) | e }}</td>
+{%- endif %}
+</tr></table>
+</td></tr></table>
+</td></tr>
+{%- endif %}
+{%- for s in r.sections | default([]) %}
+{%- set ss = s.status | default('') %}
+{{ gap(14) }}
+<tr><td>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="{{ card }}"><tr><td style="padding:18px 20px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+<td style="font-size:17px;font-weight:700;color:{{ ink }};">{{ s.title | e }}
+{%- if s.rows is defined %} &nbsp;<span style="display:inline-block;min-width:22px;text-align:center;border-radius:11px;background:{{ pal[ss].fg if ss in ['warning', 'critical'] else accent }};color:#ffffff;font-size:12px;font-weight:700;padding:2px 7px;">{{ s.rows | length }}</span>{% endif %}</td>
+{%- if ss in pal %}
+<td align="right">{{ pill(ss) }}</td>
+{%- endif %}
+</tr></table>
+{%- if s.text | default('') %}
+<div style="padding:8px 0 0 0;color:#33413c;">{{ s.text | e }}</div>
+{%- endif %}
+{%- if s.columns is defined %}
+{%- if s.rows | default([]) %}
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;font-size:13px;margin-top:8px;">
+<tr>
+{%- for c in s.columns %}
+<th align="left" style="font-size:10px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:{{ label }};padding:8px 12px 8px 0;border-bottom:1px solid {{ line }};">{{ c | e }}</th>
+{%- endfor %}
+</tr>
+{%- for row in s.rows %}
+{%- set rs = (s.row_status[loop.index0] if s.row_status is defined and s.row_status | length > loop.index0 else '') | default('', true) %}
+{%- set cs = (s.cell_status[loop.index0] if s.cell_status is defined and s.cell_status | length > loop.index0 else []) | default([], true) %}
+{%- if rs in tint %}
+<tr bgcolor="{{ tint[rs] }}" style="background:{{ tint[rs] }};">
+{%- else %}
+<tr>
+{%- endif %}
+{%- for cell in row %}
+{%- set cst = cs[loop.index0] if cs | length > loop.index0 else '' %}
+{%- set text = ('' if cell is none else cell) | string %}
+{%- if cst and cst in pal %}
+<td style="padding:7px 12px 7px 0;border-bottom:1px solid #eef3f1;vertical-align:top;"><span style="display:inline-block;border-radius:999px;background:{{ pal[cst].bg }};border:1px solid {{ pal[cst].bd }};color:{{ pal[cst].fg }};font-weight:600;padding:1px 9px;">{{ text | e }}</span></td>
+{%- else %}
+<td style="padding:7px 12px 7px 0;border-bottom:1px solid #eef3f1;vertical-align:top;color:{{ ink }};">{{ text | e }}</td>
+{%- endif %}
+{%- endfor %}
+</tr>
+{%- endfor %}
+</table>
+{%- else %}
+<div style="padding:8px 0 0 0;color:{{ muted }};">None.</div>
+{%- endif %}
+{%- endif %}
+{%- if s.lines | default([]) %}
+<ul style="margin:8px 0 0 0;padding-left:20px;color:#33413c;">
+{%- for l in s.lines if l | trim %}
+<li style="margin:2px 0;">{{ l | e }}</li>
+{%- endfor %}
+</ul>
+{%- endif %}
+</td></tr></table>
+</td></tr>
+{%- endfor %}
+<tr><td align="center" style="text-align:center;font-size:12px;color:{{ muted }};line-height:1.6;padding:18px 10px 4px 10px;">
+{%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
+{{ _email_footer | e }}
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>

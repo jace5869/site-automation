@@ -18,8 +18,8 @@ description:
   - Read only, also in check mode. Never fails - ok is false and why says what was missing.
   - AAP's address and login come from the environment, as the "Red Hat Ansible Automation Platform"
     credential sets it (CONTROLLER_HOST, CONTROLLER_OAUTH_TOKEN or CONTROLLER_USERNAME and
-    CONTROLLER_PASSWORD, CONTROLLER_VERIFY_SSL, or the AAP_* / TOWER_* names). Its user needs at least
-    the Read role on the job template.
+    CONTROLLER_PASSWORD, CONTROLLER_VERIFY_SSL, or the AAP_* / TOWER_* names). Its user must be able to
+    see the template's jobs - Organization Auditor on the template's organization (or any role on the template).
 options:
   job_id: {description: This job's ID (awx_job_id) - only runs before it are listed., type: int, required: true}
   template_id: {description: Its job template's ID (awx_job_template_id)., type: int, required: true}
@@ -42,7 +42,7 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.site_aap import Api, connection, error_text
 
 NO_CREDENTIAL = ('no AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template '
-                 '(an AAP user with at least the Read role on it)')
+                 '(an AAP user with Organization Auditor on its organization)')
 DONE = "successful,failed,error,canceled"
 
 
@@ -54,7 +54,7 @@ def history(api, job_id, template_id, runs):
     code, data = api.call("GET", "jobs/?job_template=%d&id__lt=%d&status__in=%s&order_by=-id&page_size=%d"
                           % (template_id, job_id, DONE, max(1, min(runs, 50))))
     if code != 200:
-        return [], ("AAP refused the list of this template's jobs (HTTP %d): %s - its user needs the Read role on the template"
+        return [], ("AAP refused the list of this template's jobs (HTTP %d): %s - its user needs Organization Auditor on the template's organization"
                     % (code, error_text(data)) if code in (401, 403) else
                     "AAP answered HTTP %d for this template's jobs: %s" % (code, error_text(data)))
     out = []

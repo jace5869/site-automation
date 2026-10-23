@@ -336,10 +336,13 @@
 ## The look of the HTML version (docs/EMAIL_REPORTS.md, "The look"): standard = a header band in the
 ## report's colour (green, amber, red, blue) with number boxes under it; command = a dark header
 ## with your logo and report_email_header_text, the job's last runs as a strip of bars
-## (report_history), the numbers in one row.
+## (report_history), the numbers in one row; portal = white cards on a pale mint background (like
+## the AAP portal pages): a header card with your logo, report_email_header_text and the status,
+## number tiles, a card with the last runs, a card per section. Classic desktop Outlook shows the
+## portal cards square, without shadows.
 # report_email_theme: standard
 
-## command: the small line above the title
+## command, portal: the line with the logo
 # report_email_header_text: Site automation report
 
 ## Your logo in the header (both looks): a PNG, JPEG or GIF in your repository - a path from
@@ -348,12 +351,13 @@
 ## release: list the file in .site-local, or the update deletes it.
 # report_logo_file: ""
 
-## pixels in the email (its width follows)
+## pixels in the email (its width follows); portal: at most 56
 # report_logo_height: 84
 
-## command: the job's last runs, read from AAP - attach a "Red Hat Ansible Automation Platform"
-## credential (a user with at least Read on the template) to the template; without it the email goes
-## out without the strip.
+## command, portal: the job's last runs, read from AAP - attach a "Red Hat Ansible Automation
+## Platform" credential to the template, whose user can see the template's jobs (Organization
+## Auditor on its organization, docs/EMAIL_REPORTS.md); without it the email goes out without the
+## strip.
 # report_history: true
 
 ## bars in the strip, this run included
@@ -362,10 +366,10 @@
 ## a CA file for AAP's own HTTPS certificate ("" = what the execution environment trusts)
 # report_history_aap_ca_path: ""
 
-## Your own look instead: copy roles/site_email/templates/report.html.j2 (or report_command.html.j2)
-## to e.g. playbooks/files/email/report.html.j2, change it, and set report_email_html_template: "{{
-## playbook_dir }}/files/email/report.html.j2" report.html.j2 (the default) = the look
-## report_email_theme picks.
+## Your own look instead: copy roles/site_email/templates/report.html.j2 (or report_command /
+## report_portal) to e.g. playbooks/files/email/report.html.j2, change it, and set
+## report_email_html_template: "{{ playbook_dir }}/files/email/report.html.j2" report.html.j2 (the
+## default) = the look report_email_theme picks.
 # report_email_html_template: report.html.j2
 
 # ---- site_findings - usually in all.yml ----------------------------------------------------------

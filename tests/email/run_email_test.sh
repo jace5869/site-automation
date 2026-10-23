@@ -151,7 +151,7 @@ check "the artifact for the next run: status and headline number" grep -q '"valu
 aap AAPMOCK_JOBS_FORBID=1
 CONTROLLER_HOST="http://127.0.0.1:$aport" CONTROLLER_USERNAME=admin CONTROLLER_PASSWORD=goodpw \
 PLAYBOOK=send_report.yml send "AAP refuses the jobs: the email goes out without the strip, says why" ok \
-    "{$look, \"awx_job_id\": 919, \"awx_job_template_id\": 71}" "No strip of past runs in the email: AAP refused" "the Read role on the template"
+    "{$look, \"awx_job_id\": 919, \"awx_job_template_id\": 71}" "No strip of past runs in the email: AAP refused" "Organization Auditor on the template"
 PLAYBOOK=send_report.yml send "no AAP credential on the template: says so" ok "{$look, \"awx_job_id\": 919, \"awx_job_template_id\": 71}" \
     "No strip of past runs in the email: no AAP connection"
 [ "$(mails)" = 4 ] && echo "ok   -   ...every one of them emailed" || { echo "FAIL - $(mails) emails, expected 4"; fails=$((fails + 1)); }
@@ -163,8 +163,18 @@ PLAYBOOK=send_report.yml send "a logo file that is not there: sent without it, s
     "{\"report_email_to\": [\"ops@example.mil\"], \"report_email_theme\": \"command\", \"report_logo_file\": \"$work/none.png\"}" \
     "No logo in the email: $work/none.png is not there"
 check "no picture in it" bash -c "! grep -q 'site-report-logo' '$work/mail/6.eml'"
-PLAYBOOK=send_report.yml send "an unknown look: says which there are" fail '{"report_email_to": ["ops@example.mil"], "report_email_theme": "pulse"}' \
-    "report_email_theme must be standard or command"
+PLAYBOOK=send_report.yml send "an unknown look: says which there are" fail '{"report_email_to": ["ops@example.mil"], "report_email_theme": "fancy"}' \
+    "report_email_theme must be standard, command or portal"
+aap
+CONTROLLER_HOST="http://127.0.0.1:$aport" CONTROLLER_USERNAME=admin CONTROLLER_PASSWORD=goodpw \
+PLAYBOOK=send_report.yml send "the portal look in AAP: cards, the logo, the last runs" ok \
+    "{\"report_email_to\": [\"ops@example.mil\"], \"report_email_theme\": \"portal\", \"report_logo_file\": \"$work/logo.png\", \"awx_job_id\": 919, \"awx_job_template_id\": 71, \"awx_job_template_name\": \"VMware - check\"}" \
+    "Content-ID: <site-report-logo>"
+part html "$work/mail/7.eml" > "$work/html.txt"
+check "the logo in the header card, at most 56 px tall (42 wide)" grep -q 'src="cid:site-report-logo" width="42" height="56"' "$work/html.txt"
+check "the job line, the status pill" bash -c "grep -q 'AAP job 919 &middot; VMware - check' '$work/html.txt' && grep -q '</span>Warning</span>' '$work/html.txt'"
+check "LAST 14 RUNS, 14 rounded bars, this run the tallest" bash -c "grep -q 'LAST 14 RUNS' '$work/html.txt' && [ \$(grep -c 'valign=\"bottom\" height=\"48\"' '$work/html.txt') = 14 ] && grep -q 'height=\"44\" bgcolor=\"#d98a1c\" title=\"this run' '$work/html.txt'"
+check "the last run and how long ago" grep -q '>Last run</td>' "$work/html.txt"
 
 relay --tls "$work/cert.pem" "$work/key.pem" --auth "relayuser:s3cret pw"
 SMTP_USERNAME=relayuser SMTP_PASSWORD='s3cret pw' send "login from the SMTP relay credential (environment)" ok \

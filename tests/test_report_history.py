@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The reports' look (roles/site_email): the strip of past runs - report_headline, report_runs, the plain-text
 line (plugins/filter/site_filters.py), site_report_history against the fake AAP (tests/servicenow/aapmock.py),
-in this process - the logo's size (image_size), and the command look's template rendered with Jinja.
+in this process - the logo's size (image_size), and the command and portal looks' templates rendered with Jinja.
     python3 tests/test_report_history.py"""
 import importlib.util
 import os
@@ -161,7 +161,7 @@ class History(unittest.TestCase):
         runs, why = self.hist()
         self.assertEqual(runs, [])
         self.assertIn("HTTP 403", why)
-        self.assertIn("the Read role on the template", why)
+        self.assertIn("Organization Auditor on the template's organization", why)
         os.environ.pop("AAPMOCK_JOBS_FORBID")
         self.assertIn("refused the login", self.hist(CONTROLLER_PASSWORD="bad")[1])
         self.assertEqual(rh.history(_aap.Api(_aap.connection({}), no_credential=rh.NO_CREDENTIAL), 1, 71, 13)[1], rh.NO_CREDENTIAL)
@@ -202,6 +202,68 @@ class CommandLook(unittest.TestCase):
         h = self.render(_report=dict(REPORT, summary=[{"label": "N%d" % i, "value": i} for i in range(7)]))
         self.assertEqual(h.count("letter-spacing:1px;color:#5a6779;text-transform:uppercase;"), 7)
         self.assertEqual(h.count('<tr><td style="padding:6px 20px 4px 20px;">'), 1)
+
+
+class Ago(unittest.TestCase):
+    def test_how_long_ago_each_past_run_finished(self):
+        import datetime
+        now = datetime.datetime(2026, 10, 4, 6, 31)
+        bars = sf.report_runs(past(("successful", "ok", 1), ("successful", "ok", 2), ("successful", "ok", 3)), REPORT, now=now)
+        self.assertEqual([b["ago"] for b in bars], ["3 days ago", "2 days ago", "24 h ago", ""])
+        self.assertEqual(sf._run_ago("", now), "")
+        self.assertEqual(sf._run_ago("2026-10-05T00:00:00Z", now), "0 min ago")
+
+
+class PortalLook(unittest.TestCase):
+    """roles/site_email/templates/report_portal.html.j2, rendered with plain Jinja (it uses no Ansible filter)."""
+
+    def render(self, **v):
+        import jinja2
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
+                                 autoescape=False)
+        base = {"_report": dict(REPORT, subtitle="<b>sub</b>",
+                                sections=[{"title": "Deleted", "status": "ok", "columns": ["VM", "State"], "rows": [["<x>", "off"]],
+                                           "cell_status": [["", "critical"]]},
+                                          {"title": "Notes", "lines": ["one <line>"]}]),
+                "_email_footer": "AAP job 9", "_email_logo_cid": "", "_email_runs": [],
+                "report_email_header_text": "Site <automation> report"}
+        base.update(v)
+        return env.get_template("report_portal.html.j2").render(**base)
+
+    def test_no_logo_no_strip(self):
+        h = self.render()
+        self.assertNotIn("cid:", h)
+        self.assertNotIn("RUNS</td>", h)
+        self.assertIn("Run from the command line", h)
+        self.assertIn(">Warning</span>", h)
+        for raw in ("<b>sub</b>", "<x>", "<line>", "<automation>"):
+            self.assertNotIn(raw, h)
+        self.assertIn("Site &lt;automation&gt; report", h)
+        self.assertIn("one &lt;line&gt;", h)
+
+    def test_tiles_rows_of_four_amber_red_outlined(self):
+        h = self.render(_report=dict(REPORT, summary=[{"label": "N%d" % i, "value": i, "status": "critical" if i == 5 else ""}
+                                                      for i in range(6)]))
+        self.assertEqual(h.count('<td width="25%" valign="top"'), 6)
+        self.assertEqual(h.count('<td width="25%" style="padding:0 0 0 6px;">&nbsp;</td>'), 2)
+        self.assertEqual(h.count("border:2px solid #b42318;border-radius:18px"), 1)
+
+    def test_job_line_logo_strip_last_run(self):
+        import datetime
+        bars = sf.report_runs(past(("successful", "ok", 2), ("failed", None, None)), REPORT, 14, 44,
+                              now=datetime.datetime(2026, 10, 4, 6, 1))
+        h = self.render(_email_logo_cid="site-report-logo", _email_logo_size=[43, 56], _email_runs=bars,
+                        awx_job_id=4182, awx_job_template_name="VMware - <snap>")
+        self.assertIn('src="cid:site-report-logo" width="43" height="56"', h)
+        self.assertIn("AAP job 4182 &middot; VMware - &lt;snap&gt;", h)
+        self.assertIn("LAST 3 RUNS", h)
+        self.assertEqual(h.count('valign="bottom" height="48"'), 3)
+        self.assertEqual(h.count("border:2px solid #0f1f1a;"), 1)
+        self.assertIn('height="44" bgcolor="#d98a1c" title="this run - Deleted 4 - warning"', h)
+        self.assertIn(">Critical</span></td>\n<td style=\"font-size:13px;color:#5b6b66;white-space:nowrap;\">47 h ago</td>", h)
+
+    def test_cell_status_as_a_pill(self):
+        self.assertIn("color:#b42318;font-weight:600;padding:1px 9px;\">off</span>", self.render())
 
 
 if __name__ == "__main__":

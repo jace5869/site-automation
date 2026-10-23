@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.21.0 — 2026-10-23
+
+**Updating without scripts:** paste `site-automation-0.21.0-changed-since-0.20.0.zip` as it is (from
+0.15.1 to 0.19.0: `site-automation-0.21.0-changed-since-0.15.1.zip`, then read the 0.20.0 notes - one
+file to delete). Both leave out `playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`.
+Nothing else to change: the reports look as before until you set `report_email_theme: portal`.
+
+**A third look for the report emails: portal.** `report_email_theme: portal`: white cards on a pale mint
+background with a dark green accent, like the AAP portal pages. A header card with your logo (at most
+56 px tall there), `report_email_header_text`, the AAP job and the status as a pill (Successful, Warning,
+Critical); the numbers as tiles, an amber or red one outlined in its colour; a card with the job's last
+runs (the same strip from AAP as the command look, rounded) and a line *This run - Last run, 2 days
+ago*; one card per section, with cell colours as pills. New Outlook, Outlook on the web and phones show
+the rounded cards; classic desktop Outlook shows the same layout square. docs/EMAIL_REPORTS.md, "The
+look".
+
+**The AAP user for the strip of past runs: Organization Auditor.** AAP 2.5 and later have no Read role
+on a single job template, so the docs and the job's message now say: give the credential's user
+**Organization Auditor** on the templates' organization (Access Management > Users > the user > Roles >
+Assign roles, resource type Organization). Read-only, and it covers new templates too.
+
 ## 0.20.0 — 2026-10-22
 
 **Updating without scripts:** paste `site-automation-0.20.0-changed-since-0.19.0.zip` as it is (from
