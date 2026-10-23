@@ -297,7 +297,7 @@
   ansible.builtin.set_stats:
     data:
       site_report_url: "{{ _web_out.url }}"
-  when: _web_on | bool and _web_out.url and not ansible_check_mode
+  when: _web_on | bool and _web_out.url | default('') | length > 0 and not ansible_check_mode
 
 - name: Email | the email links its web copy
   ansible.builtin.set_fact:
