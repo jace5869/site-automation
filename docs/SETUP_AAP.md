@@ -499,6 +499,15 @@ same template again) whose survey has the multiple-select question the refresh f
 credential's user needs the **Admin** role on those workflows. Click by click: [VMWARE.md](VMWARE.md),
 "Pick lists"; the workflows: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md), 26 and 27.
 
+### AAP - report email question ("Also email the report to")
+
+One template - `AAP - report email question` (`playbooks/aap_email_question.yml`), with only the **Red Hat
+Ansible Automation Platform** credential (its user: **Admin** on the report templates and their workflows),
+any inventory, no Limit. Run it with **Check** first, then for real, once all your report templates exist (and
+again when you add one): it adds the optional box **Also email the report to** to every report template's
+survey and to the workflows that run them. What it does and what people can type:
+[EMAIL_REPORTS.md](EMAIL_REPORTS.md), "Also email the report to".
+
 ### NetApp ONTAP health report
 
 It reads the storage clusters' REST API, not your hosts: a read-only ONTAP account, a NetApp

@@ -24,4 +24,4 @@
     name: site_email
   vars:
     _report: "{{ _hz_doc | combine({'footer': _hz_footer | default('Horizon REST API of ' ~ _hz_read.url | default(''))}) }}"
-  when: report_email_to | default([]) | length > 0
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0

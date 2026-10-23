@@ -1,0 +1,15 @@
+---
+# Test harness: a job's report through a caller's gate (roles/vmware_vm/tasks/report.yml decides whether to email,
+# from report_email_to and report_email_also), then roles/site_email. Not a shipped playbook.
+- name: Email a report through a caller's gate
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The VMware jobs' report step
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: report.yml
+      vars:
+        _vm_report_subject: "Gate test report"
+        _vm_report_lines: [vm01 restarted]

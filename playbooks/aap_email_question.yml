@@ -1,0 +1,19 @@
+---
+# AAP - THE "ALSO EMAIL THE REPORT TO" QUESTION. Adds a text box to the survey of every report template (found by
+# its playbook, whatever you named it) and of the workflows that run them, through AAP's API: whoever launches
+# one can type more email addresses, and that run's report goes to them too - on top of the template's usual
+# recipients (report_email_to), never in their place. A blank box changes nothing; schedules are not affected.
+# A survey that is turned off stays off (the job says so); a question already there is left as it is.
+# Run it once, and again after you add report templates. aap_email_question_state: absent takes it out again.
+# Runs on the AAP side: attach a "Red Hat Ansible Automation Platform" credential (its user: the Admin role on the
+# report templates and their workflows); no Limit. Run it with Check first: it then only reads and says what it
+# would change. docs/EMAIL_REPORTS.md, "Also email the report to".
+#   ansible-playbook playbooks/aap_email_question.yml --check
+- name: AAP - the "Also email the report to" question
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The question in the report templates' surveys
+      ansible.builtin.include_role:
+        name: aap_email_question

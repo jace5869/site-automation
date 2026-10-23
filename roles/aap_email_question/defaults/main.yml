@@ -1,0 +1,74 @@
+---
+# THE "ALSO EMAIL THE REPORT TO" QUESTION (playbooks/aap_email_question.yml): adds a text box to the survey of
+# every report template and of the workflows that run them, through AAP's API, so whoever launches one can send
+# that run's report to more people (report_email_also, added to the template's report_email_to). Run it once,
+# and again after you add report templates. docs/EMAIL_REPORTS.md, "Also email the report to".
+
+aap_email_question_state: present       # present = add the question; absent = take it out again
+# Which templates: the job templates whose playbook is one of these (the file name - your template names do not
+# matter). Every playbook that can email a report is here; a test keeps the list complete.
+aap_email_question_playbooks:
+  - act_fix_approved.yml
+  - ad_health_report.yml
+  - ad_lockout.yml
+  - cert_report.yml
+  - database_health.yml
+  - esxi_security.yml
+  - health_check.yml
+  - horizon_capacity_report.yml
+  - horizon_desktops_check.yml
+  - horizon_desktops_fix_approved.yml
+  - horizon_health_report.yml
+  - horizon_image_push_approved.yml
+  - horizon_image_push_plan.yml
+  - horizon_session_cleanup.yml
+  - net_cert_renew.yml
+  - net_cert_report.yml
+  - net_config_backup.yml
+  - net_config_load.yml
+  - ontap_health_report.yml
+  - poam_status.yml
+  - servicenow_health.yml
+  - troubleshoot.yml
+  - trust_report.yml
+  - vm_alarm_act_analysis.yml
+  - vm_alarm_report.yml
+  - vm_capacity_report.yml
+  - vm_created_report.yml
+  - vm_datastore_report.yml
+  - vm_deploy_from_ticket.yml
+  - vm_deploy_inventory.yml
+  - vm_deploy_poll.yml
+  - vm_health_report.yml
+  - vm_notes.yml
+  - vm_pick_refresh.yml
+  - vm_reboot.yml
+  - vm_reboot_picked.yml
+  - vm_secure_boot_report.yml
+  - vm_shutdown.yml
+  - vm_snapshot.yml
+  - vm_snapshot_cleanup.yml
+  - vm_snapshot_delete.yml
+  - vm_snapshot_delete_picked.yml
+  - vm_snapshot_report.yml
+  - vm_vlan.yml
+  - vmware_cert_renew.yml
+  - vmware_cert_report.yml
+  - vmware_trust_report.yml
+  - win_cert_report.yml
+  - win_health_check.yml
+  - win_troubleshoot.yml
+  - win_trust_report.yml
+aap_email_question_templates: []         # more job templates or workflows, by name or ID
+aap_email_question_exclude: []           # templates left out, by name or ID
+aap_email_question_workflows: true       # also the workflows that run them (a job in a workflow is never asked its own survey)
+aap_email_question_project: ""           # only job templates of this AAP project (its name); empty = any project
+aap_email_question_ca_path: ""           # a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts)
+
+# The question, as whoever launches a template sees it. A text box of several lines (a pasted list keeps its line
+# breaks), not required, empty by default.
+aap_email_question_text: Also email the report to
+# The help text under the question.
+aap_email_question_description: >-
+  Optional. More people for this run's report, on top of the template's usual recipients: email addresses
+  separated by commas or semicolons, or one per line (pasted from Outlook or Excel works too).

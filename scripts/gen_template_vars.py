@@ -29,6 +29,10 @@ WIN_CHECKS = "win_check_*"
 # playbook -> the job template's name in the docs, its credentials, the check roles it may run
 # (run_check.yml picks them by name at run time), and the lines to fill in first
 TEMPLATES = {
+    "aap_email_question.yml": ("AAP - report email question", "Red Hat Ansible Automation Platform", "", """\
+## Run it with Check first: it then only reads, and lists the templates and workflows it would change
+# aap_email_question_project: "Site automation"   # only the templates of your project (its name in AAP)
+"""),
     "act_fix_approved.yml": ("Apply approved ACT fix", "Machine", LINUX_CHECKS, ""),
     "ad_health_report.yml": ("Active Directory health report", "Machine (Windows)", "", ""),
     "ad_lockout.yml": ("Active Directory - account lockout", "Machine (Windows)", "", """\

@@ -1317,5 +1317,41 @@ class VmwareCerts(unittest.TestCase):
         self.assertNotIn("CSRs made", [s["label"] for s in doc["summary"]])
 
 
+
+class EmailRecipients(unittest.TestCase):
+    """report_email_to plus report_email_also (the "Also email the report to" box asked at launch)."""
+
+    def test_also_is_added_never_in_place(self):
+        self.assertEqual(f.email_recipients("a@example.mil, b@example.mil", "c@example.mil"), ["a@example.mil", "b@example.mil", "c@example.mil"])
+        self.assertEqual(f.email_recipients([], "c@example.mil"), ["c@example.mil"])
+        self.assertEqual(f.email_recipients(["a@example.mil"], ""), ["a@example.mil"])
+        self.assertEqual(f.email_recipients(["a@example.mil"], None), ["a@example.mil"])
+        self.assertEqual(f.email_recipients([], " "), [])
+
+    def test_each_once_whatever_the_case(self):
+        self.assertEqual(f.email_recipients("a@example.mil", ["A@EXAMPLE.mil", "b@example.mil", "B@example.mil"]),
+                         ["a@example.mil", "b@example.mil"])
+
+    def test_report_email_to_read_as_before(self):
+        # report_email_to is not checked: a relay may take a local name (root); spaces, commas, semicolons
+        self.assertEqual(f.email_recipients("root; ops@example.mil  x@example.mil"), ["root", "ops@example.mil", "x@example.mil"])
+        self.assertEqual(f.email_recipients([" a@example.mil ", ""]), ["a@example.mil"])
+
+    def test_outlook_and_text_forms(self):
+        text = "Doe, Jane CIV USN (US) <jane.doe@example.mil>; Roe, Rick <rick.roe@example.mil>\nx@example.mil, y@example.mil z@example.mil"
+        self.assertEqual(f.email_recipients([], text),
+                         ["jane.doe@example.mil", "rick.roe@example.mil", "x@example.mil", "y@example.mil", "z@example.mil"])
+        self.assertEqual(f.email_also_refused(text), [])
+
+    def test_refused_with_why(self):
+        r = f.email_also_refused("jane at example; c@example.com, @example.mil; a@b; ok@sub.example.mil", ["example.mil"])
+        self.assertEqual(r, ["jane at example (no email address in it)", "c@example.com (not in report_email_also_domains: example.mil)",
+                             "@example.mil (not an email address)", "a@b (not an email address)"])
+        self.assertEqual(f.email_recipients([], "c@example.com, ok@sub.example.mil", "example.mil, @example.org"), ["ok@sub.example.mil"])
+        # a domain is matched whole: example.mil is not in the domain "ample" + ".mil" (in two parts for tests/check_public.py)
+        self.assertEqual(f.email_recipients([], "x@example.mil", ["ample" + ".mil"]), [])
+        self.assertEqual(f.email_also_refused(None), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -34,11 +34,11 @@
                               ~ ('vCenter ' ~ read[0] if read | length == 1 else ('vCenters ' ~ read | join(', ') if read
                                  else ('vCenter ' ~ lookup('ansible.builtin.env', 'VMWARE_HOST')) if lookup('ansible.builtin.env', 'VMWARE_HOST') else ''))
                               ~ (' - DRY RUN (Check): nothing was changed.' if ansible_check_mode else '')}) }}
-  when: report_email_to | default([]) | length > 0 and not _vm_report_no_email | default(false) | bool
+  when: (report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0) and not _vm_report_no_email | default(false) | bool
 
 - name: VMware | no email
   ansible.builtin.debug:
     msg: >-
       {{ 'No email: ' ~ _vm_report_no_email_why | default('nothing was deleted (vm_snapshot_cleanup_email_only_if_deleted).') if _vm_report_no_email | default(false) | bool
          else 'No email: report_email_to is not set (docs/EMAIL_REPORTS.md).' }}
-  when: report_email_to | default([]) | length == 0 or _vm_report_no_email | default(false) | bool
+  when: (report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0) or _vm_report_no_email | default(false) | bool

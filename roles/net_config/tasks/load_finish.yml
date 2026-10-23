@@ -64,7 +64,7 @@
     name: site_email
   vars:
     _report: "{{ _ncl_doc }}"
-  when: report_email_to | default([]) | length > 0
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
 
 - name: Network config | every device done
   ansible.builtin.assert:

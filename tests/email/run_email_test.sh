@@ -3,8 +3,9 @@
 # plain, STARTTLS with the relay's CA, SSL, a login from the SMTP relay credential (environment),
 # a refused login, a refused recipient, a relay without STARTTLS, a login with security none
 # (refused: the password would travel unencrypted), an untrusted certificate, missing settings,
-# survey text recipients, a dry run, no email at all when report_email_to is empty, and the look: the
-# command theme, the logo attached to the email, the strip of past runs from a fake AAP (tests/servicenow/aapmock.py).
+# survey text recipients, a dry run, no email at all when report_email_to is empty, the look: the
+# command theme, the logo attached to the email, the strip of past runs from a fake AAP (tests/servicenow/aapmock.py),
+# and report_email_also ("Also email the report to") through a caller's gate.
 #   bash tests/email/run_email_test.sh            (ANSIBLE_PLAYBOOK=... to pick one)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -193,5 +194,24 @@ send "relay without encryption, security none" ok '{"report_email_to": ["ops@exa
 
 relay --tls "$work/cert.pem" "$work/key.pem" --ssl
 send "SSL from the start (port 465 style)" ok '{"report_email_to": ["ops@example.mil"], "report_email_security": "ssl"}' "X-TLS: yes"
+
+# "Also email the report to" (report_email_also, asked at launch): added to report_email_to, through a caller's gate
+relay --tls "$work/cert.pem" "$work/key.pem"
+PLAYBOOK=send_gate.yml send "also, without report_email_to: the gate lets it through, sent to the also address" ok \
+    '{"report_email_also": "jane.doe@example.mil"}' "X-Envelope-To: jane.doe@example.mil" "Subject: [AAP] Gate test report"
+PLAYBOOK=send_gate.yml send "neither: no email, says report_email_to is not set" ok '{"report_email_also": ""}' "No email: report_email_to is not set"
+expect_mails "  ...one email so far" 1
+PLAYBOOK=send_gate.yml send "also added to report_email_to: Outlook's form, each once, a domain refused" ok \
+    '{"report_email_to": "ops@example.mil", "report_email_also": "Doe, Jane CIV (US) <jane.doe@example.mil>; OPS@example.mil; c@example.com", "report_email_also_domains": ["example.mil"]}' \
+    "X-Envelope-To: ops@example.mil,jane.doe@example.mil" "c@example.com (not in report_email_also_domains: example.mil)"
+PLAYBOOK=send_gate.yml send "a blank box changes nothing" ok '{"report_email_to": ["ops@example.mil"], "report_email_also": " "}' \
+    "X-Envelope-To: ops@example.mil"
+grep -q "jane" "$work/mail/3.eml" && { echo "FAIL - a blank box still sent to the last run's also address"; fails=$((fails + 1)); } \
+    || echo "ok   - ...only report_email_to"
+PLAYBOOK=send_gate.yml send "also only, every address refused: nothing sent, says why, the job does not fail" ok \
+    '{"report_email_also": "jane at example; c@example.com", "report_email_also_domains": "example.mil"}' \
+    "jane at example (no email address in it)" "c@example.com (not in report_email_also_domains"
+expect_mails "  ...no new email" 3
+send "the plain email (site_email alone) takes it too" ok '{"report_email_also": ["x@example.mil", "X@EXAMPLE.mil"]}' "X-Envelope-To: x@example.mil"
 
 if [ "$fails" -eq 0 ]; then echo "ok   - all email checks passed"; else echo "$fails FAILED"; exit 1; fi

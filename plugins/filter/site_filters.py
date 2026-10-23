@@ -62,6 +62,11 @@ report_runs        the strip of past runs at the top of a report (report_email_t
                        {{ _email_hist.runs | report_runs(_report, report_history_runs) }}
 image_size         [width, height] of a PNG, GIF or JPEG file, scaled to a height: the report's logo.
                        {{ report_logo_file | image_size(84) }}
+email_recipients   who gets a report: report_email_to, plus the addresses of report_email_also (the
+                   "Also email the report to" box asked at launch) in report_email_also_domains - each once.
+                       {{ report_email_to | email_recipients(report_email_also, report_email_also_domains) }}
+email_also_refused the text of report_email_also that is no address, or an address outside
+                   report_email_also_domains - each with why (the job lists them; no email goes to them).
 
 vm_ds_row          a datastore (site_vmware_datastores) as a row of the datastore report's tables
                    (multi = several vCenters: the datacenter cell names the vCenter too).
@@ -1510,6 +1515,67 @@ def image_size(path, height=0):
     return [int(round(w * height / float(h))), height] if height else [w, h]
 
 
+# Outlook's "Doe, Jane <jane.doe@example.mil>": the address between < and >, the name around it left out
+EMAIL_BRACKETED = re.compile(r"<\s*([^<>\s]+@[^<>\s]+)\s*>")
+EMAIL_OK = re.compile(r"^[^@\s<>,;\"'()]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$")
+
+
+def _email_also(also, domains=None):
+    """report_email_also -> (the addresses to add, [what was refused, with why]). Each entry (separated by
+    semicolons or line breaks) is either names with one address in <...> (Outlook), or addresses separated by
+    commas or spaces - then each word must be an address."""
+    items = also if isinstance(also, (list, tuple)) else [also]
+    allowed = [str(d).strip().lower().lstrip("@.") for d in (domains if isinstance(domains, (list, tuple)) else name_list(domains))]
+    allowed = [d for d in allowed if d]
+    ok, refused, seen = [], [], set()
+    words = []
+    for item in items:
+        for entry in re.split(r"[;\r\n]+", str(item if item is not None else "")):
+            inside = EMAIL_BRACKETED.findall(entry)
+            if inside:
+                words += inside
+                continue
+            for part in (x.strip() for x in entry.split(",")):
+                if part and "@" not in part:
+                    refused.append("%s (no email address in it)" % " ".join(part.split())[:80])
+                elif part:
+                    words += part.split()
+    for a in words:
+        a = a.strip(".'\"")
+        if not a or a.lower() in seen:
+            continue
+        seen.add(a.lower())
+        dom = a.rsplit("@", 1)[-1].lower()
+        if not EMAIL_OK.match(a):
+            refused.append("%s (not an email address)" % a[:80])
+        elif allowed and not any(dom == d or dom.endswith("." + d) for d in allowed):
+            refused.append("%s (not in report_email_also_domains: %s)" % (a, ", ".join(allowed)))
+        else:
+            ok.append(a)
+    return ok, refused
+
+
+def email_recipients(to, also=None, domains=None):
+    """report_email_to (a list, or text with commas, semicolons, spaces or one per line) plus the addresses
+    of report_email_also that email_also_refused does not refuse - each address once, whatever its case."""
+    if isinstance(to, (list, tuple)):
+        first = [str(x).strip() for x in to]
+    else:
+        first = str(to or "").replace(",", " ").replace(";", " ").split()
+    out, seen = [], set()
+    for a in first + _email_also(also, domains)[0]:
+        if a and a.lower() not in seen:
+            seen.add(a.lower())
+            out.append(a)
+    return out
+
+
+def email_also_refused(also, domains=None):
+    """What of report_email_also gets no email, each with why: text without an address, an address that is
+    not one (no domain), an address outside report_email_also_domains (when it is set)."""
+    return _email_also(also, domains)[1]
+
+
 def findings_report(by_host, title, missing=None, checks=None, extra=None):
     """The result of a check run (site_findings on every host) as a report for roles/site_email:
     title with the counts, summary boxes, one findings table (critical first), the hosts that did
@@ -1583,4 +1649,4 @@ class FilterModule(object):
                 "human_size": human_size, "name_matches": name_matches, "name_list": name_list,
                 "report_text": report_text, "findings_report": findings_report,
                 "report_headline": report_headline, "report_runs": report_runs,
-                "image_size": image_size}
+                "image_size": image_size, "email_recipients": email_recipients, "email_also_refused": email_also_refused}

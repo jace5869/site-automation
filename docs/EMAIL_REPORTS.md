@@ -52,9 +52,10 @@ mail clients that do not show HTML. One email per job run, whatever the number o
    report_email_to: linux-team@yoursite.mil, ops@yoursite.mil
    ```
 
-   Or a survey question with the variable `report_email_to` (Text, not required). Putting
-   `report_email_to` in `all.yml` instead makes **every** job in the table above email those
-   people, each time it runs - usually more than you want.
+   Or a survey question with the variable `report_email_to` (Text, not required) - but what is typed
+   there **replaces** the list. To let people **add** someone for one run, use the "Also email the
+   report to" question instead (next section). Putting `report_email_to` in `all.yml` instead makes
+   **every** job in the table above email those people, each time it runs - usually more than you want.
 
    Not in an AAP inventory **group's** Variables: the email is sent by the AAP side of the job,
    which never gets a group's variables. The template's Variables, a survey, the inventory's own
@@ -75,6 +76,61 @@ run (Check) sends nothing. A job without `report_email_to` says `No email: repor
 set`.
 
 **All settings**, with their defaults: [site_email](VARIABLES_REFERENCE.md#site_email).
+
+## Also email the report to (asked at launch)
+
+Whoever launches a report template can send that run's report to more people: a box **Also email the
+report to** in the template's survey. What is typed there is **added** to the template's own
+`report_email_to` - never in its place - for that run only. A blank box changes nothing, so schedules
+and runs nobody fills in work as before. A template without `report_email_to` emails only the people
+typed in the box (and nothing when it is blank).
+
+**Add the question to every report template at once** with the job template **AAP - report email
+question** (`playbooks/aap_email_question.yml`, nothing but the **Red Hat Ansible Automation Platform**
+credential, no inventory hosts needed - localhost). Its AAP user needs the **Admin** role on the report
+templates and their workflows. It finds them through AAP's API **by their playbook**, so your own template
+names work, and:
+
+- adds the question at the end of each one's survey; a template without a survey gets one, with this
+  question alone, turned on;
+- adds it to every **workflow** that runs one of them too - AAP never asks a job its own survey inside a
+  workflow, only the workflow's, and the answer then reaches every report step of it (in Certificate watch,
+  the people typed get one email per step that emails);
+- leaves a survey that is **turned off** off (turning it on would also ask its other questions, and their
+  defaults would reach every run): the job lists those - turn the survey on by hand if you want it there;
+- leaves a question that is already there as it is, so you can reword it in AAP and run the job again;
+- points out a survey that asks `report_email_to` itself (that one replaces the list).
+
+Run it with **Check** first: it then only reads and lists, per template, what it would do. Run it again
+after you add report templates. `aap_email_question_state: absent` takes the question out again (a survey
+left with no question is removed and turned off). Settings: [aap_email_question](VARIABLES_REFERENCE.md#aap_email_question)
+- e.g. `aap_email_question_project` (only your project's templates), `aap_email_question_exclude`,
+`aap_email_question_text` (the question's wording).
+
+**What people can type:** addresses separated by commas, semicolons, spaces or one per line (a column
+pasted from Excel works), or pasted from Outlook (`Doe, Jane <jane.doe@yoursite.mil>; Roe, Rick <rick.roe@yoursite.mil>`). Each address gets
+one email, even when it is in `report_email_to` too. Text that is no address is listed in the job
+(`Email | not sent to these`) and the report still goes to everyone else.
+
+**Only your own domains** - so a report never goes outside by a typo - in `all.yml`:
+
+```yaml
+report_email_also_domains: [yoursite.mil]     # a subdomain too (mail.yoursite.mil); empty = any domain
+```
+
+An address in another domain is listed in the job, with why, and gets no email. The usual recipients in
+`report_email_to` are not checked against it.
+
+**The same rules as the usual recipients.** A job that emails only when something happened - ESXi security
+settings (only when a host was changed or failed), the snapshot cleanup with
+`vm_snapshot_cleanup_email_only_if_deleted`, the VM request pickup - sends the people typed in the box
+nothing either when nothing happened; the job's output says why (`No email: ...`). And the mail relay must be
+set up (`report_email_smtp_host`, `report_email_from` in `all.yml`): without it, a report launched with an
+address in the box fails at its email step - the setup job warns when it is not set.
+
+By hand instead: Templates > the template > **Survey** > Add question - question *Also email the report to*,
+answer variable name `report_email_also`, answer type **Textarea** (a one-line Text box drops the line breaks of
+a pasted list), **Required** off, no default; then turn the survey on. For a workflow, the same on the workflow.
 
 ## Green or red: when a report finds problems
 
@@ -202,7 +258,7 @@ localhost:
         - title: Notes
           lines: [one line, another line]                  # a bullet list instead of a table
       footer: "Source: playbooks/cert_report.yml"           # optional
-  when: report_email_to | default([]) | length > 0
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
 ```
 
 A section has `columns` and `rows` (a table; an empty list shows "None."), or `lines`, or just
@@ -218,6 +274,10 @@ The job's output says what happened to the email, in the task `Email | result` (
 | You see | It means | Do |
 |---|---|---|
 | `No email: report_email_to is not set` | no recipient for this template | add `report_email_to` to the template's Variables (or its survey) |
+| `Email \| not sent to these, from "Also email the report to"` | text in the box that is no address, or an address outside `report_email_also_domains` | the rest got the email; send it again with the address corrected |
+| `Email question \| ... FAILED: the AAP user may not change this job template` | the AAP credential's user has no Admin role on that template | give it the Admin role on the template (or its organization's job templates), or leave it out: `aap_email_question_exclude` |
+| `To email the report, set report_email_smtp_host ...` on a report someone launched with an address in the box | the mail relay is not set up, so no report can email | step 1 of "Turning it on", in `all.yml` - or leave the box empty |
+| `... its survey is turned off, and was left off` | the template's survey is switched off | turn it on (Survey > the switch) if you want the question asked there; check its other questions' defaults first |
 | `To email the report, set report_email_smtp_host ... and report_email_from ...` | the relay is not set up | step 1 of "Turning it on", in `all.yml` |
 | `the mail relay ... does not offer STARTTLS` | the relay has no encryption on that port | `report_email_security: none` (or `ssl` with port 465) |
 | `TLS with the mail relay ... failed: ... certificate verify failed` | the execution environment does not trust the relay's certificate | `report_email_ca_path` to the CA file ([VMWARE.md](VMWARE.md), "Email the report"); list `playbooks/files/ca/` in `.site-local` |

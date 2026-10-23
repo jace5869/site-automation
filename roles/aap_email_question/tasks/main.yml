@@ -1,0 +1,57 @@
+---
+# Adds (or takes out) the "Also email the report to" question - variable report_email_also - in the surveys of
+# the report templates and their workflows (library/site_aap_question.py). Runs on localhost, with the
+# "Red Hat Ansible Automation Platform" credential's variables. A Check run (dry run) only reads.
+- name: Email question | the report templates and their workflows, in AAP
+  site_aap_question:
+    question:
+      variable: report_email_also
+      question_name: "{{ aap_email_question_text }}"
+      question_description: "{{ aap_email_question_description }}"
+      max: 4096
+    playbooks: "{{ aap_email_question_playbooks | name_list }}"
+    # names have spaces: text is split at commas and line breaks only
+    templates: >-
+      {{ (aap_email_question_templates | regex_replace('[\r\n]+', ',')).split(',') | map('trim') | select | list
+         if aap_email_question_templates is string else aap_email_question_templates }}
+    exclude: >-
+      {{ (aap_email_question_exclude | regex_replace('[\r\n]+', ',')).split(',') | map('trim') | select | list
+         if aap_email_question_exclude is string else aap_email_question_exclude }}
+    workflows: "{{ aap_email_question_workflows | bool }}"
+    project: "{{ aap_email_question_project }}"
+    state: "{{ aap_email_question_state }}"
+    warn_variables: [report_email_to]
+    ca_path: "{{ aap_email_question_ca_path }}"
+  register: _aeq
+
+- name: Email question | what was done
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for r in _aeq.results -%}
+      {%-   set head = ('job template' if r.kind == 'job' else 'workflow') ~ ' ' ~ r.id ~ " '" ~ r.template ~ "'" -%}
+      {%-   set act = ('FAILED: ' ~ r.error) if not r.ok else (('would be ' if ansible_check_mode and r.changed else '') ~ r.action) -%}
+      {%-   set _ = out.append(head ~ ': ' ~ act ~ ((' - ' ~ r.warnings | join('; ')) if r.warnings else '')) -%}
+      {%- endfor -%}
+      {{ out or ['no template in AAP runs one of aap_email_question_playbooks'
+                 ~ ((' in project ' ~ aap_email_question_project) if aap_email_question_project else '')
+                 ~ ' - check aap_email_question_project, or that the AAP user can see the templates'] }}
+
+- name: Email question | the mail relay is not set here - a report launched with an address in the box would fail at its email step
+  ansible.builtin.debug:
+    msg: >-
+      report_email_smtp_host and report_email_from are not both set where this job runs (playbooks/group_vars/all.yml,
+      or the inventory's Variables): the reports cannot email anyone until they are (docs/EMAIL_REPORTS.md, "Turning it on").
+  when: >-
+    aap_email_question_state == 'present' and
+    (report_email_smtp_host | default('') | trim | length == 0 or report_email_from | default('') | trim | length == 0)
+
+- name: Email question | AAP could not be read, or a template is not there
+  ansible.builtin.fail:
+    msg: "{{ _aeq.problems }}"
+  when: _aeq.problems | length > 0
+
+- name: Email question | a template could not be changed
+  ansible.builtin.fail:
+    msg: "{{ _aeq.results | rejectattr('ok') | map(attribute='template') | list }}: see what was done, above"
+  when: _aeq.results | rejectattr('ok') | list | length > 0

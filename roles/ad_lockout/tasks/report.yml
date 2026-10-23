@@ -20,7 +20,7 @@
     _report: >-
       {{ _adl.report | combine({'footer': 'Read-only: the Security logs and account attributes on the domain controllers'
                                           ~ (', and the unlock (ad_lockout_unlock)' if ad_lockout_unlock | bool else '') ~ '.'}) }}
-  when: report_email_to | default([]) | length > 0
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
 
 - name: Lockout | every domain controller answered, and the unlock worked
   ansible.builtin.assert:

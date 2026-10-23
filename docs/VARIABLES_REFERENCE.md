@@ -11,7 +11,25 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [check_trust](#check_trust), [horizon](#horizon), [net_certs](#net_certs), [net_config](#net_config), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
+**Contents:** [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [check_trust](#check_trust), [horizon](#horizon), [net_certs](#net_certs), [net_config](#net_config), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
+
+## aap_email_question
+
+File: `roles/aap_email_question/defaults/main.yml`
+
+> THE "ALSO EMAIL THE REPORT TO" QUESTION (playbooks/aap_email_question.yml): adds a text box to the survey of every report template and of the workflows that run them, through AAP's API, so whoever launches one can send that run's report to more people (report_email_also, added to the template's report_email_to). Run it once, and again after you add report templates. docs/EMAIL_REPORTS.md, "Also email the report to".
+
+| Setting | Default | What it does |
+|---|---|---|
+| `aap_email_question_state` | `present` | present = add the question; absent = take it out again |
+| `aap_email_question_playbooks` | `- act_fix_approved.yml - ad_health_report.yml - ad_lockout.yml - cert_report.yml - databa…` | Which templates: the job templates whose playbook is one of these (the file name - your template names do not matter). Every playbook that can email a report is here; a test keeps the list complete. |
+| `aap_email_question_templates` | `[]` | more job templates or workflows, by name or ID |
+| `aap_email_question_exclude` | `[]` | templates left out, by name or ID |
+| `aap_email_question_workflows` | `true` | also the workflows that run them (a job in a workflow is never asked its own survey) |
+| `aap_email_question_project` | (empty) | only job templates of this AAP project (its name); empty = any project |
+| `aap_email_question_ca_path` | (empty) | a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts) |
+| `aap_email_question_text` | `Also email the report to` | The question, as whoever launches a template sees it. A text box of several lines (a pasted list keeps its line breaks), not required, empty by default. |
+| `aap_email_question_description` | (worked out by the role; see its file) | The help text under the question. |
 
 ## ad_lockout
 
@@ -724,6 +742,8 @@ File: `roles/site_email/defaults/main.yml`
 |---|---|---|
 | `report_email_to` | `[]` | Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails. |
 | `report_email_cc` | `[]` | copied: a list, or text like report_email_to |
+| `report_email_also` | `[]` | "Also email the report to": more people for one run, asked when the job is launched - a survey question (playbooks/aap_email_question.yml adds it to the report templates). Added to report_email_to, never in its place; empty = only report_email_to. A list, or text: addresses separated by commas, semicolons, spaces or o… (all of it: the role file) |
+| `report_email_also_domains` | `[]` | The domains an address in report_email_also may be in (a subdomain too), e.g. [yoursite.mil]; any other is listed in the job and gets no email. Empty = any domain (your mail relay may still refuse some). |
 | `report_email_from` | (empty) | the sender, e.g. aap-noreply@yoursite.mil |
 | `report_email_smtp_host` | (empty) | your mail relay, e.g. smtp.yoursite.mil |
 | `report_email_smtp_port` | `25` | 25 or 587 with starttls, 465 with ssl |

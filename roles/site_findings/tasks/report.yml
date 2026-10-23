@@ -109,13 +109,13 @@
                            ansible_play_hosts | map('extract', hostvars) | map(attribute='site_checks_run', default=[]) | flatten | unique | list,
                            site_report_sections | default([])) }}
   run_once: true
-  when: report_email_to | default([]) | length > 0
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
 
 - name: Report | no email
   ansible.builtin.debug:
     msg: "No email: report_email_to is not set (docs/EMAIL_REPORTS.md)."
   run_once: true
-  when: report_email_to | default([]) | length == 0
+  when: report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0
 
 - name: Report | FAIL this host because it has findings (an AAP workflow's "on failure" path starts here)
   ansible.builtin.fail:

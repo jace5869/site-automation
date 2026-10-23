@@ -1,6 +1,6 @@
 ---
 # Email one report - from any playbook: include this role with _report set (or the plain-text pair).
-# Nothing happens when report_email_to is empty. In a dry run (Check) nothing is sent.
+# Nothing happens when report_email_to and report_email_also are empty. In a dry run (Check) nothing is sent.
 #
 # Input, either a formatted report (HTML email with a plain-text copy; docs/EMAIL_REPORTS.md):
 #   _report:
@@ -21,12 +21,17 @@
 # first plain-number summary value as the job artifact site_report_run, the height of its bar.
 - name: Email | who gets the report
   ansible.builtin.set_fact:
-    _email_to: >-
-      {{ ((report_email_to | replace(',', ' ') | replace(';', ' ')).split() if report_email_to is string
-          else report_email_to) | map('string') | map('trim') | select | unique | list }}
+    # report_email_to, and report_email_also: the "Also email the report to" box asked at launch (this run only)
+    _email_to: "{{ report_email_to | email_recipients(report_email_also | default([]), report_email_also_domains) }}"
     _email_cc: >-
       {{ ((report_email_cc | replace(',', ' ') | replace(';', ' ')).split() if report_email_cc is string
           else report_email_cc) | map('string') | map('trim') | select | unique | list }}
+    _email_also_refused: "{{ report_email_also | default([]) | email_also_refused(report_email_also_domains) }}"
+
+- name: Email | not sent to these, from "Also email the report to" (report_email_also)
+  ansible.builtin.debug:
+    msg: "{{ _email_also_refused }}"
+  when: _email_also_refused | length > 0
 
 - name: Email | the mail settings are complete
   ansible.builtin.assert:

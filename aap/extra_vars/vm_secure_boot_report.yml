@@ -40,6 +40,18 @@
 ## copied: a list, or text like report_email_to
 # report_email_cc: []
 
+## "Also email the report to": more people for one run, asked when the job is launched - a survey
+## question (playbooks/aap_email_question.yml adds it to the report templates). Added to
+## report_email_to, never in its place; empty = only report_email_to. A list, or text: addresses
+## separated by commas, semicolons, spaces or one per line, or pasted from Outlook (Doe, Jane
+## <jane.doe@yoursite.mil>; ...).
+# report_email_also: []
+
+## The domains an address in report_email_also may be in (a subdomain too), e.g. [yoursite.mil]; any
+## other is listed in the job and gets no email. Empty = any domain (your mail relay may still
+## refuse some).
+# report_email_also_domains: []
+
 ## the sender, e.g. aap-noreply@yoursite.mil
 # report_email_from: ""
 
