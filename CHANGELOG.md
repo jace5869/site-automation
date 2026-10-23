@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.22.0 — 2026-10-23
+
+**Updating without scripts:** paste `site-automation-0.22.0-changed-since-0.21.0.zip` as it is (from
+0.15.1 to 0.20.0: `site-automation-0.22.0-changed-since-0.15.1.zip`; coming from before 0.20.0, read the
+0.20.0 notes too - one file to delete). Both leave out `playbooks/group_vars`, `playbooks/host_vars` and
+`poam/poam.csv`. Nothing else to change: no report emails anyone new until someone types an address in the
+new box. One new job template (below), to add the box for you.
+
+**Also email the report to: an optional box when a report is launched.** Whoever launches a report template
+can type more email addresses, and that run's report goes to them too. They are **added** to the template's
+own `report_email_to`, never put in its place, and only for that run. A blank box changes nothing, so
+schedules work as before. A template without `report_email_to` emails just the people typed in the box. The
+new variable is `report_email_also`; every report job takes it, the same ones that email today.
+
+- People can type addresses separated by commas, semicolons, spaces or one per line, or paste them from
+  Outlook (`Doe, Jane <jane.doe@yoursite.mil>; ...`).
+- Each address gets one email, even when it is also in `report_email_to`.
+- Text that is not an address is listed in the job, with why, and the report still goes to everyone else.
+- To keep reports inside your own domains, put `report_email_also_domains: [yoursite.mil]` in `all.yml`.
+  An address in any other domain is listed in the job and gets no email.
+- The jobs that email only when something happened (ESXi security settings, the snapshot cleanup with
+  `vm_snapshot_cleanup_email_only_if_deleted`, the VM request pickup) do the same for these addresses.
+- With the mail relay not set (`report_email_smtp_host`, `report_email_from`), a run launched with an
+  address in the box fails at its email step, as it does with `report_email_to`.
+
+**AAP - report email question: puts that box on every report template for you.** The new template is
+`playbooks/aap_email_question.yml`. It needs only the **Red Hat Ansible Automation Platform** credential,
+and its user needs Admin on the report templates and their workflows. It uses AAP's API, and:
+
+- finds the report templates **by their playbook**, so your own template names work;
+- adds the question (a multi-line box, so a pasted list keeps its lines) at the end of each template's
+  survey; a template with no survey gets one, turned on;
+- adds the question to every workflow that runs a report. AAP never asks a job's own survey inside a
+  workflow, only the workflow's;
+- leaves a survey that is turned off as it is, and says so;
+- leaves a question that is already there alone, so a run again changes nothing;
+- points out a survey that asks `report_email_to` itself, because that one replaces the list;
+- says so when the mail relay is not set in its own settings.
+
+Run it with Check first: it then only reads and lists what it would do. `aap_email_question_state: absent`
+takes the question out again. A test keeps its list of report playbooks complete. Setup:
+docs/SETUP_AAP.md, "AAP - report email question". Usage: docs/EMAIL_REPORTS.md, "Also email the report to".
+
 ## 0.21.0 — 2026-10-23
 
 **Updating without scripts:** paste `site-automation-0.21.0-changed-since-0.20.0.zip` as it is (from
