@@ -258,9 +258,10 @@ class PortalLook(unittest.TestCase):
         self.assertIn("AAP job 4182 &middot; VMware - &lt;snap&gt;", h)
         self.assertIn("LAST 3 RUNS", h)
         self.assertEqual(h.count('valign="bottom" height="48"'), 3)
-        self.assertEqual(h.count("border:2px solid #0f1f1a;"), 1)
+        self.assertEqual(h.count('bgcolor="#0f1f1a" style="background:#0f1f1a;padding:2px;'), 1)
+        self.assertEqual(h.count("<!--[if mso]>"), h.count("<!--[if !mso]><!-->"))
         self.assertIn('height="44" bgcolor="#d98a1c" title="this run - Deleted 4 - warning"', h)
-        self.assertIn(">Critical</span></td>\n<td style=\"font-size:13px;color:#5b6b66;white-space:nowrap;\">47 h ago</td>", h)
+        self.assertIn(">Critical</span><!--<![endif]--></td>\n<td style=\"font-size:13px;color:#5b6b66;white-space:nowrap;\">47 h ago</td>", h)
 
     def test_cell_status_as_a_pill(self):
         self.assertIn("color:#b42318;font-weight:600;padding:1px 9px;\">off</span>", self.render())

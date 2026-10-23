@@ -28,7 +28,9 @@
 {%- set job_id = awx_job_id | default(tower_job_id | default('')) | string -%}
 {%- set job_name = awx_job_template_name | default(tower_job_template_name | default('')) | string -%}
 {%- macro pill(k) -%}
-<span style="display:inline-block;border-radius:999px;background:{{ pal[k].bg }};border:1px solid {{ pal[k].bd }};color:{{ pal[k].fg }};font-size:15px;font-weight:700;padding:4px 12px 4px 7px;white-space:nowrap;"><span style="display:inline-block;width:19px;height:19px;line-height:19px;text-align:center;border-radius:10px;background:{{ pal[k].fg }};color:#ffffff;font-size:12px;margin-right:6px;">{{ pal[k].icon }}</span>{{ pal[k].word }}</span>
+{#- classic desktop Outlook (mso) draws no fixed-size span: a table cell with a dot there, the round icon elsewhere #}
+<!--[if mso]><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="{{ pal[k].bg }}" style="background:{{ pal[k].bg }};border:1px solid {{ pal[k].bd }};padding:3px 10px;color:{{ pal[k].fg }};font-family:'Segoe UI',Arial,sans-serif;font-size:15px;font-weight:bold;white-space:nowrap;">&#9679;&nbsp;{{ pal[k].word }}</td></tr></table><![endif]-->
+<!--[if !mso]><!--><span style="display:inline-block;border-radius:999px;background:{{ pal[k].bg }};border:1px solid {{ pal[k].bd }};color:{{ pal[k].fg }};font-size:15px;font-weight:700;padding:4px 12px 4px 7px;white-space:nowrap;"><span style="display:inline-block;width:19px;height:19px;line-height:19px;text-align:center;border-radius:10px;background:{{ pal[k].fg }};color:#ffffff;font-size:12px;margin-right:6px;">{{ pal[k].icon }}</span>{{ pal[k].word }}</span><!--<![endif]-->
 {%- endmacro -%}
 {%- macro gap(h) -%}
 <tr><td height="{{ h }}" style="height:{{ h }}px;line-height:{{ h }}px;font-size:0;mso-line-height-rule:exactly;">&nbsp;</td></tr>
@@ -96,9 +98,15 @@
 {%- for b in runs %}
 {%- set bc = pal[b.status].bar if b.status in pal else pal.unknown.bar %}
 <td valign="bottom" height="48" style="height:48px;padding:0 3px;" title="{{ b.text | e }}">
+{%- if b.current %}
+<table role="presentation" width="18" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="{{ ink }}" style="background:{{ ink }};padding:2px;border-radius:9px;">
+{%- endif %}
 <table role="presentation" width="14" cellpadding="0" cellspacing="0" border="0"><tr>
-<td width="14" height="{{ b.height }}" bgcolor="{{ bc }}" title="{{ b.text | e }}" style="width:14px;height:{{ b.height }}px;background:{{ bc }};border-radius:7px;{{ ('border:2px solid ' ~ ink ~ ';') if b.current else '' }}font-size:0;line-height:0;mso-line-height-rule:exactly;">&nbsp;</td>
+<td width="14" height="{{ b.height }}" bgcolor="{{ bc }}" title="{{ b.text | e }}" style="width:14px;height:{{ b.height }}px;background:{{ bc }};border-radius:7px;font-size:1px;line-height:{{ b.height }}px;mso-line-height-rule:exactly;">&nbsp;</td>
 </tr></table>
+{%- if b.current %}
+</td></tr></table>
+{%- endif %}
 </td>
 {%- endfor %}
 </tr></table>
