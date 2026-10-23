@@ -1,0 +1,19 @@
+---
+# The report website on a Windows server (report_web_host): one PowerShell script run there - the folder and the
+# index read back (site_report_web_read.ps1), or this run's files written (the script site_report_web made).
+# Its own file, included with ansible_connection set: the report jobs include site_email with
+# ansible_connection: local (the AAP side), and only a nearer include's vars come before that.
+# Input: _web_ps (the script), _web_ps_what, _web_ps_config (SITE_CHECK_CONFIG). Output: _web_ps_out.
+- name: Email | on {{ report_web_host | trim }} - {{ _web_ps_what }}
+  ansible.builtin.script:
+    cmd: "{{ _web_ps }}"
+    executable: "{{ 'pwsh' if report_web_host_connection == 'local' else omit }}"   # local: the tests, with pwsh
+  environment:
+    SITE_CHECK_CONFIG: "{{ _web_ps_config | to_json }}"
+  delegate_to: site-report-web
+  become: false
+  register: _web_ps_out
+  changed_when: _web_ps_changed | default(false) | bool
+  failed_when: false
+  ignore_unreachable: true
+  check_mode: false

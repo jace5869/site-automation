@@ -68,6 +68,12 @@
 # The look of every report email: standard | command | portal (your logo, the job's last runs from AAP - "The look")
 # report_email_theme: command                      # or portal
 # report_logo_file: files/report_logo.png          # = playbooks/files/report_logo.png, in your repository
+# Every report also as a web page (docs/WEB_REPORTS.md) - with or without the email:
+# report_web_dest: https://CHANGE-ME.yoursite.mil/upload   # an upload address (PUT), or a mounted folder: /mnt/reports
+# report_web_url: https://CHANGE-ME.yoursite.mil           # the address people open
+# Or on a Windows server, over WinRM (the login: a "Report website" credential on the report templates):
+# report_web_host: CHANGE-ME.yoursite.mil                 # the server; report_web_dest is then its folder:
+# report_web_dest: 'D:\reports'
 
 # ---- The account AAP logs in as -------------------------------------------------------------
 # check_accounts_nopasswd_allowed: [CHANGE-ME-service-account]

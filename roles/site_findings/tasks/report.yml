@@ -91,7 +91,7 @@
       {{ out }}
   run_once: true
 
-- name: Report | email the report (report_email_to) - once for the job, from the AAP side, before any host fails
+- name: Report | email the report, publish it (report_email_to, report_web_dest) - once for the job, from the AAP side, before any host fails
   ansible.builtin.include_role:
     name: site_email
     apply:
@@ -109,7 +109,7 @@
                            ansible_play_hosts | map('extract', hostvars) | map(attribute='site_checks_run', default=[]) | flatten | unique | list,
                            site_report_sections | default([])) }}
   run_once: true
-  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
 
 - name: Report | no email
   ansible.builtin.debug:

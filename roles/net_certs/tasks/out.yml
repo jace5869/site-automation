@@ -25,12 +25,12 @@
         not_read: "{{ _net.not_read }}"
         swept: "{{ _net_read.swept }}"
 
-- name: Network certs | email it (report_email_to)
+- name: Network certs | email it, publish it (report_email_to, report_web_dest)
   ansible.builtin.include_role:
     name: site_email
   vars:
     _report: "{{ _net_doc }}"
-  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
 
 - name: Network certs | no email
   ansible.builtin.debug:

@@ -67,6 +67,11 @@ email_recipients   who gets a report: report_email_to, plus the addresses of rep
                        {{ report_email_to | email_recipients(report_email_also, report_email_also_domains) }}
 email_also_refused the text of report_email_also that is no address, or an address outside
                    report_email_also_domains - each with why (the job lists them; no email goes to them).
+report_web_files   the file names of a report on the report website (report_web_page, report_web_latest,
+                   report_web_index): the patterns with their {names} filled in, checked.
+                       {{ {'page': report_web_page, ...} | report_web_files(names) }}
+site_web_win_error why the PowerShell script on report_web_host (the report website on a Windows server) gave no
+                   answer - the server not reached or the login refused (with what to check), or the script's error.
 
 vm_ds_row          a datastore (site_vmware_datastores) as a row of the datastore report's tables
                    (multi = several vCenters: the datacenter cell names the vCenter too).
@@ -102,6 +107,11 @@ import hashlib
 import json
 import io
 import re
+
+try:
+    from ansible.errors import AnsibleFilterError as _FilterError
+except ImportError:                      # the unit tests, without Ansible
+    _FilterError = ValueError
 
 
 def from_csv(text, delimiter=","):
@@ -1635,6 +1645,67 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
             "footer": ("Checks run: " + ", ".join(sorted(set(checks)))) if checks else ""}
 
 
+def _web_value(value, lower=False):
+    """One {name}'s value as part of a file name: letters, digits, dot, dash and underscore; the rest a dash."""
+    v = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value if value is not None else ""))
+    v = re.sub(r"-{2,}", "-", v).strip("-.")
+    return v.lower() if lower else v
+
+
+def report_web_files(patterns, names):
+    """The file names of one run on the report website (roles/site_email, report_web_*): each pattern
+    (page, latest, index - '' = none) with its {names} filled in. names: template (the template's name, made
+    lower case with dashes), template_id, job, status, date, time, year, month, day, and your own
+    (report_web_names). Raises an error naming the setting when a pattern uses a name that does not exist,
+    leaves the folder (/, ..) or is not an .html file."""
+    import string
+    vals = dict((k, _web_value(v)) for k, v in (names or {}).items())
+    vals["template"] = _web_value((names or {}).get("template"), lower=True) or "report"
+    known = sorted(vals)
+    out = {}
+    for key in ("page", "latest", "index"):
+        pat = str((patterns or {}).get(key) or "").strip()
+        setting = "report_web_" + key
+        if not pat:
+            if key == "page":
+                raise _FilterError("%s is empty: it names each run's page, e.g. {template}/{date}_{time}_job-{job}.html." % setting)
+            out[key] = ""
+            continue
+        try:
+            fields = [f for _, f, _, _ in string.Formatter().parse(pat) if f is not None]
+        except ValueError as e:
+            raise _FilterError("%s '%s': %s (a name goes in braces, e.g. {template})." % (setting, pat, e))
+        for f in fields:
+            if f not in vals:
+                raise _FilterError("%s '%s': there is no {%s}; the names are {%s}." % (setting, pat, f, "}, {".join(known)))
+        name = pat.format(**vals).replace("\\", "/")
+        parts = name.split("/")
+        if name.startswith("/") or any(p in ("", ".", "..") for p in parts):
+            raise _FilterError("%s '%s' gives '%s': a path inside the report folder, no leading /, no empty or .. part." % (setting, pat, name))
+        if not name.lower().endswith(".html"):
+            raise _FilterError("%s '%s' gives '%s': the name must end in .html." % (setting, pat, name))
+        out[key] = name
+    if out["latest"] == out["page"]:
+        out["latest"] = ""
+    return out
+
+
+def site_web_win_error(result, where):
+    """Why the script on report_web_host gave no answer (result: the registered ansible.builtin.script), in plain
+    words; where: the server and its connection, e.g. web01.yoursite.mil (winrm, port 5986)."""
+    r = result if isinstance(result, dict) else {}
+    msg = " ".join(str(r.get("msg") or "").split())
+    if r.get("unreachable"):
+        return ("could not reach report_web_host %s: %s - check the login (the Report website credential's user name "
+                "and password, or without it the template's Machine credential: DOMAIN\\user for NTLM) and the connection "
+                "(report_web_host_port, _scheme, _transport, _cert_validation; report_web_ca_path for its certificate)."
+                % (where, msg or "no answer"))
+    err = " ".join(str(r.get("stderr") or "").split())
+    if r.get("skipped"):
+        return "the script on report_web_host %s did not run (%s)." % (where, msg or "skipped")
+    return "the script on report_web_host %s failed: %s" % (where, (err or msg or "no answer (rc %s)" % r.get("rc", "?"))[:600])
+
+
 class FilterModule(object):
     def filters(self):
         return {"from_csv": from_csv, "days_until": days_until, "site_result": site_result,
@@ -1649,4 +1720,5 @@ class FilterModule(object):
                 "human_size": human_size, "name_matches": name_matches, "name_list": name_list,
                 "report_text": report_text, "findings_report": findings_report,
                 "report_headline": report_headline, "report_runs": report_runs,
-                "image_size": image_size, "email_recipients": email_recipients, "email_also_refused": email_also_refused}
+                "image_size": image_size, "email_recipients": email_recipients, "email_also_refused": email_also_refused,
+                "report_web_files": report_web_files, "site_web_win_error": site_web_win_error}

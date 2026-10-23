@@ -22,7 +22,7 @@ REPO = os.environ.get("SITE_AUTOMATION_DIR") or (
     os.path.dirname(os.path.dirname(_HERE)) if os.path.isfile(os.path.join(_HERE, "..", "START_HERE.md"))
     else sys.exit("build_ops_guide.py: cannot find the site-automation repository; "
                   "run the script from <repo>/docs/pdf or set SITE_AUTOMATION_DIR=<repo>"))
-SA_VERSION = "0.22.0"
+SA_VERSION = "0.23.0"
 DOCS = [  # (file, chapter title)
     ("docs/START_HERE.md", "Start here: the pieces and how they fit"),
     ("docs/SETUP_AAP.md", "Setting up AAP, step by step"),
@@ -41,6 +41,7 @@ DOCS = [  # (file, chapter title)
     ("docs/CERT_INVENTORY.md", "The certificate inventory: CSV, JSON and SQL Server, for a dashboard"),
     ("docs/CERT_RENEWAL_CATALOG.md", "Certificate renewal through the PKI's ServiceNow catalog item"),
     ("docs/EMAIL_REPORTS.md", "Emailed reports: the formatted email and its look"),
+    ("docs/WEB_REPORTS.md", "The report website: every report as a web page"),
     ("docs/SECRETS.md", "Secrets: where they live"),
     ("docs/APPROVED_COMMANDS.md", "Approved commands: what ACT may run by itself"),
     ("docs/MARIADB.md", "The MariaDB and MySQL check, step by step"),
@@ -49,7 +50,7 @@ DOCS = [  # (file, chapter title)
 ]
 CRED_TYPES = ["servicenow_api.yml", "mariadb_monitor.yml", "keystore_password.yml",
               "stigman_api.yml", "act_model_key.yml", "act_genai_beta_key.yml",
-              "stigman_database.yml", "tls_certificate.yml", "registry_login.yml", "teams_webhook.yml", "smtp_relay.yml", "horizon_api.yml"]
+              "stigman_database.yml", "tls_certificate.yml", "registry_login.yml", "teams_webhook.yml", "smtp_relay.yml", "report_web.yml", "horizon_api.yml"]
 
 ST["bullet2"] = style("bullet2", leftIndent=30, bulletIndent=17, spaceAfter=3)
 ST["bullet3"] = style("bullet3", leftIndent=46, bulletIndent=33, spaceAfter=3)

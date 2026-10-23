@@ -212,6 +212,12 @@ ended (green or red), half height. `report_history: false` turns the strip off.
 The plain-text copy of the email has the strip as one line: `Last 14 runs, oldest first: ok ok
 warning ... critical (this run)`.
 
+## Also on a web page
+
+Every report can also be written as a web page - the same report, in the portal look - on a Windows server (over
+WinRM), into a folder or onto a web server, with a `latest.html` per template and an index of every report; the
+job prints the page's address, and the email links to it. With or without the email: [WEB_REPORTS.md](WEB_REPORTS.md).
+
 ## Changing the look
 
 The look is one file, `roles/site_email/templates/report.html.j2` (Jinja and HTML, styles inline

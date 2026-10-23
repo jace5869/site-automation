@@ -5,12 +5,15 @@
     the email (cid:), no scripts. Input: _report (see roles/site_email/tasks/main.yml), _email_footer,
     _email_logo_cid ('' = no logo) and _email_logo_size ([width, height]), _email_runs (report_runs; [] = no strip). Every value is escaped. -#}
 {%- set r = _report -%}
+{#- the web copy (report_web_dest) passes its own _page_logo_cid, _page_logo_size and _page_runs; an email links its web copy (_email_web_url) -#}
+{%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
+{%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}
 {%- set colour = {'ok': '#15803d', 'warning': '#b45309', 'critical': '#b91c1c', 'info': '#1d4ed8', 'unknown': '#6b7280'} -%}
 {%- set tint = {'ok': '#dcfce7', 'warning': '#fef3c7', 'critical': '#fee2e2', 'info': '#dbeafe', 'unknown': '#f3f4f6'} -%}
 {%- set st = r.status | default('info') if r.status | default('info') in colour else 'info' -%}
 {%- set navy = '#0b1a2e' -%}
 {%- set accent = '#5eead4' -%}
-{%- set runs = _email_runs | default([]) -%}
+{%- set runs = _page_runs | default(_email_runs | default([])) -%}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -24,8 +27,8 @@
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:1000px;background:#ffffff;border:1px solid #c5cedb;font-family:'Segoe UI',Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;color:#111827;">
 <tr><td bgcolor="{{ navy }}" style="background:{{ navy }};padding:16px 20px 10px 20px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-{%- if _email_logo_cid | default('') %}
-<td width="{{ _email_logo_size[0] + 16 }}" valign="middle" style="padding-right:16px;"><img src="cid:{{ _email_logo_cid }}" width="{{ _email_logo_size[0] }}" height="{{ _email_logo_size[1] }}" alt="" style="display:block;border:0;width:{{ _email_logo_size[0] }}px;height:{{ _email_logo_size[1] }}px;"></td>
+{%- if logo_cid %}
+<td width="{{ logo_size[0] + 16 }}" valign="middle" style="padding-right:16px;"><img src="cid:{{ logo_cid }}" width="{{ logo_size[0] }}" height="{{ logo_size[1] }}" alt="" style="display:block;border:0;width:{{ logo_size[0] }}px;height:{{ logo_size[1] }}px;"></td>
 {%- endif %}
 <td valign="middle" style="color:#ffffff;">
 <div style="font-size:11px;font-weight:bold;letter-spacing:3px;color:{{ accent }};text-transform:uppercase;">{{ report_email_header_text | default('Site automation report') | e }} &nbsp;<span style="display:inline-block;background:{{ colour[st] }};color:#ffffff;letter-spacing:1px;padding:1px 8px;border-radius:9px;">{{ st | upper }}</span></div>
@@ -113,7 +116,7 @@
 {%- endfor %}
 <tr><td bgcolor="{{ navy }}" style="background:{{ navy }};color:#b6c4d8;padding:10px 20px;font-size:12px;">
 {%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
-{{ _email_footer | e }}
+{{ _email_footer | e }}{% if _email_web_url | default('') %}<br><a href="{{ _email_web_url | e }}" style="color:inherit;">Open this report in a browser</a>{% endif %}
 </td></tr>
 </table>
 </td></tr>

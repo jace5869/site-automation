@@ -1,0 +1,25 @@
+# Credential type: "Report website"
+# The login for the report website (roles/site_email, docs/WEB_REPORTS.md):
+# - on a Windows server (report_web_host): the user name (DOMAIN\user) and password the job logs in with over
+#   WinRM to write the pages - without this credential, the template's Machine credential;
+# - for uploads (report_web_dest: https://...): a token, sent as "Authorization: Bearer <token>", or the user name
+#   and password, as basic authentication.
+# A report folder (a mounted share) needs no credential.
+inputs:
+  fields:
+    - id: username
+      type: string
+      label: User name (DOMAIN\user for a Windows server)
+    - id: password
+      type: string
+      label: Password
+      secret: true
+    - id: token
+      type: string
+      label: Upload token (instead of a user name and password)
+      secret: true
+injectors:
+  env:
+    REPORT_WEB_USERNAME: "{{ username | default('') }}"
+    REPORT_WEB_PASSWORD: "{{ password | default('') }}"
+    REPORT_WEB_TOKEN: "{{ token | default('') }}"

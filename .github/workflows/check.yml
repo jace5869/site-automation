@@ -61,6 +61,7 @@ jobs:
           python tests/test_report_history.py
           python tests/test_email_question.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_email_question.py
+          python tests/test_report_web.py
       - name: The real ACT in the alarms analysis mode (piped evidence, masked names, the answer read back)
         run: python tests/test_alarm_act_contract.py
       - name: docs/VARIABLES_REFERENCE.md is generated from the roles and is up to date
@@ -91,6 +92,10 @@ jobs:
         run: |
           bash tests/email/run_email_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/email/run_email_test.sh
+      - name: The report website - a report folder, an upload with PUT (fake website; current ansible-core and 2.16)
+        run: |
+          bash tests/email/run_web_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/email/run_web_test.sh
       - name: Active Directory health report, the Ansible side with made-up DCs (current ansible-core and 2.16)
         run: |
           bash tests/ad/run_ad_test.sh
@@ -253,6 +258,7 @@ jobs:
           Enable-PSRemoting -Force -SkipNetworkProfileCheck | Out-Null
           Set-Item -Path WSMan:\localhost\Service\Auth\Basic -Value $true
           Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $true
+          New-Item -ItemType Directory -Path C:\sa-reports -Force | Out-Null      # the report website's folder (report_web_host)
           "SATEST_PW=$pw" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - uses: Vampire/setup-wsl@v3
         with:
@@ -303,7 +309,28 @@ jobs:
           /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/ad_lockout.yml -e target=winrunner -e ad_lockout_user=satest | tee /tmp/6.out
           grep -q 'No domain controller could read its domain' /tmp/6.out || { echo 'FAIL: the lockout job does not say no DC read its domain'; fail=1; }
           grep -q 'winrunner: ActiveDirectory PowerShell module' /tmp/6.out || { echo 'FAIL: the lockout script gave no answer'; fail=1; }
+          # the report website on a Windows server (report_web_host): twice, so the index is read back and the
+          # latest page and the index are written over; the login from the Report website credential's variables
+          for job in 907 908; do
+            REPORT_WEB_USERNAME=satest REPORT_WEB_PASSWORD="$SATEST_PW" /tmp/v/bin/ansible-playbook tests/email/send_report.yml \
+              -e '{"report_web_host": "127.0.0.1", "report_web_host_port": 5985, "report_web_host_scheme": "http",
+                   "report_web_host_transport": "basic", "report_web_dest": "C:\\sa-reports",
+                   "awx_job_template_name": "Linux - Certificate trust report"}' -e awx_job_id=$job | tee /tmp/7.out || fail=1
+            grep -q "Published: 127.0.0.1:C:.*sa-reports.*linux-certificate-trust-report.*_job-$job.html" /tmp/7.out || { echo "FAIL: job $job not published on Windows"; fail=1; }
+          done
           exit $fail
+      - name: The report website's pages on Windows (report_web_host)
+        shell: powershell
+        run: |
+          $d = 'C:\sa-reports\linux-certificate-trust-report'
+          Get-ChildItem -Recurse C:\sa-reports | Select-Object FullName, Length | Format-Table -AutoSize
+          $runs = @(Get-ChildItem -Path $d -Filter '*_job-90?.html').Count
+          $latest = Get-Content -Raw -LiteralPath "$d\latest.html"
+          $index = Get-Content -Raw -LiteralPath 'C:\sa-reports\index.json' | ConvertFrom-Json
+          $left = @(Get-ChildItem -Recurse -Force C:\sa-reports -Filter '*.tmp').Count
+          "runs: $runs, latest is job 908: $($latest -match 'AAP job 908'), reports in the index: $(@($index.reports).Count), temporary files: $left"
+          if ($runs -ne 2 -or $latest -notmatch 'AAP job 908' -or @($index.reports).Count -ne 1 -or $left -ne 0) { exit 1 }
+          if (-not (Test-Path 'C:\sa-reports\index.html')) { exit 1 }
       - name: The findings reached the Windows Application event log
         shell: powershell
         run: |

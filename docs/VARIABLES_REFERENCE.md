@@ -759,6 +759,21 @@ File: `roles/site_email/defaults/main.yml`
 | `report_history_runs` | `14` | bars in the strip, this run included |
 | `report_history_aap_ca_path` | (empty) | a CA file for AAP's own HTTPS certificate ("" = what the execution environment trusts) |
 | `report_email_html_template` | `report.html.j2` | Your own look instead: copy roles/site_email/templates/report.html.j2 (or report_command / report_portal) to e.g. playbooks/files/email/report.html.j2, change it, and set report_email_html_template: "{{ playbook_dir }}/files/email/report.html.j2" report.html.j2 (the default) = the look report_email_theme picks. |
+| `report_web_dest` | (empty) | THE REPORT WEBSITE (docs/WEB_REPORTS.md): every report job also writes its report as a web page - off until report_web_dest is set. Works without an email (report_email_to empty). Each run: its page, a copy as the template's latest page, the report's data as JSON beside each (for your own site), and an index of every… (all of it: the role file) |
+| `report_web_url` | (empty) | the address people open that folder at, e.g. https://reports.yoursite.mil ("" = dest when it is https://) |
+| `report_web_theme` | `portal` | the page's look: standard, command or portal (as report_email_theme) |
+| `report_web_page` | `"{template}/{date}_{time}_job-{job}.html"` | The names inside the folder, with {names} filled in: {template} (the AAP template's name, lower case with dashes; the play's name outside AAP), {template_id}, {job} (the AAP job; local outside AAP), {status} (ok, warning, critical, info), {date} (2026-10-23), {time} (0605), {year}, {month}, {day} - the time the job wr… (all of it: the role file) |
+| `report_web_latest` | `"{template}/latest.html"` | always the template's newest run ("" = none) |
+| `report_web_index` | `index.html` | every report's last run ("" = none) |
+| `report_web_names` | `{}` | your own {names}, e.g. {site: "{{ site_code }}"} for "{site}/{template}/..." |
+| `report_web_json` | `true` | the report's data as .json beside each page and index.json beside the index |
+| `report_web_ca_path` | (empty) | a CA file for an https:// report_web_dest, or report_web_host's WinRM certificate ("" = what the EE trusts) |
+| `report_web_host` | (empty) | Or on a Windows server (a file server, or the IIS server itself): report_web_host is that server, report_web_dest the folder on it (D:\reports, there already). The pages are made on the AAP side and written there over WinRM, in one PowerShell script per run (Constrained Language Mode too): nothing to mount, no WebDAV.… (all of it: the role file) |
+| `report_web_host_connection` | `winrm` | winrm or psrp |
+| `report_web_host_port` | `5986` | WinRM: 5986 (https), 5985 (http) |
+| `report_web_host_scheme` | `https` | https, or http (Kerberos and NTLM encrypt each message then) |
+| `report_web_host_transport` | `ntlm` | ntlm, kerberos (Kerberos in the EE), credssp or basic |
+| `report_web_host_cert_validation` | `validate` | validate (the CA: report_web_ca_path) or ignore |
 
 ## site_findings
 

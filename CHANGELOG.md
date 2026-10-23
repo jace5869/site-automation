@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.23.0 — 2026-10-23
+
+**Updating without scripts:** paste `site-automation-0.23.0-changed-since-0.22.0.zip` as it is (from
+0.15.1 to 0.20.0: `site-automation-0.23.0-changed-since-0.15.1.zip`, then read the 0.20.0 notes - one
+file to delete). Both leave out `playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`.
+Nothing else to change: no report is written anywhere until you set `report_web_dest`.
+
+**Every report as a web page too: the report website.** `report_web_dest` (in `all.yml`, for every report
+job at once): each run writes its report as a page in the portal look, with your logo inside it, named
+`<template>/<date>_<time>_job-<job>.html` (the AAP template's name, lower case with dashes; UTC), a copy as
+`<template>/latest.html`, the report's data as JSON beside each (for a site of your own), and `index.html`
+with every report's last run, worst first. Into a folder (a share mounted on the execution nodes) or uploaded
+to a web server with HTTP PUT (WebDAV - nginx, Apache, IIS; a login from the new **Report website**
+credential type, `aap/credential_types/report_web.yml`). Works without email (`report_email_to` empty); with
+email, the email links to its page. The job prints `Report: https://...` and keeps the address as the job
+artifact `site_report_url` for the next step of a workflow. Every name is a setting (`report_web_page`,
+`report_web_latest`, `report_web_index`, your own `{names}` in `report_web_names`). A dry run writes nothing.
+docs/WEB_REPORTS.md, with an nginx example.
+
+**Or on a Windows server, over WinRM.** `report_web_host: web01.yoursite.mil` and `report_web_dest: 'D:\reports'`:
+the pages are made on the AAP side and written on that server by one PowerShell script per run, the way the
+Windows jobs reach your servers - nothing to mount, no WebDAV; IIS there serves the folder. Windows PowerShell
+5.1 and 7, Constrained Language Mode too. The login is the **Report website** credential's user name and
+password (beside any Machine credential), or without it the template's Machine credential; the connection is
+`report_web_host_port`, `_scheme`, `_transport`, `_cert_validation` (5986, https, ntlm, validate) and
+`report_web_ca_path`. The server does not have to be in the job's inventory. A server that cannot be reached
+or a login refused stops the job saying which, and what to check. Tested over real WinRM in the checks' Windows
+job. docs/WEB_REPORTS.md, "A Windows server, over WinRM".
+
 ## 0.22.0 — 2026-10-23
 
 **Updating without scripts:** paste `site-automation-0.22.0-changed-since-0.21.0.zip` as it is (from

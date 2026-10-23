@@ -19,9 +19,9 @@
          + (_hz.api | dict2items | map(attribute='key') | zip(_hz.api | dict2items | map(attribute='value')) | map('join', ': ') | list) }}
   when: _hz is defined and _hz_read is defined
 
-- name: Horizon | email it (report_email_to)
+- name: Horizon | email it, publish it (report_email_to, report_web_dest)
   ansible.builtin.include_role:
     name: site_email
   vars:
     _report: "{{ _hz_doc | combine({'footer': _hz_footer | default('Horizon REST API of ' ~ _hz_read.url | default(''))}) }}"
-  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0

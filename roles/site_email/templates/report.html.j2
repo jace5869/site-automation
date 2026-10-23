@@ -4,6 +4,9 @@
     _email_logo_cid ('' = no logo) with _email_logo_size ([width, height]). Every value is escaped
     (| e). Your own look: copy this file and point report_email_html_template at the copy. -#}
 {%- set r = _report -%}
+{#- the web copy (report_web_dest) passes its own _page_logo_cid, _page_logo_size and _page_runs; an email links its web copy (_email_web_url) -#}
+{%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
+{%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}
 {%- set colour = {'ok': '#15803d', 'warning': '#b45309', 'critical': '#b91c1c', 'info': '#1d4ed8', 'unknown': '#6b7280'} -%}
 {#- a section may colour its rows: row_status (one status per row: a light tint of the whole row) and
     cell_status (per row, one status per cell: that cell in the full colour, white bold text) -#}
@@ -21,15 +24,15 @@
 <tr><td align="center" style="padding:16px 8px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:1000px;background:#ffffff;border:1px solid #d1d5db;font-family:'Segoe UI',Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;color:#111827;">
 <tr><td style="background:{{ band }};color:#ffffff;padding:16px 20px;">
-{%- if _email_logo_cid | default('') %}
+{%- if logo_cid %}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td valign="middle" style="color:#ffffff;">
 {%- endif %}
 <div style="font-size:20px;font-weight:bold;">{{ r.title | e }}</div>
 {%- if r.subtitle | default('') %}
 <div style="font-size:14px;margin-top:4px;">{{ r.subtitle | e }}</div>
 {%- endif %}
-{%- if _email_logo_cid | default('') %}
-</td><td width="{{ _email_logo_size[0] + 16 }}" align="right" valign="middle" style="padding-left:16px;"><img src="cid:{{ _email_logo_cid }}" width="{{ _email_logo_size[0] }}" height="{{ _email_logo_size[1] }}" alt="" style="display:block;border:0;width:{{ _email_logo_size[0] }}px;height:{{ _email_logo_size[1] }}px;"></td></tr></table>
+{%- if logo_cid %}
+</td><td width="{{ logo_size[0] + 16 }}" align="right" valign="middle" style="padding-left:16px;"><img src="cid:{{ logo_cid }}" width="{{ logo_size[0] }}" height="{{ logo_size[1] }}" alt="" style="display:block;border:0;width:{{ logo_size[0] }}px;height:{{ logo_size[1] }}px;"></td></tr></table>
 {%- endif %}
 </td></tr>
 {%- if r.summary | default([]) %}
@@ -95,7 +98,7 @@
 {%- endfor %}
 <tr><td style="padding:12px 20px 16px 20px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;">
 {%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
-{{ _email_footer | e }}
+{{ _email_footer | e }}{% if _email_web_url | default('') %}<br><a href="{{ _email_web_url | e }}" style="color:inherit;">Open this report in a browser</a>{% endif %}
 </td></tr>
 </table>
 </td></tr>

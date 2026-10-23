@@ -8,6 +8,9 @@
     _email_logo_cid ('' = no logo) and _email_logo_size ([width, height]), _email_runs (report_runs; [] = no
     strip). Every value is escaped. -#}
 {%- set r = _report -%}
+{#- the web copy (report_web_dest) passes its own _page_logo_cid, _page_logo_size and _page_runs; an email links its web copy (_email_web_url) -#}
+{%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
+{%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}
 {%- set pal = {
     'ok':       {'bar': '#2f9e72', 'fg': '#13734f', 'bg': '#e3f5ec', 'bd': '#bfe6d3', 'word': 'Successful', 'icon': '&#10003;'},
     'warning':  {'bar': '#d98a1c', 'fg': '#9a5806', 'bg': '#fdf2df', 'bd': '#f3d6a6', 'word': 'Warning', 'icon': '!'},
@@ -24,7 +27,7 @@
 {%- set line = '#e4ece9' -%}
 {%- set mono = "font-family:Consolas,'Cascadia Mono',Menlo,'Courier New',monospace;" -%}
 {%- set card = 'background:#ffffff;border:2px solid ' ~ edge ~ ';border-radius:20px;box-shadow:0 6px 22px rgba(15,70,52,.08);' -%}
-{%- set runs = _email_runs | default([]) -%}
+{%- set runs = _page_runs | default(_email_runs | default([])) -%}
 {%- set job_id = awx_job_id | default(tower_job_id | default('')) | string -%}
 {%- set job_name = awx_job_template_name | default(tower_job_template_name | default('')) | string -%}
 {%- macro pill(k) -%}
@@ -51,8 +54,8 @@
 <tr><td>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;{{ card }}"><tr><td style="padding:18px 20px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-{%- if _email_logo_cid | default('') %}
-<td width="{{ _email_logo_size[0] + 14 }}" valign="middle" style="padding-right:14px;"><img src="cid:{{ _email_logo_cid }}" width="{{ _email_logo_size[0] }}" height="{{ _email_logo_size[1] }}" alt="" style="display:block;border:0;width:{{ _email_logo_size[0] }}px;height:{{ _email_logo_size[1] }}px;"></td>
+{%- if logo_cid %}
+<td width="{{ logo_size[0] + 14 }}" valign="middle" style="padding-right:14px;"><img src="cid:{{ logo_cid }}" width="{{ logo_size[0] }}" height="{{ logo_size[1] }}" alt="" style="display:block;border:0;width:{{ logo_size[0] }}px;height:{{ logo_size[1] }}px;"></td>
 {%- endif %}
 <td valign="middle">
 <div style="font-size:18px;font-weight:700;color:{{ ink }};">{{ report_email_header_text | default('Site automation report') | e }}</div>
@@ -182,7 +185,7 @@
 {%- endfor %}
 <tr><td align="center" style="text-align:center;font-size:12px;color:{{ muted }};line-height:1.6;padding:18px 10px 4px 10px;">
 {%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
-{{ _email_footer | e }}
+{{ _email_footer | e }}{% if _email_web_url | default('') %}<br><a href="{{ _email_web_url | e }}" style="color:inherit;">Open this report in a browser</a>{% endif %}
 </td></tr>
 </table>
 <!--[if mso]></td></tr></table><![endif]-->

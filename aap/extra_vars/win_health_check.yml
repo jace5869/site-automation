@@ -384,6 +384,71 @@
 ## default) = the look report_email_theme picks.
 # report_email_html_template: report.html.j2
 
+## THE REPORT WEBSITE (docs/WEB_REPORTS.md): every report job also writes its report as a web page -
+## off until report_web_dest is set. Works without an email (report_email_to empty). Each run: its
+## page, a copy as the template's latest page, the report's data as JSON beside each (for your own
+## site), and an index of every report's last run. The job prints the page's address ("Report:
+## https://...") and keeps it as the job artifact site_report_url. Where the files go: a folder the
+## job can write - a share mounted on the AAP execution nodes and exposed to jobs (Settings > Job
+## settings > Paths to expose to isolated jobs), e.g. /mnt/reports - or an https:// address that
+## takes uploads (HTTP PUT, WebDAV: nginx, Apache, IIS). An upload's login comes from a "Report
+## website" credential (aap/credential_types/report_web.yml).
+# report_web_dest: ""
+
+## the address people open that folder at, e.g. https://reports.yoursite.mil ("" = dest when it is
+## https://)
+# report_web_url: ""
+
+## the page's look: standard, command or portal (as report_email_theme)
+# report_web_theme: portal
+
+## The names inside the folder, with {names} filled in: {template} (the AAP template's name, lower
+## case with dashes; the play's name outside AAP), {template_id}, {job} (the AAP job; local outside
+## AAP), {status} (ok, warning, critical, info), {date} (2026-10-23), {time} (0605), {year},
+## {month}, {day} - the time the job wrote it, UTC - and your own from report_web_names. Each must
+## end in .html; folders are made as needed. each run's page (the address the job prints)
+# report_web_page: "{template}/{date}_{time}_job-{job}.html"
+
+## always the template's newest run ("" = none)
+# report_web_latest: "{template}/latest.html"
+
+## every report's last run ("" = none)
+# report_web_index: index.html
+
+## your own {names}, e.g. {site: "{{ site_code }}"} for "{site}/{template}/..."
+# report_web_names: {}
+
+## the report's data as .json beside each page and index.json beside the index
+# report_web_json: true
+
+## a CA file for an https:// report_web_dest, or report_web_host's WinRM certificate ("" = what the
+## EE trusts)
+# report_web_ca_path: ""
+
+## Or on a Windows server (a file server, or the IIS server itself): report_web_host is that server,
+## report_web_dest the folder on it (D:\reports, there already). The pages are made on the AAP side
+## and written there over WinRM, in one PowerShell script per run (Constrained Language Mode too):
+## nothing to mount, no WebDAV. The login: the "Report website" credential's user name and password,
+## or - without it - the template's Machine credential; the account needs WinRM (Remote Management
+## Users) and Modify on the folder. The connection, as your Windows inventory's: e.g.
+## web01.yoursite.mil
+# report_web_host: ""
+
+## winrm or psrp
+# report_web_host_connection: winrm
+
+## WinRM: 5986 (https), 5985 (http)
+# report_web_host_port: 5986
+
+## https, or http (Kerberos and NTLM encrypt each message then)
+# report_web_host_scheme: https
+
+## ntlm, kerberos (Kerberos in the EE), credssp or basic
+# report_web_host_transport: ntlm
+
+## validate (the CA: report_web_ca_path) or ignore
+# report_web_host_cert_validation: validate
+
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
 ## Which severities make the job FAIL. A failed job is what sends an AAP workflow down its "on
 ## failure" path (open tickets, ask ACT, wait for approval). [] = report only, never fail.

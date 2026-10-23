@@ -9,6 +9,9 @@
       ansible.builtin.include_role:
         name: site_email
       vars:
+        # as the report jobs include it: the email and the pages leave from the AAP side
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
         _report:
           title: "Test formatted report"
           subtitle: "2 VMs to fix"

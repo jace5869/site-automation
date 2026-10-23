@@ -71,6 +71,7 @@ own `playbooks/group_vars/all.yml` keeps its old settings until you comment them
 | [docs/NETAPP.md](docs/NETAPP.md) | the NetApp ONTAP health report: the read-only ONTAP account, the credential, the template, every section, settings and troubleshooting |
 | [docs/HORIZON.md](docs/HORIZON.md) | the Horizon 8 (VDI) jobs: the service account and its Horizon role, the credential, the templates and surveys, the broken desktops and image push workflows step by step, what is not yet tried on a real Horizon |
 | [docs/EMAIL_REPORTS.md](docs/EMAIL_REPORTS.md) | emailed reports: which jobs email, setting it up, green or red when a report finds problems, the look, adding email to a playbook |
+| [docs/WEB_REPORTS.md](docs/WEB_REPORTS.md) | the report website: every report also as a web page (on a Windows server over WinRM, a folder or an upload), the file names, the JSON, nginx, the address in the job output |
 | [docs/SERVICENOW_SETUP.md](docs/SERVICENOW_SETUP.md) | ServiceNow, step by step: the API account to ask for, the instance URL and API calls, firewall / proxy / DoD CA, the credential, a test ticket, and how to verify it in ServiceNow |
 | [docs/CERT_RENEWAL_CATALOG.md](docs/CERT_RENEWAL_CATALOG.md) | the certificate renewals without incidents: each CSR ordered from your PKI's catalog item - finding the item's questions, the settings, the catalog test, what a run does |
 | [docs/USING_YOUR_AAP_INVENTORY.md](docs/USING_YOUR_AAP_INVENTORY.md) | your inventory is already in AAP: the groups to add and which variables go on which group |
