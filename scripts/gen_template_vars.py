@@ -40,6 +40,13 @@ TEMPLATES = {
 # ad_lockout_unlock: false                   # true = also unlock it (a survey question: Unlock it? no / yes)
 # ad_lockout_exchange_servers: [EXCH*]       # your mail servers: a phone with the old password
 """),
+    "cert_install_approved.yml": ("Certificate install - approved", "Machine, ServiceNow API (for the work notes)", "", ""),
+    "cert_install_check.yml": ("Certificate install - check", "Machine, ServiceNow API", "", ""),
+    "cert_restore.yml": ("Certificate restore", "Machine", "", """\
+## Which backup - run it with Check (and a Limit) first: it lists them
+# cert_restore_only: web01                  # the newest backup of each certificate whose name or subject matches
+# cert_restore_backup: ''                   # or one backup, by its folder name
+"""),
     "cert_report.yml": ("Certificate report", "Machine (Keystore password, SQL Server (certificate inventory): optional)", "check_certs", ""),
     "cert_renew_csr.yml": ("Certificate renewal - CSRs", "Machine, ServiceNow API (Keystore password: optional)", "check_certs", """\
 servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job opens (a certificate with no ticket yet)
@@ -177,9 +184,16 @@ vm_pick_reboot_templates: ["VM - restart picked VMs (workflow)"]          # whos
     "vm_snapshot_report.yml": ("VM - snapshot report", "VMware vCenter", "", ""),
     "vm_vlan.yml": ("VM - change VLAN", "VMware vCenter", "", ""),
     "win_act_install.yml": ("ACT for Windows - install", "Machine (Windows)", "", ""),
+    "win_cert_install_approved.yml": ("Windows certificate install - approved", "Machine (Windows), ServiceNow API (for the work notes)", "", ""),
+    "win_cert_install_check.yml": ("Windows certificate install - check", "Machine (Windows), ServiceNow API", "", ""),
     "win_cert_report.yml": ("Windows certificate report", "Machine (Windows) (SQL Server (certificate inventory): optional)", "win_check_certs", ""),
     "win_cert_renew_csr.yml": ("Windows certificate renewal - CSRs", "Machine (Windows), ServiceNow API", "win_check_certs", """\
 servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job opens (a certificate with no ticket yet)
+"""),
+    "win_cert_restore.yml": ("Windows certificate restore", "Machine (Windows)", "", """\
+## Which backup - run it with Check (and a Limit) first: it lists them
+# win_cert_restore_only: web01              # the newest backup of each certificate whose thumbprint or subject matches
+# win_cert_restore_backup: ''               # or one backup, by its folder name
 """),
     "win_connection_test.yml": ("Windows connection test", "Machine (Windows)", "", ""),
     "win_health_check.yml": ("Windows health check", "Machine (Windows)", WIN_CHECKS, ""),

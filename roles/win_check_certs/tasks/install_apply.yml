@@ -1,0 +1,78 @@
+---
+# WINDOWS CERTIFICATE INSTALL, the step after the approval (playbooks/win_cert_install_approved.yml), on the
+# server. AAP hands it the check job's plan (cert_install_plan): each approved certificate is planned again first -
+# the same certificate, the same bindings, or it is refused - then certreq -accept puts it with its key in
+# Personal, and each binding moves to it and is read back (with full PowerShell, the https ports are asked).
+# Anything wrong: the bindings go back to the old certificate. It refuses to run on its own (outside the workflow
+# nothing was approved). Check (dry run): what it would do.
+- name: Windows certs | install | the check job's plan reached this job
+  ansible.builtin.assert:
+    that:
+      - cert_install_plan is defined
+      - cert_install_plan is mapping
+      - cert_install_plan | length > 0
+    fail_msg: >-
+      Nothing to install: no approved plan (cert_install_plan) reached this job. It runs only in the Windows
+      certificate install workflow, after "Windows certificate install - check" and the approval step:
+      docs/CERT_INSTALL.md. Do not tick "Prompt on launch" for Variables on this template.
+    quiet: true
+  run_once: true
+
+- name: Windows certs | install | every server of the plan is in this job
+  ansible.builtin.assert:
+    that: _wci_missing | length == 0
+    fail_msg: >-
+      The approved plan has certificates for {{ _wci_missing | join(', ') }}, which this job does not run on (its
+      inventory, or a Limit): nothing is installed anywhere. Give this template the check job's inventory, and no Limit.
+    quiet: true
+  run_once: true
+  vars:
+    _wci_missing: "{{ cert_install_plan.keys() | difference(ansible_play_hosts_all) | list }}"
+
+- name: Windows certs | install | nothing approved for this server
+  ansible.builtin.meta: end_host
+  when: inventory_hostname not in cert_install_plan
+
+- name: Windows certs | install | the approved certificates - planned again, accepted, the bindings moved and read back
+  ansible.builtin.script: win_cert_install.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'action': 'install', 'dir': win_cert_renew_dir, 'approved': item, 'rebind': win_cert_install_rebind,
+          'winrm_https_in_use': _wci_aap_https | bool, 'by_hand': _wci_by_hand, 'verify_wait': win_cert_install_verify_wait | int,
+          'check_mode': ansible_check_mode, 'job': awx_job_id | default('') | string} | to_json }}
+  loop: "{{ cert_install_plan[inventory_hostname] }}"
+  loop_control:
+    label: "{{ item.base }} ({{ item.ritm }})"
+  register: _wci_done
+  changed_when: _wci_status in ['installed', 'rolled back']
+  failed_when: false                    # each certificate's result is reported (below)
+  check_mode: false                     # the script itself changes nothing in Check (check_mode above)
+  vars:
+    _wci_line: "{{ _wci_done.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+    _wci_status: "{{ ((_wci_line[16:] | from_json).facts.installed[0].status) if _wci_line else '' }}"
+    _wci_by_hand: >-
+      {{ ('an AAP host (group ' ~ (group_names | intersect(['aap', 'aap_hosts']) | join(', ')) ~ '): a person installs its certificates')
+         if group_names | intersect(['aap', 'aap_hosts']) | length > 0 else '' }}
+    _wci_aap_https: >-
+      {{ (ansible_connection | default('') == 'winrm'
+          and (ansible_winrm_scheme | default('http' if (ansible_port | default(5986) | int) == 5985 else 'https')) == 'https')
+         or (ansible_connection | default('') == 'psrp'
+          and (ansible_psrp_protocol | default('http' if (ansible_port | default(5986) | int) == 5985 else 'https')) == 'https') }}
+
+- name: Windows certs | install | the result, for the requests
+  ansible.builtin.set_fact:
+    cert_install_result:
+      host: "{{ site_report_name | default(inventory_hostname) }}"
+      items: >-
+        {%- set out = [] -%}
+        {%- for r in _wci_done.results | default([]) -%}
+        {%-   set line = r.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') -%}
+        {%-   if line -%}
+        {%-     set _ = out.extend((line[16:] | from_json).facts.installed | default([])) -%}
+        {%-   else -%}
+        {%-     set _ = out.append({'base': r.item.base, 'subject': r.item.subject | default(''), 'ritm': r.item.ritm, 'ritm_sys_id': r.item.ritm_sys_id,
+                                    'status': 'failed', 'reason': 'the install script gave no result: '
+                                    ~ ((r.stderr | default(r.msg | default(''))) | string | truncate(300))}) -%}
+        {%-   endif -%}
+        {%- endfor -%}
+        {{ out }}

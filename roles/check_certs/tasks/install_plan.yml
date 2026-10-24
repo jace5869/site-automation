@@ -1,0 +1,34 @@
+---
+# CERTIFICATE INSTALL, the check (playbooks/cert_install_check.yml), on the host, after the AAP side found the
+# issued certificates (hostvars.localhost.cert_install_issued): what installing each would do here - the files,
+# the service to reload, the port to check - or why it waits for a person. Reads only: the plan goes to the
+# approval (roles/servicenow/tasks/cert_install_plan.yml).
+- name: Certs | install | the certificates the PKI issued for this host
+  ansible.builtin.set_fact:
+    _ci_issued: >-
+      {{ (hostvars['localhost'].cert_install_issued | default({})).get(inventory_hostname, [])
+         | selectattr('status', 'equalto', 'issued') | list }}
+
+- name: Certs | install | what installing each would do
+  site_cert_install:
+    action: plan
+    dir: "{{ cert_renew_dir }}"
+    issued: "{{ _ci_issued }}"
+    services: "{{ cert_install_services }}"
+    never_reload: "{{ cert_install_never_reload }}"
+    known: "{{ cert_install_known_services }}"
+    key_files: "{{ cert_install_key_files }}"
+    key_dirs: "{{ cert_install_key_dirs }}"
+    trust_check: "{{ cert_install_trust_check | bool }}"
+    install_notes: "{{ cert_renew_install_notes | default({}, true) }}"
+    # an AAP host (the literal groups: no setting removes them): its installer manages its certificates
+    by_hand: >-
+      {{ ('an AAP host (group ' ~ (group_names | intersect(['aap', 'aap_hosts']) | join(', ')) ~ '): the AAP installer manages its certificates')
+         if group_names | intersect(['aap', 'aap_hosts']) | length > 0 else '' }}
+  register: _ci_plan
+  check_mode: false                     # reads only
+  when: _ci_issued | length > 0
+
+- name: Certs | install | the plan, for the approval
+  ansible.builtin.set_fact:
+    cert_install_host_plan: "{{ _ci_plan.plan | default([]) }}"

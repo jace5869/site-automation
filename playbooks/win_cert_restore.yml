@@ -1,0 +1,24 @@
+---
+# WINDOWS CERTIFICATE RESTORE - the old certificate back. The Windows certificate install leaves the old certificate
+# in Personal and records each binding it moved (win_cert_renew_dir\backup\<date>-<old thumbprint>\). This moves them
+# back - https in HTTP.sys, Remote Desktop, the WinRM HTTPS listener - and reads them back; the renewal then waits
+# again (the next install check offers the new certificate again, for approval).
+# Which: win_cert_restore_backup (a backup's folder name) or win_cert_restore_only (the newest backup of each
+# certificate whose thumbprint or subject matches). Run it with Check and a Limit first: it lists the backups.
+# Credentials: Machine (Windows, an administrator). docs/CERT_INSTALL.md, "Put the old certificate back".
+#   ansible-playbook playbooks/win_cert_restore.yml -i <windows inventory> --limit web01.example.mil --check
+- name: Windows certificate restore - the bindings back on the old certificate
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  vars:
+    site_os: windows
+  pre_tasks:
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  tasks:
+    - name: The backups, and the one(s) put back
+      ansible.builtin.include_role:
+        name: win_check_certs
+        tasks_from: restore.yml

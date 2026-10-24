@@ -1,0 +1,38 @@
+---
+# CERTIFICATE INSTALL - THE APPROVED ONES (job 2 of the certificate install workflow, after the approval). AAP hands
+# it the check job's plan (cert_install_plan); for each approved certificate the plan is made again on the host -
+# the same certificate, the same files, the same services, or it is refused - then each file is copied aside
+# (cert_renew_dir/backup), the new ones written with the old ones' owner, mode and SELinux label, the service's
+# configuration tested, the service reloaded (never restarted) and the port asked which certificate it serves.
+# Anything wrong: the copies go back and the service is reloaded again. Installed: a work note on its request.
+# It refuses to run on its own (outside the workflow nothing was approved), and when a host of the plan is not in
+# its inventory. Do not tick "Prompt on launch" for Variables on its template. Put a certificate back:
+# playbooks/cert_restore.yml.
+#
+#   [Certificate install - check] --Run on fail--> [Approval] --Run on success--> [Certificate install - approved]
+#
+# Credentials: Machine (sudo) and ServiceNow API (for the work notes; without it, only the job says what it did).
+- name: Certificate install - the approved certificates
+  hosts: "{{ target | default('all') }}"
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Linux hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  tasks:
+    - name: Install what was approved, then check it
+      ansible.builtin.include_role:
+        name: check_certs
+        tasks_from: install_apply.yml
+
+- name: Certificate install - the result, on the requests
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: What was installed, and a work note on each request
+      ansible.builtin.include_role:
+        name: servicenow
+        tasks_from: cert_installed.yml

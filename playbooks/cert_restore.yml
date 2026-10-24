@@ -1,0 +1,24 @@
+---
+# CERTIFICATE RESTORE - an old certificate back. Each certificate install copied the files it replaced aside
+# (cert_renew_dir/backup/<date>-<certificate>/). This puts one back - the files with their owner, mode and SELinux
+# label - tests the service's configuration, reloads it, and checks the port serves the old certificate again;
+# the renewal then waits again (the next install check finds its certificate again).
+# Which: cert_restore_backup (a backup's folder name) or cert_restore_only (the newest backup of each certificate
+# whose name or subject matches). Run it with Check and a Limit first: it lists the backups and changes nothing.
+# Credentials: Machine (sudo). docs/CERT_INSTALL.md, "Put the old certificate back".
+#   ansible-playbook playbooks/cert_restore.yml --limit web01.example.mil --check
+#   ansible-playbook playbooks/cert_restore.yml --limit web01.example.mil -e cert_restore_only=web01
+- name: Certificate restore - the old certificate back from its backup
+  hosts: "{{ target | default('all') }}"
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Linux hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  tasks:
+    - name: The backups, and the one(s) put back
+      ansible.builtin.include_role:
+        name: check_certs
+        tasks_from: restore.yml

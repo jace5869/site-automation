@@ -19,7 +19,7 @@ function Ev($log, $id, $provider, $level, $hoursAgo, $message, $props) {
 }
 $GB = 1073741824
 # ---- the scenarios --------------------------------------------------------------------------
-$M = @{ cim = @{}; events = @(); logs = @{}; reg = @{}; paths = @(); exe = @{}; exit = @{} }
+$M = @{ cim = @{}; events = @(); logs = @{}; reg = @{}; paths = @(); exe = @{}; exit = @{}; grants = @(); addstore = @(); netshLog = @() }
 $cfg = @{}
 switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: the audit data without auditpol /backup
     'disk_full' {
@@ -321,6 +321,94 @@ switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: th
         $cands += @(@{ id = 'certs:tls:127.0.0.1:8443'; store = ''; where = 'TLS app'; subject = 'CN=tls'; days = 5; expires = '2026-01-01'; severity = 'critical' })
         $cfg = @{ certs = $cands; dir = $M.fs; key_bits = 2048; digest = 'sha256'; max = 10; check_mode = ($Scenario -eq 'csr_check') }
     }
+    { $_ -like 'install*' -or $_ -like 'restore*' } {
+        # the certificate install (win_cert_install.ps1): the stores, HTTP.sys's bindings, Remote Desktop, the WinRM
+        # listener and SQL Server are stand-ins; the renewal's folder and the key files are real temporary ones
+        $M.fs = Join-Path ([System.IO.Path]::GetTempPath()) ('sa-inst-' + (Get-Random))
+        $null = New-Item -ItemType Directory -Path $M.fs
+        $env:ProgramData = $M.fs
+        $old = 'A1' * 20; $new = 'B2' * 20; $req = 'C3' * 20; $int = 'D4' * 20; $rootTp = 'E5' * 20; $other = 'F6' * 20
+        $M.newTp = $new
+        $dir = Join-Path $M.fs 'renew'
+        $null = New-Item -ItemType Directory -Path $dir
+        $csrPath = Join-Path $dir 'web01.corp.test-a1a1a1a1.csr'
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath $csrPath -Value "-----BEGIN NEW CERTIFICATE REQUEST-----`r`nWEB01`r`n-----END NEW CERTIFICATE REQUEST-----"
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath ($csrPath -replace '\.csr$', '.inf') -Value '[NewRequest]'
+        ConvertTo-Json @{ certificate = 'CN=web01.corp.test'; old_thumbprint = $old; store = 'Cert:\LocalMachine\My'; expires = '2026-11-14 10:00 UTC'
+            found_in = @('LocalMachine\My, used by https 0.0.0.0:443'); names = @('web01.corp.test'); request = $req; csr_path = $csrPath } |
+            Microsoft.PowerShell.Management\Set-Content -LiteralPath (Join-Path $dir "$old.json")
+        $M.certs = @{ 'Cert:\LocalMachine\My' = @((O @{ Subject = 'CN=web01.corp.test'; Thumbprint = $old; HasPrivateKey = $true }))
+            'Cert:\LocalMachine\REQUEST' = @((O @{ Subject = 'CN=web01.corp.test'; Thumbprint = $req }))
+            'Cert:\LocalMachine\CA' = @() }
+        $app = '{4dc3e181-e14b-4a21-b022-59fc669b0914}'
+        $M.ssl = @(@{ label = 'IP:port'; key = 'ipport=0.0.0.0:443'; hash = $old; appid = $app; store = 'My' },
+            @{ label = 'Hostname:port'; key = 'hostnameport=www.corp.test:443'; hash = $old; appid = $app; store = 'My' },
+            @{ label = 'IP:port'; key = 'ipport=0.0.0.0:8443'; hash = $other; appid = $app; store = 'My' })
+        $rp = 'Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Listener\*+HTTPS'
+        $M.wsman = @(O @{ PSPath = $rp })
+        $M.reg[$rp] = O @{ certThumbprint = $old }
+        $M.wsmanItems = @(O @{ Name = 'Listener_1305953032'; Keys = @('Transport=HTTPS', 'Address=*'); Reg = $rp })
+        $M.cim.Win32_TSGeneralSetting = @(O @{ TerminalName = 'RDP-Tcp'; SSLCertificateSHA1Hash = $old })
+        $M.sqlKeys = @()
+        $null = New-Item -ItemType Directory -Path (Join-Path $M.fs 'Microsoft\Crypto\Keys') -Force
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath (Join-Path $M.fs 'Microsoft\Crypto\Keys\oldkey') -Value 'key'
+        Microsoft.PowerShell.Management\Set-Content -LiteralPath (Join-Path $M.fs 'Microsoft\Crypto\Keys\newkey') -Value 'key'
+        $M.exe["certutil.exe -store My $old"] = @('================ Certificate 0 ================', '  Provider = Microsoft Software Key Storage Provider', 'Unique container name: oldkey')
+        $M.exe["certutil.exe -store My $new"] = @('================ Certificate 0 ================', '  Provider = Microsoft Software Key Storage Provider', 'Unique container name: newkey')
+        $M.icacls = @{ (Join-Path $M.fs 'Microsoft\Crypto\Keys\oldkey') = @(((Join-Path $M.fs 'Microsoft\Crypto\Keys\oldkey') + ' NT AUTHORITY\SYSTEM:(F)'),
+                '                                 BUILTIN\Administrators:(F)', '                                 CORP\svc_web:(R)', '', 'Successfully processed 1 files; Failed processing 0 files') }
+        $pem = "-----BEGIN CERTIFICATE-----`nNEWCERT`n-----END CERTIFICATE-----`n"
+        $cert = @{ pem = $pem; sha1 = $new; sha256 = ('ab' * 32); serial = '1F2E'; subject = 'CN=web01.corp.test'; issuer = 'CN=TEST ID CA-70'; not_after = '2027-11-14 10:00 UTC'; key = 'RSA 2048-bit' }
+        $chain = @(@{ pem = "-----BEGIN CERTIFICATE-----`nINT`n-----END CERTIFICATE-----`n"; sha1 = $int; self_signed = $false },
+            @{ pem = "-----BEGIN CERTIFICATE-----`nROOT`n-----END CERTIFICATE-----`n"; sha1 = $rootTp; self_signed = $true })
+        $iss = @{ base = $old; ritm = 'RITM0010001'; ritm_sys_id = 'r1'; cert = $cert; chain = $chain; problems = @() }
+        $bind = @(@{ kind = 'https'; key = 'ipport=0.0.0.0:443'; appid = $app; store = 'My'; address = ''; transport = '' },
+            @{ kind = 'https'; key = 'hostnameport=www.corp.test:443'; appid = $app; store = 'My'; address = ''; transport = '' },
+            @{ kind = 'winrm'; key = '*+HTTPS'; appid = ''; store = ''; address = '*'; transport = 'HTTPS' },
+            @{ kind = 'rdp'; key = 'RDP-Tcp'; appid = ''; store = ''; address = ''; transport = '' })
+        $ap = @{ base = $old; ritm = 'RITM0010001'; ritm_sys_id = 'r1'; subject = 'CN=web01.corp.test'; status = 'ready'; bindings = $bind
+            new = @{ sha1 = $new; sha256 = ('ab' * 32); serial = '1F2E'; subject = 'CN=web01.corp.test'; issuer = 'CN=TEST ID CA-70'; not_after = '2027-11-14 10:00 UTC'; key = 'RSA 2048-bit' }
+            cert_pem = $pem; chain_pem = @($chain[0].pem, $chain[1].pem); chain_sha1 = @($int, $rootTp); chain_roots = @($rootTp) }
+        $cfg = @{ action = 'plan'; dir = $dir; issued = $iss; check_mode = $false; verify_wait = 1 }
+        switch ($Scenario) {
+            'install_pending' { $cfg = @{ action = 'pending'; dir = $dir } }
+            'install_plan_aaphttps' { $cfg.winrm_https_in_use = $true }
+            'install_plan_sql' {
+                $sk = 'Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Microsoft SQL Server\MSSQL16.MSSQLSERVER'
+                $M.sqlKeys = @(O @{ PSPath = $sk })
+                $M.reg[$sk + '\MSSQLServer\SuperSocketNetLib'] = O @{ Certificate = $old.ToLower() }
+            }
+            'install_plan_gone' { $M.certs['Cert:\LocalMachine\REQUEST'] = @() }
+            'install_plan_problems' { $iss.problems = @('expired on 2026-01-01 00:00 UTC') }
+            'install_plan_done' {
+                $M.certs['Cert:\LocalMachine\My'] += @(O @{ Subject = 'CN=web01.corp.test'; Thumbprint = $new; HasPrivateKey = $true })
+                foreach ($b in $M.ssl) { if ($b.hash -eq $old) { $b.hash = $new } }
+                $M.reg[$rp].certThumbprint = $new
+                $M.cim.Win32_TSGeneralSetting[0].SSLCertificateSHA1Hash = $new
+            }
+            'install' { $cfg = @{ action = 'install'; dir = $dir; approved = $ap; check_mode = $false; verify_wait = 1 } }
+            'install_check' { $cfg = @{ action = 'install'; dir = $dir; approved = $ap; check_mode = $true } }
+            'install_rollback' { $M.netshFail = @('hostnameport=www.corp.test:443'); $cfg = @{ action = 'install'; dir = $dir; approved = $ap; verify_wait = 1 } }
+            'install_changed' { $M.cim.Win32_TSGeneralSetting[0].SSLCertificateSHA1Hash = $other; $cfg = @{ action = 'install'; dir = $dir; approved = $ap } }
+            'install_accept_fails' { $M.acceptFail = $true; $cfg = @{ action = 'install'; dir = $dir; approved = $ap } }
+            { $_ -like 'restore*' } {
+                # after an install: the bindings on the new one, the renewal's files in installed\, its backup
+                $M.certs['Cert:\LocalMachine\My'] += @(O @{ Subject = 'CN=web01.corp.test'; Thumbprint = $new; HasPrivateKey = $true })
+                $M.certs['Cert:\LocalMachine\REQUEST'] = @()
+                foreach ($b in $M.ssl) { if ($b.hash -eq $old) { $b.hash = $new } }
+                $M.reg[$rp].certThumbprint = $new
+                $M.cim.Win32_TSGeneralSetting[0].SSLCertificateSHA1Hash = $new
+                $inst = Join-Path $dir "installed\20261024-090000.000-$old"
+                $null = New-Item -ItemType Directory -Path $inst -Force
+                foreach ($f in @("$old.json", 'web01.corp.test-a1a1a1a1.csr', 'web01.corp.test-a1a1a1a1.inf')) { Microsoft.PowerShell.Management\Move-Item -LiteralPath (Join-Path $dir $f) -Destination $inst }
+                $bk = Join-Path $dir "backup\20261024-090000.000-$old"
+                $null = New-Item -ItemType Directory -Path $bk -Force
+                ConvertTo-Json -Depth 5 @{ base = $old; subject = 'CN=web01.corp.test'; made = '2026-10-24 09:00:00 UTC'; old_thumbprint = $old; new_thumbprint = $new
+                    bindings = $bind } | Microsoft.PowerShell.Management\Set-Content -LiteralPath (Join-Path $bk 'backup.json')
+                $cfg = @{ action = 'restore'; dir = $dir; only = $(if ($Scenario -eq 'restore_list') { '' } else { 'web01' }); check_mode = ($Scenario -eq 'restore_check') }
+            }
+        }
+    }
     'certs_endpoints_clm' {
         $cfg = @{ stores = @(); endpoints = @(@{ name = 'IIS'; host = '127.0.0.1'; port = 443 }) }
         $M.exe['netsh.exe http show sslcert'] = @()
@@ -380,7 +468,7 @@ function Test-NetConnection { return [bool]$M.tnc }
 function Get-MpComputerStatus { if ($null -eq $M.mp) { throw 'not available' } ; $M.mp }
 function Get-NetFirewallProfile { $M.fw }
 function Get-SmbServerConfiguration { if ($null -eq $M.smb) { throw 'no smb' } ; $M.smb }
-function Get-ItemProperty { param([string] $Path, [string] $Name, $ErrorAction) $M.reg[$Path] }
+function Get-ItemProperty { param([string] $Path, [string] $LiteralPath, [string] $Name, $ErrorAction) if ($LiteralPath) { $Path = $LiteralPath }; $M.reg[$Path] }
 function Test-Path {
     param([string] $Path, [string] $LiteralPath, [string] $PathType = 'Any')
     $p = $Path; if ($LiteralPath) { $p = $LiteralPath }
@@ -409,6 +497,8 @@ function Get-ChildItem {
     }
     if ($Path -like 'Cert:*') { if ($M.certs -and $M.certs.ContainsKey($Path)) { return $M.certs[$Path] } ; throw "no store $Path" }
     if ($Path -like 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Listener') { return $M.wsman }
+    if ($Path -eq 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server') { return $M.sqlKeys }
+    if ($Path -eq 'WSMan:\localhost\Listener') { return $M.wsmanItems }
     return
 }
 # the certificate stores' changes (the trust check's removal): Remove-Item on a store entry, Export-/Import-Certificate
@@ -462,12 +552,53 @@ function auditpol.exe {
     }
     Invoke-Exe ('auditpol.exe ' + ($args -join ' '))
 }
-function netsh.exe { Invoke-Exe ('netsh.exe ' + ($args -join ' ')) }
+function netsh.exe {
+    if ($null -eq $M.ssl) { return (Invoke-Exe ('netsh.exe ' + ($args -join ' '))) }
+    # HTTP.sys's SSL bindings as a list: show (all, or one), update, delete, add - $M.netshFail: keys that refuse a change
+    $global:LASTEXITCODE = 0
+    $verb = $args[1]; $key = [string]$args[3]
+    $kv = @{}; foreach ($a in @($args | Select-Object -Skip 4)) { $k, $v = ([string]$a) -split '=', 2; $kv[$k] = $v }
+    if ($verb -eq 'show') {
+        $out = @('', 'SSL Certificate bindings:', '-------------------------', '')
+        foreach ($b in @($M.ssl | Where-Object { -not $key -or $_.key -eq $key })) {
+            $out += @(('    {0,-28} : {1}' -f $b.label, (($b.key -split '=', 2)[1])), "    Certificate Hash             : $($b.hash.ToLower())",
+                "    Application ID               : $($b.appid)", "    Certificate Store Name       : $($b.store)", '')
+        }
+        return $out
+    }
+    $M.netshLog += @(($args -join ' '))
+    if (@($M.netshFail) -contains $key) { $global:LASTEXITCODE = 1; return 'SSL Certificate add failed, Error: 1312' }
+    $b = @($M.ssl | Where-Object { $_.key -eq $key })
+    if ($verb -eq 'update' -and $b.Count) { $b[0].hash = $kv['certhash'].ToUpper(); return 'SSL Certificate successfully updated' }
+    if ($verb -eq 'delete' -and $b.Count) { $M.ssl = @($M.ssl | Where-Object { $_.key -ne $key }); return 'SSL Certificate successfully deleted' }
+    if ($verb -eq 'add') { $M.ssl += @(@{ label = 'IP:port'; key = $key; hash = $kv['certhash'].ToUpper(); appid = $kv['appid']; store = $kv['certstorename'] }); return 'SSL Certificate successfully added' }
+    $global:LASTEXITCODE = 1
+    return 'The parameter is incorrect.'
+}
+function Set-CimInstance {
+    param($InputObject, [hashtable] $Property, $ErrorAction)
+    foreach ($k in $Property.Keys) { $InputObject.$k = $Property[$k] }
+}
+function Set-Item {
+    param([string] $Path, $Value, [switch] $Force, $ErrorAction)
+    if ($Path -match '^WSMan:\\localhost\\Listener\\([^\\]+)\\CertificateThumbprint$') {
+        $l = @($M.wsmanItems | Where-Object { $_.Name -eq $Matches[1] })
+        if (-not $l.Count) { throw "no listener $($Matches[1])" }
+        $M.reg[$l[0].Reg].certThumbprint = [string]$Value
+        return
+    }
+    Microsoft.PowerShell.Management\Set-Item @PSBoundParameters
+}
 function net.exe { Invoke-Exe ('net.exe ' + ($args -join ' ')) }
-function icacls.exe { $global:LASTEXITCODE = 0 }
+function icacls.exe {
+    $global:LASTEXITCODE = 0
+    if ($args.Count -eq 1 -and $M.icacls -and $M.icacls.ContainsKey([string]$args[0])) { return $M.icacls[[string]$args[0]] }
+    if ($args.Count -eq 3 -and $args[1] -eq '/grant') { $M.grants += @(((Split-Path -Leaf ([string]$args[0])) + ' ' + $args[2])) }
+}
 # certreq -new -q -machine <inf> <csr>: a CSR file, and a pending request in the REQUEST store
 function certutil.exe {
     # -f -decode IN OUT: base64 (the trust check in Constrained Language Mode)
+    if ($args[0] -eq '-addstore') { $M.addstore += @((Split-Path -Leaf ([string]$args[2]))); $global:LASTEXITCODE = 0; return 'CertUtil: -addstore command completed successfully.' }
     if ($args[1] -eq '-decode') {
         $b64 = ((Microsoft.PowerShell.Management\Get-Content -LiteralPath $args[2]) -join '') -replace '\s', ''
         Write-Bytes $args[3] ([byte[]][Convert]::FromBase64String($b64))
@@ -478,6 +609,15 @@ function certutil.exe {
 }
 function certreq.exe {
     $global:LASTEXITCODE = 0
+    if ($args[0] -eq '-accept') {
+        # certreq -accept -machine -q <cer>: the issued certificate with the pending request's key, in Personal
+        if ($M.acceptFail) { $global:LASTEXITCODE = 0x800B0109; return 'Certificate Request Processor: A certificate chain processed, but terminated in a root certificate which is not trusted by the trust provider. 0x800b010a' }
+        if ((Get-Content -LiteralPath $args[-1] -Raw) -notmatch 'BEGIN CERTIFICATE') { $global:LASTEXITCODE = 1; return 'not a certificate' }
+        $M.certs['Cert:\LocalMachine\My'] += @(O @{ Subject = 'CN=web01.corp.test'; Thumbprint = $M.newTp; HasPrivateKey = $true })
+        $M.certs['Cert:\LocalMachine\REQUEST'] = @()
+        $M.accepted = $true
+        return 'Installed Certificate:'
+    }
     $inf, $csr = $args[-2], $args[-1]
     $subj = ((Get-Content -LiteralPath $inf) | Where-Object { $_ -like 'Subject = *' }) -replace '^Subject = "(.*)"$', '$1'
     Microsoft.PowerShell.Management\Set-Content -LiteralPath $csr -Value "-----BEGIN NEW CERTIFICATE REQUEST-----`r`nMADE $subj`r`n-----END NEW CERTIFICATE REQUEST-----"
@@ -489,6 +629,12 @@ $env:SITE_CHECK_CONFIG = ConvertTo-Json -InputObject $cfg -Depth 6 -Compress
 if ($Clm) { $ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage' }
 try { & $Script }
 finally {
+    if ($null -ne $M.ssl) {
+        '###STATE### ' + (ConvertTo-Json -Compress -Depth 4 -InputObject @{ ssl = @($M.ssl | ForEach-Object { $_.key + '=' + $_.hash })
+                rdp = [string]$M.cim.Win32_TSGeneralSetting[0].SSLCertificateSHA1Hash; winrm = [string]$M.reg[$M.wsmanItems[0].Reg].certThumbprint
+                grants = @($M.grants); addstore = @($M.addstore); accepted = [bool]$M.accepted; netsh = @($M.netshLog)
+                tree = @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $M.fs -Recurse -File | ForEach-Object { $_.FullName.Substring($M.fs.Length) -replace '\\', '/' }) })
+    }
     if ($M.fs) {
         # what certreq was given, for the tests; then the temporary folder goes
         foreach ($f in @(Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $M.fs -Filter '*.inf')) { '###INF### ' + $f.Name + ' ' + ((Get-Content -LiteralPath $f.FullName) -join '|') }

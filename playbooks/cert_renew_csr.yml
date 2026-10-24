@@ -7,7 +7,9 @@
 # servicenow_min_severity says - with a work note saying what to do next (where the issued certificate
 # goes: in place of the file, into the keystore, or for a port alone, wherever that service keeps it).
 # The key never leaves the host. A run again reuses the pending CSR and changes nothing on the ticket.
-# Nothing in use is changed: installing the issued certificate is a later step, by a person.
+# Nothing in use is changed. Installing the issued certificate is a later step: with cert_renew_servicenow: catalog,
+# the certificate install workflow takes it from the request, after an approval (cert_install_check.yml,
+# docs/CERT_INSTALL.md); with incidents, a person installs it.
 #
 # Not renewed (listed, with why): files found only in check_certs_discover_extra_dirs (/home, /root:
 # the report only, unless cert_renew_extra_dirs), hosts in cert_skip_hosts or cert_skip_groups (Satellite), the trust

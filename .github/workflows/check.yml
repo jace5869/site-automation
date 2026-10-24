@@ -18,7 +18,7 @@ jobs:
       - name: The VMware collection the vm_*.yml playbooks use, and its Python libraries (before syntax-check and lint)
         run: |
           pip install pyvmomi vmware-vcenter
-          ansible-galaxy collection install -r tests/vmware/requirements.yml
+          bash tests/galaxy_install.sh -r tests/vmware/requirements.yml
       - name: Syntax-check every playbook (site + vendored ACT)
         run: |
           set -e
@@ -54,6 +54,8 @@ jobs:
           python tests/test_vm_deploy.py
           python tests/test_cert_csr.py
           python tests/test_cert_order.py
+          python tests/test_cert_issued.py
+          python tests/test_cert_install.py
           python tests/test_horizon.py
           python tests/test_aap_survey.py
           python tests/test_net_config.py
@@ -142,11 +144,15 @@ jobs:
         run: |
           bash tests/certs/run_cert_renew_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/certs/run_cert_renew_test.sh
+      - name: Certificate install - from the request to the port, with the approval, the rollbacks and the restore (test CA, fake ServiceNow, a stand-in web server; current ansible-core and 2.16)
+        run: |
+          bash tests/certs/run_cert_install_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/certs/run_cert_install_test.sh
       - name: Network device certificates - report, sweep, incidents, Cisco CSRs (stand-in devices and IOS-XE CLI, fake ServiceNow; current ansible-core and 2.16)
         run: |
           pip install paramiko
           /tmp/ac216/bin/pip -q install paramiko
-          ansible-galaxy collection install cisco.ios ansible.netcommon
+          bash tests/galaxy_install.sh cisco.ios ansible.netcommon
           bash tests/netcerts/run_net_certs_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netcerts/run_net_certs_test.sh
       - name: Network config backup and load - git, share, ServiceNow, IOS lines and restore (scp + configure replace), PAN-OS commit (stand-in devices; current ansible-core and 2.16)
@@ -158,7 +164,7 @@ jobs:
       - name: Certificate inventory into SQL Server (a real SQL Server 2022 in docker)
         run: |
           pip install pymssql
-          ansible-galaxy collection install community.general
+          bash tests/galaxy_install.sh community.general
           docker pull -q mcr.microsoft.com/mssql/server:2022-latest
           CERT_SQL_TEST_RUNTIME=docker bash tests/certinv/run_cert_inventory_sql_test.sh
       - name: Credential types and inventory are valid YAML
@@ -337,3 +343,141 @@ jobs:
           $n = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'site-health' } -MaxEvents 50 -ErrorAction SilentlyContinue).Count
           "site-health events in the Application log: $n"
           if ($n -lt 1) { exit 1 }
+
+  windows-cert-install:
+    name: Windows certificate install, for real (Ansible in WSL -> this runner, a test CA, a fake ServiceNow)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: WinRM on this runner, with a local administrator account for the test
+        shell: powershell
+        run: |
+          $pw = 'Sa-' + [guid]::NewGuid().ToString('N').Substring(0, 20) + '!'
+          "::add-mask::$pw"
+          $sec = ConvertTo-SecureString -String $pw -AsPlainText -Force
+          New-LocalUser -Name satest -Password $sec -PasswordNeverExpires | Out-Null
+          Add-LocalGroupMember -Group Administrators -Member satest
+          New-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System -Name LocalAccountTokenFilterPolicy -Value 1 -PropertyType DWord -Force | Out-Null
+          Enable-PSRemoting -Force -SkipNetworkProfileCheck | Out-Null
+          Set-Item -Path WSMan:\localhost\Service\Auth\Basic -Value $true
+          Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $true
+          "SATEST_PW=$pw" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - uses: Vampire/setup-wsl@v3
+        with:
+          distribution: Ubuntu-22.04
+          additional-packages: python3-venv python3-pip openssl
+      - name: A test CA, and the certificate in use - about to expire, bound to a port in HTTP.sys (made in WSL)
+        shell: wsl-bash {0}
+        run: |
+          set -eu
+          mkdir -p /mnt/c/sa-cert && cd /mnt/c/sa-cert
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout root.key -out root.crt -days 400 -subj "/C=US/O=U.S. Government/OU=PKI/CN=SA TEST ROOT CA" \
+            -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign
+          openssl req -new -newkey rsa:2048 -nodes -keyout int.key -out int.csr -subj "/C=US/O=U.S. Government/OU=PKI/CN=SA TEST ID CA"
+          printf 'basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\n' > ca.ext
+          openssl x509 -req -in int.csr -CA root.crt -CAkey root.key -CAcreateserial -days 390 -out int.crt -extfile ca.ext
+          openssl req -new -newkey rsa:2048 -nodes -keyout old.key -out old.csr -subj "/C=US/O=U.S. Government/CN=sa-certtest.example.mil" \
+            -addext "subjectAltName=DNS:sa-certtest.example.mil" -addext "extendedKeyUsage=serverAuth"
+          openssl x509 -req -in old.csr -CA int.crt -CAkey int.key -CAcreateserial -days 20 -out old.crt -copy_extensions copy
+          openssl pkcs12 -export -inkey old.key -in old.crt -certfile int.crt -out old.pfx -passout pass:satest -keypbe AES-256-CBC -certpbe AES-256-CBC -macalg sha256
+          ls -l
+      - name: The test CA trusted, the old certificate in Personal and bound to 0.0.0.0:47443, a listener on that port
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          certutil -addstore Root C:\sa-cert\root.crt | Out-Null
+          certutil -addstore CA C:\sa-cert\int.crt | Out-Null
+          $c = Import-PfxCertificate -FilePath C:\sa-cert\old.pfx -CertStoreLocation Cert:\LocalMachine\My -Password (ConvertTo-SecureString satest -AsPlainText -Force)
+          $tp = @($c | Where-Object { $_.Subject -like 'CN=sa-certtest*' })[0].Thumbprint
+          netsh http add sslcert ipport=0.0.0.0:47443 certhash=$tp appid='{4dc3e181-e14b-4a21-b022-59fc669b0914}' certstorename=My
+          if ($LASTEXITCODE -ne 0) { throw 'netsh http add sslcert failed' }
+          # the listener as a scheduled task (SYSTEM): it outlives this step and the WinRM sessions
+          Set-Content -Path C:\sa-cert\listen.ps1 -Value '$l = New-Object System.Net.HttpListener; $l.Prefixes.Add("https://+:47443/"); $l.Start(); while ($true) { $x = $l.GetContext(); $x.Response.Close() }'
+          schtasks /create /tn sa-listener /tr "powershell -NoProfile -ExecutionPolicy Bypass -File C:\sa-cert\listen.ps1" /sc once /st 23:59 /ru SYSTEM /f | Out-Null
+          schtasks /run /tn sa-listener | Out-Null
+          Start-Sleep -Seconds 5
+          $tcp = New-Object System.Net.Sockets.TcpClient('127.0.0.1', 47443)
+          $ssl = New-Object System.Net.Security.SslStream($tcp.GetStream(), $false, { $true })
+          $ssl.AuthenticateAsClient($env:COMPUTERNAME)
+          $served = (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($ssl.RemoteCertificate)).Thumbprint
+          $tcp.Close()
+          "the port serves $served (the old one: $tp)"
+          if ($served -ne $tp) { throw 'the test listener does not serve the old certificate' }
+          "OLD_TP=$tp" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          netsh http show sslcert ipport=0.0.0.0:47443
+      - name: Ansible (in WSL) - the renewal orders the CSR, the PKI issues it, the check, the approved install, the restore
+        shell: wsl-bash {0}
+        env:
+          WSLENV: SATEST_PW:OLD_TP
+        run: |
+          set +e +o pipefail
+          set -u
+          python3 -m venv /tmp/v && /tmp/v/bin/pip -q install ansible-core pywinrm
+          rm -rf ~/sa && cp -r . ~/sa && cd ~/sa
+          cat > /tmp/inv.yml <<'INV'
+          all:
+            hosts:
+              winrunner:
+                ansible_host: 127.0.0.1
+                ansible_connection: winrm
+                ansible_port: 5985
+                ansible_winrm_scheme: http
+                ansible_winrm_transport: basic
+                ansible_user: satest
+                ansible_password: "{{ lookup('env', 'SATEST_PW') }}"
+          INV
+          SNMOCK_LOG=/tmp/sn.jsonl python3 tests/servicenow/snmock.py 18500 >/dev/null 2>&1 &
+          export ANSIBLE_NOCOLOR=1 ANSIBLE_ROLES_PATH=roles ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_SHOW_CUSTOM_STATS=1
+          export SN_HOST=http://127.0.0.1:18500 SN_USERNAME=api SN_PASSWORD=goodpw
+          vars='{"cert_renew_servicenow": "catalog", "cert_renew_catalog_item": "dod pki certificate request",
+                 "cert_renew_catalog_variables": {"requested_for": "jdoe", "contact_method": "Email"},
+                 "win_cert_renew_only": ":47443", "site_fail_on": []}'
+          fail=0
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            /tmp/v/bin/ansible -i /tmp/inv.yml winrunner -m ansible.builtin.raw -a 'hostname' >/dev/null 2>&1 && break
+            echo "WinRM not ready yet (attempt $i)"; sleep 10
+          done
+          new_tp() { openssl x509 -in /tmp/issued.crt -noout -fingerprint -sha1 | cut -d= -f2 | tr -d : ; }
+          bound() { /tmp/v/bin/ansible -i /tmp/inv.yml winrunner -m ansible.builtin.raw -a 'netsh http show sslcert ipport=0.0.0.0:47443' 2>&1 | tr -d '\r' | grep -i 'Certificate Hash' | awk '{print toupper($NF)}'; }
+          OLD_TP=$(openssl x509 -in /mnt/c/sa-cert/old.crt -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)
+          /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_cert_renew_csr.yml -e "$vars" | tee /tmp/r1.out
+          grep -q 'ORDERED RITM' /tmp/r1.out || { echo 'FAIL: the CSR was not ordered'; fail=1; }
+          # the PKI: the CSR from the request, signed by the test CA, the certificate (DER) and the chain (.p7b) on the request
+          python3 - <<'PY'
+          import base64, json, subprocess, urllib.request
+          H = {"Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode()}
+          def call(m, path, data=None, ctype="application/json"):
+              r = urllib.request.Request("http://127.0.0.1:18500" + path, data=data, method=m, headers=dict(H, **{"Content-Type": ctype}))
+              b = urllib.request.urlopen(r).read()
+              return b if path.endswith("/file") and m == "GET" else json.loads(b or b"{}").get("result")
+          a = [x for x in call("GET", "/api/now/attachment?sysparm_query=file_nameSTARTSWITHsa-certtest.example.mil-") if x["file_name"].endswith(".csr")][0]
+          open("/tmp/req.csr", "wb").write(call("GET", "/api/now/attachment/%s/file" % a["sys_id"]))
+          subprocess.check_call(["openssl", "x509", "-req", "-in", "/tmp/req.csr", "-CA", "/mnt/c/sa-cert/int.crt", "-CAkey", "/mnt/c/sa-cert/int.key",
+                                 "-CAcreateserial", "-days", "400", "-out", "/tmp/issued.crt", "-copy_extensions", "copy"])
+          subprocess.check_call(["openssl", "x509", "-in", "/tmp/issued.crt", "-outform", "DER", "-out", "/tmp/issued.cer"])
+          subprocess.check_call(["openssl", "crl2pkcs7", "-nocrl", "-certfile", "/mnt/c/sa-cert/int.crt", "-certfile", "/mnt/c/sa-cert/root.crt", "-outform", "DER", "-out", "/tmp/chain.p7b"])
+          ritm = a["table_sys_id"]
+          for name, f in (("sa-certtest.cer", "/tmp/issued.cer"), ("DoD_chain.p7b", "/tmp/chain.p7b")):
+              call("POST", "/api/now/attachment/file?table_name=sc_req_item&table_sys_id=%s&file_name=%s" % (ritm, name), open(f, "rb").read(), "application/octet-stream")
+          print("issued on", ritm)
+          PY
+          /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_cert_install_check.yml -e "$vars" | tee /tmp/c1.out
+          grep -q 'NEEDS APPROVAL: 1 certificate(s) to install' /tmp/c1.out || { echo 'FAIL: no approval asked'; fail=1; }
+          grep 'READY | winrunner' /tmp/c1.out | grep -q 'https ipport=0.0.0.0:47443' || { echo 'FAIL: the plan does not move the 47443 binding'; fail=1; }
+          python3 -c 'import json,sys; l=[x for x in open("/tmp/c1.out") if x.startswith("\tRUN: ")]; json.dump(json.loads(l[0][6:]), open("/tmp/plan.json","w"))' || fail=1
+          /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_cert_install_approved.yml -e @/tmp/plan.json --check | tee /tmp/a0.out
+          grep -q 'WOULD INSTALL | winrunner' /tmp/a0.out || { echo 'FAIL: the dry run'; fail=1; }
+          [ "$(bound)" = "$OLD_TP" ] || { echo "FAIL: the dry run changed the binding: $(bound)"; fail=1; }
+          /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_cert_install_approved.yml -e @/tmp/plan.json | tee /tmp/a1.out || fail=1
+          grep -q 'INSTALLED | winrunner' /tmp/a1.out || { echo 'FAIL: not installed'; fail=1; }
+          grep -q 'ipport=0.0.0.0:47443 serves it' /tmp/a1.out || { echo 'FAIL: the port was not asked, or does not serve it'; fail=1; }
+          [ "$(bound)" = "$(new_tp)" ] && echo "ok: 0.0.0.0:47443 is bound to the new certificate $(new_tp)" || { echo "FAIL: bound to $(bound), not $(new_tp)"; fail=1; }
+          echo | timeout 10 openssl s_client -connect 127.0.0.1:47443 2>/dev/null | openssl x509 -noout -fingerprint -sha1 | grep -qi "$(new_tp | sed 's/../&:/g; s/:$//')" \
+            && echo 'ok: the port serves the new certificate (seen from WSL)' || echo 'note: the port could not be read from WSL (the job checked it on the server)'
+          grep -q 'PATCH' /tmp/sn.jsonl && grep '"PATCH"' /tmp/sn.jsonl | grep -q 'Installed on winrunner' || { echo 'FAIL: no work note on the request'; fail=1; }
+          /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_cert_restore.yml -e win_cert_restore_only=. | tee /tmp/x1.out || fail=1
+          grep -q 'RESTORED | ' /tmp/x1.out || { echo 'FAIL: not restored'; fail=1; }
+          [ "$(bound)" = "$OLD_TP" ] && echo 'ok: restored - the binding is back on the old certificate' || { echo "FAIL: after the restore, bound to $(bound)"; fail=1; }
+          /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_cert_install_check.yml -e "$vars" | tee /tmp/c2.out
+          grep 'READY | winrunner' /tmp/c2.out | grep -q 'Personal (it is there with its key)' || { echo 'FAIL: after the restore, the check does not offer it again'; fail=1; }
+          exit $fail

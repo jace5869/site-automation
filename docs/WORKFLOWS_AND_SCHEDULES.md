@@ -332,6 +332,8 @@ or on the workflow, so every step gets them.
 step 2 out and link step 3 to step 1, **Run always**
 ([CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md)).
 
+**Install the issued certificates** (with the catalog item): workflow 29, after this one.
+
 **Network devices:** *Network device certificate renewal* on its own, daily - it reads the devices, opens
 the incidents and emails the report ([NETWORK_CERTS.md](NETWORK_CERTS.md)). **A dashboard:** with
 `cert_inventory_files` or `cert_inventory_sql` in `all.yml`, each certificate report also writes every
@@ -342,6 +344,25 @@ when a device changed, optionally an incident for it. A **load** as a workflow: 
 Job type **Check** (prompt on launch, or a second template) → **Approval** → *[Network config load]* **Run**,
 each with the same `net_config_change` and lines: the approver sees the dry run's report - exactly what will be
 sent - before anything is ([NETWORK_CONFIG.md](NETWORK_CONFIG.md)).
+
+### 29. Certificate install, with an approval (daily)
+
+```text
+[Certificate install - check]  --Run on fail-->  [Approval]  --Run on success-->  [Certificate install - approved]
+```
+
+| Step | Template | Link |
+|---|---|---|
+| 1 | Certificate install - check | (start) |
+| 2 | *Approval*: `Install the certificates the check listed?`, **Timeout** 8 hours. Description: `Open the check job: its READY lines say what each one changes.` | **Run on fail**, from 1 |
+| 3 | Certificate install - approved (the check's inventory, no Limit) | **Run on success**, from 2 |
+
+**Schedule:** every day 07:00, after workflow 7. The check reads each renewal's request in ServiceNow for the
+certificate the PKI put there and fails on purpose when one is ready (`NEEDS APPROVAL`); nothing ready, it stays
+green and the approval never comes. The install plans each one again, copies the old files aside, reloads the
+service, checks the port, and puts the old files back if anything is wrong. Windows: the same with *Windows
+certificate install - check / approved*. Everything else - what stays for a person, the restore:
+[CERT_INSTALL.md](CERT_INSTALL.md).
 
 ### 8. Database watch: MariaDB and MySQL (hourly)
 

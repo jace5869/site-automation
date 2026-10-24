@@ -92,3 +92,14 @@ cert_renew_catalog_upload_table: ZZ_YYsc_cart_item
 # servicenow_catalog_test.yml: true = also order the item once, with a test CSR - the PKI gets a real request
 # (tell them first, or cancel it). false = only read the item and check the settings.
 servicenow_catalog_test_order: false
+
+# ---- Certificate install: the issued certificate, from its request (cert_install_check.yml, win_cert_install_check.yml) ----
+# The PKI puts the issued certificate on the request (RITM) that carries the CSR: attached to the RITM, to one of
+# its attachment questions, to its REQ or to its catalog task (SCTASK) - one file or several, PEM, DER, PKCS7 (.p7b)
+# or a zip of them - or pasted into a work note or comment of the RITM or its task. The job reads them all and takes the certificate whose public key is the CSR's;
+# the CA certificates with it are its chain. Anything else there is listed, never used.
+cert_install_attachment_exts: [cer, crt, pem, der, p7b, p7c, p7, cert, zip, txt]   # the attachments read (their extension)
+cert_install_max_bytes: 1048576          # a bigger attachment is not read
+cert_install_journal: true               # also look for a certificate pasted into the request's work notes and comments
+cert_install_min_days: 30                # the issued certificate must be valid at least this many more days (else held for a person)
+cert_install_fewer_names: false          # true = install a certificate that lacks names (subjectAltName) the old one had; false = held for a person

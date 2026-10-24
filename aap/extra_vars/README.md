@@ -17,8 +17,11 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Active Directory - account lockout | `playbooks/ad_lockout.yml` | [ad_lockout.yml](ad_lockout.yml) |
 | Active Directory health report | `playbooks/ad_health_report.yml` | [ad_health_report.yml](ad_health_report.yml) |
 | Apply approved ACT fix | `playbooks/act_fix_approved.yml` | [act_fix_approved.yml](act_fix_approved.yml) |
+| Certificate install - approved | `playbooks/cert_install_approved.yml` | [cert_install_approved.yml](cert_install_approved.yml) |
+| Certificate install - check | `playbooks/cert_install_check.yml` | [cert_install_check.yml](cert_install_check.yml) |
 | Certificate renewal - CSRs | `playbooks/cert_renew_csr.yml` | [cert_renew_csr.yml](cert_renew_csr.yml) |
 | Certificate report | `playbooks/cert_report.yml` | [cert_report.yml](cert_report.yml) |
+| Certificate restore | `playbooks/cert_restore.yml` | [cert_restore.yml](cert_restore.yml) |
 | Database health - MariaDB / MySQL | `playbooks/database_health.yml` | [database_health.yml](database_health.yml) |
 | ESXi - security settings | `playbooks/esxi_security.yml` | [esxi_security.yml](esxi_security.yml) |
 | Health check | `playbooks/health_check.yml` | [health_check.yml](health_check.yml) |
@@ -72,8 +75,11 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VMware - certificate report | `playbooks/vmware_cert_report.yml` | [vmware_cert_report.yml](vmware_cert_report.yml) |
 | VMware - trust store report | `playbooks/vmware_trust_report.yml` | [vmware_trust_report.yml](vmware_trust_report.yml) |
 | Windows - trust store report | `playbooks/win_trust_report.yml` | [win_trust_report.yml](win_trust_report.yml) |
+| Windows certificate install - approved | `playbooks/win_cert_install_approved.yml` | [win_cert_install_approved.yml](win_cert_install_approved.yml) |
+| Windows certificate install - check | `playbooks/win_cert_install_check.yml` | [win_cert_install_check.yml](win_cert_install_check.yml) |
 | Windows certificate renewal - CSRs | `playbooks/win_cert_renew_csr.yml` | [win_cert_renew_csr.yml](win_cert_renew_csr.yml) |
 | Windows certificate report | `playbooks/win_cert_report.yml` | [win_cert_report.yml](win_cert_report.yml) |
+| Windows certificate restore | `playbooks/win_cert_restore.yml` | [win_cert_restore.yml](win_cert_restore.yml) |
 | Windows connection test | `playbooks/win_connection_test.yml` | [win_connection_test.yml](win_connection_test.yml) |
 | Windows health check | `playbooks/win_health_check.yml` | [win_health_check.yml](win_health_check.yml) |
 | Windows patch | `playbooks/win_patch.yml` | [win_patch.yml](win_patch.yml) |

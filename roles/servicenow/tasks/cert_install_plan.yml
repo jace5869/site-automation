@@ -1,0 +1,78 @@
+---
+# CERTIFICATE INSTALL, the check's last step (playbooks/cert_install_check.yml, win_cert_install_check.yml), on
+# the AAP side: every renewal waiting on every host, and what became of it - its certificate not issued yet, or
+# what installing it would do (hostvars[host].cert_install_host_plan), or why it waits for a person. The ones
+# ready to install go to the approval and the install job (set_stats cert_install_plan) and this job FAILS on
+# purpose, so the workflow takes its "Run on fail" path to the approval step. Nothing ready: it stays green.
+- name: Certificate install | every renewal waiting, and what became of it
+  ansible.builtin.set_fact:
+    _ci_lines: >-
+      {%- set out = [] -%}
+      {%- set issued = cert_install_issued | default({}) -%}
+      {%- for h in groups['all'] | sort if hostvars[h].cert_install_pending is defined -%}
+      {%-   set plan = hostvars[h].cert_install_host_plan | default([]) -%}
+      {%-   for i in hostvars[h].cert_install_pending['items'] -%}
+      {%-     set r = issued.get(h, []) | selectattr('base', 'equalto', i.base) | first | default({'status': 'failed', 'reason': 'not looked up'}) -%}
+      {%-     set p = plan | selectattr('base', 'equalto', i.base) | first | default({}) -%}
+      {%-     set head = h ~ ' | ' ~ (i.subject or i.base) ~ ((' | ' ~ r.ritm) if r.ritm | default('') else '') -%}
+      {%-     if r.status != 'issued' -%}
+      {%-       set _ = out.append(r.status | upper ~ ' | ' ~ head ~ ' | ' ~ r.reason) -%}
+      {%-     elif p.status | default('') == 'ready' -%}
+      {%-       set files = p.files | default([]) -%}
+      {#-       Linux: the files ({path, role ...}); Windows: what changes, as text (Personal, each binding) -#}
+      {%-       set what = ((files | map(attribute='path') | list) if files and files[0] is mapping else files) | join(', ') -%}
+      {%-       set rel = p.units | default([]) | selectattr('reload') | map(attribute='unit') | list -%}
+      {%-       set chk = p.verify | default([]) | map(attribute='port') | map('string') | list -%}
+      {%-       set _ = out.append('READY | ' ~ head ~ ' | install in ' ~ what
+                                   ~ ((' | reload ' ~ rel | join(', ')) if rel else '')
+                                   ~ ((' | then port ' ~ chk | join(', ') ~ ' must serve it') if chk else '')
+                                   ~ ' | the new one: serial ' ~ p.new.serial ~ ', expires ' ~ p.new.not_after
+                                   ~ ((' | ' ~ p.notes | join('; ')) if p.notes | default([]) else '')) -%}
+      {%-     elif p.status | default('') == 'by hand' -%}
+      {%-       set _ = out.append('BY HAND | ' ~ head ~ ' | ' ~ p.reason ~ ((' | steps: ' ~ p.steps | join(' ; ')) if p.steps | default([]) else '')) -%}
+      {%-     else -%}
+      {%-       set _ = out.append((p.status | default('not planned')) | upper ~ ' | ' ~ head ~ ' | ' ~ p.reason | default('the host did not plan it')) -%}
+      {%-     endif -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {%- for h in groups['all'] | sort if hostvars[h].site_host_unreached | default('') -%}
+      {%-   set _ = out.append('NOT REACHED | ' ~ h ~ ' | ' ~ hostvars[h].site_host_unreached ~ ' - its certificates on a later run') -%}
+      {%- endfor -%}
+      {{ out }}
+    _ci_ready: >-
+      {%- set out = {} -%}
+      {%- for h in groups['all'] | sort if hostvars[h].cert_install_host_plan is defined -%}
+      {%-   set items = hostvars[h].cert_install_host_plan | selectattr('status', 'in', ['ready', 'installed already']) | list -%}
+      {%-   if items -%}{%- set _ = out.update({h: items}) -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Certificate install | what the PKI issued, and what installing it would do
+  ansible.builtin.debug:
+    msg: "{{ _ci_lines or ['No renewal waits for its certificate on these hosts.'] }}"
+
+- name: Certificate install | hand the plan to the approval step and the install job (set_stats)
+  ansible.builtin.set_stats:
+    data:
+      cert_install_plan: "{{ _ci_ready }}"
+    per_host: false
+    aggregate: true
+  when: _ci_ready | length > 0
+
+- name: Certificate install | NEEDS APPROVAL
+  ansible.builtin.fail:
+    msg: >-
+      NEEDS APPROVAL: {{ _ci_n }} certificate(s) to install - {{ _ci_names | join('; ') }}.
+      Approve to install exactly these (each is planned again first, copied aside, and put back if the port does
+      not serve it); deny to leave them for the next run. The lines above say what each one changes.
+  when: _ci_ready | length > 0
+  vars:
+    _ci_n: "{{ _ci_ready.values() | map('length') | sum }}"
+    _ci_names: >-
+      {%- set out = [] -%}
+      {%- for h, items in _ci_ready.items() -%}
+      {%-   for p in items -%}
+      {%-     set _ = out.append(h ~ ': ' ~ (p.subject or p.base) ~ ' (' ~ p.ritm ~ (', installed already: tidy up' if p.status != 'ready' else '') ~ ')') -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}

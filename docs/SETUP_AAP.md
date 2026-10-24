@@ -369,6 +369,16 @@ with the CSR attached to the certificate's ServiceNow incident (step 3 of workfl
 **Windows:** *Windows certificate renewal - CSRs* (`playbooks/win_cert_renew_csr.yml`) does the same on
 Windows servers with `certreq`, with the Windows machine credential: [WINDOWS.md](WINDOWS.md#windows-certificate-renewal---csrs).
 
+### Certificate install - check / approved, and the restore
+
+With the CSRs ordered from the PKI's catalog item, the issued certificate is installed from that request after an
+approval: *Certificate install - check* (`playbooks/cert_install_check.yml`: `Linux ssh (sudo)`, `ServiceNow API`)
+in a workflow with an **Approval** (Run on fail) and *Certificate install - approved*
+(`playbooks/cert_install_approved.yml`: the same credentials, the same inventory, **no** Limit and **no** Prompt on
+launch for Variables). *Certificate restore* (`playbooks/cert_restore.yml`) puts an old certificate back. The
+Windows three: `win_cert_install_check.yml`, `win_cert_install_approved.yml`, `win_cert_restore.yml`, with the
+Windows machine credential. The templates, the workflow and the settings: [CERT_INSTALL.md](CERT_INSTALL.md).
+
 ### Network device certificate report / renewal
 
 The certificates of switches, firewalls, printers, iLO / iDRAC ... read from the controller: no login to the

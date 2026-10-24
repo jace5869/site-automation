@@ -1,0 +1,48 @@
+---
+# WINDOWS CERTIFICATE RESTORE (playbooks/win_cert_restore.yml), on the server: a backup's bindings (https, Remote
+# Desktop, WinRM) back on the old certificate - it stayed in Personal - read back; the renewal waits again (the
+# next install check finds the new certificate in Personal and moves the bindings again, after its approval).
+# Which backup: win_cert_restore_backup (its folder name), or the newest of each certificate win_cert_restore_only
+# matches. Check (dry run): lists the backups and what it would put back.
+- name: Windows certs | restore | the backups on this server, and the one(s) to put back
+  ansible.builtin.script: win_cert_install.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'action': 'restore', 'dir': win_cert_renew_dir, 'backup': win_cert_restore_backup | default(''),
+          'only': win_cert_restore_only | default(''), 'check_mode': ansible_check_mode} | to_json }}
+  register: _wcr_out
+  changed_when: _wcr.restored | default([]) | selectattr('status', 'equalto', 'restored') | list | length > 0
+  failed_when: _wcr_line | length == 0
+  check_mode: false                     # the script itself changes nothing in Check (check_mode above)
+  vars:
+    _wcr_line: "{{ _wcr_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+    _wcr: "{{ (_wcr_line[16:] | from_json).facts if _wcr_line else {} }}"
+
+- name: Windows certs | restore | what was put back
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for r in _wcr.restored | default([]) -%}
+      {%-   set _ = out.append(r.status | upper ~ ' | ' ~ r.backup ~ ' | ' ~ r.subject | default('') ~ ' | ' ~ (r.files | default([]) | join(', '))
+                               ~ ((' | ' ~ r.reason) if r.reason | default('') else '')) -%}
+      {%- endfor -%}
+      {%- if not out -%}
+      {%-   set _ = out.append('Nothing named to restore: set win_cert_restore_backup (one of the backups below) or win_cert_restore_only.') -%}
+      {%- endif -%}
+      {%- for b in _wcr.backups | default([]) -%}
+      {%-   set _ = out.append('backup ' ~ b.name ~ ' | ' ~ b.subject ~ ' | made ' ~ b.made ~ ((' | restored ' ~ b.restored) if b.restored else '')
+                               ~ ' | ' ~ b.files | join(', ')) -%}
+      {%- endfor -%}
+      {%- if not _wcr.backups | default([]) -%}{%- set _ = out.append('no backup on ' ~ inventory_hostname ~ ' (' ~ win_cert_renew_dir ~ '\backup)') -%}{%- endif -%}
+      {{ out }}
+  vars:
+    _wcr_line: "{{ _wcr_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+    _wcr: "{{ (_wcr_line[16:] | from_json).facts if _wcr_line else {} }}"
+
+- name: Windows certs | restore | a backup that could not be put back
+  ansible.builtin.fail:
+    msg: "{{ _wcr.restored | selectattr('status', 'equalto', 'failed') | map(attribute='reason') | join('; ') }}"
+  when: _wcr.restored | default([]) | selectattr('status', 'equalto', 'failed') | list | length > 0
+  vars:
+    _wcr_line: "{{ _wcr_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+    _wcr: "{{ (_wcr_line[16:] | from_json).facts if _wcr_line else {} }}"

@@ -45,6 +45,12 @@ for p in sorted(list((root / "playbooks").glob("*.yml")) + list((root / "roles")
         check(yaml.safe_load(m.group(2)) == role_default[m.group(1)], f"{rel}: the fallback for {m.group(1)} equals the role default")
 check(found >= 4, f"found the hard-coded fallbacks ({found}: act_fix_approved.yml, win_patch x2, service_watch)")
 
+# the certificate install: an AAP host's certificates are installed by a person (its installer manages them) -
+# the plan and the install both test the literal AAP groups
+for p in ("roles/check_certs/tasks/install_plan.yml", "roles/check_certs/tasks/install_apply.yml",
+          "roles/win_check_certs/tasks/install_plan.yml", "roles/win_check_certs/tasks/install_apply.yml"):
+    check("group_names | intersect(['aap', 'aap_hosts'])" in (root / p).read_text(), f"{p}: an AAP host's certificates are installed by a person")
+
 fix = (root / "playbooks/act_fix_approved.yml").read_text()
 check(re.search(r"_no_apply.*\['aap', ?'aap_hosts'\]", fix, re.S) is not None, "act_fix_approved.yml: never applies fixes on AAP hosts")
 check(re.search(r"meta: end_host\n\s+when: group_names \| intersect\(_no_apply \+ \['aap', 'aap_hosts'\]\)", fix) is not None,

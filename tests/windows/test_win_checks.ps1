@@ -191,6 +191,80 @@ foreach ($scen in 'csr', 'csr_check') {
         if ($bad.Count) { $fail++; Write-Host "FAIL - $label : $($bad -join '; ')" } else { Write-Host "ok   - $label" }
     }
 }
+# The install (win_cert_install.ps1): scenario -> what the result must be, what the stand-ins must hold after
+$old = 'A1' * 20; $new = 'B2' * 20
+$installCases = @(
+    @('install_pending', 'pending', '', ''),
+    @('install_plan', 'plan', 'ready', 'Personal (certreq -accept -machine)|https ipport=0.0.0.0:443|https hostnameport=www.corp.test:443|winrm *+HTTPS|rdp RDP-Tcp'),
+    @('install_plan_aaphttps', 'plan', 'by hand', 'AAP connects through it'),
+    @('install_plan_sql', 'plan', 'by hand', 'SQL Server MSSQL16.MSSQLSERVER'),
+    @('install_plan_gone', 'plan', 'held', 'the pending request (the new key) is gone'),
+    @('install_plan_problems', 'plan', 'held', 'expired on 2026-01-01'),
+    @('install_plan_done', 'plan', 'installed already', 'nothing uses the old one'),
+    @('install', 'installed', 'installed', ''),
+    @('install_check', 'installed', 'would install', ''),
+    @('install_rollback', 'installed', 'rolled back', 'hostnameport=www.corp.test:443'),
+    @('install_changed', 'installed', 'refused', 'changed since the approval'),
+    @('install_accept_fails', 'installed', 'failed', 'certreq -accept -machine did not put it in Personal'),
+    @('restore', 'restored', 'restored', ''),
+    @('restore_check', 'restored', 'would restore', ''))
+foreach ($clm in @($false, $true)) {
+    foreach ($c in $installCases) {
+        $scen, $what, $want, $text = $c
+        $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner, '-Script', (Join-Path $root 'roles/win_check_certs/files/win_cert_install.ps1'), '-Scenario', $scen)
+        if ($clm) { $a += '-Clm' }
+        $out = @(& $shell @a 2>&1 | ForEach-Object { [string]$_ })
+        $count++
+        $label = "certs/$scen" + $(if ($clm) { ' (constrained)' } else { '' })
+        $bad = @()
+        $line = @($out | Where-Object { $_ -like '###SITE-JSON### *' }) | Select-Object -Last 1
+        $st = @($out | Where-Object { $_ -like '###STATE### *' }) | Select-Object -Last 1
+        if (-not $line -or -not $st) { $fail++; Write-Host "FAIL - $label : no result line"; $out | Select-Object -Last 8 | ForEach-Object { Write-Host "       $_" }; continue }
+        $facts = (ConvertFrom-Json -InputObject $line.Substring(16)).facts
+        $state = ConvertFrom-Json -InputObject $st.Substring(12)
+        $ssl = (@($state.ssl) -join ' ')
+        $moved = ($ssl -eq "ipport=0.0.0.0:443=$new hostnameport=www.corp.test:443=$new ipport=0.0.0.0:8443=$('F6' * 20)") -and $state.rdp -eq $new -and $state.winrm -eq $new
+        $kept = ($ssl -eq "ipport=0.0.0.0:443=$old hostnameport=www.corp.test:443=$old ipport=0.0.0.0:8443=$('F6' * 20)") -and $state.rdp -eq $old -and $state.winrm -eq $old
+        $tree = @($state.tree) -join ' '
+        if ($what -eq 'pending') {
+            $p = @($facts.pending)
+            if ($p.Count -ne 1 -or $p[0].stem -notmatch '^web01\.corp\.test-[0-9a-f]{8}$' -or $p[0].csr -notmatch '^-----BEGIN CERTIFICATE REQUEST-----\nWEB01') { $bad += "pending: $(ConvertTo-Json -Compress $p)" }
+        }
+        else {
+            $r = @($facts.$what)[0]
+            if ([string]$r.status -ne $want) { $bad += "status '$($r.status)', expected '$want' ($($r.reason))" }
+            if ($text -and $what -eq 'plan' -and $want -eq 'ready' -and ((@($r.files) -join '|') -ne $text)) { $bad += "bindings: $(@($r.files) -join '|')" }
+            elseif ($text -and $want -ne 'ready' -and ([string]$r.reason).IndexOf($text) -lt 0) { $bad += "reason: $($r.reason)" }
+        }
+        switch ($scen) {
+            'install' {
+                if (-not $moved) { $bad += "the bindings did not move: $ssl rdp $($state.rdp) winrm $($state.winrm)" }
+                if (-not $state.accepted) { $bad += 'certreq -accept was not run' }
+                if ((@($state.addstore) -join ' ') -ne ('D4' * 20 + '.cer')) { $bad += "intermediates added: $(@($state.addstore) -join ' ') (only the intermediate, never the root)" }
+                if ((@($state.grants) -join '|') -ne 'newkey CORP\svc_web:(R)|newkey *S-1-5-20:(R)') { $bad += "key grants: $(@($state.grants) -join '|')" }
+                if ($tree -notmatch "/renew/installed/[0-9.-]+-$old/$old\.json" -or $tree -match "/renew/$old\.json" -or $tree -notmatch "/renew/backup/[0-9.-]+-$old/backup\.json") { $bad += "files: $tree" }
+                if ($tree -match 'incoming') { $bad += 'the incoming folder was left' }
+            }
+            'install_rollback' {
+                if (-not $kept) { $bad += "not rolled back: $ssl rdp $($state.rdp) winrm $($state.winrm)" }
+                if ($tree -notmatch "/renew/$old\.json") { $bad += 'the renewal no longer waits' }
+            }
+            { $_ -in @('install_check', 'install_changed', 'install_accept_fails') } {
+                # install_changed: Remote Desktop moved to another certificate before the approved job - and stays there
+                if ($scen -eq 'install_changed') { $kept = $kept -or (($ssl -like "ipport=0.0.0.0:443=$old *") -and $state.rdp -eq ('F6' * 20) -and $state.winrm -eq $old) }
+                if (-not $kept) { $bad += "changed: $ssl rdp $($state.rdp) winrm $($state.winrm)" }
+                if ($scen -eq 'install_check' -and ($state.accepted -or @($state.netsh).Count -or $tree -match 'backup')) { $bad += 'a dry run changed something' }
+                if ($scen -eq 'install_accept_fails' -and @($state.netsh).Count) { $bad += 'a binding was touched after certreq failed' }
+            }
+            'restore' {
+                if (-not $kept) { $bad += "not restored: $ssl rdp $($state.rdp) winrm $($state.winrm)" }
+                if ($tree -notmatch "/renew/$old\.json") { $bad += "the renewal does not wait again: $tree" }
+            }
+            'restore_check' { if (-not $moved) { $bad += 'a dry run changed something' } }
+        }
+        if ($bad.Count) { $fail++; Write-Host "FAIL - $label : $($bad -join '; ')" } else { Write-Host "ok   - $label" }
+    }
+}
 # Constrained Language Mode: TLS endpoints are reported as not checkable, not as an error
 $out = @(& $shell -NoProfile -ExecutionPolicy Bypass -File $runner -Script (Script 'certs') -Scenario 'certs_endpoints_clm' -Clm 2>&1 | ForEach-Object { [string]$_ })
 $count++

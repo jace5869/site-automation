@@ -23,8 +23,9 @@ body, its Content-Type kept), GET /api/now/attachment?sysparm_query=table_sys_id
 SNMOCK_NO_ATTACH=1: an attachment is refused (403, as an instance that does not allow the extension).
 SNMOCK_ATTACH_TXT_ONLY=1: an attachment whose name does not end in .txt is refused (400 "Invalid file type:
 text/plain", as an instance that checks the type against the name).
-GET /api/now/attachment/<sys_id>: one attachment's record. An attachment may go to a ZZ_YY table (an attachment
-question's file) with any table_sys_id: nothing has to exist there.
+GET /api/now/attachment/<sys_id>: one attachment's record; GET /api/now/attachment/<sys_id>/file: the file itself, as it was
+sent (binary too). An attachment may go to a ZZ_YY table (an attachment question's file) with any table_sys_id: nothing has
+to exist there.
 Service Catalog API: one item, "DoD PKI Certificate Request" (CATALOG_ID), with the questions of the PKI's form
 (an attachment question for the CSR, references to sys_user / cmn_location, a select box).
 GET /api/sn_sc/servicecatalog/items?sysparm_text=X (items whose name has X), GET .../items/<id> (its questions),
@@ -207,6 +208,7 @@ class H(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", "0") or 0)
         url = urllib.parse.urlparse(self.path)
         raw = self.rfile.read(n) if n else b""
+        self.raw = raw
         if url.path.startswith("/api/now/attachment"):
             body = {"raw": raw.decode("utf-8", "replace"), "content_type": self.headers.get("Content-Type", "")}
         else:
@@ -218,6 +220,13 @@ class H(BaseHTTPRequestHandler):
         with open(LOG, "a") as f:
             f.write(json.dumps({"method": method, "path": url.path, "query": q, "body": body,
                                 "user": user[0] if user else None, "status": code}) + "\n")
+        if isinstance(obj, bytes):          # a file (GET /api/now/attachment/<sys_id>/file)
+            self.send_response(code)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(obj)))
+            self.end_headers()
+            self.wfile.write(obj)
+            return
         self._send(code, obj)
 
     def do_GET(self):
@@ -301,6 +310,9 @@ class H(BaseHTTPRequestHandler):
             if disp:
                 out["state"] = state_label(rec)
                 out["priority"] = "5 - Planning" if rec.get("urgency") == "3" else "3 - Moderate"
+                for field in JOURNAL_LABEL:          # journal fields asked for: as ServiceNow shows them
+                    if field in out:
+                        out[field] = show(rec, True)[field]
             return 200, {"result": out}
         if method == "PATCH":
             if not itil:
@@ -357,14 +369,17 @@ class H(BaseHTTPRequestHandler):
         return 405, {"error": {"message": "Method not allowed"}}
 
     def attachment(self, method, parts, q, body, user):
+        if method == "GET" and len(parts) == 5 and parts[4] == "file":
+            a = next((x for x in ATTACHMENTS if x["sys_id"] == parts[3]), None)
+            return (200, base64.b64decode(a["_data"])) if a else (404, {"error": {"message": "Record doesn't exist or ACL restricts the record retrieval"}})
         if method == "GET" and len(parts) == 4:
             a = next((x for x in ATTACHMENTS if x["sys_id"] == parts[3]), None)
-            return (200, {"result": a}) if a else (404, {"error": {"message": "Record doesn't exist or ACL restricts the record retrieval"}})
+            return (200, {"result": {k: v for k, v in a.items() if not k.startswith("_")}}) if a else (404, {"error": {"message": "Record doesn't exist or ACL restricts the record retrieval"}})
         if method == "GET" and len(parts) == 3:
             rows = [a for a in ATTACHMENTS if matches(a, q.get("sysparm_query", ""))
                     and not (os.environ.get("SNMOCK_HIDE_ZZYY") == "1" and a["table_name"].startswith("ZZ_YY"))]
             rows = rows[:int(q.get("sysparm_limit", "10000"))]
-            return 200, {"result": [pick(a, q.get("sysparm_fields")) for a in rows]}
+            return 200, {"result": [pick({k: v for k, v in a.items() if not k.startswith("_")}, q.get("sysparm_fields")) for a in rows]}
         if method == "POST" and parts[3:] == ["file"]:
             if not user[1]:
                 return fail("Operation Failed", "ACL Exception Insert Failed due to security constraints", 403)
@@ -377,9 +392,9 @@ class H(BaseHTTPRequestHandler):
                 return 400, {"error": {"message": "Invalid table or record"}}
             a = {"sys_id": uuid.uuid4().hex, "table_name": q["table_name"], "table_sys_id": q["table_sys_id"],
                  "file_name": q.get("file_name", ""), "content_type": body.get("content_type", ""),
-                 "size_bytes": str(len(body.get("raw", "")))}
+                 "size_bytes": str(len(self.raw)), "_data": base64.b64encode(self.raw).decode()}
             ATTACHMENTS.append(a)
-            return 201, {"result": a}
+            return 201, {"result": {k: v for k, v in a.items() if not k.startswith("_")}}
         return 405, {"error": {"message": "Method not allowed"}}
 
 
