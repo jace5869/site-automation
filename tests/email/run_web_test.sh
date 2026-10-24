@@ -122,7 +122,12 @@ run "a folder that is not there (a share not mounted): fails, never makes it" fa
     "is not there - is the share mounted"
 check "nothing made" test ! -e "$work/nomount"
 run "an unknown look: says which there are" fail "{\"report_web_dest\": \"$work/reports\", \"report_web_theme\": \"fancy\"}" \
-    "report_web_theme must be standard, command or portal"
+    "report_web_theme must be standard, command, portal or glass"
+mkdir -p "$work/glass"
+run "the glass look: the page gets the blur, icons and a plain print" ok "{\"report_web_dest\": \"$work/glass\", \"report_web_theme\": \"glass\", $aapjob}"
+check "the logo inside it (at most 80 px tall), the blur, line icons, print, phone rules, no cid:" bash -c "p=\"\$(ls '$work'/glass/linux-certificate-trust-report/*_job-907.html)\" \
+    && grep -q 'width=\"60\" height=\"80\"' \"\$p\" && grep -q 'backdrop-filter:blur(22px)' \"\$p\" && grep -q '<svg' \"\$p\" \
+    && grep -q '@media print' \"\$p\" && grep -q '@media (max-width:760px)' \"\$p\" && ! grep -q 'cid:' \"\$p\" && ! grep -q 'mso-hide:all' \"\$p\""
 before="$(find "$work/reports" -type f | wc -l)"
 CHECK=1 run "dry run (Check): nothing written, the address shown" ok \
     "{\"report_web_dest\": \"$work/reports\", \"report_web_url\": \"https://reports.example.mil\", $aapjob}" \

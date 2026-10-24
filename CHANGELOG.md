@@ -1,5 +1,68 @@
 # Changelog
 
+## 0.24.0 — 2026-10-24
+
+**Updating without scripts:** paste `site-automation-0.24.0-changed-since-0.23.0.zip` as it is (from
+0.15.1 to 0.22.0: `site-automation-0.24.0-changed-since-0.15.1.zip`; coming from before 0.20.0, read the
+0.20.0 notes too - one file to delete). Both leave out `playbooks/group_vars`, `playbooks/host_vars` and
+`poam/poam.csv`. Nothing else to change: the reports look as before until you set `report_email_theme: glass`
+or `report_web_theme: glass`. The list at the end repeats what 0.20.0 to 0.23.0 ask you to set up.
+
+**A fourth look for the reports: glass.** `report_email_theme: glass` (the emails) and `report_web_theme: glass`
+(the web pages), in `all.yml`. See-through, frosted cards on a soft blue-green background:
+
+- a header card with your logo (up to 80 px tall here), `report_email_header_text`, the title, and the status
+  with what it asks of the reader - *All clear*, *Needs attention*, *Action required*;
+- the numbers as tiles with an icon, a warning or critical tile tinted in its colour;
+- the job's last runs with a colour key, beside *This run* and *Last run, 6 days ago*;
+- one card per section, its table on a near-solid white panel.
+
+Only the frame is see-through: every text sits on a surface solid enough to read as on paper (the lightest
+text at least 4.5:1 against what is behind it). In the email: the inbox shows the subtitle and the warning
+and critical numbers as the line under the subject; with the report website on, an **Open the full report**
+button; on a phone the tiles go two by two and wide tables scroll sideways. Mail programs that draw
+transparency, rounded corners and shadows show the glass; the others (classic desktop Outlook) show the
+same layout with solid white cards, square. The web page adds what only a browser draws: the blur behind
+the cards, line icons, and a plain print. docs/EMAIL_REPORTS.md, "The look".
+
+**To do, if you have not yet: what 0.20.0 to 0.24.0 ask you to set up.** In order; each step works without
+the ones after it.
+
+1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
+   *your* repository - never the public one: `playbooks/files/report_logo.png`. In `all.yml`:
+   `report_logo_file: files/report_logo.png`. Add the line `playbooks/files/report_logo.png` to `.site-local`,
+   or `scripts/update-from-release` deletes it.
+2. **The strip of past runs** (0.20.0, 0.21.0). Attach a **Red Hat Ansible Automation Platform** credential to
+   every report template (the pick lists' one works). Give its user **Organization Auditor** on the templates'
+   organization: Access Management > Users > the user > Roles > Assign roles, resource type Organization.
+   Without it the reports go out without the strip, and the job says why.
+3. **The look** (0.20.0, 0.21.0, 0.24.0). In `all.yml`: `report_email_theme: glass` (or `command`, `portal`)
+   and, if you like, `report_email_header_text: <your line above the title>`.
+4. **"Also email the report to" on every report** (0.22.0). Create the job template **AAP - report email
+   question**: playbook `playbooks/aap_email_question.yml`, only the Red Hat Ansible Automation Platform
+   credential (its user: **Admin** on the report templates and their workflows), any inventory, no Limit.
+   Launch it with Job type **Check** first - it only lists the templates and workflows it would change -
+   then for real. It adds the optional box to every report template's survey and to the workflows that run
+   them. Run it again whenever you add a report template. Optional, in `all.yml`:
+   `report_email_also_domains: [yoursite.mil]`, so typed addresses outside your domains get nothing. The
+   mail relay must be set (`report_email_smtp_host`, `report_email_from`). docs/SETUP_AAP.md, "AAP - report
+   email question"; docs/EMAIL_REPORTS.md, "Also email the report to".
+5. **The report website** (0.23.0). In `all.yml`, `report_web_url: https://reports.yoursite.mil` and one of:
+   - **a Windows server, over WinRM**: `report_web_host: web01.yoursite.mil` and `report_web_dest: 'D:\reports'`
+     (the folder already there; IIS serves it). The login: a **Report website** credential (DOMAIN\user and
+     password) on the report templates - or, without it, the template's Machine credential. The connection is
+     5986, https, NTLM unless you say otherwise; Windows servers on WinRM over HTTP with Kerberos:
+     `report_web_host_port: 5985`, `report_web_host_scheme: http`, `report_web_host_transport: kerberos`.
+   - **an upload** (WebDAV): `report_web_dest: https://reports.yoursite.mil/upload` and a **Report website**
+     credential with a token or a user name and password.
+   - **a folder**: `report_web_dest: /mnt/reports` - the share mounted on every execution node, and in AAP
+     Settings > Job settings > Paths to expose to isolated jobs: `/mnt/reports:/mnt/reports:rw`.
+
+   The **Report website** credential type is new in 0.23.0: create it from `aap/credential_types/report_web.yml`
+   (aap/credential_types/README.md says how). Then `report_web_theme: glass` for the pages. Run one report with
+   **Check** (it prints the address it would use), then for real: the job prints `Report: https://...`, and its
+   email gets the **Open the full report** button. docs/WEB_REPORTS.md.
+
 ## 0.23.0 — 2026-10-23
 
 **Updating without scripts:** paste `site-automation-0.23.0-changed-since-0.22.0.zip` as it is (from

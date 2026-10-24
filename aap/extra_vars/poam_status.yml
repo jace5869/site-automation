@@ -110,22 +110,28 @@
 ## (report_history), the numbers in one row; portal = white cards on a pale mint background (like
 ## the AAP portal pages): a header card with your logo, report_email_header_text and the status,
 ## number tiles, a card with the last runs, a card per section. Classic desktop Outlook shows the
-## portal cards square, without shadows.
+## portal cards square, without shadows. glass = see-through frosted cards on a soft blue-green
+## background: your logo, the status and what it asks ("Action required"), tiles with icons (a
+## warning or critical one tinted), the last runs beside This run / Last run, a card per section
+## with its table on a near-solid panel; the line under the subject in the inbox, an "Open the full
+## report" button with report_web_dest, tiles two by two on a phone. Mail programs that do not draw
+## transparency (classic desktop Outlook) show solid white cards, square. The web page adds the
+## blur, icons and a plain print.
 # report_email_theme: standard
 
-## command, portal: the line with the logo
+## command, portal, glass: the line with the logo
 # report_email_header_text: Site automation report
 
-## Your logo in the header (both looks): a PNG, JPEG or GIF in your repository - a path from
-## playbooks/ (files/report_logo.png = playbooks/files/report_logo.png) or a full path. Attached to
-## each email, so keep it small: about 160 px tall, under 100 KB. Updating with scripts/update-from-
-## release: list the file in .site-local, or the update deletes it.
+## Your logo in the header (every look but standard): a PNG, JPEG or GIF in your repository - a path
+## from playbooks/ (files/report_logo.png = playbooks/files/report_logo.png) or a full path.
+## Attached to each email, so keep it small: about 160 px tall, under 100 KB. Updating with
+## scripts/update-from-release: list the file in .site-local, or the update deletes it.
 # report_logo_file: ""
 
-## pixels in the email (its width follows); portal: at most 56
+## pixels in the email (its width follows); portal: at most 56, glass: at most 80
 # report_logo_height: 84
 
-## command, portal: the job's last runs, read from AAP - attach a "Red Hat Ansible Automation
+## command, portal, glass: the job's last runs, read from AAP - attach a "Red Hat Ansible Automation
 ## Platform" credential to the template, whose user can see the template's jobs (Organization
 ## Auditor on its organization, docs/EMAIL_REPORTS.md); without it the email goes out without the
 ## strip.
@@ -138,7 +144,7 @@
 # report_history_aap_ca_path: ""
 
 ## Your own look instead: copy roles/site_email/templates/report.html.j2 (or report_command /
-## report_portal) to e.g. playbooks/files/email/report.html.j2, change it, and set
+## _portal / _glass) to e.g. playbooks/files/email/report.html.j2, change it, and set
 ## report_email_html_template: "{{ playbook_dir }}/files/email/report.html.j2" report.html.j2 (the
 ## default) = the look report_email_theme picks.
 # report_email_html_template: report.html.j2
@@ -158,7 +164,7 @@
 ## https://)
 # report_web_url: ""
 
-## the page's look: standard, command or portal (as report_email_theme)
+## the page's look: standard, command, portal or glass (as report_email_theme)
 # report_web_theme: portal
 
 ## The names inside the folder, with {names} filled in: {template} (the AAP template's name, lower

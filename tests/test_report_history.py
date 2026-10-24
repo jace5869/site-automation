@@ -268,5 +268,83 @@ class PortalLook(unittest.TestCase):
         self.assertIn("color:#b42318;font-weight:600;padding:1px 9px;\">off</span>", self.render())
 
 
+class GlassLook(PortalLook):
+    """roles/site_email/templates/report_glass.html.j2: the email, and the web copy (_page_runs set) with the blur,
+    icons and print that only a browser gets."""
+
+    def render(self, **v):
+        import jinja2
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
+                                 autoescape=False)
+        base = {"_report": dict(REPORT, subtitle="<b>sub</b>",
+                                summary=REPORT["summary"] + [{"label": "Old <ones>", "value": 3, "status": "warning"}],
+                                sections=[{"title": "Deleted", "status": "ok", "columns": ["VM", "State"], "rows": [["<x>", "off"]],
+                                           "cell_status": [["", "critical"]]},
+                                          {"title": "Notes", "lines": ["one <line>"]}]),
+                "_email_footer": "AAP job 9", "_email_logo_cid": "", "_email_runs": [],
+                "report_email_header_text": "Site <automation> report"}
+        base.update(v)
+        return env.get_template("report_glass.html.j2").render(**base)
+
+    def test_no_logo_no_strip(self):
+        h = self.render()
+        self.assertNotIn("cid:", h)
+        self.assertNotIn(" runs</div>", h)
+        self.assertIn("Run from the command line", h)
+        self.assertIn('color:#9a5300;line-height:1.2;">Warning</div>\n<div style="font-size:12px;color:#0f2236;line-height:1.3;">Needs attention</div>', h)
+        for raw in ("<b>sub</b>", "<x>", "<line>", "<automation>", "<ones>"):
+            self.assertNotIn(raw, h)
+        self.assertIn("Site &lt;automation&gt; report", h)
+        self.assertIn("one &lt;line&gt;", h)
+
+    def test_email_preview_line_phone_rules_no_browser_only_parts(self):
+        h = self.render()
+        # the line under the subject in the inbox: the subtitle, then the warning and critical numbers
+        self.assertIn("mso-hide:all;font-size:1px;line-height:1px;color:#dde8f0;\">&lt;b&gt;sub&lt;/b&gt; · Old &lt;ones&gt;: 3</div>", h)
+        self.assertIn("@media (max-width:760px)", h)
+        for web_only in ("<svg", "backdrop-filter", "@media print", 'class="g-bg"'):
+            self.assertNotIn(web_only, h)
+        self.assertNotIn("Open the full report", h)
+        self.assertIn("Open the full report", self.render(_email_web_url="https://reports.example.mil/a/latest.html"))
+
+    def test_web_copy_blur_icons_print(self):
+        h = self.render(_page_runs=[], _page_logo_cid="", _email_web_url="https://reports.example.mil/a/latest.html")
+        for web_only in ("<svg", "backdrop-filter:blur(22px)", "@media print", 'class="g-bg"', "@media (max-width:760px)"):
+            self.assertIn(web_only, h)
+        self.assertNotIn("mso-hide:all", h)
+        self.assertNotIn("Open the full report", h)       # the page is the full report
+
+    def test_tiles_rows_of_four_amber_red_outlined(self):
+        h = self.render(_report=dict(REPORT, summary=[{"label": "N%d" % i, "value": i, "status": "critical" if i == 5 else ""}
+                                                      for i in range(6)]))
+        self.assertEqual(h.count('<td class="g-tile" width="25%" valign="top"'), 6)
+        self.assertEqual(h.count('<td class="g-tile g-tile-empty" width="25%" style="padding:0 0 0 6px;">&nbsp;</td>'), 2)
+        self.assertEqual(h.count("background:rgba(253,232,232,.80);border:1px solid #f5bfbf;"), 1)
+        # every see-through surface has its solid colour for mail programs that draw no transparency
+        self.assertEqual(h.count('bgcolor="#f8fbfd" style="width:100%;background:rgba(255,255,255,.66)'),
+                         h.count("background:rgba(255,255,255,.66)") - 1)   # the critical tile: its own tint
+
+    def test_job_line_logo_strip_last_run(self):
+        import datetime
+        bars = sf.report_runs(past(("successful", "ok", 2), ("failed", None, None)), REPORT, 14, 54,
+                              now=datetime.datetime(2026, 10, 4, 6, 1))
+        h = self.render(_email_logo_cid="site-report-logo", _email_logo_size=[62, 80], _email_runs=bars,
+                        awx_job_id=4182, awx_job_template_name="VMware - <snap>")
+        self.assertIn('src="cid:site-report-logo" width="62" height="80"', h)
+        self.assertIn("AAP job 4182 &middot; VMware - &lt;snap&gt;", h)
+        self.assertIn("Last 3 runs</div>", h)
+        self.assertEqual(h.count('valign="bottom" height="60"'), 3)
+        self.assertEqual(h.count('bgcolor="#0f2236" style="background:#0f2236;padding:2px;'), 1)
+        self.assertEqual(h.count("<!--[if mso]>"), h.count("<!--[if !mso]><!-->") + 2)  # + the fixed-width box
+        self.assertIn('<!--[if mso]><table role="presentation" width="760"', h)
+        self.assertIn('height="54" bgcolor="#e0951f" title="this run - Deleted 4 - warning"', h)
+        self.assertIn("Last run &middot; 47 h ago</div>", h)
+        self.assertIn("&#9679;</span>&nbsp;Critical</span>", h)   # the colour key: only the colours in the strip
+        self.assertNotIn("&nbsp;Unknown</span>", h)
+
+    def test_cell_status_as_a_pill(self):
+        self.assertIn("color:#b42318;font-weight:600;padding:1px 10px;\">off</span>", self.render())
+
+
 if __name__ == "__main__":
     unittest.main()

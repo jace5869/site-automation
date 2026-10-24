@@ -17,7 +17,7 @@
 #       - {title: Alarms, columns: [Severity, Host], rows: [[CRITICAL, esx01]], row_status: [critical], cell_status: [[critical, '']]}
 #     footer: "vCenter vcsa01"                                 # optional; the AAP job line is added
 # or plain text: _report_subject and _report_body.
-# The look: report_email_theme (standard | command | portal), report_logo_file. The strip of past runs (command, portal)
+# The look: report_email_theme (standard | command | portal | glass), report_logo_file. The strip of past runs (all but standard)
 # reads this template's earlier jobs from AAP (site_report_history); each run keeps its report's status and
 # first plain-number summary value as the job artifact site_report_run, the height of its bar.
 # The website (report_web_dest; docs/WEB_REPORTS.md): the page in report_web_theme's look, named by report_web_page,
@@ -74,25 +74,25 @@
       {{ '' if not f else (f if f.startswith('/') else playbook_dir ~ '/' ~ (f[10:] if f.startswith('playbooks/') else f)) }}
   when: _email_any | bool
 
-- name: Email | report_email_theme is standard, command or portal
+- name: Email | report_email_theme is standard, command, portal or glass
   ansible.builtin.assert:
-    that: _email_theme in ['standard', 'command', 'portal']
-    fail_msg: "report_email_theme must be standard, command or portal, not '{{ report_email_theme }}' (docs/EMAIL_REPORTS.md, \"The look\")."
+    that: _email_theme in ['standard', 'command', 'portal', 'glass']
+    fail_msg: "report_email_theme must be standard, command, portal or glass, not '{{ report_email_theme }}' (docs/EMAIL_REPORTS.md, \"The look\")."
     quiet: true
   when: _email_to | length > 0 and _email_html | bool
 
-- name: Email | report_web_theme is standard, command or portal
+- name: Email | report_web_theme is standard, command, portal or glass
   ansible.builtin.assert:
-    that: _web_theme in ['standard', 'command', 'portal']
-    fail_msg: "report_web_theme must be standard, command or portal, not '{{ report_web_theme }}' (docs/WEB_REPORTS.md)."
+    that: _web_theme in ['standard', 'command', 'portal', 'glass']
+    fail_msg: "report_web_theme must be standard, command, portal or glass, not '{{ report_web_theme }}' (docs/WEB_REPORTS.md)."
     quiet: true
   when: _web_on | bool
 
 - name: Email | the logo's size
   ansible.builtin.set_fact:
-    # portal: the logo sits in the header card, at most 56 px tall
-    _email_logo_size: "{{ _email_logo_file | image_size([report_logo_height | int, 56] | min if _email_theme == 'portal' else report_logo_height | int) }}"
-    _web_logo_size: "{{ _email_logo_file | image_size([report_logo_height | int, 56] | min if _web_theme == 'portal' else report_logo_height | int) }}"
+    # portal, glass: the logo sits in the header card, at most 56 / 80 px tall
+    _email_logo_size: "{{ _email_logo_file | image_size([report_logo_height | int, _logo_caps[_email_theme]] | min if _email_theme in _logo_caps else report_logo_height | int) }}"
+    _web_logo_size: "{{ _email_logo_file | image_size([report_logo_height | int, _logo_caps[_web_theme]] | min if _web_theme in _logo_caps else report_logo_height | int) }}"
   when: _email_any | bool and _email_logo_file | length > 0
 
 - name: Email | no logo
@@ -109,8 +109,8 @@
   register: _email_hist
   check_mode: false                      # read only
   when: >-
-    ((_email_to | length > 0 and _email_html | bool and _email_theme in ['command', 'portal'])
-     or (_web_on | bool and _web_theme in ['command', 'portal'])) and report_history | bool
+    ((_email_to | length > 0 and _email_html | bool and _email_theme in _strip_looks)
+     or (_web_on | bool and _web_theme in _strip_looks)) and report_history | bool
     and report_history_runs | int > 1 and (awx_job_id | default(tower_job_id | default(''))) | string | length > 0
     and (awx_job_template_id | default(tower_job_template_id | default(''))) | string | length > 0
 
@@ -122,15 +122,15 @@
 - name: Email | the strip of past runs
   ansible.builtin.set_fact:
     _email_runs: >-
-      {{ _email_hist.runs | report_runs(_report | default(_web_report), report_history_runs | int, 44 if _email_theme == 'portal' else 36)
+      {{ _email_hist.runs | report_runs(_report | default(_web_report), report_history_runs | int, _bar_tops[_email_theme] | default(36))
          if _email_hist.ok | default(false) else [] }}
     _web_runs: >-
-      {{ _email_hist.runs | report_runs(_web_report, report_history_runs | int, 44 if _web_theme == 'portal' else 36)
+      {{ _email_hist.runs | report_runs(_web_report, report_history_runs | int, _bar_tops[_web_theme] | default(36))
          if _email_hist.ok | default(false) else [] }}
     _email_logo_cid: "{{ 'site-report-logo' if _email_logo_file | length > 0 and (_email_logo_size | default([0]))[0] > 0 else '' }}"
     _email_template: >-
       {{ report_email_html_template if report_email_html_template != 'report.html.j2' else
-         ('report_' ~ _email_theme ~ '.html.j2' if _email_theme in ['command', 'portal'] else 'report.html.j2') }}
+         ('report_' ~ _email_theme ~ '.html.j2' if _email_theme in _strip_looks else 'report.html.j2') }}
   when: _email_any | bool
 
 - name: Email | this report, for the next runs' strip (job artifact site_report_run)
@@ -222,7 +222,7 @@
     url: "{{ report_web_url | default('') | trim }}"
     files: "{{ _web_files }}"
     html: >-
-      {{ lookup('ansible.builtin.template', 'report_' ~ _web_theme ~ '.html.j2' if _web_theme in ['command', 'portal'] else 'report.html.j2') }}
+      {{ lookup('ansible.builtin.template', 'report_' ~ _web_theme ~ '.html.j2' if _web_theme in _strip_looks else 'report.html.j2') }}
     images: "{{ [{'cid': 'site-report-logo', 'path': _email_logo_file}] if _web_logo_cid | bool else [] }}"
     logo_size: "{{ _web_logo_size if _web_logo_cid | bool else [] }}"
     header_text: "{{ report_email_header_text | default('Site automation report') }}"

@@ -165,7 +165,7 @@ PLAYBOOK=send_report.yml send "a logo file that is not there: sent without it, s
     "No logo in the report: $work/none.png is not there"
 check "no picture in it" bash -c "! grep -q 'site-report-logo' '$work/mail/6.eml'"
 PLAYBOOK=send_report.yml send "an unknown look: says which there are" fail '{"report_email_to": ["ops@example.mil"], "report_email_theme": "fancy"}' \
-    "report_email_theme must be standard, command or portal"
+    "report_email_theme must be standard, command, portal or glass"
 aap
 CONTROLLER_HOST="http://127.0.0.1:$aport" CONTROLLER_USERNAME=admin CONTROLLER_PASSWORD=goodpw \
 PLAYBOOK=send_report.yml send "the portal look in AAP: cards, the logo, the last runs" ok \
@@ -176,6 +176,19 @@ check "the logo in the header card, at most 56 px tall (42 wide)" grep -q 'src="
 check "the job line, the status pill" bash -c "grep -q 'AAP job 919 &middot; VMware - check' '$work/html.txt' && grep -q '</span>Warning</span>' '$work/html.txt'"
 check "LAST 14 RUNS, 14 rounded bars, this run the tallest" bash -c "grep -q 'LAST 14 RUNS' '$work/html.txt' && [ \$(grep -c 'valign=\"bottom\" height=\"48\"' '$work/html.txt') = 14 ] && grep -q 'height=\"44\" bgcolor=\"#d98a1c\" title=\"this run' '$work/html.txt'"
 check "the last run and how long ago" grep -q '>Last run</td>' "$work/html.txt"
+aap
+CONTROLLER_HOST="http://127.0.0.1:$aport" CONTROLLER_USERNAME=admin CONTROLLER_PASSWORD=goodpw \
+PLAYBOOK=send_report.yml send "the glass look in AAP: see-through cards, the logo, the last runs" ok \
+    "{\"report_email_to\": [\"ops@example.mil\"], \"report_email_theme\": \"glass\", \"report_logo_file\": \"$work/logo.png\", \"awx_job_id\": 919, \"awx_job_template_id\": 71, \"awx_job_template_name\": \"VMware - check\"}" \
+    "Content-ID: <site-report-logo>"
+part html "$work/mail/8.eml" > "$work/html.txt"
+check "the logo in the header card, at most 80 px tall (60 wide)" grep -q 'src="cid:site-report-logo" width="60" height="80"' "$work/html.txt"
+check "the status and what it asks, the line under the subject" bash -c "grep -q '>Warning</div>' '$work/html.txt' && grep -q 'Needs attention' '$work/html.txt' \
+    && grep -q 'mso-hide:all;font-size:1px;line-height:1px;color:#dde8f0;\">2 VMs to fix .* BIOS firmware: 2</div>' '$work/html.txt'"
+check "Last 14 runs, 14 bars, this run the tallest" bash -c "grep -q 'Last 14 runs</div>' '$work/html.txt' && [ \$(grep -c 'valign=\"bottom\" height=\"60\"' '$work/html.txt') = 14 ] \
+    && grep -q 'height=\"54\" bgcolor=\"#e0951f\" title=\"this run' '$work/html.txt'"
+check "a solid colour behind every see-through card; nothing only a browser draws" bash -c "grep -q 'bgcolor=\"#f8fbfd\" style=\"width:100%;background:rgba(255,255,255,.66)' '$work/html.txt' \
+    && ! grep -q '<svg' '$work/html.txt' && ! grep -q 'backdrop-filter' '$work/html.txt'"
 
 relay --tls "$work/cert.pem" "$work/key.pem" --auth "relayuser:s3cret pw"
 SMTP_USERNAME=relayuser SMTP_PASSWORD='s3cret pw' send "login from the SMTP relay credential (environment)" ok \

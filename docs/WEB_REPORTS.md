@@ -1,7 +1,7 @@
 # The report website
 
 Every report job ([EMAIL_REPORTS.md](EMAIL_REPORTS.md), "Which jobs email") can also write its report as a
-**web page**: the same report as the email, in the portal look, with your logo. Each run gets its own page,
+**web page**: the same report as the email, in the portal look (or `report_web_theme`: standard, command, glass), with your logo. Each run gets its own page,
 each template a `latest.html` that is always its newest run, and an `index.html` lists every report's last run,
 worst first. The report's data is written as JSON beside each page, so a web developer can build their own site
 on it.
@@ -224,7 +224,7 @@ the page is written by the AAP side of the job, which never gets a group's varia
 | `report_web_dest` | `""` (off) | the folder on `report_web_host` (`D:\reports`), the upload address (`https://...`) or the folder (`/mnt/...`) |
 | `report_web_host` | `""` | a Windows server to write the pages on, over WinRM; `report_web_host_*` for the connection ("A Windows server") |
 | `report_web_url` | `""` | the address people open; `""` = `report_web_dest` when it is `https://` (else the job prints where the page is: `web01:D:\reports\...`) |
-| `report_web_theme` | `portal` | `standard`, `command` or `portal`, as `report_email_theme` |
+| `report_web_theme` | `portal` | `standard`, `command`, `portal` or `glass`, as `report_email_theme`; `glass` adds the blur behind the cards, icons and a plain print |
 | `report_web_json` | `true` | the JSON beside each page |
 | `report_web_ca_path` | `""` | a CA file for an `https://` upload address, or for `report_web_host`'s WinRM certificate |
 | `report_web_page`, `_latest`, `_index`, `_names` | see "Changing the names" | |

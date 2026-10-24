@@ -1,0 +1,316 @@
+{#- The "glass" look (report_email_theme: glass): frosted see-through cards on a soft blue-green background - a
+    header card with the site's logo (report_logo_file, at most 80 px tall), report_email_header_text, the
+    title and the status with what it asks of the reader; the summary as number tiles, a warning or critical
+    one tinted in its colour; the job's last runs (report_history: from AAP) beside This run / Last run; then
+    one card per section, its table on a near-solid panel so the text reads as on paper. Only the frame is
+    see-through. Mail programs that draw transparency, rounded corners and shadows show the glass; the others
+    (classic desktop Outlook) show the same layout with solid white cards, square. The web copy
+    (report_web_dest) adds what a browser draws and a mail program does not: the blur behind the cards,
+    icons, tiles that stack on a phone, tables that scroll sideways, and a plain print.
+    Outlook-safe like report.html.j2: tables for the layout, every style inline, the logo attached to the
+    email (cid:), no scripts. Input: _report (see roles/site_email/tasks/main.yml), _email_footer,
+    _email_logo_cid ('' = no logo) and _email_logo_size ([width, height]), _email_runs (report_runs; [] = no
+    strip). Every value is escaped. -#}
+{%- set r = _report -%}
+{#- the web copy (report_web_dest) passes its own _page_logo_cid, _page_logo_size and _page_runs; an email links its web copy (_email_web_url) -#}
+{%- set web = _page_runs is defined -%}
+{%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
+{%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}
+{%- set pal = {
+    'ok':       {'bar': '#22a06b', 'fg': '#0d7149', 'bg': '#e2f6ec', 'bd': '#b7e4cd', 'glass': 'rgba(226,246,236,.78)', 'word': 'Successful', 'hint': 'All clear', 'icon': '&#10003;'},
+    'warning':  {'bar': '#e0951f', 'fg': '#9a5300', 'bg': '#fff1dc', 'bd': '#f4d29c', 'glass': 'rgba(255,241,220,.80)', 'word': 'Warning', 'hint': 'Needs attention', 'icon': '!'},
+    'critical': {'bar': '#dc4a4a', 'fg': '#b42318', 'bg': '#fde8e8', 'bd': '#f5bfbf', 'glass': 'rgba(253,232,232,.80)', 'word': 'Critical', 'hint': 'Action required', 'icon': '&#215;'},
+    'info':     {'bar': '#3b82f6', 'fg': '#1d4ed8', 'bg': '#e5eefe', 'bd': '#bcd0fa', 'glass': 'rgba(229,238,254,.78)', 'word': 'Info', 'hint': 'For your information', 'icon': 'i'},
+    'unknown':  {'bar': '#9aa8b6', 'fg': '#4a5868', 'bg': '#eef2f6', 'bd': '#d4dce5', 'glass': 'rgba(238,242,246,.78)', 'word': 'Unknown', 'hint': 'Not known', 'icon': '?'}} -%}
+{%- set tint = {'ok': '#ebf8f1', 'warning': '#fff6e8', 'critical': '#fdeeee', 'info': '#eef4fe', 'unknown': '#f3f6f9'} -%}
+{%- set st = r.status | default('info') if r.status | default('info') in pal else 'info' -%}
+{%- set ink = '#0f2236' -%}
+{%- set muted = '#4a5d71' -%}
+{%- set label = '#3d5166' -%}
+{%- set accent = '#0e6e74' -%}
+{%- set line = '#e3eaf1' -%}
+{#- the frame: see-through white over the background, a white hairline, a soft shadow; bgcolor = the solid colour where transparency is not drawn #}
+{%- set glass = 'background:rgba(255,255,255,.66);border:1px solid rgba(255,255,255,.85);border-radius:22px;box-shadow:0 10px 30px rgba(15,34,54,.10);' -%}
+{%- set solid = '#f8fbfd' -%}
+{#- what is read: a near-solid panel #}
+{%- set paper = 'background:rgba(255,255,255,.92);border:1px solid #e3eaf1;border-radius:14px;' -%}
+{%- set runs = _page_runs | default(_email_runs | default([])) -%}
+{%- set job_id = awx_job_id | default(tower_job_id | default('')) | string -%}
+{%- set job_name = awx_job_template_name | default(tower_job_template_name | default('')) | string -%}
+{#- the line under the subject in the inbox: the subtitle, then the tiles that are warning or critical #}
+{%- set flagged = [] -%}
+{%- for t in r.summary | default([]) if t.status | default('') in ['warning', 'critical'] -%}
+{%- set _ = flagged.append(t.label ~ ': ' ~ t.value) -%}
+{%- endfor -%}
+{%- set preview = ([r.subtitle | default('')] + flagged) | select | join(' · ') -%}
+{%- macro svg(kind, color, size) -%}
+{#- web copy only: line icons, 24 x 24 #}
+<svg width="{{ size }}" height="{{ size }}" viewBox="0 0 24 24" fill="none" stroke="{{ color }}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:block;">
+{%- if kind == 'ok' %}<path d="M5 12.5l4.5 4.5L19 7.5"/>
+{%- elif kind == 'warning' %}<path d="M12 3.5L22 20.5H2z"/><path d="M12 10v4.5"/><circle cx="12" cy="17.6" r=".6" fill="{{ color }}"/>
+{%- elif kind == 'critical' %}<circle cx="12" cy="12" r="9.5"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7"/>
+{%- elif kind == 'info' %}<circle cx="12" cy="12" r="9.5"/><path d="M12 11v6"/><circle cx="12" cy="7.6" r=".6" fill="{{ color }}"/>
+{%- elif kind == 'runs' %}<circle cx="12" cy="12" r="9.5"/><path d="M12 6.5V12l3.5 2.5"/>
+{%- elif kind == 'notes' %}<path d="M6 2.5h8.5L19 7v14.5H6z"/><path d="M14 2.5V7h5M9 12h7M9 16h7"/>
+{%- elif kind == 'table' %}<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9.5h18M3 14.5h18M9.5 9.5V20"/>
+{%- elif kind == 'number' %}<path d="M4 20V11M10 20V5M16 20v-6M22 20H2"/>
+{%- else %}<circle cx="12" cy="12" r="9.5"/><path d="M9.6 9.3a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .8-1 1.5v.4"/><circle cx="12" cy="17.2" r=".6" fill="{{ color }}"/>
+{%- endif %}</svg>
+{%- endmacro -%}
+{%- macro badge(kind, k, size) -%}
+{#- a round icon: in the web copy a line icon, in the email the status sign (classic desktop Outlook: square) #}
+{%- set c = pal[k] if k in pal else {'fg': accent, 'bg': '#e1f1f2', 'icon': {'runs': '&#8635;', 'notes': '&#8801;', 'table': '&#8801;'}[kind] | default('#')} -%}
+<table role="presentation" width="{{ size }}" cellpadding="0" cellspacing="0" border="0"><tr><td width="{{ size }}" height="{{ size }}" align="center" valign="middle" bgcolor="{{ c.bg }}" style="width:{{ size }}px;height:{{ size }}px;background:{{ c.bg }};border-radius:{{ size }}px;color:{{ c.fg }};font-size:{{ (size * 0.45) | int }}px;font-weight:700;line-height:{{ size }}px;text-align:center;mso-line-height-rule:exactly;">
+{%- if web %}<div style="display:inline-block;vertical-align:middle;line-height:0;">{{ svg(kind, c.fg, (size * 0.52) | int) }}</div>{% else %}{{ c.icon }}{% endif -%}
+</td></tr></table>
+{%- endmacro -%}
+{%- macro pill(k) -%}
+{#- classic desktop Outlook (mso) draws no fixed-size span: a table cell with a dot there, the round icon elsewhere #}
+<!--[if mso]><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="{{ pal[k].bg }}" style="background:{{ pal[k].bg }};border:1px solid {{ pal[k].bd }};padding:3px 10px;color:{{ pal[k].fg }};font-family:'Segoe UI',Arial,sans-serif;font-size:14px;font-weight:bold;white-space:nowrap;">&#9679;&nbsp;{{ pal[k].word }}</td></tr></table><![endif]-->
+<!--[if !mso]><!--><span style="display:inline-block;border-radius:999px;background:{{ pal[k].bg }};border:1px solid {{ pal[k].bd }};color:{{ pal[k].fg }};font-size:14px;font-weight:700;padding:4px 12px 4px 7px;white-space:nowrap;"><span style="display:inline-block;width:19px;height:19px;line-height:19px;text-align:center;border-radius:10px;background:{{ pal[k].fg }};color:#ffffff;font-size:12px;margin-right:6px;">{{ pal[k].icon }}</span>{{ pal[k].word }}</span><!--<![endif]-->
+{%- endmacro -%}
+{%- macro gap(h) -%}
+<tr><td height="{{ h }}" style="height:{{ h }}px;line-height:{{ h }}px;font-size:0;mso-line-height-rule:exactly;">&nbsp;</td></tr>
+{%- endmacro -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ r.title | e }}</title>
+<style>
+{#- phones, in the email and the page: tiles two by two (one below 340 px), the header and the runs stacked, tables scrolling sideways; a mail program without these rules shows the layout as it is #}
+@media (max-width:760px){
+  .g-tile{display:inline-block !important;width:50% !important;box-sizing:border-box;padding:0 4px 10px 4px !important;vertical-align:top;}
+  .g-tile-empty{display:none !important;}
+  .g-side{display:block !important;width:100% !important;padding:14px 0 0 0 !important;border-left:0 !important;}
+  .g-bars{display:block !important;}
+  .g-title{font-size:21px !important;}
+  .g-paper td,.g-paper th{white-space:nowrap;}
+  .g-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:calc(100vw - 70px);}
+}
+@media (max-width:520px){
+  .g-head-text,.g-head-status{display:block !important;}
+  .g-head-status{text-align:left !important;padding:12px 0 0 0 !important;}
+  .g-foot-mark,.g-sec-pill{display:none !important;}
+  .g-strip>tbody>tr>td{padding:0 1px !important;}
+  .g-strip .g-bt,.g-strip .g-b{width:11px !important;}
+  .g-strip .g-cur{width:15px !important;}
+}
+@media (max-width:340px){.g-tile{width:100% !important;}}
+</style>
+{%- if web %}
+<style>
+{#- the web copy only: the blur needs something behind the cards - soft coloured shapes, fixed to the window; a plain print #}
+body{background:#dde8f0 !important;}
+.g-bg{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;background:linear-gradient(140deg,#cfe2ee 0%,#e6eef6 45%,#d3e9e4 100%);}
+.g-bg i{position:absolute;border-radius:50%;filter:blur(70px);opacity:.75;}
+.g-bg i:nth-child(1){width:46vw;height:46vw;left:-12vw;top:-14vw;background:#8fd0d6;}
+.g-bg i:nth-child(2){width:38vw;height:38vw;right:-10vw;top:8vh;background:#9bb8f0;}
+.g-bg i:nth-child(3){width:34vw;height:34vw;left:30vw;bottom:-16vw;background:#f3d9a8;opacity:.55;}
+body>table:first-of-type{position:relative;z-index:1;background:transparent !important;background-image:none !important;}
+.g-shell{max-width:1120px !important;}
+.g-card{-webkit-backdrop-filter:blur(22px) saturate(160%);backdrop-filter:blur(22px) saturate(160%);}
+.g-paper tr:hover td{background:rgba(14,110,116,.05);}
+@media print{
+  body,.g-bg{background:#ffffff !important;}.g-bg{display:none;}
+  .g-card{-webkit-backdrop-filter:none;backdrop-filter:none;box-shadow:none !important;background:#ffffff !important;border:1px solid #d5dee8 !important;}
+  .g-card,.g-paper{break-inside:avoid;}
+}
+</style>
+{%- endif %}
+</head>
+<body style="margin:0;padding:0;background:#dde8f0;">
+{%- if web %}
+<div class="g-bg" aria-hidden="true"><i></i><i></i><i></i></div>
+{%- else %}
+<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#dde8f0;">{{ preview | e }}</div>
+{%- endif %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#dde8f0" style="background:#dde8f0;background-image:linear-gradient(140deg,#cfe2ee 0%,#e6eef6 45%,#d3e9e4 100%);">
+<tr><td align="center" style="padding:22px 12px;">
+{#- classic desktop Outlook (mso) ignores max-width and sizes each card to its content: a fixed width there #}
+<!--[if mso]><table role="presentation" width="760" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td width="760"><![endif]-->
+<table role="presentation" class="g-shell" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:900px;font-family:'Segoe UI',Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;color:{{ ink }};">
+<tr><td>
+<table role="presentation" class="g-card" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{{ solid }}" style="width:100%;{{ glass }}"><tr><td style="padding:20px 22px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+{%- if logo_cid %}
+<td width="{{ logo_size[0] + 18 }}" valign="middle" style="padding-right:18px;"><img src="cid:{{ logo_cid }}" width="{{ logo_size[0] }}" height="{{ logo_size[1] }}" alt="" style="display:block;border:0;width:{{ logo_size[0] }}px;height:{{ logo_size[1] }}px;"></td>
+{%- endif %}
+<td class="g-head-text" valign="middle">
+<div style="font-size:11px;font-weight:700;letter-spacing:3px;text-transform:uppercase;color:{{ label }};">{{ report_email_header_text | default('Site automation report') | e }}</div>
+<div class="g-title" style="font-size:25px;font-weight:700;color:{{ ink }};line-height:1.25;margin-top:6px;">{{ r.title | e }}</div>
+{%- if r.subtitle | default('') %}
+<div style="font-size:15px;color:{{ muted }};margin-top:4px;">{{ r.subtitle | e }}</div>
+{%- endif %}
+<div style="font-size:12px;color:{{ muted }};margin-top:8px;">{{ ('AAP job ' ~ job_id) if job_id else 'Run from the command line' }}{% if job_name %} &middot; {{ job_name | e }}{% endif %}</div>
+</td>
+<td class="g-head-status" align="right" valign="middle" style="white-space:nowrap;padding-left:14px;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" bgcolor="{{ pal[st].bg }}" style="background:{{ pal[st].glass }};border:1px solid {{ pal[st].bd }};border-radius:20px;"><tr>
+<td valign="middle" style="padding:10px 0 10px 12px;">{{ badge(st, st, 34) }}</td>
+<td valign="middle" style="padding:10px 16px 10px 10px;">
+<div style="font-size:16px;font-weight:700;color:{{ pal[st].fg }};line-height:1.2;">{{ pal[st].word }}</div>
+<div style="font-size:12px;color:{{ ink }};line-height:1.3;">{{ pal[st].hint }}</div>
+</td>
+</tr></table>
+</td>
+</tr></table>
+</td></tr></table>
+</td></tr>
+{%- for chunk in r.summary | default([]) | batch(4) %}
+{{ gap(14) }}
+<tr><td>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+{%- for t in chunk %}
+{%- set ts = t.status | default('') %}
+{%- set hi = ts in ['warning', 'critical'] %}
+{%- set v = t.value | string %}
+<td class="g-tile" width="25%" valign="top" style="padding:0 {{ '0' if loop.index == 4 else '6px' }} 0 {{ '0' if loop.first else '6px' }};">
+<table role="presentation" class="g-card" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{{ pal[ts].bg if hi else solid }}" style="width:100%;{{ glass }}{% if hi %}background:{{ pal[ts].glass }};border:1px solid {{ pal[ts].bd }};{% endif %}"><tr>
+<td width="40" valign="middle" style="padding:16px 0 16px 16px;">{{ badge(ts if hi else 'number', ts if hi else '', 38) }}</td>
+<td valign="middle" style="padding:14px 14px 14px 12px;">
+<div style="font-size:13px;font-weight:600;color:{{ pal[ts].fg if hi else label }};">{{ t.label | e }}</div>
+<div style="font-size:{{ '28px' if v | length <= 9 else '17px' }};font-weight:700;color:{{ pal[ts].fg if hi else ink }};margin-top:2px;line-height:1.1;word-break:break-word;">{{ v | e }}</div>
+</td>
+</tr></table>
+</td>
+{%- endfor %}
+{%- for _ in range(4 - chunk | length) %}
+<td class="g-tile g-tile-empty" width="25%" style="padding:0 0 0 6px;">&nbsp;</td>
+{%- endfor %}
+</tr></table>
+</td></tr>
+{%- endfor %}
+{%- if runs %}
+{%- set legend = runs | map(attribute='status') | unique | list %}
+{{ gap(14) }}
+<tr><td>
+<table role="presentation" class="g-card" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{{ solid }}" style="width:100%;{{ glass }}"><tr><td style="padding:18px 22px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+<td class="g-bars" valign="top">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+<td valign="middle" style="padding-right:12px;">{{ badge('runs', '', 38) }}</td>
+<td valign="middle">
+<div style="font-size:17px;font-weight:700;color:{{ ink }};">Last {{ runs | length }} run{{ 's' if runs | length != 1 else '' }}</div>
+<div style="font-size:12px;color:{{ muted }};">Oldest to newest{% for k in ['ok', 'warning', 'critical', 'unknown'] if k in legend %} <span style="white-space:nowrap;padding-left:10px;"><span style="color:{{ pal[k].bar }};font-size:14px;">&#9679;</span>&nbsp;{{ pal[k].word }}</span>{% endfor %}</div>
+</td>
+</tr></table>
+<table role="presentation" class="g-strip" cellpadding="0" cellspacing="0" border="0" style="margin-top:12px;"><tr>
+{%- for b in runs %}
+{%- set bc = pal[b.status].bar if b.status in pal else pal.unknown.bar %}
+<td valign="bottom" height="60" style="height:60px;padding:0 4px;" title="{{ b.text | e }}">
+{%- if b.current %}
+<table role="presentation" class="g-cur" width="22" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="{{ ink }}" style="background:{{ ink }};padding:2px;border-radius:9px;">
+{%- endif %}
+<table role="presentation" class="g-bt" width="18" cellpadding="0" cellspacing="0" border="0"><tr>
+<td class="g-b" width="18" height="{{ b.height }}" bgcolor="{{ bc }}" title="{{ b.text | e }}" style="width:18px;height:{{ b.height }}px;background:{{ bc }};border-radius:7px;font-size:1px;line-height:{{ b.height }}px;mso-line-height-rule:exactly;">&nbsp;</td>
+</tr></table>
+{%- if b.current %}
+</td></tr></table>
+{%- endif %}
+</td>
+{%- endfor %}
+</tr></table>
+</td>
+<td class="g-side" width="250" valign="middle" style="width:250px;padding-left:20px;border-left:1px solid {{ line }};">
+<div style="font-size:12px;color:{{ muted }};">This run</div>
+<div style="margin:4px 0 12px 0;">{{ pill(st) }}</div>
+{%- if runs | length > 1 %}
+{%- set prev = runs[-2] %}
+<div style="font-size:12px;color:{{ muted }};">Last run{% if prev.ago | default('') or prev.when %} &middot; {{ (prev.ago | default('') or prev.when) | e }}{% endif %}</div>
+<div style="margin-top:4px;">{{ pill(prev.status if prev.status in pal else 'unknown') }}</div>
+{%- endif %}
+</td>
+</tr></table>
+</td></tr></table>
+</td></tr>
+{%- endif %}
+{%- for s in r.sections | default([]) %}
+{%- set ss = s.status | default('') %}
+{{ gap(14) }}
+<tr><td>
+<table role="presentation" class="g-card" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{{ solid }}" style="width:100%;{{ glass }}"><tr><td style="padding:18px 22px 20px 22px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+<td width="44" valign="middle" style="padding-right:12px;">{{ badge(ss if ss in pal else ('table' if s.columns is defined else 'notes'), ss, 38) }}</td>
+<td valign="middle" style="font-size:18px;font-weight:700;color:{{ ink }};">{{ s.title | e }}
+{%- if s.rows is defined %} &nbsp;<span style="display:inline-block;min-width:28px;text-align:center;border-radius:14px;background:{{ pal[ss].fg if ss in ['warning', 'critical'] else accent }};color:#ffffff;font-size:14px;font-weight:700;line-height:20px;padding:2px 6px;">&nbsp;{{ s.rows | length }}&nbsp;</span>{% endif %}
+{%- if s.text | default('') %}
+<div style="font-size:14px;font-weight:400;color:{{ muted }};margin-top:2px;">{{ s.text | e }}</div>
+{%- endif %}
+</td>
+{%- if ss in pal %}
+<td class="g-sec-pill" align="right" valign="middle">{{ pill(ss) }}</td>
+{%- endif %}
+</tr></table>
+{%- if s.columns is defined %}
+{%- if s.rows | default([]) %}
+<div class="g-scroll" style="margin-top:12px;">
+<table role="presentation" class="g-paper" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;{{ paper }}"><tr><td style="padding:2px 4px;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;font-size:14px;">
+<tr>
+{%- for c in s.columns %}
+<th align="left" style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:{{ label }};padding:10px 12px;border-bottom:1px solid {{ line }};">{{ c | e }}</th>
+{%- endfor %}
+</tr>
+{%- for row in s.rows %}
+{%- set rs = (s.row_status[loop.index0] if s.row_status is defined and s.row_status | length > loop.index0 else '') | default('', true) %}
+{%- set cs = (s.cell_status[loop.index0] if s.cell_status is defined and s.cell_status | length > loop.index0 else []) | default([], true) %}
+{%- set last = loop.last %}
+{%- if rs in tint %}
+<tr bgcolor="{{ tint[rs] }}" style="background:{{ tint[rs] }};">
+{%- else %}
+<tr>
+{%- endif %}
+{%- for cell in row %}
+{%- set cst = cs[loop.index0] if cs | length > loop.index0 else '' %}
+{%- set text = ('' if cell is none else cell) | string %}
+{%- set cellbd = '' if last else 'border-bottom:1px solid #edf2f6;' %}
+{%- if cst and cst in pal %}
+<td style="padding:9px 12px;{{ cellbd }}vertical-align:top;"><span style="display:inline-block;border-radius:999px;background:{{ pal[cst].bg }};border:1px solid {{ pal[cst].bd }};color:{{ pal[cst].fg }};font-weight:600;padding:1px 10px;">{{ text | e }}</span></td>
+{%- else %}
+<td style="padding:9px 12px;{{ cellbd }}vertical-align:top;color:{{ ink }};">{{ text | e }}</td>
+{%- endif %}
+{%- endfor %}
+</tr>
+{%- endfor %}
+</table>
+</td></tr></table>
+</div>
+{%- else %}
+<div style="padding:10px 0 0 0;color:{{ muted }};">None.</div>
+{%- endif %}
+{%- endif %}
+{%- if s.lines | default([]) %}
+<ul style="margin:10px 0 0 0;padding-left:22px;color:{{ ink }};">
+{%- for l in s.lines if l | trim %}
+<li style="margin:3px 0;">{{ l | e }}</li>
+{%- endfor %}
+</ul>
+{%- endif %}
+</td></tr></table>
+</td></tr>
+{%- endfor %}
+{%- if _email_web_url | default('') and not web %}
+{{ gap(16) }}
+<tr><td align="center">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" bgcolor="{{ accent }}" style="background:{{ accent }};border-radius:12px;padding:12px 26px;">
+<a href="{{ _email_web_url | e }}" style="color:#ffffff;font-size:15px;font-weight:700;text-decoration:none;display:inline-block;">Open the full report</a>
+</td></tr></table>
+</td></tr>
+{%- endif %}
+{{ gap(14) }}
+<tr><td>
+<table role="presentation" class="g-card" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{{ solid }}" style="width:100%;{{ glass }}border-radius:16px;"><tr>
+<td style="padding:12px 20px;font-size:12px;color:{{ muted }};line-height:1.6;">
+{%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
+{{ _email_footer | e }}
+</td>
+<td class="g-foot-mark" align="right" valign="middle" style="padding:12px 20px;font-size:10px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:{{ label }};white-space:nowrap;"><span style="color:{{ accent }};letter-spacing:1px;">&#9632;&#9632;&#9632;&#9632;</span>&nbsp; {{ report_email_header_text | default('Site automation report') | e }}</td>
+</tr></table>
+</td></tr>
+</table>
+<!--[if mso]></td></tr></table><![endif]-->
+</td></tr>
+</table>
+</body>
+</html>

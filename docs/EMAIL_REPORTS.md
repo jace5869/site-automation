@@ -163,9 +163,9 @@ that have a severity, each row is tinted (light red, amber or blue) and the seve
 in its colour, so the problems stand out at a glance. Every value
 from a host or vCenter is escaped, so a VM name cannot add markup to the email.
 
-## The look: standard, command or portal, your logo, the last runs
+## The look: standard, command, portal or glass, your logo, the last runs
 
-`report_email_theme` picks one of three looks, for every report job at once when it is in `all.yml`:
+`report_email_theme` picks one of four looks, for every report job at once when it is in `all.yml`:
 
 - **standard** (the default): the header band in the report's colour, number boxes under it - as
   described above.
@@ -182,17 +182,31 @@ from a host or vCenter is escaped, so a VM name cannot add markup to the email.
   `This run Critical, Last run Successful 2 days ago`; then one card per section. New Outlook,
   Outlook on the web and phones show the rounded cards and shadows; classic desktop Outlook shows the
   same layout with square corners.
+- **glass**: see-through, frosted cards on a soft blue-green background. A header card with your logo
+  (at most 80 px tall), `report_email_header_text`, the title and the status with what it asks of the
+  reader (*Needs attention*, *Action required*); the numbers as tiles with an icon - a warning or
+  critical tile tinted in its colour; **the job's last runs** with a colour key, beside *This run* and
+  *Last run*; then one card per section, its table on a near-solid white panel. Only the frame is
+  see-through: every text stays on a surface solid enough to read as on paper (the lightest text is at
+  least 4.5:1 against what is behind it). The inbox shows the subtitle and the warning and critical
+  numbers as the line under the subject; with the report website (`report_web_dest`) the email ends with
+  an **Open the full report** button. On a phone the tiles go two by two and wide tables scroll sideways.
+  Mail programs that draw transparency, rounded corners and shadows show the glass; the others (classic
+  desktop Outlook) show the same layout with solid white cards and square corners. The web page
+  (`report_web_theme: glass`) adds what a browser draws and a mail program does not: the blur behind
+  the cards, line icons, and a plain print.
 
 ```yaml
 # playbooks/group_vars/all.yml
-report_email_theme: command                  # or portal
+report_email_theme: command                  # or portal, or glass
+report_web_theme: glass                      # the web page's look (docs/WEB_REPORTS.md)
 report_logo_file: files/report_logo.png      # = playbooks/files/report_logo.png
 ```
 
 **The logo** (every look): a PNG (best, with a transparent background), JPEG or GIF in your
 repository. Put it in `playbooks/files/` and set `report_logo_file` (a path from `playbooks/`, or a
 full path). It is attached to each email and shown from there - Outlook blocks pictures from links -
-so keep it small: about 160 px tall, under 100 KB. It is shown `report_logo_height` (84) pixels tall; in the portal look's header card at most 56.
+so keep it small: about 160 px tall, under 100 KB. It is shown `report_logo_height` (84) pixels tall; in the portal look's header card at most 56, in the glass look's at most 80.
 Your logo belongs in your own repository only. If you update with `scripts/update-from-release`, add
 the line `playbooks/files/report_logo.png` to `.site-local`, or the update deletes it.
 
@@ -223,7 +237,7 @@ job prints the page's address, and the email links to it. With or without the em
 The look is one file, `roles/site_email/templates/report.html.j2` (Jinja and HTML, styles inline
 because Outlook ignores most style sheets). To change it without touching the repository's file:
 
-1. Copy it (or `report_command.html.j2` / `report_portal.html.j2`, the other looks) to `playbooks/files/email/report.html.j2` in
+1. Copy it (or `report_command.html.j2` / `report_portal.html.j2` / `report_glass.html.j2`, the other looks) to `playbooks/files/email/report.html.j2` in
    your repository and edit the copy: colours, fonts, a banner line your site requires.
 2. In `all.yml`: `report_email_html_template: "{{ playbook_dir }}/files/email/report.html.j2"`.
 3. Add the line `playbooks/files/email/` to the file `.site-local` at the top of your repository
