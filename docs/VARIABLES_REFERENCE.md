@@ -191,6 +191,15 @@ File: `roles/check_certs/defaults/main.yml`
 | `cert_renew_attach_ext` | `csr` | The CSR's attachment on the ticket: <common name>-<8 characters of the CSR's SHA-256>.<ext> (a new CSR, a new name). An instance that refuses .csr attachments (its allowed extensions, or "Invalid file type: text/plain"): txt names every CSR .txt from the start. Refused, it is tried again as .txt (cert_renew_attach_ret… (all of it: the role file) |
 | `cert_renew_attach_type` | `text/plain` | the attachment's Content-Type (a CSR is Base64 text) |
 | `cert_renew_attach_retry_txt` | `true` | a refused attachment is tried again as <name>.txt (text/plain); false: straight to the work note |
+| `cert_install_services` | `[]` | ---- Install: the issued certificate in place of the old one (playbooks/cert_install_check.yml -> approval -> playbooks/cert_install_approved.yml) ---- With cert_renew_servicenow: catalog, the PKI puts the issued certificate on the request that carries its CSR. The install check finds it there (the certificate whose p… (all of it: the role file) |
+| `cert_install_known_services` | `[]` | The services whose configuration is searched for the certificate's file - [{dir, service, test}] (test: the command that checks the configuration before the reload). Empty = httpd (/etc/httpd, apachectl configtest), apache2, nginx (nginx -t), haproxy (haproxy -c), postfix (postfix check), dovecot (doveconf -n), slapd,… (all of it: the role file) |
+| `cert_install_never_reload` | `[]` | services (globs) the job never reloads, e.g. ['slapd*']: their certificates are installed by a person |
+| `cert_install_key_files` | `{}` | The old key's file, when it cannot be found - neither in the configuration that names the certificate, nor once in the usual folders (several files with the old key: held, to be named here): {certificate file: key file}, e.g. {/etc/pki/tls/certs/web01.crt: /etc/pki/tls/private/web01.key} |
+| `cert_install_key_dirs` | `[]` | where else to look for the old key (empty = /etc/pki/tls/private, /etc/ssl/private, the services' folders ...) |
+| `cert_install_trust_check` | `true` | the chain must build up to a root (the host's trust store, or the PKI's root sent with it); false = install without |
+| `cert_install_verify_wait` | `15` | seconds the port has, after the reload, to serve the new certificate (then: put back) |
+| `cert_restore_backup` | (empty) | ---- Restore: an old certificate back from its backup (playbooks/cert_restore.yml) ---- Each install copies the files it replaces to cert_renew_dir/backup/<date>-<certificate>/. The restore puts them back, reloads the service, checks the port serves the old certificate again, and the renewal waits again (the next inst… (all of it: the role file) |
+| `cert_restore_only` | (empty) | or: the newest backup of each certificate whose name or subject matches (a regular expression), e.g. 'web01' |
 
 ## check_containers
 
@@ -709,6 +718,11 @@ File: `roles/servicenow/defaults/main.yml`
 | `cert_renew_catalog_reorder_states` | `["4", "7"]` | A request closed in one of these states (a requested item's: 4 Closed Incomplete, 7 Closed Skipped - rejected or cancelled) is ordered again on the next run. In any other state - open, in progress, Closed Complete (the PKI issued it: install it) - the certificate is not ordered again. |
 | `cert_renew_catalog_upload_table` | `ZZ_YYsc_cart_item` | Where the CSR is uploaded before the order, for the attachment question (ServiceNow moves it to the request). |
 | `servicenow_catalog_test_order` | `false` | servicenow_catalog_test.yml: true = also order the item once, with a test CSR - the PKI gets a real request (tell them first, or cancel it). false = only read the item and check the settings. |
+| `cert_install_attachment_exts` | `[cer, crt, pem, der, p7b, p7c, p7, cert, zip, txt]` | ---- Certificate install: the issued certificate, from its request (cert_install_check.yml, win_cert_install_check.yml) ---- The PKI puts the issued certificate on the request (RITM) that carries the CSR: attached to the RITM, to one of its attachment questions, or to its REQ - one file or several, PEM, DER, PKCS7 (.p… (all of it: the role file) |
+| `cert_install_max_bytes` | `1048576` | a bigger attachment is not read |
+| `cert_install_journal` | `true` | also look for a certificate pasted into the request's work notes and comments |
+| `cert_install_min_days` | `30` | the issued certificate must be valid at least this many more days (else held for a person) |
+| `cert_install_fewer_names` | `false` | true = install a certificate that lacks names (subjectAltName) the old one had; false = held for a person |
 
 ## site_act
 
@@ -1096,6 +1110,10 @@ File: `roles/win_check_certs/defaults/main.yml`
 | `win_cert_renew_exclude_issuer` | (empty) | regular expression: certificates whose issuer matches are never renewed here (renewed by their own tool) |
 | `win_cert_renew_only` | (empty) | regular expression on the certificate's place, e.g. 'used by https' (empty = every one) |
 | `win_cert_renew_exportable` | `false` | true = the new key can be exported (to move it to another server); false keeps it on this one |
+| `win_cert_install_rebind` | `[https, rdp, winrm]` | ---- Install: the issued certificate (playbooks/win_cert_install_check.yml -> approval -> playbooks/win_cert_install_approved.yml) ---- The PKI's certificate, from the request carrying the CSR (cert_renew_servicenow: catalog), is put together with its pending key by certreq -accept -machine (in Personal); its chain's… (all of it: the role file) |
+| `win_cert_install_verify_wait` | `15` | seconds an https port has, after the rebinding, to serve the new certificate (full PowerShell only) |
+| `win_cert_restore_backup` | (empty) | ---- Restore: the bindings back on the old certificate (playbooks/win_cert_restore.yml) ---- a backup's folder name, as the restore's Check lists it |
+| `win_cert_restore_only` | (empty) | or: the newest backup of each certificate whose thumbprint or subject matches (a regular expression) |
 
 ## win_check_disk
 

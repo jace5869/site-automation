@@ -610,8 +610,9 @@ on vCenter and the hosts: `VMware - certificate renewal` - and a report of them 
 ([VMWARE.md](VMWARE.md), "Certificates of vCenter and the ESXi hosts").
 The three use the same window: the report flags, the CSR is made and the incident is opened at 30 days.
 Change it on the workflow (`check_certs_warn_days`) and all three follow. The PKI person submits the CSR and attaches
-the issued certificate to the same ticket. Installing the new certificate is still done by a person:
-this job changes nothing a service uses.
+the issued certificate to the same ticket. This job changes nothing a service uses. With the catalog item, the
+issued certificate is then installed from its request after an approval - *Certificate install*, Linux and
+Windows ([CERT_INSTALL.md](CERT_INSTALL.md)); with incidents, a person installs it.
 
 **Per certificate:**
 

@@ -174,8 +174,14 @@ no second one (until it is cancelled: Closed Skipped).
 
 ## After the PKI issues the certificate
 
-The request shows **Closed Complete** (each run says `the PKI issued it: install it`). Install it where the
-key is - the same steps as with incidents:
+The request shows **Closed Complete** (each run says `the PKI issued it: install it`).
+
+**Installed by the job, after an approval:** *Certificate install - check* (on a schedule) finds the certificate on
+the request - whatever the PKI attached or pasted, as long as its public key is the CSR's - and says what installing
+it would do; after the approval, *Certificate install - approved* puts it in place, reloads the service, checks the
+port, and puts the old one back if anything is wrong. Linux and Windows: [CERT_INSTALL.md](CERT_INSTALL.md).
+
+**By hand** - a keystore, a service that needs a restart, vCenter, ESXi, Cisco - where the key is:
 
 | Where | How |
 |---|---|

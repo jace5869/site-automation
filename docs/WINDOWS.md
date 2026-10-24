@@ -19,6 +19,8 @@ also in Constrained Language Mode (see step 5).
 | Windows troubleshoot | `playbooks/win_troubleshoot.yml` | on demand: an admin's first PowerShell commands for one kind of problem |
 | Windows certificate report | `playbooks/win_cert_report.yml` | every certificate on every server, soonest expiry first |
 | Windows certificate renewal - CSRs | `playbooks/win_cert_renew_csr.yml` | for each of the server's own certificates that expires: a new key and a CSR (`certreq`) on the server, the CSR on the certificate's ServiceNow ticket |
+| Windows certificate install - check / approved | `playbooks/win_cert_install_check.yml`, `win_cert_install_approved.yml` | the issued certificate from the catalog request: `certreq -accept`, the old certificate's bindings moved to it, after an approval ([CERT_INSTALL.md](CERT_INSTALL.md)) |
+| Windows certificate restore | `playbooks/win_cert_restore.yml` | the bindings back on the old certificate |
 | Windows patch | `playbooks/win_patch.yml` | install what Software Center offers (ConfigMgr); restart only with `automatic_restarts: yes`; prove the server is back |
 | ACT for Windows - install | `playbooks/win_act_install.yml` | put ACT on the servers in `C:\ProgramData\act`, locked down and unblocked; keep it current |
 | ServiceNow tickets, POA&M status | the ones you have | unchanged: they take the Windows results the same way |
@@ -232,7 +234,9 @@ weekly health check reads only those stores. To list what a server has, on the s
 ### Windows certificate renewal - CSRs
 
 With `cert_renew_servicenow: catalog` the CSRs are ordered from your PKI's catalog item instead of going on
-incidents: [CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md).
+incidents: [CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md). Then the issued certificate is installed from that
+request, after an approval - `certreq -accept` and each binding of the old certificate moved: *Windows certificate
+install* ([CERT_INSTALL.md](CERT_INSTALL.md)).
 
 | Field | Value |
 |---|---|
