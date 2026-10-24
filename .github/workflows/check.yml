@@ -18,7 +18,7 @@ jobs:
       - name: The VMware collection the vm_*.yml playbooks use, and its Python libraries (before syntax-check and lint)
         run: |
           pip install pyvmomi vmware-vcenter
-          ansible-galaxy collection install -r tests/vmware/requirements.yml
+          bash tests/galaxy_install.sh -r tests/vmware/requirements.yml
       - name: Syntax-check every playbook (site + vendored ACT)
         run: |
           set -e
@@ -152,7 +152,7 @@ jobs:
         run: |
           pip install paramiko
           /tmp/ac216/bin/pip -q install paramiko
-          ansible-galaxy collection install cisco.ios ansible.netcommon
+          bash tests/galaxy_install.sh cisco.ios ansible.netcommon
           bash tests/netcerts/run_net_certs_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netcerts/run_net_certs_test.sh
       - name: Network config backup and load - git, share, ServiceNow, IOS lines and restore (scp + configure replace), PAN-OS commit (stand-in devices; current ansible-core and 2.16)
@@ -164,7 +164,7 @@ jobs:
       - name: Certificate inventory into SQL Server (a real SQL Server 2022 in docker)
         run: |
           pip install pymssql
-          ansible-galaxy collection install community.general
+          bash tests/galaxy_install.sh community.general
           docker pull -q mcr.microsoft.com/mssql/server:2022-latest
           CERT_SQL_TEST_RUNTIME=docker bash tests/certinv/run_cert_inventory_sql_test.sh
       - name: Credential types and inventory are valid YAML
