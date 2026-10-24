@@ -21,8 +21,9 @@ The same for Windows: *Windows certificate install - check* → approval → *Wi
    `cert_renew_dir` (Linux), the pending request in `win_cert_renew_dir` (Windows).
 2. **The request.** On the AAP side - the hosts never get the ServiceNow credential - the request carrying each
    CSR (by the CSR's name in the order, as the renewal finds its orders), and what the PKI put there:
-   - files attached to the RITM, to one of its attachment questions, or to its REQ;
-   - a certificate pasted into a work note or comment;
+   - files attached to the RITM, to one of its attachment questions, to its REQ, or to its catalog task
+     (SCTASK - where the PKI team often works the request);
+   - a certificate pasted into a work note or comment of the RITM or its task;
    - each one PEM (.cer, .crt, .pem), DER, PKCS7 (.p7b, text or binary) or a zip of them.
 
    **The certificate counts only when its public key is the CSR's.** Anything else there - someone else's
@@ -130,9 +131,10 @@ cert_install_never_reload: ['slapd*']     # services the job never reloads: thei
 ## Setting it up
 
 1. **The renewal orders from the catalog** (`cert_renew_servicenow: catalog`) - [CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md).
-2. **The PKI puts the certificate on the request.** Ask them to attach DISA's files to the RITM (or paste the
-   certificate into a work note) - the .cer and the chain (.p7b) as DISA sends them. The API account must be able to
-   read the request's attachments and journal (and, for the note after the install, write a work note).
+2. **The PKI puts the certificate on the request.** Ask them to attach DISA's files to the RITM or to its catalog
+   task (or paste the certificate into a work note there) - the .cer and the chain (.p7b) as DISA sends them. The API account must be able to
+   read the request's and its tasks' attachments and journal (and, for the note after the install, write a work
+   note on the RITM).
 3. **The job templates** (project: this repository, the same inventory as the renewal):
 
    | Template | Playbook | Credentials | Options |

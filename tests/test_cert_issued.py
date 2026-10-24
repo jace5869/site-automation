@@ -281,6 +281,20 @@ class AgainstTheFakeServiceNow(unittest.TestCase):
         r = self.find(self.pending("web01.example.mil-bbbb2222"), journal=False)
         self.assertEqual(r["status"], "waiting", r)
 
+    def test_on_its_catalog_task(self):
+        """The PKI team works the SCTASK under the RITM: the certificate attached there, or pasted in its notes."""
+        ritm = self.order("web01.example.mil-ffff6666", read("web.csr"))
+        task = self.call("POST", "/api/now/table/sc_task", {"request_item": ritm["sys_id"], "short_description": "Issue the certificate"})
+        self.call("POST", "/api/now/attachment/file?table_name=sc_task&table_sys_id=%s&file_name=web01.cer" % task["sys_id"],
+                  raw=read("web.der"), ctype="application/pkix-cert")
+        r = self.find(self.pending("web01.example.mil-ffff6666"))
+        self.assertEqual((r["status"], r["source"]), ("issued", "web01.cer"), r)
+        ritm2 = self.order("web01.example.mil-ffff7777", read("web.csr"))
+        task2 = self.call("POST", "/api/now/table/sc_task", {"request_item": ritm2["sys_id"], "short_description": "Issue the certificate"})
+        self.call("PATCH", "/api/now/table/sc_task/%s" % task2["sys_id"], {"work_notes": "Here:\n" + read("web.crt").decode()})
+        r = self.find(self.pending("web01.example.mil-ffff7777"))
+        self.assertEqual((r["status"], r["source"]), ("issued", task2["number"] + "'s work notes"), r)
+
     def test_closed_incomplete(self):
         ritm = self.order("web01.example.mil-cccc3333", read("web.csr"))
         self.call("PATCH", "/api/now/table/sc_req_item/%s" % ritm["sys_id"], {"state": "4"})

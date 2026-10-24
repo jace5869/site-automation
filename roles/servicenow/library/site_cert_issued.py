@@ -13,8 +13,8 @@ short_description: Find the issued certificate of each pending CSR on its Servic
 description:
   - For each pending CSR (made by the certificate renewal on a Linux or Windows host), finds the catalog
     request (RITM) that carries it - by the CSR's name in the order, as the renewal does - and reads what
-    the PKI put there - the files attached to the RITM, to its attachment questions or to its REQ, and the
-    certificates pasted into its work notes or comments.
+    the PKI put there - the files attached to the RITM, to its attachment questions, to its REQ or to its
+    catalog tasks (SCTASK), and the certificates pasted into the work notes or comments of the RITM or its tasks.
   - A file may hold one certificate or several, as text (PEM) or binary (DER), a PKCS7 bundle (.p7b) or a
     zip of them. The certificate whose public key is the CSR's is the issued one; the CA certificates with
     it are its chain. A certificate for another key is listed, never used.
@@ -359,7 +359,13 @@ def find_one(sn, p, item, now):
     for r in sorted(live, key=lambda x: x.get('number', ''), reverse=True):
         out.update(ritm=r.get('number', ''), ritm_sys_id=r.get('sys_id', ''), request_sys_id=r.get('request', ''),
                    ritm_state=RITM_STATES.get(str(r.get('state')), str(r.get('state'))))
-        on = [x for x in (r.get('sys_id'), r.get('request')) if x]
+        # the RITM, its REQ, and its catalog tasks (SCTASK: where the PKI team often works the request)
+        try:
+            tasks = sn.get('/api/now/table/sc_task', {'sysparm_query': 'request_item=%s' % r.get('sys_id'),
+                                                      'sysparm_fields': 'sys_id,number', 'sysparm_limit': '20'}) or []
+        except SnError:
+            tasks = []          # an account that cannot read the tasks: the RITM and the REQ still count
+        on = [x for x in [r.get('sys_id'), r.get('request')] + [t.get('sys_id') for t in tasks] if x]
         files = sn.get('/api/now/attachment', {'sysparm_query': 'table_sys_idIN' + ','.join(on),
                                                'sysparm_fields': 'sys_id,file_name,table_name,table_sys_id,size_bytes',
                                                'sysparm_limit': '100'}) or []
@@ -381,16 +387,18 @@ def find_one(sn, p, item, now):
             out['read'].append('%s (%s)' % (name, ('%d certificate(s)' % len(got)) if got else 'no certificate in it'))
             cands.append((name, got))
         if p['journal']:
-            try:
-                j = sn.get('/api/now/table/sc_req_item/%s' % quote(r['sys_id']),
-                           {'sysparm_fields': 'work_notes,comments', 'sysparm_display_value': 'true'}) or {}
+            for table, sid, whose in [('sc_req_item', r['sys_id'], 'its')] + [('sc_task', t['sys_id'], t.get('number', 'its task') + "'s")
+                                                                               for t in tasks if t.get('sys_id')]:
+                try:
+                    j = sn.get('/api/now/table/%s/%s' % (table, quote(sid)),
+                               {'sysparm_fields': 'work_notes,comments', 'sysparm_display_value': 'true'}) or {}
+                except SnError:
+                    continue      # an account that cannot read the journal: the attachments still count
                 for field in ('work_notes', 'comments'):
                     got = journal_pem(j.get(field) if isinstance(j.get(field), str) else '')
                     if got:
-                        out['read'].append('the %s (%d certificate(s) pasted)' % (field.replace('_', ' '), len(got)))
-                        cands.append(('its ' + field.replace('_', ' '), got))
-            except SnError:
-                pass              # an account that cannot read the journal: the attachments still count
+                        out['read'].append('%s %s (%d certificate(s) pasted)' % (whose, field.replace('_', ' '), len(got)))
+                        cands.append(('%s %s' % (whose, field.replace('_', ' ')), got))
         every = [c for _, got in cands for c in got]
         leaf = None
         for where, got in cands:

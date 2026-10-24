@@ -17,8 +17,8 @@ request. A new workflow takes it from there, on Linux and on Windows (docs/CERT_
 ```
 
 - **The check**, on a schedule, only reads. For each renewal waiting on a host, it finds its request and what
-  the PKI put there: files attached to the RITM, to an attachment question or to the REQ, or a certificate pasted
-  into a work note - PEM, DER, PKCS7 (.p7b) or a zip of them. **A certificate counts only when its public key is
+  the PKI put there: files attached to the RITM, to an attachment question, to the REQ or to its catalog task
+  (SCTASK), or a certificate pasted into a work note - PEM, DER, PKCS7 (.p7b) or a zip of them. **A certificate counts only when its public key is
   the CSR's**; anything else there is listed and never used. On the host, it says what installing it would do,
   and when one is ready it ends red on purpose - `NEEDS APPROVAL` - with one line per certificate:
   `READY | web01 | ... | install in <files> | reload httpd.service | then port 443 must serve it | the new one: serial ..., expires ...`.
@@ -48,7 +48,7 @@ request. A new workflow takes it from there, on Linux and on Windows (docs/CERT_
 **To set it up:**
 
 1. The renewal orders from the catalog item ([CERT_RENEWAL_CATALOG.md](docs/CERT_RENEWAL_CATALOG.md)).
-2. Ask the PKI to attach DISA's files (the .cer and the .p7b) to the request.
+2. Ask the PKI to attach DISA's files (the .cer and the .p7b) to the request or to its catalog task.
 3. Create six templates:
    - *Certificate install - check* (`playbooks/cert_install_check.yml`: Machine, ServiceNow API);
    - *Certificate install - approved* (`playbooks/cert_install_approved.yml`: the same, the same inventory, no
