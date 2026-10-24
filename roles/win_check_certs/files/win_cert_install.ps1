@@ -314,6 +314,7 @@ function Set-Binding($b, [string] $Tp) {
 }
 # the certificate an https binding's port serves now (full PowerShell only: .NET's TLS client)
 function Get-Served($b) {
+    $script:servedWhy = ''
     if (-not $fullLanguage -or $b.kind -ne 'https') { return '' }
     $hp = ($b.key -split '=', 2)[1]
     $h, $p = $hp -split ':(?=[0-9]+$)', 2
@@ -322,7 +323,7 @@ function Get-Served($b) {
     $tcp = New-Object System.Net.Sockets.TcpClient
     try {
         $a = $tcp.BeginConnect($h, [int]$p, $null, $null)
-        if (-not $a.AsyncWaitHandle.WaitOne(5000)) { return '' }
+        if (-not $a.AsyncWaitHandle.WaitOne(5000)) { $script:servedWhy = "${h}:$p does not answer"; return '' }
         $tcp.EndConnect($a)
         $cb = [System.Net.Security.RemoteCertificateValidationCallback] { param($s, $c, $ch, $e) $true }
         $ssl = New-Object System.Net.Security.SslStream($tcp.GetStream(), $false, $cb)
@@ -331,7 +332,7 @@ function Get-Served($b) {
         $ssl.Dispose()
         return ([string]$x.Thumbprint).ToUpper()
     }
-    catch { return '' }
+    catch { $script:servedWhy = "${h}:$p - " + [string]$_.Exception.Message; return '' }
     finally { $tcp.Close() }
 }
 function Undo-Bindings($done, [string] $Old) {
@@ -417,6 +418,7 @@ function Install-Approved($ap) {
             Start-Sleep -Seconds 1
         }
         if ($tp -eq $new) { $res.verified += @($b.key) }
+        elseif (-not $tp) { $res.notes += @("$($b.key): the port was not asked ($($script:servedWhy)) - the binding was read back") }
         elseif ($tp) {
             Undo-Bindings $done $old
             $res.status = 'rolled back'; $res.reason = "$($b.key) serves $tp, not the new certificate - the bindings are back on the old one"

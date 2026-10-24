@@ -391,8 +391,18 @@ jobs:
           $tp = @($c | Where-Object { $_.Subject -like 'CN=sa-certtest*' })[0].Thumbprint
           netsh http add sslcert ipport=0.0.0.0:47443 certhash=$tp appid='{4dc3e181-e14b-4a21-b022-59fc669b0914}' certstorename=My
           if ($LASTEXITCODE -ne 0) { throw 'netsh http add sslcert failed' }
-          Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile', '-Command', '$l = New-Object System.Net.HttpListener; $l.Prefixes.Add("https://+:47443/"); $l.Start(); while ($true) { $x = $l.GetContext(); $x.Response.Close() }'
-          Start-Sleep -Seconds 3
+          # the listener as a scheduled task (SYSTEM): it outlives this step and the WinRM sessions
+          Set-Content -Path C:\sa-cert\listen.ps1 -Value '$l = New-Object System.Net.HttpListener; $l.Prefixes.Add("https://+:47443/"); $l.Start(); while ($true) { $x = $l.GetContext(); $x.Response.Close() }'
+          schtasks /create /tn sa-listener /tr "powershell -NoProfile -ExecutionPolicy Bypass -File C:\sa-cert\listen.ps1" /sc once /st 23:59 /ru SYSTEM /f | Out-Null
+          schtasks /run /tn sa-listener | Out-Null
+          Start-Sleep -Seconds 5
+          $tcp = New-Object System.Net.Sockets.TcpClient('127.0.0.1', 47443)
+          $ssl = New-Object System.Net.Security.SslStream($tcp.GetStream(), $false, { $true })
+          $ssl.AuthenticateAsClient($env:COMPUTERNAME)
+          $served = (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($ssl.RemoteCertificate)).Thumbprint
+          $tcp.Close()
+          "the port serves $served (the old one: $tp)"
+          if ($served -ne $tp) { throw 'the test listener does not serve the old certificate' }
           "OLD_TP=$tp" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           netsh http show sslcert ipport=0.0.0.0:47443
       - name: Ansible (in WSL) - the renewal orders the CSR, the PKI issues it, the check, the approved install, the restore
@@ -428,7 +438,8 @@ jobs:
             echo "WinRM not ready yet (attempt $i)"; sleep 10
           done
           new_tp() { openssl x509 -in /tmp/issued.crt -noout -fingerprint -sha1 | cut -d= -f2 | tr -d : ; }
-          bound() { /tmp/v/bin/ansible -i /tmp/inv.yml winrunner -m ansible.builtin.raw -a 'netsh http show sslcert ipport=0.0.0.0:47443' 2>&1 | grep -i 'Certificate Hash' | awk '{print toupper($NF)}'; }
+          bound() { /tmp/v/bin/ansible -i /tmp/inv.yml winrunner -m ansible.builtin.raw -a 'netsh http show sslcert ipport=0.0.0.0:47443' 2>&1 | tr -d '\r' | grep -i 'Certificate Hash' | awk '{print toupper($NF)}'; }
+          OLD_TP=$(openssl x509 -in /mnt/c/sa-cert/old.crt -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)
           /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/win_cert_renew_csr.yml -e "$vars" | tee /tmp/r1.out
           grep -q 'ORDERED RITM' /tmp/r1.out || { echo 'FAIL: the CSR was not ordered'; fail=1; }
           # the PKI: the CSR from the request, signed by the test CA, the certificate (DER) and the chain (.p7b) on the request
