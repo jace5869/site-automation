@@ -387,9 +387,11 @@ class Installer(object):
             if k == 'cert':
                 if certs.index(b) == olds[0]:
                     layout.append('leaf')
-                else:
+                elif self.is_ca(b):
                     layout.append('ca')
                     chain += 1
+                else:
+                    layout.append('other')          # another certificate in the same file: kept as it is
             else:
                 layout.append(k if k == 'key' else 'other')
         st = os.stat(path)
@@ -406,8 +408,12 @@ class Installer(object):
         else:
             out.append(self.key_plan(path, old_pub))
         if chain:
-            self.chain_plan(f, item, [b for i, b in enumerate(certs) if i != olds[0]])
+            self.chain_plan(f, item, [b for (k, b), lay in zip(blocks, layout) if lay == 'ca'])
         return out
+
+    def is_ca(self, pem):
+        text = self.openssl(['x509', '-noout', '-text'], data=pem) or ''
+        return bool(re.search(r'CA:TRUE', text))
 
     def chain_plan(self, f, item, old_cas):
         """A file that holds its chain gets the new certificate's chain: the PKI's, as many as the old file had
@@ -440,11 +446,11 @@ class Installer(object):
                 hits = [k for k in self.scan_keys(cert_path) if self.key_file_pub(k) == old_pub]
         hits = sorted(set(os.path.realpath(h) for h in hits))
         if not hits:
+            # a key with a password cannot be compared: say so, it may be the one (then a person installs it)
             enc = [k for k in self.scan_keys(cert_path) if self.key_file_pub(k) is None and 'ENCRYPTED' in self.head(k)]
-            if enc:
-                raise Held('the old key of %s is not readable without a password (%s?): a person installs it' % (cert_path, enc[0]))
-            raise Held('the old key of %s was not found (its configuration, or %s): name it in cert_install_key_files'
-                       % (cert_path, ', '.join(self.key_dirs[:3])))
+            raise Held('the old key of %s was not found (its configuration, or %s): name it in cert_install_key_files%s'
+                       % (cert_path, ', '.join(self.key_dirs[:3]),
+                          (' - keys with a password are not read: %s' % ', '.join(enc[:3])) if enc else ''))
         if len(hits) > 1:
             raise Held('the old key of %s is in several files (%s): name the one in use in cert_install_key_files'
                        % (cert_path, ', '.join(hits)))

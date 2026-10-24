@@ -335,7 +335,7 @@ switch ($Scenario -replace '^audit_fallback$', 'audit') {   # audit_fallback: th
         Microsoft.PowerShell.Management\Set-Content -LiteralPath $csrPath -Value "-----BEGIN NEW CERTIFICATE REQUEST-----`r`nWEB01`r`n-----END NEW CERTIFICATE REQUEST-----"
         Microsoft.PowerShell.Management\Set-Content -LiteralPath ($csrPath -replace '\.csr$', '.inf') -Value '[NewRequest]'
         ConvertTo-Json @{ certificate = 'CN=web01.corp.test'; old_thumbprint = $old; store = 'Cert:\LocalMachine\My'; expires = '2026-11-14 10:00 UTC'
-            found_in = @('LocalMachine\My, used by https 0.0.0.0:443'); names = @('dns=web01.corp.test'); request = $req; csr_path = $csrPath } |
+            found_in = @('LocalMachine\My, used by https 0.0.0.0:443'); names = @('web01.corp.test'); request = $req; csr_path = $csrPath } |
             Microsoft.PowerShell.Management\Set-Content -LiteralPath (Join-Path $dir "$old.json")
         $M.certs = @{ 'Cert:\LocalMachine\My' = @((O @{ Subject = 'CN=web01.corp.test'; Thumbprint = $old; HasPrivateKey = $true }))
             'Cert:\LocalMachine\REQUEST' = @((O @{ Subject = 'CN=web01.corp.test'; Thumbprint = $req }))

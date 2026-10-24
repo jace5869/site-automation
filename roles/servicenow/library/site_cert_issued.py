@@ -91,13 +91,22 @@ class SnError(Exception):
 
 
 def norm_name(name):
-    """A subjectAltName as either renewal writes it - Linux 'DNS:a' / 'IP:192.0.2.1', Windows 'dns=a' /
-    'ipaddress=192.0.2.1' - or as read here, in one form to compare: 'dns:a', 'ip:192.0.2.1' (an address in
-    its usual form, IPv6 shortened), 'email:x', 'uri:x'."""
+    """A subjectAltName as a renewal wrote it - Linux 'DNS:a' / 'IP:192.0.2.1'; Windows the value alone, 'a' /
+    '192.0.2.1' (its certreq form 'dns=a' too) - or as read here, in one form to compare: 'dns:a', 'ip:192.0.2.1'
+    (an address in its usual form, IPv6 shortened), 'email:x', 'uri:x'."""
     s = str(name or '').strip()
-    m = re.match(r'^([A-Za-z ]+?)\s*[:=]\s*(.*)$', s)
+    m = re.match(r'^(DNS|IP Address|IP|ipaddress|email|URI|url|dns)\s*[:=]\s*(.*)$', s, re.I)
     if not m:
-        return s.lower()
+        # the value alone: its kind from its form
+        try:
+            return 'ip:' + str(ipaddress.ip_address(s))
+        except ValueError:
+            pass
+        if '://' in s:
+            return 'uri:' + s
+        if '@' in s:
+            return 'email:' + s
+        return 'dns:' + s.lower().rstrip('.')
     kind, value = m.group(1).strip().lower(), m.group(2).strip()
     kind = {'ip address': 'ip', 'ipaddress': 'ip', 'url': 'uri'}.get(kind, kind)
     if kind == 'ip':

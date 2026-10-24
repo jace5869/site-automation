@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.25.0 — 2026-10-24
+
+**Updating without scripts:** paste `site-automation-0.25.0-changed-since-0.24.0.zip` as it is (from
+0.15.1 to 0.23.0: `site-automation-0.25.0-changed-since-0.15.1.zip`; coming from before 0.20.0, read the
+0.20.0 notes too - one file to delete). Both leave out `playbooks/group_vars`, `playbooks/host_vars` and
+`poam/poam.csv`. Nothing changes until you create the new templates below; the to-do list of the 0.24.0 notes
+still applies.
+
+**The issued certificate, installed from its request - after an approval.** With the CSRs ordered from the PKI's
+catalog item (`cert_renew_servicenow: catalog`), the PKI admin puts the certificate from DISA on the same
+request. A new workflow takes it from there, on Linux and on Windows (docs/CERT_INSTALL.md):
+
+```text
+[Certificate install - check] --Run on fail--> [Approval] --Run on success--> [Certificate install - approved]
+```
+
+- **The check**, on a schedule, only reads. For each renewal waiting on a host, it finds its request and what
+  the PKI put there: files attached to the RITM, to an attachment question or to the REQ, or a certificate pasted
+  into a work note - PEM, DER, PKCS7 (.p7b) or a zip of them. **A certificate counts only when its public key is
+  the CSR's**; anything else there is listed and never used. On the host, it says what installing it would do,
+  and when one is ready it ends red on purpose - `NEEDS APPROVAL` - with one line per certificate:
+  `READY | web01 | ... | install in <files> | reload httpd.service | then port 443 must serve it | the new one: serial ..., expires ...`.
+- **The approved install** plans each one again first (anything changed since: refused).
+  - **Linux:** each file is copied aside (`cert_renew_dir/backup`), then the new ones are written in the old
+    layout (text or binary, with its chain, with its key) and with the old owner, mode and SELinux label. The
+    old key's file gets the new key. Then the configuration test (`apachectl configtest`, `nginx -t` ...), a
+    **reload** (never a restart), and the port must serve the new certificate. Anything wrong: the old files go
+    back and the service is reloaded again.
+  - **Windows:** the chain's intermediate CAs go into Intermediate CAs (never a root), then
+    `certreq -accept -machine`. The new key gets the old key's extra read permissions (and NETWORK SERVICE for
+    Remote Desktop). Then each binding of the old certificate moves to the new one and is read back: https in
+    HTTP.sys (IIS ...), Remote Desktop, the WinRM HTTPS listener. With full PowerShell, the ports are asked which
+    certificate they serve. Anything wrong: the bindings go back. The old certificate stays in Personal.
+  - Installed: a work note on the request says what went where.
+- **Never automatic - a person installs it, with the steps:**
+  - a keystore, or a service that cannot reload (Java and the like need a restart);
+  - SQL Server, a Central Certificate Store binding, or the WinRM HTTPS listener AAP connects through;
+  - a certificate seen only on a port, or a path something else deploys (`cert_renew_install_notes`);
+  - **an AAP host** (groups `aap`, `aap_hosts`).
+- **Held for a person:** the certificate is not for the key on the host, is expired, or is valid fewer than
+  `cert_install_min_days` days. It lacks names the old one had, its chain does not build, the file was replaced
+  since the CSR, or the old key was not found or was found in several files.
+- **Put the old one back:** *Certificate restore* / *Windows certificate restore* (`cert_restore_only: web01`,
+  Check first lists the backups). The files (Linux) or bindings (Windows) go back, and the renewal waits again.
+
+**To set it up:**
+
+1. The renewal orders from the catalog item ([CERT_RENEWAL_CATALOG.md](docs/CERT_RENEWAL_CATALOG.md)).
+2. Ask the PKI to attach DISA's files (the .cer and the .p7b) to the request.
+3. Create six templates:
+   - *Certificate install - check* (`playbooks/cert_install_check.yml`: Machine, ServiceNow API);
+   - *Certificate install - approved* (`playbooks/cert_install_approved.yml`: the same, the same inventory, no
+     Limit, Variables not prompted);
+   - *Certificate restore* (`playbooks/cert_restore.yml`);
+   - and the three `win_` ones.
+4. Make the workflow with an **Approval** on the check's **Run on fail** (workflow 29 in
+   docs/WORKFLOWS_AND_SCHEDULES.md), and schedule it daily. Try the check as **Check** with a Limit first.
+5. Optional, in `all.yml`:
+   - `cert_install_services`: a file no httpd/nginx/haproxy/postfix/dovecot configuration names, and the
+     service to reload for it;
+   - `cert_install_key_files`: an old key that cannot be found;
+   - `cert_install_never_reload`;
+   - `win_cert_install_rebind`.
+
+Tested against a stand-in ServiceNow and a test CA (Linux: `tests/certs/run_cert_install_test.sh`, with a
+stand-in web server, the rollbacks and the restore; `tests/test_cert_install.py`, `tests/test_cert_issued.py`).
+Windows: with stand-ins in PowerShell 5.1 and 7, normal and Constrained Language, and for real on a Windows
+Server runner - the renewal's CSR, `certreq -accept`, an HTTP.sys binding moved and serving the new certificate,
+the restore.
+
 ## 0.24.0 — 2026-10-24
 
 **Updating without scripts:** paste `site-automation-0.24.0-changed-since-0.23.0.zip` as it is (from
