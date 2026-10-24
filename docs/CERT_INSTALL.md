@@ -190,6 +190,7 @@ and renew again.
 | `REFUSED ... changed since the approval` | between the check and the approval, a file, a binding or a service changed | the next check plans it again |
 | `The approved plan has certificates for X, which this job does not run on` | the approved template's inventory or Limit | the check job's inventory, no Limit |
 | `FAILED ... certreq -accept -machine did not put it in Personal` (Windows) | its chain is not trusted on the server (0x800b0109), or the pending request is not this one | the DoD roots in Trusted Root; nothing else was changed |
+| `ipport=0.0.0.0:443: the port was not asked (... does not answer)` (Windows) | nothing listens on that port now (the site is stopped), or Constrained Language | the binding was read back and is on the new certificate; browse to the site to see it |
 | `the work note was refused` | the API account may not write to the request | nothing else: the job output says what was installed |
 
 ## Limits
