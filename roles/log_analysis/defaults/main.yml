@@ -1,0 +1,114 @@
+---
+# LOG ANALYSIS (playbooks/log_analysis.yml for a group of servers, playbooks/vm_log_analysis.yml for
+# vCenter and its ESXi hosts through vCenter's API). Read-only: each host's warning, error and critical
+# log lines of the window, grouped on the AAP side into patterns (the same line with other numbers,
+# times and names is one pattern, counted across hosts), and ACT (GenAI) explains the top ones - likely
+# cause, evidence, fix, confidence - in evidence mode: ACT runs no command anywhere. Every setting can be
+# set for all hosts, per group or host in the inventory, on the template, or as a survey answer (a list
+# may be typed as "a, b" or one per line). docs/LOG_ANALYSIS.md
+
+# ---- the window ------------------------------------------------------------------------------------
+# The last this-many hours ...
+log_analysis_hours: 24
+# ... or a fixed window, e.g. the outage: log_analysis_since "2026-10-23 08:00" and log_analysis_until
+# "2026-10-23 10:30" (UTC, as the report shows times). Since alone = from then until now.
+log_analysis_since: ""
+log_analysis_until: ""                    # the end of the fixed window (empty = now)
+
+# ---- what to read ------------------------------------------------------------------------------------
+# What a host is: auto (Windows when its connection is WinRM / PSRP, else Linux), linux, windows, or
+# vcsa (a vCenter appliance over SSH: Linux, with the vcsa profile on). Set it per group in the inventory.
+log_analysis_source: auto
+# Profiles: one word switches on the logs of a product (roles/log_analysis/vars/main.yml): vcsa, mid_server,
+# iis, sql_server, nginx, httpd, mariadb, podman, sssd, idm, auditd, aap. E.g. for a group of web servers:
+#   log_analysis_profiles: [nginx, sssd]
+log_analysis_profiles: []
+# Your own profiles, or a shipped one changed (the same name replaces it), the shape of vars/main.yml:
+#   log_analysis_profiles_extra: {stigman: {files: [/opt/stigman/logs/*.log], units: [stigman-api]}}
+log_analysis_profiles_extra: {}
+
+# Linux (and the vCenter appliance): the journal's lines of this priority or worse (journalctl -p:
+# emerg, alert, crit, err, warning, notice).
+log_analysis_priority: err
+log_analysis_journal: true                # false = no journal (text logs, units and containers only)
+# Units and syslog identifiers whose journal is read at log_analysis_units_priority, lower than the
+# rest: e.g. [sssd, nginx, stigman-api] (globs such as dirsrv@* work) and [sudo, sshd].
+log_analysis_units: []
+log_analysis_identifiers: []             # syslog identifiers read the same way, e.g. [sudo, sshd]
+log_analysis_units_priority: warning     # the priority those units and identifiers are read at
+# Podman containers whose output (podman logs) of the window is read, its lines that match
+# log_analysis_match: a name for root's, user/name for a user's (rootless), e.g. [stigman-api, svc_app/web].
+log_analysis_containers: []
+# Text logs (globs), read when they changed in the window: their matching lines, the newest
+# log_analysis_max_lines. Compressed rotations (.gz .xz .bz2 .zst) are left out. log_analysis_files is
+# the base list; log_analysis_files_extra adds to it and to the profiles' files (never replaces them).
+log_analysis_files: []                    # e.g. [/var/log/messages, /var/log/secure]
+log_analysis_files_extra: []              # e.g. [/opt/app/logs/*.log]
+log_analysis_become: true                 # read as root (sudo), as the other checks do
+
+# Windows: the event logs read, their critical (1), error (2) and - log_analysis_win_level 3 - warning events.
+log_analysis_win_logs: [System, Application]
+log_analysis_win_logs_extra: []           # more channels, e.g. ["Microsoft-Windows-TaskScheduler/Operational", "Directory Service", "DNS Server"]
+log_analysis_win_level: 3                 # 1 critical, 2 + error, 3 + warning
+# Event providers whose events are read at every level up to information, in the logs above
+# (e.g. [Service Control Manager]); log_analysis_win_providers_only: true = only these providers' events.
+log_analysis_win_providers: []
+log_analysis_win_providers_only: false   # true = only those providers' events
+# Event IDs always read whatever their level: "Log:ID", or a number for every log read plus Security,
+# e.g. [4625, 4740, "System:7031", "System:7034"]. Security needs an account that may read it.
+log_analysis_win_event_ids: []
+# Text logs (wildcards), read like the Linux ones; _extra adds to the base list and the profiles', e.g.
+#   ['D:\Apps\*\logs\*.log']   (a MID Server's agent logs: the mid_server profile)
+log_analysis_win_files: []
+log_analysis_win_files_extra: []         # more Windows text logs, added to the list above
+
+# The words that make a line of a text log or a container's output worth reading (grep -E, any case);
+# _extra adds words, e.g. [SEVERE, 'HTTP/1.1" 5'].
+log_analysis_match: "error|fail|fatal|crit|panic|denied|refused|timed out|timeout|unable to|cannot|exception|warn|segfault|oom|corrupt|not responding"
+log_analysis_match_extra: []             # more words, added to log_analysis_match
+
+# ---- vCenter and ESXi through vCenter's API (playbooks/vm_log_analysis.yml) ------------------------
+# No SSH and no login to the hosts: vCenter hands over its own logs and each host's (the "VMware vCenter"
+# credential; a read-only role plus Global > Diagnostics). Keys as vCenter names them.
+log_analysis_vcenter_logs: [vpxd]         # [] = not vCenter's own log
+log_analysis_esxi_logs: [hostd, vmkernel, vpxa]   # [] = no host logs; more: fdm, vobd, hostd-probe ...
+log_analysis_esxi_hosts: []               # host names (* ? allowed); [] = every host
+log_analysis_read_lines: 20000            # read back at most this many lines from the end of each log
+
+# ---- every source ------------------------------------------------------------------------------
+log_analysis_max_lines: 500               # keep at most this many lines per log (the newest)
+log_analysis_max_line_chars: 400          # a line longer than this is cut
+# Lines left out everywhere before they are grouped (regular expressions, any case, matched against
+# "<program> <line>"): noise every server logs. log_analysis_ignore is the shipped list; _extra adds yours,
+# e.g. ['sshd.*Connection closed by authenticating user'].
+log_analysis_ignore:
+  - 'Event 10016:'                        # Windows: DCOM "application-specific permission settings" (harmless, by design)
+  - 'Event 36887:'                        # Windows: Schannel "a fatal alert was received from the remote endpoint"
+log_analysis_ignore_extra: []            # more lines to leave out, added to log_analysis_ignore
+log_analysis_min_count: 1                 # a pattern seen fewer times than this is left out
+
+# ---- ACT -----------------------------------------------------------------------------------------
+# ACT runs on the AAP side (the execution environment) with the site_act_* settings
+# (roles/site_act/defaults/main.yml); the key comes from an "ACT model key" credential.
+# false = the patterns only, no ACT (no key needed).
+log_analysis_act: true
+# What you want to know, in your words - ACT looks at it first (a good survey question), e.g.
+# "users report slow logins since 09:00".
+log_analysis_question: ""
+log_analysis_names_extra: []              # more names ACT replaces with placeholders before the model sees them (host names are always)
+log_analysis_max_items: 30                # ACT analyzes at most this many patterns, the most severe first (the rest are listed)
+log_analysis_examples: 3                  # example lines per pattern in the evidence, the report and the artifacts
+log_analysis_max_chars: 60000             # the evidence ACT reads is cut at this many characters
+log_analysis_check_url: true              # first check that the AAP node can reach the model's URL
+# Seconds the model may take for its answer: site_act_model_timeout (600) unless set here.
+log_analysis_act_model_timeout: "{{ site_act_model_timeout | default(600) }}"
+
+# ---- the report ------------------------------------------------------------------------------------
+# The report is printed, kept as the job artifact log_analysis, emailed (report_email_to, and the "Also
+# email the report to" box) and published (report_web_dest). A run that finds nothing is not emailed
+# unless log_analysis_email_if_clean: true (the website gets every run).
+log_analysis_email_if_clean: false
+log_analysis_max_rows: 200                # rows per table in the report (the artifacts have them all)
+# The job stays green when it finds patterns. It fails when ACT was wanted and could not run (after the
+# report), and when no host could be read. true = also fail when a critical or error pattern was found.
+log_analysis_fail: false

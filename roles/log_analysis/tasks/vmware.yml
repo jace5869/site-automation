@@ -1,0 +1,54 @@
+---
+# vCenter and its ESXi hosts (playbooks/vm_log_analysis.yml): their logs read through vCenter's API - no
+# SSH, no login to a host (roles/vmware_vm/tasks/logs_read.yml) - then grouped, explained by ACT and
+# reported (analyze.yml). A host that is not connected, and a vCenter that could not be read, are listed.
+- name: Logs | the window, the words to look for, the lines to leave out
+  ansible.builtin.set_fact:
+    _la_window: "{{ log_analysis_hours | log_window(log_analysis_since, log_analysis_until) }}"
+    _la_vset: >-
+      {{ {'match': log_analysis_match, 'match_extra': log_analysis_match_extra,
+          'ignore': log_analysis_ignore, 'ignore_extra': log_analysis_ignore_extra} | log_settings({}, 'esxi') }}
+
+- name: Logs | the window is right
+  ansible.builtin.assert:
+    that: _la_window.error | length == 0
+    fail_msg: "{{ _la_window.error }}"
+    quiet: true
+
+- name: Logs | read vCenter's and the hosts' logs
+  ansible.builtin.include_role:
+    name: vmware_vm
+    tasks_from: logs_read.yml
+    public: true
+  vars:
+    _vl_opts: >-
+      {{ {'label': _la_window.label, 'begin': _la_window.begin, 'end': _la_window.end, 'match': _la_vset.match,
+          'vcenter_logs': log_analysis_vcenter_logs | log_list, 'esxi_logs': log_analysis_esxi_logs | log_list,
+          'esxi_hosts': log_analysis_esxi_hosts | log_list, 'read_lines': log_analysis_read_lines | int,
+          'max_lines': log_analysis_max_lines | int, 'max_line_chars': log_analysis_max_line_chars | int} }}
+
+- name: Logs | analyze and report
+  ansible.builtin.include_tasks: analyze.yml
+  vars:
+    _la_hosts: >-
+      {{ _vm_logs_read.hosts
+         + (_vm_logs_read.vcenters | selectattr('error') | map('log_vcenter_unread') | list) }}
+    _la_title: vCenter log analysis
+    _la_what: >-
+      {%- set vcs = _vm_logs_read.vcenters | rejectattr('error') | map(attribute='name') | list -%}
+      {{ ('vCenter ' if vcs | length == 1 else 'vCenters ') ~ vcs | join(', ') ~ ' and '
+         ~ (_vm_logs_read.hosts | selectattr('source', 'equalto', 'esxi') | list | length) ~ ' ESXi host(s), through vCenter' }}
+    _la_ignore: "{{ _la_vset.ignore }}"
+    _la_settings:
+      - >-
+        vCenter's logs: {{ (log_analysis_vcenter_logs | log_list | join(', ')) or 'none' }};
+        each host's: {{ (log_analysis_esxi_logs | log_list | join(', ')) or 'none' }}{{ ' (hosts ' ~ (log_analysis_esxi_hosts | log_list | join(', ')) ~ ')'
+                                                                                      if log_analysis_esxi_hosts | log_list | length > 0 else '' }}.
+      - "Read back at most {{ log_analysis_read_lines }} lines of each log; kept: the lines vCenter or ESXi marks warning, error or critical, and the lines that match log_analysis_match."
+
+- name: Logs | every vCenter was read
+  ansible.builtin.include_role:
+    name: vmware_vm
+    tasks_from: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_logs_read.vcenters }}"

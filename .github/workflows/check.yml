@@ -44,6 +44,8 @@ jobs:
         run: |
           python tests/test_filters.py
           python tests/test_vmware_modules.py
+          python tests/test_vm_watch.py
+          python tests/test_log_analysis.py
           python tests/test_cert_inventory.py
           python tests/test_net_certs.py
           python tests/test_ontap.py
@@ -116,6 +118,10 @@ jobs:
         run: |
           bash tests/vmware/run_vmware_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vmware/run_vmware_test.sh
+      - name: Log analysis, this runner as a Linux host with made-up logs (stand-in journalctl and podman, fake ACT; current ansible-core and 2.16)
+        run: |
+          bash tests/logs/run_log_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/logs/run_log_test.sh
       - name: Containers check and Service watch, rootful and rootless (fake podman; current ansible-core and 2.16)
         run: |
           bash tests/containers/run_containers_test.sh
@@ -187,7 +193,9 @@ jobs:
           }
           if ($bad) { exit 1 }
       - name: Windows checks with test data (PowerShell 7 on Linux, normal and constrained)
-        run: pwsh -NoProfile -File tests/windows/test_win_checks.ps1
+        run: |
+          pwsh -NoProfile -File tests/windows/test_win_checks.ps1
+          pwsh -NoProfile -File tests/windows/test_log_collect.ps1
       - name: Active Directory report scripts with made-up domains (PowerShell 7 on Linux, normal and constrained)
         run: pwsh -NoProfile -File tests/windows/test_ad_collect.ps1
       - name: Account lockout scripts with a made-up domain (PowerShell 7 on Linux, normal and constrained)
@@ -222,6 +230,12 @@ jobs:
       - name: With test data - PowerShell 7
         shell: pwsh
         run: pwsh -NoProfile -File tests/windows/test_win_checks.ps1
+      - name: Log analysis collector with test data - Windows PowerShell 5.1
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows/test_log_collect.ps1
+      - name: Log analysis collector with test data - PowerShell 7
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/windows/test_log_collect.ps1
       - name: Active Directory report scripts with made-up domains - Windows PowerShell 5.1
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows/test_ad_collect.ps1

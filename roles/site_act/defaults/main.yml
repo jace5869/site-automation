@@ -29,7 +29,7 @@ site_act_diagnose_only_groups: [aap, aap_hosts, sat, idm, netapp, netapp_console
 
 # ---- Which model ACT talks to -----------------------------------------------------------------
 #   site_act_provider  genai       GenAI.mil (the default)
-#                      asksage     Ask Sage (set site_act_url to your organization's instance)
+#                      asksage     Ask Sage - RETIRED FOR NOW: do not pick it (kept for when it returns)
 #                      genai-beta  the GenAI.mil beta proxy (preview models)
 #   site_act_models    the model to use FOR EACH provider, e.g.
 #                        {genai: gemini-3.8-flash, asksage: gpt-5.6-sol-gov}

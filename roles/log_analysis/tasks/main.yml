@@ -1,0 +1,38 @@
+---
+# On the AAP side (playbooks/log_analysis.yml, last play): what every host read (collect.yml), grouped,
+# explained by ACT and reported (analyze.yml).
+- name: Logs | what every host read
+  ansible.builtin.set_fact:
+    _la_hosts: >-
+      {{ groups['all'] | map('extract', hostvars) | selectattr('log_analysis_result', 'defined')
+         | map(attribute='log_analysis_result') | list }}
+    _la_window: "{{ log_analysis_hours | log_window(log_analysis_since, log_analysis_until) }}"
+
+- name: Logs | some host was targeted
+  ansible.builtin.assert:
+    that: _la_hosts | length > 0
+    fail_msg: >-
+      No host was read: the job ran on no host of the target ({{ target | default('all') }}). Set target to a group
+      of the inventory, or check the Limit.
+    quiet: true
+
+- name: Logs | analyze and report
+  ansible.builtin.include_tasks: analyze.yml
+  vars:
+    _la_title: Log analysis
+    _la_what: "{{ _la_hosts | length }} host(s) of {{ target | default('all') }}"
+    _la_settings: >-
+      {%- set prof = {} -%}
+      {%- for h in _la_hosts -%}
+      {%-   for p in h.profiles | default([]) -%}{%- set _ = prof.update({p: prof[p] | default([]) + [h.host]}) -%}{%- endfor -%}
+      {%- endfor -%}
+      {%- set kinds = _la_hosts | map(attribute='source') | list -%}
+      {%- set out = ['Hosts: ' ~ (['linux', 'vcsa', 'windows'] | map('extract', {'linux': (kinds | select('equalto', 'linux') | list | length) ~ ' Linux',
+                                                                                    'vcsa': (kinds | select('equalto', 'vcsa') | list | length) ~ ' vCenter appliance',
+                                                                                    'windows': (kinds | select('equalto', 'windows') | list | length) ~ ' Windows'})
+                                    | reject('match', '^0 ') | join(', ')) ~ '.'] -%}
+      {%- for p in prof | sort -%}
+      {%-   set _ = out.append('Profile ' ~ p ~ ': ' ~ (prof[p] | join(', ') | truncate(300)) ~ '.') -%}
+      {%- endfor -%}
+      {%- if not prof -%}{%- set _ = out.append('Profiles: none (log_analysis_profiles).') -%}{%- endif -%}
+      {{ out }}

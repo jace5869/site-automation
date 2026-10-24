@@ -199,6 +199,39 @@ vm_health_max_rows: 500                  # rows per table in the report (the art
 # FAILED when there is a critical problem (a host not connected, an HA agent isolated ...), for workflows.
 vm_health_fail: false
 
+# ---- VM outage watch (playbooks/vm_outage_watch.yml), every 5 to 15 minutes ----
+# Quiet when nothing is down: one line, no email. Watch only (phase 1): it restarts nothing; it lists the
+# hung VMs a later phase would restart, so false alarms can be counted first. docs/VM_OUTAGE_WATCH.md
+
+# The HA and storage events of the last this many minutes (set it to the schedule's interval).
+vm_watch_window_minutes: 15
+# A VM powered on for less than this is not judged (a VM still starting has no heartbeat yet).
+vm_watch_min_up_minutes: 15
+# A VM is hung only when it has no guest heartbeat AND does not answer on the network, in every check:
+# a suspect is checked this many times in one run (1 = once), vm_watch_confirm_seconds apart.
+vm_watch_confirm_checks: 2
+vm_watch_confirm_seconds: 120            # seconds between those checks
+# The network probe, from the AAP node, of the suspects only: ping, and a TCP connect to this port too
+# (e.g. 22 or 3389; 0 = ping only). A refused connection counts as an answer (the guest is alive).
+vm_watch_probe: true                     # false = no probe: no VM is then called hung (one signal only)
+vm_watch_probe_port: 0                   # TCP port also tried (0 = ping only)
+vm_watch_probe_timeout: 3                # seconds per address
+vm_watch_max_suspects: 50                # probe and confirm at most this many suspects in one run
+# A VM with no heartbeat that answers on the network (or cannot be probed): VMware Tools died, not
+# the guest. warning = in the tickets (servicenow_min_severity warning); info = the job's output only.
+vm_watch_one_signal_severity: warning
+vm_watch_skip_vms: []                    # VMs never judged: names, * and ? allowed (e.g. [LAB-*])
+vm_watch_skip_folders: []                # VM folders never judged, as vCenter shows them (e.g. ["/DC1/vm/Lab*"])
+# Phase 2 (not built yet) would restart the hung VMs - never these (names, * and ?), never the AAP
+# server or the VMs of vmware_protected_vms / vmware_protected_groups: their hung state is a ticket only.
+vm_watch_protect: []                     # e.g. [DC*, SQL*, VCSA*]
+vm_watch_max_actions: 5                  # more hung VMs at once than this = something bigger: none would be restarted past it
+# The job shows FAILED (a workflow's "On failure" path) when it finds a condition of these severities.
+vm_watch_fail_on: [critical]
+# The report is emailed (report_email_to) and published (report_web_dest) only when it finds a condition
+# of these severities; a clean run is one line in the job output.
+vm_watch_report_on: [critical]
+
 # ---- VMs created report (playbooks/vm_created_report.yml), e.g. every Friday at noon ----
 
 # The window: the VMs created in the last this many days, up to the moment the job runs (7 = the

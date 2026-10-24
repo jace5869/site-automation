@@ -1,0 +1,37 @@
+---
+# Windows: the event logs' critical, error and (log_analysis_win_level 3) warning events, the listed
+# providers' events at every level, the listed event IDs whatever their level, and the matching lines of
+# the text logs that changed in the window (e.g. a ServiceNow MID Server's agent logs) -
+# files/log_collect.ps1, run with the built-in script module over WinRM: no collection needed.
+# Input: _la_set (log_settings), _la_win (log_window).
+- name: Logs | read the event logs and the text logs of {{ _la_win.label }} (read-only)
+  ansible.builtin.script: log_collect.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'since_min': _la_win.since_min | int, 'until_min': _la_win.until_min | int, 'logs': _la_set.win_logs,
+          'level': log_analysis_win_level | int, 'providers': _la_set.win_providers,
+          'providers_only': log_analysis_win_providers_only | bool, 'event_ids': _la_set.win_event_ids,
+          'files': _la_set.win_files, 'match': _la_set.match, 'max_lines': log_analysis_max_lines | int,
+          'max_line_chars': log_analysis_max_line_chars | int} | to_json }}
+  register: _la_wout
+  changed_when: false
+  failed_when: false
+  check_mode: false                     # it only reads: a dry run (Check) shows the real report
+  ignore_unreachable: true
+
+- name: Logs | this server's lines
+  ansible.builtin.set_fact:
+    log_analysis_result: >-
+      {%- set r = _la_wout.stdout_lines | default([]) | site_result | log_win_entries(inventory_hostname, {'max_line_chars': log_analysis_max_line_chars | int}) -%}
+      {%- set err = '' if _la_line | length > 0 else
+                    ((_la_err or _la_wout.msg | default('') or 'the script gave no result') | truncate(300)) -%}
+      {{ {'host': inventory_hostname, 'source': 'windows', 'reachable': not (_la_wout.unreachable | default(false)),
+          'error': err, 'entries': r.entries, 'sources': r.sources, 'profiles': _la_set.profiles, 'ignore': _la_set.ignore} }}
+  vars:
+    _la_line: "{{ _la_wout.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+    # PowerShell errors can arrive as CLIXML: keep only the error text
+    _la_err: >-
+      {{ ((_la_wout.stderr | default('') | regex_findall('<S S="Error">(.*?)</S>') | join(' '))
+          or (_la_wout.stderr | default('')))
+         | regex_replace('_x001B_\\[[0-9;]*m', '') | regex_replace('_x000[AD]_', ' ')
+         | regex_replace('\\s+', ' ') | trim }}

@@ -1,0 +1,117 @@
+---
+# On the AAP side: the lines of every host grouped into patterns (plugins/filter/log_filters.py), the top
+# ones explained by ACT in evidence mode (ACT runs no command; it reads what the job collected), and the
+# report - printed, kept as the job artifact log_analysis, emailed (report_email_to, report_email_also)
+# and published (report_web_dest).
+# Input: _la_hosts (every host's result), _la_window (log_window), _la_title, _la_what (the hosts, in
+# words), _la_settings (lines for the report's "What was read"), _la_ignore (lines left out everywhere,
+# besides each host's own list), _la_vcenters (optional: the vCenters read, for the VMware job).
+- name: Logs | the patterns, most severe first
+  ansible.builtin.set_fact:
+    _la: >-
+      {{ _la_hosts | log_analysis({'ignore': _la_ignore | default([]), 'begin': _la_window.begin, 'end': _la_window.end,
+           'min_count': log_analysis_min_count | int, 'max_items': log_analysis_max_items | int,
+           'examples': log_analysis_examples | int}) }}
+    _la_ran: false
+    _la_parsed: {}
+    _la_reason: ""
+    _la_raw: ""
+    _la_model: ""
+
+- name: Logs | ACT explains the patterns
+  when: log_analysis_act | bool and _la.problems | length > 0
+  block:
+    - name: Logs | ACT analyzes the {{ _la.problems | length }} pattern(s) - evidence mode, ACT runs no command
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: evidence_analysis.yml
+        public: true
+      vars:
+        _ea_items: "{{ _la.problems }}"
+        _ea_evidence: >-
+          {{ _la | log_evidence(_la.problems, {'window': _la_window.label, 'question': log_analysis_question,
+                                               'max_chars': log_analysis_max_chars | int}) }}
+        _ea_task: >-
+          {{ _la.problems | log_act_task({'what': _la_what, 'window': _la_window.label, 'question': log_analysis_question,
+                                          'extra': site_act_extra_instructions | default('')}) }}
+        _ea_names: "{{ _la | log_names(log_analysis_names_extra) }}"
+        _ea_model_timeout: "{{ log_analysis_act_model_timeout }}"
+        _ea_check_url: "{{ log_analysis_check_url | bool }}"
+
+    - name: Logs | what ACT said, for the report
+      ansible.builtin.set_fact:
+        _la_ran: "{{ _ea_ran | bool }}"
+        _la_parsed: "{{ _ea_parsed }}"
+        _la_reason: "{{ _ea_reason }}"
+        _la_raw: "{{ _ea_raw }}"
+        _la_model: "{{ _ea_model }}"
+
+- name: Logs | the report
+  ansible.builtin.set_fact:
+    _la_doc: >-
+      {{ _la | log_report(_la_parsed, {'title': _la_title, 'what': _la_what, 'window': _la_window.label,
+           'act': log_analysis_act | bool, 'ran': _la_ran | bool, 'reason': _la_reason, 'raw': _la_raw,
+           'provider': site_act_provider | default('') if log_analysis_act | bool else '', 'model': _la_model,
+           'max_items': log_analysis_max_items | int, 'max_rows': log_analysis_max_rows | int,
+           'question': log_analysis_question, 'settings': _la_settings | default([])}) }}
+
+- name: Logs | {{ _la_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_la_doc | report_text).splitlines() }}"
+
+- name: Logs | the patterns as job artifacts (log_analysis)
+  ansible.builtin.set_stats:
+    data:
+      log_analysis: >-
+        {%- set out = [] -%}
+        {%- for p in _la.all -%}
+        {%-   set _ = out.append(p | combine((_la_parsed.by_id | default({}))[p.id] | default({}))) -%}
+        {%- endfor -%}
+        {{ {'title': _la_doc.title, 'window': _la_window, 'hosts': _la.hosts, 'lines': _la.lines, 'patterns': out,
+            'critical': _la.critical, 'error': _la.error, 'warning': _la.warning, 'ignored': _la.ignored, 'not_read': _la.not_read,
+            'question': log_analysis_question, 'act': {'asked': log_analysis_act | bool, 'ran': _la_ran | bool,
+            'reason': '' if _la_ran | bool else _la_reason, 'overall': _la_parsed.overall | default('')},
+            'dry_run': ansible_check_mode} }}
+
+# a run that found nothing is not emailed unless log_analysis_email_if_clean; the website gets every run
+- name: Logs | email it, publish it (report_email_to, report_web_dest)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _la_doc }}"
+    _report_email_skip: "{{ _la.all | length == 0 and _la.not_read | int == 0 and not log_analysis_email_if_clean | bool }}"
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+
+- name: Logs | no email
+  ansible.builtin.debug:
+    msg: >-
+      {{ 'No email: report_email_to is not set (docs/EMAIL_REPORTS.md).'
+         if report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0
+         else 'No email: no host logged a warning or an error (log_analysis_email_if_clean).' }}
+  when: >-
+    (report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0)
+    or (_la.all | length == 0 and _la.not_read | int == 0 and not log_analysis_email_if_clean | bool)
+
+- name: Logs | some host was read
+  ansible.builtin.assert:
+    that: (_la.not_read | int) < (_la.hosts | length)
+    fail_msg: >-
+      No host's logs could be read ({{ _la.hosts | map(attribute='error') | select | unique | join('; ') | truncate(400) }}).
+      The report above says why for each.
+    quiet: true
+
+- name: Logs | ACT analyzed the patterns
+  ansible.builtin.assert:
+    that: _la_ran | bool
+    fail_msg: "ACT did not analyze the patterns: {{ _la_reason }} The patterns are in the report (and the email) without an analysis."
+    quiet: true
+  when: log_analysis_act | bool and _la.problems | length > 0 and not ansible_check_mode
+
+- name: Logs | no critical or error pattern (log_analysis_fail)
+  ansible.builtin.assert:
+    that: (_la.critical | int) + (_la.error | int) == 0
+    fail_msg: >-
+      {{ _la.critical }} critical and {{ _la.error }} error pattern(s) (the report is above). log_analysis_fail: false
+      makes this a report only.
+    quiet: true
+  when: log_analysis_fail | bool

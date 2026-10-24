@@ -11,6 +11,9 @@
   vcsim.py guest VM PROPERTY=VALUE...   set read-only properties of a VM (the pick lists: a hung VM is
                    guestHeartbeatStatus=red guest.toolsStatus=toolsNotRunning)
   vcsim.py snap VM NAME   take a snapshot NAME (again: two of the same name - the collection takes a name once)
+  vcsim.py watch   for the outage watch: HA restarted DC0_C0_RP0_VM0 on another host (a warning), all paths
+                   down to a device on DC0_C0_H0 (not cleared: critical), a VMFS heartbeat that timed out on
+                   DC0_C0_H1 and recovered (a warning)
   vcsim.py health  for the health report, on a simulator started with -dc 2 -cluster 2 -host 2
                    -standalone-host 1: vSphere HA on for DC0_C0 (admission control off), DC1_C0 in vCLS
                    retreat mode, host DC0_C1_H1 disconnected
@@ -189,6 +192,31 @@ def health():
     WaitForTask(hosts["DC0_C1_H1"].DisconnectHost_Task())
 
 
+def watch():
+    now = datetime.datetime.now(datetime.timezone.utc)
+    em = content.eventManager
+    hosts = {h.name: h for h in content.viewManager.CreateContainerView(content.rootFolder, [vim.HostSystem], True).view}
+    dc = content.rootFolder.childEntity[0]
+
+    def where(h):
+        return dict(host=vim.event.HostEventArgument(name=h.name, host=h), datacenter=vim.event.DatacenterEventArgument(name=dc.name, datacenter=dc),
+                    computeResource=vim.event.ComputeResourceEventArgument(name=h.parent.name, computeResource=h.parent))
+    v = vm("DC0_C0_RP0_VM0")
+    h0, h1 = hosts["DC0_C0_H0"], hosts["DC0_C0_H1"]
+    em.PostEvent(vim.event.VmRestartedOnAlternateHostEvent(
+        key=0, chainId=0, createdTime=now - datetime.timedelta(minutes=3), userName="", sourceHost=vim.event.HostEventArgument(name=h1.name, host=h1),
+        vm=vim.event.VmEventArgument(name=v.name, vm=v), **where(h0)))
+    # an EventEx needs its object (vcsim's alarm manager reads it)
+    for minutes, type_id, msg in ((4, "esx.problem.storage.apd.start", "Device naa.600a098038303053 has entered the All Paths Down state."),
+                                  (6, "esx.problem.vmfs.heartbeat.timedout", "Lost access to volume DS-TEST due to connectivity issues."),
+                                  (5, "esx.problem.vmfs.heartbeat.recovered", "Successfully restored access to volume DS-TEST.")):
+        em.PostEvent(vim.event.EventEx(key=0, chainId=0, createdTime=now - datetime.timedelta(minutes=minutes), userName="", eventTypeId=type_id,
+                                       severity="error", message=msg, fullFormattedMessage=msg, objectType=vim.HostSystem,
+                                       objectId=(h0 if type_id.startswith("esx.problem.storage") else h1)._moId,
+                                       objectName=(h0 if type_id.startswith("esx.problem.storage") else h1).name,
+                                       **where(h0 if type_id.startswith("esx.problem.storage") else h1)))
+
+
 def guest():
     WaitForTask(vm(sys.argv[2]).ReconfigVM_Task(vim.vm.ConfigSpec(
         extraConfig=[vim.option.OptionValue(key="SET." + kv.split("=", 1)[0], value=kv.split("=", 1)[1]) for kv in sys.argv[3:]])))
@@ -198,4 +226,4 @@ def snap():
     WaitForTask(vm(sys.argv[2]).CreateSnapshot_Task(name=sys.argv[3], description="", memory=False, quiesce=False))
 
 
-{"setup": setup, "state": state, "events": events, "health": health, "guest": guest, "snap": snap}[sys.argv[1]]()
+{"setup": setup, "state": state, "events": events, "health": health, "guest": guest, "snap": snap, "watch": watch}[sys.argv[1]]()

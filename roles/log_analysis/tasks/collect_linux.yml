@@ -1,0 +1,101 @@
+---
+# Linux (and a vCenter appliance): the journal's lines of log_analysis_priority or worse, the units' and
+# identifiers' at log_analysis_units_priority, the containers' output, and the matching lines of the text
+# logs that changed in the window - the newest log_analysis_max_lines of each. Read-only: journalctl,
+# podman logs, find and grep. Each section starts with a line "@@@ <kind> <name>", read back on the AAP
+# side (log_linux_entries). Input: _la_set (log_settings), _la_win (log_window).
+- name: Logs | read the journal, the containers and the text logs of {{ _la_win.label }} (read-only)
+  ansible.builtin.shell: |
+    set -u
+    since_min={{ _la_win.since_min | int }}
+    until_min={{ _la_win.until_min | int }}
+    max={{ log_analysis_max_lines | int }}
+    err="$(mktemp)"
+    trap 'rm -f "$err"' EXIT
+    jwin=(--since "-${since_min}min")
+    [ "$until_min" -gt 0 ] && jwin+=(--until "-${until_min}min")
+    have_journal=0
+    command -v journalctl >/dev/null 2>&1 && have_journal=1
+    of=""
+    [ "$have_journal" = 1 ] && journalctl -q --no-pager -n 0 -o json --output-fields=MESSAGE >/dev/null 2>&1 \
+      && of="--output-fields=MESSAGE,PRIORITY,SYSLOG_IDENTIFIER,_COMM"
+    journal() {  # journal TITLE PRIORITY [match options]
+      local title="$1" prio="$2"; shift 2
+      echo "@@@ journal $title"
+      if [ "$have_journal" != 1 ]; then echo "@@@ error no journalctl on this host"; return; fi
+      journalctl -q --no-pager -p "$prio" "${jwin[@]}" -o json $of "$@" 2>"$err" | tail -n "$max"
+      [ -s "$err" ] && echo "@@@ error $(head -c 300 "$err" | tr '\n' ' ')"
+    }
+    {% if log_analysis_journal | bool %}
+    journal "" {{ log_analysis_priority | quote }}
+    {% endif %}
+    {% if _la_set.units | length > 0 %}
+    journal units {{ log_analysis_units_priority | quote }} {% for u in _la_set.units %}-u {{ u | quote }} {% endfor %}
+
+    {% endif %}
+    {% if _la_set.identifiers | length > 0 %}
+    journal identifiers {{ log_analysis_units_priority | quote }} {% for i in _la_set.identifiers %}-t {{ i | quote }} {% endfor %}
+
+    {% endif %}
+    pwin=(--timestamps --since "${since_min}m")
+    [ "$until_min" -gt 0 ] && pwin+=(--until "${until_min}m")
+    for spec in {{ _la_set.containers | map('quote') | join(' ') }}; do
+      echo "@@@ container $spec"
+      if ! command -v podman >/dev/null 2>&1; then echo "@@@ error no podman on this host"; continue; fi
+      user=""; name="$spec"
+      case "$spec" in */*) user="${spec%%/*}"; name="${spec#*/}" ;; esac
+      out="$(mktemp)"
+      if [ -n "$user" ]; then
+        uid="$(id -u "$user" 2>/dev/null)" || { echo "@@@ error no user $user"; rm -f "$out"; continue; }
+        [ -d "/run/user/$uid" ] || { echo "@@@ error /run/user/$uid is missing (the user is not logged in and has no linger)"; rm -f "$out"; continue; }
+        (cd / && runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/$uid" podman logs "${pwin[@]}" "$name") >"$out" 2>&1
+        rc=$?
+      else
+        podman logs "${pwin[@]}" "$name" >"$out" 2>&1
+        rc=$?
+      fi
+      if [ "$rc" = 0 ]; then
+        grep -aiE -- "$LA_MATCH" "$out" | tail -n "$max" | cut -c1-2000
+      else
+        echo "@@@ error podman logs: $(tail -c 300 "$out" | tr '\n' ' ')"
+      fi
+      rm -f "$out"
+    done
+    declare -A seen
+    for pattern in {{ _la_set.files | map('quote') | join(' ') }}; do
+      found=0
+      while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        found=1
+        [ -f "$f" ] || continue
+        [ -z "${seen[$f]:-}" ] || continue
+        seen[$f]=1
+        case "$f" in *.gz|*.xz|*.bz2|*.zst|*.zip) echo "@@@ skipped $f compressed"; continue ;; esac
+        if [ ! -r "$f" ]; then echo "@@@ file $f"; echo "@@@ error not readable"; continue; fi
+        if [ -z "$(find "$f" -maxdepth 0 -mmin "-$since_min" 2>/dev/null)" ]; then echo "@@@ skipped $f unchanged in the window"; continue; fi
+        echo "@@@ file $f"
+        grep -aiE -- "$LA_MATCH" "$f" 2>"$err" | tail -n "$max" | cut -c1-2000
+        [ -s "$err" ] && echo "@@@ error $(head -c 300 "$err" | tr '\n' ' ')"
+      done < <(compgen -G "$pattern" | sort)
+      [ "$found" = 1 ] || echo "@@@ skipped $pattern no such file"
+    done
+    exit 0
+  args:
+    executable: /bin/bash
+  environment:
+    LA_MATCH: "{{ _la_set.match }}"
+  become: "{{ log_analysis_become | bool }}"
+  register: _la_linux
+  changed_when: false
+  failed_when: false
+  check_mode: false                     # it only reads: a dry run (Check) shows the real report
+  ignore_unreachable: true
+
+- name: Logs | this host's lines
+  ansible.builtin.set_fact:
+    log_analysis_result: >-
+      {%- set r = _la_linux.stdout | default('') | log_linux_entries(inventory_hostname, {'max_line_chars': log_analysis_max_line_chars | int}) -%}
+      {%- set err = '' if (_la_linux.rc | default(1)) == 0 else
+                    ((_la_linux.msg | default('') ~ ' ' ~ _la_linux.stderr | default('')) | trim | replace('\n', ' ') or 'the read failed') -%}
+      {{ {'host': inventory_hostname, 'source': _la_kind, 'reachable': not (_la_linux.unreachable | default(false)),
+          'error': err | truncate(300), 'entries': r.entries, 'sources': r.sources, 'profiles': _la_set.profiles, 'ignore': _la_set.ignore} }}

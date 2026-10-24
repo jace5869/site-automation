@@ -1,0 +1,75 @@
+---
+# The profiles that ship with the log analysis: switch one on for a group with one word in
+# log_analysis_profiles (e.g. [nginx, sssd]); add your own, or change one of these, in
+# log_analysis_profiles_extra (the same shape - an entry of the same name replaces the shipped one).
+# Only the standard locations and unit names of each product: what your site moved elsewhere goes
+# in log_analysis_files_extra / log_analysis_win_files_extra, or in a profile of your own.
+# A profile may set:
+#   files          Linux text logs (globs)              win_logs       Windows event log channels
+#   units          systemd units, read at log_analysis_units_priority
+#   identifiers    syslog identifiers, the same         win_providers  event providers, every level up to information
+#   containers     podman containers (user/name for a user's)
+#   win_event_ids  event IDs always read ("Log:ID", or a number: every log read and Security)
+#   win_files      Windows text logs (wildcards)        match          more words a text log line is read for
+#   ignore         lines to leave out (regular expressions)
+_log_analysis_profiles:
+  vcsa:           # a vCenter appliance (log_analysis_source: vcsa switches it on by itself)
+    files:
+      - /var/log/vmware/vpxd/vpxd.log
+      - /var/log/vmware/vpxd-svcs/vpxd-svcs.log
+      - /var/log/vmware/vmon/vmon.log
+      - /var/log/vmware/sso/sts-health-status.log
+      - /var/log/vmware/sso/ssoAdminServer.log
+      - /var/log/vmware/sso/vmware-identity-sts.log
+      - /var/log/vmware/envoy/envoy.log
+      - /var/log/vmware/rhttpproxy/rhttpproxy.log
+      - /var/log/vmware/vsphere-ui/logs/vsphere_client_virgo.log
+      - /var/log/vmware/applmgmt/applmgmt.log
+      - /var/log/vmware/vpostgres/postgresql.log
+      - /var/log/vmware/vmdird/vmdird-syslog.log
+      - /var/log/vmware/certificatemanagement/certificatemanagement-svcs.log
+      - /var/log/vmware/eam/eam.log
+      - /var/log/vmware/content-library/cls.log
+  mid_server:     # a ServiceNow MID Server on Windows: its agent and wrapper logs, its service stopping
+    win_files:
+      - 'C:\ServiceNow\*\agent\logs\agent0.log*'
+      - 'C:\ServiceNow\*\agent\logs\wrapper.log*'
+      - 'D:\ServiceNow\*\agent\logs\agent0.log*'
+      - 'D:\ServiceNow\*\agent\logs\wrapper.log*'
+    win_event_ids: ['System:7031', 'System:7034', 'System:7023', 'System:7024']
+    match: [SEVERE]
+  iis:
+    win_providers: [Microsoft-Windows-WAS, W3SVC, Microsoft-Windows-IIS-W3SVC-WP, Microsoft-Windows-IIS-APPHOSTSVC]
+    win_files: ['C:\Windows\System32\LogFiles\HTTPERR\httperr*.log']
+    match: [Timer_ConnectionIdle, Timer_MinBytesPerSecond, Connection_Abandoned, AppOffline, Request_Cancelled, '503']
+  sql_server:
+    win_providers: [MSSQLSERVER, SQLSERVERAGENT]
+    win_files: ['C:\Program Files\Microsoft SQL Server\MSSQL*\MSSQL\Log\ERRORLOG*']
+    match: ['Severity: (1[6-9]|2[0-5])', deadlock, 'Login failed']
+  nginx:
+    files: [/var/log/nginx/error.log]
+    units: [nginx]
+  httpd:
+    files: [/var/log/httpd/error_log, /var/log/httpd/ssl_error_log]
+    units: [httpd]
+  mariadb:        # MariaDB and MySQL
+    files: [/var/log/mariadb/mariadb.log, /var/log/mysql/error.log, /var/log/mysqld.log]
+    units: [mariadb, mysqld]
+  podman:
+    units: [podman, podman-restart]
+    identifiers: [podman, conmon]
+  sssd:
+    files: [/var/log/sssd/sssd.log, /var/log/sssd/sssd_*.log, /var/log/sssd/krb5_child.log, /var/log/sssd/ldap_child.log]
+    units: [sssd]
+  idm:            # a Red Hat IdM (FreeIPA) server
+    files: ['/var/log/dirsrv/slapd-*/errors', /var/log/krb5kdc.log, /var/log/kadmind.log, /var/log/httpd/error_log,
+            /var/log/pki/pki-tomcat/ca/system]
+    units: ['dirsrv@*', krb5kdc, kadmin, httpd, named, ipa-custodia, 'pki-tomcatd@*']
+  auditd:
+    files: [/var/log/audit/audit.log]
+    units: [auditd]
+    match: ['res=failed', 'success=no']
+  aap:            # an AAP (automation controller) node installed from RPMs; a containerized AAP: log_analysis_containers
+    files: [/var/log/tower/tower.log, /var/log/tower/dispatcher.log, /var/log/tower/callback_receiver.log,
+            /var/log/tower/task_system.log, /var/log/tower/wsrelay.log]
+    units: [automation-controller, receptor, automation-gateway, nginx, redis]

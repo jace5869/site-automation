@@ -1,0 +1,24 @@
+---
+# Read vCenter's own log and its ESXi hosts' logs through vCenter's API (read-only; the log analysis,
+# playbooks/vm_log_analysis.yml). Input: _vl_opts (the log_analysis_* settings, from
+# roles/log_analysis/tasks/vmware.yml). Output: _vm_logs_read (roles/vmware_vm/library/site_vmware_logs.py).
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | read vCenter's log and its hosts' logs ({{ _vl_opts.label }}) through vCenter's API
+  site_vmware_logs:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    vcenter_logs: "{{ _vl_opts.vcenter_logs }}"
+    esxi_logs: "{{ _vl_opts.esxi_logs }}"
+    esxi_hosts: "{{ _vl_opts.esxi_hosts }}"
+    begin: "{{ _vl_opts.begin }}"
+    end: "{{ _vl_opts.end }}"
+    match: "{{ _vl_opts.match }}"
+    read_lines: "{{ _vl_opts.read_lines | int }}"
+    max_lines: "{{ _vl_opts.max_lines | int }}"
+    max_line_chars: "{{ _vl_opts.max_line_chars | int }}"
+    now: "{{ _vm_now | default(omit) }}"
+  register: _vm_logs_read
+  check_mode: false

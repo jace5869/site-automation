@@ -34,6 +34,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Horizon - push the approved image | `playbooks/horizon_image_push_approved.yml` | [horizon_image_push_approved.yml](horizon_image_push_approved.yml) |
 | Horizon - session cleanup | `playbooks/horizon_session_cleanup.yml` | [horizon_session_cleanup.yml](horizon_session_cleanup.yml) |
 | Horizon - user help | `playbooks/horizon_user_help.yml` | [horizon_user_help.yml](horizon_user_help.yml) |
+| Log analysis | `playbooks/log_analysis.yml` | [log_analysis.yml](log_analysis.yml) |
 | NetApp ONTAP health report | `playbooks/ontap_health_report.yml` | [ontap_health_report.yml](ontap_health_report.yml) |
 | Network config backup | `playbooks/net_config_backup.yml` | [net_config_backup.yml](net_config_backup.yml) |
 | Network config load | `playbooks/net_config_load.yml` | [net_config_load.yml](net_config_load.yml) |
@@ -61,6 +62,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VM - deploy settings finder | `playbooks/vm_deploy_inventory.yml` | [vm_deploy_inventory.yml](vm_deploy_inventory.yml) |
 | VM - health report | `playbooks/vm_health_report.yml` | [vm_health_report.yml](vm_health_report.yml) |
 | VM - notes | `playbooks/vm_notes.yml` | [vm_notes.yml](vm_notes.yml) |
+| VM - outage watch | `playbooks/vm_outage_watch.yml` | [vm_outage_watch.yml](vm_outage_watch.yml) |
 | VM - pick up deploy tickets | `playbooks/vm_deploy_poll.yml` | [vm_deploy_poll.yml](vm_deploy_poll.yml) |
 | VM - refresh the pick lists | `playbooks/vm_pick_refresh.yml` | [vm_pick_refresh.yml](vm_pick_refresh.yml) |
 | VM - restart | `playbooks/vm_reboot.yml` | [vm_reboot.yml](vm_reboot.yml) |
@@ -70,6 +72,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VM - snapshot | `playbooks/vm_snapshot.yml` | [vm_snapshot.yml](vm_snapshot.yml) |
 | VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | [vm_snapshot_cleanup.yml](vm_snapshot_cleanup.yml) |
 | VM - snapshot report | `playbooks/vm_snapshot_report.yml` | [vm_snapshot_report.yml](vm_snapshot_report.yml) |
+| VM - vCenter log analysis | `playbooks/vm_log_analysis.yml` | [vm_log_analysis.yml](vm_log_analysis.yml) |
 | VM - VMs created report | `playbooks/vm_created_report.yml` | [vm_created_report.yml](vm_created_report.yml) |
 | VMware - certificate renewal | `playbooks/vmware_cert_renew.yml` | [vmware_cert_renew.yml](vmware_cert_renew.yml) |
 | VMware - certificate report | `playbooks/vmware_cert_report.yml` | [vmware_cert_report.yml](vmware_cert_report.yml) |

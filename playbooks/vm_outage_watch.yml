@@ -1,0 +1,17 @@
+---
+# VM OUTAGE WATCH (vCenter), every 5 to 15 minutes. Read-only: is something down or hung right now - a
+# host not responding, an HA agent isolated, a datastore not accessible, all paths down, an HA restart or
+# failure, a VM waiting on a question, a hung VM (no guest heartbeat AND no answer on the network, in
+# every check of the run). Quiet when clean: one line, no email. Fails when it finds a critical condition
+# (vm_watch_fail_on), for a workflow's ServiceNow tickets step. Watch only: it restarts nothing, and lists
+# what a later phase would restart. Attach a "VMware vCenter" credential; no Limit. docs/VM_OUTAGE_WATCH.md
+#   ansible-playbook playbooks/vm_outage_watch.yml
+- name: VM outage watch
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM outage watch
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: watch.yml

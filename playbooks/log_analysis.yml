@@ -1,0 +1,45 @@
+---
+# LOG ANALYSIS - point it at a group of servers (target, or the Limit) and GenAI reads their logs. Read-only.
+# Each host's warning, error and critical log lines of the last log_analysis_hours (or log_analysis_since ..
+# log_analysis_until: "what happened during the outage") are read - Linux: the journal, units, containers,
+# text logs; Windows (WinRM): the event logs, providers, event IDs, text logs; a vCenter appliance over SSH
+# (log_analysis_source: vcsa) - and grouped on the AAP side into patterns (the same line with other
+# numbers, times and names is one pattern, counted across hosts). ACT (GenAI) explains the top ones in
+# evidence mode - likely cause, evidence, fix, confidence - and runs no command anywhere. Profiles switch
+# on a product's logs with one word (log_analysis_profiles: [nginx, sssd], mid_server, iis, sql_server ...),
+# log_analysis_question tells ACT what you want to know. One report: printed, the job artifact
+# log_analysis, emailed (report_email_to) and published (report_web_dest). A host that cannot be reached
+# is listed, and the job is not failed for it. vCenter and ESXi without SSH: vm_log_analysis.yml.
+# In AAP: the inventory, its Machine credential (the Windows one for Windows hosts) and an "ACT model
+# key" credential (log_analysis_act: false = the patterns only, no key). docs/LOG_ANALYSIS.md
+#   ansible-playbook playbooks/log_analysis.yml -e target=web -e '{"log_analysis_profiles": ["nginx"]}'
+#   ansible-playbook playbooks/log_analysis.yml -l web01.example.mil -e log_analysis_since="2026-10-23 08:00" \
+#     -e log_analysis_until="2026-10-23 10:30" -e log_analysis_question="users report slow logins since 08:15"
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('all') }}"
+
+- name: Logs - read each host
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Read this host's logs (read-only)
+      ansible.builtin.include_role:
+        name: log_analysis
+        tasks_from: collect.yml
+
+- name: Log analysis
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Log analysis
+      ansible.builtin.include_role:
+        name: log_analysis

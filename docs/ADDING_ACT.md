@@ -59,12 +59,13 @@ themselves, so they need no key.
 
 ### 2. Pick the model provider
 
-ACT can talk to three providers. Pick one with **`site_act_provider`**:
+ACT can talk to three providers. Pick one with **`site_act_provider`**. **GenAI.mil (`genai`) is the default
+and the one to use: Ask Sage is retired for now.** Its settings stay below, unused, in case it comes back.
 
 | `site_act_provider` | Provider | Key (credential) | Also set |
 |---|---|---|---|
 | `genai` (default) | GenAI.mil | *ACT model key*, **GenAI API key** field | nothing (optional: `site_act_model`) |
-| `asksage` | Ask Sage | *ACT model key*, **AskSage API key** field | `site_act_url`: your organization's Ask Sage API URL. The default is `https://api.genai.army.mil/server/openai/v1/chat/completions` |
+| `asksage` | Ask Sage (**retired for now**: do not pick it) | *ACT model key*, **AskSage API key** field | `site_act_url`: your organization's Ask Sage API URL. The default is `https://api.genai.army.mil/server/openai/v1/chat/completions` |
 | `genai-beta` | GenAI.mil beta proxy (preview models) | *ACT GenAI beta key* (`aap/credential_types/act_genai_beta_key.yml`) | nothing |
 
 The settings:
@@ -90,7 +91,7 @@ The settings:
   site_act_urls:                           # only if your Ask Sage is not ACT's default URL
     asksage: https://<your ask sage host>/server/openai/v1/chat/completions
   ```
-  To make Ask Sage the default, change the first line to `site_act_provider: asksage`.
+  (Ask Sage is retired for now: keep `site_act_provider: genai`.)
 - **For one group**: the group's settings file (`playbooks/group_vars/<group>.yml`), or the
   group's **Variables** box in AAP. For example `site_act_provider: asksage` there, and only that
   group's hosts use Ask Sage (with its model from `site_act_models`).
@@ -152,7 +153,7 @@ On **Health check** and **Troubleshoot** → **Survey** → **Create survey ques
 |---|---|---|---|---|
 | Ask ACT (GenAI) about the findings? | `use_act` | Multiple Choice (single select) | `no`, `yes` | `no` |
 | What may ACT do? | `site_act_level` | Multiple Choice (single select) | `explain`, `diagnose`, `self-heal` | `explain` |
-| Which model provider? (optional) | `site_act_provider` | Multiple Choice (single select) | `genai`, `asksage`, `genai-beta` | the one in your settings |
+| Which model provider? (optional) | `site_act_provider` | Multiple Choice (single select) | `genai`, `genai-beta` (leave `asksage` out while Ask Sage is retired) | the one in your settings |
 | Which model? (optional, blank = the provider's model from `site_act_models`) | `site_act_model` | Text, not required | | blank |
 
 Leave out the last two if everyone uses the same provider. Your setting (section 2) then applies.
@@ -358,6 +359,11 @@ that first. It uses the same settings as everything else here: `site_act_provide
 `site_act_models`, `site_act_url`, `site_act_env` (a proxy), `site_act_ca` (a CA file **in the
 execution environment**, e.g. one from the project: `"{{ playbook_dir }}/files/ca/model-ca.pem"`),
 and the **ACT model key** credential on its template.
+
+The **log analysis** ([LOG_ANALYSIS.md](LOG_ANALYSIS.md): `Log analysis` for a group of Linux or Windows
+servers or a vCenter appliance, `VM - vCenter log analysis` for vCenter and its ESXi hosts) works the
+same way: the job reads the logs, groups the lines into patterns on the AAP side, and ACT explains the
+top ones in evidence mode - one call per job, whatever the number of hosts.
 
 ## Write your own check (it works with the report, tickets and ACT automatically)
 

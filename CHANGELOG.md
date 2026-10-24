@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.26.0 — 2026-10-24
+
+**Updating without scripts:** paste `site-automation-0.26.0-changed-since-0.25.0.zip` as it is (from
+0.15.1 to 0.24.0: `site-automation-0.26.0-changed-since-0.15.1.zip`; coming from before 0.20.0, read the
+0.20.0 notes too - one file to delete). Both leave out `playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`.
+Nothing else to change: the new jobs do nothing until you make templates for them.
+
+**VM outage watch (phase 1, watch only).** `playbooks/vm_outage_watch.yml` ("VM - outage watch") runs every 5 to 15
+minutes against vCenter and asks one question: is something down or hung right now? It flags a host not responding or
+disconnected, an HA agent isolated or partitioned, a datastore not accessible, all paths down or device loss that did
+not clear, an HA restart or failure, a VM waiting on a question, and a hung VM. A VM is hung only when two signals
+agree in every check of the run: no guest heartbeat in vCenter, and no answer to a ping (or `vm_watch_probe_port`)
+from the AAP node. Only the suspects are probed, and they are checked again `vm_watch_confirm_seconds` later; a VM with
+a vCenter task running (snapshot, migration, clone) or just started is not judged. A clean run is one line, with no
+email and no web page. When it finds something it reports it, hands one incident per condition to the ServiceNow
+tickets job (`[VM - outage watch] --Always--> [ServiceNow tickets]`, noted or resolved once it clears), and fails. It
+restarts nothing: it lists the hung VMs a later phase would restart, and the protected ones it never would (the AAP
+server, `vmware_protected_vms`, `vm_watch_protect`), so false alarms can be counted before any action is turned on.
+docs/VM_OUTAGE_WATCH.md.
+
+**Log analysis: point it at a group of servers, and GenAI reads their logs.** `playbooks/log_analysis.yml` reads the
+warning, error and critical log lines of the hosts the job targets, for the last `log_analysis_hours` (24) or a fixed
+window (`log_analysis_since` / `log_analysis_until`, e.g. the outage): Linux (the journal, units, podman containers,
+text logs), Windows over WinRM (event logs, providers, event IDs, text logs) and a vCenter appliance over SSH.
+`playbooks/vm_log_analysis.yml` reads vCenter's vpxd and each ESXi host's hostd, vmkernel and vpxa through vCenter's
+API: no SSH. On the AAP side the lines are grouped into patterns - the same line with other numbers, times and names on
+several hosts is one pattern, counted - and ACT explains the top ones in evidence mode (likely cause, evidence, fix,
+confidence); it runs no command. Every run gives one report: the patterns table always, ACT's table when it ran, the
+hosts not read, and what was read. It is printed, kept as the job artifact `log_analysis`, emailed (`report_email_to`,
+"Also email the report to") and published (`report_web_dest`). Profiles switch on a product's logs with one word:
+`vcsa`, `mid_server` (a ServiceNow MID Server on Windows), `iis`, `sql_server`, `nginx`, `httpd`, `mariadb`, `podman`,
+`sssd`, `idm`, `auditd`, `aap`; add your own in `log_analysis_profiles_extra`. Every list has an `_extra` that adds to
+it, `log_analysis_ignore_extra` leaves out known noise, and `log_analysis_question` tells ACT what you want to know
+("users report slow logins since 09:00"). `log_analysis_act: false` gives the patterns without ACT.
+docs/LOG_ANALYSIS.md.
+
+**ACT: GenAI.mil, not Ask Sage.** Ask Sage is retired for now: the docs, the example settings and the suggested
+provider survey say so and offer `genai` and `genai-beta` only. GenAI.mil was already the default everywhere; the
+`asksage` setting still works, for when it comes back.
+
 ## 0.25.0 — 2026-10-24
 
 **Updating without scripts:** paste `site-automation-0.25.0-changed-since-0.24.0.zip` as it is (from

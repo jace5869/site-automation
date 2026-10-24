@@ -1,0 +1,94 @@
+---
+# VM OUTAGE WATCH (playbooks/vm_outage_watch.yml): is something down or hung right now? Hosts not
+# responding, HA agents isolated, datastores not accessible, all paths down / device loss, HA restarts
+# and failures, VMs waiting on a question, hung VMs (no heartbeat AND no answer on the network, in every
+# check of the run). Read-only: phase 1 restarts nothing, it lists what phase 2 would restart.
+# A clean run is one line - no email, no web page. A run that finds a condition of vm_watch_report_on
+# reports it (report_email_to, report_web_dest). Always: the artifacts vm_watch, and site_health /
+# site_health_targets for the ServiceNow tickets job after it in a workflow (one ticket per condition,
+# noted - or resolved - once it clears). Fails on a condition of vm_watch_fail_on, after all that.
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | what is down or hung (the suspects checked {{ vm_watch_confirm_checks }} time(s), {{ vm_watch_confirm_seconds }} s apart)
+  site_vmware_watch:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    window_minutes: "{{ vm_watch_window_minutes | float }}"
+    min_up_minutes: "{{ vm_watch_min_up_minutes | float }}"
+    skip_vms: "{{ vm_watch_skip_vms | name_list }}"
+    skip_folders: "{{ vm_watch_skip_folders | name_list }}"
+    probe: "{{ vm_watch_probe | bool }}"
+    probe_port: "{{ vm_watch_probe_port | int }}"
+    probe_timeout: "{{ vm_watch_probe_timeout | float }}"
+    max_suspects: "{{ vm_watch_max_suspects | int }}"
+    confirm_checks: "{{ vm_watch_confirm_checks | int }}"
+    confirm_seconds: "{{ vm_watch_confirm_seconds | float }}"
+    now: "{{ _vm_now | default(omit) }}"
+  register: _vm_w
+  check_mode: false                      # read-only: a dry run (Check) reads and reports the same
+
+# one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: VMware | what was found, and what phase 2 would restart (nothing is restarted)
+  ansible.builtin.set_fact:
+    _vm_w_cond: "{{ _vm_w | vm_watch_conditions({'one_signal_severity': vm_watch_one_signal_severity}) }}"
+    _vm_w_opts: >-
+      {{ {'protected_ids': ((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))
+                            + (vmware_protected_groups | select('in', groups) | map('extract', groups) | flatten)) | host_ids(hostvars),
+          'protected_names': (vmware_protected_vms | name_list) + (vm_watch_protect | name_list),
+          'aap_known': ((groups['aap'] | default([])) + (groups['aap_hosts'] | default([]))) | length > 0
+                       or (vmware_protected_vms | name_list) | length > 0,
+          'max_actions': vm_watch_max_actions | int} }}
+
+- name: VMware | phase 2's decision (made, not carried out)
+  ansible.builtin.set_fact:
+    _vm_w_actions: "{{ _vm_w_cond | vm_watch_actions(_vm_w_opts) }}"
+    _vm_w_report_it: "{{ _vm_w_cond | selectattr('severity', 'in', vm_watch_report_on | name_list) | list | length > 0 }}"
+
+- name: VMware | {{ _vm_w | vm_watch_clean_line(_vm_w_cond) if _vm_w_cond | length == 0 else 'below the report threshold (vm_watch_report_on)' }}
+  ansible.builtin.debug:
+    msg: >-
+      {{ [_vm_w | vm_watch_clean_line(_vm_w_cond)]
+         + (_vm_w_cond | map(attribute='severity') | map('upper') | zip(_vm_w_cond | map(attribute='summary')) | map('join', ' ') | list)
+         + ((_vm_w | vm_watch_not_judged) | map(attribute='name') | zip((_vm_w | vm_watch_not_judged) | map(attribute='why'))
+            | map('join', ' - not judged: ') | list) }}
+  when: not _vm_w_report_it | bool
+
+- name: VMware | the outage report
+  when: _vm_w_report_it | bool
+  block:
+    - name: VMware | the report
+      ansible.builtin.set_fact:
+        _vm_w_doc: "{{ _vm_w | vm_watch_report(_vm_w_cond, _vm_w_actions) }}"
+
+    - name: VMware | outage report
+      ansible.builtin.include_tasks: report.yml
+      vars:
+        _vm_vcenters: "{{ _vm_w.vcenters }}"
+        _vm_report_subject: "{{ _vm_w_doc.title }}"
+        _vm_report_lines: "{{ (_vm_w_doc | report_text).splitlines() }}"
+        _vm_report_doc: "{{ _vm_w_doc }}"
+
+# always (clean or not): the tickets job after this one in a workflow opens, updates and clears the tickets
+- name: VMware | the result as job artifacts (vm_watch; site_health for the ServiceNow tickets job)
+  ansible.builtin.set_stats:
+    data:
+      vm_watch: "{{ _vm_w | vm_watch_artifact(_vm_w_cond, _vm_w_actions) }}"
+      site_health: "{{ _vm_w | vm_watch_health(_vm_w_cond, {'job': awx_job_id | default('')}) }}"
+      site_health_targets: []
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_w.vcenters }}"
+
+- name: VMware | nothing down or hung (vm_watch_fail_on)
+  ansible.builtin.assert:
+    that: _vm_w_cond | selectattr('severity', 'in', vm_watch_fail_on | name_list) | list | length == 0
+    fail_msg: >-
+      {{ _vm_w_cond | selectattr('severity', 'in', vm_watch_fail_on | name_list) | list | length }} condition(s) at
+      {{ vm_watch_fail_on | name_list | join(' / ') }}:
+      {{ _vm_w_cond | selectattr('severity', 'in', vm_watch_fail_on | name_list) | map(attribute='summary') | join('; ') }}.
+      Nothing was restarted (watch only). The report is above.
+    quiet: true

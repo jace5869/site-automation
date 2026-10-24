@@ -20,6 +20,7 @@ import site_vmware_esxi_security as es  # noqa: E402
 import site_vmware_health as hl  # noqa: E402
 import site_vmware_vm_created as vc  # noqa: E402
 import site_vmware_certs as vcert  # noqa: E402
+import site_vmware_watch as wt  # noqa: E402
 
 G = 1024 ** 3
 
@@ -552,6 +553,60 @@ class VmwareCerts(unittest.TestCase):
         os.environ["VMWARE_PASSWORD"] = "wrong"
         with self.assertRaisesRegex(RuntimeError, r"refused the login to its API \(HTTP 401\)"):
             self._csr("api")
+
+
+class OutageWatch(unittest.TestCase):
+    """site_vmware_watch: who is a suspect, a task that makes it busy, where it is probed, the verdict."""
+    VM = {"name": "app01", "power": "poweredOn", "tools": "toolsOk", "tools_running": "guestToolsRunning", "heartbeat": "red",
+          "up_minutes": 600, "ip": "192.0.2.20", "ips": ["192.0.2.20", "fe80::1"], "hostname": "app01.example.mil"}
+
+    def test_suspect_reason(self):
+        self.assertEqual(wt.suspect_reason(self.VM), "no guest heartbeat (red)")
+        gray = dict(self.VM, heartbeat="gray", tools="toolsNotRunning", tools_running="guestToolsNotRunning")
+        self.assertEqual(wt.suspect_reason(gray), "VMware Tools stopped answering (heartbeat gray)")
+        self.assertEqual(wt.suspect_reason(dict(self.VM, heartbeat="green")), "")
+        self.assertEqual(wt.suspect_reason(dict(self.VM, heartbeat="gray")), "")           # gray but Tools say running: not judged
+        self.assertEqual(wt.suspect_reason(dict(self.VM, heartbeat="yellow")), "")
+        self.assertEqual(wt.suspect_reason(dict(self.VM, tools="toolsNotInstalled")), "")  # no Tools: never judged
+        self.assertEqual(wt.suspect_reason(dict(self.VM, tools="")), "")
+        self.assertEqual(wt.suspect_reason(dict(self.VM, power="poweredOff")), "")
+        self.assertEqual(wt.suspect_reason(dict(self.VM, up_minutes=5)), "")               # still starting
+        self.assertEqual(wt.suspect_reason(dict(self.VM, up_minutes=5), min_up_minutes=0), "no guest heartbeat (red)")
+        self.assertEqual(wt.suspect_reason(dict(self.VM, up_minutes=None)), "no guest heartbeat (red)")
+
+    def test_busy_task(self):
+        self.assertEqual(wt.busy_task([{"id": "VirtualMachine.createSnapshot", "state": "running"}]),
+                         "snapshot (VirtualMachine.createSnapshot)")
+        self.assertEqual(wt.busy_task([{"id": "Drm.ExecuteVMotionLRO", "state": "queued"}]), "vmotion (Drm.ExecuteVMotionLRO)")
+        self.assertEqual(wt.busy_task([{"id": "VirtualMachine.createSnapshot", "state": "success"},
+                                       {"id": "VirtualMachine.migrate", "state": "error"}]), "")
+        self.assertEqual(wt.busy_task([{"id": "VirtualMachine.acquireTicket", "state": "running"}]), "")
+        self.assertEqual(wt.busy_task(None), "")
+
+    def test_probe_candidates(self):
+        self.assertEqual(wt.probe_candidates(self.VM), ["192.0.2.20", "app01.example.mil", "app01"])
+        # Tools that stopped often leave no IP: the guest host name and the VM name (DNS)
+        self.assertEqual(wt.probe_candidates({"name": "app 01", "ip": "", "ips": []}), [])
+        self.assertEqual(wt.probe_candidates({"name": "app01", "ip": "", "ips": [], "hostname": ""}), ["app01"])
+
+    def test_verdict(self):
+        hung = {"reason": "no guest heartbeat (red)", "busy": "", "probe": "no answer"}
+        self.assertEqual(wt.verdict([hung, hung]), "hung")
+        self.assertEqual(wt.verdict([hung, dict(hung, probe="answers")]), "one-signal")
+        self.assertEqual(wt.verdict([hung, dict(hung, reason="")]), "recovered")         # heartbeat back in the 2nd check
+        self.assertEqual(wt.verdict([hung, dict(hung, busy="snapshot (x)")]), "busy")
+        self.assertEqual(wt.verdict([dict(hung, probe="no address")]), "unprobed")
+        self.assertEqual(wt.verdict([hung, dict(hung, probe="unavailable")]), "unprobed")  # one check could not probe: not hung
+        self.assertEqual(wt.verdict([]), "recovered")
+
+    def test_name_skipped(self):
+        v = {"name": "LAB-01", "folder": "/DC1/vm/Lab/web"}
+        self.assertEqual(wt.name_skipped(v, ["lab-*"], []), "vm_watch_skip_vms")
+        self.assertEqual(wt.name_skipped(v, [], ["/dc1/vm/lab*"]), "vm_watch_skip_folders")
+        self.assertEqual(wt.name_skipped(v, ["web*"], ["/DC2/*"]), "")
+
+    def test_probe_without_address(self):
+        self.assertEqual(wt.probe({"name": "", "ip": "", "ips": []})["probe"], "no address")
 
 
 if __name__ == "__main__":

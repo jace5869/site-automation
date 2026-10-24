@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: log_analysis
+  description: "Log analysis (read-only): the warning and error log lines of a group of servers, vCenter or its ESXi hosts, grouped into patterns and explained by ACT (GenAI) in evidence mode."
+  license: MIT
+  min_ansible_version: "2.16"
+dependencies: []

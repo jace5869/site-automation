@@ -8,7 +8,10 @@
 # tests/containers/fake_act.py); the ESXi security settings; capacity planning (with and without
 # GenAI's estimate); the health report (a third simulator with 2 datacenters); the certificate renewal of vCenter
 # and its hosts (the days raised, one host, incidents and CSRs in a fake ServiceNow, no second CSR, a refused attachment);
-# the pick lists (the survey's choices written in a fake AAP, the picked snapshots deleted and VMs restarted, each checked again).
+# the pick lists (the survey's choices written in a fake AAP, the picked snapshots deleted and VMs restarted, each checked again);
+# the outage watch (hung VMs by heartbeat and ping, protected ones, HA and storage events, a disconnected host, its
+# incidents opened and resolved in a fake ServiceNow);
+# the vCenter log analysis (vcsim hands out no logs: the job says so).
 #   bash tests/vmware/run_vmware_test.sh
 # Needs: podman or docker; a python with pyVmomi and the vSphere Automation SDK (pip install pyvmomi
 # vmware-vcenter; VMWARE_TEST_PYTHON=... to pick it); the vmware.vmware collection (installed into a
@@ -1935,5 +1938,83 @@ run "catalog, its request cancelled (Closed Skipped): a new CSR (a new key on th
     && echo "ok   -   ...one new order, not the cancelled one" || { echo "FAIL -   ...the new order"; fails=$((fails + 1)); }
 unset SN_HOST SN_USERNAME SN_PASSWORD
 kill "$csn_pid" "$csn_pid2" "$csn_pid3" 2>/dev/null
+
+# ---- the vCenter log analysis: vcsim has no DiagnosticManager, so it hands out no log - the job says so for
+# vCenter and each host and fails after its report (tests/test_log_analysis.py reads made-up vpxd / hostd /
+# vmkernel lines through a stand-in DiagnosticManager) ---------------------------------------------------------
+run "vCenter log analysis against vcsim (no logs through its API): said for vCenter and each host, reported, fails" fail vm_log_analysis.yml \
+    -e log_analysis_act=false \
+    -- "does not hand out logs through its API (DiagnosticManager not implemented)" "vCenter log analysis: no warning or error" \
+       "host(s) not read" "No host's logs could be read"
+run "vCenter log analysis: a wrong window is refused before vCenter is read" fail vm_log_analysis.yml -e log_analysis_until=soon \
+    -- "must look like 2026-10-23 08:00"
+
+# ---- the VM outage watch (playbooks/vm_outage_watch.yml) ---------------------------------------------------
+# a fresh simulator; the suspects checked twice, 1 s apart; vcsim's VMs have just booted (no minimum up time).
+# The fake IP addresses (192.0.2.x) do not answer a ping: a VM with no heartbeat there is hung. One at 127.0.0.1 answers.
+fresh
+wt='{"vm_watch_confirm_seconds": 1, "vm_watch_probe_timeout": 1, "vm_watch_min_up_minutes": 0}'
+stats() {  # stats FILE: the job's artifacts (the CUSTOM STATS line of the last run) as an extra-vars file
+    "$py" - "$work/out.txt" "$1" <<'EOPY'
+import json, sys
+line = [l for l in open(sys.argv[1]) if l.strip().startswith("RUN: {")][-1]
+d = json.loads(line.strip()[len("RUN: "):])
+json.dump({"site_health": d["site_health"], "site_health_targets": d["site_health_targets"]}, open(sys.argv[2], "w"))
+EOPY
+}
+run "outage watch, nothing down: one line, green" ok vm_outage_watch.yml -e "$wt" \
+    -- "No outage: 4 host(s), 1 datastore(s), 4 powered-on VM(s) checked (vCenter 127.0.0.1)." '"site_health_targets": []'
+grep -qF "VMware | email it" "$work/out.txt" && { echo "FAIL -   ...a clean run must not report"; fails=$((fails + 1)); } || echo "ok   -   ...no report, no email"
+VMWARE_PORT=$port "$py" "$here/vcsim.py" guest DC0_C0_RP0_VM1 guestHeartbeatStatus=red guest.toolsStatus=toolsOk guest.ipAddress=127.0.0.1
+run "outage watch: no heartbeat but answers a ping - one signal, a warning, green, not reported (vm_watch_report_on)" ok vm_outage_watch.yml -e "$wt" \
+    -- "WARNING VM DC0_C0_RP0_VM1 has no guest heartbeat, but it answers on the network: not called hung (one signal only)"
+VMWARE_PORT=$port "$py" "$here/vcsim.py" guest DC0_H0_VM1 guestHeartbeatStatus=red guest.toolsStatus=toolsOk
+run "outage watch: a hung VM (no heartbeat, no answer, in both checks) - reported, red, nothing restarted" fail vm_outage_watch.yml -e "$wt" \
+    -- "VM outage watch: 1 critical, 1 warning" "VM DC0_H0_VM1 is hung: no guest heartbeat (red); no answer at 192.0.2.20, in 2 check(s)" \
+       "Would be restarted in phase 2 (nothing was done)" "Nothing was restarted (watch only)" '"id": "vm-watch:hung:DC0_H0_VM1"'
+check "  ...and it is still on" DC0_H0_VM1 "v['power']" poweredOn
+stats "$work/watch-hung.json"
+run "outage watch: a hung VM in vm_watch_protect - a ticket only" fail vm_outage_watch.yml -e "$wt" -e '{"vm_watch_protect": ["dc0_h0_*"]}' \
+    -- "Protected: ticket only" "DC0_H0_VM1  127.0.0.1  DC0_H0  vmware_protected_vms / vm_watch_protect"
+VMWARE_PORT=$port "$py" "$here/vcsim.py" guest DC0_H0_VM0 guestHeartbeatStatus=red guest.toolsStatus=toolsOk
+run "outage watch: the AAP server hung - never restarted, a ticket only" fail vm_outage_watch.yml -e "$wt" \
+    -- "VM DC0_H0_VM0 is hung" "the AAP server, or a host of vmware_protected_groups"
+INV="$work/inv-noaap.yml" run "outage watch: the inventory cannot tell which VM is AAP - nothing would be restarted" fail vm_outage_watch.yml -e "$wt" \
+    -- "does not say which VM is the AAP server"
+run "outage watch as a dry run (Check): the same report" fail vm_outage_watch.yml --check -e "$wt" \
+    -- "VM outage watch: 2 critical, 1 warning" "VM DC0_H0_VM1 is hung"
+run "outage watch with vm_watch_fail_on: [] - reported, green" ok vm_outage_watch.yml -e "$wt" -e '{"vm_watch_fail_on": []}' \
+    -- "VM outage watch: 2 critical, 1 warning"
+run "outage watch with vm_watch_skip_vms: the skipped VMs are not judged" ok vm_outage_watch.yml -e "$wt" \
+    -e '{"vm_watch_skip_vms": ["DC0_H0_*", "dc0_c0_rp0_vm1"]}' -- "No outage: 4 host(s), 1 datastore(s), 1 powered-on VM(s) checked"
+run "outage watch with vm_watch_probe: false - no VM is hung (one signal only)" ok vm_outage_watch.yml -e "$wt" -e vm_watch_probe=false \
+    -- "it could not be probed (unavailable)"
+# the tickets job after it, in a fake ServiceNow: one incident per condition; resolved once the watch is clean
+wsn_port=$((port + 53))
+SNMOCK_LOG="$work/wsn.jsonl" "$py" "$repo/tests/servicenow/snmock.py" "$wsn_port" >/dev/null 2>&1 &
+wsn_pid=$!
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$wsn_port") 2>/dev/null && break; sleep 0.1; done
+export SN_HOST="http://127.0.0.1:$wsn_port" SN_USERNAME=api SN_PASSWORD=goodpw
+run "outage watch -> ServiceNow tickets: an incident for the hung VM, one for the warning" fail servicenow_tickets.yml -e "@$work/watch-hung.json" \
+    -e servicenow_resolve_cleared=true -- "opened: INC0010001, INC0010002" "2 finding(s) on 127.0.0.1"
+grep -qF '[site-health] 127.0.0.1: VM DC0_H0_VM1 is hung: no guest heartbeat (red); no answer at 192.0.2.20, in 2 check(s)' "$work/wsn.jsonl" \
+    && echo "ok   -   ...the incident says which VM, and why" || { echo "FAIL -   ...the incident's short description"; fails=$((fails + 1)); }
+VMWARE_PORT=$port "$py" "$here/vcsim.py" guest DC0_H0_VM1 guestHeartbeatStatus=green guest.toolsRunningStatus=guestToolsRunning
+VMWARE_PORT=$port "$py" "$here/vcsim.py" guest DC0_H0_VM0 guestHeartbeatStatus=green guest.toolsRunningStatus=guestToolsRunning
+VMWARE_PORT=$port "$py" "$here/vcsim.py" guest DC0_C0_RP0_VM1 guestHeartbeatStatus=green guest.toolsRunningStatus=guestToolsRunning
+run "outage watch: the VMs have their heartbeat back - clean again" ok vm_outage_watch.yml -e "$wt" -- "No outage: 4 host(s)"
+stats "$work/watch-clean.json"
+run "outage watch -> ServiceNow tickets: the clean run resolves the incident" ok servicenow_tickets.yml -e "@$work/watch-clean.json" \
+    -e servicenow_resolve_cleared=true -- "resolved: INC0010001, INC0010002"
+unset SN_HOST SN_USERNAME SN_PASSWORD
+kill "$wsn_pid" 2>/dev/null
+VMWARE_PORT=$port "$py" "$here/vcsim.py" watch
+run "outage watch: all paths down (not cleared), an HA restart, a VMFS heartbeat that recovered" fail vm_outage_watch.yml -e "$wt" \
+    -- "all paths down on host DC0_C0_H0 (device naa.600a098038303053)" ", not cleared" \
+       "VM DC0_C0_RP0_VM0: HA restarted the VM on another host" "VMFS heartbeat timed out on host DC0_C0_H1" ", cleared at"
+run "outage watch with vm_watch_window_minutes: 0 - no events read" ok vm_outage_watch.yml -e "$wt" -e vm_watch_window_minutes=0 -- "No outage"
+VMWARE_PORT=$port "$py" "$here/vcsim.py" events >/dev/null
+run "outage watch: a host disconnected" fail vm_outage_watch.yml -e "$wt" -e vm_watch_window_minutes=0 \
+    -- "ESXi host DC0_C0_H2 is disconnected (cluster DC0_C0): its VMs may be down"
 
 if [ "$fails" -eq 0 ]; then echo "ok   - all VMware scenarios passed"; else echo "$fails FAILED"; exit 1; fi

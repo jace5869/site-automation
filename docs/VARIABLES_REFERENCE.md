@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [check_trust](#check_trust), [horizon](#horizon), [net_certs](#net_certs), [net_config](#net_config), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
+**Contents:** [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [check_trust](#check_trust), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
 
 ## aap_email_question
 
@@ -498,6 +498,60 @@ File: `roles/horizon/defaults/main.yml`
 | `horizon_push_stop_on_first_error` | `true` | stop the push at the first desktop that fails |
 | `horizon_test_user` | (empty) | ---- API test (playbooks/horizon_api_test.yml) -------------------------------------------------- also look up this user (e.g. jdoe), as the user-help job does |
 
+## log_analysis
+
+File: `roles/log_analysis/defaults/main.yml`
+
+> LOG ANALYSIS (playbooks/log_analysis.yml for a group of servers, playbooks/vm_log_analysis.yml for vCenter and its ESXi hosts through vCenter's API). Read-only: each host's warning, error and critical log lines of the window, grouped on the AAP side into patterns (the same line with other numbers, times and names is one pattern, counted across hosts), and ACT (GenAI) explains the top ones - likely cause, evidence, fix, confidence - in evidence mode: ACT runs no command anywhere. Every setting can be set for all hosts, per group or host in the inventory, on the template, or as a survey answer (a list may be typed as "a, b" or one per line). docs/LOG_ANALYSIS.md
+
+| Setting | Default | What it does |
+|---|---|---|
+| `log_analysis_hours` | `24` | ---- the window ------------------------------------------------------------------------------------ The last this-many hours ... |
+| `log_analysis_since` | (empty) | ... or a fixed window, e.g. the outage: log_analysis_since "2026-10-23 08:00" and log_analysis_until "2026-10-23 10:30" (UTC, as the report shows times). Since alone = from then until now. |
+| `log_analysis_until` | (empty) | the end of the fixed window (empty = now) |
+| `log_analysis_source` | `auto` | ---- what to read ------------------------------------------------------------------------------------ What a host is: auto (Windows when its connection is WinRM / PSRP, else Linux), linux, windows, or vcsa (a vCenter appliance over SSH: Linux, with the vcsa profile on). Set it per group in the inventory. |
+| `log_analysis_profiles` | `[]` | Profiles: one word switches on the logs of a product (roles/log_analysis/vars/main.yml): vcsa, mid_server, iis, sql_server, nginx, httpd, mariadb, podman, sssd, idm, auditd, aap. E.g. for a group of web servers: log_analysis_profiles: [nginx, sssd] |
+| `log_analysis_profiles_extra` | `{}` | Your own profiles, or a shipped one changed (the same name replaces it), the shape of vars/main.yml: log_analysis_profiles_extra: {stigman: {files: [/opt/stigman/logs/*.log], units: [stigman-api]}} |
+| `log_analysis_priority` | `err` | Linux (and the vCenter appliance): the journal's lines of this priority or worse (journalctl -p: emerg, alert, crit, err, warning, notice). |
+| `log_analysis_journal` | `true` | false = no journal (text logs, units and containers only) |
+| `log_analysis_units` | `[]` | Units and syslog identifiers whose journal is read at log_analysis_units_priority, lower than the rest: e.g. [sssd, nginx, stigman-api] (globs such as dirsrv@* work) and [sudo, sshd]. |
+| `log_analysis_identifiers` | `[]` | syslog identifiers read the same way, e.g. [sudo, sshd] |
+| `log_analysis_units_priority` | `warning` | the priority those units and identifiers are read at |
+| `log_analysis_containers` | `[]` | Podman containers whose output (podman logs) of the window is read, its lines that match log_analysis_match: a name for root's, user/name for a user's (rootless), e.g. [stigman-api, svc_app/web]. |
+| `log_analysis_files` | `[]` | Text logs (globs), read when they changed in the window: their matching lines, the newest log_analysis_max_lines. Compressed rotations (.gz .xz .bz2 .zst) are left out. log_analysis_files is the base list; log_analysis_files_extra adds to it and to the profiles' files (never replaces them). e.g. [/var/log/messages, /v… (all of it: the role file) |
+| `log_analysis_files_extra` | `[]` | e.g. [/opt/app/logs/*.log] |
+| `log_analysis_become` | `true` | read as root (sudo), as the other checks do |
+| `log_analysis_win_logs` | `[System, Application]` | Windows: the event logs read, their critical (1), error (2) and - log_analysis_win_level 3 - warning events. |
+| `log_analysis_win_logs_extra` | `[]` | more channels, e.g. ["Microsoft-Windows-TaskScheduler/Operational", "Directory Service", "DNS Server"] |
+| `log_analysis_win_level` | `3` | 1 critical, 2 + error, 3 + warning |
+| `log_analysis_win_providers` | `[]` | Event providers whose events are read at every level up to information, in the logs above (e.g. [Service Control Manager]); log_analysis_win_providers_only: true = only these providers' events. |
+| `log_analysis_win_providers_only` | `false` | true = only those providers' events |
+| `log_analysis_win_event_ids` | `[]` | Event IDs always read whatever their level: "Log:ID", or a number for every log read plus Security, e.g. [4625, 4740, "System:7031", "System:7034"]. Security needs an account that may read it. |
+| `log_analysis_win_files` | `[]` | Text logs (wildcards), read like the Linux ones; _extra adds to the base list and the profiles', e.g. ['D:\Apps\*\logs\*.log'] (a MID Server's agent logs: the mid_server profile) |
+| `log_analysis_win_files_extra` | `[]` | more Windows text logs, added to the list above |
+| `log_analysis_match` | `"error\|fail\|fatal\|crit\|panic\|denied\|refused\|timed out\|timeout\|unable to\|cannot\|exception\|…` | The words that make a line of a text log or a container's output worth reading (grep -E, any case); _extra adds words, e.g. [SEVERE, 'HTTP/1.1" 5']. |
+| `log_analysis_match_extra` | `[]` | more words, added to log_analysis_match |
+| `log_analysis_vcenter_logs` | `[vpxd]` | ---- vCenter and ESXi through vCenter's API (playbooks/vm_log_analysis.yml) ------------------------ No SSH and no login to the hosts: vCenter hands over its own logs and each host's (the "VMware vCenter" credential; a read-only role plus Global > Diagnostics). Keys as vCenter names them. [] = not vCenter's own log |
+| `log_analysis_esxi_logs` | `[hostd, vmkernel, vpxa]` | [] = no host logs; more: fdm, vobd, hostd-probe ... |
+| `log_analysis_esxi_hosts` | `[]` | host names (* ? allowed); [] = every host |
+| `log_analysis_read_lines` | `20000` | read back at most this many lines from the end of each log |
+| `log_analysis_max_lines` | `500` | ---- every source ------------------------------------------------------------------------------ keep at most this many lines per log (the newest) |
+| `log_analysis_max_line_chars` | `400` | a line longer than this is cut |
+| `log_analysis_ignore` | `- 'Event 10016:' # Windows: DCOM "application-specific permission settings" (harmless, by…` | Lines left out everywhere before they are grouped (regular expressions, any case, matched against "<program> <line>"): noise every server logs. log_analysis_ignore is the shipped list; _extra adds yours, e.g. ['sshd.*Connection closed by authenticating user']. |
+| `log_analysis_ignore_extra` | `[]` | more lines to leave out, added to log_analysis_ignore |
+| `log_analysis_min_count` | `1` | a pattern seen fewer times than this is left out |
+| `log_analysis_act` | `true` | ---- ACT ----------------------------------------------------------------------------------------- ACT runs on the AAP side (the execution environment) with the site_act_* settings (roles/site_act/defaults/main.yml); the key comes from an "ACT model key" credential. false = the patterns only, no ACT (no key needed). |
+| `log_analysis_question` | (empty) | What you want to know, in your words - ACT looks at it first (a good survey question), e.g. "users report slow logins since 09:00". |
+| `log_analysis_names_extra` | `[]` | more names ACT replaces with placeholders before the model sees them (host names are always) |
+| `log_analysis_max_items` | `30` | ACT analyzes at most this many patterns, the most severe first (the rest are listed) |
+| `log_analysis_examples` | `3` | example lines per pattern in the evidence, the report and the artifacts |
+| `log_analysis_max_chars` | `60000` | the evidence ACT reads is cut at this many characters |
+| `log_analysis_check_url` | `true` | first check that the AAP node can reach the model's URL |
+| `log_analysis_act_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | Seconds the model may take for its answer: site_act_model_timeout (600) unless set here. |
+| `log_analysis_email_if_clean` | `false` | ---- the report ------------------------------------------------------------------------------------ The report is printed, kept as the job artifact log_analysis, emailed (report_email_to, and the "Also email the report to" box) and published (report_web_dest). A run that finds nothing is not emailed unless log_analys… (all of it: the role file) |
+| `log_analysis_max_rows` | `200` | rows per table in the report (the artifacts have them all) |
+| `log_analysis_fail` | `false` | The job stays green when it finds patterns. It fails when ACT was wanted and could not run (after the report), and when no host could be read. true = also fail when a critical or error pattern was found. |
+
 ## net_certs
 
 File: `roles/net_certs/defaults/main.yml`
@@ -733,7 +787,7 @@ File: `roles/site_act/defaults/main.yml`
 | `site_act_level` | `explain` | ACT (GenAI) on top of ANY check playbook. The check roles already did the cheap, certain part: they found WHAT is wrong (site_findings) and know which read-only command shows more (each finding's `hint`). This role hands that to ACT (the act_triage role) to find out WHY, and to propose - or, if you allow it, make - th… (all of it: the role file) |
 | `site_act_allow` | `[]` | self-heal only: regular expressions of fix commands ACT may run without a person. Each must match the WHOLE command. Keep them narrow, e.g. site_act_allow: ['systemctl restart (chronyd\|rsyslog\|crond)'] |
 | `site_act_diagnose_only_groups` | `[aap, aap_hosts, sat, idm, netapp, netapp_console_hosts]` | Hosts where ACT may only diagnose - never fix by itself, whatever site_act_level says: AAP itself (a fix could stop the job that is running it) and vendor-managed appliances. The apply step (act_fix_approved.yml) skips them too: a person applies the fix there by hand. AAP (groups aap, aap_hosts) is ALWAYS in this list… (all of it: the role file) |
-| `site_act_provider` | `genai` | ---- Which model ACT talks to ----------------------------------------------------------------- site_act_provider genai GenAI.mil (the default) asksage Ask Sage (set site_act_url to your organization's instance) genai-beta the GenAI.mil beta proxy (preview models) site_act_models the model to use FOR EACH provider, e.… (all of it: the role file) |
+| `site_act_provider` | `genai` | ---- Which model ACT talks to ----------------------------------------------------------------- site_act_provider genai GenAI.mil (the default) asksage Ask Sage - RETIRED FOR NOW: do not pick it (kept for when it returns) genai-beta the GenAI.mil beta proxy (preview models) site_act_models the model to use FOR EACH pr… (all of it: the role file) |
 | `site_act_models` | `{genai: gemini-3.8-flash, asksage: gpt-5.6-sol-gov}` | the model for each provider (see above): the model follows the provider picked |
 | `site_act_urls` | `{}` | the API URL for each provider; a provider not listed uses ACT's default |
 | `site_act_model` | (empty) | one model for this run, whatever the provider (e.g. a survey answer); empty = site_act_models |
@@ -930,6 +984,21 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_health_sensors` | `true` | read the hosts' hardware sensors (false = skip them) |
 | `vm_health_max_rows` | `500` | rows per table in the report (the artifacts have them all) |
 | `vm_health_fail` | `false` | The job stays green when it finds problems: the report and email say what. true = mark the job FAILED when there is a critical problem (a host not connected, an HA agent isolated ...), for workflows. |
+| `vm_watch_window_minutes` | `15` | The HA and storage events of the last this many minutes (set it to the schedule's interval). |
+| `vm_watch_min_up_minutes` | `15` | A VM powered on for less than this is not judged (a VM still starting has no heartbeat yet). |
+| `vm_watch_confirm_checks` | `2` | A VM is hung only when it has no guest heartbeat AND does not answer on the network, in every check: a suspect is checked this many times in one run (1 = once), vm_watch_confirm_seconds apart. |
+| `vm_watch_confirm_seconds` | `120` | seconds between those checks |
+| `vm_watch_probe` | `true` | The network probe, from the AAP node, of the suspects only: ping, and a TCP connect to this port too (e.g. 22 or 3389; 0 = ping only). A refused connection counts as an answer (the guest is alive). false = no probe: no VM is then called hung (one signal only) |
+| `vm_watch_probe_port` | `0` | TCP port also tried (0 = ping only) |
+| `vm_watch_probe_timeout` | `3` | seconds per address |
+| `vm_watch_max_suspects` | `50` | probe and confirm at most this many suspects in one run |
+| `vm_watch_one_signal_severity` | `warning` | A VM with no heartbeat that answers on the network (or cannot be probed): VMware Tools died, not the guest. warning = in the tickets (servicenow_min_severity warning); info = the job's output only. |
+| `vm_watch_skip_vms` | `[]` | VMs never judged: names, * and ? allowed (e.g. [LAB-*]) |
+| `vm_watch_skip_folders` | `[]` | VM folders never judged, as vCenter shows them (e.g. ["/DC1/vm/Lab*"]) |
+| `vm_watch_protect` | `[]` | Phase 2 (not built yet) would restart the hung VMs - never these (names, * and ?), never the AAP server or the VMs of vmware_protected_vms / vmware_protected_groups: their hung state is a ticket only. e.g. [DC*, SQL*, VCSA*] |
+| `vm_watch_max_actions` | `5` | more hung VMs at once than this = something bigger: none would be restarted past it |
+| `vm_watch_fail_on` | `[critical]` | The job shows FAILED (a workflow's "On failure" path) when it finds a condition of these severities. |
+| `vm_watch_report_on` | `[critical]` | The report is emailed (report_email_to) and published (report_web_dest) only when it finds a condition of these severities; a clean run is one line in the job output. |
 | `vm_created_days` | `7` | The window: the VMs created in the last this many days, up to the moment the job runs (7 = the past week; run weekly, each VM is in exactly one report). VMs created and deleted since are listed too, as long as vCenter keeps their events (often 30 days). |
 | `esxi_security_hosts` | `[]` | Which hosts: names (* and ? allowed; the short name matches too). [] = every host of vCenter (or of vmware_datacenter). |
 | `esxi_security_clusters` | `[]` | only the hosts of these clusters (names, wildcards); [] = all |

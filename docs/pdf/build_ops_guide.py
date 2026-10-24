@@ -22,7 +22,7 @@ REPO = os.environ.get("SITE_AUTOMATION_DIR") or (
     os.path.dirname(os.path.dirname(_HERE)) if os.path.isfile(os.path.join(_HERE, "..", "START_HERE.md"))
     else sys.exit("build_ops_guide.py: cannot find the site-automation repository; "
                   "run the script from <repo>/docs/pdf or set SITE_AUTOMATION_DIR=<repo>"))
-SA_VERSION = "0.25.0"
+SA_VERSION = "0.26.0"
 DOCS = [  # (file, chapter title)
     ("docs/START_HERE.md", "Start here: the pieces and how they fit"),
     ("docs/SETUP_AAP.md", "Setting up AAP, step by step"),
@@ -34,6 +34,8 @@ DOCS = [  # (file, chapter title)
     ("docs/ADDING_ACT.md", "Adding ACT (GenAI) later"),
     ("docs/WINDOWS.md", "Windows servers"),
     ("docs/VMWARE.md", "VMware jobs (vCenter): restart, snapshots, VLAN, reports, alarms and ACT"),
+    ("docs/VM_OUTAGE_WATCH.md", "VM outage watch: what is down or hung right now"),
+    ("docs/LOG_ANALYSIS.md", "Log analysis: the patterns in a group of servers' logs, explained by ACT"),
     ("docs/NETAPP.md", "NetApp ONTAP health report"),
     ("docs/NETWORK_CERTS.md", "Network device certificates: report and renewal"),
     ("docs/TRUST_STORES.md", "Trust stores: who still trusts a compromised or dropped CA"),

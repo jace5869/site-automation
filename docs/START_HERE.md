@@ -26,6 +26,8 @@ click at a time.
 | **Apply approved ACT fix** | Applies exactly the fix a person approved | Only inside a workflow, after an approval |
 | **NetApp ONTAP health report** | Is any node, disk, port, volume, aggregate, SnapMirror or certificate in trouble on the storage clusters? ([NETAPP.md](NETAPP.md)) | Daily |
 | **VMware jobs** | Restart, shut down, snapshot, notes or change the VLAN of VMs through vCenter. Reports: secure boot, datastores, snapshots (with an approved cleanup), alarms and events, and ACT's analysis of the alarms: likely cause, fix and confidence ([VMWARE.md](VMWARE.md)) | On demand; the reports daily or weekly |
+| **VM outage watch** | Is something down or hung right now: hosts, HA, datastores, VMs on a question, hung VMs (no heartbeat AND no answer on the network). Quiet when clean; a report and a ServiceNow incident per problem when not. Watch only for now: it restarts nothing ([VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md)) | Every 5 to 15 minutes |
+| **Log analysis** | Point it at a group of servers (Linux, Windows, a vCenter appliance) or at vCenter and its ESXi hosts: their log lines grouped into patterns, and ACT's likely cause, fix and confidence for each ([LOG_ANALYSIS.md](LOG_ANALYSIS.md)) | On demand, or daily |
 
 Every check is **read-only**. It looks and reports, and changes nothing. Patching changes servers,
 and waits for an approval first; the VMware jobs change only what an operator asked for, and never

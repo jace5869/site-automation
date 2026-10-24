@@ -1,0 +1,20 @@
+---
+# VCENTER LOG ANALYSIS (vCenter + ACT). Read-only: vCenter's own log (vpxd) and each ESXi host's (hostd,
+# vmkernel, vpxa), read through vCenter's API - no SSH, nothing to switch on at the hosts - the warning,
+# error and critical lines of the last log_analysis_hours (or log_analysis_since .. log_analysis_until),
+# grouped into patterns across hosts, and ACT's likely cause, evidence, fix and confidence for the top
+# ones (evidence mode: ACT runs no command). One report: printed, the job artifact log_analysis, emailed
+# (report_email_to) and published (report_web_dest). A host not connected to vCenter is listed.
+# The appliance's other logs (SSO, envoy, vsphere-ui ...): log_analysis.yml with log_analysis_source: vcsa.
+# Attach a "VMware vCenter" credential (read-only plus Global > Diagnostics) AND an "ACT model key"
+# credential; no Limit. docs/LOG_ANALYSIS.md
+#   ansible-playbook playbooks/vm_log_analysis.yml -e '{"log_analysis_esxi_hosts": ["esx0*"]}'
+- name: VMware vCenter log analysis
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VMware vCenter log analysis
+      ansible.builtin.include_role:
+        name: log_analysis
+        tasks_from: vmware.yml

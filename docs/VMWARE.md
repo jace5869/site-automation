@@ -21,6 +21,8 @@ System Center Orchestrator):
 | VM - health report | `playbooks/vm_health_report.yml` | read-only: every datacenter, cluster and host of every vCenter - vSphere HA and DRS working or not (HA agents, failover capacity, DRS recommendations and faults, vCLS retreat mode), hosts not connected or in maintenance, hardware sensors not green, hosts that need a restart, CPU and memory used, configuration issues and alarms - coloured, with what to do for each problem |
 | VM - alarms report | `playbooks/vm_alarm_report.yml` | read-only: the triggered alarms on vCenter, datacenters, clusters and hosts; the alarms that fired in the last 24 hours (also the ones that cleared since); hosts not connected; the last 24 hours' failed logins, VM shutdowns / HA restarts and other errors and warnings; configuration issues - coloured by severity |
 | VM - alarms ACT analysis | `playbooks/vm_alarm_act_analysis.yml` | read-only: the same problems, with ACT's likely cause, fix and confidence for each. ACT runs on the AAP side, never on the hosts |
+| VM - outage watch | `playbooks/vm_outage_watch.yml` | every 5 to 15 minutes, read-only: is something down or hung right now - a host not responding, an HA agent isolated, a datastore not accessible, all paths down, an HA restart or failure, a VM waiting on a question, a hung VM (no heartbeat AND no answer on the network). One line when clean; a report, a ServiceNow incident and a red job when not. Restarts nothing (phase 1). [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md) |
+| VM - vCenter log analysis | `playbooks/vm_log_analysis.yml` | read-only: vCenter's own log and each ESXi host's (hostd, vmkernel, vpxa), read through vCenter's API - no SSH - grouped into patterns across hosts, with ACT's likely cause, fix and confidence for each ([LOG_ANALYSIS.md](LOG_ANALYSIS.md)) |
 | VM - capacity planning | `playbooks/vm_capacity_report.yml` | read-only: overall and per cluster - CPU, memory (also with a host down), vCPUs per core, VMs that still fit, hosts recommended, datastores - with growth from vCenter's own history and the days until each limit; optionally GenAI's estimate next to it |
 | VM - deploy from ServiceNow ticket | `playbooks/vm_deploy_from_ticket.yml` | builds the VM - or VMs, one per name - a ServiceNow ticket asks for, from a template - checked against your rules, placed by site, name rule or free room, the result on the ticket. Best run in its workflow (propose, approval, build) |
 | VM - deploy settings finder | `playbooks/vm_deploy_inventory.yml` | read-only: every vCenter's datacenters, clusters, templates, datastores, folders and networks, by the names the deploy's settings use - with the lines to paste into the deploy template's Variables |
@@ -748,6 +750,16 @@ key, no network, an ACT error): the email still lists the problems, and says why
 | `vm_alarm_act_check_url` | `true` | check that the AAP node can reach the model first |
 | `vm_alarm_act_model_timeout` | `site_act_model_timeout` (600) | seconds the model may take for its answer (a `GENAI_TIMEOUT` in `site_act_env` wins) |
 | `site_act_timeout` | `1200` | seconds the whole ACT run may take (keep it above the model's) |
+
+## Outage watch: what is down or hung right now
+
+`playbooks/vm_outage_watch.yml`, every 5 to 15 minutes, in a workflow before the ServiceNow tickets job. It
+reads only what means an outage: hosts not responding, HA agents isolated, datastores not accessible, all
+paths down and device loss, HA restarts and failures, VMs waiting on a question, and hung VMs. A VM is hung
+only when it has no guest heartbeat AND does not answer a ping (or `vm_watch_probe_port`) from the AAP node,
+in every check of the run. A clean run is one line, with no email. Watch only: it restarts nothing, and lists the
+hung VMs a later phase would restart, so the false alarms can be counted first. Everything - what it
+reads, the settings, the workflow, the phase 2 plan - is in [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md).
 
 ## Capacity planning: overall and per cluster
 

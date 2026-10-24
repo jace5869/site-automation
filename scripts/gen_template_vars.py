@@ -80,6 +80,11 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
     "horizon_user_help.yml": ("Horizon - user help", "Horizon API", "", """\
 ## A survey: horizon_user (text, required) and horizon_user_action (look, logoff, disconnect, reset, restart, recover)
 """),
+    "log_analysis.yml": ("Log analysis", "Machine (Machine (Windows) for Windows hosts), ACT model key (not with log_analysis_act: false)", "", """\
+## The hosts: target (a group of this inventory) or the Limit. A survey: log_analysis_question, log_analysis_since / log_analysis_until
+# target: web
+# log_analysis_profiles: [nginx, sssd]          # vcsa, mid_server, iis, sql_server, nginx, httpd, mariadb, podman, sssd, idm, auditd, aap
+"""),
     "ontap_health_report.yml": ("NetApp ONTAP health report", "NetApp ONTAP", "", ""),
     "patch_hosts.yml": ("Patch hosts", "Machine", "", ""),
     "poam_status.yml": ("POA&M status", "STIG Manager API (optional)", "", ""),
@@ -164,6 +169,13 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
     "vm_created_report.yml": ("VM - VMs created report", "VMware vCenter", "", ""),
     "vm_deploy_inventory.yml": ("VM - deploy settings finder", "VMware vCenter", "", ""),
     "vm_health_report.yml": ("VM - health report", "VMware vCenter", "", ""),
+    "vm_log_analysis.yml": ("VM - vCenter log analysis", "VMware vCenter (read-only + Global > Diagnostics), ACT model key", "", ""),
+    "vm_outage_watch.yml": ("VM - outage watch", "VMware vCenter", "", """\
+## Every 5 to 15 minutes, in a workflow: [VM - outage watch] --Always--> [ServiceNow tickets]; Concurrent jobs off
+# vm_watch_window_minutes: 15                    # the schedule's interval
+# vm_watch_probe_port: 0                         # e.g. 22 or 3389: also a TCP connect (needed when ICMP is blocked)
+# vm_watch_protect: []                           # e.g. [DC*, SQL*]: a ticket only, never a restart (phase 2)
+"""),
     "vm_deploy_poll.yml": ("VM - pick up deploy tickets", "ServiceNow API, Red Hat Ansible Automation Platform", "", """\
 vm_deploy_assignment_group: YOUR GROUP NAME       # REQUIRED: only this group's tickets are picked up
 # vm_deploy_poll_dry_run: true                    # the first week: list what it would start, start nothing

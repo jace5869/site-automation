@@ -1,0 +1,70 @@
+---
+# On each host the job targets (playbooks/log_analysis.yml, second play). Read-only. What the host is
+# (log_analysis_source: auto, linux, windows, vcsa) picks the collector; its answer is kept as the fact
+# log_analysis_result {host, source, reachable, error, entries, sources} for the report on the AAP side.
+# A host that cannot be reached is listed in the report, and the job is not failed for it.
+- name: Logs | what this host is
+  ansible.builtin.set_fact:
+    _la_kind: >-
+      {{ log_analysis_source if log_analysis_source in ['linux', 'windows', 'vcsa']
+         else ('windows' if (ansible_connection | default('ssh')) in ['winrm', 'psrp', 'ansible.builtin.winrm', 'ansible.builtin.psrp']
+                            or (ansible_shell_type | default('sh')) in ['powershell', 'cmd'] else 'linux') }}
+
+- name: Logs | log_analysis_source is auto, linux, windows or vcsa
+  ansible.builtin.assert:
+    that: log_analysis_source in ['auto', 'linux', 'windows', 'vcsa']
+    fail_msg: "log_analysis_source must be auto, linux, windows or vcsa, not {{ log_analysis_source }} ({{ inventory_hostname }})."
+    quiet: true
+
+# one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: Logs | what to read here - the settings, the profiles switched on, the window
+  ansible.builtin.set_fact:
+    _la_set: >-
+      {{ {'profiles': log_analysis_profiles, 'profiles_extra': log_analysis_profiles_extra,
+          'files': log_analysis_files, 'files_extra': log_analysis_files_extra,
+          'units': log_analysis_units, 'identifiers': log_analysis_identifiers, 'containers': log_analysis_containers,
+          'win_logs': log_analysis_win_logs, 'win_logs_extra': log_analysis_win_logs_extra,
+          'win_providers': log_analysis_win_providers, 'win_event_ids': log_analysis_win_event_ids,
+          'win_files': log_analysis_win_files, 'win_files_extra': log_analysis_win_files_extra,
+          'match': log_analysis_match, 'match_extra': log_analysis_match_extra,
+          'ignore': log_analysis_ignore, 'ignore_extra': log_analysis_ignore_extra}
+         | log_settings(_log_analysis_profiles, _la_kind) }}
+    _la_win: "{{ log_analysis_hours | log_window(log_analysis_since, log_analysis_until) }}"
+
+- name: Logs | the profiles exist, the window is right
+  ansible.builtin.assert:
+    that:
+      - _la_set.unknown_profiles | length == 0
+      - _la_win.error | length == 0
+    fail_msg: >-
+      {{ _la_win.error if _la_win.error | length > 0 else
+         'Unknown profile(s) in log_analysis_profiles: ' ~ _la_set.unknown_profiles | join(', ') ~ '. Known: '
+         ~ (_log_analysis_profiles | combine(log_analysis_profiles_extra) | list | sort | join(', '))
+         ~ ' (add your own in log_analysis_profiles_extra).' }}
+    quiet: true
+
+- name: Logs | reach the host
+  ansible.builtin.raw: echo reached      # no Python, no module: Linux and Windows alike
+  changed_when: false
+  check_mode: false
+  ignore_unreachable: true
+  register: _la_reach
+
+- name: Logs | not reached - listed in the report, the job goes on without it
+  ansible.builtin.set_fact:
+    log_analysis_result: >-
+      {{ {'host': inventory_hostname, 'source': _la_kind, 'reachable': false, 'entries': [], 'sources': [],
+          'error': ((_la_reach.msg | default('', true) | string | trim | replace('\n', ' ')) or 'unreachable') | truncate(300)} }}
+  when: _la_reach.unreachable | default(false)
+
+- name: Logs | leave it out
+  ansible.builtin.meta: end_host
+  when: _la_reach.unreachable | default(false)
+
+- name: Logs | Windows event logs and text logs
+  ansible.builtin.include_tasks: collect_windows.yml
+  when: _la_kind == 'windows'
+
+- name: Logs | Linux journal and text logs
+  ansible.builtin.include_tasks: collect_linux.yml
+  when: _la_kind != 'windows'
