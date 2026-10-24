@@ -1,0 +1,75 @@
+---
+# One report job's page, for the copy job (tasks/copy.yml): made in report_web_theme's look from what that job kept
+# (_copy_item.packed - its report, its strip of past runs, its file names and address, its footer) and written on the
+# report website: over WinRM on report_web_host (the index carried on from the page before, _copy_index), or into the
+# folder, or uploaded. The page says the report job (its number, template, footer), not this one.
+- name: Copy | job {{ _copy_item.job }} ({{ _copy_item.template }}) - its page
+  site_report_web:
+    dest: "{{ report_web_dest | trim }}"
+    url: "{{ report_web_url | default('') | trim }}"
+    page_url: "{{ _copy_doc.url | default('') }}"
+    files: "{{ _copy_doc.files }}"
+    html: >-
+      {{ lookup('ansible.builtin.template', 'report_' ~ _web_theme ~ '.html.j2' if _web_theme in _strip_looks else 'report.html.j2') }}
+    images: "{{ [{'cid': 'site-report-logo', 'path': _email_logo_file}] if _web_logo_cid | bool else [] }}"
+    logo_size: "{{ _web_logo_size if _web_logo_cid | bool else [] }}"
+    header_text: "{{ report_email_header_text | default('Site automation report') }}"
+    json: "{{ report_web_json | bool }}"
+    data: "{{ _copy_doc.data }}"
+    entry: "{{ _copy_doc.entry }}"
+    ca_path: "{{ report_web_ca_path | default('') }}"
+    windows_host: "{{ report_web_host | trim if _web_win | bool else '' }}"
+    index_text: "{{ _copy_index | default('') if _web_win | bool else '' }}"
+  vars:
+    _copy_doc: "{{ _copy_item.packed | report_page_unpack }}"
+    _web_logo_cid: "{{ _email_logo_file | length > 0 and (_web_logo_size | default([0]))[0] > 0 }}"
+    # the report job's own report, strip, number, template and footer line (the page is that job's)
+    _report: "{{ _copy_doc.data.report }}"
+    _page_runs: "{{ _copy_doc.data.runs | default([]) }}"
+    _page_job: "{{ _copy_doc.data.job }}"
+    _page_template: "{{ _copy_doc.data.template | default('') }}"
+    _email_footer: "{{ _copy_doc.footer | default('') }}"
+    _page_logo_cid: "{{ 'site-report-logo' if _web_logo_cid | bool else '' }}"
+    _page_logo_size: "{{ _web_logo_size | default([0, 0]) }}"
+  register: _copy_out
+
+- name: Copy | job {{ _copy_item.job }} - its page written on report_web_host
+  when: _web_win | bool
+  block:
+    - name: Copy | job {{ _copy_item.job }} - its page there
+      ansible.builtin.include_tasks: web_windows.yml
+      vars:
+        ansible_connection: "{{ _copy_conn }}"
+        _web_ps_host: "{{ _copy_host }}"
+        _web_ps_pwsh: "{{ _copy_conn == 'local' }}"
+        _web_ps: "{{ _copy_out.script }}"
+        _web_ps_what: job {{ _copy_item.job }}'s page, in {{ report_web_dest | trim }}
+        _web_ps_config: {}
+        _web_ps_changed: true
+
+    - name: Copy | report_web_host's answer, on the page
+      ansible.builtin.set_fact:
+        _web_win_write: "{{ ((_web_ps_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('###SITE-JSON### {}'))[16:] | from_json).write | default({}) }}"
+  always:
+    - name: Copy | the script made for it, deleted here
+      ansible.builtin.file:
+        path: "{{ _copy_out.script }}"
+        state: absent
+      when: _copy_out.script | default('') | length > 0
+
+- name: Copy | job {{ _copy_item.job }} - report_web_host wrote its page
+  ansible.builtin.assert:
+    that: _web_win_write.ok | default(false)
+    fail_msg: >-
+      The report website, job {{ _copy_item.job }}: {{ _web_win_write.error | default('', true) or (_web_ps_out | site_web_win_error(_copy_where, _copy_inv | bool)) }}
+      {{- (' (written before it stopped: ' ~ _web_win_write.written | join(', ') ~ ')') if _web_win_write.written | default([]) else '' }}
+    quiet: true
+  when: _web_win | bool
+
+- name: Copy | job {{ _copy_item.job }} - done
+  ansible.builtin.set_fact:
+    _copy_index: "{{ _copy_out.index_text | default('') }}"
+    _copy_written: >-
+      {{ _copy_written | default([]) + ['job ' ~ _copy_item.job ~ " '" ~ _copy_item.template ~ "': "
+         ~ (_copy_out.url or _copy_out.place)
+         ~ ('' if _copy_out.newest | default(true) else ' (an older run than the one there: its latest page and index line left as they are)')] }}

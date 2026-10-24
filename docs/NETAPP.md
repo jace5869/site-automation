@@ -102,7 +102,7 @@ default. Either:
 ## Set it up
 
 1. **Templates > Create template > Create job template:**
-   - Name: `NetApp - ONTAP health report`
+   - Name: `NetApp ONTAP health report`
    - Inventory: any (e.g. your VMware one: the job runs on the AAP side)
    - Project: site-automation. Playbook: `playbooks/ontap_health_report.yml`
    - Execution environment: any with Python 3 (no NetApp collection is needed)

@@ -42,6 +42,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Network device certificate report | `playbooks/net_cert_report.yml` | [net_cert_report.yml](net_cert_report.yml) |
 | Patch hosts | `playbooks/patch_hosts.yml` | [patch_hosts.yml](patch_hosts.yml) |
 | POA&M status | `playbooks/poam_status.yml` | [poam_status.yml](poam_status.yml) |
+| Report website - copy | `playbooks/report_web_copy.yml` | [report_web_copy.yml](report_web_copy.yml) |
 | Service watch - apply approved fix | `playbooks/service_fix_approved.yml` | [service_fix_approved.yml](service_fix_approved.yml) |
 | Service watch - check | `playbooks/service_watch.yml` | [service_watch.yml](service_watch.yml) |
 | ServiceNow - catalog test | `playbooks/servicenow_catalog_test.yml` | [servicenow_catalog_test.yml](servicenow_catalog_test.yml) |

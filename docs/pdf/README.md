@@ -18,7 +18,7 @@ spaces.
 | [ACT-5Ws-Leadership-Brief.pdf](ACT-5Ws-Leadership-Brief.pdf) | Leadership brief: ACT with AAP (who, what, when, where, why) | - |
 | [ACT-5Ws-Standalone-Brief.pdf](ACT-5Ws-Standalone-Brief.pdf) | Leadership brief: ACT on its own | - |
 
-**Versions.** The six site-automation PDFs are for this release (site-automation 0.26.0, ACT
+**Versions.** The six site-automation PDFs are for this release (site-automation 0.27.0, ACT
 0.6.25). The four ACT PDFs were made for ACT 0.6.18 (two of them were corrected for 0.6.21: how
 the key reaches a host); for what
 changed since (both endpoint formats and `:probe`, the danger tier under `--auto`, https-only
@@ -28,10 +28,30 @@ keys), see [ADDING_ACT.md](../ADDING_ACT.md), [APPROVED_COMMANDS.md](../APPROVED
 The PDFs carry no classification or distribution markings. Add the ones your site requires
 before you distribute them.
 
+## Your logo on them
+
+The PDFs here carry no logo. To put your site's logo on the cover and at the top of every page of the six
+site-automation guides, build them again (see below) with `SITE_PDF_LOGO` set to the logo: a PNG with a
+transparent background, or a JPEG. The report logo works (`playbooks/files/report_logo.png`); a copy 300 px tall
+or more prints sharper. Keep the copies with your logo in your own repository or on a share - never in the public
+repository.
+
+```bash
+cd docs/pdf
+SITE_PDF_LOGO=../../playbooks/files/report_logo.png python3 build_ops_guide.py Site-Automation-Ops-Runbooks-Guide.pdf
+```
+
+```powershell
+cd docs\pdf
+$env:SITE_PDF_LOGO = '..\..\playbooks\files\report_logo.png'
+python build_ops_guide.py Site-Automation-Ops-Runbooks-Guide.pdf
+```
+
 ## Rebuilding them
 
 The scripts that draw the PDFs are in this folder (`build_*.py`, with `actpdf.py` for the shared
-look). They need Python 3, the `reportlab` package and the **Noto Sans** and **Noto Sans Mono**
+parts and `sapdf.py` for the look of the six site-automation guides). They need Python 3, the
+`reportlab` package and the **Noto Sans** and **Noto Sans Mono**
 fonts (Fedora/RHEL: `dnf install google-noto-sans-fonts google-noto-sans-mono-fonts`; elsewhere set
 `NOTO_FONT_DIR` to the folder that holds `NotoSans-Regular.ttf`). They need no network.
 
@@ -52,3 +72,25 @@ script; `build_runbook.py` reads `docs/AAP_2.7_RUNBOOK.md` from an ACT-Linux che
 `ACT_LINUX_DIR` to it (default `/opt/ACT`). The version on a cover
 (`SA_VERSION` in `build_ops_guide.py`, `VERSION` in `actpdf.py` for ACT) is edited by hand at each
 release. To check a PDF: open it, look at the contents page and at any page with a table or code.
+
+## Workflow diagrams
+
+Draw a workflow in a doc top to bottom, in a block marked `workflow`. It reads as text on screen and
+the setup guide draws it as boxes and arrows (green on success, red on fail, blue always):
+
+```workflow
+[Certificate install - check]  on a schedule
+   +-- Run always -->  [ServiceNow tickets]
+   |  Run on fail
+   v
+[Approval]  "Install these?"
+   |  Run on success
+   v
+[Certificate install - approved]
+```
+
+A step is `[the job template's name]`, then two spaces and what to answer (`;` between lines). A
+branch to the right, `+-- link -->  [step]`, comes straight after its step (one per step). A blank
+line starts another chain: two or three of them are drawn side by side. Keep every line within 88
+characters (`tests/test_docs.py` checks it), so nothing wraps in the PDF or scrolls on a screen.
+A block the PDF cannot draw is printed as the text it is.

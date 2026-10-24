@@ -72,6 +72,11 @@ report_web_files   the file names of a report on the report website (report_web_
                        {{ {'page': report_web_page, ...} | report_web_files(names) }}
 site_web_win_error why the PowerShell script on report_web_host (the report website on a Windows server) gave no
                    answer - the server not reached or the login refused (with what to check), or the script's error.
+                   inventory = the copy job reached it as a host of its inventory (its connection settings there).
+report_page_unpack a report a report job kept for the job Report website - copy (its job artifact site_report_page,
+                   report_web_copy) -> its file names, address, data, index line and footer. Reads it as
+                   plugins/module_utils/site_report_page.py packs it (the copy job's module checked it before).
+                       {{ item.packed | report_page_unpack }}
 
 vm_ds_row          a datastore (site_vmware_datastores) as a row of the datastore report's tables
                    (multi = several vCenters: the datacenter cell names the vCenter too).
@@ -100,9 +105,11 @@ host_ids           the names and addresses inventory hosts can be recognised by 
                    and ansible_host; host names without the domain, lower case).
                        {{ groups['aap'] | default([]) | host_ids(hostvars) }}
 """
+import base64
 import csv
 import datetime
 import fnmatch
+import gzip
 import hashlib
 import json
 import io
@@ -1690,20 +1697,38 @@ def report_web_files(patterns, names):
     return out
 
 
-def site_web_win_error(result, where):
+def site_web_win_error(result, where, inventory=False):
     """Why the script on report_web_host gave no answer (result: the registered ansible.builtin.script), in plain
-    words; where: the server and its connection, e.g. web01.yoursite.mil (winrm, port 5986)."""
+    words; where: the server and its connection, e.g. web01.yoursite.mil (winrm, port 5986); inventory: it was reached
+    as a host of the job's inventory (the copy job), with that host's connection settings."""
     r = result if isinstance(result, dict) else {}
     msg = " ".join(str(r.get("msg") or "").split())
+    if r.get("unreachable") and inventory:
+        return ("could not reach report_web_host %s, a host of this job's inventory: %s - check the template's Machine "
+                "credential (or a Report website credential on it) and that host's connection settings in the inventory "
+                "(ansible_port, ansible_winrm_scheme, ansible_winrm_transport), as for your other Windows jobs."
+                % (where, msg or "no answer"))
     if r.get("unreachable"):
         return ("could not reach report_web_host %s: %s - check the login (the Report website credential's user name "
-                "and password, or without it the template's Machine credential: DOMAIN\\user for NTLM) and the connection "
-                "(report_web_host_port, _scheme, _transport, _cert_validation; report_web_ca_path for its certificate)."
-                % (where, msg or "no answer"))
+                "and password, or without it the template's Machine credential: DOMAIN\\user for NTLM, user@YOURSITE.MIL "
+                "for Kerberos) and the connection (report_web_host_port, _scheme, _transport, _cert_validation; "
+                "report_web_ca_path for its certificate)." % (where, msg or "no answer"))
     err = " ".join(str(r.get("stderr") or "").split())
     if r.get("skipped"):
         return "the script on report_web_host %s did not run (%s)." % (where, msg or "skipped")
     return "the script on report_web_host %s failed: %s" % (where, (err or msg or "no answer (rc %s)" % r.get("rc", "?"))[:600])
+
+
+def report_page_unpack(text):
+    """A report kept for the copy job (site_report_page) -> {files, url, data, entry, footer, v}; the same reading as
+    plugins/module_utils/site_report_page.py's unpack (a test keeps the two the same)."""
+    try:
+        doc = json.loads(gzip.decompress(base64.b64decode(str(text), validate=True)).decode("utf-8"))
+    except Exception as e:                      # noqa: BLE001 - whatever it is, it is not a kept report
+        raise _FilterError("report_page_unpack: not a kept report (%s)" % (str(e) or type(e).__name__))
+    if not isinstance(doc, dict) or not isinstance(doc.get("files"), dict) or not isinstance(doc.get("data"), dict):
+        raise _FilterError("report_page_unpack: not a kept report")
+    return doc
 
 
 class FilterModule(object):
@@ -1721,4 +1746,5 @@ class FilterModule(object):
                 "report_text": report_text, "findings_report": findings_report,
                 "report_headline": report_headline, "report_runs": report_runs,
                 "image_size": image_size, "email_recipients": email_recipients, "email_also_refused": email_also_refused,
-                "report_web_files": report_web_files, "site_web_win_error": site_web_win_error}
+                "report_web_files": report_web_files, "site_web_win_error": site_web_win_error,
+                "report_page_unpack": report_page_unpack}

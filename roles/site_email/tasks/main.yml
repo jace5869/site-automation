@@ -23,6 +23,8 @@
 # The website (report_web_dest; docs/WEB_REPORTS.md): the page in report_web_theme's look, named by report_web_page,
 # a copy as report_web_latest, the data as JSON beside each, and report_web_index; the page's address is printed
 # ("Report: https://...") and kept as the job artifact site_report_url. _report_email_skip: true = only the website.
+# report_web_copy: true = the page is not written here - the report is kept as the job artifact site_report_page for the
+# job "Report website - copy" (tasks/copy.yml), which writes it at the same address; nothing here reaches report_web_host.
 - name: Email | who gets the report
   ansible.builtin.set_fact:
     # report_email_to, and report_email_also: the "Also email the report to" box asked at launch (this run only)
@@ -44,7 +46,10 @@
 - name: Email | the report website (report_web_dest)
   ansible.builtin.set_fact:
     _web_on: "{{ report_web_dest | default('') | string | trim | length > 0 }}"
-    _web_win: "{{ report_web_dest | default('') | string | trim | length > 0 and report_web_host | default('') | string | trim | length > 0 }}"
+    _web_copy: "{{ report_web_dest | default('') | string | trim | length > 0 and report_web_copy | default(false) | bool }}"
+    _web_win: >-
+      {{ report_web_dest | default('') | string | trim | length > 0 and report_web_host | default('') | string | trim | length > 0
+         and not report_web_copy | default(false) | bool }}
     _web_theme: "{{ report_web_theme | default('portal') | string | trim | lower }}"
     _web_report: >-
       {{ _report if _report is defined else
@@ -172,23 +177,7 @@
   when: _web_win | bool
 
 - name: Email | report_web_host, for the copy (the login - the Report website credential, else the Machine credential)
-  ansible.builtin.add_host:
-    name: site-report-web
-    ansible_host: "{{ report_web_host | trim }}"
-    ansible_port: "{{ report_web_host_port | int }}"
-    ansible_winrm_scheme: "{{ report_web_host_scheme }}"
-    ansible_winrm_transport: "{{ report_web_host_transport }}"
-    ansible_winrm_server_cert_validation: "{{ report_web_host_cert_validation }}"
-    ansible_winrm_ca_trust_path: "{{ report_web_ca_path | default('', true) or omit }}"
-    ansible_psrp_protocol: "{{ report_web_host_scheme }}"
-    ansible_psrp_auth: "{{ report_web_host_transport }}"
-    ansible_psrp_cert_validation: "{{ report_web_host_cert_validation }}"
-    ansible_psrp_ca_path: "{{ report_web_ca_path | default('', true) or omit }}"
-    ansible_user: "{{ lookup('ansible.builtin.env', 'REPORT_WEB_USERNAME') or omit }}"
-    ansible_password: "{{ lookup('ansible.builtin.env', 'REPORT_WEB_PASSWORD') or omit }}"
-    ansible_become: false
-  changed_when: false
-  no_log: true
+  ansible.builtin.include_tasks: web_host.yml
   when: _web_win | bool and not ansible_check_mode
 
 - name: Email | report_web_host - its folder, and the index there
@@ -221,8 +210,13 @@
     dest: "{{ report_web_dest | trim }}"
     url: "{{ report_web_url | default('') | trim }}"
     files: "{{ _web_files }}"
+    # report_web_copy: no page made here - the copy job makes it from what is kept
     html: >-
-      {{ lookup('ansible.builtin.template', 'report_' ~ _web_theme ~ '.html.j2' if _web_theme in _strip_looks else 'report.html.j2') }}
+      {{ '' if _web_copy | bool else
+         lookup('ansible.builtin.template', 'report_' ~ _web_theme ~ '.html.j2' if _web_theme in _strip_looks else 'report.html.j2') }}
+    keep: "{{ _web_copy | bool }}"
+    max_kb: "{{ report_web_copy_max_kb | int }}"
+    footer: "{{ _email_footer | default('') }}"
     images: "{{ [{'cid': 'site-report-logo', 'path': _email_logo_file}] if _web_logo_cid | bool else [] }}"
     logo_size: "{{ _web_logo_size if _web_logo_cid | bool else [] }}"
     header_text: "{{ report_email_header_text | default('Site automation report') }}"
@@ -242,7 +236,7 @@
       when: "{{ _web_when }}"
       job: "{{ awx_job_id | default(tower_job_id | default('local')) }}"
     ca_path: "{{ report_web_ca_path | default('') }}"
-    windows_host: "{{ report_web_host | default('') | trim if _web_win | bool else '' }}"
+    windows_host: "{{ report_web_host | default('') | trim if _web_win | bool or _web_copy | bool else '' }}"
     index_text: "{{ _web_win_read.index | default('', true) if _web_win | bool and not ansible_check_mode else '' }}"
   vars:
     # the web copy: its own look's logo size and strip (report_web_theme), the logo put inside the page
@@ -286,22 +280,39 @@
     _web_win_where: "{{ report_web_host | trim }} ({{ report_web_host_connection }}, port {{ report_web_host_port }})"
   when: _web_win | bool and not ansible_check_mode
 
+- name: Email | the report, kept for the job Report website - copy (job artifact site_report_page, report_web_copy)
+  ansible.builtin.set_stats:
+    data:
+      site_report_page: ["{{ _web_out.packed }}"]
+  when: _web_copy | bool and not ansible_check_mode and _web_out.packed | default('') | length > 0
+
 - name: Email | the report's address
   ansible.builtin.debug:
     msg: >-
-      {{ 'Report: ' ~ _web_out.url if _web_out.url and not ansible_check_mode
-         else ('Published: ' ~ _web_out.place) if _web_win | bool and not ansible_check_mode else _web_out.msg }}
+      {%- if ansible_check_mode or (_web_copy | bool and not _web_out.packed | default('')) -%}
+      {{ _web_out.msg }}
+      {%- elif _web_out.url -%}
+      Report: {{ _web_out.url }}{{ (' - ' ~ _web_out.note) if _web_copy | bool else '' }}
+      {%- elif _web_win | bool -%}
+      Published: {{ _web_out.place }}
+      {%- else -%}
+      {{ _web_out.msg }}
+      {%- endif -%}
   when: _web_on | bool
 
 - name: Email | the report's address, for the next step (job artifact site_report_url)
   ansible.builtin.set_stats:
     data:
       site_report_url: "{{ _web_out.url }}"
-  when: _web_on | bool and _web_out.url | default('') | length > 0 and not ansible_check_mode
+  when: >-
+    _web_on | bool and _web_out.url | default('') | length > 0 and not ansible_check_mode
+    and (not _web_copy | bool or _web_out.packed | default('') | length > 0)
 
 - name: Email | the email links its web copy
   ansible.builtin.set_fact:
-    _email_web_url: "{{ _web_out.url if _web_on | bool and not ansible_check_mode else '' }}"
+    _email_web_url: >-
+      {{ _web_out.url if _web_on | bool and not ansible_check_mode and (not _web_copy | bool or _web_out.packed | default('') | length > 0)
+         else '' }}
   when: _email_to | length > 0
 
 - name: Email | send the report to {{ _email_to | join(', ') }}

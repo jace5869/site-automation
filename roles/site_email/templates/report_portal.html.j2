@@ -28,8 +28,9 @@
 {%- set mono = "font-family:Consolas,'Cascadia Mono',Menlo,'Courier New',monospace;" -%}
 {%- set card = 'background:#ffffff;border:2px solid ' ~ edge ~ ';border-radius:20px;box-shadow:0 6px 22px rgba(15,70,52,.08);' -%}
 {%- set runs = _page_runs | default(_email_runs | default([])) -%}
-{%- set job_id = awx_job_id | default(tower_job_id | default('')) | string -%}
-{%- set job_name = awx_job_template_name | default(tower_job_template_name | default('')) | string -%}
+{#- the copy job (Report website - copy) passes the report job's own: _page_job, _page_template -#}
+{%- set job_id = _page_job | default(awx_job_id | default(tower_job_id | default(''))) | string -%}
+{%- set job_name = _page_template | default(awx_job_template_name | default(tower_job_template_name | default(''))) | string -%}
 {%- macro pill(k) -%}
 {#- classic desktop Outlook (mso) draws no fixed-size span: a table cell with a dot there, the round icon elsewhere #}
 <!--[if mso]><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="{{ pal[k].bg }}" style="background:{{ pal[k].bg }};border:1px solid {{ pal[k].bd }};padding:3px 10px;color:{{ pal[k].fg }};font-family:'Segoe UI',Arial,sans-serif;font-size:15px;font-weight:bold;white-space:nowrap;">&#9679;&nbsp;{{ pal[k].word }}</td></tr></table><![endif]-->

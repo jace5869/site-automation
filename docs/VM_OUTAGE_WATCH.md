@@ -106,8 +106,11 @@ Job artifacts, for the next step of a workflow:
 2. **Try it** once by hand. A clean estate is one green line; a red run shows the report.
 3. **The workflow** "VM - outage watch (workflow)":
 
-   ```
-   [VM - outage watch] --Always--> [ServiceNow tickets]
+   ```workflow
+   [VM - outage watch]
+      |  Run always
+      v
+   [ServiceNow tickets]
    ```
 
    *Always*, not *On failure*. The tickets job opens one incident per condition, adds a work note while it
@@ -157,12 +160,18 @@ that port, or ping them, through the firewalls in between.
 Phase 2 will be built only once phase 1 has run long enough to show its false alarms. It will be
 conservative by default:
 
-```
-[VM - outage watch] --Always--> [ServiceNow tickets]
-        |
-        +--On failure--> [VM - guest restart] (eligible VMs only)
-                                 |
-                                 +--On failure--> [Approval: hard reset] --> [VM - hard reset]
+```workflow
+[VM - outage watch]
+   +-- Run always -->  [ServiceNow tickets]
+   |  Run on fail
+   v
+[VM - guest restart]  eligible VMs only
+   |  Run on fail
+   v
+[Approval: hard reset]
+   |  Run on success
+   v
+[VM - hard reset]
 ```
 
 - **Only the VMs in "Would be restarted in phase 2".** Confirmed hung (both signals, every check), not

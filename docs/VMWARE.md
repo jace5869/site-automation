@@ -207,7 +207,8 @@ Surveys (**Survey > Add**, then switch the survey **on**):
 The secure boot and datastore reports need no survey. Schedule them weekly with `report_email_to`
 in their Variables. They stay green when they find VMs or datastores to fix - the report and
 email say which; `vm_secure_boot_fail: true` / `vm_datastore_fail: true` mark the job failed
-instead, for a workflow that opens a ticket. `vm_secure_boot_folder` limits the secure boot report
+instead, for a notification on failure (the *ServiceNow tickets* job does not take these reports'
+results). `vm_secure_boot_folder` limits the secure boot report
 to one vCenter folder; `vmware_datacenter` limits either report to one datacenter;
 `vm_datastore_warn_pct` / `vm_datastore_crit_pct` (85 / 90) set the datastore thresholds.
 

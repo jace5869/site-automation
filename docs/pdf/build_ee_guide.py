@@ -9,7 +9,7 @@ build files themselves in an appendix.
 import sys
 
 import build_ops_guide as g
-from actpdf import *  # noqa: F401,F403
+from sapdf import *  # noqa: F401,F403
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "Site-Automation-EE-Guide.pdf"
 GUIDE = "docs/EXECUTION_ENVIRONMENT.md"
@@ -46,7 +46,7 @@ def appendix_files():
 
 
 def build():
-    story = [Spacer(1, 3.55 * inch), P(
+    story = [Spacer(1, COVER_SPACE), P(
         "**What this is.** One execution environment (EE) with everything the site's automation needs: "
         "Linux, Windows and Active Directory, VMware, NetApp, MySQL, MariaDB and SQL Server, Cisco, "
         "ServiceNow - and every site-automation job. What is in it; how to build it from "

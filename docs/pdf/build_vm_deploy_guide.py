@@ -14,7 +14,7 @@ import re
 import sys
 
 import build_ops_guide as g
-from actpdf import *  # noqa: F401,F403
+from sapdf import *  # noqa: F401,F403
 from actpdf import _arrow, _box
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "Site-Automation-VM-Deploy-Guide.pdf"
@@ -211,7 +211,7 @@ def chapters(text):
 
 
 def build():
-    story = [Spacer(1, 3.55 * inch), P(
+    story = [Spacer(1, COVER_SPACE), P(
         "**What this is.** The VM deploy job, complete: the standard setup to start with; setting it up in "
         "AAP step by step - the execution environment, the vCenter role, the credentials, the job template "
         "and its survey, the approval workflow, the scheduled pickup, the server's service and its AAP "

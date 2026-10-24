@@ -9,6 +9,11 @@ on it.
 It works **without email**: set `report_web_dest` and leave `report_email_to` empty. With both set, the email
 carries a link to its page ("Open this report in a browser").
 
+Each report job writes its own pages. When some report templates run in an execution environment that cannot reach
+the web server (a Windows server needs WinRM, and with NTLM blocked Kerberos, in the execution environment), let
+**the copy job** write them instead: one template, in the execution environment your Windows jobs use, writes every
+report job's pages ("The copy job", below).
+
 The job prints the page's address, and keeps it as the job artifact `site_report_url`:
 
 ```
@@ -138,7 +143,8 @@ reference, e.g. `&#233;`), so no byte-order mark and no code page gets in the wa
    `report_web_url`. Only reading - nothing is uploaded to IIS.
 
 The server does not have to be in the job's inventory: the report jobs use many inventories, and the settings
-above are all it needs. `report_web_dest` is a folder **on** that server (`D:\reports`), not a share
+above are all it needs. Every report template must then run in an execution environment with WinRM (and Kerberos,
+if you use it) - or let the copy job write the pages ("The copy job", below). `report_web_dest` is a folder **on** that server (`D:\reports`), not a share
 (`\\fileserver\reports`): over WinRM that would be a second hop, which NTLM does not allow.
 
 ### A web server that takes uploads (HTTP PUT)
@@ -231,6 +237,92 @@ the page is written by the AAP side of the job, which never gets a group's varia
 
 A dry run (Check) writes nothing and prints the address it would have used.
 
+## The copy job: report templates in any execution environment
+
+With `report_web_copy: true` the report jobs **write nothing** on the web server and connect to nothing there. Each
+keeps its report in AAP, as part of the job (the job artifact `site_report_page`: the report, its strip of past runs,
+the file names and the address, compressed - a 750-row certificate report is about 12 to 40 KB). One job template,
+**Report website - copy** (`playbooks/report_web_copy.yml`), in an execution environment that reaches the server,
+then writes those pages - the same pages, at the same address. So:
+
+- the report templates keep their own execution environments and credentials: no WinRM, no Kerberos, no Report
+  website credential on each one;
+- the copy job is the only template that knows the server. When `report_web_host` is a host of **its** inventory
+  (by the same name), it reaches it the way your Windows jobs do - that host's connection settings
+  (`ansible_port`, `ansible_winrm_transport` ...) and the template's Machine credential. The `report_web_host_*`
+  settings are not needed then;
+- each report job still prints the page's address, keeps it as `site_report_url`, and its email gets the button
+  (**Open the full report**, *Open this report in a browser*) - the page is there once the copy job has run, so a
+  link opened before that answers *not found*.
+
+### Setting it up
+
+1. **The settings**, in `playbooks/group_vars/all.yml` (the report jobs and the copy job both read them):
+
+   ```yaml
+   report_web_copy: true
+   report_web_host: web01.yoursite.mil      # the server's name as the copy job's inventory has it
+   report_web_dest: 'D:\reports'
+   report_web_url: https://web01.yoursite.mil/reports
+   report_web_theme: glass                  # the pages' look - the copy job draws them
+   report_logo_file: files/report_logo.png
+   ```
+
+   Hold on to `report_web_copy: true` until step 3 has passed. To try it, put it on one report template's Variables
+   first, run that template (Run, not Check), and look at that job in AAP: **Jobs >** the job **> Details >
+   Artifacts** has `site_report_page`.
+2. **The template** *Report website - copy*: playbook `playbooks/report_web_copy.yml`; the **execution environment
+   your Windows jobs work with**; the **inventory that has the web server** (your Windows inventory), no Limit; its
+   **Machine credential** - an account with **Modify** on the folder; and a **Red Hat Ansible Automation Platform**
+   credential whose user has **Organization Auditor** on the organizations of the report templates (the one of the
+   strip of past runs works). Leave *Concurrent jobs* off: one copy at a time, so the index is never written twice at
+   once.
+3. **Launch it with Job type Check**: it lists each report job it would copy (`Would copy: job 907 ...`) and writes
+   nothing. Then **Run**: `job 907 'Linux - Certificate trust report': https://...` for each page written, and how
+   the server was reached:
+   `web01.yoursite.mil (winrm, port 5985, from this job's inventory): its connection settings in this job's inventory`.
+4. **A schedule**: every 15 minutes, say (*Templates >* the template *> Schedules*). Or add it as the last step of a
+   workflow that runs reports, so their pages are there when the workflow ends - or both.
+
+### What each run copies
+
+The report jobs that finished since the run before (a few minutes before it, leaving out those it already copied),
+oldest first, whatever their template or how they ended. Where a run got to is its own job artifact
+`site_report_copied`; a **Check** run, and a run with `report_web_copy_jobs`, keep none, so they never move it on. The
+first run (no run before it) copies the report jobs of the last `report_web_copy_hours` (24). A run copies at most
+`report_web_copy_max_pages` (50) pages and says when there are more: the next run copies the rest.
+
+`report_web_copy_jobs: [907, 908]` (on the template's Variables, or a survey) copies those jobs' pages again,
+whatever was copied before - a page deleted on the server, say.
+
+An older run never takes the place of a newer one: the template's `latest.html` and its line in the index are only
+written over by a run at least as new as the one there (by its time); the older run gets its own page.
+
+A report too big to keep (more than `report_web_copy_max_kb`, 256 KB, compressed) has its longest tables cut until
+it fits - the page says *This page shows the first N of M rows* - and the email always has the whole report.
+
+| Setting | Default | |
+|---|---|---|
+| `report_web_copy` | `false` | `true` = the report jobs keep their report for the copy job instead of writing their pages |
+| `report_web_copy_max_kb` | `256` | the kept report's greatest size, compressed |
+| `report_web_copy_jobs` | `[]` | the copy job: these job IDs only |
+| `report_web_copy_hours` | `24` | the copy job's first run: the report jobs of the last hours |
+| `report_web_copy_max_pages` | `50` | the copy job: pages a run writes at most |
+
+Good to know:
+
+- The copy job sees only the jobs its AAP user may see: **Organization Auditor** on every organization that has
+  report templates. A report template in another organization is left out, without a word.
+- Per-template settings of the website (`report_web_dest`, `report_web_url` on one template's Variables) are the
+  copy job's own: it writes everything into its own `report_web_dest`. The file names (`report_web_page`,
+  `report_web_names`) are the report job's - they are kept with the report.
+- A template with `report_web_copy: false` on its Variables writes its pages itself, as before. It then shares the
+  index with the copy job: two jobs writing it in the same second can lose one line (it is back after that
+  template's next run).
+- `report_web_host` not a host of the copy job's inventory (or under another name there, a short name, say): the
+  copy job reaches it with the `report_web_host_*` settings and the Report website credential (else its Machine
+  credential), as a report job would. The job says which it did.
+
 ## Using the address in a workflow or another job
 
 The job keeps the page's address as the artifact `site_report_url`. In a workflow, the next step gets it as a
@@ -257,3 +349,9 @@ variable (`{{ site_report_url }}`) - for a Teams post or a ServiceNow work note.
 | `winrm or requests is not installed` | The execution environment has no `pywinrm` (docs/WINDOWS.md, step 2) |
 | `report_web_page '...': there is no {x}` | A name that does not exist; the message lists the ones that do |
 | A report missing from the index | Two jobs finished in the same second and one line was lost; it is back after that job's next run |
+| The copy job: `Nothing to copy: no report job kept its report for this job since ...` | No report job finished with `report_web_copy: true` since then: is it in `all.yml`, did the project sync? A report run with Check keeps nothing |
+| The copy job: `AAP refused the list of jobs (HTTP 403)` | Its AAP credential's user needs Organization Auditor on the report templates' organizations |
+| The copy job: `could not reach report_web_host web01..., a host of this job's inventory` | The template's Machine credential, and that host's connection settings in the inventory - as for your other Windows jobs |
+| The copy job: `job 907 (...): its report cannot be read` | The report job's project is newer or older than the copy job's (sync both), or the artifact was cut; the other reports are still copied |
+| The report job: `No web page for this run: its report is bigger than report_web_copy_max_kb` | Raise `report_web_copy_max_kb`, or let that template write its pages itself (`report_web_copy: false` on its Variables) |
+| The email's button answers *not found* | The copy job has not run since that report: it runs on its schedule (or launch it) |

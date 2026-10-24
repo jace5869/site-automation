@@ -518,6 +518,16 @@ again when you add one): it adds the optional box **Also email the report to** t
 survey and to the workflows that run them. What it does and what people can type:
 [EMAIL_REPORTS.md](EMAIL_REPORTS.md), "Also email the report to".
 
+### Report website - copy
+
+Only when report templates run in an execution environment that cannot reach the report website's server (no WinRM
+or Kerberos in it) and `report_web_copy: true` is in `all.yml`. One template - `Report website - copy`
+(`playbooks/report_web_copy.yml`) - in the execution environment your Windows jobs use, with the inventory that has
+the web server (no Limit), its Machine credential (an account with Modify on the folder) and a **Red Hat Ansible
+Automation Platform** credential (its user: **Organization Auditor** on the report templates' organizations).
+*Concurrent jobs* off. Run it with **Check** first (it lists what it would copy), then for real, then give it a
+schedule (every 15 minutes). [WEB_REPORTS.md](WEB_REPORTS.md), "The copy job".
+
 ### NetApp ONTAP health report
 
 It reads the storage clusters' REST API, not your hosts: a read-only ONTAP account, a NetApp

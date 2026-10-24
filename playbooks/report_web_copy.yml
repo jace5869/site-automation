@@ -1,0 +1,28 @@
+---
+# REPORT WEBSITE - COPY. For report templates whose execution environment cannot reach the web server (no WinRM or
+# Kerberos in it): with report_web_copy: true in all.yml, each report job keeps its report in AAP (the job artifact
+# site_report_page) instead of writing its page, and this job - the one template that reaches the server - writes those
+# pages there: report_web_dest on report_web_host (or the folder, or the upload address), at the address each report job
+# printed and its email links. Schedule it (every 15 minutes), or put it at the end of a workflow. Each run copies the
+# report jobs finished since the run before (where a run got to is its job artifact site_report_copied); a Check run or
+# report_web_copy_jobs (job IDs: their pages again) never moves that on.
+# The template: the execution environment your Windows jobs use; the inventory that has the web server, report_web_host
+# by its name there (that host's connection settings are used); its Machine credential - an account with Modify on the
+# folder; and a "Red Hat Ansible Automation Platform" credential, its user Organization Auditor on the report templates'
+# organizations. No Limit. Leave "Concurrent jobs" off. Run it with Check first: it lists what it would copy.
+# docs/WEB_REPORTS.md, "The copy job".
+#   ansible-playbook playbooks/report_web_copy.yml --check
+- name: Report website - copy the report jobs' pages onto the report website
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    # the AAP side, whatever the inventory: a Windows inventory's own variables (ansible_connection: winrm) are its
+    # "all" group's, which localhost takes too; the steps run on report_web_host set their own (tasks/copy.yml)
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: The report jobs' pages, written on the report website
+      ansible.builtin.include_role:
+        name: site_email
+        tasks_from: copy.yml

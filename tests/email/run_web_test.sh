@@ -3,7 +3,10 @@
 # email, the page with its logo inside, latest, the JSON, the index of every template (worst first, one line per
 # template), the address printed and kept as the artifact site_report_url, your own names (report_web_names),
 # bad names, a folder that is not there, a dry run, an upload with HTTP PUT (WebDAV: folders made with MKCOL) with
-# a token and with a wrong one, and an email that links its web copy.
+# a token and with a wrong one, and an email that links its web copy. The copy job (report_web_copy): a report job
+# that keeps its report and reaches nothing (report_web_host set, no WinRM here), then playbooks/report_web_copy.yml
+# against a fake AAP (tests/email/fake_aap.py) serving those jobs' artifacts - Check, into a folder, again (nothing
+# new), and onto a Windows server of its inventory and one that is not (pwsh here in place of WinRM).
 #   bash tests/email/run_web_test.sh            (ANSIBLE_PLAYBOOK=... to pick one)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -11,11 +14,12 @@ repo="$(cd "$here/../.." && pwd)"
 ap="${ANSIBLE_PLAYBOOK:-ansible-playbook}"
 py="$(command -v python3)"
 work="$(mktemp -d)"
-pid="" wpid=""
-cleanup() { [ -n "$pid" ] && kill "$pid" 2>/dev/null; [ -n "$wpid" ] && kill "$wpid" 2>/dev/null; rm -rf "$work"; }
+pid="" wpid="" apid=""
+cleanup() { [ -n "$pid" ] && kill "$pid" 2>/dev/null; [ -n "$wpid" ] && kill "$wpid" 2>/dev/null; [ -n "$apid" ] && kill "$apid" 2>/dev/null; rm -rf "$work"; }
 trap cleanup EXIT
 port="${SMTP_TEST_PORT:-18035}"
 wport="${WEB_TEST_PORT:-18036}"
+aport="${AAP_TEST_PORT:-18037}"
 fails=0
 printf 'all:\n  hosts:\n    localhost: {ansible_connection: local, ansible_python_interpreter: %s}\n' "$py" > "$work/inv.yml"
 "$py" -c 'import struct, sys, zlib
@@ -42,13 +46,15 @@ web() {  # web [ENV=VALUE...]: a fresh fake report website (tests/email/fake_web
     echo "ABORT - fake website did not start"; cat "$work/web.err"; exit 1
 }
 
-# run NAME EXPECT(ok|fail) VARS_JSON [TEXT...]: tests/email/send_report.yml, the texts in the job output
+# run NAME EXPECT(ok|fail) VARS_JSON [TEXT...]: tests/email/send_report.yml (or PB=, against INV=), the texts in the job
+# output (with the artifacts: CUSTOM STATS)
 run() {
     local name="$1" want="$2" vars="$3"; shift 3
     local base="{\"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $port, \"report_email_from\": \"aap@example.mil\",
                  \"report_email_security\": \"none\", \"report_logo_file\": \"$work/logo.png\"}"
     (cd "$repo" && ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_STDOUT_CALLBACK=default \
-        ANSIBLE_SHOW_CUSTOM_STATS=1 "$ap" -i "$work/inv.yml" "$here/send_report.yml" -e "$base" -e "$vars" ${CHECK:+--check}) > "$work/out.txt" 2>&1
+        ANSIBLE_SHOW_CUSTOM_STATS=1 \
+        "$ap" -i "${INV:-$work/inv.yml}" "${PB:-$here/send_report.yml}" -e "$base" -e "$vars" ${CHECK:+--check}) > "$work/out.txt" 2>&1
     local rc=$?
     if { [ "$want" = ok ] && [ $rc -ne 0 ]; } || { [ "$want" = fail ] && [ $rc -eq 0 ]; }; then
         echo "FAIL - $name: exit $rc (wanted $want)"; grep -E '"msg"|ERROR' "$work/out.txt" | head -4 | cut -c1-300; fails=$((fails + 1)); return 1
@@ -205,5 +211,125 @@ winmsg="report_web_host 127.0.0.1 (winrm, port 9)"
 run "a Windows server that cannot be reached: says which, and what to check" fail \
     "{\"report_web_host\": \"127.0.0.1\", \"report_web_host_port\": 9, \"report_web_host_scheme\": \"http\", \"report_web_dest\": \"D:\\\\reports\"}" \
     "$winmsg"
+
+# ---- the copy job (report_web_copy) -------------------------------------------------------------------------
+# artifact KEY: the last run's job artifact KEY (its CUSTOM STATS line "RUN: {...}", what AAP keeps), as JSON
+artifact() {
+    "$py" - "$work/out.txt" "$1" <<'PY'
+import json, sys
+run = [x for x in open(sys.argv[1]).read().splitlines() if x.startswith("\tRUN: ")]
+print(json.dumps((json.loads(run[-1][6:]) if run else {}).get(sys.argv[2])))
+PY
+}
+# aapjob ID TEMPLATE_ID NAME MINUTES_AGO [JOB_TYPE]: the last run, with its artifacts, as a job of the fake AAP
+aapjob() {
+    "$py" - "$work/out.txt" "$work/jobs.json" "$@" <<'PY'
+import datetime, json, sys
+out, jobs, i, tid, name, ago = sys.argv[1:7]
+run = [x for x in open(out).read().splitlines() if x.startswith("\tRUN: ")]
+art = json.loads(run[-1][6:]) if run else {}
+when = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=int(ago))
+js = json.load(open(jobs))
+js.append({"id": int(i), "job_template": int(tid), "name": name, "status": "successful", "job_type": sys.argv[7] if len(sys.argv) > 7 else "run",
+           "finished": when.strftime("%Y-%m-%dT%H:%M:%S.%fZ"), "artifacts": art})
+json.dump(js, open(jobs, "w"))
+PY
+}
+echo '[]' > "$work/jobs.json"
+"$py" "$here/fake_aap.py" "$aport" "$work/jobs.json" 2>"$work/aap.err" &
+apid=$!
+for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$aport") 2>/dev/null && break; sleep 0.1; done
+export CONTROLLER_HOST="http://127.0.0.1:$aport" CONTROLLER_USERNAME=audit CONTROLLER_PASSWORD=pw
+relay
+keep='"report_web_copy": true, "report_web_host": "web01.example.mil", "report_web_dest": "D:\\reports", "report_web_url": "https://reports.example.mil",
+      "report_web_theme": "glass", "report_email_theme": "glass", "report_email_to": ["ops@example.mil"], "report_history": false'
+run "copy mode: the report job reaches nothing (report_web_host set, no WinRM), prints the address, keeps its report" ok \
+    "{$keep, $aapjob}" "Report: https://reports.example.mil/linux-certificate-trust-report/" "kept for the job Report website - copy, which writes it there"
+part html "$work/mail/1.eml" > "$work/html.txt"
+check "its email: the Open the full report button, to the page the copy job writes" grep -qE \
+    'href="https://reports.example.mil/linux-certificate-trust-report/[0-9_-]+_job-907.html"[^>]*>Open the full report<' "$work/html.txt"
+check "site_report_page and site_report_url" "$py" -c 'import json, sys
+a = json.loads(sys.argv[1]); u = json.loads(sys.argv[2])
+assert isinstance(a, list) and len(a) == 1 and len(a[0]) > 100 and u.endswith("_job-907.html"), (a, u)' "$(artifact site_report_page)" "$(artifact site_report_url)"
+aapjob 907 71 "Linux - Certificate trust report" 30
+run "copy mode: a second template (critical)" ok \
+    "{$keep, \"awx_job_id\": 4182, \"awx_job_template_id\": 80, \"awx_job_template_name\": \"VMware snapshot cleanup\",
+      \"_report\": {\"title\": \"Snapshots: 3 failed\", \"status\": \"critical\", \"sections\": [{\"title\": \"Failed\", \"lines\": [\"vm1\"]}]}}" \
+    "Report: https://reports.example.mil/vmware-snapshot-cleanup/"
+aapjob 4182 80 "VMware snapshot cleanup" 20
+CHECK=1 run "copy mode, Check: nothing kept" ok "{$keep, $aapjob}" "Dry run (Check): the report would be kept for the job Report website - copy"
+check "no artifact" test "$(artifact site_report_page)" = null
+
+mkdir -p "$work/copy"
+copyjob='"awx_job_id": 999, "awx_job_template_id": 90, "awx_job_template_name": "Report website - copy"'
+cvars="\"report_web_dest\": \"$work/copy\", \"report_web_url\": \"https://reports.example.mil\", \"report_web_theme\": \"glass\", $copyjob"
+CHECK=1 PB=playbooks/report_web_copy.yml run "the copy job, Check: lists what it would copy, writes nothing" ok "{$cvars}" \
+    "Would copy: job 907 'Linux - Certificate trust report'" "Would copy: job 4182 'VMware snapshot cleanup'"
+check "nothing written, nothing kept for the next run" bash -c "test -z \"\$(ls -A '$work/copy')\" && test '$(artifact site_report_copied)' = null"
+PB=playbooks/report_web_copy.yml run "the copy job: both report jobs' pages into the folder" ok "{$cvars}" \
+    "job 907 'Linux - Certificate trust report': https://reports.example.mil/linux-certificate-trust-report/" "job 4182 'VMware snapshot cleanup': https://reports.example.mil/vmware-snapshot-cleanup/"
+cd1="$work/copy/linux-certificate-trust-report"
+cp1="$(ls "$cd1" 2>/dev/null | grep -E '_job-907\.html$')"
+check "the page the report job named, latest, the JSON" bash -c "test -n '$cp1' && test -s '$cd1/latest.html' && test -s '$cd1/${cp1%.html}.json' && test -s '$cd1/latest.json'"
+check "the page is the report job's: its number and template, its footer - not the copy job's (999)" bash -c "grep -q 'AAP job 907 &middot; Linux - Certificate trust report' '$cd1/$cp1' \
+    && grep -q 'AAP job 907 (Linux - Certificate trust report)' '$cd1/$cp1' && ! grep -q 'job 999' '$cd1/$cp1' && ! grep -q 'Report website - copy' '$cd1/$cp1'"
+check "the glass look, the logo inside, the report's own data" bash -c "grep -q 'backdrop-filter:blur(22px)' '$cd1/$cp1' && grep -q 'src=\"data:image/png;base64,' '$cd1/$cp1' \
+    && grep -q 'DEBIAN_11_64' '$cd1/$cp1' && grep -q '&lt;script&gt;' '$cd1/$cp1' && ! grep -q '<script>alert' '$cd1/$cp1'"
+check "the JSON: the address the report job printed, its job" "$py" -c 'import json, sys
+j = json.load(open(sys.argv[1]))
+assert str(j["job"]) == "907" and j["url"] == "https://reports.example.mil/linux-certificate-trust-report/" + sys.argv[2], j' "$cd1/${cp1%.html}.json" "$cp1"
+check "index.json: both templates, the critical one first" "$py" -c 'import json, sys
+r = json.load(open(sys.argv[1]))["reports"]
+assert [x["key"] for x in r] == ["vmware-snapshot-cleanup/latest.html", "linux-certificate-trust-report/latest.html"] and str(r[1]["job"]) == "907", r' "$work/copy/index.json"
+check "where it got to, kept for the next run (site_report_copied)" "$py" -c 'import json, sys
+c = json.loads(sys.argv[1])
+assert c["copied"] == 2 and c["until"].endswith("Z") and c["seen"], c' "$(artifact site_report_copied)"
+aapjob 500 90 "Report website - copy" 2
+PB=playbooks/report_web_copy.yml run "the copy job again: nothing new since the run before" ok "{$cvars, \"awx_job_id\": 501}" "Nothing to copy: no report job kept its report"
+CHECK=1 PB=playbooks/report_web_copy.yml run "a Check run of the copy job after it (passed over by the next)" ok "{$cvars, \"awx_job_id\": 502}" "Nothing to copy"
+aapjob 502 90 "Report website - copy" 1 check
+relay
+# (its when later than 907's, whatever the minute now: _web_when, the run's time on the website)
+run "copy mode: a newer run of the first template" ok "{$keep, \"awx_job_id\": 908, \"awx_job_template_id\": 71, \"awx_job_template_name\": \"Linux - Certificate trust report\",
+    \"_web_when\": \"2099-01-01 00:00 UTC\"}" \
+    "kept for the job Report website - copy"
+aapjob 908 71 "Linux - Certificate trust report" 0
+PB=playbooks/report_web_copy.yml run "the copy job: only the new run, latest now it" ok "{$cvars, \"awx_job_id\": 503}" "job 908 'Linux - Certificate trust report'"
+check "job 907 not copied again" bash -c "! grep -q 'job 907' '$work/out.txt'"
+check "latest.html is job 908" grep -q 'AAP job 908 &middot;' "$cd1/latest.html"
+PB=playbooks/report_web_copy.yml run "named jobs (report_web_copy_jobs): an older run again - its page, not latest" ok \
+    "{$cvars, \"awx_job_id\": 504, \"report_web_copy_jobs\": \"907\"}" "an older run than the one there: its latest page and index line left as they are"
+check "latest.html still job 908, the index too" bash -c "grep -q 'AAP job 908 &middot;' '$cd1/latest.html' && \"$py\" -c 'import json, sys
+r = [x for x in json.load(open(sys.argv[1]))[\"reports\"] if x[\"key\"].startswith(\"linux\")]
+assert str(r[0][\"job\"]) == \"908\", r' '$work/copy/index.json'"
+PB=playbooks/report_web_copy.yml run "the copy job without report_web_dest: says where to set it" fail "{$copyjob}" "Set report_web_dest (and report_web_url)"
+CONTROLLER_PASSWORD=wrong PB=playbooks/report_web_copy.yml run "the copy job with a wrong AAP login: says so" fail "{$cvars}" "AAP refused the login (HTTP 401)"
+
+if command -v pwsh >/dev/null 2>&1; then
+    mkdir -p "$work/wincopy"
+    # a Windows inventory: its own variables (the "all" group's, which localhost takes too) say winrm
+    printf 'all:\n  vars: {ansible_connection: winrm, ansible_port: 5985}\n  hosts:\n    webtest: {ansible_connection: local}\n' > "$work/inv-web.yml"
+    wcvars="\"report_web_host\": \"webtest\", \"report_web_dest\": \"$work/wincopy\", \"report_web_url\": \"https://reports.example.mil\", $copyjob"
+    INV="$work/inv-web.yml" PB=playbooks/report_web_copy.yml run "the copy job onto a Windows server of its inventory (its connection; pwsh here)" ok \
+        "{$wcvars, \"report_web_copy_jobs\": [907, 4182, 908]}" "webtest (local, port 5985, from this job's inventory): its connection settings in this job's inventory" \
+        "webtest - job 907's page, in $work/wincopy" "job 908 'Linux - Certificate trust report': https://reports.example.mil/linux-certificate-trust-report/"
+    wd="$work/wincopy/linux-certificate-trust-report"
+    check "the pages, latest (job 908), the index there; ASCII only" bash -c "ls '$wd'/*_job-907.html '$wd'/*_job-908.html >/dev/null && grep -q 'AAP job 908' '$wd/latest.html' \
+        && test -s '$work/wincopy/index.html' && ! LC_ALL=C grep -q '[^ -~[:space:]]' '$wd/latest.html'"
+    check "index.json there: 2 templates, carried from page to page" "$py" -c 'import json, sys
+r = json.load(open(sys.argv[1]))["reports"]
+assert sorted(x["key"] for x in r) == ["linux-certificate-trust-report/latest.html", "vmware-snapshot-cleanup/latest.html"], r' "$work/wincopy/index.json"
+    check "no script left here" bash -c "! ls \"\${TMPDIR:-/tmp}\"/site_report_web_*.ps1 2>/dev/null | grep -q ."
+    mkdir -p "$work/wincopy2"
+    INV="$work/inv-web.yml" PB=playbooks/report_web_copy.yml run "the copy job, report_web_host not in its inventory: report_web_host_* (pwsh here)" ok \
+        "{$wcvars, \"report_web_host\": \"web-other.example.mil\", \"report_web_host_connection\": \"local\", \"report_web_dest\": \"$work/wincopy2\", \"report_web_copy_jobs\": [4182]}" \
+        "not a host of this job's inventory (by that name), so with report_web_host_port" "web-other.example.mil - job 4182's page"
+    check "its page there" bash -c "ls '$work'/wincopy2/vmware-snapshot-cleanup/*_job-4182.html >/dev/null"
+    INV="$work/inv-web.yml" PB=playbooks/report_web_copy.yml run "the copy job, the folder not there on the server: fails, never makes it" fail \
+        "{$wcvars, \"report_web_dest\": \"$work/wincopy-gone\", \"report_web_copy_jobs\": [4182]}" "The report website: the folder $work/wincopy-gone is not there on"
+    check "nothing made" test ! -e "$work/wincopy-gone"
+else
+    echo "skip - the copy job onto a Windows server: no pwsh here"
+fi
 
 if [ "$fails" -eq 0 ]; then echo "ok   - all report website checks passed"; else echo "$fails FAILED"; exit 1; fi

@@ -128,7 +128,7 @@ The report, the ServiceNow tickets and ACT only ever read findings. That is why:
 | `inventories/example/` | a sample inventory and settings. Copy it to `inventories/site/` |
 | `aap/credential_types/` | the credential types to create in AAP |
 | `poam/poam.csv` | your POA&M list (for the POA&M runbook) |
-| `docs/` | this guide, [SETUP_AAP.md](SETUP_AAP.md), [USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md), [VARIABLES.md](VARIABLES.md), [RUNBOOKS.md](RUNBOOKS.md), [MARIADB.md](MARIADB.md), [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md), [ADDING_ACT.md](ADDING_ACT.md), [APPROVED_COMMANDS.md](APPROVED_COMMANDS.md); PDFs in `docs/pdf/` |
+| `docs/` | this guide, [SETUP_AAP.md](SETUP_AAP.md), [USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md), [VARIABLES.md](VARIABLES.md), [RUNBOOKS.md](RUNBOOKS.md), [MARIADB.md](MARIADB.md), [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md), [JOB_TEMPLATES.md](JOB_TEMPLATES.md), [ADDING_ACT.md](ADDING_ACT.md), [APPROVED_COMMANDS.md](APPROVED_COMMANDS.md); PDFs in `docs/pdf/` |
 
 ## The order to do things in
 
@@ -137,7 +137,8 @@ The report, the ServiceNow tickets and ACT only ever read findings. That is why:
    for the inventory part.
    Read its output. Adjust thresholds in your settings files ([VARIABLES.md](VARIABLES.md)) until
    the findings are the ones you care about.
-2. **Add the other job templates** (step 9) and try each once.
+2. **Add the other job templates** (step 9) and try each once. Every template, with the link to its
+   how-to: [JOB_TEMPLATES.md](JOB_TEMPLATES.md).
 3. **Add ServiceNow** (step 10), and build the *Daily health* workflow
    ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)).
 4. **Schedule** the workflows.

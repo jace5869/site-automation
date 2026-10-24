@@ -9,7 +9,7 @@ import re
 import sys
 
 import build_ops_guide as g
-from actpdf import *  # noqa: F401,F403
+from sapdf import *  # noqa: F401,F403
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "Site-Automation-Settings-Reference.pdf"
 DOCS = [("docs/VARIABLES.md", "Settings: what they are, where they go, and who wins"),
@@ -26,7 +26,7 @@ class SettingsDoc(g.OpsDoc):
 
 
 def build():
-    story = [Spacer(1, 3.55 * inch), P(
+    story = [Spacer(1, COVER_SPACE), P(
         "**What this is.** Every setting the site-automation jobs read - the value it has when you set "
         "nothing, and what it does - with how to use one: where to put it (a template's Variables, "
         "`playbooks/group_vars/all.yml`, a group or a host), which place wins, and how to see what a job "

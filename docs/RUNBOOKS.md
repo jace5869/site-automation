@@ -887,7 +887,6 @@ Windows has its own playbooks, checks and troubleshooting areas (for example `up
 | Idea | Why not yet |
 |---|---|
 | SCAP scan → import into STIG Manager | Needs the same Keycloak client as the POA&M cross-check, plus a decision on SCC vs OpenSCAP content. STIG Manager's own importer (stigman-watcher) is the supported path |
-| Certificate renewal workflow | Depends on how your PKI issues certificates. For STIG Manager, renewal already works: update the TLS credential, run *STIG Manager - deploy* |
 | AAP self-health (job failure rate, execution environment and token age) | Needs an AAP API credential; AAP's own dashboards cover most of it today |
 | Container runbooks (image updates with rollback, drift) | Deferred on purpose; *Service watch* covers container outages |
 | MariaDB backups, security baseline, password rotation | Out of scope for now: health only, as asked |

@@ -88,6 +88,11 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
     "ontap_health_report.yml": ("NetApp ONTAP health report", "NetApp ONTAP", "", ""),
     "patch_hosts.yml": ("Patch hosts", "Machine", "", ""),
     "poam_status.yml": ("POA&M status", "STIG Manager API (optional)", "", ""),
+    "report_web_copy.yml": ("Report website - copy", "Machine (Windows), Red Hat Ansible Automation Platform", "", """\
+## Schedule it (every 15 minutes); run it with Check first: it lists what it would copy. report_web_copy: true,
+## report_web_host, report_web_dest and report_web_url belong in all.yml - the report jobs read them too
+# report_web_copy_jobs: [907, 908]               # these AAP jobs' pages again (job IDs), whatever was copied before
+"""),
     "service_fix_approved.yml": ("Service watch - apply approved fix", "Machine", "", ""),
     "service_watch.yml": ("Service watch - check", "Machine (ACT model key: optional)", "", ""),
     "servicenow_catalog_test.yml": ("ServiceNow - catalog test", "ServiceNow API", "", """\

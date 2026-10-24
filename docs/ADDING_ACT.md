@@ -10,12 +10,19 @@ with ACT automatically.
 <!-- figure:act_modular -->
 
 ```text
- check roles (deterministic, cheap)          site_act (the bridge)             ACT (GenAI)
- ---------------------------------          ---------------------             -----------
- disk, services, selinux, mariadb ...  -->  findings as one line each   -->  root cause, evidence,
- each finding: summary + hint command       + the hint commands' output       the exact fix
-                                            + your level (explain /           (runs, or proposes,
-                                              diagnose / self-heal)            per the level)
+check roles (deterministic, cheap)
+  disk, services, selinux, mariadb ...
+  each finding: summary + hint command
+     |
+     v
+site_act (the bridge)
+  the findings, one line each, + the hint commands' output
+  + your level (explain / diagnose / self-heal)
+     |
+     v
+ACT (GenAI)
+  root cause, evidence, the exact fix
+  (runs it, or proposes it, as the level says)
 ```
 
 - The **checks** decide *whether* something is wrong. They are plain Ansible: the same answer

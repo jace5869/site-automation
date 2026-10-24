@@ -125,9 +125,14 @@ The protected pools, `horizon_protected_pools` (e.g. `[VIP-*]`), belong in
 
 ## Workflow: fix broken desktops, with an approval
 
-```text
-[Horizon - desktops check]  --Run on fail-->  [Approval]  --Run on success-->  [Horizon - fix the approved desktops]
- horizon_desktops_mode: approval
+```workflow
+[Horizon - desktops check]  horizon_desktops_mode: approval
+   |  Run on fail
+   v
+[Approval]
+   |  Run on success
+   v
+[Horizon - fix the approved desktops]
 ```
 
 1. **Templates → Create template → Create workflow job template**, name
@@ -166,8 +171,10 @@ path. Its approval then shows no NEEDS APPROVAL line, and the fix job refuses wi
   - `remove` of a desktop assigned to a user
   - anything over `horizon_fix_max` (20 per run)
 
-**Schedule** the workflow e.g. every hour in working hours. For a list without the approval,
-schedule *Horizon - desktops check* on its own with `horizon_desktops_mode: report`.
+**Schedule** the workflow e.g. every hour in working hours. For a list without the approval, make a
+second template, *Horizon - desktops check (report)*: the same playbook, without
+`horizon_desktops_mode` in its Variables (`report` is the default), on its own schedule. The workflow's
+template keeps `approval`.
 
 **Rehearse it.** Tick **Prompt on launch** for Job type on *Horizon - fix the approved desktops*.
 In the visualizer, set its node's Job type to **Check**. Run the workflow and approve: the fix job
@@ -175,8 +182,14 @@ prints `w11-004: would recover (a dry run)` and changes nothing.
 
 ## Workflow: push a new golden image, with an approval
 
-```text
-[Horizon - image push plan]  --Run on success-->  [Approval]  --Run on success-->  [Horizon - push the approved image]
+```workflow
+[Horizon - image push plan]
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[Horizon - push the approved image]
 ```
 
 1. Create a workflow job template, `Horizon - image push (workflow)`, with this **survey**:
@@ -186,8 +199,12 @@ prints `w11-004: would recover (a dry run)` and changes nothing.
      have that name.
    - `horizon_push_start`: text, optional. Empty = once approved. Or `2026-11-01 22:00` (UTC).
    - `horizon_push_logoff_policy`: multiple choice, `WAIT_FOR_LOGOFF` (default) or `FORCE_LOGOFF`.
-2. Nodes: *Horizon - image push plan* → **Run on success** → **Approval** (name
-   `Push this image?`) → **Run on success** → *Horizon - push the approved image*.
+2. Nodes: *Horizon - image push plan* → **Run on success** → **Approval** → **Run on success** →
+   *Horizon - push the approved image*. The approval: name `Push this image?`, timeout e.g. 8 hours,
+   description `Open the image push plan job: the READY FOR APPROVAL line says what, where and when.`
+3. **Rehearse it** before the first real push: tick **Prompt on launch** for Job type on *Horizon - push
+   the approved image*, set its node's Job type to **Check**, launch and approve. It prints what it would
+   schedule and schedules nothing.
 
 The plan job checks everything in Horizon:
 - each pool is an instant-clone pool, not protected, with no push already scheduled or running
@@ -198,7 +215,8 @@ A plan with a problem **fails**, and nothing reaches the approval. A good plan p
 `READY FOR APPROVAL: Push W11-Gold / /2026-10/2026-11 to IC-Win11, IC-Finance, starting ...; users: each desktop is replaced when its user logs off.`
 It also prints any warnings, such as Horizon flagging the VM or the same image being pushed again.
 
-The push job reads each pool again and schedules exactly the approved push. A start time that has
+The plan reaches the push job as the job artifact `horizon_push_plan` (on the plan job: **Details** >
+**Artifacts**). The push job reads each pool again and schedules exactly the approved push. A start time that has
 passed by the approval starts in a minute. Progress is in Horizon Console (the pool's **Summary**),
 and the next health report shows a failed push in red.
 
@@ -248,8 +266,7 @@ Run it as Check first. Then schedule it, e.g. every night at 02:00. For a list o
 | Horizon - health report | every day 06:00 | a Connection Server, service, gateway or vCenter link down; a certificate within `horizon_cert_crit_days` (7) or not valid; the event database not connected; the license expired; a pool that stopped provisioning or whose image failed |
 | Horizon - capacity report | every Monday 07:00 | a pool at `horizon_capacity_crit_pct` (95 %) in use, or with no free desktop (amber at 80 %, or fewer free desktops than its spares) |
 
-Both stay green when they find problems: the report says what. `horizon_health_fail: true` turns
-them red, for a workflow's "Run on fail" path, such as a ticket. To email them, set `report_email_to`
+Both stay green when they find problems: the report says what. With `horizon_health_fail: true` the job turns **red** when it finds a problem: put a notification on the template (its **Notifications** tab: on failure) to hear about it. The *ServiceNow tickets* job does not take this report's results - it only works after the checks that hand it findings ([JOB_TEMPLATES.md](JOB_TEMPLATES.md), "What one job hands to the next"). To email them, set `report_email_to`
 on the template ([EMAIL_REPORTS.md](EMAIL_REPORTS.md)).
 
 ## Messages and what to do

@@ -69,6 +69,7 @@ own `playbooks/group_vars/all.yml` keeps its old settings until you comment them
 | [docs/START_HERE.md](docs/START_HERE.md) | what the pieces are (Ansible and AAP in plain words) and how a run works |
 | [docs/HOW_IT_FITS_TOGETHER.md](docs/HOW_IT_FITS_TOGETHER.md) | how code, inventory, variables, credentials and surveys fit; a setting's way from YAML to a host; updating the repository at work safely |
 | [docs/SETUP_AAP.md](docs/SETUP_AAP.md) | the setup, step by step: Git, credentials, project, inventory, templates, ServiceNow |
+| [docs/JOB_TEMPLATES.md](docs/JOB_TEMPLATES.md) | every job template, one line each: what kind of job it is, where its how-to is, and what one job hands to the next in a workflow |
 | [docs/VMWARE.md](docs/VMWARE.md) | the VMware jobs: the collection the execution environment needs, the vCenter account and credential, one template per job with its survey |
 | [docs/VM_DEPLOY_GUIDE.md](docs/VM_DEPLOY_GUIDE.md) | the VM deploy from a ServiceNow ticket, complete: setting it up in AAP step by step, how a run works, what requesters write, where the VM goes, configurations to copy, every message with what to do, every setting (also a PDF) |
 | [docs/EXECUTION_ENVIRONMENT.md](docs/EXECUTION_ENVIRONMENT.md) | one execution environment for everything (Linux, Windows and Active Directory, VMware, NetApp, MySQL / MariaDB / SQL Server, Cisco, ServiceNow): build it from `ee/all-in-one/`, check it, add it to AAP; AD as an inventory (also a PDF) |
@@ -85,7 +86,7 @@ own `playbooks/group_vars/all.yml` keeps its old settings until you comment them
 | [docs/APPROVED_COMMANDS.md](docs/APPROVED_COMMANDS.md) | how to pre-approve the commands ACT may run by itself, what can never be approved, and how to verify it |
 | [docs/MARIADB.md](docs/MARIADB.md) | the MariaDB and MySQL database checks, step by step: host installs and podman containers (rootless too), the monitor account per engine, verifying it, what was tested |
 | [docs/RUNBOOKS.md](docs/RUNBOOKS.md) | every check and finding, and what to do about it |
-| [docs/WORKFLOWS_AND_SCHEDULES.md](docs/WORKFLOWS_AND_SCHEDULES.md) | how to build any workflow, and 17 ready-made ones for Linux, Windows and both (health, compliance, patching with a dry run first, ACT fixes, certificates, MariaDB, investigations, STIG Manager); schedules |
+| [docs/WORKFLOWS_AND_SCHEDULES.md](docs/WORKFLOWS_AND_SCHEDULES.md) | how to build any workflow, and over 30 ready-made workflows and schedules for Linux, Windows, VMware and Horizon (health, compliance, patching with a dry run first, ACT fixes, certificates, MariaDB, investigations, STIG Manager); schedules |
 | [docs/ADDING_ACT.md](docs/ADDING_ACT.md) | adding ACT later (explain / diagnose / self-heal), and writing your own check |
 | [docs/WINDOWS.md](docs/WINDOWS.md) | Windows servers: WinRM, credential, inventory, templates, settings, patching, ACT |
 | [docs/DRY_RUNS.md](docs/DRY_RUNS.md) | dry runs (Job type Check): what each template does in one, where to set it, examples |

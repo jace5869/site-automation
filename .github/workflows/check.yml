@@ -66,6 +66,8 @@ jobs:
           python tests/test_email_question.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_email_question.py
           python tests/test_report_web.py
+      - name: The docs - every playbook in docs/JOB_TEMPLATES.md with its how-to; workflow drawings no wider than 88
+        run: python tests/test_docs.py
       - name: The real ACT in the alarms analysis mode (piped evidence, masked names, the answer read back)
         run: python tests/test_alarm_act_contract.py
       - name: docs/VARIABLES_REFERENCE.md is generated from the roles and is up to date
@@ -279,6 +281,7 @@ jobs:
           Set-Item -Path WSMan:\localhost\Service\Auth\Basic -Value $true
           Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $true
           New-Item -ItemType Directory -Path C:\sa-reports -Force | Out-Null      # the report website's folder (report_web_host)
+          New-Item -ItemType Directory -Path C:\sa-copy -Force | Out-Null         # the same, written by the copy job (report_web_copy)
           "SATEST_PW=$pw" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - uses: Vampire/setup-wsl@v3
         with:
@@ -338,6 +341,28 @@ jobs:
                    "awx_job_template_name": "Linux - Certificate trust report"}' -e awx_job_id=$job | tee /tmp/7.out || fail=1
             grep -q "Published: 127.0.0.1:C:.*sa-reports.*linux-certificate-trust-report.*_job-$job.html" /tmp/7.out || { echo "FAIL: job $job not published on Windows"; fail=1; }
           done
+          # the copy job (report_web_copy): two report jobs keep their report and reach nothing; the copy job reads them from
+          # a fake AAP and writes their pages here over WinRM - winrunner a host of its inventory, so its connection settings
+          echo '[]' > /tmp/jobs.json
+          python3 tests/email/fake_aap.py 18137 /tmp/jobs.json &
+          sleep 2
+          export CONTROLLER_HOST=http://127.0.0.1:18137 CONTROLLER_USERNAME=audit CONTROLLER_PASSWORD=pw ANSIBLE_SHOW_CUSTOM_STATS=1
+          for job in 917 918; do
+            /tmp/v/bin/ansible-playbook tests/email/send_report.yml \
+              -e '{"report_web_copy": true, "report_web_host": "winrunner", "report_web_dest": "C:\\sa-copy", "report_web_url": "https://reports.example.mil",
+                   "awx_job_template_name": "Linux - Certificate trust report", "awx_job_template_id": 71}' -e awx_job_id=$job | tee /tmp/8.out || fail=1
+            grep -q "kept for the job Report website - copy" /tmp/8.out || { echo "FAIL: job $job kept no report"; fail=1; }
+            python3 -c 'import datetime, json, sys
+          run = [x for x in open("/tmp/8.out").read().splitlines() if x.startswith("\tRUN: ")]
+          js = json.load(open("/tmp/jobs.json"))
+          js.append({"id": int(sys.argv[1]), "job_template": 71, "name": "Linux - Certificate trust report", "status": "successful", "job_type": "run",
+                     "finished": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"), "artifacts": json.loads(run[-1][6:])})
+          json.dump(js, open("/tmp/jobs.json", "w"))' $job || fail=1
+          done
+          /tmp/v/bin/ansible-playbook -i /tmp/inv.yml playbooks/report_web_copy.yml \
+            -e '{"report_web_host": "winrunner", "report_web_dest": "C:\\sa-copy", "report_web_url": "https://reports.example.mil", "awx_job_id": 999, "awx_job_template_id": 90}' | tee /tmp/9.out || fail=1
+          grep -q "winrunner (winrm, port 5985, from this job's inventory): its connection settings" /tmp/9.out || { echo "FAIL: the copy job did not use winrunner's own connection"; fail=1; }
+          grep -q "job 918 'Linux - Certificate trust report': https://reports.example.mil/linux-certificate-trust-report/" /tmp/9.out || { echo "FAIL: the copy job did not write job 918"; fail=1; }
           exit $fail
       - name: The report website's pages on Windows (report_web_host)
         shell: powershell
@@ -351,6 +376,16 @@ jobs:
           "runs: $runs, latest is job 908: $($latest -match 'AAP job 908'), reports in the index: $(@($index.reports).Count), temporary files: $left"
           if ($runs -ne 2 -or $latest -notmatch 'AAP job 908' -or @($index.reports).Count -ne 1 -or $left -ne 0) { exit 1 }
           if (-not (Test-Path 'C:\sa-reports\index.html')) { exit 1 }
+      - name: The copy job's pages on Windows (report_web_copy, written over WinRM)
+        shell: powershell
+        run: |
+          $d = 'C:\sa-copy\linux-certificate-trust-report'
+          Get-ChildItem -Recurse C:\sa-copy | Select-Object FullName, Length | Format-Table -AutoSize
+          $runs = @(Get-ChildItem -Path $d -Filter '*_job-91?.html').Count
+          $latest = Get-Content -Raw -LiteralPath "$d\latest.html"
+          $index = Get-Content -Raw -LiteralPath 'C:\sa-copy\index.json' | ConvertFrom-Json
+          "runs: $runs, latest is job 918: $($latest -match 'AAP job 918'), not the copy job's: $($latest -notmatch 'job 999'), reports in the index: $(@($index.reports).Count)"
+          if ($runs -ne 2 -or $latest -notmatch 'AAP job 918' -or $latest -match 'job 999' -or @($index.reports).Count -ne 1) { exit 1 }
       - name: The findings reached the Windows Application event log
         shell: powershell
         run: |

@@ -10,7 +10,8 @@ import re
 import sys
 import textwrap
 
-from actpdf import *  # noqa: F401,F403 - shared fonts, styles, helpers, GuideDoc
+import build_ops_guide as g
+from sapdf import *  # noqa: F401,F403 - actpdf's fonts, styles and helpers in the site-automation look
 from actpdf import _arrow, _box
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "Service-Watch-Demo-AAP-ACT.pdf"
@@ -27,7 +28,7 @@ ST["bullet3"] = style("bullet3", leftIndent=46, bulletIndent=33, spaceAfter=3)
 LIST_ST = ["bullet", "bullet2", "bullet3"]
 
 
-class DemoDoc(GuideDoc):
+class DemoDoc(g.OpsDoc):
     cover_title = "Service watch"
     cover_lines = ("AAP 2.7 + ACT (GenAI): find why a container went down,",
                    "record it, and fix it after approval")
@@ -201,7 +202,7 @@ def render(md_text):
 
 def build():
     text = open(SRC, encoding="utf-8").read()
-    story = [Spacer(1, 3.55 * inch), P(
+    story = [Spacer(1, COVER_SPACE), P(
         "**What this is.** Step-by-step instructions to have Ansible Automation Platform watch the "
         "`stigman` and `nginx` containers. When one is down, ACT (GenAI) finds the root cause, the "
         "incident is recorded, and the fix waits for a person to approve it (or, in self-heal mode, "

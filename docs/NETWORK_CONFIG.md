@@ -135,9 +135,42 @@ share: the latest, or a dated copy (`net_config_restore_ref: 20261021T060000Z`).
 
 The Variables of each: `aap/extra_vars/net_config_backup.yml`, `net_config_load.yml`.
 
-**A schedule** (daily): *Network config backup*. **A load**: a workflow *[Network config load, Check] → Approval →
-[Network config load, Run]* shows the approver the dry run's report before anything is sent
-([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)).
+**A schedule** (daily): *Network config backup*.
+
+### A load, with an approval
+
+The approver sees the dry run's report - exactly what will be sent - before anything is.
+
+```workflow
+[Network config load]  Job type = Check: what would be sent
+   |  Run on success
+   v
+[Approval]  "Send these changes?"
+   |  Run on success
+   v
+[Network config load]  Job type = Run: sends exactly that
+```
+
+1. On the template *Network config load*, tick **Prompt on launch** for **Job type**.
+2. **Create workflow job template** `Network config load (workflow)`. Tick **Prompt on launch** for its
+   **Variables**: each launch, paste the change there - every step gets the workflow's Variables:
+
+   ```yaml
+   net_config_change: CHG0012345
+   net_config_load_mode: lines
+   net_config_only: [rtr-lab01*]
+   net_config_lines:
+     - ntp server 192.0.2.123
+   ```
+
+   (A survey cannot carry the lines: they are a list.)
+3. **Add step** *Network config load*, Job type **Check**. On it, **+** → **Run on success** →
+   **Approval**: name `Send these changes?`, timeout e.g. 4 hours, description `Open the Check job: its
+   report lists each device and the lines or the diff.`
+4. On the approval, **+** → **Run on success** → *Network config load*, Job type **Run**. **Save**.
+
+The Check step needs no change request in state Implement; the Run step does, and stops if the change
+moved on meanwhile.
 
 ## Troubleshooting
 
@@ -149,7 +182,7 @@ The Variables of each: `aap/extra_vars/net_config_backup.yml`, `net_config_load.
 | PAN-OS `Invalid Credential` / `HTTP 403` | the API key or the user (its admin role must allow the XML API: export for the backup, configuration and commit for the load) |
 | `the firewall has uncommitted changes` | someone's changes wait in the candidate: commit or revert them first (the web interface: *Commit* / *Revert Changes*) |
 | `validation failed - nothing committed, the candidate reverted` | the change refers to something that is not there (a zone, an object): fix the entries |
-| `entry 2 of 3 (set /config/...): ... - nothing committed, the candidate reverted` | the firewall refused that entry (a wrong xpath or element); the entries before it were taken back too | fix that entry |
+| `entry 2 of 3 (set /config/...): ... - nothing committed, the candidate reverted` | the firewall refused that entry (a wrong xpath or element); the entries before it were taken back too: fix that entry |
 | `the copy to the device failed (scp ...)` | `ip scp server enable` on the device, the user's privilege 15, the file system (`net_config_ios_file`) |
 | `configure replace failed` | IOS refused the backup (a command this release does not know - a backup from another model or release?); nothing was replaced |
 | `still different: N line(s)` after a restore | IOS added defaults of its own (a newer release): look at the diff in the next backup |

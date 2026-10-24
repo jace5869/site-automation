@@ -842,6 +842,11 @@ File: `roles/site_email/defaults/main.yml`
 | `report_web_host_scheme` | `https` | https, or http (Kerberos and NTLM encrypt each message then) |
 | `report_web_host_transport` | `ntlm` | ntlm, kerberos (Kerberos in the EE), credssp or basic |
 | `report_web_host_cert_validation` | `validate` | validate (the CA: report_web_ca_path) or ignore |
+| `report_web_copy` | `false` | THE COPY JOB instead (docs/WEB_REPORTS.md, "The copy job"): for report templates whose execution environment cannot reach the web server (no WinRM or Kerberos in it). true = the report jobs write nothing there - each keeps its report in AAP (the job artifact site_report_page) and the one job template "Report website -… (all of it: the role file) |
+| `report_web_copy_max_kb` | `256` | the kept report's greatest size, packed (a bigger one: its longest tables cut, said on the page) |
+| `report_web_copy_jobs` | `[]` | The copy job itself (playbooks/report_web_copy.yml): it reaches report_web_host as a host of its own inventory when it is one (that host's connection settings and the template's Machine credential - your Windows inventory), else with the report_web_host_* settings above. Its "Red Hat Ansible Automation Platform" crede… (all of it: the role file) |
+| `report_web_copy_hours` | `24` | its first run (no copy before it): the report jobs of the last 24 hours |
+| `report_web_copy_max_pages` | `50` | pages a run writes at most; the rest are the next run's |
 
 ## site_findings
 

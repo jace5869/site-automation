@@ -1,0 +1,158 @@
+---
+# The job "Report website - copy" (playbooks/report_web_copy.yml): the pages of the report jobs that keep their report
+# for it (report_web_copy: true - the job artifact site_report_page), written on the report website as those jobs would
+# write them themselves: into report_web_dest on report_web_host over WinRM, a folder, or an upload. Runs on the AAP side.
+# report_web_host is reached as a host of this job's inventory when it is one (that host's connection settings, the
+# template's Machine credential), else with the report_web_host_* settings (web_host.yml). Which jobs: those finished
+# since this template's run before (AAP's API - the "Red Hat Ansible Automation Platform" credential), or
+# report_web_copy_jobs. A run keeps where it got to as the job artifact site_report_copied, for the next one; a dry run
+# (Check) lists what it would copy and writes nothing. One page: copy_page.yml.
+- name: Copy | report_web_dest is set
+  ansible.builtin.assert:
+    that: report_web_dest | default('') | string | trim | length > 0
+    fail_msg: >-
+      Set report_web_dest (and report_web_url) in playbooks/group_vars/all.yml, as for the report jobs: where the pages go
+      (docs/WEB_REPORTS.md, "The copy job").
+    quiet: true
+
+- name: Copy | the report website, the look, the logo
+  ansible.builtin.set_fact:
+    _web_win: "{{ report_web_host | default('') | string | trim | length > 0 }}"
+    _web_theme: "{{ report_web_theme | default('portal') | string | trim | lower }}"
+    _email_logo_file: >-
+      {%- set f = report_logo_file | default('') | string | trim -%}
+      {{ '' if not f else (f if f.startswith('/') else playbook_dir ~ '/' ~ (f[10:] if f.startswith('playbooks/') else f)) }}
+
+- name: Copy | where report_web_host is, for the messages (_copy_inv, _copy_host and _copy_conn are in vars/main.yml)
+  ansible.builtin.set_fact:
+    _copy_where: >-
+      {{ report_web_host | trim }} ({{ ((hostvars[report_web_host | trim].ansible_connection | default('winrm')) ~ ', port '
+         ~ (hostvars[report_web_host | trim].ansible_port | default('the default')) ~ ", from this job's inventory")
+         if _copy_inv | bool else (report_web_host_connection ~ ', port ' ~ report_web_host_port) }})
+  when: _web_win | bool
+
+- name: Copy | report_web_theme is standard, command, portal or glass
+  ansible.builtin.assert:
+    that: _web_theme in ['standard', 'command', 'portal', 'glass']
+    fail_msg: "report_web_theme must be standard, command, portal or glass, not '{{ report_web_theme }}' (docs/WEB_REPORTS.md)."
+    quiet: true
+
+- name: Copy | report_web_dest is a folder on report_web_host
+  ansible.builtin.assert:
+    that: report_web_dest | trim is match('^[A-Za-z]:[/\\\\]') or _copy_conn == 'local'
+    fail_msg: >-
+      With report_web_host, report_web_dest is the folder on that server, e.g. D:\reports - not '{{ report_web_dest }}'
+      (a share's \\server\share path does not work over WinRM: it would be a second hop).
+    quiet: true
+  when: _web_win | bool
+
+- name: Copy | the logo's size
+  ansible.builtin.set_fact:
+    _web_logo_size: "{{ _email_logo_file | image_size([report_logo_height | int, _logo_caps[_web_theme]] | min if _web_theme in _logo_caps else report_logo_height | int) }}"
+  when: _email_logo_file | length > 0
+
+- name: Copy | no logo
+  ansible.builtin.debug:
+    msg: "No logo on the pages: {{ _email_logo_file }} is not there, or not a PNG, JPEG or GIF (report_logo_file)."
+  when: _email_logo_file | length > 0 and _web_logo_size[0] == 0
+
+- name: Copy | the report jobs to copy, from AAP
+  site_report_copy:
+    job_id: "{{ awx_job_id | default(tower_job_id | default(0)) | int }}"
+    template_id: "{{ awx_job_template_id | default(tower_job_template_id | default(0)) | int }}"
+    jobs: "{{ report_web_copy_jobs | name_list }}"
+    hours: "{{ report_web_copy_hours | int }}"
+    max_pages: "{{ report_web_copy_max_pages | int }}"
+    ca_path: "{{ report_history_aap_ca_path }}"
+  register: _copy
+  check_mode: false                      # read only
+
+- name: Copy | AAP could not be read
+  ansible.builtin.fail:
+    msg: "{{ _copy.problems | join('; ') }}"
+  when: _copy.problems | length > 0
+
+- name: Copy | reports that cannot be copied
+  ansible.builtin.debug:
+    msg: "{{ _copy.warnings_text }}"
+  when: _copy.warnings_text | length > 0
+
+- name: Copy | the report jobs that kept their report for this job
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for r in _copy.reports -%}
+      {%-   set _ = out.append(('Would copy' if ansible_check_mode else 'To copy') ~ ': job ' ~ r.job ~ " '" ~ r.template ~ "' ("
+                               ~ r.when ~ ', ' ~ r.status ~ ') - ' ~ (r.url or r.page)) -%}
+      {%- endfor -%}
+      {{ out or [('Nothing to copy: no report job kept its report for this job since ' ~ _copy.since ~ ' (report_web_copy: true on the report jobs?)')
+                 if _copy.since else 'Nothing to copy: the jobs in report_web_copy_jobs kept no report'] }}
+
+- name: Copy | report_web_host
+  when: _web_win | bool and _copy.reports | length > 0 and not ansible_check_mode
+  block:
+    - name: Copy | report_web_host - not a host of this job's inventory, so with report_web_host_* (web_host.yml)
+      ansible.builtin.include_tasks: web_host.yml
+      when: not _copy_inv | bool
+
+    - name: Copy | how report_web_host is reached
+      ansible.builtin.debug:
+        msg: >-
+          {{ _copy_where }}{{ ": its connection settings in this job's inventory, and the template's Machine credential"
+             if _copy_inv | bool else
+             ": not a host of this job's inventory (by that name), so with report_web_host_port, _scheme and _transport and the"
+             ~ " Report website credential (else the Machine credential) - to use the inventory's settings, set report_web_host"
+             ~ " to the server's name there" }}
+
+    - name: Copy | report_web_host - its folder, and the index there
+      ansible.builtin.include_tasks: web_windows.yml
+      vars:
+        ansible_connection: "{{ _copy_conn }}"
+        _web_ps_host: "{{ _copy_host }}"
+        _web_ps_pwsh: "{{ _copy_conn == 'local' }}"
+        _web_ps: site_report_web_read.ps1
+        _web_ps_what: the folder {{ report_web_dest | trim }}, and the index there
+        _web_ps_config:
+          dest: "{{ report_web_dest | trim }}"
+          index: "{{ (report_web_index[:-5] ~ '.json').split('/') if report_web_index else [] }}"
+
+    - name: Copy | report_web_host's answer
+      ansible.builtin.set_fact:
+        _web_win_read: "{{ ((_web_ps_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('###SITE-JSON### {}'))[16:] | from_json).read | default({}) }}"
+
+    - name: Copy | report_web_host answered, and report_web_dest is there
+      ansible.builtin.assert:
+        that: _web_win_read.ok | default(false)
+        fail_msg: "The report website: {{ _web_win_read.error | default('', true) or (_web_ps_out | site_web_win_error(_copy_where, _copy_inv | bool)) }}"
+        quiet: true
+
+    - name: Copy | the index there, for the first page
+      ansible.builtin.set_fact:
+        _copy_index: "{{ _web_win_read.index | default('', true) }}"
+
+- name: Copy | each report job's page
+  ansible.builtin.include_tasks: copy_page.yml
+  loop: "{{ _copy.reports }}"
+  loop_control:
+    loop_var: _copy_item
+    label: job {{ _copy_item.job }}
+  when: not ansible_check_mode
+
+- name: Copy | written
+  ansible.builtin.debug:
+    msg: "{{ _copy_written | default([]) }}"
+  when: _copy_written | default([]) | length > 0
+
+- name: Copy | more to copy
+  ansible.builtin.debug:
+    msg: >-
+      More report jobs kept their report than report_web_copy_max_pages ({{ report_web_copy_max_pages }}): this run copied the
+      oldest, the next run copies the rest.
+  when: _copy.more | bool
+
+- name: Copy | where this run got to, for the next one (job artifact site_report_copied)
+  ansible.builtin.set_stats:
+    data:
+      # one expression: the numbers stay numbers (ansible-core 2.16 makes text of a lone number)
+      site_report_copied: "{{ {'until': _copy.until, 'seen': _copy.seen, 'copied': _copy.reports | length} }}"
+  when: not ansible_check_mode and _copy.until | length > 0

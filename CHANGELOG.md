@@ -1,5 +1,138 @@
 # Changelog
 
+## 0.27.0 — 2026-10-24
+
+**Updating without scripts:** paste one zip as it is - from 0.26.0: `site-automation-0.27.0-changed-since-0.26.0.zip`;
+from 0.25.0: `site-automation-0.27.0-changed-since-0.25.0.zip` (it has 0.26.0's files too); from 0.24.0:
+`site-automation-0.27.0-changed-since-0.24.0.zip` (0.25.0's and 0.26.0's files too); from 0.15.1 to 0.23.0:
+`site-automation-0.27.0-changed-since-0.15.1.zip` (coming from before 0.20.0, read the 0.20.0 notes too - one file
+to delete). They leave out `playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. The copy job does
+nothing until you create it and set `report_web_copy: true`. The report jobs that write their own pages work as
+before, except that an older run no longer replaces a newer `latest.html`. The PDFs have a new look. The list at
+the end repeats what 0.20.0 to 0.27.0 ask you to set up: the copy job is in its step 5, 0.25.0's certificate
+install is its step 6, 0.26.0's outage watch and log analysis are its step 7.
+
+**The report website from any execution environment: the copy job.** Until now each report job wrote its own web
+page, so with the pages on a Windows server every report template needed an execution environment with WinRM - and,
+with NTLM blocked, Kerberos. With `report_web_copy: true` in `all.yml` the report jobs write nothing there and
+connect to nothing there: each keeps its report in AAP, as part of the job (the job artifact `site_report_page`,
+compressed - tens of KB), still prints the page's address and still gives its email the **Open the full report**
+button. One new job template, **Report website - copy** (`playbooks/report_web_copy.yml`), in the execution
+environment your Windows jobs use, writes those pages - the same pages, at the same address:
+
+- it reaches the server as a host of **its own inventory** (your Windows inventory: that host's connection settings
+  and the template's Machine credential), so no `report_web_host_*` settings and no Report website credential on
+  every report template;
+- each run copies the report jobs finished since the run before (a schedule every 15 minutes, or the last step of a
+  workflow); where it got to is its own job artifact, so a Check run never skips anything;
+  `report_web_copy_jobs: [907]` writes a job's page again;
+- an older run never takes the place of a newer `latest.html` (this holds for the report jobs writing their own
+  pages too);
+- a report too big to keep (`report_web_copy_max_kb`, 256 KB compressed) has its longest tables cut on the page,
+  which says so; the email always has all of it.
+
+Templates that keep writing their own pages (`report_web_copy: false` on their Variables) work as before.
+docs/WEB_REPORTS.md, "The copy job".
+
+**The PDFs: a new look, and your logo on your own copies.** The six site-automation guides in `docs/pdf/` (the
+setup guide, the settings reference, the VM deploy guide, the EE guide, how it fits together and the service-watch
+demo) take the colours of the reports' glass look: a light cover with the title on a see-through card, a band
+under each chapter's title, rounded tables and notes. The pages inside stay white, for printing. The setup
+guide's cover now reads *Operations Runbooks*. The PDFs here carry no logo: build your own copies with
+`SITE_PDF_LOGO` and your logo is on the cover and at the top of every page (docs/pdf/README.md, "Your logo on
+them"). The four ACT PDFs are as they were.
+
+**The docs: a how-to for every job template, and workflows you can read.**
+- [docs/JOB_TEMPLATES.md](docs/JOB_TEMPLATES.md) is new (also a chapter of the setup guide PDF). It has one line
+  per playbook: its template, what kind of job it is (report, on demand, workflow step, after an approval, watch,
+  setup or test) and the link to its how-to. For a report, the how-to is its settings file in `aap/extra_vars/`.
+  It ends with *What one job hands to the next*: which job's results reach which step, in which workflow.
+- The workflow diagrams are drawn top to bottom, so none is wider than a page. Before, 18 of them broke across
+  lines in the PDF. The setup guide draws them as boxes and arrows, in AAP's colours (green on success, red on
+  fail, blue always). Its six drawn figures (the overview, four workflows, the ACT diagram) are back: the
+  PDF build had been dropping them, so their text sketches were printed instead.
+- Setup steps were added where they were missing:
+  - *STIG Manager - deploy* and *ACT for Windows - install*: the template fields, and the approval's timeout;
+  - the network config load: its approval workflow, click by click, with the change in the workflow's Variables;
+  - the Horizon image push: the approval and a rehearsal;
+  - *Horizon - desktops check*: a second template for the report on its own.
+- Workflow numbers: the Horizon workflows are now 30 to 32 (26 and 27 were used twice), and the VM outage watch
+  is workflow 28. The schedule table lists every schedule.
+- Fixed: the NetApp, Active Directory, Horizon, secure boot and datastore reports no longer say their "On
+  failure" path can open a ticket. *ServiceNow tickets* takes only the checks' findings; use a notification on
+  failure.
+
+**To do, if you have not yet: what 0.20.0 to 0.27.0 ask you to set up.** In order; each step works without
+the ones after it.
+
+1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
+   *your* repository - never the public one: `playbooks/files/report_logo.png`. In `all.yml`:
+   `report_logo_file: files/report_logo.png`. Add the line `playbooks/files/report_logo.png` to `.site-local`,
+   or `scripts/update-from-release` deletes it.
+2. **The strip of past runs** (0.20.0, 0.21.0). Attach a **Red Hat Ansible Automation Platform** credential to
+   every report template (the pick lists' one works). Give its user **Organization Auditor** on the templates'
+   organization: Access Management > Users > the user > Roles > Assign roles, resource type Organization.
+   Without it the reports go out without the strip, and the job says why.
+3. **The look** (0.20.0, 0.21.0, 0.24.0). In `all.yml`: `report_email_theme: glass` (or `command`, `portal`)
+   and, if you like, `report_email_header_text: <your line above the title>`.
+4. **"Also email the report to" on every report** (0.22.0). Create the job template **AAP - report email
+   question**: playbook `playbooks/aap_email_question.yml`, only the Red Hat Ansible Automation Platform
+   credential (its user: **Admin** on the report templates and their workflows), any inventory, no Limit.
+   Launch it with Job type **Check** first - it only lists the templates and workflows it would change -
+   then for real. It adds the optional box to every report template's survey and to the workflows that run
+   them. Run it again whenever you add a report template. Optional, in `all.yml`:
+   `report_email_also_domains: [yoursite.mil]`, so typed addresses outside your domains get nothing. The
+   mail relay must be set (`report_email_smtp_host`, `report_email_from`). docs/SETUP_AAP.md, "AAP - report
+   email question"; docs/EMAIL_REPORTS.md, "Also email the report to".
+5. **The report website** (0.23.0, 0.27.0). In `all.yml`, `report_web_url: https://web01.yoursite.mil/reports`,
+   `report_web_theme: glass`, and where the pages go - for a Windows server (IIS serving the folder):
+   `report_web_host: web01.yoursite.mil` and `report_web_dest: 'D:\reports'` (the folder already there). Then one
+   of two ways to write them:
+   - **every report template in an execution environment with WinRM (and Kerberos)** - the all-in-one EE, say: the
+     report jobs write their own pages. The login: a **Report website** credential (`user@YOURSITE.MIL` for
+     Kerberos) on the report templates - or, without it, the template's Machine credential; for WinRM over HTTP with
+     Kerberos also `report_web_host_port: 5985`, `report_web_host_scheme: http`, `report_web_host_transport: kerberos`.
+     The **Report website** credential type: create it from `aap/credential_types/report_web.yml`.
+   - **report templates in other execution environments** - the copy job (new in 0.27.0):
+     1. Create the job template **Report website - copy**: playbook `playbooks/report_web_copy.yml`; the execution
+        environment your Windows jobs work with; your Windows inventory - it must have the web server, and
+        `report_web_host` is its name there - no Limit; its Machine credential (an account with **Modify** on
+        `D:\reports`); a **Red Hat Ansible Automation Platform** credential whose user has **Organization Auditor**
+        on the report templates' organizations. *Concurrent jobs* off.
+     2. Try it on one report template: `report_web_copy: true` on its Variables, run it (Run, not Check), then look
+        at that job in AAP (Details > Artifacts: `site_report_page`).
+     3. Launch **Report website - copy** with **Check** (`Would copy: job ...`), then for real: the page appears at the
+        address the report job printed, and the job says how it reached the server - *from this job's inventory*.
+     4. Then `report_web_copy: true` in `all.yml`, and a schedule for the copy job (every 15 minutes). An email's
+        button answers *not found* until the copy job's next run.
+
+     Both ways can be mixed: `report_web_copy: false` on one template's Variables and it writes its own pages.
+   - Or an upload (WebDAV) or a folder (a share on the execution nodes): docs/WEB_REPORTS.md, "Where the files go".
+
+   Run one report with **Check** (it prints the address it would use), then for real: the job prints
+   `Report: https://...`, and its email gets the **Open the full report** button. docs/WEB_REPORTS.md.
+6. **Certificate install** (0.25.0) - only when the renewals order from the PKI's catalog item
+   ([CERT_RENEWAL_CATALOG.md](docs/CERT_RENEWAL_CATALOG.md)). Ask the PKI to attach DISA's files (the .cer and
+   the .p7b) to the request or to its catalog task. Create six templates: *Certificate install - check*
+   (`playbooks/cert_install_check.yml`: Machine, ServiceNow API), *Certificate install - approved*
+   (`playbooks/cert_install_approved.yml`: the same, the same inventory, no Limit, Variables not prompted),
+   *Certificate restore* (`playbooks/cert_restore.yml`), and the three `win_` ones (`win_cert_install_check.yml`,
+   `win_cert_install_approved.yml`, `win_cert_restore.yml`). Make the workflow with an **Approval** on the
+   check's **Run on fail** (workflow 29 in docs/WORKFLOWS_AND_SCHEDULES.md) and schedule it daily; try the check
+   as **Check** with a Limit first. The optional settings: the 0.25.0 notes, "To set it up"; docs/CERT_INSTALL.md.
+7. **VM outage watch and log analysis** (0.26.0). Each does nothing until you make its template.
+   - *VM - outage watch* (`playbooks/vm_outage_watch.yml`): the VMware vCenter credential, the inventory that has
+     your `aap` group, no Limit. Run it once by hand (a clean estate is one green line). Then the workflow
+     `[VM - outage watch] --Always--> [ServiceNow tickets]` (*Always*, so a clean run notes or resolves the
+     incident), scheduled every 5 to 15 minutes with **Concurrent jobs off**, and `vm_watch_window_minutes` set to
+     that interval. It restarts nothing. docs/VM_OUTAGE_WATCH.md, "Set it up".
+   - *Log analysis* (`playbooks/log_analysis.yml`): one template per inventory (Linux with its Machine credential,
+     Windows with its Machine (Windows) credential), plus the **ACT model key**; Limit prompted on launch and a
+     survey with `target`, `log_analysis_question`, `log_analysis_since` / `log_analysis_until`. And
+     *VM - vCenter log analysis* (`playbooks/vm_log_analysis.yml`): VMware vCenter and ACT model key, no Limit.
+     Run each as **Check** first (it reads and reports, ACT is not called). docs/LOG_ANALYSIS.md, "Set it up in
+     AAP". With `report_web_copy: true` their pages go through the copy job too.
+
 ## 0.26.0 — 2026-10-24
 
 **Updating without scripts:** paste `site-automation-0.26.0-changed-since-0.25.0.zip` as it is (from

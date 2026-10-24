@@ -5,10 +5,14 @@ The certificate renewal makes a new key and a CSR where the old certificate is, 
 The PKI admin then puts the certificate from DISA on **that same request**. The certificate install takes it
 from there and puts it in place of the old one - after a person approved what it will do.
 
-```text
-[Certificate install - check] --Run on fail--> [Approval] --Run on success--> [Certificate install - approved]
-   on a schedule; red on purpose               "Install these?"                  installs exactly the approved ones
-   when something is ready ("NEEDS APPROVAL")
+```workflow
+[Certificate install - check]  on a schedule; red ("NEEDS APPROVAL") when one is ready
+   |  Run on fail
+   v
+[Approval]  "Install these?"
+   |  Run on success
+   v
+[Certificate install - approved]  installs exactly the approved ones
 ```
 
 The same for Windows: *Windows certificate install - check* → approval → *Windows certificate install - approved*.

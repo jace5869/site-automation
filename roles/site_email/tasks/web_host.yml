@@ -1,0 +1,21 @@
+---
+# report_web_host as the host the report website's scripts run on (site-report-web), with the report_web_host_* settings.
+# The login: the Report website credential's user name and password, else the template's Machine credential.
+- name: Email | report_web_host, with report_web_host_port, _scheme, _transport (the login - the Report website credential, else the Machine credential)
+  ansible.builtin.add_host:
+    name: site-report-web
+    ansible_host: "{{ report_web_host | trim }}"
+    ansible_port: "{{ report_web_host_port | int }}"
+    ansible_winrm_scheme: "{{ report_web_host_scheme }}"
+    ansible_winrm_transport: "{{ report_web_host_transport }}"
+    ansible_winrm_server_cert_validation: "{{ report_web_host_cert_validation }}"
+    ansible_winrm_ca_trust_path: "{{ report_web_ca_path | default('', true) or omit }}"
+    ansible_psrp_protocol: "{{ report_web_host_scheme }}"
+    ansible_psrp_auth: "{{ report_web_host_transport }}"
+    ansible_psrp_cert_validation: "{{ report_web_host_cert_validation }}"
+    ansible_psrp_ca_path: "{{ report_web_ca_path | default('', true) or omit }}"
+    ansible_user: "{{ lookup('ansible.builtin.env', 'REPORT_WEB_USERNAME') or omit }}"
+    ansible_password: "{{ lookup('ansible.builtin.env', 'REPORT_WEB_PASSWORD') or omit }}"
+    ansible_become: false
+  changed_when: false
+  no_log: true

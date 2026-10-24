@@ -231,6 +231,8 @@ warning ... critical (this run)`.
 Every report can also be written as a web page - the same report, in the portal look - on a Windows server (over
 WinRM), into a folder or onto a web server, with a `latest.html` per template and an index of every report; the
 job prints the page's address, and the email links to it. With or without the email: [WEB_REPORTS.md](WEB_REPORTS.md).
+Report templates whose execution environment cannot reach that server keep their report for one job that writes the
+pages for all of them (`report_web_copy`; WEB_REPORTS.md, "The copy job").
 
 ## Changing the look
 

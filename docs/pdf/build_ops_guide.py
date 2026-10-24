@@ -11,7 +11,7 @@ import re
 import sys
 import textwrap
 
-from actpdf import *  # noqa: F401,F403 - shared fonts, styles, helpers, GuideDoc
+from sapdf import *  # noqa: F401,F403 - actpdf's fonts, styles and helpers in the site-automation look
 from actpdf import _arrow, _box
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "Site-Automation-Ops-Runbooks-Guide.pdf"
@@ -22,13 +22,14 @@ REPO = os.environ.get("SITE_AUTOMATION_DIR") or (
     os.path.dirname(os.path.dirname(_HERE)) if os.path.isfile(os.path.join(_HERE, "..", "START_HERE.md"))
     else sys.exit("build_ops_guide.py: cannot find the site-automation repository; "
                   "run the script from <repo>/docs/pdf or set SITE_AUTOMATION_DIR=<repo>"))
-SA_VERSION = "0.26.0"
+SA_VERSION = "0.27.0"
 DOCS = [  # (file, chapter title)
     ("docs/START_HERE.md", "Start here: the pieces and how they fit"),
     ("docs/SETUP_AAP.md", "Setting up AAP, step by step"),
     ("docs/USING_YOUR_AAP_INVENTORY.md", "Using the inventory you already have in AAP"),
     ("docs/SERVICENOW_SETUP.md", "ServiceNow: set up, test and verify"),
     ("docs/WORKFLOWS_AND_SCHEDULES.md", "Workflows and schedules"),
+    ("docs/JOB_TEMPLATES.md", "Every job template: what it is, and where its how-to is"),
     ("docs/DRY_RUNS.md", "Dry runs: try anything, change nothing"),
     ("docs/RUNBOOKS.md", "The runbooks: every check and what to do"),
     ("docs/ADDING_ACT.md", "Adding ACT (GenAI) later"),
@@ -60,41 +61,21 @@ ST["bullet3"] = style("bullet3", leftIndent=46, bulletIndent=33, spaceAfter=3)
 LIST_ST = ["bullet", "bullet2", "bullet3"]
 
 
-class OpsDoc(GuideDoc):
-    cover_title = "Site Automation"
-    cover_lines = ("Operations runbooks: health checks, troubleshooting,",
-                   "ServiceNow, POA&M and patching - with AAP and, later, ACT")
+class OpsDoc(SiteDoc):
+    cover_title = "Operations Runbooks"
+    cover_lines = ("Health checks, troubleshooting, ServiceNow, POA&M and patching -",
+                   "with AAP and, later, ACT")
     cover_meta = "Setup guide for new AAP admins"
     header_title = "Site Automation  -  Operations Runbooks Setup Guide"
     pdf_title = "Site Automation - Operations Runbooks - Setup Guide"
+    version_text = "site-automation %s" % SA_VERSION
+    cover_note = ("Host names and addresses in this guide are placeholders. "
+                  "Copy YAML from the repository files, not from the PDF.")
 
     def __init__(self, path):
         super().__init__(path)
         self.author = "site-automation"
         self.subject = "site-automation %s runbooks with Ansible Automation Platform 2.7" % SA_VERSION
-
-    @staticmethod
-    def cover_bg(c, doc):
-        c.saveState()
-        c.setFillColor(NAVY)
-        c.rect(0, PAGE_H - 4.1 * inch, PAGE_W, 4.1 * inch, stroke=0, fill=1)
-        c.setFillColor(TEAL)
-        c.rect(0, PAGE_H - 4.1 * inch - 6, PAGE_W, 6, stroke=0, fill=1)
-        c.setFillColor(colors.white)
-        c.setFont("Sans-Bold", 30)
-        c.drawString(MARGIN, PAGE_H - 1.75 * inch, doc.cover_title)
-        c.setFont("Sans", 14)
-        for i, line in enumerate(doc.cover_lines):
-            c.drawString(MARGIN, PAGE_H - (2.2 + 0.27 * i) * inch, line)
-        c.setFont("Sans", 10)
-        c.setFillColor(colors.HexColor("#BFD3E6"))
-        c.drawString(MARGIN, PAGE_H - 3.2 * inch, "%s   |   site-automation %s   |   %s"
-                     % (doc.cover_meta, SA_VERSION, DATE))
-        c.setFillColor(MUTED)
-        c.setFont("Sans", 8)
-        c.drawString(MARGIN, 0.55 * inch, "Host names and addresses in this guide are placeholders. "
-                                          "Copy YAML from the repository files, not from the PDF.")
-        c.restoreState()
 
     def afterFlowable(self, flowable):
         """Like GuideDoc's, but the TOC gets escaped text (headings such as "POA&M")."""
@@ -107,21 +88,6 @@ class OpsDoc(GuideDoc):
             self.canv.addOutlineEntry(text, key, level=level, closed=level > 0)
             if level == 0 or getattr(flowable, "_toc", False):
                 self.notify("TOCEntry", (level, _esc(text), self.page, key))
-
-    @staticmethod
-    def chrome(c, doc):
-        c.saveState()
-        c.setStrokeColor(LINE)
-        c.setLineWidth(0.6)
-        c.line(MARGIN, PAGE_H - 0.6 * inch, PAGE_W - MARGIN, PAGE_H - 0.6 * inch)
-        c.setFont("Sans", 7.8)
-        c.setFillColor(MUTED)
-        c.drawString(MARGIN, PAGE_H - 0.52 * inch, doc.header_title)
-        c.drawRightString(PAGE_W - MARGIN, PAGE_H - 0.52 * inch, "site-automation %s" % SA_VERSION)
-        c.line(MARGIN, 0.6 * inch, PAGE_W - MARGIN, 0.6 * inch)
-        c.drawRightString(PAGE_W - MARGIN, 0.44 * inch, "Page %d" % doc.page)
-        c.drawString(MARGIN, 0.44 * inch, DATE)
-        c.restoreState()
 
 
 # ---------------------------------------------------------------------------- diagrams
@@ -265,6 +231,124 @@ def fig_act_modular():
                      "automatically through its findings' hints.")
 
 
+#  ```workflow blocks in the docs: a workflow top to bottom, readable as text and drawn here.
+#    [Health check]  health_checks = daily            a step: [template], then its answers (; between)
+#       +-- Run on fail -->  [ServiceNow tickets]     a branch to the right (one per step)
+#       |  Run always                                  the link to the next step
+#       v
+#    [ServiceNow tickets]
+#  A blank line starts another chain (2 or 3 chains side by side, no branches). Anything else, or too
+#  big to draw, is printed as the text it is.
+def _wf_kind(title):
+    t = title.lower()
+    if t.startswith("approval"):
+        return "approve"
+    if t.startswith("servicenow tickets"):
+        return "tickets"
+    return "apply" if "approved" in t or t.startswith("apply") else "job"
+
+
+def _wf_link_color(label):
+    t = label.lower()
+    return RED if "fail" in t else GREEN if "success" in t else NAVY if "always" in t else MUTED
+
+
+def parse_workflow(text):
+    """The chains of a ```workflow block - [[step, ...], ...]; a step is {title, notes, side, link} -
+    or None when the block is not in that form."""
+    def notes(s):
+        return [n.strip() for n in (s or "").split(";") if n.strip()]
+    chains, cur, link = [], None, None
+    for line in text.splitlines():
+        if not line.strip():
+            if cur:
+                chains.append(cur)
+            cur, link = None, None
+            continue
+        m = re.match(r"^\[([^\]]+)\](?:\s{2,}(\S.*))?$", line.rstrip())
+        if m:
+            if cur and link is None:                 # two steps without a link between them
+                return None
+            if cur:
+                cur[-1]["link"] = link
+            cur = (cur or []) + [{"title": m.group(1), "notes": notes(m.group(2)), "side": None, "link": None}]
+            link = None
+            continue
+        m = re.match(r"^\s+\+--\s*(.+?)\s*-->\s*\[([^\]]+)\](?:\s{2,}(\S.*))?$", line.rstrip())
+        if m and cur and cur[-1]["side"] is None and link is None:
+            cur[-1]["side"] = (m.group(1), m.group(2), notes(m.group(3)))
+            continue
+        m = re.match(r"^\s+\|\s*(.*)$", line.rstrip())
+        if m and cur:
+            link = (link or "") + ((" " if link else "") + m.group(1).strip() if m.group(1).strip() else "")
+            continue
+        if re.match(r"^\s+v$", line.rstrip()) and cur and link is not None:
+            continue
+        return None
+    if cur:
+        chains.append(cur)
+    if not chains or any(link is None for c in chains for link in [s["link"] for s in c[:-1]]):
+        return None
+    return chains
+
+
+def fig_workflow(text):
+    """A ```workflow block drawn: the steps top to bottom, the links' colours as in AAP's visualizer
+    (green success, red fail, blue always). None when it cannot be drawn well."""
+    chains = parse_workflow(text)
+    if not chains or len(chains) > 3 or (len(chains) > 1 and any(s["side"] for c in chains for s in c)):
+        return None
+    W = CONTENT_W
+    sides = any(s["side"] for c in chains for s in c)
+    if len(chains) == 1:
+        bw = 220 if sides else 250
+        cols = [0 if sides else (W - bw) / 2]
+    else:
+        bw = (W - 28 * (len(chains) - 1)) / len(chains)
+        cols = [i * (bw + 28) for i in range(len(chains))]
+    sw, gap, ts, ls = 190, 34, 8.6, 7.0
+
+    def fits(title, lines, width):
+        return (stringWidth(title, "Sans-Bold", ts) <= width - 12
+                and all(stringWidth(n, "Sans", ls) <= width - 12 for n in lines))
+
+    def h(step):
+        return 26 + 10 * max(len(step["notes"]), len(step["side"][2]) if step["side"] else 0)
+
+    for c in chains:
+        for s in c:
+            if not fits(s["title"], s["notes"], bw) or (s["side"] and not fits(s["side"][1], s["side"][2], sw)):
+                return None
+    rows = [max(h(c[k]) for c in chains if k < len(c)) for k in range(max(len(c) for c in chains))]
+    H = sum(rows) + gap * (len(rows) - 1) + 4          # chains side by side: a row's steps the same height
+    if H > 560:
+        return None
+    d = Drawing(W, H)
+    for x, c in zip(cols, chains):
+        y = H - 2
+        for k, s in enumerate(c):
+            bh = rows[k]
+            y -= bh
+            _node(d, x, y, bw, bh, s["title"], s["notes"], _wf_kind(s["title"]))
+            if s["side"]:
+                label, title, lines = s["side"]
+                col = _wf_link_color(label)
+                _node(d, W - sw, y, sw, bh, title, lines, _wf_kind(title))
+                _arrow(d, x + bw, y + bh / 2, W - sw, y + bh / 2, color=col, width=1.5)
+                _label(d, (x + bw + W - sw) / 2, y + bh / 2 + 5, label, col, 7.0)
+            if k < len(c) - 1:
+                col = _wf_link_color(s["link"])
+                _arrow(d, x + bw / 2, y, x + bw / 2, y - gap, color=col, width=1.5)
+                if s["link"]:
+                    d.add(String(x + bw / 2 + 8, y - gap / 2 - 3, s["link"], fontName="Sans-Bold", fontSize=7.0,
+                                 fillColor=col))
+                y -= gap
+    t = Table([[d]], colWidths=[W], spaceBefore=4, spaceAfter=8)
+    t.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                           ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+    return t
+
+
 FIGURES = {"mental_model": fig_mental_model, "wf_daily": fig_wf_daily, "wf_weekly": fig_wf_weekly,
            "wf_patch": fig_wf_patch, "wf_act": fig_wf_act, "act_modular": fig_act_modular}
 
@@ -292,7 +376,7 @@ def md_table(lines):
     rows = [[inline(c.strip().replace("\\|", "|")) for c in re.split(r"(?<!\\)\|", l.strip().strip("|"))] for l in lines]
     header, body = [c.replace("`", "") for c in rows[0]], [r for r in rows[2:]]
     n = len(header)
-    body = [r + [""] * (n - len(r)) for r in body]
+    body = [r[:n - 1] + [" | ".join(r[n - 1:])] if len(r) > n else r + [""] * (n - len(r)) for r in body]
     lens = []
     for c in range(n):
         cells = [re.sub(r"\*\*", "", r[c]) for r in [header] + body]
@@ -301,6 +385,23 @@ def md_table(lines):
         content = max(len(cell.replace("`", "")) for cell in cells)
         lens.append(max(longest * 2.4, min(content, 55), 10))
     widths = [l / sum(lens) for l in lens]
+    # no word broken in two: a column is at least as wide as its longest word (a longer one, an
+    # identifier or a path, may still wrap)
+    least = []
+    for c in range(n):
+        words = [t[:24] for r in [header] + body for t in re.split(r"\s+", re.sub(r"\*\*|`", "", r[c])) if t]
+        least.append(max(max(stringWidth(w, "Sans-Bold", 8.8), stringWidth(w, "Mono", 8.2)) + 14
+                         for w in words) / CONTENT_W if words else 0)
+    short = [c for c in range(n) if widths[c] < least[c]]
+    spare = [c for c in range(n) if c not in short]
+    need = sum(least[c] - widths[c] for c in short)
+    room = sum(max(widths[c] - least[c], 0) for c in spare)
+    if need > 0 and room > 0:
+        grow = min(need, room)
+        for c in short:
+            widths[c] += (least[c] - widths[c]) * grow / need
+        for c in spare:
+            widths[c] -= grow * max(widths[c] - least[c], 0) / room
     return table(header, body, widths)
 
 
@@ -340,6 +441,10 @@ def render(md_text, chapter):
                 continue
             skip_sketch = False
             text = "\n".join(body)
+            drawn = fig_workflow(text) if lang == "workflow" else None
+            if drawn:
+                story.append(drawn)
+                continue
             label = None
             if body and body[0].startswith("# ") and lang == "yaml":
                 label, text = body[0][2:], "\n".join(body[1:])
@@ -428,7 +533,7 @@ def appendix_credential_types():
 
 
 def build():
-    story = [Spacer(1, 3.55 * inch), P(
+    story = [Spacer(1, COVER_SPACE), P(
         "**What this is.** A step-by-step guide to setting up the site's operations runbooks in "
         "Ansible Automation Platform: health checks (system, compliance, MariaDB / MySQL, certificates, "
         "patching), troubleshooting, ServiceNow tickets, POA&M status and patching, and later ACT "
@@ -450,7 +555,7 @@ def build():
     story += [toc, PageBreak()]
     for n, (path, chapter) in enumerate(DOCS, 1):
         text = open("%s/%s" % (REPO, path), encoding="utf-8").read()
-        text = re.sub(r"<!--.*?-->\s*", "", text, flags=re.S)      # notes for editors, not for readers
+        text = re.sub(r"<!--(?!\s*figure:).*?-->\s*", "", text, flags=re.S)   # editors' notes; figures stay
         story += render(text, "%d. %s" % (n, chapter))
     story += appendix_credential_types()
     OpsDoc(OUT).multiBuild(story)

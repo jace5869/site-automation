@@ -35,8 +35,9 @@
 {#- what is read: a near-solid panel #}
 {%- set paper = 'background:rgba(255,255,255,.92);border:1px solid #e3eaf1;border-radius:14px;' -%}
 {%- set runs = _page_runs | default(_email_runs | default([])) -%}
-{%- set job_id = awx_job_id | default(tower_job_id | default('')) | string -%}
-{%- set job_name = awx_job_template_name | default(tower_job_template_name | default('')) | string -%}
+{#- the copy job (Report website - copy) passes the report job's own: _page_job, _page_template -#}
+{%- set job_id = _page_job | default(awx_job_id | default(tower_job_id | default(''))) | string -%}
+{%- set job_name = _page_template | default(awx_job_template_name | default(tower_job_template_name | default(''))) | string -%}
 {#- the line under the subject in the inbox: the subtitle, then the tiles that are warning or critical #}
 {%- set flagged = [] -%}
 {%- for t in r.summary | default([]) if t.status | default('') in ['warning', 'critical'] -%}

@@ -8,7 +8,7 @@ docs/HOW_IT_FITS_TOGETHER.md, with drawn diagrams, plus an appendix with the set
 import sys
 
 import build_ops_guide as g
-from actpdf import *  # noqa: F401,F403
+from sapdf import *  # noqa: F401,F403
 from actpdf import _arrow, _box
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "Site-Automation-How-It-Fits-Together.pdf"
@@ -199,7 +199,7 @@ def appendix_group_vars():
 
 
 def build():
-    story = [Spacer(1, 3.55 * inch), P(
+    story = [Spacer(1, COVER_SPACE), P(
         "**What this is.** How the pieces of site automation fit together: what the code, the "
         "inventory, the credentials and the survey each do; how one setting travels from its "
         "default in a YAML file to a host; how groups work (and a host in several of them); what a "

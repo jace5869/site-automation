@@ -4,7 +4,9 @@
 template's latest page, the report's data as JSON beside each, and the index of every report (index.html and
 index.json, this template's line updated). Into a folder the job can write (a share mounted on the execution
 node), uploaded with HTTP PUT (WebDAV: nginx, Apache, IIS), or - with windows_host - as a PowerShell script that
-writes them on a Windows server (the role runs it there over WinRM). Standard library only."""
+writes them on a Windows server (the role runs it there over WinRM). With keep (report_web_copy), nothing is written:
+the report is packed for the job "Report website - copy", which writes it later (plugins/module_utils/site_report_page.py).
+Standard library only."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -18,15 +20,21 @@ description:
     from the environment - REPORT_WEB_TOKEN (sent as a bearer token), or REPORT_WEB_USERNAME and
     REPORT_WEB_PASSWORD (basic) - as the "Report website" credential sets it, never from a parameter.
   - The pictures of the page (src="cid:name", the logo) are put inside it (data:), so every page stands alone.
-  - With windows_host, dest is a folder on that Windows server: nothing is written here, the files are put in a
+  - With windows_host, dest is a folder on that Windows server - nothing is written here, the files are put in a
     PowerShell script (returned as script, a temporary file) that writes them there; index_text is that
     server's index.json, read before. The script only uses what Constrained Language Mode allows.
+  - The template's latest page and its line in the index are only written over by a run at least as new as the one
+    already there (its when) - a copy of an older run (the copy job) never takes the place of a newer one.
+  - With keep, nothing is written and html is not needed - the report, its file names, address, index line and footer
+    are returned packed (packed, at most max_kb) for the copy job; a report too big even with its longest tables cut
+    returns packed empty, and msg says so.
   - In check mode nothing is written; the address is returned.
 options:
   dest: {description: The report folder (an absolute path) or the http(s) address it is uploaded to., type: str, required: true}
   url: {description: The address people open the folder at (default - dest when it is http(s))., type: str, default: ''}
   files: {description: "The names inside the folder - {page, latest, index} (report_web_files); '' = none.", type: dict, required: true}
-  html: {description: The page., type: str, required: true}
+  page_url: {description: "The page's address, as the report job printed it (the copy job; '' = url and the page's name).", type: str, default: ''}
+  html: {description: The page (not with keep)., type: str, default: ''}
   images: {description: "Pictures in the page: [{cid: name, path: file}].", type: list, elements: dict, default: []}
   data: {description: The report and its run (written as JSON beside the page)., type: dict, default: {}}
   entry: {description: "This template's line of the index: key (one per template), name, title, status, when, job.", type: dict, required: true}
@@ -37,6 +45,9 @@ options:
   timeout: {description: Seconds per request., type: int, default: 30}
   windows_host: {description: "The Windows server dest is on (report_web_host): a script to write the files there.", type: str, default: ''}
   index_text: {description: "With windows_host - the index.json there ('' = none yet; as text, or read already).", type: raw, default: ''}
+  keep: {description: Write nothing - return the report packed for the copy job (report_web_copy)., type: bool, default: false}
+  max_kb: {description: With keep - the packed report's greatest size (report_web_copy_max_kb)., type: int, default: 256}
+  footer: {description: With keep - the email's footer line (the AAP job, who started it, when) for the copied page., type: str, default: ''}
 author: site automation
 '''
 
@@ -47,6 +58,11 @@ index_url: {description: The index of every report., type: str}
 written: {description: The files written (inside the folder)., type: list}
 place: {description: "Where the page is, without an address (/mnt/reports/..., web01:D:\\reports\\...).", type: str}
 script: {description: "With windows_host - the PowerShell script that writes them there (a temporary file; delete it).", type: str}
+index_text: {description: The index (index.json) as written - for the next page of the same run (the copy job)., type: str}
+newest: {description: This run is at least as new as the template's line in the index (its latest page was written)., type: bool}
+packed: {description: "With keep - the report packed for the copy job ('' = too big, see msg)", type: str}
+note: {description: "With keep - what was kept, its size (and the tables cut to fit).", type: str}
+cut: {description: "With keep - the tables cut to fit max_kb: [[section, rows kept, rows]]", type: list}
 '''
 
 import base64
@@ -60,6 +76,7 @@ import ssl
 import tempfile
 
 from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.site_report_page import KEEP_AT_LEAST, pack
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
 from ansible.module_utils.six.moves.urllib.parse import quote
 from ansible.module_utils.six.moves.urllib.request import Request, build_opener, HTTPSHandler
@@ -360,13 +377,47 @@ def _json_name(rel):
     return rel[:-5] + '.json'
 
 
+def _reports(known):
+    """The index's lines, from index.json's text (none when it is not there or cannot be read)."""
+    try:
+        reports = (json.loads(known).get('reports') or []) if known else []
+    except (ValueError, AttributeError):
+        reports = []                                     # unreadable: start again with this report
+    return [r for r in reports if isinstance(r, dict)]
+
+
+def newer(old, entry):
+    """This run (entry) is at least as new as the index's line for its template (old) - by when, 2026-10-23 06:05 UTC."""
+    return not old or str(entry.get('when') or '') >= str(old.get('when') or '')
+
+
+def keep(module, p, page, latest, index, urls, where, win):
+    """With keep: the report packed for the copy job, nothing written."""
+    place = urls['url'] or _place(where, page, win)
+    if module.check_mode:
+        module.exit_json(changed=False, packed='', cut=[], msg='Dry run (Check): the report would be kept for the job Report website - copy, '
+                         'for %s' % place, **urls)
+    doc = {'files': {'page': page, 'latest': latest, 'index': index}, 'url': urls['url'], 'data': p['data'],
+           'entry': dict(p['entry'], page=page, latest=latest), 'footer': p['footer']}
+    text, cut = pack(doc, max(16, p['max_kb']) * 1024)
+    if not text:
+        module.exit_json(changed=False, packed='', cut=[list(c) for c in cut], msg=(
+            'No web page for this run: its report is bigger than report_web_copy_max_kb (%d KB) even with its tables cut to %d '
+            'rows - raise report_web_copy_max_kb, or let this template write its pages itself (report_web_copy: false)'
+            % (p['max_kb'], KEEP_AT_LEAST)), **urls)
+    note = 'kept for the job Report website - copy, which writes it there (%d KB%s)' % (
+        (len(text) + 1023) // 1024, '; cut to fit: ' + ', '.join('%s %d of %d' % c for c in cut) if cut else '')
+    module.exit_json(changed=False, packed=text, cut=[list(c) for c in cut], place=place, note=note,
+                     msg='%s%s: %s' % (note[0].upper(), note[1:], place), **urls)
+
+
 def main():
     module = AnsibleModule(
         argument_spec=dict(
             dest=dict(type='str', required=True),
             url=dict(type='str', default=''),
             files=dict(type='dict', required=True),
-            html=dict(type='str', required=True),
+            html=dict(type='str', default=''),
             images=dict(type='list', elements='dict', default=[]),
             data=dict(type='dict', default={}),
             entry=dict(type='dict', required=True),
@@ -377,6 +428,10 @@ def main():
             timeout=dict(type='int', default=30),
             windows_host=dict(type='str', default=''),
             index_text=dict(type='raw', default=''),
+            page_url=dict(type='str', default=''),
+            keep=dict(type='bool', default=False),
+            max_kb=dict(type='int', default=256),
+            footer=dict(type='str', default=''),
         ),
         supports_check_mode=True,
     )
@@ -386,9 +441,11 @@ def main():
     where = ('%s:%s' % (win, dest.rstrip('/\\'))) if win else dest.rstrip('/')
     page, latest, index = (str(p['files'].get(k) or '') for k in ('page', 'latest', 'index'))
     base = (p['url'].strip() or (dest if re.match(r'(?i)https?://', dest) and not win else '')).rstrip('/')
-    urls = dict(url=_join(base, page), latest_url=_join(base, latest), index_url=_join(base, index))
+    urls = dict(url=p['page_url'].strip() or _join(base, page), latest_url=_join(base, latest), index_url=_join(base, index))
     if not page:
         module.fail_json(msg='no page name (report_web_page)')
+    if p['keep']:
+        keep(module, p, page, latest, index, urls, where, win)
     if module.check_mode:
         module.exit_json(changed=False, written=[], msg='Dry run (Check): the report would be published at %s'
                          % (urls['url'] or _place(where, page, win)), **urls)
@@ -396,7 +453,10 @@ def main():
         target = Staged(_json_name(index) if index else '', p['index_text']) if win else Target(dest, p['ca_path'], p['timeout'])
         html = web_page(p['html'], p['images'])
         written = []
-        for rel in (page, latest):
+        entry = dict(p['entry'], page=page, latest=latest)
+        reports = _reports(target.read(_json_name(index))) if index else []
+        is_newest = newer(next((r for r in reports if r.get('key') == entry.get('key')), None), entry)
+        for rel in (page, latest if is_newest else ''):
             if not rel:
                 continue
             target.write(rel, html, 'text/html; charset=utf-8')
@@ -406,22 +466,18 @@ def main():
                 target.write(_json_name(rel), json.dumps(doc, indent=2, sort_keys=True, default=str) + '\n',
                              'application/json; charset=utf-8')
                 written.append(_json_name(rel))
+        index_text = ''
         if index:
-            entry = dict(p['entry'], page=page, latest=latest)
-            known = target.read(_json_name(index))
-            try:
-                reports = (json.loads(known).get('reports') or []) if known else []
-            except (ValueError, AttributeError):
-                reports = []                              # unreadable: start again with this report
-            reports = [r for r in reports if isinstance(r, dict) and r.get('key') != entry.get('key')] + [entry]
+            if is_newest:
+                reports = [r for r in reports if r.get('key') != entry.get('key')] + [entry]
             reports.sort(key=lambda r: (RANK.get(r.get('status'), 2), str(r.get('name') or r.get('key') or '').lower()))
             generated = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
             logo = None
             if p['images'] and len(p['logo_size']) == 2 and p['logo_size'][0] > 0:
                 uri = inline_images('cid:' + str(p['images'][0].get('cid')), p['images'][:1])
                 logo = (uri, p['logo_size'][0], p['logo_size'][1]) if uri.startswith('data:') else None
-            target.write(_json_name(index), json.dumps({'generated': generated, 'reports': reports}, indent=2,
-                                                       sort_keys=True, default=str) + '\n', 'application/json; charset=utf-8')
+            index_text = json.dumps({'generated': generated, 'reports': reports}, indent=2, sort_keys=True, default=str) + '\n'
+            target.write(_json_name(index), index_text, 'application/json; charset=utf-8')
             target.write(index, index_html(reports, index, p['header_text'], logo, generated), 'text/html; charset=utf-8')
             written += [_json_name(index), index]
     except Fail as e:
@@ -430,9 +486,9 @@ def main():
         fd, script = tempfile.mkstemp(prefix='site_report_web_', suffix='.ps1')
         with os.fdopen(fd, 'wb') as f:
             f.write(windows_script(dest, target.files).encode('utf-8-sig'))   # PowerShell 5.1 reads it as UTF-8
-        module.exit_json(changed=False, written=written, script=script, place=_place(where, page, win),
-                         msg='Made, for %s: %s' % (win, ', '.join(written)), **urls)
-    module.exit_json(changed=True, written=written, place=_place(where, page, win),
+        module.exit_json(changed=False, written=written, script=script, place=_place(where, page, win), index_text=index_text,
+                         newest=is_newest, msg='Made, for %s: %s' % (win, ', '.join(written)), **urls)
+    module.exit_json(changed=True, written=written, place=_place(where, page, win), index_text=index_text, newest=is_newest,
                      msg='Published: %s' % (urls['url'] or _place(where, page, win)), **urls)
 
 

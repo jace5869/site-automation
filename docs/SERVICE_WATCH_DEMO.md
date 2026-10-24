@@ -13,13 +13,13 @@ recorded. Then, depending on the mode you pick when you launch it:
 cause and proposed fix, approve it, and watch the container come back.
 
 ```
-                        Run on fail                           Run on success
- [Service watch - check] ---------> [Approve the fix?] ------------------> [Service watch - apply approved fix]
-         |                                  |
-         | success: everything was          | denied or timed out:
-         | up, or self-healed               | nothing is changed
-         v                                  v
-        end                                end
+[Service watch - check]  success (everything up, or self-healed): the end
+   |  Run on fail
+   v
+[Approve the fix?]  denied or timed out: nothing is changed
+   |  Run on success
+   v
+[Service watch - apply approved fix]
 ```
 
 > **Menu names.** The screens are described with the AAP 2.7 wording. Not every click was checked in a

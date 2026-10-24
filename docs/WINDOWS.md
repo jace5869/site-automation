@@ -248,8 +248,14 @@ install* ([CERT_INSTALL.md](CERT_INSTALL.md)).
 The Windows twin of the Linux renewal ([RUNBOOKS.md](RUNBOOKS.md), "Certificate renewal"). Put it in
 the weekly workflow after the tickets step, so each CSR lands on the ticket the report opened:
 
-```text
-[Windows certificate report] --Run always--> [ServiceNow tickets] --Run always--> [Windows certificate renewal - CSRs]
+```workflow
+[Windows certificate report]
+   |  Run always
+   v
+[ServiceNow tickets]
+   |  Run always
+   v
+[Windows certificate renewal - CSRs]
 ```
 
 For each certificate the report flags (within `win_check_certs_warn_days`, 30 days, or expired) that is
@@ -398,6 +404,12 @@ If a server fails:
 `playbooks/win_act_install.yml` puts ACT for Windows (`vendor/act-windows/act.ps1`) on the
 servers in `C:\ProgramData\act` (setting `win_act_dir`). Run it again after you update this
 repository, and every server gets the new version.
+
+**The job template** *ACT for Windows - install*: playbook `playbooks/win_act_install.yml`; your Windows
+inventory and its **Machine (Windows)** credential; the execution environment your Windows jobs use;
+**Prompt on launch** ticked for **Limit** and **Job type**. Launch it as **Check** with a Limit of one
+server first. To roll out group by group with an approval: workflow 15 in
+[WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md).
 
 - **Locked down.** Ordinary users may create folders and files in `C:\ProgramData` (and in
   `C:\temp`). Someone could then place, or swap, `act.ps1` before an administrator runs it, and

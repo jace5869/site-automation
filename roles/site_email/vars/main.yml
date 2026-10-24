@@ -5,3 +5,10 @@ _strip_looks: [command, portal, glass]
 _logo_caps: {portal: 56, glass: 80}
 # the tallest bar of the strip of past runs, in pixels (36 in the others)
 _bar_tops: {portal: 44, glass: 54}
+# The copy job (tasks/copy.yml): report_web_host reached as its own host when this job's inventory has it (that host's
+# connection settings), else as site-report-web (web_host.yml, with report_web_host_*). Here, not facts: a task run on
+# that server reads them as that host, which does not see the AAP side's facts.
+_copy_inv: "{{ report_web_host | default('') | string | trim in hostvars }}"
+_copy_host: "{{ report_web_host | trim if _copy_inv | bool else 'site-report-web' }}"
+_copy_conn: >-
+  {{ (hostvars[report_web_host | trim].ansible_connection | default('winrm')) if _copy_inv | bool else report_web_host_connection }}

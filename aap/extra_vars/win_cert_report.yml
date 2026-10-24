@@ -242,6 +242,19 @@
 ## validate (the CA: report_web_ca_path) or ignore
 # report_web_host_cert_validation: validate
 
+## THE COPY JOB instead (docs/WEB_REPORTS.md, "The copy job"): for report templates whose execution
+## environment cannot reach the web server (no WinRM or Kerberos in it). true = the report jobs
+## write nothing there - each keeps its report in AAP (the job artifact site_report_page) and the
+## one job template "Report website - copy" (playbooks/report_web_copy.yml), in an execution
+## environment that reaches report_web_host, writes the pages there later, at the same address: the
+## email's button and site_report_url point at it (there once the copy job has run). Set it in
+## all.yml, with report_web_dest and report_web_url as above; the copy job uses them (and
+## report_web_theme, the logo) too.
+# report_web_copy: false
+
+## the kept report's greatest size, packed (a bigger one: its longest tables cut, said on the page)
+# report_web_copy_max_kb: 256
+
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
 ## Which severities make the job FAIL. A failed job is what sends an AAP workflow down its "on
 ## failure" path (open tickets, ask ACT, wait for approval). [] = report only, never fail.

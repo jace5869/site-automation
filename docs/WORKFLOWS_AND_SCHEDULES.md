@@ -64,8 +64,9 @@ Approvals**, and in the workflow job's view.
 ## Adding ACT to a workflow: what "on fail" means, and where `site_act` goes
 
 **You do not add `site_act` to the workflow.** There is no ACT template and no ACT box. ACT runs
-**inside the check job**. The check playbooks (Health check, Troubleshoot, Service watch, the
-Windows ones) already include `roles/site_act`, and it runs when that job's answers say
+**inside the check job**. The check playbooks (Health check, Troubleshoot, Database health, Service
+watch) already include `roles/site_act` - the Windows ones not yet ([WINDOWS.md](WINDOWS.md),
+"Not in this release") - and it runs when that job's answers say
 `use_act` = `yes`, at the level in `site_act_level`. In the workflow you only give the check box
 those two answers.
 
@@ -121,8 +122,10 @@ the same two survey questions, and it fits the same workflow.
 <!-- figure:wf_daily -->
 
 ```text
-[Health check]  --Run always-->  [ServiceNow tickets]
- health_checks = daily
+[Health check]  health_checks = daily
+   |  Run always
+   v
+[ServiceNow tickets]
 ```
 
 | Step | Template | Answers | Link |
@@ -144,19 +147,29 @@ and link"), so they all start together:
 <!-- figure:wf_weekly -->
 
 ```text
-[Health check]        --Run always-->  [ServiceNow tickets]
- health_checks = weekly
-[Certificate report]  --Run always-->  [ServiceNow tickets]
-[POA&M status]        --Run always-->  [ServiceNow tickets]
+[Health check]  health_checks = weekly
+   |  Run always
+   v
+[ServiceNow tickets]
+
+[Certificate report]
+   |  Run always
+   v
+[ServiceNow tickets]
+
+[POA&M status]
+   |  Run always
+   v
+[ServiceNow tickets]
 ```
 
 Give each chain **its own** tickets box. A box with two parents gets only one parent's findings:
 the artifacts overwrite each other.
 
 The `weekly` set includes the trust check (a compromised or dropped CA still trusted somewhere on the
-host). For the one table of every store on every host, and vCenter and ESXi, add a fourth chain,
-*Trust store report* -> *ServiceNow tickets*, or run that template on demand
-([TRUST_STORES.md](TRUST_STORES.md)).
+host). For the one table of every store on every Linux host, add a fourth chain, *Trust store
+report* -> *ServiceNow tickets*, or run that template on demand. vCenter and the ESXi hosts have their
+own report, *VMware - trust store report*, which does not feed tickets ([TRUST_STORES.md](TRUST_STORES.md)).
 
 **Schedule:** Mondays at 07:00.
 
@@ -165,12 +178,20 @@ host). For the one table of every store on every host, and vCenter and ESXi, add
 <!-- figure:wf_patch -->
 
 ```text
-[Health check: pre]  --success-->  [Approval: patch?]  --success-->  [Patch hosts]
- disk, mounts, services                                                  |
-        |                                                          Run always
-     Run on fail                                                         v
-        v                                                       [Health check: post] --always--> [ServiceNow tickets]
- [ServiceNow tickets]                                             health_checks = daily
+[Health check: pre]  disk, mounts, services
+   +-- Run on fail -->  [ServiceNow tickets]
+   |  Run on success
+   v
+[Approval: patch?]
+   |  Run on success
+   v
+[Patch hosts]
+   |  Run always
+   v
+[Health check: post]  health_checks = daily
+   |  Run always
+   v
+[ServiceNow tickets]
 ```
 
 | Step | Template | Answers | Link |
@@ -210,7 +231,7 @@ example the second Wednesday at 20:00. The approval then waits for the on-call p
 
 The same as 3, but the approver sees exactly what will be installed before approving:
 
-```text
+```workflow
 [Health check: pre]             health_checks = disk, mounts, services
     |  Run on success
 [Patch hosts]                   Job type = Check: lists what it would install
@@ -242,13 +263,17 @@ For when you use ACT. See [ADDING_ACT.md](ADDING_ACT.md) for the three levels.
 <!-- figure:wf_act -->
 
 ```text
-[Health check]  --Run on fail-->  [Approval: apply ACT's fix?]  --success-->  [Apply approved ACT fix]
- use_act = yes                                                                       |
- site_act_level = diagnose                                                     Run always
-        |                                                                            v
-   Run always                                                               [ServiceNow tickets]
-        v
- [ServiceNow tickets]
+[Health check]  use_act = yes; site_act_level = diagnose
+   +-- Run always -->  [ServiceNow tickets]
+   |  Run on fail
+   v
+[Approval: apply ACT's fix?]
+   |  Run on success
+   v
+[Apply approved ACT fix]
+   |  Run always
+   v
+[ServiceNow tickets]
 ```
 
 | Step | Template | Answers | Link |
@@ -287,10 +312,16 @@ and runs the same checks again. The tickets carry ACT's analysis too.
 
 The STIG-related checks, and the POA&M list, with tickets:
 
-```text
-[Health check]  --Run always-->  [ServiceNow tickets]
- selinux, fapolicyd, auditd, accounts
-[POA&M status]  --Run always-->  [ServiceNow tickets]
+```workflow
+[Health check]  selinux, fapolicyd, auditd, accounts
+   |  Run always
+   v
+[ServiceNow tickets]
+
+[POA&M status]
+   |  Run always
+   v
+[ServiceNow tickets]
 ```
 
 | Step | Template | Answers | Link |
@@ -307,8 +338,14 @@ security team wants these on their own day.
 
 Certificates expire on a day, not in a week:
 
-```text
-[Certificate report]  --Run always-->  [ServiceNow tickets]  --Run always-->  [Certificate renewal - CSRs]
+```workflow
+[Certificate report]
+   |  Run always
+   v
+[ServiceNow tickets]
+   |  Run always
+   v
+[Certificate renewal - CSRs]
 ```
 
 | Step | Template | Answers | Link |
@@ -340,15 +377,21 @@ the incidents and emails the report ([NETWORK_CERTS.md](NETWORK_CERTS.md)). **A 
 certificate it read ([CERT_INVENTORY.md](CERT_INVENTORY.md)).
 
 **Network configurations:** *Network config backup* on a daily schedule - a commit in the backups' repository
-when a device changed, optionally an incident for it. A **load** as a workflow: *[Network config load]* with
-Job type **Check** (prompt on launch, or a second template) → **Approval** → *[Network config load]* **Run**,
-each with the same `net_config_change` and lines: the approver sees the dry run's report - exactly what will be
-sent - before anything is ([NETWORK_CONFIG.md](NETWORK_CONFIG.md)).
+when a device changed, optionally an incident for it. A **load** as a workflow: *[Network config load]* as
+**Check** → **Approval** → *[Network config load]* as **Run**, the change and its lines in the workflow's
+Variables: the approver sees the dry run's report - exactly what will be sent - before anything is. Click by
+click: [NETWORK_CONFIG.md](NETWORK_CONFIG.md), "A load, with an approval".
 
 ### 29. Certificate install, with an approval (daily)
 
-```text
-[Certificate install - check]  --Run on fail-->  [Approval]  --Run on success-->  [Certificate install - approved]
+```workflow
+[Certificate install - check]
+   |  Run on fail
+   v
+[Approval]
+   |  Run on success
+   v
+[Certificate install - approved]
 ```
 
 | Step | Template | Link |
@@ -366,8 +409,11 @@ certificate install - check / approved*. Everything else - what stays for a pers
 
 ### 8. Database watch: MariaDB and MySQL (hourly)
 
-```text
-[Database health - MariaDB / MySQL]  --Run always-->  [ServiceNow tickets]
+```workflow
+[Database health - MariaDB / MySQL]
+   |  Run always
+   v
+[ServiceNow tickets]
 ```
 
 | Step | Template | Answers | Link |
@@ -387,10 +433,11 @@ Prefer to keep it in the general Health check? Use the *Health check* as step 1 
 
 One launch gives the troubleshooting commands, ACT's explanation and every check:
 
-```text
-[Troubleshoot]  --Run always-->  [Health check]
- ts_area, use_act = yes,          health_checks = all
- site_act_level = explain
+```workflow
+[Troubleshoot]  ts_area; use_act = yes; site_act_level = explain
+   |  Run always
+   v
+[Health check]  health_checks = all
 ```
 
 | Step | Template | Answers | Link |
@@ -403,7 +450,13 @@ are already looking. Add `[ServiceNow tickets]` after step 2 (**Run always**) if
 
 ### 10. STIG Manager deploy with checks
 
-```text
+**The template** *STIG Manager - deploy*: playbook `playbooks/stigman_deploy.yml`; the inventory with the
+group `stigman`; credentials Machine (ssh + sudo), *STIG Manager database*, *TLS certificate* (and
+*Container registry login (hosts)* when you pull with an account); **Prompt on launch** ticked for **Job
+type** and **Show changes**, so the workflow can run it as Check, then as Run. Its Variables:
+`aap/extra_vars/stigman_deploy.yml`.
+
+```workflow
 [STIG Manager - deploy]         Job type = Check (+ Show changes): what would change
     |  Run on success
 [Approval]                      "Apply the changes the dry run listed?"
@@ -418,7 +471,7 @@ are already looking. Add `[ServiceNow tickets]` after step 2 (**Run always**) if
 | Step | Template | Answers | Link |
 |---|---|---|---|
 | 1 | STIG Manager - deploy | **Job type** `Check` (and **Show changes**) | (start) |
-| 2 | *Approval* | `Apply the changes the dry run listed?` | **Run on success**, from 1 |
+| 2 | *Approval* | `Apply the changes the dry run listed?`, **Timeout** 8 hours | **Run on success**, from 1 |
 | 3 | STIG Manager - deploy | **Job type** `Run` | **Run on success**, from 2 |
 | 4 | Service watch - check | | **Run always**, from 3 |
 | 5 | Health check | `health_checks` = `certs`, `services` | **Run always**, from 4 |
@@ -442,19 +495,30 @@ tickets step is the same template as for Linux: it runs on AAP itself.
 
 ### 12. Windows daily health
 
-```text
-[Windows health check]  --Run always-->  [ServiceNow tickets]
- health_checks = daily
+```workflow
+[Windows health check]  health_checks = daily
+   |  Run always
+   v
+[ServiceNow tickets]
 ```
 
 **Schedule:** every day 06:15.
 
 ### 13. Windows weekly compliance
 
-```text
-[Windows health check]        --Run always-->  [ServiceNow tickets]
- health_checks = weekly
-[Windows certificate report]  --Run always-->  [ServiceNow tickets]  --Run always-->  [Windows certificate renewal - CSRs]
+```workflow
+[Windows health check]  health_checks = weekly
+   |  Run always
+   v
+[ServiceNow tickets]
+
+[Windows certificate report]
+   |  Run always
+   v
+[ServiceNow tickets]
+   |  Run always
+   v
+[Windows certificate renewal - CSRs]
 ```
 
 The last step is optional: a CSR for each of the server's own certificates that expires, on its ticket
@@ -464,7 +528,7 @@ The last step is optional: a CSR for each of the server's own certificates that 
 
 ### 14. Windows patch with a dry run first
 
-```text
+```workflow
 [Windows health check: pre]     health_checks = disk, services
     |  Run on success
 [Windows patch]                 Job type = Check: lists the updates Software Center has
@@ -494,7 +558,12 @@ ConfigMgr holds the updates and the patch step stops and says so.
 
 ### 15. ACT for Windows rollout
 
-```text
+**The template** *ACT for Windows - install*: playbook `playbooks/win_act_install.yml`; your Windows
+inventory and its **Machine (Windows)** credential; the execution environment your Windows jobs use;
+**Prompt on launch** ticked for **Job type** and **Limit** ([WINDOWS.md](WINDOWS.md), "ACT on the
+servers").
+
+```workflow
 [ACT for Windows - install]     Job type = Check: would install / update / already current
     |  Run on success
 [Approval]
@@ -502,15 +571,24 @@ ConfigMgr holds the updates and the patch step stops and says so.
 [ACT for Windows - install]     Job type = Run
 ```
 
+| Step | Template | Answers | Link |
+|---|---|---|---|
+| 1 | ACT for Windows - install | **Job type** `Check` | (start) |
+| 2 | *Approval* | `Install or update ACT on these servers?`, **Timeout** 8 hours | **Run on success**, from 1 |
+| 3 | ACT for Windows - install | **Job type** `Run` | **Run on success**, from 2 |
+
 The dry run lists, per server, whether ACT would be installed, updated, or is already current.
-Launch it with a Limit (a group) to roll out group by group. Run it again after every update of
+Launch the workflow with a Limit (a group; tick **Prompt on launch** for Limit on the workflow too) to
+roll out group by group. Run it again after every update of
 this repository.
 
 ### 16. Windows: investigate a server (on demand)
 
-```text
-[Windows troubleshoot]  --Run always-->  [Windows health check]
- ts_area                                  health_checks = all
+```workflow
+[Windows troubleshoot]  ts_area
+   |  Run always
+   v
+[Windows health check]  health_checks = all
 ```
 
 Launch with one server in the Limit.
@@ -522,15 +600,24 @@ Launch with one server in the Limit.
 One workflow, two independent chains (each first box added with **Add step**). Each step uses its
 own template's inventory, so leave the workflow's Inventory empty:
 
-```text
-[Health check]           --Run always-->  [ServiceNow tickets]
- health_checks = daily
-[Windows health check]   --Run always-->  [ServiceNow tickets]
- health_checks = daily
-[Certificate report]     --Run always-->  [ServiceNow tickets]
+```workflow
+[Health check]  health_checks = daily
+   |  Run always
+   v
+[ServiceNow tickets]
+
+[Windows health check]  health_checks = daily
+   |  Run always
+   v
+[ServiceNow tickets]
+
+[Certificate report]
+   |  Run always
+   v
+[ServiceNow tickets]
 ```
 
-**Schedule:** every day 06:00. It replaces workflows 1, 7 and 12.
+**Schedule:** every day 06:00. It replaces workflows 1 and 12, and the first two steps of 7 (keep 7 for its CSR step).
 
 ## VMware workflows
 
@@ -539,8 +626,14 @@ template's credentials ([VMWARE.md](VMWARE.md)).
 
 ### 18. VMware daily checks: health, alarms, then ACT's analysis (daily)
 
-```text
-[VM - health report]  --Run always-->  [VM - alarms report]  --Run always-->  [VM - alarms ACT analysis]
+```workflow
+[VM - health report]
+   |  Run always
+   v
+[VM - alarms report]
+   |  Run always
+   v
+[VM - alarms ACT analysis]
 ```
 
 **Always**, not On success: a report is red when `vm_health_fail` / `vm_alarm_fail: true` is set,
@@ -552,19 +645,31 @@ analysis is wanted? Schedule `VM - alarms ACT analysis` on its own: its email li
 
 ### 19. Snapshot cleanup with approval
 
-```text
-[VM - snapshot report]  --On success-->  [Approval]  --On success-->  [VM - snapshot cleanup]
+```workflow
+[VM - snapshot report]
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[VM - snapshot cleanup]
 ```
 
 Click by click, with the survey and the dry run: [VMWARE.md](VMWARE.md), "Snapshots".
 
 ### 26. Delete picked snapshots, with approval (on demand)
 
-```text
-(schedule: [VM - refresh the pick lists] every 30 minutes - writes the survey's choices)
+The workflow's survey: tick the snapshots. Its choices come from *VM - refresh the pick lists*, on a
+schedule every 30 minutes.
 
-survey: tick snapshots  ->  [VM - delete picked snapshots]  --On success-->  [Approval]  --On success-->  [VM - delete picked snapshots]
-                             (plan: what will be deleted)                                               (exactly the plan)
+```workflow
+[VM - delete picked snapshots]  the plan: what will be deleted
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[VM - delete picked snapshots]  exactly the plan
 ```
 
 The **same** job template twice. Its survey question `vm_snapshot_picks` (Multiple choice, multiple
@@ -576,8 +681,16 @@ Click by click: [VMWARE.md](VMWARE.md), "Pick lists".
 
 ### 27. Restart picked (or hung) VMs, with approval (on demand)
 
-```text
-survey: tick VMs, How  ->  [VM - restart picked VMs]  --On success-->  [Approval]  --On success-->  [VM - restart picked VMs]
+The workflow's survey: tick the VMs, and How (guest or hard).
+
+```workflow
+[VM - restart picked VMs]  the plan: what will be restarted
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[VM - restart picked VMs]  exactly the plan
 ```
 
 As 26, with `vm_reboot_picks` and `vm_power_mode` (`guest` / `hard`) on the workflow's survey. For a
@@ -612,43 +725,65 @@ by email without tickets, one on `VMware - certificate report` ([VMWARE.md](VMWA
 
 ### 21. NetApp ONTAP health (daily)
 
-No workflow needed: a schedule on the `NetApp - ONTAP health report` template, e.g. every day at
-06:00 in your time zone ([NETAPP.md](NETAPP.md)). In a workflow with `ontap_report_fail: true`, its
-"On failure" path can open a ticket.
+No workflow needed: a schedule on the `NetApp ONTAP health report` template, e.g. every day at
+06:00 in your time zone ([NETAPP.md](NETAPP.md)). With `ontap_report_fail: true` the job turns **red** when it finds a problem: put a notification on the template (its **Notifications** tab: on failure) to hear about it. The *ServiceNow tickets* job does not take this report's results - it only works after the checks that hand it findings ([JOB_TEMPLATES.md](JOB_TEMPLATES.md), "What one job hands to the next").
 
 ### 24. Active Directory health (daily)
 
 No workflow needed: a schedule on the `Active Directory health report` template, every day at 06:30
 in your time zone, with `ad_report_hours: 24` (the default) so each change is in exactly one report
-([ACTIVE_DIRECTORY.md](ACTIVE_DIRECTORY.md)). In a workflow with `ad_report_fail: true`, its
-"On failure" path can open a ticket.
+([ACTIVE_DIRECTORY.md](ACTIVE_DIRECTORY.md)). With `ad_report_fail: true` the job turns **red** when it finds a problem: put a notification on the template (its **Notifications** tab: on failure) to hear about it. The *ServiceNow tickets* job does not take this report's results - it only works after the checks that hand it findings ([JOB_TEMPLATES.md](JOB_TEMPLATES.md), "What one job hands to the next").
+
+### 28. VM outage watch (every 5 to 15 minutes)
+
+```workflow
+[VM - outage watch]
+   |  Run always
+   v
+[ServiceNow tickets]
+```
+
+*Run always*, so a clean run reaches the tickets job too and the incident of a condition that cleared
+is noted (or resolved). **Concurrent jobs** off on the workflow, and `vm_watch_window_minutes` set to
+the schedule's interval. Click by click: [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md), "Set it up".
 
 ## Horizon workflows
 
 The Horizon templates run on the AAP side against a Connection Server: no Limit, the "Horizon API"
 credential ([HORIZON.md](HORIZON.md)).
 
-### 26. Fix broken desktops, with an approval
+### 30. Fix broken desktops, with an approval
 
-```text
-[Horizon - desktops check]  --Run on fail-->  [Approval]  --Run on success-->  [Horizon - fix the approved desktops]
- horizon_desktops_mode: approval
+```workflow
+[Horizon - desktops check]  horizon_desktops_mode: approval
+   |  Run on fail
+   v
+[Approval]
+   |  Run on success
+   v
+[Horizon - fix the approved desktops]
 ```
 
 The check fails on purpose when there is a desktop to fix (`NEEDS APPROVAL: ...`), and hands the
 list on. The fix job reads each desktop again and fixes only the approved ones still broken. Click by
 click, and a rehearsal as Check: [HORIZON.md](HORIZON.md). **Schedule:** e.g. every hour in working hours.
 
-### 27. Push a new golden image, with an approval
+### 31. Push a new golden image, with an approval
 
-```text
-[Horizon - image push plan]  --Run on success-->  [Approval]  --Run on success-->  [Horizon - push the approved image]
+```workflow
+[Horizon - image push plan]
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[Horizon - push the approved image]
 ```
 
 A survey on the workflow (the pools, the golden image VM, its snapshot, the start, the log-off
 policy). A plan with a problem fails and never reaches the approval ([HORIZON.md](HORIZON.md)).
 
-### 28. Horizon reports and the session cleanup
+### 32. Horizon reports and the session cleanup
 
 No workflow needed: schedules on `Horizon - health report` (every day 06:00), `Horizon - capacity
 report` (every Monday 07:00) and `Horizon - session cleanup` (every night 02:00, after a first run
@@ -685,6 +820,16 @@ as Check).
 | Active Directory health | every day 06:30 | template *Active Directory health report* (24) |
 | vCenter and ESXi certificates | Monday 07:00 | template *VMware - certificate renewal* (25) |
 | Pick lists (the surveys of workflows 26 and 27) | every 30 minutes | template *VM - refresh the pick lists* |
+| Snapshot cleanup | Monday 07:00 | workflow 19 ([VMWARE.md](VMWARE.md), "Snapshots") |
+| ESXi security settings | every day 00:00 | template *ESXi - security settings* (20) |
+| NetApp ONTAP health | every day 06:00 | template *NetApp ONTAP health report* (21) |
+| vSphere capacity planning / VMs created | Monday 07:00 / Friday 12:00 | templates (22, 23) |
+| Certificate install | every day 07:00 | workflow 29 |
+| Horizon: broken desktops / reports | hourly in working hours / daily | workflows 30 and 32 |
+| VM outage watch | every 5 to 15 minutes (**Concurrent jobs** off) | workflow 28 |
+| Report website - copy | every 15 minutes | template *Report website - copy* ([WEB_REPORTS.md](WEB_REPORTS.md)) |
+| VM deploy tickets | every 15 minutes | template *VM - pick up deploy tickets* ([VM_DEPLOY_GUIDE.md](VM_DEPLOY_GUIDE.md)) |
+| Network config backup | every day | template *Network config backup* ([NETWORK_CONFIG.md](NETWORK_CONFIG.md)) |
 
 **Notifications** (optional). **Automation Execution → Administration → Notifiers → Create
 notifier** (type *Email*, your mail relay). Then on a template or workflow → **Notifications** tab
