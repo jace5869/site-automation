@@ -45,8 +45,7 @@
       work_notes: >-
         Installed on {{ item.host }}{{ (' by AAP job ' ~ awx_job_id) if awx_job_id is defined else '' }}:
         the certificate serial {{ item.new.serial | default('?') }}, expires {{ item.new.not_after | default('?') }}
-        - {{ item.files | default([]) | join(', ') or 'in the certificate store' }}{{ ('; reloaded ' ~ item.units | join(', ')) if item.units | default([]) else '' }}{{ ('; ' ~ item.verified | join(', ') ~ ' serve it') if item.verified | default([]) else '' }}.
-        The old files are kept on the host ({{ item.backup | default('') }}).
+        - {{ _where }}{{ _reloaded }}{{ _verified }}. The old files are kept on the host ({{ item.backup | default('') }}).
     validate_certs: "{{ servicenow_validate_certs }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout }}"
@@ -56,6 +55,10 @@
   register: _ci_noted
   failed_when: false                    # the job says what was done either way
   when: _sn_url | length > 0 and not ansible_check_mode
+  vars:
+    _where: "{{ item.files | default([]) | join(', ') or 'in the certificate store' }}"
+    _reloaded: "{{ ('; reloaded ' ~ item.units | join(', ')) if item.units | default([]) else '' }}"
+    _verified: "{{ ('; ' ~ item.verified | join(', ') ~ ' serve it') if item.verified | default([]) else '' }}"
 
 - name: Certificate install | requests that did not take the note
   ansible.builtin.debug:

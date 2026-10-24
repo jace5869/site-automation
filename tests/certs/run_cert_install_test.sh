@@ -178,6 +178,7 @@ n="$(ls renew/*.csr 2>/dev/null | wc -l)"
 [ "$n" = 3 ] && ok "3 CSRs: web01 (file, chain file, port: one), app01, tlsonly (a port alone)" || bad "$n CSRs: $(ls renew 2>/dev/null)"
 web_ritm="$(ritm_of web01.example.mil)"; app_ritm="$(ritm_of app01.example.mil)"; tls_ritm="$(ritm_of tlsonly.example.mil)"
 [ -n "$web_ritm" ] && [ -n "$app_ritm" ] && [ -n "$tls_ritm" ] && ok "each CSR is on its request" || bad "the requests: web $web_ritm app $app_ritm tls $tls_ritm"
+: > requests.jsonl
 
 # ---- 2. nothing issued yet: waiting, green, no plan ----
 run wait.txt playbooks/cert_install_check.yml; rc=$?
@@ -209,10 +210,10 @@ run dry.txt playbooks/cert_install_check.yml --check; rc_dry=$?
 run check.txt playbooks/cert_install_check.yml; rc=$?
 [ $rc -ne 0 ] && [ $rc_dry -ne 0 ] && has "issued: red on purpose - NEEDS APPROVAL (a dry run says the same)" check.txt "NEEDS APPROVAL: 1 certificate(s) to install" \
     || { bad "check: exit $rc / dry $rc_dry"; tail -30 check.txt; }
-has "web01 READY: its file, its chain file, its key, reload httpd, the port" check.txt \
-    "READY | web01.example.mil | CN=web01.example.mil" "install in $work/pki/web01-fullchain.pem" "$work/private/web01.key" \
-    "reload httpd.service" "then port $tls1 must serve it"
-grep -F "READY | web01" check.txt | grep -qF "$work/pki/web01.crt" && ok "web01: the leaf-only file too (no configuration names it: same key)" || bad "web01: pki/web01.crt not in the plan"
+grep -F "READY | web01.example.mil | CN=web01.example.mil" check.txt > ready.txt
+has "web01 READY: its chain file, its key, reload httpd, the port" ready.txt "$work/pki/web01-fullchain.pem" "$work/private/web01.key" \
+    "reload httpd.service" "then port $tls1 must serve it" "the new one: serial"
+grep -qF "$work/pki/web01.crt" ready.txt && ok "web01: the leaf-only file too (no configuration names it: same key)" || bad "web01: pki/web01.crt not in the plan"
 has "app01 held: no service found that uses it" check.txt "HELD | web01.example.mil | CN=app01.example.mil" "no service found that uses $work/pki/app01.crt" "cert_install_services"
 has "tlsonly by hand: only seen on a port" check.txt "BY HAND | web01.example.mil | CN=tlsonly.example.mil" "only seen on a port (127.0.0.1:$tls2)"
 grep -qE '"method": "(POST|PATCH)"' requests.jsonl && bad "the check wrote to ServiceNow" || ok "the check only reads ServiceNow, also with the certificates there"
@@ -265,8 +266,8 @@ run real.txt playbooks/cert_install_approved.yml -e @"$work/plan.json"; rc=$?
 [ "$(served "$tls1")" = "$new_fp" ] && ok "the port serves the new certificate" || bad "the port serves $(served "$tls1")"
 [ "$(fp pki/web01.crt)" = "$new_fp" ] && [ "$(grep -c 'BEGIN CERTIFICATE' pki/web01.crt)" = 1 ] && ok "pki/web01.crt: the new certificate, alone as before" || bad "pki/web01.crt"
 [ "$(fp pki/web01-fullchain.pem)" = "$new_fp" ] && [ "$(grep -c 'BEGIN CERTIFICATE' pki/web01-fullchain.pem)" = 2 ] \
-    && openssl crl2pkcs7 -nocrl -certfile pki/web01-fullchain.pem 2>/dev/null | openssl pkcs7 -print_certs -noout 2>/dev/null | grep -q "TEST ID CA-70" \
-    && ! grep -q "TEST ROOT CA 3" <(openssl crl2pkcs7 -nocrl -certfile pki/web01-fullchain.pem | openssl pkcs7 -print_certs -noout) \
+    && openssl crl2pkcs7 -nocrl -certfile pki/web01-fullchain.pem 2>/dev/null | openssl pkcs7 -print_certs -noout 2>/dev/null | grep '^subject' | grep -q "TEST ID CA-70" \
+    && ! openssl crl2pkcs7 -nocrl -certfile pki/web01-fullchain.pem 2>/dev/null | openssl pkcs7 -print_certs -noout 2>/dev/null | grep '^subject' | grep -q "TEST ROOT CA 3" \
     && ok "the fullchain file: the new certificate and the intermediate - no root, as before" || bad "the fullchain file: $(grep -c 'BEGIN CERTIFICATE' pki/web01-fullchain.pem) certificates"
 [ "$(openssl pkey -in private/web01.key -pubout 2>/dev/null)" = "$(openssl x509 -in issued/web01.crt -noout -pubkey)" ] && [ "$(stat -c %a private/web01.key)" = 640 ] \
     && [ "$(stat -c %a pki/web01-fullchain.pem)" = 640 ] && ok "the key file: the new key, the old mode (0640); the chain file keeps 0640" || bad "the key file"

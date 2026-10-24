@@ -60,10 +60,17 @@
 - name: Certificate install | NEEDS APPROVAL
   ansible.builtin.fail:
     msg: >-
-      NEEDS APPROVAL: {{ _ci_n }} certificate(s) to install -
-      {% for h, items in _ci_ready.items() %}{% for p in items %}{{ h }}: {{ p.subject or p.base }} ({{ p.ritm }}{{ ', installed already: tidy up' if p.status != 'ready' else '' }}){{ ', ' if not loop.last else '' }}{% endfor %}{{ '; ' if not loop.last else '' }}{% endfor %}.
+      NEEDS APPROVAL: {{ _ci_n }} certificate(s) to install - {{ _ci_names | join('; ') }}.
       Approve to install exactly these (each is planned again first, copied aside, and put back if the port does
       not serve it); deny to leave them for the next run. The lines above say what each one changes.
   when: _ci_ready | length > 0
   vars:
     _ci_n: "{{ _ci_ready.values() | map('length') | sum }}"
+    _ci_names: >-
+      {%- set out = [] -%}
+      {%- for h, items in _ci_ready.items() -%}
+      {%-   for p in items -%}
+      {%-     set _ = out.append(h ~ ': ' ~ (p.subject or p.base) ~ ' (' ~ p.ritm ~ (', installed already: tidy up' if p.status != 'ready' else '') ~ ')') -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
