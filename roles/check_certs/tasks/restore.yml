@@ -1,0 +1,38 @@
+---
+# CERTIFICATE RESTORE (playbooks/cert_restore.yml), on the host: the old certificate back from the copy the
+# install made (cert_renew_dir/backup) - the files with their owner, mode and SELinux label, the configuration
+# tested, the service reloaded, the port checked for the old certificate - and the renewal waits again. Which
+# backup: cert_restore_backup (its folder name), or the newest of each certificate cert_restore_only matches.
+# Check (dry run): lists the backups and what it would put back.
+- name: Certs | restore | the backups on this host, and the one(s) to put back
+  site_cert_install:
+    action: restore
+    dir: "{{ cert_renew_dir }}"
+    backup: "{{ cert_restore_backup | default('') }}"
+    only: "{{ cert_restore_only | default('') }}"
+    verify_wait: "{{ cert_install_verify_wait | int }}"
+  register: _cr
+
+- name: Certs | restore | what was put back
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for r in _cr.restored -%}
+      {%-   set _ = out.append(r.status | upper ~ ' | ' ~ r.backup ~ ' | ' ~ r.subject | default('') ~ ' | ' ~ (r.files | default([]) | join(', '))
+                               ~ ((' | reloaded ' ~ r.units | join(', ')) if r.units | default([]) and r.status == 'restored' else '')
+                               ~ ((' | ' ~ r.reason) if r.reason | default('') else '')) -%}
+      {%- endfor -%}
+      {%- if not out -%}
+      {%-   set _ = out.append('Nothing named to restore: set cert_restore_backup (one of the backups below) or cert_restore_only.') -%}
+      {%- endif -%}
+      {%- for b in _cr.backups -%}
+      {%-   set _ = out.append('backup ' ~ b.name ~ ' | ' ~ b.subject ~ ' | made ' ~ b.made ~ ((' | restored ' ~ b.restored) if b.restored else '')
+                               ~ ' | ' ~ b.files | join(', ')) -%}
+      {%- endfor -%}
+      {%- if not _cr.backups -%}{%- set _ = out.append('no backup on ' ~ inventory_hostname ~ ' (' ~ cert_renew_dir ~ '/backup)') -%}{%- endif -%}
+      {{ out }}
+
+- name: Certs | restore | a backup that could not be put back
+  ansible.builtin.fail:
+    msg: "{{ _cr.restored | selectattr('status', 'equalto', 'failed') | map(attribute='reason') | join('; ') }}"
+  when: _cr.restored | selectattr('status', 'equalto', 'failed') | list | length > 0

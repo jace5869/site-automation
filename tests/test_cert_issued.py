@@ -4,7 +4,6 @@ pasted into a work note), the chain, the names, and a run against the fake Servi
     python3 tests/test_cert_issued.py
 The whole install, through the playbooks: tests/certs/run_cert_install_test.sh"""
 import base64
-import datetime
 import io
 import json
 import os

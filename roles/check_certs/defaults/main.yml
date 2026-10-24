@@ -115,3 +115,41 @@ cert_renew_install_notes:
 cert_renew_attach_ext: csr
 cert_renew_attach_type: text/plain       # the attachment's Content-Type (a CSR is Base64 text)
 cert_renew_attach_retry_txt: true        # a refused attachment is tried again as <name>.txt (text/plain); false: straight to the work note
+
+# ---- Install: the issued certificate in place of the old one (playbooks/cert_install_check.yml ->
+# approval -> playbooks/cert_install_approved.yml) ----
+# With cert_renew_servicenow: catalog, the PKI puts the issued certificate on the request that carries its
+# CSR. The install check finds it there (the certificate whose public key is the CSR's), says what installing
+# it would do, and waits for the approval; the install job then puts it in place of the old one - the same
+# file layout (text or binary, with its chain, with its key), the old key's file replaced by the new key, the
+# old owner, mode and SELinux label kept - after copying each file aside (cert_renew_dir/backup). It tests the
+# service's configuration, reloads it (a reload only: never a restart), and asks the port which certificate it
+# serves. Anything wrong: the copies go back and the service is reloaded again. Installed: the renewal's key and
+# CSR move to cert_renew_dir/installed. Never automatic, with the steps for a person: a keystore (its program
+# needs a restart), a certificate seen only on a port, a service that cannot reload, a path in
+# cert_renew_install_notes (something else deploys it). docs/CERT_INSTALL.md
+#
+# The service that uses a certificate file is found by itself: the configuration of httpd, nginx, haproxy,
+# postfix, dovecot, slapd or cockpit that names the file, and the program on the port that serves it. For a
+# file no configuration names - the service to reload: [{path: glob, service: unit}], e.g.
+# [{path: '/opt/app/tls/*.crt', service: app}]. A service listed here is tested by no command first.
+cert_install_services: []
+# The services whose configuration is searched for the certificate's file - [{dir, service, test}] (test: the
+# command that checks the configuration before the reload). Empty = httpd (/etc/httpd, apachectl configtest),
+# apache2, nginx (nginx -t), haproxy (haproxy -c), postfix (postfix check), dovecot (doveconf -n), slapd, cockpit.
+cert_install_known_services: []
+cert_install_never_reload: []            # services (globs) the job never reloads, e.g. ['slapd*']: their certificates are installed by a person
+# The old key's file, when it cannot be found - neither in the configuration that names the certificate, nor
+# once in the usual folders (several files with the old key: held, to be named here):
+# {certificate file: key file}, e.g. {/etc/pki/tls/certs/web01.crt: /etc/pki/tls/private/web01.key}
+cert_install_key_files: {}
+cert_install_key_dirs: []                # where else to look for the old key (empty = /etc/pki/tls/private, /etc/ssl/private, the services' folders ...)
+cert_install_trust_check: true           # the chain must build up to a root (the host's trust store, or the PKI's root sent with it); false = install without
+cert_install_verify_wait: 15             # seconds the port has, after the reload, to serve the new certificate (then: put back)
+
+# ---- Restore: an old certificate back from its backup (playbooks/cert_restore.yml) ----
+# Each install copies the files it replaces to cert_renew_dir/backup/<date>-<certificate>/. The restore puts
+# them back, reloads the service, checks the port serves the old certificate again, and the renewal waits again
+# (the next install check finds its certificate again). Run with Check first: it lists the backups.
+cert_restore_backup: ''                  # a backup's folder name, as the restore's Check lists it
+cert_restore_only: ''                    # or: the newest backup of each certificate whose name or subject matches (a regular expression), e.g. 'web01'

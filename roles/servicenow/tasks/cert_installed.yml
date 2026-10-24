@@ -1,0 +1,75 @@
+---
+# CERTIFICATE INSTALL, the install job's last step (playbooks/cert_install_approved.yml,
+# win_cert_install_approved.yml), on the AAP side: what was installed where (hostvars[host].cert_install_result),
+# a work note on each one's request - what was installed, where, by which job (the account may not be allowed to
+# write there: then only the job says it) - and the job fails when one was not installed (rolled back, refused).
+- name: Certificate install | connection (from the ServiceNow API credential)
+  ansible.builtin.set_fact:
+    _sn_url: >-
+      {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+    _sn_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    _ci_results: >-
+      {%- set out = [] -%}
+      {%- for h in groups['all'] | sort if hostvars[h].cert_install_result is defined -%}
+      {%-   for r in hostvars[h].cert_install_result['items'] -%}
+      {%-     set _ = out.append(r | combine({'host': h})) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Certificate install | what was done
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for r in _ci_results -%}
+      {%-   set _ = out.append(r.status | upper ~ ' | ' ~ r.host ~ ' | ' ~ (r.subject or r.base) ~ ((' | ' ~ r.ritm) if r.ritm else '')
+                             ~ ((' | ' ~ r.files | join(', ')) if r.files | default([]) else '')
+                             ~ ((' | reloaded ' ~ r.units | join(', ')) if r.units | default([]) and r.status == 'installed' else '')
+                             ~ ((' | ' ~ r.verified | join(', ') ~ ' serve' ~ ('s' if r.verified | length == 1 else '') ~ ' it') if r.verified | default([]) else '')
+                             ~ ((' | the old files: ' ~ r.backup) if r.backup | default('') else '')
+                             ~ ((' | ' ~ r.reason) if r.reason | default('') else '')) -%}
+      {%- endfor -%}
+      {{ out or ['Nothing was approved for these hosts.'] }}
+
+- name: Certificate install | a work note on each request
+  ansible.builtin.uri:
+    url: "{{ _sn_url }}/api/now/table/sc_req_item/{{ item.ritm_sys_id }}"
+    method: PATCH
+    url_username: "{{ _sn_user }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    body_format: json
+    body:
+      work_notes: >-
+        Installed on {{ item.host }}{{ (' by AAP job ' ~ awx_job_id) if awx_job_id is defined else '' }}:
+        the certificate serial {{ item.new.serial | default('?') }}, expires {{ item.new.not_after | default('?') }}
+        - {{ item.files | default([]) | join(', ') or 'in the certificate store' }}{{ ('; reloaded ' ~ item.units | join(', ')) if item.units | default([]) else '' }}{{ ('; ' ~ item.verified | join(', ') ~ ' serve it') if item.verified | default([]) else '' }}.
+        The old files are kept on the host ({{ item.backup | default('') }}).
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  loop: "{{ _ci_results | selectattr('status', 'equalto', 'installed') | selectattr('ritm_sys_id') | list }}"
+  loop_control:
+    label: "{{ item.host }}: {{ item.ritm }}"
+  register: _ci_noted
+  failed_when: false                    # the job says what was done either way
+  when: _sn_url | length > 0 and not ansible_check_mode
+
+- name: Certificate install | requests that did not take the note
+  ansible.builtin.debug:
+    msg: >-
+      {{ _ci_noted.results | default([]) | rejectattr('skipped', 'defined') | rejectattr('status', 'in', [200, 201])
+         | map(attribute='item') | map(attribute='ritm') | join(', ') }}: the work note was refused (the API account may not
+      write to these requests) - the job output above says what was installed.
+  when: _ci_noted.results | default([]) | rejectattr('skipped', 'defined') | rejectattr('status', 'in', [200, 201]) | list | length > 0
+
+- name: Certificate install | not every approved certificate was installed
+  ansible.builtin.fail:
+    msg: >-
+      {{ _ci_bad | length }} not installed:
+      {% for r in _ci_bad %}{{ r.host }}: {{ r.subject or r.base }} - {{ r.status }}: {{ r.reason }}{{ '; ' if not loop.last else '' }}{% endfor %}
+  when: _ci_bad | length > 0
+  vars:
+    _ci_bad: "{{ _ci_results | rejectattr('status', 'in', ['installed', 'installed already', 'would install']) | list }}"

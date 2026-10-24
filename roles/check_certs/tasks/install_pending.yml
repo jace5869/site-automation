@@ -1,0 +1,18 @@
+---
+# CERTIFICATE INSTALL, the check (playbooks/cert_install_check.yml), on the host: the renewals waiting for
+# their certificate in cert_renew_dir - each key, CSR and info file the renewal made - with the CSR, for the
+# AAP side to find each one's certificate on its request (roles/servicenow/tasks/cert_issued.yml).
+# Reads only.
+- name: Certs | install | the renewals waiting for their certificate ({{ cert_renew_dir }})
+  site_cert_install:
+    action: pending
+    dir: "{{ cert_renew_dir }}"
+  register: _ci_pending
+  check_mode: false                     # reads only
+
+- name: Certs | install | for the AAP side
+  ansible.builtin.set_fact:
+    cert_install_pending:
+      host: "{{ site_report_name | default(inventory_hostname) }}"
+      os: linux
+      items: "{{ _ci_pending.pending }}"

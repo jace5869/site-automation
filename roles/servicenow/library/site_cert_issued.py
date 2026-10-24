@@ -74,7 +74,6 @@ from ansible.module_utils.urls import open_url
 
 try:
     from cryptography import x509
-    from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import ec, rsa
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, pkcs7
     HAS_CRYPTO = True

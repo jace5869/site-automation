@@ -1,0 +1,58 @@
+---
+# CERTIFICATE INSTALL, the check (playbooks/cert_install_check.yml, win_cert_install_check.yml), on the AAP side:
+# for each renewal waiting on a host (hostvars[host].cert_install_pending), the catalog request carrying its CSR
+# and what the PKI put there - the certificate whose public key is the CSR's, and its chain
+# (library/site_cert_issued.py). The hosts never get the ServiceNow credential. Reads only, in a dry run too.
+# Output: cert_install_issued {host: [{base, status, reason, ritm, cert, chain, problems ...}]}.
+- name: Certificate install | connection (from the ServiceNow API credential)
+  ansible.builtin.set_fact:
+    _sn_url: >-
+      {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+    _sn_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    _ci_pending_all: >-
+      {%- set out = [] -%}
+      {%- for h in groups['all'] | sort if hostvars[h].cert_install_pending is defined -%}
+      {%-   for i in hostvars[h].cert_install_pending['items'] -%}
+      {%-     set _ = out.append({'key': h ~ '|' ~ i.base, 'host': h, 'stem': i.stem, 'expires': i.expires, 'csr': i.csr,
+                                  'names': i.names}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Certificate install | the ServiceNow API credential is needed (the certificates are on the requests)
+  ansible.builtin.fail:
+    msg: >-
+      {{ _ci_pending_all | length }} renewal(s) wait for their certificate, but the job has no ServiceNow connection:
+      attach the "ServiceNow API" credential to this template - the account that orders the certificates
+      (docs/CERT_INSTALL.md).
+  when: not _sn_url and _ci_pending_all | length > 0
+
+- name: Certificate install | each CSR's request, and the certificate the PKI put there
+  site_cert_issued:
+    url: "{{ _sn_url }}"
+    username: "{{ _sn_user }}"
+    password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    validate_certs: "{{ servicenow_validate_certs | bool }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | int }}"
+    pending: "{{ _ci_pending_all }}"
+    reorder_states: "{{ cert_renew_catalog_reorder_states }}"
+    exts: "{{ cert_install_attachment_exts }}"
+    max_bytes: "{{ cert_install_max_bytes | int }}"
+    journal: "{{ cert_install_journal | bool }}"
+    min_days: "{{ cert_install_min_days | int }}"
+    fewer_names: "{{ cert_install_fewer_names | bool }}"
+  register: _ci_found
+  check_mode: false                     # only reads
+  when: _ci_pending_all | length > 0
+
+- name: Certificate install | per host, for the plan
+  ansible.builtin.set_fact:
+    cert_install_issued: >-
+      {%- set out = {} -%}
+      {%- for r in _ci_found.issued | default([]) -%}
+      {%-   set host, base = r.key.split('|', 1) -%}
+      {%-   set _ = out.update({host: out.get(host, []) + [r | combine({'base': base})]}) -%}
+      {%- endfor -%}
+      {{ out }}

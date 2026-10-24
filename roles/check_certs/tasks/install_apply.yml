@@ -1,0 +1,57 @@
+---
+# CERTIFICATE INSTALL, the step after the approval (playbooks/cert_install_approved.yml), on the host. AAP hands
+# it the check job's plan (cert_install_plan, set_stats in roles/servicenow/tasks/cert_install_plan.yml): for each
+# approved certificate, the plan is made again first - the same files, the same services, the same certificate,
+# or it is refused - then each file is copied aside, the new ones written, the configuration tested, the service
+# reloaded and the port checked. Anything wrong: the copies go back and the service is reloaded again.
+# It refuses to run on its own (outside the workflow nothing was approved). Check (dry run): what it would do.
+- name: Certs | install | the check job's plan reached this job
+  ansible.builtin.assert:
+    that:
+      - cert_install_plan is defined
+      - cert_install_plan is mapping
+      - cert_install_plan | length > 0
+    fail_msg: >-
+      Nothing to install: no approved plan (cert_install_plan) reached this job. It runs only in the certificate
+      install workflow, after "Certificate install - check" and the approval step: docs/CERT_INSTALL.md. Do not
+      tick "Prompt on launch" for Variables on this template.
+    quiet: true
+  run_once: true
+
+# A host of the plan that this job does not run on (another inventory, a Limit) would be left out without a word
+- name: Certs | install | every host of the plan is in this job
+  ansible.builtin.assert:
+    that: _ci_missing | length == 0
+    fail_msg: >-
+      The approved plan has certificates for {{ _ci_missing | join(', ') }}, which this job does not run on (its
+      inventory, or a Limit): nothing is installed anywhere. Give this template the check job's inventory, and no Limit.
+    quiet: true
+  run_once: true
+  vars:
+    _ci_missing: "{{ cert_install_plan.keys() | difference(ansible_play_hosts_all) | list }}"
+
+- name: Certs | install | nothing approved for this host
+  ansible.builtin.meta: end_host
+  when: inventory_hostname not in cert_install_plan
+
+- name: Certs | install | the approved certificates - planned again, copied aside, installed, the service reloaded, the port checked
+  site_cert_install:
+    action: install
+    dir: "{{ cert_renew_dir }}"
+    approved: "{{ cert_install_plan[inventory_hostname] }}"
+    services: "{{ cert_install_services }}"
+    never_reload: "{{ cert_install_never_reload }}"
+    known: "{{ cert_install_known_services }}"
+    key_files: "{{ cert_install_key_files }}"
+    key_dirs: "{{ cert_install_key_dirs }}"
+    trust_check: "{{ cert_install_trust_check | bool }}"
+    verify_wait: "{{ cert_install_verify_wait | int }}"
+    install_notes: "{{ cert_renew_install_notes | default({}, true) }}"
+    job: "{{ awx_job_id | default('') | string }}"
+  register: _ci_done
+
+- name: Certs | install | the result, for the requests
+  ansible.builtin.set_fact:
+    cert_install_result:
+      host: "{{ site_report_name | default(inventory_hostname) }}"
+      items: "{{ _ci_done.installed }}"
