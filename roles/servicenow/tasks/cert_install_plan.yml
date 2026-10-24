@@ -18,7 +18,9 @@
       {%-     if r.status != 'issued' -%}
       {%-       set _ = out.append(r.status | upper ~ ' | ' ~ head ~ ' | ' ~ r.reason) -%}
       {%-     elif p.status | default('') == 'ready' -%}
-      {%-       set what = (p.files | map(attribute='path') | join(', ')) if p.files | default([]) else 'the certificate store' -%}
+      {%-       set files = p.files | default([]) -%}
+      {#-       Linux: the files ({path, role ...}); Windows: what changes, as text (Personal, each binding) -#}
+      {%-       set what = ((files | map(attribute='path') | list) if files and files[0] is mapping else files) | join(', ') -%}
       {%-       set rel = p.units | default([]) | selectattr('reload') | map(attribute='unit') | list -%}
       {%-       set chk = p.verify | default([]) | map(attribute='port') | map('string') | list -%}
       {%-       set _ = out.append('READY | ' ~ head ~ ' | install in ' ~ what
