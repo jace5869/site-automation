@@ -47,6 +47,10 @@
     trust_check: "{{ cert_install_trust_check | bool }}"
     verify_wait: "{{ cert_install_verify_wait | int }}"
     install_notes: "{{ cert_renew_install_notes | default({}, true) }}"
+    # an AAP host (the literal groups: no setting removes them): its installer manages its certificates
+    by_hand: >-
+      {{ ('an AAP host (group ' ~ (group_names | intersect(['aap', 'aap_hosts']) | join(', ')) ~ '): the AAP installer manages its certificates')
+         if group_names | intersect(['aap', 'aap_hosts']) | length > 0 else '' }}
     job: "{{ awx_job_id | default('') | string }}"
   register: _ci_done
 

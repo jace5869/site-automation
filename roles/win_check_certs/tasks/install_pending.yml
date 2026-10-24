@@ -1,0 +1,23 @@
+---
+# WINDOWS CERTIFICATE INSTALL, the check (playbooks/win_cert_install_check.yml), on the server: the renewals waiting
+# for their certificate in win_cert_renew_dir (each <old thumbprint>.json the renewal left, with its CSR), for the
+# AAP side to find each one's certificate on its request (roles/servicenow/tasks/cert_issued.yml). Reads only.
+- name: Windows certs | install | the renewals waiting for their certificate ({{ win_cert_renew_dir }})
+  ansible.builtin.script: win_cert_install.ps1
+  environment:
+    SITE_CHECK_CONFIG: "{{ {'action': 'pending', 'dir': win_cert_renew_dir} | to_json }}"
+  register: _wci_out
+  changed_when: false
+  failed_when: _wci_line | length == 0
+  check_mode: false                     # reads only
+  vars:
+    _wci_line: "{{ _wci_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"
+
+- name: Windows certs | install | for the AAP side
+  ansible.builtin.set_fact:
+    cert_install_pending:
+      host: "{{ site_report_name | default(inventory_hostname) }}"
+      os: windows
+      items: "{{ (_wci_line[16:] | from_json).facts.pending | default([]) }}"
+  vars:
+    _wci_line: "{{ _wci_out.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') }}"

@@ -1,0 +1,49 @@
+---
+# WINDOWS CERTIFICATE INSTALL, the check (playbooks/win_cert_install_check.yml), on the server, after the AAP side
+# found the issued certificates (hostvars.localhost.cert_install_issued): what installing each would do here -
+# certreq -accept, and each binding of the old certificate moved - or why a person does it. One certificate at a
+# time (the script's settings travel in an environment variable). Reads only: the plan goes to the approval.
+- name: Windows certs | install | the certificates the PKI issued for this server
+  ansible.builtin.set_fact:
+    _wci_issued: >-
+      {{ (hostvars['localhost'].cert_install_issued | default({})).get(inventory_hostname, [])
+         | selectattr('status', 'equalto', 'issued') | list }}
+    # an AAP host (the literal groups: no setting removes them): a person installs its certificates
+    _wci_by_hand: >-
+      {{ ('an AAP host (group ' ~ (group_names | intersect(['aap', 'aap_hosts']) | join(', ')) ~ '): a person installs its certificates')
+         if group_names | intersect(['aap', 'aap_hosts']) | length > 0 else '' }}
+    # AAP connects through the WinRM HTTPS listener: then a person moves that one (it would cut the connection)
+    _wci_aap_https: >-
+      {{ (ansible_connection | default('') == 'winrm'
+          and (ansible_winrm_scheme | default('http' if (ansible_port | default(5986) | int) == 5985 else 'https')) == 'https')
+         or (ansible_connection | default('') == 'psrp'
+          and (ansible_psrp_protocol | default('http' if (ansible_port | default(5986) | int) == 5985 else 'https')) == 'https') }}
+
+- name: Windows certs | install | what installing each would do
+  ansible.builtin.script: win_cert_install.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'action': 'plan', 'dir': win_cert_renew_dir, 'issued': item, 'rebind': win_cert_install_rebind,
+          'winrm_https_in_use': _wci_aap_https | bool, 'by_hand': _wci_by_hand} | to_json }}
+  loop: "{{ _wci_issued }}"
+  loop_control:
+    label: "{{ item.base }} ({{ item.ritm }})"
+  register: _wci_plan
+  changed_when: false
+  failed_when: false                    # a server that gives no plan is listed as failed (below)
+  check_mode: false                     # reads only
+
+- name: Windows certs | install | the plan, for the approval
+  ansible.builtin.set_fact:
+    cert_install_host_plan: >-
+      {%- set out = [] -%}
+      {%- for r in _wci_plan.results | default([]) -%}
+      {%-   set line = r.stdout_lines | default([]) | select('match', '^###SITE-JSON### ') | list | last | default('') -%}
+      {%-   if line -%}
+      {%-     set _ = out.extend((line[16:] | from_json).facts.plan | default([])) -%}
+      {%-   else -%}
+      {%-     set _ = out.append({'base': r.item.base, 'status': 'failed', 'subject': '', 'ritm': r.item.ritm,
+                                  'reason': 'the plan script gave no result: ' ~ ((r.stderr | default(r.msg | default(''))) | string | truncate(300))}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}

@@ -1,0 +1,39 @@
+---
+# WINDOWS CERTIFICATE INSTALL - THE APPROVED ONES (job 2 of the Windows certificate install workflow, after the
+# approval). AAP hands it the check job's plan (cert_install_plan); for each approved certificate the plan is made
+# again on the server - the same certificate, the same bindings, or it is refused - then its chain's intermediate
+# CAs go into Intermediate Certification Authorities (never a root), certreq -accept -machine puts it with its key in
+# Personal, the new key gets the old key's extra permissions (NETWORK SERVICE for Remote Desktop), and each binding
+# moves to it and is read back - with full PowerShell, the https ports are asked which certificate they serve.
+# Anything wrong: the bindings go back to the old certificate (it stays in Personal). Installed: a work note on its
+# request. It refuses to run on its own, and when a server of the plan is not in its inventory. Do not tick
+# "Prompt on launch" for Variables on its template. Put the old one back: playbooks/win_cert_restore.yml.
+#
+#   [Windows certificate install - check] --Run on fail--> [Approval] --Run on success--> [Windows certificate install - approved]
+#
+# Credentials: Machine (Windows, an administrator) and ServiceNow API (for the work notes).
+- name: Windows certificate install - the approved certificates
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  vars:
+    site_os: windows
+  pre_tasks:
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+  tasks:
+    - name: Install what was approved, then check it
+      ansible.builtin.include_role:
+        name: win_check_certs
+        tasks_from: install_apply.yml
+
+- name: Windows certificate install - the result, on the requests
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: What was installed, and a work note on each request
+      ansible.builtin.include_role:
+        name: servicenow
+        tasks_from: cert_installed.yml

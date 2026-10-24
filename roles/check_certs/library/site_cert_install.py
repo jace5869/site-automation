@@ -44,6 +44,7 @@ options:
   only: {description: "restore - the newest backup of the certificates whose name or subject match (a regular expression).", type: str, default: ''}
   job: {description: The AAP job, written in the backup's and the install's record., type: str, default: ''}
   install_notes: {description: "The start of a path -> what to do instead (cert_renew_install_notes): something else deploys that file, so a person installs it.", type: dict, default: {}}
+  by_hand: {description: "Why every certificate on this host is installed by a person (an AAP host: its installer manages its certificates); empty = none.", type: str, default: ''}
 author: site automation
 '''
 
@@ -217,6 +218,10 @@ class Installer(object):
             return item
         info = pend['info']
         item.update(subject=info.get('certificate', ''), expires=info.get('expires', ''))
+        if self.p['by_hand']:
+            item.update(status='by hand', reason=self.p['by_hand'],
+                        steps=['the issued certificate and the new key (%s.key) in place of the old ones, then reload the service' % pend['path']])
+            return item
         wrong = ''
         try:
             self.check_cert(item, iss, pend)
@@ -956,7 +961,7 @@ def main():
         key_dirs=dict(type='list', elements='path', default=[]), known=dict(type='list', elements='dict', default=[]),
         trust_check=dict(type='bool', default=True), verify_wait=dict(type='int', default=15),
         backup=dict(type='str', default=''), only=dict(type='str', default=''), job=dict(type='str', default=''),
-        install_notes=dict(type='dict', default={})),
+        install_notes=dict(type='dict', default={}), by_hand=dict(type='str', default='')),
         supports_check_mode=True)
     i = Installer(m)
     a = m.params['action']

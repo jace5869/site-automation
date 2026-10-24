@@ -21,6 +21,10 @@
     key_dirs: "{{ cert_install_key_dirs }}"
     trust_check: "{{ cert_install_trust_check | bool }}"
     install_notes: "{{ cert_renew_install_notes | default({}, true) }}"
+    # an AAP host (the literal groups: no setting removes them): its installer manages its certificates
+    by_hand: >-
+      {{ ('an AAP host (group ' ~ (group_names | intersect(['aap', 'aap_hosts']) | join(', ')) ~ '): the AAP installer manages its certificates')
+         if group_names | intersect(['aap', 'aap_hosts']) | length > 0 else '' }}
   register: _ci_plan
   check_mode: false                     # reads only
   when: _ci_issued | length > 0

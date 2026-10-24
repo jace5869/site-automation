@@ -56,6 +56,7 @@ $job = [string](Get-Setting 'job' '')
 $rebindKinds = @(Get-Setting 'rebind' @('https', 'rdp', 'winrm') | ForEach-Object { ([string]$_).ToLower() })
 $aapHttps = [bool](Get-Setting 'winrm_https_in_use' $false)
 $verifyWait = [int](Get-Setting 'verify_wait' 15)
+$byHand = [string](Get-Setting 'by_hand' '')
 $wsmanKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Listener'
 $rdpNs = 'root\cimv2\TerminalServices'
 
@@ -180,6 +181,10 @@ function Get-Plan($iss) {
     $info = Get-Info $infoPath
     $item.subject = [string]$info.certificate
     $item.expires = [string]$info.expires
+    if ($byHand) {
+        $item.status = 'by hand'; $item.reason = $byHand; $item.steps = @('certreq -accept -machine <the issued certificate>.cer, then its bindings')
+        return $item
+    }
     $old = ([string]$info.old_thumbprint).ToUpper()
     if (-not $old) { $old = $base.ToUpper() }
     $item.old = $old
@@ -226,7 +231,8 @@ function Get-Plan($iss) {
         return $item
     }
     if ($item.bindings.Count -eq 0) { $item.notes += @('nothing found that uses the old one (https, Remote Desktop, WinRM): it goes into the store only - a program that names the old thumbprint needs the new one') }
-    $item.files = @($item.bindings | ForEach-Object { $_.kind + ' ' + $_.key })
+    $item.files = @($(if ($item.state -eq 'accepted') { 'Personal (it is there with its key)' } else { 'Personal (certreq -accept -machine)' })) +
+        @($item.bindings | ForEach-Object { $_.kind + ' ' + $_.key })
     $item.status = 'ready'
     return $item
 }
@@ -246,7 +252,7 @@ function Get-KeyFile([string] $Tp) {
     if ($cng) { return (Join-Path $env:ProgramData "Microsoft\Crypto\Keys\$name") }
     return ''
 }
-# the old key's extra permissions (a service account, NETWORK SERVICE ...) on the new key; Remote Desktop needs NETWORK SERVICE
+# the old key's extra permissions (a service account, NETWORK SERVICE ...) on the new key - read; Remote Desktop needs NETWORK SERVICE
 function Copy-KeyAccess([string] $OldTp, [string] $NewTp, [bool] $Rdp) {
     $notes = @()
     $newKey = Get-KeyFile $NewTp
@@ -260,9 +266,9 @@ function Copy-KeyAccess([string] $OldTp, [string] $NewTp, [bool] $Rdp) {
             if ($t.StartsWith($oldKey)) { $t = $t.Substring($oldKey.Length) }
             $t = $t.Trim()
             if ($t -notmatch '^(.+?):(\([A-Z]+\))*\(([A-Z,]+)\)$') { continue }
-            $who = $Matches[1].Trim(); $perm = $Matches[3]
+            $who = $Matches[1].Trim()
             if ($who -match '^(NT AUTHORITY\\SYSTEM|BUILTIN\\Administrators|CREATOR OWNER)$') { continue }
-            $grants += @("${who}:($perm)")
+            $grants += @("${who}:(R)")         # read: all a program needs of a key, whatever it had on the old one
         }
     }
     if ($Rdp -and -not ($grants | Where-Object { $_ -like 'NT AUTHORITY\NETWORK SERVICE:*' })) { $grants += @('*S-1-5-20:(R)') }

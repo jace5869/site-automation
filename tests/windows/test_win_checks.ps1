@@ -195,7 +195,7 @@ foreach ($scen in 'csr', 'csr_check') {
 $old = 'A1' * 20; $new = 'B2' * 20
 $installCases = @(
     @('install_pending', 'pending', '', ''),
-    @('install_plan', 'plan', 'ready', 'https ipport=0.0.0.0:443|https hostnameport=www.corp.test:443|winrm *+HTTPS|rdp RDP-Tcp'),
+    @('install_plan', 'plan', 'ready', 'Personal (certreq -accept -machine)|https ipport=0.0.0.0:443|https hostnameport=www.corp.test:443|winrm *+HTTPS|rdp RDP-Tcp'),
     @('install_plan_aaphttps', 'plan', 'by hand', 'AAP connects through it'),
     @('install_plan_sql', 'plan', 'by hand', 'SQL Server MSSQL16.MSSQLSERVER'),
     @('install_plan_gone', 'plan', 'held', 'the pending request (the new key) is gone'),

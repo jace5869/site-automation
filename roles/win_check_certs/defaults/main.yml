@@ -36,3 +36,20 @@ win_cert_renew_issuer: ''                # regular expression: only certificates
 win_cert_renew_exclude_issuer: ''        # regular expression: certificates whose issuer matches are never renewed here (renewed by their own tool)
 win_cert_renew_only: ''                  # regular expression on the certificate's place, e.g. 'used by https' (empty = every one)
 win_cert_renew_exportable: false         # true = the new key can be exported (to move it to another server); false keeps it on this one
+
+# ---- Install: the issued certificate (playbooks/win_cert_install_check.yml -> approval ->
+# playbooks/win_cert_install_approved.yml) ----
+# The PKI's certificate, from the request carrying the CSR (cert_renew_servicenow: catalog), is put together with
+# its pending key by certreq -accept -machine (in Personal); its chain's intermediate CAs go into Intermediate
+# Certification Authorities (never a root). Then each binding of the old certificate moves to it - the kinds
+# listed here - and is read back; with full PowerShell the https ports are asked which certificate they serve.
+# Anything wrong: the bindings go back to the old certificate, which stays in the store (a restore is a
+# rebinding). The new key gets the old key's extra permissions (a service account), and NETWORK SERVICE for Remote
+# Desktop. A person installs it, with the steps - when SQL Server uses it (a restart), a Central Certificate Store
+# binding, the WinRM HTTPS listener AAP connects through. docs/CERT_INSTALL.md
+win_cert_install_rebind: [https, rdp, winrm]   # https: HTTP.sys bindings (IIS, WSUS ...); rdp: Remote Desktop; winrm: the WinRM HTTPS listener
+win_cert_install_verify_wait: 15         # seconds an https port has, after the rebinding, to serve the new certificate (full PowerShell only)
+
+# ---- Restore: the bindings back on the old certificate (playbooks/win_cert_restore.yml) ----
+win_cert_restore_backup: ''              # a backup's folder name, as the restore's Check lists it
+win_cert_restore_only: ''                # or: the newest backup of each certificate whose thumbprint or subject matches (a regular expression)
