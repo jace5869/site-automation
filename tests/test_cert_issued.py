@@ -152,8 +152,8 @@ class Names(unittest.TestCase):
         self.assertEqual([m.norm_name(x) for x in ["dns=web01.example.mil", "ipaddress=192.0.2.3", "url=https://x"]],
                          ["dns:web01.example.mil", "ip:192.0.2.3", "uri:https://x"])
         # the Windows renewal's info file: the values alone
-        self.assertEqual([m.norm_name(x) for x in ["Web01.example.mil", "192.0.2.3", "2001:db8:0:0:0:0:0:1", "a@b.mil", "https://x"]],
-                         ["dns:web01.example.mil", "ip:192.0.2.3", "ip:2001:db8::1", "email:a@b.mil", "uri:https://x"])
+        self.assertEqual([m.norm_name(x) for x in ["Web01.example.mil", "192.0.2.3", "2001:db8:0:0:0:0:0:1", "a@example.mil", "https://x"]],
+                         ["dns:web01.example.mil", "ip:192.0.2.3", "ip:2001:db8::1", "email:a@example.mil", "uri:https://x"])
         self.assertEqual(m.norm_name("IP:2001:DB8:0:0:0:0:0:1"), "ip:2001:db8::1")
         self.assertEqual(m.norm_name("ipaddress=2001:db8:0:0:0:0:0:1"), "ip:2001:db8::1")
 
