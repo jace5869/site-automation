@@ -355,7 +355,8 @@ Applications listed in Software Center are not installed; only software updates 
    updates. There is a second round (`win_patch_max_rounds: 2`), only when it restarted.
 
 **Safety.**
-- One server at a time, and the rollout stops at the first server that fails.
+- One server at a time (`win_patch_serial`, in the template's Variables - in `all.yml` it does
+  nothing), and the rollout stops at the first server that fails.
 - By default it only patches the group `win_patch_hosts`. Set `target:` in the template's
   Variables (for example `target: all`) and pick the servers with the Limit at launch.
 - Servers in `win_patch_never_patch_groups` (default `no_patch`) are skipped.

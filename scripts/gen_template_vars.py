@@ -51,7 +51,10 @@ TEMPLATES = {
     "cert_renew_csr.yml": ("Certificate renewal - CSRs", "Machine, ServiceNow API (Keystore password: optional)", "check_certs", """\
 servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job opens (a certificate with no ticket yet)
 """),
-    "database_health.yml": ("Database health - MariaDB / MySQL", "Machine, MariaDB monitor (optional)", "check_mariadb", ""),
+    "database_health.yml": ("Database health - MariaDB / MySQL", "Machine, MariaDB monitor (optional)", "check_mariadb", """\
+## ACT (GenAI) looks at each host with findings (docs/ADDING_ACT.md)
+# use_act: false
+"""),
     "esxi_security.yml": ("ESXi - security settings", "VMware vCenter", "", ""),
     "health_check.yml": ("Health check", "Machine (ACT model key with use_act)", LINUX_CHECKS, """\
 ## The checks to run: daily, weekly, all, or names, e.g. [disk, services]
@@ -144,7 +147,10 @@ net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # the backups' re
 # check_trust_remove: false
 # check_trust_remove_severities: [critical, warning]
 """),
-    "troubleshoot.yml": ("Troubleshoot", "Machine", "", ""),
+    "troubleshoot.yml": ("Troubleshoot", "Machine", "", """\
+## ACT (GenAI) reads everything collected and explains the root cause (docs/ADDING_ACT.md)
+# use_act: false
+"""),
     "vmware_cert_report.yml": ("VMware - certificate report", "VMware vCenter (SQL Server (certificate inventory): optional)", "", ""),
     "vmware_cert_renew.yml": ("VMware - certificate renewal", "VMware vCenter, ServiceNow API", "", """\
 servicenow_assignment_group: YOUR GROUP NAME   # who gets the incidents (exactly as in ServiceNow)
@@ -233,7 +239,13 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 ONLY = {"vm_snapshot_cleanup_email_only_if_deleted": ("vm_snapshot_cleanup.yml",),
         # the pick lists: the refresh names the answers' variables (its questions), the pick jobs read them
         "vm_snapshot_picks": ("vm_snapshot_delete_picked.yml",), "vm_reboot_picks": ("vm_reboot_picked.yml",),
-        "vm_pick_max_choices": ("vm_pick_refresh.yml",)}
+        "vm_pick_max_choices": ("vm_pick_refresh.yml",),
+        "vmware_trust_esxi": ("vmware_trust_report.yml",),
+        "cert_report_discover": ("cert_report.yml", "cert_renew_csr.yml"),
+        # a job variable in a shared role's file: the lines to fill in of the templates that read it have it
+        "use_act": (),
+        # one launch only - a template that keeps it would replace the secrets on every deploy
+        "stigman_replace_secrets": ()}
 
 INCLUDE_ROLE = re.compile(r"(?:include_role|import_role):\s*\n((?:[ \t]+\S.*\n?){1,4})")
 ROLE_NAME = re.compile(r"^\s*name:\s*[\"']?([^\"'\s]+)", re.M)

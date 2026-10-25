@@ -90,6 +90,12 @@
 ## the folders searched for keystores
 # check_certs_discover_keystore_dirs: [/etc, /opt, /srv, /usr/share/tomcat, /var/lib/tomcat, /var/lib/pki]
 
+## The certificate report and the CSR jobs (playbooks/cert_report.yml, cert_renew_csr.yml) switch on
+## the port and keystore search above for their run, and the report the trust store too; the health
+## check's certs check does not. false = those two jobs look only in the folders above and
+## check_certs_files.
+# cert_report_discover: true
+
 ## how many folder levels deep the search goes
 # check_certs_discover_keystore_depth: 5
 

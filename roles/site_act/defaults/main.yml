@@ -15,6 +15,9 @@
 #   self-heal  Like diagnose, but ACT may run the fixes that match site_act_allow by itself
 #              (e.g. restart chronyd). Anything else still waits for approval.
 site_act_level: explain
+# The runbooks (Health check, Database health, Troubleshoot): true = ACT looks at what the job found.
+# A job variable, per template or launch - not all.yml (every check job would then call the model).
+use_act: false
 
 # self-heal only: regular expressions of fix commands ACT may run without a person. Each must
 # match the WHOLE command. Keep them narrow, e.g.

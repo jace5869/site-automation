@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Write docs/VARIABLES_REFERENCE.md: every setting in every roles/*/defaults/main.yml, with its
-default and the comment written above it. The role files stay the single source of truth.
+default and the comment written above it. The role files stay the single source of truth - but for
+the few settings of one host (HOST_SETTINGS below), which can have no role default.
 
     python scripts/gen_variable_reference.py            # rewrite the reference
     python scripts/gen_variable_reference.py --check    # exit 1 when the file is out of date (CI)
@@ -17,6 +18,22 @@ OUT = os.path.join(ROOT, "docs", "VARIABLES_REFERENCE.md")
 KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):(?:\s+(.*))?$")
 MAX_VALUE = 90
 MAX_DOC = 320
+
+# Settings of ONE host: its host variables (the inventory, or the host's Variables box in AAP). Not in a
+# role's defaults - when the host has none, the role works the value out from the host itself (a default
+# would replace that for every host) - and never in a template's Variables (the same for every host there).
+# (role, setting, when not set, what it does)
+HOST_SETTINGS = [
+    ("net_config", "net_config_address", "the host's `ansible_host`, else its name",
+     "The address the backup and load jobs connect to, when it is not `ansible_host` (PAN-OS)"),
+    ("net_config", "net_config_platform", "from `ansible_network_os`",
+     "`ios` or `panos`: the platform of a host that has no `ansible_network_os` "
+     "(`cisco.ios.ios` / `paloaltonetworks.panos`)"),
+    ("net_certs", "net_cert_address", "the host's `ansible_host`, else its name",
+     "The address the certificate report connects to (a host of `net_cert_group`)"),
+    ("net_certs", "net_cert_servername", "the host's name",
+     "The name sent in the TLS hello (SNI): the certificate a device with several names shows for this one"),
+]
 
 
 def strip_inline_comment(text):
@@ -127,7 +144,8 @@ def render():
         "A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add",
         "to it. Repeat the entries you want to keep.",
         "",
-        "**Contents:** " + ", ".join("[%s](#%s)" % (r, r) for r in roles_with_settings()),
+        "**Contents:** " + ", ".join("[%s](#%s)" % (r, r) for r in roles_with_settings())
+        + ", [settings of one host](#settings-of-one-host)",
         "",
     ]
     for path in sorted(glob.glob(os.path.join(ROOT, "roles", "*", "defaults", "main.yml"))):
@@ -150,6 +168,17 @@ def render():
                 doc = doc[:MAX_DOC - 1].rstrip() + "… (all of it: the role file)"
             out.append("| `%s` | %s | %s |" % (s["name"], cell(shorten(s["value"])), cell(doc)))
         out.append("")
+    out += ["## Settings of one host",
+            "",
+            "Set these on the host itself: its host variables in the inventory, or the host's **Variables** box",
+            "in AAP. Never in a job template's Variables - there one value would be used for every host. When a",
+            "host has none, the role works the value out from the host, so no role file has a default for them.",
+            "",
+            "| Setting | Role | When not set | What it does |",
+            "|---|---|---|---|"]
+    for role, name, unset, doc in HOST_SETTINGS:
+        out.append("| `%s` | [%s](#%s) | %s | %s |" % (name, role, role, cell(unset), cell(doc)))
+    out.append("")
     return "\n".join(out).rstrip() + "\n"
 
 

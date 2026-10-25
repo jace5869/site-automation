@@ -123,7 +123,7 @@ can extract every secret that template uses. Therefore:
 |---|---|
 | TLS certificate | update the **TLS certificate** credential, re-run `stigman_deploy.yml` (nginx restarts) |
 | Registry token | update the credential; the next run logs in with it |
-| STIG Manager DB password | password-rotation run: `ALTER USER` in MySQL, update the podman secret, restart the API; then update the AAP credential. The playbook for this comes with the day-2 set |
+| STIG Manager DB password | password-rotation run: `ALTER USER` in MySQL, update the podman secret, restart the API; then update the AAP credential. The playbook for this comes with the day-2 set. Changing only the credential is refused by the next deploy (the password in MySQL would stay the old one). **Creating the database again** from nothing: launch the deploy once with `stigman_replace_secrets: true` (Prompt on launch, Variables) - never save it in the template |
 | SSH key | add the new public key to the hosts, update the **Machine** credential, remove the old key |
 | ACT / Teams | update the credential; nothing else |
 | ServiceNow API account | change the password in ServiceNow, update the **ServiceNow API** credential, then run *ServiceNow - test ticket* ([SERVICENOW_SETUP.md](SERVICENOW_SETUP.md)) to prove it works |

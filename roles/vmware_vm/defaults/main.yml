@@ -307,6 +307,10 @@ vmware_cert_csr_fields: {}
 # another one). true = make them anyway, and print them in the job output.
 vmware_cert_csr_without_servicenow: false
 
+# ---- VMware trust store report (playbooks/vmware_trust_report.yml) ----
+# vCenter's trusted roots and each ESXi host's trusted CAs; false = vCenter only (the ESXi hosts left out)
+vmware_trust_esxi: true
+
 # ---- vSphere capacity planning (playbooks/vm_capacity_report.yml) ----
 
 vm_capacity_clusters: []                 # only these clusters (names; * and ? allowed); [] = every cluster

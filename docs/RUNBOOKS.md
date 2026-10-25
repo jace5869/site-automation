@@ -796,7 +796,8 @@ covered by the health check: see `inventories/example/group_vars/servicenow_mid_
 Installs updates with dnf (`patch_security_only` for security fixes only; `patch_exclude` for
 packages never updated here). Then:
 
-1. **One host at a time** (`patch_serial`). The rollout **stops at the first host that fails**.
+1. **One host at a time** (`patch_serial`, in the template's Variables - in `all.yml` it does
+   nothing). The rollout **stops at the first host that fails**.
 2. Refuses with less than `patch_min_free_mb` free in `/var`.
 3. **No automatic restarts** unless `automatic_restarts: true` (the survey or the template's
    Variables). Without it, a host that needs a reboot is listed ("reboot it by hand, or run again

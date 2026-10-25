@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [check_trust](#check_trust), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot)
+**Contents:** [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [check_trust](#check_trust), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_email_question
 
@@ -168,6 +168,7 @@ File: `roles/check_certs/defaults/main.yml`
 | `check_certs_probe_timeout` | `3` | seconds for each port probe |
 | `check_certs_discover_keystores` | `false` | Java keystores (*.jks, *.keystore, *.p12, *.pfx) in these folders, and the ones running Java programs use (-Djavax.net.ssl.keyStore=...). A keystore that needs a password is listed as not checked: no password is ever guessed - give it in check_certs_keystores (password_env). The JDK's own trust stores (cacerts) are sk… (all of it: the role file) |
 | `check_certs_discover_keystore_dirs` | `[/etc, /opt, /srv, /usr/share/tomcat, /var/lib/tomcat, /var/lib/pki]` | the folders searched for keystores |
+| `cert_report_discover` | `true` | The certificate report and the CSR jobs (playbooks/cert_report.yml, cert_renew_csr.yml) switch on the port and keystore search above for their run, and the report the trust store too; the health check's certs check does not. false = those two jobs look only in the folders above and check_certs_files. |
 | `check_certs_discover_keystore_depth` | `5` | how many folder levels deep the search goes |
 | `check_certs_discover_keystore_exclude` | `'/(cacerts\|jssecacerts)$\|/jre/lib/security/\|/lib/security/'` | regular expression: keystore paths skipped (the JDK's trust stores) |
 | `check_certs_discover_keystore_max` | `40` | read at most this many found keystores per host |
@@ -601,6 +602,7 @@ File: `roles/net_config/defaults/main.yml`
 | `net_config_share_keep` | `30` | dated copies kept per device (the oldest go) |
 | `net_config_ios_command` | `show running-config` | ---- what is read ---- IOS: the command whose output is kept |
 | `net_config_panos_port` | `443` | PAN-OS: the XML API's HTTPS port |
+| `net_config_panos_scheme` | `https` | PAN-OS: always https - http is for the tests' stand-in firewall only (it would send the API key in clear) |
 | `net_config_panos_validate_certs` | `true` | PAN-OS: check the firewall's certificate |
 | `net_config_panos_ca_path` | (empty) | PAN-OS: a CA bundle (PEM) for that check ('' = the system's) |
 | `net_config_timeout` | `60` | PAN-OS: seconds per request |
@@ -670,6 +672,7 @@ File: `roles/patch/defaults/main.yml`
 | `patch_packages` | `['*']` | what to update ('*' = everything that has an update) |
 | `patch_security_only` | `false` | true = only updates that fix security advisories |
 | `patch_exclude` | `[]` | never update these here, e.g. ['mariadb*', 'kernel*'] |
+| `patch_serial` | `1` | How many hosts are patched at the same time (1 = one by one: the rollout stops at the first host that fails). ONLY in the job template's Variables, a survey or the launch: Ansible picks the batch size before it reads all.yml or any group or host variables, so set there it does nothing. |
 | `automatic_restarts` | `false` | NO AUTOMATIC RESTARTS unless you say so: this playbook reboots a host only when automatic_restarts is true (set it in the job template's Variables, or answer the survey), and then only as patch_reboot says. With automatic_restarts false (the default) it installs the updates and tells you which hosts still need a reboo… (all of it: the role file) |
 | `patch_reboot` | `when_needed` | Reboot (only with automatic_restarts: true): when_needed (needs-restarting says so) \| never \| always |
 | `patch_reboot_timeout` | `1800` | seconds to wait for the host to come back |
@@ -785,6 +788,7 @@ File: `roles/site_act/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `site_act_level` | `explain` | ACT (GenAI) on top of ANY check playbook. The check roles already did the cheap, certain part: they found WHAT is wrong (site_findings) and know which read-only command shows more (each finding's `hint`). This role hands that to ACT (the act_triage role) to find out WHY, and to propose - or, if you allow it, make - th… (all of it: the role file) |
+| `use_act` | `false` | The runbooks (Health check, Database health, Troubleshoot): true = ACT looks at what the job found. A job variable, per template or launch - not all.yml (every check job would then call the model). |
 | `site_act_allow` | `[]` | self-heal only: regular expressions of fix commands ACT may run without a person. Each must match the WHOLE command. Keep them narrow, e.g. site_act_allow: ['systemctl restart (chronyd\|rsyslog\|crond)'] |
 | `site_act_diagnose_only_groups` | `[aap, aap_hosts, sat, idm, netapp, netapp_console_hosts]` | Hosts where ACT may only diagnose - never fix by itself, whatever site_act_level says: AAP itself (a fix could stop the job that is running it) and vendor-managed appliances. The apply step (act_fix_approved.yml) skips them too: a person applies the fix there by hand. AAP (groups aap, aap_hosts) is ALWAYS in this list… (all of it: the role file) |
 | `site_act_provider` | `genai` | ---- Which model ACT talks to ----------------------------------------------------------------- site_act_provider genai GenAI.mil (the default) asksage Ask Sage - RETIRED FOR NOW: do not pick it (kept for when it returns) genai-beta the GenAI.mil beta proxy (preview models) site_act_models the model to use FOR EACH pr… (all of it: the role file) |
@@ -893,6 +897,7 @@ File: `roles/stigman_stack/defaults/main.yml`
 | `stigman_tls_cert_src` | `"{{ lookup('ansible.builtin.env', 'TLS_CERT_FILE') }}"` | nginx's certificate file, from the TLS certificate credential (TLS_CERT_FILE) |
 | `stigman_tls_key_src` | `"{{ lookup('ansible.builtin.env', 'TLS_KEY_FILE') }}"` | its private key file, from the credential (TLS_KEY_FILE) |
 | `stigman_tls_ca_src` | `"{{ lookup('ansible.builtin.env', 'TLS_CA_FILE') }}"` | the CA bundle file, from the credential (TLS_CA_FILE) |
+| `stigman_replace_secrets` | `false` | A deploy refuses to change a database password secret already deployed: in MySQL the password stays the old one, and STIG Manager would lose its database. true = replace the secrets anyway - ONE launch only, when the database is being created again (Prompt on launch, Variables); never save it in the template. |
 
 ## troubleshoot
 
@@ -1023,6 +1028,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vmware_cert_vmca_issuers` | `[]` | Issuers taken as VMCA besides VMCA's own root (CN=CA with DC=..., or OU=VMware Engineering): any case, * and ? allowed, e.g. ['*O=vc01.yoursite.mil*']. |
 | `vmware_cert_csr_fields` | `{}` | vCenter's CSR: its subject and names are the current certificate's. vCenter's API wants an organization, organization unit, locality, state and country - one the certificate does not have goes empty. Set any of them here (the PKI sets the subject by its own rules anyway), e.g. vmware_cert_csr_fields: {organization: U.… (all of it: the role file) |
 | `vmware_cert_csr_without_servicenow` | `false` | Without the ServiceNow API credential no CSR is made (nothing would record it: the next run would make another one). true = make them anyway, and print them in the job output. |
+| `vmware_trust_esxi` | `true` | ---- VMware trust store report (playbooks/vmware_trust_report.yml) ---- vCenter's trusted roots and each ESXi host's trusted CAs; false = vCenter only (the ESXi hosts left out) |
 | `vm_capacity_clusters` | `[]` | ---- vSphere capacity planning (playbooks/vm_capacity_report.yml) ---- only these clusters (names; * and ? allowed); [] = every cluster |
 | `vm_capacity_history_days` | `90` | The history: vCenter's own daily statistics (cluster CPU and memory, datastore space), kept a year at statistics level 1. Read this many days; the growth is a straight line over the last vm_capacity_trend_days, with at least vm_capacity_min_samples daily values. |
 | `vm_capacity_trend_days` | `30` | the growth (straight line) is fitted on this many most recent days |
@@ -1323,6 +1329,7 @@ File: `roles/win_patch/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `automatic_restarts` | `false` | NO AUTOMATIC RESTARTS unless you say so: this playbook restarts a server only when automatic_restarts is true (the job template's Variables, or the survey) and the updates need it. With automatic_restarts false (the default) it installs the updates and tells you which servers still need a restart; a person restarts th… (all of it: the role file) |
+| `win_patch_serial` | `1` | How many servers are patched at the same time (1 = one by one: the rollout stops at the first server that fails). ONLY in the job template's Variables, a survey or the launch: Ansible picks the batch size before it reads all.yml or any group or host variables, so set there it does nothing. |
 | `win_patch_never_reboot_groups` | `"{{ patch_never_reboot_groups \| default(['aap', 'aap_hosts', 'sat', 'netapp', 'netapp_con…` | Servers in these groups are patched but NEVER restarted by this playbook (restart them by hand). Follows the Linux setting (patch_never_reboot_groups) when you set it, so ONE list covers both; the fallback is the Linux role's default (roles/patch/defaults/main.yml; tests/test_protection.py checks it). |
 | `win_patch_never_patch_groups` | `"{{ patch_never_patch_groups \| default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp',…` | Servers in these groups are skipped entirely (e.g. servers patched only by hand). |
 | `win_patch_scan_first` | `true` | ask the client to rescan and re-evaluate before installing |
@@ -1351,3 +1358,16 @@ File: `roles/win_troubleshoot/defaults/main.yml`
 | `ts_hours` | `2` | how many hours back the event logs are read |
 | `ts_output_lines` | `60` | keep the last this-many lines of each command |
 | `win_ts_areas` | `overview: checks: [disk, services, performance, time, eventlog] commands: - {why: "Window…` | What each area runs. `why` is printed above the command's output. Commands must be read-only. |
+
+## Settings of one host
+
+Set these on the host itself: its host variables in the inventory, or the host's **Variables** box
+in AAP. Never in a job template's Variables - there one value would be used for every host. When a
+host has none, the role works the value out from the host, so no role file has a default for them.
+
+| Setting | Role | When not set | What it does |
+|---|---|---|---|
+| `net_config_address` | [net_config](#net_config) | the host's `ansible_host`, else its name | The address the backup and load jobs connect to, when it is not `ansible_host` (PAN-OS) |
+| `net_config_platform` | [net_config](#net_config) | from `ansible_network_os` | `ios` or `panos`: the platform of a host that has no `ansible_network_os` (`cisco.ios.ios` / `paloaltonetworks.panos`) |
+| `net_cert_address` | [net_certs](#net_certs) | the host's `ansible_host`, else its name | The address the certificate report connects to (a host of `net_cert_group`) |
+| `net_cert_servername` | [net_certs](#net_certs) | the host's name | The name sent in the TLS hello (SNI): the certificate a device with several names shows for this one |

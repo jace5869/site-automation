@@ -6,6 +6,10 @@
 patch_packages: ['*']                    # what to update ('*' = everything that has an update)
 patch_security_only: false               # true = only updates that fix security advisories
 patch_exclude: []                        # never update these here, e.g. ['mariadb*', 'kernel*']
+# How many hosts are patched at the same time (1 = one by one: the rollout stops at the first host that
+# fails). ONLY in the job template's Variables, a survey or the launch: Ansible picks the batch size before
+# it reads all.yml or any group or host variables, so set there it does nothing.
+patch_serial: 1
 
 # NO AUTOMATIC RESTARTS unless you say so: this playbook reboots a host only when
 # automatic_restarts is true (set it in the job template's Variables, or answer the survey), and

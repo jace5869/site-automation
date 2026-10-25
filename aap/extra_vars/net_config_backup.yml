@@ -66,6 +66,10 @@ net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # your PRIVATE, i
 ## PAN-OS: the XML API's HTTPS port
 # net_config_panos_port: 443
 
+## PAN-OS: always https - http is for the tests' stand-in firewall only (it would send the API key
+## in clear)
+# net_config_panos_scheme: https
+
 ## PAN-OS: check the firewall's certificate
 # net_config_panos_validate_certs: true
 

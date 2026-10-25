@@ -9,6 +9,10 @@
 # With automatic_restarts false (the default) it installs the updates and tells you which servers
 # still need a restart; a person restarts them.
 automatic_restarts: false
+# How many servers are patched at the same time (1 = one by one: the rollout stops at the first server
+# that fails). ONLY in the job template's Variables, a survey or the launch: Ansible picks the batch size
+# before it reads all.yml or any group or host variables, so set there it does nothing.
+win_patch_serial: 1
 # Servers in these groups are patched but NEVER restarted by this playbook (restart them by hand).
 # Follows the Linux setting (patch_never_reboot_groups) when you set it, so ONE list covers both; the
 # fallback is the Linux role's default (roles/patch/defaults/main.yml; tests/test_protection.py checks it).

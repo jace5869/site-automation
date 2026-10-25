@@ -43,6 +43,7 @@ net_config_share_keep: 30               # dated copies kept per device (the olde
 
 net_config_ios_command: show running-config   # IOS: the command whose output is kept
 net_config_panos_port: 443              # PAN-OS: the XML API's HTTPS port
+net_config_panos_scheme: https         # PAN-OS: always https - http is for the tests' stand-in firewall only (it would send the API key in clear)
 net_config_panos_validate_certs: true   # PAN-OS: check the firewall's certificate
 net_config_panos_ca_path: ''            # PAN-OS: a CA bundle (PEM) for that check ('' = the system's)
 net_config_timeout: 60                  # PAN-OS: seconds per request

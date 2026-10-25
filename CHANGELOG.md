@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.28.0 — unreleased
+
+**Every setting in the Settings Reference.** Seven settings the jobs read had no line in a role's defaults file,
+so they were neither in the Settings Reference (`docs/VARIABLES_REFERENCE.md`) nor in the job template files in
+`aap/extra_vars/`: `cert_report_discover` (the certificate report and CSR jobs also look on the TLS ports, in the
+keystores and the trust store), `patch_serial` and `win_patch_serial` (how many hosts are patched at the same time),
+`vmware_trust_esxi` (the VMware trust store report reads the ESXi hosts too), `net_config_panos_scheme`,
+`stigman_replace_secrets` (one STIG Manager deploy that replaces the database secrets, when the database is created
+again) and `use_act`. They have their defaults now - the values the jobs already used, so nothing works differently
+- and the template files of the jobs that read them list them (not `stigman_replace_secrets`: it is for one launch,
+never saved in a template). Four settings of one network device - `net_config_address`, `net_config_platform`,
+`net_cert_address`, `net_cert_servername` - have their own table at the end of the reference, "Settings of one
+host": they go in the host's Variables, never in a template's. A new check in `tests/test_variable_reference.py`
+fails when a playbook reads a setting no defaults file lists, so the reference stays complete.
+
+**`patch_serial` and `win_patch_serial` work only in the template's Variables.** Ansible picks how many hosts run at
+the same time before it reads `all.yml` or a group's or host's variables: set there, these two did nothing, and
+still do nothing. The docs gave only the name; they say where now (`docs/VARIABLES.md`, "Job variables").
+
+8. **The patch batch size** (0.28.0) - only if you set `patch_serial` or `win_patch_serial` in `all.yml` or in a
+   group's or host's file: it never worked there. Move it to the *Patch hosts* / *Windows patch* template's
+   Variables (or a survey).
+
 ## 0.27.0 — 2026-10-24
 
 **Updating without scripts:** paste one zip as it is - from 0.26.0: `site-automation-0.27.0-changed-since-0.26.0.zip`;

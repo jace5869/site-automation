@@ -40,3 +40,7 @@ stigman_db_password: "{{ lookup('ansible.builtin.env', 'STIGMAN_DB_PASSWORD') }}
 stigman_tls_cert_src: "{{ lookup('ansible.builtin.env', 'TLS_CERT_FILE') }}"  # nginx's certificate file, from the TLS certificate credential (TLS_CERT_FILE)
 stigman_tls_key_src: "{{ lookup('ansible.builtin.env', 'TLS_KEY_FILE') }}"  # its private key file, from the credential (TLS_KEY_FILE)
 stigman_tls_ca_src: "{{ lookup('ansible.builtin.env', 'TLS_CA_FILE') }}"  # the CA bundle file, from the credential (TLS_CA_FILE)
+# A deploy refuses to change a database password secret already deployed: in MySQL the password stays the
+# old one, and STIG Manager would lose its database. true = replace the secrets anyway - ONE launch only,
+# when the database is being created again (Prompt on launch, Variables); never save it in the template.
+stigman_replace_secrets: false

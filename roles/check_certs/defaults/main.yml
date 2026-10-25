@@ -50,6 +50,10 @@ check_certs_probe_timeout: 3             # seconds for each port probe
 # stores (cacerts) are skipped.
 check_certs_discover_keystores: false
 check_certs_discover_keystore_dirs: [/etc, /opt, /srv, /usr/share/tomcat, /var/lib/tomcat, /var/lib/pki]  # the folders searched for keystores
+# The certificate report and the CSR jobs (playbooks/cert_report.yml, cert_renew_csr.yml) switch on the port
+# and keystore search above for their run, and the report the trust store too; the health check's certs
+# check does not. false = those two jobs look only in the folders above and check_certs_files.
+cert_report_discover: true
 check_certs_discover_keystore_depth: 5   # how many folder levels deep the search goes
 check_certs_discover_keystore_exclude: '/(cacerts|jssecacerts)$|/jre/lib/security/|/lib/security/'  # regular expression: keystore paths skipped (the JDK's trust stores)
 check_certs_discover_keystore_max: 40    # read at most this many found keystores per host

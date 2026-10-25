@@ -24,6 +24,11 @@
 ## never update these here, e.g. ['mariadb*', 'kernel*']
 # patch_exclude: []
 
+## How many hosts are patched at the same time (1 = one by one: the rollout stops at the first host
+## that fails). ONLY in the job template's Variables, a survey or the launch: Ansible picks the
+## batch size before it reads all.yml or any group or host variables, so set there it does nothing.
+# patch_serial: 1
+
 ## Reboot (only with automatic_restarts: true): when_needed (needs-restarting says so) | never |
 ## always
 # patch_reboot: when_needed

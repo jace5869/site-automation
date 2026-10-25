@@ -120,6 +120,8 @@ in a survey question, never in a settings file:
 | `ts_area`, `ts_service`, ... | what to troubleshoot | Troubleshoot |
 | `use_act`, `site_act_level` | ask ACT, and what it may do | Health check, Troubleshoot |
 | `site_fail_on` | which findings fail the job: `[critical]` or `[critical, warning]` | any check job |
+| `patch_serial`, `win_patch_serial` | how many hosts are patched at the same time (1). **Only** here: in `all.yml` or a group's or host's variables it does nothing | Patch hosts, Windows patch |
+| `stigman_replace_secrets` | `true` for ONE launch: replace the database secrets when the database is created again ([SECRETS.md](SECRETS.md)) | STIG Manager - deploy |
 
 ---
 
@@ -141,6 +143,11 @@ in a survey question, never in a settings file:
 **File names matter.** `playbooks/group_vars/<group>.yml` applies to the group with **exactly that
 name** in your AAP inventory, and `playbooks/host_vars/<host>.yml` to the host with exactly that
 name. A file for a group your inventory does not have is silently never used.
+
+**A few settings belong to one host** - a network device's address, for example. They are at the end
+of the Settings Reference ([settings of one host](VARIABLES_REFERENCE.md#settings-of-one-host)): set
+them in the host's Variables or `playbooks/host_vars/<host>.yml`, never in a template's Variables
+(there one value would be used for every host).
 
 The files shipped in `playbooks/group_vars/` and the group each expects:
 
@@ -334,3 +341,4 @@ check_services_required: [sshd, crond, rsyslog, chronyd, auditd, tomcat]
 | A list lost entries | a list replaces the default: repeat the entries you keep |
 | YAML error at the start of the job | indentation (spaces, never tabs), a missing space after `:`, or a value with `: ` inside it that needs quotes |
 | A survey answer is ignored | the survey question's **variable name** is not exactly the setting's name |
+| `patch_serial` / `win_patch_serial` in a settings file changes nothing | Ansible picks how many hosts run at the same time before it reads any settings file: put it in the template's Variables, or a survey |
