@@ -2,7 +2,8 @@
 # HEALTH REPORT (read-only): every datacenter, cluster and host of every vCenter - vSphere HA (on,
 # host monitoring, failover capacity left, each host's HA agent), DRS (on, automation, recommendations
 # waiting, faults), vCLS retreat mode, hosts not connected or in maintenance, hardware sensors not
-# green, hosts that need a restart, CPU and memory used, configuration issues and triggered alarms.
+# green, hosts that need a restart, CPU and memory used, configuration issues and triggered alarms;
+# single sign-on (vm_sso) and the hosts' and VMs' network drops and errors (vm_net_drops).
 # Coloured by severity, what to do for each problem. Printed, emailed (report_email_to), and published
 # as artifacts (vm_health). Green unless vm_health_fail.
 - name: VMware | a vCenter credential is attached
@@ -42,6 +43,31 @@
       ansible.builtin.set_fact:
         _vm_hl_doc: "{{ _vm_hl_doc | vcenter_sso_doc(_vm_sso, _vm_sso_opts) }}"
         _vm_hl_problems: "{{ _vm_hl_problems + (_vm_sso | vcenter_sso_problems(_vm_sso_opts)) }}"
+
+- name: VMware | network drops and errors (vm_net_drops)
+  when: vm_net_drops | bool
+  block:
+    - name: VMware | network drops and errors - read every host and powered-on VM
+      site_vmware_net_drops:
+        datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+        vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+        validate_certs: "{{ vmware_validate_certs | bool }}"
+        hours: "{{ vm_net_drops_hours | int }}"
+        vms: "{{ vm_net_drops_vms | bool }}"
+        now: "{{ _vm_now | default(omit) }}"
+      register: _vm_nd
+      check_mode: false                  # read-only
+      failed_when: false                 # the report says what could not be read
+
+    - name: VMware | network drops and errors - in the report and its problems
+      ansible.builtin.set_fact:
+        _vm_hl_doc: "{{ _vm_hl_doc | vm_net_drops_doc(_vm_nd, _vm_nd_opts) }}"
+        _vm_hl_problems: "{{ _vm_hl_problems + (_vm_nd | vm_net_drops_problems(_vm_nd_opts)) }}"
+      vars:
+        _vm_nd_opts: >-
+          {{ {'drops_warn_per_hour': vm_net_drops_warn_per_hour | int, 'errors_warn_per_hour': vm_net_errors_warn_per_hour | int,
+              'max_rows': vm_health_max_rows | int,
+              'known_down': _vm_hl_read.vcenters | selectattr('error') | map(attribute='name') | list} }}
 
 - name: VMware | health report
   ansible.builtin.include_tasks: report.yml

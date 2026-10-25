@@ -198,6 +198,14 @@ vm_health_max_rows: 500                  # rows per table in the report (the art
 # The job stays green when it finds problems: the report and email say what. true = mark the job
 # FAILED when there is a critical problem (a host not connected, an HA agent isolated ...), for workflows.
 vm_health_fail: false
+# Network drops and errors in the health report: packets dropped and network errors of every ESXi host (by physical NIC)
+# and powered-on VM (by virtual NIC), from vCenter's statistics. The past day needs vCenter's 5-minute statistics at
+# level 2 (the default is 1); at level 1 the last hour is read, and the report says so. docs/VMWARE.md
+vm_net_drops: true                       # read them (false = the report has no network section)
+vm_net_drops_vms: true                   # the powered-on VMs too (false = the hosts only: quicker where there are thousands of VMs)
+vm_net_drops_hours: 24                   # hours to read when vCenter keeps the past day (at most 24: what the 5-minute interval keeps)
+vm_net_drops_warn_per_hour: 100          # dropped packets an hour (received + sent) of one host or VM from this many -> warning
+vm_net_errors_warn_per_hour: 10          # network errors an hour (received + sent) of one host or VM from this many -> warning
 
 # ---- VM outage watch (playbooks/vm_outage_watch.yml), every 5 to 15 minutes ----
 # Quiet when nothing is down: one line, no email. Watch only (phase 1): it restarts nothing; it lists the

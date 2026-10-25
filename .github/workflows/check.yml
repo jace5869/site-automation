@@ -66,6 +66,7 @@ jobs:
           python tests/test_stig.py
           python tests/test_sso.py
           python tests/test_net_perf.py
+          python tests/test_vm_net_drops.py
           python tests/test_report_history.py
           python tests/test_email_question.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_email_question.py

@@ -73,8 +73,12 @@ An interface's first run (or after a reboot: its counters start over) is counted
 trip and loss per target; the last `net_perf_keep`, 30) and `counters.json` (the interfaces' counters at
 the last run).
 
+## The hosts' and VMs' drops seen by vCenter
+
+The drops counted here are the Linux guest's own. What the ESXi hosts' physical NICs and every VM's
+virtual NIC dropped - Windows VMs too - is in the daily **VM - health report**, section *Network drops and
+errors*, from vCenter's own counters: [VMWARE.md](VMWARE.md#network-drops-and-errors).
+
 ## Not in this version
 
-- vCenter's own counters (dropped packets per VM and per host, `net.droppedRx` / `net.droppedTx`):
-  planned for the VMware health report.
 - Paths between two hosts other than iperf3 pairs and the targets: add the other host as a target.

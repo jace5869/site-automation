@@ -1105,6 +1105,11 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_health_sensors` | `true` | read the hosts' hardware sensors (false = skip them) |
 | `vm_health_max_rows` | `500` | rows per table in the report (the artifacts have them all) |
 | `vm_health_fail` | `false` | The job stays green when it finds problems: the report and email say what. true = mark the job FAILED when there is a critical problem (a host not connected, an HA agent isolated ...), for workflows. |
+| `vm_net_drops` | `true` | Network drops and errors in the health report: packets dropped and network errors of every ESXi host (by physical NIC) and powered-on VM (by virtual NIC), from vCenter's statistics. The past day needs vCenter's 5-minute statistics at level 2 (the default is 1); at level 1 the last hour is read, and the report says so.… (all of it: the role file) |
+| `vm_net_drops_vms` | `true` | the powered-on VMs too (false = the hosts only: quicker where there are thousands of VMs) |
+| `vm_net_drops_hours` | `24` | hours to read when vCenter keeps the past day (at most 24: what the 5-minute interval keeps) |
+| `vm_net_drops_warn_per_hour` | `100` | dropped packets an hour (received + sent) of one host or VM from this many -> warning |
+| `vm_net_errors_warn_per_hour` | `10` | network errors an hour (received + sent) of one host or VM from this many -> warning |
 | `vm_watch_window_minutes` | `15` | The HA and storage events of the last this many minutes (set it to the schedule's interval). |
 | `vm_watch_min_up_minutes` | `15` | A VM powered on for less than this is not judged (a VM still starting has no heartbeat yet). |
 | `vm_watch_confirm_checks` | `2` | A VM is hung only when it has no guest heartbeat AND does not answer on the network, in every check: a suspect is checked this many times in one run (1 = once), vm_watch_confirm_seconds apart. |

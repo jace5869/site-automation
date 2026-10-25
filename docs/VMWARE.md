@@ -560,6 +560,8 @@ in [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)).
 | Clusters | each cluster: hosts running VMs, **vSphere HA** (on or OFF, what admission control reserves, host agents not OK), **DRS** (on or OFF, automation level, score, recommendations waiting), **vCLS** (normal or RETREAT MODE), CPU and memory used, alarms, problems |
 | Hosts | every host, by datacenter and cluster (standalone hosts too): connection, maintenance mode, the **HA agent** (primary, secondary, isolated, partitioned ...), **hardware** (sensors and hardware status not green), CPU and memory used, days up, ESXi version and build, alarms |
 | vCenter | each vCenter's version and the alarms on vCenter itself |
+| Single sign-on and OCSP | below |
+| Network drops and errors | each ESXi host and powered-on VM that dropped packets or had network errors, by NIC - below |
 
 On top: the counts in coloured boxes (hosts not connected, HA problems, DRS problems, hosts with
 hardware faults, triggered alarms). The subject says it in one line, e.g.
@@ -645,6 +647,55 @@ them too (a proxy or firewall between vCenter and the responder is not seen from
 The account of the **VMware vCenter** credential reads the services (read access to the appliance) and
 the STS certificate (CertificateManagement.Administer, read); what it may not read is listed in the
 section's notes, not as a problem. `vm_sso: false` turns it all off.
+
+### Network drops and errors
+
+A NIC or uplink at its limit, a bad cable or SFP, a VM whose guest cannot keep up: they drop packets
+long before anything is down. The health report has a section **Network drops and errors**
+(`vm_net_drops: true`, the default): every connected ESXi host and every powered-on VM that dropped
+packets or had network errors, received and sent, by NIC (a host's `vmnic0`, a VM's `Network adapter 1
+(its port group)`). Only those with a drop or an error are listed; the text above the table says how
+many were read.
+
+| What | Severity |
+|---|---|
+| a host or VM dropped `vm_net_drops_warn_per_hour` (100) packets an hour or more, received + sent | warning |
+| a host or VM had `vm_net_errors_warn_per_hour` (10) network errors an hour or more | warning |
+| a vCenter whose counters could not be read (its health could) | warning |
+
+Never critical: drops slow things down, they do not stop them, so `vm_health_fail` does not fail on them.
+
+**Where the counts come from, and vCenter's statistics level.** The counts are vCenter's performance
+counters `net.droppedRx`, `net.droppedTx`, `net.errorsRx` and `net.errorsTx` - the same as the host's and
+the VM's network charts in the vSphere Client. They are not in the logs vCenter and the hosts send to a
+syslog server or SIEM: vCenter keeps them in its own database. vCenter keeps them for the **past day**
+only when its 5-minute statistics are at **level 2** or more; the default is level 1. The section says,
+for each vCenter, what it read:
+
+- **Level 2 or more:** the past `vm_net_drops_hours` (24) hours - the totals of each host and VM (by NIC
+  from level 3).
+- **Level 1:** the **last hour**, from the hosts' real-time statistics (ESXi keeps every counter for an
+  hour), by NIC, with a note on how to raise the level. A daily report then sees only the hour before it
+  ran.
+
+To check or raise the level: vSphere Client > the vCenter > **Configure > Settings > General > Edit >
+Statistics**. The row whose interval duration is **5 minutes**: set its statistics level to **Level 2**.
+The dialog shows the database size it estimates before you save; level 2 adds more counters for every
+host and VM, kept a day at 5 minutes (and longer at the coarser intervals only if you raise those too -
+not needed here). Check vCenter's database partition has room (the appliance's management page, port
+5480 > Monitor > Disks, `/storage/seat`).
+
+| Setting (template Variables) | Default | What it does |
+|---|---|---|
+| `vm_net_drops` | `true` | read the drops and errors (`false` = no network section) |
+| `vm_net_drops_vms` | `true` | the powered-on VMs too (`false` = the hosts only, quicker with thousands of VMs) |
+| `vm_net_drops_hours` | `24` | hours to read when vCenter keeps the past day (at most 24) |
+| `vm_net_drops_warn_per_hour` | `100` | dropped packets an hour, received + sent, of one host or VM: a warning from |
+| `vm_net_errors_warn_per_hour` | `10` | network errors an hour of one host or VM: a warning from |
+
+The account of the **VMware vCenter** credential needs nothing more: read-only reads the statistics.
+The Linux guests' own interface counters are in the network performance report
+([NETWORK_PERF.md](NETWORK_PERF.md)): there the drops are counted inside the guest, here at the host.
 
 ## VMs created: the weekly report
 
@@ -1380,6 +1431,10 @@ Every message of the deploy, its workflow and the scheduled pickup, with what to
 | `Could not read vCLS retreat mode` (blue) | the account may not read vCenter's advanced settings | nothing needed: retreat mode still raises vCenter's own alarm on the cluster |
 | `vCenter ... has no datacenter named ...` | a typo in `vmware_datacenter` | the exact name, as the vSphere Client shows it |
 | `Reading the health of datacenters, clusters and hosts from vCenter ... failed: ...` | something this job did not expect from your vCenter | send that line to the people who maintain this repository |
+| *Network drops and errors*: `the last hour only: vCenter keeps no drop counts for the past day` | vCenter's 5-minute statistics are at level 1 (the default) | raise them to level 2 ([Network drops and errors](#network-drops-and-errors)), or leave it: each run then covers the hour before it |
+| a VM with many **received** drops (`Dropped in`) | the guest does not empty its receive ring in time: busy, too few vCPU, an E1000 adapter, small rings | VMXNET3; larger rings in the guest (Linux `ethtool -G`, Windows the adapter's *Rx Ring* settings); more vCPU |
+| a host with network **errors** | the physical side: NIC, cable, SFP, switch port | the switch port's own error counters; swap the cable or SFP |
+| `the network drop and error counters: ...` | the account could not read that vCenter's statistics | the VMware vCenter credential's account needs a role on the inventory (Read-only) |
 
 ### Alarms report
 

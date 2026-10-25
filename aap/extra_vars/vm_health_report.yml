@@ -62,6 +62,25 @@
 ## workflows.
 # vm_health_fail: false
 
+## Network drops and errors in the health report: packets dropped and network errors of every ESXi
+## host (by physical NIC) and powered-on VM (by virtual NIC), from vCenter's statistics. The past
+## day needs vCenter's 5-minute statistics at level 2 (the default is 1); at level 1 the last hour
+## is read, and the report says so. docs/VMWARE.md read them (false = the report has no network
+## section)
+# vm_net_drops: true
+
+## the powered-on VMs too (false = the hosts only: quicker where there are thousands of VMs)
+# vm_net_drops_vms: true
+
+## hours to read when vCenter keeps the past day (at most 24: what the 5-minute interval keeps)
+# vm_net_drops_hours: 24
+
+## dropped packets an hour (received + sent) of one host or VM from this many -> warning
+# vm_net_drops_warn_per_hour: 100
+
+## network errors an hour (received + sent) of one host or VM from this many -> warning
+# vm_net_errors_warn_per_hour: 10
+
 ## ---- Single sign-on and OCSP (vCenter 8.0): the health report (playbooks/vm_health_report.yml)
 ## and the watch ---- vCenter's SSO services, the STS signing certificate (health report only), the
 ## identity providers, a login by a test domain account (the "vCenter SSO test account" credential),

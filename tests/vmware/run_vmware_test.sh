@@ -6,7 +6,7 @@
 # dry runs, duplicate and unknown names, no credential; the alarms report (posted events, a
 # disconnected host, an alarm that fired and cleared) and its ACT analysis (a fake ACT:
 # tests/containers/fake_act.py); the ESXi security settings; capacity planning (with and without
-# GenAI's estimate); the health report (a third simulator with 2 datacenters); the certificate renewal of vCenter
+# GenAI's estimate); the health report (a third simulator with 2 datacenters; its network drops); the certificate renewal of vCenter
 # and its hosts (the days raised, one host, incidents and CSRs in a fake ServiceNow, no second CSR, a refused attachment);
 # the pick lists (the survey's choices written in a fake AAP, the picked snapshots deleted and VMs restarted, each checked again);
 # the outage watch (hung VMs by heartbeat and ping, protected ones, HA and storage events, a disconnected host, its
@@ -1778,6 +1778,15 @@ if [ "$(nmail)" = $((n0 + 1)) ] && subject "$eml" | grep -q "^\[AAP\] VMware hea
     echo "ok   -   ...the email: clusters with HA, DRS, vCLS coloured, every host by datacenter and cluster, a text copy"
 else
     echo "FAIL -   ...health email"; head -60 "$work/hl.txt"; fails=$((fails + 1))
+fi
+# network drops: vcsim's 5-minute statistics are at level 1 and its counters have no samples - the last hour is read,
+# every host and powered-on VM, nothing dropped, and the note says how to get the past day
+if grep -q "^Network drops and errors" "$work/hl.txt" && grep -q "[0-9]* host(s) and [0-9]* powered-on VM(s) read" "$work/hl.txt" \
+   && grep -q "the last hour (the hosts' real-time statistics)" "$work/hl.txt" && grep -q "the 5-minute interval to level 2" "$work/hl.txt" \
+   && grep -q "^- No dropped packets and no network errors." "$work/hl.txt" && ! grep -q "network: [0-9]* warning" "$work/hl.txt"; then
+    echo "ok   -   ...the network drops and errors: every host and VM read from vCenter's statistics, the level-1 note"
+else
+    echo "FAIL -   ...network drops section"; sed -n '/^Network drops/,/^$/p' "$work/hl.txt" | head -20; fails=$((fails + 1))
 fi
 # the trust store report: vcsim has neither the certificate-management REST API nor ListCACertificates, so every
 # store is "not read" and the job fails saying so (a real vCenter answers both); no credential refused
