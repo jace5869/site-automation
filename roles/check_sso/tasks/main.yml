@@ -1,0 +1,91 @@
+---
+# SSO. Read-only: systemctl, sssctl (domain-list, domain-status), realm list, journalctl and sssd's own logs,
+# klist -k, kinit -k into a memory cache (asks a KDC for a ticket with the host's keytab: nothing is written),
+# adcli testjoin, getent passwd. One line per fact; plugins/filter/sso_filters.py turns them into findings:
+#   sso:sssd-down / sso:winbind-down   configured but not running                      critical
+#   sso:offline:<domain>               sssd has the domain offline now                  critical
+#   sso:keytab                         the host's keytab gets no ticket (machine account) critical
+#   sso:testjoin:<domain>              adcli testjoin fails                              critical
+#   sso:user:<user>                    a domain user in check_sso_test_users does not resolve  critical
+#   sso:went-offline                   sssd went offline N times in the window (online now)    warning
+#   sso:kdc                            "cannot contact any KDC" N times in the window           warning
+# A host joined to no domain (no sssd domain, no realm, no winbind for ADS) gives nothing.
+
+- name: SSO | sssd, winbind, the domains, the keytab, the join, the logs
+  ansible.builtin.shell: |
+    set -u
+    to={{ check_sso_timeout | int }}
+    conf=no
+    sd={{ check_sso_sssd_dir | quote }}
+    { [ -f "$sd/sssd.conf" ] || ls "$sd"/conf.d/*.conf >/dev/null 2>&1; } && conf=yes
+    echo "sssd_conf $conf"
+    [ "$conf" = yes ] && echo "sssd $(systemctl is-active sssd 2>/dev/null || true)"
+    wb=no
+    smb={{ check_sso_smb_conf | quote }}
+    if [ -f "$smb" ] && grep -qiE '^[[:space:]]*security[[:space:]]*=[[:space:]]*ads' "$smb"; then wb=yes; fi
+    echo "winbind_conf $wb"
+    [ "$wb" = yes ] && echo "winbind $(systemctl is-active winbind 2>/dev/null || true)"
+    if command -v realm >/dev/null 2>&1; then
+      realm list 2>/dev/null | awk '
+        /^[^ \t]/ { if (d) print "realm " d "|" sw "|" cs "|" cf; d=$1; sw=""; cs=""; cf="" }
+        /server-software:/ { sw=$2 } /client-software:/ { cs=$2 } /configured:/ { cf=$2 }
+        END { if (d) print "realm " d "|" sw "|" cs "|" cf }'
+    fi
+    if [ "$conf" = yes ] && command -v sssctl >/dev/null 2>&1; then
+      for d in $(timeout "$to" sssctl domain-list 2>/dev/null | grep -vE '^(implicit_files|files)$'); do
+        out=$(timeout "$to" sssctl domain-status "$d" 2>&1); rc=$?
+        st=$(printf '%s\n' "$out" | sed -nE 's/^Online status: *([A-Za-z]+).*/\1/p' | head -1 | tr 'A-Z' 'a-z')
+        servers=$(printf '%s\n' "$out" | sed -nE '/^Active servers:/,/^$/ s/^[^:]+: *([^ ]+)$/\1/p' | grep -v '^not$' | sort -u | paste -sd, -)
+        err=""; [ $rc -ne 0 ] && err=$(printf '%s' "$out" | tail -1 | tr '|' ' ')
+        echo "domain $d|${st:-unknown}|$servers|$err"
+      done
+    fi
+    since="-{{ check_sso_hours | int }}h"
+    pat_off='Going offline|Backend is offline|went offline|Marking .* as offline|Server .* marked offline'
+    pat_kdc='Cannot contact any KDC|Cannot find KDC|Cannot resolve network address for KDC'
+    logs=$( { journalctl -u sssd --since "$since" -o cat 2>/dev/null
+              find {{ check_sso_sssd_log_dir | quote }} -name '*.log' -mmin -$(( {{ check_sso_hours | int }} * 60 )) -exec tail -n 20000 {} + 2>/dev/null; } )
+    echo "offline_events $(printf '%s\n' "$logs" | grep -cE "$pat_off")"
+    echo "kdc_events $(printf '%s\n' "$logs" | grep -cE "$pat_kdc")"
+    kt={{ check_sso_keytab | quote }}
+    if [ -f "$kt" ] && command -v klist >/dev/null 2>&1; then
+      princ=$(klist -k "$kt" 2>/dev/null | awk 'NR>3 {print $2}' | grep -m1 '\$@')
+      [ -z "$princ" ] && princ=$(klist -k "$kt" 2>/dev/null | awk 'NR>3 {print $2}' | head -1)
+      echo "keytab exists|$princ"
+      {% if check_sso_keytab_test | bool %}
+      if [ -n "$princ" ] && command -v kinit >/dev/null 2>&1 && [ "$conf$wb" != nono ]; then
+        out=$(KRB5CCNAME=MEMORY:site-sso timeout "$to" kinit -k -t "$kt" "$princ" 2>&1) && echo "kinit ok|" || echo "kinit fail|$(printf '%s' "$out" | tail -1 | tr '|' ' ')"
+      fi
+      {% endif %}
+    else
+      echo "keytab missing|"
+    fi
+    {% if check_sso_testjoin | bool %}
+    if command -v adcli >/dev/null 2>&1 && command -v realm >/dev/null 2>&1; then
+      realm list 2>/dev/null | awk '/^[^ \t]/ {d=$1} /server-software: active-directory/ {print d}' | while read -r d; do
+        out=$(timeout "$to" adcli testjoin -D "$d" 2>&1) && echo "testjoin $d|ok|" || echo "testjoin $d|fail|$(printf '%s' "$out" | tail -1 | tr '|' ' ')"
+      done
+    fi
+    {% endif %}
+    {% for u in check_sso_test_users %}
+    timeout "$to" getent passwd {{ u | quote }} >/dev/null 2>&1 && echo "user {{ u }}|ok" || echo "user {{ u }}|fail"
+    {% endfor %}
+    exit 0
+  args:
+    executable: /bin/bash
+  register: _sso
+  changed_when: false
+  check_mode: false             # only reads
+
+- name: SSO | findings
+  ansible.builtin.set_fact:
+    _sso_result: >-
+      {{ _sso.stdout_lines | sso_findings(check_sso_offline_warn | int, check_sso_kdc_warn | int, check_sso_hours | int, check_sso_keytab) }}
+
+- name: SSO | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + _sso_result.findings }}"
+
+- name: SSO | what was read
+  ansible.builtin.debug:
+    msg: "{{ _sso_result.lines }}"

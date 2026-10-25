@@ -88,6 +88,13 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 # target: web
 # log_analysis_profiles: [nginx, sssd]          # vcsa, mid_server, iis, sql_server, nginx, httpd, mariadb, podman, sssd, idm, auditd, aap
 """),
+    "net_perf_report.yml": ("Network performance report", "Machine", "", """\
+## The targets every host of the job measures (ping; with a port, a timed TCP connect too); more per group or host
+## in net_perf_targets_extra
+net_perf_targets: [{name: Gateway, host: GATEWAY-ADDRESS}, {name: DC01, host: DC-NAME, port: 389}]
+## The OCSP responders, asked from every host (with cert and issuer: a real OCSP request)
+# net_perf_ocsp: [{name: OCSP, url: "http://OCSP-SERVER", cert: files/ocsp/test-user.pem, issuer: files/ocsp/issuing-ca.pem}]
+"""),
     "ontap_health_report.yml": ("NetApp ONTAP health report", "NetApp ONTAP", "", ""),
     "patch_hosts.yml": ("Patch hosts", "Machine", "", ""),
     "poam_status.yml": ("POA&M status", "STIG Manager API (optional)", "", ""),

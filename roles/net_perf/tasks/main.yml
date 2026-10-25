@@ -1,0 +1,48 @@
+---
+# NETWORK PERFORMANCE, one host (playbooks/net_perf_report.yml): the OCSP requests are made once on the AAP side, each
+# host measures (library/site_net_perf.py) and keeps its own history, the measurements are judged on the AAP side
+# (plugins/filter/net_perf_filters.py) -> net_perf_result and this host's findings (netperf:*).
+
+- name: Network performance | the OCSP requests (made once, on the AAP side)
+  ansible.builtin.set_fact:
+    _np_ocsp: >-
+      {%- set out = [] -%}
+      {%- for x in net_perf_ocsp -%}
+      {%-   set _ = out.append({'name': x.name | default(x.url), 'url': x.url,
+                                'request': (lookup('ansible.builtin.file', x.cert) | ocsp_request_b64(lookup('ansible.builtin.file', x.issuer)))
+                                           if x.cert | default('') and x.issuer | default('') else ''}) -%}
+      {%- endfor -%}
+      {{ out }}
+  run_once: true
+
+- name: Network performance | measure from this host (ping, TCP, OCSP, interfaces) and keep the run
+  site_net_perf:
+    targets: "{{ net_perf_targets + net_perf_targets_extra }}"
+    ping_count: "{{ net_perf_ping_count | int }}"
+    ping_interval: "{{ net_perf_ping_interval | float }}"
+    tcp_tries: "{{ net_perf_tcp_tries | int }}"
+    timeout: "{{ net_perf_timeout | int }}"
+    ocsp: "{{ _np_ocsp }}"
+    nics: "{{ net_perf_nics | bool }}"
+    nic_exclude: "{{ net_perf_nic_exclude }}"
+    sysfs: "{{ net_perf_sysfs }}"
+    dir: "{{ net_perf_dir }}"
+    keep: "{{ net_perf_keep | int }}"
+    save: "{{ not ansible_check_mode }}"   # a dry run measures and keeps nothing
+  register: _np_raw
+  check_mode: false                       # only measures
+
+# one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: Network performance | judged (thresholds, the host's usual, the OCSP answers)
+  ansible.builtin.set_fact:
+    net_perf_result: >-
+      {{ _np_raw | net_perf_result(inventory_hostname,
+           {'rtt_warn_ms': net_perf_rtt_warn_ms, 'rtt_crit_ms': net_perf_rtt_crit_ms, 'loss_warn_pct': net_perf_loss_warn_pct,
+            'loss_crit_pct': net_perf_loss_crit_pct, 'slower_factor': net_perf_slower_factor, 'slower_min_ms': net_perf_slower_min_ms,
+            'drops_warn_per_hour': net_perf_drops_warn_per_hour, 'errors_warn_per_hour': net_perf_errors_warn_per_hour,
+            'ocsp_warn_ms': net_perf_ocsp_warn_ms, 'ocsp_severity': net_perf_ocsp_severity, 'now': _np_now | default('')},
+           net_perf_targets + net_perf_targets_extra) }}
+
+- name: Network performance | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + net_perf_result.findings }}"

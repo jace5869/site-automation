@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: check_sso
+  description: "Health check: SSO - sssd / winbind running, each domain online, the keytab and the AD join still work, domain users resolve."
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

@@ -32,6 +32,17 @@
     _vm_hl_doc: "{{ _vm_hl_read | vm_health_report(_vm_hl_opts) }}"
     _vm_hl_problems: "{{ _vm_hl_read | vm_health_problems(_vm_hl_opts) }}"
 
+- name: VMware | single sign-on and OCSP (vm_sso)
+  when: vm_sso | bool
+  block:
+    - name: VMware | single sign-on and OCSP - read
+      ansible.builtin.include_tasks: sso_read.yml
+
+    - name: VMware | single sign-on and OCSP - in the report and its problems
+      ansible.builtin.set_fact:
+        _vm_hl_doc: "{{ _vm_hl_doc | vcenter_sso_doc(_vm_sso, _vm_sso_opts) }}"
+        _vm_hl_problems: "{{ _vm_hl_problems + (_vm_sso | vcenter_sso_problems(_vm_sso_opts)) }}"
+
 - name: VMware | health report
   ansible.builtin.include_tasks: report.yml
   vars:

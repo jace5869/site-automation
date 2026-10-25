@@ -40,6 +40,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Network config load | `playbooks/net_config_load.yml` | [net_config_load.yml](net_config_load.yml) |
 | Network device certificate renewal | `playbooks/net_cert_renew.yml` | [net_cert_renew.yml](net_cert_renew.yml) |
 | Network device certificate report | `playbooks/net_cert_report.yml` | [net_cert_report.yml](net_cert_report.yml) |
+| Network performance report | `playbooks/net_perf_report.yml` | [net_perf_report.yml](net_perf_report.yml) |
 | Patch hosts | `playbooks/patch_hosts.yml` | [patch_hosts.yml](patch_hosts.yml) |
 | POA&M status | `playbooks/poam_status.yml` | [poam_status.yml](poam_status.yml) |
 | Report website - copy | `playbooks/report_web_copy.yml` | [report_web_copy.yml](report_web_copy.yml) |

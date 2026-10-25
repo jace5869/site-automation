@@ -231,6 +231,22 @@ vm_watch_fail_on: [critical]
 # The report is emailed (report_email_to) and published (report_web_dest) only when it finds a condition
 # of these severities; a clean run is one line in the job output.
 vm_watch_report_on: [critical]
+vm_watch_sso: true                       # the watch also asks: is single sign-on down now (vm_sso_*, below)? false = not asked
+
+# ---- Single sign-on and OCSP (vCenter 8.0): the health report (playbooks/vm_health_report.yml) and the watch ----
+# vCenter's SSO services, the STS signing certificate (health report only), the identity providers, a login by a test
+# domain account (the "vCenter SSO test account" credential), and the OCSP responders smart card logins depend on.
+vm_sso: true                             # read single sign-on in the health report (and in the watch, with vm_watch_sso); false = never
+vm_sso_services: [sts, lookupsvc, trustmanagement, vmdird, vmafdd]  # SSO services that must be started (as vCenter's and the appliance's service lists name them; one not listed is skipped)
+vm_sso_sts_warn_days: 60                 # the STS signing certificate expires within this many days -> warning
+vm_sso_sts_crit_days: 14                 # ... within this many -> critical (expired: critical)
+vm_sso_test_user: ""                     # the test domain account; empty = the "vCenter SSO test account" credential's (VMWARE_SSO_TEST_USER); none = no login test
+# The OCSP responders: [{url: http://ocsp.example.mil}] asks only that it answers; with cert and issuer (PEM files from
+# playbooks/, e.g. files/ocsp/test-user.pem and files/ocsp/issuing-ca.pem - a certificate the responder knows, not a
+# secret) a real OCSP request: the answer must be successful, the certificate good and the answer not stale.
+vm_sso_ocsp: []                          # e.g. [{url: "http://ocsp.example.mil", cert: files/ocsp/test-user.pem, issuer: files/ocsp/issuing-ca.pem}]
+vm_sso_ocsp_severity: critical           # an OCSP responder that fails: critical (smart card logins fail) or warning
+vm_sso_timeout: 30                       # seconds per request
 
 # ---- VMs created report (playbooks/vm_created_report.yml), e.g. every Friday at noon ----
 

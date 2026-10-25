@@ -9,7 +9,7 @@ printed with a finding is always the first thing to run.
 
 Runs the checks you pick on each host: a list of names, or the shortcuts:
 
-- `daily` = disk, mounts, services, performance, time, network, logging, mariadb (the database check: MariaDB or MySQL; `mysql` and `database` also pick it), containers (podman containers, rootful and rootless)
+- `daily` = disk, mounts, services, performance, time, network, logging, mariadb (the database check: MariaDB or MySQL; `mysql` and `database` also pick it), containers (podman containers, rootful and rootless), sso (can domain users still log in)
 - `weekly` = selinux, fapolicyd, auditd, accounts, certs, trust, patching
 - `all` = both
 
@@ -122,6 +122,26 @@ Per group: `check_services_required_extra: [mariadb]`. To ignore a failed unit:
 | `1203 error messages in the journal` | something complains a lot (top senders listed) | look at the top sender first |
 
 **All settings** of this check, with their defaults: [check_logging](VARIABLES_REFERENCE.md#check_logging).
+
+### sso
+
+**What it means:** can domain users still log in? A Linux host joined to Active Directory or IdM
+(sssd, realmd, or winbind for Samba) keeps letting users in from its cache for a while after it loses
+the domain - then logins fail, often at night. Hosts joined to no domain are skipped.
+
+| Finding | Severity | What it says | Look / fix |
+|---|---|---|---|
+| `sso:sssd-down`, `sso:winbind-down` | critical | configured but not running | `systemctl status sssd`; `journalctl -u sssd -n 50`; `sssctl config-check` |
+| `sso:offline:<domain>` | critical | sssd reaches none of the domain's servers now | `sssctl domain-status <domain>`; `sssctl domain-status -s <domain>` (the servers it found); DNS SRV records, the firewall to 389/636/88 |
+| `sso:keytab` | critical | the host's keytab gets no Kerberos ticket: the computer account was reset, deleted or disabled, or its password changed elsewhere | `klist -k /etc/krb5.keytab`; re-join (`realm leave`, `realm join`) |
+| `sso:testjoin:<domain>` | critical | `adcli testjoin` fails | `adcli testjoin -D <domain> -v`; the computer object in AD |
+| `sso:user:<user>` | critical | a user in `check_sso_test_users` does not resolve | `getent passwd <user>`; `sssctl user-checks <user>` |
+| `sso:went-offline` | warning | sssd went offline `check_sso_offline_warn` times in `check_sso_hours` (online now) | `journalctl -u sssd --since -24h \| grep -i offline`: the servers or the network flap |
+| `sso:kdc` | warning | no KDC (domain controller) could be reached, `check_sso_kdc_warn` times | DNS `_kerberos._tcp` SRV records; the `time` check (clock skew breaks Kerberos) |
+
+The keytab test asks a KDC for a ticket with the host's own key into a memory cache: nothing is
+written, no login session is made (`check_sso_keytab_test: false` turns it off). Windows servers:
+the broken trust with the domain is `network:secure-channel` (the Windows network check).
 
 ### selinux
 

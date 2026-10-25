@@ -1,0 +1,20 @@
+# Credential type: "vCenter SSO test account"
+# Optional, for the single sign-on check in playbooks/vm_health_report.yml and playbooks/vm_outage_watch.yml: a
+# domain (Active Directory) account that logs in to vCenter each run and logs out again - the surest proof that
+# domain users can still log in. It needs no privilege in vCenter (Read-only on vCenter's root, not propagated, makes
+# a successful login plain); a separate account, not a person's, with a password that does not expire (or a reminder).
+inputs:
+  fields:
+    - id: username
+      type: string
+      label: User name
+      help_text: As people log in to vCenter, e.g. svc-sso-test@example.mil
+    - id: password
+      type: string
+      label: Password
+      secret: true
+  required: [username, password]
+injectors:
+  env:
+    VMWARE_SSO_TEST_USER: "{{ username }}"
+    VMWARE_SSO_TEST_PASSWORD: "{{ password }}"

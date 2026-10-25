@@ -21,6 +21,7 @@ into **Injector configuration**. Then create one credential of each type per env
 | `report_web.yml` | Report website | any report job with `report_web_host` (the pages written on a Windows server over WinRM: its user name and password; without it, the template's Machine credential) or `report_web_dest: https://...` (an upload with HTTP PUT that needs a login: a token or a user name and password) (`docs/WEB_REPORTS.md`) |
 | `netapp_ontap.yml` | NetApp ONTAP | `ontap_health_report.yml` - a read-only account on the clusters (`docs/NETAPP.md`) |
 | `cert_inventory_sql.yml` | SQL Server (certificate inventory) | the certificate reports with `cert_inventory_sql: true` - a login that adds and updates the inventory table (`docs/CERT_INVENTORY.md`) - optional |
+| `vcenter_sso_test.yml` | vCenter SSO test account | `vm_health_report.yml`, `vm_outage_watch.yml`: a domain account that logs in to vCenter each run (single sign-on works) - optional |
 | `horizon_api.yml` | Horizon API | every `horizon_*.yml` job - an AD account with a Horizon administrator role (`docs/HORIZON.md`) |
 | `panos_api.yml` | Palo Alto PAN-OS API | `net_config_backup.yml`, `net_config_load.yml` on Palo Alto firewalls - an API key, or a username and password (`docs/NETWORK_CONFIG.md`) |
 | `net_config_git.yml` | Network config git repository | `net_config_backup.yml` and a restore with `net_config_store: git` - an SSH deploy key, or a username and token, for the private repository the configurations are kept in |

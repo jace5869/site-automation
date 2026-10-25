@@ -55,6 +55,8 @@ Approvals**, and in the workflow job's view.
 | Health check / Windows health check | a finding (`site_fail_on`), or ACT proposes a fix | the findings (`site_health`) | ServiceNow tickets (**always**); an approval (**on fail**) |
 | Certificate report / Windows certificate report | a certificate expires soon | the findings | ServiceNow tickets (**always**) |
 | POA&M status | an item is overdue / due soon | the findings | ServiceNow tickets (**always**) |
+| STIG drift report | a host drifted from its checklist, or fails a rule it passed last time | the findings | ServiceNow tickets (**always**) |
+| Network performance report | loss, latency, a refused port, drops or an OCSP responder over its limits | the findings | ServiceNow tickets (**always**) |
 | Troubleshoot / Windows troubleshoot | never for findings (a look, not a verdict) | the findings | a health check, tickets if you want them |
 | Patch hosts / Windows patch | a host fails, or its services do not come back | - | a health check (**always**) |
 | Apply approved ACT fix | the problem is still there | the findings of the re-check | ServiceNow tickets (**always**) |
@@ -406,6 +408,45 @@ green and the approval never comes. The install plans each one again, copies the
 service, checks the port, and puts the old files back if anything is wrong. Windows: the same with *Windows
 certificate install - check / approved*. Everything else - what stays for a person, the restore:
 [CERT_INSTALL.md](CERT_INSTALL.md).
+
+### 33. STIG drift (weekly)
+
+Has a server moved away from its STIG checklist since it was reviewed?
+
+```workflow
+[STIG drift report]
+   |  Run always
+   v
+[ServiceNow tickets]
+```
+
+| Step | Template | Answers | Link |
+|---|---|---|---|
+| 1 | STIG drift report | `target`: the group to scan | (start) |
+| 2 | ServiceNow tickets | | **Run always**, from 1 |
+
+**Schedule:** weekly, e.g. Sunday 02:00 (a STIG scan takes a few minutes per host and some CPU), and once
+after patch night. One incident per host with drift (a rule STIG Manager has as Not a Finding fails now) or a
+new fail since its last scan; *Run always*, so the incident of a host that is clean again gets its note.
+STIG Manager is only read. Click by click: [STIG_DRIFT.md](STIG_DRIFT.md), "Setting it up".
+
+### 34. Network performance (hourly)
+
+```workflow
+[Network performance report]
+   |  Run always
+   v
+[ServiceNow tickets]
+```
+
+| Step | Template | Answers | Link |
+|---|---|---|---|
+| 1 | Network performance report | `target`: the group to measure from | (start) |
+| 2 | ServiceNow tickets | `servicenow_min_severity: critical` (optional: the warnings stay in the report) | **Run always**, from 1 |
+
+**Schedule:** hourly, **Concurrent jobs** off on the workflow. The trend - each path against the host's own
+usual - needs a few runs before it says anything. When users say "the network is slow", launch the template
+on its own with the group they use: the report shows where. [NETWORK_PERF.md](NETWORK_PERF.md).
 
 ### 8. Database watch: MariaDB and MySQL (hourly)
 
@@ -825,6 +866,8 @@ as Check).
 | NetApp ONTAP health | every day 06:00 | template *NetApp ONTAP health report* (21) |
 | vSphere capacity planning / VMs created | Monday 07:00 / Friday 12:00 | templates (22, 23) |
 | Certificate install | every day 07:00 | workflow 29 |
+| STIG drift | weekly, e.g. Sunday 02:00, and after patch night | workflow 33 |
+| Network performance | hourly (**Concurrent jobs** off) | workflow 34 |
 | Horizon: broken desktops / reports | hourly in working hours / daily | workflows 30 and 32 |
 | VM outage watch | every 5 to 15 minutes (**Concurrent jobs** off) | workflow 28 |
 | Report website - copy | every 15 minutes | template *Report website - copy* ([WEB_REPORTS.md](WEB_REPORTS.md)) |

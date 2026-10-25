@@ -32,8 +32,9 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | Service watch - check | `playbooks/service_watch.yml` | Workflow step | [SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md#part-5-aap-setup), the workflow: [Part 6](SERVICE_WATCH_DEMO.md#part-6-the-workflow) |
 | Service watch - apply approved fix | `playbooks/service_fix_approved.yml` | After an approval | [SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md#part-7-approving-a-fix) |
 | POA&M status | `playbooks/poam_status.yml` | Report | [SETUP_AAP.md](SETUP_AAP.md#poam-status), [RUNBOOKS.md](RUNBOOKS.md#poam-status-playbookspoam_statusyml) |
-| STIG drift report | `playbooks/stig_drift_report.yml` | Report | [STIG_DRIFT.md](STIG_DRIFT.md#setting-it-up) |
+| STIG drift report | `playbooks/stig_drift_report.yml` | Report | [STIG_DRIFT.md](STIG_DRIFT.md#setting-it-up), workflow 33: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#33-stig-drift-weekly) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | Setup or test | workflow 10: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#10-stig-manager-deploy-with-checks) |
+| Network performance report | `playbooks/net_perf_report.yml` | Report | [NETWORK_PERF.md](NETWORK_PERF.md#set-it-up), workflow 34: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#34-network-performance-hourly) |
 | Log analysis | `playbooks/log_analysis.yml` | On demand | [LOG_ANALYSIS.md](LOG_ANALYSIS.md#set-it-up-in-aap) |
 
 ## Windows servers
@@ -151,7 +152,7 @@ snapshot cleanup finds its own candidates, and a pick-list template's first run 
 
 | From | Hands over | To | Workflow |
 |---|---|---|---|
-| Health check, Windows health check, Troubleshoot, Windows troubleshoot, Database health, Certificate report, Windows certificate report, Trust store report, Windows - trust store report, POA&M status, VM - outage watch | `site_health`, `site_health_targets` (the findings, per host) | ServiceNow tickets | 1, 2, 6, 7, 8, 12, 13, 17, 28 |
+| Health check, Windows health check, Troubleshoot, Windows troubleshoot, Database health, Certificate report, Windows certificate report, Trust store report, Windows - trust store report, POA&M status, VM - outage watch, STIG drift report, Network performance report | `site_health`, `site_health_targets` (the findings, per host) | ServiceNow tickets | 1, 2, 6, 7, 8, 12, 13, 17, 28, 33, 34 |
 | Health check or Troubleshoot with ACT (`use_act`, `site_act_level: diagnose`) | `act_triage` (ACT's proposed fix), `site_health` | Apply approved ACT fix | 5 |
 | Service watch - check | `service_watch_fix` | Service watch - apply approved fix | [SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md#part-6-the-workflow), Part 6 |
 | Certificate install - check, Windows certificate install - check | `cert_install_plan` | Certificate install - approved, Windows certificate install - approved | 29 |

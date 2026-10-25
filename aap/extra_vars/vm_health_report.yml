@@ -62,6 +62,40 @@
 ## workflows.
 # vm_health_fail: false
 
+## ---- Single sign-on and OCSP (vCenter 8.0): the health report (playbooks/vm_health_report.yml)
+## and the watch ---- vCenter's SSO services, the STS signing certificate (health report only), the
+## identity providers, a login by a test domain account (the "vCenter SSO test account" credential),
+## and the OCSP responders smart card logins depend on. read single sign-on in the health report
+## (and in the watch, with vm_watch_sso); false = never
+# vm_sso: true
+
+## SSO services that must be started (as vCenter's and the appliance's service lists name them; one
+## not listed is skipped)
+# vm_sso_services: [sts, lookupsvc, trustmanagement, vmdird, vmafdd]
+
+## the STS signing certificate expires within this many days -> warning
+# vm_sso_sts_warn_days: 60
+
+## ... within this many -> critical (expired: critical)
+# vm_sso_sts_crit_days: 14
+
+## the test domain account; empty = the "vCenter SSO test account" credential's
+## (VMWARE_SSO_TEST_USER); none = no login test
+# vm_sso_test_user: ""
+
+## The OCSP responders: [{url: http://ocsp.example.mil}] asks only that it answers; with cert and
+## issuer (PEM files from playbooks/, e.g. files/ocsp/test-user.pem and files/ocsp/issuing-ca.pem -
+## a certificate the responder knows, not a secret) a real OCSP request: the answer must be
+## successful, the certificate good and the answer not stale. e.g. [{url: "http://ocsp.example.mil",
+## cert: files/ocsp/test-user.pem, issuer: files/ocsp/issuing-ca.pem}]
+# vm_sso_ocsp: []
+
+## an OCSP responder that fails: critical (smart card logins fail) or warning
+# vm_sso_ocsp_severity: critical
+
+## seconds per request
+# vm_sso_timeout: 30
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
 ## email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails.

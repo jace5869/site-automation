@@ -1,0 +1,120 @@
+---
+# NETWORK PERFORMANCE REPORT - on a schedule (hourly or daily) and when users say "the network is slow". From each
+# Linux host of the job: latency, jitter and packet loss to the targets it depends on (net_perf_targets: ping, and a
+# timed TCP connect to a port), its OCSP responders answering a real request (net_perf_ocsp), its interfaces' drops
+# and errors since the last run, and each path against the host's own usual (its last runs, kept on the host). iperf3
+# throughput only between the pairs you name (net_perf_iperf_pairs), one at a time. Fails the hosts with a critical or
+# warning finding (site_fail_on). docs/NETWORK_PERF.md.
+#
+#   ansible-playbook playbooks/net_perf_report.yml -e target=rhel_servers
+#   ansible-playbook playbooks/net_perf_report.yml --check      # measures, keeps nothing on the hosts
+- name: Network performance report
+  hosts: "{{ target | default('all') }}"
+  become: true
+  gather_facts: false
+  vars:
+    site_report_title: Network performance report
+  pre_tasks:
+    - name: Linux hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  tasks:
+    - name: Start
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: start.yml
+
+    - name: Measure (a measurement that breaks is a finding; the other hosts go on)
+      block:
+        - name: Measure
+          ansible.builtin.include_role:
+            name: net_perf
+            public: true
+
+        - name: Measured
+          ansible.builtin.set_fact:
+            site_checks_run: "{{ (site_checks_run + ['netperf']) | unique }}"
+      rescue:
+        - name: The measurement itself could not run (reported as a finding)
+          ansible.builtin.set_fact:
+            site_findings: >-
+              {{ site_findings + [{'check': 'netperf', 'id': 'netperf:check-error', 'severity': 'warning',
+                                   'summary': 'the network measurement could not run: ' ~ (ansible_failed_result.msg | default('unknown error') | string | truncate(300)),
+                                   'hint': ''}] }}
+            site_checks_run: "{{ (site_checks_run + ['netperf']) | unique }}"
+            site_checks_failed: "{{ (site_checks_failed | default([]) + ['netperf']) | unique }}"
+
+    # iperf3, one pair at a time: the server answers one test (-1) and exits; the client measures for a few seconds
+    - name: Throughput (iperf3) - the server side, for one test
+      ansible.builtin.command:
+        argv: [iperf3, -s, -1, -D, -p, "{{ net_perf_iperf_port | int }}"]
+      delegate_to: "{{ item.server }}"
+      loop: "{{ net_perf_iperf_pairs | default([]) }}"
+      loop_control:
+        label: "{{ item.client }} -> {{ item.server }}"
+      run_once: true
+      changed_when: false
+      failed_when: false
+      register: _np_iperf_srv
+      when: item.server in ansible_play_hosts and item.client in ansible_play_hosts and not ansible_check_mode
+
+    - name: Throughput (iperf3) - the client side
+      ansible.builtin.command:
+        argv: [iperf3, -c, "{{ hostvars[item.server].ansible_host | default(item.server) }}", -p, "{{ net_perf_iperf_port | int }}",
+               -t, "{{ [net_perf_iperf_seconds | int, 30] | min }}", -J]
+      delegate_to: "{{ item.client }}"
+      loop: "{{ net_perf_iperf_pairs | default([]) }}"
+      loop_control:
+        label: "{{ item.client }} -> {{ item.server }}"
+      run_once: true
+      changed_when: false
+      failed_when: false
+      register: _np_iperf_cli
+      until: _np_iperf_cli.rc | default(0) == 0
+      retries: 2                          # the server may not be listening yet
+      delay: 2
+      when: item.server in ansible_play_hosts and item.client in ansible_play_hosts and not ansible_check_mode
+
+    - name: Throughput (iperf3) - the results, and a finding on the client of a pair below its min_mbps
+      ansible.builtin.set_fact:
+        _np_iperf: "{{ _np_iperf_cli.results | default([]) | net_perf_iperf(net_perf_iperf_pairs | default([])) }}"
+      run_once: true
+
+    - name: Throughput (iperf3) - findings for this host (as the client)
+      ansible.builtin.set_fact:
+        site_findings: >-
+          {{ site_findings + (_np_iperf | selectattr('client', 'equalto', inventory_hostname) | rejectattr('status', 'equalto', 'ok')
+             | map('net_perf_iperf_finding') | list) }}
+      when: _np_iperf | default([]) | length > 0
+
+    - name: Every host
+      ansible.builtin.debug:
+        msg: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts | sort if hostvars[h].net_perf_result is defined -%}
+          {%-   for t in hostvars[h].net_perf_result.targets -%}
+          {%-     set _ = out.append(t.status | upper ~ '  ' ~ h ~ ' -> ' ~ t.target ~ ': loss ' ~ t.loss ~ ' %, avg ' ~ (t.avg if t.avg is not none else '-')
+                                     ~ ' ms' ~ ((', usual ' ~ t.usual ~ ' ms') if t.usual else '')) -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+    - name: The tables for the report email
+      ansible.builtin.set_fact:
+        site_report_sections: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('net_perf_result', 'defined') | map(attribute='net_perf_result') | list
+             | net_perf_report_sections(_np_iperf | default([])) }}
+      run_once: true
+
+  post_tasks:
+    - name: Report (fails the hosts with a finding)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml

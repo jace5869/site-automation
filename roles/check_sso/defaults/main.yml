@@ -1,0 +1,18 @@
+---
+# SSO (read-only): can domain users still log in? A Linux host joined to Active Directory or IdM (sssd, realmd,
+# winbind) keeps working on cached logins for a while after it loses its domain - then logins fail. This check
+# finds it before then: sssd (or winbind) running, each sssd domain online, the host's keytab still gets a ticket
+# from a KDC (its machine account works), the AD join is valid (adcli testjoin), domain users resolve, and how
+# often sssd went offline or could not reach a KDC recently. A host that is not joined to any domain is skipped.
+
+check_sso_hours: 24                      # how far back the logs are read (sssd going offline, KDC unreachable)
+check_sso_offline_warn: 1                # sssd went offline this many times in that window (and is online now) -> warning
+check_sso_kdc_warn: 3                    # "cannot contact any KDC" this many times -> warning
+check_sso_keytab: /etc/krb5.keytab       # the host's keytab
+check_sso_keytab_test: true              # get a ticket with it (kinit -k into memory: nothing is written) - proves the machine account works
+check_sso_testjoin: true                 # adcli testjoin on hosts joined to Active Directory with adcli / realmd
+check_sso_test_users: []                 # domain users that must resolve (getent passwd), e.g. [svc_monitor@example.mil]; empty = none
+check_sso_sssd_dir: /etc/sssd            # sssd's configuration (sssd.conf, conf.d/): there = sssd is set up
+check_sso_smb_conf: /etc/samba/smb.conf  # Samba's: security = ads there = winbind is set up for Active Directory
+check_sso_sssd_log_dir: /var/log/sssd    # sssd's own logs, read with the journal
+check_sso_timeout: 30                    # seconds for each command that asks the domain (kinit, adcli, getent)

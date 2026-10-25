@@ -103,8 +103,9 @@ collection, the asset and the checklist's STIG revision - beside the scan's (*V2
 3. In AAP: the job template (docs/SETUP_AAP.md, "STIG drift report"): `playbooks/stig_drift_report.yml`,
    the machine credential and the STIG Manager API credential; `aap/extra_vars/stig_drift_report.yml`
    has its settings.
-4. Run it once as **Check** with a Limit of one host, then for real, then schedule it weekly (and in
-   the patching workflow after the patch job).
+4. Run it once as **Check** with a Limit of one host, then for real, then schedule it weekly - as
+   workflow 33, with the tickets step after it ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#33-stig-drift-weekly))
+   - and in the patching workflow after the patch job.
 
 ## Settings
 

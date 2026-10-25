@@ -64,6 +64,8 @@ jobs:
           python tests/test_net_config.py
           python tests/test_trust.py
           python tests/test_stig.py
+          python tests/test_sso.py
+          python tests/test_net_perf.py
           python tests/test_report_history.py
           python tests/test_email_question.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_email_question.py
@@ -138,6 +140,18 @@ jobs:
         run: |
           bash tests/stig/run_stig_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_test.sh
+      - name: The sso check against fake sssd, realm, Kerberos and adcli tools (current ansible-core and 2.16)
+        run: |
+          bash tests/sso/run_sso_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/sso/run_sso_test.sh
+      - name: vCenter single sign-on and OCSP (a stand-in vCenter REST API, openssl ocsp; current ansible-core and 2.16)
+        run: |
+          bash tests/vcsso/run_vcsso_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vcsso/run_vcsso_test.sh
+      - name: The network performance report (fake ping and iperf3, a real OCSP responder; current ansible-core and 2.16)
+        run: |
+          bash tests/netperf/run_netperf_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/netperf/run_netperf_test.sh
       - name: Every Linux check runs on this runner (no check-error)
         run: bash tests/linux/run_linux_checks.sh
       - name: update-from-release.sh (bash twin of the PowerShell update test)

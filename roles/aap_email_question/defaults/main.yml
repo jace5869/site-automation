@@ -25,6 +25,7 @@ aap_email_question_playbooks:
   - log_analysis.yml
   - net_cert_renew.yml
   - net_cert_report.yml
+  - net_perf_report.yml
   - net_config_backup.yml
   - net_config_load.yml
   - ontap_health_report.yml

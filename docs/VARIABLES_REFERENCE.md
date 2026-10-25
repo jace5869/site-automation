@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_email_question
 
@@ -402,6 +402,26 @@ File: `roles/check_services/defaults/main.yml`
 | `check_services_ignore_failed` | `[]` | Failed units to ignore (regular expressions), e.g. a known-broken vendor unit. |
 | `check_services_restart_warn` | `3` | More restarts than this since the unit started = a restart loop |
 
+## check_sso
+
+File: `roles/check_sso/defaults/main.yml`
+
+> SSO (read-only): can domain users still log in? A Linux host joined to Active Directory or IdM (sssd, realmd, winbind) keeps working on cached logins for a while after it loses its domain - then logins fail. This check finds it before then: sssd (or winbind) running, each sssd domain online, the host's keytab still gets a ticket from a KDC (its machine account works), the AD join is valid (adcli testjoin), domain users resolve, and how often sssd went offline or could not reach a KDC recently. A host that is not joined to any domain is skipped.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `check_sso_hours` | `24` | how far back the logs are read (sssd going offline, KDC unreachable) |
+| `check_sso_offline_warn` | `1` | sssd went offline this many times in that window (and is online now) -> warning |
+| `check_sso_kdc_warn` | `3` | "cannot contact any KDC" this many times -> warning |
+| `check_sso_keytab` | `/etc/krb5.keytab` | the host's keytab |
+| `check_sso_keytab_test` | `true` | get a ticket with it (kinit -k into memory: nothing is written) - proves the machine account works |
+| `check_sso_testjoin` | `true` | adcli testjoin on hosts joined to Active Directory with adcli / realmd |
+| `check_sso_test_users` | `[]` | domain users that must resolve (getent passwd), e.g. [svc_monitor@example.mil]; empty = none |
+| `check_sso_sssd_dir` | `/etc/sssd` | sssd's configuration (sssd.conf, conf.d/): there = sssd is set up |
+| `check_sso_smb_conf` | `/etc/samba/smb.conf` | Samba's: security = ads there = winbind is set up for Active Directory |
+| `check_sso_sssd_log_dir` | `/var/log/sssd` | sssd's own logs, read with the journal |
+| `check_sso_timeout` | `30` | seconds for each command that asks the domain (kinit, adcli, getent) |
+
 ## check_stig
 
 File: `roles/check_stig/defaults/main.yml`
@@ -662,6 +682,40 @@ File: `roles/net_config/defaults/main.yml`
 | `net_config_ios_file` | `flash:site-automation-restore.cfg` | IOS restore: where the backup is copied first (scp; ip scp server enable on the device) |
 | `net_config_panos_allow_pending` | `false` | PAN-OS: change even with someone's uncommitted changes (they would be committed too) |
 | `net_config_max_devices` | `10` | a load to more devices at once is refused (net_config_only, the template's Limit - or raise it) |
+
+## net_perf
+
+File: `roles/net_perf/defaults/main.yml`
+
+> NETWORK PERFORMANCE (playbooks/net_perf_report.yml): from each Linux host - the latency, jitter and loss to the targets it depends on (ping, and a timed TCP connect), its OCSP responders answering a real request (from the host, where it matters), its interfaces' drops and errors since the last run, and how today compares with the host's own recent runs (kept on the host). iperf3 throughput only between the pairs you name: short, one at a time. Read-only, except the few files of the host's own history (net_perf_dir). docs/NETWORK_PERF.md.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `net_perf_targets` | `[]` | ---- Targets (from every host of the job) ------------------------------------------------------------------- name, host; port (optional: a timed TCP connect too); thresholds of its own (optional: rtt_warn_ms, rtt_crit_ms, loss_warn_pct, loss_crit_pct). A target may also be set per group or host (net_perf_targets_extr… (all of it: the role file) |
+| `net_perf_targets_extra` | `[]` | more targets for some hosts (group_vars / host_vars): added to net_perf_targets |
+| `net_perf_ping_count` | `20` | pings per target |
+| `net_perf_ping_interval` | `0.2` | seconds between them (0.2 is the least a non-root ping may use) |
+| `net_perf_tcp_tries` | `5` | timed TCP connects per target with a port |
+| `net_perf_rtt_warn_ms` | `50` | average round trip from this many ms -> warning |
+| `net_perf_rtt_crit_ms` | `200` | ... from this many -> critical |
+| `net_perf_loss_warn_pct` | `1` | packet loss from this percent -> warning |
+| `net_perf_loss_crit_pct` | `10` | ... from this percent -> critical (100 % = the target does not answer at all) |
+| `net_perf_timeout` | `5` | seconds a single ping or connect may wait |
+| `net_perf_ocsp` | `[]` | ---- OCSP responders (asked from every host) ---------------------------------------------------------------- url; with cert and issuer (PEM files from playbooks/, a certificate the responder knows - not a secret) a real OCSP request: the answer must be successful, the certificate good, the answer fresh. A url alone:… (all of it: the role file) |
+| `net_perf_ocsp_warn_ms` | `2000` | an OCSP answer slower than this -> warning |
+| `net_perf_ocsp_severity` | `critical` | an OCSP responder that fails: critical (smart card logins fail) or warning |
+| `net_perf_nics` | `true` | ---- Interfaces (drops and errors since the last run) --------------------------------------------------------- read the interfaces' counters (/sys/class/net/*/statistics) |
+| `net_perf_nic_exclude` | `"^(lo\|veth\|virbr\|docker\|podman\|cni\|flannel\|vnet\|tap\|tun)"` | interfaces left out (regular expression) |
+| `net_perf_sysfs` | `/sys/class/net` | where the kernel shows the interfaces and their counters |
+| `net_perf_drops_warn_per_hour` | `100` | dropped packets per hour (received + sent) from this many -> warning |
+| `net_perf_errors_warn_per_hour` | `10` | errors per hour (CRC, frame, carrier ...) from this many -> warning |
+| `net_perf_dir` | `/var/lib/site-automation/netperf` | ---- History (on the host) and the trend -------------------------------------------------------------------- each run's summary and the last counters; root-only. A dry run keeps nothing |
+| `net_perf_keep` | `30` | runs kept on the host |
+| `net_perf_slower_factor` | `2.0` | a target's average round trip this many times its usual (the median of the kept runs) -> warning |
+| `net_perf_slower_min_ms` | `5` | ... and at least this many ms more than usual (2 ms against 1 ms is not news) |
+| `net_perf_iperf_pairs` | `[]` | ---- iperf3 between named pairs (optional, needs iperf3 on both hosts and port 5201 open) -------------------- server and client are inventory names of this job's hosts; the server runs iperf3 for one test only (-1), then exits. e.g. [{server: app01.example.mil, client: db01.example.mil, min_mbps: 900}] |
+| `net_perf_iperf_seconds` | `5` | seconds per test (at most 30) |
+| `net_perf_iperf_port` | `5201` | the TCP port iperf3 listens on, on the server of each pair |
 
 ## ontap_report
 
@@ -1066,6 +1120,15 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_watch_max_actions` | `5` | more hung VMs at once than this = something bigger: none would be restarted past it |
 | `vm_watch_fail_on` | `[critical]` | The job shows FAILED (a workflow's "On failure" path) when it finds a condition of these severities. |
 | `vm_watch_report_on` | `[critical]` | The report is emailed (report_email_to) and published (report_web_dest) only when it finds a condition of these severities; a clean run is one line in the job output. |
+| `vm_watch_sso` | `true` | the watch also asks: is single sign-on down now (vm_sso_*, below)? false = not asked |
+| `vm_sso` | `true` | ---- Single sign-on and OCSP (vCenter 8.0): the health report (playbooks/vm_health_report.yml) and the watch ---- vCenter's SSO services, the STS signing certificate (health report only), the identity providers, a login by a test domain account (the "vCenter SSO test account" credential), and the OCSP responders smart… (all of it: the role file) |
+| `vm_sso_services` | `[sts, lookupsvc, trustmanagement, vmdird, vmafdd]` | SSO services that must be started (as vCenter's and the appliance's service lists name them; one not listed is skipped) |
+| `vm_sso_sts_warn_days` | `60` | the STS signing certificate expires within this many days -> warning |
+| `vm_sso_sts_crit_days` | `14` | ... within this many -> critical (expired: critical) |
+| `vm_sso_test_user` | (empty) | the test domain account; empty = the "vCenter SSO test account" credential's (VMWARE_SSO_TEST_USER); none = no login test |
+| `vm_sso_ocsp` | `[]` | The OCSP responders: [{url: http://ocsp.example.mil}] asks only that it answers; with cert and issuer (PEM files from playbooks/, e.g. files/ocsp/test-user.pem and files/ocsp/issuing-ca.pem - a certificate the responder knows, not a secret) a real OCSP request: the answer must be successful, the certificate good and t… (all of it: the role file) |
+| `vm_sso_ocsp_severity` | `critical` | an OCSP responder that fails: critical (smart card logins fail) or warning |
+| `vm_sso_timeout` | `30` | seconds per request |
 | `vm_created_days` | `7` | The window: the VMs created in the last this many days, up to the moment the job runs (7 = the past week; run weekly, each VM is in exactly one report). VMs created and deleted since are listed too, as long as vCenter keeps their events (often 30 days). |
 | `esxi_security_hosts` | `[]` | Which hosts: names (* and ? allowed; the short name matches too). [] = every host of vCenter (or of vmware_datacenter). |
 | `esxi_security_clusters` | `[]` | only the hosts of these clusters (names, wildcards); [] = all |

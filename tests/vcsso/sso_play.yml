@@ -1,0 +1,24 @@
+---
+# The single sign-on read and its three outputs, without the rest of the health report or the watch (they need a
+# vCenter with VMs): tests/vcsso/run_vcsso_test.sh runs it against tests/vcsso/vcenter_mock.py and openssl ocsp.
+- name: The vCenter single sign-on read (test)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Read
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: sso_read.yml
+
+    - name: The watch's conditions, the health report's problems, its section
+      ansible.builtin.debug:
+        msg: >-
+          {{ ['CONDITIONS'] + (_vm_sso | vcenter_sso_conditions(_vm_sso_opts) | map(attribute='severity') | map('upper')
+                                 | zip(_vm_sso | vcenter_sso_conditions(_vm_sso_opts) | map(attribute='summary')) | map('join', ' ') | list)
+             + ['PROBLEMS'] + (_vm_sso | vcenter_sso_problems(_vm_sso_opts) | map(attribute='severity') | map('upper')
+                                 | zip(_vm_sso | vcenter_sso_problems(_vm_sso_opts) | map(attribute='problem')) | map('join', ' ') | list)
+             + ['TITLE ' ~ ({'title': 'VMware health report: healthy', 'status': 'ok', 'sections': [{'title': 'Needs attention'}]}
+                            | vcenter_sso_doc(_vm_sso, _vm_sso_opts)).title]
+             + (({'sections': [{'title': 'Needs attention'}]} | vcenter_sso_doc(_vm_sso, _vm_sso_opts)).sections[1].rows | default([])
+                | map('join', ' | ') | list) }}

@@ -1,5 +1,151 @@
 # Changelog
 
+## 0.30.0 — 2026-10-25
+
+**Updating without scripts:** paste one zip as it is - from 0.29.0:
+`site-automation-0.30.0-changed-since-0.29.0.zip`; from 0.28.0: `site-automation-0.30.0-changed-since-0.28.0.zip`
+(it has 0.29.0's files too); from 0.27.0: `site-automation-0.30.0-changed-since-0.27.0.zip` (0.28.0's and 0.29.0's
+files too); from 0.15.1 to 0.26.0: `site-automation-0.30.0-changed-since-0.15.1.zip` (coming from before 0.20.0,
+read the 0.20.0 notes too - one file to delete). They leave out `playbooks/group_vars`, `playbooks/host_vars` and
+`poam/poam.csv`. The health check's daily set now has the `sso` check (below): a host joined to no domain is
+skipped. The list at the end repeats what 0.20.0 to 0.30.0 ask you to set up: single sign-on is its step 11, the
+network performance report its step 12.
+
+**Single sign-on: can domain users still log in?** A Linux server joined to Active Directory or IdM keeps working on
+cached logins for a while after it loses its domain - then nobody can log in. The new health check `sso` (in
+`daily`) finds it before then: sssd (or winbind) running, each sssd domain online now (`sssctl domain-status`), the
+host's keytab still getting a Kerberos ticket (`kinit -k` into memory - nothing is written: the machine account
+works), the AD join valid (`adcli testjoin`), the domain users you name resolving (`check_sso_test_users`), and how
+often sssd went offline or found no KDC in the last `check_sso_hours` (24). Critical when logins fail or are about
+to; warnings for the flapping. A host joined to no domain is skipped. Read-only. docs/RUNBOOKS.md, "sso".
+
+**vCenter single sign-on and OCSP (vCenter 8.0).** Every user and every job logs in to vCenter through its SSO. The
+VMware health report has a new section, **Single sign-on and OCSP**, and the **VM outage watch** asks every run
+whether SSO is down now: the SSO services (sts, lookupsvc, trustmanagement, vmdird, vmafdd) started, a **test domain
+account** logging in to vCenter and out again (the new credential type **vCenter SSO test account**,
+`aap/credential_types/vcenter_sso_test.yml`; without it, no login test), the credential's own login, the STS signing
+certificate's expiry (report only: critical within `vm_sso_sts_crit_days` (14), warning within
+`vm_sso_sts_warn_days` (60)), and each vCenter's identity providers. The **OCSP responders** smart card logins
+depend on (`vm_sso_ocsp`): with a test certificate the responder knows and its issuing CA, each run sends a real
+OCSP request and judges the answer - successful, the certificate good, the answer fresh; with a URL only, it must
+answer at all. A vCenter without the REST API (an older one) is a note, not a problem. Only reads reach vCenter;
+`vm_sso: false` and `vm_watch_sso: false` turn it off. Tested against a stand-in vCenter 8 API and a real `openssl
+ocsp` responder (`tests/vcsso/`). docs/VMWARE.md, "Single sign-on and OCSP (vCenter 8.0)".
+
+**Network performance report: is the network slow, and where?** `playbooks/net_perf_report.yml` measures from each
+Linux host to what it depends on: latency, jitter and loss to each target (`net_perf_targets`: ping, and a timed TCP
+connect when the target has a port), its OCSP responders asked a real question (`net_perf_ocsp`), its interfaces'
+dropped packets and errors per hour since the last run, and the **trend** - each path against the median of the
+host's own last runs, kept on the host (`net_perf_dir`), so "3 ms, usually 1 ms" stands out even below the
+thresholds. Throughput with iperf3 only between the pairs you name (`net_perf_iperf_pairs`), one at a time, a few
+seconds each. Warning and critical thresholds per target where a far site needs its own. The hosts with a finding
+fail, so a workflow can open tickets; the report is emailed and published like the others. A dry run measures and
+keeps nothing. docs/NETWORK_PERF.md.
+
+**Two new workflows** (docs/WORKFLOWS_AND_SCHEDULES.md): 33, *STIG drift* (weekly: the STIG drift report, then
+the tickets), and 34, *Network performance* (hourly: the network performance report, then the tickets).
+
+**To do, if you have not yet: what 0.20.0 to 0.30.0 ask you to set up.** In order; each step works without
+the ones after it.
+
+1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
+   *your* repository - never the public one: `playbooks/files/report_logo.png`. In `all.yml`:
+   `report_logo_file: files/report_logo.png`. Add the line `playbooks/files/report_logo.png` to `.site-local`,
+   or `scripts/update-from-release` deletes it.
+2. **The strip of past runs** (0.20.0, 0.21.0). Attach a **Red Hat Ansible Automation Platform** credential to
+   every report template (the pick lists' one works). Give its user **Organization Auditor** on the templates'
+   organization: Access Management > Users > the user > Roles > Assign roles, resource type Organization.
+   Without it the reports go out without the strip, and the job says why.
+3. **The look** (0.20.0, 0.21.0, 0.24.0). In `all.yml`: `report_email_theme: glass` (or `command`, `portal`)
+   and, if you like, `report_email_header_text: <your line above the title>`.
+4. **"Also email the report to" on every report** (0.22.0). Create the job template **AAP - report email
+   question**: playbook `playbooks/aap_email_question.yml`, only the Red Hat Ansible Automation Platform
+   credential (its user: **Admin** on the report templates and their workflows), any inventory, no Limit.
+   Launch it with Job type **Check** first - it only lists the templates and workflows it would change -
+   then for real. It adds the optional box to every report template's survey and to the workflows that run
+   them. Run it again whenever you add a report template. Optional, in `all.yml`:
+   `report_email_also_domains: [yoursite.mil]`, so typed addresses outside your domains get nothing. The
+   mail relay must be set (`report_email_smtp_host`, `report_email_from`). docs/SETUP_AAP.md, "AAP - report
+   email question"; docs/EMAIL_REPORTS.md, "Also email the report to".
+5. **The report website** (0.23.0, 0.27.0). In `all.yml`, `report_web_url: https://web01.yoursite.mil/reports`,
+   `report_web_theme: glass`, and where the pages go - for a Windows server (IIS serving the folder):
+   `report_web_host: web01.yoursite.mil` and `report_web_dest: 'D:\reports'` (the folder already there). Then one
+   of two ways to write them:
+   - **every report template in an execution environment with WinRM (and Kerberos)** - the all-in-one EE, say: the
+     report jobs write their own pages. The login: a **Report website** credential (`user@YOURSITE.MIL` for
+     Kerberos) on the report templates - or, without it, the template's Machine credential; for WinRM over HTTP with
+     Kerberos also `report_web_host_port: 5985`, `report_web_host_scheme: http`, `report_web_host_transport: kerberos`.
+     The **Report website** credential type: create it from `aap/credential_types/report_web.yml`.
+   - **report templates in other execution environments** - the copy job (new in 0.27.0):
+     1. Create the job template **Report website - copy**: playbook `playbooks/report_web_copy.yml`; the execution
+        environment your Windows jobs work with; your Windows inventory - it must have the web server, and
+        `report_web_host` is its name there - no Limit; its Machine credential (an account with **Modify** on
+        `D:\reports`); a **Red Hat Ansible Automation Platform** credential whose user has **Organization Auditor**
+        on the report templates' organizations. *Concurrent jobs* off.
+     2. Try it on one report template: `report_web_copy: true` on its Variables, run it (Run, not Check), then look
+        at that job in AAP (Details > Artifacts: `site_report_page`).
+     3. Launch **Report website - copy** with **Check** (`Would copy: job ...`), then for real: the page appears at the
+        address the report job printed, and the job says how it reached the server - *from this job's inventory*.
+     4. Then `report_web_copy: true` in `all.yml`, and a schedule for the copy job (every 15 minutes). An email's
+        button answers *not found* until the copy job's next run.
+
+     Both ways can be mixed: `report_web_copy: false` on one template's Variables and it writes its own pages.
+   - Or an upload (WebDAV) or a folder (a share on the execution nodes): docs/WEB_REPORTS.md, "Where the files go".
+
+   Run one report with **Check** (it prints the address it would use), then for real: the job prints
+   `Report: https://...`, and its email gets the **Open the full report** button. docs/WEB_REPORTS.md.
+6. **Certificate install** (0.25.0) - only when the renewals order from the PKI's catalog item
+   ([CERT_RENEWAL_CATALOG.md](docs/CERT_RENEWAL_CATALOG.md)). Ask the PKI to attach DISA's files (the .cer and
+   the .p7b) to the request or to its catalog task. Create six templates: *Certificate install - check*
+   (`playbooks/cert_install_check.yml`: Machine, ServiceNow API), *Certificate install - approved*
+   (`playbooks/cert_install_approved.yml`: the same, the same inventory, no Limit, Variables not prompted),
+   *Certificate restore* (`playbooks/cert_restore.yml`), and the three `win_` ones (`win_cert_install_check.yml`,
+   `win_cert_install_approved.yml`, `win_cert_restore.yml`). Make the workflow with an **Approval** on the
+   check's **Run on fail** (workflow 29 in docs/WORKFLOWS_AND_SCHEDULES.md) and schedule it daily; try the check
+   as **Check** with a Limit first. The optional settings: the 0.25.0 notes, "To set it up"; docs/CERT_INSTALL.md.
+7. **VM outage watch and log analysis** (0.26.0). Each does nothing until you make its template.
+   - *VM - outage watch* (`playbooks/vm_outage_watch.yml`): the VMware vCenter credential, the inventory that has
+     your `aap` group, no Limit. Run it once by hand (a clean estate is one green line). Then the workflow
+     `[VM - outage watch] --Always--> [ServiceNow tickets]` (*Always*, so a clean run notes or resolves the
+     incident), scheduled every 5 to 15 minutes with **Concurrent jobs off**, and `vm_watch_window_minutes` set to
+     that interval. It restarts nothing. docs/VM_OUTAGE_WATCH.md, "Set it up".
+   - *Log analysis* (`playbooks/log_analysis.yml`): one template per inventory (Linux with its Machine credential,
+     Windows with its Machine (Windows) credential), plus the **ACT model key**; Limit prompted on launch and a
+     survey with `target`, `log_analysis_question`, `log_analysis_since` / `log_analysis_until`. And
+     *VM - vCenter log analysis* (`playbooks/vm_log_analysis.yml`): VMware vCenter and ACT model key, no Limit.
+     Run each as **Check** first (it reads and reports, ACT is not called). docs/LOG_ANALYSIS.md, "Set it up in
+     AAP". With `report_web_copy: true` their pages go through the copy job too.
+8. **The patch batch size** (0.28.0) - only if you set `patch_serial` or `win_patch_serial` in `all.yml` or in a
+   group's or host's file: it never worked there. Move it to the *Patch hosts* / *Windows patch* template's
+   Variables (or a survey).
+9. **STIG drift report** (0.28.0). On the hosts, `openscap-scanner` and `scap-security-guide` from your RHEL
+   repositories (or `check_stig_install: true`). In STIG Manager, a Keycloak client for the job - your autostig
+   one, or another - with the scope `stig-manager:collection:read` and a grant in the collections (Full, or
+   Restricted with these hosts' assets). In AAP, the template *STIG drift report* (`playbooks/stig_drift_report.yml`):
+   the Machine credential and a **STIG Manager API** credential with that client; `check_stig_stigman_api` in its
+   Variables, and each host's `check_stig_stigman_collection` in the inventory, per group or host. Run it as
+   **Check** with a Limit first (it scans and compares, keeps nothing), then weekly and after patching: the
+   workflow 33 (new in 0.30.0) runs the tickets step after it. docs/STIG_DRIFT.md, "Setting it up".
+10. **The MID Server hosts** (0.29.0). Move them to a group `servicenow_mid_hosts` of your **Windows**
+    inventory, then on the *ServiceNow health* template: that inventory, and its Machine (Windows) credential next
+    to the ServiceNow API one. The API account needs read on `ecc_agent`, `ecc_queue` and `ecc_agent_issue` (e.g.
+    the `mid_server` role). Optional: `servicenow_mid_expected: [mid01, mid02]`. Launch it once by hand.
+    docs/SERVICENOW_SETUP.md, "MID Servers".
+11. **Single sign-on** (0.30.0). Linux: nothing to set - `sso` runs in the health check's daily set; optional
+    `check_sso_test_users: [svc_monitor@yoursite.mil]` in `all.yml`. Add `sso` to the *Health check* survey's
+    `health_checks` choices to run it on its own. vCenter: create the credential type **vCenter SSO test account**
+    from `aap/credential_types/vcenter_sso_test.yml`, a credential with an AD account made for it (Read-only on
+    vCenter's root, not propagated, or no permission at all), and attach it to the *VM - health report* and *VM -
+    outage watch* templates. OCSP: put a test certificate and its issuing CA under `playbooks/files/ocsp/` and list
+    the responders in `all.yml` (`vm_sso_ocsp`). Run the VM - health report once by hand: its section **Single
+    sign-on and OCSP**. docs/VMWARE.md, "Single sign-on and OCSP (vCenter 8.0)".
+12. **Network performance report** (0.30.0). In `all.yml`, `net_perf_targets` (the gateway, the domain
+    controllers with port 389, the web servers with 443) and, if you like, `net_perf_ocsp` (the same responders).
+    Create the template *Network performance report* (`playbooks/net_perf_report.yml`): the Machine credential,
+    `target:` the group to measure from. Run it as **Check** first (it measures and keeps nothing), then schedule
+    it hourly as workflow 34, the tickets step after it (Concurrent jobs off) - the trend needs a few runs.
+    docs/NETWORK_PERF.md, "Set it up".
+
 ## 0.29.0 — 2026-10-25
 
 **Updating without scripts:** paste one zip as it is - from 0.28.0:

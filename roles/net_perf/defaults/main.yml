@@ -1,0 +1,46 @@
+---
+# NETWORK PERFORMANCE (playbooks/net_perf_report.yml): from each Linux host - the latency, jitter and loss to the
+# targets it depends on (ping, and a timed TCP connect), its OCSP responders answering a real request (from the host,
+# where it matters), its interfaces' drops and errors since the last run, and how today compares with the host's own
+# recent runs (kept on the host). iperf3 throughput only between the pairs you name: short, one at a time.
+# Read-only, except the few files of the host's own history (net_perf_dir). docs/NETWORK_PERF.md.
+
+# ---- Targets (from every host of the job) -------------------------------------------------------------------
+# name, host; port (optional: a timed TCP connect too); thresholds of its own (optional: rtt_warn_ms, rtt_crit_ms,
+# loss_warn_pct, loss_crit_pct). A target may also be set per group or host (net_perf_targets_extra).
+net_perf_targets: []                     # e.g. [{name: Gateway, host: 192.0.2.1}, {name: DC01, host: dc01.example.mil, port: 389}, {name: STIG Manager, host: stigman.example.mil, port: 443}]
+net_perf_targets_extra: []               # more targets for some hosts (group_vars / host_vars): added to net_perf_targets
+net_perf_ping_count: 20                  # pings per target
+net_perf_ping_interval: 0.2              # seconds between them (0.2 is the least a non-root ping may use)
+net_perf_tcp_tries: 5                    # timed TCP connects per target with a port
+net_perf_rtt_warn_ms: 50                 # average round trip from this many ms -> warning
+net_perf_rtt_crit_ms: 200                # ... from this many -> critical
+net_perf_loss_warn_pct: 1                # packet loss from this percent -> warning
+net_perf_loss_crit_pct: 10               # ... from this percent -> critical (100 % = the target does not answer at all)
+net_perf_timeout: 5                      # seconds a single ping or connect may wait
+
+# ---- OCSP responders (asked from every host) ----------------------------------------------------------------
+# url; with cert and issuer (PEM files from playbooks/, a certificate the responder knows - not a secret) a real OCSP
+# request: the answer must be successful, the certificate good, the answer fresh. A url alone: it must answer HTTP.
+net_perf_ocsp: []                        # e.g. [{name: DISA OCSP, url: "http://ocsp.example.mil", cert: files/ocsp/test-user.pem, issuer: files/ocsp/issuing-ca.pem}]
+net_perf_ocsp_warn_ms: 2000              # an OCSP answer slower than this -> warning
+net_perf_ocsp_severity: critical         # an OCSP responder that fails: critical (smart card logins fail) or warning
+
+# ---- Interfaces (drops and errors since the last run) ---------------------------------------------------------
+net_perf_nics: true                      # read the interfaces' counters (/sys/class/net/*/statistics)
+net_perf_nic_exclude: "^(lo|veth|virbr|docker|podman|cni|flannel|vnet|tap|tun)"  # interfaces left out (regular expression)
+net_perf_sysfs: /sys/class/net            # where the kernel shows the interfaces and their counters
+net_perf_drops_warn_per_hour: 100        # dropped packets per hour (received + sent) from this many -> warning
+net_perf_errors_warn_per_hour: 10        # errors per hour (CRC, frame, carrier ...) from this many -> warning
+
+# ---- History (on the host) and the trend --------------------------------------------------------------------
+net_perf_dir: /var/lib/site-automation/netperf  # each run's summary and the last counters; root-only. A dry run keeps nothing
+net_perf_keep: 30                        # runs kept on the host
+net_perf_slower_factor: 2.0              # a target's average round trip this many times its usual (the median of the kept runs) -> warning
+net_perf_slower_min_ms: 5                # ... and at least this many ms more than usual (2 ms against 1 ms is not news)
+
+# ---- iperf3 between named pairs (optional, needs iperf3 on both hosts and port 5201 open) --------------------
+# server and client are inventory names of this job's hosts; the server runs iperf3 for one test only (-1), then exits.
+net_perf_iperf_pairs: []                 # e.g. [{server: app01.example.mil, client: db01.example.mil, min_mbps: 900}]
+net_perf_iperf_seconds: 5                # seconds per test (at most 30)
+net_perf_iperf_port: 5201                # the TCP port iperf3 listens on, on the server of each pair

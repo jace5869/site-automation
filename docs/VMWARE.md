@@ -602,6 +602,50 @@ not configured (that is what maintenance mode does).
 (`config.vcls.clusters.<cluster id>.enabled = false`). If the account may not read them, the report
 says so in blue, and retreat mode still shows as vCenter's own alarm on the cluster.
 
+### Single sign-on and OCSP (vCenter 8.0)
+
+Every user and every job logs in to vCenter through its single sign-on. When SSO breaks - a service
+stopped, the STS signing certificate expired, the identity source lost its domain controllers - nobody
+can log in. The health report has a section **Single sign-on and OCSP** (`vm_sso: true`, the default),
+and the **outage watch** asks every run whether SSO is down *now* (`vm_watch_sso`):
+
+| What | Severity | Health report | Watch |
+|---|---|---|---|
+| An SSO service in `vm_sso_services` (sts, lookupsvc, trustmanagement, vmdird, vmafdd) not started | critical | yes | yes |
+| The test domain account cannot log in to vCenter | critical | yes | yes |
+| The credential's own login refused (single sign-on, or the credential) | critical | yes | yes |
+| The STS signing certificate expired, or expires within `vm_sso_sts_crit_days` (14) | critical | yes | - |
+| ... within `vm_sso_sts_warn_days` (60) | warning | yes | - |
+| An OCSP responder in `vm_sso_ocsp` does not answer, answers not successful, stale, or not good | `vm_sso_ocsp_severity` (critical) | yes | yes |
+
+The section also lists each vCenter's identity providers. Only reads reach vCenter.
+
+**The test login.** The surest proof that domain users can log in: a domain account logs in to vCenter
+each run and logs out again. Create an AD account for it (not a person's), give it **Read-only** on
+vCenter's root without propagating (or nothing: a login that is authenticated but has no permission
+still proves SSO works), and a **vCenter SSO test account** credential
+(`aap/credential_types/vcenter_sso_test.yml`) on the health report and the watch templates. Without it,
+there is no login test.
+
+**OCSP.** Smart card (CAC) logins to vCenter check each card's certificate with an OCSP responder: when
+it does not answer, they fail. List your responders in `all.yml`:
+
+```yaml
+vm_sso_ocsp:
+  - url: http://ocsp.example.mil
+    cert: files/ocsp/test-user.pem       # a certificate the responder knows (not a secret), from playbooks/
+    issuer: files/ocsp/issuing-ca.pem    # the CA that issued it
+```
+
+With `cert` and `issuer`, each run sends a real OCSP request and reads the answer: it must be
+successful, the certificate **good**, and the answer fresh (its next update not passed). With a `url`
+only, it must answer HTTP at all. The responders are asked from the AAP node; vCenter itself must reach
+them too (a proxy or firewall between vCenter and the responder is not seen from here).
+
+The account of the **VMware vCenter** credential reads the services (read access to the appliance) and
+the STS certificate (CertificateManagement.Administer, read); what it may not read is listed in the
+section's notes, not as a problem. `vm_sso: false` turns it all off.
+
 ## VMs created: the weekly report
 
 The read-only **VM - VMs created report** answers "how many VMs were created this past week?" for

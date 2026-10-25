@@ -31,6 +31,9 @@
 #                cacerts, Python certifi, Node, podman containers, an application's own files) and software
 #                with its own trust logic (Go programs, Node, NSS) below the fixed version. docs/TRUST_STORES.md
 #   patching     pending (security) updates, reboot needed, days since the last update
+#   sso          can domain users still log in: sssd (or winbind) running, each domain online, the host's keytab
+#                still gets a ticket, the AD join valid (adcli testjoin), test users resolve, how often sssd went
+#                offline. Hosts joined to no domain are skipped. docs/RUNBOOKS.md
 #   mariadb      database health and performance (slow queries, lock waits, open transactions ...),
 #                MariaDB AND MySQL, on the host or in podman containers - only on
 #                hosts in mariadb_hosts / mysql_hosts / database_hosts (or the groups mariadb, mysql),
@@ -44,7 +47,7 @@
 #                host's last scan. In no shortcut (a scan takes minutes): ask for it by name, or use its own
 #                template, playbooks/stig_drift_report.yml. docs/STIG_DRIFT.md
 #
-# Shortcuts: daily = disk mounts services performance time network logging mariadb containers
+# Shortcuts: daily = disk mounts services performance time network logging mariadb containers sso
 #            weekly = selinux fapolicyd auditd accounts certs trust patching
 #            all = both
 #
@@ -58,9 +61,9 @@
     health_checks: [daily]
     _health_alias: {mysql: mariadb, database: mariadb}
     _health_sets:
-      daily: [disk, mounts, services, performance, time, network, logging, mariadb, containers]
+      daily: [disk, mounts, services, performance, time, network, logging, mariadb, containers, sso]
       weekly: [selinux, fapolicyd, auditd, accounts, certs, trust, patching]
-      all: [disk, mounts, services, performance, time, network, logging, mariadb, containers,
+      all: [disk, mounts, services, performance, time, network, logging, mariadb, containers, sso,
             selinux, fapolicyd, auditd, accounts, certs, trust, patching]
     _health_by_name: [stig]     # known, but in no shortcut: asked for by name only
     # A survey's multiple-choice answer can arrive as a list or as lines of text, a text answer or an extra

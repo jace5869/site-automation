@@ -180,14 +180,14 @@ which credentials. Its survey asks which checks to run.
    - **Answer type** *Multiple Choice (multiple select)*
    - **Choices**, one per line: `daily`, `weekly`, `all`, `disk`, `mounts`, `services`,
      `performance`, `time`, `network`, `logging`, `selinux`, `fapolicyd`, `auditd`,
-     `accounts`, `certs`, `patching`, `mariadb`, `mysql`, `database`, `containers`, `stig`
+     `accounts`, `certs`, `patching`, `mariadb`, `mysql`, `database`, `containers`, `stig`, `sso`
    - **Default answer** `daily`. Tick **Required**. Click **Create question**.
 
    **Made this survey with an earlier release?** AAP never updates a survey for you: open the
    **Health check** template → **Survey** tab → click the `health_checks` question → **Edit** →
-   add `containers` on a new line under **Choices** → **Save**. (`daily` and `all` already include
-   the containers check without that; the choice is for running it on its own. `stig`, the STIG drift
-   scan, is in no shortcut: add it the same way to run it by name.)
+   add `containers` and `sso` on new lines under **Choices** → **Save**. (`daily` and `all` already include
+   the containers and sso checks without that; the choice is for running one on its own. `stig`, the STIG
+   drift scan, is in no shortcut: add it the same way to run it by name.)
 5. Turn the survey **on** (the switch at the top of the Survey tab).
 
 **You should see** the template in the Templates list with a rocket icon.
@@ -343,6 +343,17 @@ Weekly, and after patching: each Linux host's OpenSCAP STIG scan against its che
 | Playbook | `playbooks/stig_drift_report.yml` |
 | Credentials | `Linux ssh (sudo)`, `STIG Manager API` (the client: your autostig one, or another with `stig-manager:collection:read` and a grant in the collections) |
 | Variables | `aap/extra_vars/stig_drift_report.yml`: `check_stig_stigman_api`; each host's `check_stig_stigman_collection` in the inventory (per group or host) |
+
+### Network performance report
+
+Hourly or daily, and when users say "the network is slow": latency, loss and jitter from each Linux host to
+its targets, its OCSP responders, its interfaces' drops, against its own usual ([NETWORK_PERF.md](NETWORK_PERF.md)).
+
+| Field | Value |
+|---|---|
+| Playbook | `playbooks/net_perf_report.yml` |
+| Credentials | `Linux ssh (sudo)` |
+| Variables | `aap/extra_vars/net_perf_report.yml`: `net_perf_targets` (and `net_perf_ocsp`, `net_perf_iperf_pairs`); `target:` the group to measure from |
 
 ### VMware - trust store report
 

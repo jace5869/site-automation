@@ -35,6 +35,7 @@ Every vCenter of the job (the credential's, and `vmware_vcenters`), or one datac
 | A VM **hung**: no guest heartbeat AND no answer on the network, in every check of the run | critical |
 | A VM with no guest heartbeat that answers on the network, or could not be probed (one signal only) | warning (`vm_watch_one_signal_severity`) |
 | A vCenter that could not be read | critical |
+| vCenter's single sign-on down now: an SSO service stopped, the test domain account refused, an OCSP responder not answering (`vm_watch_sso`; [VMWARE.md](VMWARE.md#single-sign-on-and-ocsp-vcenter-80)) | critical |
 
 "The window" is the last `vm_watch_window_minutes` (15): set it to the schedule's interval, so every
 event is seen once.

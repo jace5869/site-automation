@@ -41,6 +41,16 @@
                        or (vmware_protected_vms | name_list) | length > 0,
           'max_actions': vm_watch_max_actions | int} }}
 
+- name: VMware | is single sign-on down now (vm_watch_sso)
+  when: vm_watch_sso | bool and vm_sso | bool
+  block:
+    - name: VMware | single sign-on and OCSP - read
+      ansible.builtin.include_tasks: sso_read.yml
+
+    - name: VMware | single sign-on and OCSP - what is down now
+      ansible.builtin.set_fact:
+        _vm_w_cond: "{{ _vm_w_cond + (_vm_sso | vcenter_sso_conditions(_vm_sso_opts)) }}"
+
 - name: VMware | phase 2's decision (made, not carried out)
   ansible.builtin.set_fact:
     _vm_w_actions: "{{ _vm_w_cond | vm_watch_actions(_vm_w_opts) }}"
