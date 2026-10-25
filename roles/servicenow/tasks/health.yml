@@ -2,7 +2,11 @@
 # Is ServiceNow itself healthy? Runs on the controller (localhost), read-only:
 #   1. the instance answers the REST API, and how fast
 #   2. every MID Server is Up and validated (a down MID Server silently stops discovery,
-#      orchestration and integrations that go through it)
+#      orchestration and integrations that go through it), its heartbeat recent, the versions alike,
+#      the expected ones there; its output queue moving (ecc_queue) and its open MID Server Issues
+#   3. the MID Server hosts (Windows, read before this by tasks/mid_host.yml: servicenow_mid_result) -
+#      the service running, the agent log written, SEVERE lines, JVM restarts, the drive, the URL
+# Judged in plugins/filter/servicenow_mid_filters.py; one MID Server table in the report.
 # The result is published like a host's findings (host name "servicenow"), so the same workflow
 # steps (tickets, notifications) work with it.
 
@@ -37,7 +41,7 @@
 
 - name: ServiceNow health | MID Servers
   ansible.builtin.uri:
-    url: "{{ _sn_url }}/api/now/table/ecc_agent?sysparm_fields=name,status,validated,host_name,version,last_refreshed&sysparm_limit=200"
+    url: "{{ _sn_url }}/api/now/table/ecc_agent?sysparm_fields=name,status,validated,host_name,ip_address,version,last_refreshed&sysparm_limit=500"
     method: GET
     url_username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
     url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
@@ -50,6 +54,67 @@
   failed_when: false
   check_mode: false             # only reads
   when: servicenow_check_mid | bool and _sn_ping.status | default(0) == 200
+
+- name: ServiceNow health | the time, for the heartbeats and the queue
+  ansible.builtin.set_fact:
+    _sn_epoch: "{{ now().timestamp() | int }}"
+
+- name: ServiceNow health | MID Servers' output waiting longer than {{ servicenow_mid_queue_minutes }} min (ecc_queue)
+  ansible.builtin.uri:
+    url: >-
+      {{ _sn_url }}/api/now/stats/ecc_queue?sysparm_count=true&sysparm_group_by=agent&sysparm_query={{
+         ('queue=output^state=ready^agentSTARTSWITHmid.server.^sys_created_on<'
+          ~ ('%Y-%m-%d %H:%M:%S' | strftime(_sn_epoch | int - (servicenow_mid_queue_minutes | int) * 60, utc=true))) | urlencode }}
+    method: GET
+    url_username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  register: _sn_queue
+  failed_when: false
+  check_mode: false             # only reads
+  when: servicenow_check_mid | bool and servicenow_mid_queue_check | bool and _sn_mid.status | default(0) == 200
+
+- name: ServiceNow health | open MID Server Issues (ecc_agent_issue)
+  ansible.builtin.uri:
+    url: >-
+      {{ _sn_url }}/api/now/table/ecc_agent_issue?sysparm_fields=mid_server,message,state,sys_created_on&sysparm_display_value=true&sysparm_limit=200&sysparm_query={{
+         'stateNOT INresolved,closed,ignored' | urlencode }}
+    method: GET
+    url_username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    validate_certs: "{{ servicenow_validate_certs }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout }}"
+  register: _sn_issues
+  failed_when: false
+  check_mode: false             # only reads
+  when: servicenow_check_mid | bool and servicenow_mid_issues_check | bool and _sn_mid.status | default(0) == 200
+
+# one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: ServiceNow health | the MID Servers, as the instance and their hosts see them
+  ansible.builtin.set_fact:
+    _sn_agents: >-
+      {{ (_sn_mid.json.result | default([]) if _sn_mid.status | default(0) == 200 else [])
+         | sn_mid_agents({'names': servicenow_mid_names | name_list, 'now': _sn_epoch | int}) }}
+    _sn_queue_by: "{{ (_sn_queue.json.result | default([])) if _sn_queue.status | default(0) == 200 else [] }}"
+    _sn_mid_hosts: >-
+      {{ (groups[servicenow_mid_hosts_group] | default([]) | map('extract', hostvars) | selectattr('servicenow_mid_result', 'defined')
+          | map(attribute='servicenow_mid_result') | list) if servicenow_check_mid_hosts | bool else [] }}
+    _sn_mid_opts: >-
+      {{ {'names': servicenow_mid_names | name_list, 'expected': servicenow_mid_expected | name_list,
+          'stale_minutes': servicenow_mid_stale_minutes | float, 'version_check': servicenow_mid_version_check | bool,
+          'queue_minutes': servicenow_mid_queue_minutes | int, 'queue_warn': servicenow_mid_queue_warn | int,
+          'queue_critical': servicenow_mid_queue_critical | int, 'instance_url': _sn_url, 'url_check': servicenow_mid_url_check | bool,
+          'service_match': servicenow_mid_service_match, 'hours': servicenow_mid_hours,
+          'log_stale_minutes': servicenow_mid_log_stale_minutes | float, 'severe_warn': servicenow_mid_severe_warn | int,
+          'jvm_warn': servicenow_mid_jvm_restarts_warn | int, 'disk_warn': servicenow_mid_disk_warn_pct | float,
+          'disk_critical': servicenow_mid_disk_critical_pct | float} }}
 
 - name: ServiceNow health | findings
   ansible.builtin.set_fact:
@@ -71,18 +136,34 @@
                                 'summary': 'could not read the MID Server list (HTTP ' ~ _sn_mid.status | default('?') ~ '): the API account needs read access to ecc_agent',
                                 'hint': ''}) -%}
       {%-   endif -%}
-      {%-   for m in (_sn_mid.json.result | default([])) if m.status | default('') != 'Up' or m.validated | default('') | string | lower != 'true' -%}
-      {%-     set _ = f.append({'check': 'servicenow', 'id': 'servicenow:mid:' ~ m.name, 'severity': 'critical',
-                                'summary': 'MID Server ' ~ m.name ~ ' on ' ~ m.host_name | default('?') ~ ' is ' ~ m.status | default('?')
-                                           ~ (' and NOT validated' if m.validated | default('') | string | lower != 'true' else '')
-                                           ~ ' (last seen ' ~ m.last_refreshed | default('?') ~ ')',
-                                'hint': 'on ' ~ m.host_name | default('the MID host') ~ ': systemctl status mid* --no-pager; tail -50 <mid>/agent/logs/agent0.log.0'}) -%}
-      {%-   endfor -%}
+      {%-   if servicenow_check_mid | bool and _sn_mid.status | default(0) == 200 -%}
+      {%-     set _ = f.extend(_sn_agents | sn_mid_findings(_sn_queue_by | sn_mid_queue,
+                                                          (_sn_issues.json.result | default([])) if _sn_issues.status | default(0) == 200 else [],
+                                                          _sn_mid_hosts, _sn_mid_opts)) -%}
+      {%-   endif -%}
+      {%- endif -%}
+      {%- if _sn_ping.status | default(0) != 200 or not servicenow_check_mid | bool or _sn_mid.status | default(0) != 200 -%}
+      {#-   the instance could not say: the hosts are still judged on what they said -#}
+      {%-   set _ = f.extend(_sn_mid_hosts | sn_mid_host_findings(_sn_mid_opts)) -%}
       {%- endif -%}
       {{ f }}
+    site_report_sections: >-
+      {{ [_sn_agents | sn_mid_section(_sn_queue_by | sn_mid_queue, _sn_mid_hosts, _sn_mid_opts)]
+         if servicenow_check_mid | bool and (_sn_agents | length > 0 or _sn_mid_hosts | length > 0) else [] }}
 
 - name: ServiceNow health | status
   ansible.builtin.debug:
     msg: >-
       API {{ 'answers in ' ~ _sn_ping.elapsed ~ ' s' if _sn_ping.status | default(0) == 200 else 'DOES NOT ANSWER' }};
-      MID Servers: {{ (_sn_mid.json.result | default([]) | map(attribute='name') | zip(_sn_mid.json.result | default([]) | map(attribute='status')) | map('join', ' ') | join(', ')) or 'not checked' }}
+      {{ (_sn_agents | sn_mid_status(_sn_queue_by | sn_mid_queue, _sn_mid_hosts)) if servicenow_check_mid | bool else 'MID Servers: not checked (servicenow_check_mid)' }}
+
+- name: ServiceNow health | what could not be read (the API account's rights, docs/SERVICENOW_SETUP.md)
+  ansible.builtin.debug:
+    msg: >-
+      {{ ([('ecc_queue (stuck output): HTTP ' ~ _sn_queue.status ~ ' - give the account read on ecc_queue (e.g. the mid_server role), or servicenow_mid_queue_check: false')]
+          if _sn_queue.status is defined and _sn_queue.status | default(0) != 200 else [])
+         + ([('ecc_agent_issue (MID Server Issues): HTTP ' ~ _sn_issues.status ~ ' - an older release has no such table, or the account cannot read it; servicenow_mid_issues_check: false')]
+            if _sn_issues.status is defined and _sn_issues.status | default(0) != 200 else []) }}
+  when: >-
+    (_sn_queue.status is defined and _sn_queue.status | default(0) != 200)
+    or (_sn_issues.status is defined and _sn_issues.status | default(0) != 200)

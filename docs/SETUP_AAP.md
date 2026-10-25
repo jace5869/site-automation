@@ -469,12 +469,14 @@ Only useful as a workflow step after a check. Runs on the controller.
 
 ### ServiceNow health
 
-Hourly. Runs on the controller.
+Hourly. The instance's view runs on the controller; the MID Server hosts are read over WinRM
+([SERVICENOW_SETUP.md](SERVICENOW_SETUP.md#mid-servers)).
 
 | Field | Value |
 |---|---|
 | Playbook | `playbooks/servicenow_health.yml` |
-| Credentials | `ServiceNow API` |
+| Inventory | your **Windows** inventory, with the MID Server hosts in a group `servicenow_mid_hosts` (without that group: any inventory, the instance's view only) |
+| Credentials | `ServiceNow API`, and the Windows inventory's `Machine (Windows)` credential |
 | Privilege escalation | not needed |
 | Limit | empty, and **no** Prompt on launch (it runs on the controller) |
 | Survey | none |
@@ -581,7 +583,7 @@ ticket in ServiceNow. In short:
 
 1. Ask the ServiceNow admins for an **integration account** (web service access only) with:
    - `itil` (or a role that can create and update incidents);
-   - `mid_server` (read the MID Server list), if you want the MID Server check.
+   - `mid_server` (or read on `ecc_agent`, `ecc_queue` and `ecc_agent_issue`), if you want the MID Server check.
 2. Create the **ServiceNow API** credential (step 3) with the instance URL, for example
    `https://servicenow.example.mil`, and the account.
 3. In your settings file (`playbooks/group_vars/all.yml`; the example inventory's
@@ -594,7 +596,9 @@ ticket in ServiceNow. In short:
 4. Create **ServiceNow - test ticket** (step 9) and launch it, first as *Check*, then as *Run*.
    **You should see** six steps that say PASS, and a link to the test incident. It is resolved
    by the same job.
-5. Launch **ServiceNow health** once: `API answers in N s`, then the MID Servers and their status.
+5. Launch **ServiceNow health** once: `API answers in N s`, then the MID Servers and their status. With the
+   Windows inventory (a group `servicenow_mid_hosts`) and its Machine (Windows) credential, it checks the MID
+   Server hosts too ([SERVICENOW_SETUP.md](SERVICENOW_SETUP.md#mid-servers)).
 6. Build the *Daily health* workflow ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)).
    Its tickets step then runs after every check.
 

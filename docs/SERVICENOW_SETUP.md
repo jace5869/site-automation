@@ -27,7 +27,7 @@ Plan about 30 minutes, plus the time the ServiceNow admins need for step 1.
 |---|---|---|
 | The instance URL | `https://yourinstance.servicenowservices.com` or `https://servicenow.example.mil` | the ServiceNow admins (or your browser's address bar) |
 | An API account and its password | `svc_aap_sn` | the ServiceNow admins |
-| Roles on that account | `itil` (and `mid_server` for the MID Server check) | the ServiceNow admins |
+| Roles on that account | `itil` (and read on `ecc_agent`, `ecc_queue`, `ecc_agent_issue` for the MID Server check, e.g. `mid_server`) | the ServiceNow admins |
 | The assignment group for the tickets | `Linux Operations` | the ServiceNow admins or your team lead |
 | A network path from AAP to the instance | TCP 443 from the AAP execution nodes | the network or firewall team |
 | Trust for the instance's certificate | the DoD root CA, if the instance uses a DoD certificate | you (step 3) |
@@ -49,7 +49,8 @@ Request: a ServiceNow integration account for Ansible Automation Platform (AAP)
 - "Web service access only": ticked (API use only, no interactive login)
 - "Internal Integration User": ticked, if our release has it
 - Roles: itil (read, create and update incidents; read groups and users)
-         mid_server (read the MID Server list; only if we want the MID Server check)
+         mid_server, or read access to ecc_agent, ecc_queue and ecc_agent_issue (the MID Server
+           list, their queue and their issues; only if we want the MID Server check)
   No admin role.
 - Authentication: basic authentication over HTTPS for the Table API. If MFA or single
   sign-on is enforced, this account must be exempt, as web-service accounts usually are.
@@ -86,7 +87,9 @@ authentication and JSON. These are the only calls the playbooks make:
 | `POST /api/now/table/incident` | open an incident | test ticket, tickets |
 | `GET /api/now/table/incident/<sys_id>` | read an incident back | test ticket |
 | `PATCH /api/now/table/incident/<sys_id>` | add a work note; resolve | test ticket, tickets |
-| `GET /api/now/table/ecc_agent` | MID Servers: up and validated? | health |
+| `GET /api/now/table/ecc_agent` | MID Servers: up, validated, heartbeat, version? | health |
+| `GET /api/now/stats/ecc_queue?sysparm_count=true&sysparm_group_by=agent` | MID Servers' output waiting too long (stuck)? | health |
+| `GET /api/now/table/ecc_agent_issue` | open MID Server Issues? | health |
 
 With `cert_renew_servicenow: catalog` the certificate renewals order the PKI's catalog item instead of opening
 incidents ([CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md)). Those jobs, and the catalog test, make these calls:
@@ -306,9 +309,55 @@ tickets automatically), and the ticket in ServiceNow looks like the list above.
 | 5: `HTTP 403` | the account may create but not update | the `itil` role, or an ACL on work notes |
 | 6: `could not resolve ... Data Policy Exception` (WARN) | the instance needs other values to resolve | ask the admins for the resolved state and close code; set `servicenow_resolved_state` and `servicenow_close_code`. Only needed if you use `servicenow_resolve_cleared: true` |
 
+## MID Servers
+
+The **ServiceNow health** job (`playbooks/servicenow_health.yml`) checks the MID Servers - all of it,
+in one job and one report, with a MID Server table. No other job needs a MID Server setting.
+
+**What the instance says** (the API account, from the AAP side):
+
+| Finding | Severity | Setting |
+|---|---|---|
+| a MID Server Down (or any state but Up), or not validated | critical | |
+| Upgrading or Paused | warning | |
+| Up, but its heartbeat (`last_refreshed`) older than 15 minutes | critical | `servicenow_mid_stale_minutes` |
+| one you expect is not in the list (renamed, deleted) | critical | `servicenow_mid_expected: [mid01, mid02]` |
+| the MID Servers on different versions (one stuck in its upgrade) | warning | `servicenow_mid_version_check` |
+| output waiting more than 10 minutes for a MID Server (it is not picking up its work) | warning; 50 or more critical | `servicenow_mid_queue_minutes`, `_queue_warn`, `_queue_critical` |
+| open MID Server Issues | warning | `servicenow_mid_issues_check` |
+
+Only some MID Servers: `servicenow_mid_names: [PROD-*]`. A table the account cannot read (ecc_queue,
+or ecc_agent_issue on an older release) is said in the job's output, not counted as a problem.
+
+**What the MID Server hosts say** (Windows, over WinRM, in the same run): put the MID Server hosts in a
+group **`servicenow_mid_hosts`** of your **Windows** inventory (`inventories/example-windows/hosts.yml`),
+run the ServiceNow health template with that inventory, and attach its **Machine (Windows)** credential
+next to the ServiceNow API one. The check reads, and changes nothing:
+
+| Finding | Severity | Setting |
+|---|---|---|
+| a MID Server service (`snc_mid*`, or display name "ServiceNow MID Server*") not running | critical | `servicenow_mid_service_match` |
+| its service not set to start by itself | warning | |
+| it runs, but its agent log (`agent\logs\agent0.log.0`) not written for 30 minutes - hung | critical | `servicenow_mid_log_stale_minutes` |
+| 20 or more SEVERE lines in the agent log in the last 24 hours (the latest one shown) | warning | `servicenow_mid_severe_warn`, `servicenow_mid_hours` |
+| the JVM crashed, hung or ran out of memory (`wrapper.log`) | warning | `servicenow_mid_jvm_restarts_warn` |
+| the agent's drive under 10 % free (5 %: critical) | warning | `servicenow_mid_disk_warn_pct`, `_critical_pct` |
+| `config.xml` pointing at another instance (after a clone, a moved MID Server) | critical | `servicenow_mid_url_check` |
+| a host of the group not reached, or no MID Server service on it | critical / warning | |
+
+The two views meet in the report: a MID Server the instance says is Down names its stopped service, and
+the host it runs on. The agent folder is read from each service's command line, so any install folder
+works. A group named otherwise: `servicenow_mid_hosts_group`; the instance's view only:
+`servicenow_check_mid_hosts: false`. The MID Servers' logs explained by ACT: the log analysis with
+`log_analysis_profiles: [mid_server]` ([LOG_ANALYSIS.md](LOG_ANALYSIS.md)).
+
+**In a workflow:** `[ServiceNow health] --Always--> [ServiceNow tickets]` opens one incident per MID
+Server problem (on the host "servicenow"). Hourly is a good schedule. When the API itself is down, an
+AAP notification on the template's failure is the alert: a broken ServiceNow cannot take tickets.
+
 ## Next
 
-- **ServiceNow health** (hourly): the instance's API and the MID Servers ([RUNBOOKS.md](RUNBOOKS.md)).
+- **ServiceNow health** (hourly): the instance's API and the MID Servers (above).
 - **The tickets step** in the *Daily health* workflow ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)):
   one incident per problem, updated on later runs, noted or resolved when it clears.
 - Keep **ServiceNow - test ticket**. Run it again after a password change, a new certificate,

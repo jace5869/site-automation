@@ -253,5 +253,60 @@ expect "pickup blind: says why" 'cannot see the \"Picked up\" note it wrote'
 [ "$(grep -c '"PATCH"' "$work/requests-$snp.jsonl")" = 1 ] && echo "ok   - pickup blind: only the first ticket was touched" \
     || { echo "FAIL - blind touched more tickets"; fails=$((fails + 1)); }
 
+# ---- ServiceNow health: the instance's MID Servers, and the MID Server hosts (a host that is not Windows, one not reached)
+mids() {  # mids FILE JSON-OF-AGENTS-QUEUE-ISSUES (the "ago" of each agent: minutes since its heartbeat)
+    python3 - "$1" "$2" <<'EOPY'
+import datetime, json, sys
+d = json.loads(sys.argv[2])
+now = datetime.datetime.now(datetime.timezone.utc)
+for a in d.get("agents", []):
+    a["last_refreshed"] = (now - datetime.timedelta(minutes=a.pop("ago", 1))).strftime("%Y-%m-%d %H:%M:%S")
+    a.setdefault("validated", "true"); a.setdefault("version", "xanadu-07-02-2024")
+json.dump(d, open(sys.argv[1], "w"))
+EOPY
+}
+mids "$work/mid-ok.json" '{"agents": [{"name": "mid01", "status": "Up", "host_name": "mid01.example.mil"},
+                                      {"name": "mid02", "status": "Up", "host_name": "mid02.example.mil"}]}'
+mids "$work/mid-bad.json" '{"agents": [{"name": "mid01", "status": "Down", "host_name": "mid01.example.mil", "ago": 90},
+                                       {"name": "mid02", "status": "Up", "host_name": "mid02.example.mil", "ago": 45},
+                                       {"name": "mid04", "status": "Up", "host_name": "mid04.example.mil", "version": "washingtondc-12-20-2023"}],
+                            "queue": {"mid04": 7},
+                            "issues": [{"mid_server": {"display_value": "mid04"}, "message": "MID Server certificate expires in 10 days", "state": "new"}]}'
+start_mock $((port + 20)) SNMOCK_MID="$work/mid-ok.json"
+start_mock $((port + 21)) SNMOCK_MID="$work/mid-bad.json"
+start_mock $((port + 22)) SNMOCK_MID="$work/mid-ok.json" SNMOCK_MID_NO_QUEUE=1 SNMOCK_MID_NO_ISSUES=1
+PLAYBOOK=playbooks/servicenow_health.yml scenario "health: the API and two MID Servers well" 0 $((port + 20)) api goodpw
+expect "health well: the MID Servers' line" 'MID Servers: mid01 Up, mid02 Up'
+PLAYBOOK=playbooks/servicenow_health.yml scenario "health: MID Servers down, silent, on another version, stuck, with issues, one missing" 2 \
+    $((port + 21)) api goodpw -e '{"servicenow_mid_expected": ["mid01", "mid03"]}'
+expect "health bad: down" 'MID Server mid01 on mid01.example.mil is Down'
+expect "health bad: Up but silent" 'MID Server mid02 on mid02.example.mil says Up, but has not reported for 45 minutes'
+expect "health bad: missing" 'MID Server mid03 (servicenow_mid_expected) is not in the instance'
+expect "health bad: versions" 'the MID Servers run 2 different versions'
+expect "health bad: stuck output" '7 output message(s) have waited more than 10 minutes for MID Server mid04'
+expect "health bad: open issues" 'MID Server mid04 has 1 open MID Server Issue(s): MID Server certificate expires in 10 days'
+PLAYBOOK=playbooks/servicenow_health.yml scenario "health: no read on ecc_queue, no ecc_agent_issue table - said, not a problem" 0 \
+    $((port + 22)) api goodpw
+expect "health unreadable: ecc_queue said" 'ecc_queue (stuck output): HTTP 403'
+expect "health unreadable: ecc_agent_issue said" 'ecc_agent_issue (MID Server Issues): HTTP 400'
+cat > "$work/mid-inv.yml" <<EOI
+all:
+  hosts:
+    localhost: {ansible_connection: local, ansible_python_interpreter: $(command -v python3)}
+  children:
+    servicenow_mid_hosts:
+      hosts:
+        mid01.example.mil: {ansible_connection: local, ansible_python_interpreter: $(command -v python3)}
+        mid02.example.mil: {ansible_host: 127.0.0.1, ansible_port: 1, ansible_connection: ssh, ansible_ssh_timeout: 3}
+EOI
+PLAYBOOK=playbooks/servicenow_health.yml scenario "health with MID Server hosts: one not Windows, one not reached - in the same report" 2 \
+    $((port + 20)) api goodpw -i "$work/mid-inv.yml"
+expect "health hosts: not Windows" 'the MID Server check could not run on mid01.example.mil: not a Windows host'
+expect "health hosts: not reached" 'MID Server host mid02.example.mil could not be reached over WinRM'
+expect "health hosts: the line" 'MID Servers: mid01 Up, mid02 Up; hosts checked: 0 of 2'
+PLAYBOOK=playbooks/servicenow_health.yml scenario "health with servicenow_check_mid_hosts: false - the instance's view only" 0 \
+    $((port + 20)) api goodpw -i "$work/mid-inv.yml" -e servicenow_check_mid_hosts=false
+expect "health no hosts: the line" 'MID Servers: mid01 Up, mid02 Up'
+
 if [ "$fails" -gt 0 ]; then echo "$fails check(s) failed"; exit 1; fi
-echo "all ServiceNow test-ticket, tickets and VM request pickup checks passed"
+echo "all ServiceNow test-ticket, tickets, VM request pickup and ServiceNow health checks passed"

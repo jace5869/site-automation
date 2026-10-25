@@ -133,7 +133,7 @@ of your groups (or hosts) are:
 - the NetApp Console host;
 - the STIG Manager host(s);
 - the ServiceNow database host(s);
-- the ServiceNow MID Server host(s);
+- the ServiceNow MID Server host(s), in the Windows inventory (the ServiceNow health job reads them);
 - the servers monthly patching may touch.
 
 On the old ansible-core machine, `ansible-inventory -i <your inventory> --graph` prints the
@@ -252,13 +252,9 @@ give root a password, so the check logs in with a monitoring account instead. Th
 (several containers, discovery, rootless containers, the account to ask the DBA for, and how to
 verify) is in [MARIADB.md](MARIADB.md).
 
-**The ServiceNow MID Server host(s):**
-
-```yaml
-check_services_required_extra: [mid]            # CHANGE: its unit name (systemctl list-units | grep -i mid)
-check_certs_keystores:
-  - path: /opt/servicenow/mid/agent/security/agent_keystore     # CHANGE: your MID Server's path
-```
+**The ServiceNow MID Server host(s):** nothing here. They are Windows servers, checked by the
+**ServiceNow health** job: a group `servicenow_mid_hosts` in the **Windows** inventory
+([SERVICENOW_SETUP.md](SERVICENOW_SETUP.md#mid-servers)).
 
 **The NetApp Console host:** nothing is needed. It is checked like every host; being in
 `netapp_console_hosts` and `no_patch` keeps automation from changing it.

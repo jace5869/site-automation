@@ -784,10 +784,12 @@ As *Check* (a dry run) steps 1 and 2 run, and 3 to 6 are only printed. Set up, r
 ## ServiceNow health (`playbooks/servicenow_health.yml`)
 
 From the controller: does the instance answer its REST API, and how fast
-(`servicenow_slow_seconds`)? Is every MID Server **Up** and **validated**? Hourly is a good
-schedule. Alert with an AAP **notification** (email) on failure, not with a ticket: a broken
-ServiceNow cannot take tickets. The MID Server **hosts** (the Linux service, its keystore) are
-covered by the health check: see `inventories/example/group_vars/servicenow_mid_hosts.yml`.
+(`servicenow_slow_seconds`)? Is every MID Server **Up**, **validated** and reporting, on one
+version, its queue moving, without open MID Server Issues? And on the MID Server **hosts** (Windows,
+the group `servicenow_mid_hosts` of the Windows inventory): each MID service running, its agent log
+written lately, SEVERE lines, JVM restarts, the drive, the instance URL - all in this one job and its
+report ([SERVICENOW_SETUP.md](SERVICENOW_SETUP.md#mid-servers)). Hourly is a good schedule. Alert with
+an AAP **notification** (email) on failure when the API is down: a broken ServiceNow cannot take tickets.
 
 **All settings** of this job, with their defaults: [servicenow](VARIABLES_REFERENCE.md#servicenow).
 

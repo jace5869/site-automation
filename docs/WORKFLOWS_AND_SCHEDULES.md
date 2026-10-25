@@ -224,7 +224,7 @@ hosts template (*Multiple Choice*, `no` / `yes`, default `no`), or put `automati
 in the step's variables. Hosts in `patch_never_reboot_groups` are never rebooted either way.
 
 **Launch** with **Limit** `patch_hosts`, or one group at a time (`stigman` this week,
-`servicenow_mid_hosts` next week). **Schedule:** monthly, in your maintenance window, for
+another group next week). **Schedule:** monthly, in your maintenance window, for
 example the second Wednesday at 20:00. The approval then waits for the on-call person.
 
 ### 4. Patch with a dry run first

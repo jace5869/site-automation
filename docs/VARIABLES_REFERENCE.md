@@ -803,6 +803,25 @@ File: `roles/servicenow/defaults/main.yml`
 | `servicenow_fail_when_findings` | `true` | Fail the job when it opened/updated tickets, so the workflow shows red while problems exist. |
 | `servicenow_check_mid` | `true` | servicenow_health.yml: also check the MID Servers (needs read access to the ecc_agent table) |
 | `servicenow_slow_seconds` | `5` | the API answering slower than this -> warning |
+| `servicenow_mid_names` | `[]` | ---- servicenow_health.yml: the MID Servers -------------------------------------------------- What the instance says about each MID Server (ecc_agent): Up and validated, its heartbeat (last_refreshed) no older than servicenow_mid_stale_minutes, the same version on every MID Server, the ones you expect all there; its… (all of it: the role file) |
+| `servicenow_mid_expected` | `[]` | these must exist (names): one missing -> critical |
+| `servicenow_mid_stale_minutes` | `15` | Up, but its heartbeat older than this -> critical (it reports every few minutes) |
+| `servicenow_mid_version_check` | `true` | MID Servers on different versions -> warning (one stuck in an upgrade) |
+| `servicenow_mid_queue_check` | `true` | read ecc_queue (the account needs read on it, e.g. the mid_server role) |
+| `servicenow_mid_queue_minutes` | `10` | output waiting longer than this for its MID Server counts as stuck |
+| `servicenow_mid_queue_warn` | `1` | this many stuck messages -> warning |
+| `servicenow_mid_queue_critical` | `50` | ... this many -> critical |
+| `servicenow_mid_issues_check` | `true` | read the open MID Server Issues (ecc_agent_issue) |
+| `servicenow_check_mid_hosts` | `true` | The MID Server HOSTS (Windows, over WinRM), in the same job and report: the hosts of this group of the job's inventory - the Windows inventory, with its Machine (Windows) credential next to the ServiceNow API one. No such group (or false below): the instance's view only. Read-only. On each host: every MID Server servi… (all of it: the role file) |
+| `servicenow_mid_hosts_group` | `servicenow_mid_hosts` | the inventory group of the MID Server hosts |
+| `servicenow_mid_service_match` | `"snc_mid*"` | service names (* and ?); the display name "ServiceNow MID Server*" matches too |
+| `servicenow_mid_hours` | `24` | how far back the logs are read for SEVERE lines and JVM restarts |
+| `servicenow_mid_log_stale_minutes` | `30` | the agent log not written for this long while the service runs -> critical (hung) |
+| `servicenow_mid_severe_warn` | `20` | this many SEVERE lines in servicenow_mid_hours -> warning |
+| `servicenow_mid_jvm_restarts_warn` | `1` | this many JVM restarts (crash, hang, out of memory) -> warning |
+| `servicenow_mid_disk_warn_pct` | `10` | free space of the agent's drive under this % -> warning |
+| `servicenow_mid_disk_critical_pct` | `5` | ... under this % -> critical |
+| `servicenow_mid_url_check` | `true` | config.xml's instance URL not this instance (a clone, a moved MID) -> critical |
 | `servicenow_test_resolve` | `true` | servicenow_test_ticket.yml: resolve the test incident at the end (false = leave it open to look at) |
 | `cert_renew_servicenow` | `incident` | How the CSRs the certificate renewals make (Linux, Windows, VMware, network devices) go to the PKI. incident: each one is attached to its certificate's incident, with a work note saying what to do next - a person submits it to the PKI. catalog: each one is ordered from your PKI's catalog item (cert_renew_catalog_item)… (all of it: the role file) |
 | `cert_renew_csr_memory_days` | `90` | incident: a CSR on an incident of the certificate made in the last this-many days counts as made - also when that incident was resolved or closed since (the PKI may still be signing it): vCenter, ESXi and Cisco keep one pending key, and a second CSR would replace it. Older: a new CSR (the certificate is due again). |

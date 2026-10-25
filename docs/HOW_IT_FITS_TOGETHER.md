@@ -137,7 +137,7 @@ Three kinds of groups work well together, and you already have the first kind:
 
 | Kind | Examples | Used for |
 |---|---|---|
-| What a host **is** | your `db_servers`, `stigman`, `mid_servers`, `aap`, `netapp` | settings that belong to that kind of host (the MariaDB container name, the MID keystore path) |
+| What a host **is** | your `db_servers`, `stigman`, `mid_servers`, `aap`, `netapp` | settings that belong to that kind of host (the MariaDB container name, the MID Server services' names) |
 | What automation **may do** to it | `patch_hosts`, `no_patch`, `aap_hosts`, `netapp_console_hosts` | safety: what gets patched, what ACT may only diagnose |
 | **Everything** | `all` (built in: you never create it) | where the checks run when a template has no `target` |
 

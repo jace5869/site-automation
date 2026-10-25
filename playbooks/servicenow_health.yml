@@ -1,18 +1,34 @@
 ---
-# SERVICENOW HEALTH - does the instance answer its API (and how fast), and is every MID Server
-# Up and validated? Read-only. Runs on the controller.
+# SERVICENOW HEALTH - does the instance answer its API (and how fast), and are its MID Servers well?
+# Read-only. Every MID Server problem is in this one job and its one report:
+#   - what the instance says (on the controller): each MID Server Up and validated, its heartbeat recent,
+#     the versions alike, the expected ones there (servicenow_mid_expected), its output queue moving
+#     (ecc_queue), its open MID Server Issues (ecc_agent_issue)
+#   - what the MID Server HOSTS say (Windows, over WinRM): the hosts of the group servicenow_mid_hosts
+#     (servicenow_mid_hosts_group) of the job's inventory - each MID service running and starting by
+#     itself, its agent log written lately, SEVERE lines, JVM restarts, the drive's free space, config.xml
+#     pointing at this instance. No such group: the instance's view only.
 #
-# Credential: "ServiceNow API". The account needs read access to the incident table and, for the
-# MID Server check, to ecc_agent (e.g. the mid_server role).
-#
-# For the MID Server HOSTS (the Linux service, its certificates), use the health check with
-# check_services_required_extra and check_certs_keystores in the inventory - see docs/RUNBOOKS.md.
+# Credentials: "ServiceNow API" - the account needs read on incident, ecc_agent, ecc_queue and
+# ecc_agent_issue (e.g. itil + mid_server); with MID hosts, also the Windows inventory's Machine
+# (Windows) credential. docs/SERVICENOW_SETUP.md, "MID Servers".
+#   ansible-playbook -i inventories/example-windows playbooks/servicenow_health.yml
+- name: ServiceNow health - the MID Server hosts (Windows)
+  hosts: "{{ servicenow_mid_hosts_group | default('servicenow_mid_hosts') }}"
+  gather_facts: false
+  tasks:
+    - name: Read each MID Server host (read-only)
+      ansible.builtin.include_role:
+        name: servicenow
+        tasks_from: mid_host.yml
+      when: servicenow_check_mid_hosts | default(true) | bool
+
 - name: ServiceNow health
   hosts: localhost
   connection: local
   gather_facts: false
   tasks:
-    - name: Check the instance and its MID Servers
+    - name: Check the instance and its MID Servers (and what their hosts said)
       ansible.builtin.include_role:
         name: servicenow
         tasks_from: health.yml

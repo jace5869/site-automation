@@ -46,6 +46,7 @@ jobs:
           python tests/test_vmware_modules.py
           python tests/test_vm_watch.py
           python tests/test_log_analysis.py
+          python tests/test_servicenow_mid.py
           python tests/test_cert_inventory.py
           python tests/test_net_certs.py
           python tests/test_ontap.py
@@ -145,7 +146,7 @@ jobs:
         run: |
           bash tests/horizon/run_horizon_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/horizon/run_horizon_test.sh
-      - name: ServiceNow test ticket against a fake ServiceNow (current ansible-core and 2.16)
+      - name: ServiceNow test ticket, tickets, VM request pickup and ServiceNow health (MID Servers) against a fake ServiceNow (current ansible-core and 2.16)
         run: |
           bash tests/servicenow/run_servicenow_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_servicenow_test.sh
@@ -203,6 +204,7 @@ jobs:
         run: |
           pwsh -NoProfile -File tests/windows/test_win_checks.ps1
           pwsh -NoProfile -File tests/windows/test_log_collect.ps1
+          pwsh -NoProfile -File tests/windows/test_mid_host.ps1
       - name: Active Directory report scripts with made-up domains (PowerShell 7 on Linux, normal and constrained)
         run: pwsh -NoProfile -File tests/windows/test_ad_collect.ps1
       - name: Account lockout scripts with a made-up domain (PowerShell 7 on Linux, normal and constrained)
@@ -237,6 +239,12 @@ jobs:
       - name: With test data - PowerShell 7
         shell: pwsh
         run: pwsh -NoProfile -File tests/windows/test_win_checks.ps1
+      - name: ServiceNow MID Server host check with test data - Windows PowerShell 5.1
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows/test_mid_host.ps1
+      - name: ServiceNow MID Server host check with test data - PowerShell 7
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/windows/test_mid_host.ps1
       - name: Log analysis collector with test data - Windows PowerShell 5.1
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows/test_log_collect.ps1

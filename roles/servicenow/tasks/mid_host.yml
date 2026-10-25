@@ -1,0 +1,56 @@
+---
+# On each ServiceNow MID Server host (playbooks/servicenow_health.yml, the hosts of servicenow_mid_hosts_group),
+# over WinRM. Read-only: files/mid_host.ps1 lists the MID Server services and reads their agent folder,
+# logs and drive. Its answer is kept as the fact servicenow_mid_result {host, hostname, reachable, error,
+# mids} for the instance's check on the AAP side, which judges it (plugins/filter/servicenow_mid_filters.py).
+# A host that cannot be reached is a finding there; the job goes on without it.
+- name: ServiceNow MID host | reach the host
+  ansible.builtin.raw: echo reached      # no module: answers on Windows as anywhere
+  changed_when: false
+  check_mode: false
+  ignore_unreachable: true
+  register: _mid_reach
+
+- name: ServiceNow MID host | not reached - a finding on the AAP side, the job goes on without it
+  ansible.builtin.set_fact:
+    servicenow_mid_result: >-
+      {{ {'host': inventory_hostname, 'hostname': '', 'reachable': false, 'mids': [],
+          'error': ((_mid_reach.msg | default('', true) | string | trim | replace('\n', ' ')) or 'unreachable') | truncate(300)} }}
+  when: _mid_reach.unreachable | default(false)
+
+- name: ServiceNow MID host | leave it out
+  ansible.builtin.meta: end_host
+  when: _mid_reach.unreachable | default(false)
+
+- name: ServiceNow MID host | a Windows host (the MID Servers run on Windows here)
+  ansible.builtin.set_fact:
+    servicenow_mid_result: >-
+      {{ {'host': inventory_hostname, 'hostname': '', 'reachable': true, 'mids': [],
+          'error': 'not a Windows host (its connection is ' ~ (ansible_connection | default('ssh')) ~ '): the MID Server host check '
+                   ~ 'reads Windows services - run the ServiceNow health template with the Windows inventory'} }}
+  when: (ansible_connection | default('ssh')) not in ['winrm', 'psrp', 'ansible.builtin.winrm', 'ansible.builtin.psrp']
+
+- name: ServiceNow MID host | the MID Server services, agent folders, logs and drive (read-only)
+  ansible.builtin.script: mid_host.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'service_match': servicenow_mid_service_match, 'hours': servicenow_mid_hours | float} | to_json }}
+  register: _mid_out
+  changed_when: false
+  failed_when: false
+  check_mode: false                      # it only reads: a dry run (Check) shows the real result
+  ignore_unreachable: true
+  when: servicenow_mid_result is not defined
+
+- name: ServiceNow MID host | what it said
+  ansible.builtin.set_fact:
+    servicenow_mid_result: >-
+      {%- set r = _mid_out.stdout_lines | default([]) | site_result -%}
+      {%- set ok = 'facts' in r -%}
+      {{ {'host': inventory_hostname, 'hostname': (r.facts | default({})).hostname | default(''),
+          'reachable': not (_mid_out.unreachable | default(false)),
+          'error': '' if ok and not (r.facts | default({})).error | default('') else
+                   ((r.facts | default({})).error | default('') or ((_mid_out.msg | default('') ~ ' ' ~ _mid_out.stderr | default('')) | trim
+                    | replace('\n', ' ')) or 'the script gave no answer') | truncate(300),
+          'mids': (r.facts | default({})).mids | default([])} }}
+  when: servicenow_mid_result is not defined

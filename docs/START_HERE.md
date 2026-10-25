@@ -22,7 +22,7 @@ click at a time.
 | **STIG drift report** | Has a server moved away from its STIG checklist? An OpenSCAP STIG scan of each Linux host against what STIG Manager has as Not a Finding (read-only) and against the host's last scan; the scans stay on the hosts ([STIG_DRIFT.md](STIG_DRIFT.md)) | Weekly, and after patching or a change window |
 | **POA&M status** | Which POA&M items are overdue or due soon? Which open CAT I/II findings have no POA&M item? | Weekly |
 | **ServiceNow tickets** | Opens or updates a ticket for each problem a check found. Notes the ones that cleared | After every check (as a workflow step) |
-| **ServiceNow health** | Is ServiceNow answering? Are the MID Servers up? | Hourly |
+| **ServiceNow health** | Is ServiceNow answering? Are the MID Servers up, reporting and working - and on their Windows hosts, the MID service, its logs and drive? | Hourly |
 | **Patch hosts** | Installs updates, and proves every service came back. Reboots only with `automatic_restarts: yes` | Monthly, after an approval |
 | **Apply approved ACT fix** | Applies exactly the fix a person approved | Only inside a workflow, after an approval |
 | **NetApp ONTAP health report** | Is any node, disk, port, volume, aggregate, SnapMirror or certificate in trouble on the storage clusters? ([NETAPP.md](NETAPP.md)) | Daily |

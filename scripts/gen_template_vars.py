@@ -102,7 +102,10 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 cert_renew_catalog_item: YOUR PKI ITEM           # its name exactly as the catalog shows it, or its sys_id
 # servicenow_catalog_test_order: false           # true = also order it once, with a test CSR (the PKI gets a request)
 """),
-    "servicenow_health.yml": ("ServiceNow health", "ServiceNow API", "", ""),
+    "servicenow_health.yml": ("ServiceNow health", "ServiceNow API (Machine (Windows) for the MID Server hosts)", "", """\
+## The MID Server hosts: a group servicenow_mid_hosts in the Windows inventory this template runs with
+# servicenow_mid_expected: [MID01, MID02]          # these must be in the instance's MID Server list
+"""),
     "servicenow_test_ticket.yml": ("ServiceNow - test ticket", "ServiceNow API", "", """\
 servicenow_assignment_group: YOUR GROUP NAME   # exactly as in ServiceNow
 # servicenow_test_resolve: false               # leave the test ticket open to look at

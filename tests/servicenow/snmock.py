@@ -35,6 +35,10 @@ an attachment question names moved to the RITM (ZZ_YYsc_req_item) - SNMOCK_SC_KE
 was uploaded (an instance that does not move it). SNMOCK_SC_REFUSE=1: every order refused (400).
 SNMOCK_HIDE_ZZYY=1: an attachment search (GET /api/now/attachment?sysparm_query=...) leaves out the ZZ_YY ones.
 cmn_location: Building 100 (loc1); sys_user also has jdoe (u2, "Jane Doe").
+MID Servers (the ServiceNow health check): SNMOCK_MID=<file.json> {"agents": [ecc_agent rows], "queue": {name: stuck count},
+"issues": [ecc_agent_issue rows]}; without it ecc_agent is empty. GET /api/now/stats/ecc_queue (grouped by agent) answers
+the queue counts; SNMOCK_MID_NO_QUEUE=1: 403 (an account that cannot read ecc_queue); SNMOCK_MID_NO_ISSUES=1: ecc_agent_issue
+is an unknown table (400, a release without it).
 Usage: snmock.py PORT   (requests appended to $SNMOCK_LOG as JSON lines)
 """
 import base64
@@ -48,6 +52,14 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 USERS = {"api": ("goodpw", True), "ro": ("goodpw", False)}
+def mid_data():
+    path = os.environ.get("SNMOCK_MID", "")
+    if not path:
+        return {}
+    with open(path) as fh:
+        return json.load(fh)
+
+
 GROUPS = [{"sys_id": "g1", "name": "Linux Operations", "active": "true"}]
 SYSUSERS = [{"sys_id": "u1", "user_name": "svc_aap", "name": "AAP Service", "active": "true"},
             {"sys_id": "u2", "user_name": "jdoe", "name": "Jane Doe", "active": "true"}]
@@ -245,6 +257,11 @@ class H(BaseHTTPRequestHandler):
             return self.attachment(method, parts, q, body, user)
         if parts[:4] == ["api", "sn_sc", "servicecatalog", "items"]:
             return self.catalog(method, parts[4:], q, body, user)
+        if parts[:4] == ["api", "now", "stats", "ecc_queue"]:
+            if os.environ.get("SNMOCK_MID_NO_QUEUE") == "1":
+                return fail("Operation Failed", "ACL Exception: no read access to ecc_queue", 403)
+            return 200, {"result": [{"groupby_fields": [{"field": "agent", "value": "mid.server." + k}], "stats": {"count": str(v)}}
+                                    for k, v in sorted(mid_data().get("queue", {}).items())]}
         if parts[:3] != ["api", "now", "table"] or len(parts) < 4:
             return 404, {"error": {"message": "Requested URI does not represent any resource"}}
         table = parts[3]
@@ -264,7 +281,11 @@ class H(BaseHTTPRequestHandler):
             want = q.get("sysparm_query", "").partition("=")[2]
             return 200, {"result": [x for x in LOCATIONS if x["name"] == want]}
         if table == "ecc_agent":
-            return 200, {"result": []}
+            return 200, {"result": mid_data().get("agents", [])}
+        if table == "ecc_agent_issue":
+            if os.environ.get("SNMOCK_MID_NO_ISSUES") == "1":
+                return 400, {"error": {"message": "Invalid table ecc_agent_issue"}}
+            return 200, {"result": mid_data().get("issues", [])}
         if table == "task" and method == "GET" and not sys_id:
             # every ticket is a task: the parent table, with sys_class_name naming the real one
             if os.environ.get("SNMOCK_NO_TASK") == "1":

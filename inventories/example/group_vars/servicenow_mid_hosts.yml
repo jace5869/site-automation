@@ -1,5 +1,5 @@
-# The ServiceNow MID Server hosts: the MID service must run, and its keystore must not expire.
-check_services_required_extra: [mid]            # the MID Server's systemd unit name on your hosts
-check_certs_keystores:
-  - path: /opt/servicenow/mid/agent/security/agent_keystore
-    # password_env: KEYSTORE_PASSWORD           # only for a PKCS12 keystore ("Keystore password" credential)
+# The ServiceNow MID Server hosts are checked by the ServiceNow health job (playbooks/servicenow_health.yml),
+# not by the health check: the group servicenow_mid_hosts of the WINDOWS inventory (inventories/example-windows/
+# hosts.yml), read over WinRM - each MID service, its agent log, SEVERE lines, JVM restarts, the drive, the
+# instance URL - in the same report as what the instance says about them. docs/SERVICENOW_SETUP.md, "MID Servers".
+# Nothing to set here; this file is kept so an update without scripts leaves no old settings behind.
