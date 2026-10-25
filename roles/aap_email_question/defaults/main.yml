@@ -30,6 +30,7 @@ aap_email_question_playbooks:
   - ontap_health_report.yml
   - poam_status.yml
   - servicenow_health.yml
+  - stig_drift_report.yml
   - troubleshoot.yml
   - trust_report.yml
   - vm_alarm_act_analysis.yml

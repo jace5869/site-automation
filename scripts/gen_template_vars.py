@@ -125,6 +125,13 @@ net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # your PRIVATE, i
 net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # the backups' repository (for a restore)
 ## net_config_change (the change request, in Implement): a survey question, or the launch's extra variables
 """),
+    "stig_drift_report.yml": ("STIG drift report", "Machine, STIG Manager API", "check_stig", """\
+## STIG Manager's API (empty: each scan is compared only with the host's last one). The login: the "STIG
+## Manager API" credential - your autostig client, or another with stig-manager:collection:read
+check_stig_stigman_api: https://STIGMAN-SERVER/api
+## Each host's collection: set it per group or host in your inventory (empty: every collection the client reads)
+# check_stig_stigman_collection: RHEL Servers
+"""),
     "stigman_deploy.yml": ("STIG Manager - deploy", "Machine, STIG Manager database, TLS certificate", "", ""),
     "trust_report.yml": ("Trust store report", "Machine", "check_trust", """\
 ## Only the certificates this list names are looked for (roles/check_trust/vars/main.yml ships the October 2026

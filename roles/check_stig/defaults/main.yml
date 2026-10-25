@@ -1,0 +1,53 @@
+---
+# STIG (drift): scans the Linux host against the DISA STIG with OpenSCAP - the SCAP Security Guide's STIG profile
+# for its RHEL version (RHEL 9: V2R9, RHEL 10: V1R2 in scap-security-guide 0.1.82) - keeps each scan's report on
+# the host, and compares the result with the host's checklist in STIG Manager (read-only: this check never writes
+# to STIG Manager) and with the host's last scan. A rule STIG Manager has as Not a Finding that fails now is
+# drift; a rule that passed in the last scan and fails now is new. playbooks/stig_drift_report.yml runs it; the
+# health check runs it only when asked by name (health_checks: [stig] - in no shortcut: a scan takes minutes).
+# docs/STIG_DRIFT.md.
+
+# ---- The scan, on the host --------------------------------------------------------------------------------------
+check_stig_install: false                # true: install openscap-scanner and scap-security-guide when missing (dnf, from the host's own repositories); false: a host without them is listed as not scanned
+check_stig_oscap: ""                     # the oscap program; empty = found in PATH (/usr/bin/oscap)
+check_stig_profile: stig                 # the profile: stig, stig_gui (a host with a desktop), or a full profile id (xccdf_...)
+check_stig_content_dir: /usr/share/xml/scap/ssg/content  # where scap-security-guide puts its datastreams (ssg-rhel<major>-ds.xml)
+check_stig_datastream: ""                # another datastream on the host instead (e.g. a DISA SCAP benchmark, with check_stig_profile its profile id); empty = the SCAP Security Guide's for the host's RHEL version
+check_stig_datastream_src: ""            # a datastream on the AAP side (in your repository, from playbooks/: files/stig/ssg-rhel9-ds.xml) copied to the host first - newer content than the host's repositories have; empty = none
+check_stig_tailoring: ""                 # a tailoring file on the host (your site's changes to the profile, made with SCAP Workbench); empty = none
+check_stig_tailoring_src: ""             # or a tailoring file on the AAP side (from playbooks/), copied to the host first; empty = none
+check_stig_timeout: 1800                 # seconds the scan may take (a full scan takes one to five minutes)
+
+# ---- Kept on the host ----------------------------------------------------------------------------------------
+check_stig_dir: /var/lib/site-automation/stig  # each scan's HTML report, results (gzip) and summary (JSON), and latest-report.html / latest-summary.json; root-only. A dry run keeps nothing
+check_stig_keep: 10                      # how many scans are kept on the host (the oldest are deleted); the last one is what the next scan is compared with
+check_stig_keep_report: true             # keep oscap's HTML report of each scan (about 4 MB)
+check_stig_keep_results: true            # keep the XCCDF results of each scan (gzip, about 1 MB): what STIG Manager or eMASS can import
+
+# ---- STIG Manager (read-only) ---------------------------------------------------------------------------------
+# The job logs in as a Keycloak client with the client credentials grant - your autostig client, or another one -
+# from the "STIG Manager API" credential (STIGMAN_TOKEN_URL, STIGMAN_CLIENT_ID, STIGMAN_CLIENT_SECRET), or from the
+# check_stig_stigman_token_url / _client_id / _client_secret settings (keep the secret in a vault). The client needs
+# the scope stig-manager:collection:read and a grant (Restricted is enough) in the collections to read.
+check_stig_stigman_api: ""               # STIG Manager's API, e.g. https://stigman.example.mil/api ; empty = not compared with STIG Manager (only with the host's last scan)
+check_stig_stigman_token_url: ""         # Keycloak's token endpoint (https://keycloak.example.mil/realms/stigman/protocol/openid-connect/token); empty = the credential's
+check_stig_stigman_client_id: ""         # the client, e.g. autostig; empty = the credential's
+check_stig_stigman_client_secret: ""     # its secret (vault it); empty = the credential's
+check_stig_stigman_scope: ""             # scopes to ask for, e.g. "stig-manager:collection:read"; empty = the client's default scopes
+check_stig_stigman_validate_certs: true  # check the HTTPS certificates of STIG Manager and Keycloak
+check_stig_stigman_ca_path: ""           # a CA bundle on the AAP side to check them with (the DoD roots); empty = the execution environment's
+check_stig_stigman_timeout: 60           # seconds per request
+
+# Finding each host's asset. Set the collection per group or per host (group_vars, host_vars, or the inventory's
+# variables in AAP): the asset is looked for only there. Empty = every collection the client can read; a host
+# whose name matches assets in two collections is listed and not compared until its collection is set.
+check_stig_stigman_collection: ""        # the collection this host's asset is in, e.g. "RHEL Servers"
+check_stig_stigman_collections: []       # with no collection set: search only these collections ([] = every one the client can read)
+check_stig_stigman_asset: ""             # this host's asset name in STIG Manager; empty = the inventory name, then its short name (web01 for web01.example.mil); the asset's FQDN field matches too
+check_stig_stigman_benchmarks: {"8": RHEL_8_STIG, "9": RHEL_9_STIG, "10": RHEL_10_STIG}  # the STIG Manager benchmark (STIG) for each RHEL version
+check_stig_stigman_statuses: [saved, submitted, accepted]  # the reviews that count as the checklist (a rejected review does not); [accepted] = only what was accepted
+check_stig_stigman_missing_severity: warning  # a host not found in STIG Manager (or its collection not readable): warning; critical; or none = listed in the report only
+
+# ---- Findings ------------------------------------------------------------------------------------------------
+check_stig_severity: {high: critical, medium: warning, low: warning}  # the finding for a drifted or new fail, by the rule's CAT (high = CAT I)
+check_stig_list_max: 200                 # at most this many rows in the report's table of fails STIG Manager has no review for

@@ -81,7 +81,7 @@ For each file in `aap/credential_types/` that you need now:
 | `servicenow_api.yml` | ServiceNow API | tickets, ServiceNow health (step 10) |
 | `mariadb_monitor.yml` | MariaDB monitor | the MariaDB check on a containerized database (root login refused there); optional on host installs |
 | `keystore_password.yml` | Keystore password | optional: certs check on a PKCS12 keystore |
-| `stigman_api.yml` | STIG Manager API | optional: POA&M cross-check with STIG Manager |
+| `stigman_api.yml` | STIG Manager API | optional: POA&M cross-check with STIG Manager; the STIG drift report's checklist comparison |
 | `act_model_key.yml` | ACT model key | later, for ACT ([ADDING_ACT.md](ADDING_ACT.md)): GenAI.mil and Ask Sage keys |
 | `act_genai_beta_key.yml` | ACT GenAI beta key | only for ACT with the GenAI.mil beta provider |
 
@@ -180,13 +180,14 @@ which credentials. Its survey asks which checks to run.
    - **Answer type** *Multiple Choice (multiple select)*
    - **Choices**, one per line: `daily`, `weekly`, `all`, `disk`, `mounts`, `services`,
      `performance`, `time`, `network`, `logging`, `selinux`, `fapolicyd`, `auditd`,
-     `accounts`, `certs`, `patching`, `mariadb`, `mysql`, `database`, `containers`
+     `accounts`, `certs`, `patching`, `mariadb`, `mysql`, `database`, `containers`, `stig`
    - **Default answer** `daily`. Tick **Required**. Click **Create question**.
 
    **Made this survey with an earlier release?** AAP never updates a survey for you: open the
    **Health check** template → **Survey** tab → click the `health_checks` question → **Edit** →
    add `containers` on a new line under **Choices** → **Save**. (`daily` and `all` already include
-   the containers check without that; the choice is for running it on its own.)
+   the containers check without that; the choice is for running it on its own. `stig`, the STIG drift
+   scan, is in no shortcut: add it the same way to run it by name.)
 5. Turn the survey **on** (the switch at the top of the Survey tab).
 
 **You should see** the template in the Templates list with a rocket icon.
@@ -331,6 +332,17 @@ certificate authority ([TRUST_STORES.md](TRUST_STORES.md)).
 | Playbook | `playbooks/trust_report.yml` |
 | Credentials | `Linux ssh (sudo)` |
 | Variables | `check_trust_extra` for certificates of your own; `check_trust_severity` to change a severity; `check_trust_remove: true` to take the certificates out (run as Check first) |
+
+### STIG drift report
+
+Weekly, and after patching: each Linux host's OpenSCAP STIG scan against its checklist in STIG Manager
+(read-only) and against its last scan; the scans stay on the hosts ([STIG_DRIFT.md](STIG_DRIFT.md)).
+
+| Field | Value |
+|---|---|
+| Playbook | `playbooks/stig_drift_report.yml` |
+| Credentials | `Linux ssh (sudo)`, `STIG Manager API` (the client: your autostig one, or another with `stig-manager:collection:read` and a grant in the collections) |
+| Variables | `aap/extra_vars/stig_drift_report.yml`: `check_stig_stigman_api`; each host's `check_stig_stigman_collection` in the inventory (per group or host) |
 
 ### VMware - trust store report
 

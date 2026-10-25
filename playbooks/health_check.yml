@@ -40,6 +40,9 @@
 #                Quadlet .container / .kube files, systemd units that run podman, pods, compose): down,
 #                unhealthy, crashed, restart loops, OOM kills, users without linger. Hosts without
 #                podman are skipped. docs/RUNBOOKS.md
+#   stig         the STIG drift scan: OpenSCAP's STIG profile, compared with STIG Manager (read-only) and the
+#                host's last scan. In no shortcut (a scan takes minutes): ask for it by name, or use its own
+#                template, playbooks/stig_drift_report.yml. docs/STIG_DRIFT.md
 #
 # Shortcuts: daily = disk mounts services performance time network logging mariadb containers
 #            weekly = selinux fapolicyd auditd accounts certs trust patching
@@ -59,6 +62,7 @@
       weekly: [selinux, fapolicyd, auditd, accounts, certs, trust, patching]
       all: [disk, mounts, services, performance, time, network, logging, mariadb, containers,
             selinux, fapolicyd, auditd, accounts, certs, trust, patching]
+    _health_by_name: [stig]     # known, but in no shortcut: asked for by name only
     # A survey's multiple-choice answer can arrive as a list or as lines of text, a text answer or an extra
     # variable as "disk, services": accept all of them.
     _health_asked: >-
@@ -83,10 +87,10 @@
 
     - name: Only known checks
       ansible.builtin.assert:
-        that: _health_run | difference(_health_sets.all) | length == 0
+        that: _health_run | difference(_health_sets.all + _health_by_name) | length == 0
         fail_msg: >-
-          Unknown check(s): {{ _health_run | difference(_health_sets.all) | join(', ') }}.
-          Known: {{ _health_sets.all | join(', ') }} (or mysql / database for the mariadb check; daily, weekly, all).
+          Unknown check(s): {{ _health_run | difference(_health_sets.all + _health_by_name) | join(', ') }}.
+          Known: {{ (_health_sets.all + _health_by_name) | join(', ') }} (or mysql / database for the mariadb check; daily, weekly, all).
         quiet: true
       run_once: true
 

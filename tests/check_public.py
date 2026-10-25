@@ -31,6 +31,7 @@ DOMAINS = (
     "genai.mil", "genai.army.mil", "github.com", "githubusercontent.com", "docker.io", "quay.io",
     "redhat.io", "redhat.com", "ansible.com", "mariadb.com", "mariadb.org", "netapp.com", "vmware.com",
     "broadcom.com", "microsoft.com", "adaptivecards.io", "python.org", "pypi.org", "servicenow.com", "w3.org",
+    "nist.gov", "cyber.mil",                                        # XCCDF's namespace; DISA's STIG references (the STIG drift report)
 )
 # Dotted words of code, not host names (System.Net, $vm.guest.net ...).
 CODE = ("system.io", "system.net", "guest.net", "g.net")

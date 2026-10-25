@@ -575,6 +575,119 @@
 ## More restarts than this since the unit started = a restart loop
 # check_services_restart_warn: 3
 
+# ---- check_stig ----------------------------------------------------------------------------------
+## ---- The scan, on the host
+## -------------------------------------------------------------------------------------- true:
+## install openscap-scanner and scap-security-guide when missing (dnf, from the host's own
+## repositories); false: a host without them is listed as not scanned
+# check_stig_install: false
+
+## the oscap program; empty = found in PATH (/usr/bin/oscap)
+# check_stig_oscap: ""
+
+## the profile: stig, stig_gui (a host with a desktop), or a full profile id (xccdf_...)
+# check_stig_profile: stig
+
+## where scap-security-guide puts its datastreams (ssg-rhel<major>-ds.xml)
+# check_stig_content_dir: /usr/share/xml/scap/ssg/content
+
+## another datastream on the host instead (e.g. a DISA SCAP benchmark, with check_stig_profile its
+## profile id); empty = the SCAP Security Guide's for the host's RHEL version
+# check_stig_datastream: ""
+
+## a datastream on the AAP side (in your repository, from playbooks/: files/stig/ssg-rhel9-ds.xml)
+## copied to the host first - newer content than the host's repositories have; empty = none
+# check_stig_datastream_src: ""
+
+## a tailoring file on the host (your site's changes to the profile, made with SCAP Workbench);
+## empty = none
+# check_stig_tailoring: ""
+
+## or a tailoring file on the AAP side (from playbooks/), copied to the host first; empty = none
+# check_stig_tailoring_src: ""
+
+## seconds the scan may take (a full scan takes one to five minutes)
+# check_stig_timeout: 1800
+
+## ---- Kept on the host
+## ---------------------------------------------------------------------------------------- each
+## scan's HTML report, results (gzip) and summary (JSON), and latest-report.html / latest-
+## summary.json; root-only. A dry run keeps nothing
+# check_stig_dir: /var/lib/site-automation/stig
+
+## how many scans are kept on the host (the oldest are deleted); the last one is what the next scan
+## is compared with
+# check_stig_keep: 10
+
+## keep oscap's HTML report of each scan (about 4 MB)
+# check_stig_keep_report: true
+
+## keep the XCCDF results of each scan (gzip, about 1 MB): what STIG Manager or eMASS can import
+# check_stig_keep_results: true
+
+## ---- STIG Manager (read-only)
+## --------------------------------------------------------------------------------- The job logs in
+## as a Keycloak client with the client credentials grant - your autostig client, or another one -
+## from the "STIG Manager API" credential (STIGMAN_TOKEN_URL, STIGMAN_CLIENT_ID,
+## STIGMAN_CLIENT_SECRET), or from the check_stig_stigman_token_url / _client_id / _client_secret
+## settings (keep the secret in a vault). The client needs the scope stig-manager:collection:read
+## and a grant (Restricted is enough) in the collections to read. STIG Manager's API, e.g.
+## https://stigman.example.mil/api ; empty = not compared with STIG Manager (only with the host's
+## last scan)
+# check_stig_stigman_api: ""
+
+## Keycloak's token endpoint (https://keycloak.example.mil/realms/stigman/protocol/openid-
+## connect/token); empty = the credential's
+# check_stig_stigman_token_url: ""
+
+## the client, e.g. autostig; empty = the credential's
+# check_stig_stigman_client_id: ""
+
+## its secret (vault it); empty = the credential's
+# check_stig_stigman_client_secret: ""
+
+## scopes to ask for, e.g. "stig-manager:collection:read"; empty = the client's default scopes
+# check_stig_stigman_scope: ""
+
+## check the HTTPS certificates of STIG Manager and Keycloak
+# check_stig_stigman_validate_certs: true
+
+## a CA bundle on the AAP side to check them with (the DoD roots); empty = the execution
+## environment's
+# check_stig_stigman_ca_path: ""
+
+## seconds per request
+# check_stig_stigman_timeout: 60
+
+## Finding each host's asset. Set the collection per group or per host (group_vars, host_vars, or
+## the inventory's variables in AAP): the asset is looked for only there. Empty = every collection
+## the client can read; a host whose name matches assets in two collections is listed and not
+## compared until its collection is set. the collection this host's asset is in, e.g. "RHEL Servers"
+# check_stig_stigman_collection: ""
+
+## with no collection set: search only these collections ([] = every one the client can read)
+# check_stig_stigman_collections: []
+
+## this host's asset name in STIG Manager; empty = the inventory name, then its short name (web01
+## for web01.example.mil); the asset's FQDN field matches too
+# check_stig_stigman_asset: ""
+
+## the STIG Manager benchmark (STIG) for each RHEL version
+# check_stig_stigman_benchmarks: {"8": RHEL_8_STIG, "9": RHEL_9_STIG, "10": RHEL_10_STIG}
+
+## the reviews that count as the checklist (a rejected review does not); [accepted] = only what was
+## accepted
+# check_stig_stigman_statuses: [saved, submitted, accepted]
+
+## a host not found in STIG Manager (or its collection not readable): warning; critical; or none =
+## listed in the report only
+# check_stig_stigman_missing_severity: warning
+
+## ---- Findings
+## ------------------------------------------------------------------------------------------------
+## the finding for a drifted or new fail, by the rule's CAT (high = CAT I)
+# check_stig_severity: {high: critical, medium: warning, low: warning}
+
 # ---- check_time ----------------------------------------------------------------------------------
 ## seconds
 # check_time_offset_warn: 0.5

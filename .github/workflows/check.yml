@@ -62,6 +62,7 @@ jobs:
           python tests/test_aap_survey.py
           python tests/test_net_config.py
           python tests/test_trust.py
+          python tests/test_stig.py
           python tests/test_report_history.py
           python tests/test_email_question.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_email_question.py
@@ -132,6 +133,10 @@ jobs:
         run: |
           bash tests/trust/run_trust_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/trust/run_trust_test.sh
+      - name: The STIG drift report (a fake oscap, a stand-in STIG Manager - read-only)
+        run: |
+          bash tests/stig/run_stig_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_test.sh
       - name: Every Linux check runs on this runner (no check-error)
         run: bash tests/linux/run_linux_checks.sh
       - name: update-from-release.sh (bash twin of the PowerShell update test)

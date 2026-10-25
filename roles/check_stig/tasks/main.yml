@@ -1,0 +1,105 @@
+---
+# STIG DRIFT. The scan runs on the host (library/site_stig_scan.py: oscap with the STIG profile, one result per STIG
+# rule; the scan's report, results and summary kept in check_stig_dir on the host). STIG Manager is read once for
+# every host, from the AAP side (library/site_stigman_read.py, GET only). Then each host is compared
+# (plugins/filter/stig_filters.py):
+#   stig:drift          a rule STIG Manager has as Not a Finding (or Not Applicable) fails now
+#   stig:new            a rule that passed in the host's last scan fails now (and STIG Manager does not have it open)
+#   stig:stigman        the host's asset was not found in STIG Manager, or could not be read (check_stig_stigman_missing_severity)
+#   stig:not-scanned    no oscap or no STIG content on the host, or the scan failed
+# The report (playbooks/stig_drift_report.yml) also lists what is fixed on the host but still Open in STIG Manager,
+# and the fails STIG Manager has no review for.
+
+- name: STIG | install openscap-scanner and scap-security-guide (check_stig_install)
+  ansible.builtin.dnf:
+    name: [openscap-scanner, scap-security-guide]
+    state: present
+  when: check_stig_install | bool
+
+- name: STIG | the folder for them on the host (root-only)
+  ansible.builtin.file:
+    path: "{{ check_stig_dir }}/content"
+    state: directory
+    mode: "0700"
+  when: check_stig_datastream_src | length > 0 or check_stig_tailoring_src | length > 0
+
+- name: STIG | the datastream and tailoring file from the AAP side (check_stig_datastream_src, check_stig_tailoring_src)
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ check_stig_dir }}/content/{{ item.src | basename }}"
+    mode: "0600"
+  loop: >-
+    {{ ([{'src': check_stig_datastream_src}] if check_stig_datastream_src else [])
+       + ([{'src': check_stig_tailoring_src}] if check_stig_tailoring_src else []) }}
+  loop_control:
+    label: "{{ item.src }}"
+
+- name: STIG | scan (oscap, the STIG profile) and keep the result on the host
+  site_stig_scan:
+    dir: "{{ check_stig_dir }}"
+    keep: "{{ check_stig_keep | int }}"
+    save: "{{ not ansible_check_mode }}"   # a dry run scans (it only reads) and keeps nothing
+    keep_report: "{{ check_stig_keep_report | bool }}"
+    keep_results: "{{ check_stig_keep_results | bool }}"
+    oscap: "{{ check_stig_oscap }}"
+    content_dir: "{{ check_stig_content_dir }}"
+    datastream: "{{ (check_stig_dir ~ '/content/' ~ (check_stig_datastream_src | basename)) if check_stig_datastream_src else check_stig_datastream }}"
+    profile: "{{ check_stig_profile }}"
+    tailoring: "{{ (check_stig_dir ~ '/content/' ~ (check_stig_tailoring_src | basename)) if check_stig_tailoring_src else check_stig_tailoring }}"
+    timeout: "{{ check_stig_timeout | int }}"
+  register: _stig_scan
+  check_mode: false             # the scan only reads; in a dry run (save: false) nothing is kept on the host
+
+- name: STIG | read every host's checklist from STIG Manager (read-only, once, from the AAP side)
+  site_stigman_read:
+    api: "{{ check_stig_stigman_api }}"
+    token_url: "{{ check_stig_stigman_token_url or lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') }}"
+    client_id: "{{ check_stig_stigman_client_id or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_ID') }}"
+    client_secret: "{{ check_stig_stigman_client_secret or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET') }}"
+    scope: "{{ check_stig_stigman_scope }}"
+    collections: "{{ check_stig_stigman_collections }}"
+    validate_certs: "{{ check_stig_stigman_validate_certs | bool }}"
+    ca_path: "{{ check_stig_stigman_ca_path }}"
+    timeout: "{{ check_stig_stigman_timeout | int }}"
+    hosts: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts if hostvars[h]._stig_scan is defined and hostvars[h]._stig_scan.scanned | default(false) -%}
+      {%-   set hv = hostvars[h] -%}
+      {%-   set names = [hv.check_stig_stigman_asset] if hv.check_stig_stigman_asset | default('') else [h, h.split('.')[0]] -%}
+      {%-   set _ = out.append({'host': h, 'names': names | unique | list, 'collection': hv.check_stig_stigman_collection | default(''),
+                                'benchmark': check_stig_stigman_benchmarks[hv._stig_scan.major | string] | default('')}) -%}
+      {%- endfor -%}
+      {{ out }}
+  register: _stig_sm
+  delegate_to: localhost
+  run_once: true
+  become: false
+  check_mode: false             # only reads
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  when: check_stig_stigman_api | length > 0
+
+- name: STIG | STIG Manager could not be read at all
+  ansible.builtin.debug:
+    msg: "STIG Manager: {{ _stig_sm.error }}"
+  run_once: true
+  when: check_stig_stigman_api | length > 0 and _stig_sm.error | default('') | length > 0
+
+- name: STIG | compare (STIG Manager, the last scan) and the findings
+  ansible.builtin.set_fact:
+    check_stig_result: >-
+      {{ _stig_scan | stig_compare(_sm_host, inventory_hostname, check_stig_severity, check_stig_stigman_statuses,
+                                   check_stig_stigman_api | length > 0, check_stig_stigman_missing_severity) }}
+  vars:
+    _sm_host: >-
+      {{ (_stig_sm.hosts | default({}))[inventory_hostname]
+         | default({'status': 'error', 'why': _stig_sm.error} if _stig_sm.error | default('') else {}) }}
+
+- name: STIG | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + check_stig_result.findings }}"
+
+- name: STIG | what was found
+  ansible.builtin.debug:
+    msg: "{{ check_stig_result | stig_lines }}"

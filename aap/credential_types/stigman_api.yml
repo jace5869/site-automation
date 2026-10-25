@@ -1,5 +1,6 @@
 # Credential type: "STIG Manager API"
-# Optional, for the STIG Manager cross-check in playbooks/poam_status.yml. The client is created
+# Optional, for the STIG Manager cross-check in playbooks/poam_status.yml and the checklist comparison in
+# playbooks/stig_drift_report.yml (both only read). The client is created
 # by your Keycloak realm owner (client-credentials grant, scope stig-manager:collection:read, and
 # a grant in the collections to read) - this repository never changes the realm.
 inputs:

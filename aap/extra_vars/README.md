@@ -49,6 +49,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | ServiceNow - test ticket | `playbooks/servicenow_test_ticket.yml` | [servicenow_test_ticket.yml](servicenow_test_ticket.yml) |
 | ServiceNow health | `playbooks/servicenow_health.yml` | [servicenow_health.yml](servicenow_health.yml) |
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | [servicenow_tickets.yml](servicenow_tickets.yml) |
+| STIG drift report | `playbooks/stig_drift_report.yml` | [stig_drift_report.yml](stig_drift_report.yml) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | [stigman_deploy.yml](stigman_deploy.yml) |
 | Troubleshoot | `playbooks/troubleshoot.yml` | [troubleshoot.yml](troubleshoot.yml) |
 | Trust store report | `playbooks/trust_report.yml` | [trust_report.yml](trust_report.yml) |

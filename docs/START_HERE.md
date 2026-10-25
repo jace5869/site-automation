@@ -19,6 +19,7 @@ click at a time.
 | **Troubleshoot** | Someone reports a problem on a host. What does it look like? | On demand |
 | **Certificate report** | Which certificates expire soon, on every server, in one list? | Weekly |
 | **Trust store report** | Which servers (Linux, and Windows with its own template), Java, Python, Node, containers and Go programs - and, with its own VMware template, vCenter and ESXi - still trust a compromised or dropped certificate authority? ([TRUST_STORES.md](TRUST_STORES.md)) | Weekly (the check `trust` is in the weekly set), and when a CA incident is announced |
+| **STIG drift report** | Has a server moved away from its STIG checklist? An OpenSCAP STIG scan of each Linux host against what STIG Manager has as Not a Finding (read-only) and against the host's last scan; the scans stay on the hosts ([STIG_DRIFT.md](STIG_DRIFT.md)) | Weekly, and after patching or a change window |
 | **POA&M status** | Which POA&M items are overdue or due soon? Which open CAT I/II findings have no POA&M item? | Weekly |
 | **ServiceNow tickets** | Opens or updates a ticket for each problem a check found. Notes the ones that cleared | After every check (as a workflow step) |
 | **ServiceNow health** | Is ServiceNow answering? Are the MID Servers up? | Hourly |

@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_time](#check_time), [check_trust](#check_trust), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_email_question
 
@@ -401,6 +401,44 @@ File: `roles/check_services/defaults/main.yml`
 | `check_services_required_extra` | `[]` | More for a group of hosts, e.g. in group_vars/mariadb_hosts.yml: [mariadb] |
 | `check_services_ignore_failed` | `[]` | Failed units to ignore (regular expressions), e.g. a known-broken vendor unit. |
 | `check_services_restart_warn` | `3` | More restarts than this since the unit started = a restart loop |
+
+## check_stig
+
+File: `roles/check_stig/defaults/main.yml`
+
+> STIG (drift): scans the Linux host against the DISA STIG with OpenSCAP - the SCAP Security Guide's STIG profile for its RHEL version (RHEL 9: V2R9, RHEL 10: V1R2 in scap-security-guide 0.1.82) - keeps each scan's report on the host, and compares the result with the host's checklist in STIG Manager (read-only: this check never writes to STIG Manager) and with the host's last scan. A rule STIG Manager has as Not a Finding that fails now is drift; a rule that passed in the last scan and fails now is new. playbooks/stig_drift_report.yml runs it; the health check runs it only when asked by name (health_checks: [stig] - in no shortcut: a scan takes minutes). docs/STIG_DRIFT.md.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `check_stig_install` | `false` | ---- The scan, on the host -------------------------------------------------------------------------------------- true: install openscap-scanner and scap-security-guide when missing (dnf, from the host's own repositories); false: a host without them is listed as not scanned |
+| `check_stig_oscap` | (empty) | the oscap program; empty = found in PATH (/usr/bin/oscap) |
+| `check_stig_profile` | `stig` | the profile: stig, stig_gui (a host with a desktop), or a full profile id (xccdf_...) |
+| `check_stig_content_dir` | `/usr/share/xml/scap/ssg/content` | where scap-security-guide puts its datastreams (ssg-rhel<major>-ds.xml) |
+| `check_stig_datastream` | (empty) | another datastream on the host instead (e.g. a DISA SCAP benchmark, with check_stig_profile its profile id); empty = the SCAP Security Guide's for the host's RHEL version |
+| `check_stig_datastream_src` | (empty) | a datastream on the AAP side (in your repository, from playbooks/: files/stig/ssg-rhel9-ds.xml) copied to the host first - newer content than the host's repositories have; empty = none |
+| `check_stig_tailoring` | (empty) | a tailoring file on the host (your site's changes to the profile, made with SCAP Workbench); empty = none |
+| `check_stig_tailoring_src` | (empty) | or a tailoring file on the AAP side (from playbooks/), copied to the host first; empty = none |
+| `check_stig_timeout` | `1800` | seconds the scan may take (a full scan takes one to five minutes) |
+| `check_stig_dir` | `/var/lib/site-automation/stig` | ---- Kept on the host ---------------------------------------------------------------------------------------- each scan's HTML report, results (gzip) and summary (JSON), and latest-report.html / latest-summary.json; root-only. A dry run keeps nothing |
+| `check_stig_keep` | `10` | how many scans are kept on the host (the oldest are deleted); the last one is what the next scan is compared with |
+| `check_stig_keep_report` | `true` | keep oscap's HTML report of each scan (about 4 MB) |
+| `check_stig_keep_results` | `true` | keep the XCCDF results of each scan (gzip, about 1 MB): what STIG Manager or eMASS can import |
+| `check_stig_stigman_api` | (empty) | ---- STIG Manager (read-only) --------------------------------------------------------------------------------- The job logs in as a Keycloak client with the client credentials grant - your autostig client, or another one - from the "STIG Manager API" credential (STIGMAN_TOKEN_URL, STIGMAN_CLIENT_ID, STIGMAN_CLIENT_SE… (all of it: the role file) |
+| `check_stig_stigman_token_url` | (empty) | Keycloak's token endpoint (https://keycloak.example.mil/realms/stigman/protocol/openid-connect/token); empty = the credential's |
+| `check_stig_stigman_client_id` | (empty) | the client, e.g. autostig; empty = the credential's |
+| `check_stig_stigman_client_secret` | (empty) | its secret (vault it); empty = the credential's |
+| `check_stig_stigman_scope` | (empty) | scopes to ask for, e.g. "stig-manager:collection:read"; empty = the client's default scopes |
+| `check_stig_stigman_validate_certs` | `true` | check the HTTPS certificates of STIG Manager and Keycloak |
+| `check_stig_stigman_ca_path` | (empty) | a CA bundle on the AAP side to check them with (the DoD roots); empty = the execution environment's |
+| `check_stig_stigman_timeout` | `60` | seconds per request |
+| `check_stig_stigman_collection` | (empty) | Finding each host's asset. Set the collection per group or per host (group_vars, host_vars, or the inventory's variables in AAP): the asset is looked for only there. Empty = every collection the client can read; a host whose name matches assets in two collections is listed and not compared until its collection is set.… (all of it: the role file) |
+| `check_stig_stigman_collections` | `[]` | with no collection set: search only these collections ([] = every one the client can read) |
+| `check_stig_stigman_asset` | (empty) | this host's asset name in STIG Manager; empty = the inventory name, then its short name (web01 for web01.example.mil); the asset's FQDN field matches too |
+| `check_stig_stigman_benchmarks` | `{"8": RHEL_8_STIG, "9": RHEL_9_STIG, "10": RHEL_10_STIG}` | the STIG Manager benchmark (STIG) for each RHEL version |
+| `check_stig_stigman_statuses` | `[saved, submitted, accepted]` | the reviews that count as the checklist (a rejected review does not); [accepted] = only what was accepted |
+| `check_stig_stigman_missing_severity` | `warning` | a host not found in STIG Manager (or its collection not readable): warning; critical; or none = listed in the report only |
+| `check_stig_severity` | `{high: critical, medium: warning, low: warning}` | ---- Findings ------------------------------------------------------------------------------------------------ the finding for a drifted or new fail, by the rule's CAT (high = CAT I) |
+| `check_stig_list_max` | `200` | at most this many rows in the report's table of fails STIG Manager has no review for |
 
 ## check_time
 
