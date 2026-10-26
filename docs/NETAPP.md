@@ -27,7 +27,7 @@ certificates). Then, in this order:
 | **Port errors (CRC)** | ports with receive errors or CRC errors since the node booted (CRC counters: ONTAP 9.11+) | amber from 1, red from 10,000 |
 | **Aggregates** | every data aggregate, fullest first: node, home node, size, used, available, used % | amber 85 %, red 90 % |
 | **Aggregates not on their home node** | after a takeover, aggregates still on the partner | amber |
-| **Volumes** | volumes 85 % full or more, and volumes offline or restricted, with their aggregate, state, type, size, available, used %. Volumes under 50 GB (`ontap_volume_min_gb`) are not flagged for used % - root volumes and other small ones run full by design; offline still is | amber 85 %, red 90 %, red offline |
+| **Volumes** | volumes 85 % full or more, and volumes offline or restricted, with their aggregate, state, type, size, available, used %. Volumes under 50 GB (`ontap_volume_min_gb`) are left out, full or not online - root volumes and other small ones run full by design; the table says how many | amber 85 %, red 90 %, red offline |
 | **Inodes (files)** | volumes using 85 % or more of their inodes (no new file can be created when they run out) | amber 85 %, red 90 % |
 | **Snapshot space** | the 25 volumes whose snapshots hold the most: type, volume size, snapshot count, reserve, snapshot used, % of reserve, % of volume | amber from 100 % of the reserve (spilling into the volume) |
 | **SnapMirror** | relationships that are unhealthy, lagging, broken off, paused or uninitialized, and transfers running now: mirror state, status, healthy, lag, last transfer, progress, progress updated, policy, reason | red unhealthy / 48 h lag, amber 24 h lag, blue transferring |
@@ -138,7 +138,7 @@ Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for e
 | `ontap_clusters` | `[]` | the clusters' management addresses |
 | `ontap_validate_certs` / `ontap_ca_path` | `true` / (none) | check the clusters' certificates; the CA file to check them with |
 | `ontap_volume_warn_pct` / `_crit_pct` | `85` / `90` | volume used % for amber / red |
-| `ontap_volume_min_gb` | `50` | volumes smaller than this (GB) are not flagged for used % (offline still is); `0` = every volume, as before 0.31.1 |
+| `ontap_volume_min_gb` | `50` | volumes smaller than this (GB) are left out of the Volumes table, full or not online (0.31.1: full only); `0` = every volume, as before 0.31.1 |
 | `ontap_aggr_warn_pct` / `_crit_pct` | `85` / `90` | aggregate used % |
 | `ontap_inode_warn_pct` / `_crit_pct` | `85` / `90` | inodes used % |
 | `ontap_snapshot_reserve_warn_pct` / `_crit_pct` | `100` / `150` | snapshot space as % of the snapshot reserve |

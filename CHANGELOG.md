@@ -79,6 +79,11 @@ job, a log analysis's patterns) came back cut off, and that error was not caught
 when it still cannot be read, its bar shows how it ended (without its number), and the report goes out. Anything
 else that goes wrong reading the past runs leaves the strip out and says why - it never fails the job.
 
+**NetApp health report: small volumes left out when they are not online too.** 0.31.1 left volumes under 50 GB
+(`ontap_volume_min_gb`) out of *Volumes 85% full or more, or not online* only when full: small offline or restricted
+ones were still there, red. Now a small volume is left out either way, and the line under the table counts both -
+`Volumes under 50 GB are left out (2 at or above 85%, 3 not online).` `ontap_volume_min_gb: 0` lists every volume.
+
 **To do, if you have not yet: what 0.20.0 to 0.32.0 ask you to set up.** In order; each step works without
 the ones after it.
 

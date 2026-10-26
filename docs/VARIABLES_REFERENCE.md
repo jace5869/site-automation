@@ -734,7 +734,7 @@ File: `roles/ontap_report/defaults/main.yml`
 | `ontap_tls_legacy` | `false` | true = connect to older ONTAP whose TLS the execution environment refuses (UNSAFE_LEGACY_RENEGOTIATION_DISABLED, KEY_TOO_SMALL, SHA-1) |
 | `ontap_volume_warn_pct` | `85` | Thresholds (used %, hours, days, seconds): at or above "warn" = amber, at or above "crit" = red. |
 | `ontap_volume_crit_pct` | `90` | volume used % -> red |
-| `ontap_volume_min_gb` | `50` | volumes smaller than this (GB) are not flagged for used % - root volumes and other small ones run full by design (offline still is); 0 = every volume |
+| `ontap_volume_min_gb` | `50` | volumes smaller than this (GB) are left out of the Volumes table - full (root volumes and other small ones run full by design) or not online; 0 = every volume |
 | `ontap_aggr_warn_pct` | `85` | aggregate used % -> amber |
 | `ontap_aggr_crit_pct` | `90` | aggregate used % -> red |
 | `ontap_inode_warn_pct` | `85` | inodes used % of a volume -> amber |

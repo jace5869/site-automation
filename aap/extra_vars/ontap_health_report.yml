@@ -41,8 +41,8 @@
 ## volume used % -> red
 # ontap_volume_crit_pct: 90
 
-## volumes smaller than this (GB) are not flagged for used % - root volumes and other small ones run
-## full by design (offline still is); 0 = every volume
+## volumes smaller than this (GB) are left out of the Volumes table - full (root volumes and other
+## small ones run full by design) or not online; 0 = every volume
 # ontap_volume_min_gb: 50
 
 ## aggregate used % -> amber
