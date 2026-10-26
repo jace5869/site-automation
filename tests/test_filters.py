@@ -414,6 +414,38 @@ class WatchAllowPatterns(unittest.TestCase):
             self.assertFalse(any(p.match(c) for p in pats), c)
 
 
+class ActBatches(unittest.TestCase):
+    """The alarms ACT analysis asked vm_alarm_act_batch problems at a time (roles/vmware_vm/tasks/alarm_act.yml)."""
+
+    @staticmethod
+    def batch(ids, ran=True, overall="", reason="", error=""):
+        by = {i: {"cause": "c" + i, "evidence": "", "fix": "", "confidence": 80} for i in ids} if ran and not error else {}
+        return {"ids": ids, "ran": ran, "reason": reason, "raw": "",
+                "parsed": {"parsed": ran and not error, "overall": overall, "by_id": by, "error": error}}
+
+    def test_every_batch_answered(self):
+        bs = [self.batch(["P1", "P2", "P3", "P4", "P5"], overall="Fix the power supply first."), self.batch(["P6", "P7"], overall="Then the logins.")]
+        m = va.act_batches_merge(bs)
+        self.assertEqual((m["parsed"], sorted(m["by_id"], key=lambda x: int(x[1:]))), (True, ["P%d" % i for i in range(1, 8)]))
+        self.assertEqual(m["overall"], "P1-P5: Fix the power supply first. P6, P7: Then the logins.")
+        self.assertEqual(va.act_batches_reason(bs), "")
+
+    def test_one_batch_failed_the_others_kept(self):
+        bs = [self.batch(["P1", "P2", "P3"]), self.batch(["P4", "P5", "P6"], ran=False, reason="ACT failed: the reply was cut off."),
+              self.batch(["P7"], error="ACT's answer has no readable JSON block")]
+        m = va.act_batches_merge(bs)
+        self.assertEqual((m["parsed"], sorted(m["by_id"])), (True, ["P1", "P2", "P3"]))
+        self.assertIn("P4-P6 not analyzed: ACT failed: the reply was cut off.", m["overall"])
+        self.assertIn("P7: ACT's answer could not be read (ACT's answer has no readable JSON block).", m["overall"])
+        self.assertEqual(va.act_batches_reason(bs), "P4-P6 not analyzed: ACT failed: the reply was cut off.")
+
+    def test_one_batch_as_before(self):
+        one = self.batch(["P1"], ran=False, reason="This job has no API key for provider genai.")
+        self.assertEqual(va.act_batches_merge([one]), one["parsed"])
+        self.assertEqual(va.act_batches_reason([one]), "This job has no API key for provider genai.")
+        self.assertEqual(va.act_batches_reason([self.batch(["P1"], error="no JSON")]), "")    # answered: the report shows the answer
+
+
 class VmFacts(unittest.TestCase):
     VM = {"name": "Web01.example.mil", "runtime": {"powerState": "poweredOn"},
           "config": {"template": False, "firmware": "efi", "annotation": "owner: ops",

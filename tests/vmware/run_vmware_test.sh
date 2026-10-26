@@ -566,6 +566,11 @@ if [ "$(nmail)" = $((n0 + 1)) ] && grep -q "P1 \[CRITICAL\] Host DC0_C0_H2 (DC0_
 else
     echo "FAIL -   ...ACT evidence / email"; head -c 800 "$work/act/fake-act-stdin.txt"; fails=$((fails + 1))
 fi
+run "ACT analysis 2 problems at a time (vm_alarm_act_batch): two questions, each with its own evidence, one report" ok vm_alarm_act_analysis.yml \
+    -e "$actvars" -e vm_alarm_act_batch=2 -- "ACT analyzes the 4 problem(s), 2 at a time" "P1, P2: Reconnect DC0_C0_H2 first." \
+       "P3, P4: Reconnect DC0_C0_H2 first." "92% high" "30% low" "ACT gave no answer for this one"
+grep -q "^P3 " "$work/act/fake-act-stdin.txt" && ! grep -q "^P1 " "$work/act/fake-act-stdin.txt" \
+    && echo "ok   -   ...the last question had only P3 and P4's evidence" || { echo "FAIL -   ...batch evidence"; grep "^P[0-9]" "$work/act/fake-act-stdin.txt"; fails=$((fails + 1)); }
 echo '{"summary": "ROOT CAUSE: the host is disconnected. CONFIDENCE: high"}' > "$work/act/act.json"
 run "ACT analysis: an answer without the JSON block is shown as text, the job stays green" ok vm_alarm_act_analysis.yml -e "$actvars" \
     -- "ACT's answer is below as text" "ROOT CAUSE: the host is disconnected."

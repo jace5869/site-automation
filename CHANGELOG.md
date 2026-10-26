@@ -19,6 +19,14 @@ Platform" credential the report templates use > Roles > Assign roles: resource t
 **Organization Auditor** (read-only; every template in the organization, new ones too). The next run shows the last
 14 runs - AAP kept them all. docs/EMAIL_REPORTS.md, "The look" and "Troubleshooting".
 
+**The VMware alarms ACT analysis asks 5 problems at a time.** With 5 problems it worked, with 15 it did not: one
+answer about 15 problems is long enough for a gateway or proxy to cut it off, or to run past the model's time. Now
+ACT is asked `vm_alarm_act_batch` (5) problems per question, each question with only its problems' evidence, and the
+answers make one report as before - 15 problems are three questions. When one question fails, the others' analyses
+are still in the report, the problems of the failed one say `ACT gave no answer for this one`, and the job says
+which (`P6-P10 not analyzed: ...`) and fails after the email. `vm_alarm_act_batch: 0` asks all in one question, as
+before. docs/VMWARE.md, "ACT analysis".
+
 **OCSP: the certificate is enough.** The VMware health report (and the watch) and the network performance report
 check the OCSP responders smart card logins depend on. They no longer need the responder's address: name a
 certificate the responder knows once, for both, in `all.yml` - `site_ocsp_certs: [files/ocsp/test-user.pem]` - and

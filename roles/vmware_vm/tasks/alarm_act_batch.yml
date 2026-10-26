@@ -1,0 +1,25 @@
+---
+# One batch of the alarms ACT analysis (alarm_act.yml, vm_alarm_act_batch problems at a time): ACT is asked about
+# these problems with their evidence only, and its answer is added to _vm_al_batches. Input: _vm_al_batch (the problems).
+- name: VMware | no answer from an earlier batch is taken for this one's
+  ansible.builtin.set_fact:
+    act_triage_result: {status: error, summary: "", stop_reason: "ACT gave no result"}
+
+- name: VMware | ACT analyzes {{ _vm_al_batch | map(attribute='id') | join(', ') }} - evidence mode, ACT runs no command
+  ansible.builtin.include_role:
+    name: site_act
+    tasks_from: evidence_analysis.yml
+    public: true
+  vars:
+    _ea_items: "{{ _vm_al_batch }}"
+    _ea_evidence: "{{ _vm_al_read | vm_alarm_evidence(_vm_al_batch) }}"
+    _ea_task: "{{ _vm_al_batch | vm_alarm_act_task({'hours': vm_alarm_hours, 'extra': site_act_extra_instructions | default('')}) }}"
+    _ea_names: "{{ _vm_al_read | vm_alarm_names }}"
+    _ea_model_timeout: "{{ vm_alarm_act_model_timeout }}"
+    _ea_check_url: "{{ vm_alarm_act_check_url and _vm_al_batches | length == 0 }}"     # the way to the model: checked once
+
+- name: VMware | ACT's answer for {{ _vm_al_batch | map(attribute='id') | join(', ') }}
+  ansible.builtin.set_fact:
+    _vm_al_batches: >-
+      {{ _vm_al_batches + [{'ids': _vm_al_batch | map(attribute='id') | list, 'ran': _ea_ran | bool, 'parsed': _ea_parsed,
+                            'reason': _ea_reason, 'raw': _ea_raw, 'model': _ea_model}] }}

@@ -77,6 +77,10 @@
 ## analyze at most this many problems, the most severe first
 # vm_alarm_act_max_items: 40
 
+## problems per question to ACT: a long answer about many problems is what a gateway or proxy cuts
+## off (0 = all in one question)
+# vm_alarm_act_batch: 5
+
 ## configuration issues too (false = alarms and events only)
 # vm_alarm_act_config_issues: true
 

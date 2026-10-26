@@ -35,31 +35,33 @@
 - name: VMware | ACT analysis
   when: _vm_al_p.problems | length > 0
   block:
-    - name: VMware | ACT analyzes the {{ _vm_al_p.problems | length }} problem(s) - evidence mode, ACT runs no command
-      ansible.builtin.include_role:
-        name: site_act
-        tasks_from: evidence_analysis.yml
-        public: true
-      vars:
-        _ea_items: "{{ _vm_al_p.problems }}"
-        _ea_evidence: "{{ _vm_al_read | vm_alarm_evidence(_vm_al_p.problems) }}"
-        _ea_task: "{{ _vm_al_p.problems | vm_alarm_act_task({'hours': vm_alarm_hours, 'extra': site_act_extra_instructions | default('')}) }}"
-        _ea_names: "{{ _vm_al_read | vm_alarm_names }}"
-        _ea_model_timeout: "{{ vm_alarm_act_model_timeout }}"
-        _ea_check_url: "{{ vm_alarm_act_check_url }}"
+    # vm_alarm_act_batch problems per question: a long answer about many problems is what a gateway or the model's
+    # output limit cuts off; each batch is a question of its own, with only its problems' evidence
+    - name: VMware | no answer yet
+      ansible.builtin.set_fact:
+        _vm_al_batches: []
+
+    - name: VMware | ACT analyzes the {{ _vm_al_p.problems | length }} problem(s), {{ vm_alarm_act_batch }} at a time
+      ansible.builtin.include_tasks: alarm_act_batch.yml
+      loop: "{{ _vm_al_p.problems | batch(vm_alarm_act_batch | int if vm_alarm_act_batch | int > 0 else 1000) | list }}"
+      loop_control:
+        loop_var: _vm_al_batch
+        label: "{{ _vm_al_batch | map(attribute='id') | join(', ') }}"
 
     - name: VMware | what ACT said, for the report
       ansible.builtin.set_fact:
-        _vm_al_ran: "{{ _ea_ran | bool }}"
-        _vm_al_parsed: "{{ _ea_parsed }}"
-        _vm_al_reason: "{{ _ea_reason }}"
+        _vm_al_ran: "{{ _vm_al_batches | selectattr('ran') | list | length > 0 }}"
+        _vm_al_parsed: "{{ _vm_al_batches | act_batches_merge }}"
+        _vm_al_reason: "{{ _vm_al_batches | act_batches_reason }}"
+        _vm_al_raw: "{{ _vm_al_batches | map(attribute='raw') | select | join('\n\n') }}"
+        _ea_model: "{{ (_vm_al_batches | map(attribute='model') | select | list + [''])[0] }}"
 
     - name: VMware | the analysis
       ansible.builtin.set_fact:
         _vm_al_doc: >-
           {{ _vm_al_p.problems | vm_alarm_act_report(_vm_al_parsed,
                {'vcenter': _vm_al_read.vcenter, 'hours': vm_alarm_hours, 'provider': site_act_provider,
-                'model': _ea_model, 'ran': _vm_al_ran | bool, 'reason': _vm_al_reason, 'raw': _ea_raw,
+                'model': _ea_model, 'ran': _vm_al_ran | bool, 'reason': _vm_al_reason, 'raw': _vm_al_raw,
                 'not_analyzed': _vm_al_p.not_analyzed, 'max_items': vm_alarm_act_max_items}) }}
 
     - name: VMware | ACT analysis
@@ -83,8 +85,11 @@
 
     - name: VMware | ACT analyzed the problems
       ansible.builtin.assert:
-        that: _vm_al_ran | bool
-        fail_msg: "ACT did not analyze the alarms: {{ _vm_al_reason }} The alarms are in the report (and the email) without an analysis."
+        that: _vm_al_ran | bool and _vm_al_reason | length == 0
+        fail_msg: >-
+          {{ ('ACT did not analyze every problem: ' ~ _vm_al_reason ~ ' The others are analyzed in the report (and the email).')
+             if _vm_al_ran | bool else
+             ('ACT did not analyze the alarms: ' ~ _vm_al_reason ~ ' The alarms are in the report (and the email) without an analysis.') }}
         quiet: true
       when: not ansible_check_mode
 

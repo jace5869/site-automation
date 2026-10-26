@@ -854,6 +854,7 @@ key, no network, an ACT error): the email still lists the problems, and says why
 | Setting | Default | What it does |
 |---|---|---|
 | `vm_alarm_act_max_items` | `40` | give ACT at most this many problems, the most severe first (the rest are listed as not analyzed) |
+| `vm_alarm_act_batch` | `5` | problems per question to ACT: 15 problems are three questions of 5, each with only its problems' evidence, in one report. A long answer about many problems is what a gateway or proxy cuts off, or what runs past the model's time. `0` = all in one question (before 0.31.1) |
 | `vm_alarm_act_config_issues` | `true` | configuration issues too |
 | `vm_alarm_act_check_url` | `true` | check that the AAP node can reach the model first |
 | `vm_alarm_act_model_timeout` | `site_act_model_timeout` (600) | seconds the model may take for its answer (a `GENAI_TIMEOUT` in `site_act_env` wins) |
@@ -1478,6 +1479,8 @@ Every message of the deploy, its workflow and the scheduled pickup, with what to
 | `ACT produced no result (it timed out after 1200s ...)` | a slow model, or a lot of evidence | `site_act_timeout: 1800`, or `vm_alarm_act_max_items: 20` |
 | `ACT's answer is below as text` | the model did not use the table format | the answer is still in the email. Run it again, or try another model (`site_act_models`) |
 | A row says `ACT gave no answer for this one` | the model skipped that problem | run it again; fewer problems (`vm_alarm_act_max_items`) help a small model |
+| The analysis works with a few problems, not with more (cut off, timed out, or no readable answer) | one answer about many problems is too long for the gateway, a proxy, or the model's time | `vm_alarm_act_batch` (5, since 0.31.1) asks 5 at a time; lower it to 3 if 5 still fails |
+| `ACT did not analyze every problem: P6-P10 not analyzed: ...` | one batch failed, the others were analyzed (the report has them) | the reason after it, as in the rows above; run it again |
 | The job is red, but the email came | ACT could not run; the email lists the problems and says why | fix what the email says, then run it again |
 
 **Test the way to the model by hand**, from the AAP server (the execution environment uses the

@@ -1093,6 +1093,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_alarm_vm_event_types` | `[VmGuestShutdownEvent, VmGuestRebootEvent, VmPoweredOffEvent, VmResettingEvent, VmFailove…` | Events about a VM stopping, restarting or failing over (guest shutdown, power off, HA restart): the VM events table. |
 | `vm_alarm_fail` | `false` | The job stays green when it finds alarms: the report and email say what. true = mark the job FAILED when there is a critical alarm or a host is not connected, for workflows. |
 | `vm_alarm_act_max_items` | `40` | ACT analysis (playbooks/vm_alarm_act_analysis.yml). ACT runs on the AAP side (the execution environment), never on the ESXi hosts; the model provider, model, URL, proxy and CA are the site_act_* settings (roles/site_act/defaults/main.yml), the key an "ACT model key" credential. analyze at most this many problems, the… (all of it: the role file) |
+| `vm_alarm_act_batch` | `5` | problems per question to ACT: a long answer about many problems is what a gateway or proxy cuts off (0 = all in one question) |
 | `vm_alarm_act_config_issues` | `true` | configuration issues too (false = alarms and events only) |
 | `vm_alarm_act_email_if_none` | `false` | true = email even when there is nothing to analyze |
 | `vm_alarm_act_check_url` | `true` | first check that the AAP node can reach the model's URL |

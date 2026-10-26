@@ -591,6 +591,49 @@ def act_analysis_parse(text, problems=None, depth=0):
     return {"parsed": True, "overall": " ".join(str(obj.get("overall") or "").split()), "by_id": by_id, "error": ""}
 
 
+def _ids_text(ids):
+    """P11, P12, P13 -> 'P11-P13' when they follow each other, else 'P2, P5'."""
+    ids = list(ids or [])
+    nums = [int(i[1:]) for i in ids if re.match(r"^P\d+$", str(i))]
+    if len(nums) == len(ids) > 2 and nums == list(range(nums[0], nums[0] + len(nums))):
+        return "%s-%s" % (ids[0], ids[-1])
+    return ", ".join(str(i) for i in ids)
+
+
+def act_batches_merge(batches):
+    """The answers of an analysis asked in batches ([{ids, ran, parsed: act_analysis_parse, reason}]) -> one
+    act_analysis_parse result: every batch's analyses and overall lines; parsed when any batch's answer was read.
+    A batch that failed or whose answer could not be read is named in the overall lines (one batch: as it was)."""
+    bs = batches or []
+    if len(bs) == 1:
+        return bs[0].get("parsed") or {"parsed": False, "overall": "", "by_id": {}, "error": "ACT gave no answer"}
+    by_id, overall, errors, parsed = {}, [], [], False
+    for b in bs:
+        pa = b.get("parsed") or {}
+        if b.get("ran") and pa.get("parsed"):
+            parsed = True
+            by_id.update(pa.get("by_id") or {})
+            if pa.get("overall"):
+                overall.append("%s: %s" % (_ids_text(b.get("ids")), pa["overall"]))
+        elif b.get("ran"):
+            errors.append("%s: ACT's answer could not be read (%s)." % (_ids_text(b.get("ids")), pa.get("error") or "no JSON"))
+        else:
+            errors.append("%s not analyzed: %s" % (_ids_text(b.get("ids")), b.get("reason") or "ACT gave no answer."))
+    return {"parsed": parsed, "overall": " ".join(overall + errors), "by_id": by_id, "error": " ".join(errors)}
+
+
+def act_batches_reason(batches):
+    """'' when ACT answered every batch, else why not, by batch ('P11-P15 not analyzed: ACT failed: ...');
+    one batch: its own reason, as it was."""
+    bs = batches or []
+    bad = [b for b in bs if not b.get("ran")]
+    if not bad:
+        return ""
+    if len(bs) == 1:
+        return bs[0].get("reason") or ""
+    return " ".join("%s not analyzed: %s" % (_ids_text(b.get("ids")), b.get("reason") or "ACT gave no answer.") for b in bad)
+
+
 def _conf_status(c):
     if c is None:
         return ""
@@ -693,4 +736,5 @@ class FilterModule(object):
         return {"vm_alarm_groups": vm_alarm_groups, "vm_alarm_report": vm_alarm_report, "vm_alarm_history": vm_alarm_history,
                 "vm_alarm_problems": vm_alarm_problems, "vm_alarm_evidence": vm_alarm_evidence,
                 "vm_alarm_act_task": vm_alarm_act_task, "act_analysis_parse": act_analysis_parse,
-                "vm_alarm_act_report": vm_alarm_act_report, "vm_alarm_names": vm_alarm_names}
+                "vm_alarm_act_report": vm_alarm_act_report, "vm_alarm_names": vm_alarm_names,
+                "act_batches_merge": act_batches_merge, "act_batches_reason": act_batches_reason}
