@@ -136,6 +136,14 @@ class H(BaseHTTPRequestHandler):
         if inv is not None:
             return self._send(*inv)
         jb = self._jobs(method, rest, q)
+        if jb is not None and jb[0] == "cut":                    # says 1 MB is coming, sends 10 bytes, closes: IncompleteRead
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "1048576")
+            self.end_headers()
+            self.wfile.write(b'{"id": 9, ')
+            self.close_connection = True
+            return
         if jb is not None:
             return self._send(*jb)
         sv = self._surveys(method, rest, q, body)
@@ -166,6 +174,9 @@ class H(BaseHTTPRequestHandler):
         if method != "GET" or not rest or rest[0] != "jobs":
             return None
         hide = os.environ.get("AAPMOCK_JOBS_HIDE") == "1"         # AAP leaves out what its user may not see, without an error
+        cut = [x for x in os.environ.get("AAPMOCK_JOB_CUT", "").split(",") if x]     # jobs whose answer is cut off on its way
+        if len(rest) == 2 and rest[1] in cut:
+            return "cut", None
         if len(rest) == 2:
             found = [j for j in JOBS_71 if str(j["id"]) == rest[1] and not hide]
             return (200, found[0]) if found else (404, {"detail": "Not found."})

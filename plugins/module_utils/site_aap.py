@@ -7,6 +7,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import base64
+import http.client
 import json
 import os
 import socket
@@ -97,6 +98,8 @@ class Api(object):
                 e.close()
         except (URLError, socket.timeout, ssl.SSLError, OSError) as e:
             return -1, {"detail": str(getattr(e, "reason", e))}
+        except http.client.HTTPException as e:          # IncompleteRead: the answer cut off on its way (a large job's artifacts)
+            return -1, {"detail": "the answer was cut off: %s" % (e.__class__.__name__ if isinstance(e, http.client.IncompleteRead) else e)}
 
     def probe(self):
         """Find the API path (api/controller/v2/ first) and check the login: '' or why not."""

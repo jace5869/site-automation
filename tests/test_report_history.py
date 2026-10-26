@@ -123,7 +123,7 @@ class History(unittest.TestCase):
 
     def setUp(self):
         from http.server import ThreadingHTTPServer
-        for k in ("AAPMOCK_LEGACY", "AAPMOCK_JOBS_FORBID", "AAPMOCK_JOBS_HIDE"):
+        for k in ("AAPMOCK_LEGACY", "AAPMOCK_JOBS_FORBID", "AAPMOCK_JOBS_HIDE", "AAPMOCK_JOB_CUT"):
             os.environ.pop(k, None)
         spec = importlib.util.spec_from_file_location("aapmock_%d" % id(self), os.path.join(HERE, "servicenow", "aapmock.py"))
         self.mock = importlib.util.module_from_spec(spec)
@@ -152,6 +152,17 @@ class History(unittest.TestCase):
         os.environ["AAPMOCK_LEGACY"] = "1"
         runs, why = self.hist(runs=2, CONTROLLER_USERNAME="", CONTROLLER_PASSWORD="", CONTROLLER_OAUTH_TOKEN="goodtoken")
         self.assertEqual((why, [r["id"] for r in runs]), ("", [916, 917]))
+
+    def test_a_job_whose_answer_is_cut_off(self):
+        # a job with large artifacts, its answer cut off on the way (IncompleteRead): that run's bar without its report, no crash
+        os.environ["AAPMOCK_JOB_CUT"] = "917,916"
+        runs, why = self.hist(runs=3)
+        self.assertEqual(why, "")
+        self.assertEqual([(r["id"], r["status"], r["report"]) for r in runs],
+                         [(915, "successful", {"status": "warning", "value": 0, "label": "Deleted"}), (916, "failed", None), (917, "successful", None)])
+        api = _aap.Api(_aap.connection(self.env))
+        api.probe()
+        self.assertEqual(api.call("GET", "jobs/917/"), (-1, {"detail": "the answer was cut off: IncompleteRead"}))
 
     def test_no_runs_yet(self):
         self.assertEqual(self.hist(job=901, template=71), ([], ""))      # the first run: AAP shows this job

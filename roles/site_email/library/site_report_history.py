@@ -66,6 +66,8 @@ def history(api, job_id, template_id, runs):
             continue
         report = None
         c, d = api.call("GET", "jobs/%d/" % j["id"])      # the list leaves the artifacts out
+        if c == -1:                                       # cut off on its way (a job with large artifacts): once more
+            c, d = api.call("GET", "jobs/%d/" % j["id"])
         art = d.get("artifacts") if c == 200 else None
         if isinstance(art, dict) and isinstance(art.get("site_report_run"), dict):
             r = art["site_report_run"]
@@ -101,7 +103,10 @@ def main():
                            supports_check_mode=True)
     p = module.params
     api = Api(connection(), p["ca_path"], p["timeout"], ca_setting="report_history_aap_ca_path", no_credential=NO_CREDENTIAL)
-    runs, why = history(api, p["job_id"], p["template_id"], p["runs"])
+    try:
+        runs, why = history(api, p["job_id"], p["template_id"], p["runs"])
+    except Exception as e:                                # noqa: BLE001 - never fail the job: the report goes out without the strip
+        runs, why = [], "reading the past runs from AAP failed: %s: %s" % (e.__class__.__name__, e)
     module.exit_json(changed=False, ok=not why, why=why, runs=runs,
                      msg=why or "%d past run(s) of this template from AAP" % len(runs))
 

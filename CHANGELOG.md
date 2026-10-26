@@ -171,6 +171,12 @@ the ones after it.
     UTC. Then run the *VM - health report* once and look at its **Clock** column and any NTP warnings.
     docs/VMWARE.md, "Times and clocks".
 
+**Fixed: a report job failed reading its past runs** with `http.client.IncompleteRead: IncompleteRead(2702637 bytes
+read, 996684 more expected)` - an earlier job of the template with large artifacts (a report page kept for the copy
+job, a log analysis's patterns) came back cut off, and that error was not caught. Such a job is now asked once more;
+when it still cannot be read, its bar shows how it ended (without its number), and the report goes out. Anything
+else that goes wrong reading the past runs leaves the strip out and says why - it never fails the job.
+
 **The CRL too.** Smart card logins to vCenter fall back to the CA's CRL when OCSP does not answer. The VMware
 health report now also downloads the CRL of every certificate in `site_ocsp_certs` / `vm_sso_ocsp` (its CRL
 Distribution Point, or `crl_url`), from the AAP node, each address once: it must be a CRL, issued and signed by the CA,
