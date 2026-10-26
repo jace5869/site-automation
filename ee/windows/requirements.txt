@@ -1,0 +1,13 @@
+# Python libraries the collections do not bring themselves (ansible-builder adds theirs). They come from PyPI.
+# ---- Windows over WinRM ----
+pywinrm[kerberos]
+requests-kerberos
+requests-ntlm          # NTLM: not on a FIPS host (no MD4); Kerberos is the way there
+pypsrp[kerberos]       # the psrp connection, an alternative to winrm
+# ---- Active Directory over LDAP, from the EE (microsoft.ad brings sansldap, pyspnego, dnspython) ----
+ldap3                  # pure Python: your own LDAP scripts
+# ---- SQL Server (community.general.mssql_db, mssql_script) - ansible.mysql brings PyMySQL itself ----
+pymssql
+# ---- general ----
+jmespath               # the json_query filter
+dnspython              # the community.general.dig lookup

@@ -1,0 +1,74 @@
+---
+# The Windows, Active Directory and SQL execution environment: Windows over WinRM (Kerberos), Active
+# Directory (and AD as an AAP inventory), SQL Server, MySQL and MariaDB.
+#   cp ansible.cfg.example ansible.cfg            # your automation hub's address
+#   ansible-builder create -f execution-environment.yml -c context
+#   podman build --network=host --build-arg ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_TOKEN=... \
+#     -f context/Containerfile -t site-ee-windows:1 context
+version: 3
+
+images:
+  base_image:
+    # Your base EE - the one built with the earlier EE guide. This EE adds to everything it has.
+    # Pulled from your hub: podman tag aap.example.mil/base-ee:1.0 localhost/base-ee:1.0. None? Use AAP's
+    # Default EE: registry.redhat.io/ansible-automation-platform-27/ee-supported-rhel9:latest
+    name: localhost/base-ee:1.0
+
+dependencies:
+  # The Python that Ansible runs on in your base EE (ansible-builder would take /usr/bin/python3, which
+  # is RHEL 9's Python 3.9). Check it: podman run --rm localhost/base-ee:1.0 bash -c 'head -1 $(command -v ansible)'
+  python_interpreter:
+    python_path: /usr/bin/python3.12
+  galaxy: requirements.yml
+  python: requirements.txt
+  system: bindep.txt
+  exclude:
+    system:
+      # ansible.netcommon (your base EE may have it) asks for these to compile ansible-pylibssh, which
+      # comes ready-built (a wheel); both are in CodeReady Builder, which a RHEL build does not have
+      - python3-Cython
+      - libssh-devel
+
+options:
+  package_manager_path: /usr/bin/microdnf
+
+additional_build_files:
+  - src: ansible.cfg
+    dest: configs
+  - src: krb5-ad-enctypes.conf
+    dest: configs
+  - src: check-ee.sh
+    dest: configs
+  - src: check-list.txt
+    dest: configs
+  - src: ca
+    dest: ca
+
+additional_build_steps:
+  prepend_galaxy:
+    - COPY _build/configs/ansible.cfg /etc/ansible/ansible.cfg
+    # the automation hub token, given at build time - never written in a file
+    - ARG ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_TOKEN
+    - ARG ANSIBLE_GALAXY_SERVER_COMMUNITY_TOKEN
+    - ARG ANSIBLE_GALAXY_SERVER_PUBLISHED_TOKEN
+  prepend_builder:
+    # a PyPI mirror, when the build host cannot reach pypi.org: --build-arg PIP_INDEX_URL=https://...
+    - ARG PIP_INDEX_URL
+    # the C headers of the EE's own Python (gssapi, krb5 and pykerberos compile against them), and pip's
+    # wheel package: pykerberos (WinRM's Kerberos) is then built here, not in the final image
+    - RUN $PKGMGR install -y python$($PYCMD -c 'import sys; print("%d.%d" % sys.version_info[:2])')-devel && $PKGMGR clean all
+    - RUN $PYCMD -m pip install --no-cache-dir wheel
+  append_final:
+    # Kerberos to Active Directory from a FIPS host: AD's AES-SHA1 keys allowed (krb5-ad-enctypes.conf)
+    - COPY _build/configs/krb5-ad-enctypes.conf /etc/krb5.conf.d/ad-enctypes.conf
+    - RUN rm -f /etc/krb5.conf.d/crypto-policies
+    # Kerberos tickets in a file: the kernel keyring RHEL uses by default does not work in a container
+    - ENV KRB5CCNAME=FILE:/tmp/krb5cc_ee
+    # your CA certificates (ca/*.pem) in the trust store - LDAPS, SQL Server TLS, AAP
+    - COPY _build/ca/ /tmp/site-ca/
+    - RUN cp /tmp/site-ca/*.pem /etc/pki/ca-trust/source/anchors/ 2>/dev/null; update-ca-trust extract && rm -rf /tmp/site-ca
+    - ENV REQUESTS_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt
+    # ee-check: does the image have what it should (podman run --rm <image> ee-check)
+    - COPY _build/configs/check-ee.sh /usr/local/bin/ee-check
+    - COPY _build/configs/check-list.txt /usr/local/share/ee-check.list
+    - RUN chmod 755 /usr/local/bin/ee-check

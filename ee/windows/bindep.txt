@@ -1,0 +1,4 @@
+# System packages (RPMs, from Red Hat) the collections do not bring themselves (ansible-builder adds theirs).
+krb5-workstation [platform:rpm]       # kinit / klist: check Kerberos inside the EE
+bind-utils [platform:rpm]             # dig / nslookup: check DNS (the domain controllers' SRV records)
+iputils [platform:rpm]                # ping, for troubleshooting from the EE

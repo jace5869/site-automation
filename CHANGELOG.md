@@ -10,7 +10,7 @@ from 0.20.0 to 0.27.0: `site-automation-0.32.0-changed-since-0.20.0.zip`; from 0
 `playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. Coming from 0.31.0 or before, they bring 0.31.1's
 new `.gitignore`: if you changed yours, add your lines again. Nothing to change after the update; the list at the end
 repeats what 0.20.0 to 0.32.0 ask you to set up - the new steps 14 and 16 are nothing to set, step 15 (your time
-zone) is optional, and step 17 only if you run ACT's fapolicyd job.
+zone) is optional, step 17 only if you run ACT's fapolicyd job, and step 18 when you next build an EE.
 
 **A Limit needs no `localhost` any more.** Nine jobs read the hosts and then did their last part on `localhost`:
 *Log analysis*, the *Active Directory health report* and *account lockout* make their report there (and email it),
@@ -92,6 +92,15 @@ your security approval - then the quiet hosts, those without fapolicyd and those
 `vendor/act/ansible/playbooks/fapolicyd_denials.yml` itself posts to Teams only and sends no email: change its
 Playbook to `playbooks/fapolicyd_denials.yml`. A Limit of hosts needs no `localhost`. docs/RUNBOOKS.md,
 "fapolicyd denials"; `tests/fapolicyd/run_fapolicyd_test.sh`.
+
+**Execution environments: three, each built on your base EE.** `ee/` now has `windows/` (Windows, Active Directory
+and SQL), `network/` (Cisco and Palo Alto) and `all-in-one/` (every job), each built on top of your base EE
+(`base-ee:1.0`, Python 3.12) instead of Red Hat's `ee-minimal` image, keeping all it has: the collections pinned to
+the versions for ansible-core 2.16, SQL Server through `lowlydba.sqlserver`, PAN-OS, and `ee-check` reading each
+folder's `check-list.txt` (it ends with `ALL YES`, or names what is missing). The all-in-one adds `tzdata` for
+`report_time_zone`. docs/EXECUTION_ENVIRONMENT.md and its PDF (`Site-Automation-EE-Guide.pdf`, *Execution
+Environments - step by step*) build, check and add each one to AAP. An EE you built from an earlier `ee/all-in-one/`
+keeps working: rebuild when you want what is new.
 
 **To do, if you have not yet: what 0.20.0 to 0.32.0 ask you to set up.** In order; each step works without
 the ones after it.
@@ -215,6 +224,8 @@ the ones after it.
     `playbooks/fapolicyd_denials.yml` instead of `vendor/act/ansible/playbooks/fapolicyd_denials.yml`, and
     `report_email_to` in its **Variables** (or all.yml): one report of every host by email and on the website, the
     Teams card as before. docs/RUNBOOKS.md, "fapolicyd denials".
+18. **Your execution environments** (0.32.0) - optional, when you next build one: from `ee/` and the EE guide PDF
+    (*Execution Environments - step by step*), on your base EE. docs/EXECUTION_ENVIRONMENT.md.
 
 ## 0.31.1 — 2026-10-26
 

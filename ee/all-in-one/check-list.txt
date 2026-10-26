@@ -1,0 +1,63 @@
+# What ee-check looks for in this EE: lib <python import> <package>, collection <name>, tool <command>
+name All-in-one EE
+# ---- Windows over WinRM ----
+lib winrm pywinrm
+lib kerberos pykerberos
+lib requests_kerberos requests-kerberos
+lib requests_ntlm requests-ntlm
+lib pypsrp pypsrp
+# ---- Active Directory ----
+lib spnego pyspnego
+lib gssapi gssapi
+lib krb5 krb5
+lib sansldap sansldap
+lib ldap3 ldap3
+lib dns dnspython
+# ---- VMware ----
+lib pyVmomi pyVmomi
+lib com.vmware.vcenter_client vmware-vcenter
+# ---- NetApp, ServiceNow ----
+lib requests requests
+lib solidfire solidfire-sdk-python
+# ---- SQL ----
+lib pymssql pymssql
+lib pymysql PyMySQL
+# ---- Cisco and the network connections ----
+lib pylibsshext ansible-pylibssh
+lib paramiko paramiko
+lib ncclient ncclient
+lib netaddr netaddr
+lib textfsm textfsm
+# ---- Palo Alto ----
+lib panos pan-os-python
+lib pan.xapi pan-python
+lib xmltodict xmltodict
+# ---- general ----
+lib jmespath jmespath
+lib cryptography cryptography
+collection ansible.posix
+collection ansible.utils
+collection community.general
+collection community.crypto
+collection containers.podman
+collection redhat.rhel_system_roles
+collection ansible.windows
+collection microsoft.ad
+collection community.windows
+collection vmware.vmware
+collection netapp.ontap
+collection ansible.mysql
+collection lowlydba.sqlserver
+collection ansible.netcommon
+collection cisco.ios
+collection cisco.nxos
+collection cisco.asa
+collection paloaltonetworks.panos
+collection servicenow.itsm
+tool kinit
+tool klist
+tool ssh
+tool sshpass
+tool dig
+tool ping
+kerberos

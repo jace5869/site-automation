@@ -1,0 +1,32 @@
+# What ee-check looks for in this EE: lib <python import> <package>, collection <name>, tool <command>
+name Windows, Active Directory and SQL EE
+# ---- Windows over WinRM ----
+lib winrm pywinrm
+lib kerberos pykerberos
+lib requests_kerberos requests-kerberos
+lib requests_ntlm requests-ntlm
+lib pypsrp pypsrp
+# ---- Active Directory ----
+lib spnego pyspnego
+lib gssapi gssapi
+lib krb5 krb5
+lib sansldap sansldap
+lib ldap3 ldap3
+lib dns dnspython
+# ---- SQL ----
+lib pymssql pymssql
+lib pymysql PyMySQL
+# ---- general ----
+lib jmespath jmespath
+lib cryptography cryptography
+collection ansible.windows
+collection community.windows
+collection microsoft.ad
+collection community.general
+collection lowlydba.sqlserver
+collection ansible.mysql
+tool kinit
+tool klist
+tool dig
+tool ping
+kerberos

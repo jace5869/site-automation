@@ -1,0 +1,16 @@
+---
+# The collections of the network EE. "certified" = Red Hat Automation Hub (also in a Private Automation Hub
+# that syncs it); "partner" = made by the vendor (in your hub's rh-certified repository when it has it -
+# otherwise Galaxy). ansible-builder reads each collection's own Python and system needs.
+# After the first good build, pin each one to the version it got: podman run --rm <image> ee-check
+# Only one vendor? Remove the other's lines here and in check-list.txt.
+collections:
+  # ---- the network connections, and helpers ----
+  - name: ansible.netcommon             # certified: network_cli (SSH), netconf, httpapi connections
+  - name: ansible.utils                 # certified: ipaddr filters, cli_parse, validate
+  # ---- Cisco ----
+  - name: cisco.ios                     # certified: IOS / IOS-XE
+  - name: cisco.nxos                    # certified: Nexus
+  - name: cisco.asa                     # certified: ASA firewalls
+  # ---- Palo Alto ----
+  - name: paloaltonetworks.panos        # partner: PAN-OS firewalls and Panorama (over their XML API, HTTPS)

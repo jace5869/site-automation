@@ -1,0 +1,14 @@
+# Copy to ansible.cfg (this folder) when the collections come from your automation hub. The URLs: AAP >
+# Automation Content > Repositories > a repository > "Copy CLI configuration" (AAP 2.5 and later: the
+# platform's own address). The token is NOT written here: it is given at build time (--build-arg).
+[galaxy]
+server_list = rh_certified, community, published
+
+[galaxy_server.rh_certified]
+url = https://aap.example.mil/api/galaxy/content/rh-certified/
+
+[galaxy_server.community]
+url = https://aap.example.mil/api/galaxy/content/community/
+
+[galaxy_server.published]
+url = https://aap.example.mil/api/galaxy/content/published/

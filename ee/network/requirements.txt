@@ -1,0 +1,4 @@
+# Python libraries the collections do not bring themselves (ansible-builder adds theirs). They come from PyPI.
+# The collections bring the rest: ansible-pylibssh, paramiko, ncclient (Cisco); pan-os-python, pan-python,
+# xmltodict (Palo Alto); netaddr, textfsm, ttp (ansible.utils).
+jmespath               # the json_query filter

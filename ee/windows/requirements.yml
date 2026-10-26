@@ -1,0 +1,18 @@
+---
+# The collections of the Windows, Active Directory and SQL EE. "certified" = Red Hat Automation Hub (also in a
+# Private Automation Hub that syncs it); "community" = Galaxy (a Private Automation Hub needs its community
+# repository to have it). ansible-builder reads each collection's own Python and system needs.
+# After the first good build, pin each one to the version it got: podman run --rm <image> ee-check
+collections:
+  # ---- Windows ----
+  - name: ansible.windows               # certified: the core Windows modules (win_service, win_updates ...)
+  - name: community.windows             # community: more Windows modules
+  # ---- Active Directory ----
+  - name: microsoft.ad                  # certified: users, groups, computers, OUs - and AD as an AAP inventory
+  # ---- SQL Server ----
+  - name: community.general             # community: mssql_db, mssql_script (SQL Server over port 1433)
+    version: "<12.0.0"      # 11.x: the newest for ansible-core 2.16 (12 needs 2.17)
+  - name: lowlydba.sqlserver            # community: SQL Server through dbatools on a Windows host (logins, jobs, backups)
+    version: "<3.0.0"      # 2.x: the newest for ansible-core 2.16 (3 needs 2.19)
+  # ---- MySQL and MariaDB ----
+  - name: ansible.mysql                 # MySQL and MariaDB (was community.mysql)
