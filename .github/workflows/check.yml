@@ -167,6 +167,8 @@ jobs:
         run: bash tests/linux/run_linux_checks.sh
       - name: update-from-release.sh (bash twin of the PowerShell update test)
         run: bash tests/test_update_from_release.sh
+      - name: ee/build-ee.sh - the checks, the build arguments, ee-check, push and save (fake podman, ansible-builder, curl)
+        run: bash tests/ee/test_build_ee.sh
       - name: Horizon 8 jobs against a fake Horizon REST API (tests/horizon/hzmock.py)
         run: |
           bash tests/horizon/run_horizon_test.sh
@@ -214,7 +216,7 @@ jobs:
               yaml.safe_load(open(f)); print('ok', f)
           PY
       - name: Shell scripts parse
-        run: for f in scripts/*.sh; do bash -n "$f"; done
+        run: for f in scripts/*.sh ee/*.sh ee/*/check-ee.sh; do bash -n "$f"; done
       - name: PowerShell scripts parse
         shell: pwsh
         run: |

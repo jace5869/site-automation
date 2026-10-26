@@ -84,7 +84,7 @@ mv site-automation-0.32.0/ee ~/ee && rmdir site-automation-0.32.0
 cd ~/ee && ls
 ```
 
-> **You should see:** `all-in-one  network  windows`
+> **You should see:** `all-in-one  build-ee.sh  network  windows`
 
 Each folder has the same kinds of files:
 
@@ -262,6 +262,23 @@ this line to the `podman build` command, just before the line `-f context/Contai
 ```
 
 You are ready. Go to the chapter of the EE you want.
+
+**Or let a script do it.** `build-ee.sh` (in `~/ee`) does the checks of steps 3 to 7, then an EE's
+*Build it* and *Check it* steps, and chapter 6's step 1 when you ask. It stops at the first problem and says
+which step fixes it, and asks for your hub token (nothing shows as you paste it):
+
+```bash
+cd ~/ee
+bash build-ee.sh all-in-one 1                         # builds localhost/site-ee-all:1
+PUSH=aap.example.mil bash build-ee.sh all-in-one 1    # ... and pushes it to your hub
+SAVE=1 bash build-ee.sh all-in-one 1                  # ... or saves it as site-ee-all-1.tar
+```
+
+With a PyPI mirror (step 7), put `PIP_INDEX_URL=https://...` in front of the command. The first argument
+is `windows`, `network` or `all-in-one`; the second is the version. At the end it prints what to enter
+in AAP (chapter 6, step 2).
+
+> **You should see:** `== ALL YES` (ee-check), and then the AAP fields: *Name*, *Image*, *Pull*.
 
 # EE 1: Windows, Active Directory and SQL
 

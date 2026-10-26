@@ -99,7 +99,10 @@ and SQL), `network/` (Cisco and Palo Alto) and `all-in-one/` (every job), each b
 the versions for ansible-core 2.16, SQL Server through `lowlydba.sqlserver`, PAN-OS, and `ee-check` reading each
 folder's `check-list.txt` (it ends with `ALL YES`, or names what is missing). All three have `smbprotocol`, for the
 report website written straight to an SMB share (Kerberos, no mount - the next release); the all-in-one adds
-`tzdata` for `report_time_zone`. docs/EXECUTION_ENVIRONMENT.md and its PDF (`Site-Automation-EE-Guide.pdf`, *Execution
+`tzdata` for `report_time_zone`. `ee/build-ee.sh all-in-one 2` builds one in one go: the guide's checks first (it
+stops at the first problem with the step that fixes it), ansible-builder and podman with your hub token (asked for,
+never shown), `ee-check`, then `PUSH=your-hub` pushes it or `SAVE=1` saves it as a file, and it prints the AAP fields.
+docs/EXECUTION_ENVIRONMENT.md and its PDF (`Site-Automation-EE-Guide.pdf`, *Execution
 Environments - step by step*) build, check and add each one to AAP. An EE you built from an earlier `ee/all-in-one/`
 keeps working: rebuild when you want what is new.
 
@@ -226,7 +229,8 @@ the ones after it.
     `report_email_to` in its **Variables** (or all.yml): one report of every host by email and on the website, the
     Teams card as before. docs/RUNBOOKS.md, "fapolicyd denials".
 18. **Your execution environments** (0.32.0) - optional, when you next build one: from `ee/` and the EE guide PDF
-    (*Execution Environments - step by step*), on your base EE. docs/EXECUTION_ENVIRONMENT.md.
+    (*Execution Environments - step by step*), on your base EE - by hand, or `bash build-ee.sh all-in-one 2` in
+    `~/ee`. docs/EXECUTION_ENVIRONMENT.md.
 
 ## 0.31.1 — 2026-10-26
 
