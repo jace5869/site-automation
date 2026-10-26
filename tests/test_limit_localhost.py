@@ -29,12 +29,13 @@ GUARDS = {("site_findings", "limit_check.yml"), ("net_config", "limit_check.yml"
 GUARDED = {"net_cert_renew.yml", "net_config_backup.yml", "net_config_load.yml", "servicenow_health.yml"}
 # their report part runs on the hosts, once, on the AAP side (0.32.0): a Limit of hosts needs no localhost
 AAP_SIDE = {"ad_health_report.yml", "ad_lockout.yml", "cert_install_approved.yml", "cert_install_check.yml",
-            "cert_renew_csr.yml", "log_analysis.yml", "win_cert_install_approved.yml", "win_cert_install_check.yml",
+            "cert_renew_csr.yml", "fapolicyd_denials.yml", "log_analysis.yml", "win_cert_install_approved.yml", "win_cert_install_check.yml",
             "win_cert_renew_csr.yml"}
 # groups filled while the job runs (add_host): empty when the hosts are listed
 RUNTIME_GROUPS = {"adl_sources"}
 ENV = dict(os.environ, ANSIBLE_NOCOLOR="1", ANSIBLE_LOCALHOST_WARNING="False", ANSIBLE_INVENTORY_UNPARSED_WARNING="False",
-           ANSIBLE_HOST_KEY_CHECKING="False", ANSIBLE_TIMEOUT="5", ANSIBLE_ROLES_PATH=os.path.join(REPO, "roles"))
+           ANSIBLE_HOST_KEY_CHECKING="False", ANSIBLE_TIMEOUT="5",
+           ANSIBLE_ROLES_PATH=os.pathsep.join(os.path.join(REPO, d) for d in ("roles", "vendor/act/ansible/roles")))   # as ansible.cfg
 
 
 def hosts_of(play):

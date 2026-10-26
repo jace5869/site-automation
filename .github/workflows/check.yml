@@ -139,6 +139,10 @@ jobs:
         run: |
           bash tests/containers/run_containers_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/containers/run_containers_test.sh
+      - name: fapolicyd denials with ACT, the report emailed (fake rpm/systemctl/ausearch, fake ACT; current ansible-core and 2.16)
+        run: |
+          bash tests/fapolicyd/run_fapolicyd_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_test.sh
       - name: Trust check against a made-up host tree (current ansible-core and 2.16)
         run: |
           bash tests/trust/run_trust_test.sh

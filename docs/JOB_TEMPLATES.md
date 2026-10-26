@@ -36,6 +36,7 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | Setup or test | workflow 10: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#10-stig-manager-deploy-with-checks) |
 | Network performance report | `playbooks/net_perf_report.yml` | Report | [NETWORK_PERF.md](NETWORK_PERF.md#set-it-up), workflow 34: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#34-network-performance-hourly) |
 | Log analysis | `playbooks/log_analysis.yml` | On demand | [LOG_ANALYSIS.md](LOG_ANALYSIS.md#set-it-up-in-aap) |
+| fapolicyd denials | `playbooks/fapolicyd_denials.yml` | Report | [RUNBOOKS.md](RUNBOOKS.md#fapolicyd-denials-playbooksfapolicyd_denialsyml) |
 
 ## Windows servers
 

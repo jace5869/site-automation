@@ -9,8 +9,8 @@ from 0.20.0 to 0.27.0: `site-automation-0.32.0-changed-since-0.20.0.zip`; from 0
 `site-automation-0.32.0-changed-since-0.15.1.zip` (read the 0.20.0 notes too - one file to delete). They leave out
 `playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. Coming from 0.31.0 or before, they bring 0.31.1's
 new `.gitignore`: if you changed yours, add your lines again. Nothing to change after the update; the list at the end
-repeats what 0.20.0 to 0.32.0 ask you to set up - the new step 14 is nothing to set, and step 15 (your time zone) is
-optional.
+repeats what 0.20.0 to 0.32.0 ask you to set up - the new steps 14 and 16 are nothing to set, step 15 (your time
+zone) is optional, and step 17 only if you run ACT's fapolicyd job.
 
 **A Limit needs no `localhost` any more.** Nine jobs read the hosts and then did their last part on `localhost`:
 *Log analysis*, the *Active Directory health report* and *account lockout* make their report there (and email it),
@@ -83,6 +83,15 @@ else that goes wrong reading the past runs leaves the strip out and says why - i
 (`ontap_volume_min_gb`) out of *Volumes 85% full or more, or not online* only when full: small offline or restricted
 ones were still there, red. Now a small volume is left out either way, and the line under the table counts both -
 `Volumes under 50 GB are left out (2 at or above 85%, 3 not online).` `ontap_volume_min_gb: 0` lists every volume.
+
+**fapolicyd denials by email.** New `playbooks/fapolicyd_denials.yml`: ACT's fapolicyd playbook (each host's
+denials from the audit log, ACT's analysis - evidence only, it runs nothing - and the Teams card when that credential
+is attached), then one report of every host, emailed (`report_email_to`) and on the report website: the hosts with
+denials or fapolicyd stopped first, their denied files and programs, ACT's analysis and its proposals - marked for
+your security approval - then the quiet hosts, those without fapolicyd and those not reached. A template that runs
+`vendor/act/ansible/playbooks/fapolicyd_denials.yml` itself posts to Teams only and sends no email: change its
+Playbook to `playbooks/fapolicyd_denials.yml`. A Limit of hosts needs no `localhost`. docs/RUNBOOKS.md,
+"fapolicyd denials"; `tests/fapolicyd/run_fapolicyd_test.sh`.
 
 **To do, if you have not yet: what 0.20.0 to 0.32.0 ask you to set up.** In order; each step works without
 the ones after it.
@@ -202,6 +211,10 @@ the ones after it.
     log analysis ask ACT 5 items per question (`site_act_batch`): a `log_analysis_max_items: 5` you set to make it
     finish can go. The VM - health report also checks the CRL of your `site_ocsp_certs` certificate
     (`vm_sso_crl: false` turns it off).
+17. **fapolicyd denials by email** (0.32.0) - only if you run ACT's fapolicyd job. On its template, **Playbook**
+    `playbooks/fapolicyd_denials.yml` instead of `vendor/act/ansible/playbooks/fapolicyd_denials.yml`, and
+    `report_email_to` in its **Variables** (or all.yml): one report of every host by email and on the website, the
+    Teams card as before. docs/RUNBOOKS.md, "fapolicyd denials".
 
 ## 0.31.1 — 2026-10-26
 

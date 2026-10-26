@@ -167,6 +167,8 @@ the broken trust with the domain is `network:secure-channel` (the Windows networ
 
 `check_fapolicyd_required: true` (the example inventory sets it) makes a missing fapolicyd a
 finding.
+What the denials were and what to do about them, with ACT's analysis, in a report of their own:
+[fapolicyd denials](#fapolicyd-denials-playbooksfapolicyd_denialsyml).
 
 **All settings** of this check, with their defaults: [check_fapolicyd](VARIABLES_REFERENCE.md#check_fapolicyd).
 
@@ -501,6 +503,35 @@ Add `use_act=true` and ACT reads everything collected and explains the root caus
 ([ADDING_ACT.md](ADDING_ACT.md)).
 
 **All settings** of this job, with their defaults: [troubleshoot](VARIABLES_REFERENCE.md#troubleshoot).
+
+## fapolicyd denials (`playbooks/fapolicyd_denials.yml`)
+
+What fapolicyd blocked, and what to do about it: each host's denials from the audit log, ACT's analysis of them,
+and one report of every host - emailed (`report_email_to`) and on the report website, as every report job. ACT
+only reads: the job collects the evidence (the denials, the rules, and for each denied file its package, hash,
+trust entry and SELinux label) and ACT explains it. It runs nothing on the host. It is ACT's own playbook
+(`vendor/act/ansible/playbooks/fapolicyd_denials.yml`, which posts a Teams card when the Teams webhook credential
+is attached), then the report.
+
+**The template:** Playbook `playbooks/fapolicyd_denials.yml`; your Linux inventory; credentials **Machine** and
+**ACT model key** ([ADDING_ACT.md](ADDING_ACT.md#1-the-act-model-key-credential)), and the Teams webhook one if you
+want the card too. Variables: `target` (the group; or a Limit of hosts - no `localhost` needed) and, optional,
+`fapolicyd_since: yesterday` (an `ausearch -ts` keyword: `recent` = 10 minutes, `today` the default, `yesterday`,
+`this-week`, `boot`). A daily schedule just after midnight with `yesterday` reads the whole day before. A template that runs
+`vendor/act/ansible/playbooks/fapolicyd_denials.yml` itself posts to Teams only and sends no email: change its
+Playbook to this one.
+
+| The report shows | Means | Do |
+|---|---|---|
+| a host with denials, ACT's analysis and `ACT proposes (for your security approval): fapolicyd-cli --file add ...` | fapolicyd blocked a program; ACT says whether it looks legitimate and the narrowest trust entry or rule | review it with your ISSO - a trust entry or a rule is a security-control change - then apply it by hand |
+| `fapolicyd not running` (red) | application allow-listing is off | `systemctl status fapolicyd`; its log says why it stopped |
+| `auditd` not active | denials are not recorded: the job sees none | `systemctl start auditd` |
+| *No denials* while things are blocked | the deny rules do not audit (`deny` or `deny_syslog` instead of `deny_audit`) | `deny_audit` in the rules (the RHEL default rules use it) |
+| *Not read* | the host could not be reached | as for any job: the inventory, the credential |
+
+ACT runs only on a host with denials or a problem; the others cost no model call. A host whose ACT status is in
+`fapolicyd_fail_on` (`[error]`: ACT could not answer) fails after the report; `[]` never fails one. The health
+check's `fapolicyd` check (above) counts the denials without ACT.
 
 ## Certificate report (`playbooks/cert_report.yml`)
 

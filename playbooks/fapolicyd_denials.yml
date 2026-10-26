@@ -1,0 +1,53 @@
+---
+# fapolicyd denials, with the report emailed: ACT's own playbook (vendor/act/ansible/playbooks/fapolicyd_denials.yml:
+# each host's denials from the audit log, ACT's analysis of them - evidence only, ACT runs nothing on the host - and the
+# Teams card when the Teams webhook credential is attached), then ONE report of every host's result: emailed
+# (report_email_to) and on the report website (report_web_dest), as every report job.
+#   target          the hosts (default: all) - or a Limit of hosts
+#   fapolicyd_since ausearch -ts keyword: recent (10 min), today (the default), yesterday, this-week, boot
+#   fapolicyd_fail_on  ACT statuses that fail the host after the report (default [error]; [] = never)
+# ACT's proposals (a trust entry, a narrow rule) are security-control changes: route them through your security
+# approval (e.g. the ISSO) before anyone applies them. docs/RUNBOOKS.md, "fapolicyd".
+- name: Fapolicyd denials - read and analysed (ACT)
+  ansible.builtin.import_playbook: ../vendor/act/ansible/playbooks/fapolicyd_denials.yml
+  vars:
+    act_triage_fail_on: []          # no host fails before the report: fapolicyd_fail_on, below, after it
+
+# on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
+- name: Fapolicyd denials - the report
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  vars:
+    fapolicyd_since: today          # as ACT's playbook: set it in the template's Variables, both plays read it
+  tasks:
+    - name: Fapolicyd denials | email the report, publish it (report_email_to, report_web_dest)
+      ansible.builtin.include_role:
+        name: site_email
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _report: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | list
+             | fapolicyd_report(ansible_play_hosts_all, fapolicyd_since, site_report_title | default('')) }}
+      when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+
+- name: Fapolicyd denials - after the report
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  vars:
+    fapolicyd_fail_on: [error]
+  tasks:
+    - name: Fapolicyd denials | no email
+      ansible.builtin.debug:
+        msg: "No email: report_email_to is not set (docs/EMAIL_REPORTS.md)."
+      run_once: true
+      when: report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0
+
+    - name: Fapolicyd denials | fail the hosts whose ACT status is in fapolicyd_fail_on (after the report)
+      ansible.builtin.fail:
+        msg: "ACT status {{ act_triage_result.status }}: {{ act_triage_result.stop_reason or act_triage_result.summary }}"
+      when: act_triage_result is defined and act_triage_result.status in fapolicyd_fail_on

@@ -83,6 +83,14 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
     "horizon_user_help.yml": ("Horizon - user help", "Horizon API", "", """\
 ## A survey: horizon_user (text, required) and horizon_user_action (look, logoff, disconnect, reset, restart, recover)
 """),
+    "fapolicyd_denials.yml": ("fapolicyd denials", "Machine, ACT model key (Teams webhook: optional)", "", """\
+## The hosts: target (a group of this inventory) or the Limit
+# target: app_servers
+## Denials since (ausearch -ts): recent (10 minutes), today, yesterday, this-week, boot
+# fapolicyd_since: today
+## ACT statuses that fail the host, after the report ([] = never)
+# fapolicyd_fail_on: [error]
+"""),
     "log_analysis.yml": ("Log analysis", "Machine (Machine (Windows) for Windows hosts), ACT model key (not with log_analysis_act: false)", "", """\
 ## The hosts: target (a group of this inventory) or the Limit. A survey: log_analysis_question, log_analysis_since / log_analysis_until
 # target: web
