@@ -667,8 +667,8 @@ def act_batches_reason(batches):
     bad = [b for b in bs if not b.get("ran")]
     if not bad:
         return ""
-    if len(bs) == 1:
-        return bs[0].get("reason") or ""
+    if len(bs) == 1 or (len(bad) == len(bs) and len({b.get("reason") for b in bad}) == 1):     # one reason for all: said once
+        return bad[0].get("reason") or ""
     return " ".join("%s not analyzed: %s" % (_ids_text(b.get("ids")), b.get("reason") or "ACT gave no answer.") for b in bad)
 
 

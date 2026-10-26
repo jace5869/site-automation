@@ -21,22 +21,26 @@
 - name: Logs | ACT explains the patterns
   when: log_analysis_act | bool and _la.problems | length > 0
   block:
-    - name: Logs | ACT analyzes the {{ _la.problems | length }} pattern(s) - evidence mode, ACT runs no command
+    # log_analysis_act_batch patterns per question (roles/site_act/tasks/evidence_batches.yml), each with only its evidence
+    - name: Logs | ACT analyzes the {{ _la.problems | length }} pattern(s), {{ log_analysis_act_batch }} at a time - evidence mode, ACT runs no command
       ansible.builtin.include_role:
         name: site_act
-        tasks_from: evidence_analysis.yml
+        tasks_from: evidence_batches.yml
         public: true
       vars:
-        _ea_items: "{{ _la.problems }}"
-        _ea_evidence: >-
-          {{ _la | log_evidence(_la.problems, {'window': _la_window.label, 'question': log_analysis_question,
-                                               'max_chars': log_analysis_max_chars | int}) }}
-        _ea_task: >-
-          {{ _la.problems | log_act_task({'what': _la_what, 'window': _la_window.label, 'question': log_analysis_question,
-                                          'extra': site_act_extra_instructions | default('')}) }}
+        _eb_batches: >-
+          {%- set out = [] -%}
+          {%- for b in _la.problems | batch(log_analysis_act_batch | int if log_analysis_act_batch | int > 0 else 100000) -%}
+          {%-   set _ = out.append({'items': b,
+                                    'evidence': _la | log_evidence(b, {'window': _la_window.label, 'question': log_analysis_question,
+                                                                       'max_chars': log_analysis_max_chars | int}),
+                                    'task': b | log_act_task({'what': _la_what, 'window': _la_window.label, 'question': log_analysis_question,
+                                                              'extra': site_act_extra_instructions | default('')})}) -%}
+          {%- endfor -%}
+          {{ out }}
+        _eb_check_url: "{{ log_analysis_check_url | bool }}"
         _ea_names: "{{ _la | log_names(log_analysis_names_extra) }}"
         _ea_model_timeout: "{{ log_analysis_act_model_timeout }}"
-        _ea_check_url: "{{ log_analysis_check_url | bool }}"
 
     - name: Logs | what ACT said, for the report
       ansible.builtin.set_fact:
@@ -102,8 +106,11 @@
 
 - name: Logs | ACT analyzed the patterns
   ansible.builtin.assert:
-    that: _la_ran | bool
-    fail_msg: "ACT did not analyze the patterns: {{ _la_reason }} The patterns are in the report (and the email) without an analysis."
+    that: _la_ran | bool and _la_reason | length == 0
+    fail_msg: >-
+      {{ ('ACT did not analyze every pattern: ' ~ _la_reason ~ ' The others are analyzed in the report (and the email).')
+         if _la_ran | bool else
+         ('ACT did not analyze the patterns: ' ~ _la_reason ~ ' The patterns are in the report (and the email) without an analysis.') }}
     quiet: true
   when: log_analysis_act | bool and _la.problems | length > 0 and not ansible_check_mode
 

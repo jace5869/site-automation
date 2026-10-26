@@ -69,5 +69,10 @@ site_act_timeout: 1200                    # seconds for one whole ACT run (sever
 # Every host in a job uses the same key, and GenAI.mil's default quota is 60 requests and 200,000
 # tokens a minute per key: a fleet run with many hosts at once gets HTTP 429 (too many requests).
 site_act_concurrency: 3
+# The jobs where ACT reads evidence (the VMware alarms analysis and capacity planning, the log analysis) ask it
+# about this many items per question: a long answer about many items is what a gateway or proxy cuts off, or what
+# runs past site_act_model_timeout. 15 items are 3 questions of 5, in one report. 0 = all in one question.
+# Each job's own setting wins: vm_alarm_act_batch, vm_capacity_act_batch, log_analysis_act_batch.
+site_act_batch: 5
 site_act_extra_instructions: ""           # anything ACT should know about this site
 site_act_evidence_text: ""                # extra evidence (troubleshoot.yml passes what it collected)

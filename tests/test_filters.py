@@ -444,6 +444,8 @@ class ActBatches(unittest.TestCase):
         self.assertEqual(va.act_batches_merge([one]), one["parsed"])
         self.assertEqual(va.act_batches_reason([one]), "This job has no API key for provider genai.")
         self.assertEqual(va.act_batches_reason([self.batch(["P1"], error="no JSON")]), "")    # answered: the report shows the answer
+        nokey = [self.batch(["P1", "P2"], ran=False, reason="no key."), self.batch(["P3"], ran=False, reason="no key.")]
+        self.assertEqual(va.act_batches_reason(nokey), "no key.")                              # the same for all: said once
 
 
 class VmFacts(unittest.TestCase):

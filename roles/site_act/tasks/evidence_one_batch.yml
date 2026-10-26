@@ -1,0 +1,19 @@
+---
+# One question of evidence_batches.yml: the items of _eb with their evidence; the answer is added to _eb_results.
+- name: ACT | no answer from an earlier question is taken for this one's
+  ansible.builtin.set_fact:
+    act_triage_result: {status: error, summary: "", stop_reason: "ACT gave no result"}
+
+- name: ACT | ask about {{ _eb['items'] | map(attribute='id') | join(', ') }}
+  ansible.builtin.include_tasks: evidence_analysis.yml
+  vars:
+    _ea_items: "{{ _eb['items'] }}"
+    _ea_evidence: "{{ _eb.evidence }}"
+    _ea_task: "{{ _eb.task }}"
+    _ea_check_url: "{{ _eb_check_url | default(true) | bool and _eb_results | length == 0 }}"     # the way to the model: checked once
+
+- name: ACT | the answer about {{ _eb['items'] | map(attribute='id') | join(', ') }}
+  ansible.builtin.set_fact:
+    _eb_results: >-
+      {{ _eb_results + [{'ids': _eb['items'] | map(attribute='id') | list, 'ran': _ea_ran | bool, 'parsed': _ea_parsed,
+                         'reason': _ea_reason, 'raw': _ea_raw, 'model': _ea_model}] }}

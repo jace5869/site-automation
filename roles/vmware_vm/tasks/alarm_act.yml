@@ -35,26 +35,30 @@
 - name: VMware | ACT analysis
   when: _vm_al_p.problems | length > 0
   block:
-    # vm_alarm_act_batch problems per question: a long answer about many problems is what a gateway or the model's
-    # output limit cuts off; each batch is a question of its own, with only its problems' evidence
-    - name: VMware | no answer yet
-      ansible.builtin.set_fact:
-        _vm_al_batches: []
-
-    - name: VMware | ACT analyzes the {{ _vm_al_p.problems | length }} problem(s), {{ vm_alarm_act_batch }} at a time
-      ansible.builtin.include_tasks: alarm_act_batch.yml
-      loop: "{{ _vm_al_p.problems | batch(vm_alarm_act_batch | int if vm_alarm_act_batch | int > 0 else 1000) | list }}"
-      loop_control:
-        loop_var: _vm_al_batch
-        label: "{{ _vm_al_batch | map(attribute='id') | join(', ') }}"
+    # vm_alarm_act_batch problems per question (roles/site_act/tasks/evidence_batches.yml), each with only its evidence
+    - name: VMware | ACT analyzes the {{ _vm_al_p.problems | length }} problem(s), {{ vm_alarm_act_batch }} at a time - evidence mode, ACT runs no command
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: evidence_batches.yml
+        public: true
+      vars:
+        _eb_batches: >-
+          {%- set out = [] -%}
+          {%- for b in _vm_al_p.problems | batch(vm_alarm_act_batch | int if vm_alarm_act_batch | int > 0 else 100000) -%}
+          {%-   set _ = out.append({'items': b, 'evidence': _vm_al_read | vm_alarm_evidence(b),
+                                    'task': b | vm_alarm_act_task({'hours': vm_alarm_hours, 'extra': site_act_extra_instructions | default('')})}) -%}
+          {%- endfor -%}
+          {{ out }}
+        _eb_check_url: "{{ vm_alarm_act_check_url }}"
+        _ea_names: "{{ _vm_al_read | vm_alarm_names }}"
+        _ea_model_timeout: "{{ vm_alarm_act_model_timeout }}"
 
     - name: VMware | what ACT said, for the report
       ansible.builtin.set_fact:
-        _vm_al_ran: "{{ _vm_al_batches | selectattr('ran') | list | length > 0 }}"
-        _vm_al_parsed: "{{ _vm_al_batches | act_batches_merge }}"
-        _vm_al_reason: "{{ _vm_al_batches | act_batches_reason }}"
-        _vm_al_raw: "{{ _vm_al_batches | map(attribute='raw') | select | join('\n\n') }}"
-        _ea_model: "{{ (_vm_al_batches | map(attribute='model') | select | list + [''])[0] }}"
+        _vm_al_ran: "{{ _ea_ran | bool }}"
+        _vm_al_parsed: "{{ _ea_parsed }}"
+        _vm_al_reason: "{{ _ea_reason }}"
+        _vm_al_raw: "{{ _ea_raw }}"
 
     - name: VMware | the analysis
       ansible.builtin.set_fact:

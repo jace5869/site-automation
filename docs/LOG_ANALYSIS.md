@@ -82,6 +82,7 @@ template, or as a **survey** answer. A list may be typed as `a, b` or one per li
 | `log_analysis_names_extra` | `[]` | more names ACT replaces with placeholders (host names always are) |
 | `log_analysis_act` | `true` | `false` = the patterns only, no ACT, no key needed |
 | `log_analysis_max_items` | `30` | ACT gets at most this many patterns, the most severe first; the rest are in the patterns table |
+| `log_analysis_act_batch` | `site_act_batch` (5) | patterns per question to ACT, each question with only its patterns' evidence; the answers make one report. A long answer about many patterns is what a gateway or proxy cuts off. `0` = all in one question |
 | `log_analysis_max_lines`, `log_analysis_max_line_chars` | `500`, `400` | per log: the newest lines kept; a longer line is cut |
 | `log_analysis_max_chars` | `60000` | the evidence ACT reads is cut here |
 | `log_analysis_min_count` | `1` | a pattern seen fewer times is left out |

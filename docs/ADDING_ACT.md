@@ -343,6 +343,17 @@ answers HTTP 429. `site_act_concurrency` (default **3**) caps how many hosts run
 time; the rest wait their turn. `0` = no cap. ACT itself also waits when the gateway sends a 429
 with `Retry-After`.
 
+### Many items at once: `site_act_batch`
+
+The jobs where ACT reads evidence - the VMware alarms analysis, capacity planning and log analysis - ask
+ACT about **5 items per question** (`site_act_batch`): 15 alarms are three questions of 5, each with
+only its items' evidence, and the answers make one report. One long answer about many items is what a
+gateway or proxy cuts off (`the reply was cut off`), or what runs past `site_act_model_timeout`. When one
+question fails, the others' analyses are still in the report and the job names the items that were not
+analyzed (`P6-P10 not analyzed: ...`). `site_act_batch: 3` for a slow model or a strict gateway; `0` asks
+everything in one question. Each job has its own setting too: `vm_alarm_act_batch`, `vm_capacity_act_batch`,
+`log_analysis_act_batch`.
+
 ### How to verify
 
 1. **The probe result:** in step 4 every model you plan to use shows one endpoint that worked.

@@ -889,7 +889,7 @@ key, no network, an ACT error): the email still lists the problems, and says why
 | Setting | Default | What it does |
 |---|---|---|
 | `vm_alarm_act_max_items` | `40` | give ACT at most this many problems, the most severe first (the rest are listed as not analyzed) |
-| `vm_alarm_act_batch` | `5` | problems per question to ACT: 15 problems are three questions of 5, each with only its problems' evidence, in one report. A long answer about many problems is what a gateway or proxy cuts off, or what runs past the model's time. `0` = all in one question (before 0.31.1) |
+| `vm_alarm_act_batch` | `site_act_batch` (5) | problems per question to ACT: 15 problems are three questions of 5, each with only its problems' evidence, in one report. A long answer about many problems is what a gateway or proxy cuts off, or what runs past the model's time. `0` = all in one question (before 0.31.1) |
 | `vm_alarm_act_config_issues` | `true` | configuration issues too |
 | `vm_alarm_act_check_url` | `true` | check that the AAP node can reach the model first |
 | `vm_alarm_act_model_timeout` | `site_act_model_timeout` (600) | seconds the model may take for its answer (a `GENAI_TIMEOUT` in `site_act_env` wins) |
@@ -978,6 +978,7 @@ runs no command (as in "The ACT analysis" above: the same key, URL, proxy and CA
 | `vm_capacity_trend_days` / `vm_capacity_history_days` | `30` / `90` | the days the trend is fitted on / read |
 | `vm_capacity_include_local_datastores` | `false` | count a host's own datastores too |
 | `vm_capacity_act` | `false` | GenAI's estimate next to the math |
+| `vm_capacity_act_batch` | `site_act_batch` (5) | items per question to ACT: 30 items are six questions, each with the whole evidence (an estimate needs the overall numbers) and asking about its 5 items; `0` = all in one question |
 | `vm_capacity_fail` | `false` | `true` = the job shows failed when a cluster or datastore is critical |
 
 ## Deploy a VM from a ServiceNow ticket
@@ -1517,7 +1518,7 @@ Every message of the deploy, its workflow and the scheduled pickup, with what to
 | `ACT's answer is below as text` | the model did not use the table format | the answer is still in the email. Run it again, or try another model (`site_act_models`) |
 | `The 'file' lookup had an issue accessing the file 'files/ocsp/...'` (0.31.0), or an OCSP row `not found in the project: files/ocsp/...` | the certificate is not in the project AAP synced: the repository's `.gitignore` leaves out `*.crt` / `*.pem` (before 0.31.1 also in `playbooks/files/ocsp/`), so it was never committed - VS Code shows such files greyed out | `git add -f playbooks/files/ocsp/*.crt`, commit, push, sync the project; or add `!playbooks/files/ocsp/*.crt` to `.gitignore` |
 | A row says `ACT gave no answer for this one` | the model skipped that problem | run it again; fewer problems (`vm_alarm_act_max_items`) help a small model |
-| The analysis works with a few problems, not with more (cut off, timed out, or no readable answer) | one answer about many problems is too long for the gateway, a proxy, or the model's time | `vm_alarm_act_batch` (5, since 0.31.1) asks 5 at a time; lower it to 3 if 5 still fails |
+| The analysis works with a few problems, not with more (cut off, timed out, or no readable answer) | one answer about many problems is too long for the gateway, a proxy, or the model's time `site_act_batch` (5) asks every ACT job 5 items at a time (the alarms since 0.31.1, capacity planning and log analysis since the release after it); `site_act_batch: 3` if 5 still fails, or the job's own `vm_alarm_act_batch` / `vm_capacity_act_batch` |
 | `ACT did not analyze every problem: P6-P10 not analyzed: ...` | one batch failed, the others were analyzed (the report has them) | the reason after it, as in the rows above; run it again |
 | The job is red, but the email came | ACT could not run; the email lists the problems and says why | fix what the email says, then run it again |
 

@@ -603,6 +603,7 @@ File: `roles/log_analysis/defaults/main.yml`
 | `log_analysis_question` | (empty) | What you want to know, in your words - ACT looks at it first (a good survey question), e.g. "users report slow logins since 09:00". |
 | `log_analysis_names_extra` | `[]` | more names ACT replaces with placeholders before the model sees them (host names are always) |
 | `log_analysis_max_items` | `30` | ACT analyzes at most this many patterns, the most severe first (the rest are listed) |
+| `log_analysis_act_batch` | `"{{ site_act_batch \| default(5) }}"` | patterns per question to ACT, each with only its evidence (0 = all in one question) |
 | `log_analysis_examples` | `3` | example lines per pattern in the evidence, the report and the artifacts |
 | `log_analysis_max_chars` | `60000` | the evidence ACT reads is cut at this many characters |
 | `log_analysis_check_url` | `true` | first check that the AAP node can reach the model's URL |
@@ -916,6 +917,7 @@ File: `roles/site_act/defaults/main.yml`
 | `site_act_model_timeout` | `600` | Seconds the model may take for ONE answer, retries after a provider hiccup included (ACT's GENAI_TIMEOUT; ACT's own default, 90, is too short for a long analysis or a busy provider). Every ACT job uses it: the runbooks' use_act, the VMware alarms and capacity analyses, service watch. |
 | `site_act_timeout` | `1200` | seconds for one whole ACT run (several answers): keep it above site_act_model_timeout |
 | `site_act_concurrency` | `3` | How many hosts may run ACT at the same time in one job (0 = no limit: as many as the job's forks). Every host in a job uses the same key, and GenAI.mil's default quota is 60 requests and 200,000 tokens a minute per key: a fleet run with many hosts at once gets HTTP 429 (too many requests). |
+| `site_act_batch` | `5` | The jobs where ACT reads evidence (the VMware alarms analysis and capacity planning, the log analysis) ask it about this many items per question: a long answer about many items is what a gateway or proxy cuts off, or what runs past site_act_model_timeout. 15 items are 3 questions of 5, in one report. 0 = all in one qu… (all of it: the role file) |
 | `site_act_extra_instructions` | (empty) | anything ACT should know about this site |
 | `site_act_evidence_text` | (empty) | extra evidence (troubleshoot.yml passes what it collected) |
 
@@ -1097,7 +1099,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_alarm_vm_event_types` | `[VmGuestShutdownEvent, VmGuestRebootEvent, VmPoweredOffEvent, VmResettingEvent, VmFailove…` | Events about a VM stopping, restarting or failing over (guest shutdown, power off, HA restart): the VM events table. |
 | `vm_alarm_fail` | `false` | The job stays green when it finds alarms: the report and email say what. true = mark the job FAILED when there is a critical alarm or a host is not connected, for workflows. |
 | `vm_alarm_act_max_items` | `40` | ACT analysis (playbooks/vm_alarm_act_analysis.yml). ACT runs on the AAP side (the execution environment), never on the ESXi hosts; the model provider, model, URL, proxy and CA are the site_act_* settings (roles/site_act/defaults/main.yml), the key an "ACT model key" credential. analyze at most this many problems, the… (all of it: the role file) |
-| `vm_alarm_act_batch` | `5` | problems per question to ACT: a long answer about many problems is what a gateway or proxy cuts off (0 = all in one question) |
+| `vm_alarm_act_batch` | `"{{ site_act_batch \| default(5) }}"` | problems per question to ACT: a long answer about many problems is what a gateway or proxy cuts off (0 = all in one question) |
 | `vm_alarm_act_config_issues` | `true` | configuration issues too (false = alarms and events only) |
 | `vm_alarm_act_email_if_none` | `false` | true = email even when there is nothing to analyze |
 | `vm_alarm_act_check_url` | `true` | first check that the AAP node can reach the model's URL |
@@ -1183,6 +1185,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_capacity_fail` | `false` | The job stays green: the report says what is short. true = mark it FAILED when a cluster or datastore is critical (for workflows). |
 | `vm_capacity_act` | `false` | GenAI: ACT reads the numbers and makes its own estimate, shown next to the job's (math vs GenAI). Needs an "ACT model key" credential on the template; the same site_act_* settings as the alarms analysis. ACT runs on the AAP side and runs no command. |
 | `vm_capacity_act_max_items` | `30` | items ACT estimates: everything overall, then clusters and datastores, problems first |
+| `vm_capacity_act_batch` | `"{{ site_act_batch \| default(5) }}"` | items per question to ACT (each question has the whole evidence; 0 = all in one) |
 | `vm_capacity_act_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | seconds the model may take for its answer |
 | `vm_capacity_act_check_url` | `true` | first check that the AAP node can reach the model's URL |
 | `vm_deploy_ticket` | (empty) | ---- Deploy a VM from a ServiceNow ticket (playbooks/vm_deploy_from_ticket.yml) ---- The ticket (survey answer): INC..., TASK..., SCTASK..., RITM..., CHG... - or your instance's own prefixes (INCN..., CHGN...): the job asks ServiceNow which table a ticket is in. The ticket says what to build in 'key: value' lines - in… (all of it: the role file) |

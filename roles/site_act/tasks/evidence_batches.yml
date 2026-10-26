@@ -1,0 +1,39 @@
+---
+# ACT reads evidence and answers (evidence_analysis.yml), a few items per question: a long answer about many items is
+# what a gateway or proxy cuts off, or what runs past the model's time. One question per batch, each with its own
+# evidence; the answers are merged into one, so the outputs are evidence_analysis.yml's. Used by the VMware alarms ACT
+# analysis, the capacity planning and the log analysis (site_act_batch and each job's own *_act_batch).
+# Input:  _eb_batches ([{items, evidence, task}], built by the job: problems | batch(n)), _eb_check_url (bool: check
+#         the way to the model, once), _ea_names, _ea_model_timeout, _ea_in_check - as for evidence_analysis.yml
+# Output: _ea_ran (ACT answered at least one batch), _ea_parsed (act_batches_merge), _ea_reason ('' when every batch
+#         was answered, else which were not and why), _ea_raw, _ea_model, _ea_url, _eb_results (per batch)
+- name: ACT | no answer yet
+  ansible.builtin.set_fact:
+    _eb_results: []
+
+# a dry run (Check) asks nothing: one "would analyze N items" for them all
+- name: ACT | a dry run (Check) - ACT is not asked
+  ansible.builtin.include_tasks: evidence_analysis.yml
+  vars:
+    _ea_items: "{{ _eb_batches | map(attribute='items') | flatten }}"
+    _ea_evidence: ""
+    _ea_task: ""
+    _ea_check_url: false
+  when: ansible_check_mode and not _ea_in_check | default(false) | bool
+
+- name: ACT | {{ _eb_batches | map(attribute='items') | map('length') | sum }} item(s) in {{ _eb_batches | length }} question(s)
+  ansible.builtin.include_tasks: evidence_one_batch.yml
+  when: not ansible_check_mode or _ea_in_check | default(false) | bool
+  loop: "{{ _eb_batches }}"
+  loop_control:
+    loop_var: _eb
+    label: "{{ _eb['items'] | map(attribute='id') | join(', ') }}"
+
+- name: ACT | the answers, as one
+  when: not ansible_check_mode or _ea_in_check | default(false) | bool
+  ansible.builtin.set_fact:
+    _ea_ran: "{{ _eb_results | selectattr('ran') | list | length > 0 }}"
+    _ea_parsed: "{{ _eb_results | act_batches_merge }}"
+    _ea_reason: "{{ _eb_results | act_batches_reason }}"
+    _ea_raw: "{{ _eb_results | map(attribute='raw') | select | join('\n\n') }}"
+    _ea_model: "{{ (_eb_results | map(attribute='model') | select | list + [''])[0] }}"

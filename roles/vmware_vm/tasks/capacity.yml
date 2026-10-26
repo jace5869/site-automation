@@ -41,18 +41,25 @@
 - name: VMware | GenAI's estimate next to the math (vm_capacity_act)
   when: vm_capacity_act | bool
   block:
-    - name: "VMware | ACT estimates the {{ _vm_cap['items'][: vm_capacity_act_max_items | int] | length }} item(s) - evidence mode, ACT runs no command"
+    # vm_capacity_act_batch items per question (roles/site_act/tasks/evidence_batches.yml); each question has the whole
+    # evidence - an estimate needs the overall numbers - and asks only about its items
+    - name: "VMware | ACT estimates the {{ _vm_cap['items'][: vm_capacity_act_max_items | int] | length }} item(s), {{ vm_capacity_act_batch }} at a time - evidence mode, ACT runs no command"
       ansible.builtin.include_role:
         name: site_act
-        tasks_from: evidence_analysis.yml
+        tasks_from: evidence_batches.yml
         public: true
       vars:
-        _ea_items: "{{ _vm_cap['items'][: vm_capacity_act_max_items | int] }}"
-        _ea_evidence: "{{ _vm_cap | vm_capacity_evidence(_vm_cap_opts) }}"
-        _ea_task: "{{ _vm_cap['items'][: vm_capacity_act_max_items | int] | vm_capacity_act_task(_vm_cap_opts | combine({'extra': site_act_extra_instructions | default('')})) }}"
+        _eb_batches: >-
+          {%- set ev = _vm_cap | vm_capacity_evidence(_vm_cap_opts) -%}
+          {%- set out = [] -%}
+          {%- for b in _vm_cap['items'][: vm_capacity_act_max_items | int] | batch(vm_capacity_act_batch | int if vm_capacity_act_batch | int > 0 else 100000) -%}
+          {%-   set _ = out.append({'items': b, 'evidence': ev,
+                                    'task': b | vm_capacity_act_task(_vm_cap_opts | combine({'extra': site_act_extra_instructions | default('')}))}) -%}
+          {%- endfor -%}
+          {{ out }}
+        _eb_check_url: "{{ vm_capacity_act_check_url }}"
         _ea_names: "{{ _vm_cap_read | vm_capacity_names }}"
         _ea_model_timeout: "{{ vm_capacity_act_model_timeout }}"
-        _ea_check_url: "{{ vm_capacity_act_check_url }}"
 
     - name: VMware | ACT's estimate in the report
       ansible.builtin.set_fact:
@@ -84,8 +91,11 @@
 
 - name: VMware | ACT made its estimate
   ansible.builtin.assert:
-    that: _ea_ran | bool
-    fail_msg: "ACT did not estimate: {{ _ea_reason }} The capacity report (the math) is above and in the email."
+    that: _ea_ran | bool and _ea_reason | length == 0
+    fail_msg: >-
+      {{ ('ACT did not estimate every item: ' ~ _ea_reason ~ ' The others are estimated in the report (and the email).')
+         if _ea_ran | bool else
+         ('ACT did not estimate: ' ~ _ea_reason ~ ' The capacity report (the math) is above and in the email.') }}
     quiet: true
   when: vm_capacity_act | bool and not ansible_check_mode
 

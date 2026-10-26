@@ -118,7 +118,7 @@ run() {  # run NAME EXPECT(ok|fail) [args...] -- TEXT...
 
 export GENAI_KEY=test-key
 run "a group with a host not reached: patterns grouped and ranked, ACT's answer, emailed and published, green" ok \
-    -e "$mail" -e "$actvars" -e 'log_analysis_question="users report slow logins since 08:00"' \
+    -e "$mail" -e "$actvars" -e 'log_analysis_question="users report slow logins since 08:00"' -e log_analysis_act_batch=0 \
     -- "Log analysis: likely causes and fixes for" "1 host(s) not read" "gone01.example.mil" "90% high" "60% medium" \
        "Give the JVM more memory first." "Patterns (" "Profile mine: localhost." "Profile sssd: localhost." \
        "could not connect to db01:5432" "request failed with status 500" "certificate expires in 5 days" \
@@ -135,6 +135,11 @@ grep -q "Connection reset by .* port" "$work/act/fake-act-stdin.txt" && [ "$(gre
     && grep -q "^P1 \[CRITICAL\] journal kernel" "$work/act/fake-act-stdin.txt" \
     && echo "ok   -   ...two sshd lines one pattern (the units' read of the same line counted once), the critical one first" \
     || { echo "FAIL -   ...grouping"; head -30 "$work/act/fake-act-stdin.txt"; fails=$((fails + 1)); }
+run "ACT asked 2 patterns at a time (log_analysis_act_batch): one report, each question with its own evidence" ok \
+    -e "$actvars" -e log_analysis_act_batch=2 -- "pattern(s), 2 at a time" "P1, P2: Give the JVM more memory first." "90% high" \
+       "ACT gave no answer for this one"
+grep -q "^P1 " "$work/act/fake-act-stdin.txt" && { echo "FAIL -   ...the last question had P1's evidence"; fails=$((fails + 1)); } \
+    || echo "ok   -   ...the last question had only its own patterns' evidence"
 eml="$(ls "$work/mail"/*.eml 2>/dev/null | sort -V | tail -1)"
 if [ -n "$eml" ] && grep -q "Likely causes and fixes" "$eml" && grep -q "First seen" "$eml" && grep -q "What was read" "$eml" \
    && ls "$work/site"/*/latest.html >/dev/null 2>&1; then
