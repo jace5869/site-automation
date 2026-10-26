@@ -66,7 +66,8 @@ An interface's first run (or after a reboot: its counters start over) is counted
      - {name: OCSP 2, url: "http://ocsp2.example.mil", cert: files/ocsp/test-user.pem, issuer: files/ocsp/issuing-ca.pem}
    ```
 
-   With a `url` only, the responder must answer HTTP at all.
+   With a `url` only, each host sends it a HEAD request (what `curl -I` sends): any HTTP answer is the
+   responder up, but 502, 503 or 504 (a proxy or load balancer saying the server behind it is down).
 3. **iperf3** (optional): `iperf3` installed on both hosts of a pair, TCP port 5201 open on the server.
    Both hosts must be in the job; the server answers one test and exits.
 

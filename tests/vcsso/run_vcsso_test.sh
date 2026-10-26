@@ -39,6 +39,24 @@ printf 'V\t%s\t\t%s\tunknown\t/CN=user.example.mil\nR\t%s\t%s\t%s\tunknown\t/CN=
 openssl ocsp -index index.txt -port "$po" -rsigner ocsp.pem -rkey ocsp.key -CA ca.pem -nmin 60 -ignore_err >/dev/null 2>&1 & pids="$pids $!"
 mkdir -p pb/files pub && cp user.pem gone.pem ca.pem pb/files/ && openssl x509 -in ca.pem -outform DER -out pub/ca.cer
 "$py" -m http.server "$pc" --bind 127.0.0.1 --directory "$W/pub" >/dev/null 2>&1 & pids="$pids $!"
+# a responder that answers HEAD (curl -I) but fails a plain GET, and one whose server behind it is down (503)
+ph=$((pc + 1)) pd=$((pc + 2))
+"$py" -c 'import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class H(BaseHTTPRequestHandler):
+    def do_HEAD(self):
+        self.send_response(int(sys.argv[2])); self.end_headers()
+    def do_GET(self):
+        self.send_response(500); self.end_headers()
+    def log_message(self, *a): pass
+HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()' "$ph" 200 >/dev/null 2>&1 & pids="$pids $!"
+"$py" -c 'import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class H(BaseHTTPRequestHandler):
+    def do_HEAD(self):
+        self.send_response(503); self.end_headers()
+    def log_message(self, *a): pass
+HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()' "$pd" >/dev/null 2>&1 & pids="$pids $!"
 chain() { "$py" -c 'import json,sys; print(json.dumps({"active_cert_chain": {"cert_chain": [open(sys.argv[1]).read(), open("ca.pem").read()]}, "signing_cert_chains": []}))' "$1"; }
 data() {  # data STS STATE [forbidden]
     cat > data.json <<J
@@ -105,6 +123,10 @@ run "OCSP: a certificate that names no responder" -e "{\"vm_sso_ocsp\": [{\"cert
     "the certificate CN=gone.example.mil names no OCSP address (Authority Information Access): give the responder's url"
 run "OCSP: a responder that does not answer" -e '{"vm_sso_ocsp": [{"url": "http://127.0.0.1:9"}]}' -- "CRITICAL the OCSP responder http://127.0.0.1:9: no answer"
 run "OCSP: a stale answer (its next update passed)" -e "_vm_now=$(date -u -d '+1 day' +%Y-%m-%dT%H:%M:%SZ)" -- "the answer is stale: its next update"
+run "OCSP: a URL only - a HEAD request, as curl -I (this responder fails a plain GET)" -e "{\"vm_sso_ocsp\": [{\"url\": \"http://127.0.0.1:$ph/\"}]}" -- \
+    "OK | OCSP http://127.0.0.1:$ph/ | answers" "!CRITICAL"
+run "OCSP: a URL only - 503, the server behind it down" -e "{\"vm_sso_ocsp\": [{\"url\": \"http://127.0.0.1:$pd/\"}]}" -- \
+    "CRITICAL the OCSP responder http://127.0.0.1:$pd/: the responder answered HTTP 503 (the server behind the address is not answering)"
 run "OCSP: a URL only - it answers" -e "{\"vm_sso_ocsp\": [{\"url\": \"http://127.0.0.1:$po\"}]}" -e vm_sso_ocsp_severity=warning -- "OK | OCSP http://127.0.0.1:$po | answers" "!CRITICAL"
 
 VP=wrong run "the credential's own login refused: critical, and the test login is still tried" -- \

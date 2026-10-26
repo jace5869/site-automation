@@ -44,7 +44,9 @@ certificate the responder knows once, for both, in `all.yml` - `site_ocsp_certs:
 the address and the issuing CA's certificate are read from the certificate itself (its Authority Information
 Access, which every DoD certificate carries; the CA's certificate is downloaded from the AAP node, or put it after
 the user's in the same file). `vm_sso_ocsp` and `net_perf_ocsp` still work as before, and an entry may now leave out
-`url` and `issuer` too. What could not be read is reported as the responder's problem, with what to give instead.
+`url` and `issuer` too. What could not be read is reported as the responder's problem, with what to give instead. A `url`
+alone is now asked with a HEAD request, as `curl -I` does (before: a plain GET, which some responders answer with a
+server error): any HTTP answer is the responder up, but 502, 503 or 504.
 docs/VMWARE.md, "Single sign-on and OCSP"; docs/NETWORK_PERF.md, "Set it up".
 
 **The ACT PDFs in the new look, and up to date.** The two 5W's briefs, the ACT Automated Triage Guide and the ACT on

@@ -57,8 +57,9 @@ def ocsp_judge(rec, now=""):
         return out
     if rec.get("mode") != "request":
         out["status"] = "http %s" % rec.get("code")
-        out["ok"] = 0 < int(rec.get("code") or 0) < 500
-        out["why"] = "" if out["ok"] else "the responder answered HTTP %s" % rec.get("code")
+        # a URL only (a HEAD request): any HTTP answer is the responder up, but 502/503/504 - the server behind it is not
+        out["ok"] = int(rec.get("code") or 0) > 0 and int(rec.get("code") or 0) not in (502, 503, 504)
+        out["why"] = "" if out["ok"] else "the responder answered HTTP %s (the server behind the address is not answering)" % rec.get("code")
         return out
     if int(rec.get("code") or 0) != 200:
         out["why"] = "the responder answered HTTP %s to the OCSP request" % rec.get("code")

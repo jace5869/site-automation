@@ -84,8 +84,10 @@ class Judge(unittest.TestCase):
     def test_ocsp_plain_and_failed(self):
         r = nf.net_perf_result(raw([], ocsp=[{"name": "P", "url": "http://ocsp.example.mil", "mode": "reach", "code": 405, "ms": 30},
                                              {"name": "Q", "url": "http://ocsp.example.mil", "mode": "reach", "code": 0, "why": "no answer: refused"},
+                                             {"name": "R", "url": "http://ocsp.example.mil", "mode": "reach", "code": 500, "ms": 30},
+                                             {"name": "U", "url": "http://ocsp.example.mil", "mode": "reach", "code": 503, "ms": 30},
                                              {"name": "S", "url": "http://ocsp.example.mil", "mode": "reach", "code": 200, "ms": 5000}]), "h")
-        self.assertEqual(ids(r), [("netperf:ocsp:Q", "critical"), ("netperf:ocsp-slow:S", "warning")])
+        self.assertEqual(ids(r), [("netperf:ocsp:Q", "critical"), ("netperf:ocsp:U", "critical"), ("netperf:ocsp-slow:S", "warning")])
 
 
 class Iperf(unittest.TestCase):

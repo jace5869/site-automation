@@ -21,7 +21,7 @@ net_perf_timeout: 5                      # seconds a single ping or connect may 
 
 # ---- OCSP responders (asked from every host) ----------------------------------------------------------------
 # Simplest: site_ocsp_certs (below) - a certificate the responder knows, its OCSP address and issuer read from it.
-# net_perf_ocsp, when set, is used instead: a url alone - it must answer HTTP; with cert (a PEM file from playbooks/, not
+# net_perf_ocsp, when set, is used instead: a url alone - a HEAD request (as curl -I), any HTTP answer but 502/503/504; with cert (a PEM file from playbooks/, not
 # a secret) a real OCSP request: the answer must be successful, the certificate good, the answer fresh. A url or issuer
 # left out is read from the certificate (its Authority Information Access), on the AAP side.
 net_perf_ocsp: []                        # e.g. [{name: DISA OCSP, cert: files/ocsp/test-user.pem}] or [{name: DISA OCSP, url: "http://ocsp.example.mil", cert: files/ocsp/test-user.pem, issuer: files/ocsp/issuing-ca.pem}]

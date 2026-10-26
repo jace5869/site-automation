@@ -701,7 +701,7 @@ File: `roles/net_perf/defaults/main.yml`
 | `net_perf_loss_warn_pct` | `1` | packet loss from this percent -> warning |
 | `net_perf_loss_crit_pct` | `10` | ... from this percent -> critical (100 % = the target does not answer at all) |
 | `net_perf_timeout` | `5` | seconds a single ping or connect may wait |
-| `net_perf_ocsp` | `[]` | ---- OCSP responders (asked from every host) ---------------------------------------------------------------- Simplest: site_ocsp_certs (below) - a certificate the responder knows, its OCSP address and issuer read from it. net_perf_ocsp, when set, is used instead: a url alone - it must answer HTTP; with cert (a PEM fi… (all of it: the role file) |
+| `net_perf_ocsp` | `[]` | ---- OCSP responders (asked from every host) ---------------------------------------------------------------- Simplest: site_ocsp_certs (below) - a certificate the responder knows, its OCSP address and issuer read from it. net_perf_ocsp, when set, is used instead: a url alone - a HEAD request (as curl -I), any HTTP an… (all of it: the role file) |
 | `site_ocsp_certs` | `[]` | certificates the OCSP responders know (PEM files from playbooks/), for net_perf_ocsp and vm_sso_ocsp when those are empty, e.g. [files/ocsp/test-user.pem] |
 | `net_perf_ocsp_warn_ms` | `2000` | an OCSP answer slower than this -> warning |
 | `net_perf_ocsp_severity` | `critical` | an OCSP responder that fails: critical (smart card logins fail) or warning |

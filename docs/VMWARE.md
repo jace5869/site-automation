@@ -653,7 +653,8 @@ vm_sso_ocsp:
 
 With a certificate, each run sends a real OCSP request and reads the answer: it must be
 successful, the certificate **good**, and the answer fresh (its next update not passed). With a `url`
-only, it must answer HTTP at all. The responders are asked from the AAP node; vCenter itself must reach
+only, it is sent a HEAD request (what `curl -I` sends): any HTTP answer is the responder up, but 502, 503 or
+504 (a proxy or load balancer saying the server behind it is down). The responders are asked from the AAP node; vCenter itself must reach
 them too (a proxy or firewall between vCenter and the responder is not seen from here).
 
 The account of the **VMware vCenter** credential reads the services (read access to the appliance) and

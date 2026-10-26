@@ -17,7 +17,8 @@ description:
     (/api/vcenter/certificate-management/vcenter/signing-certificate) and the identity providers (/api/vcenter/identity/providers).
   - With C(test_user) a login as that domain account (POST /api/session), then its logout.
   - Each OCSP responder in C(ocsp) - with a certificate and its issuer, a real OCSP request (the answer must be successful,
-    the certificate good, the answer not past its next update); with a URL only, that it answers HTTP at all.
+    the certificate good, the answer not past its next update); with a URL only, that it answers a HEAD request (as curl -I)
+    with any HTTP status but 502, 503 or 504.
 options:
   vcenters: {description: More vCenters besides the credential's (VMWARE_HOST)., type: list, elements: str, default: []}
   services: {description: The SSO services that must be started (names as vCenter lists them)., type: list, elements: str, default: []}
@@ -66,6 +67,8 @@ except ImportError:
 
 PEM_RE = re.compile(r"-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s\\n]+?-----END CERTIFICATE-----")
 SIGNING_PATH = "/api/vcenter/certificate-management/vcenter/signing-certificate"
+UA = "site-automation-ocsp-check"         # not Python's default, which some proxies and web filters turn away
+DOWN_CODES = (502, 503, 504)              # a URL-only check: a proxy or load balancer saying the responder behind it is down
 
 
 def utc_now(now=""):
@@ -233,7 +236,8 @@ def check_ocsp(x, timeout, now):
             cert = x509.load_pem_x509_certificate(x["cert"].encode("ascii"))
             issuer = x509.load_pem_x509_certificate(x["issuer"].encode("ascii"))
             body = ocsp.OCSPRequestBuilder().add_certificate(cert, issuer, hashes.SHA1()).build().public_bytes(serialization.Encoding.DER)
-            req = urlrequest.Request(url, data=body, headers={"Content-Type": "application/ocsp-request", "Accept": "application/ocsp-response"})
+            req = urlrequest.Request(url, data=body, headers={"Content-Type": "application/ocsp-request", "Accept": "application/ocsp-response",
+                                                              "User-Agent": UA})
             resp = urlrequest.urlopen(req, timeout=timeout)
             raw = resp.read()
             rec["ms"] = int((time.time() - t0) * 1000)
@@ -254,14 +258,19 @@ def check_ocsp(x, timeout, now):
             else:
                 rec["ok"] = True
             return rec
-        resp = urlrequest.urlopen(urlrequest.Request(url), timeout=timeout)
+        # a URL only: a HEAD request, as `curl -I` sends - any HTTP answer is the responder up, but a proxy or load
+        # balancer saying the server behind it is not there (502, 503, 504)
+        req = urlrequest.Request(url, headers={"User-Agent": UA})
+        req.get_method = lambda: "HEAD"
+        resp = urlrequest.urlopen(req, timeout=timeout)
         rec["status"] = "http %d" % resp.getcode()
         rec["ok"] = True
     except urlerror.HTTPError as e:
         rec["status"] = "http %d" % e.code
-        if rec["mode"] == "reach":                  # an OCSP responder answers a bare GET with 4xx: it is up
-            rec["ok"] = e.code < 500
-            rec["why"] = "" if rec["ok"] else "the responder answered HTTP %d" % e.code
+        e.close()
+        if rec["mode"] == "reach":
+            rec["ok"] = e.code not in DOWN_CODES
+            rec["why"] = "" if rec["ok"] else "the responder answered HTTP %d (the server behind the address is not answering)" % e.code
         else:
             rec["why"] = "the responder answered HTTP %d to the OCSP request" % e.code
     except (urlerror.URLError, OSError) as e:

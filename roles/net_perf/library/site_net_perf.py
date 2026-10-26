@@ -110,14 +110,17 @@ def ocsp_post(url, request_b64, timeout):
     try:
         if request_b64:
             req = urlrequest.Request(url, data=base64.b64decode(request_b64),
-                                     headers={"Content-Type": "application/ocsp-request", "Accept": "application/ocsp-response"})
-        else:
-            req = urlrequest.Request(url)
+                                     headers={"Content-Type": "application/ocsp-request", "Accept": "application/ocsp-response",
+                                              "User-Agent": "site-automation-ocsp-check"})
+        else:                              # a URL only: a HEAD request, as `curl -I` sends
+            req = urlrequest.Request(url, headers={"User-Agent": "site-automation-ocsp-check"})
+            req.get_method = lambda: "HEAD"
         resp = urlrequest.urlopen(req, timeout=timeout)
         rec["code"], body = resp.getcode(), resp.read(65536)
         rec["body"] = base64.b64encode(body).decode("ascii") if request_b64 else ""
     except urlerror.HTTPError as e:
         rec["code"] = e.code
+        e.close()
     except (urlerror.URLError, OSError) as e:
         rec["why"] = "no answer: %s" % getattr(e, "reason", e)
     rec["ms"] = int((time.time() - t0) * 1000)
