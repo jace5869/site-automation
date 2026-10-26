@@ -7,7 +7,8 @@ from 0.30.0: `site-automation-0.31.1-changed-since-0.30.0.zip` (0.31.0's files t
 `site-automation-0.31.1-changed-since-0.28.0.zip`; from 0.20.0 to 0.27.0: `site-automation-0.31.1-changed-since-0.20.0.zip`;
 from 0.15.1 to 0.19.x: `site-automation-0.31.1-changed-since-0.15.1.zip` (read the 0.20.0 notes too - one file to delete).
 They leave out `playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. Nothing to change after the update;
-the to-do list of 0.31.0 still holds.
+the to-do list of 0.31.0 still holds. The zips bring a new `.gitignore`: if you changed yours, add your lines again.
+Optional: `site_ocsp_certs` in `all.yml` (below), with the certificate committed in `playbooks/files/ocsp/`.
 
 **Fixed: the strip of past runs showed only this run, run after run.** AAP gives no error for jobs its user may not
 see - it lists none - so when the reports' AAP credential's user had no role on the template's organization, every
