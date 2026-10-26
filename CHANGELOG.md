@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.32.0 — unreleased
+## 0.32.0 — 2026-10-26
 
 **Updating without scripts:** paste one zip as it is - from 0.31.1: `site-automation-0.32.0-changed-since-0.31.1.zip`;
 from 0.31.0: `site-automation-0.32.0-changed-since-0.31.0.zip` (0.31.1's files too); from 0.30.0:
