@@ -8,7 +8,8 @@
   a vCenter SSO service in opts.services not started              critical
   the test domain account cannot log in                           critical
   the STS signing certificate expired / within crit / warn days   critical / critical / warning   (health report only)
-  an OCSP responder: no answer, not successful, stale, not good    opts.ocsp_severity (critical)"""
+  an OCSP responder: no answer, not successful, stale, not good    opts.ocsp_severity (critical)
+  a CRL: no download, not a CRL, not the CA's, stale, lists the test certificate   opts.crl_severity (warning; health report only)"""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -16,7 +17,7 @@ RANK = {"critical": 0, "warning": 1, "info": 2}
 
 
 def _o(opts):
-    o = dict({"sts_warn_days": 60, "sts_crit_days": 14, "ocsp_severity": "critical"}, **(opts or {}))
+    o = dict({"sts_warn_days": 60, "sts_crit_days": 14, "ocsp_severity": "critical", "crl_severity": "warning"}, **(opts or {}))
     o["sts_warn_days"], o["sts_crit_days"] = int(o["sts_warn_days"]), int(o["sts_crit_days"])
     return o
 
@@ -62,14 +63,20 @@ def _problems(sso, opts, now_only):
             out.append((o["ocsp_severity"], first, "ocsp", x.get("url", ""),
                         "the OCSP responder %s: %s - smart card (CAC) logins that check revocation fail" % (x.get("url", ""), x.get("why") or "no answer"),
                         "Check the responder and the network path to it (proxy, firewall, DNS); vCenter's smart card revocation settings."))
+    for x in [] if now_only else (sso or {}).get("crl") or []:
+        if not x.get("ok"):
+            out.append((o["crl_severity"], first, "crl", x.get("url", ""),
+                        "the CRL %s: %s - smart card logins that check revocation by CRL (or fall back to it) fail" % (x.get("url", ""), x.get("why") or "not read"),
+                        "Check the CRL server and the network path to it (proxy, firewall, DNS) from the AAP node and from vCenter; "
+                        "a stale CRL is the CA's to publish again."))
     out.sort(key=lambda p: (RANK.get(p[0], 9), p[1], p[3]))
     return out
 
 
 def vcenter_sso_problems(sso, opts=None):
     """The health report's problem rows: [{severity, object_type, object, vcenter, datacenter, cluster, problem, fix}]."""
-    return [{"severity": s, "object_type": "vcenter", "object": ("OCSP " + obj) if kind == "ocsp" else vc, "vcenter": vc, "datacenter": "", "cluster": "",
-             "problem": prob, "fix": fix} for s, vc, kind, obj, prob, fix in _problems(sso, opts, False)]
+    return [{"severity": s, "object_type": "vcenter", "object": ("OCSP " + obj) if kind == "ocsp" else ("CRL " + obj) if kind == "crl" else vc, "vcenter": vc,
+             "datacenter": "", "cluster": "", "problem": prob, "fix": fix} for s, vc, kind, obj, prob, fix in _problems(sso, opts, False)]
 
 
 def vcenter_sso_conditions(sso, opts=None):
@@ -91,7 +98,7 @@ def vcenter_sso_doc(doc, sso, opts=None):
     ps = _problems(sso, o, False)
     rows, rs = [], []
     for v in (sso or {}).get("vcenters") or []:
-        mine = [p for p in ps if p[1] == v.get("name") and p[2] != "ocsp"]
+        mine = [p for p in ps if p[1] == v.get("name") and p[2] not in ("ocsp", "crl")]
         st = _status(mine)
         svc = ", ".join("%s %s" % (s["name"], (s.get("state") or "?").lower()) for s in v.get("services") or [] if s.get("found")) or "-"
         sts = ", ".join("%s (%d days)" % (c.get("expires", ""), int(c.get("days", 0))) for c in v.get("sts") or []) or "not read"
@@ -111,12 +118,22 @@ def vcenter_sso_doc(doc, sso, opts=None):
         rows.append([st.upper(), "OCSP " + x.get("url", ""), what or x.get("why", ""), "", "", "%d ms" % int(x.get("ms") or 0),
                      x.get("why", "") if what and not x.get("ok") else ""])
         rs.append(st)
+    for x in (sso or {}).get("crl") or []:
+        st = "ok" if x.get("ok") else o["crl_severity"]
+        what = ""
+        if x.get("entries") is not None:
+            what = "%s certificate(s) listed, %.1f MB, next update %s" % (x["entries"], (x.get("size") or 0) / 1048576.0, x.get("next_update") or "-")
+            what += "; the test certificate is not on it" if x.get("ok") else ""
+        rows.append([st.upper(), "CRL " + x.get("url", ""), what or x.get("why", ""), "", "", "%d ms" % int(x.get("ms") or 0),
+                     x.get("why", "") if what and not x.get("ok") else ""])
+        rs.append(st)
     if rows:
         sec = {"title": "Single sign-on and OCSP", "status": _status(ps) if ps else "ok",
                "columns": ["Status", "vCenter / responder", "SSO services", "STS signing certificate", "Identity providers", "Test login / answer time", "Notes"],
                "rows": rows, "row_status": rs,
                "text": "Single sign-on is how every user and job logs in to vCenter: its services, the certificate that signs its tokens, its identity "
-                       "sources, and a real login by a test domain account. The OCSP responders are what smart card logins check revocation with."}
+                       "sources, and a real login by a test domain account. The OCSP responders and the CRLs are what smart card logins check "
+                       "revocation with - both asked from the AAP node: whether each vCenter reaches them too is not seen from here."}
         secs = list(d.get("sections") or [])
         at = 1 if secs and secs[0].get("title") == "Needs attention" else 0
         secs.insert(at, sec)

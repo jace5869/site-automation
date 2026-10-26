@@ -70,7 +70,7 @@ VC = {"name": "vc01.example.mil", "error": "", "notes": [], "providers": [{"name
 
 def sso(**kw):
     v = dict(VC, **kw.pop("vc", {}))
-    return {"vcenters": [v], "ocsp": kw.get("ocsp", [])}
+    return {"vcenters": [v], "ocsp": kw.get("ocsp", []), "crl": kw.get("crl", [])}
 
 
 class VcenterSso(unittest.TestCase):
@@ -103,6 +103,21 @@ class VcenterSso(unittest.TestCase):
         c = vf.vcenter_sso_conditions(s)[0]
         self.assertEqual((c["vcenter"], c["object_type"], c["severity"]), ("vc01.example.mil", "OCSP responder", "critical"))
         self.assertEqual(vf.vcenter_sso_problems(s, {"ocsp_severity": "warning"})[0]["severity"], "warning")
+
+    def test_crl_in_the_report_only_a_warning(self):
+        bad = {"url": "http://crl.example.mil/ca.crl", "ok": False, "why": "the CRL is stale: its next update (2026-10-01 00:00 UTC) has passed",
+               "entries": 120000, "size": 31457280, "next_update": "2026-10-01 00:00 UTC", "ms": 4200}
+        s = sso(crl=[bad])
+        p = vf.vcenter_sso_problems(s)
+        self.assertEqual([(x["severity"], x["object"]) for x in p], [("warning", "CRL http://crl.example.mil/ca.crl")])
+        self.assertIn("the CRL is stale", p[0]["problem"])
+        self.assertEqual(vf.vcenter_sso_conditions(s), [])                                    # the watch: never
+        self.assertEqual(vf.vcenter_sso_problems(s, {"crl_severity": "critical"})[0]["severity"], "critical")
+        good = dict(bad, ok=True, why="", next_update="2026-11-01 00:00 UTC")
+        sec = vf.vcenter_sso_doc({"title": "T", "sections": []}, sso(crl=[good]))["sections"][0]
+        row = [r for r in sec["rows"] if r[1].startswith("CRL ")][0]
+        self.assertEqual(row[0], "OK")
+        self.assertEqual(row[2], "120000 certificate(s) listed, 30.0 MB, next update 2026-11-01 00:00 UTC; the test certificate is not on it")
 
     def test_doc_section_title_status(self):
         doc = {"title": "VMware health report: healthy - 1 host(s)", "status": "ok", "sections": [{"title": "Needs attention"}, {"title": "Datacenters"}]}

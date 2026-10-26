@@ -649,6 +649,7 @@ and the **outage watch** asks every run whether SSO is down *now* (`vm_watch_sso
 | The STS signing certificate expired, or expires within `vm_sso_sts_crit_days` (14) | critical | yes | - |
 | ... within `vm_sso_sts_warn_days` (60) | warning | yes | - |
 | An OCSP responder (`site_ocsp_certs` or `vm_sso_ocsp`) does not answer, answers not successful, stale, or not good, or its address or issuer could not be read from the certificate | `vm_sso_ocsp_severity` (critical) | yes | yes |
+| The CRL of a certificate there cannot be downloaded, is not a CRL, is not the CA's (issuer or signature), is stale (its next update passed), or lists the test certificate | `vm_sso_crl_severity` (warning) | yes | no |
 
 The section also lists each vCenter's identity providers. Only reads reach vCenter.
 
@@ -690,6 +691,16 @@ only, it is sent an OCSP request about a made-up certificate, as a smart card lo
 response ("unauthorized", usually) is the responder up. No answer, an HTTP error, or an answer that is not
 OCSP is the problem. (A plain GET or `curl -I` proves less: some responders close a bare GET unanswered.) The responders are asked from the AAP node; vCenter itself must reach
 them too (a proxy or firewall between vCenter and the responder is not seen from here).
+
+**CRL.** vCenter checks a smart card's certificate against its CA's CRL when OCSP does not answer (or
+only by CRL, when set so). For every entry with a certificate, the health report also downloads that
+CA's CRL - from the certificate's CRL Distribution Point, or `crl_url` in a `vm_sso_ocsp` entry - from
+the AAP node, each address once, and checks that it is a CRL issued and signed by the CA, that it is
+fresh (its next update not passed: vCenter refuses cards it cannot check against a current CRL), and
+that the test certificate is not on it. The row shows how many certificates it lists, its size and its
+next update. A failing CRL is a warning (`vm_sso_crl_severity`), since OCSP still answers logins; the
+outage watch never downloads it (DoD CRLs are tens of MB). `vm_sso_crl: false` turns it off; `crl: false`
+in one entry skips that one; `vm_sso_crl_timeout` (120 s) and `vm_sso_crl_max_mb` (200) bound the download.
 
 The account of the **VMware vCenter** credential reads the services (read access to the appliance) and
 the STS certificate (CertificateManagement.Administer, read); what it may not read is listed in the

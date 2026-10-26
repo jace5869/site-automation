@@ -15,13 +15,16 @@
       {%-   set c = (lookup('ansible.builtin.file', x.cert, errors='ignore') | default('', true)) if x.cert | default('') else '' -%}
       {%-   set i = (lookup('ansible.builtin.file', x.issuer, errors='ignore') | default('', true)) if x.issuer | default('') else '' -%}
       {%-   set miss = ([x.cert] if x.cert | default('') and not c else []) + ([x.issuer] if x.issuer | default('') and not i else []) -%}
-      {%-   set _ = out.append({'url': x.url | default(''), 'cert': c, 'issuer': i,
+      {%-   set _ = out.append({'url': x.url | default(''), 'cert': c, 'issuer': i, 'crl': x.crl | default(true), 'crl_url': x.crl_url | default(''),
                                 'why': ('not found in the project: ' ~ miss | join(', ') ~ ' - put it in playbooks/ (e.g. playbooks/files/ocsp/), '
                                         ~ 'commit it (git add -f when .gitignore leaves it out), push and sync the project') if miss else ''}
                                | ocsp_target(vm_sso_timeout | int)) -%}
       {%- endfor -%}
       {{ out }}
     timeout: "{{ vm_sso_timeout | int }}"
+    crl: "{{ _vm_sso_crl | default(vm_sso_crl) | bool }}"          # the health report; the watch passes false (a CRL is tens of MB)
+    crl_timeout: "{{ vm_sso_crl_timeout | int }}"
+    crl_max_mb: "{{ vm_sso_crl_max_mb | int }}"
     now: "{{ _vm_now | default(omit) }}"
   register: _vm_sso
   check_mode: false                      # read-only
@@ -30,4 +33,4 @@
   ansible.builtin.set_fact:
     _vm_sso_opts: >-
       {{ {'sts_warn_days': vm_sso_sts_warn_days | int, 'sts_crit_days': vm_sso_sts_crit_days | int,
-          'ocsp_severity': vm_sso_ocsp_severity} }}
+          'ocsp_severity': vm_sso_ocsp_severity, 'crl_severity': vm_sso_crl_severity} }}

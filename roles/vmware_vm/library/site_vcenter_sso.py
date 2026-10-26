@@ -28,6 +28,10 @@ options:
           not be read from the certificate, plugins/filter/ocsp_filters.py) is reported as the responder's failure.", type: list, elements: dict, default: []}
   validate_certs: {description: Check vCenter's HTTPS certificate., type: bool, default: true}
   timeout: {description: Seconds per request., type: int, default: 30}
+  crl: {description: "Also check each entry's CRL (crl_url, read from the certificate's CRL Distribution Point by ocsp_target):
+         a CRL, issued and signed by the issuer, not past its next update, not listing the test certificate. An entry's crl: false skips it.", type: bool, default: false}
+  crl_timeout: {description: Seconds for one CRL download (DoD CRLs are tens of MB)., type: int, default: 120}
+  crl_max_mb: {description: A CRL larger than this is not read., type: int, default: 200}
   now: {description: The time to count expiry from (tests)., type: str, default: ''}
 author: site automation
 '''
@@ -36,6 +40,10 @@ RETURN = r'''
 vcenters:
   description: "Per vCenter: {name, error, services: [{name, state, health, found}], sts: [{subject, expires, days}],
                 providers: [{name, type, default, domains}], login: {user, ok, code, why}, notes: []}"
+  type: list
+  returned: always
+crl:
+  description: "Per CRL (each address once): {url, ok, size (bytes), entries (certificates listed), this_update, next_update, ms, why}"
   type: list
   returned: always
 ocsp:
@@ -310,6 +318,55 @@ def check_ocsp(x, timeout, now):
     return rec
 
 
+def check_crl(x, timeout, now, max_bytes):
+    """The CRL of an entry's CA (x: crl_url, issuer and cert as PEM): it is downloaded, must be a CRL, issued and signed
+    by the CA, not past its next update, and must not list the test certificate."""
+    url = x.get("crl_url") or ""
+    rec = {"url": url, "ok": False, "size": 0, "entries": None, "this_update": "", "next_update": "", "ms": 0, "why": ""}
+    t0 = time.time()
+    try:
+        if not HAS_CRYPTO:
+            rec["why"] = "the Python package cryptography is missing (needed to read a CRL)"
+            return rec
+        resp = urlrequest.urlopen(urlrequest.Request(url, headers={"User-Agent": UA}), timeout=timeout)
+        raw = resp.read(max_bytes + 1)
+        rec["ms"], rec["size"] = int((time.time() - t0) * 1000), len(raw)
+        if len(raw) > max_bytes:
+            rec["why"] = "the CRL is larger than %d MB (vm_sso_crl_max_mb): not read" % (max_bytes // (1 << 20))
+            return rec
+        try:
+            crl = x509.load_der_x509_crl(raw)
+        except ValueError:
+            crl = x509.load_pem_x509_crl(raw)
+        rec["entries"] = len(crl)
+        tu = _aware(getattr(crl, "last_update_utc", None) or crl.last_update)
+        nu = _aware(getattr(crl, "next_update_utc", None) or crl.next_update)
+        rec["this_update"] = tu.strftime("%Y-%m-%d %H:%M UTC") if tu else ""
+        rec["next_update"] = nu.strftime("%Y-%m-%d %H:%M UTC") if nu else ""
+        issuer = x509.load_pem_x509_certificate(x["issuer"].encode("ascii")) if x.get("issuer") else None
+        cert = x509.load_pem_x509_certificate(x["cert"].encode("ascii")) if x.get("cert") else None
+        if issuer is not None and crl.issuer != issuer.subject:
+            rec["why"] = "the CRL is issued by %s, not by the certificate's CA (%s)" % (crl.issuer.rfc4514_string(), issuer.subject.rfc4514_string())
+        elif issuer is not None and not crl.is_signature_valid(issuer.public_key()):
+            rec["why"] = "the CRL's signature does not verify against the CA's certificate"
+        elif nu and nu < now:
+            rec["why"] = ("the CRL is stale: its next update (%s) has passed - vCenter refuses smart cards it cannot check "
+                          "against a current CRL" % rec["next_update"])
+        elif cert is not None and crl.get_revoked_certificate_by_serial_number(cert.serial_number) is not None:
+            rec["why"] = "the test certificate is on the CRL (revoked): use one that is valid"
+        else:
+            rec["ok"] = True
+    except urlerror.HTTPError as e:
+        rec["why"] = "the CRL server answered HTTP %d" % e.code
+        e.close()
+    except (urlerror.URLError, OSError) as e:
+        rec["why"] = "no answer: %s" % getattr(e, "reason", e)
+    except ValueError as e:
+        rec["why"] = "the download is not a CRL: %s" % e
+    rec["ms"] = rec["ms"] or int((time.time() - t0) * 1000)
+    return rec
+
+
 def main():
     module = AnsibleModule(argument_spec=dict(
         vcenters=dict(type="list", elements="str", default=[]),
@@ -319,13 +376,21 @@ def main():
         ocsp=dict(type="list", elements="dict", default=[]),
         validate_certs=dict(type="bool", default=True),
         timeout=dict(type="int", default=30),
+        crl=dict(type="bool", default=False),
+        crl_timeout=dict(type="int", default=120),
+        crl_max_mb=dict(type="int", default=200),
         now=dict(type="str", default=""),
     ), supports_check_mode=True)
     p = module.params
     now = utc_now(p["now"])
     vcs = [read_vcenter(n, p, now) for n in vcenter_list(p["vcenters"])]
     oc = [check_ocsp(x, p["timeout"], now) for x in p["ocsp"] if x.get("url") or x.get("why")]
-    module.exit_json(changed=False, vcenters=vcs, ocsp=oc)
+    crls, seen = [], set()
+    for x in p["ocsp"] if p["crl"] else []:            # each CA's CRL once, however many entries share it
+        if x.get("crl_url") and x.get("crl", True) not in (False, "false", "no") and not x.get("why") and x["crl_url"] not in seen:
+            seen.add(x["crl_url"])
+            crls.append(check_crl(x, p["crl_timeout"], now, p["crl_max_mb"] << 20))
+    module.exit_json(changed=False, vcenters=vcs, ocsp=oc, crl=crls)
 
 
 if __name__ == "__main__":

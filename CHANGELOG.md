@@ -171,6 +171,13 @@ the ones after it.
     UTC. Then run the *VM - health report* once and look at its **Clock** column and any NTP warnings.
     docs/VMWARE.md, "Times and clocks".
 
+**The CRL too.** Smart card logins to vCenter fall back to the CA's CRL when OCSP does not answer. The VMware
+health report now also downloads the CRL of every certificate in `site_ocsp_certs` / `vm_sso_ocsp` (its CRL
+Distribution Point, or `crl_url`), from the AAP node, each address once: it must be a CRL, issued and signed by the CA,
+not past its next update, and must not list the test certificate. A row per CRL in "Single sign-on and OCSP" (how
+many certificates it lists, its size, its next update); a failing one is a warning (`vm_sso_crl_severity`). The
+outage watch does not download it. `vm_sso_crl: false` turns it off. docs/VMWARE.md, "Single sign-on and OCSP".
+
 ## 0.31.1 — 2026-10-26
 
 **Updating without scripts:** paste one zip as it is - from 0.31.0: `site-automation-0.31.1-changed-since-0.31.0.zip`;

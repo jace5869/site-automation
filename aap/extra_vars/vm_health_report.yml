@@ -132,6 +132,21 @@
 ## an OCSP responder that fails: critical (smart card logins fail) or warning
 # vm_sso_ocsp_severity: critical
 
+## The CRL of each certificate above (its CRL Distribution Point, or crl_url in a vm_sso_ocsp entry;
+## crl: false skips one), in the health report only - from the AAP node: downloaded, issued and
+## signed by the CA, not past its next update, not listing the test certificate. vCenter falls back
+## to the CRL when OCSP does not answer, or uses it alone when set so. false = no CRL check
+# vm_sso_crl: true
+
+## a CRL that fails: warning (OCSP still answers smart card logins) or critical
+# vm_sso_crl_severity: warning
+
+## seconds for one CRL download (DoD CRLs are tens of MB)
+# vm_sso_crl_timeout: 120
+
+## a CRL larger than this is not read
+# vm_sso_crl_max_mb: 200
+
 ## seconds per request
 # vm_sso_timeout: 30
 

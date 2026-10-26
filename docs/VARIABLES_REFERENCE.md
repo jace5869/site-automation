@@ -1145,6 +1145,10 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_sso_ocsp` | `[]` | The OCSP responders. Simplest: site_ocsp_certs (below) - a certificate the responder knows, its OCSP address and its issuer read from the certificate itself. vm_sso_ocsp, when set, is used instead: [{url: http://ocsp.example.mil}] asks only that it answers; with cert (a PEM file from playbooks/, e.g. files/ocsp/test-u… (all of it: the role file) |
 | `site_ocsp_certs` | `[]` | certificates the OCSP responders know (PEM files from playbooks/), for vm_sso_ocsp and net_perf_ocsp when those are empty, e.g. [files/ocsp/test-user.pem] |
 | `vm_sso_ocsp_severity` | `critical` | an OCSP responder that fails: critical (smart card logins fail) or warning |
+| `vm_sso_crl` | `true` | The CRL of each certificate above (its CRL Distribution Point, or crl_url in a vm_sso_ocsp entry; crl: false skips one), in the health report only - from the AAP node: downloaded, issued and signed by the CA, not past its next update, not listing the test certificate. vCenter falls back to the CRL when OCSP does not a… (all of it: the role file) |
+| `vm_sso_crl_severity` | `warning` | a CRL that fails: warning (OCSP still answers smart card logins) or critical |
+| `vm_sso_crl_timeout` | `120` | seconds for one CRL download (DoD CRLs are tens of MB) |
+| `vm_sso_crl_max_mb` | `200` | a CRL larger than this is not read |
 | `vm_sso_timeout` | `30` | seconds per request |
 | `vm_created_days` | `7` | The window: the VMs created in the last this many days, up to the moment the job runs (7 = the past week; run weekly, each VM is in exactly one report). VMs created and deleted since are listed too, as long as vCenter keeps their events (often 30 days). |
 | `esxi_security_hosts` | `[]` | Which hosts: names (* and ? allowed; the short name matches too). [] = every host of vCenter (or of vmware_datacenter). |

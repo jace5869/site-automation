@@ -25,7 +25,7 @@ o req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.pem -days 3650 -subj 
 printf 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\n' > leaf.ext
 printf 'basicConstraints=CA:FALSE\nextendedKeyUsage=OCSPSigning\n' > ocsp.ext
 # the user certificate names its OCSP responder and where its issuer's certificate is, as DoD certificates do
-printf 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nauthorityInfoAccess=OCSP;URI:http://127.0.0.1:%s,caIssuers;URI:http://127.0.0.1:%s/ca.cer\n' "$po" "$pc" > aia.ext
+printf 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nauthorityInfoAccess=OCSP;URI:http://127.0.0.1:%s,caIssuers;URI:http://127.0.0.1:%s/ca.cer\ncrlDistributionPoints=URI:http://127.0.0.1:%s/ca.crl\n' "$po" "$pc" "$pc" > aia.ext
 for n in sts300:300 sts40:40 sts9:9 ocsp:365 user:365 gone:365 vc:365; do
     name=${n%%:*} days=${n##*:}
     o req -newkey rsa:2048 -nodes -keyout $name.key -out $name.csr -subj "/CN=$name.example.mil"
@@ -38,6 +38,27 @@ ex=$(date -u -d '+1 year' +%y%m%d%H%M%SZ) rv=$(date -u -d '-1 day' +%y%m%d%H%M%S
 printf 'V\t%s\t\t%s\tunknown\t/CN=user.example.mil\nR\t%s\t%s\t%s\tunknown\t/CN=gone.example.mil\n' "$ex" "$sgood" "$ex" "$rv" "$sgone" > index.txt
 openssl ocsp -index index.txt -port "$po" -rsigner ocsp.pem -rkey ocsp.key -CA ca.pem -nmin 60 -ignore_err >/dev/null 2>&1 & pids="$pids $!"
 mkdir -p pb/files pub && cp user.pem gone.pem ca.pem pb/files/ && openssl x509 -in ca.pem -outform DER -out pub/ca.cer
+# the CA's CRLs: current (gone revoked), stale, one listing the test certificate, one not signed by the CA
+"$py" - <<'EOPY'
+import datetime
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+ca = x509.load_pem_x509_certificate(open("ca.pem", "rb").read())
+key = serialization.load_pem_private_key(open("ca.key", "rb").read(), None)
+serial = lambda f: x509.load_pem_x509_certificate(open(f, "rb").read()).serial_number
+now = datetime.datetime.now(datetime.timezone.utc)
+def crl(path, revoked, last, nxt, signer=key):
+    b = x509.CertificateRevocationListBuilder().issuer_name(ca.subject).last_update(now + last).next_update(now + nxt)
+    for s in revoked:
+        b = b.add_revoked_certificate(x509.RevokedCertificateBuilder().serial_number(s).revocation_date(now - datetime.timedelta(days=1)).build())
+    open(path, "wb").write(b.sign(signer, hashes.SHA256()).public_bytes(serialization.Encoding.DER))
+d = datetime.timedelta(days=1)
+crl("pub/ca.crl", [serial("gone.pem")], -d, d)
+crl("pub/stale.crl", [serial("gone.pem")], -3 * d, -d)
+crl("pub/user-revoked.crl", [serial("user.pem")], -d, d)
+crl("pub/other.crl", [], -d, d, rsa.generate_private_key(public_exponent=65537, key_size=2048))
+EOPY
 "$py" -m http.server "$pc" --bind 127.0.0.1 --directory "$W/pub" >/dev/null 2>&1 & pids="$pids $!"
 # a responder that answers about many certificates at once (DISA's sends 20): the answer about the revoked one first,
 # then the test certificate's - made by openssl from a request about both
@@ -113,7 +134,8 @@ run() {  # run NAME [args...] -- TEXT...  (a TEXT starting with ! must not be th
 run "all well: nothing in the watch, nothing in the health report" -- \
     '"CONDITIONS",' '"PROBLEMS",' '"TITLE VMware health report: healthy"' \
     "OK | 127.0.0.1:$pv | sts started, lookupsvc started, trustmanagement started, vmdird started, vmafdd started" \
-    "example.mil (default)" "svc-sso-test@example.mil: logs in" "OK | OCSP http://127.0.0.1:$po | successful, certificate good, next update" "!CRITICAL" "!WARNING"
+    "example.mil (default)" "svc-sso-test@example.mil: logs in" "OK | OCSP http://127.0.0.1:$po | successful, certificate good, next update" "!CRITICAL" "!WARNING" \
+    "OK | CRL http://127.0.0.1:$pc/ca.crl | 1 certificate(s) listed, 0.0 MB, next update" "the test certificate is not on it"
 
 data sts300 STOPPED
 run "an SSO service stopped: critical in the watch and the report" -- \
@@ -146,6 +168,17 @@ run "OCSP: a cert file that is not in the project - a row that says so, the repo
     "not found in the project: files/ocsp/missing.crt, files/ocsp/ca.crt - put it in playbooks/" "svc-sso-test@example.mil: logs in"
 run "OCSP: an answer about many certificates (as DISA's) - the test certificate's found by its serial" -e "{\"vm_sso_ocsp\": [{\"url\": \"http://127.0.0.1:$pm\", \"cert\": \"$W/pb/files/user.pem\", \"issuer\": \"$W/pb/files/ca.pem\"}]}" -- \
     "OK | OCSP http://127.0.0.1:$pm | successful, certificate good, next update" "!CRITICAL"
+run "CRL: stale (its next update passed) - a warning" -e "{\"vm_sso_ocsp\": [{\"url\": \"http://127.0.0.1:$po\", \"cert\": \"$W/pb/files/user.pem\", \"issuer\": \"$W/pb/files/ca.pem\", \"crl_url\": \"http://127.0.0.1:$pc/stale.crl\"}]}" -- \
+    "WARNING the CRL http://127.0.0.1:$pc/stale.crl: the CRL is stale: its next update" "!CRITICAL"
+run "CRL: it lists the test certificate" -e "{\"vm_sso_ocsp\": [{\"url\": \"http://127.0.0.1:$po\", \"cert\": \"$W/pb/files/user.pem\", \"issuer\": \"$W/pb/files/ca.pem\", \"crl_url\": \"http://127.0.0.1:$pc/user-revoked.crl\"}]}" -- \
+    "WARNING the CRL http://127.0.0.1:$pc/user-revoked.crl: the test certificate is on the CRL (revoked)" "!CRITICAL"
+run "CRL: not signed by the CA" -e "{\"vm_sso_ocsp\": [{\"url\": \"http://127.0.0.1:$po\", \"cert\": \"$W/pb/files/user.pem\", \"issuer\": \"$W/pb/files/ca.pem\", \"crl_url\": \"http://127.0.0.1:$pc/other.crl\"}]}" -- \
+    "WARNING the CRL http://127.0.0.1:$pc/other.crl: the CRL's signature does not verify against the CA's certificate" "!CRITICAL"
+run "CRL: the download is not a CRL" -e "{\"vm_sso_ocsp\": [{\"url\": \"http://127.0.0.1:$po\", \"cert\": \"$W/pb/files/user.pem\", \"issuer\": \"$W/pb/files/ca.pem\", \"crl_url\": \"http://127.0.0.1:$pc/ca.cer\"}]}" -- \
+    "WARNING the CRL http://127.0.0.1:$pc/ca.cer: the download is not a CRL" "!CRITICAL"
+run "CRL: vm_sso_crl: false - not checked" -e vm_sso_crl=false -- "!CRL http" "OK | OCSP http://127.0.0.1:$po"
+run "CRL: a critical by setting" -e "{\"vm_sso_ocsp\": [{\"url\": \"http://127.0.0.1:$po\", \"cert\": \"$W/pb/files/user.pem\", \"issuer\": \"$W/pb/files/ca.pem\", \"crl_url\": \"http://127.0.0.1:$pc/stale.crl\"}]}" \
+    -e vm_sso_crl_severity=critical -- "CRITICAL the CRL http://127.0.0.1:$pc/stale.crl"
 run "OCSP: a responder that does not answer" -e '{"vm_sso_ocsp": [{"url": "http://127.0.0.1:9"}]}' -- "CRITICAL the OCSP responder http://127.0.0.1:9: no answer"
 run "OCSP: a stale answer (its next update passed)" -e "_vm_now=$(date -u -d '+1 day' +%Y-%m-%dT%H:%M:%SZ)" -- "the answer is stale: its next update"
 run "OCSP: a URL only - a made-up OCSP request (this responder closes a bare GET)" -e "{\"vm_sso_ocsp\": [{\"url\": \"http://127.0.0.1:$ph/\"}]}" -- \

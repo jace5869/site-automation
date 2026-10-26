@@ -7,6 +7,7 @@ ocsp_cert_entry turns a site_ocsp_certs item (a cert file's path) into an entry.
           certificate carries one)
   issuer  missing: the next certificate in the cert file when it is the issuer, else the issuer certificate the
           certificate's caIssuers address serves (DER, PEM or a .p7c bundle), downloaded here on the AAP side
+  crl_url missing: the certificate's CRL Distribution Point (the VMware health report's CRL check, vm_sso_crl)
 
 Runs on the AAP side (a filter). Never raises: what could not be found is in the entry's why."""
 from __future__ import absolute_import, division, print_function
@@ -39,6 +40,16 @@ def _aia(cert, method):
     return [d.access_location.value for d in ext
             if d.access_method == method and isinstance(d.access_location, x509.UniformResourceIdentifier)
             and d.access_location.value.lower().startswith(("http://", "https://"))]
+
+
+def _crl_dp(cert):
+    """The certificate's http(s) CRL addresses (its CRL Distribution Points)."""
+    try:
+        ext = cert.extensions.get_extension_for_oid(ExtensionOID.CRL_DISTRIBUTION_POINTS).value
+    except x509.ExtensionNotFound:
+        return []
+    return [n.value for dp in ext for n in (dp.full_name or [])
+            if isinstance(n, x509.UniformResourceIdentifier) and n.value.lower().startswith(("http://", "https://"))]
 
 
 def _download_issuer(cert, url, timeout):
@@ -87,6 +98,8 @@ def ocsp_target(entry, timeout=15):
         return e
     e["cert"] = pems[0]
     e["serial"] = str(cert.serial_number)               # the answer about it, in a response about many (net_perf's judge)
+    if not str(e.get("crl_url") or "").strip():         # the CRL check (vm_sso_crl): the certificate's CRL Distribution Point
+        e["crl_url"] = (_crl_dp(cert) + [""])[0]
     if not url:
         urls = _aia(cert, AuthorityInformationAccessOID.OCSP)
         if not urls:

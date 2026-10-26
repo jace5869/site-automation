@@ -46,6 +46,8 @@
   block:
     - name: VMware | single sign-on and OCSP - read
       ansible.builtin.include_tasks: sso_read.yml
+      vars:
+        _vm_sso_crl: false               # the CRL (tens of MB) is the health report's, not every watch run's
 
     - name: VMware | single sign-on and OCSP - what is down now
       ansible.builtin.set_fact:
