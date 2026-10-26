@@ -1,5 +1,176 @@
 # Changelog
 
+## 0.32.0 — unreleased
+
+**Updating without scripts:** paste one zip as it is - from 0.31.1: `site-automation-0.32.0-changed-since-0.31.1.zip`;
+from 0.31.0: `site-automation-0.32.0-changed-since-0.31.0.zip` (0.31.1's files too); from 0.30.0:
+`site-automation-0.32.0-changed-since-0.30.0.zip`; from 0.28.0 or 0.29.0: `site-automation-0.32.0-changed-since-0.28.0.zip`;
+from 0.20.0 to 0.27.0: `site-automation-0.32.0-changed-since-0.20.0.zip`; from 0.15.1 to 0.19.x:
+`site-automation-0.32.0-changed-since-0.15.1.zip` (read the 0.20.0 notes too - one file to delete). They leave out
+`playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. Coming from 0.31.0 or before, they bring 0.31.1's
+new `.gitignore`: if you changed yours, add your lines again. Nothing to change after the update; the list at the end
+repeats what 0.20.0 to 0.32.0 ask you to set up - the new step 14 is nothing to set, and step 15 (your time zone) is
+optional.
+
+**A Limit needs no `localhost` any more.** Nine jobs read the hosts and then did their last part on `localhost`:
+*Log analysis*, the *Active Directory health report* and *account lockout* make their report there (and email it),
+and the certificate jobs - *install - check*, *install - approved*, the renewal (CSR) job, Linux and Windows - read
+and write the ServiceNow requests and tickets there. A Limit (the template's, or a workflow's) applies to every play,
+and `localhost` is in it only when named: with a Limit of hosts Ansible skipped that last part
+(`skipping: no hosts matched`) and the job ended green - a log analysis launched with a Limit read every host and
+emailed nothing. That part now runs on the hosts themselves, once, on the AAP side, the way the health check's
+report always has: a Limit of hosts (`web01,web02`) is all it takes, and one with `localhost` in it works as before.
+*Account lockout* with `ad_lockout_check_sources` names the source computers it does not look on because the Limit
+leaves them out. Four jobs work on the AAP side and still need `localhost` in a Limit (or no Limit): *ServiceNow
+health* (the instance, after its MID Server hosts) and the network config and network certificate jobs - they now
+stop at once and say so, instead of ending green. `tests/test_limit_localhost.py` keeps every playbook one way or
+the other.
+
+**PowerShell's error text without its colour codes.** Some regular expressions were written with `\\` inside a YAML
+block, where a backslash is not an escape: they reached Python with two. A Windows server's error text - in the log
+analysis, a Windows check's result and a Windows patch answer - kept PowerShell's colour codes (`_x001B_[31;1m`), its
+spaces and line breaks were not joined, and the job printed `FutureWarning: Possible nested set at position 10`. The same mistake left the
+`5.5.5-` in front of the version in the MariaDB check's status line, and the line breaks in a network config
+backup's push error. One backslash now; `tests/test_yaml_regex.py` finds a doubled one.
+
+**Times in your time zone, next to UTC; the hosts' clocks.** "The report says the host went down at 14:03, its log
+says something else" - the VMware reports keep UTC, as vCenter, ESXi and their log files do, while the vSphere Client
+shows the browser's time zone. New `report_time_zone` (e.g. `America/New_York`, in `all.yml`): the *VM - health
+report* and *VM - alarms report* show each time in that zone first, then UTC - `2026-10-25 10:03:12 EDT (14:03 UTC)`,
+with summer time as it was on that day; the ACT analysis keeps UTC. Empty (the default), the reports are as before.
+The health report also:
+- says since when a host not connected is down: vCenter's newest event of it losing the connection, the time the
+  vSphere Client's **Monitor > Events** shows (a triggered alarm's "since" is when the alarm turned, which can be later);
+- has a **Clock** column: each connected host's clock against vCenter's. A host writes its own logs by its own clock,
+  so one that is off logs a disconnection at another time than vCenter's event. From a minute off amber, from 5
+  minutes red (Active Directory logins to it fail) - `vm_health_clock_warn_seconds` / `vm_health_clock_crit_seconds`;
+  no NTP server set on a host, or its NTP service stopped, amber; vCenter's own clock against the AAP job's too;
+  `vm_health_clock: false` skips it (one call per host). docs/VMWARE.md, "Times and clocks".
+
+**The report website on an NFS share, and one file per report.** docs/WEB_REPORTS.md, "A folder: a share mounted on
+the execution nodes", has an NFS export next to the SMB one (who may write to it, SELinux). For a dashboard tile or a
+bookmark, `latest.html` in each template's folder is always its newest run; `report_web_latest: "{template}.html"`
+puts them side by side at the top instead (`vm-health-report.html`, `linux-log-analysis.html` ...).
+
+**`scripts/update-from-release.sh` keeps your `.git` folder in every case.** Run from a release folder that is itself
+a git worktree or submodule (its `.git` is a file), it put that file in place of your clone's `.git` folder - your
+local commits gone. A release from the zip, or a plain clone, was never affected; the PowerShell script neither.
+
+**To do, if you have not yet: what 0.20.0 to 0.32.0 ask you to set up.** In order; each step works without
+the ones after it.
+
+1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
+   *your* repository - never the public one: `playbooks/files/report_logo.png`. In `all.yml`:
+   `report_logo_file: files/report_logo.png`. Add the line `playbooks/files/report_logo.png` to `.site-local`,
+   or `scripts/update-from-release` deletes it.
+2. **The strip of past runs** (0.20.0, 0.21.0). Attach a **Red Hat Ansible Automation Platform** credential to
+   every report template (the pick lists' one works). Give its user **Organization Auditor** on the templates'
+   organization: Access Management > Users > the user > Roles > Assign roles, resource type Organization.
+   Without it the reports go out without the strip, and the job says why.
+3. **The look** (0.20.0, 0.21.0, 0.24.0). In `all.yml`: `report_email_theme: glass` (or `command`, `portal`)
+   and, if you like, `report_email_header_text: <your line above the title>`.
+4. **"Also email the report to" on every report** (0.22.0). Create the job template **AAP - report email
+   question**: playbook `playbooks/aap_email_question.yml`, only the Red Hat Ansible Automation Platform
+   credential (its user: **Admin** on the report templates and their workflows), any inventory, no Limit.
+   Launch it with Job type **Check** first - it only lists the templates and workflows it would change -
+   then for real. It adds the optional box to every report template's survey and to the workflows that run
+   them. Run it again whenever you add a report template. Optional, in `all.yml`:
+   `report_email_also_domains: [yoursite.mil]`, so typed addresses outside your domains get nothing. The
+   mail relay must be set (`report_email_smtp_host`, `report_email_from`). docs/SETUP_AAP.md, "AAP - report
+   email question"; docs/EMAIL_REPORTS.md, "Also email the report to".
+5. **The report website** (0.23.0, 0.27.0). In `all.yml`, `report_web_url: https://web01.yoursite.mil/reports`,
+   `report_web_theme: glass`, and where the pages go - for a Windows server (IIS serving the folder):
+   `report_web_host: web01.yoursite.mil` and `report_web_dest: 'D:\reports'` (the folder already there). Then one
+   of two ways to write them:
+   - **every report template in an execution environment with WinRM (and Kerberos)** - the all-in-one EE, say: the
+     report jobs write their own pages. The login: a **Report website** credential (`user@YOURSITE.MIL` for
+     Kerberos) on the report templates - or, without it, the template's Machine credential; for WinRM over HTTP with
+     Kerberos also `report_web_host_port: 5985`, `report_web_host_scheme: http`, `report_web_host_transport: kerberos`.
+     The **Report website** credential type: create it from `aap/credential_types/report_web.yml`.
+   - **report templates in other execution environments** - the copy job (new in 0.27.0):
+     1. Create the job template **Report website - copy**: playbook `playbooks/report_web_copy.yml`; the execution
+        environment your Windows jobs work with; your Windows inventory - it must have the web server, and
+        `report_web_host` is its name there - no Limit; its Machine credential (an account with **Modify** on
+        `D:\reports`); a **Red Hat Ansible Automation Platform** credential whose user has **Organization Auditor**
+        on the report templates' organizations. *Concurrent jobs* off.
+     2. Try it on one report template: `report_web_copy: true` on its Variables, run it (Run, not Check), then look
+        at that job in AAP (Details > Artifacts: `site_report_page`).
+     3. Launch **Report website - copy** with **Check** (`Would copy: job ...`), then for real: the page appears at the
+        address the report job printed, and the job says how it reached the server - *from this job's inventory*.
+     4. Then `report_web_copy: true` in `all.yml`, and a schedule for the copy job (every 15 minutes). An email's
+        button answers *not found* until the copy job's next run.
+
+     Both ways can be mixed: `report_web_copy: false` on one template's Variables and it writes its own pages.
+   - Or an upload (WebDAV) or a folder (a share on the execution nodes): docs/WEB_REPORTS.md, "Where the files go".
+
+   Run one report with **Check** (it prints the address it would use), then for real: the job prints
+   `Report: https://...`, and its email gets the **Open the full report** button. docs/WEB_REPORTS.md.
+6. **Certificate install** (0.25.0) - only when the renewals order from the PKI's catalog item
+   ([CERT_RENEWAL_CATALOG.md](docs/CERT_RENEWAL_CATALOG.md)). Ask the PKI to attach DISA's files (the .cer and
+   the .p7b) to the request or to its catalog task. Create six templates: *Certificate install - check*
+   (`playbooks/cert_install_check.yml`: Machine, ServiceNow API), *Certificate install - approved*
+   (`playbooks/cert_install_approved.yml`: the same, the same inventory, no Limit, Variables not prompted),
+   *Certificate restore* (`playbooks/cert_restore.yml`), and the three `win_` ones (`win_cert_install_check.yml`,
+   `win_cert_install_approved.yml`, `win_cert_restore.yml`). Make the workflow with an **Approval** on the
+   check's **Run on fail** (workflow 29 in docs/WORKFLOWS_AND_SCHEDULES.md) and schedule it daily; try the check
+   as **Check** with a Limit first. The optional settings: the 0.25.0 notes, "To set it up"; docs/CERT_INSTALL.md.
+7. **VM outage watch and log analysis** (0.26.0). Each does nothing until you make its template.
+   - *VM - outage watch* (`playbooks/vm_outage_watch.yml`): the VMware vCenter credential, the inventory that has
+     your `aap` group, no Limit. Run it once by hand (a clean estate is one green line). Then the workflow
+     `[VM - outage watch] --Always--> [ServiceNow tickets]` (*Always*, so a clean run notes or resolves the
+     incident), scheduled every 5 to 15 minutes with **Concurrent jobs off**, and `vm_watch_window_minutes` set to
+     that interval. It restarts nothing. docs/VM_OUTAGE_WATCH.md, "Set it up".
+   - *Log analysis* (`playbooks/log_analysis.yml`): one template per inventory (Linux with its Machine credential,
+     Windows with its Machine (Windows) credential), plus the **ACT model key**; Limit prompted on launch and a
+     survey with `target`, `log_analysis_question`, `log_analysis_since` / `log_analysis_until`. And
+     *VM - vCenter log analysis* (`playbooks/vm_log_analysis.yml`): VMware vCenter and ACT model key, no Limit.
+     Run each as **Check** first (it reads and reports, ACT is not called). docs/LOG_ANALYSIS.md, "Set it up in
+     AAP". With `report_web_copy: true` their pages go through the copy job too.
+8. **The patch batch size** (0.28.0) - only if you set `patch_serial` or `win_patch_serial` in `all.yml` or in a
+   group's or host's file: it never worked there. Move it to the *Patch hosts* / *Windows patch* template's
+   Variables (or a survey).
+9. **STIG drift report** (0.28.0). On the hosts, `openscap-scanner` and `scap-security-guide` from your RHEL
+   repositories (or `check_stig_install: true`). In STIG Manager, a Keycloak client for the job - your autostig
+   one, or another - with the scope `stig-manager:collection:read` and a grant in the collections (Full, or
+   Restricted with these hosts' assets). In AAP, the template *STIG drift report* (`playbooks/stig_drift_report.yml`):
+   the Machine credential and a **STIG Manager API** credential with that client; `check_stig_stigman_api` in its
+   Variables, and each host's `check_stig_stigman_collection` in the inventory, per group or host. Run it as
+   **Check** with a Limit first (it scans and compares, keeps nothing), then weekly and after patching: the
+   workflow 33 (new in 0.30.0) runs the tickets step after it. docs/STIG_DRIFT.md, "Setting it up".
+10. **The MID Server hosts** (0.29.0). Move them to a group `servicenow_mid_hosts` of your **Windows**
+    inventory, then on the *ServiceNow health* template: that inventory, and its Machine (Windows) credential next
+    to the ServiceNow API one. The API account needs read on `ecc_agent`, `ecc_queue` and `ecc_agent_issue` (e.g.
+    the `mid_server` role). Optional: `servicenow_mid_expected: [mid01, mid02]`. Launch it once by hand.
+    docs/SERVICENOW_SETUP.md, "MID Servers".
+11. **Single sign-on** (0.30.0). Linux: nothing to set - `sso` runs in the health check's daily set; optional
+    `check_sso_test_users: [svc_monitor@yoursite.mil]` in `all.yml`. Add `sso` to the *Health check* survey's
+    `health_checks` choices to run it on its own. vCenter: create the credential type **vCenter SSO test account**
+    from `aap/credential_types/vcenter_sso_test.yml`, a credential with an AD account made for it (Read-only on
+    vCenter's root, not propagated, or no permission at all), and attach it to the *VM - health report* and *VM -
+    outage watch* templates. OCSP (0.31.1): a certificate the responder knows, committed in `playbooks/files/ocsp/`,
+    named once in `all.yml` - `site_ocsp_certs: [files/ocsp/test-user.pem]` - or the responders' addresses alone
+    (`vm_sso_ocsp: [{url: "http://ocsp.example.mil"}]`). Run the VM - health report once by hand: its section
+    **Single sign-on and OCSP**. docs/VMWARE.md, "Single sign-on and OCSP (vCenter 8.0)".
+12. **Network performance report** (0.30.0). In `all.yml`, `net_perf_targets` (the gateway, the domain
+    controllers with port 389, the web servers with 443) and, if you like, `net_perf_ocsp` (the same responders).
+    Create the template *Network performance report* (`playbooks/net_perf_report.yml`): the Machine credential,
+    `target:` the group to measure from. Run it as **Check** first (it measures and keeps nothing), then schedule
+    it hourly as workflow 34, the tickets step after it (Concurrent jobs off) - the trend needs a few runs.
+    docs/NETWORK_PERF.md, "Set it up".
+13. **The hosts' and VMs' network drops** (0.31.0). Nothing to set: the *VM - health report* has the new section
+    **Network drops and errors**. It reads the past day only when vCenter's 5-minute statistics are at level 2 -
+    at level 1 (the default) the last hour, and it says so. To raise it: vSphere Client > the vCenter > Configure >
+    Settings > General > Edit > Statistics, the 5-minute row to **Level 2** (check the database estimate the dialog
+    shows). docs/VMWARE.md, "Network drops and errors".
+14. **A Limit is the hosts, nothing more** (0.32.0) - nothing to set. *Log analysis*, the certificate install and
+    renewal (CSR) jobs and the *Active Directory* reports take a Limit of hosts (`web01,web02`); the `,localhost` you
+    may have added still works. Only *ServiceNow health* and the network config and certificate jobs need `localhost`
+    in a Limit - or no Limit - and they say so.
+15. **Your time zone** (0.32.0) - optional. In `all.yml`: `report_time_zone: America/New_York` (a name as
+    `timedatectl list-timezones` prints it): the VMware health and alarms reports then show each time in it, next to
+    UTC. Then run the *VM - health report* once and look at its **Clock** column and any NTP warnings.
+    docs/VMWARE.md, "Times and clocks".
+
 ## 0.31.1 — 2026-10-26
 
 **Updating without scripts:** paste one zip as it is - from 0.31.0: `site-automation-0.31.1-changed-since-0.31.0.zip`;

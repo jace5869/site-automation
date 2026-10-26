@@ -7,15 +7,26 @@ with columns / rows, and per row row_status and cell_status for the colours).
 What counts as a problem:
   critical  a host not connected to vCenter (or powered off); the HA agent of a host isolated,
             partitioned, unreachable or in error; vCLS retreat mode on a cluster with DRS (DRS stops);
-            a red hardware sensor; a red alarm; CPU or memory at or above the critical percentage
+            a red hardware sensor; a red alarm; CPU or memory at or above the critical percentage; a host's
+            clock off from vCenter's by vm_health_clock_crit_seconds or more
   warning   HA or DRS off on a cluster of 2 or more hosts (vm_health_require_ha / _drs); HA host
             monitoring off; HA failover capacity below what admission control reserves; DRS
             recommendations waiting or DRS faults; retreat mode without DRS; a yellow sensor; a host
             that needs a restart; a configuration issue; a yellow alarm; CPU or memory at or above the
-            warning percentage
-  info      a host in maintenance mode or standby; HA admission control off; DRS in manual mode"""
+            warning percentage; a host's clock off from vCenter's by vm_health_clock_warn_seconds or more, no
+            NTP server set on it or its NTP service stopped; vCenter's clock off from the AAP job's
+  info      a host in maintenance mode or standby; HA admission control off; DRS in manual mode
+Times: UTC (as vCenter, ESXi and their log files keep them), and also in report_time_zone when it is set
+(the vSphere Client shows the browser's time zone)."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
+
+import datetime
+
+try:
+    import zoneinfo
+except ImportError:                             # Python before 3.9: UTC only
+    zoneinfo = None
 
 RANK = {"critical": 0, "warning": 1, "unknown": 2, "info": 3, "ok": 4, "": 5}
 ALARM_SEV = {"red": "critical", "yellow": "warning"}
@@ -46,6 +57,50 @@ DRS_LABEL = {"fullyAutomated": "fully automated", "partiallyAutomated": "partial
 
 def _t(iso):
     return str(iso or "").replace("T", " ").replace("Z", "")
+
+
+def _zone(name):
+    """report_time_zone -> (its tzinfo, or None for UTC only; a note when it is not a time zone known here)."""
+    name = str(name or "").strip()
+    if not name or name.upper() in ("UTC", "Z", "ETC/UTC", "GMT"):
+        return None, ""
+    try:
+        return zoneinfo.ZoneInfo(name), ""
+    except Exception:                           # noqa: BLE001 - unknown name, no time zone data in the EE
+        return None, ("report_time_zone %s is not a time zone this execution environment knows "
+                      "(a name as timedatectl list-timezones prints them, e.g. America/New_York): times are in UTC" % name)
+
+
+def _when(iso, tz=None):
+    """'2026-10-25T14:03:12Z' -> '2026-10-25 14:03:12 UTC'; with a time zone (_zone) its time first, then UTC's:
+    '2026-10-25 10:03:12 EDT (14:03 UTC)' - summer time as it was on that day."""
+    s = _t(iso)
+    if not s:
+        return ""
+    try:
+        u = datetime.datetime.strptime(str(iso).strip().rstrip("Z")[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+    except ValueError:
+        return s
+    if tz is None:
+        return u.strftime("%Y-%m-%d %H:%M:%S UTC")
+    lt = u.astimezone(tz)
+    return "%s (%s UTC)" % (lt.strftime("%Y-%m-%d %H:%M:%S %Z"), u.strftime("%H:%M" if lt.date() == u.date() else "%Y-%m-%d %H:%M"))
+
+
+def _secs(x):
+    """A clock difference in words: 'ahead by 2 min 5 s', 'behind by 40 s'."""
+    a = abs(float(x))
+    m, sec = divmod(int(round(a)), 60)
+    h, m = divmod(m, 60)
+    txt = " ".join(p for p in ("%d h" % h if h else "", "%d min" % m if m else "", "%d s" % sec if sec or not (h or m) else "") if p)
+    return ("ahead by " if x > 0 else "behind by ") + txt
+
+
+def _clock_cell(x):
+    """A host's clock against vCenter's for the table: '+2 s', '-5 min 3 s', '?' (not read)."""
+    if x is None:
+        return "?"
+    return ("+" if x >= 0 else "-") + _secs(x).split(" by ", 1)[1]
 
 
 def _worst(statuses):
@@ -92,7 +147,10 @@ def _opts(o):
     o = o or {}
     if "cpu_warn" in o:                         # already read
         return o
+    tz, tz_note = _zone(o.get("time_zone"))
     return {"require_ha": bool(o.get("require_ha", True)), "require_drs": bool(o.get("require_drs", True)),
+            "clock_warn": float(o.get("clock_warn_seconds", 60) or 0), "clock_crit": float(o.get("clock_crit_seconds", 300) or 0),
+            "tz": tz, "tz_note": tz_note,
             "cpu_warn": float(o.get("cpu_warn_pct", 85) or 0), "cpu_crit": float(o.get("cpu_crit_pct", 95) or 0),
             "mem_warn": float(o.get("mem_warn_pct", 90) or 0), "mem_crit": float(o.get("mem_crit_pct", 95) or 0),
             "max_rows": int(o.get("max_rows", 500) or 0), "datacenter": o.get("datacenter") or ""}
@@ -104,13 +162,13 @@ def _up(h):
             and not h.get("maintenance") and h.get("standby", "none") in ("none", "", "exiting"))
 
 
-def _alarm_problems(alarms, what):
+def _alarm_problems(alarms, what, tz=None):
     out = []
     for a in alarms or []:
         sev = ALARM_SEV.get(a.get("status"))
         if sev:
-            out.append((sev, "Alarm: %s%s (since %s UTC)" % (a.get("alarm", ""), ", acknowledged" if a.get("acknowledged") else "",
-                                                            _t(a.get("time"))),
+            out.append((sev, "Alarm: %s%s (since %s)" % (a.get("alarm", ""), ", acknowledged" if a.get("acknowledged") else "",
+                                                        _when(a.get("time"), tz)),
                         "Monitor > Issues and Alarms > Triggered Alarms on the %s: the alarm says what to look at." % what))
     return out
 
@@ -128,12 +186,15 @@ def host_problems(h, cluster, o):
     o = _opts(o)
     out = []
     conn, power = h.get("connection", ""), h.get("power", "")
+    since = (" since %s (vCenter's event)" % _when(h["down_since"], o["tz"])) if h.get("down_since") else ""
     if conn == "notResponding":
-        out.append(("critical", "Not responding to vCenter", "Check the host is on and its management network; then right-click > Connection > Connect."))
+        out.append(("critical", "Not responding to vCenter" + since,
+                    "Check the host is on and its management network; then right-click > Connection > Connect."))
     elif conn == "disconnected":
-        out.append(("critical", "Disconnected from vCenter", "Right-click the host > Connection > Connect (someone may have disconnected it)."))
+        out.append(("critical", "Disconnected from vCenter" + since,
+                    "Right-click the host > Connection > Connect (someone may have disconnected it)."))
     elif conn and conn != "connected":
-        out.append(("critical", "Connection: %s" % conn, "Check the host and its management network."))
+        out.append(("critical", "Connection: %s%s" % (conn, since), "Check the host and its management network."))
     if conn == "connected":
         if power == "poweredOff":
             out.append(("critical", "Powered off", "Power it on (from its management controller), or remove it from the cluster."))
@@ -158,7 +219,8 @@ def host_problems(h, cluster, o):
                     "Restart it in a maintenance window (maintenance mode first)."))
     for i in h.get("config_issues") or []:
         out.append(("warning", i, "Host > Summary in vCenter (the issue is shown there)."))
-    out += _alarm_problems(h.get("alarms"), "host")
+    out += _clock_problems(h, o)
+    out += _alarm_problems(h.get("alarms"), "host", o["tz"])
     if _up(h):
         cpu = _pct(h.get("cpu_used_mhz"), h.get("cpu_mhz"))
         mem = _pct(h.get("mem_used_mb"), h.get("mem_mb"))
@@ -168,6 +230,29 @@ def host_problems(h, cluster, o):
                 out.append((sev, "%s %s used" % (label, _pct_text(p)),
                             "DRS should spread the load; if it cannot, move or power off VMs (see the capacity report)."))
     out += _status_problem(h.get("status"), out, "host")
+    return out
+
+
+def _clock_problems(h, o):
+    """A connected host's clock against vCenter's, and its NTP setting (nothing said when vCenter would not say)."""
+    if h.get("connection") != "connected":
+        return []
+    out = []
+    x = h.get("clock_offset_s")
+    sev = ("critical" if o["clock_crit"] and abs(x) >= o["clock_crit"] else "warning" if o["clock_warn"] and abs(x) >= o["clock_warn"]
+           else "") if x is not None else ""
+    if sev:
+        out.append((sev, "Clock %s against vCenter's: its log times (hostd, vmkernel) differ from vCenter's events by as much" % _secs(x),
+                    "Host > Configure > System > Time Configuration: NTP servers set and the NTP service running"
+                    + ("; Active Directory logins fail from 5 minutes off" if abs(x) >= 300 else "") + "."))
+    servers = h.get("ntp_servers")
+    if servers is not None and not servers and h.get("clock_protocol") != "ptp":
+        out.append(("warning", "No NTP server set: its clock drifts, and its log times stop matching vCenter's events",
+                    "Host > Configure > System > Time Configuration > Network Time Protocol: your NTP servers, the service started "
+                    "(Start and stop with host)."))
+    elif servers and h.get("ntp_running") is False and h.get("clock_protocol") != "ptp":
+        out.append(("warning", "NTP service not running (servers %s): its clock drifts" % ", ".join(servers[:3]),
+                    "Host > Configure > System > Services > NTP Daemon: Start, policy Start and stop with host."))
     return out
 
 
@@ -227,7 +312,7 @@ def cluster_problems(c, hosts, o):
                         "Cluster > Monitor > vSphere DRS > Faults: each says why (affinity rules, a VM that cannot move ...)."))
     for i in c.get("config_issues") or []:
         out.append(("warning", i, "Cluster > Summary in vCenter (the issue is shown there)."))
-    out += _alarm_problems(c.get("alarms"), "cluster")
+    out += _alarm_problems(c.get("alarms"), "cluster", o["tz"])
     up = [h for h in hosts if _up(h)]
     cpu = _pct(sum(h.get("cpu_used_mhz") or 0 for h in up), sum(h.get("cpu_mhz") or 0 for h in up)) if up else None
     mem = _pct(sum(h.get("mem_used_mb") or 0 for h in up), sum(h.get("mem_mb") or 0 for h in up)) if up else None
@@ -259,11 +344,16 @@ def _evaluate(data, opts):
     dres = []
     for dc in d.get("datacenters") or []:
         ps = [("warning", i, "Datacenter > Summary in vCenter.") for i in dc.get("config_issues") or []]
-        ps += _alarm_problems(dc.get("alarms"), "datacenter")
+        ps += _alarm_problems(dc.get("alarms"), "datacenter", o["tz"])
         dres.append((dc, ps))
     vres = []
     for v in d.get("vcenter_info") or []:
-        ps = _alarm_problems(v.get("alarms"), "vCenter")
+        ps = _alarm_problems(v.get("alarms"), "vCenter", o["tz"])
+        x = v.get("clock_offset_s")
+        if x is not None and o["clock_warn"] and abs(x) >= o["clock_warn"]:
+            ps.append(("warning", "vCenter's clock and the AAP job's differ: vCenter's is %s, so its event and alarm times are off "
+                                  "by as much (or the AAP node's clock is)" % _secs(x),
+                       "vCenter's appliance management (port 5480) > Time: NTP; and the AAP nodes' time sync (chronyc tracking)."))
         if v.get("vcls_readable") is False:
             ps.append(("info", "Could not read vCLS retreat mode (vCenter's advanced settings): the account may lack the privilege",
                        "Retreat mode still shows as a vCenter alarm on the cluster."))
@@ -352,8 +442,10 @@ def vm_health_report(data, opts=None):
         title = "VMware health report: healthy - " + counts
     status = "critical" if crit else ("warning" if warn else "ok")
     vc = ("vCenters " + ", ".join(vcs)) if multi else ("vCenter " + (d.get("vcenter") or ""))
-    subtitle = "%s - every datacenter, cluster and host%s - read %s UTC" % (
-        vc, (" of datacenter " + o["datacenter"]) if o["datacenter"] else "", _t(d.get("read_at")))
+    subtitle = "%s - every datacenter, cluster and host%s - read %s" % (
+        vc, (" of datacenter " + o["datacenter"]) if o["datacenter"] else "", _when(d.get("read_at"), o["tz"]))
+    if o["tz_note"]:
+        subtitle += " - " + o["tz_note"]
     summary = [
         {"label": "Datacenters", "value": len(dcs), "status": status},
         {"label": "Clusters", "value": len(clusters), "status": _worst([p[0] for _, _, ps in clusters for p in ps if p[0] != "info"]) or "ok"},
@@ -462,17 +554,20 @@ def vm_health_report(data, opts=None):
         cpu = _pct(h.get("cpu_used_mhz"), h.get("cpu_mhz")) if conn == "connected" else None
         mem = _pct(h.get("mem_used_mb"), h.get("mem_mb")) if conn == "connected" else None
         maint = "yes" if h.get("maintenance") else ("standby" if h.get("standby") in ("in", "entering") else "no")
+        clock_st = _worst([p[0] for p in _clock_problems(h, o)])
         rows.append((st, [st.upper(), h.get("name", ""), "(standalone)" if h.get("standalone") else h.get("cluster", ""),
                           _where(h, multi, h.get("datacenter", "")), CONN_LABEL.get(conn, conn), maint, ha_txt, hw_txt, _pct_text(cpu), _pct_text(mem),
                           "-" if h.get("uptime_days") is None else h["uptime_days"],
+                          _clock_cell(h.get("clock_offset_s")) if conn == "connected" else "-",
                           ("%s (%s)" % (h.get("version"), h.get("build"))) if h.get("version") else "",
                           len([a for a in h.get("alarms") or [] if a.get("status") in ("red", "yellow")])],
                      [st, "", "", "", "critical" if conn not in ("connected", "") else "", "info" if maint != "no" else "", ha_st, hw_st,
-                      _usage_sev(cpu, o["cpu_warn"], o["cpu_crit"]), _usage_sev(mem, o["mem_warn"], o["mem_crit"]), "", "", ""]))
+                      _usage_sev(cpu, o["cpu_warn"], o["cpu_crit"]), _usage_sev(mem, o["mem_warn"], o["mem_crit"]), "", clock_st, "", ""]))
     sections.append(_section("Hosts", ["Status", "Host", "Cluster", "Datacenter", "Connection", "Maintenance", "HA agent", "Hardware",
-                                       "CPU used", "Memory used", "Up (days)", "ESXi", "Alarms"], rows,
-                             "Every host, by datacenter and cluster. Hardware: the sensors and hardware status that are not green."
-                             if rows else "No host.", o["max_rows"]))
+                                       "CPU used", "Memory used", "Up (days)", "Clock", "ESXi", "Alarms"], rows,
+                             "Every host, by datacenter and cluster. Hardware: the sensors and hardware status that are not green. "
+                             "Clock: the host's clock against vCenter's (+ ahead, - behind; ? = vCenter would not say) - the host "
+                             "writes its own logs by it." if rows else "No host.", o["max_rows"]))
 
     rows = []
     for v, ps in vres:

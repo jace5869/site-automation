@@ -462,7 +462,7 @@
 - name: MariaDB | status
   ansible.builtin.debug:
     msg: >-
-      {{ _mdb_label }} {{ (_mdb.V.VERSION | default('?')) | regex_replace('^5\\.5\\.5-', '') | regex_replace('(?i)-mariadb.*$', '') }} - {{ ('container ' ~ _mdb_c ~ ' (podman, image ' ~ (_mdb_p.image | default('?')) ~ ')')
+      {{ _mdb_label }} {{ (_mdb.V.VERSION | default('?')) | regex_replace('^5\.5\.5-', '') | regex_replace('(?i)-mariadb.*$', '') }} - {{ ('container ' ~ _mdb_c ~ ' (podman, image ' ~ (_mdb_p.image | default('?')) ~ ')')
       if _mdb_c else ('service ' ~ _mdb_p.unit | default('?') ~ ' on the host') }}:
       up {{ ((_mdb.S.UPTIME | default('0') | int) / 3600) | round(1) }} h,
       {{ _mdb.S.THREADS_CONNECTED | default('?') }}/{{ _mdb.V.MAX_CONNECTIONS | default('?') }} connections,

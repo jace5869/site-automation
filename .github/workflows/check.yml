@@ -72,6 +72,11 @@ jobs:
           python tests/test_email_question.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_email_question.py
           python tests/test_report_web.py
+          python tests/test_limit_localhost.py
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_limit_localhost.py
+          python tests/test_yaml_regex.py
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_yaml_regex.py
+          python tests/test_report_time.py
       - name: The docs - every playbook in docs/JOB_TEMPLATES.md with its how-to; workflow drawings no wider than 88
         run: python tests/test_docs.py
       - name: The real ACT in the alarms analysis mode (piped evidence, masked names, the answer read back)

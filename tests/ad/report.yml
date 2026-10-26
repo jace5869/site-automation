@@ -29,7 +29,8 @@
       when: inventory_hostname in _ad_collectors.values()
 
 - name: The report
-  hosts: localhost
+  # as playbooks/ad_health_report.yml: on the DCs, once on the AAP side
+  hosts: dcs
   gather_facts: false
   vars:
     # ages are measured from when the fixtures were "read", not from today (as tests/test_ad.py)
@@ -38,3 +39,10 @@
     - name: Active Directory health report
       ansible.builtin.include_role:
         name: ad_report
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"

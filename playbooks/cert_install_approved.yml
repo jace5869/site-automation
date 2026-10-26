@@ -28,11 +28,18 @@
         tasks_from: install_apply.yml
 
 - name: Certificate install - the result, on the requests
-  hosts: localhost
-  connection: local
+  # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
+  hosts: "{{ target | default('all') }}"
   gather_facts: false
   tasks:
     - name: What was installed, and a work note on each request
       ansible.builtin.include_role:
         name: servicenow
         tasks_from: cert_installed.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"

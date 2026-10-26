@@ -5,8 +5,9 @@ set -u
 release=$(cd "$(dirname "$0")/.." && pwd)
 script=$release/scripts/update-from-release.sh
 work=$(mktemp -d "${TMPDIR:-/tmp}/sa-update-test.XXXXXX")
+rel2=$(mktemp -d "${TMPDIR:-/tmp}/sa-update-rel.XXXXXX")
 fail=0
-trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work" "$rel2"' EXIT
 check() { if [ "$1" = 0 ]; then echo "ok   - $2"; else echo "FAIL - $2"; fail=$((fail + 1)); fi; }
 has()  { printf '%s' "$out" | grep -Eq -- "$1"; }
 run()  { out=$(bash "$script" "$work" "$@" 2>&1); }
@@ -64,6 +65,10 @@ grep -q MY-SETTING "$work/playbooks/group_vars/all.yml";            check $? 'ed
 g add -A >/dev/null 2>&1; g commit -q -m update >/dev/null 2>&1
 run
 has '0 new, 0 changed, 0 to delete';                                check $? 'after apply + commit: nothing left to do'
+# a release that is a git worktree (its .git is a file): the clone's .git folder stays
+rsync -a --exclude .git "$release"/ "$rel2"/; printf 'gitdir: %s/nowhere\n' "$rel2" > "$rel2/.git"
+out=$(bash "$rel2/scripts/update-from-release.sh" "$work" --apply 2>&1)
+[ -d "$work/.git" ] && g rev-parse -q --verify HEAD >/dev/null;    check $? "a release with a .git file leaves the clone's .git folder alone"
 echo 'local edit' >> "$work/README.md"
 run
 has 'uncommitted';                                                  check $? 'uncommitted changes are refused'

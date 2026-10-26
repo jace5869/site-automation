@@ -33,5 +33,5 @@
     _la_err: >-
       {{ ((_la_wout.stderr | default('') | regex_findall('<S S="Error">(.*?)</S>') | join(' '))
           or (_la_wout.stderr | default('')))
-         | regex_replace('_x001B_\\[[0-9;]*m', '') | regex_replace('_x000[AD]_', ' ')
-         | regex_replace('\\s+', ' ') | trim }}
+         | regex_replace('_x001B_\[[0-9;]*m', '') | regex_replace('_x000[AD]_', ' ')
+         | regex_replace('\s+', ' ') | trim }}

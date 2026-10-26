@@ -60,6 +60,12 @@ report_history_aap_ca_path: ""           # a CA file for AAP's own HTTPS certifi
 # report.html.j2 (the default) = the look report_email_theme picks.
 report_email_html_template: report.html.j2
 
+# The time zone of the times in a report, besides UTC: e.g. America/New_York (a name as `timedatectl list-timezones`
+# prints them) shows "2026-10-25 10:03:12 EDT (14:03 UTC)". vCenter, ESXi and their log files keep UTC; the vSphere
+# Client shows the browser's time zone. "" = UTC only. Used by the VMware health and alarms reports (the others show
+# UTC). docs/VMWARE.md, "Times and clocks"
+report_time_zone: ""
+
 # THE REPORT WEBSITE (docs/WEB_REPORTS.md): every report job also writes its report as a web page - off until
 # report_web_dest is set. Works without an email (report_email_to empty). Each run: its page, a copy as the
 # template's latest page, the report's data as JSON beside each (for your own site), and an index of every

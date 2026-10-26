@@ -51,7 +51,8 @@
         - _adl_tg.by_domain['corp.test'] | default([]) | selectattr('locked') | list | length > 0
 
 - name: The source computers to look on
-  hosts: localhost
+  # as playbooks/ad_lockout.yml: on the DCs, once on the AAP side
+  hosts: "{{ target | default('dcs') }}"
   gather_facts: false
   vars:
     ad_lockout_now: "{{ (lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/lockout_dc_pdc.json') | from_json).dc.read_at }}"
@@ -63,11 +64,25 @@
           ansible.builtin.include_role:
             name: ad_lockout
             tasks_from: build.yml
+            apply:
+              delegate_to: localhost
+              run_once: true
+              become: false
+          vars:
+            ansible_connection: local
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
         - name: The source computers to look on
           ansible.builtin.include_role:
             name: ad_lockout
             tasks_from: sources_pick.yml
+            apply:
+              delegate_to: localhost
+              run_once: true
+              become: false
+          vars:
+            ansible_connection: local
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
 - name: On the source computers (from the fixtures)
   hosts: adl_sources
@@ -80,7 +95,8 @@
               'data': (lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/lockout_' ~ fixture_source ~ '.json') | from_json).source} }}
 
 - name: The report
-  hosts: localhost
+  # as playbooks/ad_lockout.yml: on the DCs, once on the AAP side
+  hosts: "{{ target | default('dcs') }}"
   gather_facts: false
   vars:
     ad_lockout_now: "{{ (lookup('ansible.builtin.file', playbook_dir ~ '/fixtures/lockout_dc_pdc.json') | from_json).dc.read_at }}"
@@ -89,8 +105,22 @@
       ansible.builtin.include_role:
         name: ad_lockout
         tasks_from: build.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
     - name: Print it, publish it, email it
       ansible.builtin.include_role:
         name: ad_lockout
         tasks_from: report.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"

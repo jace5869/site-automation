@@ -536,6 +536,10 @@ if [ "$(nmail)" = $((n0 + 1)) ] && subject "$eml" | grep -q "^\[AAP\] VMware ala
 else
     echo "FAIL -   ...alarms email"; head -40 "$work/al.txt"; fails=$((fails + 1))
 fi
+# report_time_zone: the times in that zone, then UTC (America/Phoenix: no summer time), the columns without "(UTC)"
+run "alarms report with report_time_zone: times in that zone and UTC" ok vm_alarm_report.yml -e report_time_zone=America/Phoenix \
+    -- "VMware alarms report: no triggered alarms, 1 host(s) not connected" " MST ("
+if grep -q "(UTC)" "$work/out.txt"; then echo "FAIL -   ...a column still says (UTC)"; fails=$((fails + 1)); else echo "ok   -   ...no column says (UTC)"; fi
 run "alarms report with vm_alarm_fail: true: a host not connected fails the job, for workflows" fail vm_alarm_report.yml -e vm_alarm_fail=true \
     -- "1 host(s) not connected (the report is above)"
 run "alarms report: an unknown object type is refused" fail vm_alarm_report.yml -e '{"vm_alarm_types": ["host", "hosst"]}' -- "unknown object type(s) hosst"
@@ -1760,7 +1764,8 @@ unset SN_HOST SN_USERNAME SN_PASSWORD
 kill "$sn_pid" 2>/dev/null
 
 # ---- health report: a third simulator with 2 datacenters, 2 clusters each and a standalone host each;
-# HA on for DC0_C0 (admission control off), DC1_C0 in vCLS retreat mode, host DC0_C1_H1 disconnected ----
+# HA on for DC0_C0 (admission control off), DC1_C0 in vCLS retreat mode, host DC0_C1_H1 disconnected (and vCenter's
+# event of it); vcsim cannot say a host's clock or NTP setting: "?", and no clock problem ----
 port3=$((port + 9))
 "$engine" run -d --name "$name3" -p "127.0.0.1:$port3:8989" "$image" -l 0.0.0.0:8989 -api-version 8.0 \
     -dc 2 -cluster 2 -host 2 -standalone-host 1 -vm 1 >/dev/null || { echo "ABORT - could not start the third $image"; exit 1; }
@@ -1770,7 +1775,7 @@ RUN_PORT=$port3 run "health report: every datacenter, cluster and host; retreat 
     ok vm_health_report.yml -e "$mail" \
     -- "VMware health report: 2 critical, 3 warning(s) - 2 datacenter(s), 4 cluster(s), 10 host(s)" \
        "vSphere Cluster Services (vCLS) in retreat mode: DRS is not working" "config.vcls.clusters.domain-c" \
-       "Disconnected from vCenter" "vSphere HA is off: the VMs of a failed host are not restarted" \
+       "Disconnected from vCenter since 20" "UTC (vCenter's event)" "vSphere HA is off: the VMs of a failed host are not restarted" \
        "HA admission control is off" '"vm_health"' '"problems"' "emailed"
 eml="$(lastmail)"; getpart html "$eml" > "$work/hl.html"; getpart plain "$eml" > "$work/hl.txt"
 if [ "$(nmail)" = $((n0 + 1)) ] && subject "$eml" | grep -q "^\[AAP\] VMware health report: 2 critical, 3 warning(s)" \
@@ -1778,6 +1783,9 @@ if [ "$(nmail)" = $((n0 + 1)) ] && subject "$eml" | grep -q "^\[AAP\] VMware hea
    && grep -Eq "^CRITICAL +DC0_C1 +DC0 +1 of 2 \(1 not connected\) +OFF" "$work/hl.txt" \
    && grep -Eq "^OK +DC0_C0 +DC0 +2 of 2 +on, admission control off +on +normal" "$work/hl.txt" \
    && grep -Eq "^CRITICAL +DC0_C1_H1 +DC0_C1 +DC0 +disconnected" "$work/hl.txt" && grep -Eq "^OK +DC1_H0 +\(standalone\) +DC1 +connected" "$work/hl.txt" \
+   && grep -Eq "^Status +Host +.* +Up \(days\) +Clock +ESXi +Alarms" "$work/hl.txt" \
+   && grep -Eq "^OK +DC1_H0 +\(standalone\) +DC1 +connected +no +- +green +[-0-9%]+ +[-0-9%]+ +[-0-9.]+ +\? +8\." "$work/hl.txt" \
+   && ! grep -q "Clock .* against vCenter's:" "$work/hl.txt" \
    && grep -q 'bgcolor="#b91c1c"[^>]*>RETREAT MODE<' "$work/hl.html" && grep -q 'bgcolor="#b45309"[^>]*>OFF<' "$work/hl.html" \
    && grep -q 'bgcolor="#fee2e2"' "$work/hl.html" && grep -q '>Needs attention' "$work/hl.html"; then
     echo "ok   -   ...the email: clusters with HA, DRS, vCLS coloured, every host by datacenter and cluster, a text copy"
@@ -1800,6 +1808,13 @@ run "trust store report: nothing readable on vcsim - every store not read, the j
        "no certificate API on vCenter" "does not implement: ListCACertificates" "nothing could be read:"
 run "trust store report, Check mode with the removal asked: the same, nothing changed" fail vmware_trust_report.yml --check \
     -e check_trust_remove=true -- "nothing could be read" "changed=0"
+# report_time_zone: each time in that zone (America/Phoenix: no summer time, so always MST), then UTC's
+RUN_PORT=$port3 run "health report with report_time_zone: the read time and the disconnection in that zone and UTC" ok vm_health_report.yml \
+    -e report_time_zone=America/Phoenix -e vm_net_drops=false \
+    -- "VMware health report: 2 critical, 3 warning(s)" " MST (" "UTC) (vCenter's event)" "Disconnected from vCenter since 20"
+RUN_PORT=$port3 run "health report with a report_time_zone the EE does not know: UTC, and says so" ok vm_health_report.yml \
+    -e report_time_zone=Mars/Olympus -e vm_net_drops=false \
+    -- "VMware health report: 2 critical, 3 warning(s)" "report_time_zone Mars/Olympus is not a time zone this execution environment knows"
 RUN_PORT=$port3 run "health report with vm_health_require_ha: false - HA off is not a warning" ok vm_health_report.yml \
     -e vm_health_require_ha=false -- "VMware health report: 2 critical - 2 datacenter(s), 4 cluster(s), 10 host(s)"
 RUN_PORT=$port3 run "health report of one datacenter (vmware_datacenter)" ok vm_health_report.yml -e vmware_datacenter=DC1 \

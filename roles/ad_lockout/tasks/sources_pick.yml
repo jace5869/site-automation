@@ -12,6 +12,16 @@
     label: "{{ item.key }}: {{ item.value | map(attribute='sam') | join(', ') }}"
   changed_when: false
 
+# a Limit applies to the next play too: a source computer outside it is skipped there without a word
+- name: Lockout | source computers outside the job's Limit are not looked on
+  ansible.builtin.debug:
+    msg: >-
+      Not looked on - outside the job's Limit ({{ ansible_limit }}): {{ _adl_outside | join(', ') }}. Leave the Limit
+      empty to look on them (target picks the DCs), or add them to it.
+  vars:
+    _adl_outside: "{{ _adl.check.keys() | list | difference(query('ansible.builtin.inventory_hostnames', ansible_limit | default('all', true))) }}"
+  when: ansible_limit | default('', true) | length > 0 and _adl_outside | length > 0
+
 - name: Lockout | looked on
   ansible.builtin.debug:
     msg: >-

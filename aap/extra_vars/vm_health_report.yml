@@ -58,6 +58,19 @@
 ## read the hosts' hardware sensors (false = skip them)
 # vm_health_sensors: true
 
+## Each connected host's clock against vCenter's, and its NTP setting: a host writes its own logs
+## (hostd, vmkernel) by its clock, vCenter its events by its own - off clocks are why a
+## disconnection's time in a host's log does not match vCenter's. No NTP server set, or the NTP
+## service stopped, is a warning. vCenter's clock against the AAP job's too. read them (false =
+## skip: one call per host)
+# vm_health_clock: true
+
+## a host's clock this many seconds off vCenter's (ahead or behind) -> warning
+# vm_health_clock_warn_seconds: 60
+
+## -> critical (Active Directory logins fail from 5 minutes off)
+# vm_health_clock_crit_seconds: 300
+
 ## rows per table in the report (the artifacts have them all)
 # vm_health_max_rows: 500
 
@@ -209,6 +222,13 @@
 ## report_email_html_template: "{{ playbook_dir }}/files/email/report.html.j2" report.html.j2 (the
 ## default) = the look report_email_theme picks.
 # report_email_html_template: report.html.j2
+
+## The time zone of the times in a report, besides UTC: e.g. America/New_York (a name as
+## `timedatectl list-timezones` prints them) shows "2026-10-25 10:03:12 EDT (14:03 UTC)". vCenter,
+## ESXi and their log files keep UTC; the vSphere Client shows the browser's time zone. "" = UTC
+## only. Used by the VMware health and alarms reports (the others show UTC). docs/VMWARE.md, "Times
+## and clocks"
+# report_time_zone: ""
 
 ## THE REPORT WEBSITE (docs/WEB_REPORTS.md): every report job also writes its report as a web page -
 ## off until report_web_dest is set. Works without an email (report_email_to empty). Each run: its

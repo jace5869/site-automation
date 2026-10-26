@@ -210,6 +210,11 @@ run dry.txt playbooks/cert_install_check.yml --check; rc_dry=$?
 run check.txt playbooks/cert_install_check.yml; rc=$?
 [ $rc -ne 0 ] && [ $rc_dry -ne 0 ] && has "issued: red on purpose - NEEDS APPROVAL (a dry run says the same)" check.txt "NEEDS APPROVAL: 1 certificate(s) to install" \
     || { bad "check: exit $rc / dry $rc_dry"; tail -30 check.txt; }
+run checkl.txt playbooks/cert_install_check.yml -l web01.example.mil; rc=$?     # a Limit of the host alone, no localhost
+has "a Limit of the host alone (no localhost): the same plan" checkl.txt "NEEDS APPROVAL: 1 certificate(s) to install" \
+    "READY | web01.example.mil | CN=web01.example.mil"
+[ $rc -ne 0 ] && ! grep -q "skipping: no hosts matched" checkl.txt && ok "...no play skipped, red as the check without a Limit" \
+    || bad "check with a Limit: exit $rc, or a play skipped"
 grep -F "READY | web01.example.mil | CN=web01.example.mil" check.txt > ready.txt
 has "web01 READY: its chain file, its key, reload httpd, the port" ready.txt "$work/pki/web01-fullchain.pem" "$work/private/web01.key" \
     "reload httpd.service" "then port $tls1 must serve it" "the new one: serial"

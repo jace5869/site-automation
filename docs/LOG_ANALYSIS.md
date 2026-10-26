@@ -132,7 +132,8 @@ log_analysis_win_files_extra: ['E:\MID\*\agent\logs\agent0.log*']
    - The vCenter appliance: a host in a group with `log_analysis_source: vcsa`, its Machine
      credential root (or a sudo account), the appliance's shell bash (above).
    - Credentials: the Machine credential **and** ACT model key. **Prompt on launch** for the
-     **Limit**, and a **survey** with `target` (the group), `log_analysis_question` (text, not
+     **Limit** (hosts only - since 0.32.0 a Limit needs no `localhost`; one with it works too), and a
+     **survey** with `target` (the group), `log_analysis_question` (text, not
      required), `log_analysis_since` / `log_analysis_until` (text, not required) and, if you like,
      `log_analysis_profiles` (multiple choice).
    - Variables: `report_email_to: ops@yoursite.mil` (or empty, with `report_web_dest` only).

@@ -946,6 +946,7 @@ File: `roles/site_email/defaults/main.yml`
 | `report_history_runs` | `14` | bars in the strip, this run included |
 | `report_history_aap_ca_path` | (empty) | a CA file for AAP's own HTTPS certificate ("" = what the execution environment trusts) |
 | `report_email_html_template` | `report.html.j2` | Your own look instead: copy roles/site_email/templates/report.html.j2 (or report_command / _portal / _glass) to e.g. playbooks/files/email/report.html.j2, change it, and set report_email_html_template: "{{ playbook_dir }}/files/email/report.html.j2" report.html.j2 (the default) = the look report_email_theme picks. |
+| `report_time_zone` | (empty) | The time zone of the times in a report, besides UTC: e.g. America/New_York (a name as `timedatectl list-timezones` prints them) shows "2026-10-25 10:03:12 EDT (14:03 UTC)". vCenter, ESXi and their log files keep UTC; the vSphere Client shows the browser's time zone. "" = UTC only. Used by the VMware health and alarms… (all of it: the role file) |
 | `report_web_dest` | (empty) | THE REPORT WEBSITE (docs/WEB_REPORTS.md): every report job also writes its report as a web page - off until report_web_dest is set. Works without an email (report_email_to empty). Each run: its page, a copy as the template's latest page, the report's data as JSON beside each (for your own site), and an index of every… (all of it: the role file) |
 | `report_web_url` | (empty) | the address people open that folder at, e.g. https://reports.yoursite.mil ("" = dest when it is https://) |
 | `report_web_theme` | `portal` | the page's look: standard, command, portal or glass (as report_email_theme) |
@@ -1108,6 +1109,9 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_health_mem_warn_pct` | `90` | memory used: a warning from this percent |
 | `vm_health_mem_crit_pct` | `95` | memory used: critical from this percent |
 | `vm_health_sensors` | `true` | read the hosts' hardware sensors (false = skip them) |
+| `vm_health_clock` | `true` | Each connected host's clock against vCenter's, and its NTP setting: a host writes its own logs (hostd, vmkernel) by its clock, vCenter its events by its own - off clocks are why a disconnection's time in a host's log does not match vCenter's. No NTP server set, or the NTP service stopped, is a warning. vCenter's clock… (all of it: the role file) |
+| `vm_health_clock_warn_seconds` | `60` | a host's clock this many seconds off vCenter's (ahead or behind) -> warning |
+| `vm_health_clock_crit_seconds` | `300` | -> critical (Active Directory logins fail from 5 minutes off) |
 | `vm_health_max_rows` | `500` | rows per table in the report (the artifacts have them all) |
 | `vm_health_fail` | `false` | The job stays green when it finds problems: the report and email say what. true = mark the job FAILED when there is a critical problem (a host not connected, an HA agent isolated ...), for workflows. |
 | `vm_net_drops` | `true` | Network drops and errors in the health report: packets dropped and network errors of every ESXi host (by physical NIC) and powered-on VM (by virtual NIC), from vCenter's statistics. The past day needs vCenter's 5-minute statistics at level 2 (the default is 1); at level 1 the last hour is read, and the report says so.… (all of it: the role file) |

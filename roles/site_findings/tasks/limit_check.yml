@@ -1,0 +1,17 @@
+---
+# For a playbook that does its work on localhost - on the AAP side - after reading hosts (servicenow_health.yml:
+# the instance, after its MID Server hosts): a Limit that leaves localhost out makes Ansible skip that play
+# ("skipping: no hosts matched") and the job would end GREEN having checked nothing. Include it as the FIRST task
+# of the playbook's first play on hosts, so the job stops before any host is touched. A playbook whose last part
+# is a report of its hosts runs that part on the hosts instead, once, on the AAP side (include_role with apply:
+# delegate_to: localhost, run_once: true - log_analysis.yml and others): a Limit there needs no localhost.
+# Runs once, on the controller (assert never logs in to a host). tests/test_limit_localhost.py keeps it so.
+- name: Limit | the job's Limit includes localhost
+  ansible.builtin.assert:
+    that: ansible_limit | default('', true) | length == 0 or 'localhost' in query('ansible.builtin.inventory_hostnames', ansible_limit)
+    fail_msg: >-
+      The job's Limit ({{ ansible_limit | default('') }}) leaves out localhost, where this job does its work
+      (on the AAP side): Ansible would skip it and the job would end green with nothing done. Add ",localhost"
+      to the Limit (e.g. mid01,localhost), or leave the Limit empty (the job's group picks the hosts).
+    quiet: true
+  run_once: true

@@ -8,5 +8,5 @@
     fail_msg: >-
       {{ inventory_hostname }}: {{ _wp_step }} gave no result (exit code {{ _wp_raw_any.rc | default('?') }}):
       {{ (((_wp_raw_any.stderr | default('') | regex_findall('<S S="Error">(.*?)</S>') | join(' ')) or (_wp_raw_any.stderr | default('')) or (_wp_raw_any.msg | default('')) or 'no output')
-          | regex_replace('_x001B_\\[[0-9;]*m', '') | regex_replace('_x000[AD]_', ' ') | regex_replace('\\s+', ' ') | trim) | truncate(500) }}
+          | regex_replace('_x001B_\[[0-9;]*m', '') | regex_replace('_x000[AD]_', ' ') | regex_replace('\s+', ' ') | trim) | truncate(500) }}
     quiet: true

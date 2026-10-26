@@ -59,11 +59,18 @@
         tasks_from: csr.yml
 
 - name: Certificate renewal - the CSRs on the ServiceNow tickets
-  hosts: localhost
-  connection: local
+  # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
+  hosts: "{{ target | default('all') }}"
   gather_facts: false
   tasks:
     - name: Attach each CSR to its certificate's ticket
       ansible.builtin.include_role:
         name: servicenow
         tasks_from: cert_csr.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"

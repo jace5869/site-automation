@@ -37,14 +37,21 @@
         tasks_from: install_pending.yml
 
 - name: Windows certificate install - the issued certificates, from the requests
-  hosts: localhost
-  connection: local
+  # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
+  hosts: "{{ target | default('all') }}"
   gather_facts: false
   tasks:
     - name: Each CSR's request, and the certificate the PKI put there
       ansible.builtin.include_role:
         name: servicenow
         tasks_from: cert_issued.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
 - name: Windows certificate install - what installing each would do
   hosts: "{{ target | default('all') }}"
@@ -59,11 +66,18 @@
       when: cert_install_pending is defined
 
 - name: Windows certificate install - the plan, for the approval
-  hosts: localhost
-  connection: local
+  # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
+  hosts: "{{ target | default('all') }}"
   gather_facts: false
   tasks:
     - name: What is ready to install, and the approval
       ansible.builtin.include_role:
         name: servicenow
         tasks_from: cert_install_plan.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"

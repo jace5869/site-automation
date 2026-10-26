@@ -121,7 +121,7 @@ INV
         local name="$1" want="$2" vars="$3"; shift 3
         (cd "$repo" && ANSIBLE_NOCOLOR=1 ANSIBLE_ROLES_PATH="$work/roles:roles" ANSIBLE_FILTER_PLUGINS=plugins/filter ANSIBLE_LOCALHOST_WARNING=False \
             ANSIBLE_DEPRECATION_WARNINGS=False ANSIBLE_STDOUT_CALLBACK=default \
-            "$ap" -i "$work/inv.yml" playbooks/ad_lockout.yml -e "$vars" ${CHECK:+--check}) > "$work/out.txt" 2>&1
+            "$ap" -i "$work/inv.yml" playbooks/ad_lockout.yml -e "$vars" ${CHECK:+--check} ${LIMIT:+-l "$LIMIT"}) > "$work/out.txt" 2>&1
         local rc=$?
         if { [ "$want" = ok ] && [ $rc -ne 0 ]; } || { [ "$want" = fail ] && [ $rc -eq 0 ]; }; then
             echo "FAIL - $name: exit $rc (wanted $want)"; grep -E '"msg"|ERROR|FAILED' "$work/out.txt" | head -5 | cut -c1-300; fails=$((fails + 1)); return 1
@@ -141,6 +141,11 @@ INV
         'Would be unlocked (dry run)'
     e2e "the playbook: the source computer looked on" ok '{"ad_lockout_user": "jdoe", "ad_lockout_check_sources": true}' \
         'Looking on pc123.corp.test' 'On PC123: the service BackupAgent'
+    LIMIT="dc01.corp.test" e2e "a Limit of the DC only (no localhost): read, the report - the source computer outside it said" ok \
+        '{"ad_lockout_user": "jdoe", "ad_lockout_check_sources": true}' \
+        'Account lockout: CORP\\jdoe LOCKED OUT - from PC123' "Not looked on - outside the job's Limit (dc01.corp.test): pc123.corp.test"
+    LIMIT="dc01.corp.test,localhost" e2e "a Limit with localhost in it (the habit of before 0.32.0): the same" ok \
+        '{"ad_lockout_user": "jdoe"}' 'Account lockout: CORP\\jdoe LOCKED OUT - from PC123'
 else
     echo "skip - the playbook with its own tasks (no pwsh)"
 fi

@@ -6,7 +6,9 @@
 # log_analysis_ignore_extra drops a line, the since / until window reaches journalctl and podman and leaves
 # out a line of the text log outside it, the question reaches ACT's prompt, the patterns are grouped and
 # ranked, ACT's answer and the patterns table are emailed and published, a host that cannot be reached is
-# listed (the job stays green), log_analysis_act: false needs no key, no key with ACT fails after the report.
+# listed (the job stays green), log_analysis_act: false needs no key, no key with ACT fails after the report, a
+# Limit of hosts only (an inventory without localhost, as AAP's) is read, analysed and reported - and one with
+# localhost in it still works.
 #   bash tests/logs/run_log_test.sh                    (ANSIBLE_PLAYBOOK=... for another ansible-core)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -78,6 +80,13 @@ all:
         localhost:
         gone01.example.mil:
 EOI
+# as an AAP inventory: no localhost in it (the report part runs once, from the first host, on the AAP side)
+cat > "$work/inv-nolocal.yml" <<EOI
+all:
+  hosts:
+    lin01.example.mil: {ansible_connection: local, ansible_python_interpreter: $py}
+    gone01.example.mil: {ansible_host: 127.0.0.1, ansible_port: 1, ansible_connection: ssh}
+EOI
 mail="{\"report_email_to\": \"ops@example.mil\", \"report_email_from\": \"aap@example.mil\", \"report_email_smtp_host\": \"127.0.0.1\",
        \"report_email_smtp_port\": $port, \"report_email_security\": \"none\", \"report_web_dest\": \"$work/site\"}"
 actvars="{\"act_triage_script_src\": \"$repo/tests/containers/fake_act.py\", \"act_triage_poll\": 1,
@@ -94,7 +103,7 @@ run() {  # run NAME EXPECT(ok|fail) [args...] -- TEXT...
     (cd "$repo" && PATH="$work/bin:$PATH" FAKE_ACT_OUT="$work/act" FAKE_ACT_CONFIG="$work/act/act.json" \
         ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False \
         ANSIBLE_SHOW_CUSTOM_STATS=True ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_TIMEOUT=5 \
-        "$ap" -i "$work/inv.yml" playbooks/log_analysis.yml -e target=web -e "$base" -e '{"awx_job_id": 4711}' "${args[@]}") \
+        "$ap" -i "${INV:-$work/inv.yml}" playbooks/log_analysis.yml -e target=web -e "$base" -e '{"awx_job_id": 4711}' "${args[@]}") \
         > "$work/out.txt" 2>&1
     local rc=$?
     if { [ "$want" = ok ] && [ $rc -ne 0 ]; } || { [ "$want" = fail ] && [ $rc -eq 0 ]; }; then
@@ -147,6 +156,13 @@ run "an unknown profile is named, with the known ones" fail -e '{"log_analysis_p
     -- "Unknown profile(s) in log_analysis_profiles: nginxx" "mid_server"
 run "a wrong window is refused" fail -e "log_analysis_since=yesterday" -- "must look like 2026-10-23 08:00"
 run "a dry run (Check): ACT not called, the report still made, green" ok --check -e "$actvars" -- "A dry run (Check): ACT was not called"
+INV="$work/inv-nolocal.yml" run "a Limit of hosts only, no localhost anywhere: read, analysed, reported" ok \
+    -l "gone01.example.mil,lin01.example.mil" -e target=all -e log_analysis_act=false -e "$mail" \
+    -- "ACT: not asked (log_analysis_act: false)." "1 host(s) not read" "Log analysis: " "emailed" \
+    && { grep -q "skipping: no hosts matched" "$work/out.txt" && { echo "FAIL -   ...a play was skipped"; fails=$((fails + 1)); } \
+         || echo "ok   -   ...no play skipped"; }
+run "a Limit with localhost in it: read, analysed, reported" ok -l "gone01.example.mil,localhost" -e log_analysis_act=false \
+    -- "ACT: not asked (log_analysis_act: false)." "1 host(s) not read"
 unset GENAI_KEY
 run "ACT without an API key: says which credential, still reports, fails" fail -e "$actvars" \
     -- "This job has no API key for provider genai" "ACT did not run" "Patterns ("

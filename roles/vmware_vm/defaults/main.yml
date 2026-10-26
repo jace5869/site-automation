@@ -195,6 +195,12 @@ vm_health_cpu_crit_pct: 95               # CPU used: critical from this percent
 vm_health_mem_warn_pct: 90               # memory used: a warning from this percent
 vm_health_mem_crit_pct: 95               # memory used: critical from this percent
 vm_health_sensors: true                  # read the hosts' hardware sensors (false = skip them)
+# Each connected host's clock against vCenter's, and its NTP setting: a host writes its own logs (hostd, vmkernel)
+# by its clock, vCenter its events by its own - off clocks are why a disconnection's time in a host's log does not
+# match vCenter's. No NTP server set, or the NTP service stopped, is a warning. vCenter's clock against the AAP job's too.
+vm_health_clock: true                    # read them (false = skip: one call per host)
+vm_health_clock_warn_seconds: 60         # a host's clock this many seconds off vCenter's (ahead or behind) -> warning
+vm_health_clock_crit_seconds: 300        # -> critical (Active Directory logins fail from 5 minutes off)
 vm_health_max_rows: 500                  # rows per table in the report (the artifacts have them all)
 # The job stays green when it finds problems: the report and email say what. true = mark the job
 # FAILED when there is a critical problem (a host not connected, an HA agent isolated ...), for workflows.

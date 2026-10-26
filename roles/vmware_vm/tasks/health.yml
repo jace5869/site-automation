@@ -2,7 +2,8 @@
 # HEALTH REPORT (read-only): every datacenter, cluster and host of every vCenter - vSphere HA (on,
 # host monitoring, failover capacity left, each host's HA agent), DRS (on, automation, recommendations
 # waiting, faults), vCLS retreat mode, hosts not connected or in maintenance, hardware sensors not
-# green, hosts that need a restart, CPU and memory used, configuration issues and triggered alarms;
+# green, hosts that need a restart, CPU and memory used, configuration issues and triggered alarms,
+# each host's clock against vCenter's and its NTP setting (vm_health_clock), when a host not connected lost vCenter;
 # single sign-on (vm_sso) and the hosts' and VMs' network drops and errors (vm_net_drops).
 # Coloured by severity, what to do for each problem. Printed, emailed (report_email_to), and published
 # as artifacts (vm_health). Green unless vm_health_fail.
@@ -15,6 +16,7 @@
     vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
     validate_certs: "{{ vmware_validate_certs | bool }}"
     sensors: "{{ vm_health_sensors | bool }}"
+    clock: "{{ vm_health_clock | bool }}"
     now: "{{ _vm_now | default(omit) }}"
   register: _vm_hl_read
   check_mode: false
@@ -26,6 +28,8 @@
       {{ {'require_ha': vm_health_require_ha | bool, 'require_drs': vm_health_require_drs | bool,
           'cpu_warn_pct': vm_health_cpu_warn_pct | float, 'cpu_crit_pct': vm_health_cpu_crit_pct | float,
           'mem_warn_pct': vm_health_mem_warn_pct | float, 'mem_crit_pct': vm_health_mem_crit_pct | float,
+          'clock_warn_seconds': vm_health_clock_warn_seconds | float, 'clock_crit_seconds': vm_health_clock_crit_seconds | float,
+          'time_zone': report_time_zone | default('', true),
           'max_rows': vm_health_max_rows | int, 'datacenter': vmware_datacenter | default('', true)} }}
 
 - name: VMware | the report

@@ -48,8 +48,8 @@
         tasks_from: collect.yml
 
 - name: Account lockout - the source computers to look on
-  hosts: localhost
-  connection: local
+  # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
+  hosts: "{{ target | default('win_dc') }}"
   gather_facts: false
   tasks:
     - name: The source computers of this inventory (ad_lockout_check_sources)
@@ -59,11 +59,25 @@
           ansible.builtin.include_role:
             name: ad_lockout
             tasks_from: build.yml
+            apply:
+              delegate_to: localhost
+              run_once: true
+              become: false
+          vars:
+            ansible_connection: local
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
         - name: The source computers to look on
           ansible.builtin.include_role:
             name: ad_lockout
             tasks_from: sources_pick.yml
+            apply:
+              delegate_to: localhost
+              run_once: true
+              become: false
+          vars:
+            ansible_connection: local
+            ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
 - name: Account lockout - on the source computers (read-only)
   hosts: adl_sources
@@ -82,16 +96,30 @@
         tasks_from: sources.yml
 
 - name: Account lockout report
-  hosts: localhost
-  connection: local
+  # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
+  hosts: "{{ target | default('win_dc') }}"
   gather_facts: false
   tasks:
     - name: The report
       ansible.builtin.include_role:
         name: ad_lockout
         tasks_from: build.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
     - name: Print it, publish it, email it
       ansible.builtin.include_role:
         name: ad_lockout
         tasks_from: report.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"

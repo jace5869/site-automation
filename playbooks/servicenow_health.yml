@@ -17,6 +17,11 @@
   hosts: "{{ servicenow_mid_hosts_group | default('servicenow_mid_hosts') }}"
   gather_facts: false
   tasks:
+    - name: The job's Limit includes localhost (the last part runs there)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: limit_check.yml
+
     - name: Read each MID Server host (read-only)
       ansible.builtin.include_role:
         name: servicenow

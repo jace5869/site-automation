@@ -62,7 +62,7 @@ run "ad_report_fail: a critical finding fails the job" fail '{"ad_report_fail": 
     'ad_report_fail: false makes this a report only'
 run "a dry run (Check) shows the same report" ok '{}' 'Inbound replication'
 CHECK=1 run "  ...in check mode" ok '{}' 'Inbound replication'
-LIMIT=localhost,dc01.corp.test run "a healthy domain is green, also with ad_report_fail" ok '{"ad_report_fail": true, "fixture_domain": "domain_ok"}' \
+LIMIT=dc01.corp.test run "a healthy domain is green, also with ad_report_fail" ok '{"ad_report_fail": true, "fixture_domain": "domain_ok"}' \
     'Active Directory health report: all 1 domain controller(s) healthy (corp.test)'
 if [ "$fails" -gt 0 ]; then echo "$fails test(s) failed"; exit 1; fi
 echo "all AD report tests passed"

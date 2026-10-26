@@ -38,7 +38,9 @@ case "$branch" in
   main|master) echo "Note: you are on '$branch'. That is fine: nothing reaches AAP until you push." ;;
 esac
 
-protect=(.git/ .site-local poam/poam.csv inventories/site/ playbooks/group_vars/ playbooks/host_vars/)
+# .git without a slash: a file too (a release that is a git worktree has a .git file; with the slash
+# rsync would put it in place of your .git folder)
+protect=(.git .site-local poam/poam.csv inventories/site/ playbooks/group_vars/ playbooks/host_vars/)
 if [ -f .site-local ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     line=${line%%#*}                                # comment

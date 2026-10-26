@@ -16,7 +16,8 @@
                    DC0_C0_H1 and recovered (a warning)
   vcsim.py health  for the health report, on a simulator started with -dc 2 -cluster 2 -host 2
                    -standalone-host 1: vSphere HA on for DC0_C0 (admission control off), DC1_C0 in vCLS
-                   retreat mode, host DC0_C1_H1 disconnected
+                   retreat mode, host DC0_C1_H1 disconnected, with vCenter's event of it (vcsim posts none; it
+                   dates a posted event now)
 
 Setup (vcsim's default inventory: DC0_H0_VM0/1, DC0_C0_RP0_VM0/1; port groups DC0_DVPG0/1, VM Network):
   DC0_H0_VM0      the AAP server: guest host name aap01.example.mil, IP 192.0.2.5, Tools running, a
@@ -189,7 +190,13 @@ def health():
     content.setting.UpdateOptions(changedValue=[vim.option.OptionValue(key="config.vcls.clusters.%s.enabled" % cls["DC1_C0"]._moId,
                                                                        value="false")])
     hosts = {h.name: h for h in content.viewManager.CreateContainerView(content.rootFolder, [vim.HostSystem], True).view}
-    WaitForTask(hosts["DC0_C1_H1"].DisconnectHost_Task())
+    h = hosts["DC0_C1_H1"]
+    WaitForTask(h.DisconnectHost_Task())
+    dc = h.parent.parent.parent
+    content.eventManager.PostEvent(vim.event.HostDisconnectedEvent(
+        key=0, chainId=0, createdTime=datetime.datetime.now(datetime.timezone.utc), userName="",
+        host=vim.event.HostEventArgument(name=h.name, host=h), datacenter=vim.event.DatacenterEventArgument(name=dc.name, datacenter=dc),
+        computeResource=vim.event.ComputeResourceEventArgument(name=h.parent.name, computeResource=h.parent)))
 
 
 def watch():

@@ -1,12 +1,12 @@
 ---
 # WINDOWS CERTIFICATE INSTALL, the check (playbooks/win_cert_install_check.yml), on the server, after the AAP side
-# found the issued certificates (hostvars.localhost.cert_install_issued): what installing each would do here -
+# found the issued certificates (cert_install_issued, on every host): what installing each would do here -
 # certreq -accept, and each binding of the old certificate moved - or why a person does it. One certificate at a
 # time (the script's settings travel in an environment variable). Reads only: the plan goes to the approval.
 - name: Windows certs | install | the certificates the PKI issued for this server
   ansible.builtin.set_fact:
     _wci_issued: >-
-      {{ (hostvars['localhost'].cert_install_issued | default({})).get(inventory_hostname, [])
+      {{ (cert_install_issued | default({})).get(inventory_hostname, [])
          | selectattr('status', 'equalto', 'issued') | list }}
     # an AAP host (the literal groups: no setting removes them): a person installs its certificates
     _wci_by_hand: >-

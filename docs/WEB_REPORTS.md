@@ -70,6 +70,14 @@ report_web_page: "{site}/{template}/{year}-{month}/{date}_{time}_job-{job}.html"
 report_web_latest: "{site}/{template}/latest.html"
 ```
 
+**One fixed file per report** (a dashboard tile, a bookmark): `latest.html` is that already, one per template -
+`vm-health-report/latest.html`, `linux-log-analysis/latest.html`. To have them side by side at the top of the folder
+instead, as `vm-health-report.html`, `linux-log-analysis.html` ... (the template's name, lower case with dashes):
+
+```yaml
+report_web_latest: "{template}.html"
+```
+
 A name must end in `.html` and stay inside the report folder (no leading `/`, no `..`); a value is made safe for
 a file name (letters, digits, `.`, `-`, `_`; the rest becomes `-`). A name that does not exist stops the job and
 lists the ones that do.
@@ -205,6 +213,12 @@ visible inside the job's container:
    user AAP runs jobs as (`awx`). An SMB share, e.g. in `/etc/fstab`:
    `//fileserver/reports /mnt/reports cifs credentials=/etc/reports.cred,uid=awx,gid=awx,file_mode=0664,dir_mode=0775,_netdev 0 0`
    (with SELinux add `context=system_u:object_r:container_file_t:s0`).
+   An NFS export, e.g. in `/etc/fstab`:
+   `nfs01.yoursite.mil:/export/reports /mnt/reports nfs4 rw,hard,_netdev,context="system_u:object_r:container_file_t:s0" 0 0`.
+   NFS has no `uid=` option: on the NFS server, give the export's folder to the `awx` user's number (`id awx` on a
+   node - the same on every node), or map every writer to it in `/etc/exports`
+   (`/export/reports aapnode*.yoursite.mil(rw,all_squash,anonuid=<that uid>,anongid=<its gid>)`). With SELinux, the
+   `context=` above, or `setsebool -P virt_use_nfs 1` on each node.
 2. In AAP: **Settings > Job settings > Paths to expose to isolated jobs**: `/mnt/reports:/mnt/reports:rw`.
 3. The web server serves the same share (IIS on the file server, or nginx with the share mounted).
 

@@ -121,7 +121,7 @@
               ansible.builtin.set_fact:
                 _ncg_res: >-
                   {{ _ncg_res | net_config_mark_failed({'*new_changed*': 'the commit could not be pushed to ' ~ net_config_git_repo ~ ': '
-                     ~ ((_ncg_pull.stderr | default('') if _ncg_pull.rc != 0 else _ncg_push2.stderr | default('')) | regex_replace('\\s+', ' ')
+                     ~ ((_ncg_pull.stderr | default('') if _ncg_pull.rc != 0 else _ncg_push2.stderr | default('')) | regex_replace('\s+', ' ')
                         | truncate(300)) ~ ' - run the backup again (untick Concurrent jobs on its template)'}) }}
                 _ncg_unpushed: true
               when: _ncg_pull.rc != 0 or _ncg_push2.rc | default(1) != 0

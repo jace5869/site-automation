@@ -383,6 +383,52 @@ class HealthFacts(unittest.TestCase):
         self.assertEqual([x["name"] for x in hl.bad_sensors(only)], ["VMware Rollup Health State"])
         self.assertEqual(hl.bad_sensors(None), [])
 
+    def test_ntp(self):
+        svc = _NS(service=[_NS(key="TSM-SSH", running=True), _NS(key="ntpd", running=False)])
+        dti = _NS(ntpConfig=_NS(server=["ntp1.example.mil", " ", "ntp2.example.mil"]), systemClockProtocol="ntp")
+        self.assertEqual(hl.ntp_facts(dti, svc), (["ntp1.example.mil", "ntp2.example.mil"], "ntp", False))
+        self.assertEqual(hl.ntp_facts(_NS(ntpConfig=_NS(server=None)), None), ([], "", None))     # none set; services not said
+        self.assertEqual(hl.ntp_facts(None, _NS(service=[])), (None, "", None))                   # vCenter would not say (vcsim)
+
+    def test_clock_offset(self):
+        import datetime as dt
+        ticks = iter([1000.0, 1000.4])                  # the call took 0.4 s: the host read at 1000.2
+        at = dt.datetime.fromtimestamp(1090.2, tz=dt.timezone.utc)
+        self.assertEqual(hl.clock_offset(lambda: at, 0.0, clock=lambda: next(ticks)), 90.0)
+        ticks = iter([1000.0, 1000.0])                  # vCenter itself 30 s ahead of this machine: 60 s against vCenter
+        self.assertEqual(hl.clock_offset(lambda: at.replace(tzinfo=None) - dt.timedelta(seconds=0.2), 30.0,
+                                         clock=lambda: next(ticks)), 60.0)
+
+        def refused():
+            raise RuntimeError("managed object not found: HostDateTimeSystem")
+        self.assertIsNone(hl.clock_offset(refused))
+        self.assertIsNone(hl.clock_offset(lambda: None))
+
+    def test_down_since(self):
+        """The newest event of the host losing vCenter; none or an error: no time."""
+        import datetime as dt
+        saved = getattr(hl, "vim", None)
+        spec = lambda **kw: kw                          # noqa: E731
+        spec.ByEntity = lambda **kw: kw
+        hl.vim = _NS(event=_NS(EventFilterSpec=spec))
+        try:
+            t = lambda h: dt.datetime(2026, 10, 25, h, 3, 12, tzinfo=dt.timezone.utc)     # noqa: E731
+            asked = []
+            em = _NS(QueryEvents=lambda s: asked.append(s) or [_NS(createdTime=t(9), fullFormattedMessage="Host esx01 lost  its connection"),
+                                                               _NS(createdTime=t(14), fullFormattedMessage="Host esx01 is not responding")])
+            self.assertEqual(hl.down_since(_NS(eventManager=em), "HOST"), ("2026-10-25T14:03:12Z", "Host esx01 is not responding"))
+            self.assertEqual((asked[0]["entity"], asked[0]["eventTypeId"]), ({"entity": "HOST", "recursion": "self"}, hl.DOWN_EVENTS))
+            self.assertEqual(hl.down_since(_NS(eventManager=_NS(QueryEvents=lambda s: [])), "HOST"), ("", ""))
+
+            def boom(s):
+                raise RuntimeError("no permission")
+            self.assertEqual(hl.down_since(_NS(eventManager=_NS(QueryEvents=boom)), "HOST"), ("", ""))
+        finally:
+            if saved is None:
+                del hl.vim
+            else:
+                hl.vim = saved
+
 
 def _self_signed(cn, days=30, sans=(), extra=()):
     """A key and a self-signed certificate (PEM) for the tests."""

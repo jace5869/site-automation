@@ -7,8 +7,14 @@ prompt, and ACT's answer read back into a table."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import datetime
 import json
 import re
+
+try:
+    import zoneinfo
+except ImportError:                             # Python before 3.9: UTC only
+    zoneinfo = None
 
 RANK = {"critical": 0, "warning": 1, "unknown": 2, "info": 3, "ok": 4, "": 5}
 PLURAL = {"vcenter": "vCenter", "datacenter": "datacenters", "cluster": "clusters", "host": "hosts", "datastore": "datastores",
@@ -21,6 +27,37 @@ MARK_BEGIN, MARK_END = "BEGIN_ACT_ANALYSIS", "END_ACT_ANALYSIS"
 def _t(iso):
     """'2026-10-05T03:52:47Z' -> '2026-10-05 03:52:47'."""
     return str(iso or "").replace("T", " ").replace("Z", "")
+
+
+def _zone(name):
+    """report_time_zone -> (its tzinfo, or None for UTC only; a note when it is not a time zone known here)."""
+    name = str(name or "").strip()
+    if not name or name.upper() in ("UTC", "Z", "ETC/UTC", "GMT"):
+        return None, ""
+    try:
+        return zoneinfo.ZoneInfo(name), ""
+    except Exception:                           # noqa: BLE001 - unknown name, no time zone data in the EE
+        return None, ("report_time_zone %s is not a time zone this execution environment knows "
+                      "(a name as timedatectl list-timezones prints them, e.g. America/New_York): times are in UTC" % name)
+
+
+def _tt(iso, tz=None):
+    """A time in a table: '2026-10-05 03:52:47' (the column says UTC), or with a time zone (_zone) its time first,
+    then UTC's: '2026-10-04 23:52:47 EDT (03:52 UTC on 10-05)'."""
+    s = _t(iso)
+    if tz is None or not s:
+        return s
+    try:
+        u = datetime.datetime.strptime(str(iso).strip().rstrip("Z")[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+    except ValueError:
+        return s
+    lt = u.astimezone(tz)
+    return "%s (%s UTC%s)" % (lt.strftime("%Y-%m-%d %H:%M:%S %Z"), u.strftime("%H:%M"), "" if lt.date() == u.date() else u.strftime(" on %m-%d"))
+
+
+def _col(name, tz=None):
+    """A time column's header: 'Since (UTC)', or 'Since' when each time says its zone."""
+    return name if tz is not None else name + " (UTC)"
 
 
 def _hours(h):
@@ -206,6 +243,7 @@ def _section(title, columns, rows, text="", status="", status_col=0, max_rows=0)
 def vm_alarm_report(data, opts=None):
     """The alarms report (roles/site_email layout)."""
     d, o = data or {}, opts or {}
+    tz, tz_note = _zone(o.get("time_zone"))
     vcs = _vcs(d)
     multi = len(vcs) > 1
     vc = ("vCenters " + ", ".join(vcs)) if multi else ("vCenter " + (d.get("vcenter") or ""))
@@ -244,10 +282,10 @@ def vm_alarm_report(data, opts=None):
     status = worst if worst in ("critical", "warning") else "ok"
     types = o.get("types") or ["vcenter", "datacenter", "cluster", "host"]
     tl = [PLURAL.get(t, t) for t in types]
-    subtitle = "%s - alarms now on %s%s - read %s UTC%s" % (
+    subtitle = "%s - alarms now on %s%s - read %s%s%s" % (
         vc, ", ".join(tl[:-1]) + " and " + tl[-1] if len(tl) > 1 else tl[0],
-        ("; events of the last %s hours" % hours) if events_on else "", _t(d.get("read_at")),
-        (" - datacenter " + o["datacenter"]) if o.get("datacenter") else "")
+        ("; events of the last %s hours" % hours) if events_on else "", _tt(d.get("read_at"), tz) + ("" if tz else " UTC"),
+        (" - datacenter " + o["datacenter"]) if o.get("datacenter") else "", (" - " + tz_note) if tz_note else "")
     summary = [
         {"label": "Critical alarms", "value": len(crit), "status": "critical" if crit else "ok"},
         {"label": "Warning alarms", "value": len(warn), "status": "warning" if warn else "ok"},
@@ -267,22 +305,22 @@ def vm_alarm_report(data, opts=None):
         if not a.get("acknowledged"):
             return "no"
         return "yes" + (" - " + a["acknowledged_by"] if a.get("acknowledged_by") else "") + (
-            ", " + _t(a["acknowledged_time"]) if a.get("acknowledged_time") else "")
+            ", " + _tt(a["acknowledged_time"], tz) if a.get("acknowledged_time") else "")
 
     sections = [_section(
-        "Triggered alarms", ["Severity", "Type", "Object", "Alarm", "Since (UTC)", "Acknowledged", "Cluster", "Datacenter"],
+        "Triggered alarms", ["Severity", "Type", "Object", "Alarm", _col("Since", tz), "Acknowledged", "Cluster", "Datacenter"],
         [(a.get("severity"), [_sev(a.get("severity")), TYPE_LABEL.get(a.get("entity_type"), a.get("entity_type")), a.get("entity"),
-                              a.get("alarm"), _t(a.get("time")), ack(a), a.get("cluster"), _dc(a, multi)]) for a in alarms],
+                              a.get("alarm"), _tt(a.get("time"), tz), ack(a), a.get("cluster"), _dc(a, multi)]) for a in alarms],
         "As vCenter shows them now: red = critical, yellow = warning. Acknowledged = someone has seen it in vCenter; "
         "the alarm is still active until its cause is gone." if alarms else "No alarm is triggered.",
         _worst([a.get("severity") for a in alarms]), max_rows=max_rows)]
     if events_on:
         sections.append(_section(
             "Alarms that fired in the last %s h" % hours,
-            ["Severity", "Type", "Object", "Alarm", "Went red", "Went yellow", "First fired (UTC)", "Last change (UTC)", "Now",
+            ["Severity", "Type", "Object", "Alarm", "Went red", "Went yellow", _col("First fired", tz), _col("Last change", tz), "Now",
              "Cluster", "Datacenter"],
             [(x["severity"], [_sev(x["severity"]), TYPE_LABEL.get(x["entity_type"], x["entity_type"]), x["entity"], x["alarm"],
-                              x["red"], x["yellow"], _t(x["first"]), _t(x["last"]),
+                              x["red"], x["yellow"], _tt(x["first"], tz), _tt(x["last"], tz),
                               "cleared" if x["now"] == "cleared" else "still %s" % x["now"], x["cluster"], _dc(x, multi)]) for x in fired],
             ("Every alarm that turned yellow or red in the last %s h: still on (red / amber, also in the table above), "
              "or cleared since (blue) - an alarm that comes and goes is worth a look too." % hours
@@ -291,34 +329,34 @@ def vm_alarm_report(data, opts=None):
             if fired else "No alarm fired in the last %s h." % hours,
             _worst([x["severity"] for x in fired if x["severity"] != "info"]), max_rows=max_rows))
     sections.append(_section(
-        "Host connection", ["Severity", "Host", "State now", "Maintenance", "Connection events", "Last event (UTC)", "Last message",
+        "Host connection", ["Severity", "Host", "State now", "Maintenance", "Connection events", _col("Last event", tz), "Last message",
                             "Cluster", "Datacenter"],
         [(c["severity"], [_sev(c["severity"]), c["host"], c["state"], "yes" if c["maintenance"] else "no", c["events"],
-                          _t(c["last"]), c["message"], c["cluster"], _dc(c, multi)]) for c in g["connection"]],
+                          _tt(c["last"], tz), c["message"], c["cluster"], _dc(c, multi)]) for c in g["connection"]],
         ("Hosts not connected to vCenter now (critical), and hosts that lost the connection in the last %s h but are back (warning)." % hours)
         if g["connection"] else "Every host is connected%s." % (", and none lost its connection in the last %s h" % hours if events_on else ""),
         _worst([c["severity"] for c in g["connection"]]), max_rows=max_rows))
     if events_on:
         sections.append(_section(
-            "Failed logins", ["Severity", "User", "From", "Where", "Failures", "First (UTC)", "Last (UTC)"],
-            [(x["severity"], [_sev(x["severity"]), x["user"], x["ip"], x["where"], x["count"], _t(x["first"]), _t(x["last"])])
+            "Failed logins", ["Severity", "User", "From", "Where", "Failures", _col("First", tz), _col("Last", tz)],
+            [(x["severity"], [_sev(x["severity"]), x["user"], x["ip"], x["where"], x["count"], _tt(x["first"], tz), _tt(x["last"], tz)])
              for x in g["logins"]],
             ("Wrong user name or password, per user, source and server. %d or more = critical: an account being locked "
              "out, a service or scanner with an old password, or someone guessing." % int(o.get("login_critical") or 10))
             if g["logins"] else "No failed login in the last %s h." % hours,
             _worst([x["severity"] for x in g["logins"]]), max_rows=max_rows))
         sections.append(_section(
-            "Virtual machine events", ["Severity", "Time (UTC)", "VM", "Event", "Host", "Cluster", "Datacenter", "By"],
-            [(e.get("severity"), [_sev(e.get("severity")), _t(e.get("time")), e.get("vm"), e.get("message"), e.get("host"),
+            "Virtual machine events", ["Severity", _col("Time", tz), "VM", "Event", "Host", "Cluster", "Datacenter", "By"],
+            [(e.get("severity"), [_sev(e.get("severity")), _tt(e.get("time"), tz), e.get("vm"), e.get("message"), e.get("host"),
                                   e.get("cluster"), _dc(e, multi), e.get("user") or "-"]) for e in g["vm"]],
             "Guest shutdowns and restarts, power-offs, resets and HA restarts. Info = someone did it (By); warning = HA "
             "restarted or reset it, or it was powered off with no user; critical = a failover or power-on failed."
             if g["vm"] else "No VM was shut down, powered off, reset or restarted by HA in the last %s h." % hours,
             _worst([e.get("severity") for e in vm_bad]), max_rows=max_rows))
         sections.append(_section(
-            "Other errors and warnings", ["Severity", "Object", "Event", "Count", "First (UTC)", "Last (UTC)", "Latest message"],
+            "Other errors and warnings", ["Severity", "Object", "Event", "Count", _col("First", tz), _col("Last", tz), "Latest message"],
             [(x["severity"], [_sev(x["severity"]), "%s %s" % (TYPE_LABEL.get(x["object_type"], ""), x["object"]), x["type"], x["count"],
-                              _t(x["first"]), _t(x["last"]), x["message"]]) for x in g["other"]],
+                              _tt(x["first"], tz), _tt(x["last"], tz), x["message"]]) for x in g["other"]],
             ("vCenter's error and warning events, the same event on the same object counted once."
              + (" Only the newest %s events were read (vm_alarm_max_events)." % o.get("max_events", "") if d.get("events_capped") else ""))
             if g["other"] else "No other error or warning event in the last %s h." % hours,

@@ -558,7 +558,7 @@ in [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md)).
 | Needs attention | every problem found, most severe first: severity, the object (vCenter, datacenter, cluster or host), the problem, **what to do**, and where it is (datacenter / cluster) |
 | Datacenters | each datacenter with everything in it: clusters, hosts, hosts running VMs, in maintenance, not connected, its problems |
 | Clusters | each cluster: hosts running VMs, **vSphere HA** (on or OFF, what admission control reserves, host agents not OK), **DRS** (on or OFF, automation level, score, recommendations waiting), **vCLS** (normal or RETREAT MODE), CPU and memory used, alarms, problems |
-| Hosts | every host, by datacenter and cluster (standalone hosts too): connection, maintenance mode, the **HA agent** (primary, secondary, isolated, partitioned ...), **hardware** (sensors and hardware status not green), CPU and memory used, days up, ESXi version and build, alarms |
+| Hosts | every host, by datacenter and cluster (standalone hosts too): connection, maintenance mode, the **HA agent** (primary, secondary, isolated, partitioned ...), **hardware** (sensors and hardware status not green), CPU and memory used, days up, the **clock** against vCenter's, ESXi version and build, alarms |
 | vCenter | each vCenter's version and the alarms on vCenter itself |
 | Single sign-on and OCSP | below |
 | Network drops and errors | each ESXi host and powered-on VM that dropped packets or had network errors, by NIC - below |
@@ -569,8 +569,8 @@ hardware faults, triggered alarms). The subject says it in one line, e.g.
 
 | Colour | What |
 |---|---|
-| **Red (critical)** | a host not connected to vCenter (or powered off); a host's HA agent isolated, partitioned, unreachable or in error; vCLS retreat mode on a cluster with DRS (DRS stops); a red hardware sensor; a red alarm; CPU or memory from 95 % |
-| **Amber (warning)** | HA or DRS off on a cluster of 2 or more hosts; HA host monitoring off; HA failover capacity below what admission control reserves; DRS recommendations waiting, or DRS faults; retreat mode without DRS; a yellow sensor; a host that needs a restart; a configuration issue (SSH on, ...); a yellow alarm; CPU from 85 %, memory from 90 % |
+| **Red (critical)** | a host not connected to vCenter (or powered off); a host's HA agent isolated, partitioned, unreachable or in error; vCLS retreat mode on a cluster with DRS (DRS stops); a red hardware sensor; a red alarm; CPU or memory from 95 %; a host's clock 5 minutes or more off vCenter's |
+| **Amber (warning)** | HA or DRS off on a cluster of 2 or more hosts; HA host monitoring off; HA failover capacity below what admission control reserves; DRS recommendations waiting, or DRS faults; retreat mode without DRS; a yellow sensor; a host that needs a restart; a configuration issue (SSH on, ...); a yellow alarm; CPU from 85 %, memory from 90 %; a host's clock a minute or more off vCenter's, no NTP server set on it, or its NTP service stopped; vCenter's clock a minute or more off the AAP job's |
 | **Blue (info)** | a host in maintenance mode or standby; HA admission control off; DRS in manual mode - worth knowing, not broken |
 
 A one-host cluster without HA or DRS is fine, and so is a host in maintenance mode whose HA agent is
@@ -597,12 +597,42 @@ not configured (that is what maintenance mode does).
 | `vm_health_cpu_warn_pct` / `vm_health_cpu_crit_pct` | `85` / `95` | CPU used (a host, or a cluster's hosts running VMs): amber from, red from |
 | `vm_health_mem_warn_pct` / `vm_health_mem_crit_pct` | `90` / `95` | the same for memory |
 | `vm_health_sensors` | `true` | read the hosts' hardware sensors |
+| `vm_health_clock` | `true` | read each host's clock and NTP setting ("Times and clocks", below) |
+| `vm_health_clock_warn_seconds` / `vm_health_clock_crit_seconds` | `60` / `300` | a host's clock this far off vCenter's, ahead or behind: amber from, red from |
+| `report_time_zone` | `""` (UTC only) | the times in that time zone too, e.g. `America/New_York` - best in `all.yml` (below) |
 | `vm_health_fail` | `false` | `true` = the job shows **failed** on a critical problem, for a workflow |
 | `vmware_datacenter` | (all) | one datacenter only |
 
 **vCLS retreat mode** is read from vCenter's advanced settings
 (`config.vcls.clusters.<cluster id>.enabled = false`). If the account may not read them, the report
 says so in blue, and retreat mode still shows as vCenter's own alarm on the cluster.
+
+### Times and clocks
+
+"The report says the host went down at 14:03, its log says something else" has three causes, and the
+report shows each:
+
+- **The time zone.** vCenter, ESXi and their log files (hostd, vmkernel, vobd, vpxd) keep UTC, and so does
+  the report. The vSphere Client shows times in the browser's time zone, so 14:03 UTC is 10:03 there in
+  New York in summer. Set the time zone people read the reports in, once, in `all.yml`:
+
+  ```yaml
+  report_time_zone: America/New_York        # a name as `timedatectl list-timezones` prints it
+  ```
+
+  Each time then shows in that zone first, then in UTC: `2026-10-25 10:03:12 EDT (14:03 UTC)`, with summer
+  time as it was on that day. The VMware health and alarms reports use it; the ACT (GenAI) analysis keeps UTC.
+  A name the execution environment does not know leaves UTC, and the report's subtitle says so.
+- **Which event.** A host not connected shows **since** the newest event of it losing vCenter (not
+  responding, connection lost, disconnected, shut down) - the time the vSphere Client's **Monitor > Events**
+  shows for it. A triggered alarm's "since" is when the alarm turned that colour, which can be later.
+- **The host's clock.** A host writes its own logs by its own clock, vCenter its events by vCenter's: a host
+  3 minutes behind logs the disconnection 3 minutes "before" vCenter's event. The **Clock** column shows each
+  connected host's clock against vCenter's (`+` ahead, `-` behind, `?` = vCenter would not say). From
+  `vm_health_clock_warn_seconds` (60) it is amber, from `vm_health_clock_crit_seconds` (300) red - Active
+  Directory logins to a host fail from 5 minutes off. No NTP server set on a host, or its NTP service stopped,
+  is amber: fix it under **Host > Configure > System > Time Configuration**. vCenter's own clock is compared
+  with the AAP job's: a minute or more apart is amber, as one of them is off.
 
 ### Single sign-on and OCSP (vCenter 8.0)
 
@@ -1348,6 +1378,8 @@ the last column says.
 | `Could not find imported module support code for ... site_vmware_... Looked for ... ansible.module_utils.site_vcenters` | the folder `roles/vmware_vm/module_utils/` is missing: an update copied the changed files but not that new folder | copy `roles/vmware_vm/module_utils/` from the release into your repository, commit, sync the project |
 | `the same vCenter as ...: read once` in the artifacts | a vCenter listed twice (a short name and its FQDN, or its IP) | nothing: it is read once |
 | `Refused: ... is the AAP server or a protected VM` | by design | do it in vCenter yourself |
+| `report_time_zone ... is not a time zone this execution environment knows: times are in UTC` | a misspelt name, or an execution environment without time zone data | a name as `timedatectl list-timezones` prints it (`America/New_York`, `Europe/London`); if the name is right, add `tzdata` to the execution environment's build |
+| A report's time and a host's log time differ | the time zone, the event, or the host's clock | health report: "Times and clocks" above |
 
 ### Datastore and snapshot reports, snapshot cleanup
 
