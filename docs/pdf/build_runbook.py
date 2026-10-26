@@ -8,7 +8,7 @@ import json
 import re
 import sys
 
-from actpdf import *  # noqa: F401,F403 - shared fonts, styles, helpers, GuideDoc
+from sapdf import *  # noqa: F401,F403 - actpdf's fonts, styles and helpers in the site-automation look
 from actpdf import _arrow, _box
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "ACT-AAP-2.7-Runbook.pdf"
@@ -17,7 +17,7 @@ import os
 RUNBOOK_MD = os.path.join(os.environ.get("ACT_LINUX_DIR", "/opt/ACT"), "docs", "AAP_2.7_RUNBOOK.md")
 
 
-class RunbookDoc(GuideDoc):
+class RunbookDoc(ActDoc):
     cover_title = "ACT on AAP 2.7"
     cover_lines = ("Step-by-step runbook: templates, workflow with approval,",
                    "schedules and Microsoft Teams reporting")
@@ -76,7 +76,7 @@ def diagram_network():
          stroke=NAVY, tsize=8.6, lsize=7.3)
     _box(d, 196, 98, 140, 56, "Managed hosts", ["podman stack, fapolicyd,", "ACT copied in"], fill=TEAL_L,
          stroke=TEAL, tsize=8.6, lsize=7.3)
-    _box(d, 384, 98, 120, 56, "Model endpoint", ["GenAI.mil / AskSage"], fill=AMBER_L, stroke=AMBER,
+    _box(d, 384, 98, 120, 56, "Model endpoint", ["GenAI.mil"], fill=AMBER_L, stroke=AMBER,
          tsize=8.6, lsize=7.3)
     _box(d, 196, 10, 140, 50, "Teams webhook", ["Power Automate /", "Logic Apps address"],
          fill=colors.HexColor("#EEF0FA"), stroke=colors.HexColor("#5B5FC7"),
@@ -110,7 +110,7 @@ def pretty_json_code(text, label):
 
 # ---------------------------------------------------------------------------- story
 story = []
-story.append(Spacer(1, 3.55 * inch))
+story.append(Spacer(1, COVER_SPACE))
 story.append(P(
     "**What this runbook is.** Every step, in order, to run ACT from Red Hat Ansible Automation "
     "Platform 2.7: the credential types and credentials, the project and inventory, four job "
@@ -158,12 +158,12 @@ story += steps([
     "**Python 3.8 or newer** on every host. RHEL 9: the default `python3` is fine. RHEL 8: "
     "`dnf install -y python3.11` (installs next to the default; the role finds it).",
     "**Network**: each host must reach the model endpoint over HTTPS. Test from one host, for "
-    "example `curl -sI https://api.genai.mil` (or your AskSage address).",
+    "example `curl -sI https://api.genai.mil`. (GenAI.mil only: Ask Sage is retired for now.)",
     "**Privilege**: the SSH user of your Machine credential needs `sudo`. The playbooks use "
     "`become: true`: the journal, `ausearch` and restarts need root.",
     "**Rootless podman only**: if the containers run under a service account instead of root, that "
-    "account needs lingering: `loginctl enable-linger <account>`. (Supported by the playbook, not yet "
-    "tested in a real deployment.)",
+    "account needs lingering: `loginctl enable-linger <account>`. (Tested on rootless podman 5.8 "
+    "with ACT 0.6.24.)",
 ])
 story.append(H2("A2. Put the content where AAP can read it"))
 story.append(P(
@@ -188,7 +188,7 @@ story += section("Part B. Credential types and credentials", [H2("B1. Credential
 story += steps([
     "From the navigation panel, select **Automation Execution → Infrastructure → Credential Types**.",
     "Click **Create credential type**.",
-    "**Name**: `ACT model key`. **Description**: `GenAI / AskSage API key for ACT`.",
+    "**Name**: `ACT model key`. **Description**: `GenAI.mil API key for ACT`.",
     "Paste the **Input configuration** and **Injector configuration** below.",
     "Click **Create credential type**.",
 ])
@@ -236,7 +236,7 @@ story.append(P("From the navigation panel, select **Automation Execution → Inf
                "then **Create credential** for each, choose your **Organization**, and click "
                "**Create credential**:"))
 story.append(table(["name", "credential type", "fields"], [
-    ["ACT model key", "ACT model key", "the GenAI and/or AskSage key"],
+    ["ACT model key", "ACT model key", "the GenAI key (leave the AskSage field empty: Ask Sage is retired for now)"],
     ["Teams - ops channel", "Teams webhook", "the URL from G1 (create this after G1)"],
     ["Linux ssh (sudo)", "Machine", "**Username**, **SSH Private Key**, **Privilege Escalation Method** "
                                     "`sudo`, **Privilege Escalation Username** `root` (and password if "
@@ -285,8 +285,11 @@ story += section("Part D. Job templates", [P(
     ], [0.3, 0.7])])
 
 story.append(H2("D1. \"ACT - Podman app health\"", toc=True))
-story.append(P("**Playbook** `ansible/playbooks/podman_app_health.yml`. **Variables** (edit container "
-               "names, units and URLs to match your deployment):"))
+story.append(P("**Playbook** `ansible/playbooks/podman_app_health.yml`. **Variables**: with no "
+               "`podman_apps`, the job checks every container podman runs on each host (found by itself, "
+               "since ACT 0.6.24; see below). To check one application in depth - its probe URLs, its "
+               "database answering, the order its containers depend on each other - list its containers "
+               "(edit the names, units and URLs to match your deployment):"))
 story.append(code("""
 target: stigman_hosts
 act_report_teams_aap_url: https://aap.example.mil
@@ -315,12 +318,20 @@ podman_apps:
 story.append(P("The probe URLs are examples: use each application's real health or login URL. "
                "**Survey** (D5): *Multiple Choice (single select)*, answer variable `podman_allow_restart`, "
                "choices `false` and `true`, default `false`."))
+story.append(callout("good", "Which containers, with podman_apps empty (the default)", [
+    "Every running container, and the stopped ones that should run - a systemd unit or quadlet runs them, "
+    "their restart policy is `always` / `unless-stopped` (or `on-failure` and they failed) - or that crashed "
+    "in the last 30 minutes. A one-off container that finished is left out, and so are names matching "
+    "`podman_discover_exclude` (regular expressions). The finding says why a stopped container should run.",
+    "**Found containers are diagnosed only:** `podman_allow_restart` applies to the containers listed in "
+    "`podman_apps`; ACT's proposed restarts of the others go to a person.",
+]))
 story.append(callout("note", "What it does", [
     "Checks that each container exists and is running, its healthcheck, its restart count, the "
     "number of error-looking lines in the last 30 minutes of its logs, and each probe URL or command. "
     "ACT runs only on hosts where something failed.",
     "ACT is told the dependency order (nginx → stigman → MySQL, Keycloak), so it fixes the database "
-    "before blaming STIG Manager. With `podman_allow_restart: true` it may restart exactly these "
+    "before blaming STIG Manager. With `podman_allow_restart: true` it may restart exactly the listed "
     "containers (or their systemd units), one at a time, dependencies first, and must verify each "
     "with `podman inspect`. It never restarts for configuration, credential, certificate or disk "
     "problems: it reports those.",
@@ -538,14 +549,17 @@ story.append(space(8))
 story.append(H2("H3. Troubleshooting"))
 story.append(table(["symptom", "cause", "fix"], [
     ["`error`, \"No API key is configured\"", "ACT model key credential not attached",
-     "attach it; for AskSage also set `act_triage_env: {ACT_PROVIDER: asksage}`"],
+     "attach it, with the GenAI key in it"],
     ["\"ACT needs Python 3.8+\"", "RHEL 8 default Python", "`dnf install -y python3.11`"],
     ["`error`, network or TLS error", "host cannot reach the model endpoint",
      "open egress; set `GENAI_CA` in `act_triage_env` for an internal CA"],
     ["Podman checks see no containers", "containers are rootless",
      "set `podman_user` (host variable) to the owning account"],
-    ["An expected restart was not done", "`podman_allow_restart` false, or the container has a unit",
-     "set the survey answer; fill `unit` for systemd-managed containers"],
+    ["An expected restart was not done", "`podman_allow_restart` false, the container has a unit, or it was "
+     "found rather than listed", "set the survey answer; fill `unit` for systemd-managed containers; list it in "
+     "`podman_apps` (found containers are diagnosed only)"],
+    ["A container you do not care about is checked", "found by itself (`podman_apps` empty)",
+     "`podman_discover_exclude: ['^buildah-', '^tmp-']` (regular expressions)"],
     ["Teams: nothing posted", "nothing needed attention, or no credential",
      "`act_report_teams_when: always` to test; attach the Teams credential"],
     ["Teams task fails", "webhook URL wrong or expired, or no egress",

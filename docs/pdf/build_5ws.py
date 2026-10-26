@@ -10,7 +10,7 @@ import sys
 
 from reportlab.lib.pagesizes import landscape
 
-from actpdf import *  # noqa: F401,F403 - fonts, palette, styles, md(), helpers
+from sapdf import *  # noqa: F401,F403 - actpdf's fonts, palette, styles, md(), helpers in the site-automation look
 from actpdf import _arrow, _box
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "ACT-5Ws-Leadership-Brief.pdf"
@@ -44,27 +44,10 @@ TITLES = {
 
 def on_page(c, doc):
     title, sub = TITLES.get(doc.page, TITLES[2])
-    c.saveState()
-    c.setFillColor(NAVY)
-    c.rect(0, PH - BAND, PW, BAND, stroke=0, fill=1)
-    c.setFillColor(TEAL)
-    c.rect(0, PH - BAND - 4, PW, 4, stroke=0, fill=1)
-    c.setFillColor(colors.white)
-    c.setFont("Sans-Bold", 19)
-    c.drawString(M, PH - 0.47 * inch, title)
-    c.setFont("Sans", 9.5)
-    c.setFillColor(colors.HexColor("#BFD3E6"))
-    c.drawString(M, PH - 0.68 * inch, sub)
-    c.drawRightString(PW - M, PH - 0.68 * inch, "ACT %s  |  %s" % (VERSION, DATE))
-    c.setStrokeColor(LINE)
-    c.setLineWidth(0.6)
-    c.line(M, 0.42 * inch, PW - M, 0.42 * inch)
-    c.setFont("Sans", 7.4)
-    c.setFillColor(MUTED)
-    c.drawString(M, 0.28 * inch, "Source: ACT Automated Triage Guide (ACT %s) and the service-watch pilot "
-                                 "guide. Details, setup steps and FAQ are in the full guide." % VERSION)
-    c.drawRightString(PW - M, 0.28 * inch, "Page %d of 2" % doc.page)
-    c.restoreState()
+    brief_page(c, PW, PH, BAND, M, title, sub, "ACT %s  \u00b7  %s" % (VERSION, DATE),
+               "Source: ACT Automated Triage Guide (ACT %s) and the service-watch pilot "
+               "guide. Details, setup steps and FAQ are in the full guide." % VERSION,
+               "Page %d of 2" % doc.page)
 
 
 def B(items):
@@ -72,44 +55,21 @@ def B(items):
 
 
 def block(label, subtitle, color, body):
-    """A 5W cell: colored header strip, then bullets on a light panel."""
-    head = Table([[[Paragraph(label, S["cellhead"]), Paragraph(subtitle, S["sub"])]]])
-    head.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), color),
-                              ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                              ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
-    return [head, Spacer(1, 5)] + body
+    """A 5W card: its coloured strip (label, subtitle), then bullets on white (sapdf.cards_row)."""
+    return ([Paragraph(label, S["cellhead"]), Paragraph(subtitle, S["sub"])], color, body)
 
 
 def grid(cells, ncols, gap=8):
-    w = (CW - gap * (ncols - 1)) / ncols
-    row, widths = [], []
-    for i, c in enumerate(cells):
-        row.append(c)
-        widths.append(w)
-        if i < len(cells) - 1:
-            row.append("")
-            widths.append(gap)
-    t = Table([row], colWidths=widths)
-    cmds = [("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]
-    for i in range(0, len(row), 2):
-        cmds += [("BACKGROUND", (i, 0), (i, 0), PANEL), ("BOX", (i, 0), (i, 0), 0.5, LINE)]
-    t.setStyle(TableStyle(cmds))
-    return t
+    return cards_row(cells, CW, gap)
 
 
 def panel(content, bg, bar):
-    t = Table([[content]], colWidths=[CW])
-    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), bg), ("LINEBEFORE", (0, 0), (0, -1), 3.5, bar),
-                           ("LEFTPADDING", (0, 0), (-1, -1), 10), ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-                           ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
-    return t
+    return brief_panel(content, CW, {TEAL: "note", AMBER: "warn", GREEN: "good", RED: "risk"}[bar])
 
 
 # ============================================================================ page 1: the 5W's
 story = [panel(Paragraph(md(
-    "**BLUF.** ACT (Agentic Command Tool) uses our GenAI.mil or AskSage models to do the **first pass of "
+    "**BLUF.** ACT (Agentic Command Tool) uses our GenAI.mil models to do the **first pass of "
     "troubleshooting** on a Linux server automatically: it finds the **root cause** of a failure, shows "
     "the **evidence**, and proposes the **exact fix**. Run from Ansible Automation Platform (AAP), a fix "
     "is applied **only after a person approves it** (or, later, for a short list of pre-approved "
@@ -121,7 +81,7 @@ who = block("WHO", "operates, approves, oversees", NAVY, B([
     "list of pre-approved fixes.",
     "**Approves fixes:** named approvers, given the Approve role on the AAP workflow.",
     "**Oversees:** the ISSO decides what data may go to the GenAI service.",
-    "**Uses:** AAP 2.7 and GenAI.mil or AskSage, both already in place.",
+    "**Uses:** AAP 2.7 and GenAI.mil, both already in place.",
 ]))
 what = block("WHAT", "an AI assistant for server triage", TEAL, B([
     "Plans, runs **read-only** checks (service state, logs, disk, config), reads the real output, and "
@@ -141,7 +101,7 @@ where = block("WHERE", "what runs where", colors.HexColor("#4B5D8A"), B([
     "**AAP 2.7** runs the jobs and keeps the job logs and approval records.",
     "**ACT runs on the server** being checked: one script copied in per run. No agent, no service, no "
     "open ports.",
-    "**Model:** GenAI.mil (or AskSage) over HTTPS; each server must be able to reach it.",
+    "**Model:** GenAI.mil over HTTPS; each server must be able to reach it.",
     "**First target:** the STIG Manager test server. Not production, not the AAP server itself.",
 ]))
 why = block("WHY", "the payoff", GREEN, B([
@@ -165,7 +125,7 @@ story.append(grid([where, why, safe], 3))
 story.append(panel([Paragraph('<font name="Sans-Bold" color="#A86A0B">Decisions requested</font>', S["ask"]),
                     Spacer(1, 3)] + [Paragraph(md(t), S["ask"], bulletText="%d." % (i + 1)) for i, t in enumerate([
     "Approve the **Phase 1 pilot**: diagnose and approval mode only, on the STIG Manager test server.",
-    "**ISSO concurrence** on sending service status and log lines to GenAI.mil (or AskSage), with "
+    "**ISSO concurrence** on sending service status and log lines to GenAI.mil, with "
     "passwords, tokens and keys removed and host names, IP addresses and user names pseudonymized first.",
     "**Name the approvers** for the AAP workflow, and **the owner** of the pre-approved fix list.",
 ])], AMBER_L, AMBER))
@@ -199,12 +159,12 @@ def t2(header, rows, widths):
     data = [[Paragraph(md(h), S["head"]) for h in header]]
     data += [[Paragraph(md(c), S["cellb" if j == 0 else "cell"]) for j, c in enumerate(r)] for r in rows]
     t = Table(data, colWidths=[w * (CW - 10) / 2 for w in widths], repeatRows=1)
-    cmds = [("BACKGROUND", (0, 0), (-1, 0), NAVY), ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LINEBELOW", (0, 0), (-1, -1), 0.4, LINE), ("BOX", (0, 0), (-1, -1), 0.5, LINE),
+    cmds = [("BACKGROUND", (0, 0), (-1, 0), NAVY), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("ROUNDEDCORNERS", [5, 5, 5, 5]),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.4, RULE), ("BOX", (0, 0), (-1, -1), 0.6, RULE),
             ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
             ("TOPPADDING", (0, 0), (-1, -1), 3.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]
     for i in range(2, len(data), 2):
-        cmds.append(("BACKGROUND", (0, i), (-1, i), PANEL))
+        cmds.append(("BACKGROUND", (0, i), (-1, i), ZEBRA))
     t.setStyle(TableStyle(cmds))
     return t
 
@@ -228,8 +188,9 @@ guard = t2(["Safeguard", "What it means in practice"], [
                           "command and how it was approved; AAP keeps job logs and approvals."],
 ], [0.3, 0.7])
 status = t2(["Topic", "Status / risk and mitigation"], [
-    ["Testing to date", "Built and tested end to end against a **simulated model**. Phase 1 is the first "
-                        "run against GenAI.mil or AskSage in our environment."],
+    ["Testing to date", "ACT %s already runs against GenAI.mil from AAP in read-only analyses (for "
+                        "example VMware capacity planning). This triage workflow was tested end to end against a "
+                        "**simulated model**; Phase 1 is its first run against GenAI.mil." % VERSION],
     ["Model can be wrong", "Diagnoses carry evidence and a confidence level; approval and verification "
                            "are the safety net, not the model."],
     ["Data sent to GenAI", "The task text and command output (service status, log lines). Passwords, tokens "
@@ -237,13 +198,13 @@ status = t2(["Topic", "Status / risk and mitigation"], [
                            "names, names listed for it, local accounts and e-mail addresses are "
                            "**pseudonymized** (replaced with consistent placeholders); ACT puts the real "
                            "values back only on the server, to run commands. A short name ACT cannot "
-                           "recognize may still be sent. Released in ACT 0.6.18, which the pilot "
-                           "will use. Needs ISSO concurrence."],
+                           "recognize may still be sent. In ACT since 0.6.18. Needs ISSO "
+                           "concurrence."],
     ["Prompt injection", "A crafted log line could try to steer the model. In diagnose and approval "
                          "mode it cannot change anything; pre-approved patterns stay narrow."],
     ["Network", "Each server needs HTTPS access to the model endpoint."],
-    ["Scope", "Linux servers via AAP today. A Windows version of ACT exists; its AAP integration is "
-              "not yet tested."],
+    ["Scope", "Linux servers via AAP today. Windows: ACT is installed for administrators and reads "
+              "Windows event logs in the log analysis; Windows triage through AAP is not yet tested."],
 ], [0.3, 0.7])
 two = Table([[guard, "", status]], colWidths=[(CW - 10) / 2, 10, (CW - 10) / 2])
 two.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
@@ -265,8 +226,8 @@ PHASES = [
 phases = Table([[[Paragraph(md("**%s**" % t), S["cell"]), Paragraph(md(d), S["cell"]),
                   Paragraph("<i>%s</i> %s" % (escape(k), md(e)), S["cell"])]
                  for t, d, k, e in PHASES]], colWidths=[CW / 4] * 4)
-phases.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOX", (0, 0), (-1, -1), 0.5, LINE),
-                            ("LINEBEFORE", (1, 0), (-1, 0), 0.5, LINE),
+phases.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOX", (0, 0), (-1, -1), 0.6, RULE),
+                            ("LINEBEFORE", (1, 0), (-1, 0), 0.5, RULE), ("ROUNDEDCORNERS", [6, 6, 6, 6]),
                             ("BACKGROUND", (0, 0), (0, 0), TEAL_L),
                             ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7),
                             ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))

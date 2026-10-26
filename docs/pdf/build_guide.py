@@ -5,7 +5,7 @@ Rebuild after a release:  python3 build_guide.py [output.pdf]
 Needs reportlab and the Noto Sans / Noto Sans Mono TTFs (Fedora: google-noto-sans-fonts)."""
 import sys
 
-from actpdf import *  # noqa: F401,F403 - shared fonts, styles, helpers, GuideDoc
+from sapdf import *  # noqa: F401,F403 - actpdf's fonts, styles and helpers in the site-automation look
 from actpdf import _arrow, _box
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "ACT-Automated-Triage-Guide.pdf"
@@ -101,7 +101,7 @@ def diagram_architecture():
     _arrow(d, hx + 75, H - 150, hx + 75, H - 168, color=TEAL, head=4)
     # endpoint
     ex = W - 106
-    _box(d, ex, H - 158, 106, 68, "Model endpoint", ["GenAI.mil or", "AskSage", "(HTTPS)"], fill=PANEL,
+    _box(d, ex, H - 158, 106, 68, "Model endpoint", ["GenAI.mil", "(HTTPS)"], fill=PANEL,
          stroke=NAVY, tsize=8.4, lsize=7.3)
     # arrows between columns
     _arrow(d, 144, H - 59, hx + 6, H - 59, color=NAVY)
@@ -183,7 +183,7 @@ def diagram_rollout():
 
 # ---------------------------------------------------------------------------- content
 story = []
-story.append(Spacer(1, 3.55 * inch))
+story.append(Spacer(1, COVER_SPACE))
 story.append(Paragraph(md(
     "**What this guide covers.** ACT is a command-line AI agent that investigates problems on a "
     "server the way an engineer would: it runs real commands, reads the output, and explains the "
@@ -199,8 +199,8 @@ cover_rows = [
 ]
 t = Table([[Paragraph(md(a), ST["cell"]), Paragraph(md(b), ST["cell"])] for a, b in cover_rows],
           colWidths=[CONTENT_W * 0.26, CONTENT_W * 0.74])
-t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), PANEL), ("BOX", (0, 0), (-1, -1), 0.5, LINE),
-                       ("LINEBELOW", (0, 0), (-1, 0), 0.4, LINE), ("VALIGN", (0, 0), (-1, -1), "TOP"),
+t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), CHIP), ("BOX", (0, 0), (-1, -1), 0.6, RULE),
+                       ("LINEBELOW", (0, 0), (-1, 0), 0.4, RULE), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("ROUNDEDCORNERS", [6, 6, 6, 6]),
                        ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
                        ("LEFTPADDING", (0, 0), (-1, -1), 8)]))
 story.append(t)
@@ -217,7 +217,7 @@ story.append(PageBreak())
 
 # ============================================================================ 1. At a glance
 story += section("1. At a glance", [P(
-    "**ACT** (Agentic Command Tool) is a command-line assistant backed by the GenAI.mil or AskSage "
+    "**ACT** (Agentic Command Tool) is a command-line assistant backed by the GenAI.mil "
     "models. Given a task such as \"nginx is down, find out why\", it plans, runs commands on the host, "
     "reads the results, and reports the root cause. It can also apply a fix, but only under strict rules "
     "you control.", "lead")])
@@ -249,12 +249,17 @@ story.append(H2("What it needs"))
 story.append(table(["", "Requirement"], [
     ["Hosts", "Linux with systemd and Python 3.8+ (RHEL 8: install `python3.11` alongside the default). "
               "ACT itself is one script the automation copies in: no agent, no daemon."],
-    ["Network", "Each host must reach the model endpoint (GenAI.mil or AskSage) over HTTPS."],
+    ["Network", "Each host must reach the model endpoint (GenAI.mil) over HTTPS."],
     ["AAP", "A project pointing at the ACT-Linux repository, one custom credential type for the model "
             "key, two job templates, and one workflow."],
     ["People", "An owner for the pre-approved fix list and approvers for the workflow."],
 ], [0.16, 0.84], bold_first=True))
 story.append(space(10))
+story.append(callout("note", "GenAI.mil, not Ask Sage", [
+    "Ask Sage is retired for now: use GenAI.mil (`genai`, the default, or `genai-beta` for its preview "
+    "models). ACT still supports Ask Sage (`asksage`) for when it comes back; this guide mentions it only "
+    "where a setting or a credential field still carries its name.",
+]))
 story.append(callout("warn", "What it is not", [
     "Not autonomous root access: without pre-approved patterns it cannot change anything unattended.",
     "Not a replacement for monitoring: it acts on alerts and checks, it does not watch hosts itself.",
@@ -396,8 +401,9 @@ story.append(H2("4.3 What each AAP object does"))
 story.append(table(["AAP object", "purpose"], [
     ["Project", "Syncs the ACT-Linux repository (act script, role, playbooks). Hosts download nothing "
                 "themselves."],
-    ["Credential type **ACT model key**", "Holds the GenAI and/or AskSage key and injects it as an "
-                                          "environment variable in the execution environment."],
+    ["Credential type **ACT model key**", "Holds the GenAI key and injects it as an environment variable "
+                                          "in the execution environment (its AskSage field stays empty "
+                                          "while Ask Sage is retired)."],
     ["Job template **ACT triage**", "Runs `ansible/playbooks/act_triage.yml`: checks everywhere, ACT "
                                      "where needed, results and report."],
     ["Job template **ACT apply approved**", "Runs `ansible/playbooks/act_apply_approved.yml`: applies "
@@ -407,6 +413,27 @@ story.append(table(["AAP object", "purpose"], [
                                          "an alert."],
     ["Notifications", "Tells approvers a decision is waiting, and reports failures."],
 ], [0.34, 0.66], bold_first=False))
+story.append(H2("4.4 ACT in the site-automation jobs"))
+story.append(P(
+    "The site-automation repository carries ACT for Linux and Windows (`vendor/act`, `vendor/act-windows`, "
+    "ACT %s) and uses it in two ways. Its own setup is in the *Operations Runbooks* guide (\"Adding ACT "
+    "later\") and `docs/ADDING_ACT.md`." % VERSION))
+story.append(table(["How", "Jobs", "What ACT does"], [
+    ["**On the host**, as in this guide", "Health check and troubleshoot runbooks (`use_act`), service "
+                                           "watch (containers)",
+     "Diagnoses on the host; a fix runs only after an AAP approval node, or in self-heal mode for the fixes "
+     "you listed."],
+    ["**Evidence mode**, on the AAP side", "VMware alarms analysis, capacity planning (`vm_capacity_act`), "
+                                           "log analysis (Linux, Windows, vCenter), the VM deploy (reading the "
+                                           "ticket's text)",
+     "Reads only what the job hands it and answers - for an analysis: likely cause, evidence, fix, "
+     "confidence. It runs no command."],
+    ["**For administrators**", "*ACT for Windows - install*",
+     "Puts `act.ps1` in `C:\\ProgramData\\act`, locked down, for administrators to run by hand."],
+], [0.22, 0.36, 0.42]))
+story.append(P(
+    "Every site-automation ACT job streams the model's answer and gives it `site_act_model_timeout` (600 s) "
+    "per answer; `site_act_concurrency` limits how many hosts call the model at once.", "small"))
 
 # ============================================================================ 5. What to expect
 story += section("5. What to expect", [P(
@@ -450,7 +477,7 @@ story.append(H2("5.3 A result file (excerpt)"))
 story.append(code("""
 {
   "schema": "act.result/1",
-  "act_version": "0.6.21",
+  "act_version": "%s",
   "platform": "linux",
   "host": "web01",
   "status": "needs_approval",
@@ -468,9 +495,10 @@ story.append(code("""
      "pre_approvable": true}
   ],
   "files_changed": [],
-  "pre_approved_patterns": []
+  "pre_approved_patterns": [],
+  "model_retries": {"length": 0, "rescue": 0, "rate_limited": 0, "content_filter": 0}
 }
-""", "Example: result file excerpt (full specification in docs/RESULT_FILE.md)"))
+""" % VERSION, "Example: result file excerpt (full specification in docs/RESULT_FILE.md)"))
 story.append(H2("5.4 Realistic expectations"))
 story += bullets([
     "**Cost follows problems, not fleet size.** Healthy hosts make no model calls. Each triage is "
@@ -488,15 +516,15 @@ story += section("6. Setup, step by step", [H2("6.1 Before you start"), table(["
     ["1", "Hosts have Python 3.8+ (`python3 --version`). On RHEL 8: `dnf install -y python3.11`. The "
           "role finds it automatically."],
     ["2", "Hosts can reach the model endpoint over HTTPS. Test from one host before rolling out."],
-    ["3", "You have a GenAI.mil or AskSage API key for automation use."],
+    ["3", "You have a GenAI.mil API key for automation use."],
     ["4", "AAP execution environments with ansible-core 2.14 or newer."],
     ["5", "You have agreed who owns the pre-approved pattern list and who approves fixes."],
 ], [0.06, 0.94])])
 story.append(H2("6.2 Step 1: Project"))
 story.append(P(
     "*Resources > Projects > Add*. Source control type **Git**. URL: the ACT-Linux repository (or an "
-    "internal mirror). Branch or tag: `v0.6.21`. Sync it. (Menu names differ slightly between AAP 2.4 "
-    "and 2.5+; the objects are the same.)"))
+    "internal mirror). Branch or tag: `v%s`. Sync it. (Menu names differ slightly between AAP 2.4 "
+    "and 2.5+; the objects are the same.)" % VERSION))
 story.append(H2("6.3 Step 2: Credential type for the model key"))
 story.append(P("*Administration > Credential Types > Add* (AAP 2.5+: *Automation Execution > "
                "Infrastructure > Credential Types*). Name: **ACT model key**."))
@@ -520,7 +548,7 @@ env:
 """, "Injector configuration"))
 story.append(H2("6.4 Step 3: Credentials and inventory"))
 story += bullets([
-    "*Credentials > Add*, type **ACT model key**: paste the key(s).",
+    "*Credentials > Add*, type **ACT model key**: paste the GenAI key (leave the AskSage field empty).",
     "Your usual **Machine** credential with SSH access and privilege escalation. The playbooks use "
     "`become: true` because the journal and any fix need root.",
     "Your normal inventory. No changes are needed.",
@@ -533,8 +561,8 @@ story += bullets([
 story.append(code("""
 act_triage_units: [nginx, php-fpm]        # units that must be running
 act_triage_journal_error_threshold: 100   # error lines per hour that count as a finding
-# AskSage instead of GenAI:
-# act_triage_env: {ACT_PROVIDER: asksage, ASKSAGE_MODEL: gpt-4.1-gov}
+# GenAI.mil's preview models (their own key, GENAI_BETA_KEY):
+# act_triage_env: {ACT_PROVIDER: genai-beta}
 """, "Extra variables (example)"))
 story += bullets([
     "Optional **survey**: a *Textarea* question with variable name `act_triage_allow_lines` for the "
@@ -588,8 +616,7 @@ story.append(code("""
 story.append(H2("6.10 Without AAP"))
 story += bullets([
     "**Ansible CLI:** `ANSIBLE_ROLES_PATH=ansible/roles ansible-playbook -i inventory "
-    "ansible/playbooks/act_triage.yml -e target=web` with the key in `GENAI_KEY` (or "
-    "`ASKSAGE_API_KEY`).",
+    "ansible/playbooks/act_triage.yml -e target=web` with the key in `GENAI_KEY`.",
     "**One server, no Ansible:** `examples/act-healthcheck.sh` with the provided systemd timer runs the "
     "same checks hourly and leaves result, report and audit files in `/var/log/act-health`.",
     "**By hand:** `sudo act --non-interactive --result-file /tmp/r.json \"nginx is down, find out "
@@ -611,8 +638,8 @@ def example(num, title, when, run, allow, see):
     data = [[Paragraph(md("**%s**" % k), ST["cell"]), Paragraph(md(v), ST["cell"])] for k, v in rows]
     t = Table(data, colWidths=[CONTENT_W * 0.2, CONTENT_W * 0.8])
     t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, -1), PANEL), ("BOX", (0, 0), (-1, -1), 0.5, LINE),
-        ("LINEBELOW", (0, 0), (-1, -2), 0.4, LINE), ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BACKGROUND", (0, 0), (0, -1), ZEBRA), ("BOX", (0, 0), (-1, -1), 0.6, RULE),
+        ("LINEBELOW", (0, 0), (-1, -2), 0.4, RULE), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("ROUNDEDCORNERS", [5, 5, 5, 5]),
         ("TOPPADDING", (0, 0), (-1, -1), 4.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ("LEFTPADDING", (0, 0), (-1, -1), 6),
     ]))
@@ -720,7 +747,7 @@ faq = [
     ("What data leaves our network?",
      "The task text and the output of the commands ACT runs (log lines, config snippets; from ACT "
      "0.6.18 with host names, IP addresses and accounts replaced by placeholders) "
-     "go to the configured model endpoint (GenAI.mil or AskSage). Keys and command output are never "
+     "go to the configured model endpoint (GenAI.mil). Keys and command output are never "
      "written to the result file. Confirm what the endpoint is approved to receive."),
     ("What does it cost?",
      "Model usage follows problems, not fleet size: healthy hosts make no model calls, and each triage "
@@ -741,8 +768,14 @@ faq = [
      "Whoever owns the job templates in AAP. Pre-approved patterns live in the template or survey under "
      "AAP role-based access control, and should be reviewed like code."),
     ("What about Windows?",
-     "ACT-Windows has the same unattended mode, pre-approval and result file. The AAP role is Linux-only "
-     "today; an example Windows play is provided as a template."),
+     "ACT-Windows has the same unattended mode, pre-approval and result file. The `act_triage` role is "
+     "Linux-only; an example Windows play is provided as a template. site-automation installs ACT for "
+     "Windows for administrators, and its log analysis reads Windows event logs with ACT in evidence mode "
+     "(section 4.4)."),
+    ("What if the model's reply is cut off?",
+     "Since 0.6.25 ACT asks again, like after any network failure (`GENAI_RETRIES`, within "
+     "`GENAI_TIMEOUT`), and says what happened: `the reply was cut off after N bytes`. When every try is cut "
+     "at about the same size, a gateway or proxy limits the size or time: ask for a shorter answer."),
 ]
 for q, a in faq:
     story += [H3(q), P(a)]
@@ -751,10 +784,24 @@ for q, a in faq:
 story += section("10. Current status and limits", [callout("note", "Where things stand", [
     "ACT %s was released in %s for Linux and Windows. Its automated test suites pass on Linux "
     "(Python 3.8, 3.11, 3.13) and Windows (PowerShell 5.1 and 7)." % (VERSION, DATE),
-    "The unattended mode, pre-approval, result file, the Ansible role and both playbooks have been run "
-    "end to end, but **against a simulated model endpoint**. They have not yet been exercised against "
-    "GenAI.mil or AskSage in our environment. Phase 1 of the rollout is that first real-world test.",
+    "ACT runs against GenAI.mil from AAP: `:probe` on GenAI.mil and a site-automation analysis (the "
+    "VMware capacity planning, section 4.4) found what 0.6.23 and 0.6.25 fix (below). The `act_triage` role and the approval workflow "
+    "of this guide were run end to end against a simulated model endpoint; their first run against "
+    "GenAI.mil is Phase 1 of the rollout.",
 ])])
+story.append(H2("What changed in 0.6.22 to 0.6.25"))
+story += bullets([
+    "**0.6.22:** the model's answer is streamed (`ACT_STREAM`; ESC cancels at once; a gateway that cannot "
+    "stream falls back by itself); `ACT_TEMPERATURE=auto` (Gemini 3 and the reasoning models get their "
+    "vendor's default); `Retry-After` honoured on 429/503; structured output and tool-result turns where "
+    "the model supports them; clearer 401/403/404 messages; the result file's new `model_retries`.",
+    "**0.6.23:** `ACT_MAX_TOKENS=auto` - 16384 output tokens for thinking models (Gemini 2.5 and later, "
+    "`gpt-5*`, `o1`/`o3`/`o4`), 4096 for the others: no more empty answers. `:probe` judges a reply by "
+    "its content and can test several models (`:probe a b,c`). Run `:probe all` again after upgrading.",
+    "**0.6.24:** `podman_app_health.yml` finds the containers by itself (`podman_apps: []`, the new "
+    "default); found containers are diagnosed only.",
+    "**0.6.25:** a reply cut off on its way back is asked for again instead of ending the run.",
+])
 story += bullets([
     "**Templates, not yet tested:** the Windows Ansible play, the Event-Driven Ansible rulebook, and the "
     "exact AAP menu paths (they vary between AAP versions).",
@@ -776,7 +823,11 @@ story += section("Appendix A. Quick reference", [H2("Command-line options (Linux
         ["`--result-file PATH`", "`ACT_RESULT_FILE`", "Write the result JSON (act.result/1)."],
         ["`--audit-log PATH`", "`ACT_AUDIT_LOG`", "Step-by-step JSONL record."],
         ["`--max-steps N`", "`GENAI_MAX_STEPS`", "Step budget."],
-        ["`--provider NAME`", "`ACT_PROVIDER`", "`genai`, `asksage` or `genai-beta`."],
+        ["`--provider NAME`", "`ACT_PROVIDER`", "`genai` (default) or `genai-beta` (`asksage` is retired "
+                                                "for now)."],
+        ["", "`ACT_STREAM`", "`auto` (interactive), `1` (also unattended), `0`."],
+        ["", "`ACT_MAX_TOKENS`", "`auto`: 16384 for thinking models, 4096 for the others; a number forces one."],
+        ["", "`ACT_TEMPERATURE`", "`auto`: none for Gemini 3 and the reasoning models, else 0.2."],
         ["`--allow-piped-upload`", "", "Allow sending piped text to the model."],
     ], [0.3, 0.27, 0.43])])
 story.append(P("Windows (`act.ps1`): `-NonInteractive`, `-Allow` (or `ACT_ALLOW`), `-ResultFile` (or "
@@ -792,7 +843,7 @@ story.append(table(["variable", "default", "what it does"], [
     ["`act_triage_findings_extra`", "`[]`", "Your own findings (URL checks, application probes)."],
     ["`act_triage_always`", "`false`", "Run ACT even when every check passes."],
     ["`act_triage_extra_instructions`", "`\"\"`", "Extra text for the prompt."],
-    ["`act_triage_env`", "`{}`", "Non-secret ACT settings, e.g. `ACT_PROVIDER`, `ASKSAGE_MODEL`."],
+    ["`act_triage_env`", "`{}`", "Non-secret ACT settings, e.g. `ACT_PROVIDER`, `GENAI_MODEL`, `ACT_STREAM`."],
     ["`act_triage_max_steps` / `_timeout`", "`30` / `900`", "Step budget / seconds per host."],
     ["`act_triage_fail_on`", "`[error]`", "Statuses that mark the host failed in AAP."],
 ], [0.43, 0.12, 0.45]))
@@ -811,8 +862,12 @@ story.append(table(["path", "what"], [
 # ============================================================================ Appendix B
 story += section("Appendix B. Troubleshooting", [table(["symptom", "cause", "fix"], [
     ["`error`, exit 2, \"No API key is configured\"", "Key not in the environment.",
-     "Attach the ACT model key credential; for AskSage also set `ACT_PROVIDER: asksage` in "
-     "`act_triage_env`."],
+     "Attach the ACT model key credential (the GenAI key field)."],
+    ["`error`, exit 3, \"the key is invalid, missing or locked\" (HTTP 401)", "The key is wrong or expired.",
+     "Put a new key in the credential."],
+    ["`error`, exit 3, \"the reply was cut off after N bytes ... (after 4 attempts)\"",
+     "A gateway or proxy closed the connection before the whole answer arrived.",
+     "Same size every time: a size or time limit on the way - ask for a shorter answer (fewer items)."],
     ["Exit 2, \"invalid --allow pattern\"", "Regular-expression syntax error.",
      "Fix the pattern; escape `( ) . +` where you mean them literally."],
     ["`error`, exit 3, network or TLS error", "Host cannot reach the endpoint, or an internal CA.",
@@ -836,7 +891,7 @@ story += section("Appendix B. Troubleshooting", [table(["symptom", "cause", "fix
 
 
 def build():
-    doc = GuideDoc(OUT)
+    doc = ActDoc(OUT)
     doc.multiBuild(story)
     print("wrote", OUT)
 

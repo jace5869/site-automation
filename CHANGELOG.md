@@ -19,6 +19,13 @@ Platform" credential the report templates use > Roles > Assign roles: resource t
 **Organization Auditor** (read-only; every template in the organization, new ones too). The next run shows the last
 14 runs - AAP kept them all. docs/EMAIL_REPORTS.md, "The look" and "Troubleshooting".
 
+**The ACT PDFs in the new look, and up to date.** The two 5W's briefs, the ACT Automated Triage Guide and the ACT on
+AAP 2.7 Runbook now have the look of the site-automation guides (the glass look's cover and band, rounded cards and
+tables) and take your logo too (`SITE_PDF_LOGO`; docs/pdf/README.md has one loop for all ten). Their text is brought
+to ACT 0.6.25: GenAI.mil only (Ask Sage is retired for now), what ACT 0.6.22 to 0.6.25 changed (streaming, output
+limits for thinking models, `:probe`, a cut-off reply asked for again), how the site-automation jobs use ACT (on the
+host, in evidence mode, ACT for Windows), and the podman health job finding its containers by itself.
+
 ## 0.31.0 — 2026-10-25
 
 **Updating without scripts:** paste one zip as it is - from 0.30.0:

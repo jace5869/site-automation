@@ -1,6 +1,7 @@
-"""The site-automation look for the guides' PDFs, on top of actpdf.py (the ACT guides keep actpdf's own):
-a cover in the colours of the reports' glass look, its title on a see-through card; a band under each
-chapter's title; rounded tables, notes and code. White pages inside, for printing.
+"""The site-automation look for every PDF here, on top of actpdf.py: a cover in the colours of the
+reports' glass look, its title on a see-through card; a band under each chapter's title; rounded tables,
+notes and code. White pages inside, for printing. The ACT guides are SiteDocs with ACT's texts (ActDoc);
+the landscape 5W's briefs draw their band with brief_page and their cards with cards_row.
 
 The logo: SITE_PDF_LOGO=<a PNG or JPEG> puts it on the cover and at the top of every page. Without it
 there is none. The PDFs in the repository are built without one; a site builds its own copies with its
@@ -230,3 +231,114 @@ class SiteDoc(GuideDoc):
         c.setFont("Sans", 7.8)
         c.drawRightString(PAGE_W - MARGIN, 0.42 * inch, "Page %d" % doc.page)
         c.restoreState()
+
+
+# ---------------------------------------------------------------------------- the ACT guides
+class ActDoc(SiteDoc):
+    """SiteDoc for the ACT guides: ACT's version in the chip, ACT's line at the foot of the cover."""
+    eyebrow = "SITE AUTOMATION  \u00b7  ACT"
+    version_text = "ACT %s" % VERSION
+    cover_note = ("ACT-Linux and ACT-Windows %s. Example outputs in this guide are illustrative; host names are "
+                  "placeholders." % VERSION)
+
+
+def rounded(t, radius=5, edge=None):
+    """A table of a builder's own, rounded and edged like the others."""
+    t.setStyle(TableStyle([("BOX", (0, 0), (-1, -1), 0.6, edge or RULE), ("ROUNDEDCORNERS", [radius] * 4)]))
+    return t
+
+
+# ---------------------------------------------------------------------------- the landscape briefs (5W's)
+def brief_page(c, pw, ph, band, margin, title, sub, chip, foot, page):
+    """A brief's page: the glass look's colours and soft shapes as a band across the top, a teal-to-navy
+    line under it, the logo (when there is one), the title in navy, the chip at the right; the footer."""
+    c.saveState()
+    p = c.beginPath()
+    p.rect(0, ph - band, pw, band)
+    c.clipPath(p, stroke=0, fill=0)
+    c.linearGradient(0, ph, pw, ph - band, (SKY, MIST, SEA), (0, 0.5, 1))
+    _glow(c, pw - 1.6 * inch, ph, 1.7 * inch, colors.HexColor("#5B8DEF"))
+    _glow(c, 0.4 * inch, ph - band, 1.3 * inch, TEAL)
+    c.restoreState()
+    c.saveState()
+    p = c.beginPath()
+    p.rect(0, ph - band - 2.4, pw, 2.4)
+    c.clipPath(p, stroke=0, fill=0)
+    c.linearGradient(0, 0, pw, 0, (TEAL, NAVY))
+    c.restoreState()
+
+    c.saveState()
+    tx = margin
+    if LOGO:
+        tx += draw_logo(c, margin, ph - band + 0.13 * inch, band - 0.26 * inch) + 14
+    cw = stringWidth(chip, "Sans-Semi", 8.2) + 20
+    cx = pw - margin - cw
+    c.setFillColor(NAVY)
+    size = _fit(title, "Sans-Bold", 19, cx - tx - 14, least=13)
+    c.setFont("Sans-Bold", size)
+    c.drawString(tx, ph - 0.47 * inch, title)
+    c.setFillColor(SLATE)
+    c.setFont("Sans", 9.5)
+    c.drawString(tx, ph - 0.68 * inch, sub)
+    c.setFillColor(colors.white)
+    c.setFillAlpha(0.72)
+    c.setStrokeColor(colors.white)
+    c.roundRect(cx, ph - band / 2 - 10, cw, 20, 10, stroke=1, fill=1)
+    c.setFillAlpha(1)
+    c.setFillColor(NAVY)
+    c.setFont("Sans-Semi", 8.2)
+    c.drawString(cx + 10, ph - band / 2 - 3.2, chip)
+    c.setStrokeColor(RULE)
+    c.setLineWidth(0.6)
+    c.line(margin, 0.42 * inch, pw - margin, 0.42 * inch)
+    c.setFont("Sans", 7.4)
+    c.setFillColor(MUTED)
+    c.drawString(margin, 0.28 * inch, foot)
+    c.drawRightString(pw - margin, 0.28 * inch, page)
+    c.restoreState()
+
+
+def cards_row(cards, width, gap=8):
+    """Cards side by side, as tall as the tallest: each (head, colour, body) - head the flowables on the
+    coloured strip, body the flowables under it on a white card."""
+    w = (width - gap * (len(cards) - 1)) / len(cards)
+    pad = [("LEFTPADDING", (0, 0), (-1, 0), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 6), ("LEFTPADDING", (0, 1), (-1, 1), 4),
+           ("TOPPADDING", (0, 0), (-1, 0), 5), ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+           ("TOPPADDING", (0, 1), (-1, 1), 5), ("BOTTOMPADDING", (0, 1), (-1, 1), 2), ("VALIGN", (0, 0), (-1, -1), "TOP")]
+
+    def card(head, color, body, heights=None):
+        t = Table([[head], [body]], colWidths=[w], rowHeights=heights)
+        t.setStyle(TableStyle(pad + [("BACKGROUND", (0, 0), (-1, 0), color), ("BACKGROUND", (0, 1), (-1, 1), colors.white),
+                                     ("BOX", (0, 0), (-1, -1), 0.6, RULE), ("ROUNDEDCORNERS", [6, 6, 6, 6])]))
+        return t
+    sizes = []
+    for head, color, body in cards:
+        t = card(head, color, body)
+        t.wrap(w, 10000)
+        sizes.append(t._rowHeights)
+    top = max(h[0] for h in sizes)
+    tall = max(h[0] + h[1] for h in sizes)
+    row, widths = [], []
+    for i, (head, color, body) in enumerate(cards):
+        row.append(card(head, color, body, [top, tall - top]))
+        widths.append(w)
+        if i < len(cards) - 1:
+            row += [""]
+            widths.append(gap)
+    t = Table([row], colWidths=widths)
+    t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                           ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 0),
+                           ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+    return t
+
+
+def brief_panel(content, width, kind):
+    """A rounded panel across the page in a kind's colours (note | warn | good | risk), like the callouts."""
+    bg = {"note": TEAL_L, "warn": AMBER_L, "good": GREEN_L, "risk": RED_L}[kind]
+    edge = {"note": "#8CC6CB", "warn": "#DDBB86", "good": "#97C9AB", "risk": "#DDA39C"}[kind]
+    t = Table([[content]], colWidths=[width])
+    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), bg), ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor(edge)),
+                           ("ROUNDEDCORNERS", [6, 6, 6, 6]),
+                           ("LEFTPADDING", (0, 0), (-1, -1), 12), ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                           ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
+    return t

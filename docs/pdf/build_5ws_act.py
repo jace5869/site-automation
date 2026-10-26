@@ -10,7 +10,7 @@ import sys
 
 from reportlab.lib.pagesizes import landscape
 
-from actpdf import *  # noqa: F401,F403 - fonts, palette, styles, md(), helpers
+from sapdf import *  # noqa: F401,F403 - actpdf's fonts, palette, styles, md(), helpers in the site-automation look
 from actpdf import _arrow, _box
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "ACT-5Ws-Standalone-Brief.pdf"
@@ -44,27 +44,10 @@ TITLES = {
 
 def on_page(c, doc):
     title, sub = TITLES.get(doc.page, TITLES[2])
-    c.saveState()
-    c.setFillColor(NAVY)
-    c.rect(0, PH - BAND, PW, BAND, stroke=0, fill=1)
-    c.setFillColor(TEAL)
-    c.rect(0, PH - BAND - 4, PW, 4, stroke=0, fill=1)
-    c.setFillColor(colors.white)
-    c.setFont("Sans-Bold", 19)
-    c.drawString(M, PH - 0.47 * inch, title)
-    c.setFont("Sans", 9.5)
-    c.setFillColor(colors.HexColor("#BFD3E6"))
-    c.drawString(M, PH - 0.68 * inch, sub)
-    c.drawRightString(PW - M, PH - 0.68 * inch, "ACT %s (Linux and Windows)  |  %s" % (VERSION, DATE))
-    c.setStrokeColor(LINE)
-    c.setLineWidth(0.6)
-    c.line(M, 0.42 * inch, PW - M, 0.42 * inch)
-    c.setFont("Sans", 7.4)
-    c.setFillColor(MUTED)
-    c.drawString(M, 0.28 * inch, "Source: ACT-Linux and ACT-Windows %s documentation. Using ACT from "
-                                 "Ansible Automation Platform is covered in a separate brief." % VERSION)
-    c.drawRightString(PW - M, 0.28 * inch, "Page %d of 2" % doc.page)
-    c.restoreState()
+    brief_page(c, PW, PH, BAND, M, title, sub, "ACT %s (Linux and Windows)  \u00b7  %s" % (VERSION, DATE),
+               "Source: ACT-Linux and ACT-Windows %s documentation. Using ACT from "
+               "Ansible Automation Platform is covered in a separate brief." % VERSION,
+               "Page %d of 2" % doc.page)
 
 
 def B(items):
@@ -72,46 +55,23 @@ def B(items):
 
 
 def block(label, subtitle, color, body):
-    """A 5W cell: colored header strip, then bullets on a light panel."""
-    head = Table([[[Paragraph(label, S["cellhead"]), Paragraph(subtitle, S["sub"])]]])
-    head.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), color),
-                              ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                              ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
-    return [head, Spacer(1, 5)] + body
+    """A 5W card: its coloured strip (label, subtitle), then bullets on white (sapdf.cards_row)."""
+    return ([Paragraph(label, S["cellhead"]), Paragraph(subtitle, S["sub"])], color, body)
 
 
 def grid(cells, ncols, gap=8):
-    w = (CW - gap * (ncols - 1)) / ncols
-    row, widths = [], []
-    for i, c in enumerate(cells):
-        row.append(c)
-        widths.append(w)
-        if i < len(cells) - 1:
-            row.append("")
-            widths.append(gap)
-    t = Table([row], colWidths=widths)
-    cmds = [("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]
-    for i in range(0, len(row), 2):
-        cmds += [("BACKGROUND", (i, 0), (i, 0), PANEL), ("BOX", (i, 0), (i, 0), 0.5, LINE)]
-    t.setStyle(TableStyle(cmds))
-    return t
+    return cards_row(cells, CW, gap)
 
 
 def panel(content, bg, bar):
-    t = Table([[content]], colWidths=[CW])
-    t.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), bg), ("LINEBEFORE", (0, 0), (0, -1), 3.5, bar),
-                           ("LEFTPADDING", (0, 0), (-1, -1), 10), ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-                           ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
-    return t
+    return brief_panel(content, CW, {TEAL: "note", AMBER: "warn", GREEN: "good", RED: "risk"}[bar])
 
 
 # ============================================================================ page 1: the 5W's
 story = [panel(Paragraph(md(
     "**BLUF.** ACT (Agentic Command Tool) is an **AI assistant for the command line**. An administrator "
-    "types a problem in plain English (\"nginx will not start, find out why\"); ACT uses our GenAI.mil or "
-    "AskSage models to plan, runs the checks, reads the real output, and reports the **root cause** and "
+    "types a problem in plain English (\"nginx will not start, find out why\"); ACT uses our GenAI.mil "
+    "models to plan, runs the checks, reads the real output, and reports the **root cause** and "
     "the **fix**. It changes nothing without the administrator's **confirmation**, and it does not call "
     "a job done until a check **proves it worked**. One file each for Linux and Windows; nothing to "
     "install. **Ready for a pilot** with a few administrators."), S["bluf"]), TEAL_L, TEAL), Spacer(1, 8)]
@@ -120,7 +80,7 @@ who = block("WHO", "uses, owns, oversees", NAVY, B([
     "**Uses:** Linux and Windows system administrators, at their own terminal.",
     "**Owns:** the systems team: versions, settings, and the rules for how it may be used.",
     "**Oversees:** the ISSO decides what data may go to the GenAI service.",
-    "**Relies on:** GenAI.mil or AskSage, already in place. No new servers.",
+    "**Relies on:** GenAI.mil, already in place. No new servers.",
 ]))
 what = block("WHAT", "an AI assistant at the command line", TEAL, B([
     "Turns a plain-English task into a **plan**, runs the commands, reads the output, and reports "
@@ -135,14 +95,14 @@ when = block("WHEN", "on demand, while an administrator works", AMBER, B([
     "tasks (\"which services failed since boot?\").",
     "Optional **best-answer mode** for hard problems: every available model proposes a plan and the "
     "best one is used.",
-    "**Now:** ACT 0.6.18 is released for Linux and Windows.",
+    "**Now:** ACT %s is released for Linux and Windows." % VERSION,
 ]))
 where = block("WHERE", "what runs where", colors.HexColor("#4B5D8A"), B([
     "**On the server the administrator is working on**, over their usual SSH (for example "
     "SecureCRT) or Windows session.",
     "**Linux:** one Python script (RHEL 8/9, Python 3.8+). **Windows Server:** one PowerShell "
     "script (5.1 or 7). No agent, no service, no open ports.",
-    "**Model:** GenAI.mil or AskSage over HTTPS from that server.",
+    "**Model:** GenAI.mil over HTTPS from that server.",
     "**Key:** in the administrator's own settings file, readable only by them.",
 ]))
 why = block("WHY", "the payoff", GREEN, B([
@@ -168,7 +128,7 @@ story.append(panel([Paragraph('<font name="Sans-Bold" color="#A86A0B">Decisions 
                     Spacer(1, 3)] + [Paragraph(md(t), S["ask"], bulletText="%d." % (i + 1)) for i, t in enumerate([
     "Approve a **pilot**: a few named administrators use ACT in its default ask-before-change mode, "
     "first on non-production servers.",
-    "**ISSO concurrence** on sending command output and log lines to GenAI.mil (or AskSage), with "
+    "**ISSO concurrence** on sending command output and log lines to GenAI.mil, with "
     "passwords, tokens and keys removed and host names, IP addresses and user names pseudonymized first.",
     "Set the **usage rule**: default mode only on production (no \"auto\" mode), and name an **owner** "
     "for ACT versions and settings.",
@@ -203,12 +163,12 @@ def t2(header, rows, widths):
     data = [[Paragraph(md(h), S["head"]) for h in header]]
     data += [[Paragraph(md(c), S["cellb" if j == 0 else "cell"]) for j, c in enumerate(r)] for r in rows]
     t = Table(data, colWidths=[w * (CW - 10) / 2 for w in widths], repeatRows=1)
-    cmds = [("BACKGROUND", (0, 0), (-1, 0), NAVY), ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LINEBELOW", (0, 0), (-1, -1), 0.4, LINE), ("BOX", (0, 0), (-1, -1), 0.5, LINE),
+    cmds = [("BACKGROUND", (0, 0), (-1, 0), NAVY), ("VALIGN", (0, 0), (-1, -1), "TOP"), ("ROUNDEDCORNERS", [5, 5, 5, 5]),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.4, RULE), ("BOX", (0, 0), (-1, -1), 0.6, RULE),
             ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
             ("TOPPADDING", (0, 0), (-1, -1), 3.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]
     for i in range(2, len(data), 2):
-        cmds.append(("BACKGROUND", (0, i), (-1, i), PANEL))
+        cmds.append(("BACKGROUND", (0, i), (-1, i), ZEBRA))
     t.setStyle(TableStyle(cmds))
     return t
 
@@ -228,7 +188,8 @@ modes = t2(["Mode", "What runs without asking", "Use"], [
 ], [0.25, 0.43, 0.32])
 status = t2(["Topic", "Status / risk and mitigation"], [
     ["Testing to date", "Released for Linux and Windows. Automated test suites pass on Python 3.8, 3.11 and "
-                        "3.13 and on PowerShell 5.1 and 7."],
+                        "3.13 and on PowerShell 5.1 and 7. It already runs against GenAI.mil from AAP; a reply "
+                        "cut off on the way is asked for again (0.6.25)."],
     ["Model can be wrong", "The administrator confirms every change, and ACT refuses to report done until a "
                            "check proves the fix. Diagnoses come with evidence."],
     ["Runs with the user's rights", "Not a sandbox: ACT can do what the person running it can do. Use normal "
@@ -238,8 +199,8 @@ status = t2(["Topic", "Status / risk and mitigation"], [
                            "names, names listed for it, local accounts and e-mail addresses are "
                            "**pseudonymized** (replaced with consistent placeholders); ACT puts the real "
                            "values back only on the server, to run commands. A short name ACT cannot "
-                           "recognize may still be sent. Released in ACT 0.6.18, which the pilot "
-                           "will use. Needs ISSO concurrence."],
+                           "recognize may still be sent. In ACT since 0.6.18. Needs ISSO "
+                           "concurrence."],
     ["Prompt injection", "A crafted log line could try to steer the model. Output is treated as untrusted "
                          "data, and changes still need confirmation (the reason for no auto mode)."],
     ["Network", "Each server needs HTTPS access to the model endpoint."],
@@ -264,8 +225,8 @@ PHASES = [
 phases = Table([[[Paragraph(md("**%s**" % t), S["cell"]), Paragraph(md(d), S["cell"]),
                   Paragraph("<i>%s</i> %s" % (escape(k), md(e)), S["cell"])]
                  for t, d, k, e in PHASES]], colWidths=[CW / 4] * 4)
-phases.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOX", (0, 0), (-1, -1), 0.5, LINE),
-                            ("LINEBEFORE", (1, 0), (-1, 0), 0.5, LINE),
+phases.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOX", (0, 0), (-1, -1), 0.6, RULE),
+                            ("LINEBEFORE", (1, 0), (-1, 0), 0.5, RULE), ("ROUNDEDCORNERS", [6, 6, 6, 6]),
                             ("BACKGROUND", (0, 0), (0, 0), TEAL_L),
                             ("LEFTPADDING", (0, 0), (-1, -1), 7), ("RIGHTPADDING", (0, 0), (-1, -1), 7),
                             ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))

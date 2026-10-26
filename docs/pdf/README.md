@@ -18,20 +18,18 @@ spaces.
 | [ACT-5Ws-Leadership-Brief.pdf](ACT-5Ws-Leadership-Brief.pdf) | Leadership brief: ACT with AAP (who, what, when, where, why) | - |
 | [ACT-5Ws-Standalone-Brief.pdf](ACT-5Ws-Standalone-Brief.pdf) | Leadership brief: ACT on its own | - |
 
-**Versions.** The six site-automation PDFs are for this release (site-automation 0.31.1, ACT
-0.6.25). The four ACT PDFs were made for ACT 0.6.18 (two of them were corrected for 0.6.21: how
-the key reaches a host); for what
-changed since (both endpoint formats and `:probe`, the danger tier under `--auto`, https-only
-keys), see [ADDING_ACT.md](../ADDING_ACT.md), [APPROVED_COMMANDS.md](../APPROVED_COMMANDS.md) and the
-`CHANGELOG.md`.
+**Versions.** All ten PDFs are for this release (site-automation 0.31.1, ACT 0.6.25) and share one
+look. The four ACT PDFs say GenAI.mil only (Ask Sage is retired for now), what changed in ACT 0.6.22 to
+0.6.25, how site-automation's jobs use ACT (the Triage Guide, section 4.4), and the podman health job's
+containers found by themselves (the AAP 2.7 Runbook, D1).
 
 The PDFs carry no classification or distribution markings. Add the ones your site requires
 before you distribute them.
 
 ## Your logo on them
 
-The PDFs here carry no logo. To put your site's logo on the cover and at the top of every page of the six
-site-automation guides, build them again (see below) with `SITE_PDF_LOGO` set to the logo: a PNG with a
+The PDFs here carry no logo. To put your site's logo on the cover (the 5W's briefs: in their band) and at
+the top of every page of all ten, build them again (see below) with `SITE_PDF_LOGO` set to the logo: a PNG with a
 transparent background, or a JPEG. The report logo works (`playbooks/files/report_logo.png`); a copy 300 px tall
 or more prints sharper. Keep the copies with your logo in your own repository or on a share - never in the public
 repository.
@@ -39,6 +37,15 @@ repository.
 ```bash
 cd docs/pdf
 SITE_PDF_LOGO=../../playbooks/files/report_logo.png python3 build_ops_guide.py Site-Automation-Ops-Runbooks-Guide.pdf
+# all ten (the runbook needs ACT_LINUX_DIR, below):
+export SITE_PDF_LOGO=../../playbooks/files/report_logo.png
+for b in "ops_guide Site-Automation-Ops-Runbooks-Guide" "how_it_fits Site-Automation-How-It-Fits-Together" \
+         "service_watch Service-Watch-Demo-AAP-ACT" "settings_reference Site-Automation-Settings-Reference" \
+         "vm_deploy_guide Site-Automation-VM-Deploy-Guide" "ee_guide Site-Automation-EE-Guide" \
+         "guide ACT-Automated-Triage-Guide" "runbook ACT-AAP-2.7-Runbook" \
+         "5ws ACT-5Ws-Leadership-Brief" "5ws_act ACT-5Ws-Standalone-Brief"; do
+  set -- $b; python3 build_$1.py $2.pdf
+done
 ```
 
 ```powershell
@@ -50,7 +57,7 @@ python build_ops_guide.py Site-Automation-Ops-Runbooks-Guide.pdf
 ## Rebuilding them
 
 The scripts that draw the PDFs are in this folder (`build_*.py`, with `actpdf.py` for the shared
-parts and `sapdf.py` for the look of the six site-automation guides). They need Python 3, the
+parts and `sapdf.py` for the look of all of them). They need Python 3, the
 `reportlab` package and the **Noto Sans** and **Noto Sans Mono**
 fonts (Fedora/RHEL: `dnf install google-noto-sans-fonts google-noto-sans-mono-fonts`; elsewhere set
 `NOTO_FONT_DIR` to the folder that holds `NotoSans-Regular.ttf`). They need no network.
@@ -64,6 +71,10 @@ python3 build_service_watch.py Service-Watch-Demo-AAP-ACT.pdf
 python3 build_settings_reference.py Site-Automation-Settings-Reference.pdf
 python3 build_vm_deploy_guide.py Site-Automation-VM-Deploy-Guide.pdf
 python3 build_ee_guide.py Site-Automation-EE-Guide.pdf
+python3 build_guide.py ACT-Automated-Triage-Guide.pdf
+ACT_LINUX_DIR=/opt/ACT python3 build_runbook.py ACT-AAP-2.7-Runbook.pdf
+python3 build_5ws.py ACT-5Ws-Leadership-Brief.pdf
+python3 build_5ws_act.py ACT-5Ws-Standalone-Brief.pdf
 ```
 
 The site-automation PDFs find the repository from where the script sits (or from
