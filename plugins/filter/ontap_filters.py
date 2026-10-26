@@ -569,6 +569,8 @@ def ontap_report(collected, opts=None):
 
     # ---- 14. volumes + 15. inodes + 16. snapshots -------------------------------------------------------
     vw, vc = float(o.get("volume_warn_pct", 85)), float(o.get("volume_crit_pct", 90))
+    vmin = float(o.get("volume_min_gb", 50) or 0) * 1024 ** 3        # smaller volumes: no used-% finding (offline still is)
+    small = 0
     iw, ic = float(o.get("inode_warn_pct", 85)), float(o.get("inode_crit_pct", 90))
     sw, sc = float(o.get("snap_warn_pct", 100)), float(o.get("snap_crit_pct", 150))
     vrows, irows, srows = [], [], []
@@ -581,6 +583,8 @@ def ontap_report(collected, opts=None):
             p = float(p) if isinstance(p, (int, float)) else pct(used, size)
             state = v.get("state", "?")
             ps = level(p, vw, vc)
+            if vmin and isinstance(size, (int, float)) and size < vmin and ps in ("warning", "critical"):
+                ps, small = "ok", small + 1
             sst = "ok" if state == "online" else "critical"
             aggr = ", ".join(x.get("name", "") for x in (v.get("aggregates") or []) if isinstance(x, dict))
             name = "%s / %s" % (g(v, "svm.name", ""), v.get("name"))
@@ -606,7 +610,9 @@ def ontap_report(collected, opts=None):
                 if rs in ("warning", "critical"):
                     R.problem(c["_name"], "snapshots", "volume " + name, rs, "snapshots use %s%% of their reserve" % rp)
     R.table("Volumes %s%% full or more, or not online" % _hours(vw), "Volumes at or above %s%% used (amber) or %s%% (red), and "
-            "volumes offline or restricted (red), with the aggregate they are on." % (_hours(vw), _hours(vc)),
+            "volumes offline or restricted (red), with the aggregate they are on.%s" % (
+                _hours(vw), _hours(vc), (" Volumes under %s GB are left out of the used %% (%d of them at or above %s%%)."
+                                         % (_hours(vmin / 1024 ** 3), small, _hours(vw))) if vmin else ""),
             ["Cluster", "SVM", "Volume", "Aggregate", "State", "Type", "Size", "Available", "Used %"],
             sorted(vrows, key=lambda r: -float(str(r[0][8]).rstrip("%") or 0) if str(r[0][8]).rstrip("%").replace(".", "").isdigit() else 0),
             "Every volume is online and below %s%%." % _hours(vw), _notes(cs, SECTION_KEYS["volumes"]))
@@ -786,6 +792,9 @@ def ontap_report(collected, opts=None):
                {"label": "Network down", "value": sum(1 for p in R.problems if p["area"] == "network" and p["severity"] == "critical"),
                 "status": "critical" if any(p["area"] == "network" and p["severity"] == "critical" for p in R.problems) else "ok"},
                {"label": "Certificates expiring", "value": count("certificate"), "status": worst([p["severity"] for p in R.problems if p["area"] == "certificate"]) or "ok"}]
+    # the alerts and the event log last: the tables above say what is wrong, these say what ONTAP raised about it
+    last = [s for s in R.sections if s["title"] == "Health alerts" or s["title"].startswith("Error events")]
+    R.sections = [s for s in R.sections if s not in last] + last
     report = {"title": title, "status": status,
               "subtitle": "Read %s UTC%s" % (now.strftime("%Y-%m-%d %H:%M"), (" - " + vers) if vers else ""),
               "summary": summary, "sections": R.sections}

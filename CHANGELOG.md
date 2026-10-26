@@ -19,6 +19,12 @@ Platform" credential the report templates use > Roles > Assign roles: resource t
 **Organization Auditor** (read-only; every template in the organization, new ones too). The next run shows the last
 14 runs - AAP kept them all. docs/EMAIL_REPORTS.md, "The look" and "Troubleshooting".
 
+**NetApp health report: the alerts last, and small volumes not flagged as full.** The *Health alerts* and *Error
+events* sections are now at the bottom of the report, after the certificates: the tables above them say what is
+wrong, the alerts often say it again in many lines. Volumes under 50 GB (`ontap_volume_min_gb`) are no longer flagged
+for used % - root volumes and other small volumes run full by design; an offline one still is, and the Volumes
+table says how many small ones were left out. `ontap_volume_min_gb: 0` flags every volume, as before. docs/NETAPP.md.
+
 **The VMware alarms ACT analysis asks 5 problems at a time.** With 5 problems it worked, with 15 it did not: one
 answer about 15 problems is long enough for a gateway or proxy to cut it off, or to run past the model's time. Now
 ACT is asked `vm_alarm_act_batch` (5) problems per question, each question with only its problems' evidence, and the

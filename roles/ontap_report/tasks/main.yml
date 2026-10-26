@@ -32,6 +32,7 @@
       {{ _ontap_read | ontap_report({
            'aggr_warn_pct': ontap_aggr_warn_pct | float, 'aggr_crit_pct': ontap_aggr_crit_pct | float,
            'volume_warn_pct': ontap_volume_warn_pct | float, 'volume_crit_pct': ontap_volume_crit_pct | float,
+           'volume_min_gb': ontap_volume_min_gb | float,
            'inode_warn_pct': ontap_inode_warn_pct | float, 'inode_crit_pct': ontap_inode_crit_pct | float,
            'snap_warn_pct': ontap_snapshot_reserve_warn_pct | float, 'snap_crit_pct': ontap_snapshot_reserve_crit_pct | float,
            'lag_warn_hours': ontap_snapmirror_lag_warn_hours | float, 'lag_crit_hours': ontap_snapmirror_lag_crit_hours | float,

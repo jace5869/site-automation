@@ -208,5 +208,40 @@ class Report(unittest.TestCase):
         self.assertEqual(r["critical"], 1)
 
 
+    @staticmethod
+    def one(volumes, alerts=(), ems=()):
+        GB = 1024 ** 3
+
+        def vol(name, size_gb, used_pct, state="online"):
+            return {"name": name, "svm": {"name": "svm1"}, "aggregates": [{"name": "aggr1"}], "state": state, "type": "rw",
+                    "space": {"size": size_gb * GB, "used": size_gb * GB * used_pct // 100, "available": size_gb * GB * (100 - used_pct) // 100,
+                              "percent_used": used_pct}, "is_svm_root": False}
+        data = {"cluster": {"records": [{"name": "c1"}]}, "volumes": {"records": [vol(*v) for v in volumes]},
+                "alerts": {"records": list(alerts)}, "ems": {"records": list(ems)}}
+        return {"read_at": "2026-10-07T12:00:00Z", "clusters": [{"address": "c1.example.mil", "reachable": True, "data": data}]}
+
+    def test_small_volumes_not_flagged_for_used_pct(self):
+        col = self.one([("vol0_small", 10, 97), ("vol_49", 49, 92), ("vol_big", 500, 95), ("vol_50", 50, 88), ("vol_off", 5, 10, "offline")])
+        r = of.ontap_report(col, {"volume_min_gb": 50})
+        sec = [x for x in r["report"]["sections"] if x["title"].startswith("Volumes")][0]
+        self.assertEqual(sorted(row[2] for row in sec["rows"]), ["vol_50", "vol_big", "vol_off"])     # a small one offline still is
+        self.assertIn("Volumes under 50 GB are left out of the used % (2 of them at or above 85%).", sec["text"])
+        self.assertEqual(sorted(p["object"] for p in r["problems"] if p["area"] == "capacity"),
+                         ["volume svm1 / vol_50", "volume svm1 / vol_big", "volume svm1 / vol_off"])
+        r0 = of.ontap_report(col, {"volume_min_gb": 0})                                                 # 0 = every volume
+        self.assertEqual(sum(1 for p in r0["problems"] if p["area"] == "capacity"), 5)
+        self.assertEqual(sum(1 for p in of.ontap_report(col)["problems"] if p["area"] == "capacity"), 3)   # the default: 50 GB
+
+    def test_alerts_and_events_last(self):
+        alert = {"node": "n1", "perceived_severity": "major", "alert_id": "DualPathToDiskShelf_Alert", "probable_cause": "one path"}
+        ems = {"node": {"name": "n1"}, "message": {"name": "callhome.battery.low", "severity": "error"}, "time": "2026-10-07T11:00:00Z",
+               "log_message": "battery low"}
+        titles = [x["title"] for x in of.ontap_report(self.one([("v", 100, 10)], [alert], [ems]))["report"]["sections"]]
+        self.assertEqual(titles[-2], "Health alerts")
+        self.assertTrue(titles[-1].startswith("Error events"), titles[-1])
+        self.assertLess(titles.index("System health"), titles.index("Health alerts"))
+        self.assertGreater(titles.index("Health alerts"), titles.index("Certificates expiring"))
+
+
 if __name__ == "__main__":
     unittest.main()
