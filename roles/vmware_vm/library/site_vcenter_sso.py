@@ -17,8 +17,8 @@ description:
     (/api/vcenter/certificate-management/vcenter/signing-certificate) and the identity providers (/api/vcenter/identity/providers).
   - With C(test_user) a login as that domain account (POST /api/session), then its logout.
   - Each OCSP responder in C(ocsp) - with a certificate and its issuer, a real OCSP request (the answer must be successful,
-    the certificate good, the answer not past its next update); with a URL only, that it answers a HEAD request (as curl -I)
-    with any HTTP status but 502, 503 or 504.
+    the certificate good, the answer not past its next update); with a URL only, an OCSP request about a made-up certificate:
+    any OCSP response (usually "unauthorized") is the responder up.
 options:
   vcenters: {description: More vCenters besides the credential's (VMWARE_HOST)., type: list, elements: str, default: []}
   services: {description: The SSO services that must be started (names as vCenter lists them)., type: list, elements: str, default: []}
@@ -39,7 +39,7 @@ vcenters:
   type: list
   returned: always
 ocsp:
-  description: "Per responder: {url, ok, mode (request / reach), status, cert_status, this_update, next_update, ms, why, from_cert}"
+  description: "Per responder: {url, ok, mode (request / probe / reach), status, cert_status, this_update, next_update, ms, why, from_cert}"
   type: list
   returned: always
 '''
@@ -68,7 +68,11 @@ except ImportError:
 PEM_RE = re.compile(r"-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s\\n]+?-----END CERTIFICATE-----")
 SIGNING_PATH = "/api/vcenter/certificate-management/vcenter/signing-certificate"
 UA = "site-automation-ocsp-check"         # not Python's default, which some proxies and web filters turn away
-DOWN_CODES = (502, 503, 504)              # a URL-only check: a proxy or load balancer saying the responder behind it is down
+# A URL only: this OCSP request about a made-up certificate (issuer and key hashes of zeros, serial 1) is POSTed, as a
+# smart card login's would be; any OCSP response - "unauthorized" for this one, usually - is the responder up and
+# speaking OCSP. A plain GET or HEAD proves less: some responders close the connection on a bare GET.
+PROBE = bytes(bytearray.fromhex("30423040303e303c303a300906052b0e03021a05000414000000000000000000000000000000000000000004140000"
+                                "000000000000000000000000000000000000020101"))
 
 
 def utc_now(now=""):
@@ -258,19 +262,26 @@ def check_ocsp(x, timeout, now):
             else:
                 rec["ok"] = True
             return rec
-        # a URL only: a HEAD request, as `curl -I` sends - any HTTP answer is the responder up, but a proxy or load
-        # balancer saying the server behind it is not there (502, 503, 504)
-        req = urlrequest.Request(url, headers={"User-Agent": UA})
-        req.get_method = lambda: "HEAD"
+        rec["mode"] = "probe"
+        req = urlrequest.Request(url, data=PROBE, headers={"Content-Type": "application/ocsp-request", "Accept": "application/ocsp-response",
+                                                           "User-Agent": UA})
         resp = urlrequest.urlopen(req, timeout=timeout)
-        rec["status"] = "http %d" % resp.getcode()
+        raw = resp.read(65536)
+        rec["ms"] = int((time.time() - t0) * 1000)
+        if HAS_CRYPTO:
+            st = ocsp.load_der_ocsp_response(raw).response_status.name.lower()      # ValueError: not OCSP
+        elif "ocsp-response" in str(resp.headers.get("Content-Type", "")).lower():
+            st = "an answer"
+        else:
+            raise ValueError("its Content-Type is %s" % resp.headers.get("Content-Type", "none"))
+        rec["status"] = "OCSP, %s to a made-up certificate" % st
         rec["ok"] = True
     except urlerror.HTTPError as e:
         rec["status"] = "http %d" % e.code
         e.close()
-        if rec["mode"] == "reach":
-            rec["ok"] = e.code not in DOWN_CODES
-            rec["why"] = "" if rec["ok"] else "the responder answered HTTP %d (the server behind the address is not answering)" % e.code
+        if rec["mode"] == "probe":
+            rec["why"] = "the responder answered HTTP %d to an OCSP request%s" % (e.code, " (the server behind the address is not answering)"
+                                                                                  if e.code in (502, 503, 504) else "")
         else:
             rec["why"] = "the responder answered HTTP %d to the OCSP request" % e.code
     except (urlerror.URLError, OSError) as e:

@@ -81,6 +81,19 @@ class Judge(unittest.TestCase):
                                              {"name": "eth2", "first": True}]), "h")
         self.assertEqual(ids(r), [("netperf:drops:eth0", "warning"), ("netperf:drops:eth1", "warning")])
 
+    def test_ocsp_probe_a_url_only(self):
+        import base64
+        from cryptography.hazmat.primitives.serialization import Encoding
+        from cryptography.x509 import ocsp
+        unauth = base64.b64encode(ocsp.OCSPResponseBuilder.build_unsuccessful(ocsp.OCSPResponseStatus.UNAUTHORIZED).public_bytes(Encoding.DER)).decode()
+        self.assertEqual(nf.ocsp_request_b64(""), nf.PROBE_B64)
+        self.assertEqual(len(base64.b64decode(nf.PROBE_B64)), 68)
+        j = nf.ocsp_judge({"mode": "probe", "code": 200, "body": unauth})
+        self.assertEqual((j["ok"], j["status"]), (True, "OCSP, unauthorized to a made-up certificate"))
+        self.assertIn("not an OCSP response", nf.ocsp_judge({"mode": "probe", "code": 200, "body": base64.b64encode(b"<html>").decode()})["why"])
+        self.assertIn("HTTP 503 to an OCSP request (the server behind", nf.ocsp_judge({"mode": "probe", "code": 503})["why"])
+        self.assertEqual(nf.ocsp_judge({"mode": "probe", "why": "no answer: closed"})["why"], "no answer: closed")
+
     def test_ocsp_plain_and_failed(self):
         r = nf.net_perf_result(raw([], ocsp=[{"name": "P", "url": "http://ocsp.example.mil", "mode": "reach", "code": 405, "ms": 30},
                                              {"name": "Q", "url": "http://ocsp.example.mil", "mode": "reach", "code": 0, "why": "no answer: refused"},

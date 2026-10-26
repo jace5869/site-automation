@@ -16,7 +16,7 @@ options:
   ping_interval: {description: Seconds between pings., type: float, default: 0.2}
   tcp_tries: {description: Timed TCP connects per target with a port., type: int, default: 5}
   timeout: {description: Seconds one ping or connect may wait., type: int, default: 5}
-  ocsp: {description: "[{name, url, request (base64 DER, '' = a plain GET), why (set = not asked: reported as is)}]", type: list, elements: dict, default: []}
+  ocsp: {description: "[{name, url, request (base64 DER, '' = a HEAD request), mode (request / probe: a made-up certificate's request), why (set = not asked: reported as is)}]", type: list, elements: dict, default: []}
   nics: {description: Read the interfaces' counters., type: bool, default: true}
   nic_exclude: {description: Interfaces left out (regular expression)., type: str, default: '^lo$'}
   sysfs: {description: Where the interfaces' counters are., type: str, default: /sys/class/net}
@@ -182,7 +182,8 @@ class Run(object):
             ts.append(r)
         oc = []
         for x in p["ocsp"]:
-            r = {"name": x.get("name") or x.get("url"), "url": x.get("url", ""), "mode": "request" if x.get("request") else "reach"}
+            r = {"name": x.get("name") or x.get("url"), "url": x.get("url", ""),
+                 "mode": x.get("mode") or ("request" if x.get("request") else "reach")}
             if x.get("why"):                       # its address or issuer could not be read from the certificate (AAP side)
                 r.update({"code": 0, "ms": 0, "body": "", "why": x["why"]})
             else:

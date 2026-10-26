@@ -13,7 +13,8 @@
                      'cert': lookup('ansible.builtin.file', x.cert) if x.cert | default('') else '',
                      'issuer': lookup('ansible.builtin.file', x.issuer) if x.issuer | default('') else ''} | ocsp_target(net_perf_timeout | int * 3) -%}
       {%-   set _ = out.append({'name': t.name or t.url or x.cert | default(''), 'url': t.url, 'why': t.why,
-                                'request': (t.cert | ocsp_request_b64(t.issuer)) if t.cert and t.issuer and not t.why else ''}) -%}
+                                'mode': 'request' if t.cert and t.issuer else 'probe',
+                                'request': ('' | ocsp_request_b64) if not t.cert else (t.cert | ocsp_request_b64(t.issuer)) if t.issuer and not t.why else ''}) -%}
       {%- endfor -%}
       {{ out }}
   run_once: true

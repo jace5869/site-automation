@@ -36,8 +36,15 @@ def _o(opts):
     return o
 
 
-def ocsp_request_b64(cert_pem, issuer_pem):
-    """An OCSP request (DER, base64) for cert issued by issuer - made here, sent by each host."""
+# A URL only: this OCSP request about a made-up certificate (hashes of zeros, serial 1) is sent, as a smart card login's
+# would be; any OCSP response ("unauthorized", usually) is the responder up. Some responders close a bare GET unanswered.
+PROBE_B64 = "MEIwQDA+MDwwOjAJBgUrDgMCGgUABBQAAAAAAAAAAAAAAAAAAAAAAAAAAAQUAAAAAAAAAAAAAAAAAAAAAAAAAAACAQE="
+
+
+def ocsp_request_b64(cert_pem, issuer_pem=""):
+    """An OCSP request (DER, base64) for cert issued by issuer - made here, sent by each host. No cert: the probe."""
+    if not cert_pem:
+        return PROBE_B64
     if not HAS_CRYPTO:
         raise ValueError("the Python package cryptography is needed on the AAP side to make an OCSP request")
     c = x509.load_pem_x509_certificate(cert_pem.encode("ascii"))
@@ -54,6 +61,22 @@ def ocsp_judge(rec, now=""):
     """A host's OCSP answer -> {ok, status, cert_status, next_update, why}."""
     out = {"ok": False, "status": "", "cert_status": "", "next_update": "", "why": rec.get("why") or ""}
     if out["why"]:
+        return out
+    if rec.get("mode") == "probe":
+        code = int(rec.get("code") or 0)
+        if code != 200:
+            out["why"] = "the responder answered HTTP %s to an OCSP request%s" % (code, " (the server behind the address is not answering)"
+                                                                                  if code in (502, 503, 504) else "")
+            return out
+        if not HAS_CRYPTO:
+            out["why"] = "not judged: the Python package cryptography is missing on the AAP side"
+            return out
+        try:
+            st = ocsp.load_der_ocsp_response(base64.b64decode(rec.get("body") or "")).response_status.name.lower()
+        except ValueError as e:
+            out["why"] = "the answer is not an OCSP response: %s" % e
+            return out
+        out.update({"ok": True, "status": "OCSP, %s to a made-up certificate" % st})
         return out
     if rec.get("mode") != "request":
         out["status"] = "http %s" % rec.get("code")
