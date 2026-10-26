@@ -3,13 +3,15 @@
 # - on a Windows server (report_web_host): the user name (DOMAIN\user) and password the job logs in with over
 #   WinRM to write the pages - without this credential, the template's Machine credential;
 # - for uploads (report_web_dest: https://...): a token, sent as "Authorization: Bearer <token>", or the user name
-#   and password, as basic authentication.
+#   and password, as basic authentication;
+# - on a Windows file share (report_web_dest: \\fileserver\share\folder): the account (DOMAIN\user) that writes the
+#   pages there over SMB - Modify on that folder.
 # A report folder (a mounted share) needs no credential.
 inputs:
   fields:
     - id: username
       type: string
-      label: User name (DOMAIN\user for a Windows server)
+      label: User name (DOMAIN\user for a Windows server or a file share)
     - id: password
       type: string
       label: Password

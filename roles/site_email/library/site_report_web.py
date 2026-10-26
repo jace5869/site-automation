@@ -3,10 +3,11 @@
 """Publish one report on the report website (roles/site_email, report_web_dest): its page, a copy as the
 template's latest page, the report's data as JSON beside each, and the index of every report (index.html and
 index.json, this template's line updated). Into a folder the job can write (a share mounted on the execution
-node), uploaded with HTTP PUT (WebDAV: nginx, Apache, IIS), or - with windows_host - as a PowerShell script that
+node), onto a Windows file share over SMB (a \\\\server\\share\\folder path: smbprotocol, no mount), uploaded with HTTP PUT
+(WebDAV: nginx, Apache, IIS), or - with windows_host - as a PowerShell script that
 writes them on a Windows server (the role runs it there over WinRM). With keep (report_web_copy), nothing is written:
 the report is packed for the job "Report website - copy", which writes it later (plugins/module_utils/site_report_page.py).
-Standard library only."""
+Standard library only, but for the SMB share: smbprotocol (pure Python; in the execution environment)."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -16,9 +17,14 @@ short_description: Publish a report as web pages (a folder or an HTTP PUT upload
 description:
   - Writes the page, the template's latest page and their JSON, then reads the index (index.json), puts this
     template's line in it and writes index.json and index.html again.
-  - dest is a folder (an absolute path) or an http(s):// address that accepts PUT. A login for the upload comes
+  - dest is a folder (an absolute path), a Windows file share's folder (\\server\share\folder, or
+    smb://server/share/folder) or an http(s):// address that accepts PUT. A login for the upload comes
     from the environment - REPORT_WEB_TOKEN (sent as a bearer token), or REPORT_WEB_USERNAME and
-    REPORT_WEB_PASSWORD (basic) - as the "Report website" credential sets it, never from a parameter.
+    REPORT_WEB_PASSWORD (basic) - as the "Report website" credential sets it, never from a parameter. The share's
+    login is REPORT_WEB_USERNAME (DOMAIN\user or user@domain) and REPORT_WEB_PASSWORD too, or a Kerberos ticket
+    (smb_auth kerberos, no password). The share's folder must be there (it is never made); the folders inside it are.
+  - In check mode nothing is written; with a share, the job still logs in and looks at the folder (read-only), so a
+    dry run proves the login and the path.
   - The pictures of the page (src="cid:name", the logo) are put inside it (data:), so every page stands alone.
   - With windows_host, dest is a folder on that Windows server - nothing is written here, the files are put in a
     PowerShell script (returned as script, a temporary file) that writes them there; index_text is that
@@ -47,6 +53,9 @@ options:
   index_text: {description: "With windows_host - the index.json there ('' = none yet; as text, or read already).", type: raw, default: ''}
   keep: {description: Write nothing - return the report packed for the copy job (report_web_copy)., type: bool, default: false}
   max_kb: {description: With keep - the packed report's greatest size (report_web_copy_max_kb)., type: int, default: 256}
+  smb_auth: {description: "The share's login - negotiate (Kerberos, else NTLM), ntlm or kerberos.", type: str, default: negotiate}
+  smb_encrypt: {description: Encrypt the share's traffic (SMB 3); a share that requires it is encrypted anyway., type: bool, default: false}
+  smb_port: {description: The share's port., type: int, default: 445}
   footer: {description: With keep - the email's footer line (the AAP job, who started it, when) for the copied page., type: str, default: ''}
 author: site automation
 '''
@@ -184,6 +193,114 @@ class Target(object):
                     raise Fail('the folder %s is not there on the website (report_web_dest)' % self.dest)
                 if e.code != 405:                        # 405: it is there already
                     raise Fail('making the folder %s/%s: HTTP %s %s%s' % (self.dest, '/'.join(parts[:i]), e.code, e.reason, _login_hint(e.code)))
+
+
+def smb_path(dest):
+    """\\\\server\\share\\folder, //server/share/folder or smb://server/share/folder -> (server, '\\\\server\\share\\folder'),
+    or None when dest is no share."""
+    d = dest.strip()
+    m = re.match(r'(?i)^smb://(.+)$', d)
+    if m:
+        d = '//' + m.group(1)
+    if not (d.startswith('\\\\') or d.startswith('//')):
+        return None
+    parts = [x for x in re.split(r'[\\/]+', d) if x]
+    if len(parts) < 2:
+        raise Fail('report_web_dest %s: a share is \\\\server\\share\\folder' % dest)
+    return parts[0], '\\\\' + '\\'.join(parts)
+
+
+class SmbTarget(object):
+    """A folder on a Windows file share, over SMB 2/3 (smbprotocol): no mount, the login from the Report website credential."""
+
+    def __init__(self, dest, auth='negotiate', encrypt=False, port=445, timeout=30):
+        self.server, self.root = smb_path(dest)
+        try:
+            import smbclient
+            from smbprotocol import exceptions as smbexc
+        except ImportError:
+            raise Fail('report_web_dest is a file share (%s), and this execution environment has no smbprotocol: add it to '
+                       'the EE (ee/all-in-one/requirements.txt), or let the copy job write the pages (report_web_copy) from an EE '
+                       'that has it (docs/WEB_REPORTS.md, "A Windows file share")' % self.root)
+        self.smb, self.exc = smbclient, smbexc
+        self.kw = {'port': port}
+        user, password = os.environ.get('REPORT_WEB_USERNAME', ''), os.environ.get('REPORT_WEB_PASSWORD', '')
+        if auth not in ('negotiate', 'ntlm', 'kerberos'):
+            raise Fail('report_web_smb_auth must be negotiate, ntlm or kerberos, not %s' % auth)
+        if not user and auth != 'kerberos':
+            raise Fail('no login for the share %s: attach the "Report website" credential (DOMAIN\\user and its password) to '
+                       'the template - or report_web_smb_auth: kerberos with a ticket' % self.root)
+        try:
+            smbclient.register_session(self.server, username=user or None, password=password or None, port=port,
+                                       encrypt=encrypt or None, auth_protocol=auth, connection_timeout=timeout)
+        except Exception as e:                          # noqa: BLE001 - every way a login fails, said in words
+            raise Fail(self._why('logging in to %s as %s' % (self.server, user or 'the Kerberos ticket'), e))
+        try:
+            ok = smbclient.path.isdir(self.root, **self.kw)
+        except Exception as e:                          # noqa: BLE001
+            raise Fail(self._why('opening %s' % self.root, e))
+        if not ok:
+            share = '\\\\%s\\%s' % (self.server, self.root.split('\\')[3])
+            try:
+                smbclient.listdir(share, **self.kw)     # the share itself: is it there?
+            except Exception as e:                      # noqa: BLE001
+                raise Fail(self._why('opening the share %s' % share, e))
+            raise Fail('the folder %s is not there - make it once by hand (report_web_dest)' % self.root)
+
+    def _why(self, what, e):
+        text = str(e)
+        low = text.lower()
+        if 'logon_failure' in low or 'logon failure' in low or 'status_logon' in low or 'invalid credentials' in low:
+            hint = ': the user name or password is wrong (the Report website credential - DOMAIN\\user), or the account is locked'
+        elif 'access_denied' in low or 'access is denied' in low:
+            hint = ': the account may log in but not use this folder - give it Modify on it (the share and the folder)'
+        elif 'bad_network_name' in low or '0xc00000cc' in low or (what.startswith('opening the share') and (
+                '0xc0000225' in low or 'no such file' in low)):
+            hint = ': no such share on that server (the part after the server name)'
+        elif 'md4' in low or 'unsupported hash' in low:
+            hint = ': NTLM needs MD4, which a FIPS execution environment does not have - use report_web_smb_auth: kerberos'
+        elif 'failed to connect' in low or 'timed out' in low or 'refused' in low or 'name or service' in low:
+            hint = ': the server cannot be reached on port %d from the execution node (a firewall, or the name)' % self.kw['port']
+        else:
+            hint = ''
+        return '%s: %s%s' % (what, text.splitlines()[0][:300] if text else type(e).__name__, hint)
+
+    def _path(self, rel):
+        return self.root + '\\' + rel.replace('/', '\\')
+
+    def read(self, rel):
+        try:
+            with self.smb.open_file(self._path(rel), mode='rb', **self.kw) as f:
+                return f.read().decode('utf-8')
+        except OSError as e:
+            if getattr(e, 'errno', None) == 2:          # not there
+                return None
+            raise Fail(self._why('reading ' + self._path(rel), e))
+        except Exception as e:                          # noqa: BLE001
+            raise Fail(self._why('reading ' + self._path(rel), e))
+
+    def write(self, rel, text, ctype):
+        path = self._path(rel)
+        folder = path.rsplit('\\', 1)[0]
+        tmp = '%s\\.%s.%s.tmp' % (folder, path.rsplit('\\', 1)[1], os.getpid())
+        try:
+            if folder != self.root:
+                self.smb.makedirs(folder, exist_ok=True, **self.kw)
+            with self.smb.open_file(tmp, mode='wb', **self.kw) as f:
+                f.write(text.encode('utf-8'))
+            self.smb.replace(tmp, path, **self.kw)      # the old page is replaced whole: never half a page
+        except Exception as e:                          # noqa: BLE001
+            try:
+                self.smb.remove(tmp, **self.kw)
+            except Exception:                           # noqa: BLE001
+                pass
+            raise Fail(self._why('writing ' + path, e))
+
+    def close(self):
+        try:
+            self.smb.reset_connection_cache()
+        except Exception:                               # noqa: BLE001
+            pass
 
 
 class Staged(object):
@@ -369,7 +486,7 @@ def index_html(reports, index, header_text, logo, generated):
 
 
 def _place(where, rel, win):
-    """Where a file is, without an address: /mnt/reports/a/b.html, or web01:D:\\reports\\a\\b.html."""
+    """Where a file is, without an address: /mnt/reports/a/b.html, web01:D:\\reports\\a\\b.html or \\\\fs01\\its\\a\\b.html."""
     return where + ('\\' + rel.replace('/', '\\') if win else '/' + rel)
 
 
@@ -432,25 +549,42 @@ def main():
             keep=dict(type='bool', default=False),
             max_kb=dict(type='int', default=256),
             footer=dict(type='str', default=''),
+            smb_auth=dict(type='str', default='negotiate'),
+            smb_encrypt=dict(type='bool', default=False),
+            smb_port=dict(type='int', default=445),
         ),
         supports_check_mode=True,
     )
     p = module.params
     dest = p['dest'].strip()
     win = p['windows_host'].strip()
-    where = ('%s:%s' % (win, dest.rstrip('/\\'))) if win else dest.rstrip('/')
+    try:
+        smb = None if win else smb_path(dest)
+    except Fail as e:
+        module.fail_json(msg='The report website: %s' % e)
+    where = ('%s:%s' % (win, dest.rstrip('/\\'))) if win else smb[1] if smb else dest.rstrip('/')
+    bs = bool(win or smb)                                # places written with backslashes
     page, latest, index = (str(p['files'].get(k) or '') for k in ('page', 'latest', 'index'))
     base = (p['url'].strip() or (dest if re.match(r'(?i)https?://', dest) and not win else '')).rstrip('/')
     urls = dict(url=p['page_url'].strip() or _join(base, page), latest_url=_join(base, latest), index_url=_join(base, index))
     if not page:
         module.fail_json(msg='no page name (report_web_page)')
     if p['keep']:
-        keep(module, p, page, latest, index, urls, where, win)
-    if module.check_mode:
+        keep(module, p, page, latest, index, urls, where, bs)
+    if module.check_mode and not smb:
         module.exit_json(changed=False, written=[], msg='Dry run (Check): the report would be published at %s'
-                         % (urls['url'] or _place(where, page, win)), **urls)
+                         % (urls['url'] or _place(where, page, bs)), **urls)
+    target = None
     try:
-        target = Staged(_json_name(index) if index else '', p['index_text']) if win else Target(dest, p['ca_path'], p['timeout'])
+        if win:
+            target = Staged(_json_name(index) if index else '', p['index_text'])
+        elif smb:
+            target = SmbTarget(dest, p['smb_auth'], p['smb_encrypt'], p['smb_port'], p['timeout'])
+            if module.check_mode:                        # logged in and the folder is there: that is all a dry run does
+                module.exit_json(changed=False, written=[], msg='Dry run (Check): logged in to %s, the folder %s is there; the report '
+                                 'would be published at %s' % (target.server, target.root, urls['url'] or _place(where, page, True)), **urls)
+        else:
+            target = Target(dest, p['ca_path'], p['timeout'])
         html = web_page(p['html'], p['images'])
         written = []
         entry = dict(p['entry'], page=page, latest=latest)
@@ -482,14 +616,17 @@ def main():
             written += [_json_name(index), index]
     except Fail as e:
         module.fail_json(msg='The report website: %s' % e, **urls)
+    finally:
+        if isinstance(target, SmbTarget):
+            target.close()
     if win:
         fd, script = tempfile.mkstemp(prefix='site_report_web_', suffix='.ps1')
         with os.fdopen(fd, 'wb') as f:
             f.write(windows_script(dest, target.files).encode('utf-8-sig'))   # PowerShell 5.1 reads it as UTF-8
-        module.exit_json(changed=False, written=written, script=script, place=_place(where, page, win), index_text=index_text,
+        module.exit_json(changed=False, written=written, script=script, place=_place(where, page, bs), index_text=index_text,
                          newest=is_newest, msg='Made, for %s: %s' % (win, ', '.join(written)), **urls)
-    module.exit_json(changed=True, written=written, place=_place(where, page, win), index_text=index_text, newest=is_newest,
-                     msg='Published: %s' % (urls['url'] or _place(where, page, win)), **urls)
+    module.exit_json(changed=True, written=written, place=_place(where, page, bs), index_text=index_text, newest=is_newest,
+                     msg='Published: %s' % (urls['url'] or _place(where, page, bs)), **urls)
 
 
 if __name__ == '__main__':

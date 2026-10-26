@@ -73,8 +73,9 @@ report_time_zone: ""
 # site_report_url.
 # Where the files go: a folder the job can write - a share mounted on the AAP execution nodes and exposed to jobs
 # (Settings > Job settings > Paths to expose to isolated jobs), e.g. /mnt/reports - or an https:// address that
-# takes uploads (HTTP PUT, WebDAV: nginx, Apache, IIS). An upload's login comes from a "Report website" credential
-# (aap/credential_types/report_web.yml).
+# takes uploads (HTTP PUT, WebDAV: nginx, Apache, IIS) - or a Windows file share's folder, written over SMB with no
+# mount: '\\fileserver\its\aap\reports' (the folder there already; smbprotocol in the execution environment). An
+# upload's or a share's login comes from a "Report website" credential (aap/credential_types/report_web.yml).
 report_web_dest: ""
 report_web_url: ""                       # the address people open that folder at, e.g. https://reports.yoursite.mil ("" = dest when it is https://)
 report_web_theme: portal                 # the page's look: standard, command, portal or glass (as report_email_theme)
@@ -87,6 +88,10 @@ report_web_latest: "{template}/latest.html"                  # always the templa
 report_web_index: index.html                                 # every report's last run ("" = none)
 report_web_names: {}                     # your own {names}, e.g. {site: "{{ site_code }}"} for "{site}/{template}/..."
 report_web_json: true                    # the report's data as .json beside each page and index.json beside the index
+# A share (report_web_dest \\server\share\folder): how the job logs in, and the connection.
+report_web_smb_auth: negotiate           # negotiate (Kerberos when the EE has a ticket, else NTLM), ntlm, or kerberos (FIPS: no NTLM)
+report_web_smb_encrypt: false            # true = encrypt (SMB 3) even when the share does not require it; one that requires it is always
+report_web_smb_port: 445                 # the share's port
 report_web_ca_path: ""                   # a CA file for an https:// report_web_dest, or report_web_host's WinRM certificate ("" = what the EE trusts)
 # Or on a Windows server (a file server, or the IIS server itself): report_web_host is that server, report_web_dest
 # the folder on it (D:\reports, there already). The pages are made on the AAP side and written there over WinRM, in

@@ -1,0 +1,23 @@
+---
+# Test harness: the report part of a job whose play runs on the target hosts (a Limit, no localhost in the
+# inventory - as log_analysis.yml, ad_lockout.yml ... since 0.32.0): roles/site_email included once, delegated to
+# the AAP side, with the connection local. Not a shipped playbook.
+- name: A report from a play on the hosts
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The report, once, from the AAP side
+      ansible.builtin.include_role:
+        name: site_email
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _report:
+          title: "Test report from the hosts' play"
+          status: ok
+          sections:
+            - {title: Result, lines: ["read from {{ ansible_play_hosts | join(', ') }}"]}

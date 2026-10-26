@@ -236,6 +236,9 @@
       when: "{{ _web_when }}"
       job: "{{ awx_job_id | default(tower_job_id | default('local')) }}"
     ca_path: "{{ report_web_ca_path | default('') }}"
+    smb_auth: "{{ report_web_smb_auth | default('negotiate') }}"
+    smb_encrypt: "{{ report_web_smb_encrypt | default(false) | bool }}"
+    smb_port: "{{ report_web_smb_port | default(445) | int }}"
     windows_host: "{{ report_web_host | default('') | trim if _web_win | bool or _web_copy | bool else '' }}"
     index_text: "{{ _web_win_read.index | default('', true) if _web_win | bool and not ansible_check_mode else '' }}"
   vars:

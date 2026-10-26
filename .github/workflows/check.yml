@@ -113,6 +113,12 @@ jobs:
         run: |
           bash tests/email/run_web_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/email/run_web_test.sh
+      - name: The report website on a Windows file share over SMB, against Samba in a container (current ansible-core and 2.16)
+        run: |
+          pip install smbprotocol
+          /tmp/ac216/bin/pip -q install smbprotocol
+          bash tests/email/run_smb_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14452 bash tests/email/run_smb_test.sh
       - name: Active Directory health report, the Ansible side with made-up DCs (current ansible-core and 2.16)
         run: |
           bash tests/ad/run_ad_test.sh

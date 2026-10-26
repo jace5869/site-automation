@@ -125,8 +125,10 @@
 ## https://...") and keeps it as the job artifact site_report_url. Where the files go: a folder the
 ## job can write - a share mounted on the AAP execution nodes and exposed to jobs (Settings > Job
 ## settings > Paths to expose to isolated jobs), e.g. /mnt/reports - or an https:// address that
-## takes uploads (HTTP PUT, WebDAV: nginx, Apache, IIS). An upload's login comes from a "Report
-## website" credential (aap/credential_types/report_web.yml).
+## takes uploads (HTTP PUT, WebDAV: nginx, Apache, IIS) - or a Windows file share's folder, written
+## over SMB with no mount: '\\fileserver\its\aap\reports' (the folder there already; smbprotocol in
+## the execution environment). An upload's or a share's login comes from a "Report website"
+## credential (aap/credential_types/report_web.yml).
 # report_web_dest: ""
 
 ## the address people open that folder at, e.g. https://reports.yoursite.mil ("" = dest when it is
@@ -154,6 +156,16 @@
 
 ## the report's data as .json beside each page and index.json beside the index
 # report_web_json: true
+
+## A share (report_web_dest \\server\share\folder): how the job logs in, and the connection.
+## negotiate (Kerberos when the EE has a ticket, else NTLM), ntlm, or kerberos (FIPS: no NTLM)
+# report_web_smb_auth: negotiate
+
+## true = encrypt (SMB 3) even when the share does not require it; one that requires it is always
+# report_web_smb_encrypt: false
+
+## the share's port
+# report_web_smb_port: 445
 
 ## a CA file for an https:// report_web_dest, or report_web_host's WinRM certificate ("" = what the
 ## EE trusts)

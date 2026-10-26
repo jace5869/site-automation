@@ -957,6 +957,9 @@ File: `roles/site_email/defaults/main.yml`
 | `report_web_index` | `index.html` | every report's last run ("" = none) |
 | `report_web_names` | `{}` | your own {names}, e.g. {site: "{{ site_code }}"} for "{site}/{template}/..." |
 | `report_web_json` | `true` | the report's data as .json beside each page and index.json beside the index |
+| `report_web_smb_auth` | `negotiate` | A share (report_web_dest \\server\share\folder): how the job logs in, and the connection. negotiate (Kerberos when the EE has a ticket, else NTLM), ntlm, or kerberos (FIPS: no NTLM) |
+| `report_web_smb_encrypt` | `false` | true = encrypt (SMB 3) even when the share does not require it; one that requires it is always |
+| `report_web_smb_port` | `445` | the share's port |
 | `report_web_ca_path` | (empty) | a CA file for an https:// report_web_dest, or report_web_host's WinRM certificate ("" = what the EE trusts) |
 | `report_web_host` | (empty) | Or on a Windows server (a file server, or the IIS server itself): report_web_host is that server, report_web_dest the folder on it (D:\reports, there already). The pages are made on the AAP side and written there over WinRM, in one PowerShell script per run (Constrained Language Mode too): nothing to mount, no WebDAV.… (all of it: the role file) |
 | `report_web_host_connection` | `winrm` | winrm or psrp |

@@ -110,7 +110,20 @@ worst first.
 
 ## Where the files go
 
-Three ways; the pages are the same in each.
+Four ways; the pages are the same in each.
+
+### A Windows file share, over SMB
+
+```yaml
+report_web_dest: '\\fileserver\its\aap\reports'   # the share's folder - there already (single quotes)
+```
+
+The job writes the pages straight onto the share over SMB 2/3, logged in as the account of the **Report website**
+credential (`DOMAIN\user`, Modify on that folder) - no mount on the execution nodes, no AAP setting, no web server
+that takes uploads. The execution environment needs `smbprotocol` (in the all-in-one EE since 0.33.0), or only the
+copy job's does (`report_web_copy`). A dry run (Check) logs in and checks the folder, and writes nothing.
+`report_web_smb_auth` (`negotiate`, `ntlm`, `kerberos` - Kerberos on FIPS), `report_web_smb_encrypt`,
+`report_web_smb_port`. The whole setup, step by step: [REPORT_SHARE.md](REPORT_SHARE.md) (also a PDF).
 
 ### A Windows server, over WinRM
 

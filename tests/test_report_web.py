@@ -121,6 +121,26 @@ class Module(unittest.TestCase):
             with self.assertRaises(rw.Fail):
                 rw.Target(bad, "", 5)
 
+    def test_smb_path(self):
+        self.assertEqual(rw.smb_path('\\\\fileserver\\its\\aap\\reports\\'), ('fileserver', '\\\\fileserver\\its\\aap\\reports'))
+        self.assertEqual(rw.smb_path('smb://fileserver/its/aap/reports'), ('fileserver', '\\\\fileserver\\its\\aap\\reports'))
+        self.assertEqual(rw.smb_path('//fs01.example.mil/its'), ('fs01.example.mil', '\\\\fs01.example.mil\\its'))
+        for not_smb in ('/mnt/reports', 'https://reports.example.mil/up', 'D:\\reports'):
+            self.assertIsNone(rw.smb_path(not_smb))
+        with self.assertRaises(rw.Fail):
+            rw.smb_path('\\\\fileserver')
+
+    def test_smb_login_needed(self):
+        saved = {k: os.environ.pop(k, None) for k in ("REPORT_WEB_USERNAME", "REPORT_WEB_PASSWORD")}
+        try:
+            with self.assertRaises(rw.Fail) as e:
+                rw.SmbTarget('\\\\fileserver\\its\\aap', 'ntlm', False, 445, 2)
+            self.assertTrue('Report website' in str(e.exception) or 'smbprotocol' in str(e.exception))
+        finally:
+            for k, v in saved.items():
+                if v is not None:
+                    os.environ[k] = v
+
     def test_http_login_from_the_environment(self):
         os.environ.update(REPORT_WEB_TOKEN="", REPORT_WEB_USERNAME="up", REPORT_WEB_PASSWORD="pw")
         self.assertEqual(rw.Target("https://reports.example.mil/r", "", 5).auth, "Basic dXA6cHc=")
