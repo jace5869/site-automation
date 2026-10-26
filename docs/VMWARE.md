@@ -618,7 +618,7 @@ and the **outage watch** asks every run whether SSO is down *now* (`vm_watch_sso
 | The credential's own login refused (single sign-on, or the credential) | critical | yes | yes |
 | The STS signing certificate expired, or expires within `vm_sso_sts_crit_days` (14) | critical | yes | - |
 | ... within `vm_sso_sts_warn_days` (60) | warning | yes | - |
-| An OCSP responder in `vm_sso_ocsp` does not answer, answers not successful, stale, or not good | `vm_sso_ocsp_severity` (critical) | yes | yes |
+| An OCSP responder (`site_ocsp_certs` or `vm_sso_ocsp`) does not answer, answers not successful, stale, or not good, or its address or issuer could not be read from the certificate | `vm_sso_ocsp_severity` (critical) | yes | yes |
 
 The section also lists each vCenter's identity providers. Only reads reach vCenter.
 
@@ -630,16 +630,28 @@ still proves SSO works), and a **vCenter SSO test account** credential
 there is no login test.
 
 **OCSP.** Smart card (CAC) logins to vCenter check each card's certificate with an OCSP responder: when
-it does not answer, they fail. List your responders in `all.yml`:
+it does not answer, they fail. Put a certificate the responder knows - any user's, from a smart card or
+the PKI's site - in your repository as a PEM file (it is not a secret), and name it in `all.yml`:
+
+```yaml
+site_ocsp_certs: [files/ocsp/test-user.pem]     # playbooks/files/ocsp/test-user.pem; the network performance report uses it too
+```
+
+The responder's address and the certificate of the CA that issued it are read from the certificate
+itself (its *Authority Information Access*: every DoD certificate names its OCSP responder and where its
+CA's certificate is); the CA's certificate is downloaded from the AAP node. When the AAP node cannot
+reach that address, put the CA's certificate after the user's in the same file. `vm_sso_ocsp`, when
+set, is used instead - to give an address or an issuer yourself, or ask another responder:
 
 ```yaml
 vm_sso_ocsp:
-  - url: http://ocsp.example.mil
-    cert: files/ocsp/test-user.pem       # a certificate the responder knows (not a secret), from playbooks/
-    issuer: files/ocsp/issuing-ca.pem    # the CA that issued it
+  - cert: files/ocsp/test-user.pem       # the address and issuer from the certificate
+  - url: http://ocsp2.example.mil        # or all three given
+    cert: files/ocsp/test-user.pem
+    issuer: files/ocsp/issuing-ca.pem
 ```
 
-With `cert` and `issuer`, each run sends a real OCSP request and reads the answer: it must be
+With a certificate, each run sends a real OCSP request and reads the answer: it must be
 successful, the certificate **good**, and the answer fresh (its next update not passed). With a `url`
 only, it must answer HTTP at all. The responders are asked from the AAP node; vCenter itself must reach
 them too (a proxy or firewall between vCenter and the responder is not seen from here).

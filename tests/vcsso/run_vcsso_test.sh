@@ -17,17 +17,19 @@ pids=""
 cleanup() { for p in $pids; do kill "$p" 2>/dev/null; done; rm -rf "$W"; }
 trap cleanup EXIT
 fails=0
-pv="${VCSSO_PORT:-12601}" po="${VCSSO_OCSP_PORT:-12602}"
+pv="${VCSSO_PORT:-12601}" po="${VCSSO_OCSP_PORT:-12602}" pc="${VCSSO_CA_PORT:-12603}"
 cd "$W" || exit 1
 o() { openssl "$@" >/dev/null 2>&1 || { echo "ABORT - openssl $1"; exit 1; }; }
 # a CA; the STS signing certificates (300, 40 and 9 days); the OCSP responder's certificate; two user certificates, one revoked
 o req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.pem -days 3650 -subj "/CN=Test Root CA"
 printf 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\n' > leaf.ext
 printf 'basicConstraints=CA:FALSE\nextendedKeyUsage=OCSPSigning\n' > ocsp.ext
+# the user certificate names its OCSP responder and where its issuer's certificate is, as DoD certificates do
+printf 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nauthorityInfoAccess=OCSP;URI:http://127.0.0.1:%s,caIssuers;URI:http://127.0.0.1:%s/ca.cer\n' "$po" "$pc" > aia.ext
 for n in sts300:300 sts40:40 sts9:9 ocsp:365 user:365 gone:365 vc:365; do
     name=${n%%:*} days=${n##*:}
     o req -newkey rsa:2048 -nodes -keyout $name.key -out $name.csr -subj "/CN=$name.example.mil"
-    o x509 -req -in $name.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out $name.pem -days $days -extfile $([ $name = ocsp ] && echo ocsp.ext || echo leaf.ext)
+    o x509 -req -in $name.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out $name.pem -days $days -extfile $(case $name in ocsp) echo ocsp.ext;; user) echo aia.ext;; *) echo leaf.ext;; esac)
 done
 : > index.txt
 o ca -gencrl -help 2>/dev/null; true
@@ -35,7 +37,8 @@ sgood=$(openssl x509 -in user.pem -noout -serial | cut -d= -f2) sgone=$(openssl 
 ex=$(date -u -d '+1 year' +%y%m%d%H%M%SZ) rv=$(date -u -d '-1 day' +%y%m%d%H%M%SZ)
 printf 'V\t%s\t\t%s\tunknown\t/CN=user.example.mil\nR\t%s\t%s\t%s\tunknown\t/CN=gone.example.mil\n' "$ex" "$sgood" "$ex" "$rv" "$sgone" > index.txt
 openssl ocsp -index index.txt -port "$po" -rsigner ocsp.pem -rkey ocsp.key -CA ca.pem -nmin 60 -ignore_err >/dev/null 2>&1 & pids="$pids $!"
-mkdir -p pb/files && cp user.pem gone.pem ca.pem pb/files/
+mkdir -p pb/files pub && cp user.pem gone.pem ca.pem pb/files/ && openssl x509 -in ca.pem -outform DER -out pub/ca.cer
+"$py" -m http.server "$pc" --bind 127.0.0.1 --directory "$W/pub" >/dev/null 2>&1 & pids="$pids $!"
 chain() { "$py" -c 'import json,sys; print(json.dumps({"active_cert_chain": {"cert_chain": [open(sys.argv[1]).read(), open("ca.pem").read()]}, "signing_cert_chains": []}))' "$1"; }
 data() {  # data STS STATE [forbidden]
     cat > data.json <<J
@@ -94,6 +97,12 @@ data sts300 STARTED
 
 run "OCSP: the test certificate revoked" -e "{\"vm_sso_ocsp\": [{\"url\": \"http://127.0.0.1:$po\", \"cert\": \"$W/pb/files/gone.pem\", \"issuer\": \"$W/pb/files/ca.pem\"}]}" -- \
     "CRITICAL the OCSP responder http://127.0.0.1:$po: the responder says the test certificate is revoked - smart card (CAC) logins"
+run "OCSP: only the certificate - the responder's address and the issuer read from it" -e "{\"vm_sso_ocsp\": [{\"cert\": \"$W/pb/files/user.pem\"}]}" -- \
+    "OK | OCSP http://127.0.0.1:$po | successful, certificate good, next update" "!CRITICAL"
+run "OCSP: site_ocsp_certs, for both reports, when vm_sso_ocsp is empty" -e "{\"vm_sso_ocsp\": [], \"site_ocsp_certs\": [\"$W/pb/files/user.pem\"]}" -- \
+    "OK | OCSP http://127.0.0.1:$po | successful, certificate good, next update" "!CRITICAL"
+run "OCSP: a certificate that names no responder" -e "{\"vm_sso_ocsp\": [{\"cert\": \"$W/pb/files/gone.pem\"}]}" -- \
+    "the certificate CN=gone.example.mil names no OCSP address (Authority Information Access): give the responder's url"
 run "OCSP: a responder that does not answer" -e '{"vm_sso_ocsp": [{"url": "http://127.0.0.1:9"}]}' -- "CRITICAL the OCSP responder http://127.0.0.1:9: no answer"
 run "OCSP: a stale answer (its next update passed)" -e "_vm_now=$(date -u -d '+1 day' +%Y-%m-%dT%H:%M:%SZ)" -- "the answer is stale: its next update"
 run "OCSP: a URL only - it answers" -e "{\"vm_sso_ocsp\": [{\"url\": \"http://127.0.0.1:$po\"}]}" -e vm_sso_ocsp_severity=warning -- "OK | OCSP http://127.0.0.1:$po | answers" "!CRITICAL"

@@ -16,7 +16,7 @@ pids=""
 cleanup() { for p in $pids; do kill "$p" 2>/dev/null; done; rm -rf "$W"; }
 trap cleanup EXIT
 fails=0
-po="${NETPERF_OCSP_PORT:-12611}" pt="${NETPERF_TCP_PORT:-12612}" ps="${NETPERF_SMTP_PORT:-12613}"
+pc="${NETPERF_CA_PORT:-12614}" po="${NETPERF_OCSP_PORT:-12611}" pt="${NETPERF_TCP_PORT:-12612}" ps="${NETPERF_SMTP_PORT:-12613}"
 mkdir -p "$W/bin" "$W/ping" "$W/sys/eth0/statistics" "$W/sys/lo/statistics" "$W/mail" "$W/pb/files"
 # fake ping: the last argument is the target; its answer is $W/ping/<target> ("loss avg max mdev"), none = no answer
 cat > "$W/bin/ping" <<EOF
@@ -48,15 +48,19 @@ cd "$W" || exit 1
 o() { openssl "$@" >/dev/null 2>&1 || { echo "ABORT - openssl $1"; exit 1; }; }
 o req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.pem -days 3650 -subj "/CN=Test Root CA"
 printf 'extendedKeyUsage=OCSPSigning\n' > ocsp.ext; printf 'basicConstraints=CA:FALSE\n' > leaf.ext
+# the user certificate names its OCSP responder and where its issuer's certificate is, as DoD certificates do
+printf 'basicConstraints=CA:FALSE\nauthorityInfoAccess=OCSP;URI:http://127.0.0.1:%s,caIssuers;URI:http://127.0.0.1:%s/ca.cer\n' "$po" "$pc" > aia.ext
 for n in ocsp user gone; do
     o req -newkey rsa:2048 -nodes -keyout $n.key -out $n.csr -subj "/CN=$n.example.mil"
-    o x509 -req -in $n.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out $n.pem -days 365 -extfile $([ $n = ocsp ] && echo ocsp.ext || echo leaf.ext)
+    o x509 -req -in $n.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out $n.pem -days 365 -extfile $(case $n in ocsp) echo ocsp.ext;; user) echo aia.ext;; *) echo leaf.ext;; esac)
 done
 ex=$(date -u -d '+1 year' +%y%m%d%H%M%SZ) rv=$(date -u -d '-1 day' +%y%m%d%H%M%SZ)
 printf 'V\t%s\t\t%s\tunknown\t/CN=user.example.mil\nR\t%s\t%s\t%s\tunknown\t/CN=gone.example.mil\n' "$ex" "$(openssl x509 -in user.pem -noout -serial | cut -d= -f2)" \
     "$ex" "$rv" "$(openssl x509 -in gone.pem -noout -serial | cut -d= -f2)" > index.txt
 openssl ocsp -index index.txt -port "$po" -rsigner ocsp.pem -rkey ocsp.key -CA ca.pem -nmin 60 -ignore_err >/dev/null 2>&1 & pids="$pids $!"
 cp user.pem gone.pem ca.pem pb/files/
+mkdir -p pub && openssl x509 -in ca.pem -outform DER -out pub/ca.cer
+"$py" -m http.server "$pc" --bind 127.0.0.1 --directory "$W/pub" >/dev/null 2>&1 & pids="$pids $!"
 "$py" "$repo/tests/email/fake_smtp.py" "$ps" "$W/mail" >/dev/null 2>&1 & pids="$pids $!"
 cd "$repo" || exit 1
 sleep 1
@@ -131,6 +135,9 @@ run "OCSP: revoked" fail -e "{\"net_perf_ocsp\": [{\"name\": \"Test OCSP\", \"ur
     "[CRITICAL] netperf: the OCSP responder Test OCSP (http://127.0.0.1:$po), from this host: the responder says the test certificate is revoked"
 run "OCSP: no answer (warning by setting)" fail -e '{"net_perf_ocsp": [{"name": "Gone", "url": "http://127.0.0.1:9"}], "net_perf_ocsp_severity": "warning"}' -- \
     "[WARNING] netperf: the OCSP responder Gone (http://127.0.0.1:9), from this host: no answer"
+run "OCSP: site_ocsp_certs only - the address and the issuer read from the certificate" ok -e "{\"net_perf_ocsp\": [], \"site_ocsp_certs\": [\"$W/pb/files/user.pem\"]}" -- "HEALTHY"
+run "OCSP: a certificate that names no responder" fail -e "{\"net_perf_ocsp\": [{\"name\": \"Bare\", \"cert\": \"$W/pb/files/gone.pem\"}]}" -- \
+    "[CRITICAL] netperf: the OCSP responder Bare" "names no OCSP address"
 run "OCSP: a URL only that answers" ok -e "{\"net_perf_ocsp\": [{\"name\": \"Plain\", \"url\": \"http://127.0.0.1:$po\"}]}" -- "HEALTHY"
 printf '{"start": {}, "end": {"sum_sent": {"bits_per_second": 4.2e8, "retransmits": 37}, "sum_received": {"bits_per_second": 4.1e8}}}' > "$W/iperf"
 run "iperf3: db01 -> app01 at 410 Mbit/s, expected 900: a warning on db01 (the client)" fail -e '{"net_perf_iperf_pairs": [{"server": "app01", "client": "db01", "min_mbps": 900}]}' -- \

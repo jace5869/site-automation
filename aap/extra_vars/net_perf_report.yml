@@ -97,6 +97,11 @@ net_perf_targets: [{name: Gateway, host: GATEWAY-ADDRESS}, {name: DC01, host: DC
 ## the TCP port iperf3 listens on, on the server of each pair
 # net_perf_iperf_port: 5201
 
+# ---- vmware_vm -----------------------------------------------------------------------------------
+## certificates the OCSP responders know (PEM files from playbooks/), for vm_sso_ocsp and
+## net_perf_ocsp when those are empty, e.g. [files/ocsp/test-user.pem]
+# site_ocsp_certs: []
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
 ## email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails.

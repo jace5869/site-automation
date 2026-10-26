@@ -701,7 +701,8 @@ File: `roles/net_perf/defaults/main.yml`
 | `net_perf_loss_warn_pct` | `1` | packet loss from this percent -> warning |
 | `net_perf_loss_crit_pct` | `10` | ... from this percent -> critical (100 % = the target does not answer at all) |
 | `net_perf_timeout` | `5` | seconds a single ping or connect may wait |
-| `net_perf_ocsp` | `[]` | ---- OCSP responders (asked from every host) ---------------------------------------------------------------- url; with cert and issuer (PEM files from playbooks/, a certificate the responder knows - not a secret) a real OCSP request: the answer must be successful, the certificate good, the answer fresh. A url alone:… (all of it: the role file) |
+| `net_perf_ocsp` | `[]` | ---- OCSP responders (asked from every host) ---------------------------------------------------------------- Simplest: site_ocsp_certs (below) - a certificate the responder knows, its OCSP address and issuer read from it. net_perf_ocsp, when set, is used instead: a url alone - it must answer HTTP; with cert (a PEM fi… (all of it: the role file) |
+| `site_ocsp_certs` | `[]` | certificates the OCSP responders know (PEM files from playbooks/), for net_perf_ocsp and vm_sso_ocsp when those are empty, e.g. [files/ocsp/test-user.pem] |
 | `net_perf_ocsp_warn_ms` | `2000` | an OCSP answer slower than this -> warning |
 | `net_perf_ocsp_severity` | `critical` | an OCSP responder that fails: critical (smart card logins fail) or warning |
 | `net_perf_nics` | `true` | ---- Interfaces (drops and errors since the last run) --------------------------------------------------------- read the interfaces' counters (/sys/class/net/*/statistics) |
@@ -1131,7 +1132,8 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_sso_sts_warn_days` | `60` | the STS signing certificate expires within this many days -> warning |
 | `vm_sso_sts_crit_days` | `14` | ... within this many -> critical (expired: critical) |
 | `vm_sso_test_user` | (empty) | the test domain account; empty = the "vCenter SSO test account" credential's (VMWARE_SSO_TEST_USER); none = no login test |
-| `vm_sso_ocsp` | `[]` | The OCSP responders: [{url: http://ocsp.example.mil}] asks only that it answers; with cert and issuer (PEM files from playbooks/, e.g. files/ocsp/test-user.pem and files/ocsp/issuing-ca.pem - a certificate the responder knows, not a secret) a real OCSP request: the answer must be successful, the certificate good and t… (all of it: the role file) |
+| `vm_sso_ocsp` | `[]` | The OCSP responders. Simplest: site_ocsp_certs (below) - a certificate the responder knows, its OCSP address and its issuer read from the certificate itself. vm_sso_ocsp, when set, is used instead: [{url: http://ocsp.example.mil}] asks only that it answers; with cert (a PEM file from playbooks/, e.g. files/ocsp/test-u… (all of it: the role file) |
+| `site_ocsp_certs` | `[]` | certificates the OCSP responders know (PEM files from playbooks/), for vm_sso_ocsp and net_perf_ocsp when those are empty, e.g. [files/ocsp/test-user.pem] |
 | `vm_sso_ocsp_severity` | `critical` | an OCSP responder that fails: critical (smart card logins fail) or warning |
 | `vm_sso_timeout` | `30` | seconds per request |
 | `vm_created_days` | `7` | The window: the VMs created in the last this many days, up to the moment the job runs (7 = the past week; run weekly, each VM is in exactly one report). VMs created and deleted since are listed too, as long as vCenter keeps their events (often 30 days). |

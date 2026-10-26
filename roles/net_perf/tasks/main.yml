@@ -6,11 +6,14 @@
 - name: Network performance | the OCSP requests (made once, on the AAP side)
   ansible.builtin.set_fact:
     _np_ocsp: >-
+      {#- net_perf_ocsp, else site_ocsp_certs; a url or issuer left out is read from the certificate (plugins/filter/ocsp_filters.py) -#}
       {%- set out = [] -%}
-      {%- for x in net_perf_ocsp -%}
-      {%-   set _ = out.append({'name': x.name | default(x.url), 'url': x.url,
-                                'request': (lookup('ansible.builtin.file', x.cert) | ocsp_request_b64(lookup('ansible.builtin.file', x.issuer)))
-                                           if x.cert | default('') and x.issuer | default('') else ''}) -%}
+      {%- for x in (net_perf_ocsp or site_ocsp_certs | map('ocsp_cert_entry') | list) -%}
+      {%-   set t = {'name': x.name | default(''), 'url': x.url | default(''),
+                     'cert': lookup('ansible.builtin.file', x.cert) if x.cert | default('') else '',
+                     'issuer': lookup('ansible.builtin.file', x.issuer) if x.issuer | default('') else ''} | ocsp_target(net_perf_timeout | int * 3) -%}
+      {%-   set _ = out.append({'name': t.name or t.url or x.cert | default(''), 'url': t.url, 'why': t.why,
+                                'request': (t.cert | ocsp_request_b64(t.issuer)) if t.cert and t.issuer and not t.why else ''}) -%}
       {%- endfor -%}
       {{ out }}
   run_once: true

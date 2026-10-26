@@ -19,6 +19,15 @@ Platform" credential the report templates use > Roles > Assign roles: resource t
 **Organization Auditor** (read-only; every template in the organization, new ones too). The next run shows the last
 14 runs - AAP kept them all. docs/EMAIL_REPORTS.md, "The look" and "Troubleshooting".
 
+**OCSP: the certificate is enough.** The VMware health report (and the watch) and the network performance report
+check the OCSP responders smart card logins depend on. They no longer need the responder's address: name a
+certificate the responder knows once, for both, in `all.yml` - `site_ocsp_certs: [files/ocsp/test-user.pem]` - and
+the address and the issuing CA's certificate are read from the certificate itself (its Authority Information
+Access, which every DoD certificate carries; the CA's certificate is downloaded from the AAP node, or put it after
+the user's in the same file). `vm_sso_ocsp` and `net_perf_ocsp` still work as before, and an entry may now leave out
+`url` and `issuer` too. What could not be read is reported as the responder's problem, with what to give instead.
+docs/VMWARE.md, "Single sign-on and OCSP"; docs/NETWORK_PERF.md, "Set it up".
+
 **The ACT PDFs in the new look, and up to date.** The two 5W's briefs, the ACT Automated Triage Guide and the ACT on
 AAP 2.7 Runbook now have the look of the site-automation guides (the glass look's cover and band, rounded cards and
 tables) and take your logo too (`SITE_PDF_LOGO`; docs/pdf/README.md has one loop for all ten). Their text is brought

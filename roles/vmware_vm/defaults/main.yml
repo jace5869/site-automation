@@ -249,10 +249,13 @@ vm_sso_services: [sts, lookupsvc, trustmanagement, vmdird, vmafdd]  # SSO servic
 vm_sso_sts_warn_days: 60                 # the STS signing certificate expires within this many days -> warning
 vm_sso_sts_crit_days: 14                 # ... within this many -> critical (expired: critical)
 vm_sso_test_user: ""                     # the test domain account; empty = the "vCenter SSO test account" credential's (VMWARE_SSO_TEST_USER); none = no login test
-# The OCSP responders: [{url: http://ocsp.example.mil}] asks only that it answers; with cert and issuer (PEM files from
-# playbooks/, e.g. files/ocsp/test-user.pem and files/ocsp/issuing-ca.pem - a certificate the responder knows, not a
-# secret) a real OCSP request: the answer must be successful, the certificate good and the answer not stale.
-vm_sso_ocsp: []                          # e.g. [{url: "http://ocsp.example.mil", cert: files/ocsp/test-user.pem, issuer: files/ocsp/issuing-ca.pem}]
+# The OCSP responders. Simplest: site_ocsp_certs (below) - a certificate the responder knows, its OCSP address and its
+# issuer read from the certificate itself. vm_sso_ocsp, when set, is used instead: [{url: http://ocsp.example.mil}] asks
+# only that it answers; with cert (a PEM file from playbooks/, e.g. files/ocsp/test-user.pem - not a secret) a real OCSP
+# request: the answer must be successful, the certificate good and the answer not stale. A url or issuer left out is read
+# from the certificate (its Authority Information Access: the OCSP address, and the issuer's download address).
+vm_sso_ocsp: []                          # e.g. [{cert: files/ocsp/test-user.pem}] or [{url: "http://ocsp.example.mil", cert: files/ocsp/test-user.pem, issuer: files/ocsp/issuing-ca.pem}]
+site_ocsp_certs: []                      # certificates the OCSP responders know (PEM files from playbooks/), for vm_sso_ocsp and net_perf_ocsp when those are empty, e.g. [files/ocsp/test-user.pem]
 vm_sso_ocsp_severity: critical           # an OCSP responder that fails: critical (smart card logins fail) or warning
 vm_sso_timeout: 30                       # seconds per request
 

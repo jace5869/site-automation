@@ -8,12 +8,14 @@
     services: "{{ vm_sso_services }}"
     test_user: "{{ '' if vm_sso_test_user == 'none' else (vm_sso_test_user or lookup('ansible.builtin.env', 'VMWARE_SSO_TEST_USER')) }}"
     test_password: "{{ lookup('ansible.builtin.env', 'VMWARE_SSO_TEST_PASSWORD') }}"
+    # vm_sso_ocsp, else site_ocsp_certs; a url or issuer left out is read from the certificate (plugins/filter/ocsp_filters.py)
     ocsp: >-
       {%- set out = [] -%}
-      {%- for x in vm_sso_ocsp -%}
-      {%-   set _ = out.append({'url': x.url,
+      {%- for x in (vm_sso_ocsp or site_ocsp_certs | map('ocsp_cert_entry') | list) -%}
+      {%-   set _ = out.append({'url': x.url | default(''),
                                 'cert': lookup('ansible.builtin.file', x.cert) if x.cert | default('') else '',
-                                'issuer': lookup('ansible.builtin.file', x.issuer) if x.issuer | default('') else ''}) -%}
+                                'issuer': lookup('ansible.builtin.file', x.issuer) if x.issuer | default('') else ''}
+                               | ocsp_target(vm_sso_timeout | int)) -%}
       {%- endfor -%}
       {{ out }}
     timeout: "{{ vm_sso_timeout | int }}"

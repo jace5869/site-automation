@@ -23,7 +23,8 @@ options:
   services: {description: The SSO services that must be started (names as vCenter lists them)., type: list, elements: str, default: []}
   test_user: {description: "A domain account that logs in ('' = no login test).", type: str, default: ''}
   test_password: {description: Its password., type: str, default: '', no_log: true}
-  ocsp: {description: "[{url, cert: PEM, issuer: PEM}] - cert and issuer optional.", type: list, elements: dict, default: []}
+  ocsp: {description: "[{url, cert: PEM, issuer: PEM, why, from_cert}] - cert and issuer optional; why (the url or issuer could
+          not be read from the certificate, plugins/filter/ocsp_filters.py) is reported as the responder's failure.", type: list, elements: dict, default: []}
   validate_certs: {description: Check vCenter's HTTPS certificate., type: bool, default: true}
   timeout: {description: Seconds per request., type: int, default: 30}
   now: {description: The time to count expiry from (tests)., type: str, default: ''}
@@ -37,7 +38,7 @@ vcenters:
   type: list
   returned: always
 ocsp:
-  description: "Per responder: {url, ok, mode (request / reach), status, cert_status, this_update, next_update, ms, why}"
+  description: "Per responder: {url, ok, mode (request / reach), status, cert_status, this_update, next_update, ms, why, from_cert}"
   type: list
   returned: always
 '''
@@ -218,7 +219,10 @@ def test_login(r, user, password):
 
 def check_ocsp(x, timeout, now):
     url = x.get("url") or ""
-    rec = {"url": url, "ok": False, "mode": "reach", "status": "", "cert_status": "", "this_update": "", "next_update": "", "ms": 0, "why": ""}
+    rec = {"url": url, "ok": False, "mode": "reach", "status": "", "cert_status": "", "this_update": "", "next_update": "", "ms": 0,
+           "why": x.get("why") or "", "from_cert": x.get("from_cert") or []}
+    if rec["why"]:                                  # the address or issuer could not be read from the certificate
+        return rec
     t0 = time.time()
     try:
         if x.get("cert") and x.get("issuer"):
@@ -282,7 +286,7 @@ def main():
     p = module.params
     now = utc_now(p["now"])
     vcs = [read_vcenter(n, p, now) for n in vcenter_list(p["vcenters"])]
-    oc = [check_ocsp(x, p["timeout"], now) for x in p["ocsp"] if x.get("url")]
+    oc = [check_ocsp(x, p["timeout"], now) for x in p["ocsp"] if x.get("url") or x.get("why")]
     module.exit_json(changed=False, vcenters=vcs, ocsp=oc)
 
 

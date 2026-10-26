@@ -44,13 +44,26 @@ An interface's first run (or after a reboot: its counters start over) is counted
      - {name: STIG Manager, host: stigman.example.mil, port: 443}
    ```
 
-2. **The OCSP responders** (optional). With a test certificate the responder knows and the CA that
-   issued it (PEM files in your repository under `playbooks/`; a certificate is not a secret), each
-   host sends a real OCSP request - made once on the AAP side - and the answer is read there:
+2. **The OCSP responders** (optional). Put a certificate the responder knows - any user's, from a
+   smart card or the PKI's site - in your repository as a PEM file (it is not a secret), and name it
+   once in `all.yml`; the VMware health report uses the same setting:
+
+   ```yaml
+   site_ocsp_certs: [files/ocsp/test-user.pem]     # playbooks/files/ocsp/test-user.pem
+   ```
+
+   The responder's address and the certificate of the CA that issued it are read from the certificate
+   itself (its *Authority Information Access*: every DoD certificate names its OCSP responder and where
+   its CA's certificate is). The CA's certificate is downloaded on the AAP side; when the AAP node
+   cannot reach that address, put the CA's certificate after the user's in the same file (or give it
+   as `issuer`). Each host then sends a real OCSP request - made once on the AAP side - and the answer
+   is read there. `net_perf_ocsp`, when set, is used instead - to name a responder, give its address,
+   or ask a second one:
 
    ```yaml
    net_perf_ocsp:
-     - {name: OCSP, url: "http://ocsp.example.mil", cert: files/ocsp/test-user.pem, issuer: files/ocsp/issuing-ca.pem}
+     - {name: DISA OCSP, cert: files/ocsp/test-user.pem}           # the address and issuer from the certificate
+     - {name: OCSP 2, url: "http://ocsp2.example.mil", cert: files/ocsp/test-user.pem, issuer: files/ocsp/issuing-ca.pem}
    ```
 
    With a `url` only, the responder must answer HTTP at all.
