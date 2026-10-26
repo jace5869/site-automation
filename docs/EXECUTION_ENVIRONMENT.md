@@ -261,6 +261,20 @@ this line to the `podman build` command, just before the line `-f context/Contai
   --build-arg PIP_INDEX_URL=https://nexus.example.mil/repository/pypi/simple \
 ```
 
+**Behind TLS inspection** (the network replaces the sites' certificates with its own, so pip says
+`CERTIFICATE_VERIFY_FAILED`, ansible-galaxy `SSL: CERTIFICATE_VERIFY_FAILED`, podman `x509: certificate signed by
+unknown authority`): tell each one not to check, in the `podman build` command:
+
+```text
+  --tls-verify=false \
+  --build-arg PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org" \
+  --build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs \
+```
+
+With a PyPI mirror, `PIP_TRUSTED_HOST` is its host instead (e.g. `nexus.example.mil`). Pulling or pushing an image:
+`podman pull --tls-verify=false ...`, `podman push --tls-verify=false ...`. The `ca/` folder (step 6) puts your CA
+in the finished EE for the jobs; it does not help the build itself, which runs before it.
+
 You are ready. Go to the chapter of the EE you want.
 
 **Or let a script do it.** `build-ee.sh` (in `~/ee`) does the checks of steps 3 to 7, then an EE's
@@ -272,9 +286,12 @@ cd ~/ee
 bash build-ee.sh all-in-one 1                         # builds localhost/site-ee-all:1
 PUSH=aap.example.mil bash build-ee.sh all-in-one 1    # ... and pushes it to your hub
 SAVE=1 bash build-ee.sh all-in-one 1                  # ... or saves it as site-ee-all-1.tar
+INSECURE=1 bash build-ee.sh all-in-one 1              # behind TLS inspection: no certificate checked
 ```
 
-With a PyPI mirror (step 7), put `PIP_INDEX_URL=https://...` in front of the command. The first argument
+With a PyPI mirror (step 7), put `PIP_INDEX_URL=https://...` in front of the command. `INSECURE=1` (step 7, *Behind
+TLS inspection*) turns off every certificate check of the build: pip trusts PyPI's hosts (or your mirror's),
+ansible-galaxy `--ignore-certs`, podman `--tls-verify=false`; `PIP_TRUSTED_HOST="..."` alone turns off only pip's. The first argument
 is `windows`, `network` or `all-in-one`; the second is the version. At the end it prints what to enter
 in AAP (chapter 6, step 2).
 
@@ -899,6 +916,9 @@ If you build a new base EE, for example `base-ee:1.1`, change the `name:` line i
 | `Failed to find collection ...` | your hub does not have that collection | ask the hub admin to sync it (chapter 2, step 4), or remove its line from `requirements.yml` and `check-list.txt` |
 | `No match for argument: <package>` | that RHEL package is not in the build machine's repositories | check the subscription (`sudo subscription-manager status`); if a collection wants it only to compile, add it under `exclude: system:` in `execution-environment.yml` |
 | `Could not find a version that satisfies the requirement ...` | the build cannot reach PyPI | add `--build-arg PIP_INDEX_URL=...` (chapter 2, step 7) |
+| pip: `CERTIFICATE_VERIFY_FAILED` or `SSLError` | TLS inspection: pip does not trust the certificate it gets | `--build-arg PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org"` (or your mirror's host), or `INSECURE=1 bash build-ee.sh ...` (chapter 2, step 7) |
+| ansible-galaxy: `SSL: CERTIFICATE_VERIFY_FAILED` installing collections | TLS inspection, or the hub's certificate is not trusted | `--build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs`, or `INSECURE=1` (chapter 2, step 7) |
+| podman: `x509: certificate signed by unknown authority` | the registry's certificate is not trusted | `--tls-verify=false` on `podman pull`, `build`, `login`, `push`, or `INSECURE=1` |
 | `Python.h: No such file or directory` | the C headers of the EE's Python are missing | the build installs them from your RHEL repositories: check the subscription |
 | `ee-check` ends with `MISSING` | a library, collection or tool is not in the image | read the build's output for that name; rebuild |
 | a job: `couldn't resolve module/action` | the module's collection is not in the job's EE | the template's **Execution environment**; `ee-check` lists the collections |

@@ -8,6 +8,9 @@
 #   PUSH=aap.example.mil bash build-ee.sh all-in-one 2    # ... and pushes it: aap.example.mil/site-ee-all:2
 #   SAVE=1 bash build-ee.sh all-in-one 2                  # ... and saves it: site-ee-all-2.tar (no registry)
 #   PIP_INDEX_URL=https://nexus.example.mil/repository/pypi/simple bash build-ee.sh ...   # your PyPI mirror
+#   INSECURE=1 bash build-ee.sh all-in-one 2              # behind TLS inspection: no certificate checked - pip
+#       --trusted-host (PyPI's hosts, or your mirror's), ansible-galaxy --ignore-certs, podman --tls-verify=false
+#   PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org" bash build-ee.sh ...   # only pip's (INSECURE=1 sets it)
 # The hub token: it asks for it (nothing shows as you paste), or takes TOKEN from the environment. It is never
 # written to a file or shown.
 set -euo pipefail
@@ -23,6 +26,14 @@ case "$folder" in
 esac
 [[ "$tag" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "the tag is a version such as 2 or 2.1, not '$tag'" >&2; exit 2; }
 image="localhost/$name:$tag"
+curl_k=(); tls=()
+if [ -n "${INSECURE:-}" ]; then
+  curl_k=(-k); tls=(--tls-verify=false)
+  if [ -z "${PIP_TRUSTED_HOST:-}" ]; then
+    if [ -n "${PIP_INDEX_URL:-}" ]; then h=${PIP_INDEX_URL#*://}; h=${h%%/*}; PIP_TRUSTED_HOST=${h##*@}
+    else PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org"; fi
+  fi
+fi
 step() { echo; echo "== $1"; }
 ok()   { echo "   ok    $1"; }
 note() { echo "   note  $1"; }
@@ -46,7 +57,7 @@ want=$(awk '/python_path:/ {print $2; exit}' "$yml")
 if ! podman image exists "$base"; then
   case "$base" in
     localhost/*) stop "the base image $base is not on this machine: podman pull or podman load it, then podman tag it $base (chapter 2, step 3)" ;;
-    *) podman pull -q "$base" >/dev/null || stop "could not pull the base image $base: podman login ${base%%/*} first (chapter 2, step 3)" ;;
+    *) podman pull -q "${tls[@]}" "$base" >/dev/null || stop "could not pull the base image $base: podman login ${base%%/*} first (chapter 2, step 3)" ;;
   esac
 fi
 got=$(podman run --rm "$base" bash -c 'head -1 "$(command -v ansible)"' 2>/dev/null | sed -e 's/^#! *//' -e 's/ .*//') || true
@@ -61,10 +72,17 @@ if [ "$n" -gt 0 ]; then ok "$n CA certificate(s) in $folder/ca"
 else note "no CA certificate in $folder/ca: the EE will not trust your CA (chapter 2, step 6)"; fi
 
 pypi=${PIP_INDEX_URL:-https://pypi.org/simple}
-curl -sfI --max-time 20 "${pypi%/}/pip/" >/dev/null || stop "cannot reach ${pypi%/}/pip/: set PIP_INDEX_URL to your PyPI mirror (chapter 2, step 7)"
+curl -sfI "${curl_k[@]}" --max-time 20 "${pypi%/}/pip/" >/dev/null \
+  || stop "cannot reach ${pypi%/}/pip/: set PIP_INDEX_URL to your PyPI mirror (chapter 2, step 7)$([ -n "${INSECURE:-}" ] || echo ' - or, behind TLS inspection, INSECURE=1')"
 ok "PyPI: $pypi"
-[ -z "$hub" ] || curl -sI --max-time 20 "$hub" >/dev/null || stop "cannot reach your hub at $hub (chapter 2, step 4)"
+[ -z "$hub" ] || curl -sI "${curl_k[@]}" --max-time 20 "$hub" >/dev/null \
+  || stop "cannot reach your hub at $hub (chapter 2, step 4)$([ -n "${INSECURE:-}" ] || echo ' - or, behind TLS inspection, INSECURE=1')"
 [ -z "$hub" ] || ok "the hub answers"
+if [ -n "${INSECURE:-}" ]; then
+  note "INSECURE=1: no certificate is checked - pip (trusted: $PIP_TRUSTED_HOST), ansible-galaxy (--ignore-certs), podman (--tls-verify=false)"
+elif [ -n "${PIP_TRUSTED_HOST:-}" ]; then
+  note "pip does not check the certificate of: $PIP_TRUSTED_HOST"
+fi
 
 if [ -z "${TOKEN:-}" ]; then
   read -rsp "   Your automation hub token (chapter 2, step 5; nothing shows): " TOKEN || TOKEN=; echo
@@ -80,8 +98,11 @@ args=(--build-arg "ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_TOKEN=$TOKEN"
       --build-arg "ANSIBLE_GALAXY_SERVER_COMMUNITY_TOKEN=$TOKEN"
       --build-arg "ANSIBLE_GALAXY_SERVER_PUBLISHED_TOKEN=$TOKEN")
 [ -z "${PIP_INDEX_URL:-}" ] || args+=(--build-arg "PIP_INDEX_URL=$PIP_INDEX_URL")
+[ -z "${PIP_TRUSTED_HOST:-}" ] || args+=(--build-arg "PIP_TRUSTED_HOST=$PIP_TRUSTED_HOST")
+[ -z "${INSECURE:-}" ] || args+=(--build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs
+                                 --build-arg ANSIBLE_GALAXY_CLI_ROLE_OPTS=--ignore-certs)
 (cd "$folder" && ansible-builder create -f execution-environment.yml -c context) || stop "ansible-builder create failed: the error above (chapter 8)"
-(cd "$folder" && podman build --network=host "${args[@]}" -f context/Containerfile -t "$image" context) \
+(cd "$folder" && podman build --network=host "${tls[@]}" "${args[@]}" -f context/Containerfile -t "$image" context) \
   || stop "the build failed: the error above (chapter 8, When something goes wrong)"
 ok "built $image"
 
@@ -90,9 +111,9 @@ podman run --rm "$image" ee-check || stop "something is missing in $image: the l
 
 if [ -n "${PUSH:-}" ]; then
   step "Push to $PUSH (chapter 6, step 1)"
-  podman login --get-login "$PUSH" >/dev/null 2>&1 || podman login "$PUSH"
+  podman login --get-login "$PUSH" >/dev/null 2>&1 || podman login "${tls[@]}" "$PUSH"
   podman tag "$image" "$PUSH/$name:$tag"
-  podman push "$PUSH/$name:$tag" || stop "the push failed: the error above (chapter 6, step 1)"
+  podman push "${tls[@]}" "$PUSH/$name:$tag" || stop "the push failed: the error above (chapter 6, step 1)"
   ok "pushed $PUSH/$name:$tag"
   where="$PUSH/$name:$tag"; pull="Only pull the image if not present before running"
 elif [ -n "${SAVE:-}" ]; then

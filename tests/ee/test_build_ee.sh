@@ -59,6 +59,20 @@ has "--build-arg ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_TOKEN=s3cr3t-tok --build-arg
 has "s3cr3t-tok" && bad "the token is printed" || ok "  ... the token is never printed"
 has "PIP_INDEX_URL" "$work/log" && bad "PIP_INDEX_URL passed without being set" || ok "  ... no PIP_INDEX_URL unless set"
 has "podman push" "$work/log" && bad "pushed without PUSH" || ok "  ... nothing pushed without PUSH"
+grep -q -- '--tls-verify\|ignore-certs\|PIP_TRUSTED_HOST\|curl -k\|curl -sfI -k' "$work/log" && bad "certificates not checked without INSECURE" || ok "  ... every certificate checked (no INSECURE)"
+
+fresh; run TOKEN=t INSECURE=1 PUSH=hub.lab.test -- all-in-one 2
+[ "$rc" = 0 ] && ok "INSECURE=1: builds" || bad "INSECURE (rc $rc)"
+has "--build-arg PIP_TRUSTED_HOST=pypi.org files.pythonhosted.org" "$work/log" && ok "  ... pip trusts PyPI's two hosts" || bad "trusted hosts: $(grep 'podman build' "$work/log")"
+has "--build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs --build-arg ANSIBLE_GALAXY_CLI_ROLE_OPTS=--ignore-certs" "$work/log" && ok "  ... ansible-galaxy --ignore-certs" || bad "ignore-certs"
+has "podman build --network=host --tls-verify=false" "$work/log" && has "podman push --tls-verify=false hub.lab.test/site-ee-all:2" "$work/log" && ok "  ... podman build and push --tls-verify=false" || bad "tls-verify"
+grep -q '^curl -sfI -k ' "$work/log" && grep -q '^curl -sI -k ' "$work/log" && ok "  ... curl -k for PyPI and the hub" || bad "curl -k: $(grep '^curl' "$work/log")"
+has "INSECURE=1: no certificate is checked" && ok "  ... and it says so" || bad "INSECURE note"
+fresh; run TOKEN=t INSECURE=1 PIP_INDEX_URL=https://reader:pw@mirror.lab.test:8443/pypi/simple -- all-in-one
+has "--build-arg PIP_TRUSTED_HOST=mirror.lab.test:8443" "$work/log" && ok "INSECURE=1 with a mirror: pip trusts the mirror's host:port (no user, no path)" || bad "mirror trusted host: $(grep 'podman build' "$work/log")"
+fresh; run TOKEN=t PIP_TRUSTED_HOST=pypi.example.test -- all-in-one
+has "--build-arg PIP_TRUSTED_HOST=pypi.example.test" "$work/log" && ! has "ignore-certs" "$work/log" && ! has "--tls-verify" "$work/log" \
+  && ok "PIP_TRUSTED_HOST alone: only pip's check is off" || bad "PIP_TRUSTED_HOST alone"
 
 fresh; rm "$work/ee/all-in-one/ansible.cfg"; run TOKEN=t -- all-in-one
 [ "$rc" = 1 ] && has "STOP  no all-in-one/ansible.cfg" && has "chapter 2, step 4" && ok "no ansible.cfg: stops (step 4)" || bad "no ansible.cfg (rc $rc)"

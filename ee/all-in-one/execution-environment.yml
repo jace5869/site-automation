@@ -45,6 +45,15 @@ additional_build_files:
     dest: ca
 
 additional_build_steps:
+  prepend_base:
+    # pip in every stage of the build reads this build-only file: PyPI or your mirror (--build-arg
+    # PIP_INDEX_URL=https://...), and the hosts pip may reach without checking their certificate (--build-arg
+    # PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org" - behind TLS inspection; build-ee.sh INSECURE=1 sets it).
+    # The file is removed at the end: the finished EE's pip is as before.
+    - ARG PIP_INDEX_URL
+    - ARG PIP_TRUSTED_HOST
+    - ENV PIP_CONFIG_FILE=/etc/pip-ee-build.conf
+    - RUN { echo '[global]'; [ -z "$PIP_INDEX_URL" ] || echo "index-url = $PIP_INDEX_URL"; [ -z "$PIP_TRUSTED_HOST" ] || echo "trusted-host = $PIP_TRUSTED_HOST"; } > /etc/pip-ee-build.conf
   prepend_galaxy:
     - COPY _build/configs/ansible.cfg /etc/ansible/ansible.cfg
     # the automation hub token, given at build time - never written in a file
@@ -52,8 +61,6 @@ additional_build_steps:
     - ARG ANSIBLE_GALAXY_SERVER_COMMUNITY_TOKEN
     - ARG ANSIBLE_GALAXY_SERVER_PUBLISHED_TOKEN
   prepend_builder:
-    # a PyPI mirror, when the build host cannot reach pypi.org: --build-arg PIP_INDEX_URL=https://...
-    - ARG PIP_INDEX_URL
     # the C headers of the EE's own Python (gssapi, krb5 and pykerberos compile against them), and pip's
     # wheel package: pykerberos (WinRM's Kerberos) is then built here, not in the image, which has no compiler
     - RUN $PKGMGR install -y python$($PYCMD -c 'import sys; print("%d.%d" % sys.version_info[:2])')-devel && $PKGMGR clean all
@@ -72,3 +79,5 @@ additional_build_steps:
     - COPY _build/configs/check-ee.sh /usr/local/bin/ee-check
     - COPY _build/configs/check-list.txt /usr/local/share/ee-check.list
     - RUN chmod 755 /usr/local/bin/ee-check
+    # the build-only pip configuration (prepend_base) out of the finished image
+    - RUN rm -f /etc/pip-ee-build.conf

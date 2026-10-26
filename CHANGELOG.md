@@ -102,6 +102,9 @@ report website written straight to an SMB share (Kerberos, no mount - the next r
 `tzdata` for `report_time_zone`. `ee/build-ee.sh all-in-one 2` builds one in one go: the guide's checks first (it
 stops at the first problem with the step that fixes it), ansible-builder and podman with your hub token (asked for,
 never shown), `ee-check`, then `PUSH=your-hub` pushes it or `SAVE=1` saves it as a file, and it prints the AAP fields.
+Behind TLS inspection, `INSECURE=1` checks no certificate: pip `--trusted-host` (PyPI's hosts, or your mirror's - in
+every stage of the build now, through a build-only pip configuration the finished EE does not keep), ansible-galaxy
+`--ignore-certs`, podman `--tls-verify=false`; `PIP_TRUSTED_HOST` alone for pip only.
 docs/EXECUTION_ENVIRONMENT.md and its PDF (`Site-Automation-EE-Guide.pdf`, *Execution
 Environments - step by step*) build, check and add each one to AAP. An EE you built from an earlier `ee/all-in-one/`
 keeps working: rebuild when you want what is new.
