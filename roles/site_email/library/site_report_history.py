@@ -16,6 +16,9 @@ description:
   - Lists the finished jobs of one job template before this one (newest first from AAP, returned oldest
     first), then reads each one's artifacts for site_report_run (the report it sent).
   - Read only, also in check mode. Never fails - ok is false and why says what was missing.
+  - AAP lists only the jobs its user may see, without an error - so when the list is empty, this job is
+    read too. When AAP will not show even this job, its user cannot see the template's jobs: ok is false and
+    why says so (an empty strip would only look like a first run).
   - AAP's address and login come from the environment, as the "Red Hat Ansible Automation Platform"
     credential sets it (CONTROLLER_HOST, CONTROLLER_OAUTH_TOKEN or CONTROLLER_USERNAME and
     CONTROLLER_PASSWORD, CONTROLLER_VERIFY_SSL, or the AAP_* / TOWER_* names). Its user must be able to
@@ -69,7 +72,26 @@ def history(api, job_id, template_id, runs):
             report = {"status": str(r.get("status") or ""), "value": r.get("value"), "label": str(r.get("label") or "")}
         out.append({"id": j["id"], "status": str(j.get("status") or ""), "finished": str(j.get("finished") or ""),
                     "report": report})
+    if not out:
+        why = hidden(api, job_id, template_id)
+        if why:
+            return [], why
     return list(reversed(out)), ""
+
+
+def hidden(api, job_id, template_id):
+    """'' when this job (and so its template's jobs) is visible to the credential's user - the list was empty
+    because this is the template's first run - else why not: AAP leaves the jobs a user may not see out of a
+    list, without an error."""
+    code, data = api.call("GET", "jobs/%d/" % job_id)
+    if code == 200:
+        return ""
+    if code in (403, 404):
+        return ("%s cannot see this template's jobs - AAP listed none, and not even this job %d: give %s Organization Auditor "
+                "on the organization of job template %d (or a role on the template), or attach the credential of the AAP "
+                "this job runs on" % ("The AAP user " + api.user if api.user else "The credential's AAP user", job_id,
+                                      api.user or "that user", template_id))
+    return "AAP answered HTTP %d for this job %d: %s" % (code, job_id, error_text(data))
 
 
 def main():

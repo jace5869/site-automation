@@ -219,7 +219,8 @@ later: **Access Management > Users >** the user **> Roles > Assign roles**, reso
 **Organization**, your organization, **Organization Auditor**). That is read-only and covers every
 template in the organization, also new ones. A role on each template works too (JobTemplate Execute
 includes seeing its jobs, but also lets the user start it). Without it the email goes out as usual, without the strip, and the job says why: `No strip
-of past runs in the email: ...`. Each run keeps its report's status and number in AAP as the job
+of past runs in the report: ...`. AAP gives no error for jobs its user may not see - it lists none - so before 0.31.1
+the strip then showed only this run, every time. Each run keeps its report's status and number in AAP as the job
 artifact `site_report_run`; runs from before 0.20.0 have none, so their bar shows only how the job
 ended (green or red), half height. `report_history: false` turns the strip off.
 
@@ -309,8 +310,9 @@ The job's output says what happened to the email, in the task `Email | result` (
 | `DRY RUN: would email ...` | the job ran as Check | nothing: a dry run never sends |
 | The email shows plain text only | `report_email_html: false`, or a mail gateway removed the HTML part | ask the mail admins whether HTML mail is stripped; the text copy has the same tables |
 | `No logo in the email: ... is not there, or not a PNG, JPEG or GIF` | `report_logo_file` points at nothing (a path from `playbooks/`, e.g. `files/report_logo.png`) | check the path and that the file is committed and synced |
-| `No strip of past runs in the email: no AAP connection` | the template has no AAP credential | attach the "Red Hat Ansible Automation Platform" credential ("The look", above) |
-| `No strip of past runs in the email: AAP refused the list of this template's jobs (HTTP 403)` | the credential's user may not see the template | give that user Organization Auditor on the template's organization ("The look", above) |
-| `No strip of past runs in the email: AAP refused the login (HTTP 401)` | the credential's user name or password is wrong | fix the credential |
+| `No strip of past runs in the report: no AAP connection` | the template has no AAP credential | attach the "Red Hat Ansible Automation Platform" credential ("The look", above) |
+| `No strip of past runs in the report: The AAP user ... cannot see this template's jobs` (before 0.31.1: the strip shows only this run, run after run) | AAP lists only the jobs its user may see: the credential's user has no role on the template or its organization - or the credential is for another AAP | give that user Organization Auditor on the template's organization ("The look", above), or attach the credential of this AAP |
+| `No strip of past runs in the report: AAP refused the list of this template's jobs (HTTP 403)` | the credential's user may not see the template | give that user Organization Auditor on the template's organization ("The look", above) |
+| `No strip of past runs in the report: AAP refused the login (HTTP 401)` | the credential's user name or password is wrong | fix the credential |
 | The job is red, but the email came | a check report found problems (`site_fail_on`) | by design for ticket workflows; `site_fail_on: []` on email-only templates ("Green or red") |
 

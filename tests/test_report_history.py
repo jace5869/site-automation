@@ -123,7 +123,7 @@ class History(unittest.TestCase):
 
     def setUp(self):
         from http.server import ThreadingHTTPServer
-        for k in ("AAPMOCK_LEGACY", "AAPMOCK_JOBS_FORBID"):
+        for k in ("AAPMOCK_LEGACY", "AAPMOCK_JOBS_FORBID", "AAPMOCK_JOBS_HIDE"):
             os.environ.pop(k, None)
         spec = importlib.util.spec_from_file_location("aapmock_%d" % id(self), os.path.join(HERE, "servicenow", "aapmock.py"))
         self.mock = importlib.util.module_from_spec(spec)
@@ -154,7 +154,16 @@ class History(unittest.TestCase):
         self.assertEqual((why, [r["id"] for r in runs]), ("", [916, 917]))
 
     def test_no_runs_yet(self):
-        self.assertEqual(self.hist(template=72), ([], ""))
+        self.assertEqual(self.hist(job=901, template=71), ([], ""))      # the first run: AAP shows this job
+
+    def test_jobs_hidden_from_the_user(self):
+        # AAP answers 200 with an empty list for jobs its user may not see - not 403: the strip would show this run only
+        os.environ["AAPMOCK_JOBS_HIDE"] = "1"
+        runs, why = self.hist()
+        self.assertEqual(runs, [])
+        self.assertIn("The AAP user admin cannot see this template's jobs", why)
+        self.assertIn("not even this job 919", why)
+        self.assertIn("give admin Organization Auditor on the organization of job template 71", why)
 
     def test_why_not(self):
         os.environ["AAPMOCK_JOBS_FORBID"] = "1"

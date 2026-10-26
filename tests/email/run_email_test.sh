@@ -149,10 +149,13 @@ check "an older run without the artifact: how the job ended (failed = red, half 
 check "the header text escaped" grep -q 'Ops &lt;team&gt;' "$work/html.txt"
 check "plain text: the runs in one line" grep -qx 'Last 14 runs, oldest first: ok critical unknown ok ok ok ok ok ok ok warning critical ok warning (this run)' "$work/plain.txt"
 check "the artifact for the next run: status and headline number" grep -q '"value": 141' "$work/out.txt"
-aap AAPMOCK_JOBS_FORBID=1
+aap AAPMOCK_JOBS_HIDE=1   # as AAP does: no error, the jobs its user may not see are left out (AAPMOCK_JOBS_FORBID: tests/test_report_history.py)
 CONTROLLER_HOST="http://127.0.0.1:$aport" CONTROLLER_USERNAME=admin CONTROLLER_PASSWORD=goodpw \
-PLAYBOOK=send_report.yml send "AAP refuses the jobs: the email goes out without the strip, says why" ok \
-    "{$look, \"awx_job_id\": 919, \"awx_job_template_id\": 71}" "No strip of past runs in the report: AAP refused" "Organization Auditor on the template"
+PLAYBOOK=send_report.yml send "AAP shows its user none of the jobs: the email goes out without the strip, says why" ok \
+    "{$look, \"awx_job_id\": 919, \"awx_job_template_id\": 71}" "No strip of past runs in the report: The AAP user admin cannot see this template's jobs" \
+    "give admin Organization Auditor on the organization of job template 71"
+part html "$work/mail/3.eml" > "$work/html.txt"
+check "no strip of this run alone" bash -c "! grep -q 'RUNS</td>' '$work/html.txt'"
 PLAYBOOK=send_report.yml send "no AAP credential on the template: says so" ok "{$look, \"awx_job_id\": 919, \"awx_job_template_id\": 71}" \
     "No strip of past runs in the report: no AAP connection"
 [ "$(mails)" = 4 ] && echo "ok   -   ...every one of them emailed" || { echo "FAIL - $(mails) emails, expected 4"; fails=$((fails + 1)); }

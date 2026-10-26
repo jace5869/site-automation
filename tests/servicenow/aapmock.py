@@ -165,12 +165,13 @@ class H(BaseHTTPRequestHandler):
         """(status, answer) for jobs/ and jobs/<id>/, or None."""
         if method != "GET" or not rest or rest[0] != "jobs":
             return None
+        hide = os.environ.get("AAPMOCK_JOBS_HIDE") == "1"         # AAP leaves out what its user may not see, without an error
         if len(rest) == 2:
-            found = [j for j in JOBS_71 if str(j["id"]) == rest[1]]
+            found = [j for j in JOBS_71 if str(j["id"]) == rest[1] and not hide]
             return (200, found[0]) if found else (404, {"detail": "Not found."})
         if os.environ.get("AAPMOCK_JOBS_FORBID") == "1":
             return 403, {"detail": "You do not have permission to perform this action."}
-        found = [j for j in JOBS_71 if str(j["job_template"]) == q.get("job_template")]
+        found = [j for j in JOBS_71 if str(j["job_template"]) == q.get("job_template") and not hide]
         if q.get("id__lt"):
             found = [j for j in found if j["id"] < int(q["id__lt"])]
         if q.get("status__in"):

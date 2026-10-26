@@ -55,6 +55,7 @@ class Api(object):
 
     def __init__(self, conn, ca_path="", timeout=30, ca_setting="the CA path", no_credential=NO_CREDENTIAL):
         self.conn, self.ca_path, self.timeout, self.base, self.ca_error = conn, ca_path, timeout, "", ""
+        self.user = ""                                     # the login's user name, once probe() has asked
         self.ca_setting, self.no_credential = ca_setting, no_credential
         if ca_path and conn["verify"] and not os.path.isfile(ca_path):
             self.ca_error = "the CA file %s (%s) is not there" % (ca_path, ca_setting)
@@ -109,6 +110,8 @@ class Api(object):
             if code != 404:
                 break
         if code == 200:
+            me = (data.get("results") or [{}])[0] if isinstance(data.get("results"), list) else data
+            self.user = str((me if isinstance(me, dict) else {}).get("username") or "")
             return ""
         if code < 0:
             return ("AAP did not answer at %s: %s (the address, a firewall, or its certificate - %s)"
