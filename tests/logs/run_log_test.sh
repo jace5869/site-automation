@@ -166,6 +166,15 @@ INV="$work/inv-nolocal.yml" run "a Limit of hosts only, no localhost anywhere: r
     -- "ACT: not asked (log_analysis_act: false)." "1 host(s) not read" "Log analysis: " "emailed" \
     && { grep -q "skipping: no hosts matched" "$work/out.txt" && { echo "FAIL -   ...a play was skipped"; fails=$((fails + 1)); } \
          || echo "ok   -   ...no play skipped"; }
+rm -f "$work/act/fake-act-calls.log"; n0="$(ls "$work/mail"/*.eml 2>/dev/null | wc -l)"
+INV="$work/inv-nolocal.yml" run "a Limit of hosts only, ACT 2 patterns at a time: one question per batch, one report, one email" ok \
+    -l "gone01.example.mil,lin01.example.mil" -e target=all -e "$actvars" -e log_analysis_act_batch=2 -e "$mail" \
+    -- "pattern(s), 2 at a time" "Give the JVM more memory first." "emailed"
+np=$(grep -o "ACT analyzes the [0-9]* pattern(s), 2 at a time" "$work/out.txt" | head -1 | grep -o "[0-9]*" | head -1)
+calls=$(wc -l < "$work/act/fake-act-calls.log" 2>/dev/null || echo 0)
+[ -n "$np" ] && [ "$np" -gt 2 ] && [ "$calls" -eq $(( (np + 1) / 2 )) ] && [ "$(ls "$work/mail"/*.eml | wc -l)" -eq $((n0 + 1)) ] \
+    && echo "ok   -   ...$np patterns: $calls questions to ACT (one per batch, not per host), one email" \
+    || { echo "FAIL -   ...$np patterns, $calls ACT calls, $(( $(ls "$work/mail"/*.eml | wc -l) - n0 )) email(s)"; fails=$((fails + 1)); }
 run "a Limit with localhost in it: read, analysed, reported" ok -l "gone01.example.mil,localhost" -e log_analysis_act=false \
     -- "ACT: not asked (log_analysis_act: false)." "1 host(s) not read"
 unset GENAI_KEY

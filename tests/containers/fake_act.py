@@ -16,6 +16,8 @@ res = args[args.index("--result-file") + 1]
 allow = [a.split("=", 1)[1] for a in args if a.startswith("--allow=")]
 task = args[-1]
 out = os.environ.get("FAKE_ACT_OUT", "/tmp")
+with open(os.path.join(out, "fake-act-calls.log"), "a") as fh:     # one line per run: how often ACT was asked
+    fh.write("call\n")
 with open(os.path.join(out, "fake-act-task.txt"), "w") as fh:
     fh.write(task)
 with open(os.path.join(out, "fake-act-allow.json"), "w") as fh:

@@ -56,6 +56,29 @@ puts them side by side at the top instead (`vm-health-report.html`, `linux-log-a
 a git worktree or submodule (its `.git` is a file), it put that file in place of your clone's `.git` folder - your
 local commits gone. A release from the zip, or a plain clone, was never affected; the PowerShell script neither.
 
+**Every ACT analysis asks 5 items at a time.** 0.31.1 did it for the VMware alarms analysis; now the capacity
+planning (`vm_capacity_act`) and the log analysis do it too, through one shared step
+(`roles/site_act/tasks/evidence_batches.yml`). `site_act_batch` (5) sets it for all three; each job's own setting wins
+(`vm_alarm_act_batch`, `vm_capacity_act_batch`, `log_analysis_act_batch`). A long answer about many items is what a
+gateway or proxy cuts off, or what runs past the model's time: 30 log patterns are now six questions of 5, in one
+report. When a question fails the others' answers are kept, and the job names the items not analyzed. A dry run
+(Check) still asks nothing. `roles/vmware_vm/tasks/alarm_act_batch.yml` (0.31.1) is gone - a copy left behind by
+a changed-since zip is harmless: nothing includes it any more. The log analysis no longer needs `log_analysis_max_items: 5` to finish: leave it out.
+docs/ADDING_ACT.md, "Many items at once".
+
+**The CRL too.** Smart card logins to vCenter fall back to the CA's CRL when OCSP does not answer. The VMware
+health report now also downloads the CRL of every certificate in `site_ocsp_certs` / `vm_sso_ocsp` (its CRL
+Distribution Point, or `crl_url`), from the AAP node, each address once: it must be a CRL, issued and signed by the CA,
+not past its next update, and must not list the test certificate. A row per CRL in "Single sign-on and OCSP" (how
+many certificates it lists, its size, its next update); a failing one is a warning (`vm_sso_crl_severity`). The
+outage watch does not download it. `vm_sso_crl: false` turns it off. docs/VMWARE.md, "Single sign-on and OCSP".
+
+**Fixed: a report job failed reading its past runs** with `http.client.IncompleteRead: IncompleteRead(2702637 bytes
+read, 996684 more expected)` - an earlier job of the template with large artifacts (a report page kept for the copy
+job, a log analysis's patterns) came back cut off, and that error was not caught. Such a job is now asked once more;
+when it still cannot be read, its bar shows how it ended (without its number), and the report goes out. Anything
+else that goes wrong reading the past runs leaves the strip out and says why - it never fails the job.
+
 **To do, if you have not yet: what 0.20.0 to 0.32.0 ask you to set up.** In order; each step works without
 the ones after it.
 
@@ -170,19 +193,10 @@ the ones after it.
     `timedatectl list-timezones` prints it): the VMware health and alarms reports then show each time in it, next to
     UTC. Then run the *VM - health report* once and look at its **Clock** column and any NTP warnings.
     docs/VMWARE.md, "Times and clocks".
-
-**Fixed: a report job failed reading its past runs** with `http.client.IncompleteRead: IncompleteRead(2702637 bytes
-read, 996684 more expected)` - an earlier job of the template with large artifacts (a report page kept for the copy
-job, a log analysis's patterns) came back cut off, and that error was not caught. Such a job is now asked once more;
-when it still cannot be read, its bar shows how it ended (without its number), and the report goes out. Anything
-else that goes wrong reading the past runs leaves the strip out and says why - it never fails the job.
-
-**The CRL too.** Smart card logins to vCenter fall back to the CA's CRL when OCSP does not answer. The VMware
-health report now also downloads the CRL of every certificate in `site_ocsp_certs` / `vm_sso_ocsp` (its CRL
-Distribution Point, or `crl_url`), from the AAP node, each address once: it must be a CRL, issued and signed by the CA,
-not past its next update, and must not list the test certificate. A row per CRL in "Single sign-on and OCSP" (how
-many certificates it lists, its size, its next update); a failing one is a warning (`vm_sso_crl_severity`). The
-outage watch does not download it. `vm_sso_crl: false` turns it off. docs/VMWARE.md, "Single sign-on and OCSP".
+16. **ACT asks 5 at a time, and the CRL** (0.32.0) - nothing to set. The alarms analysis, capacity planning and
+    log analysis ask ACT 5 items per question (`site_act_batch`): a `log_analysis_max_items: 5` you set to make it
+    finish can go. The VM - health report also checks the CRL of your `site_ocsp_certs` certificate
+    (`vm_sso_crl: false` turns it off).
 
 ## 0.31.1 — 2026-10-26
 
