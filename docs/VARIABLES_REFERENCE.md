@@ -751,6 +751,8 @@ File: `roles/ontap_report/defaults/main.yml`
 | `ontap_min_spares` | `1` | fewer spare disks than this on a node = amber (0 = red) |
 | `ontap_ems_hours` | `24` | the error events of the last this-many hours |
 | `ontap_ems_max` | `500` | read at most this many events per cluster |
+| `ontap_ems_ignore_ldap` | `auto` | leave out events whose name has "ldap" in it: auto = on a cluster where no SVM has an LDAP client configured; true = always; false = never |
+| `ontap_ems_ignore` | `[]` | event names to leave out (regular expressions, any case), e.g. ['^secd\.ldap\.', 'callhome\.battery\.low'] |
 | `ontap_report_max_rows` | `50` | rows per table (problems first); the job's artifacts have all |
 | `ontap_snapshot_top` | `25` | the snapshot space table: the volumes whose snapshots use the most |
 | `ontap_report_fail` | `false` | The job stays green when it finds problems: the report and email say what. true = mark it FAILED when there is a critical finding or a cluster could not be read, for workflows. |

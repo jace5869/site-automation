@@ -37,7 +37,7 @@ certificates). Then, in this order:
 | **LUNs** | LUNs not mapped to any host (forgotten?) and LUNs not online | amber / red |
 | **Certificates expiring** | certificates expiring within 60 days or expired | amber 60 days, red 14 days |
 | **Health alerts** | what the health monitors raised (`system health alert show`): node, severity, alert, resource, probable cause, corrective action | red critical / major, amber minor |
-| **Error events (last 24 h)** | ONTAP's event log (EMS): emergency, alert and error events, the same event on the same node counted once | red alert / emergency, amber error |
+| **Error events (last 24 h)** | ONTAP's event log (EMS): emergency, alert and error events, the same event on the same node counted once. On a cluster where no SVM has an LDAP client configured, events with "ldap" in their name are left out (`ontap_ems_ignore_ldap`), and so are the names in `ontap_ems_ignore`; the section says how many | red alert / emergency, amber error |
 
 The health alerts and the error events come last (since 0.31.1): the tables above them say what is
 wrong, these say what ONTAP raised about it - often the same thing again, and many lines.
@@ -148,6 +148,8 @@ Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for e
 | `ontap_port_errors_warn` / `_crit` | `1` / `10000` | receive or CRC errors on a port, since boot |
 | `ontap_min_spares` | `1` | fewer spare disks than this on a node is amber (0 is red) |
 | `ontap_ems_hours` / `ontap_ems_max` | `24` / `500` | the event log window, and the most events read per cluster |
+| `ontap_ems_ignore_ldap` | `auto` | leave out events with "ldap" in their name: `auto` on a cluster where no SVM has an LDAP client configured (`vserver services name-service ldap show` is empty), `true` always, `false` never |
+| `ontap_ems_ignore` | `[]` | event names to leave out, as regular expressions (any case), e.g. `['^secd\.ldap\.', 'callhome\.battery\.low']` |
 | `ontap_report_max_rows` | `50` | rows per table |
 | `ontap_snapshot_top` | `25` | volumes in the snapshot space table |
 | `ontap_report_fail` | `false` | `true` = the job shows **failed** on a critical finding or a cluster not read (for a workflow) |

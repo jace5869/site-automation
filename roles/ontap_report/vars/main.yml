@@ -112,6 +112,10 @@ _ontap_queries:
   - key: certificates
     path: /api/security/certificates
     fields: [name, common_name, svm.name, type, expiry_time, scope]
+  - key: ldap                       # the SVMs' LDAP client configurations: none = LDAP events are noise (ontap_ems_ignore_ldap)
+    path: /api/name-services/ldap
+    fields: [svm.name, servers]
+    fallback_fields: [svm.name]
   - key: ntp
     path: /api/cluster/ntp/servers
     fields: [server, version, authentication_enabled]

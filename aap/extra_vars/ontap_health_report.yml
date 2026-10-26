@@ -96,6 +96,14 @@
 ## read at most this many events per cluster
 # ontap_ems_max: 500
 
+## leave out events whose name has "ldap" in it: auto = on a cluster where no SVM has an LDAP client
+## configured; true = always; false = never
+# ontap_ems_ignore_ldap: auto
+
+## event names to leave out (regular expressions, any case), e.g. ['^secd\.ldap\.',
+## 'callhome\.battery\.low']
+# ontap_ems_ignore: []
+
 ## rows per table (problems first); the job's artifacts have all
 # ontap_report_max_rows: 50
 

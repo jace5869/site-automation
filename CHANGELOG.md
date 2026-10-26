@@ -23,7 +23,12 @@ Platform" credential the report templates use > Roles > Assign roles: resource t
 events* sections are now at the bottom of the report, after the certificates: the tables above them say what is
 wrong, the alerts often say it again in many lines. Volumes under 50 GB (`ontap_volume_min_gb`) are no longer flagged
 for used % - root volumes and other small volumes run full by design; an offline one still is, and the Volumes
-table says how many small ones were left out. `ontap_volume_min_gb: 0` flags every volume, as before. docs/NETAPP.md.
+table says how many small ones were left out. `ontap_volume_min_gb: 0` flags every volume, as before. **LDAP events when LDAP is not used:** on a cluster where no
+SVM has an LDAP client configured, error events with "ldap" in their name are left out of *Error events*, and the
+section says how many (`2 LDAP event(s) left out - no SVM has an LDAP client configured`); the report now reads the
+LDAP client configurations (`/api/name-services/ldap`, which the read-only role may read). `ontap_ems_ignore_ldap`:
+`auto` (the default), `true` or `false`; `ontap_ems_ignore` leaves out any other event names (regular expressions).
+docs/NETAPP.md.
 
 **The VMware alarms ACT analysis asks 5 problems at a time.** With 5 problems it worked, with 15 it did not: one
 answer about 15 problems is long enough for a gateway or proxy to cut it off, or to run past the model's time. Now

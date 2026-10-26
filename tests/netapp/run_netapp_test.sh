@@ -52,6 +52,7 @@ run() {
 run "the report: every kind of problem found, coloured, three clusters (one refused, one unreachable), green" ok -e "$clusters" -e "$mail" \
     -- "NetApp ONTAP health report: " "on 3 cluster(s)" "UNREACHABLE" "the ONTAP account was refused (HTTP 401)" \
        "cluster1-02  DOWN" "storage failover not possible" "DualPathToDiskShelf_Alert" "callhome.battery.low  2" \
+       "2 LDAP event(s) left out - no SVM has an LDAP client configured" \
        "controller cluster1-01" "psu PSU2" "shelf 1.1" "1.0.3" "lif_data1" "not on its home port" "e0c" "LINK DISCONNECTED" \
        "12000" "aggr1_n1" "92%" "Aggregates not on their home node (1)" "vol_full" "vol_off" "95%" "svm1 / vol_ok" "Transfer failed." \
        "transferring" "1d 06h 00m" "dr_cluster" "svm_stopped" "a DR destination: stopped by design" "CIFS2" "dc2 (unavailable)" \

@@ -147,7 +147,7 @@ EMS_SEV = {"emergency": "critical", "alert": "critical", "error": "warning"}
 BATTERY = {"battery_ok": "ok", "battery_fully_charged": "ok", "battery_partially_discharged": "warning",
            "battery_near_end_of_life": "warning", "battery_over_charged": "warning", "battery_unknown": "unknown",
            "battery_fully_discharged": "critical", "battery_at_end_of_life": "critical", "battery_not_present": "critical"}
-SECTION_KEYS = {"nodes": ["nodes", "failover"], "health": ["subsystems"], "alerts": ["alerts"], "ems": ["ems"],
+SECTION_KEYS = {"nodes": ["nodes", "failover"], "health": ["subsystems"], "alerts": ["alerts"], "ems": ["ems", "ldap"],
                 "hardware": ["nodes", "shelves"], "disks": ["disks"], "lifs": ["lifs", "fc_lifs"], "ports": ["ports", "fc_ports"],
                 "port_errors": ["ports", "nic_counters"], "aggregates": ["aggregates"], "volumes": ["volumes"],
                 "snapmirror": ["snapmirror_cli", "snapmirror"], "peers": ["cluster_peers", "svm_peers"], "svms": ["svms"],
@@ -208,6 +208,20 @@ def _notes(cs, keys):
             if d.get("truncated"):
                 out.append("%s: %s - only the first %d records were read" % (c["_name"], k, len(d.get("records") or [])))
     return out
+
+
+def _ldap_unused(c, mode):
+    """Why this cluster's LDAP events are noise ('' = they are not): ontap_ems_ignore_ldap - true always, false never,
+    auto when the LDAP client configurations were read and no SVM has one."""
+    m = str(mode).lower()
+    if m in ("true", "yes", "1"):
+        return "ontap_ems_ignore_ldap: true"
+    if m != "auto":
+        return ""
+    d = (c.get("data") or {}).get("ldap")
+    if not isinstance(d, dict) or d.get("error") or d.get("records") is None or d.get("records"):
+        return ""
+    return "no SVM has an LDAP client configured"
 
 
 def _row(cells, statuses=None, status=None):
@@ -336,12 +350,22 @@ def ontap_report(collected, opts=None):
     # ---- 5. EMS error events -------------------------------------------------------------------------
     hours = float(o.get("ems_hours", 24))
     since = now - datetime.timedelta(hours=hours)
-    groups = {}
+    ignore = [re.compile(x, re.I) for x in o.get("ems_ignore") or []]
+    groups, left_out = {}, []
     for c in up:
+        no_ldap = _ldap_unused(c, o.get("ems_ignore_ldap", "auto"))
+        skipped = {"ldap": 0, "ignore": 0}
         for e in _recs(c, "ems"):
             t = parse_time(e.get("time"))
             sev = str(g(e, "message.severity", "")).lower()
             if (t and t < since) or sev not in EMS_SEV:
+                continue
+            ename = str(g(e, "message.name", ""))
+            if no_ldap and "ldap" in ename.lower():
+                skipped["ldap"] += 1
+                continue
+            if any(x.search(ename) for x in ignore):
+                skipped["ignore"] += 1
                 continue
             k = (c["_name"], g(e, "node.name", ""), g(e, "message.name", ""))
             x = groups.setdefault(k, {"n": 0, "last": None, "msg": "", "sev": sev})
@@ -350,6 +374,10 @@ def ontap_report(collected, opts=None):
                 x["last"], x["msg"] = t, e.get("log_message", "")
             if RANK.get(EMS_SEV[sev], 9) < RANK.get(EMS_SEV[x["sev"]], 9):
                 x["sev"] = sev
+        if skipped["ldap"]:
+            left_out.append("%s: %d LDAP event(s) left out - %s" % (c["_name"], skipped["ldap"], no_ldap))
+        if skipped["ignore"]:
+            left_out.append("%s: %d event(s) left out by ontap_ems_ignore" % (c["_name"], skipped["ignore"]))
     rows = []
     for (cl, node, name), x in sorted(groups.items(), key=lambda kv: -kv[1]["n"]):
         sv = EMS_SEV[x["sev"]]
@@ -359,7 +387,7 @@ def ontap_report(collected, opts=None):
     R.table("Error events (last %s h)" % _hours(hours), "ONTAP's event log (EMS): emergency, alert and error events, the same "
             "event on the same node counted once, most frequent first.",
             ["Cluster", "Node", "Severity", "Event", "Count", "Last (UTC)", "Last message"], rows,
-            "No such event.", _notes(cs, SECTION_KEYS["ems"]))
+            "No such event.", left_out + _notes(cs, SECTION_KEYS["ems"]))
 
     # ---- 6. controllers and shelves --------------------------------------------------------------------
     rows = []

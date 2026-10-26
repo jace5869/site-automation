@@ -243,5 +243,27 @@ class Report(unittest.TestCase):
         self.assertGreater(titles.index("Health alerts"), titles.index("Certificates expiring"))
 
 
+    def test_ldap_events_left_out_when_ldap_is_not_configured(self):
+        ems = [{"node": {"name": "n1"}, "message": {"name": n, "severity": "error"}, "time": "2026-10-07T11:00:00Z", "log_message": n}
+               for n in ("secd.ldap.noServers", "secd.LDAP.slowServer", "callhome.battery.low")]
+        def events(ldap, opts=None):
+            col = self.one([("v", 100, 10)], ems=ems)
+            if ldap is not None:
+                col["clusters"][0]["data"]["ldap"] = ldap
+            sec = [x for x in of.ontap_report(col, opts or {})["report"]["sections"] if x["title"].startswith("Error events")][0]
+            return sorted(r[3] for r in sec.get("rows", [])), sec.get("lines", [])
+        rows, lines = events({"records": []})
+        self.assertEqual(rows, ["callhome.battery.low"])
+        self.assertIn("c1: 2 LDAP event(s) left out - no SVM has an LDAP client configured", lines)
+        self.assertEqual(len(events({"records": [{"svm": {"name": "svm1"}}]})[0]), 3)            # LDAP configured: kept
+        self.assertEqual(len(events({"error": "HTTP 403", "records": []})[0]), 3)                # not readable: kept
+        self.assertEqual(len(events(None)[0]), 3)                                                # not read at all: kept
+        self.assertEqual(events({"records": [{"svm": {"name": "svm1"}}]}, {"ems_ignore_ldap": "true"})[0], ["callhome.battery.low"])
+        self.assertEqual(len(events({"records": []}, {"ems_ignore_ldap": "false"})[0]), 3)
+        rows, lines = events(None, {"ems_ignore": [r"^callhome\.battery"]})
+        self.assertNotIn("callhome.battery.low", rows)
+        self.assertIn("c1: 1 event(s) left out by ontap_ems_ignore", lines)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -40,6 +40,7 @@
            'drift_warn': ontap_time_drift_warn_seconds | float, 'drift_crit': ontap_time_drift_crit_seconds | float,
            'port_errors_warn': ontap_port_errors_warn | float, 'port_errors_crit': ontap_port_errors_crit | float,
            'min_spares': ontap_min_spares | int, 'ems_hours': ontap_ems_hours | float,
+           'ems_ignore_ldap': ontap_ems_ignore_ldap | string | lower, 'ems_ignore': ontap_ems_ignore,
            'max_rows': ontap_report_max_rows | int, 'snapshot_top': ontap_snapshot_top | int}) }}
 
 - name: NetApp | the report to print and email

@@ -66,6 +66,10 @@ paths = {
                                              "log_message": "NVRAM battery low", "node": {"name": "cluster1-02"}},
                                             {"time": iso(-3 * H), "message": {"name": "callhome.battery.low", "severity": "error"},
                                              "log_message": "NVRAM battery low (earlier)", "node": {"name": "cluster1-02"}},
+                                            {"time": iso(-4 * H), "message": {"name": "secd.ldap.noServers", "severity": "error"},
+                                             "log_message": "No LDAP servers available (LDAP is not configured)", "node": {"name": "cluster1-01"}},
+                                            {"time": iso(-5 * H), "message": {"name": "secd.ldap.noServers", "severity": "error"},
+                                             "log_message": "No LDAP servers available", "node": {"name": "cluster1-01"}},
                                             {"time": iso(-3 * D), "message": {"name": "old.event", "severity": "error"},
                                              "log_message": "outside the window", "node": {"name": "cluster1-01"}}]},
     "/api/storage/disks": {"fields": ["name", "state", "container_type", "node.name", "home_node.name", "model", "serial_number",
@@ -175,6 +179,7 @@ paths = {
                                                {"name": "far", "common_name": "far.example.mil", "type": "server", "expiry_time": iso(400 * D),
                                                 "scope": "cluster"}]},
     "/api/cluster/ntp/servers": {"fields": ["server", "version", "authentication_enabled"], "records": [{"server": "ntp1.example.mil"}]},
+    "/api/name-services/ldap": {"fields": ["svm.name", "servers"], "records": []},       # no SVM has an LDAP client: LDAP events are noise
 }
 user = sys.argv[2] if len(sys.argv) > 2 else "svc_ro"
 password = sys.argv[3] if len(sys.argv) > 3 else "readonly-test"
