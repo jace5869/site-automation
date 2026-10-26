@@ -65,7 +65,11 @@ def ocsp_target(entry, timeout=15):
     e = dict(entry or {})
     e.setdefault("name", "")
     url, cert_pem, issuer_pem = str(e.get("url") or "").strip(), str(e.get("cert") or ""), str(e.get("issuer") or "")
-    e.update({"url": url, "why": "", "from_cert": []})
+    why = str(e.get("why") or "")                       # already known, e.g. a cert file that is not there
+    e.update({"url": url, "why": why, "from_cert": []})
+    if why:
+        e["name"] = e["name"] or url or "OCSP"
+        return e
     if not cert_pem.strip():
         if not url:
             e["why"] = "neither a url nor a cert: give the responder's url, or a certificate it knows (cert)"
@@ -82,6 +86,7 @@ def ocsp_target(entry, timeout=15):
         e["why"] = "the cert is not a PEM certificate"
         return e
     e["cert"] = pems[0]
+    e["serial"] = str(cert.serial_number)               # the answer about it, in a response about many (net_perf's judge)
     if not url:
         urls = _aia(cert, AuthorityInformationAccessOID.OCSP)
         if not urls:

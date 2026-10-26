@@ -183,7 +183,7 @@ class Run(object):
         oc = []
         for x in p["ocsp"]:
             r = {"name": x.get("name") or x.get("url"), "url": x.get("url", ""),
-                 "mode": x.get("mode") or ("request" if x.get("request") else "reach")}
+                 "mode": x.get("mode") or ("request" if x.get("request") else "reach"), "serial": x.get("serial") or ""}
             if x.get("why"):                       # its address or issuer could not be read from the certificate (AAP side)
                 r.update({"code": 0, "ms": 0, "body": "", "why": x["why"]})
             else:

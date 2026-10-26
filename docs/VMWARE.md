@@ -640,7 +640,10 @@ site_ocsp_certs: [files/ocsp/test-user.pem]     # playbooks/files/ocsp/test-user
 The responder's address and the certificate of the CA that issued it are read from the certificate
 itself (its *Authority Information Access*: every DoD certificate names its OCSP responder and where its
 CA's certificate is); the CA's certificate is downloaded from the AAP node. When the AAP node cannot
-reach that address, put the CA's certificate after the user's in the same file. `vm_sso_ocsp`, when
+reach that address, put the CA's certificate after the user's in the same file. Commit the files: the
+repository's `.gitignore` leaves out `*.crt` and `*.pem` except in `playbooks/files/ca/` and (since 0.31.1)
+`playbooks/files/ocsp/` - elsewhere, or with an older `.gitignore`, add them with `git add -f`. Then push and sync
+the project in AAP. `vm_sso_ocsp`, when
 set, is used instead - to give an address or an issuer yourself, or ask another responder:
 
 ```yaml
@@ -1480,6 +1483,7 @@ Every message of the deploy, its workflow and the scheduled pickup, with what to
 | `ACT failed: ... the reply was cut off after N bytes ... (after 4 attempts)` (before 0.17.1: `ACT failed: crash: IncompleteRead: IncompleteRead(N bytes read)`) | the model's answer was cut off on its way back: the gateway or a proxy closed the connection partway through it. Since 0.17.1 (ACT 0.6.25) ACT asks again, so this means every attempt was cut | run it again (a dropped connection passes); if it keeps failing at about the same size, the answer is too long for something on the way: fewer items (`vm_capacity_act_max_items: 10`, `vm_alarm_act_max_items: 10`); tell the network team the size and how long it took |
 | `ACT produced no result (it timed out after 1200s ...)` | a slow model, or a lot of evidence | `site_act_timeout: 1800`, or `vm_alarm_act_max_items: 20` |
 | `ACT's answer is below as text` | the model did not use the table format | the answer is still in the email. Run it again, or try another model (`site_act_models`) |
+| `The 'file' lookup had an issue accessing the file 'files/ocsp/...'` (0.31.0), or an OCSP row `not found in the project: files/ocsp/...` | the certificate is not in the project AAP synced: the repository's `.gitignore` leaves out `*.crt` / `*.pem` (before 0.31.1 also in `playbooks/files/ocsp/`), so it was never committed - VS Code shows such files greyed out | `git add -f playbooks/files/ocsp/*.crt`, commit, push, sync the project; or add `!playbooks/files/ocsp/*.crt` to `.gitignore` |
 | A row says `ACT gave no answer for this one` | the model skipped that problem | run it again; fewer problems (`vm_alarm_act_max_items`) help a small model |
 | The analysis works with a few problems, not with more (cut off, timed out, or no readable answer) | one answer about many problems is too long for the gateway, a proxy, or the model's time | `vm_alarm_act_batch` (5, since 0.31.1) asks 5 at a time; lower it to 3 if 5 still fails |
 | `ACT did not analyze every problem: P6-P10 not analyzed: ...` | one batch failed, the others were analyzed (the report has them) | the reason after it, as in the rows above; run it again |

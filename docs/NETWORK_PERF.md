@@ -56,7 +56,8 @@ An interface's first run (or after a reboot: its counters start over) is counted
    itself (its *Authority Information Access*: every DoD certificate names its OCSP responder and where
    its CA's certificate is). The CA's certificate is downloaded on the AAP side; when the AAP node
    cannot reach that address, put the CA's certificate after the user's in the same file (or give it
-   as `issuer`). Each host then sends a real OCSP request - made once on the AAP side - and the answer
+   as `issuer`). Commit the files (since 0.31.1 the repository's `.gitignore` lets `playbooks/files/ocsp/`
+   through; before, `git add -f`), push, and sync the project. Each host then sends a real OCSP request - made once on the AAP side - and the answer
    is read there. `net_perf_ocsp`, when set, is used instead - to name a responder, give its address,
    or ask a second one:
 

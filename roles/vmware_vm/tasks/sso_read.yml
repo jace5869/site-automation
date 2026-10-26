@@ -12,9 +12,12 @@
     ocsp: >-
       {%- set out = [] -%}
       {%- for x in (vm_sso_ocsp or site_ocsp_certs | map('ocsp_cert_entry') | list) -%}
-      {%-   set _ = out.append({'url': x.url | default(''),
-                                'cert': lookup('ansible.builtin.file', x.cert) if x.cert | default('') else '',
-                                'issuer': lookup('ansible.builtin.file', x.issuer) if x.issuer | default('') else ''}
+      {%-   set c = (lookup('ansible.builtin.file', x.cert, errors='ignore') | default('', true)) if x.cert | default('') else '' -%}
+      {%-   set i = (lookup('ansible.builtin.file', x.issuer, errors='ignore') | default('', true)) if x.issuer | default('') else '' -%}
+      {%-   set miss = ([x.cert] if x.cert | default('') and not c else []) + ([x.issuer] if x.issuer | default('') and not i else []) -%}
+      {%-   set _ = out.append({'url': x.url | default(''), 'cert': c, 'issuer': i,
+                                'why': ('not found in the project: ' ~ miss | join(', ') ~ ' - put it in playbooks/ (e.g. playbooks/files/ocsp/), '
+                                        ~ 'commit it (git add -f when .gitignore leaves it out), push and sync the project') if miss else ''}
                                | ocsp_target(vm_sso_timeout | int)) -%}
       {%- endfor -%}
       {{ out }}

@@ -105,6 +105,10 @@ class Target(unittest.TestCase):
         self.assertEqual(of.ocsp_target({"url": "http://ocsp.example.mil"})["why"], "")     # a url alone: asked as before
         self.assertIn("not a PEM certificate", of.ocsp_target({"cert": "hello"})["why"])
 
+    def test_a_known_why_is_kept(self):
+        t = of.ocsp_target({"url": "", "cert": "", "why": "not found in the project: files/ocsp/x.crt"})
+        self.assertEqual((t["why"], t["name"]), ("not found in the project: files/ocsp/x.crt", "OCSP"))
+
     def test_site_ocsp_certs_items(self):
         self.assertEqual(of.ocsp_cert_entry("files/ocsp/test-user.pem"), {"cert": "files/ocsp/test-user.pem"})
         self.assertEqual(of.ocsp_cert_entry({"cert": "a.pem", "name": "N"}), {"cert": "a.pem", "name": "N"})

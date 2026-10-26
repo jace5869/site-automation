@@ -9,6 +9,10 @@
 # ...except public CA certificates the jobs need (docs/VMWARE.md: report_email_ca_path, site_act_ca)
 !playbooks/files/ca/*.pem
 !playbooks/files/ca/*.crt
+# ...and the certificates the OCSP checks ask about (site_ocsp_certs, vm_sso_ocsp, net_perf_ocsp: public, no keys)
+!playbooks/files/ocsp/*.pem
+!playbooks/files/ocsp/*.crt
+!playbooks/files/ocsp/*.cer
 .vault_pass*
 vault-password*
 *.secret

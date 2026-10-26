@@ -224,6 +224,23 @@ def test_login(r, user, password):
                    "does not answer or does not know the account - or the account is locked, disabled or its password expired" % code}
 
 
+def ocsp_single(o, serial=None):
+    """The answer about one certificate in an OCSP response: some responders (DISA's) answer about many certificates at
+    once - 20 in one response - and the one asked about (by its serial) is among them. ValueError when it is not."""
+    rs = getattr(o, "responses", None)                  # cryptography 37+; older ones read a single answer only
+    if rs is None:
+        return o
+    rs = list(rs)
+    if serial is not None:
+        for r in rs:
+            if r.serial_number == int(serial):
+                return r
+        raise ValueError("no answer about the test certificate (serial %x) among the %d in the response" % (int(serial), len(rs)))
+    if not rs:
+        raise ValueError("the response answers about no certificate")
+    return rs[0]
+
+
 def check_ocsp(x, timeout, now):
     url = x.get("url") or ""
     rec = {"url": url, "ok": False, "mode": "reach", "status": "", "cert_status": "", "this_update": "", "next_update": "", "ms": 0,
@@ -250,14 +267,15 @@ def check_ocsp(x, timeout, now):
             if o.response_status != ocsp.OCSPResponseStatus.SUCCESSFUL:
                 rec["why"] = "the responder answered %s, not successful" % rec["status"]
                 return rec
-            rec["cert_status"] = o.certificate_status.name.lower()
-            tu = _aware(getattr(o, "this_update_utc", None) or o.this_update)
-            nu = _aware(getattr(o, "next_update_utc", None) or o.next_update)
+            one = ocsp_single(o, cert.serial_number)
+            rec["cert_status"] = one.certificate_status.name.lower()
+            tu = _aware(getattr(one, "this_update_utc", None) or one.this_update)
+            nu = _aware(getattr(one, "next_update_utc", None) or one.next_update)
             rec["this_update"] = tu.strftime("%Y-%m-%d %H:%M UTC") if tu else ""
             rec["next_update"] = nu.strftime("%Y-%m-%d %H:%M UTC") if nu else ""
             if nu and nu < now:
                 rec["why"] = "the answer is stale: its next update (%s) has passed - the responder serves old revocation data" % rec["next_update"]
-            elif o.certificate_status != ocsp.OCSPCertStatus.GOOD:
+            elif one.certificate_status != ocsp.OCSPCertStatus.GOOD:
                 rec["why"] = "the responder says the test certificate is %s" % rec["cert_status"]
             else:
                 rec["ok"] = True

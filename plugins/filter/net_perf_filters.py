@@ -57,6 +57,23 @@ def _aware(d):
     return d if d is None or d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)
 
 
+def ocsp_single(o, serial=None):
+    """The answer about one certificate in an OCSP response: some responders (DISA's) answer about many certificates at
+    once - 20 in one response - and the one asked about (by its serial) is among them. ValueError when it is not."""
+    rs = getattr(o, "responses", None)                  # cryptography 37+; older ones read a single answer only
+    if rs is None:
+        return o
+    rs = list(rs)
+    if serial is not None:
+        for r in rs:
+            if r.serial_number == int(serial):
+                return r
+        raise ValueError("no answer about the test certificate (serial %x) among the %d in the response" % (int(serial), len(rs)))
+    if not rs:
+        raise ValueError("the response answers about no certificate")
+    return rs[0]
+
+
 def ocsp_judge(rec, now=""):
     """A host's OCSP answer -> {ok, status, cert_status, next_update, why}."""
     out = {"ok": False, "status": "", "cert_status": "", "next_update": "", "why": rec.get("why") or ""}
@@ -99,14 +116,19 @@ def ocsp_judge(rec, now=""):
     if o.response_status != ocsp.OCSPResponseStatus.SUCCESSFUL:
         out["why"] = "the responder answered %s, not successful" % out["status"]
         return out
-    out["cert_status"] = o.certificate_status.name.lower()
-    nu = _aware(getattr(o, "next_update_utc", None) or o.next_update)
+    try:
+        one = ocsp_single(o, rec.get("serial") or None)
+    except ValueError as e:
+        out["why"] = str(e)
+        return out
+    out["cert_status"] = one.certificate_status.name.lower()
+    nu = _aware(getattr(one, "next_update_utc", None) or one.next_update)
     out["next_update"] = nu.strftime("%Y-%m-%d %H:%M UTC") if nu else ""
     now_t = (datetime.datetime.strptime(now, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc) if now
              else datetime.datetime.now(datetime.timezone.utc))
     if nu and nu < now_t:
         out["why"] = "the answer is stale: its next update (%s) has passed" % out["next_update"]
-    elif o.certificate_status != ocsp.OCSPCertStatus.GOOD:
+    elif one.certificate_status != ocsp.OCSPCertStatus.GOOD:
         out["why"] = "the responder says the test certificate is %s" % out["cert_status"]
     else:
         out["ok"] = True

@@ -47,7 +47,16 @@ the user's in the same file). `vm_sso_ocsp` and `net_perf_ocsp` still work as be
 `url` and `issuer` too. What could not be read is reported as the responder's problem, with what to give instead. **A `url`
 alone works with DISA's responder now:** it is sent an OCSP request about a made-up certificate, as a smart card
 login's would be, and any OCSP response ("unauthorized", usually) is the responder up. Before, a plain GET was sent,
-which that responder closes without a reply - so a working responder showed as "no answer".
+which that responder closes without a reply - so a working responder showed as "no answer". **The certificate files
+reach AAP:** the repository's `.gitignore` leaves out `*.crt` and `*.pem` (no keys by accident) and let only
+`playbooks/files/ca/` through, so certificates put in `playbooks/files/ocsp/` - where the docs say - were never
+committed, and the health report stopped with `The 'file' lookup had an issue accessing the file`. `.gitignore` now
+lets `playbooks/files/ocsp/*.crt|.pem|.cer` through too (a `.gitignore` you changed: add those lines, or `git add -f`
+the files), and a certificate file that is not there is the OCSP row's problem - `not found in the project: ...`,
+with what to do - instead of stopping the report. **An answer about many certificates:** DISA's responder answers
+a request about one certificate with a response about 20; the check read only single answers and said `the answer
+is not an OCSP response: OCSP response contains 20 SINGLERESP structures`. It now finds the answer about the test
+certificate by its serial number.
 docs/VMWARE.md, "Single sign-on and OCSP"; docs/NETWORK_PERF.md, "Set it up".
 
 **The ACT PDFs in the new look, and up to date.** The two 5W's briefs, the ACT Automated Triage Guide and the ACT on

@@ -138,6 +138,8 @@ run "OCSP: no answer (warning by setting)" fail -e '{"net_perf_ocsp": [{"name": 
 run "OCSP: site_ocsp_certs only - the address and the issuer read from the certificate" ok -e "{\"net_perf_ocsp\": [], \"site_ocsp_certs\": [\"$W/pb/files/user.pem\"]}" -- "HEALTHY"
 run "OCSP: a certificate that names no responder" fail -e "{\"net_perf_ocsp\": [{\"name\": \"Bare\", \"cert\": \"$W/pb/files/gone.pem\"}]}" -- \
     "[CRITICAL] netperf: the OCSP responder Bare" "names no OCSP address"
+run "OCSP: a cert file that is not in the project - a finding that says so" fail -e '{"net_perf_ocsp": [{"name": "Lost", "cert": "files/ocsp/missing.crt"}]}' -- \
+    "the OCSP responder Lost" "not found in the project: files/ocsp/missing.crt"
 run "OCSP: a URL only that answers" ok -e "{\"net_perf_ocsp\": [{\"name\": \"Plain\", \"url\": \"http://127.0.0.1:$po\"}]}" -- "HEALTHY"
 printf '{"start": {}, "end": {"sum_sent": {"bits_per_second": 4.2e8, "retransmits": 37}, "sum_received": {"bits_per_second": 4.1e8}}}' > "$W/iperf"
 run "iperf3: db01 -> app01 at 410 Mbit/s, expected 900: a warning on db01 (the client)" fail -e '{"net_perf_iperf_pairs": [{"server": "app01", "client": "db01", "min_mbps": 900}]}' -- \

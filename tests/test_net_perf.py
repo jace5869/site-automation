@@ -81,6 +81,42 @@ class Judge(unittest.TestCase):
                                              {"name": "eth2", "first": True}]), "h")
         self.assertEqual(ids(r), [("netperf:drops:eth0", "warning"), ("netperf:drops:eth1", "warning")])
 
+    def test_ocsp_an_answer_about_many_certificates(self):
+        # a responder (DISA's) answering about many certificates at once: the one asked about is found by its serial
+        import base64
+        import shutil
+        import subprocess
+        import tempfile
+        if not shutil.which("openssl"):
+            self.skipTest("no openssl")
+        d = tempfile.mkdtemp()
+        def o(*a):
+            subprocess.run(["openssl"] + list(a), cwd=d, check=True, capture_output=True)
+        o("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.pem", "-days", "30", "-subj", "/CN=Test CA")
+        with open(d + "/ocsp.ext", "w") as f:
+            f.write("extendedKeyUsage=OCSPSigning\n")
+        for n in ("ocsp", "user", "gone"):
+            o("req", "-newkey", "rsa:2048", "-nodes", "-keyout", n + ".key", "-out", n + ".csr", "-subj", "/CN=%s.example.mil" % n)
+            o("x509", "-req", "-in", n + ".csr", "-CA", "ca.pem", "-CAkey", "ca.key", "-CAcreateserial", "-out", n + ".pem", "-days", "30",
+              *(["-extfile", "ocsp.ext"] if n == "ocsp" else []))
+        serial = {n: subprocess.run(["openssl", "x509", "-in", n + ".pem", "-noout", "-serial"], cwd=d, capture_output=True, text=True,
+                                    check=True).stdout.strip().split("=")[1] for n in ("user", "gone")}
+        with open(d + "/index.txt", "w") as f:
+            f.write("V\t301231000000Z\t\t%s\tunknown\t/CN=user.example.mil\n" % serial["user"])
+            f.write("R\t301231000000Z\t250101000000Z\t%s\tunknown\t/CN=gone.example.mil\n" % serial["gone"])
+        o("ocsp", "-issuer", "ca.pem", "-cert", "gone.pem", "-cert", "user.pem", "-no_nonce", "-reqout", "req.der")
+        o("ocsp", "-index", "index.txt", "-rsigner", "ocsp.pem", "-rkey", "ocsp.key", "-CA", "ca.pem", "-reqin", "req.der", "-respout", "resp.der",
+          "-nmin", "60")
+        with open(d + "/resp.der", "rb") as f:
+            body = base64.b64encode(f.read()).decode()
+        shutil.rmtree(d)
+        rec = {"mode": "request", "code": 200, "body": body}
+        j = nf.ocsp_judge(dict(rec, serial=str(int(serial["user"], 16))))
+        self.assertEqual((j["ok"], j["cert_status"]), (True, "good"))                 # the second of two answers
+        j = nf.ocsp_judge(dict(rec, serial=str(int(serial["gone"], 16))))
+        self.assertEqual((j["ok"], j["cert_status"]), (False, "revoked"))
+        self.assertIn("no answer about the test certificate (serial 7b) among the 2", nf.ocsp_judge(dict(rec, serial="123"))["why"])
+
     def test_ocsp_probe_a_url_only(self):
         import base64
         from cryptography.hazmat.primitives.serialization import Encoding
