@@ -8,8 +8,6 @@ pypsrp[kerberos]       # the psrp connection, an alternative to winrm
 ldap3                  # pure Python: your own scripts, no compiler
 # SQL Server (community.general.mssql_db, mssql_script)
 pymssql
-# The report website on a Windows file share (report_web_dest \\server\share\folder: SMB 2/3, no mount)
-smbprotocol            # pure Python; NTLM needs MD4 (not on FIPS): report_web_smb_auth: kerberos there
 # Linux and general
 jmespath               # the json_query filter
 dnspython              # the community.general.dig lookup

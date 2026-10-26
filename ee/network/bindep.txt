@@ -1,5 +1,6 @@
 # System packages (RPMs, from Red Hat) the collections do not bring themselves (ansible-builder adds theirs).
 openssh-clients [platform:rpm]        # ssh / scp: test a device's SSH from inside the EE
 sshpass [platform:rpm]                # password SSH (network devices that need it)
+git-core [platform:rpm]               # git: the network config backup's repository (net_config_store: git)
 iputils [platform:rpm]                # ping, for troubleshooting from the EE
 bind-utils [platform:rpm]             # dig / nslookup

@@ -61,4 +61,5 @@ tool ssh
 tool sshpass
 tool dig
 tool ping
+tool git
 kerberos

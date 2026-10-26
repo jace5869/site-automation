@@ -124,6 +124,8 @@ class Module(unittest.TestCase):
     def test_smb_path(self):
         self.assertEqual(rw.smb_path('\\\\fileserver\\its\\aap\\reports\\'), ('fileserver', '\\\\fileserver\\its\\aap\\reports'))
         self.assertEqual(rw.smb_path('smb://fileserver/its/aap/reports'), ('fileserver', '\\\\fileserver\\its\\aap\\reports'))
+        self.assertEqual(rw.smb_path('smb:/fileserver/its/aap'), ('fileserver', '\\\\fileserver\\its\\aap'))
+        self.assertEqual(rw.smb_path('SMB://fileserver/its/aap/'), ('fileserver', '\\\\fileserver\\its\\aap'))
         self.assertEqual(rw.smb_path('//fs01.example.mil/its'), ('fs01.example.mil', '\\\\fs01.example.mil\\its'))
         for not_smb in ('/mnt/reports', 'https://reports.example.mil/up', 'D:\\reports'):
             self.assertIsNone(rw.smb_path(not_smb))

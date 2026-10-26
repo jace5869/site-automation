@@ -199,7 +199,7 @@ def smb_path(dest):
     """\\\\server\\share\\folder, //server/share/folder or smb://server/share/folder -> (server, '\\\\server\\share\\folder'),
     or None when dest is no share."""
     d = dest.strip()
-    m = re.match(r'(?i)^smb://(.+)$', d)
+    m = re.match(r'(?i)^smb:/+(.+)$', d)                # smb://server/..., also smb:/server/... (one slash lost on the way)
     if m:
         d = '//' + m.group(1)
     if not (d.startswith('\\\\') or d.startswith('//')):
@@ -220,8 +220,8 @@ class SmbTarget(object):
             from smbprotocol import exceptions as smbexc
         except ImportError:
             raise Fail('report_web_dest is a file share (%s), and this execution environment has no smbprotocol: add it to '
-                       'the EE (ee/all-in-one/requirements.txt), or let the copy job write the pages (report_web_copy) from an EE '
-                       'that has it (docs/WEB_REPORTS.md, "A Windows file share")' % self.root)
+                       'the EE (the EEs of ee/ have it since 0.32.0: build yours again), or let the copy job write the pages '
+                       '(report_web_copy) from an EE that has it (docs/REPORT_SHARE.md, step 3)' % self.root)
         self.smb, self.exc = smbclient, smbexc
         self.kw = {'port': port}
         user, password = os.environ.get('REPORT_WEB_USERNAME', ''), os.environ.get('REPORT_WEB_PASSWORD', '')

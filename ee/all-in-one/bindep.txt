@@ -3,6 +3,7 @@
 krb5-workstation [platform:rpm]       # kinit / klist: check Kerberos inside the EE
 openssh-clients [platform:rpm]
 sshpass [platform:rpm]                # password SSH (network devices that need it)
+git-core [platform:rpm]               # git: the network config backup's repository (net_config_store: git)
 iputils [platform:rpm]                # ping, for troubleshooting from the EE
 bind-utils [platform:rpm]             # dig / nslookup: check DNS (the domain controllers' SRV records)
 tzdata [platform:rpm]                 # the time zones: report_time_zone (0.32.0), the VMware reports in your time zone

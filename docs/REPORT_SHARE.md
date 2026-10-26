@@ -38,7 +38,7 @@ web address when you set one (`Report: https://...`). A run that cannot write st
 | A folder on the share | `\\fileserver\its\aap\reports` | you, or the storage team |
 | A service account that may write there | `YOURDOMAIN\svc_aap_reports` | the Active Directory team |
 | SMB (TCP 445) from the AAP execution nodes to the file server | | the network or firewall team |
-| `smbprotocol` in the execution environment | in `ee/all-in-one/requirements.txt` since 0.33.0 | you (step 3) |
+| `smbprotocol` in the execution environment | in all three EEs of `ee/` since 0.32.0 | you (step 3) |
 | The **Report website** credential type in AAP | `aap/credential_types/report_web.yml` | you (step 5) |
 
 ## Step 1. The folder and its permissions
@@ -74,12 +74,13 @@ Request: a service account for Ansible Automation Platform (AAP) to write report
 
 ## Step 3. The execution environment
 
-The job writes over SMB with **smbprotocol**, a pure-Python SMB 2/3 client (no compiler, no Samba). It is in the
-all-in-one execution environment from release 0.33.0 (`ee/all-in-one/requirements.txt`): build it again and
-update the image in AAP ([EXECUTION_ENVIRONMENT.md](EXECUTION_ENVIRONMENT.md)). Check the new image:
+The job writes over SMB with **smbprotocol**, a pure-Python SMB 2/3 client (no compiler, no Samba). It is in all
+three execution environments of `ee/` (Windows, network, all-in-one) from release 0.32.0: build the ones your report
+templates use from those files or later, and update the image in AAP - [EXECUTION_ENVIRONMENT.md](EXECUTION_ENVIRONMENT.md),
+chapters 3 to 5 (one per EE) and "Put an EE into AAP". Check the new image:
 
 ```bash
-podman run --rm site-ee-all:2 ee-check | grep -i smb
+podman run --rm site-ee-all:3 ee-check | grep -i smb
 #   YES  smbprotocol
 ```
 

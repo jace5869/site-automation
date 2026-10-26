@@ -24,4 +24,5 @@ collection paloaltonetworks.panos
 tool ssh
 tool sshpass
 tool ping
+tool git
 tool dig

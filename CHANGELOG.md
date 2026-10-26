@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.33.0 — 2026-10-26
+
+**Updating without scripts:** paste `site-automation-0.33.0-changed-since-0.32.0.zip` as it is (from an older release:
+the zips of 0.32.0 first, as its notes say). It leaves out `playbooks/group_vars`, `playbooks/host_vars` and
+`poam/poam.csv`. Nothing to change: the report website writes to a share only when `report_web_dest` is one. It needs `smbprotocol` in
+the execution environment - in all three EEs of `ee/` since 0.32.0: build yours from 0.32.0's files or later.
+
+**The report website on a Windows file share, over SMB - no mount.** `report_web_dest: '\\fileserver\its\aap\reports'`
+(or `smb://fileserver/its/aap/reports`): every report job writes its page, `latest.html`, the JSON and the index straight
+onto the share, logged in as the account of the **Report website** credential (`DOMAIN\user`, Modify on that folder) -
+nothing mounted on the execution nodes, no AAP setting, no web server that takes uploads. Each file is written under a
+temporary name and renamed over the old one, so a reader never sees half a page; the share's folder must be there (it is
+never made), the folders inside it are made. A dry run (Check) logs in and checks the folder, and writes nothing - the
+test of the setup. A wrong password, an account without rights on the folder, a share or folder that is not there, a
+blocked port 445 and a FIPS execution environment (NTLM needs MD4: `report_web_smb_auth: kerberos`) are each said in
+words. `report_web_smb_auth` (negotiate, ntlm, kerberos), `report_web_smb_encrypt`, `report_web_smb_port`. 0.32.0 refused
+an `smb://` address ("must be a full path ... or an http(s):// address"); this is what that needs. The folder, upload
+and Windows-server modes are unchanged. Step by step: docs/REPORT_SHARE.md, and its PDF,
+`docs/pdf/Site-Automation-Report-Share-Guide.pdf`.
+
+**The network and all-in-one EEs get `git`.** The network config backup (`net_config_store: git`) runs it on the AAP
+side, and the EEs did not have it; `ee-check` checks it. docs/EXECUTION_ENVIRONMENT.md, "0.33.0: git for the config
+backup".
+
 ## 0.32.0 — 2026-10-26
 
 **Updating without scripts:** paste one zip as it is - from 0.31.1: `site-automation-0.32.0-changed-since-0.31.1.zip`;

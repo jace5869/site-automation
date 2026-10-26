@@ -576,6 +576,7 @@ Everything `base-ee:1.0` has, plus:
 | **Cisco** | `cisco.ios` (IOS / IOS-XE), `cisco.nxos` (Nexus), `cisco.asa` (ASA) | (from the connections above) |
 | **Palo Alto** | `paloaltonetworks.panos` (firewalls and Panorama) | `pan-os-python`, `pan-python`, `panos-upgrade-assurance`, `xmltodict` |
 | **The report website on an SMB share** | | `smbprotocol` (Kerberos through `pyspnego` and `gssapi`) |
+| **Config backups** | - | `git` (the network config backup's repository) |
 
 Cisco is reached over SSH. Palo Alto is reached over HTTPS, through the PAN-OS XML API. Only need
 one vendor? Remove the other one's lines from `requirements.yml` and `check-list.txt` before you
@@ -864,6 +865,21 @@ Then write each version into `requirements.yml`, for example:
   - name: microsoft.ad
     version: "==1.12.1"
 ```
+
+## 0.33.0: git for the config backup
+
+0.33.0 adds `git` to the network and all-in-one EEs: the network config backup (`net_config_store: git`) runs it on
+the AAP side, and they did not have it. (`smbprotocol`, for the report website on an SMB share, came in 0.32.0.) If you
+use the config backup with a git repository, build those two EEs again with the next tag (below), from the 0.33.0
+files - keep your own `ansible.cfg` and `ca/` files - and check:
+
+```bash
+podman run --rm site-ee-all:3 ee-check | grep -iE 'smbprotocol|git'
+#   YES  smbprotocol
+#   YES  git
+```
+
+`git-core` is in the base image's own RHEL repositories: nothing else changes.
 
 ## Rebuild with a new tag
 
