@@ -34,6 +34,7 @@ lib pan.xapi pan-python
 lib xmltodict xmltodict
 # ---- general ----
 lib jmespath jmespath
+lib smbclient smbprotocol
 lib cryptography cryptography
 collection ansible.posix
 collection ansible.utils

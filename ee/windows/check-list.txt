@@ -18,6 +18,7 @@ lib pymssql pymssql
 lib pymysql PyMySQL
 # ---- general ----
 lib jmespath jmespath
+lib smbclient smbprotocol
 lib cryptography cryptography
 collection ansible.windows
 collection community.windows

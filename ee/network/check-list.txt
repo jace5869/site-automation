@@ -14,6 +14,7 @@ lib panos_upgrade_assurance panos-upgrade-assurance
 lib xmltodict xmltodict
 # ---- general ----
 lib jmespath jmespath
+lib smbclient smbprotocol
 collection ansible.netcommon
 collection ansible.utils
 collection cisco.ios

@@ -11,3 +11,4 @@ pymssql
 # ---- general ----
 jmespath               # the json_query filter
 dnspython              # the community.general.dig lookup
+smbprotocol            # the report website on an SMB share (report_web_dest \\server\share): Kerberos through pyspnego

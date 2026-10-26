@@ -277,6 +277,7 @@ Everything `base-ee:1.0` has, plus:
 | **Active Directory** | `microsoft.ad` | `pyspnego`, `gssapi`, `krb5`, `sansldap`, `ldap3`, `dnspython`; `dig` |
 | **SQL Server** | `community.general` (`mssql_db`, `mssql_script`), `lowlydba.sqlserver` | `pymssql` |
 | **MySQL and MariaDB** | `ansible.mysql` | `PyMySQL` |
+| **The report website on an SMB share** | | `smbprotocol` (Kerberos through `pyspnego` and `gssapi`) |
 
 There are two ways to reach SQL Server:
 
@@ -540,6 +541,7 @@ Everything `base-ee:1.0` has, plus:
 | **Connections and helpers** | `ansible.netcommon` (network_cli, netconf, httpapi), `ansible.utils` | `ansible-pylibssh`, `paramiko`, `ncclient`, `netaddr`, `textfsm`, `ttp`, `jmespath`; `ssh`, `sshpass` |
 | **Cisco** | `cisco.ios` (IOS / IOS-XE), `cisco.nxos` (Nexus), `cisco.asa` (ASA) | (from the connections above) |
 | **Palo Alto** | `paloaltonetworks.panos` (firewalls and Panorama) | `pan-os-python`, `pan-python`, `panos-upgrade-assurance`, `xmltodict` |
+| **The report website on an SMB share** | | `smbprotocol` (Kerberos through `pyspnego` and `gssapi`) |
 
 Cisco is reached over SSH. Palo Alto is reached over HTTPS, through the PAN-OS XML API. Only need
 one vendor? Remove the other one's lines from `requirements.yml` and `check-list.txt` before you
@@ -699,14 +701,16 @@ Everything `base-ee:1.0` has, everything in EE 1 and EE 2, plus:
 | **VMware** | `vmware.vmware` | `pyVmomi`, `vmware-vcenter` (the vSphere Automation SDK) |
 | **NetApp** | `netapp.ontap` | `requests`, `solidfire-sdk-python` and the others the collection lists |
 | **ServiceNow** | `servicenow.itsm` (tickets, and the CMDB as an AAP inventory) | `requests` |
+| **Times in your time zone** | | `tzdata` (the system package; `report_time_zone`) |
 
 This is the EE for the site-automation jobs. `redhat.rhel_system_roles` is only on Red Hat's
 Automation Hub. If your hub does not have it, remove its line from `requirements.yml` and
 `check-list.txt`.
 
 > **Built the all-in-one EE before?** If you built `site-ee-all:1` from the earlier EE guide, this
-> version adds Palo Alto and `lowlydba.sqlserver`. Build it as **`site-ee-all:2`** instead of `:1`
-> in the commands below, so `:1` stays there to go back to.
+> version adds Palo Alto, `lowlydba.sqlserver`, `smbprotocol` (the report website on an SMB share) and
+> `tzdata`. Build it as **`site-ee-all:2`** instead of `:1` in the commands below, so `:1` stays there
+> to go back to.
 
 ## Step 1. Go to the folder
 

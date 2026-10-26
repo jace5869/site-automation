@@ -97,8 +97,9 @@ Playbook to `playbooks/fapolicyd_denials.yml`. A Limit of hosts needs no `localh
 and SQL), `network/` (Cisco and Palo Alto) and `all-in-one/` (every job), each built on top of your base EE
 (`base-ee:1.0`, Python 3.12) instead of Red Hat's `ee-minimal` image, keeping all it has: the collections pinned to
 the versions for ansible-core 2.16, SQL Server through `lowlydba.sqlserver`, PAN-OS, and `ee-check` reading each
-folder's `check-list.txt` (it ends with `ALL YES`, or names what is missing). The all-in-one adds `tzdata` for
-`report_time_zone`. docs/EXECUTION_ENVIRONMENT.md and its PDF (`Site-Automation-EE-Guide.pdf`, *Execution
+folder's `check-list.txt` (it ends with `ALL YES`, or names what is missing). All three have `smbprotocol`, for the
+report website written straight to an SMB share (Kerberos, no mount - the next release); the all-in-one adds
+`tzdata` for `report_time_zone`. docs/EXECUTION_ENVIRONMENT.md and its PDF (`Site-Automation-EE-Guide.pdf`, *Execution
 Environments - step by step*) build, check and add each one to AAP. An EE you built from an earlier `ee/all-in-one/`
 keeps working: rebuild when you want what is new.
 
