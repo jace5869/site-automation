@@ -543,6 +543,26 @@ again when you add one): it adds the optional box **Also email the report to** t
 survey and to the workflows that run them. What it does and what people can type:
 [EMAIL_REPORTS.md](EMAIL_REPORTS.md), "Also email the report to".
 
+### AAP - set execution environment
+
+One template - `AAP - set execution environment` (`playbooks/aap_ee.yml`), with only the **Red Hat Ansible
+Automation Platform** credential (its user: **Admin** on the job templates, and **Use** on the execution
+environment), any inventory, no Limit. It puts one execution environment on many job templates at once, after
+you add a new one to AAP - instead of editing each template. In its Variables (`aap/extra_vars/aap_ee.yml`):
+
+- `aap_ee_name`: the execution environment, as AAP names it (*Automation Execution > Infrastructure >
+  Execution Environments*), or its ID when two have that name;
+- which templates, at least one of: `aap_ee_project` (your site-automation project's name: its templates),
+  `aap_ee_from` (only those on these EEs now, e.g. `[Minimal execution environment]`), `aap_ee_templates`
+  (by name or ID); `aap_ee_exclude` leaves some out - jobs that need another EE, such as the network config
+  jobs for Palo Alto when your all-in-one EE has no Palo Alto.
+
+Launch it with Job type **Check** first: it lists every template it would change, from which EE to which, and
+the EE's image - nothing is changed. Then for real. A template with no EE set uses the project's or
+organization's default: it is listed and left as it is, unless `aap_ee_from` has `none`. A name that matches
+nothing - a misspelled exclude, say - or two templates changes nothing at all: the job lists what it would change,
+and fails. Later rebuilds need no run: change that EE's **Image** to the next tag, and every template on it follows.
+
 ### Report website - copy
 
 Only when report templates run in an execution environment that cannot reach the report website's server (no WinRM

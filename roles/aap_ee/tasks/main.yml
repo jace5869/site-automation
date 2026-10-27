@@ -1,0 +1,44 @@
+---
+# Puts aap_ee_name on the job templates picked (library/site_aap_ee.py). Runs on localhost, with the "Red Hat Ansible
+# Automation Platform" credential's variables. A Check run (dry run) only reads.
+- name: Execution environment | the job templates, in AAP
+  site_aap_ee:
+    ee: "{{ aap_ee_name | string }}"
+    project: "{{ aap_ee_project }}"
+    # names have spaces: text (a survey's) is split at commas and line breaks only
+    from_ee: >-
+      {{ (aap_ee_from | regex_replace('[\r\n]+', ',')).split(',') | map('trim') | select | list
+         if aap_ee_from is string else aap_ee_from | map('string') | list }}
+    templates: >-
+      {{ (aap_ee_templates | regex_replace('[\r\n]+', ',')).split(',') | map('trim') | select | list
+         if aap_ee_templates is string else aap_ee_templates | map('string') | list }}
+    exclude: >-
+      {{ (aap_ee_exclude | regex_replace('[\r\n]+', ',')).split(',') | map('trim') | select | list
+         if aap_ee_exclude is string else aap_ee_exclude | map('string') | list }}
+    ca_path: "{{ aap_ee_ca_path }}"
+  register: _aee
+
+- name: Execution environment | what was done
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- if _aee.ee -%}
+      {%-   set _ = out.append("the execution environment: '" ~ _aee.ee.name ~ "' (ID " ~ _aee.ee.id ~ ", " ~ _aee.ee.organization
+                             ~ "): image " ~ (_aee.ee.image or '(none)') ~ ", " ~ _aee.ee.pull) -%}
+      {%- endif -%}
+      {%- for r in _aee.results -%}
+      {%-   set act = ('FAILED: ' ~ r.error) if not r.ok else (('would be ' if r.changed and not r.written else '') ~ r.action) -%}
+      {%-   set _ = out.append('job template ' ~ r.id ~ " '" ~ r.template ~ "' (" ~ (r.project or 'no project') ~ '): ' ~ act) -%}
+      {%- endfor -%}
+      {{ out if _aee.results else out + ['no job template picked - check aap_ee_project, aap_ee_from and aap_ee_templates, '
+                                         ~ 'or that the AAP user can see the templates'] }}
+
+- name: Execution environment | AAP could not be read, or a name matches nothing (or two) - nothing was changed
+  ansible.builtin.fail:
+    msg: "{{ _aee.problems }}"
+  when: _aee.problems | length > 0
+
+- name: Execution environment | a template could not be changed
+  ansible.builtin.fail:
+    msg: "{{ _aee.results | rejectattr('ok') | map(attribute='template') | list }}: see what was done, above"
+  when: _aee.results | rejectattr('ok') | list | length > 0

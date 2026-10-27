@@ -1,0 +1,17 @@
+---
+# SET THE EXECUTION ENVIRONMENT (playbooks/aap_ee.yml): puts one execution environment on many job templates at once,
+# through AAP's API - after you add a new EE to AAP (docs/EXECUTION_ENVIRONMENT.md, chapter 6). Run it with Check
+# first: it lists every template it would change, from which EE to which. Later rebuilds need no run: change the
+# EE's Image in AAP (the next tag), and every template on it follows.
+
+# The execution environment to put on the templates: its name in AAP (Automation Execution > Infrastructure >
+# Execution Environments), or its ID when two have that name.
+aap_ee_name: ""
+# Which job templates (at least one of the three; never every template in AAP):
+aap_ee_project: ""                       # the templates of this AAP project (its name): your site-automation project
+# Only the templates on one of these execution environments now (names or IDs); none = those with no execution
+# environment set, which use the project's or organization's default (left as they are otherwise). Empty = any.
+aap_ee_from: []
+aap_ee_templates: []                     # more job templates, by name or ID - whatever they are on
+aap_ee_exclude: []                       # templates left out, by name or ID (jobs that stay on another EE)
+aap_ee_ca_path: ""                       # a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts)

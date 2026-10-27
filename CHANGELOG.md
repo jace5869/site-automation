@@ -5,7 +5,8 @@
 **Updating without scripts:** paste `site-automation-0.33.1-changed-since-0.33.0.zip` as it is - from 0.32.0:
 `site-automation-0.33.1-changed-since-0.32.0.zip` (0.33.0's files too); from an older release, the zips of 0.32.0
 first, as its notes say. They leave out `playbooks/group_vars`, `playbooks/host_vars` and `poam/poam.csv`. Nothing
-to change in AAP: this release is the execution environments' build files and their guide.
+to change: the execution environments' build files and their guide, and one new job template - *AAP - set execution
+environment*, optional (step 18).
 
 **An EE whose start script its user cannot read.** Every command in an EE goes through its start script,
 `/opt/builder/bin/entrypoint`, and an EE runs as user 1000. ansible-builder copies that script - and `ee-check`'s list
@@ -40,6 +41,16 @@ so in words, and the guide says what to take out (only the certificate inventory
 **Palo Alto and the base's msal:** `panos-upgrade-assurance` 2.1.1 raises `cryptography` past what the base EE's `msal`
 takes (`msal ... requires cryptography<47` from pip); the network and all-in-one EEs now ask for `msal>=1.37.0`. docs/EXECUTION_ENVIRONMENT.md: chapter 2, step 3, "0.33.1: a start script every user can read", and two rows in
 chapter 8.
+
+**New job: AAP - set execution environment** (`playbooks/aap_ee.yml`). After you add a new execution environment to AAP,
+it puts it on many job templates in one run, through AAP's API, instead of editing each one: `aap_ee_name` (the EE, by
+name, or by ID when two share it), and which templates - `aap_ee_project` (your site-automation project), `aap_ee_from`
+(those on these EEs now; `none` = those with no EE set, which are otherwise left as they are), `aap_ee_templates`, and
+`aap_ee_exclude` for jobs that stay on another EE. With none of the three it changes nothing (never every template in
+AAP), nor when a name matches nothing or two templates (a misspelled exclude must not move the job it was meant to keep):
+it then says what it would change, and fails. A Check run lists every template it would change, from which EE to which, with the EE's image. Its credential: Red
+Hat Ansible Automation Platform (Admin on the templates, Use on the EE). Later rebuilds need no run: change the EE's
+Image to the next tag. docs/SETUP_AAP.md, "AAP - set execution environment"; `tests/test_aap_ee.py`.
 
 **To do, if you have not yet: what 0.20.0 to 0.33.1 ask you to set up.** In order; each step works without
 the ones after it.
@@ -167,7 +178,9 @@ the ones after it.
     PDF (*Execution Environments - step by step*), on your base EE - by hand, or `bash build-ee.sh all-in-one 2` in
     `~/ee` (`INSECURE=1` behind TLS inspection; as root with `sudo` when podman cannot give the build your RHEL
     subscription - it says so). An EE that answers `bash: /opt/builder/bin/entrypoint: Permission denied`: build
-    the next tag from 0.33.1's files. docs/EXECUTION_ENVIRONMENT.md.
+    the next tag from 0.33.1's files. Then on your templates in one run: the job template **AAP - set execution
+    environment** (`playbooks/aap_ee.yml`, the Red Hat Ansible Automation Platform credential, Check first);
+    later tags: the EE's Image in AAP. Never push a rebuild under a tag already on the hub. docs/EXECUTION_ENVIRONMENT.md.
 19. **The report website on a Windows share** (0.33.0) - optional, instead of a mount or a web server:
     `report_web_dest: '\\fileserver\reports\aap'` in `all.yml`, and the **Report website** credential
     (`DOMAIN\user`, Modify on that folder) on the report templates, which run in an EE with `smbprotocol` (step 18);

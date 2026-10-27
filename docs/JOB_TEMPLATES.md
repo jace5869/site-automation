@@ -141,6 +141,7 @@ read only or acting ([HORIZON.md](HORIZON.md#step-3-the-job-templates)).
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | Workflow step | [SETUP_AAP.md](SETUP_AAP.md#servicenow-tickets), [RUNBOOKS.md](RUNBOOKS.md#servicenow-tickets-playbooksservicenow_ticketsyml) |
 | ServiceNow health | `playbooks/servicenow_health.yml` | Watch | [SETUP_AAP.md](SETUP_AAP.md#servicenow-health) |
 | AAP - report email question | `playbooks/aap_email_question.yml` | Setup or test | [EMAIL_REPORTS.md](EMAIL_REPORTS.md#also-email-the-report-to-asked-at-launch) |
+| AAP - set execution environment | `playbooks/aap_ee.yml` | Setup or test | [SETUP_AAP.md](SETUP_AAP.md#aap---set-execution-environment), [EXECUTION_ENVIRONMENT.md](EXECUTION_ENVIRONMENT.md#step-3-use-it) |
 | Report website - copy | `playbooks/report_web_copy.yml` | Watch | [WEB_REPORTS.md](WEB_REPORTS.md#the-copy-job-report-templates-in-any-execution-environment) |
 
 ## What one job hands to the next

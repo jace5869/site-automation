@@ -933,6 +933,20 @@ an inventory source, or set it as your organization's default.
 > **You should see:** the job's **Details** tab shows the new EE, and the first job (chapters 3 to 5)
 > is green.
 
+**Many templates at once:** the site-automation job **AAP - set execution environment**
+(`playbooks/aap_ee.yml`, [SETUP_AAP.md](SETUP_AAP.md#aap---set-execution-environment)) puts one EE on
+every template of your site-automation project - or on those on a given EE now - in one run:
+
+```yaml
+aap_ee_name: "All-in-one EE"
+aap_ee_project: "Site automation"           # your project's name in AAP
+aap_ee_exclude: [Network config backup]     # jobs that stay on another EE
+```
+
+Run it with **Check** first: it lists every template it would change, from which EE to which. Later
+rebuilds need no run: change the EE's **Image** to the next tag (chapter 7), and every template on it
+follows. Never push a rebuild under a tag already on the hub: an execution node that has `:1` keeps it.
+
 # Keep them up to date
 
 ## Pin the versions after the first good build

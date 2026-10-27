@@ -71,6 +71,8 @@ jobs:
           python tests/test_report_history.py
           python tests/test_email_question.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_email_question.py
+          python tests/test_aap_ee.py
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_aap_ee.py
           python tests/test_report_web.py
           python tests/test_limit_localhost.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_limit_localhost.py

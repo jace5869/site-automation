@@ -33,6 +33,13 @@ TEMPLATES = {
 ## Run it with Check first: it then only reads, and lists the templates and workflows it would change
 # aap_email_question_project: "Site automation"   # only the templates of your project (its name in AAP)
 """),
+    "aap_ee.yml": ("AAP - set execution environment", "Red Hat Ansible Automation Platform", "", """\
+## The execution environment, and which templates: run it with Check first - it lists every template it would
+## change, from which EE to which; jobs that need another EE go in aap_ee_exclude
+aap_ee_name: "All-in-one EE"                  # its name in AAP (Automation Execution > Infrastructure > Execution Environments)
+aap_ee_project: "Site automation"             # your site-automation project's name in AAP
+# aap_ee_exclude: [Network config backup, Network config load]   # e.g. Palo Alto jobs staying on the network EE
+"""),
     "act_fix_approved.yml": ("Apply approved ACT fix", "Machine", LINUX_CHECKS, ""),
     "ad_health_report.yml": ("Active Directory health report", "Machine (Windows)", "", ""),
     "ad_lockout.yml": ("Active Directory - account lockout", "Machine (Windows)", "", """\
