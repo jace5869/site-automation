@@ -508,7 +508,7 @@
                           {'title': 'The request (from ticket ' ~ _vd_rec.number ~ ')', 'columns': ['Setting', 'Value', 'From'], 'rows': req,
                            'text': _vd_rec.short_description | default('')}] -%}
       {%- if _vd_vm.notes | default([]) -%}
-      {%-   set _ = sections.append({'title': 'Notes', 'status': 'warning', 'lines': _vd_vm.notes}) -%}
+      {%-   set _ = sections.append({'title': 'Notes', 'status': 'warning' if _vd_issues | length > 0 else 'info', 'lines': _vd_vm.notes}) -%}
       {%- endif -%}
       {%- if _vd_svc_lines -%}
       {%-   set _ = sections.append({'title': 'Service and AAP inventory', 'status': 'warning' if _vd_svc_lines | select('match', 'WARNING: ') | list else 'ok',
@@ -521,7 +521,7 @@
       {%- endif -%}
       {{ {'title': _vm_report_subject | trim,
           'status': 'info' if _vd_dry | bool and _vd_ok | bool else ('critical' if not _vd_ok | bool
-                    else ('warning' if _vd_vm.notes | default([]) or (_vd_closed and not _vd_closed.ok | default(true))
+                    else ('warning' if _vd_issues | length > 0 or (_vd_closed and not _vd_closed.ok | default(true))
                                        or _vd_svc_lines | select('match', 'WARNING: ') | list else 'ok')),
           'subtitle': 'Ticket ' ~ _vd_rec.number ~ ' - ' ~ _vd_job,
           'summary': [{'label': 'VM', 'value': _vd.spec.vm_name},
@@ -593,7 +593,7 @@
                           {'title': 'The request (from ticket ' ~ _vd_rec.number ~ ')', 'columns': ['Setting', 'Value', 'From'], 'rows': req,
                            'text': _vd_rec.short_description | default('')}] -%}
       {%- if notes -%}
-      {%-   set _ = sections.append({'title': 'Notes', 'status': 'warning', 'lines': notes}) -%}
+      {%-   set _ = sections.append({'title': 'Notes', 'status': 'warning' if _vd_issues | length > 0 else 'info', 'lines': notes}) -%}
       {%- endif -%}
       {%- if _vd_svc_lines -%}
       {%-   set _ = sections.append({'title': 'Service and AAP inventory', 'status': 'warning' if _vd_svc_lines | select('match', 'WARNING: ') | list else 'ok',
@@ -606,7 +606,7 @@
       {%- endif -%}
       {{ {'title': _vm_report_subject | trim,
           'status': 'info' if _vd_dry | bool and _vd_all_ok | bool else ('critical' if not _vd_all_ok | bool
-                    else ('warning' if notes or (_vd_closed and not _vd_closed.ok | default(true))
+                    else ('warning' if _vd_issues | length > 0 or (_vd_closed and not _vd_closed.ok | default(true))
                                        or _vd_svc_lines | select('match', 'WARNING: ') | list else 'ok')),
           'subtitle': 'Ticket ' ~ _vd_rec.number ~ ' - ' ~ _vd_job,
           'summary': [{'label': 'VMs', 'value': _vd_res | length},

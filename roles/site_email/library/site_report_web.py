@@ -21,8 +21,9 @@ description:
     smb://server/share/folder) or an http(s):// address that accepts PUT. A login for the upload comes
     from the environment - REPORT_WEB_TOKEN (sent as a bearer token), or REPORT_WEB_USERNAME and
     REPORT_WEB_PASSWORD (basic) - as the "Report website" credential sets it, never from a parameter. The share's
-    login is REPORT_WEB_USERNAME (DOMAIN\user or user@domain) and REPORT_WEB_PASSWORD too, or a Kerberos ticket
-    (smb_auth kerberos, no password). The share's folder must be there (it is never made); the folders inside it are.
+    login is REPORT_WEB_USERNAME (user@YOURDOMAIN.MIL - the realm in capitals - for Kerberos; DOMAIN\user for NTLM
+    only) and REPORT_WEB_PASSWORD too, or a Kerberos ticket (smb_auth kerberos, no password). The share's folder must
+    be there (it is never made); the folders inside it are.
   - In check mode nothing is written; with a share, the job still logs in and looks at the folder (read-only), so a
     dry run proves the login and the path.
   - The pictures of the page (src="cid:name", the logo) are put inside it (data:), so every page stands alone.
@@ -223,12 +224,12 @@ class SmbTarget(object):
                        'the EE (the EEs of ee/ have it since 0.32.0: build yours again), or let the copy job write the pages '
                        '(report_web_copy) from an EE that has it (docs/REPORT_SHARE.md, step 3)' % self.root)
         self.smb, self.exc = smbclient, smbexc
-        self.kw = {'port': port}
+        self.kw, self.auth = {'port': port}, auth
         user, password = os.environ.get('REPORT_WEB_USERNAME', ''), os.environ.get('REPORT_WEB_PASSWORD', '')
         if auth not in ('negotiate', 'ntlm', 'kerberos'):
             raise Fail('report_web_smb_auth must be negotiate, ntlm or kerberos, not %s' % auth)
         if not user and auth != 'kerberos':
-            raise Fail('no login for the share %s: attach the "Report website" credential (DOMAIN\\user and its password) to '
+            raise Fail('no login for the share %s: attach the "Report website" credential (user@YOURDOMAIN.MIL and its password) to '
                        'the template - or report_web_smb_auth: kerberos with a ticket' % self.root)
         try:
             smbclient.register_session(self.server, username=user or None, password=password or None, port=port,
@@ -251,14 +252,25 @@ class SmbTarget(object):
         text = str(e)
         low = text.lower()
         if 'logon_failure' in low or 'logon failure' in low or 'status_logon' in low or 'invalid credentials' in low:
-            hint = ': the user name or password is wrong (the Report website credential - DOMAIN\\user), or the account is locked'
+            hint = ': the user name or password is wrong (the Report website credential - user@YOURDOMAIN.MIL), or the account is locked'
         elif 'access_denied' in low or 'access is denied' in low:
             hint = ': the account may log in but not use this folder - give it Modify on it (the share and the folder)'
         elif 'bad_network_name' in low or '0xc00000cc' in low or (what.startswith('opening the share') and (
                 '0xc0000225' in low or 'no such file' in low)):
             hint = ': no such share on that server (the part after the server name)'
+        elif 'default realm' in low:
+            hint = (': write the Report website credential\'s user name as user@YOURDOMAIN.MIL - the domain\'s full name in capitals '
+                    '(its Kerberos realm)')
+        elif 'invalid token was supplied' in low and self.auth == 'kerberos':
+            hint = (': kerberos sends a bare Kerberos token, which this server does not take - use report_web_smb_auth: negotiate '
+                    '(Kerberos too, the way the server expects it)')
+        elif 'server not found in kerberos database' in low:
+            hint = (': write the server by its full name in report_web_dest (\\\\fileserver.yourdomain.mil\\share\\folder) - '
+                    'Kerberos asks for a ticket to that name')
         elif 'md4' in low or 'unsupported hash' in low:
-            hint = ': NTLM needs MD4, which a FIPS execution environment does not have - use report_web_smb_auth: kerberos'
+            hint = (': NTLM needs MD4, which a FIPS execution environment does not have, and Kerberos did not happen - '
+                    'report_web_smb_auth: negotiate, the user name user@YOURDOMAIN.MIL (the realm in capitals), the server\'s '
+                    'full name in report_web_dest')
         elif 'failed to connect' in low or 'timed out' in low or 'refused' in low or 'name or service' in low:
             hint = ': the server cannot be reached on port %d from the execution node (a firewall, or the name)' % self.kw['port']
         else:

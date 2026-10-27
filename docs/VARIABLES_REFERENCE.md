@@ -972,7 +972,7 @@ File: `roles/site_email/defaults/main.yml`
 | `report_web_index` | `index.html` | every report's last run ("" = none) |
 | `report_web_names` | `{}` | your own {names}, e.g. {site: "{{ site_code }}"} for "{site}/{template}/..." |
 | `report_web_json` | `true` | the report's data as .json beside each page and index.json beside the index |
-| `report_web_smb_auth` | `negotiate` | A share (report_web_dest \\server\share\folder): how the job logs in, and the connection. negotiate (Kerberos when the EE has a ticket, else NTLM), ntlm, or kerberos (FIPS: no NTLM) |
+| `report_web_smb_auth` | `negotiate` | A share (report_web_dest \\server\share\folder): how the job logs in, and the connection. negotiate (Kerberos - FIPS too: user@YOURDOMAIN.MIL, the server's full name - else NTLM), ntlm, or kerberos (a ticket already in the job) |
 | `report_web_smb_encrypt` | `false` | true = encrypt (SMB 3) even when the share does not require it; one that requires it is always |
 | `report_web_smb_port` | `445` | the share's port |
 | `report_web_ca_path` | (empty) | a CA file for an https:// report_web_dest, or report_web_host's WinRM certificate ("" = what the EE trusts) |

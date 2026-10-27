@@ -52,6 +52,21 @@ it then says what it would change, and fails. A Check run lists every template i
 Hat Ansible Automation Platform (Admin on the templates, Use on the EE). Later rebuilds need no run: change the EE's
 Image to the next tag. docs/SETUP_AAP.md, "AAP - set execution environment"; `tests/test_aap_ee.py`.
 
+**VM - deploy from ServiceNow ticket: a VM that installs its own OS is not a warning.** A template of
+`vm_deploy_pxe_templates` builds a VM with no operating system yet - it installs from the network (an MECM task
+sequence) or its CD - and the report coloured that note, and the whole report, as a **Warning**. Only what did not
+finish (no IP address in time, no customization result, a network adapter not connected at power on, guestinfo not
+set) is a warning now; the other notes - no operating system yet, the cluster and datastore chosen, disks to
+partition - are **Info**, and the report is green.
+
+**The report website on a share, FIPS: `negotiate`, not `kerberos`.** 0.33.0's guide said to use
+`report_web_smb_auth: kerberos` on a FIPS execution environment. That mode sends a bare Kerberos token, and a file
+server that answers in SPNEGO stops it with `Invalid token was supplied`. Leave `negotiate`: it logs in with Kerberos
+first, with the credential's password, when the **Report website** credential's user name is
+`svc_aap_reports@YOURDOMAIN.MIL` (the domain's full name in capitals; `DOMAIN\user` gives `Configuration file does
+not specify default realm`) and `report_web_dest` names the server by its full name. The job now says which of
+these it is, in words. docs/REPORT_SHARE.md, step 5 and step 6 (FIPS), and its table.
+
 **To do, if you have not yet: what 0.20.0 to 0.33.1 ask you to set up.** In order; each step works without
 the ones after it.
 
@@ -181,11 +196,12 @@ the ones after it.
     the next tag from 0.33.1's files. Then on your templates in one run: the job template **AAP - set execution
     environment** (`playbooks/aap_ee.yml`, the Red Hat Ansible Automation Platform credential, Check first);
     later tags: the EE's Image in AAP. Never push a rebuild under a tag already on the hub. docs/EXECUTION_ENVIRONMENT.md.
-19. **The report website on a Windows share** (0.33.0) - optional, instead of a mount or a web server:
-    `report_web_dest: '\\fileserver\reports\aap'` in `all.yml`, and the **Report website** credential
-    (`DOMAIN\user`, Modify on that folder) on the report templates, which run in an EE with `smbprotocol` (step 18);
-    on a FIPS execution environment `report_web_smb_auth: kerberos`. Run one report as **Check** first: it logs in
-    and checks the folder. docs/REPORT_SHARE.md and its PDF.
+19. **The report website on a Windows share** (0.33.0, 0.33.1) - optional, instead of a mount or a web server:
+    `report_web_dest: '\\fileserver.yourdomain.mil\reports\aap'` in `all.yml` (the server by its full name), and
+    the **Report website** credential (`svc_aap_reports@YOURDOMAIN.MIL`, the realm in capitals; Modify on that
+    folder) on the report templates, which run in an EE with `smbprotocol` (step 18). Leave `report_web_smb_auth` at
+    `negotiate`, on FIPS too. Run one report as **Check** first: it logs in and checks the folder.
+    docs/REPORT_SHARE.md and its PDF.
 
 ## 0.33.0 — 2026-10-26
 

@@ -107,8 +107,9 @@ timeout 3 bash -c '</dev/tcp/fileserver.yoursite.mil/445' && echo open || echo b
    *Input configuration* and *Injector configuration* of `aap/credential_types/report_web.yml`. (It is the same
    type the WinRM and upload modes use: if you have it, skip this.)
 2. **The credential**: *Automation Execution > Infrastructure > Credentials > Add*, type **Report website**,
-   name e.g. `Report share`, **User name** `YOURDOMAIN\svc_aap_reports` (or `svc_aap_reports@yourdomain.mil`),
-   **Password**. Leave *Upload token* empty.
+   name e.g. `Report share`, **User name** `svc_aap_reports@YOURDOMAIN.MIL` - the account, `@`, and the domain's
+   full name in capitals (its Kerberos realm) - and **Password**. Leave *Upload token* empty. `YOURDOMAIN\svc_aap_reports`
+   works only with NTLM, never in a FIPS execution environment (step 6).
 3. **Attach it** to each report template (*Templates > the template > Edit > Credentials*), next to its other
    credentials - or only to **Report website - copy**, with the copy job.
 
@@ -118,8 +119,9 @@ For every report job at once, in `playbooks/group_vars/all.yml` (the report jobs
 inventory):
 
 ```yaml
-report_web_dest: '\\fileserver\its\aap\reports'   # single quotes: the backslashes stay
-# negotiate (Kerberos when there is a ticket, else NTLM), ntlm or kerberos
+# single quotes: the backslashes stay; the server by its full name - Kerberos asks for a ticket to that name
+report_web_dest: '\\fileserver.yourdomain.mil\its\aap\reports'
+# negotiate (Kerberos, else NTLM) - leave it, FIPS too; ntlm; kerberos (only a ticket already in the job)
 report_web_smb_auth: negotiate
 # encrypt every byte (SMB 3); a share that requires it is encrypted anyway
 # report_web_smb_encrypt: true
@@ -127,13 +129,17 @@ report_web_smb_auth: negotiate
 # report_web_url: https://reports.yoursite.mil/aap
 ```
 
-`smb://fileserver/its/aap/reports` works too. Not in an inventory group's Variables: the page is written by the AAP
+`smb://fileserver.yourdomain.mil/its/aap/reports` works too. Not in an inventory group's Variables: the page is written by the AAP
 side of the job, which does not get a group's variables. To try it on one template first, put the lines in that
 template's **Variables** box.
 
-**FIPS.** NTLM needs the MD4 hash, which a FIPS-mode execution environment does not have. There, use Kerberos:
-`report_web_smb_auth: kerberos`, with a ticket in the job ([EXECUTION_ENVIRONMENT.md](EXECUTION_ENVIRONMENT.md),
-"Active Directory from the EE"). The message *NTLM needs MD4* says this is the case.
+**FIPS.** Leave `report_web_smb_auth: negotiate`. It logs in with Kerberos first, with the credential's password - no
+ticket to set up - when the user name is `svc_aap_reports@YOURDOMAIN.MIL` (step 5) and `report_web_dest` names the
+server by its full name. NTLM, its fallback, needs the MD4 hash, which a FIPS-mode execution environment does not
+have: the message *NTLM needs MD4* means Kerberos did not happen - check those two. Not `kerberos`: it sends a bare
+Kerberos token, and a server that answers in SPNEGO - what `negotiate` speaks - stops it with *Invalid token was
+supplied*. The EEs of `ee/` have the Kerberos settings it needs; to try Kerberos from one by hand:
+[EXECUTION_ENVIRONMENT.md](EXECUTION_ENVIRONMENT.md), EE 1, "Step 4. Check Kerberos to Active Directory".
 
 ## Step 7. Test it
 
@@ -163,12 +169,15 @@ template's **Variables** box.
 |---|---|---|
 | `this execution environment has no smbprotocol` | the template's EE is older than 0.33.0's all-in-one | build and use the new EE (step 3), or the copy job |
 | `no login for the share ...: attach the "Report website" credential` | the template has no Report website credential | step 5.3 |
-| `the user name or password is wrong ... or the account is locked` | the login was refused | the credential's user name (`YOURDOMAIN\svc_aap_reports`) and password; is the account locked or expired? |
+| `the user name or password is wrong ... or the account is locked` | the login was refused | the credential's user name (`svc_aap_reports@YOURDOMAIN.MIL`) and password; is the account locked or expired? |
+| `Configuration file does not specify default realm` | the user name has no realm (`YOURDOMAIN\user`, or no domain) | `svc_aap_reports@YOURDOMAIN.MIL`, the realm in capitals (step 5.2) |
+| `Server not found in Kerberos database` | the server's short name in `report_web_dest` | its full name: `\\fileserver.yourdomain.mil\its\...` (step 6) |
+| `Invalid token was supplied` | `report_web_smb_auth: kerberos` | `negotiate` (step 6, FIPS) |
 | `the account may log in but not use this folder` | access denied | step 1: Modify on the folder, Change on the share |
 | `no such share on that server` | the part after the server name is wrong | the share's name: `\\fileserver\its`, as Explorer shows it |
 | `the folder ... is not there - make it once by hand` | the folder under the share is missing | make it (step 1), or correct `report_web_dest` |
 | `cannot be reached on port 445` | firewall, routing or the name | step 4 |
-| `NTLM needs MD4 ... use report_web_smb_auth: kerberos` | a FIPS execution environment | step 6, FIPS |
+| `NTLM needs MD4 ... Kerberos did not happen` | a FIPS execution environment, and Kerberos did not log in | step 6, FIPS: `negotiate`, `user@YOURDOMAIN.MIL`, the server's full name |
 | The page is there, but the reports page cannot open it | the readers lack Read, or a UNIX-style volume | step 1 |
 
 ## The other ways

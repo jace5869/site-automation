@@ -206,7 +206,8 @@
 # report_web_json: true
 
 ## A share (report_web_dest \\server\share\folder): how the job logs in, and the connection.
-## negotiate (Kerberos when the EE has a ticket, else NTLM), ntlm, or kerberos (FIPS: no NTLM)
+## negotiate (Kerberos - FIPS too: user@YOURDOMAIN.MIL, the server's full name - else NTLM), ntlm,
+## or kerberos (a ticket already in the job)
 # report_web_smb_auth: negotiate
 
 ## true = encrypt (SMB 3) even when the share does not require it; one that requires it is always

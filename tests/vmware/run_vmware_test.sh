@@ -1298,9 +1298,20 @@ EOPY
 sites='{"vm_deploy_templates": ["rhel9-*", "win2022-*"], "vm_deploy_pxe_templates": ["*-pxe"], "vm_deploy_wait_ip": 3,
         "vm_deploy_sites": {"SiteA": {"cluster": "DC0_C0"}, "SiteB": {"cluster": "DC0_H0"}}}'
 inc3="$(newticket $'vm_name: winapp01\ntemplate: win2022-pxe\nsite: siteb')"
+mkdir -p "$work/pxeweb"
 run "deploy from a ticket: a network-boot (PXE / MECM) Windows template, its site picks the cluster; the ticket gets the MAC" ok \
-    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc3" -e "$sites" \
+    vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc3" -e "$sites" -e "{\"report_web_dest\": \"$work/pxeweb\"}" \
     -- "cluster: DC0_H0   (from site SiteB)" "winapp01 deployed - installs its OS, MAC 00:" "none: the template installs its operating system"
+# no operating system yet is what a network-boot template is for: a note to know (Info), not a warning
+"$py" - "$work/pxeweb" <<'EOPY' && echo "ok   -   ...its report: the notes (no operating system yet) Info, the report not a warning" || { echo "FAIL -   ...PXE report status"; fails=$((fails + 1)); }
+import glob, json, os, sys
+docs = [json.load(open(f))["report"] for f in glob.glob(os.path.join(sys.argv[1], "**", "*.json"), recursive=True)
+        if os.path.basename(f) != "index.json"]
+r = [d for d in docs if "winapp01" in d.get("title", "")][0]
+notes = [s for s in r["sections"] if s["title"] == "Notes"][0]
+print(r["status"], notes["status"], notes["lines"])
+sys.exit(0 if r["status"] == "ok" and notes["status"] == "info" and any("no operating system yet" in l for l in notes["lines"]) else 1)
+EOPY
 VMWARE_PORT=$port "$py" - <<'EOPY' && echo "ok   -   ...winapp01 is on SiteB's host DC0_H0, powered on, not customized, its name in guestinfo.hostname" || { echo "FAIL -   ...the PXE VM"; fails=$((fails + 1)); }
 import os, sys
 from pyVim.connect import SmartConnect

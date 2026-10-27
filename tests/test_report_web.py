@@ -143,6 +143,18 @@ class Module(unittest.TestCase):
                 if v is not None:
                     os.environ[k] = v
 
+    def test_smb_login_failures_said_in_words(self):
+        t = rw.SmbTarget.__new__(rw.SmbTarget)      # no login: only the words for what went wrong
+        t.kw, t.auth = {'port': 445}, 'negotiate'
+        why = lambda text: t._why('logging in to fs01.example.mil as svc', Exception(text))     # noqa: E731
+        self.assertIn('user@YOURDOMAIN.MIL - the domain\'s full name in capitals',
+                      why('SpnegoError (1): Configuration file does not specify default realm, Context: Getting kerberos'))
+        self.assertIn("the server's full name", why('ValueError: unsupported hash type md4'))
+        self.assertIn('the server by its full name', why('Server not found in Kerberos database'))
+        self.assertNotIn('negotiate (Kerberos too', why('SpnegoError (9): Invalid token was supplied, Minor: Success'))
+        t.auth = 'kerberos'
+        self.assertIn('use report_web_smb_auth: negotiate', why('SpnegoError (9): Invalid token was supplied, Minor: Success'))
+
     def test_http_login_from_the_environment(self):
         os.environ.update(REPORT_WEB_TOKEN="", REPORT_WEB_USERNAME="up", REPORT_WEB_PASSWORD="pw")
         self.assertEqual(rw.Target("https://reports.example.mil/r", "", 5).auth, "Basic dXA6cHc=")
