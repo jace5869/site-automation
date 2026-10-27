@@ -31,6 +31,7 @@
 #   - cert_report.yml
 #   - database_health.yml
 #   - esxi_security.yml
+#   - fapolicyd_containers.yml
 #   - fapolicyd_denials.yml
 #   - health_check.yml
 #   - horizon_capacity_report.yml

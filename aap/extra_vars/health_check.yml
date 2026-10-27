@@ -815,7 +815,7 @@
 
 ## Containers: the CA bundle inside every running podman container (root's and each logged-in
 ## user's), read with podman exec - a container image carries its own ca-certificates (Red Hat: UBI
-## images are affected too). Off by default (0.33.2): a shell started in each container that reads
+## images are affected too). Off by default (0.34.0): a shell started in each container that reads
 ## CA bundles and searches its whole filesystem looks like certificate discovery to endpoint
 ## security, which flags it. Turn it on once your security team has cleared it.
 # check_trust_containers: false

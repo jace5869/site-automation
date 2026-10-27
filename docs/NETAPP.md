@@ -41,7 +41,7 @@ certificates). Then, in this order:
 
 The health alerts and the error events come last (since 0.31.1): the tables above them say what is
 wrong, these say what ONTAP raised about it - often the same thing again, and many lines.
-The volumes come third, after the nodes (since 0.33.2): the table most often acted on.
+The volumes come third, after the nodes (since 0.34.0): the table most often acted on.
 
 A section with nothing to report says so in one line ("Every LIF is up and at home."). Long
 tables show the problems first and are cut at 50 rows (`ontap_report_max_rows`); the job's

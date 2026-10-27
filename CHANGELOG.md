@@ -1,11 +1,12 @@
 # Changelog
 
-## 0.34.0 — not released yet
+## 0.34.0 — 2026-10-27
 
 **Updating without scripts:** paste `site-automation-0.34.0-changed-since-0.33.1.zip` as it is - from an older
 release, the zips of 0.33.1 first, as its notes say. They leave out `playbooks/group_vars`, `playbooks/host_vars` and
 `poam/poam.csv`. Nothing to change unless the account that writes your report website has Write but not Modify there
-(step 20).
+(step 20); the certificate trust check no longer reads inside containers (step 21); one new job template,
+*fapolicyd and containers*, optional (step 22).
 
 **The report website: each report's last runs, and a tab per area.** The index (`index.html`) listed each report's
 last run only, while every run's page stayed in the folder for good. Now each report keeps its last 5 runs
@@ -27,6 +28,33 @@ replaced just then: the job stopped with `STATUS_ACCESS_DENIED` on `index.html`.
 later, for up to about 10 seconds (a share, a mounted share's folder, a `report_web_host`). `index.html` or a
 `latest.html` open longer than that - Edge may hold a page from a share for as long as its tab is open - is now a
 warning, not a failed job: the run's own page and `index.json` are written, and the next run writes the index page.
+
+**NetApp health report: an offline or restricted volume** shows its size and `-` for available and used % (was
+`?`) - ONTAP reports no usage for a volume that is not online. Still listed in red.
+
+**NetApp health report: the volumes third**, after the clusters and nodes (they were twelfth, after the network and
+the aggregates): the table most often acted on.
+
+**Certificate trust check: containers off by default** (`check_trust_containers: false`). Reading each running podman
+container's CA bundles started a shell in it (`podman exec <container> sh -c "cat ...; find / ..."`), which endpoint
+security flags as certificate discovery. The host's own stores, Java, Python, Node, Go and certificate files are still
+read. To read containers again, set `check_trust_containers: true` once your security team has cleared it.
+docs/TRUST_STORES.md.
+
+**New job: fapolicyd and containers** (`playbooks/fapolicyd_containers.yml`). What fapolicyd blocked that a container
+caused - a container's files are not in the trust database RPM fills from the host's packages - told apart from the
+host's own denials by the container SELinux labels, the container programs (crun, conmon, podman ...), container
+storage paths and the podman cgroup; grouped by program and file, with the rule that denied it and the container's
+name. For each, the narrowest allow rule (`allow perm=execute exe=/usr/bin/crun : path=/app/server`) under *Rules to
+approve*. Once your security approval has them, list them in `fapolicyd_container_rules`: the job writes them to a
+file of its own, `/etc/fapolicyd/rules.d/35-site-containers.rules`, loads them (`fagenrules --load`), checks
+fapolicyd still runs and has them - else puts the file back and fails the host after the report. Only plain allow
+rules; `allow perm=any all : all` or `dir=/` writes nothing anywhere. Check shows what would change. Credential:
+Machine with sudo. docs/RUNBOOKS.md, "fapolicyd and containers"; `tests/fapolicyd/run_fapolicyd_containers_test.sh`.
+
+`scripts/gen_template_vars.py` finds the settings a playbook reads by its words, in one pass: it took minutes on
+Python 3.14 (one regular expression per setting, more than `re` keeps compiled), now under a second; the files it
+writes are the same.
 
 **To do, if you have not yet: what 0.20.0 to 0.34.0 ask you to set up.** In order; each step works without
 the ones after it.
@@ -171,30 +199,13 @@ the ones after it.
     if you like. Templates named otherwise than in docs/JOB_TEMPLATES.md: check which tab each is on, and set
     `report_web_tabs` in `all.yml` if you want them elsewhere. docs/WEB_REPORTS.md, "The index page: tabs, and each
     report's last runs".
-
-**NetApp health report: the volumes third**, after the clusters and nodes (they were twelfth, after the network and
-the aggregates): the table most often acted on.
-
-**Certificate trust check: containers off by default** (`check_trust_containers: false`). Reading each running podman
-container's CA bundles started a shell in it (`podman exec <container> sh -c "cat ...; find / ..."`), which endpoint
-security flags as certificate discovery. The host's own stores, Java, Python, Node, Go and certificate files are still
-read. To read containers again, set `check_trust_containers: true` once your security team has cleared it.
-docs/TRUST_STORES.md.
-
-**New job: fapolicyd and containers** (`playbooks/fapolicyd_containers.yml`). What fapolicyd blocked that a container
-caused - a container's files are not in the trust database RPM fills from the host's packages - told apart from the
-host's own denials by the container SELinux labels, the container programs (crun, conmon, podman ...), container
-storage paths and the podman cgroup; grouped by program and file, with the rule that denied it and the container's
-name. For each, the narrowest allow rule (`allow perm=execute exe=/usr/bin/crun : path=/app/server`) under *Rules to
-approve*. Once your security approval has them, list them in `fapolicyd_container_rules`: the job writes them to a
-file of its own, `/etc/fapolicyd/rules.d/35-site-containers.rules`, loads them (`fagenrules --load`), checks
-fapolicyd still runs and has them - else puts the file back and fails the host after the report. Only plain allow
-rules; `allow perm=any all : all` or `dir=/` writes nothing anywhere. Check shows what would change. Credential:
-Machine with sudo. docs/RUNBOOKS.md, "fapolicyd and containers"; `tests/fapolicyd/run_fapolicyd_containers_test.sh`.
-
-`scripts/gen_template_vars.py` finds the settings a playbook reads by its words, in one pass: it took minutes on
-Python 3.14 (one regular expression per setting, more than `re` keeps compiled), now under a second; the files it
-writes are the same.
+21. **Containers in the certificate trust check** (0.34.0) - nothing to set: it no longer reads inside containers.
+    To read them again, once your security team has cleared the `podman exec` it runs:
+    `check_trust_containers: true` in `all.yml`. docs/TRUST_STORES.md.
+22. **fapolicyd and containers** (0.34.0) - optional, on hosts that run containers: a template for
+    `playbooks/fapolicyd_containers.yml` (credential Machine with sudo; Check on launch), run read only first. Add
+    the rules it proposes only after your security approval (`fapolicyd_container_rules`). docs/RUNBOOKS.md,
+    "fapolicyd and containers".
 
 ## 0.33.1 — 2026-10-27
 
