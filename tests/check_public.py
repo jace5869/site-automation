@@ -32,6 +32,7 @@ DOMAINS = (
     "redhat.io", "redhat.com", "ansible.com", "mariadb.com", "mariadb.org", "netapp.com", "vmware.com",
     "broadcom.com", "microsoft.com", "adaptivecards.io", "python.org", "pypi.org", "pythonhosted.org", "servicenow.com", "w3.org",
     "nist.gov", "cyber.mil",                                        # XCCDF's namespace; DISA's STIG references (the STIG drift report)
+    "openxmlformats.org", "xmlsoap.org",                            # the Excel workbook's and SOAP's namespaces (site_xlsx, esxcli via vCenter)
 )
 # Dotted words of code, not host names (System.Net, $vm.guest.net ...).
 CODE = ("system.io", "system.net", "guest.net", "g.net")
