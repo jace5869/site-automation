@@ -50,6 +50,7 @@ jobs:
           python tests/test_cert_inventory.py
           python tests/test_net_certs.py
           python tests/test_ontap.py
+          python tests/test_fapolicyd_containers.py
           python tests/test_ad.py
           python tests/test_ad_lockout.py
           python tests/test_mariadb_perf.py
@@ -151,6 +152,10 @@ jobs:
         run: |
           bash tests/fapolicyd/run_fapolicyd_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_test.sh
+      - name: fapolicyd and containers - the denials, the rules approved added, a load that fails put back (fake rpm/systemctl/ausearch/fagenrules; current ansible-core and 2.16)
+        run: |
+          bash tests/fapolicyd/run_fapolicyd_containers_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_containers_test.sh
       - name: Trust check against a made-up host tree (current ansible-core and 2.16)
         run: |
           bash tests/trust/run_trust_test.sh

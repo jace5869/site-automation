@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd_containers](#fapolicyd_containers), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -528,6 +528,30 @@ File: `roles/check_trust/defaults/main.yml`
 | `check_trust_remove_blocklist_dir` | (empty) | the system blocklist folder; empty = the distribution's (/etc/pki/ca-trust/source/blocklist, SUSE /etc/pki/trust/blacklist) |
 | `check_trust_remove_update_cmd` | (empty) | the command that rebuilds the system trust after blocklisting; empty = the distribution's (update-ca-trust, update-ca-certificates) |
 | `check_trust_keystore_password` | `changeit` | the Java keystores' password (keytool's default) |
+
+## fapolicyd_containers
+
+File: `roles/fapolicyd_containers/defaults/main.yml`
+
+> FAPOLICYD AND CONTAINERS (playbooks/fapolicyd_containers.yml, docs/RUNBOOKS.md "fapolicyd and containers"): what fapolicyd blocked that a container caused, the narrowest allow rule for each, and - once approved - those rules added to the hosts. A container's files are not in fapolicyd's trust database (RPM fills it from the host's packages), so a program in a container image can be denied.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `fapolicyd_container_since` | `today` | ausearch -ts: recent (10 minutes), today, yesterday, this-week, boot |
+| `fapolicyd_container_rules` | `[]` | The approved rules to add, each exactly as the report's "Rules to approve" gives it (or your own allow rule). Written to fapolicyd_container_rules_file on every host of the run, then loaded (fagenrules --load). A rule that is not a plain allow rule stops the change on every host. Route each one through your security a… (all of it: the role file) |
+| `fapolicyd_container_rules_remove` | `[]` | rules this job added earlier, to take out again |
+| `fapolicyd_container_rules_file` | `/etc/fapolicyd/rules.d/35-site-containers.rules` | The file this job owns - and only this one. 35: after the deny rules of 30-patterns (ld.so tricks), before 40-bad-elf, 41-shared-obj, 42-trusted-elf and 90-deny-execute that deny a container's untrusted files. |
+| `fapolicyd_container_compiled` | `/etc/fapolicyd/compiled.rules` | what fagenrules builds: the rules are checked there |
+| `fapolicyd_container_rules_owner` | `root` | the rules file's owner, as the other rules.d files |
+| `fapolicyd_container_rules_group` | `fapolicyd` | and its group |
+| `fapolicyd_container_scope` | `path` | The proposed rules: the file (path) or its folder (dir: one rule for every file there; never a system folder), and with the program that was denied (exe=..., narrower) or for any program (false). path (the file) or dir (its folder) |
+| `fapolicyd_container_rule_exe` | `true` | the rule names the program denied (false: any program) |
+| `fapolicyd_container_labels` | `'(^\|:)(container_[a-z0-9_]*_t\|spc_t)(:\|$)'` | What marks a denial as a container's (any one): an SELinux label on the program or the file, a container program, a path in container storage, or a process in a podman container's cgroup (while it runs). The labels: a regular expression on the program's and the file's SELinux labels. |
+| `fapolicyd_container_programs` | `- podman - crun - runc - conmon - buildah - skopeo - catatonit - netavark - aardvark-dns…` | The container programs (their base names): what they run or open is a container's. |
+| `fapolicyd_container_paths` | `- '^/var/lib/containers/' - '/\.local/share/containers/' - '^/run/containers/' - '^/run/u…` | Container storage: regular expressions on the program's or the file's path. |
+| `fapolicyd_container_names` | `true` | the containers' names (podman ps, root's and each logged-in user's) |
+| `fapolicyd_container_max` | `200` | at most this many groups per host (the most denied first) |
+| `fapolicyd_container_timeout` | `120` | seconds for ausearch |
 
 ## horizon
 

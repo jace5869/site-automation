@@ -25,6 +25,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Certificate restore | `playbooks/cert_restore.yml` | [cert_restore.yml](cert_restore.yml) |
 | Database health - MariaDB / MySQL | `playbooks/database_health.yml` | [database_health.yml](database_health.yml) |
 | ESXi - security settings | `playbooks/esxi_security.yml` | [esxi_security.yml](esxi_security.yml) |
+| fapolicyd and containers | `playbooks/fapolicyd_containers.yml` | [fapolicyd_containers.yml](fapolicyd_containers.yml) |
 | fapolicyd denials | `playbooks/fapolicyd_denials.yml` | [fapolicyd_denials.yml](fapolicyd_denials.yml) |
 | Health check | `playbooks/health_check.yml` | [health_check.yml](health_check.yml) |
 | Horizon - API test | `playbooks/horizon_api_test.yml` | [horizon_api_test.yml](horizon_api_test.yml) |

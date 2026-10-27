@@ -1,0 +1,63 @@
+---
+# fapolicyd and containers: what fapolicyd blocked that a container caused (a program in a container image is not in
+# the trust database, which RPM fills from the host's packages), the narrowest allow rule for each - and, once
+# approved, those rules added. ONE report of every host: emailed (report_email_to) and on the report website.
+#   target                       the hosts (default: all) - or a Limit of hosts
+#   fapolicyd_container_since    ausearch -ts: recent (10 min), today (the default), yesterday, this-week, boot
+#   fapolicyd_container_rules    the approved rules to add, as the report gives them ([] = read only, the default)
+#   fapolicyd_container_rules_remove   rules this job added, to take out
+# The rules go to one file of their own (/etc/fapolicyd/rules.d/35-site-containers.rules), loaded with fagenrules;
+# one that does not load, or fapolicyd stopped after it: the file put back. Run it in Check first: it shows what
+# would change. Each rule is a security-control change: route it through your security approval (the ISSO).
+# docs/RUNBOOKS.md, "fapolicyd and containers".
+- name: Fapolicyd and containers - the denials, the rules
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  become: true
+  roles:
+    - fapolicyd_containers
+
+# on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
+- name: Fapolicyd and containers - the report
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Fapolicyd containers | email the report, publish it (report_email_to, report_web_dest)
+      ansible.builtin.include_role:
+        name: site_email
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _report: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | list
+             | fapolicyd_containers_report(ansible_play_hosts_all, fapolicyd_container_since | default('today'),
+                                           site_report_title | default(''),
+                                           fapolicyd_container_rules_file | default('/etc/fapolicyd/rules.d/35-site-containers.rules'),
+                                           ansible_check_mode) }}
+      when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+
+- name: Fapolicyd and containers - after the report
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Fapolicyd containers | no email
+      ansible.builtin.debug:
+        msg: "No email: report_email_to is not set (docs/EMAIL_REPORTS.md)."
+      run_once: true
+      when: report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0
+
+    - name: Fapolicyd containers | the rules could not be changed on this host (after the report)
+      ansible.builtin.fail:
+        msg: >-
+          {{ _fc_apply.state }}: {{ _fc_apply.error }}{{ (' - ' ~ (_fc_apply.bad | map(attribute='rule')
+          | zip(_fc_apply.bad | map(attribute='why')) | map('join', ': ') | join('; '))) if _fc_apply.bad | default([]) else '' }}
+      when: _fc_apply is defined and _fc_apply.state in ['failed', 'refused', 'not possible']
+
+    - name: Fapolicyd containers | the host could not be read
+      ansible.builtin.fail:
+        msg: "{{ _fc.error }}"
+      when: _fc is defined and (_fc.state == 'not read' or _fc.error | default('') | length > 0)

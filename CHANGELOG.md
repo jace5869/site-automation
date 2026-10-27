@@ -181,6 +181,21 @@ security flags as certificate discovery. The host's own stores, Java, Python, No
 read. To read containers again, set `check_trust_containers: true` once your security team has cleared it.
 docs/TRUST_STORES.md.
 
+**New job: fapolicyd and containers** (`playbooks/fapolicyd_containers.yml`). What fapolicyd blocked that a container
+caused - a container's files are not in the trust database RPM fills from the host's packages - told apart from the
+host's own denials by the container SELinux labels, the container programs (crun, conmon, podman ...), container
+storage paths and the podman cgroup; grouped by program and file, with the rule that denied it and the container's
+name. For each, the narrowest allow rule (`allow perm=execute exe=/usr/bin/crun : path=/app/server`) under *Rules to
+approve*. Once your security approval has them, list them in `fapolicyd_container_rules`: the job writes them to a
+file of its own, `/etc/fapolicyd/rules.d/35-site-containers.rules`, loads them (`fagenrules --load`), checks
+fapolicyd still runs and has them - else puts the file back and fails the host after the report. Only plain allow
+rules; `allow perm=any all : all` or `dir=/` writes nothing anywhere. Check shows what would change. Credential:
+Machine with sudo. docs/RUNBOOKS.md, "fapolicyd and containers"; `tests/fapolicyd/run_fapolicyd_containers_test.sh`.
+
+`scripts/gen_template_vars.py` finds the settings a playbook reads by its words, in one pass: it took minutes on
+Python 3.14 (one regular expression per setting, more than `re` keeps compiled), now under a second; the files it
+writes are the same.
+
 ## 0.33.1 — 2026-10-27
 
 **Updating without scripts:** paste `site-automation-0.33.1-changed-since-0.33.0.zip` as it is - from 0.32.0:

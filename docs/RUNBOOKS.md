@@ -533,6 +533,62 @@ ACT runs only on a host with denials or a problem; the others cost no model call
 `fapolicyd_fail_on` (`[error]`: ACT could not answer) fails after the report; `[]` never fails one. The health
 check's `fapolicyd` check (above) counts the denials without ACT.
 
+## fapolicyd and containers (`playbooks/fapolicyd_containers.yml`)
+
+What fapolicyd blocked that a **container** caused, the narrowest allow rule for each, and - once approved - those
+rules added. A container's files are not in fapolicyd's trust database (RPM fills it from the host's packages), so
+a program or a library in a container image can be denied. No ACT: the job reads, proposes, and adds only the rules
+you list.
+
+**A container's denial** is one with any of: a container SELinux label on the program or the file (`container_t`,
+`container_file_t`, `spc_t` ... - `fapolicyd_container_labels`), a container program (`crun`, `conmon`, `podman` ...
+- `fapolicyd_container_programs`), a path in container storage (`/var/lib/containers/`, `~/.local/share/containers/`
+- `fapolicyd_container_paths`), or a process still in a podman container's cgroup (its name is shown). The other
+denials are counted per host and left to the *fapolicyd denials* job.
+
+**The template:** Playbook `playbooks/fapolicyd_containers.yml`; your Linux inventory; credential **Machine** (with
+sudo: the audit log and the rules are root's). Variables: `target` (or a Limit of hosts - no `localhost` needed),
+`fapolicyd_container_since` (`recent`, `today` the default, `yesterday`, `this-week`, `boot`). Enable **Check**
+on launch - the dry run shows what would change.
+
+**Adding the rules:**
+
+1. Run it. The report's **Rules to approve** lists one rule per denial - that program, that file - and the hosts it
+   was seen on, e.g. `allow perm=execute exe=/usr/bin/crun : path=/app/server`.
+2. Take them to your security approval (the ISSO): each is a security-control change. A rule lets that program use
+   that file on the host, inside a container or not.
+3. Put the approved ones in the template's Variables, exactly as the report gave them:
+   ```yaml
+   fapolicyd_container_rules:
+     - "allow perm=execute exe=/usr/bin/crun : path=/app/server"
+   ```
+4. Run it in **Check**: the job says `would change - added: ...` for each host. Then run it for real, with a Limit
+   if only some hosts need them. Every host of the run gets every rule listed.
+5. The rules go into a file of their own, `/etc/fapolicyd/rules.d/35-site-containers.rules` - after the ld.so deny
+   rules of `30-patterns`, before `40-bad-elf` ... `90-deny-execute` that deny a container's untrusted files - and
+   are loaded with `fagenrules --load`. The job then checks fapolicyd is running and the rules are in
+   `/etc/fapolicyd/compiled.rules`. If not: the file is put back as it was, loaded again (fapolicyd started if it
+   stopped), and the host fails after the report.
+6. Leave the rules in the Variables: a run that finds them in the file changes nothing. To take one out:
+   `fapolicyd_container_rules_remove: ["<the rule>"]`.
+
+Only plain allow rules are written (`allow` / `allow_audit` / `allow_syslog`, known attributes, full paths); one
+that is not - or `allow perm=any all : all`, which turns fapolicyd off, or `dir=/` - writes nothing on any host.
+`fapolicyd_container_scope: dir` proposes the file's folder instead of the file (one rule for every file there;
+never a system folder such as `/usr/lib/`); `fapolicyd_container_rule_exe: false` leaves the program out (any
+program may then use the file). The job never touches the other rules files.
+
+| The report shows | Means | Do |
+|---|---|---|
+| *Container denials*: a program, the file it was denied, `13. deny_audit perm=execute all : all` | the container's file is not trusted | the rule under *Rules to approve*, after approval |
+| *By hand - ...: the path has a space ...* | a rule cannot hold that path | write the rule yourself, in your own rules file |
+| *The rules: ... failed* (red) | the rules did not load, or fapolicyd stopped after it | the job put the file back; `journalctl -u fapolicyd` says why |
+| *not possible: no rules.d or no fagenrules* | fapolicyd before 1.1 (one `fapolicyd.rules` file) | add the rule by hand above the deny rules |
+| *refused* | a rule asked for is not a plain allow rule | correct it in `fapolicyd_container_rules` |
+| a rule still proposed after it was added | the denials are from before it was added | `fapolicyd_container_since: recent` reads only the last 10 minutes |
+
+**All settings** of this job, with their defaults: [fapolicyd_containers](VARIABLES_REFERENCE.md#fapolicyd_containers).
+
 ## Certificate report (`playbooks/cert_report.yml`)
 
 The certs check on every host, and **one table**, soonest expiry first: days left, date, host,

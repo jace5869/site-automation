@@ -1,0 +1,117 @@
+---
+# The rules file: the rules in it now, plus the approved ones, minus the ones to take out. Loaded with fagenrules;
+# a load that fails, or fapolicyd not running after it: the file as it was, loaded again, and the host fails after
+# the report (_fc_apply.state failed).
+
+- name: Fapolicyd containers | the rules file's new list
+  ansible.builtin.set_fact:
+    _fc_plan: "{{ _fc.managed | fapolicyd_rules_plan(fapolicyd_container_rules, fapolicyd_container_rules_remove) }}"
+
+- name: Fapolicyd containers | a rule that is not a plain allow rule - nothing changed
+  ansible.builtin.set_fact:
+    _fc_apply: "{{ _fc_plan | combine({'state': 'refused', 'error': 'a rule asked for is not a plain allow rule: nothing written on any host'}) }}"
+  when: _fc_plan.bad | length > 0
+
+- name: Fapolicyd containers | a host whose fapolicyd has no rules.d or fagenrules
+  ansible.builtin.set_fact:
+    _fc_apply: "{{ _fc_plan | combine({'state': 'not possible', 'error': 'no ' ~ (fapolicyd_container_rules_file | dirname) ~ ' or no fagenrules (fapolicyd before 1.1): add the rules by hand'}) }}"
+  when: _fc_plan.bad | length == 0 and not (_fc.rules_d and _fc.fagenrules)
+
+- name: Fapolicyd containers | nothing to change
+  ansible.builtin.set_fact:
+    _fc_apply: "{{ _fc_plan | combine({'state': 'unchanged', 'error': ''}) }}"
+  when: _fc_apply is not defined and not _fc_plan.changed
+
+- name: Fapolicyd containers | change the rules file and load it
+  when: _fc_apply is not defined
+  block:
+    - name: Fapolicyd containers | the rules file
+      ansible.builtin.copy:
+        dest: "{{ fapolicyd_container_rules_file }}"
+        content: "{{ _fc_plan.rules | fapolicyd_rules_file }}"
+        owner: "{{ fapolicyd_container_rules_owner | default(omit, true) }}"
+        group: "{{ fapolicyd_container_rules_group | default(omit, true) }}"
+        mode: "0644"
+      when: _fc_plan.rules | length > 0
+
+    - name: Fapolicyd containers | the rules file, no rule left in it
+      ansible.builtin.file:
+        path: "{{ fapolicyd_container_rules_file }}"
+        state: absent
+      when: _fc_plan.rules | length == 0
+
+    - name: Fapolicyd containers | load the rules (fagenrules --load)
+      ansible.builtin.command: fagenrules --load
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Fapolicyd containers | fapolicyd still running
+      ansible.builtin.command: systemctl is-active fapolicyd
+      register: _fc_active
+      changed_when: false
+      retries: 5
+      delay: 2
+      until: _fc_active.rc == 0
+      when: not ansible_check_mode
+
+    - name: Fapolicyd containers | the rules as fapolicyd loaded them
+      ansible.builtin.slurp:
+        src: "{{ fapolicyd_container_compiled }}"
+      register: _fc_compiled
+      when: not ansible_check_mode
+
+    - name: Fapolicyd containers | every approved rule is in the loaded rules, none taken out is
+      ansible.builtin.assert:
+        that:
+          - _fc_missing | length == 0
+          - _fc_left | length == 0
+        fail_msg: >-
+          {{ fapolicyd_container_compiled }} does not hold what was asked: {{ (_fc_missing | map('regex_replace', '^', 'missing ') | list
+          + _fc_left | map('regex_replace', '^', 'still there ') | list) | join('; ') }}
+        quiet: true
+      vars:
+        _fc_lines: "{{ (_fc_compiled.content | b64decode).splitlines() | map('trim') | list }}"
+        _fc_missing: "{{ _fc_plan.rules | difference(_fc_lines) }}"
+        _fc_left: "{{ _fc_plan.removed | intersect(_fc_lines) }}"
+      when: not ansible_check_mode
+
+    - name: Fapolicyd containers | done
+      ansible.builtin.set_fact:
+        _fc_apply: "{{ _fc_plan | combine({'state': 'would change' if ansible_check_mode else 'changed', 'error': ''}) }}"
+  rescue:
+    - name: Fapolicyd containers | put the rules file back as it was
+      ansible.builtin.copy:
+        dest: "{{ fapolicyd_container_rules_file }}"
+        content: "{{ _fc.managed | fapolicyd_rules_file }}"
+        owner: "{{ fapolicyd_container_rules_owner | default(omit, true) }}"
+        group: "{{ fapolicyd_container_rules_group | default(omit, true) }}"
+        mode: "0644"
+      when: _fc.managed | length > 0
+      failed_when: false
+
+    - name: Fapolicyd containers | no rules file, as before
+      ansible.builtin.file:
+        path: "{{ fapolicyd_container_rules_file }}"
+        state: absent
+      when: _fc.managed | length == 0
+      failed_when: false
+
+    - name: Fapolicyd containers | load the rules as they were, start fapolicyd if it stopped
+      ansible.builtin.shell: fagenrules --load; systemctl is-active fapolicyd || systemctl restart fapolicyd
+      changed_when: true
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Fapolicyd containers | the change failed - said in the report, the host fails after it
+      ansible.builtin.set_fact:
+        _fc_apply: "{{ _fc_plan | combine({'state': 'failed', 'added': [], 'removed': [], 'rules': _fc.managed,
+                       'error': (ansible_failed_task.name | default('') | regex_replace('^.*[|] ', '')) ~ ': '
+                                ~ ((ansible_failed_result.stderr | default('', true)) or (ansible_failed_result.msg | default(''))) | trim
+                                ~ ' - the file put back as it was'}) }}"
+
+- name: Fapolicyd containers | the rules
+  ansible.builtin.debug:
+    msg: >-
+      {{ _fc_apply.state }}{{ (': ' ~ _fc_apply.error) if _fc_apply.error | default('') else '' }}
+      {{- (' - added: ' ~ (_fc_apply.added | join('; '))) if _fc_apply.added | default([]) else '' }}
+      {{- (' - taken out: ' ~ (_fc_apply.removed | join('; '))) if _fc_apply.removed | default([]) else '' }}
