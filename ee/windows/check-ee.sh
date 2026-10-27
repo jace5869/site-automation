@@ -15,7 +15,10 @@ echo "== Python: $($py --version 2>&1)   ansible-core: $(ansible --version 2>/de
 echo "== Python libraries"
 while read -r kind a b; do
   [ "$kind" = lib ] || continue
-  if $py -c "import $a" 2>/dev/null; then yes "$b"; else no "$b"; fi
+  # the error caught, a crash too (no "Aborted (core dumped)" on the screen): said in words when it is known
+  if err=$( { $py -c "import $a" >/dev/null; } 2>&1 ); then yes "$b"
+  elif [[ $err == *"FIPS SELFTEST FAILURE"* ]]; then no "$b - its own OpenSSL stops in FIPS mode (EXECUTION_ENVIRONMENT.md, chapter 8)"
+  else no "$b"; fi
 done < $list
 echo "== Collections"
 have=$(ansible-galaxy collection list 2>/dev/null)

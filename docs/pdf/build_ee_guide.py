@@ -118,8 +118,9 @@ def appendix(n):
     for name, where in SHARED:
         story += code_blocks(open(os.path.join(EES, "windows", name), encoding="utf-8").read(),
                              "%s  (in %s)" % (name, where))
-    story.append(H2("The build script - folder ee/", toc=True))
-    story += code_blocks(open(os.path.join(EES, "build-ee.sh"), encoding="utf-8").read(), "build-ee.sh")
+    story.append(H2("The scripts - folder ee/", toc=True))
+    for name in ("build-ee.sh", "check-collections.sh"):
+        story += code_blocks(open(os.path.join(EES, name), encoding="utf-8").read(), name)
     return story
 
 

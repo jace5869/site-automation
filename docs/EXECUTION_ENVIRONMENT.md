@@ -137,6 +137,33 @@ podman run --rm localhost/base-ee:1.0 ansible-galaxy collection list
 > **You should see:** `ansible [core 2.16...]` or `ansible [core 2.20...]`; both work with these
 > files. Then `#!/usr/bin/python3.12`, and then the list of collections it already has.
 
+**`bash: /opt/builder/bin/entrypoint: Permission denied`?** Every command in an EE starts through that
+script, and the user the EE runs as (1000) cannot read it: in this base EE it can be run but not read.
+To see it: `podman run --rm --entrypoint stat localhost/base-ee:1.0 -c '%a %U' /opt/builder/bin/entrypoint`
+(`711 root`, where `755 root` is right). Run the commands past it - `--entrypoint` and the command's
+first word before the image, the rest after it:
+
+```bash
+podman run --rm --entrypoint ansible localhost/base-ee:1.0 --version
+podman run --rm --entrypoint bash localhost/base-ee:1.0 -c 'head -1 $(command -v ansible)'
+podman run --rm --entrypoint ansible-galaxy localhost/base-ee:1.0 collection list
+```
+
+The EEs you build from it get a readable one: their `execution-environment.yml` sets it (0.33.1). The
+script, `build-ee.sh`, reads the base this way.
+
+**`WARN[0000] Failed to mount subscriptions ... permission denied` above it?** podman, run as you,
+cannot read this machine's RHEL subscription files to hand them to the container. The commands above do
+not need them. The build may: it installs the system packages (`bindep.txt`) from the RHEL repositories.
+If the build stops at `No match for argument` or a repository error, build as root - the base EE into
+root's podman first, then the same build with `sudo`:
+
+```bash
+podman save -o base-ee-1.0.tar localhost/base-ee:1.0
+sudo podman load -i base-ee-1.0.tar
+sudo env INSECURE=1 bash build-ee.sh all-in-one 2     # or: sudo podman build ... by hand
+```
+
 **The Python must match.** The three `execution-environment.yml` files say `python_path:
 /usr/bin/python3.12`. If the second command shows another one, for example `#!/usr/bin/python3.11`,
 put that path in the three files:
@@ -207,6 +234,64 @@ to sync them:
   have them
 
 If a collection cannot be had, remove its line from `requirements.yml` and `check-list.txt`.
+
+**See what your hub lacks before you build.** The build stops at the first collection it cannot find.
+`check-collections.sh` checks every one at once, as the build does: one your base EE already has in a
+version that fits is kept, the others are asked of your hub - with the base EE's own ansible-galaxy and
+the folder's `ansible.cfg` - and with `FETCH=1` it downloads the missing ones from Galaxy
+(no login needed) into `collections-to-upload/`, the newest version that fits, each with the
+ansible-core it needs:
+
+```bash
+cd ~/ee
+FETCH=1 INSECURE=1 bash check-collections.sh all-in-one
+```
+
+> **You should see:** a line per collection, `ok` with the version the base EE or your hub has, or
+> `MISSING` and the file downloaded for it. Upload those (below), then run it again until it ends
+> `all ... in the base EE or on your hub: build`.
+
+**And the versions for ansible-core 2.16.** Three of them are pinned below their newest version (see
+*Why three collections are pinned*): `community.general` 11.x, `community.crypto` 2.x,
+`lowlydba.sqlserver` 2.x. A hub that synced only the newest has none of those, and the build stops with
+`Could not satisfy the following requirements: * community.general:<12.0.0`. Either the hub admin syncs
+them too - *Automation Content > Remotes > community > Edit*, in the YAML requirements a version range
+that takes them in (`version: ">=11.0.0"` for `community.general`, `">=2.0.0"` for the other two),
+then *Repositories > community > Sync* - or, when the build machine reaches the internet, those three
+come from Galaxy. In `requirements.yml`, a `source:` line under each of the three:
+
+```yaml
+  - name: community.general             # community: hundreds of modules (ldap_*, mssql_*, nmcli, ...)
+    version: "<12.0.0"      # 11.x: the newest for ansible-core 2.16 (12 needs 2.17)
+    source: https://galaxy.ansible.com
+```
+
+The same line under `community.crypto` and `lowlydba.sqlserver` - in one go:
+
+```bash
+cd ~/ee/all-in-one
+sed -i -e '/version: "<12.0.0"/a\    source: https://galaxy.ansible.com' \
+       -e '/version: "<3.0.0"/a\    source: https://galaxy.ansible.com' requirements.yml
+grep -c 'source: https://galaxy.ansible.com' requirements.yml     # 3
+```
+
+Every other collection still comes from your hub. (Galaxy as a fourth server in `ansible.cfg` would not do that: the build takes the newest
+version it finds anywhere, the certified ones from Galaxy too when Galaxy's is newer.)
+
+**Or upload the three into your hub** (no remote to change, no Galaxy during the build). Download them -
+no login needed; `--no-check-certificate` behind TLS inspection - from Galaxy's *artifacts* address,
+the newest 11.x / 2.x of each:
+
+```bash
+wget https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-general-11.4.9.tar.gz
+wget https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-crypto-2.26.9.tar.gz
+wget https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/lowlydba-sqlserver-2.8.1.tar.gz
+```
+
+Then in AAP: *Automation Content > Namespaces*, the namespace named as the file begins - `community`,
+`lowlydba` (*Create namespace* if it is not there) - *Upload collection*, each file; then *Automation
+Content > Collection Approvals*, *Approve*. They land in the *published* repository, which `ansible.cfg`
+already lists. A collection goes only into the namespace of its own name.
 
 ## Step 5. Your hub token
 
@@ -881,6 +966,15 @@ podman run --rm site-ee-all:3 ee-check | grep -iE 'smbprotocol|git'
 
 `git-core` is in the base image's own RHEL repositories: nothing else changes.
 
+## 0.33.1: a start script every user can read
+
+Every command in an EE starts through `/opt/builder/bin/entrypoint`, and an EE runs as user 1000.
+ansible-builder copies that script, `ee-check`'s list and the Kerberos settings in with the modes they
+have on the build machine and in the base image: a script user 1000 can run but not read answers
+`bash: /opt/builder/bin/entrypoint: Permission denied`. The three `execution-environment.yml` files of
+0.33.1 make them readable, whatever modes they came with. An EE that shows that error: build it
+again from the 0.33.1 files with the next tag (below). One that runs `ee-check` is fine as it is.
+
 ## Rebuild with a new tag
 
 1. Change the files: a collection added, a version pinned or raised.
@@ -913,6 +1007,12 @@ If `base-ee:1.0` already has a collection from `requirements.yml`, the build kee
 The build upgrades it only when another collection needs a newer one: `community.windows` needs
 `ansible.windows` 3 or newer, for example. `ee-check` shows the versions you end up with.
 
+A pin can also take a collection back: `base-ee:1.0` may have `community.general` 12, which needs
+ansible-core 2.17 (the build says `[WARNING]: Collection community.general does not support Ansible
+version 2.16.19` - about the base's copy), and the build installs 11.x over it. Since 0.33.1 the
+finished EE has only the installed version's files: before, the base's 12.x files that 11.x does not
+have stayed next to them (unused, unless a playbook called a module new in 12).
+
 ## A new base EE
 
 If you build a new base EE, for example `base-ee:1.1`, change the `name:` line in the three
@@ -925,10 +1025,16 @@ If you build a new base EE, for example `base-ee:1.1`, change the `name:` line i
 | `localhost/base-ee:1.0: image not known`, or `pull access denied` for `base-ee` | the build machine does not have your base EE | chapter 2, step 3: pull or load it, and check the `name:` line |
 | `Missing Ansible or Ansible Runner for selected Python` | the build looks for Ansible on another Python than the base EE's | chapter 2, step 3: *The Python must match* |
 | `unauthorized` pulling `aap.example.mil/base-ee:1.0` or `registry.redhat.io/...` | podman is not logged in to that registry | `podman login aap.example.mil` (or `registry.redhat.io`) |
+| `bash: /opt/builder/bin/entrypoint: Permission denied` | the image's start script cannot be read by the user it runs as (1000) | the base EE: run its commands with `--entrypoint` (chapter 2, step 3); an EE you built: build the next tag from 0.33.1's `execution-environment.yml`, which makes it readable |
+| `WARN[0000] Failed to mount subscriptions ... permission denied` | podman, run as you, cannot hand this machine's RHEL subscription to the container | nothing, unless the build stops at `No match for argument` or a repository error: then build as root (chapter 2, step 3) |
+| `ee-check`: `no pymssql - its own OpenSSL stops in FIPS mode` (before 0.33.1: `Aborted (core dumped)` at `import pymssql`) | pymssql from PyPI brings its own OpenSSL 1.1.1k, which on a FIPS host runs a self-test that fails (`FATAL FIPS SELFTEST FAILURE`) and stops Python | on a FIPS host pymssql cannot load: take its lines out of `requirements.txt` and `check-list.txt`. Only the certificate inventory's SQL Server output (`cert_inventory_sql`) uses it; `lowlydba.sqlserver` reaches SQL Server through a Windows host and works |
+| pip: `msal ... requires cryptography<47, but you have cryptography 50...` | Palo Alto's `panos-upgrade-assurance` needs a newer `cryptography` than the base EE's `msal` takes | 0.33.1's `requirements.txt` asks for `msal>=1.37.0`, which takes it; or, without Palo Alto in the EE, take `paloaltonetworks.panos` out of `requirements.yml` (and its lines out of `check-list.txt`) |
 | `pasta ... permission denied` or `netavark` errors | rootless podman's network helper is blocked | keep `--network=host` on `podman build` |
 | `additional_build_files ... ansible.cfg ... does not exist` | `ansible.cfg` is not in this folder | chapter 2, step 4 |
 | `HTTP Code: 401` or `403` installing collections | no token, or the wrong one | `read -rs TOKEN` again (chapter 2, step 5); a new token: *Automation Content > API token* |
 | `HTTP Code: 401` from `galaxy.ansible.com` | a token was sent to Galaxy | in `ansible.cfg`, name the Galaxy server `galaxy` (chapter 2, step 4) |
+| `Could not satisfy the following requirements: * community.general:<12.0.0` (or `community.crypto:<3.0.0`, `lowlydba.sqlserver:<3.0.0`) | your hub has only the newest version, which needs a newer ansible-core than your base EE's | the hub's community repository syncs the older versions too, or `source: https://galaxy.ansible.com` under those three in `requirements.yml` (chapter 2, step 4, *And the versions for ansible-core 2.16*) |
+| `Could not satisfy the following requirements: * containers.podman:*` (any collection, no version) | your hub does not have that collection at all | `FETCH=1 INSECURE=1 bash check-collections.sh all-in-one` lists every one it lacks and downloads them from Galaxy; upload them (chapter 2, step 4) |
 | `Failed to find collection ...` | your hub does not have that collection | ask the hub admin to sync it (chapter 2, step 4), or remove its line from `requirements.yml` and `check-list.txt` |
 | `No match for argument: <package>` | that RHEL package is not in the build machine's repositories | check the subscription (`sudo subscription-manager status`); if a collection wants it only to compile, add it under `exclude: system:` in `execution-environment.yml` |
 | `Could not find a version that satisfies the requirement ...` | the build cannot reach PyPI | add `--build-arg PIP_INDEX_URL=...` (chapter 2, step 7) |

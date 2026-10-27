@@ -11,6 +11,8 @@
 #   INSECURE=1 bash build-ee.sh all-in-one 2              # behind TLS inspection: no certificate checked - pip
 #       --trusted-host (PyPI's hosts, or your mirror's), ansible-galaxy --ignore-certs, podman --tls-verify=false
 #   PIP_TRUSTED_HOST="pypi.org files.pythonhosted.org" bash build-ee.sh ...   # only pip's (INSECURE=1 sets it)
+#   sudo env INSECURE=1 bash build-ee.sh all-in-one 2     # as root: when podman cannot give the build your RHEL
+#       subscription as you (it says so) - the base image in root's podman first: podman save ... | sudo podman load
 # The hub token: it asks for it (nothing shows as you paste), or takes TOKEN from the environment. It is never
 # written to a file or shown.
 set -euo pipefail
@@ -38,6 +40,7 @@ step() { echo; echo "== $1"; }
 ok()   { echo "   ok    $1"; }
 note() { echo "   note  $1"; }
 stop() { echo "   STOP  $1" >&2; exit 1; }
+err=$(mktemp); trap 'rm -f "$err"' EXIT
 
 step "Checks (docs/EXECUTION_ENVIRONMENT.md, chapter 2)"
 for t in podman ansible-builder curl; do
@@ -60,23 +63,37 @@ if ! podman image exists "$base"; then
     *) podman pull -q "${tls[@]}" "$base" >/dev/null || stop "could not pull the base image $base: podman login ${base%%/*} first (chapter 2, step 3)" ;;
   esac
 fi
-got=$(podman run --rm "$base" bash -c 'head -1 "$(command -v ansible)"' 2>/dev/null | sed -e 's/^#! *//' -e 's/ .*//') || true
-[ -n "$got" ] || stop "could not see which Python Ansible runs on in $base (chapter 2, step 3)"
+# past the base's entrypoint: in some base images the user they run as cannot read it - the EE built here gets a
+# readable one (execution-environment.yml)
+got=$(podman run --rm --entrypoint bash "$base" -c 'head -1 "$(command -v ansible)"' 2>"$err" | sed -e 's/^#! *//' -e 's/ .*//') || true
+[ -n "$got" ] || { sed 's/^/   /' "$err" >&2; stop "could not see which Python Ansible runs on in $base (chapter 2, step 3)"; }
 if [ -n "$want" ] && [ "$got" != "$want" ]; then
   stop "Ansible in $base runs on $got, $yml says $want: sed -i 's|$want|$got|' */execution-environment.yml (chapter 2, step 3)"
 fi
 ok "the base image $base, its Ansible on $got"
+case "$(podman run --rm "$base" true 2>&1 || true)" in
+  *"entrypoint: Permission denied"*)
+    note "$base's entrypoint cannot be read by the user EEs run as: the EE built here gets a readable one" ;;
+esac
+if grep -q 'Failed to mount subscriptions' "$err" && [ "$(id -u)" != 0 ]; then
+  note "podman cannot give the build this machine's RHEL subscription as $(id -un) (WARN ... Failed to mount subscriptions):"
+  note "the system packages can come only from $base's own repositories. If the build stops at 'No match for argument'"
+  note "or a repository error, build as root: podman save $base | sudo podman load, then sudo env ${INSECURE:+INSECURE=1 }bash build-ee.sh $folder $tag (chapter 8)"
+fi
 
 n=$(find "$folder/ca" -maxdepth 1 -name '*.pem' 2>/dev/null | wc -l)
 if [ "$n" -gt 0 ]; then ok "$n CA certificate(s) in $folder/ca"
 else note "no CA certificate in $folder/ca: the EE will not trust your CA (chapter 2, step 6)"; fi
 
+# curl's own words in the STOP: a certificate (TLS inspection), a name that does not resolve, no way out
+tls_hint=$([ -n "${INSECURE:-}" ] || echo ' - or, behind TLS inspection, INSECURE=1')
+said() { local w=${why#curl: }; printf '%s' "${w%%$'\n'*}"; }   # its first line
 pypi=${PIP_INDEX_URL:-https://pypi.org/simple}
-curl -sfI "${curl_k[@]}" --max-time 20 "${pypi%/}/pip/" >/dev/null \
-  || stop "cannot reach ${pypi%/}/pip/: set PIP_INDEX_URL to your PyPI mirror (chapter 2, step 7)$([ -n "${INSECURE:-}" ] || echo ' - or, behind TLS inspection, INSECURE=1')"
+why=$(curl -sSfI "${curl_k[@]}" --max-time 20 "${pypi%/}/pip/" 2>&1 >/dev/null) \
+  || stop "cannot reach ${pypi%/}/pip/ ($(said)): set PIP_INDEX_URL to your PyPI mirror (chapter 2, step 7)$tls_hint"
 ok "PyPI: $pypi"
-[ -z "$hub" ] || curl -sI "${curl_k[@]}" --max-time 20 "$hub" >/dev/null \
-  || stop "cannot reach your hub at $hub (chapter 2, step 4)$([ -n "${INSECURE:-}" ] || echo ' - or, behind TLS inspection, INSECURE=1')"
+[ -z "$hub" ] || why=$(curl -sSI "${curl_k[@]}" --max-time 20 "$hub" 2>&1 >/dev/null) \
+  || stop "cannot reach your hub at $hub ($(said)) (chapter 2, step 4)$tls_hint"
 [ -z "$hub" ] || ok "the hub answers"
 if [ -n "${INSECURE:-}" ]; then
   note "INSECURE=1: no certificate is checked - pip (trusted: $PIP_TRUSTED_HOST), ansible-galaxy (--ignore-certs), podman (--tls-verify=false)"
@@ -103,7 +120,7 @@ args=(--build-arg "ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_TOKEN=$TOKEN"
                                  --build-arg ANSIBLE_GALAXY_CLI_ROLE_OPTS=--ignore-certs)
 (cd "$folder" && ansible-builder create -f execution-environment.yml -c context) || stop "ansible-builder create failed: the error above (chapter 8)"
 (cd "$folder" && podman build --network=host "${tls[@]}" "${args[@]}" -f context/Containerfile -t "$image" context) \
-  || stop "the build failed: the error above (chapter 8, When something goes wrong)"
+  || stop "the build failed: the error above (chapter 8, When something goes wrong; 'Could not satisfy': bash check-collections.sh $folder lists every collection your hub lacks)"
 ok "built $image"
 
 step "ee-check"

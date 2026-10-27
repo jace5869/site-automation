@@ -60,6 +60,10 @@ additional_build_steps:
     - ARG ANSIBLE_GALAXY_SERVER_PUBLISHED_TOKEN
   prepend_builder:
     - RUN $PYCMD -m pip install --no-cache-dir wheel
+  prepend_final:
+    # the collections exactly as the galaxy stage left them: copied on top of the base EE's own, the files of a
+    # newer version a pin replaces would stay (community.general 12's next to 11.4.9's)
+    - RUN rm -rf /usr/share/ansible/collections/ansible_collections
   append_final:
     # your CA certificates (ca/*.pem) in the trust store - Panorama, the firewalls' HTTPS, AAP
     - COPY _build/ca/ /tmp/site-ca/
@@ -68,6 +72,9 @@ additional_build_steps:
     # ee-check: does the image have what it should (podman run --rm <image> ee-check)
     - COPY _build/configs/check-ee.sh /usr/local/bin/ee-check
     - COPY _build/configs/check-list.txt /usr/local/share/ee-check.list
-    - RUN chmod 755 /usr/local/bin/ee-check
+    # every file copied in readable by the user jobs run as (1000), the entrypoint every job starts through too,
+    # whatever modes the build machine gave them - a start script user 1000 cannot read: "bash: /opt/builder/bin/
+    # entrypoint: Permission denied"
+    - RUN chmod 755 /opt/builder/bin/entrypoint /usr/local/bin/ee-check && chmod 644 /usr/local/share/ee-check.list
     # the build-only pip configuration (prepend_base) out of the finished image
     - RUN rm -f /etc/pip-ee-build.conf

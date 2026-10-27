@@ -2,4 +2,6 @@
 # The collections bring the rest: ansible-pylibssh, paramiko, ncclient (Cisco); pan-os-python, pan-python,
 # xmltodict (Palo Alto); netaddr, textfsm, ttp (ansible.utils).
 jmespath               # the json_query filter
+msal>=1.37.0           # base-ee:1.0 has msal (Azure logins) asking for cryptography<47; Palo Alto's panos-upgrade-assurance
+                       # 2.1.1 needs pyOpenSSL 26, so cryptography 49+: msal 1.37 and later take it (no pip conflict)
 smbprotocol            # the report website on an SMB share (report_web_dest \\server\share): Kerberos through pyspnego

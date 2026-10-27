@@ -16,10 +16,13 @@ echo "podman $*" >> "$FAKE_LOG"
 case "$1 $2" in
   "image exists") [ -n "${FAKE_BASE:-}" ] ;;
   "run --rm")
+    [ -z "${FAKE_SUBS_WARN:-}" ] || echo 'WARN[0000] Failed to mount subscriptions, skipping entry in /usr/share/containers/mounts.conf: permission denied' >&2
     if [ "${*: -1}" = ee-check ]; then
       if [ -n "${FAKE_CHECK_FAIL:-}" ]; then echo "  no   smbprotocol"; echo "== 1 MISSING"; exit 1; fi
       echo "== ALL YES"
-    else echo "#!${FAKE_PY:-/usr/bin/python3.12} -s"; fi ;;
+    elif [ -n "${FAKE_BASE_EP:-}" ] && [ "$3" != --entrypoint ]; then  # the base's entrypoint: mode 0711
+      echo "bash: /opt/builder/bin/entrypoint: Permission denied" >&2; exit 126
+    elif [ "${*: -1}" != true ]; then echo "#!${FAKE_PY:-/usr/bin/python3.12} -s"; fi ;;
   "info --format") echo "$FAKE_GRAPH" ;;
   "login --get-login") echo someone ;;
   "build --network=host") echo "Successfully tagged ${*: -2:1}" ;;
@@ -32,7 +35,8 @@ echo "ansible-builder $*" >> "$FAKE_LOG"; mkdir -p context; : > context/Containe
 EOF
 cat > "$work/bin/curl" <<'EOF'
 #!/usr/bin/env bash
-echo "curl $*" >> "$FAKE_LOG"; [ -z "${FAKE_NO_PYPI:-}" ] || [[ "$*" != */pip/* ]]
+echo "curl $*" >> "$FAKE_LOG"
+if [ -n "${FAKE_NO_PYPI:-}" ] && [[ "$*" == */pip/* ]]; then echo "curl: (60) SSL certificate problem: unable to get local issuer certificate" >&2; exit 60; fi
 EOF
 chmod 755 "$work/bin/"*
 
@@ -59,20 +63,40 @@ has "--build-arg ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_TOKEN=s3cr3t-tok --build-arg
 has "s3cr3t-tok" && bad "the token is printed" || ok "  ... the token is never printed"
 has "PIP_INDEX_URL" "$work/log" && bad "PIP_INDEX_URL passed without being set" || ok "  ... no PIP_INDEX_URL unless set"
 has "podman push" "$work/log" && bad "pushed without PUSH" || ok "  ... nothing pushed without PUSH"
-grep -q -- '--tls-verify\|ignore-certs\|PIP_TRUSTED_HOST\|curl -k\|curl -sfI -k' "$work/log" && bad "certificates not checked without INSECURE" || ok "  ... every certificate checked (no INSECURE)"
+grep -q -- '--tls-verify\|ignore-certs\|PIP_TRUSTED_HOST\|curl -k\|curl -sSfI -k\|curl -sSI -k' "$work/log" && bad "certificates not checked without INSECURE" || ok "  ... every certificate checked (no INSECURE)"
 
 fresh; run TOKEN=t INSECURE=1 PUSH=hub.lab.test -- all-in-one 2
 [ "$rc" = 0 ] && ok "INSECURE=1: builds" || bad "INSECURE (rc $rc)"
 has "--build-arg PIP_TRUSTED_HOST=pypi.org files.pythonhosted.org" "$work/log" && ok "  ... pip trusts PyPI's two hosts" || bad "trusted hosts: $(grep 'podman build' "$work/log")"
 has "--build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs --build-arg ANSIBLE_GALAXY_CLI_ROLE_OPTS=--ignore-certs" "$work/log" && ok "  ... ansible-galaxy --ignore-certs" || bad "ignore-certs"
 has "podman build --network=host --tls-verify=false" "$work/log" && has "podman push --tls-verify=false hub.lab.test/site-ee-all:2" "$work/log" && ok "  ... podman build and push --tls-verify=false" || bad "tls-verify"
-grep -q '^curl -sfI -k ' "$work/log" && grep -q '^curl -sI -k ' "$work/log" && ok "  ... curl -k for PyPI and the hub" || bad "curl -k: $(grep '^curl' "$work/log")"
+grep -q '^curl -sSfI -k ' "$work/log" && grep -q '^curl -sSI -k ' "$work/log" && ok "  ... curl -k for PyPI and the hub" || bad "curl -k: $(grep '^curl' "$work/log")"
 has "INSECURE=1: no certificate is checked" && ok "  ... and it says so" || bad "INSECURE note"
 fresh; run TOKEN=t INSECURE=1 PIP_INDEX_URL=https://reader:pw@mirror.lab.test:8443/pypi/simple -- all-in-one
 has "--build-arg PIP_TRUSTED_HOST=mirror.lab.test:8443" "$work/log" && ok "INSECURE=1 with a mirror: pip trusts the mirror's host:port (no user, no path)" || bad "mirror trusted host: $(grep 'podman build' "$work/log")"
 fresh; run TOKEN=t PIP_TRUSTED_HOST=pypi.example.test -- all-in-one
 has "--build-arg PIP_TRUSTED_HOST=pypi.example.test" "$work/log" && ! has "ignore-certs" "$work/log" && ! has "--tls-verify" "$work/log" \
   && ok "PIP_TRUSTED_HOST alone: only pip's check is off" || bad "PIP_TRUSTED_HOST alone"
+
+fresh; run TOKEN=t FAKE_BASE_EP=1 -- all-in-one
+[ "$rc" = 0 ] && has "entrypoint cannot be read by the user EEs run as" && ok "a base whose entrypoint its user cannot read (mode 0711): builds, and says so" || bad "base entrypoint (rc $rc)"
+has "podman run --rm --entrypoint bash localhost/base-ee:1.0 -c" "$work/log" && ok "  ... its Python read past the entrypoint" || bad "the probe goes through the entrypoint"
+n=0; for d in windows network all-in-one; do
+  grep -q '^    - RUN chmod 755 /opt/builder/bin/entrypoint /usr/local/bin/ee-check && chmod 644 /usr/local/share/ee-check.list' \
+    "$repo/ee/$d/execution-environment.yml" && n=$((n + 1))
+done
+[ "$n" = 3 ] && ok "  ... each EE's entrypoint and ee-check's files readable by user 1000 (append_final)" || bad "chmod in $((3 - n)) EE(s)"
+n=0; for d in windows network all-in-one; do
+  grep -A3 '^  prepend_final:' "$repo/ee/$d/execution-environment.yml" | grep -q '^    - RUN rm -rf /usr/share/ansible/collections/ansible_collections$' && n=$((n + 1))
+done
+[ "$n" = 3 ] && ok "each EE clears the base's collections before the installed ones are copied in (prepend_final)" || bad "prepend_final in $((3 - n)) EE(s)"
+fresh; run TOKEN=t FAKE_SUBS_WARN=1 -- all-in-one 2
+[ "$rc" = 0 ] && has "cannot give the build this machine's RHEL subscription" && has "podman save localhost/base-ee:1.0 | sudo podman load, then sudo env bash build-ee.sh all-in-one 2" \
+  && ok "podman cannot pass the RHEL subscription (rootless): says how to build as root" || bad "subscription note (rc $rc)"
+fresh; run TOKEN=t INSECURE=1 FAKE_SUBS_WARN=1 -- all-in-one 2
+has "sudo env INSECURE=1 bash build-ee.sh all-in-one 2" && ok "  ... with INSECURE=1 kept" || bad "sudo INSECURE"
+fresh; run TOKEN=t -- all-in-one
+! has "subscription" && ! has "entrypoint cannot" && ok "  ... neither note when there is no cause" || bad "a note without its cause"
 
 fresh; rm "$work/ee/all-in-one/ansible.cfg"; run TOKEN=t -- all-in-one
 [ "$rc" = 1 ] && has "STOP  no all-in-one/ansible.cfg" && has "chapter 2, step 4" && ok "no ansible.cfg: stops (step 4)" || bad "no ansible.cfg (rc $rc)"
@@ -85,6 +109,9 @@ fresh; run TOKEN=t FAKE_PY=/usr/bin/python3.11 -- all-in-one
 [ "$rc" = 1 ] && has "runs on /usr/bin/python3.11" && has "sed -i 's|/usr/bin/python3.12|/usr/bin/python3.11|' */execution-environment.yml" && ok "another Python in the base: stops with the sed (step 3)" || bad "python mismatch (rc $rc)"
 fresh; run TOKEN=t FAKE_NO_PYPI=1 -- all-in-one
 [ "$rc" = 1 ] && has "set PIP_INDEX_URL to your PyPI mirror" && ok "no PyPI: stops (step 7)" || bad "no PyPI (rc $rc)"
+has "(60) SSL certificate problem: unable to get local issuer certificate)" && has "INSECURE=1" && ok "  ... with curl's reason, and INSECURE=1 offered" || bad "curl's reason"
+fresh; run TOKEN=t INSECURE=1 FAKE_NO_PYPI=1 -- all-in-one
+[ "$rc" = 1 ] && ! has "or, behind TLS inspection" && ok "  ... INSECURE=1 not offered again when it is set" || bad "INSECURE offered twice (rc $rc)"
 fresh; run TOKEN=t FAKE_NO_PYPI=1 PIP_INDEX_URL=https://mirror.lab.test/pypi/simple -- all-in-one
 [ "$rc" = 1 ] && has "cannot reach https://mirror.lab.test/pypi/simple/pip/" && ok "a mirror that does not answer: stops" || bad "mirror (rc $rc)"
 fresh; run TOKEN=t PIP_INDEX_URL=https://mirror.lab.test/pypi/simple -- all-in-one
@@ -99,6 +126,15 @@ fresh; run TOKEN=t PUSH=hub.lab.test -- all-in-one 3
 fresh; run TOKEN=t SAVE=1 -- windows 1
 [ "$rc" = 0 ] && has "podman save -o site-ee-windows-1.tar localhost/site-ee-windows:1" "$work/log" && has "Never pull container before running" \
   && ok "SAVE: the windows EE saved as a file" || bad "save (rc $rc)"
+# ee/check-collections.sh: the list it asks the hub for, from each requirements.yml
+for d in windows network all-in-one; do
+  bash "$work/ee/check-collections.sh" "$d" --list > "$work/out.txt" 2>&1
+  [ "$(wc -l < "$work/out.txt")" = "$(grep -c '^  - name:' "$work/ee/$d/requirements.yml")" ] && ! grep -qv '^[a-z0-9_]*\.[a-z0-9_]*:' "$work/out.txt" \
+    && ok "check-collections --list, $d: every collection as name:version" || bad "check-collections --list $d"
+done
+has "community.general:<12.0.0" && has "lowlydba.sqlserver:<3.0.0" && has "vmware.vmware:>=2.11.0" && has "servicenow.itsm:*" && ok "  ... with the versions requirements.yml pins" || bad "versions in --list"
+fresh; bash "$work/ee/check-collections.sh" bogus > "$work/out.txt" 2>&1; [ $? = 2 ] && has "usage: bash check-collections.sh" && ok "check-collections: an unknown EE, the usage" || bad "check-collections usage"
+
 fresh; run TOKEN=t -- bogus
 [ "$rc" = 2 ] && has "usage: bash build-ee.sh windows|network|all-in-one" && ok "an unknown EE: the usage" || bad "usage (rc $rc)"
 fresh; run TOKEN=t -- all-in-one '2;rm'
