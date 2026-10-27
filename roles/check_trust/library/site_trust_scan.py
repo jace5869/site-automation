@@ -37,7 +37,7 @@ options:
   go_max: {description: At most this many programs looked at., type: int, default: 200}
   nss_fixed: {description: The NSS version that fixed it ('' = not compared)., type: str, default: ''}
   ca_certificates_fixed: {description: The ca-certificates package version that fixed it ('' = not compared)., type: str, default: ''}
-  containers: {description: Read the bundles inside running podman containers., type: bool, default: true}
+  containers: {description: Read the bundles inside running podman containers., type: bool, default: false}
   containers_max: {description: At most this many containers., type: int, default: 30}
   nss_dirs: {description: "NSS databases (certutil -L): the system's, root's, each user's.", type: list, elements: str, default: []}
   find_dirs: {description: Folders searched for certificate files (bundles an application carries)., type: list, elements: str, default: []}
@@ -634,7 +634,7 @@ def main():
         nss_fixed=dict(type="str", default=""),
         ca_certificates_fixed=dict(type="str", default=""),
         nss_dirs=dict(type="list", elements="str", default=[]),
-        containers=dict(type="bool", default=True),
+        containers=dict(type="bool", default=False),
         containers_max=dict(type="int", default=30),
         find_dirs=dict(type="list", elements="str", default=[]),
         find_max=dict(type="int", default=2000),

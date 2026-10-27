@@ -18,6 +18,7 @@ certificates). Then, in this order:
 |---|---|---|
 | **Clusters** | each cluster: ONTAP version, system health, nodes up, space used on its aggregates, NTP servers. A cluster that could not be read is listed in red with the reason | health, nodes, space |
 | **Nodes** | state, uptime (days hours:minutes), model, version, whether the partner could take over (storage failover), service processor, NVRAM battery, the node's clock against the AAP server's | green UP / red DOWN, and each status |
+| **Volumes** | volumes 85 % full or more, and volumes offline or restricted, with their aggregate, state, type, size, available, used %. Volumes under 50 GB (`ontap_volume_min_gb`) are left out, full or not online - root volumes and other small ones run full by design; the table says how many | amber 85 %, red 90 %, red offline |
 | **System health** | ONTAP's health monitors (`system health subsystem show`) that are not OK | amber degraded |
 | **Hardware: controllers and shelves** | each controller and disk shelf: power supplies, fans, temperature, failed parts (FRUs) | red failed |
 | **Disks** | broken disks; disks rebuilding, copying or in maintenance; unassigned disks | red / amber / blue |
@@ -27,7 +28,6 @@ certificates). Then, in this order:
 | **Port errors (CRC)** | ports with receive errors or CRC errors since the node booted (CRC counters: ONTAP 9.11+) | amber from 1, red from 10,000 |
 | **Aggregates** | every data aggregate, fullest first: node, home node, size, used, available, used % | amber 85 %, red 90 % |
 | **Aggregates not on their home node** | after a takeover, aggregates still on the partner | amber |
-| **Volumes** | volumes 85 % full or more, and volumes offline or restricted, with their aggregate, state, type, size, available, used %. Volumes under 50 GB (`ontap_volume_min_gb`) are left out, full or not online - root volumes and other small ones run full by design; the table says how many | amber 85 %, red 90 %, red offline |
 | **Inodes (files)** | volumes using 85 % or more of their inodes (no new file can be created when they run out) | amber 85 %, red 90 % |
 | **Snapshot space** | the 25 volumes whose snapshots hold the most: type, volume size, snapshot count, reserve, snapshot used, % of reserve, % of volume | amber from 100 % of the reserve (spilling into the volume) |
 | **SnapMirror** | relationships that are unhealthy, lagging, broken off, paused or uninitialized, and transfers running now: mirror state, status, healthy, lag, last transfer, progress, progress updated, policy, reason | red unhealthy / 48 h lag, amber 24 h lag, blue transferring |
@@ -41,6 +41,7 @@ certificates). Then, in this order:
 
 The health alerts and the error events come last (since 0.31.1): the tables above them say what is
 wrong, these say what ONTAP raised about it - often the same thing again, and many lines.
+The volumes come third, after the nodes (since 0.33.2): the table most often acted on.
 
 A section with nothing to report says so in one line ("Every LIF is up and at home."). Long
 tables show the problems first and are cut at 50 rows (`ontap_report_max_rows`); the job's

@@ -172,6 +172,15 @@ the ones after it.
     `report_web_tabs` in `all.yml` if you want them elsewhere. docs/WEB_REPORTS.md, "The index page: tabs, and each
     report's last runs".
 
+**NetApp health report: the volumes third**, after the clusters and nodes (they were twelfth, after the network and
+the aggregates): the table most often acted on.
+
+**Certificate trust check: containers off by default** (`check_trust_containers: false`). Reading each running podman
+container's CA bundles started a shell in it (`podman exec <container> sh -c "cat ...; find / ..."`), which endpoint
+security flags as certificate discovery. The host's own stores, Java, Python, Node, Go and certificate files are still
+read. To read containers again, set `check_trust_containers: true` once your security team has cleared it.
+docs/TRUST_STORES.md.
+
 ## 0.33.1 — 2026-10-27
 
 **Updating without scripts:** paste `site-automation-0.33.1-changed-since-0.33.0.zip` as it is - from 0.32.0:

@@ -48,8 +48,10 @@ check_trust_go_fixed: {"1.26": "1.26.10", "1.27": "1.27.3"}  # Go's fixed versio
 check_trust_go_max: 200                  # at most this many programs looked at per host
 
 # Containers: the CA bundle inside every running podman container (root's and each logged-in user's), read with
-# podman exec - a container image carries its own ca-certificates (Red Hat: UBI images are affected too).
-check_trust_containers: true
+# podman exec - a container image carries its own ca-certificates (Red Hat: UBI images are affected too). Off by
+# default (0.33.2): a shell started in each container that reads CA bundles and searches its whole filesystem looks
+# like certificate discovery to endpoint security, which flags it. Turn it on once your security team has cleared it.
+check_trust_containers: false
 check_trust_containers_max: 30           # at most this many containers per host
 
 # Certificate files an application carries (its own bundle, a copied root): every *.pem, *.crt, *.cer, *.der,

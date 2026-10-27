@@ -515,7 +515,7 @@ File: `roles/check_trust/defaults/main.yml`
 | `check_trust_go_dirs` | `[/usr/local/bin, /usr/local/sbin, /opt, /srv]` | folders searched for Go programs (four levels deep, executables over 1 MB) |
 | `check_trust_go_fixed` | `{"1.26": "1.26.10", "1.27": "1.27.3"}` | Go's fixed version per line (a program built with an older line: unsupported - rebuild it with a fixed Go) |
 | `check_trust_go_max` | `200` | at most this many programs looked at per host |
-| `check_trust_containers` | `true` | Containers: the CA bundle inside every running podman container (root's and each logged-in user's), read with podman exec - a container image carries its own ca-certificates (Red Hat: UBI images are affected too). |
+| `check_trust_containers` | `false` | Containers: the CA bundle inside every running podman container (root's and each logged-in user's), read with podman exec - a container image carries its own ca-certificates (Red Hat: UBI images are affected too). Off by default (0.33.2): a shell started in each container that reads CA bundles and searches its whole f… (all of it: the role file) |
 | `check_trust_containers_max` | `30` | at most this many containers per host |
 | `check_trust_find_dirs` | `[/etc, /opt, /srv, /usr/local, /var/lib, /root, /home]` | Certificate files an application carries (its own bundle, a copied root): every *.pem, *.crt, *.cer, *.der, cacert*, ca-bundle*, ca-certificates*, and every Java keystore (*.jks, *.keystore, *truststore*; *.p12 / *.pfx with keytool and the default password) under these folders, on the host's own filesystems - only the… (all of it: the role file) |
 | `check_trust_find_max` | `2000` | at most this many files read per host |

@@ -245,6 +245,8 @@ class Report(unittest.TestCase):
         self.assertTrue(titles[-1].startswith("Error events"), titles[-1])
         self.assertLess(titles.index("System health"), titles.index("Health alerts"))
         self.assertGreater(titles.index("Health alerts"), titles.index("Certificates expiring"))
+        self.assertTrue(titles[2].startswith("Volumes "), titles[:4])                      # after Clusters and Nodes
+        self.assertEqual(titles[:2], ["Clusters", "Nodes"])
 
 
     def test_ldap_events_left_out_when_ldap_is_not_configured(self):

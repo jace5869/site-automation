@@ -827,6 +827,11 @@ def ontap_report(collected, opts=None):
     # the alerts and the event log last: the tables above say what is wrong, these say what ONTAP raised about it
     last = [s for s in R.sections if s["title"] == "Health alerts" or s["title"].startswith("Error events")]
     R.sections = [s for s in R.sections if s not in last] + last
+    # the volumes near the top, after the clusters and nodes: the table most often acted on
+    vols = [s for s in R.sections if s["title"].startswith("Volumes ")]
+    rest = [s for s in R.sections if s not in vols]
+    at = next((i + 1 for i, s in enumerate(rest) if s["title"] == "Nodes"), 0)
+    R.sections = rest[:at] + vols + rest[at:]
     report = {"title": title, "status": status,
               "subtitle": "Read %s UTC%s" % (now.strftime("%Y-%m-%d %H:%M"), (" - " + vers) if vers else ""),
               "summary": summary, "sections": R.sections}
