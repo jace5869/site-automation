@@ -114,12 +114,42 @@ r = json.load(open(sys.argv[1]))["reports"]
 assert len(r) == 2 and str(r[1]["job"]) == "908", r' "$work/reports/index.json"
 check "latest.html is job 908 now" grep -q 'AAP job 908' "$d/latest.html"
 check "both runs kept" test "$(ls "$d" | grep -c '_job-90[78]\.html$')" = 2
+check "index.json: its line lists both runs, newest first" "$py" -c 'import json, sys
+r = json.load(open(sys.argv[1]))["reports"][1]
+assert [str(x["job"]) for x in r["runs"]] == ["908", "907"] and r["runs"][1]["page"].endswith("_job-907.html"), r' "$work/reports/index.json"
+check "index.html: the tabs (All, Certificates - a dot, it has a Warning - VMware), the line opening to its 2 runs" bash -c "grep -q '<label for=\"t1\"><span style=\"color:#9a5806;\">&#9679;</span> Certificates <span' '$work/reports/index.html' \
+    && grep -q 'VMware <span' '$work/reports/index.html' && grep -q '2 runs</span>' '$work/reports/index.html' && grep -q '<details class=\"r a1\"' '$work/reports/index.html'"
+lin='"awx_job_template_id": 71, "awx_job_template_name": "Linux - Certificate trust report"'
+run "report_web_history 2: a third run - the first run's page deleted" ok \
+    "{\"report_web_dest\": \"$work/reports\", \"report_web_history\": 2, \"awx_job_id\": 909, $lin}" "(older runs deleted: linux-certificate-trust-report/$page)"
+run "  and a fourth - the second run's" ok "{\"report_web_dest\": \"$work/reports\", \"report_web_history\": 2, \"awx_job_id\": 910, $lin}" "_job-908.html)"
+check "only the last 2 runs' pages and JSON left, and latest" bash -c "[ \"\$(ls '$d' | grep -E '_job-[0-9]+\.(html|json)\$' | sed 's/.*_job-//' | sort | tr '\n' ' ')\" = '909.html 909.json 910.html 910.json ' ] \
+    && grep -q 'AAP job 910' '$d/latest.html' && test -f '$d/latest.json'"
+check "the other template's pages untouched" bash -c "ls '$work'/reports/vmware-snapshot-cleanup/*_job-4182.html >/dev/null"
+check "index.json: 2 runs listed" "$py" -c 'import json, sys
+r = json.load(open(sys.argv[1]))["reports"][1]
+assert [str(x["job"]) for x in r["runs"]] == ["910", "909"], r' "$work/reports/index.json"
+run "report_web_delete_old false: the index forgets the older run, its page stays" ok \
+    "{\"report_web_dest\": \"$work/reports\", \"report_web_history\": 2, \"report_web_delete_old\": false, \"awx_job_id\": 911, $lin}"
+check "the page of job 909 still there, 2 runs listed" bash -c "ls '$d'/*_job-909.html >/dev/null && grep -q '_job-911.html' '$work/reports/index.json' \
+    && ! grep -q '_job-909.html' '$work/reports/index.json'"
 
 run "your own names: report_web_page with {site}, report_web_names, no latest, no JSON" ok \
     "{\"report_web_dest\": \"$work/reports\", \"report_web_page\": \"{site}/{template}/{year}/{status}-{job}.html\", \"report_web_latest\": \"\",
       \"report_web_json\": false, \"report_web_names\": {\"site\": \"HQ East\"}, $aapjob}"
 check "HQ-East/linux-certificate-trust-report/<year>/warning-907.html" bash -c "ls '$work'/reports/HQ-East/linux-certificate-trust-report/*/warning-907.html >/dev/null \
     && ! ls '$work'/reports/HQ-East/linux-certificate-trust-report/*/*.json 2>/dev/null"
+run "  another template under the same {site} folder, no latest, report_web_history 1: nothing deleted" ok \
+    "{\"report_web_dest\": \"$work/reports\", \"report_web_page\": \"{site}/{template}/{year}/{status}-{job}.html\", \"report_web_latest\": \"\",
+      \"report_web_json\": false, \"report_web_names\": {\"site\": \"HQ East\"}, \"report_web_history\": 1, \"awx_job_id\": 4183,
+      \"awx_job_template_name\": \"VM - health report\"}"
+check "the first template's page still there (no latest: a line may be two templates', so nothing is deleted)" bash -c "ls '$work'/reports/HQ-East/linux-certificate-trust-report/*/warning-907.html >/dev/null \
+    && ls '$work'/reports/HQ-East/vm-health-report/*/*-4183.html >/dev/null"
+mkdir -p "$work/busy/index.html/x"
+run "index.html cannot be written (a folder in its place - as a file open all the time would): a warning, the job ok" ok \
+    "{\"report_web_dest\": \"$work/busy\", $aapjob}" "[WARNING]: The report website: index.html was not written - it stayed open somewhere"
+check "the page, latest and index.json written" bash -c "ls '$work'/busy/linux-certificate-trust-report/*_job-907.html >/dev/null \
+    && test -s '$work/busy/linux-certificate-trust-report/latest.html' && test -s '$work/busy/index.json'"
 run "a name that does not exist: says which there are" fail "{\"report_web_dest\": \"$work/reports\", \"report_web_page\": \"{site}/{job}.html\"}" \
     "report_web_page '{site}/{job}.html': there is no {site}"
 run "a name that leaves the folder: refused" fail "{\"report_web_dest\": \"$work/reports\", \"report_web_page\": \"../{job}.html\"}" \
@@ -150,6 +180,12 @@ check "the page, latest, the JSON and the index on the website" bash -c "ls '$wo
 check "the template's folder made with MKCOL after a 409" bash -c "grep -q '^PUT .* 409' '$work/web.log' \
     && grep -q '^MKCOL /reports/linux-certificate-trust-report/ 201' '$work/web.log'"
 check "the command look, the logo inside" bash -c "grep -q 'src=\"data:image/png;base64,' '$work'/site/reports/linux-certificate-trust-report/latest.html"
+REPORT_WEB_TOKEN=t0ken run "an upload again with report_web_history 1: the older run deleted with DELETE" ok \
+    "{\"report_web_dest\": \"http://127.0.0.1:$wport/reports\", \"report_web_history\": 1, \"awx_job_id\": 908, \"awx_job_template_id\": 71, \"awx_job_template_name\": \"Linux - Certificate trust report\"}" \
+    "_job-907.html)"
+check "DELETE of its page and JSON, both gone" bash -c "grep -qE '^DELETE /reports/linux-certificate-trust-report/[^ ]*_job-907.html 204' '$work/web.log' \
+    && grep -qE '^DELETE /reports/linux-certificate-trust-report/[^ ]*_job-907.json 204' '$work/web.log' \
+    && ! ls '$work'/site/reports/linux-certificate-trust-report/*_job-907.* 2>/dev/null && ls '$work'/site/reports/linux-certificate-trust-report/*_job-908.html >/dev/null"
 REPORT_WEB_TOKEN=t0ken run "the report folder not on the website: fails, never makes it" fail "{\"report_web_dest\": \"http://127.0.0.1:$wport/gone\"}" \
     "the folder http://127.0.0.1:$wport/gone is not there on the website"
 check "nothing made" test ! -e "$work/site/gone"
@@ -194,6 +230,9 @@ if command -v pwsh >/dev/null 2>&1; then
     check "index.json there: 2 reports" "$py" -c 'import json, sys
 r = json.load(open(sys.argv[1]))["reports"]
 assert [x["key"] for x in r] == ["linux-certificate-trust-report/latest.html", "vmware-snapshot-cleanup/latest.html"], r' "$work/win/index.json"
+    run "the first template again there, report_web_history 1: its older page deleted by the script" ok \
+        "{$winvars, \"report_web_history\": 1, \"awx_job_id\": 908, $lin}" "localhost - this run's pages, in $work/win"
+    check "only job 908's page and JSON there" bash -c "! ls '$wd'/*_job-907.* 2>/dev/null && ls '$wd'/*_job-908.html '$wd'/*_job-908.json >/dev/null"
     run "the folder not there on the server: fails, never makes it" fail \
         "{$winvars, \"report_web_dest\": \"$work/win-gone\"}" "The report website: the folder $work/win-gone is not there on"
     check "nothing made" test ! -e "$work/win-gone"
@@ -290,13 +329,14 @@ CHECK=1 PB=playbooks/report_web_copy.yml run "a Check run of the copy job after 
 aapjob 502 90 "Report website - copy" 1 check
 relay
 # (its when later than 907's, whatever the minute now: _web_when, the run's time on the website)
-run "copy mode: a newer run of the first template" ok "{$keep, \"awx_job_id\": 908, \"awx_job_template_id\": 71, \"awx_job_template_name\": \"Linux - Certificate trust report\",
-    \"_web_when\": \"2099-01-01 00:00 UTC\"}" \
+run "copy mode: a newer run of the first template (report_web_history 1, its own)" ok "{$keep, \"awx_job_id\": 908, \"awx_job_template_id\": 71, \"awx_job_template_name\": \"Linux - Certificate trust report\",
+    \"_web_when\": \"2099-01-01 00:00 UTC\", \"report_web_history\": 1}" \
     "kept for the job Report website - copy"
 aapjob 908 71 "Linux - Certificate trust report" 0
 PB=playbooks/report_web_copy.yml run "the copy job: only the new run, latest now it" ok "{$cvars, \"awx_job_id\": 503}" "job 908 'Linux - Certificate trust report'"
 check "job 907 not copied again" bash -c "! grep -q 'job 907' '$work/out.txt'"
 check "latest.html is job 908" grep -q 'AAP job 908 &middot;' "$cd1/latest.html"
+check "the report job's report_web_history 1, not the copy job's 5: job 907's page deleted" bash -c "! ls '$cd1'/*_job-907.* 2>/dev/null"
 PB=playbooks/report_web_copy.yml run "named jobs (report_web_copy_jobs): an older run again - its page, not latest" ok \
     "{$cvars, \"awx_job_id\": 504, \"report_web_copy_jobs\": \"907\"}" "an older run than the one there: its latest page and index line left as they are"
 check "latest.html still job 908, the index too" bash -c "grep -q 'AAP job 908 &middot;' '$cd1/latest.html' && \"$py\" -c 'import json, sys
@@ -314,7 +354,7 @@ if command -v pwsh >/dev/null 2>&1; then
         "{$wcvars, \"report_web_copy_jobs\": [907, 4182, 908]}" "webtest (local, port 5985, from this job's inventory): its connection settings in this job's inventory" \
         "webtest - job 907's page, in $work/wincopy" "job 908 'Linux - Certificate trust report': https://reports.example.mil/linux-certificate-trust-report/"
     wd="$work/wincopy/linux-certificate-trust-report"
-    check "the pages, latest (job 908), the index there; ASCII only" bash -c "ls '$wd'/*_job-907.html '$wd'/*_job-908.html >/dev/null && grep -q 'AAP job 908' '$wd/latest.html' \
+    check "job 908's page, latest (job 908), the index there - job 907's deleted by the script (908's report_web_history 1); ASCII only" bash -c "! ls '$wd'/*_job-907.html 2>/dev/null && ls '$wd'/*_job-908.html >/dev/null && grep -q 'AAP job 908' '$wd/latest.html' \
         && test -s '$work/wincopy/index.html' && ! LC_ALL=C grep -q '[^ -~[:space:]]' '$wd/latest.html'"
     check "index.json there: 2 templates, carried from page to page" "$py" -c 'import json, sys
 r = json.load(open(sys.argv[1]))["reports"]

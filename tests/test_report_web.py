@@ -110,6 +110,30 @@ class Module(unittest.TestCase):
         self.assertIn('width="42" height="56"', html)
         self.assertIn("2 report(s)", html)
         self.assertIn("No reports yet.", rw.index_html([], "index.html", "x", None, "now"))
+        self.assertNotIn('class="tab"', rw.index_html([], "index.html", "x", None, "now"))      # no tabs without reports
+
+    def test_index_page_tabs_and_runs(self):
+        runs = [_run(9, "2026-10-09 06:00 UTC", "warning"), _run(8, "2026-10-08 06:00 UTC")]
+        reports = [{"key": "vm/latest.html", "name": "VMware - VM health report", "status": "warning", "when": runs[0]["when"],
+                    "job": 9, "page": runs[0]["page"], "latest": "vm/latest.html", "title": "2 VMs", "runs": runs},
+                   {"key": "ds/latest.html", "name": "VMware - Datastore report", "status": "ok", "when": "2026-10-09 05:00 UTC",
+                    "job": 7, "page": "ds/a.html", "latest": "ds/latest.html"},                       # an index from before
+                   {"key": "p/latest.html", "name": "Patching", "status": "critical", "when": "2026-10-09 04:00 UTC",
+                    "job": 6, "page": "p/b.html", "latest": "p/latest.html"}]
+        html = rw.index_html(reports, "index.html", "x", None, "now")
+        self.assertIn('<label for="t0">All <span style="font-weight:400;">3</span></label>', html)
+        self.assertIn('<label for="t1"><span style="color:#9a5806;">&#9679;</span> VMware <span style="font-weight:400;">2</span></label>', html)
+        self.assertIn('<label for="t2"><span style="color:#b42318;">&#9679;</span> Other <span style="font-weight:400;">1</span></label>', html)
+        self.assertIn("#t1:checked~.list .r:not(.a1){display:none}", html)
+        self.assertNotIn(".r:not(.a0)", html)                                                         # All hides nothing
+        self.assertEqual(html.count('<details class="r a1"'), 2)
+        self.assertIn('id="t0" class="tab" checked>', html)
+        self.assertIn('href="vm/2026-10-09_job-9.html" style="color:#0f6b4f;font-weight:600;">2026-10-09 06:00 UTC</a> <span', html)
+        self.assertIn('href="vm/2026-10-08_job-8.html"', html)
+        self.assertIn("2 runs</span>", html)
+        self.assertIn('href="ds/a.html" style="color:#0f6b4f;font-weight:600;">', html)              # its one run, from the line
+        self.assertIn("1 run</span>", html)
+        self.assertEqual(html.encode("ascii", "strict").decode("ascii"), html)                         # ASCII: any PowerShell writes it
 
     def test_folder_target(self):
         t = rw.Target(self.tmp, "", 5)
@@ -230,6 +254,123 @@ class Newer(unittest.TestCase):
         self.assertTrue(rw.newer(old, {"when": "2026-10-23 07:00 UTC"}))
         self.assertFalse(rw.newer(old, {"when": "2026-10-22 23:59 UTC"}))
         self.assertTrue(rw.newer({"key": "k"}, {"when": "2026-10-22 23:59 UTC"}))       # a line without when (older index)
+
+
+def _run(job, when, status="ok"):
+    return {"page": "vm/2026-10-%s_job-%d.html" % (when[8:10], job), "status": status, "when": when, "job": job, "title": "t%d" % job}
+
+
+class History(unittest.TestCase):
+    def entry(self, job, when, status="ok"):
+        return dict(_run(job, when, status), key="vm/latest.html", name="VMware - VM health report", latest="vm/latest.html")
+
+    def test_the_last_runs_kept_the_older_ones_dropped(self):
+        line, dropped = rw.history(None, self.entry(1, "2026-10-01 06:00 UTC"), 5)
+        self.assertEqual([x["job"] for x in line["runs"]], [1])
+        self.assertEqual(dropped, [])
+        for job in range(2, 8):
+            line, dropped = rw.history(line, self.entry(job, "2026-10-%02d 06:00 UTC" % job), 5)
+        self.assertEqual([x["job"] for x in line["runs"]], [7, 6, 5, 4, 3])              # newest first, 5 of them
+        self.assertEqual([x["job"] for x in dropped], [2])                               # 1 went the run before
+        self.assertEqual(line["job"], 7)
+        self.assertEqual(sorted(line["runs"][0]), sorted(rw.RUN_KEYS))                  # no key, name or runs in a run
+
+    def test_an_older_run_copied_later(self):
+        line = None
+        for job in (1, 3, 4):
+            line, _ = rw.history(line, self.entry(job, "2026-10-%02d 06:00 UTC" % job), 3)
+        line, dropped = rw.history(line, self.entry(2, "2026-10-02 06:00 UTC", "critical"), 3)
+        self.assertEqual(line["job"], 4)                                                  # the line stays the newest run's
+        self.assertEqual([x["job"] for x in line["runs"]], [4, 3, 2])
+        self.assertEqual([x["job"] for x in dropped], [1])
+        line, dropped = rw.history(line, self.entry(0, "2026-09-30 06:00 UTC"), 3)
+        self.assertEqual([x["job"] for x in line["runs"]], [4, 3, 2])
+        self.assertEqual(dropped, [])                                                     # its page, just written, stays
+
+    def test_an_index_from_before_and_a_run_again(self):
+        old = {"key": "vm/latest.html", "name": "VMware - VM health report", "latest": "vm/latest.html", **_run(1, "2026-10-01 06:00 UTC")}
+        line, dropped = rw.history(old, self.entry(2, "2026-10-02 06:00 UTC"), 5)
+        self.assertEqual([x["job"] for x in line["runs"]], [2, 1])                       # its one run, from the line itself
+        line, dropped = rw.history(line, self.entry(2, "2026-10-02 06:00 UTC", "warning"), 5)
+        self.assertEqual([(x["job"], x["status"]) for x in line["runs"]], [(2, "warning"), (1, "ok")])   # the same page once
+        line, dropped = rw.history(line, self.entry(3, "2026-10-03 06:00 UTC"), 0)        # at least 1
+        self.assertEqual([x["job"] for x in line["runs"]], [3])
+        self.assertEqual([x["job"] for x in dropped], [2, 1])
+
+    def test_deletable(self):
+        kept = {"index.html", "index.json", "vm/latest.html", "vm/latest.json"}
+        for rel in ("vm/2026-10-01_job-1.html", "vm/2026-10-01_job-1.json", "site/vm/2026/ok-1.html"):
+            self.assertTrue(rw.deletable(rel, kept), rel)
+        for rel in ("vm/latest.html", "index.json", "../x.html", "vm/../../x.html", "/etc/x.html", "C:/x.html", "a\\b.html",
+                    "vm//x.html", "vm/x.txt", "vm/x", None, 5):
+            self.assertFalse(rw.deletable(rel, kept), rel)
+
+    def test_area(self):
+        self.assertEqual(rw.area("VMware - VM health report"), "VMware")
+        self.assertEqual(rw.area("Linux - Certificate trust report - weekly"), "Linux")
+        self.assertEqual(rw.area("Patching"), "Other")
+        self.assertEqual(rw.area(" - x"), "Other")
+        self.assertEqual(rw.area(None), "Other")
+        tabs = [{"tab": "Certificates", "match": ["*certificate*"]}, {"tab": "VMware", "match": ["VM *", "VMware*"]},
+                {"tab": "Linux", "match": "Health check*"}]
+        self.assertEqual(rw.area("VMware - certificate report", tabs), "Certificates")             # the first that matches
+        self.assertEqual(rw.area("VM - health report", tabs), "VMware")
+        self.assertEqual(rw.area("vm - HEALTH report", tabs), "VMware")                            # any case
+        self.assertEqual(rw.area("Health check", tabs), "Linux")                                   # one name, not a list
+        self.assertEqual(rw.area("Backup - nightly", tabs), "Backup")                              # none: its name up to " - "
+        html = rw.index_html([{"name": n, "status": "ok", "page": "p%d.html" % i} for i, n in enumerate(
+            ["Backup - nightly", "Patching", "VM - health report", "Certificate report"])], "index.html", "x", None, "now", tabs)
+        self.assertEqual(rw.re.findall(r'<label for="t\d">(?:<span[^>]*>[^<]*</span> )?([^<]+?) <span', html),
+                         ["All", "Certificates", "VMware", "Backup", "Other"])                     # the tabs' order, A to Z, Other
+
+    def test_the_default_tabs_take_every_template_of_the_guide(self):
+        import re
+        import yaml
+        with open(os.path.join(REPO, "roles", "site_email", "defaults", "main.yml")) as f:
+            tabs = yaml.safe_load(f)["report_web_tabs"]
+        with open(os.path.join(REPO, "docs", "JOB_TEMPLATES.md")) as f:
+            names = re.findall(r"^\| ([^|]+?) \| `playbooks/", f.read(), re.M)
+        self.assertGreater(len(names), 70)
+        self.assertEqual([n for n in names if rw.area(n, tabs) == "Other" or rw.area(n, tabs) not in [t["tab"] for t in tabs]], [])
+
+
+class InUse(unittest.TestCase):
+    def setUp(self):
+        self.wait, rw.WAIT = rw.WAIT, (0, 0)
+
+    def tearDown(self):
+        rw.WAIT = self.wait
+
+    def test_again_until_it_works_or_not_worth_it(self):
+        tries = []
+
+        def busy():
+            tries.append(1)
+            if len(tries) < 3:
+                raise OSError(13, "Permission denied")
+            return "done"
+        self.assertEqual(rw.again(busy, lambda e: True), "done")
+        self.assertEqual(len(tries), 3)
+        with self.assertRaises(OSError):                                                # 1 + len(WAIT) tries, then its error
+            rw.again(lambda: (_ for _ in ()).throw(OSError(13, "x")), lambda e: True)
+        tries[:] = []
+        with self.assertRaises(ValueError):
+            rw.again(lambda: tries.append(1) or (_ for _ in ()).throw(ValueError()), lambda e: False)
+        self.assertEqual(len(tries), 1)                                                 # not worth it: at once
+
+    def test_smb_errors_that_go_away(self):
+        self.assertTrue(rw._smb_in_use(Exception("Received unexpected status from the server: STATUS_ACCESS_DENIED (3221225506)")))
+        self.assertTrue(rw._smb_in_use(Exception("[NtStatus 0xc0000043] The process cannot access the file because it is being used")))
+        self.assertFalse(rw._smb_in_use(Exception("STATUS_LOGON_FAILURE")))
+
+    def test_folder_remove(self):
+        tmp = tempfile.mkdtemp()
+        t = rw.Target(tmp, "", 5)
+        t.write("a/old.html", "x", "text/html")
+        t.remove("a/old.html")
+        t.remove("a/old.html")                                                          # gone already: fine
+        self.assertEqual(os.listdir(os.path.join(tmp, "a")), [])
+        shutil.rmtree(tmp)
 
 
 # ---- a fake AAP: job template 90 is the copy job, the others report jobs ----------------------------------------------
@@ -445,12 +586,19 @@ class Windows(unittest.TestCase):
         with open(script, "wb") as f:
             f.write(rw.windows_script(dest, files).encode("utf-8-sig"))
         self.assertEqual(rw.windows_script(dest, files).count("<p>it's"), 1)             # the same text once
+        self.assertIn("Save-File @('t', 'latest.html') $t0 $true", rw.windows_script(dest, files, (), ["t/latest.html"]))
         out = clm(script)["write"]
         self.assertTrue(out["ok"], out)
         self.assertEqual(out["written"], ["t/p.html", "t/latest.html", "index.json"])
         with open(os.path.join(dest, "t", "latest.html"), "rb") as f:
             self.assertEqual(f.read(), page.encode("ascii"))                       # exactly: no BOM, no newline added
         self.assertEqual(sorted(os.listdir(os.path.join(dest, "t"))), ["latest.html", "p.html"])
+        with open(script, "wb") as f:                                   # older runs deleted - one not there is fine
+            f.write(rw.windows_script(dest, files[1:], ["t/p.html", "t/gone.json"]).encode("utf-8-sig"))
+        out = clm(script)["write"]
+        self.assertTrue(out["ok"], out)
+        self.assertEqual((out["deleted"], out["left"]), (["t/p.html"], []))
+        self.assertEqual(sorted(os.listdir(os.path.join(dest, "t"))), ["latest.html"])
         cfg = {"SITE_CHECK_CONFIG": json.dumps({"dest": dest, "index": ["index.json"]})}
         self.assertEqual(clm(READ_PS, cfg)["read"], {"ok": True, "error": "", "index": '{"reports": []}\n'})
         self.assertIsNone(clm(READ_PS, {"SITE_CHECK_CONFIG": json.dumps({"dest": dest, "index": ["none.json"]})})["read"]["index"])

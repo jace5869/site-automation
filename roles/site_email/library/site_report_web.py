@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 """Publish one report on the report website (roles/site_email, report_web_dest): its page, a copy as the
 template's latest page, the report's data as JSON beside each, and the index of every report (index.html and
-index.json, this template's line updated). Into a folder the job can write (a share mounted on the execution
-node), onto a Windows file share over SMB (a \\\\server\\share\\folder path: smbprotocol, no mount), uploaded with HTTP PUT
-(WebDAV: nginx, Apache, IIS), or - with windows_host - as a PowerShell script that
-writes them on a Windows server (the role runs it there over WinRM). With keep (report_web_copy), nothing is written:
+index.json, this template's line updated, with its last runs - history; the pages of older runs deleted). Into a
+folder the job can write (a share mounted on the execution node), onto a Windows file share over SMB (a
+\\\\server\\share\\folder path: smbprotocol, no mount), uploaded with HTTP PUT (WebDAV: nginx, Apache, IIS), or - with
+windows_host - as a PowerShell script that writes them on a Windows server (the role runs it there over WinRM). With keep (report_web_copy), nothing is written:
 the report is packed for the job "Report website - copy", which writes it later (plugins/module_utils/site_report_page.py).
 Standard library only, but for the SMB share: smbprotocol (pure Python; in the execution environment)."""
 from __future__ import absolute_import, division, print_function
@@ -17,6 +17,10 @@ short_description: Publish a report as web pages (a folder or an HTTP PUT upload
 description:
   - Writes the page, the template's latest page and their JSON, then reads the index (index.json), puts this
     template's line in it and writes index.json and index.html again.
+  - Each template's line keeps its last runs (history, newest first); with delete_old, the pages (and JSON) of the runs
+    that fall off it are deleted - only pages the index listed for this template, never its latest page or the index.
+    One that cannot be deleted is a warning, not a failure.
+  - A page being read just then (open in a browser, on a share) is written again a moment later, a few times.
   - dest is a folder (an absolute path), a Windows file share's folder (\\server\share\folder, or
     smb://server/share/folder) or an http(s):// address that accepts PUT. A login for the upload comes
     from the environment - REPORT_WEB_TOKEN (sent as a bearer token), or REPORT_WEB_USERNAME and
@@ -46,6 +50,8 @@ options:
   data: {description: The report and its run (written as JSON beside the page)., type: dict, default: {}}
   entry: {description: "This template's line of the index: key (one per template), name, title, status, when, job.", type: dict, required: true}
   json: {description: Write the JSON files., type: bool, default: true}
+  history: {description: "The runs each template's line of the index keeps (report_web_history), at least 1.", type: int, default: 5}
+  delete_old: {description: "Delete the pages of the runs older than those (report_web_delete_old).", type: bool, default: true}
   header_text: {description: The line beside the logo on the index page., type: str, default: Site automation report}
   logo_size: {description: "[width, height] of the logo on the index page ([] = no logo).", type: list, elements: int, default: []}
   ca_path: {description: A CA file for the upload address (default - the CAs the execution environment trusts)., type: str, default: ''}
@@ -66,6 +72,8 @@ url: {description: The page's address ('' without url or an http dest)., type: s
 latest_url: {description: The template's latest page., type: str}
 index_url: {description: The index of every report., type: str}
 written: {description: The files written (inside the folder)., type: list}
+deleted: {description: "The pages (and JSON) of older runs deleted (with windows_host - to be deleted by the script).", type: list}
+not_deleted: {description: "Older runs' files that could not be deleted: [[file, why]].", type: list}
 place: {description: "Where the page is, without an address (/mnt/reports/..., web01:D:\\reports\\...).", type: str}
 script: {description: "With windows_host - the PowerShell script that writes them there (a temporary file; delete it).", type: str}
 index_text: {description: The index (index.json) as written - for the next page of the same run (the copy job)., type: str}
@@ -77,6 +85,8 @@ cut: {description: "With keep - the tables cut to fit max_kb: [[section, rows ke
 
 import base64
 import datetime
+import errno
+import fnmatch
 import html as htmllib
 import json
 import os
@@ -84,6 +94,7 @@ import posixpath
 import re
 import ssl
 import tempfile
+import time
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.site_report_page import KEEP_AT_LEAST, pack
@@ -99,6 +110,20 @@ PAL = {
     'critical': ('#b42318', '#fdeaea', '#f5c4c4', 'Critical'),
     'info': ('#1d4ed8', '#e6effd', '#c3d5f7', 'Info'),
     'unknown': ('#4b5753', '#eef2f1', '#d5ddda', 'Unknown')}
+IN_USE = (errno.EACCES, errno.EBUSY, errno.EPERM, errno.ETXTBSY)    # a mounted share's file open in a browser
+RUN_KEYS = ('page', 'status', 'when', 'job', 'title')
+WAIT = (0.5, 1, 2, 3, 4)                                 # a file in use: written again after these seconds
+
+
+def again(what, retry):
+    """what(), done again after each of WAIT's pauses while retry(the error) says it may work a moment later."""
+    for pause in WAIT + (None,):
+        try:
+            return what()
+        except Exception as e:                          # noqa: BLE001
+            if pause is None or not retry(e):
+                raise
+            time.sleep(pause)
 
 
 class Fail(Exception):
@@ -167,7 +192,14 @@ class Target(object):
                     os.chmod(tmp, 0o644)             # readable by the web server (a share may not allow it)
                 except OSError:
                     pass
-                os.replace(tmp, path)
+                try:
+                    again(lambda: os.replace(tmp, path), lambda e: isinstance(e, OSError) and e.errno in IN_USE)
+                except OSError:
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
+                    raise
             except OSError as e:
                 raise Fail('writing %s: %s' % (path, e.strerror or e))
             return
@@ -183,6 +215,24 @@ class Target(object):
                 raise Fail('uploading %s/%s: HTTP %s %s%s' % (self.dest, rel, e2.code, e2.reason, _login_hint(e2.code)))
         except URLError as e:
             raise Fail('uploading %s/%s: %s' % (self.dest, rel, e.reason))
+
+    def remove(self, rel):
+        """Delete a file (gone already is fine)."""
+        if not self.http:
+            path = os.path.join(self.dest, *rel.split('/'))
+            try:
+                again(lambda: os.remove(path), lambda e: isinstance(e, OSError) and e.errno in IN_USE)
+            except OSError as e:
+                if e.errno != errno.ENOENT:
+                    raise Fail(e.strerror or str(e))
+            return
+        try:
+            self._call('DELETE', rel).read()
+        except HTTPError as e:
+            if e.code not in (404, 410):
+                raise Fail('HTTP %s %s%s' % (e.code, e.reason, _login_hint(e.code)))
+        except URLError as e:
+            raise Fail(str(e.reason))
 
     def _folders(self, rel):
         parts = rel.split('/')[:-1]
@@ -254,7 +304,8 @@ class SmbTarget(object):
         if 'logon_failure' in low or 'logon failure' in low or 'status_logon' in low or 'invalid credentials' in low:
             hint = ': the user name or password is wrong (the Report website credential - user@YOURDOMAIN.MIL), or the account is locked'
         elif 'access_denied' in low or 'access is denied' in low:
-            hint = ': the account may log in but not use this folder - give it Modify on it (the share and the folder)'
+            hint = (': the account may log in but not use this folder - give it Modify on it (the share and the folder); or the '
+                    'file was open all that time (a browser, an editor), tried again for about 10 seconds')
         elif 'bad_network_name' in low or '0xc00000cc' in low or (what.startswith('opening the share') and (
                 '0xc0000225' in low or 'no such file' in low)):
             hint = ': no such share on that server (the part after the server name)'
@@ -300,13 +351,24 @@ class SmbTarget(object):
                 self.smb.makedirs(folder, exist_ok=True, **self.kw)
             with self.smb.open_file(tmp, mode='wb', **self.kw) as f:
                 f.write(text.encode('utf-8'))
-            self.smb.replace(tmp, path, **self.kw)      # the old page is replaced whole: never half a page
+            # the old page is replaced whole (never half a page); one open just then, in a browser, a moment later
+            again(lambda: self.smb.replace(tmp, path, **self.kw), _smb_in_use)
         except Exception as e:                          # noqa: BLE001
             try:
                 self.smb.remove(tmp, **self.kw)
             except Exception:                           # noqa: BLE001
                 pass
             raise Fail(self._why('writing ' + path, e))
+
+    def remove(self, rel):
+        path = self._path(rel)
+        try:
+            again(lambda: self.smb.remove(path, **self.kw), _smb_in_use)
+        except OSError as e:
+            if getattr(e, 'errno', None) != errno.ENOENT and 'object_name_not_found' not in str(e).lower():
+                raise Fail(self._why('deleting ' + path, e))
+        except Exception as e:                          # noqa: BLE001
+            raise Fail(self._why('deleting ' + path, e))
 
     def close(self):
         try:
@@ -315,11 +377,18 @@ class SmbTarget(object):
             pass
 
 
+def _smb_in_use(e):
+    """An SMB error that a moment later may not be there: the file open in a browser, or being deleted."""
+    low = str(e).lower()
+    return any(w in low for w in ('sharing_violation', 'sharing violation', '0xc0000043', 'access_denied', 'access is denied',
+                                  '0xc0000022', 'delete_pending', '0xc0000056', 'being used by another'))
+
+
 class Staged(object):
     """A folder on a Windows server (windows_host): the files kept here, for the script that writes them there."""
 
     def __init__(self, index_json, index_text):
-        self.index_json, self.index_text, self.files = index_json, index_text, []
+        self.index_json, self.index_text, self.files, self.removed = index_json, index_text, [], []
 
     def read(self, rel):
         if rel != self.index_json or not self.index_text:
@@ -333,6 +402,9 @@ class Staged(object):
         if rel.endswith('.html'):
             text = text.encode('ascii', 'xmlcharrefreplace').decode('ascii')
         self.files = [f for f in self.files if f[0] != rel] + [(rel, text)]
+
+    def remove(self, rel):
+        self.removed.append(rel)
 
 
 def _ps_quote(text):
@@ -348,12 +420,12 @@ def _ps_text(text):
 
 # writes the files into the folder: each to a temporary name beside it, then over the old one
 PS_WRITER = r"""# site-automation - the report website (roles/site_email, report_web_host): this run's pages and the index,
-# written into report_web_dest on this server. Made by the site_report_web module for one run, then deleted.
-# Windows PowerShell 5.1 and PowerShell 7; also works in Constrained Language Mode.
+# written into report_web_dest on this server, older runs' pages deleted. Made by the site_report_web module for one
+# run, then deleted. Windows PowerShell 5.1 and PowerShell 7; also works in Constrained Language Mode.
 $ErrorActionPreference = 'Stop'
 $dest = %(dest)s
-$out = @{ ok = $false; error = ''; written = @() }
-function Save-File([string[]] $Parts, [string] $Text) {
+$out = @{ ok = $false; error = ''; written = @(); deleted = @(); left = @(); busy = @() }
+function Save-File([string[]] $Parts, [string] $Text, [bool] $Soft = $false) {
     $path = $dest
     foreach ($p in $Parts) { $path = Join-Path -Path $path -ChildPath $p }
     $dir = Split-Path -Path $path -Parent
@@ -362,10 +434,29 @@ function Save-File([string[]] $Parts, [string] $Text) {
     Set-Content -LiteralPath $tmp -Value $Text -Encoding Ascii -NoNewline
     $n = 0
     while ($true) {                                  # a page being read just then: again, a moment later
-        try { Move-Item -LiteralPath $tmp -Destination $path -Force; break }
+        try { Move-Item -LiteralPath $tmp -Destination $path -Force; $out.written += @($Parts -join '/'); break }
         catch {
             $n++
-            if ($n -ge 5) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue; throw }
+            if ($n -ge 6) {                          # about 8 seconds
+                Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+                if (-not $Soft) { throw }
+                $out.busy += @(($Parts -join '/') + ': ' + [string]$_.Exception.Message)   # latest or the index: next run
+                return
+            }
+            Start-Sleep -Milliseconds (500 * $n)
+        }
+    }
+}
+function Remove-Old([string[]] $Parts, [string] $Rel) {
+    $path = $dest
+    foreach ($p in $Parts) { $path = Join-Path -Path $path -ChildPath $p }
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
+    $n = 0
+    while ($true) {                                  # an older run's page: never a failure of this run
+        try { Remove-Item -LiteralPath $path -Force; $out.deleted += @($Rel); break }
+        catch {
+            $n++
+            if ($n -ge 5) { $out.left += @($Rel + ': ' + [string]$_.Exception.Message); break }
             Start-Sleep -Milliseconds 500
         }
     }
@@ -383,15 +474,18 @@ catch { $out.error = [string]$_.Exception.Message }
 """
 
 
-def windows_script(dest, files):
-    """The PowerShell script that writes files [(rel, text)] into dest; a text used twice is in it once."""
+def windows_script(dest, files, remove=(), soft=()):
+    """The PowerShell script that writes files [(rel, text)] into dest, then deletes remove [rel]; a text used twice is
+    in it once. One of soft (latest, the index) open there all that time is left for the next run, not a failure."""
     body, seen = [], {}
     for rel, text in files:
         if text not in seen:
             seen[text] = '$t%d' % len(seen)
             body.append('    %s = %s' % (seen[text], _ps_text(text)))
-        body.append('    Save-File @(%s) %s' % (', '.join(_ps_quote(p) for p in rel.split('/')), seen[text]))
-        body.append('    $out.written += @(%s)' % _ps_quote(rel))
+        body.append('    Save-File @(%s) %s%s' % (', '.join(_ps_quote(p) for p in rel.split('/')), seen[text],
+                                                ' $true' if rel in soft else ''))
+    for rel in remove:
+        body.append('    Remove-Old @(%s) %s' % (', '.join(_ps_quote(p) for p in rel.split('/')), _ps_quote(rel)))
     return PS_WRITER % {'dest': _ps_quote(dest), 'body': '\n'.join(body)}
 
 
@@ -433,14 +527,78 @@ def _join(base, rel):
     return (base.rstrip('/') + '/' + quote(rel)) if base and rel else ''
 
 
-def _pill(status):
+def _pill(status, small=False):
     fg, bg, bd, word = PAL.get(status, PAL['unknown'])
-    return ('<span style="display:inline-block;border-radius:999px;background:%s;border:1px solid %s;color:%s;font-size:13px;'
-            'font-weight:700;padding:3px 11px;white-space:nowrap;">&#9679; %s</span>' % (bg, bd, fg, word))
+    return ('<span style="display:inline-block;border-radius:999px;background:%s;border:1px solid %s;color:%s;font-size:%dpx;'
+            'font-weight:700;padding:%s;white-space:nowrap;">&#9679; %s</span>'
+            % (bg, bd, fg, 12 if small else 13, '1px 9px' if small else '3px 11px', word))
 
 
-def index_html(reports, index, header_text, logo, generated):
-    """The index page: every template's last run, worst first - the portal look."""
+def area(name, tabs=()):
+    """The tab a report is on: the first of tabs (report_web_tabs: [{tab, match: [names, * = anything]}]) one of whose
+    names its template's name matches, any case; else its name up to ' - ' (Backup - nightly: Backup); else Other."""
+    low = str(name or '').lower()
+    for t in tabs or []:
+        match = t.get('match') or []
+        if any(fnmatch.fnmatchcase(low, str(m).lower()) for m in ([match] if isinstance(match, str) else match)):
+            return str(t.get('tab') or 'Other')
+    head = str(name or '').split(' - ', 1)
+    return head[0].strip() if len(head) == 2 and head[0].strip() else 'Other'
+
+
+def _job(job):
+    return ('job %s' % htmllib.escape(str(job))) if job not in (None, '', 'local') else ''
+
+
+def _runs(r):
+    """A line's runs, newest first - an index from before 0.34.0 has none: its one run."""
+    runs = [x for x in (r.get('runs') or []) if isinstance(x, dict) and x.get('page')]
+    return runs or ([dict((k, r.get(k)) for k in RUN_KEYS)] if r.get('page') else [])
+
+
+# the index page's tabs (radio buttons and their labels: no script) and its lines that open (details) - every other
+# style of the page is inline
+INDEX_STYLE = """<style>
+.tab{position:absolute;opacity:0;pointer-events:none}
+.bar label{display:inline-block;cursor:pointer;background:#ffffff;border:2px solid #cfdcd7;border-radius:999px;padding:6px 14px;
+margin:0 6px 8px 0;font-size:13px;font-weight:700;color:#45534e}
+.bar label:hover{border-color:#0f6b4f}
+.r>summary{list-style:none;cursor:pointer}
+.r>summary::-webkit-details-marker{display:none}
+.r>summary:hover{background:#f3f8f6}
+.r .caret{display:inline-block;transition:transform .15s;color:#45534e}
+.r[open] .caret{transform:rotate(90deg)}
+@media (max-width:600px){.head{display:none!important}.tiles td{padding:0 3px!important}.tiles td>div{padding:10px 8px!important}
+.tiles td>div>div:first-child{font-size:10px!important;letter-spacing:0!important}}
+%s</style>"""
+
+INDEX_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>%(header)s - reports</title>
+%(style)s
+</head>
+<body style="margin:0;padding:0;background:#e7f1ee;font-family:'Segoe UI',Arial,Helvetica,sans-serif;font-size:14px;color:#0f1f1a;">
+<div style="min-height:100vh;background:linear-gradient(160deg,#d9f0e7 0%%,#e5eff4 55%%,#dde8f2 100%%);padding:22px 12px;box-sizing:border-box;">
+<div style="max-width:1000px;margin:0 auto;">
+<div style="%(card)spadding:18px 20px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%%;"><tr>%(logo)s
+<td><div style="font-size:18px;font-weight:700;">%(header)s</div><div style="color:#5b6b66;font-size:13px;">Every report's last runs &middot; %(n)d report(s) &middot; updated %(generated)s</div></td>
+</tr></table></div>
+<table class="tiles" role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%%;margin:14px 0;table-layout:fixed;"><tr>%(tiles)s</tr></table>
+%(tabs)s<div class="list" style="%(card)spadding:4px 8px;">
+<div class="head" style="display:flex;flex-wrap:wrap;gap:6px 14px;padding:8px 12px 8px 36px;%(th)s"><span style="width:120px;">Status</span><span style="flex:1 1 260px;">Report</span><span>Last run - open a line for its runs</span></div>
+%(rows)s
+</div>
+</div></div>
+</body>
+</html>
+"""
+
+
+def index_html(reports, index, header_text, logo, generated, tabs=()):
+    """The index page: a tab per area (All first), every report's line - worst first - opening to its last runs."""
     e = htmllib.escape
     counts = dict((k, 0) for k in PAL)
     for r in reports:
@@ -453,48 +611,76 @@ def index_html(reports, index, header_text, logo, generated):
         % (card, ('border-color:%s;' % PAL[k][0]) if counts[k] and k in ('critical', 'warning') else '', label,
            PAL[k][0] if k != 'all' else '#0f1f1a', counts[k])
         for k, label in (('critical', 'Critical'), ('warning', 'Warning'), ('ok', 'Successful'), ('info', 'Info')))
+    of = [area(r.get('name') or r.get('key'), tabs) for r in reports]
+    order = [str(t.get('tab')) for t in tabs or []]               # report_web_tabs' order, then A to Z, Other last
+    areas = sorted(set(of), key=lambda a: (a == 'Other', order.index(a) if a in order else len(order), a.lower()))
+    tab = dict((a, i + 1) for i, a in enumerate(areas))
     rows = []
-    for r in reports:
+    for r, a in zip(reports, of):
         latest = r.get('latest') or r.get('page') or ''
         name = '<a href="%s" style="color:#0f6b4f;font-weight:700;text-decoration:none;">%s</a>' % (
             _href(index, latest), e(r.get('name') or r.get('key') or '')) if latest else e(r.get('name') or '')
         run = e(r.get('when') or '')
         if r.get('page'):
             run = '<a href="%s" style="color:#45534e;">%s</a>' % (_href(index, r['page']), run or 'this run')
-        job = (' &middot; job %s' % e(str(r['job']))) if r.get('job') not in (None, '', 'local') else ''
-        rows.append('<tr><td style="padding:10px 12px;border-top:1px solid #e4ece9;">%s</td>'
-                    '<td style="padding:10px 12px;border-top:1px solid #e4ece9;">%s<div style="color:#5b6b66;font-size:13px;">%s</div></td>'
-                    '<td style="padding:10px 12px;border-top:1px solid #e4ece9;white-space:nowrap;color:#45534e;font-size:13px;">%s%s</td></tr>'
-                    % (_pill(r.get('status')), name, e(r.get('title') or ''), run, job))
-    head_cell = ('padding:8px 12px;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;'
-                 'color:#45534e;text-align:left;')
+        runs = _runs(r)
+        lines = ''.join(
+            '<tr><td style="padding:5px 12px 5px 0;">%s</td><td style="padding:5px 12px 5px 0;white-space:nowrap;">'
+            '<a href="%s" style="color:#0f6b4f;font-weight:600;">%s</a>%s</td>'
+            '<td style="padding:5px 12px 5px 0;white-space:nowrap;color:#45534e;font-size:13px;">%s</td>'
+            '<td style="padding:5px 0;color:#5b6b66;font-size:13px;min-width:200px;">%s</td></tr>'
+            % (_pill(x.get('status'), True), _href(index, x['page']), e(x.get('when') or 'this run'),
+               ' <span style="color:#5b6b66;font-size:12px;">(newest)</span>' if not i else '', _job(x.get('job')),
+               e(x.get('title') or '')) for i, x in enumerate(runs))
+        rows.append(
+            '<details class="r a%d" style="border-top:1px solid #e4ece9;"><summary style="display:flex;flex-wrap:wrap;'
+            'align-items:center;gap:6px 14px;padding:10px 12px;"><span class="caret">&#9656;</span>'
+            '<span style="width:120px;">%s</span><span style="flex:1 1 260px;min-width:0;">%s'
+            '<div style="color:#5b6b66;font-size:13px;">%s</div></span>'
+            '<span style="white-space:nowrap;color:#45534e;font-size:13px;">%s%s &middot; %d run%s</span></summary>'
+            '<div style="padding:2px 12px 12px 36px;overflow-x:auto;"><table cellpadding="0" cellspacing="0" border="0" '
+            'style="border-collapse:collapse;">%s</table></div></details>'
+            % (tab[a], _pill(r.get('status')), name, e(r.get('title') or ''), run,
+               (' &middot; ' + _job(r.get('job'))) if _job(r.get('job')) else '', len(runs), '' if len(runs) == 1 else 's',
+               lines or '<tr><td style="color:#5b6b66;">No page of its runs listed.</td></tr>'))
+    # All, then the areas, A to Z (Other last); a dot on an area with a Critical or a Warning
+    tabs, rules = [], []
+    for i, label in enumerate(['All'] + areas):
+        mine = [r for r, a in zip(reports, of) if not i or a == label]
+        worst = min([RANK.get(r.get('status'), 2) for r in mine] or [4])
+        dot = '<span style="color:%s;">&#9679;</span> ' % PAL['critical' if worst == 0 else 'warning'][0] if i and worst <= 1 else ''
+        tabs.append(('<input type="radio" name="tab" id="t%d" class="tab"%s>' % (i, '' if i else ' checked'),
+                     '<label for="t%d">%s%s <span style="font-weight:400;">%d</span></label>' % (i, dot, e(label), len(mine))))
+        rules.append('#t%d:checked~.bar label[for=t%d]{background:#0f6b4f;border-color:#0f6b4f;color:#ffffff}\n'
+                     '#t%d:checked~.bar label[for=t%d] span{color:#ffffff!important}\n'
+                     '#t%d:focus-visible~.bar label[for=t%d]{outline:2px solid #0f6b4f;outline-offset:2px}\n' % ((i,) * 6))
+        if i:
+            rules.append('#t%d:checked~.list .r:not(.a%d){display:none}\n' % (i, i))
     logo_img = ('<td style="padding-right:14px;width:%dpx;"><img src="%s" width="%d" height="%d" alt="" style="display:block;"></td>'
                 % (logo[1], logo[0], logo[1], logo[2])) if logo else ''
-    return '''<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>%(header)s - reports</title>
-</head>
-<body style="margin:0;padding:0;background:#e7f1ee;font-family:'Segoe UI',Arial,Helvetica,sans-serif;font-size:14px;color:#0f1f1a;">
-<div style="min-height:100vh;background:linear-gradient(160deg,#d9f0e7 0%%,#e5eff4 55%%,#dde8f2 100%%);padding:22px 12px;box-sizing:border-box;">
-<div style="max-width:1000px;margin:0 auto;">
-<div style="%(card)spadding:18px 20px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%%;"><tr>%(logo)s
-<td><div style="font-size:18px;font-weight:700;">%(header)s</div><div style="color:#5b6b66;font-size:13px;">Every report's last run &middot; %(n)d report(s) &middot; updated %(generated)s</div></td>
-</tr></table></div>
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%%;margin:14px 0;table-layout:fixed;"><tr>%(tiles)s</tr></table>
-<div style="%(card)spadding:8px 8px 4px 8px;overflow-x:auto;">
-<table cellpadding="0" cellspacing="0" border="0" style="width:100%%;border-collapse:collapse;">
-<tr><th style="%(th)swidth:130px;">Status</th><th style="%(th)s">Report</th><th style="%(th)swidth:230px;">Last run</th></tr>
-%(rows)s
-</table></div>
-</div></div>
-</body>
-</html>
-''' % {'header': e(header_text), 'card': card, 'logo': logo_img, 'n': len(reports), 'generated': e(generated),
-       'tiles': tiles, 'th': head_cell,
-       'rows': '\n'.join(rows) or '<tr><td colspan="3" style="padding:12px;color:#5b6b66;">No reports yet.</td></tr>'}
+    return INDEX_PAGE % {
+        'header': e(header_text), 'card': card, 'logo': logo_img, 'n': len(reports), 'generated': e(generated), 'tiles': tiles,
+        'style': INDEX_STYLE % ''.join(rules),
+        'tabs': (''.join(t[0] for t in tabs) + '\n<div class="bar">' + ''.join(t[1] for t in tabs) + '</div>\n') if reports else '',
+        'th': 'font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#45534e;',
+        'rows': '\n'.join(rows) or '<div style="padding:12px;color:#5b6b66;">No reports yet.</div>'}
+
+
+def history(old, entry, n):
+    """This template's line of the index with this run in its runs (newest first, n of them), and the runs that fell
+    off it. A run of the copy job older than the line's own (old) leaves the line as it is, its runs but for this."""
+    this = dict((k, entry.get(k)) for k in RUN_KEYS)
+    runs = [x for x in (_runs(old) if old else []) if x.get('page') != this['page']]
+    runs = sorted(runs + [this], key=lambda x: (str(x.get('when') or ''), x is this), reverse=True)   # this run first of its minute
+    line = dict(entry if newer(old, entry) else old)
+    line['runs'] = runs[:max(1, n)]
+    return line, [x for x in runs[max(1, n):] if x is not this]          # this run's page, just written, stays
+
+
+def deletable(rel, kept):
+    """An older run's page (or its JSON) that may be deleted: inside the folder, a page, not one still listed."""
+    return (isinstance(rel, str) and rel.endswith(('.html', '.json')) and rel not in kept and not rel.startswith('/')
+            and '\\' not in rel and ':' not in rel and '..' not in rel.split('/') and '' not in rel.split('/'))
 
 
 def _place(where, rel, win):
@@ -527,7 +713,8 @@ def keep(module, p, page, latest, index, urls, where, win):
         module.exit_json(changed=False, packed='', cut=[], msg='Dry run (Check): the report would be kept for the job Report website - copy, '
                          'for %s' % place, **urls)
     doc = {'files': {'page': page, 'latest': latest, 'index': index}, 'url': urls['url'], 'data': p['data'],
-           'entry': dict(p['entry'], page=page, latest=latest), 'footer': p['footer']}
+           'entry': dict(p['entry'], page=page, latest=latest), 'footer': p['footer'],
+           'history': p['history'], 'delete_old': p['delete_old']}       # the report template's own, for the copy job
     text, cut = pack(doc, max(16, p['max_kb']) * 1024)
     if not text:
         module.exit_json(changed=False, packed='', cut=[list(c) for c in cut], msg=(
@@ -551,6 +738,9 @@ def main():
             data=dict(type='dict', default={}),
             entry=dict(type='dict', required=True),
             json=dict(type='bool', default=True),
+            history=dict(type='int', default=5),
+            delete_old=dict(type='bool', default=True),
+            tabs=dict(type='list', elements='dict', default=[]),
             header_text=dict(type='str', default='Site automation report'),
             logo_size=dict(type='list', elements='int', default=[]),
             ca_path=dict(type='str', default=''),
@@ -601,21 +791,31 @@ def main():
         written = []
         entry = dict(p['entry'], page=page, latest=latest)
         reports = _reports(target.read(_json_name(index))) if index else []
-        is_newest = newer(next((r for r in reports if r.get('key') == entry.get('key')), None), entry)
+        old = next((r for r in reports if r.get('key') == entry.get('key')), None)
+        is_newest = newer(old, entry)
+        busy = []                                        # latest and the index, open somewhere all that time: next run
+
+        def put(rel, text, ctype, soft=False):
+            try:
+                target.write(rel, text, ctype)
+                written.append(rel)
+            except Fail as e:
+                if not soft:
+                    raise
+                busy.append([rel, str(e)])
         for rel in (page, latest if is_newest else ''):
             if not rel:
                 continue
-            target.write(rel, html, 'text/html; charset=utf-8')
-            written.append(rel)
+            put(rel, html, 'text/html; charset=utf-8', rel == latest)
             if p['json']:
                 doc = dict(p['data'], page=page, url=urls['url'], latest=latest, index=index)
-                target.write(_json_name(rel), json.dumps(doc, indent=2, sort_keys=True, default=str) + '\n',
-                             'application/json; charset=utf-8')
-                written.append(_json_name(rel))
+                put(_json_name(rel), json.dumps(doc, indent=2, sort_keys=True, default=str) + '\n',
+                    'application/json; charset=utf-8', rel == latest)
         index_text = ''
+        deleted, not_deleted = [], []
         if index:
-            if is_newest:
-                reports = [r for r in reports if r.get('key') != entry.get('key')] + [entry]
+            line, dropped = history(old, entry, p['history'])
+            reports = [r for r in reports if r.get('key') != entry.get('key')] + [line]
             reports.sort(key=lambda r: (RANK.get(r.get('status'), 2), str(r.get('name') or r.get('key') or '').lower()))
             generated = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
             logo = None
@@ -623,9 +823,31 @@ def main():
                 uri = inline_images('cid:' + str(p['images'][0].get('cid')), p['images'][:1])
                 logo = (uri, p['logo_size'][0], p['logo_size'][1]) if uri.startswith('data:') else None
             index_text = json.dumps({'generated': generated, 'reports': reports}, indent=2, sort_keys=True, default=str) + '\n'
-            target.write(_json_name(index), index_text, 'application/json; charset=utf-8')
-            target.write(index, index_html(reports, index, p['header_text'], logo, generated), 'text/html; charset=utf-8')
-            written += [_json_name(index), index]
+            put(_json_name(index), index_text, 'application/json; charset=utf-8')
+            put(index, index_html(reports, index, p['header_text'], logo, generated, p['tabs']), 'text/html; charset=utf-8', True)
+            # the pages of the runs that fell off this template's line - after the index, which no longer lists them
+            kept = set([index, _json_name(index)])
+            for r in reports:
+                for rel in [r.get('latest'), r.get('page')] + [x.get('page') for x in _runs(r)]:
+                    if rel:
+                        kept.update([rel, _json_name(rel)])
+            # only with a latest page: the line is then one template's (report_web_latest is per template - without it,
+            # templates whose pages start with the same folder, {site}/{template}/..., would share a line)
+            for x in (dropped if p['delete_old'] and latest else []):
+                for rel in (x['page'], _json_name(x['page'])):
+                    if not deletable(rel, kept):
+                        continue
+                    try:
+                        target.remove(rel)
+                        deleted.append(rel)
+                    except Fail as e:
+                        not_deleted.append([rel, str(e)])
+            for rel, why in not_deleted:
+                module.warn('The report website: an older run\'s %s could not be deleted (%s) - give the account Modify on '
+                            'the folder, or report_web_delete_old: false' % (rel, why))
+        for rel, why in busy:
+            module.warn('The report website: %s was not written - it stayed open somewhere (a browser, an editor) for the '
+                        '10 seconds the job tried; the next run writes it (%s)' % (rel, why))
     except Fail as e:
         module.fail_json(msg='The report website: %s' % e, **urls)
     finally:
@@ -634,11 +856,13 @@ def main():
     if win:
         fd, script = tempfile.mkstemp(prefix='site_report_web_', suffix='.ps1')
         with os.fdopen(fd, 'wb') as f:
-            f.write(windows_script(dest, target.files).encode('utf-8-sig'))   # PowerShell 5.1 reads it as UTF-8
+            f.write(windows_script(dest, target.files, target.removed, [latest, _json_name(latest) if latest else '', index]).encode('utf-8-sig'))   # PowerShell 5.1 reads it as UTF-8
         module.exit_json(changed=False, written=written, script=script, place=_place(where, page, bs), index_text=index_text,
-                         newest=is_newest, msg='Made, for %s: %s' % (win, ', '.join(written)), **urls)
+                         newest=is_newest, deleted=deleted, not_deleted=not_deleted, not_written=busy, msg='Made, for %s: %s' % (win, ', '.join(written)), **urls)
     module.exit_json(changed=True, written=written, place=_place(where, page, bs), index_text=index_text, newest=is_newest,
-                     msg='Published: %s' % (urls['url'] or _place(where, page, bs)), **urls)
+                     deleted=deleted, not_deleted=not_deleted, not_written=busy, msg='Published: %s%s' % (
+                         urls['url'] or _place(where, page, bs),
+                         ' (older runs deleted: %s)' % ', '.join(d for d in deleted if d.endswith('.html')) if deleted else ''), **urls)
 
 
 if __name__ == '__main__':

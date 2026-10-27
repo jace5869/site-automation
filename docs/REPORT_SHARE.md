@@ -45,7 +45,8 @@ web address when you set one (`Report: https://...`). A run that cannot write st
 
 1. Make the folder once: `\\fileserver\its\aap\reports`. The job never makes it - if it is not there (a typo, a
    share that moved), the job stops instead of writing somewhere else. It makes the folders inside it.
-2. Give the service account (step 2) **Modify** on that folder (NTFS: *Properties > Security*). On the share
+2. Give the service account (step 2) **Modify** on that folder (NTFS: *Properties > Security*) - Modify, not
+   Write: the job also deletes older runs' pages (`report_web_history`, docs/WEB_REPORTS.md). On the share
    itself it needs at least **Change** (*Properties > Sharing > Advanced Sharing > Permissions*) - most shares give
    *Everyone: Change* or *Authenticated Users: Change* already and leave the rest to NTFS.
 3. Give whoever reads the reports **Read** on the folder: the reports page's account (an IIS application pool

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Fake report website for tests/email/run_web_test.sh: GET, PUT and MKCOL (WebDAV) into a folder, like
-nginx with dav_methods PUT MKCOL. A PUT into a folder that is not there answers 409 (make it with MKCOL first).
+"""Fake report website for tests/email/run_web_test.sh: GET, PUT, DELETE and MKCOL (WebDAV) into a folder, like
+nginx with dav_methods PUT DELETE MKCOL. A PUT into a folder that is not there answers 409 (make it with MKCOL first).
 Login: FAKE_WEB_TOKEN (Authorization: Bearer ...) or FAKE_WEB_BASIC (user:password); neither = no login.
 Each request appended to FOLDER/../web.log as "METHOD path status".
 Usage: fake_web.py PORT FOLDER"""
@@ -60,6 +60,17 @@ class Handler(BaseHTTPRequestHandler):
         with open(path, "wb") as f:
             f.write(body)
         self._answer(201)
+
+    def do_DELETE(self):
+        if not self._allowed():
+            return self._answer(401)
+        path = self._path()
+        if path is None or path == ROOT:
+            return self._answer(403)
+        if not os.path.isfile(path):
+            return self._answer(404)
+        os.remove(path)
+        self._answer(204)
 
     def do_MKCOL(self):
         if not self._allowed():

@@ -969,7 +969,10 @@ File: `roles/site_email/defaults/main.yml`
 | `report_web_theme` | `portal` | the page's look: standard, command, portal or glass (as report_email_theme) |
 | `report_web_page` | `"{template}/{date}_{time}_job-{job}.html"` | The names inside the folder, with {names} filled in: {template} (the AAP template's name, lower case with dashes; the play's name outside AAP), {template_id}, {job} (the AAP job; local outside AAP), {status} (ok, warning, critical, info), {date} (2026-10-23), {time} (0605), {year}, {month}, {day} - the time the job wr… (all of it: the role file) |
 | `report_web_latest` | `"{template}/latest.html"` | always the template's newest run ("" = none) |
-| `report_web_index` | `index.html` | every report's last run ("" = none) |
+| `report_web_index` | `index.html` | every report's last runs, a tab per area ("" = none) |
+| `report_web_history` | `5` | the runs each report keeps: listed under its line of the index, the pages of older runs deleted |
+| `report_web_delete_old` | `true` | false = the older runs' pages stay in the folder (only the index forgets them) |
+| `report_web_tabs` | `- {tab: Certificates, match: ["*certificate*", "*trust store*"]} - {tab: VMware, match: […` | The index page's tabs: a report is on the first tab one of whose names its AAP template's name matches (any case, * = anything); else on the tab of its name up to " - " (Backup - nightly: Backup); else on Other. A tab with no report is not shown. Set it in all.yml, for every template alike: the index is one page. |
 | `report_web_names` | `{}` | your own {names}, e.g. {site: "{{ site_code }}"} for "{site}/{template}/..." |
 | `report_web_json` | `true` | the report's data as .json beside each page and index.json beside the index |
 | `report_web_smb_auth` | `negotiate` | A share (report_web_dest \\server\share\folder): how the job logs in, and the connection. negotiate (Kerberos - FIPS too: user@YOURDOMAIN.MIL, the server's full name - else NTLM), ntlm, or kerberos (a ticket already in the job) |

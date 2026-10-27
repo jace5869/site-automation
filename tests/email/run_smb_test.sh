@@ -96,6 +96,33 @@ check "  ...both templates in the index" 'grep -q vm-health-report /srv/its/aap/
 run "the share given as smb://, the same folder" ok -e "{\"report_web_dest\": \"smb://127.0.0.1/its/aap/reports\", \"report_web_smb_port\": $port, \"report_web_smb_auth\": \"ntlm\"}" \
     -e '{"awx_job_id": 503}' -- 'Published: \\\\127.0.0.1\\its\\aap\\reports\\linux-health-check\\'
 check "  ...its page there" 'ls /srv/its/aap/reports/linux-health-check/*_job-503.html'
+run "report_web_history 1: the older runs' pages deleted on the share" ok -e "$smb" -e '{"awx_job_id": 505, "report_web_history": 1}' \
+    -- '(older runs deleted: linux-health-check/' '_job-501.html' '_job-503.html'
+check "  ...only job 505's page and JSON, and latest" \
+    'cd /srv/its/aap/reports/linux-health-check && [ "$(ls | grep _job- | sed "s/.*_job-//" | sort | tr "\n" " ")" = "505.html 505.json " ] && [ -f latest.html ]'
+# index.html open just then (a browser reading it): Windows and NetApp refuse to put a new file in its place
+# (STATUS_ACCESS_DENIED), Samba when it is open without sharing - so it is held that way here. The job writes it
+# again a moment later.
+rm -f "$work/held"
+"$py" - "$port" "$work/held" <<'PY' &
+import sys, time, smbclient
+smbclient.register_session("127.0.0.1", username="svc_reports", password="Pa55-word", port=int(sys.argv[1]), auth_protocol="ntlm")
+port, folder = int(sys.argv[1]), r"\\127.0.0.1\its\aap\reports"
+with smbclient.open_file(folder + r"\index.html", mode="rb", share_access=None, port=port):
+    open(sys.argv[2], "w").close()
+    end = time.time() + 90                   # held until the job is about to put its new index.html in its place
+    while time.time() < end and not any(n.startswith(".index.html.") for n in smbclient.listdir(folder, port=port)):
+        time.sleep(0.05)
+    time.sleep(2)
+    open(sys.argv[2], "a").write("contended")
+PY
+holder=$!
+for _ in $(seq 1 50); do [ -f "$work/held" ] && break; sleep 0.1; done
+run "index.html open in a browser while the job writes it: written a moment later" ok -e "$smb" -e '{"awx_job_id": 506}' \
+    -- 'Published: \\\\127.0.0.1\\its\\aap\\reports\\linux-health-check\\'
+wait "$holder"
+check "  ...index.html has job 506" 'grep -q "_job-506.html" /srv/its/aap/reports/index.html'
+grep -q contended "$work/held" && echo "ok   -   ...it was open when the job first tried" || { echo "FAIL -   ...index.html was not open when the job wrote it"; fails=$((fails + 1)); }
 SMB_PW=wrong run "a wrong password: said in words" fail -e "$smb" -- "the user name or password is wrong"
 SMB_USER= SMB_PW= run "no credential: says which one to attach" fail -e "$smb" -- 'attach the \"Report website\" credential'
 run "a folder that is not there: never made" fail -e "{\"report_web_dest\": \"\\\\\\\\127.0.0.1\\\\its\\\\nope\", \"report_web_smb_port\": $port, \"report_web_smb_auth\": \"ntlm\"}" \

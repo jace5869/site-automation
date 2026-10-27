@@ -2,8 +2,8 @@
 
 Every report job ([EMAIL_REPORTS.md](EMAIL_REPORTS.md), "Which jobs email") can also write its report as a
 **web page**: the same report as the email, in the portal look (or `report_web_theme`: standard, command, glass), with your logo. Each run gets its own page,
-each template a `latest.html` that is always its newest run, and an `index.html` lists every report's last run,
-worst first. The report's data is written as JSON beside each page, so a web developer can build their own site
+each template a `latest.html` that is always its newest run, and an `index.html` lists every report, worst first,
+each opening to its last 5 runs, with a tab per area (VMware, Linux, Windows...). Older runs' pages are deleted. The report's data is written as JSON beside each page, so a web developer can build their own site
 on it.
 
 It works **without email**: set `report_web_dest` and leave `report_email_to` empty. With both set, the email
@@ -26,14 +26,14 @@ ok: [localhost] => {
 ## What it writes
 
 ```
-index.html                                  every report's last run, worst first (status, name, title, when)
+index.html                                  every report, worst first, and its last runs; a tab per area
 index.json                                  the same as data
 linux-certificate-trust-report/
   2026-10-23_0605_job-907.html              this run's page - the address the job prints
   2026-10-23_0605_job-907.json              this run's data
   latest.html                               always the newest run (a link that never changes)
   latest.json
-  2026-10-22_0600_job-901.html              earlier runs stay
+  2026-10-22_0600_job-901.html              the 4 runs before it (report_web_history: 5)
   ...
 vmware-snapshot-cleanup/
   ...
@@ -44,10 +44,58 @@ vmware-snapshot-cleanup/
 - **The file** is the time the job wrote it (UTC) and the AAP job number: listing a folder sorts the runs oldest
   to newest, and the number leads straight to the job in AAP.
 - Renaming a template in AAP starts a new folder for its new runs (the old runs stay in the old one). The index
-  shows each folder's last run; one that stopped can be deleted on the server.
+  shows each folder's line; one that stopped can be deleted on the server.
 - Every page stands alone: the logo is inside it (no separate image file), no scripts, no outside fonts or styles.
-- Nothing is ever deleted. To keep, say, 90 days, a nightly job on the web server:
-  `find /srv/reports -name '20??-*_job-*.*' -mtime +90 -delete`.
+
+### The index page: tabs, and each report's last runs
+
+`index.html` has the four counts at the top (Critical, Warning, Successful, Info), then a row of tabs: **All**,
+then one per area - Certificates, VMware, Horizon, Windows, Network and storage, Linux, ServiceNow and AAP - each
+shown only when it has a report. A report is on the first tab whose names its AAP template's name matches
+(`report_web_tabs`, any case, `*` = anything): the names this guide gives the templates (docs/JOB_TEMPLATES.md) are
+all in it - `VM - health report` is on **VMware**, `Certificate report` and `VMware - certificate report` on
+**Certificates**, `Health check` on **Linux**. A name it does not know goes on the tab of its name up to ` - `
+(`Backup - nightly`: **Backup**), else on **Other**. A new template gets its line - and its tab, when the tab is new -
+the first time it runs. A tab with a Critical or a Warning in it has a red or amber dot.
+
+Your own names, or your own tabs: `report_web_tabs` in `all.yml` (for every template alike - the index is one page),
+in the order the tabs are shown:
+
+```yaml
+report_web_tabs:
+  - {tab: Certificates, match: ["*certificate*", "*trust store*"]}
+  - {tab: VMware, match: ["VM *", "VMware*", "ESXi*", "AB01 VM*"]}
+  - {tab: Patching, match: ["*patch*"]}
+```
+
+The defaults are in `roles/site_email/defaults/main.yml`; yours replace them whole.
+
+Each line is one report: its status, name (a link to its `latest.html`), title and last run. Click the line to
+open its last runs - each with its status, time (a link to that run's page), AAP job and title. All of it works
+without scripts, opened from a share or from a web server.
+
+- **How many runs**: `report_web_history` (`5`). The index lists them, and when a run falls off a report's list
+  its page and JSON are **deleted** - only pages the index listed for that report, never its `latest.html`, the
+  index, or anything else in the folder. An email's link to a run that old no longer opens; its `latest.html`
+  still does.
+- **Keep every page**: `report_web_delete_old: false` - the index still lists the last `report_web_history` runs,
+  and the older pages stay in the folder until you delete them (to keep, say, 90 days, a nightly job on the web
+  server: `find /srv/reports -name '20??-*_job-*.*' -mtime +90 -delete`).
+- **Only with a `latest.html`** (`report_web_latest`, set by default): a report's line is then one template's. With
+  `report_web_latest: ""`, templates whose pages start with the same folder (`{site}/{template}/...`) can share a
+  line, so nothing is deleted - the index still lists the last runs.
+- **Deleting needs** the right to delete: Modify on the folder (a share, or `report_web_host`), `DELETE` on an
+  upload address (nginx: `dav_methods PUT DELETE MKCOL;`). A page that cannot be deleted is a warning in the job's
+  output, never a failure, and stays in the folder.
+- **Pages from before 0.34.0** are not in the index's lists (it knew only each report's last run then): their
+  pages stay. Delete them on the server once if you like - every run before your upgrade.
+- **The page open in a browser** while a job writes it (Edge, from a share - `STATUS_ACCESS_DENIED`): the job
+  writes it again a moment later, for up to about 10 seconds. `index.html` or a `latest.html` still open after that
+  is a warning, not a failure - the run's own page and `index.json` are written, and the next run writes the index
+  page again. Edge may hold a page from a share for as long as its tab is open: close the tab if the warning comes
+  back.
+- Per template: `report_web_history: 30` on one template's Variables keeps 30 runs of that report only - with the
+  copy job too (the report job's setting is kept with its report).
 
 ### Changing the names
 
@@ -105,8 +153,9 @@ Each run's `.json` (and `latest.json`):
 
 `report` is the layout every report uses ([EMAIL_REPORTS.md](EMAIL_REPORTS.md), "Emailing a report from another
 playbook"). `runs` is the strip of last runs (with an AAP credential on the template). `index.json`:
-`{"generated": "...", "reports": [{"key", "name", "title", "status", "when", "job", "page", "latest"}, ...]}`,
-worst first.
+`{"generated": "...", "reports": [{"key", "name", "title", "status", "when", "job", "page", "latest", "runs"}, ...]}`,
+worst first; `runs` is that report's last runs on the website, newest first: `[{"page", "status", "when", "job", "title"}]`
+(`report_web_history` of them).
 
 ## Where the files go
 
@@ -188,10 +237,10 @@ server {
     }
     location /upload/ {                  # writing: the jobs
         alias /srv/reports/;
-        dav_methods PUT MKCOL;
+        dav_methods PUT DELETE MKCOL;    # DELETE: older runs' pages (report_web_history)
         create_full_put_path on;
         client_max_body_size 50m;
-        limit_except GET {               # GET (reading index.json back) open; PUT needs the login
+        limit_except GET {               # GET (reading index.json back) open; PUT and DELETE need the login
             auth_basic "report uploads";
             auth_basic_user_file /etc/nginx/reports.htpasswd;   # htpasswd -c ... aap-reports
         }
@@ -259,6 +308,9 @@ the page is written by the AAP side of the job, which never gets a group's varia
 | `report_web_url` | `""` | the address people open; `""` = `report_web_dest` when it is `https://` (else the job prints where the page is: `web01:D:\reports\...`) |
 | `report_web_theme` | `portal` | `standard`, `command`, `portal` or `glass`, as `report_email_theme`; `glass` adds the blur behind the cards, icons and a plain print |
 | `report_web_json` | `true` | the JSON beside each page |
+| `report_web_history` | `5` | the runs each report keeps: listed under its line of the index, older runs' pages deleted |
+| `report_web_delete_old` | `true` | `false` = older runs' pages stay in the folder (the index lists only the last `report_web_history`) |
+| `report_web_tabs` | the guide's areas | the index's tabs: `[{tab, match: [names]}]`, in `all.yml` ("The index page") |
 | `report_web_ca_path` | `""` | a CA file for an `https://` upload address, or for `report_web_host`'s WinRM certificate |
 | `report_web_page`, `_latest`, `_index`, `_names` | see "Changing the names" | |
 
@@ -365,7 +417,9 @@ variable (`{{ site_report_url }}`) - for a Teams post or a ServiceNow work note.
 | `writing /mnt/reports/...: Permission denied` | The share is not writable by `awx` (the mount's `uid` / `file_mode`), or SELinux (`context=` on the mount) |
 | `the folder https://.../upload is not there on the website` | The upload's own folder is missing on the server (`alias` / its directory) |
 | `uploading ...: HTTP 401` or `403` ... `check the login` | Attach the Report website credential; check its user name and password or token |
-| `uploading ...: HTTP 405` | The server does not take `PUT` at that address (nginx: `dav_methods PUT MKCOL;` in that location) |
+| `uploading ...: HTTP 405` | The server does not take `PUT` at that address (nginx: `dav_methods PUT DELETE MKCOL;` in that location) |
+| `[WARNING]: The report website: an older run's ... could not be deleted` | The account may write but not delete there: Modify on the folder, `DELETE` on an upload address - or `report_web_delete_old: false` |
+| `[WARNING]: The report website: index.html was not written - it stayed open somewhere` | The index (or a `latest.html`) was open in a browser - Edge, from the share - the whole time; the next run writes it. Close that tab; a file open for longer: an editor, or a backup holding it |
 | `uploading ...: HTTP 413` | The page is bigger than the server allows (nginx: `client_max_body_size`) |
 | `certificate verify failed` | Set `report_web_ca_path` to the CA that signed the server's certificate |
 | `could not reach report_web_host web01... (winrm, port 5986): ...` - `the specified credentials were rejected` | The login: the Report website credential (`DOMAIN\user`), or the account is locked; without that credential, the template's Machine credential is used |

@@ -15,6 +15,10 @@
     logo_size: "{{ _web_logo_size if _web_logo_cid | bool else [] }}"
     header_text: "{{ report_email_header_text | default('Site automation report') }}"
     json: "{{ report_web_json | bool }}"
+    # the report template's own (kept with its report), else the copy job's
+    history: "{{ _copy_doc.history | default(report_web_history) | int }}"
+    delete_old: "{{ _copy_doc.delete_old | default(report_web_delete_old) | bool }}"
+    tabs: "{{ report_web_tabs }}"
     data: "{{ _copy_doc.data }}"
     entry: "{{ _copy_doc.entry }}"
     ca_path: "{{ report_web_ca_path | default('') }}"
@@ -68,6 +72,11 @@
       {{- (' (written before it stopped: ' ~ _web_win_write.written | join(', ') ~ ')') if _web_win_write.written | default([]) else '' }}
     quiet: true
   when: _web_win | bool
+
+- name: Copy | job {{ _copy_item.job }} - not written (open there all that time - the next run writes it), or older runs' pages not deleted (Modify on the folder)
+  ansible.builtin.debug:
+    msg: "{{ _web_win_write.busy | default([]) + _web_win_write.left | default([]) }}"
+  when: _web_win | bool and (_web_win_write.busy | default([]) + _web_win_write.left | default([])) | length > 0
 
 - name: Copy | job {{ _copy_item.job }} - done
   ansible.builtin.set_fact:

@@ -153,8 +153,28 @@
 ## always the template's newest run ("" = none)
 # report_web_latest: "{template}/latest.html"
 
-## every report's last run ("" = none)
+## every report's last runs, a tab per area ("" = none)
 # report_web_index: index.html
+
+## the runs each report keeps: listed under its line of the index, the pages of older runs deleted
+# report_web_history: 5
+
+## false = the older runs' pages stay in the folder (only the index forgets them)
+# report_web_delete_old: true
+
+## The index page's tabs: a report is on the first tab one of whose names its AAP template's name
+## matches (any case, * = anything); else on the tab of its name up to " - " (Backup - nightly:
+## Backup); else on Other. A tab with no report is not shown. Set it in all.yml, for every template
+## alike: the index is one page.
+# report_web_tabs:
+#   - {tab: Certificates, match: ["*certificate*", "*trust store*"]}
+#   - {tab: VMware, match: ["VM *", "VMs *", "VMware*", "ESXi*", "vCenter*"]}
+#   - {tab: Horizon, match: ["Horizon*"]}
+#   - {tab: Windows, match: ["Windows*", "Active Directory*", "AD *", "ACT for Windows*"]}
+#   - {tab: Network and storage, match: ["Network*", "NetApp*", "ONTAP*"]}
+#   - {tab: Linux, match: ["Linux*", "Health check*", "Troubleshoot*", "Patch*", "Database*", "Service watch*", "POA&M*", "STIG*",
+#                          "Log analysis*", "fapolicyd*", "Apply approved*"]}
+#   - {tab: ServiceNow and AAP, match: ["ServiceNow*", "AAP *", "Report website*"]}
 
 ## your own {names}, e.g. {site: "{{ site_code }}"} for "{site}/{template}/..."
 # report_web_names: {}

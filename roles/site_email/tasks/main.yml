@@ -221,6 +221,9 @@
     logo_size: "{{ _web_logo_size if _web_logo_cid | bool else [] }}"
     header_text: "{{ report_email_header_text | default('Site automation report') }}"
     json: "{{ report_web_json | bool }}"
+    history: "{{ report_web_history | int }}"
+    delete_old: "{{ report_web_delete_old | bool }}"
+    tabs: "{{ report_web_tabs }}"
     data:
       report: "{{ _web_report }}"
       job: "{{ awx_job_id | default(tower_job_id | default('local')) }}"
@@ -283,6 +286,11 @@
     _web_win_where: "{{ report_web_host | trim }} ({{ report_web_host_connection }}, port {{ report_web_host_port }})"
   when: _web_win | bool and not ansible_check_mode
 
+- name: Email | report_web_host - not written (open there all that time - the next run writes it), or older runs' pages not deleted (Modify on the folder)
+  ansible.builtin.debug:
+    msg: "{{ _web_win_write.busy | default([]) + _web_win_write.left | default([]) }}"
+  when: _web_win | bool and not ansible_check_mode and (_web_win_write.busy | default([]) + _web_win_write.left | default([])) | length > 0
+
 - name: Email | the report, kept for the job Report website - copy (job artifact site_report_page, report_web_copy)
   ansible.builtin.set_stats:
     data:
@@ -295,12 +303,16 @@
       {%- if ansible_check_mode or (_web_copy | bool and not _web_out.packed | default('')) -%}
       {{ _web_out.msg }}
       {%- elif _web_out.url -%}
-      Report: {{ _web_out.url }}{{ (' - ' ~ _web_out.note) if _web_copy | bool else '' }}
+      Report: {{ _web_out.url }}{{ (' - ' ~ _web_out.note) if _web_copy | bool else '' }}{{ _web_old }}
       {%- elif _web_win | bool -%}
-      Published: {{ _web_out.place }}
+      Published: {{ _web_out.place }}{{ _web_old }}
       {%- else -%}
       {{ _web_out.msg }}
       {%- endif -%}
+  vars:
+    _web_old: >-
+      {{ (' (older runs deleted: ' ~ (_web_out.deleted | select('match', '.*[.]html$') | join(', ')) ~ ')')
+         if _web_out.deleted | default([]) | select('match', '.*[.]html$') | list | length > 0 else '' }}
   when: _web_on | bool
 
 - name: Email | the report's address, for the next step (job artifact site_report_url)
