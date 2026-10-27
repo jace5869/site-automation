@@ -136,6 +136,24 @@ part html "$work/mail/1.eml" > "$work/html.txt"
 check "the logo shown from the email itself, at 84 px tall (63 wide)" grep -q 'src="cid:site-report-logo" width="63" height="84"' "$work/html.txt"
 check "the header text, the status" grep -q 'Site automation report &nbsp;<span[^>]*>WARNING</span>' "$work/html.txt"
 check "no strip outside AAP" bash -c "! grep -q 'RUNS</td>' '$work/html.txt'"
+relay --tls "$work/cert.pem" "$work/key.pem"
+PLAYBOOK=send_report.yml send "report_email_xlsx: the report's tables attached as a workbook, the logo still in it" ok \
+    "{$look, \"report_email_xlsx\": true, \"awx_job_template_name\": \"Linux - BIOS check\"}" \
+    "Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" "filename=\"linux-bios-check_" \
+    "Content-ID: <site-report-logo>"
+check "the workbook: a sheet per table (BIOS firmware), its rows, a valid file" "$py" -c 'import email, email.policy, io, re, sys, zipfile
+m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)
+att = [p for p in m.walk() if (p.get_filename() or "").endswith(".xlsx")]
+assert len(att) == 1 and re.match(r"linux-bios-check_\d{4}-\d{2}-\d{2}\.xlsx$", att[0].get_filename()), [p.get_filename() for p in att]
+z = zipfile.ZipFile(io.BytesIO(att[0].get_content()))
+assert z.testzip() is None
+assert "<sheet name=\"BIOS firmware\"" in z.read("xl/workbook.xml").decode(), z.read("xl/workbook.xml")
+sheet = z.read("xl/worksheets/sheet1.xml").decode()
+assert "DEBIAN_11_64" in sheet and "&lt;script&gt;" in sheet and "<pane ySplit=\"1\"" in sheet, sheet[:500]' "$work/mail/1.eml"
+check "the workbook made for it deleted" bash -c "! ls \"\${TMPDIR:-/tmp}\"/site_report_*.xlsx 2>/dev/null | grep -q ."
+relay --tls "$work/cert.pem" "$work/key.pem"
+PLAYBOOK=send_report.yml send "no report_email_xlsx: no attachment" ok "{$look}" "Content-ID: <site-report-logo>"
+check "no workbook" bash -c "! grep -q 'spreadsheetml' '$work/mail/1.eml'"
 aap
 CONTROLLER_HOST="http://127.0.0.1:$aport" CONTROLLER_USERNAME=admin CONTROLLER_PASSWORD=goodpw ANSIBLE_SHOW_CUSTOM_STATS=1 \
 PLAYBOOK=send_report.yml send "in AAP: the last 13 runs from AAP, then this one" ok \

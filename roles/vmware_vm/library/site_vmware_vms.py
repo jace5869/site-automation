@@ -14,7 +14,7 @@ description:
   - Lists every VM (templates included, marked) of the credential's vCenter and of vcenters - name, ID
     (moid), vCenter, datacenter, folder, cluster, ESXi host, power state, guest host name and IP
     addresses, guest OS, VMware Tools (installed, running) and the guest heartbeat vCenter shows
-    (green, yellow, red; gray = no VMware Tools to tell), and when it was powered on.
+    (green, yellow, red; gray = no VMware Tools to tell), its vCPUs and memory, and when it was powered on.
   - vCenter's address and account come from VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD (and
     VMWARE_PORT), as a "VMware vCenter" credential in AAP gives them; vcenters adds more vCenters
     (the same account). Changes nothing.
@@ -34,7 +34,7 @@ vms:
   sample: [{name: web01, moid: vm-42, vcenter: vc01.example.mil, datacenter: DC1, folder: /DC1/vm/Linux, cluster: PROD-CL01,
             esxi_host: esx01.example.mil, template: false, power: poweredOn, hostname: web01.example.mil, ip: 192.0.2.3,
             ips: [192.0.2.3], guest_os: Red Hat Enterprise Linux 9 (64-bit), tools: toolsOk, tools_running: guestToolsRunning,
-            heartbeat: green, boot_time: "2026-10-01T12:00:00Z", up_minutes: 27360}]
+            heartbeat: green, cpus: 2, memory_mb: 8192, boot_time: "2026-10-01T12:00:00Z", up_minutes: 27360}]
 vcenters:
   description: Each vCenter and whether it was read (ok), or why not (error).
   type: list
@@ -54,7 +54,8 @@ except ImportError:
     HAS_PYVMOMI = False
 
 PROPS = ["name", "config.template", "config.guestFullName", "runtime.powerState", "runtime.host", "runtime.bootTime",
-         "guest.hostName", "guest.ipAddress", "guest.net", "guest.toolsStatus", "guest.toolsRunningStatus", "guestHeartbeatStatus"]
+         "guest.hostName", "guest.ipAddress", "guest.net", "guest.toolsStatus", "guest.toolsRunningStatus", "guestHeartbeatStatus",
+         "config.hardware.numCPU", "config.hardware.memoryMB"]
 
 
 def _folder(obj):
@@ -109,6 +110,7 @@ def _read(content, p, now, vcenter):
                     "ip": pr.get("guest.ipAddress") or "", "ips": sorted(set(str(i) for i in ips if i)),
                     "guest_os": pr.get("config.guestFullName") or "", "tools": str(pr.get("guest.toolsStatus") or ""),
                     "tools_running": str(pr.get("guest.toolsRunningStatus") or ""), "heartbeat": str(pr.get("guestHeartbeatStatus") or ""),
+                    "cpus": pr.get("config.hardware.numCPU"), "memory_mb": pr.get("config.hardware.memoryMB"),
                     "boot_time": boot.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if boot else "",
                     "up_minutes": int(max(now - boot.timestamp(), 0) // 60) if boot else None})
     view.Destroy()

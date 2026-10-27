@@ -114,6 +114,11 @@
 ## always carries a plain-text copy for mail clients that do not show HTML. false = plain text only.
 # report_email_html: true
 
+## Attach the report's tables to the email as an Excel workbook (.xlsx): a sheet per table. Some
+## reports attach their own whatever this says (VM - inventory report: every VM on one sheet). The
+## website gets no workbook.
+# report_email_xlsx: false
+
 ## The look of the HTML version (docs/EMAIL_REPORTS.md, "The look"): standard = a header band in the
 ## report's colour (green, amber, red, blue) with number boxes under it; command = a dark header
 ## with your logo and report_email_header_text, the job's last runs as a strip of bars

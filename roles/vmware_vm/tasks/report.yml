@@ -2,7 +2,8 @@
 # The job's result: printed, published as job artifacts (the job's Details > Artifacts in AAP, and
 # what the next step of a workflow receives), and emailed when report_email_to is set.
 # Input: _vm_report_subject, _vm_report_lines (list of text lines); optional _vm_report_doc, a
-# formatted report for the email (the layout roles/site_email/tasks/main.yml describes);
+# formatted report for the email (the layout roles/site_email/tasks/main.yml describes), and _vm_report_xlsx, the
+# sheets of the workbook the email attaches (roles/site_email/library/site_xlsx.py);
 # _vm_report_no_email (true = no email) with _vm_report_no_email_why (said instead); _vm_vcenters,
 # the vCenters the job read (a site_vmware_* module's 'vcenters'): the ones not read are listed in
 # red on top (the job fails at its end: vcenters_read.yml).
@@ -34,6 +35,8 @@
                               ~ ('vCenter ' ~ read[0] if read | length == 1 else ('vCenters ' ~ read | join(', ') if read
                                  else ('vCenter ' ~ lookup('ansible.builtin.env', 'VMWARE_HOST')) if lookup('ansible.builtin.env', 'VMWARE_HOST') else ''))
                               ~ (' - DRY RUN (Check): nothing was changed.' if ansible_check_mode else '')}) }}
+    _report_xlsx: "{{ _vm_report_xlsx | default([]) }}"
+    _report_xlsx_name: "{{ _vm_report_xlsx_name | default(awx_job_template_name | default(ansible_play_name)) }}"
     # the website gets every run; the email only when the job wants one (_vm_report_no_email)
     _report_email_skip: "{{ _vm_report_no_email | default(false) | bool }}"
   when: >-

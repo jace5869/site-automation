@@ -979,6 +979,7 @@ File: `roles/site_email/defaults/main.yml`
 | `report_email_ca_path` | (empty) | a CA file that signed the relay's certificate (empty = the CAs the execution environment trusts) |
 | `report_email_subject_prefix` | `"[AAP]"` | put before every subject, e.g. "[AAP] Certificate report: ..." |
 | `report_email_html` | `true` | Send a formatted (HTML) version too, for reports that come with one (all VMware jobs). The email always carries a plain-text copy for mail clients that do not show HTML. false = plain text only. |
+| `report_email_xlsx` | `false` | Attach the report's tables to the email as an Excel workbook (.xlsx): a sheet per table. Some reports attach their own whatever this says (VM - inventory report: every VM on one sheet). The website gets no workbook. |
 | `report_email_theme` | `standard` | The look of the HTML version (docs/EMAIL_REPORTS.md, "The look"): standard = a header band in the report's colour (green, amber, red, blue) with number boxes under it; command = a dark header with your logo and report_email_header_text, the job's last runs as a strip of bars (report_history), the numbers in one row; p… (all of it: the role file) |
 | `report_email_header_text` | `Site automation report` | command, portal, glass: the line with the logo |
 | `report_logo_file` | (empty) | Your logo in the header (every look but standard): a PNG, JPEG or GIF in your repository - a path from playbooks/ (files/report_logo.png = playbooks/files/report_logo.png) or a full path. Attached to each email, so keep it small: about 160 px tall, under 100 KB. Updating with scripts/update-from-release: list the file… (all of it: the role file) |
@@ -1105,6 +1106,27 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_datastore_warn_pct` | `85` | Used space (% of capacity): a datastore at or above these is listed as a warning / critical. |
 | `vm_datastore_crit_pct` | `90` | a datastore this % used or more is red (critical); amber from vm_datastore_warn_pct |
 | `vm_datastore_fail` | `false` | The job stays green when datastores are full: the report and email say which. true = mark the job FAILED when one is at or above vm_datastore_warn_pct (or inaccessible), for workflows. |
+| `vm_hostnet_services` | `[vmotion]` | Read-only: vmkping between the hosts of each cluster on these VMkernel services' adapters (full size, don't fragment), the adapters' MTUs, the storage latency. The pings run on the hosts through vCenter (esxcli): the vCenter account needs Host > CIM > CIM interaction on them (docs/VMWARE.md, "The ESXi network check").… (all of it: the role file) |
+| `vm_hostnet_targets` | `[]` | pinged from every host, e.g. [{name: NFS array, host: 192.0.2.50, interface: vmk2}] |
+| `vm_hostnet_hosts` | `[]` | only these hosts (names, * and ?); [] = every host |
+| `vm_hostnet_clusters` | `[]` | only these clusters |
+| `vm_hostnet_exclude` | `[]` | never these hosts |
+| `vm_hostnet_ping` | `true` | false = the adapters and the storage latency only, no pings |
+| `vm_hostnet_ping_count` | `3` | pings per pair |
+| `vm_hostnet_max_pairs` | `400` | pings at most per vCenter (16 hosts in one cluster: 240) |
+| `vm_hostnet_workers` | `4` | pings at the same time |
+| `vm_hostnet_rtt_warn_ms` | `5` | a round trip this slow or slower: warning (vMotion within a site is well under 1 ms) |
+| `vm_hostnet_rtt_crit_ms` | `150` | ... critical (vMotion's own limit) |
+| `vm_hostnet_latency` | `true` | read the storage latency (the last hour of the hosts' real-time statistics) |
+| `vm_hostnet_latency_minutes` | `60` | minutes of the hosts' real-time statistics read (at most 60) |
+| `vm_hostnet_latency_warn_ms` | `20` | a datastore's average read or write latency from this: warning |
+| `vm_hostnet_latency_crit_ms` | `50` | ... critical |
+| `vm_hostnet_raw` | `false` | true = esxcli's first answer as it came, in the job's output (the first run: to check it) |
+| `vm_hostnet_fail` | `false` | true = the job shows failed when the report has a warning or worse (for workflows) |
+| `vm_inventory_templates` | `false` | ---- VM inventory report (playbooks/vm_inventory_report.yml) ---- true = templates counted and listed as VMs (false: left out, their number in the subtitle) |
+| `vm_inventory_by_folder` | `true` | a table per vCenter and folder; false = one table of every VM (vCenter and folder columns) |
+| `vm_inventory_max_rows` | `2000` | VMs listed in the email and the page at most (2000: about 2.5 MB of email; the workbook always has every VM) |
+| `vm_inventory_xlsx` | `true` | attach every VM as an Excel workbook (.xlsx) to the email |
 | `vm_snapshot_max_age_days` | `5` | Snapshots at least this many days old: listed apart by the report, deleted by the cleanup. |
 | `vm_snapshot_keep_regex` | `'(?i)keep\|do.?not.?delete'` | Never deleted by the cleanup (the report lists them, with the reason): - a snapshot whose name or description matches this |
 | `vm_snapshot_cleanup_exclude_vms` | `[]` | - a snapshot of these VMs: names, * and ? allowed (e.g. [DC*, VCSA01, AAP01]). The VMs in vmware_protected_vms and the AAP server are never cleaned up either. |

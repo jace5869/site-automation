@@ -147,7 +147,10 @@ check "the first template's page still there (no latest: a line may be two templ
     && ls '$work'/reports/HQ-East/vm-health-report/*/*-4183.html >/dev/null"
 mkdir -p "$work/busy/index.html/x"
 run "index.html cannot be written (a folder in its place - as a file open all the time would): a warning, the job ok" ok \
-    "{\"report_web_dest\": \"$work/busy\", $aapjob}" "[WARNING]: The report website: index.html was not written - it stayed open somewhere"
+    "{\"report_web_dest\": \"$work/busy\", $aapjob}" "Published: $work/busy/"
+# (ansible-core 2.16 wraps a long warning over lines: read the output as one line)
+check "the warning: index.html not written, the next run writes it" bash -c "tr -s '\n ' '  ' < '$work/out.txt' \
+    | grep -qF '[WARNING]: The report website: index.html was not written - it stayed open somewhere'"
 check "the page, latest and index.json written" bash -c "ls '$work'/busy/linux-certificate-trust-report/*_job-907.html >/dev/null \
     && test -s '$work/busy/linux-certificate-trust-report/latest.html' && test -s '$work/busy/index.json'"
 run "a name that does not exist: says which there are" fail "{\"report_web_dest\": \"$work/reports\", \"report_web_page\": \"{site}/{job}.html\"}" \

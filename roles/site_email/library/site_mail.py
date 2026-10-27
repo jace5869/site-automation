@@ -34,6 +34,12 @@ options:
     type: list
     elements: dict
     default: []
+  attachments:
+    description: "Files attached to the email: [{path: file, filename: the name the reader sees (default - the file's own)}] - a
+      workbook (.xlsx), a .csv, a .pdf..."
+    type: list
+    elements: dict
+    default: []
   ca_path: {description: A CA file to trust for the relay's certificate (default - the system's trusted CAs)., type: path}
   timeout: {description: Seconds to wait for the relay., type: int, default: 30}
 author: site automation
@@ -62,6 +68,9 @@ from email.utils import formatdate, make_msgid
 from ansible.module_utils.basic import AnsibleModule
 
 IMAGE_TYPES = {'.png': 'png', '.jpg': 'jpeg', '.jpeg': 'jpeg', '.gif': 'gif'}
+FILE_TYPES = {'.xlsx': ('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet'), '.csv': ('text', 'csv'),
+              '.pdf': ('application', 'pdf'), '.json': ('application', 'json'), '.txt': ('text', 'plain'),
+              '.zip': ('application', 'zip')}
 
 
 def main():
@@ -77,6 +86,7 @@ def main():
             body=dict(type='str', required=True),
             html=dict(type='str'),
             images=dict(type='list', elements='dict', default=[]),
+            attachments=dict(type='list', elements='dict', default=[]),
             ca_path=dict(type='path'),
             timeout=dict(type='int', default=30),
         ),
@@ -119,6 +129,16 @@ def main():
                 except (IOError, OSError) as e:
                     module.fail_json(msg='the picture %s cannot be read: %s' % (path, e))
                 html_part.add_related(data, 'image', kind, cid='<%s>' % img.get('cid'), filename=os.path.basename(path))
+        for att in p['attachments']:
+            path = str(att.get('path') or '')
+            name = str(att.get('filename') or '') or os.path.basename(path)
+            try:
+                with open(path, 'rb') as f:
+                    data = f.read()
+            except (IOError, OSError) as e:
+                module.fail_json(msg='the attachment %s cannot be read: %s' % (path, e))
+            main_type, sub = FILE_TYPES.get(os.path.splitext(name)[1].lower(), ('application', 'octet-stream'))
+            msg.add_attachment(data, maintype=main_type, subtype=sub, filename=name)
     except (ValueError, TypeError) as e:
         module.fail_json(msg='the email could not be built (an address or the subject is not valid): %s' % e)
     context = ssl.create_default_context(cafile=p['ca_path'] or None)

@@ -1,0 +1,17 @@
+---
+# ESXI NETWORK CHECK (vCenter). Read-only: every ESXi host's VMkernel adapters (address, MTU, services) and their
+# switches' MTU; vmkping between the hosts of each cluster on the vMotion network (vm_hostnet_services) - full size with
+# "don't fragment", so jumbo frames are proven end to end - and to vm_hostnet_targets; the storage latency each host
+# sees. No VM is moved, nothing is changed, SSH stays off: the pings run on the hosts through vCenter (esxcli), which
+# needs Host > CIM > CIM interaction for the vCenter account. Emailed (report_email_to), on the report website.
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/esxi_network_check.yml
+- name: ESXi network check
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: ESXi network check
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: esxi_network.yml

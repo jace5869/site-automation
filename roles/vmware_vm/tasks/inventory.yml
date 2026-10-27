@@ -1,0 +1,49 @@
+---
+# VM INVENTORY REPORT (playbooks/vm_inventory_report.yml): every VM of every vCenter (vmware_vcenters; or of
+# vmware_datacenter), by vCenter and folder - power, ESXi host, cluster, guest OS, IP address, vCPUs, memory - and the
+# count. Printed, published as artifacts (vm_inventory: the counts), emailed with every VM as an Excel workbook
+# (vm_inventory_xlsx), on the report website. Read-only; green unless a vCenter could not be read.
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | read every VM
+  site_vmware_vms:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _vm_inv_read
+  check_mode: false
+
+- name: VMware | the report
+  ansible.builtin.set_fact:
+    _vm_inv_opts:
+      templates: "{{ vm_inventory_templates | bool }}"
+      by_folder: "{{ vm_inventory_by_folder | bool }}"
+      max_rows: "{{ vm_inventory_max_rows | int }}"
+    _vm_inv_doc: >-
+      {{ _vm_inv_read.vms | vm_inventory_doc(_vm_inv_read.vcenters,
+           {'templates': vm_inventory_templates | bool, 'by_folder': vm_inventory_by_folder | bool,
+            'max_rows': vm_inventory_max_rows | int}) }}
+
+- name: VM inventory report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_vcenters: "{{ _vm_inv_read.vcenters }}"
+    _vm_report_doc: "{{ _vm_inv_doc }}"
+    _vm_report_subject: "{{ _vm_inv_doc.title }}"
+    _vm_report_lines: >-
+      {{ [_vm_inv_doc.subtitle]
+         + (_vm_inv_doc.summary | map(attribute='label') | zip(_vm_inv_doc.summary | map(attribute='value'))
+            | map('join', ': ') | list) }}
+    _vm_report_xlsx: "{{ _vm_inv_read.vms | vm_inventory_xlsx(_vm_inv_opts) if vm_inventory_xlsx | bool else [] }}"
+
+- name: VMware | the counts as job artifacts (vm_inventory)
+  ansible.builtin.set_stats:
+    data:
+      vm_inventory: >-
+        {{ {'vcenters': _vm_inv_read.vcenters, 'counts': _vm_inv_doc.summary | items2dict(key_name='label', value_name='value')} }}
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_inv_read.vcenters }}"

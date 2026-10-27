@@ -63,6 +63,10 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 # use_act: false
 """),
     "esxi_security.yml": ("ESXi - security settings", "VMware vCenter", "", ""),
+    "esxi_network_check.yml": ("ESXi - network check", "VMware vCenter", "", """\
+## The pings need Host > CIM > CIM interaction for the vCenter account (docs/VMWARE.md, "The ESXi network check")
+# vm_hostnet_raw: true   # the first run: the first ping's answer as the host sent it
+"""),
     "health_check.yml": ("Health check", "Machine (ACT model key with use_act)", LINUX_CHECKS, """\
 ## The checks to run: daily, weekly, all, or names, e.g. [disk, services]
 # health_checks: [daily]
@@ -203,6 +207,7 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets the incidents (exactly
     "vm_alarm_report.yml": ("VM - alarms report", "VMware vCenter", "", ""),
     "vm_capacity_report.yml": ("VM - capacity planning", "VMware vCenter (ACT model key with vm_capacity_act)", "", ""),
     "vm_datastore_report.yml": ("VM - datastore report", "VMware vCenter", "", ""),
+    "vm_inventory_report.yml": ("VM - inventory report", "VMware vCenter", "", ""),
     "vm_deploy_from_ticket.yml": ("VM - deploy from ServiceNow ticket", "VMware vCenter, ServiceNow API, ACT model key "
                                   "(Red Hat Ansible Automation Platform with vm_deploy_services inventories)", "", """\
 # ---- fill these in first (the CAPITALS) ------------------------------------------------------

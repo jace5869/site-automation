@@ -13,6 +13,7 @@ System Center Orchestrator):
 | VM - change VLAN | `playbooks/vm_vlan.yml` | moves one network adapter to another port group (VLAN). The VM's other adapters are not touched |
 | VM - secure boot report | `playbooks/vm_secure_boot_report.yml` | read-only: every VM's firmware and secure boot. Lists BIOS VMs and EFI VMs with secure boot off separately |
 | VM - datastore report | `playbooks/vm_datastore_report.yml` | read-only: every datastore's capacity, free space, used and provisioned %; the ones at 85 / 90 % used listed apart |
+| VM - inventory report | `playbooks/vm_inventory_report.yml` | read-only: every VM of every vCenter, by vCenter and folder - power, the ESXi host it runs on, cluster, guest OS, IP address, vCPUs, memory - and the count; the email attaches every VM as an Excel workbook ("The VM inventory report") |
 | VM - snapshot report | `playbooks/vm_snapshot_report.yml` | read-only: every snapshot of every VM - name, when taken and by whom, age, size, folder - oldest first; the ones 5 days or older listed apart |
 | VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | deletes the snapshots 5 days or older - never "keep" ones, excluded VMs, datacenters or clusters, the AAP server or ones over 1 TB; or only the patching snapshots (`vm_snapshot_cleanup_name_words`) - then reports what it deleted. Best run in the workflow below, after an approval |
 | VM - refresh the pick lists | `playbooks/vm_pick_refresh.yml` | on a schedule, read-only in vCenter: writes what may be done right now - the snapshots that may be deleted, the VMs that may be restarted (or only the hung ones) - as the choices of a question in the survey of the templates below ("Pick lists") |
@@ -29,6 +30,7 @@ System Center Orchestrator):
 | VM - pick up deploy tickets | `playbooks/vm_deploy_poll.yml` | on a schedule: finds new VM request tickets in ServiceNow and starts the deploy workflow for each. Builds nothing itself; the approval stays |
 | VM - VMs created report | `playbooks/vm_created_report.yml` | read-only: how many VMs were created in the last 7 days and each one - when, by whom, how (cloned, deployed from a template, new), the ticket when the AAP deploy built it, where, its size - by person and by day, and the ones created and deleted since. Schedule it weekly (e.g. Fridays at noon) |
 | ESXi - security settings | `playbooks/esxi_security.yml` | on every ESXi host: SSH off, the shell timeouts at 600 s, lockdown mode normal. Changes only what differs, so it can run every night and puts back whatever drifted |
+| ESXi - network check | `playbooks/esxi_network_check.yml` | read-only: every host's VMkernel adapters and MTUs; vmkping between the hosts of each cluster on the vMotion network, full size with don't fragment (jumbo frames proven end to end); pings to targets you name; the storage latency each host sees. No VM is moved ("The ESXi network check") |
 | VMware - certificate report | `playbooks/vmware_cert_report.yml` | read-only: every certificate of vCenter and its ESXi hosts, soonest expiry first, and for each one due what the renewal would do. Never ServiceNow, never a CSR |
 | VMware - certificate renewal | `playbooks/vmware_cert_renew.yml` | the certificates of vCenter and every ESXi host: each one that expires within 30 days gets a ServiceNow incident, and a CSR - made where its key stays, by vCenter or the host - attached to it with what to do next. The days can be raised to try it on certificates years from expiring |
 
@@ -91,6 +93,7 @@ A service account with a vCenter role that has only what the jobs need:
 | snapshot / delete snapshot | Virtual machine > Snapshot management > Create snapshot / Remove snapshot |
 | notes | Virtual machine > Change configuration > Set annotation |
 | change VLAN | Virtual machine > Change configuration > Modify device settings, and Network > Assign network on the port groups |
+| ESXi network check (the pings) | Host > CIM > CIM interaction, on the hosts: the pings run as esxcli on each host through vCenter. Without it the report says so once, and still shows the adapters and the storage latency |
 | ESXi security settings | Host > Configuration > Security profile and firewall (the SSH service), Advanced settings (the timeouts), Change settings (lockdown mode and its exception users). If one is missing, the job's error names it (e.g. `lacks the privilege Host.Config.Settings`) |
 | certificate renewal: an ESXi host's CSR | Certificates > Manage certificates, on the hosts. If it is missing, the job's error names it |
 | certificate renewal: vCenter's CSR | Certificate Management (`CertificateManagement.Manage` and `CertificateManagement.Administer`), in a role given as a **Global Permission** - or the account in the single sign-on group **CAAdmins** (Administration > Single Sign On > Users and Groups > Groups > CAAdmins > Add members), as the vSphere Client's own CSR needs; administrator@vsphere.local has it |
@@ -211,6 +214,26 @@ instead, for a notification on failure (the *ServiceNow tickets* job does not ta
 results). `vm_secure_boot_folder` limits the secure boot report
 to one vCenter folder; `vmware_datacenter` limits either report to one datacenter;
 `vm_datastore_warn_pct` / `vm_datastore_crit_pct` (85 / 90) set the datastore thresholds.
+
+### The VM inventory report
+
+*VM - inventory report* (`playbooks/vm_inventory_report.yml`) lists every VM of every vCenter (`vmware_vcenters`;
+`vmware_datacenter` for one datacenter) - no survey, read-only. At the top, the counts: VMs, powered on, powered off,
+folders, ESXi hosts, vCenters. Then a table per vCenter and folder (`vc01 - DC1 / Linux / Web`, as vSphere's *VMs and
+Templates* view shows it; a VM in no folder under `DC1 (no folder)`), each VM with its power state, the ESXi host it
+runs on, cluster, guest OS, IP address, vCPUs and memory. The email attaches every VM as an Excel workbook,
+`vm-inventory-report_2026-10-27.xlsx`: one sheet, a line per VM with its vCenter, datacenter and folder too, to sort
+and filter. Schedule it weekly with `report_email_to` on its Variables; on the report website it is on the VMware tab.
+
+| Setting | Default | |
+|---|---|---|
+| `vm_inventory_templates` | `false` | `true` = templates counted and listed as VMs (else left out, their number in the subtitle) |
+| `vm_inventory_by_folder` | `true` | `false` = one table of every VM, with vCenter and folder columns |
+| `vm_inventory_max_rows` | `2000` | VMs listed in the email and on the page at most (2000 make an email of about 2.5 MB) - the workbook always has every VM |
+| `vm_inventory_xlsx` | `true` | `false` = no workbook attached |
+
+Green unless a vCenter could not be read (it is then listed in red on top, its VMs not counted). The counts are also
+the job artifact `vm_inventory`.
 
 ## Snapshots: the report, the cleanup, and the approval workflow
 
@@ -1114,6 +1137,63 @@ SSH as it is.
 | `esxi_security_clusters` | `[]` (all) | only the hosts of these clusters |
 | `esxi_security_exclude_hosts` | `[]` | never these hosts |
 | `vmware_datacenter` | (all) | one datacenter only |
+
+## The ESXi network check: vmkping, vMotion, MTU, storage latency
+
+*ESXi - network check* (`playbooks/esxi_network_check.yml`) answers "would vMotion work between these hosts, at full
+speed?" without moving a VM. Read-only, nothing is changed on the hosts, SSH stays off: each ping is esxcli's `network
+diag ping` (the same as `vmkping` on the host), run on the host through vCenter - as `govc host.esxcli` and PowerCLI's
+`Get-EsxCli` do. No survey; schedule it weekly, or run it after a network change.
+
+What it does, per vCenter:
+
+1. **Every host's VMkernel adapters** - address, MTU, network stack, the services on each (vMotion, vSAN, management...)
+   and the MTU of its switch (standard or distributed).
+2. **vmkping between the hosts of each cluster**, on each adapter with vMotion (`vm_hostnet_services`): from every host
+   to every other host, the adapter's full size with "don't fragment" - 8972 bytes on an MTU of 9000 - so jumbo frames
+   are proven end to end. When that fails, a small ping too: small passes, big fails = an MTU smaller on the way (a
+   switch port, an uplink, a router); both fail = no path at all (address, VLAN, port group, gateway).
+3. **Pings to your targets** (`vm_hostnet_targets`) from every host - an NFS or iSCSI array, a gateway.
+4. **The storage latency** each host sees on each datastore, from the hosts' real-time statistics (the last hour).
+
+The report puts the problems first - one line per cause: a host whose path drops jumbo frames is one line, not one per
+ping; a datastore slow from every host is one line (the array), from one host that host (its paths) - then the
+adapters, every ping (status, bytes, answered, average and highest round trip) and the latency, the worst first.
+
+| Status | When |
+|---|---|
+| critical | full-size pings fail while small ones pass (an MTU on the way); no answer at all; a round trip from 150 ms (`vm_hostnet_rtt_crit_ms`, vMotion's limit); a datastore's average latency from 50 ms (`vm_hostnet_latency_crit_ms`) |
+| warning | some pings lost; a round trip from 5 ms (`vm_hostnet_rtt_warn_ms`); latency from 20 ms (`vm_hostnet_latency_warn_ms`); the hosts of a cluster on different MTUs; an adapter's MTU above its switch's; a host without vMotion while the others have it, or a cluster with none; a ping that could not run |
+
+### Set up the network check
+
+1. **The privilege.** The vCenter account needs **Host > CIM > CIM interaction** on the hosts, for the pings (step 2
+   of "Before you start"). Read-only reads the rest.
+2. **The template.** *ESXi - network check*, playbook `playbooks/esxi_network_check.yml`, the VMware vCenter credential,
+   the execution environment of your other VMware jobs, no Limit. `report_email_to` on its Variables to email it.
+3. **The first run** with `vm_hostnet_raw: true` on its Variables (or at launch): the job prints the first ping's answer
+   as the host sent it. If the round trips in the report look a thousand times off, send that output - ESXi versions
+   name the fields differently. Then take the setting off.
+4. Optional: `vm_hostnet_targets`, e.g. `[{name: NFS array, host: 192.0.2.50, interface: vmk2}]` (`interface` - the
+   adapter to ping from; default the management one); `vm_hostnet_services: [vmotion, vsan]` for vSAN's network too.
+
+| Setting | Default | |
+|---|---|---|
+| `vm_hostnet_services` | `[vmotion]` | the adapters' services pinged between the hosts of a cluster: `vsan`, `management`, `vSphereProvisioning`... |
+| `vm_hostnet_targets` | `[]` | pinged from every host |
+| `vm_hostnet_hosts` / `_clusters` / `_exclude` | `[]` | only these hosts / clusters, never these (names, `*` and `?`) |
+| `vm_hostnet_ping` | `true` | `false` = the adapters and the latency only |
+| `vm_hostnet_ping_count` | `3` | pings per pair |
+| `vm_hostnet_max_pairs` | `400` | pings at most per vCenter: a cluster of n hosts makes n x (n-1) - 16 hosts, 240 |
+| `vm_hostnet_workers` | `4` | pings at the same time |
+| `vm_hostnet_rtt_warn_ms` / `_crit_ms` | `5` / `150` | round trip |
+| `vm_hostnet_latency` | `true` | read the storage latency |
+| `vm_hostnet_latency_warn_ms` / `_crit_ms` | `20` / `50` | a datastore's average read or write latency |
+| `vm_hostnet_raw` | `false` | print the first ping's answer as the host sent it |
+| `vm_hostnet_fail` | `false` | `true` = the job shows failed on a warning or worse, for workflows |
+
+A host in maintenance mode or not connected is listed under "Hosts not checked" and not pinged from or to. The result
+is also the job artifact `esxi_network` (the counts and every ping).
 
 ## Certificates of vCenter and the ESXi hosts: incidents and CSRs (weekly)
 

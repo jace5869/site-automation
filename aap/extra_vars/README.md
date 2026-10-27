@@ -24,6 +24,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Certificate report | `playbooks/cert_report.yml` | [cert_report.yml](cert_report.yml) |
 | Certificate restore | `playbooks/cert_restore.yml` | [cert_restore.yml](cert_restore.yml) |
 | Database health - MariaDB / MySQL | `playbooks/database_health.yml` | [database_health.yml](database_health.yml) |
+| ESXi - network check | `playbooks/esxi_network_check.yml` | [esxi_network_check.yml](esxi_network_check.yml) |
 | ESXi - security settings | `playbooks/esxi_security.yml` | [esxi_security.yml](esxi_security.yml) |
 | fapolicyd and containers | `playbooks/fapolicyd_containers.yml` | [fapolicyd_containers.yml](fapolicyd_containers.yml) |
 | fapolicyd denials | `playbooks/fapolicyd_denials.yml` | [fapolicyd_denials.yml](fapolicyd_denials.yml) |
@@ -67,6 +68,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VM - deploy from ServiceNow ticket | `playbooks/vm_deploy_from_ticket.yml` | [vm_deploy_from_ticket.yml](vm_deploy_from_ticket.yml) |
 | VM - deploy settings finder | `playbooks/vm_deploy_inventory.yml` | [vm_deploy_inventory.yml](vm_deploy_inventory.yml) |
 | VM - health report | `playbooks/vm_health_report.yml` | [vm_health_report.yml](vm_health_report.yml) |
+| VM - inventory report | `playbooks/vm_inventory_report.yml` | [vm_inventory_report.yml](vm_inventory_report.yml) |
 | VM - notes | `playbooks/vm_notes.yml` | [vm_notes.yml](vm_notes.yml) |
 | VM - outage watch | `playbooks/vm_outage_watch.yml` | [vm_outage_watch.yml](vm_outage_watch.yml) |
 | VM - pick up deploy tickets | `playbooks/vm_deploy_poll.yml` | [vm_deploy_poll.yml](vm_deploy_poll.yml) |

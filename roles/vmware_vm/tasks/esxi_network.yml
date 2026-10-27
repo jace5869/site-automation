@@ -1,0 +1,71 @@
+---
+# ESXI NETWORK CHECK (playbooks/esxi_network_check.yml), read-only: every host's VMkernel adapters and their MTUs;
+# vmkping between the hosts of each cluster on vm_hostnet_services' adapters (full size, don't fragment; a small ping
+# when that fails) and to vm_hostnet_targets; the storage latency. Printed, emailed (report_email_to), on the report
+# website, published as artifacts (esxi_network). Green unless vm_hostnet_fail and a problem.
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | the hosts' VMkernel networks, vmkping between them, the storage latency
+  site_vmware_hostnet:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    hosts: "{{ (vm_hostnet_hosts | replace(',', ' ')).split() if vm_hostnet_hosts is string else vm_hostnet_hosts }}"
+    clusters: "{{ (vm_hostnet_clusters | replace(',', ' ')).split() if vm_hostnet_clusters is string else vm_hostnet_clusters }}"
+    exclude: "{{ (vm_hostnet_exclude | replace(',', ' ')).split() if vm_hostnet_exclude is string else vm_hostnet_exclude }}"
+    services: "{{ (vm_hostnet_services | replace(',', ' ')).split() if vm_hostnet_services is string else vm_hostnet_services }}"
+    targets: "{{ vm_hostnet_targets }}"
+    ping: "{{ vm_hostnet_ping | bool }}"
+    count: "{{ vm_hostnet_ping_count | int }}"
+    max_pairs: "{{ vm_hostnet_max_pairs | int }}"
+    workers: "{{ vm_hostnet_workers | int }}"
+    latency: "{{ vm_hostnet_latency | bool }}"
+    latency_minutes: "{{ vm_hostnet_latency_minutes | int }}"
+    raw: "{{ vm_hostnet_raw | bool }}"
+  register: _vm_net
+  check_mode: false
+
+- name: VMware | esxcli's first answer, as it came (vm_hostnet_raw)
+  ansible.builtin.debug:
+    msg: "{{ _vm_net.read | map(attribute='pings') | flatten | selectattr('raw', 'defined') | map(attribute='raw') | list }}"
+  when: vm_hostnet_raw | bool
+
+- name: VMware | the report
+  ansible.builtin.set_fact:
+    _vm_net_doc: >-
+      {{ _vm_net | esxi_net_doc({
+           'services': (vm_hostnet_services | replace(',', ' ')).split() if vm_hostnet_services is string else vm_hostnet_services,
+           'rtt_warn_ms': vm_hostnet_rtt_warn_ms, 'rtt_crit_ms': vm_hostnet_rtt_crit_ms,
+           'latency_warn_ms': vm_hostnet_latency_warn_ms, 'latency_crit_ms': vm_hostnet_latency_crit_ms}) }}
+
+- name: ESXi network check report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_vcenters: "{{ _vm_net.vcenters }}"
+    _vm_report_doc: "{{ _vm_net_doc }}"
+    _vm_report_subject: "{{ _vm_net_doc.title }}"
+    _vm_report_lines: >-
+      {{ [_vm_net_doc.subtitle]
+         + ((_vm_net_doc.sections | selectattr('title', 'in', ['Needs attention', 'Notes']) | first | default({})).rows | default([])
+            | map('join', ' | ') | list) }}
+
+- name: VMware | the result as job artifacts (esxi_network)
+  ansible.builtin.set_stats:
+    data:
+      esxi_network: >-
+        {{ {'vcenters': _vm_net.vcenters, 'status': _vm_net_doc.status,
+            'counts': _vm_net_doc.summary | items2dict(key_name='label', value_name='value'),
+            'pings': _vm_net.read | map(attribute='pings') | flatten} }}
+
+- name: VMware | no problem found (vm_hostnet_fail)
+  ansible.builtin.assert:
+    that: _vm_net_doc.status in ['ok', 'info']
+    fail_msg: "{{ _vm_net_doc.title }} - the report above (and the email) says which. vm_hostnet_fail: false makes this a report only."
+    quiet: true
+  when: vm_hostnet_fail | default(false) | bool
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_net.vcenters }}"

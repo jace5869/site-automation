@@ -330,25 +330,45 @@
          else '' }}
   when: _email_to | length > 0
 
-- name: Email | send the report to {{ _email_to | join(', ') }}
-  site_mail:
-    host: "{{ report_email_smtp_host | trim }}"
-    port: "{{ report_email_smtp_port | int }}"
-    security: "{{ report_email_security }}"
-    sender: "{{ report_email_from | trim }}"
-    to: "{{ _email_to }}"
-    cc: "{{ _email_cc }}"
-    subject: "{{ _email_subject }}"
-    body: "{{ _report | report_text(_email_footer ~ _email_web_line, _email_runs | default([])) if _report is defined else _report_body ~ '\n\n--\n' ~ _email_footer ~ _email_web_line }}"
-    html: "{{ lookup('ansible.builtin.template', _email_template) if _email_html | bool else omit }}"
-    images: "{{ [{'cid': _email_logo_cid, 'path': _email_logo_file}] if _email_html | bool and _email_logo_cid else [] }}"
-    ca_path: "{{ report_email_ca_path | default(omit, true) }}"
+- name: Email | the report, sent
   when: _email_to | length > 0
-  vars:
-    _email_web_line: "{{ ('\nIn a browser: ' ~ _email_web_url) if _email_web_url | default('') else '' }}"
-  register: _email_sent
+  block:
+    - name: Email | the report's tables as a workbook, attached (report_email_xlsx, or the report's own _report_xlsx)
+      site_xlsx:
+        sheets: "{{ _report_xlsx if _report_xlsx | default([]) | length > 0 else _report | report_xlsx_sheets }}"
+      register: _email_xlsx
+      when: _report is defined and (_report_xlsx | default([]) | length > 0 or report_email_xlsx | bool) and not ansible_check_mode
 
-- name: Email | result
-  ansible.builtin.debug:
-    msg: "{{ _email_sent.msg }}"
-  when: _email_to | length > 0
+    - name: Email | send the report to {{ _email_to | join(', ') }}
+      site_mail:
+        host: "{{ report_email_smtp_host | trim }}"
+        port: "{{ report_email_smtp_port | int }}"
+        security: "{{ report_email_security }}"
+        sender: "{{ report_email_from | trim }}"
+        to: "{{ _email_to }}"
+        cc: "{{ _email_cc }}"
+        subject: "{{ _email_subject }}"
+        body: "{{ _report | report_text(_email_footer ~ _email_web_line, _email_runs | default([])) if _report is defined else _report_body ~ '\n\n--\n' ~ _email_footer ~ _email_web_line }}"
+        html: "{{ lookup('ansible.builtin.template', _email_template) if _email_html | bool else omit }}"
+        images: "{{ [{'cid': _email_logo_cid, 'path': _email_logo_file}] if _email_html | bool and _email_logo_cid else [] }}"
+        attachments: "{{ [{'path': _email_xlsx.path, 'filename': _email_xlsx_name}] if _email_xlsx.path | default('') else [] }}"
+        ca_path: "{{ report_email_ca_path | default(omit, true) }}"
+      when: _email_to | length > 0
+      vars:
+        # vm-inventory-report_2026-10-27.xlsx
+        _email_xlsx_name: >-
+          {{ (_report_xlsx_name | default(awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('report')))))
+             | lower | regex_replace('[^a-z0-9]+', '-') | regex_replace('^-+|-+$', '') }}_{{ now(utc=true, fmt='%Y-%m-%d') }}.xlsx
+        _email_web_line: "{{ ('\nIn a browser: ' ~ _email_web_url) if _email_web_url | default('') else '' }}"
+      register: _email_sent
+
+    - name: Email | result
+      ansible.builtin.debug:
+        msg: "{{ _email_sent.msg }}"
+      when: _email_to | length > 0
+  always:
+    - name: Email | the workbook made for it, deleted here
+      ansible.builtin.file:
+        path: "{{ _email_xlsx.path }}"
+        state: absent
+      when: _email_xlsx.path | default('') | length > 0

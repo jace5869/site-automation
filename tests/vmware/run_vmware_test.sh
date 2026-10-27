@@ -11,7 +11,8 @@
 # the pick lists (the survey's choices written in a fake AAP, the picked snapshots deleted and VMs restarted, each checked again);
 # the outage watch (hung VMs by heartbeat and ping, protected ones, HA and storage events, a disconnected host, its
 # incidents opened and resolved in a fake ServiceNow);
-# the vCenter log analysis (vcsim hands out no logs: the job says so).
+# the vCenter log analysis (vcsim hands out no logs: the job says so); the VM inventory report (and its workbook by email);
+# the ESXi network check (esxcli through vCenter - vcsim has no network diag ping: its answer is said).
 #   bash tests/vmware/run_vmware_test.sh
 # Needs: podman or docker; a python with pyVmomi and the vSphere Automation SDK (pip install pyvmomi
 # vmware-vcenter; VMWARE_TEST_PYTHON=... to pick it); the vmware.vmware collection (installed into a
@@ -427,6 +428,31 @@ run "datastore report with vm_datastore_fail: true: the job fails, for workflows
     -e vm_datastore_fail=true -- "vm_datastore_fail: false makes this a report only"
 run "datastore report for another datacenter: none" ok vm_datastore_report.yml -e vmware_datacenter=NOPE -- "VMware datastore report: all 0 below 85% used"
 
+# ---- VM inventory report (read-only) ----------------------------------------------------------------------------------
+run "VM inventory report: every VM by vCenter and folder, the count" ok vm_inventory_report.yml \
+    -- "VM inventory: " "VMs in 1 vCenter" '"vm_inventory"' '"VMs": '
+check_inv() {  # the counts in the artifact against vcsim's own VMs
+    "$py" - "$work/out.txt" <<'PY'
+import re, sys
+t = open(sys.argv[1]).read()
+m = re.search(r"VM inventory: (\d+) VMs? in 1 vCenter", t)
+assert m and int(m.group(1)) > 0, t[-2000:]
+assert re.search(r'"VMs": %s\b' % m.group(1), t), "the artifact's count"
+PY
+}
+check_inv && echo "ok   -   ...the title and the artifact give the same count" || { echo "FAIL -   ...inventory counts"; fails=$((fails + 1)); }
+
+# ---- ESXi network check (read-only; vcsim's hosts have no vMotion adapter, and its esxcli has no network diag ping) -------
+run "ESXi network check: the adapters read, a cluster without vMotion said, green" ok esxi_network_check.yml \
+    -- "ESXi network check: 1 problem(s)" "no host has a VMkernel adapter with vMotion on" '"esxi_network"' '"Hosts checked": '
+run "ESXi network check on management, a target: esxcli reached through vCenter, its answer said" ok esxi_network_check.yml \
+    -e '{"vm_hostnet_services": ["management"], "vm_hostnet_targets": [{"name": "NFS array", "host": "192.0.2.50"}], "vm_hostnet_clusters": ["DC0_C0"]}' \
+    -- "could not ping: NotFound: The object or item referred to could not be found." '"service": "management"' '"to": "NFS array"' \
+    '"size": 1472' '"df": true'
+run "ESXi network check with vm_hostnet_fail: the job fails, for workflows" fail esxi_network_check.yml -e vm_hostnet_fail=true \
+    -- "vm_hostnet_fail: false makes this a report only"
+run "ESXi network check, no pings (vm_hostnet_ping false)" ok esxi_network_check.yml -e vm_hostnet_ping=false -- '"Pings": 0'
+
 # ---- email the result (roles/site_email; a fake mail relay without encryption) ---------------------
 smtp_port=$((port + 37))
 mkdir -p "$work/mail"
@@ -466,6 +492,20 @@ run "cleanup, email only if deleted: deleted one, emailed" ok vm_snapshot_cleanu
     -e "$mail" -e vm_snapshot_cleanup_email_only_if_deleted=true -- "deleted 1 snapshot(s)" "emailed"
 run "cleanup again, nothing left to delete: no email" ok vm_snapshot_cleanup.yml -e _vm_now=$later -e vm_snapshot_cleanup_confirm=true \
     -e "$mail" -e vm_snapshot_cleanup_email_only_if_deleted=true -- "No email: nothing was deleted"
+run "VM inventory report emailed, every VM attached as a workbook" ok vm_inventory_report.yml -e "$mail" -- "emailed"
+emlinv="$(grep -l 'Subject: \[AAP\] VM inventory: ' "$work/mail"/*.eml | head -1)"
+if [ -n "$emlinv" ] && "$py" - "$emlinv" <<'PY'
+import email, email.policy, io, re, sys, zipfile
+m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)
+n = int(re.search(r"VM inventory: (\d+) VM", m["Subject"]).group(1))
+att = [p for p in m.walk() if re.match(r"vm-inventory-report_\d{4}-\d{2}-\d{2}\.xlsx$", p.get_filename() or "")]
+assert len(att) == 1, [p.get_filename() for p in m.walk()]
+z = zipfile.ZipFile(io.BytesIO(att[0].get_content()))
+sheet = z.read("xl/worksheets/sheet1.xml").decode()
+assert '<sheet name="VMs"' in z.read("xl/workbook.xml").decode()
+assert sheet.count("<row ") == n + 1, (sheet.count("<row "), n)          # the header and every VM
+PY
+then echo "ok   -   ...the workbook: one sheet, a line per VM"; else echo "FAIL -   ...the inventory workbook"; fails=$((fails + 1)); fi
 run "snapshot report emailed" ok vm_snapshot_report.yml -e _vm_now=$later -e "$mail" -- "emailed"
 eml4="$(ls "$work/mail"/*.eml | sort -V | tail -1)"
 getpart html "$eml4" | grep -q ">keep-me<" && grep -q "Subject: \[AAP\] VMware snapshot report (older than 5 days): " "$eml4" \

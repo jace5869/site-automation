@@ -65,6 +65,7 @@ mail clients that do not show HTML. One email per job run, whatever the number o
 |---|---|---|
 | `report_email_to` / `report_email_cc` | (none) | who gets it; a list, or text with commas |
 | `report_email_html` | `true` | send the formatted version too; `false` = plain text only |
+| `report_email_xlsx` | `false` | `true` = attach the report's tables as an Excel workbook ("A workbook attached", below) |
 | `report_email_theme` | `standard` | the look: `standard`, `command` or `portal` ("The look", below) |
 | `report_logo_file` | (none) | your logo in the header, e.g. `files/report_logo.png` |
 | `report_email_html_template` | `report.html.j2` | your own look instead (below) |
@@ -226,6 +227,16 @@ ended (green or red), half height. `report_history: false` turns the strip off.
 
 The plain-text copy of the email has the strip as one line: `Last 14 runs, oldest first: ok ok
 warning ... critical (this run)`.
+
+## A workbook attached
+
+`report_email_xlsx: true` - in `all.yml` for every report, or on one template's Variables - attaches the report's
+tables to its email as an Excel workbook (`.xlsx`): a sheet per table, named by the table's title, its first row the
+column names (bold, frozen, with filters), numbers as numbers. The file is named after the template and the day:
+`vm-datastore-report_2026-10-27.xlsx`. A report with no table gets one sheet of its lines. Some reports attach their
+own workbook whatever the setting says - *VM - inventory report*: every VM on one sheet (`vm_inventory_xlsx`). The
+workbook is made with Python's standard library: nothing to add to the execution environment. The website gets no
+workbook; a dry run (Check) makes none.
 
 ## Also on a web page
 

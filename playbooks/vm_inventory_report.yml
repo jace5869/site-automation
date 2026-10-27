@@ -1,0 +1,15 @@
+---
+# VM INVENTORY REPORT (vCenter). Read-only: every VM of every vCenter, by vCenter and folder - its power state, the ESXi
+# host it runs on, cluster, guest OS, IP address, vCPUs and memory - and how many there are. Emailed (report_email_to)
+# with every VM as an Excel workbook (vm_inventory_xlsx), and on the report website (report_web_dest).
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_inventory_report.yml
+- name: VM inventory report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM inventory report
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: inventory.yml

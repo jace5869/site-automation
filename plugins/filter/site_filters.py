@@ -1731,6 +1731,19 @@ def report_page_unpack(text):
     return doc
 
 
+def report_xlsx_sheets(report):
+    """A report's tables as the sheets of a workbook (report_email_xlsx; roles/site_email/library/site_xlsx.py): a sheet per
+    section with columns, named by its title; a report with no table: one sheet of its lines."""
+    rep = report or {}
+    sheets = [{"name": s.get("title") or "Table", "columns": list(s.get("columns") or []), "rows": list(s.get("rows") or [])}
+              for s in rep.get("sections") or [] if isinstance(s, dict) and s.get("columns")]
+    if sheets:
+        return sheets
+    return [{"name": "Report", "columns": [rep.get("title") or "Report"],
+             "rows": [[x] for s in rep.get("sections") or [] if isinstance(s, dict)
+                      for x in ([s.get("title")] if s.get("title") else []) + list(s.get("lines") or [])]}]
+
+
 class FilterModule(object):
     def filters(self):
         return {"from_csv": from_csv, "days_until": days_until, "site_result": site_result,
@@ -1747,4 +1760,4 @@ class FilterModule(object):
                 "report_headline": report_headline, "report_runs": report_runs,
                 "image_size": image_size, "email_recipients": email_recipients, "email_also_refused": email_also_refused,
                 "report_web_files": report_web_files, "site_web_win_error": site_web_win_error,
-                "report_page_unpack": report_page_unpack}
+                "report_page_unpack": report_page_unpack, "report_xlsx_sheets": report_xlsx_sheets}
