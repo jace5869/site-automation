@@ -177,7 +177,7 @@ Set them in the template's Variables, or in `playbooks/group_vars/all.yml` for e
 | `CRC counters need ONTAP 9.11 or later` | older ONTAP has no CRC counter in its REST API | nothing: receive errors are still shown |
 | SnapMirror is empty, but you have relationships | they are read on the destination cluster | add the destination cluster to `ontap_clusters` |
 | An aggregate you know is missing | root aggregates are not returned by ONTAP's REST API | by design: root aggregates are not listed |
-| A volume shows `?` for size | it is offline: ONTAP reports no space for it | it is listed in red as offline |
+| A volume shows `-` for available and used % | it is offline or restricted: ONTAP reports its size but no usage for it | it is listed in red as offline (or restricted) |
 | The email is too long | many findings | lower `ontap_report_max_rows` / `ontap_snapshot_top`; the artifacts keep everything |
 | `could not read ems - ... only the first 500 records were read` | many error events | raise `ontap_ems_max`, or lower `ontap_ems_hours` |
 

@@ -620,8 +620,9 @@ def ontap_report(collected, opts=None):
             aggr = ", ".join(x.get("name", "") for x in (v.get("aggregates") or []) if isinstance(x, dict))
             name = "%s / %s" % (g(v, "svm.name", ""), v.get("name"))
             if ps in ("warning", "critical") or sst == "critical":
-                vrows.append(_row([c["_name"], g(v, "svm.name", ""), v.get("name"), aggr, state.upper(), v.get("type", ""), human_bytes(size),
-                                   human_bytes(av), _pct_text(p)], ["", "", "", "", sst, "", "", "", ps if p is not None else ""]))
+                space = [human_bytes(size), human_bytes(av), _pct_text(p)] if state == "online" else [human_bytes(size), "-", "-"]   # not online: no usage read
+                vrows.append(_row([c["_name"], g(v, "svm.name", ""), v.get("name"), aggr, state.upper(), v.get("type", "")] + space,
+                                  ["", "", "", "", sst, "", "", "", ps if p is not None and state == "online" else ""]))
                 R.problem(c["_name"], "capacity", "volume " + name, worst([ps, sst]),
                           ("volume %s used" % _pct_text(p)) if sst == "ok" else "volume " + state)
             fu, fm = g(v, "files.used"), g(v, "files.maximum")

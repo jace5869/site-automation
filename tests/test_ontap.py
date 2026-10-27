@@ -226,6 +226,9 @@ class Report(unittest.TestCase):
         r = of.ontap_report(col, {"volume_min_gb": 50})
         sec = [x for x in r["report"]["sections"] if x["title"].startswith("Volumes")][0]
         self.assertEqual(sorted(row[2] for row in sec["rows"]), ["vol_50", "vol_big", "vol_big_off"])  # small ones offline too: left out
+        off = [row for row in sec["rows"] if row[2] == "vol_big_off"][0]
+        self.assertEqual((off[4], off[6:9]), ("OFFLINE", ["100.0 GB", "-", "-"]))                   # not online: its size, no usage
+        self.assertEqual([row for row in sec["rows"] if row[2] == "vol_big"][0][6:9], ["500.0 GB", "25.0 GB", "95%"])
         self.assertIn("Volumes under 50 GB are left out (2 at or above 85%, 2 not online).", sec["text"])
         self.assertEqual(sorted(p["object"] for p in r["problems"] if p["area"] == "capacity"),
                          ["volume svm1 / vol_50", "volume svm1 / vol_big", "volume svm1 / vol_big_off"])
