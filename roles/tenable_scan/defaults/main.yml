@@ -1,0 +1,38 @@
+---
+# ACAS SCAN (playbooks/tenable_scan.yml, docs/TENABLE.md): kick off a Tenable.sc (ACAS) scan of the hosts of an inventory
+# group, from the scanner of each host's own datacenter - Tenable.sc's scan zones say which scanners cover which IP
+# ranges - one scan per zone. From the AAP side, with the "Tenable.sc API" credential. Nothing is launched without
+# tenable_scan_policy and tenable_scan_repository: a first run lists the zones, scanners, policies and repositories the
+# account may use. A dry run (Check) chooses the zones and says what it would launch.
+
+# The hosts: a group or pattern of this inventory (the job runs on localhost: not the Limit), and/or names or
+# addresses not in the inventory. "" and [] = nothing to scan: the job lists what Tenable.sc offers.
+tenable_scan_target: ""                     # a group or pattern of the inventory (web_servers, dc1_*)
+tenable_scan_targets: []                    # names or addresses not in the inventory, e.g. [198.51.100.5, nas01.example.mil]
+tenable_scan_policy: ""                     # the scan policy (name or id): the first run lists them
+tenable_scan_repository: ""                 # the repository the results go to (name or id)
+tenable_scan_credentials: []                # scan credentials (names or ids) the scans log in to the hosts with
+# The scans' name: {target} = tenable_scan_target (or the number of hosts), {zone} = the zone. A scan of that name from
+# an earlier run is updated (its hosts) and launched again, not made twice.
+tenable_scan_name: "AAP {target} - {zone}"
+tenable_scan_description: "Launched by site-automation (AAP), playbooks/tenable_scan.yml"   # the scans' description in Tenable.sc
+# The zone (the scanners) of each host - the first rule that applies:
+#   1. the host's own tenable_zone (an inventory variable: a zone's name)
+#   2. its site, through tenable_scan_sites: a group of the host, or the site code tenable_scan_site_regex takes from its
+#      name, mapped to a zone's name - e.g. {dc_east: "Datacenter East", xy2: "Site XY2"}
+#   3. the zone whose IP ranges hold its address (the narrowest range wins)
+#   4. tenable_scan_zone_default: a zone's name; auto = Tenable.sc's automatic distribution; "" = not scanned (said)
+# The report says which rule chose each host's zone, and when a host's address is in another zone's ranges.
+tenable_scan_sites: {}
+tenable_scan_site_regex: ""                 # e.g. '^([a-z]{2}[0-9])': the first group is the site code in the host's name (xy2vmp02 -> xy2)
+tenable_scan_zone_default: ""               # rule 4: a zone's name, auto, or "" (a host no rule gives a zone is not scanned)
+tenable_scan_wait: false                   # true = wait for the scans and report the findings by severity and by host
+tenable_scan_wait_minutes: 120              # at most this long
+tenable_scan_poll_seconds: 60               # seconds between two looks at a running scan
+tenable_scan_max_targets: 256               # at most this many hosts per run (narrow tenable_scan_target, or raise it)
+tenable_scan_max_rows: 200                  # rows per table in the report
+# The job fails when Tenable.sc could not be read, a policy or repository named is not there, or a scan could not be
+# launched. false = a report only. A host no rule gives a zone is said (amber), never a failure.
+tenable_scan_fail: true
+tenable_ca_path: ""                         # a CA file for Tenable.sc's HTTPS certificate ("" = what the execution environment trusts)
+tenable_timeout: 60                         # seconds per request

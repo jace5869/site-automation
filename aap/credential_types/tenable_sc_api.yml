@@ -1,0 +1,41 @@
+# Credential type: "Tenable.sc API"
+# Used by playbooks/tenable_scan.yml (Tenable.sc's REST API, https://<tenable.sc>/rest/).
+# The API keys of a Tenable.sc user who may create and launch scans in your organization - a Security Analyst
+# or Security Manager, with the scan zones, repositories and policies the scans use (docs/TENABLE.md). A user name
+# and password instead, when API keys are turned off on your Tenable.sc (a token login).
+inputs:
+  fields:
+    - id: url
+      type: string
+      label: Tenable.sc URL
+      help_text: e.g. https://tenable.example.mil
+    - id: access_key
+      type: string
+      label: API access key
+      secret: true
+      help_text: The user's API keys (Tenable.sc, Users > Generate API Keys); leave empty for a user name and password
+    - id: secret_key
+      type: string
+      label: API secret key
+      secret: true
+    - id: username
+      type: string
+      label: User name
+      help_text: Only without API keys
+    - id: password
+      type: string
+      label: Password
+      secret: true
+    - id: verify_ssl
+      type: boolean
+      label: Verify the Tenable.sc certificate
+      default: true
+  required: [url]
+injectors:
+  env:
+    TENABLE_SC_URL: "{{ url }}"
+    TENABLE_SC_ACCESS_KEY: "{{ access_key }}"
+    TENABLE_SC_SECRET_KEY: "{{ secret_key }}"
+    TENABLE_SC_USERNAME: "{{ username }}"
+    TENABLE_SC_PASSWORD: "{{ password }}"
+    TENABLE_SC_VERIFY_SSL: "{{ verify_ssl }}"

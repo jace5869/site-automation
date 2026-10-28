@@ -137,6 +137,15 @@ read only or acting ([HORIZON.md](HORIZON.md#step-3-the-job-templates)).
 | Network config load | `playbooks/net_config_load.yml` | Workflow step | [NETWORK_CONFIG.md](NETWORK_CONFIG.md#a-load-with-an-approval) |
 | NetApp ONTAP health report | `playbooks/ontap_health_report.yml` | Report | [NETAPP.md](NETAPP.md#set-it-up) |
 
+## Tenable.sc (ACAS)
+
+Any inventory with the hosts to scan (they come from `tenable_scan_target`, not the Limit), the **Tenable.sc API**
+credential ([TENABLE.md](TENABLE.md#step-3-the-job-template)).
+
+| Job template | Playbook | Kind | How-to |
+|---|---|---|---|
+| Tenable.sc - scan | `playbooks/tenable_scan.yml` | On demand or scheduled; a change (scans are launched) - a report only until a policy and a repository are set | [TENABLE.md](TENABLE.md#step-3-the-job-template) |
+
 ## ServiceNow, AAP and the reports
 
 | Job template | Playbook | Kind | How-to |

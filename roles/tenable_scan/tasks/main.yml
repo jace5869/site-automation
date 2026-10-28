@@ -1,0 +1,79 @@
+---
+# ACAS SCAN (playbooks/tenable_scan.yml): the targets from the inventory, Tenable.sc read (zones, scanners, policies,
+# repositories), each host's zone chosen, the scans launched (not in Check, not without a policy and a repository),
+# the results read when asked, the report printed, emailed (report_email_to), published, as artifacts (tenable_scan).
+
+- name: ACAS | the targets - the hosts of tenable_scan_target in this inventory, and tenable_scan_targets
+  ansible.builtin.set_fact:
+    _tsc_targets: >-
+      {{ (query('ansible.builtin.inventory_hostnames', tenable_scan_target) if (tenable_scan_target | default('', true) | string | trim) else [])
+         | tenable_scan_targets(hostvars, tenable_scan_targets | default([])) }}
+    _tsc_launch: >-
+      {{ not ansible_check_mode and (tenable_scan_policy | string | trim | length > 0) and (tenable_scan_repository | string | trim | length > 0) }}
+
+- name: ACAS | at most tenable_scan_max_targets hosts
+  ansible.builtin.assert:
+    that: _tsc_targets | length <= tenable_scan_max_targets | int
+    fail_msg: "{{ _tsc_targets | length }} hosts: more than tenable_scan_max_targets ({{ tenable_scan_max_targets }}) - narrow tenable_scan_target, or raise it"
+    quiet: true
+
+- name: ACAS | read Tenable.sc, choose each host's zone{{ ', launch the scans' if _tsc_launch | bool else '' }}{{ ', wait for the results' if _tsc_launch | bool and tenable_scan_wait | bool else '' }}
+  site_tenable_scan:
+    targets: "{{ _tsc_targets }}"
+    target_label: "{{ tenable_scan_target | default('', true) | string | trim }}"
+    policy: "{{ tenable_scan_policy }}"
+    repository: "{{ tenable_scan_repository }}"
+    credentials: "{{ (tenable_scan_credentials | replace(',', ' ')).split() if tenable_scan_credentials is string else tenable_scan_credentials }}"
+    name: "{{ tenable_scan_name }}"
+    description: "{{ tenable_scan_description }}"
+    launch: "{{ _tsc_launch | bool }}"
+    wait: "{{ tenable_scan_wait | bool }}"
+    wait_minutes: "{{ tenable_scan_wait_minutes | int }}"
+    poll_seconds: "{{ tenable_scan_poll_seconds | int }}"
+    zone_default: "{{ tenable_scan_zone_default }}"
+    sites: "{{ tenable_scan_sites }}"
+    site_regex: "{{ tenable_scan_site_regex }}"
+    max_targets: "{{ tenable_scan_max_targets | int }}"
+    ca_path: "{{ tenable_ca_path }}"
+    timeout: "{{ tenable_timeout | int }}"
+  register: _tsc
+  check_mode: false
+
+- name: ACAS | the report
+  ansible.builtin.set_fact:
+    _tsc_doc: >-
+      {{ _tsc | tenable_scan_report({'check': ansible_check_mode, 'policy': tenable_scan_policy, 'repository': tenable_scan_repository,
+                                   'credentials': _tsc.invocation.module_args.credentials | default([]),
+                                   'target_label': tenable_scan_target | default('', true) | string | trim,
+                                   'max_rows': tenable_scan_max_rows | int, 'title': site_report_title | default('Tenable.sc scan')}) }}
+
+- name: ACAS | {{ _tsc_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_tsc_doc | report_text).splitlines() }}"
+
+- name: ACAS | the scans as job artifacts (tenable_scan)
+  ansible.builtin.set_stats:
+    data:
+      tenable_scan:
+        launched: "{{ _tsc.launched | default([]) }}"
+        results: "{{ _tsc.results | default([]) }}"
+        not_scanned: "{{ _tsc.plan.problems | default([]) }}"
+        targets: "{{ _tsc.plan.targets | default([]) }}"
+
+- name: ACAS | email it, publish it (report_email_to, report_web_dest)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _tsc_doc }}"
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+
+- name: ACAS | Tenable.sc read, every scan launched (tenable_scan_fail)
+  ansible.builtin.assert:
+    that:
+      - _tsc.error | default('') | length == 0
+      - _tsc.launched | default([]) | selectattr('error') | list | length == 0
+    fail_msg: >-
+      {{ _tsc.error | default('') or ((_tsc.launched | selectattr('error') | map(attribute='zone') | list | join(', ')) ~ ': the scan was not launched (the report says why)') }}
+      - tenable_scan_fail: false makes this a report only.
+    quiet: true
+  when: tenable_scan_fail | bool

@@ -94,6 +94,13 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
     "horizon_user_help.yml": ("Horizon - user help", "Horizon API", "", """\
 ## A survey: horizon_user (text, required) and horizon_user_action (look, logoff, disconnect, reset, restart, recover)
 """),
+    "tenable_scan.yml": ("Tenable.sc - scan", "Tenable.sc API", "", """\
+## The hosts: a group (or pattern) of this inventory - not the Limit. The policy and the repository: the first run
+## (nothing set) lists what Tenable.sc offers; nothing is launched without both. Check launches nothing.
+# tenable_scan_target: web_servers
+# tenable_scan_policy: Basic Network Scan
+# tenable_scan_repository: Main
+"""),
     "fapolicyd_containers.yml": ("fapolicyd and containers", "Machine (with sudo)", "", """\
 ## The hosts: target (a group of this inventory) or the Limit
 # target: container_hosts

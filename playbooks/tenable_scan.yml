@@ -1,0 +1,19 @@
+---
+# ACAS SCAN. Kick off a Tenable.sc (ACAS) scan of the hosts of an inventory group, from the scanner in each host's
+# own datacenter: Tenable.sc's scan zones say which scanners cover which IP ranges, so each host goes to the zone
+# whose ranges hold its address - or the zone its inventory says (tenable_zone), or the one its site (a group, or a
+# code in its name) maps to - one scan per zone. Runs on the AAP side with the "Tenable.sc API" credential; the hosts
+# come from tenable_scan_target (a group of the inventory - not the Limit: the job runs on localhost). Nothing is
+# launched without tenable_scan_policy and tenable_scan_repository: the first run lists the zones, scanners, policies and
+# repositories the account may use. Check chooses the zones and says what it would launch. tenable_scan_wait: true
+# waits and reports the findings by severity and by host. Printed, emailed (report_email_to), on the report
+# website, as artifacts (tenable_scan). docs/TENABLE.md
+#   ansible-playbook playbooks/tenable_scan.yml -e tenable_scan_target=web_servers -e tenable_scan_policy="Basic Network Scan" -e tenable_scan_repository=Main
+- name: Tenable.sc scan
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Tenable.sc scan
+      ansible.builtin.include_role:
+        name: tenable_scan

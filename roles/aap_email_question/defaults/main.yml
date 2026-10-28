@@ -8,6 +8,7 @@ aap_email_question_state: present       # present = add the question; absent = t
 # Which templates: the job templates whose playbook is one of these (the file name - your template names do not
 # matter). Every playbook that can email a report is here; a test keeps the list complete.
 aap_email_question_playbooks:
+  - tenable_scan.yml
   - act_fix_approved.yml
   - ad_health_report.yml
   - ad_lockout.yml

@@ -61,6 +61,7 @@ jobs:
           python tests/test_cert_issued.py
           python tests/test_cert_install.py
           python tests/test_horizon.py
+          python tests/test_tenable_scan.py
           python tests/test_aap_survey.py
           python tests/test_net_config.py
           python tests/test_trust.py
@@ -190,6 +191,10 @@ jobs:
         run: |
           bash tests/horizon/run_horizon_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/horizon/run_horizon_test.sh
+      - name: Tenable.sc scan job against a fake Tenable.sc (tests/tenable/scmock.py; current ansible-core and 2.16)
+        run: |
+          bash tests/tenable/run_tenable_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/tenable/run_tenable_test.sh
       - name: ServiceNow test ticket, tickets, VM request pickup and ServiceNow health (MID Servers) against a fake ServiceNow (current ansible-core and 2.16)
         run: |
           bash tests/servicenow/run_servicenow_test.sh

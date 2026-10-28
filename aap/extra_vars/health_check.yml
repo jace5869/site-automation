@@ -982,6 +982,7 @@
 #   - {tab: Certificates, match: ["*certificate*", "*trust store*"]}
 #   - {tab: VMware, match: ["VM *", "VMs *", "VMware*", "ESXi*", "vCenter*"]}
 #   - {tab: Horizon, match: ["Horizon*"]}
+#   - {tab: Tenable.sc, match: ["Tenable*"]}
 #   - {tab: Windows, match: ["Windows*", "Active Directory*", "AD *", "ACT for Windows*"]}
 #   - {tab: Network and storage, match: ["Network*", "NetApp*", "ONTAP*"]}
 #   - {tab: Linux, match: ["Linux*", "Health check*", "Troubleshoot*", "Patch*", "Database*", "Service watch*", "POA&M*", "STIG*",

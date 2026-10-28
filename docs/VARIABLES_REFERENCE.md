@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd_containers](#fapolicyd_containers), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd_containers](#fapolicyd_containers), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -37,7 +37,7 @@ File: `roles/aap_email_question/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `aap_email_question_state` | `present` | present = add the question; absent = take it out again |
-| `aap_email_question_playbooks` | `- act_fix_approved.yml - ad_health_report.yml - ad_lockout.yml - cert_report.yml - databa…` | Which templates: the job templates whose playbook is one of these (the file name - your template names do not matter). Every playbook that can email a report is here; a test keeps the list complete. |
+| `aap_email_question_playbooks` | `- tenable_scan.yml - act_fix_approved.yml - ad_health_report.yml - ad_lockout.yml - cert_…` | Which templates: the job templates whose playbook is one of these (the file name - your template names do not matter). Every playbook that can email a report is here; a test keeps the list complete. |
 | `aap_email_question_templates` | `[]` | more job templates or workflows, by name or ID |
 | `aap_email_question_exclude` | `[]` | templates left out, by name or ID |
 | `aap_email_question_workflows` | `true` | also the workflows that run them (a job in a workflow is never asked its own survey) |
@@ -1064,6 +1064,33 @@ File: `roles/stigman_stack/defaults/main.yml`
 | `stigman_tls_key_src` | `"{{ lookup('ansible.builtin.env', 'TLS_KEY_FILE') }}"` | its private key file, from the credential (TLS_KEY_FILE) |
 | `stigman_tls_ca_src` | `"{{ lookup('ansible.builtin.env', 'TLS_CA_FILE') }}"` | the CA bundle file, from the credential (TLS_CA_FILE) |
 | `stigman_replace_secrets` | `false` | A deploy refuses to change a database password secret already deployed: in MySQL the password stays the old one, and STIG Manager would lose its database. true = replace the secrets anyway - ONE launch only, when the database is being created again (Prompt on launch, Variables); never save it in the template. |
+
+## tenable_scan
+
+File: `roles/tenable_scan/defaults/main.yml`
+
+> ACAS SCAN (playbooks/tenable_scan.yml, docs/TENABLE.md): kick off a Tenable.sc (ACAS) scan of the hosts of an inventory group, from the scanner of each host's own datacenter - Tenable.sc's scan zones say which scanners cover which IP ranges - one scan per zone. From the AAP side, with the "Tenable.sc API" credential. Nothing is launched without tenable_scan_policy and tenable_scan_repository: a first run lists the zones, scanners, policies and repositories the account may use. A dry run (Check) chooses the zones and says what it would launch.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `tenable_scan_target` | (empty) | The hosts: a group or pattern of this inventory (the job runs on localhost: not the Limit), and/or names or addresses not in the inventory. "" and [] = nothing to scan: the job lists what Tenable.sc offers. a group or pattern of the inventory (web_servers, dc1_*) |
+| `tenable_scan_targets` | `[]` | names or addresses not in the inventory, e.g. [198.51.100.5, nas01.example.mil] |
+| `tenable_scan_policy` | (empty) | the scan policy (name or id): the first run lists them |
+| `tenable_scan_repository` | (empty) | the repository the results go to (name or id) |
+| `tenable_scan_credentials` | `[]` | scan credentials (names or ids) the scans log in to the hosts with |
+| `tenable_scan_name` | `"AAP {target} - {zone}"` | The scans' name: {target} = tenable_scan_target (or the number of hosts), {zone} = the zone. A scan of that name from an earlier run is updated (its hosts) and launched again, not made twice. |
+| `tenable_scan_description` | `"Launched by site-automation (AAP), playbooks/tenable_scan.yml"` | the scans' description in Tenable.sc |
+| `tenable_scan_sites` | `{}` | The zone (the scanners) of each host - the first rule that applies: 1. the host's own tenable_zone (an inventory variable: a zone's name) 2. its site, through tenable_scan_sites: a group of the host, or the site code tenable_scan_site_regex takes from its name, mapped to a zone's name - e.g. {dc_east: "Datacenter East… (all of it: the role file) |
+| `tenable_scan_site_regex` | (empty) | e.g. '^([a-z]{2}[0-9])': the first group is the site code in the host's name (xy2vmp02 -> xy2) |
+| `tenable_scan_zone_default` | (empty) | rule 4: a zone's name, auto, or "" (a host no rule gives a zone is not scanned) |
+| `tenable_scan_wait` | `false` | true = wait for the scans and report the findings by severity and by host |
+| `tenable_scan_wait_minutes` | `120` | at most this long |
+| `tenable_scan_poll_seconds` | `60` | seconds between two looks at a running scan |
+| `tenable_scan_max_targets` | `256` | at most this many hosts per run (narrow tenable_scan_target, or raise it) |
+| `tenable_scan_max_rows` | `200` | rows per table in the report |
+| `tenable_scan_fail` | `true` | The job fails when Tenable.sc could not be read, a policy or repository named is not there, or a scan could not be launched. false = a report only. A host no rule gives a zone is said (amber), never a failure. |
+| `tenable_ca_path` | (empty) | a CA file for Tenable.sc's HTTPS certificate ("" = what the execution environment trusts) |
+| `tenable_timeout` | `60` | seconds per request |
 
 ## troubleshoot
 
