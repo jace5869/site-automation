@@ -7,6 +7,8 @@
     rules_file: "{{ fapolicyd_container_rules_file }}"
     scope: "{{ fapolicyd_container_scope }}"
     with_exe: "{{ fapolicyd_container_rule_exe | bool }}"
+    storage_rules: "{{ fapolicyd_container_storage_rules | bool }}"
+    review: "{{ fapolicyd_container_review | bool }}"
     labels: "{{ fapolicyd_container_labels }}"
     programs: "{{ fapolicyd_container_programs }}"
     paths: "{{ fapolicyd_container_paths }}"

@@ -123,8 +123,14 @@ def fapolicyd_report(hostvars_list, names, since="today", title=""):
 RULE = re.compile(r"^(allow|allow_audit|allow_syslog|allow_log) perm=(open|execute|any) (.+?) : (.+)$")
 SUBJ = ("all", "auid", "uid", "gid", "sessionid", "pid", "ppid", "trust", "comm", "exe", "dir", "ftype", "device")
 OBJ = ("all", "path", "dir", "device", "ftype", "trust", "sha256hash")
+# a folder a rule for any program must not open: the host's own files are under them (as the module's SYSTEM_DIRS)
+SYSTEM_DIRS = ("/", "/bin/", "/sbin/", "/usr/", "/usr/bin/", "/usr/sbin/", "/usr/lib/", "/usr/lib64/", "/usr/libexec/",
+               "/usr/local/", "/usr/local/bin/", "/usr/local/sbin/", "/usr/local/lib/", "/usr/local/lib64/", "/lib/",
+               "/lib64/", "/etc/", "/tmp/", "/var/", "/var/tmp/", "/dev/", "/dev/shm/", "/run/", "/home/", "/root/", "/opt/")
+SYSTEM_ROOTS = ("/usr/", "/lib/", "/lib64/", "/bin/", "/sbin/", "/etc/")
 CNOTE = ("A rule added here lets that program use that file on the host, inside a container or not: approve each one "
          "through your security approval (e.g. the ISSO) before it is listed in fapolicyd_container_rules.")
+REVIEW_RANK = {"critical": 0, "warning": 1, "info": 2}
 
 
 def _attrs(text, allowed):
@@ -138,6 +144,8 @@ def _attrs(text, allowed):
             return "%r is not an attribute fapolicyd knows here" % a
         if k in ("path", "dir", "exe") and not v.startswith("/"):
             return "%s must be a full path" % k
+        if k in ("path", "dir", "exe") and ("*" in v or "?" in v or "[" in v):
+            return "%s holds a wildcard: fapolicyd has none, the rule would match nothing" % k
         if k == "dir" and not v.endswith("/"):
             return "dir must end with /"
     return ""
@@ -145,7 +153,8 @@ def _attrs(text, allowed):
 
 def fapolicyd_rule_problem(rule):
     """One rule asked for (fapolicyd_container_rules) -> '' when it may be written, else why not. Only allow rules,
-    with known attributes; never 'all : all', never a folder as wide as / ."""
+    with known attributes and no wildcard; never 'all : all', never a folder as wide as /, never a system folder
+    for any program."""
     if "\n" in str(rule or "").strip() or "\r" in str(rule or ""):
         return "one rule per item: it holds a line break"
     m = RULE.match(" ".join(str(rule or "").split()))
@@ -158,6 +167,11 @@ def fapolicyd_rule_problem(rule):
         return "all : all would turn fapolicyd off"
     if re.search(r"(^| )dir=/( |$)", m.group(4)):
         return "dir=/ is every file"
+    if m.group(3) == "all":
+        for d in re.findall(r"(?:^| )dir=(\S+)", m.group(4)):
+            if d in SYSTEM_DIRS or d.startswith(SYSTEM_ROOTS):
+                return ("dir=%s for any program opens a system folder to every untrusted file put there (RPM-owned files "
+                        "are trusted already): name the file (path=) or the program (exe=)" % d)
     return ""
 
 
@@ -222,10 +236,15 @@ def fapolicyd_containers_report(hostvars_list, names, since="today", title="", r
             elif not g.get("proposal"):
                 by_hand.append("%s: %s -> %s - %s" % (h["host"], g["exe"] or "?", g["path"] or "?", g.get("note", "")))
 
-    status = "critical" if down or failed else ("warning" if denied or unread else "ok")
+    review = [(h["host"], f) for h in read for f in h.get("rules_review") or []]
+    worst_review = min([REVIEW_RANK.get(f.get("status"), 2) for _, f in review] or [9])
+    tighten = [(hn, f) for hn, f in review if f.get("status") in ("critical", "warning")]
+    status = "critical" if down or failed or worst_review == 0 else ("warning" if denied or unread or tighten else "ok")
     head = []
     if denied:
         head.append("%d container denial(s) on %d host(s)" % (total, len(denied)))
+    if tighten:
+        head.append("%d rule(s) to tighten on %d host(s)" % (len(tighten), len(set(hn for hn, _ in tighten))))
     if [h for h in applied if h["apply"].get("added") or h["apply"].get("removed")] and not failed:
         head.append(("rules would change on %d host(s)" if check else "rules changed on %d host(s)")
                     % len([h for h in applied if h["apply"].get("added") or h["apply"].get("removed")]))
@@ -240,7 +259,9 @@ def fapolicyd_containers_report(hostvars_list, names, since="today", title="", r
         "status": status,
         "summary": [{"label": "Container denials", "value": total, "status": "warning" if total else "ok"},
                     {"label": "Hosts with them", "value": len(denied), "status": "warning" if denied else "ok"},
-                    {"label": "Rules to approve", "value": len(proposals), "status": "warning" if proposals else "ok"}]
+                    {"label": "Rules to approve", "value": len(proposals), "status": "warning" if proposals else "ok"},
+                    {"label": "Rules to tighten", "value": len(tighten),
+                     "status": "critical" if worst_review == 0 else ("warning" if tighten else "ok")}]
                    + ([{"label": "Rules not changed" if failed else "Hosts whose rules changed",
                         "value": len(failed) if failed else len([h for h in applied if h["apply"].get("added") or h["apply"].get("removed")]),
                         "status": "critical" if failed else "ok"}] if applied else [])
@@ -272,24 +293,43 @@ def fapolicyd_containers_report(hostvars_list, names, since="today", title="", r
             for g in h["groups"]:
                 rows.append([h["host"], ", ".join(g.get("containers") or []) or "-", g["exe"] or "?", g["path"] or "?", g["perm"],
                              g["count"], g.get("last", ""), ("%s. %s" % (g["rule_no"], g["rule"])) if g.get("rule") else (g.get("rule_no") or "?"),
-                             ", ".join(g.get("why") or [])])
+                             ", ".join(g.get("why") or []), g.get("where") or "?"])
                 rs.append("warning")
         secs.append({"title": "Container denials", "status": "warning",
                      "text": "What fapolicyd blocked since %s that a container caused: the program, the file it was denied, how "
                              "often, the rule that denied it, and the container while it still runs. A container's files are not "
-                             "in the trust database, which RPM fills from the host's packages." % since,
-                     "columns": ["Host", "Container", "Program", "File denied", "Permission", "Times", "Last", "Denied by rule", "Why a container's"],
+                             "in the trust database, which RPM fills from the host's packages. \"File on\": the host (a bind mount: "
+                             "the file is there at that path) or container storage (inside an image: the audit log holds the "
+                             "container's path, which names nothing on the host)." % since,
+                     "columns": ["Host", "Container", "Program", "File denied", "Permission", "Times", "Last", "Denied by rule",
+                                 "Why a container's", "File on"],
                      "rows": rows, "row_status": rs})
     if proposals or by_hand:
         lines = ["%s     (%s)" % (r, ", ".join(sorted(hs))) for r, hs in sorted(proposals.items())]
         notes = sorted(set("%s: %s" % (g["proposal"], g["note"]) for h in denied for g in h["groups"]
                            if g.get("proposal") in proposals and g.get("note")))
         secs.append({"title": "Rules to approve", "status": "warning",
-                     "text": "The narrowest allow rule for each denial: that program, that file. To add them, after your security "
-                             "approval, list them in fapolicyd_container_rules (the template's Variables) and run the job again - "
-                             "a Check run first shows what it would change. They are written to %s on every host of the run "
-                             "(use a Limit for fewer)." % (rules_file or "the rules file"),
+                     "text": "One allow rule per denial. A file on the host (a bind mount): the narrowest rule, that program, that "
+                             "file. A file inside an image: container storage's folder (dir=.../storage/overlay/, for any program - "
+                             "a rule cannot name a file inside an image: its path in the audit log is the container's, and its "
+                             "layer changes at each pull). To add them, after your security approval, list them in "
+                             "fapolicyd_container_rules (the template's Variables) and run the job again - a Check run first shows "
+                             "what it would change. They are written to %s on every host of the run (use a Limit for fewer)."
+                             % (rules_file or "the rules file"),
                      "lines": lines + ["Note - %s" % n for n in notes] + ["By hand - %s" % b for b in by_hand]})
+    if review:
+        rows, rs = [], []
+        for hn, f in sorted(review, key=lambda x: (REVIEW_RANK.get(x[1].get("status"), 2), x[0], x[1].get("file", ""), x[1].get("line", 0))):
+            rows.append([hn, f.get("file", ""), f.get("line") or "-", f.get("rule") or "(the file)", f.get("what", "")])
+            rs.append(f.get("status") if f.get("status") in ("critical", "warning") else "info")
+        secs.append({"title": "Rules in place: what to tighten", "status": "critical" if worst_review == 0 else ("warning" if tighten else "info"),
+                     "text": "The rules files in %s on each host, read as fagenrules takes them (fapolicyd's own files left out). Red: "
+                             "a rule that allows everything. Amber: a wildcard (fapolicyd has none: the rule matches nothing), a system "
+                             "folder or a user-writable folder opened to any program, a file that sorts after the stock deny rules (its "
+                             "allow rules are never reached). Blue: a repeated rule, a rule for an RPM-owned file (trusted already). "
+                             "Change these files by hand: the job writes only its own."
+                             % (rules_file.rsplit("/", 1)[0] if rules_file and "/" in rules_file else "rules.d"),
+                     "columns": ["Host", "File", "Line", "Rule", "Finding"], "rows": rows, "row_status": rs})
     quiet = [h["host"] for h in read if not h.get("groups")]
     lines = []
     for h in read:

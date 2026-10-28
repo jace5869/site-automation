@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # playbooks/fapolicyd_containers.yml: fake rpm / systemctl / ausearch / fapolicyd-cli / fagenrules, each host told
 # apart by its python (FAKE_FA_HOST), its rules folder and compiled rules in the work folder. A host with container
-# denials (and one of its own), a quiet host, one without fapolicyd, one whose rules do not load, one without rules.d,
-# one that cannot be reached. Read only; a Check run with a rule; the rule added, again (unchanged), taken out; a load
-# that fails (the file put back, the host fails after the report); a rule that is not a plain allow rule (nothing
-# written). Runs nothing for real: every tool it touches is fake.
+# denials (a file on the host - a real file, its inode in the fake audit record -, a file inside an image, and one
+# denial of its own) and a rules file of its own to tighten, a quiet host, one without fapolicyd, one whose rules do
+# not load, one without rules.d, one that cannot be reached. Read only; a Check run with a rule; the rule added,
+# again (unchanged), taken out; a load that fails (the file put back, the host fails after the report); a rule that
+# is not a plain allow rule (nothing written). Runs nothing for real: every tool it touches is fake.
 #     bash tests/fapolicyd/run_fapolicyd_containers_test.sh      (FAPOLICYD_TEST_KEEP=1 keeps the work folder)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -17,19 +18,25 @@ fails=0
 ok() { echo "ok   - $1"; }
 bad() { echo "FAIL - $1"; fails=$((fails + 1)); [ -n "${2:-}" ] && tail -n "$2" "$work/out.txt"; }
 
-RULE='allow perm=execute exe=/usr/bin/crun : path=/app/server'
+mkdir -p "$work/bin" "$work/app" "$work/fc01/rules.d" "$work/fc02/rules.d" "$work/fc04/rules.d" "$work/fc05"
+echo 'server' > "$work/app/server"                 # a host file bind-mounted into the container: on the host at its path
+APP="$work/app/server"
+RULE="allow perm=execute exe=/usr/bin/crun : path=$APP"
 OLD='allow perm=execute exe=/usr/bin/crun : path=/app/old'
-mkdir -p "$work/bin" "$work/fc01/rules.d" "$work/fc02/rules.d" "$work/fc04/rules.d" "$work/fc05"
 printf '# Managed by site-automation\n%s\n' "$OLD" > "$work/fc04/rules.d/35-site-containers.rules"
+# fc01's own rules file, as a site writes one by hand: a system folder for any program, a wildcard, an RPM-owned file
+printf '# local rules\nallow perm=any all : dir=/usr/lib/\nallow perm=any all : dir=/home/*/.local/share/containers/storage/\nallow perm=any all : path=/usr/bin/crun\n' \
+    > "$work/fc01/rules.d/99-local.rules"
 cat > "$work/hosts.json" <<EOJ
 {"fc01.example.mil": {"installed": true, "fapolicyd": "active", "auditd": "active", "dir": "$work/fc01",
-                      "denials": [["/usr/bin/crun", "/app/server", "execve", "system_u:object_r:container_file_t:s0:c1,c2"],
-                                  ["/usr/bin/crun", "/app/server", "execve", "system_u:object_r:container_file_t:s0:c1,c2"],
+                      "denials": [["/usr/bin/crun", "$APP", "execve", "system_u:object_r:container_file_t:s0:c1,c2"],
+                                  ["/usr/bin/crun", "$APP", "execve", "system_u:object_r:container_file_t:s0:c1,c2"],
+                                  ["/app/server", "/usr/lib/libapp.so.1", "openat", "system_u:object_r:container_file_t:s0:c1,c2"],
                                   ["/usr/bin/bash", "/opt/tool/run", "execve", "unconfined_u:object_r:usr_t:s0"]]},
  "fc02.example.mil": {"installed": true, "fapolicyd": "active", "auditd": "active", "dir": "$work/fc02", "denials": []},
  "fc03.example.mil": {"installed": false},
  "fc04.example.mil": {"installed": true, "fapolicyd": "active", "auditd": "active", "dir": "$work/fc04", "load_fails": true,
-                      "denials": [["/usr/bin/crun", "/app/server", "execve", "system_u:object_r:container_file_t:s0:c3,c4"]]},
+                      "denials": [["/usr/bin/crun", "$APP", "execve", "system_u:object_r:container_file_t:s0:c3,c4"]]},
  "fc05.example.mil": {"installed": true, "fapolicyd": "active", "auditd": "active", "dir": "$work/fc05", "no_fagenrules": true,
                       "denials": []}}
 EOJ
@@ -39,6 +46,10 @@ tool, args = os.path.basename(sys.argv[1]), sys.argv[2:]
 h = json.load(open(os.environ["FAKE_FA_HOSTS"])).get(os.environ.get("FAKE_FA_HOST", ""), {})
 if args == ["--is-fake"]:
     print("FAKE " + tool); sys.exit(0)
+if tool == "rpm" and args[:1] == ["-qf"]:
+    owned = args[1].startswith("/usr/bin/")
+    print("podman-4.9.4-1.el9.x86_64" if owned else "file %s is not owned by any package" % args[1])
+    sys.exit(0 if owned else 1)
 if tool == "rpm":
     print("fapolicyd-1.3.3-1.el9.x86_64" if h.get("installed") else "package fapolicyd is not installed")
     sys.exit(0 if h.get("installed") else 1)
@@ -50,8 +61,12 @@ if tool == "ausearch":
     for n, (exe, path, call, obj) in enumerate(h["denials"]):
         stamp = "msg=audit(10/27/2026 08:0%d:00.000:1%d)" % (n, n)
         subj = "system_u:system_r:container_runtime_t:s0" if "container" in obj else "unconfined_u:unconfined_r:unconfined_t:s0"
+        try:  # a file on the host: its real inode and device, as auditd records them; else (inside an image) made up
+            st = os.stat(path); ino, dev = st.st_ino, "%02x:%02x" % (os.major(st.st_dev), os.minor(st.st_dev))
+        except OSError:
+            ino, dev = 1, "00:3e"
         print("----")
-        print("type=PATH %s : item=0 name=%s inode=1 mode=file,755 obj=%s nametype=NORMAL" % (stamp, path, obj))
+        print("type=PATH %s : item=0 name=%s inode=%s dev=%s mode=file,755 obj=%s nametype=NORMAL" % (stamp, path, ino, dev, obj))
         print("type=SYSCALL %s : arch=x86_64 syscall=%s success=no exit=EPERM ppid=1 pid=99999999 uid=root comm=x exe=%s subj=%s" % (stamp, call, exe, subj))
         print("type=FANOTIFY %s : resp=deny fan_type=rule_info fan_info=13 subj_trust=yes obj_trust=no" % stamp)
     sys.exit(0)
@@ -109,12 +124,18 @@ rules01() { grep -v '^#' "$work/fc01/rules.d/35-site-containers.rules" 2>/dev/nu
 run
 [ "$rc" = 4 ] || [ "$rc" = 2 ] && ok "read only: the job runs (rc $rc: gone01 cannot be reached)" || bad "read only: rc $rc" 30
 grep -q 'No email: report_email_to is not set' "$work/out.txt" && ok "says why no email" || bad "no 'No email' line" 20
-check "the title: 3 container denials on 2 hosts" '"3 container denial(s) on 2 host(s)" in r["title"] and r["status"] == "warning"'
-check "the denials: fc01 first, crun -> /app/server twice, denied by rule 13" \
-      'sec["Container denials"]["rows"][0][:6] == ["fc01.example.mil", "-", "/usr/bin/crun", "/app/server", "execute", 2] and sec["Container denials"]["rows"][0][7].startswith("13. deny_audit")'
+check "the title: 4 container denials on 2 hosts, 3 rules to tighten on 1" \
+      '"4 container denial(s) on 2 host(s)" in r["title"] and "3 rule(s) to tighten on 1 host(s)" in r["title"] and r["status"] == "warning"'
+check "the denials: fc01 first, crun -> the host file twice, denied by rule 13, on the host" \
+      "sec[\"Container denials\"][\"rows\"][0][:6] == [\"fc01.example.mil\", \"-\", \"/usr/bin/crun\", \"$APP\", \"execute\", 2] and sec[\"Container denials\"][\"rows\"][0][7].startswith(\"13. deny_audit\") and sec[\"Container denials\"][\"rows\"][0][-1] == \"the host\""
+check "  ... the library inside the image: in container storage (its path is the container's)" \
+      'any(x[3] == "/usr/lib/libapp.so.1" and x[-1] == "container storage" for x in sec["Container denials"]["rows"])'
 check "the host's own denial is not a container's: counted apart" \
       'not any(x[3] == "/opt/tool/run" for x in sec["Container denials"]["rows"]) and any("1 other denial(s)" in l for l in sec["The hosts"]["lines"])'
-check "one rule to approve, for fc01 and fc04" "sec[\"Rules to approve\"][\"lines\"][0] == \"$RULE     (fc01.example.mil, fc04.example.mil)\""
+check "two rules to approve: container storage for the image's file (fc01), the host file's own rule (fc01, fc04)" \
+      "sec[\"Rules to approve\"][\"lines\"][0].startswith(\"allow perm=any all : dir=\") and sec[\"Rules to approve\"][\"lines\"][0].endswith(\"/overlay/     (fc01.example.mil)\") and sec[\"Rules to approve\"][\"lines\"][1] == \"$RULE     (fc01.example.mil, fc04.example.mil)\""
+check "the rules in place: fc01's 99-local.rules - a system folder, a wildcard, an RPM-owned file, sorts after the deny rules" \
+      'all(x[0] == "fc01.example.mil" and x[1] == "99-local.rules" for x in sec["Rules in place: what to tighten"]["rows"]) and len(sec["Rules in place: what to tighten"]["rows"]) == 4 and all(any(w in x[4] for x in sec["Rules in place: what to tighten"]["rows"]) for w in ("system folder", "no wildcards", "RPM-owned (podman", "sorts after 41-shared-obj.rules"))'
 check "fc05: no fagenrules said; fc03 not installed; gone01 not read" \
       'any(l.startswith("fc05.example.mil: no rules.d") for l in sec["The hosts"]["lines"]) and "fc03.example.mil" in sec["fapolicyd not installed"]["lines"][0] and "gone01.example.mil" in sec["Not read"]["lines"][0]'
 [ -z "$(rules01)" ] && [ ! -e "$work/fc01/compiled.rules" ] && ok "read only: nothing written" || bad "read only wrote rules"
@@ -131,7 +152,8 @@ run -l fc01.example.mil -e "{\"fapolicyd_container_rules\": [\"$RULE\"]}"
 [ "$(rules01)" = "$RULE" ] && grep -qx "$RULE" "$work/fc01/compiled.rules" && head -1 "$work/fc01/rules.d/35-site-containers.rules" | grep -q '^# Managed by site-automation' \
     && ok "  ... in its own file, with its header, and loaded (compiled.rules)" || bad "the rules file: $(cat "$work/fc01/rules.d/35-site-containers.rules" 2>&1)"
 check "  ... the report: changed, the rule added" "sec[\"The rules: what this run changed\"][\"rows\"][0][:3] == [\"fc01.example.mil\", \"changed\", \"$RULE\"]"
-check "  ... and the denial's rule no longer to approve (it is in the file)" '"Rules to approve" not in sec'
+check "  ... and the denial's rule no longer to approve (it is in the file); the storage rule still is" \
+      "not any(l.startswith(\"$RULE\") for l in sec[\"Rules to approve\"][\"lines\"]) and sec[\"Rules to approve\"][\"lines\"][0].startswith(\"allow perm=any all : dir=\")"
 run -l fc01.example.mil -e "{\"fapolicyd_container_rules\": [\"$RULE\"]}"
 check "the same rule again: unchanged" 'sec["The rules: what this run changed"]["rows"][0][1] == "unchanged"'
 grep -A1 'load the rules (fagenrules --load)' "$work/out.txt" | grep -q 'changed:' && bad "  ... but it loaded the rules again" 20 || ok "  ... nothing loaded again"

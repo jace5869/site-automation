@@ -64,7 +64,7 @@ class Parse(unittest.TestCase):
 
 class Container(unittest.TestCase):
     def why(self, e, cg=lambda pid: ""):
-        path, obj = fc.event_path(e)
+        path, obj, _ = fc.event_path(e)
         return fc.why_container(e, path, obj, LABELS, PROGRAMS, PATHS, cg)
 
     def test_what_makes_it_a_container_s(self):
@@ -99,6 +99,87 @@ class Propose(unittest.TestCase):
         self.assertEqual(fc.propose("/usr/bin/sh", "/app/my tool", "execute", "path", True)[0], "")
         self.assertEqual(fc.propose("/usr/bin/sh", "?", "execute", "path", True)[0], "")
 
+    def test_a_file_on_the_host_is_known_by_its_inode(self):
+        """The audit log's path is the container's: only a file that is on the host at that path, with the record's
+        inode and device, gets a rule of its own (a bind mount)."""
+        me = os.path.abspath(__file__)
+        st = os.stat(me)
+        rec = {"inode": str(st.st_ino), "dev": "%02x:%02x" % (os.major(st.st_dev), os.minor(st.st_dev))}
+        self.assertTrue(fc.same_file(me, rec))
+        self.assertTrue(fc.same_file(me, {"inode": str(st.st_ino)}))                      # no device in the record
+        self.assertFalse(fc.same_file(me, {"inode": str(st.st_ino + 1), "dev": rec["dev"]}))
+        self.assertFalse(fc.same_file(me, {"inode": str(st.st_ino), "dev": "00:01"}))     # another device
+        self.assertFalse(fc.same_file("/usr/lib/libapp.so.1", {"inode": "40"}))           # not on the host
+        self.assertFalse(fc.same_file("bin/tool", {"inode": "60"}))
+
+    def test_storage_rule(self):
+        graph, rootless = fc.storage_conf('# podman\n[storage]\ndriver = "overlay"\ngraphroot = "/var/lib/containers/storage"\n')
+        self.assertEqual((graph, rootless), ("/var/lib/containers/storage", ""))
+        self.assertEqual(fc.storage_conf('graphroot = "/data/containers/storage/"  # moved\nrootless_storage_path = "$HOME/.local/share/containers/storage"'),
+                         ("/data/containers/storage", "$HOME/.local/share/containers/storage"))
+        rule, note = fc.storage_rule("/usr/lib/libapp.so.1", "/app/server", None, graph, rootless)
+        self.assertEqual(rule, "allow perm=any all : dir=/var/lib/containers/storage/overlay/")
+        self.assertIn("no host path of its own", note)
+        self.assertEqual(fc.storage_rule("/var/lib/containers/storage/volumes/data/_data/x.sh", "/usr/bin/sh", None, graph, rootless)[0],
+                         "allow perm=any all : dir=/var/lib/containers/storage/volumes/")
+        self.assertEqual(fc.storage_rule("/run/containers/storage/overlay-containers/x/userdata/y", "/usr/bin/crun", None, graph, rootless)[0],
+                         "allow perm=any all : dir=/run/containers/storage/")
+        self.assertEqual(fc.storage_rule("/usr/bin/x", "/var/lib/docker/overlay2/a/merged/usr/bin/x", None, graph, rootless)[0],
+                         "allow perm=any all : dir=/var/lib/docker/overlay2/")
+        # a user's denial: their own storage when it exists on the host (here it does not: root's)
+        user = {"name": "alice", "uid": 1001, "home": "/home/alice"}
+        self.assertEqual(fc.storage_rule("/app/x", "/app/x", user, graph, rootless)[0], "allow perm=any all : dir=/var/lib/containers/storage/overlay/")
+        here = {"name": "tester", "uid": 1001, "home": os.path.dirname(os.path.abspath(__file__))}   # a folder that exists ...
+        rule, note = fc.storage_rule("/app/x", "/app/x", here, graph, "$HOME")                      # ... as the rootless storage
+        self.assertEqual(rule, "allow perm=any all : dir=%s/overlay/" % here["home"])
+        self.assertIn("tester's own storage", note)
+        self.assertIn("STIG", note)
+
+
+REVIEW_FILES = [
+    ("35-site-containers.rules", "# Managed by site-automation\nallow perm=any all : dir=/var/lib/containers/storage/overlay/\n"),
+    ("41-shared-obj.rules", "allow perm=open all : ftype=application/x-sharedlib trust=1\ndeny_audit perm=open all : ftype=application/x-sharedlib\n"),
+    ("99-local.rules", "\n".join([
+        "# Docker Compose binaries",
+        "allow perm=any all : path=/usr/bin/docker-compose",
+        "allow perm=any all : dir=/home/*/.local/lib/python*/site-packages/",
+        "allow perm=any all : dir=/usr/lib/",
+        "allow perm=any all : dir=/var/lib/containers/storage/",
+        "allow perm=any all : dir=/var/lib/containers/storage/",
+        "allow perm=any all : dir=/home/alice/.local/share/containers/storage/",
+        "allow perm=open exe=/usr/bin/python3.9 : dir=/usr/lib/python3.9/site-packages/",
+        "allow perm=any all : path=/usr/bin/crun",
+        "allow perm=any all : all",
+        "allow something",
+        ""])),
+]
+
+
+class Review(unittest.TestCase):
+    def test_what_to_tighten(self):
+        owned = lambda p: "podman-4.9.4-1.el9.x86_64" if p == "/usr/bin/crun" else ""
+        out = fc.review_rules(REVIEW_FILES, owned)
+        by = {}
+        for f in out:
+            by.setdefault((f["file"], f["line"]), []).append((f["status"], f["what"]))
+        self.assertNotIn(("35-site-containers.rules", 2), by)                             # the job's own storage rule: fine
+        self.assertFalse(any(k[0] == "41-shared-obj.rules" for k in by))                   # fapolicyd's own files: not reviewed
+        self.assertEqual(by[("99-local.rules", 3)][0][0], "warning")
+        self.assertIn("no wildcards", by[("99-local.rules", 3)][0][1])
+        self.assertIn("system folder", by[("99-local.rules", 4)][0][1])
+        self.assertEqual(by[("99-local.rules", 4)][0][0], "warning")
+        self.assertNotIn(("99-local.rules", 5), by)                                         # root's storage for any program: the job's own kind of rule
+        self.assertIn("repeats line 5 of 99-local.rules", by[("99-local.rules", 6)][0][1])
+        self.assertIn("any user who can write there", by[("99-local.rules", 7)][0][1])
+        self.assertEqual(by[("99-local.rules", 8)], [("info", "untrusted files under a system folder, for that program; RPM-owned files there are trusted already")])
+        self.assertIn("RPM-owned (podman-4.9.4-1.el9.x86_64)", by[("99-local.rules", 9)][0][1])
+        self.assertEqual(by[("99-local.rules", 10)][0][0], "critical")
+        self.assertIn("not a rule fapolicyd reads", by[("99-local.rules", 11)][0][1])
+        self.assertIn("sorts after 41-shared-obj.rules", by[("99-local.rules", 0)][0][1])   # the file itself
+        self.assertNotIn(("35-site-containers.rules", 0), by)
+        self.assertEqual(fc.review_rules([], owned), [])
+        self.assertEqual(fc.review_rules([("30-site.rules", "allow perm=execute exe=/usr/bin/crun : path=/srv/app/server\n")], owned), [])
+
 
 class Rules(unittest.TestCase):
     def test_rule_problem(self):
@@ -113,6 +194,11 @@ class Rules(unittest.TestCase):
         self.assertIn("full path", ff.fapolicyd_rule_problem("allow perm=any exe=crun : path=/a"))
         self.assertIn("not an attribute", ff.fapolicyd_rule_problem("allow perm=any colour=red : path=/a"))
         self.assertIn("line break", ff.fapolicyd_rule_problem("allow perm=any exe=/x : path=/a\nallow perm=any all : all"))
+        self.assertIn("wildcard", ff.fapolicyd_rule_problem("allow perm=any all : dir=/home/*/.local/share/containers/storage/"))
+        self.assertIn("system folder", ff.fapolicyd_rule_problem("allow perm=any all : dir=/usr/lib/"))
+        self.assertIn("system folder", ff.fapolicyd_rule_problem("allow perm=open all : dir=/usr/lib/python3.9/site-packages/"))
+        self.assertEqual(ff.fapolicyd_rule_problem("allow perm=open exe=/usr/bin/python3.9 : dir=/usr/lib/python3.9/site-packages/"), "")
+        self.assertEqual(ff.fapolicyd_rule_problem("allow perm=any all : dir=/var/lib/containers/storage/overlay/"), "")
 
     def test_plan(self):
         a, b, c = ("allow perm=execute exe=/usr/bin/crun : path=/app/%s" % x for x in "abc")
@@ -148,6 +234,35 @@ class Report(unittest.TestCase):
         self.assertTrue(any("other denial" in x for x in sec["The hosts"]["lines"]))
         self.assertIn("e: could not be reached", sec["Not read"]["lines"][0])
         self.assertNotIn("The rules: what this run changed", sec)
+        self.assertNotIn("Rules in place: what to tighten", sec)
+
+    def test_report_with_storage_rules_and_a_review(self):
+        base = {"state": "read", "error": "", "active": "active", "auditd": "active", "rules_d": True, "fagenrules": True,
+                "others": [], "managed": []}
+        g1 = {"exe": "/app/server", "path": "/usr/lib/libapp.so.1", "perm": "open", "count": 3, "last": "", "rule_no": "11", "rule": "",
+              "containers": [], "why": ["container SELinux label"], "where": "container storage",
+              "proposal": "allow perm=any all : dir=/var/lib/containers/storage/overlay/", "note": "every file in container storage, for any program"}
+        g2 = dict(g1, exe="/usr/bin/crun", path="/srv/app/server", perm="execute", where="the host",
+                  proposal="allow perm=execute exe=/usr/bin/crun : path=/srv/app/server", note="")
+        rv = [{"file": "99-local.rules", "line": 4, "rule": "allow perm=any all : dir=/usr/lib/", "status": "warning", "what": "any program may then run any untrusted file under a system folder"},
+              {"file": "99-local.rules", "line": 6, "rule": "allow perm=any all : dir=/var/lib/containers/storage/", "status": "info", "what": "repeats line 5 of 99-local.rules"},
+              {"file": "99-local.rules", "line": 0, "rule": "", "status": "warning", "what": "sorts after 41-shared-obj.rules"}]
+        a = {"_fc": dict(base, groups=[g1, g2], rules_review=rv)}
+        b = {"_fc": dict(base, groups=[], rules_review=[{"file": "50-x.rules", "line": 1, "rule": "allow perm=any all : all", "status": "critical", "what": "allows everything (any)"}])}
+        r = ff.fapolicyd_containers_report([a, b], ["a", "b"], "today")
+        sec = {s["title"]: s for s in r["sections"]}
+        self.assertEqual(r["status"], "critical")
+        self.assertIn("3 rule(s) to tighten on 2 host(s)", r["title"])
+        self.assertEqual(sec["Container denials"]["columns"][-1], "File on")
+        self.assertEqual([x[-1] for x in sec["Container denials"]["rows"]], ["container storage", "the host"])
+        self.assertEqual(sec["Rules to approve"]["lines"][:2], ["allow perm=any all : dir=/var/lib/containers/storage/overlay/     (a)",
+                                                                "allow perm=execute exe=/usr/bin/crun : path=/srv/app/server     (a)"])
+        t = sec["Rules in place: what to tighten"]
+        self.assertEqual(t["status"], "critical")
+        self.assertEqual(t["rows"][0], ["b", "50-x.rules", 1, "allow perm=any all : all", "allows everything (any)"])   # the worst first
+        self.assertEqual(t["row_status"], ["critical", "warning", "warning", "info"])
+        self.assertEqual(t["rows"][1][2:4], ["-", "(the file)"])                           # a host's file-level finding first, then its lines
+        self.assertEqual([x["value"] for x in r["summary"] if x["label"] == "Rules to tighten"], [3])
 
     def test_report_after_a_change(self):
         rule = "allow perm=execute exe=/usr/bin/crun : path=/app/server"

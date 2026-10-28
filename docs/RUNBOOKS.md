@@ -535,10 +535,23 @@ check's `fapolicyd` check (above) counts the denials without ACT.
 
 ## fapolicyd and containers (`playbooks/fapolicyd_containers.yml`)
 
-What fapolicyd blocked that a **container** caused, the narrowest allow rule for each, and - once approved - those
-rules added. A container's files are not in fapolicyd's trust database (RPM fills it from the host's packages), so
-a program or a library in a container image can be denied. No ACT: the job reads, proposes, and adds only the rules
-you list.
+What fapolicyd blocked that a **container** caused, the allow rule for each, a review of the rules files already in
+place, and - once approved - the rules added. A container's files are not in fapolicyd's trust database (RPM fills
+it from the host's packages), so a program or a library in a container image can be denied. No ACT: the job reads,
+proposes, and adds only the rules you list.
+
+**Two kinds of rule.** The audit log holds the path *as the container saw it*. For a file bind-mounted from the
+host at the same path (the job checks: the file is there, with the record's inode), the rule is the narrowest one,
+that program and that file: `allow perm=execute exe=/usr/bin/crun : path=/srv/app/server`. For a file inside an
+image, no rule can name it - `/usr/lib/libapp.so.1` in the log is the container's path, which names nothing (or
+another file) on the host, and the image's layer under `/var/lib/containers/storage/overlay/` changes at each pull -
+so the rule is container storage's folder, for any program: `allow perm=any all :
+dir=/var/lib/containers/storage/overlay/` (storage.conf's `graphroot`; `volumes/` when the file is in a volume;
+Docker's `overlay2/`; a user's own rootless storage for a user's denial - the note warns: anything they put there
+may then run, so on a STIG host prefer rootful containers, as quadlet units). That is the one broad rule containers
+need; the host's own folders (`/usr/lib/`, `/usr/lib64/` ...) never need one - RPM-owned files there are trusted
+already, and a folder rule would allow untrusted files put there too. `fapolicyd_container_storage_rules: false` goes
+back to a path rule for every file (it matches nothing for a file inside an image).
 
 **A container's denial** is one with any of: a container SELinux label on the program or the file (`container_t`,
 `container_file_t`, `spc_t` ... - `fapolicyd_container_labels`), a container program (`crun`, `conmon`, `podman` ...
@@ -553,8 +566,9 @@ on launch - the dry run shows what would change.
 
 **Adding the rules:**
 
-1. Run it. The report's **Rules to approve** lists one rule per denial - that program, that file - and the hosts it
-   was seen on, e.g. `allow perm=execute exe=/usr/bin/crun : path=/app/server`.
+1. Run it. The report's **Rules to approve** lists one rule per denial - that program, that file, or container
+   storage's folder for a file inside an image - and the hosts it was seen on, e.g.
+   `allow perm=execute exe=/usr/bin/crun : path=/srv/app/server`.
 2. Take them to your security approval (the ISSO): each is a security-control change. A rule lets that program use
    that file on the host, inside a container or not.
 3. Put the approved ones in the template's Variables, exactly as the report gave them:
@@ -572,15 +586,34 @@ on launch - the dry run shows what would change.
 6. Leave the rules in the Variables: a run that finds them in the file changes nothing. To take one out:
    `fapolicyd_container_rules_remove: ["<the rule>"]`.
 
-Only plain allow rules are written (`allow` / `allow_audit` / `allow_syslog`, known attributes, full paths); one
-that is not - or `allow perm=any all : all`, which turns fapolicyd off, or `dir=/` - writes nothing on any host.
-`fapolicyd_container_scope: dir` proposes the file's folder instead of the file (one rule for every file there;
+Only plain allow rules are written (`allow` / `allow_audit` / `allow_syslog`, known attributes, full paths, no
+wildcard - fapolicyd has none); one that is not - or `allow perm=any all : all`, which turns fapolicyd off, or
+`dir=/`, or a system folder (`dir=/usr/lib/`) for any program - writes nothing on any host.
+`fapolicyd_container_scope: dir` proposes a host file's folder instead of the file (one rule for every file there;
 never a system folder such as `/usr/lib/`); `fapolicyd_container_rule_exe: false` leaves the program out (any
 program may then use the file). The job never touches the other rules files.
 
+**The rules in place.** The report's **Rules in place: what to tighten** reads every file of `rules.d` on each
+host (fapolicyd's own files left out) and lists what weakens the policy or does nothing - for you to change by
+hand, with your security approval. On a STIG host (`fapolicyd` in deny-all, permit-by-exception mode) these are
+what an auditor flags:
+
+| Finding | Means | Do |
+|---|---|---|
+| *allows everything* (red) | `allow ... all : all` or `dir=/`: fapolicyd is off for that permission | take it out |
+| *fapolicyd has no wildcards* (amber) | `dir=/home/*/...`, `/usr/lib/python*/` - fapolicyd matches the `*` literally: the rule does nothing | name each folder; for a user's rootless storage, prefer rootful containers |
+| *any program may then run any untrusted file under a system folder* (amber) | `allow perm=any all : dir=/usr/lib/` and the like; RPM-owned files there are trusted already | take it out; a pip-installed package goes into the trust database (`fapolicyd-cli --file add`), or gets a rule for its interpreter only |
+| *any user who can write there* (amber) | a folder under `/home/`, `/tmp/`, `/run/user/` for any program | name the program, or take it out |
+| *sorts after 41-shared-obj.rules* (amber) | the file's name puts it after the stock rules that deny untrusted libraries (41) and programs (43): its allow rules are never reached | rename it `3x-...rules` (the job's own is `35-site-containers.rules`) and `fagenrules --load` |
+| *repeats line N* (blue) | the same rule twice | take one out |
+| *RPM-owned ... trusted already* (blue) | a rule for a file the trust database already holds | take it out |
+
+`fapolicyd_container_review: false` leaves the review out.
+
 | The report shows | Means | Do |
 |---|---|---|
-| *Container denials*: a program, the file it was denied, `13. deny_audit perm=execute all : all` | the container's file is not trusted | the rule under *Rules to approve*, after approval |
+| *Container denials*: a program, the file it was denied, `13. deny_audit perm=execute all : all`, *File on: the host* | a host file (a bind mount) the container uses is not trusted | its own rule under *Rules to approve*, after approval |
+| *File on: container storage* | the file is inside an image: its path in the log is the container's | the storage rule under *Rules to approve* (one for every image on the host) |
 | *By hand - ...: the path has a space ...* | a rule cannot hold that path | write the rule yourself, in your own rules file |
 | *The rules: ... failed* (red) | the rules did not load, or fapolicyd stopped after it | the job put the file back; `journalctl -u fapolicyd` says why |
 | *not possible: no rules.d or no fagenrules* | fapolicyd before 1.1 (one `fapolicyd.rules` file) | add the rule by hand above the deny rules |
