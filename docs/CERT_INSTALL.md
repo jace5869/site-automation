@@ -61,7 +61,11 @@ bindings (Windows), the same services - or it is refused ("changed since the app
 4. The service is **reloaded** - never restarted.
 5. The port must then serve the new certificate (`cert_install_verify_wait` seconds).
 
-Any step fails: **the copies go back** and the service is reloaded again; the job says what failed and ends red.
+Any step fails: **the copies go back** and the service is reloaded again; the job says what failed and ends red. The
+copies are checked against their checksums before any file is written back, and they go back all together or not at
+all - never an old certificate next to a new key. When the reload fails again, or the port does not serve the old
+certificate again, the job says `FAILED` and what to check by hand - `ROLLED BACK` only when the old certificate is in
+place and served again.
 Installed: the renewal's key and CSR move to `cert_renew_dir/installed/`, and a work note on the request says what
 was installed where.
 
@@ -193,6 +197,9 @@ and renew again.
 | `HELD ... no service found that uses ...` | no known configuration names the file, no port known | `cert_install_services` |
 | `ROLLED BACK ... the configuration test of httpd.service failed` | the new files do not fit the configuration | the job output has the test's message; the old files are back |
 | `ROLLED BACK ... after the reload, 127.0.0.1:443 serves ...` | the service still serves something else after the reload | the configuration may name another file - the old files are back |
+| `FAILED ... the old files are back, but systemctl reload httpd.service failed again` | the old files went back, but the service did not reload: it may still run on the rejected certificate, or be down | `systemctl status httpd.service` on the host, then reload or restart it by hand - the files on disk are the old ones |
+| `FAILED ... the old files are back, but 127.0.0.1:443 does not serve the old certificate again` | reloaded, but the port serves something else | the configuration may name another file; look at what the port serves |
+| `FAILED ... the old files could NOT all be put back` (also the restore: `nothing was put back`) | a copy in `cert_renew_dir/backup/<name>/files` is missing or damaged | the reason says which: `nothing was put back` leaves the new files in place; otherwise it names which files hold the old and which the new - put them right by hand |
 | `REFUSED ... changed since the approval` | between the check and the approval, a file, a binding or a service changed | the next check plans it again |
 | `The approved plan has certificates for X, which this job does not run on` | the approved template's inventory or Limit | the check job's inventory, no Limit |
 | `FAILED ... certreq -accept -machine did not put it in Personal` (Windows) | its chain is not trusted on the server (0x800b0109), or the pending request is not this one | the DoD roots in Trusted Root; nothing else was changed |

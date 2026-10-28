@@ -19,9 +19,10 @@ short_description: The ESXi hosts' VMkernel networks - vmkping between them (vMo
 description:
   - For every connected host (or the ones named) - its VMkernel adapters (address, MTU, network stack, services), and
     the MTU of the switch each is on.
-  - In each cluster, for each of services - from every host's vmk with that service to every other host's - a ping of
-    the vmk's full size with "don't fragment" (vmkping -d -s MTU-28); when it fails, a small one too, to tell a broken
-    link from a smaller MTU on the way. To each of targets, from every host, a small ping.
+  - In each cluster (of each datacenter - two datacenters may name a cluster alike), for each of services - from every
+    host's vmk with that service to every other host's - a ping of the vmk's full size with "don't fragment" (vmkping
+    -d -s MTU-28); when it fails, a small one too, to tell a broken link from a smaller MTU on the way. To each of
+    targets, from every host, a small ping.
   - The pings run on the hosts through vCenter (esxcli network diag ping); nothing is changed. A host in maintenance
     mode, or not connected, is listed and not pinged from or to.
   - With latency - the read and write latency of every datastore each host uses, from the hosts' real-time statistics
@@ -57,7 +58,7 @@ read:
   sample: [{vcenter: vc01.example.mil, hosts: [{name: esx01.example.mil, cluster: CL1, datacenter: DC1, state: ok,
             vmks: [{device: vmk1, ip: 192.0.2.11, mask: 255.255.255.0, mtu: 9000, netstack: vmotion, portgroup: vMotion,
                     switch: vSwitch1, switch_mtu: 9000, services: [vmotion]}]}],
-            pings: [{cluster: CL1, service: vmotion, from: esx01.example.mil, vmk: vmk1, netstack: vmotion, to: esx02.example.mil,
+            pings: [{datacenter: DC1, cluster: CL1, service: vmotion, from: esx01.example.mil, vmk: vmk1, netstack: vmotion, to: esx02.example.mil,
                      to_ip: 192.0.2.12, size: 8972, df: true, sent: 3, received: 3, loss_pct: 0, rtt_min_ms: 0.18,
                      rtt_avg_ms: 0.21, rtt_max_ms: 0.25, error: "", small: null}],
             latency: [{host: esx01.example.mil, cluster: CL1, datastore: DS01, read_avg_ms: 1.2, read_max_ms: 9,
@@ -121,21 +122,25 @@ def ping_size(mtu):
 
 
 def plan(hosts, services, targets, max_pairs):
-    """The pings: [{cluster, service, from, vmk, netstack, to, to_ip, size, df}] - for each cluster and service, every
-    host's vmk with it to every other host's; then every host to each target. -> (pings, how many were cut)."""
+    """The pings: [{datacenter, cluster, service, from, vmk, netstack, to, to_ip, size, df}] - for each cluster and
+    service, every host's vmk with it to every other host's; then every host to each target. -> (pings, how many were
+    cut). A cluster is its datacenter's: two datacenters may both have a "Production", and their hosts never vMotion
+    between them."""
     out = []
     up = [h for h in hosts if h.get("state") == "ok"]
     for svc in services or []:
-        for cl in sorted(set(h.get("cluster") or "" for h in up)):
+        for dc, cl in sorted(set((h.get("datacenter") or "", h.get("cluster") or "") for h in up)):
             if not cl:
                 continue                                # a standalone host has no cluster to vMotion within
-            members = [(h, v) for h in up if h.get("cluster") == cl for v in h.get("vmks") or [] if svc in (v.get("services") or [])]
+            members = [(h, v) for h in up if (h.get("datacenter") or "", h.get("cluster")) == (dc, cl)
+                       for v in h.get("vmks") or [] if svc in (v.get("services") or [])]
             for h, v in members:
                 for h2, v2 in members:
                     if h2["name"] == h["name"] or not v2.get("ip"):
                         continue
-                    out.append({"cluster": cl, "service": svc, "from": h["name"], "vmk": v["device"], "netstack": v.get("netstack") or "",
-                                "to": h2["name"], "to_ip": v2["ip"], "size": ping_size(v.get("mtu")), "df": True})
+                    out.append({"datacenter": dc, "cluster": cl, "service": svc, "from": h["name"], "vmk": v["device"],
+                                "netstack": v.get("netstack") or "", "to": h2["name"], "to_ip": v2["ip"], "size": ping_size(v.get("mtu")),
+                                "df": True})
     for t in targets or []:
         addr = str(t.get("host") or "").strip()
         if not addr:
@@ -147,7 +152,8 @@ def plan(hosts, services, targets, max_pairs):
                 next((x for x in vmks if "management" in (x.get("services") or [])), None) or (vmks[0] if vmks else None))
             if v is None:
                 continue
-            out.append({"cluster": h.get("cluster") or "", "service": "target", "target": str(t.get("name") or addr), "from": h["name"],
+            out.append({"datacenter": h.get("datacenter") or "", "cluster": h.get("cluster") or "", "service": "target",
+                        "target": str(t.get("name") or addr), "from": h["name"],
                         "vmk": v["device"], "netstack": str(t.get("netstack") or v.get("netstack") or ""), "to": str(t.get("name") or addr),
                         "to_ip": addr, "size": SMALL, "df": False})
     cut = max(len(out) - max(int(max_pairs), 0), 0)

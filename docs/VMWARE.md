@@ -1192,8 +1192,10 @@ adapters, every ping (status, bytes, answered, average and highest round trip) a
 | `vm_hostnet_raw` | `false` | print the first ping's answer as the host sent it |
 | `vm_hostnet_fail` | `false` | `true` = the job shows failed on a warning or worse, for workflows |
 
-A host in maintenance mode or not connected is listed under "Hosts not checked" and not pinged from or to. The result
-is also the job artifact `esxi_network` (the counts and every ping).
+A host in maintenance mode or not connected is listed under "Hosts not checked" and not pinged from or to. A cluster is
+its datacenter's: when two datacenters both have a *Production*, they are two clusters - the hosts of one are never
+pinged from the other's, and the report names them `DC1/Production` and `DC2/Production`. The result is also the job
+artifact `esxi_network` (the counts and every ping).
 
 ## Certificates of vCenter and the ESXi hosts: incidents and CSRs (weekly)
 

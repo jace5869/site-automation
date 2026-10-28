@@ -54,6 +54,16 @@ def _ms(v):
     return "-" if v is None else "%g" % round(float(v), 2)
 
 
+def _cluster_label(hosts):
+    """A cluster is its datacenter's: two datacenters may both have a "Production". -> label(datacenter, cluster): the
+    cluster's name, or datacenter/name when more than one datacenter of this vCenter has a cluster of that name."""
+    dcs = {}
+    for h in hosts or []:
+        if h.get("cluster"):
+            dcs.setdefault(h["cluster"], set()).add(h.get("datacenter") or "")
+    return lambda dc, cl: ("%s/%s" % (dc, cl)) if cl and len(dcs.get(cl, ())) > 1 else (cl or "")
+
+
 def ping_status(q, o):
     """(status, what) for one ping."""
     if q.get("error"):
@@ -101,37 +111,39 @@ def _problems(read, o):
                         or "permission" in r["note"] else "The job's log has the whole message."))
         hosts = r.get("hosts") or []
         up = [h for h in hosts if h.get("state") == "ok"]
+        lab = _cluster_label(hosts)
         for h in hosts:
             if h.get("error"):
                 out.append(("warning", vc, h["name"], h["error"], "The account needs Read-only on the host at least."))
         for svc in o["services"]:
-            for cl in sorted(set(h.get("cluster") for h in up if h.get("cluster"))):
-                members = [h for h in up if h.get("cluster") == cl]
+            for dc, cl in sorted(set((h.get("datacenter") or "", h.get("cluster")) for h in up if h.get("cluster"))):
+                members = [h for h in up if (h.get("datacenter") or "", h.get("cluster")) == (dc, cl)]
+                name = lab(dc, cl)
                 have = [(h, v) for h in members for v in h.get("vmks") or [] if svc in (v.get("services") or [])]
                 with_svc = sorted(set(h["name"] for h, _ in have))
                 if len(members) < 2:
                     continue
                 if not have:
-                    out.append(("warning", vc, "cluster " + cl, "no host has a VMkernel adapter with %s on" % _svc(svc),
+                    out.append(("warning", vc, "cluster " + name, "no host has a VMkernel adapter with %s on" % _svc(svc),
                                 "vSphere Client > each host > Configure > VMkernel adapters > the adapter > Edit: tick %s (or add an "
                                 "adapter for it); with none, %s between these hosts cannot run." % (_svc(svc), _svc(svc))))
                     continue
                 for h in members:
                     if h["name"] not in with_svc:
                         out.append(("warning", vc, h["name"], "no VMkernel adapter with %s on, while %d other host(s) of cluster %s "
-                                    "have one" % (_svc(svc), len(with_svc), cl),
+                                    "have one" % (_svc(svc), len(with_svc), name),
                                     "Tick %s on its adapter for that network, as on the others." % _svc(svc)))
                 mtus = {}
                 for h, v in have:
                     mtus.setdefault(v.get("mtu"), []).append("%s %s" % (_short(h["name"]), v["device"]))
                 if len(mtus) > 1:
-                    out.append(("warning", vc, "cluster " + cl, "the %s adapters are on different MTUs: %s" % (
+                    out.append(("warning", vc, "cluster " + name, "the %s adapters are on different MTUs: %s" % (
                         _svc(svc), "; ".join("%s on %s" % (m, ", ".join(sorted(x))) for m, x in sorted(mtus.items(), key=lambda i: str(i[0])))),
                         "Set one MTU on all of them (and on their switches, uplinks and the physical switch ports): 9000 for "
                         "jumbo frames end to end, else 1500."))
                 nets = set(_net(v.get("ip"), v.get("mask")) for _, v in have if v.get("ip"))
                 if len(nets) > 1:
-                    out.append(("info", vc, "cluster " + cl, "the %s adapters are on %d different subnets (%s)" % (
+                    out.append(("info", vc, "cluster " + name, "the %s adapters are on %d different subnets (%s)" % (
                         _svc(svc), len(nets), ", ".join(sorted(nets))),
                         "Fine when the network is routed on purpose: then their network stack (vMotion's) needs its gateway. "
                         "Otherwise an address or mask is wrong."))
@@ -149,8 +161,8 @@ def _problems(read, o):
             if st == "ok":
                 continue
             kind = re.sub(r"[\d.]+ ms", "", what) if "round trip" in what or "lost" in what else what
-            groups.setdefault((st, q.get("cluster", ""), q.get("service"), kind), []).append((q, what))
-        for (st, cl, svc, kind), qs in groups.items():
+            groups.setdefault((st, q.get("datacenter", ""), q.get("cluster", ""), q.get("service"), kind), []).append((q, what))
+        for (st, dc, cl, svc, kind), qs in groups.items():
             q0, what0 = qs[0]
             fix = _ping_fix(q0, what0)
             label = "%s ping (%s bytes%s)" % (_svc(svc), q0.get("size"), ", don't fragment" if q0.get("df") else "")
@@ -167,7 +179,7 @@ def _problems(read, o):
                 h = every[0]
                 peers = sorted(set(_short(x) for q, _ in qs for x in (q.get("from"), q.get("to")) if x != h))
                 out.append((st, vc, h, "%s to and from it fail with the other hosts of %s (%s; %d pings): %s" % (
-                    label, cl, ", ".join(peers), len(qs), kind), fix))
+                    label, lab(dc, cl), ", ".join(peers), len(qs), kind), fix))
             else:
                 for q, what in qs:
                     out.append((st, vc, "%s %s -> %s (%s)" % (q.get("from"), q.get("vmk"), q.get("to"), q.get("to_ip")),
@@ -218,13 +230,15 @@ def esxi_net_doc(net, opts=None):
     rows, rs = [], []
     hosts_ok = 0
     for r in read:
+        lab = _cluster_label(r.get("hosts"))
         for h in r.get("hosts") or []:
             if h.get("state") != "ok":
                 continue
             hosts_ok += 1
             for v in h.get("vmks") or []:
                 st = "warning" if v.get("switch_mtu") and v.get("mtu") and int(v["mtu"]) > int(v["switch_mtu"]) else "ok"
-                rows.append([_short(h["name"]), h.get("cluster") or "-", v["device"], ", ".join(_svc(s) for s in v.get("services") or []) or "-",
+                rows.append([_short(h["name"]), lab(h.get("datacenter") or "", h.get("cluster")) or "-", v["device"],
+                             ", ".join(_svc(s) for s in v.get("services") or []) or "-",
                              v.get("ip") or "-", v.get("mtu") or "-", "%s (%s)" % (v.get("switch") or "-", v.get("switch_mtu") or "?")
                              if v.get("switch") else "-", v.get("netstack") or "-"])
                 rs.append(st)
@@ -238,7 +252,8 @@ def esxi_net_doc(net, opts=None):
         by.setdefault("target" if q.get("service") == "target" else q.get("service"), []).append(q)
     for svc in [s for s in o["services"] if s in by] + (["target"] if "target" in by else []):
         rows, rs = [], []
-        for q in sorted(by[svc], key=lambda q: (RANK.get(ping_status(q, o)[0], 9), q.get("cluster", ""), q.get("from", ""), q.get("to", ""))):
+        for q in sorted(by[svc], key=lambda q: (RANK.get(ping_status(q, o)[0], 9), q.get("datacenter", ""), q.get("cluster", ""),
+                                                q.get("from", ""), q.get("to", ""))):
             st, what = ping_status(q, o)
             small = q.get("small") or {}
             rows.append([st.upper(), "%s %s" % (_short(q.get("from")), q.get("vmk")),
@@ -277,10 +292,11 @@ def esxi_net_doc(net, opts=None):
                          "rows": rows, "row_status": rs,
                          "text": "From the hosts' real-time statistics: the average and the highest 20-second sample. A warning from "
                                  "%g ms average, critical from %g." % (o["latency_warn_ms"], o["latency_crit_ms"])})
-    skipped = [(r.get("vcenter"), h) for r in read for h in r.get("hosts") or [] if h.get("state") != "ok"]
+    skipped = [(_cluster_label(r.get("hosts")), h) for r in read for h in r.get("hosts") or [] if h.get("state") != "ok"]
     if skipped:
         sections.append({"title": "Hosts not checked", "status": "info",
-                         "lines": ["%s (%s): %s" % (h["name"], h.get("cluster") or "standalone", h["state"]) for _, h in skipped]})
+                         "lines": ["%s (%s): %s" % (h["name"], lab(h.get("datacenter") or "", h.get("cluster")) or "standalone", h["state"])
+                                   for lab, h in skipped]})
     n_fail = len([q for q in pings if ping_status(q, o)[0] != "ok"])
     slow = len(set(d.get("datastore") for d in lat
                    if max([x for x in (d.get("read_avg_ms"), d.get("write_avg_ms")) if x is not None] or [0]) >= o["latency_warn_ms"]))

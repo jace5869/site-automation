@@ -720,25 +720,21 @@ class Installer(object):
                 self.write_like(f['path'], contents[f['path']])
                 written.append(f['path'])
         except (IOError, OSError) as e:
-            self.put_back(backup, written)
-            res.update(status='rolled back', reason='writing %s failed (%s): the old files are back' % (f['path'], e))
+            res.update(self.rolled(backup, written, [], 'writing %s failed (%s)' % (f['path'], e)))
             return res
         for u in now['units']:
             if u['test']:
                 rc, out, err = self.run(u['test'])
                 if rc != 0:
-                    self.put_back(backup, written)
-                    res.update(status='rolled back', reason='the configuration test of %s failed (%s): %s - the old files are back, '
-                               'nothing was reloaded' % (u['unit'], ' '.join(u['test']), (err or out).strip()[-300:]))
+                    res.update(self.rolled(backup, written, [], 'the configuration test of %s failed (%s): %s' % (
+                        u['unit'], ' '.join(u['test']), (err or out).strip()[-300:])))
                     return res
         reloaded = []
         for u in [x for x in now['units'] if x['reload']]:
             rc, out, err = self.run(['systemctl', 'reload', u['unit']])
             reloaded.append(u['unit'])
             if rc != 0:
-                self.undo(backup, written, reloaded)
-                res.update(status='rolled back', reason='systemctl reload %s failed: %s - the old files are back, reloaded again'
-                           % (u['unit'], (err or out).strip()[-300:]))
+                res.update(self.rolled(backup, written, reloaded, 'systemctl reload %s failed: %s' % (u['unit'], (err or out).strip()[-300:])))
                 return res
         bad = []
         for v in now['verify']:
@@ -754,9 +750,7 @@ class Installer(object):
             else:
                 bad.append('%s serves %s' % (where, ('a certificate %s...' % fp[:12]) if fp else 'nothing'))
         if bad:
-            self.undo(backup, written, reloaded)
-            res.update(status='rolled back', reason='after the reload, %s - not the new certificate: the old files are back, '
-                       'reloaded again' % '; '.join(bad))
+            res.update(self.rolled(backup, written, reloaded, 'after the reload, %s - not the new certificate' % '; '.join(bad)))
             return res
         self.archive(base, ap, backup)
         res['status'] = 'installed'
@@ -851,20 +845,95 @@ class Installer(object):
         return name
 
     def put_back(self, name, paths=None):
+        """The backup's files back in place - all of them, or none: every copy is read and checked against its checksum
+        first (a damaged backup changes nothing), and when writing one back fails, the ones written before it are
+        put back as they were (never an old certificate next to a new key)."""
         d = os.path.join(self.dir, 'backup', name)
         with open(os.path.join(d, 'backup.json')) as fh:
             rec = json.load(fh)
+        todo = []
         for f in rec['files']:
             if paths is not None and f['path'] not in paths:
                 continue
-            with open(os.path.join(d, 'files', f['copy']), 'rb') as fh:
-                self.write_like(f['path'], fh.read(), meta=f)
+            try:
+                with open(os.path.join(d, 'files', f['copy']), 'rb') as fh:
+                    data = fh.read()
+            except (IOError, OSError) as e:
+                raise IOError('the backup %s has no readable copy of %s (%s): nothing was put back' % (
+                    name, f['path'], getattr(e, 'strerror', None) or e))
+            if f.get('sha256') and hashlib.sha256(data).hexdigest() != f['sha256']:
+                raise IOError('the copy of %s in the backup %s is damaged (its checksum differs): nothing was put back' % (f['path'], name))
+            todo.append((f, data))
+        before = {}
+        for f, _ in todo:
+            try:
+                with open(f['path'], 'rb') as fh:
+                    before[f['path']] = fh.read()
+            except (IOError, OSError):
+                pass
+        done = []
+        try:
+            for f, data in todo:
+                self.write_like(f['path'], data, meta=f)
+                done.append(f)
+        except (IOError, OSError) as e:
+            failed, back = f['path'], []
+            for g in done:
+                try:
+                    self.write_like(g['path'], before[g['path']], meta=g)
+                    back.append(g['path'])
+                except (IOError, OSError, KeyError):
+                    pass
+            if len(back) == len(done):
+                raise IOError('writing %s back failed (%s): the file(s) written back before it are as they were again' % (
+                    failed, getattr(e, 'strerror', None) or e))
+            raise IOError('writing %s back failed (%s) - CHECK THE FILES BY HAND: %s now hold the old files, %s the new' % (
+                failed, getattr(e, 'strerror', None) or e, ', '.join(g['path'] for g in done if g['path'] not in back),
+                ', '.join([failed] + back)))
         return rec
 
+    def not_served_again(self, rec):
+        """After the old files went back and the service reloaded: the ports of the backup's record that do not serve
+        the old certificate again, each said ([] = all do, or no port to ask)."""
+        old = rec.get('old_sha256', '')
+        out = []
+        for v in (rec.get('verify') or []) if old else []:
+            fp = ''
+            for _ in range(max(1, self.p['verify_wait'])):
+                fp = self.served(v['addr'], v['port'], v['sni'], v['starttls'])
+                if fp == old:
+                    break
+                time.sleep(1)
+            if fp != old:
+                out.append('%s:%d does not serve the old certificate again (%s)' % (
+                    v['addr'] or '127.0.0.1', v['port'], ('it serves %s...' % fp[:12]) if fp else 'it serves nothing'))
+        return out
+
     def undo(self, name, written, reloaded):
-        self.put_back(name, written)
+        """The old files back and the services reloaded again -> what did not work out ([] = the old certificate is
+        in place and served again): a reload that failed again, a port that does not serve it."""
+        rec = self.put_back(name, written)
+        wrong = []
         for u in reloaded:
-            self.run(['systemctl', 'reload', u])
+            rc, out, err = self.run(['systemctl', 'reload', u])
+            if rc != 0:
+                wrong.append('systemctl reload %s failed again (%s)' % (u, (err or out).strip()[-200:]))
+        if reloaded and not wrong:
+            wrong = self.not_served_again(rec)
+        return wrong
+
+    def rolled(self, backup, written, reloaded, why):
+        """A step of the install failed (why): the old files back, the services reloaded again -> {status, reason}.
+        'rolled back' when the old certificate is in place (and served) again; 'failed' when it is not, saying what to
+        check by hand - never "rolled back" on trust."""
+        try:
+            wrong = self.undo(backup, written, reloaded)
+        except (IOError, OSError) as e:
+            return {'status': 'failed', 'reason': '%s - and the old files could NOT all be put back: %s. Check the files by hand; '
+                    'the copies are in %s' % (why, e, os.path.join(self.dir, 'backup', backup))}
+        if wrong:
+            return {'status': 'failed', 'reason': '%s - the old files are back, but %s. Check the service by hand' % (why, '; '.join(wrong))}
+        return {'status': 'rolled back', 'reason': '%s - the old files are back, %s' % (why, 'reloaded again' if reloaded else 'nothing was reloaded')}
 
     def archive(self, base, ap, backup):
         d = new_dir(os.path.join(self.dir, 'installed'), base)
@@ -925,16 +994,9 @@ class Installer(object):
                     rc, o, e = self.run(['systemctl', 'reload', u])
                     if rc != 0:
                         raise IOError('systemctl reload %s failed: %s' % (u, (e or o).strip()[-200:]))
-                old = rec.get('old_sha256', '')
-                for v in rec.get('verify') or []:
-                    fp = ''
-                    for _ in range(max(1, self.p['verify_wait'])):
-                        fp = self.served(v['addr'], v['port'], v['sni'], v['starttls'])
-                        if fp == old:
-                            break
-                        time.sleep(1)
-                    if fp != old:
-                        raise IOError('%s:%d does not serve the old certificate again' % (v['addr'] or '127.0.0.1', v['port']))
+                wrong = self.not_served_again(rec)
+                if wrong:
+                    raise IOError('; '.join(wrong))
                 self.pending_again(rec.get('base', ''))
                 rec['restored'] = time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())
                 with open(os.path.join(d, 'backup.json'), 'w') as fh:

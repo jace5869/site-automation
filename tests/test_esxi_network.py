@@ -29,8 +29,8 @@ ANSWER = """<obj xmlns:vim25="urn:vim25" xmlns:xsi="http://www.w3.org/2001/XMLSc
 <ReceivedBytes>8980</ReceivedBytes><RoundtripTime>180</RoundtripTime><TTL>64</TTL></Trace></obj>"""
 
 
-def host(name, cluster="CL1", state="ok", vmks=None):
-    return {"name": name, "cluster": cluster, "datacenter": "DC1", "state": state, "vmks": vmks or []}
+def host(name, cluster="CL1", state="ok", vmks=None, dc="DC1"):
+    return {"name": name, "cluster": cluster, "datacenter": dc, "state": state, "vmks": vmks or []}
 
 
 def vmk(dev, ip, services, mtu=9000, netstack="vmotion", switch="DSwitch", switch_mtu=9000):
@@ -61,6 +61,17 @@ class Module(unittest.TestCase):
         targets = [(p["from"], p["vmk"], p["size"], p["df"]) for p in pings if p["service"] == "target"]
         self.assertEqual(targets, [("esx01", "vmk0", 56, False), ("esx02", "vmk1", 56, False), ("esx09", "vmk1", 56, False)])
         self.assertEqual(hn.plan(hosts, ["vmotion"], [], 1), ([dict(pings[0])], 1))
+
+    def test_plan_keeps_same_named_clusters_of_two_datacenters_apart(self):
+        hosts = [host("esx01", "Production", vmks=[vmk("vmk1", "192.0.2.11", ["vmotion"])]),
+                 host("esx02", "Production", vmks=[vmk("vmk1", "192.0.2.12", ["vmotion"])]),
+                 host("esx21", "Production", dc="DC2", vmks=[vmk("vmk1", "198.51.100.21", ["vmotion"])]),
+                 host("esx22", "Production", dc="DC2", vmks=[vmk("vmk1", "198.51.100.22", ["vmotion"])])]
+        pings, cut = hn.plan(hosts, ["vmotion"], [{"name": "NFS", "host": "203.0.113.5"}], 100)
+        self.assertEqual(cut, 0)
+        self.assertEqual(sorted((p["datacenter"], p["from"], p["to"]) for p in pings if p["service"] == "vmotion"),
+                         [("DC1", "esx01", "esx02"), ("DC1", "esx02", "esx01"), ("DC2", "esx21", "esx22"), ("DC2", "esx22", "esx21")])
+        self.assertEqual(sorted(p["datacenter"] for p in pings if p["service"] == "target"), ["DC1", "DC1", "DC2", "DC2"])
 
     def test_answer(self):
         self.assertEqual(hn.parse_ping(ANSWER), {"sent": 3, "received": 3, "loss_pct": 0, "rtt_min_ms": 0.18, "rtt_avg_ms": 0.212,
@@ -161,6 +172,25 @@ class Report(unittest.TestCase):
         self.assertIn("Hosts not checked", [s["title"] for s in doc["sections"]])
         none = [s for s in doc["sections"] if s["title"].startswith("vMotion pings")][0]
         self.assertIn("None: no two connected hosts", none["lines"][0])
+
+    def test_same_cluster_name_in_two_datacenters(self):
+        """DC1 and DC2 both have a Production: two clusters - no MTU or subnet comparison across them, each named with
+        its datacenter."""
+        dc1 = [host(n, "Production", vmks=[vmk("vmk1", "192.0.2.1%d" % i, ["vmotion"])]) for i, n in enumerate(("esx01", "esx02"))]
+        dc2 = [host(n, "Production", dc="DC2", vmks=[vmk("vmk1", "198.51.100.2%d" % i, ["vmotion"], 1500)])
+               for i, n in enumerate(("esx21", "esx22", "esx23"))]
+        pings = [dict(ping(a["name"], b["name"]), datacenter="DC1", cluster="Production") for a in dc1 for b in dc1 if a is not b]
+        pings += [dict(ping(a["name"], b["name"], 0 if "esx23" in (a["name"], b["name"]) else 3, size=1472), datacenter="DC2",
+                       cluster="Production") for a in dc2 for b in dc2 if a is not b]
+        doc = rf.esxi_net_doc(read(dc1 + dc2, pings))
+        rows = self.problems(doc)
+        text = " | ".join("%s %s %s" % r for r in rows)
+        self.assertNotIn("different MTUs", text)                     # 9000 in DC1, 1500 in DC2: each cluster on one MTU
+        self.assertNotIn("different subnets", text)
+        self.assertEqual([r[:2] for r in rows], [("CRITICAL", "esx23")])
+        self.assertIn("fail with the other hosts of DC2/Production (esx21, esx22; 4 pings): no answer", rows[0][2])
+        adapters = [s for s in doc["sections"] if s["title"] == "VMkernel adapters"][0]
+        self.assertEqual(sorted(set(r[1] for r in adapters["rows"])), ["DC1/Production", "DC2/Production"])
 
     def test_storage_latency(self):
         lat = [{"host": h, "datastore": "DS2", "read_avg_ms": r, "read_max_ms": 80, "write_avg_ms": 10, "write_max_ms": 30}

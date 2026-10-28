@@ -275,6 +275,77 @@ class ByHand(unittest.TestCase):
         self.assertIn("cannot reload", p["reason"])
 
 
+class Backups(unittest.TestCase):
+    """The copies made before an install (cert_renew_dir/backup/<name>/) back in place - all of them or none - and a
+    rollback that says when the service is not back on the old certificate."""
+
+    def setUp(self):
+        n = self.id().rsplit(".", 1)[-1]
+        self.crt = write("bk/%s.crt" % n, "old cert\n")
+        self.key = write("bk/%s.key" % n, "old key\n", 0o600)
+        self.i = m.Installer(FakeModule())
+        self.name = self.i.backup("bk-" + n, {"files": [{"path": self.crt, "role": "leaf", "old_sha256": "0" * 64}, {"path": self.key, "role": "key"}],
+                                             "subject": "CN=bk", "new": {"sha256": "1" * 64},
+                                             "units": [{"unit": "web.service", "reload": True, "test": None}], "verify": []}, {})
+        write(self.crt, "new cert\n")
+        write(self.key, "new key\n", 0o600)
+        self.copies = os.path.join(W, "renew", "backup", self.name, "files")
+
+    def live(self):
+        return read(self.crt), read(self.key)
+
+    def test_both_back_with_their_mode(self):
+        os.chmod(self.key, 0o644)
+        self.i.put_back(self.name)
+        self.assertEqual(self.live(), (b"old cert\n", b"old key\n"))
+        self.assertEqual(oct(os.stat(self.key).st_mode & 0o777), "0o600")
+
+    def test_a_missing_copy_changes_nothing(self):
+        os.remove(os.path.join(self.copies, "1-" + os.path.basename(self.key)))
+        with self.assertRaises(IOError) as c:
+            self.i.put_back(self.name)
+        self.assertIn("nothing was put back", str(c.exception))
+        self.assertEqual(self.live(), (b"new cert\n", b"new key\n"))          # never the old certificate next to the new key
+
+    def test_a_damaged_copy_changes_nothing(self):
+        with open(os.path.join(self.copies, "0-" + os.path.basename(self.crt)), "wb") as fh:
+            fh.write(b"not the certificate\n")
+        with self.assertRaises(IOError) as c:
+            self.i.put_back(self.name)
+        self.assertIn("checksum differs", str(c.exception))
+        self.assertEqual(self.live(), (b"new cert\n", b"new key\n"))
+
+    def test_restore_says_failed_and_leaves_the_files(self):
+        os.remove(os.path.join(self.copies, "1-" + os.path.basename(self.key)))
+        _, out = m.Installer(FakeModule(backup=self.name)).restore()
+        self.assertEqual(out[0]["status"], "failed")
+        self.assertIn("nothing was put back", out[0]["reason"])
+        self.assertEqual(self.live(), (b"new cert\n", b"new key\n"))
+
+    def test_rollback_says_when_the_reload_fails_again(self):
+        mod = FakeModule()
+        mod.run_command = lambda args, data=None, binary_data=False: (
+            (1, "", "Job for web.service failed") if args[:2] == ["systemctl", "reload"] else FakeModule.run_command(mod, args, data, binary_data))
+        r = m.Installer(mod).rolled(self.name, [self.crt, self.key], ["web.service"], "systemctl reload web.service failed: x")
+        self.assertEqual(r["status"], "failed")
+        self.assertIn("the old files are back, but systemctl reload web.service failed again (Job for web.service failed)", r["reason"])
+        self.assertIn("Check the service by hand", r["reason"])
+        self.assertEqual(self.live(), (b"old cert\n", b"old key\n"))
+        r = self.i.rolled(self.name, [self.crt, self.key], ["web.service"], "after the reload, 127.0.0.1:443 serves nothing")
+        self.assertEqual((r["status"], r["reason"]),
+                         ("rolled back", "after the reload, 127.0.0.1:443 serves nothing - the old files are back, reloaded again"))
+        r = self.i.rolled(self.name, [self.crt, self.key], [], "writing %s failed (No space left on device)" % self.key)
+        self.assertEqual(r["status"], "rolled back")
+        self.assertTrue(r["reason"].endswith("the old files are back, nothing was reloaded"))
+
+    def test_rollback_with_a_damaged_backup_is_failed(self):
+        os.remove(os.path.join(self.copies, "0-" + os.path.basename(self.crt)))
+        r = self.i.rolled(self.name, [self.crt, self.key], ["web.service"], "systemctl reload web.service failed: x")
+        self.assertEqual(r["status"], "failed")
+        self.assertIn("could NOT all be put back", r["reason"])
+        self.assertIn("Check the files by hand", r["reason"])
+
+
 class Folders(unittest.TestCase):
     def test_names_sort_in_the_order_made(self):
         d = os.path.join(W, "dirs")

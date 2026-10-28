@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.35.1 — 2026-10-28
+
+**Updating without scripts:** paste `site-automation-0.35.1-changed-since-0.35.0.zip` as it is - from an older
+release, the zips of 0.35.0 first, as its notes say. They leave out `playbooks/group_vars`, `playbooks/host_vars` and
+`poam/poam.csv`. Nothing to change.
+
+**Certificate install and restore (Linux): the old files go back all together, and a rollback is never reported on
+trust.** Before, the restore wrote the copies back one by one: a copy missing or damaged in the backup folder stopped it
+half way - the old certificate on disk next to the new key - and the rollback after a failed reload said "the old files
+are back, reloaded again" without looking at the reload's result. Now every copy is read and checked against its
+checksum before any file is written back (a damaged backup changes nothing: `nothing was put back`), and when writing
+one back fails, the ones written before it are put back as they were. The rollback reloads the service again and
+checks: a reload that fails again, or a port that does not serve the old certificate again, is `FAILED ... Check the
+service by hand` - `ROLLED BACK` only when the old certificate is in place and served again. The restore job says the
+same. Found in a review of 0.35.0 (CERT_INSTALL.md, "When something fails").
+
+**ESXi network check: clusters of the same name in two datacenters are two clusters.** The pings and the report grouped
+the hosts by cluster name alone: two datacenters each with a *Production* made the hosts of one ping the other's
+vMotion adapters (another subnet: no answer, a false critical) and compared their MTUs and subnets. Now a cluster is
+its datacenter's, and the report names such clusters `DC1/Production`, `DC2/Production`.
+
 ## 0.35.0 — 2026-10-27
 
 **Updating without scripts:** paste `site-automation-0.35.0-changed-since-0.34.0.zip` as it is - from an older
