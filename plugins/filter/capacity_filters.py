@@ -81,7 +81,7 @@ def pct_text(p):
     return "?" if p is None else ("%.0f%%" % p)
 
 
-def trend(samples, window_days=30, now=None, min_samples=7):
+def trend(samples, window_days=90, now=None, min_samples=7):
     """A straight line fitted (least squares) on the samples of the last window_days:
     samples [[seconds, value], ...] -> {slope (per day), r2 (how well a straight line fits, 0-1),
     n, span (days)} or None when there are too few (fewer than min_samples, or under 3 days)."""
@@ -129,6 +129,27 @@ def runway_text(days, now=None):
         return "10+ years"
     when = (now or datetime.datetime.now(datetime.timezone.utc)) + datetime.timedelta(days=days)
     return "%d days (%s)" % (days, when.strftime("%Y-%m-%d"))
+
+
+def n_minus(fail):
+    """The failed-hosts term of a limit: 1 -> ' N-1' (with one host down), 0 (a standalone host) -> ''."""
+    return (" N-%d" % int(fail)) if fail else ""
+
+
+def limit_text(target_pct, fail):
+    """'80% N-1': the limit a cluster's memory or CPU runway runs to - target_pct of the capacity
+    left with fail host(s) down."""
+    return "%d%%%s" % (int(float(target_pct)), n_minus(fail))
+
+
+def runway_to(days, limit, now=None):
+    """The runway with its limit: '118 days (2027-02-23) to 80% N-1', '80% N-1 reached',
+    'not growing (limit 80% N-1)'."""
+    if days is None:
+        return "not growing (limit %s)" % limit
+    if days == 0:
+        return "%s reached" % limit
+    return "%s to %s" % (runway_text(days, now), limit)
 
 
 def days_text(days):
@@ -200,7 +221,7 @@ def cluster_numbers(c, o, now_ts):
         if avg["vcpu"]:
             fits["vCPUs per core"] = max(0, int(room["vcpu"] // avg["vcpu"]))
     limit = min(fits, key=lambda k: fits[k]) if fits else ""
-    wd, ms = float(o.get("trend_days", 30)), int(o.get("min_samples", 7))
+    wd, ms = float(o.get("trend_days", 90)), int(o.get("min_samples", 7))
     tm = trend((c.get("history") or {}).get("mem"), wd, now_ts, ms)
     tc = trend((c.get("history") or {}).get("cpu"), wd, now_ts, ms)
     mem_days = days_until(mem_used, tm["slope"] if tm else None, mem_n1 * mt) if survives else 0
@@ -252,7 +273,7 @@ def cluster_status(n, o):
 def datastore_numbers(d, o, now_ts):
     cap, free = d.get("capacity") or 0, d.get("free") or 0
     used = cap - free
-    t = trend(d.get("history"), float(o.get("trend_days", 30)), now_ts, int(o.get("min_samples", 7)))
+    t = trend(d.get("history"), float(o.get("trend_days", 90)), now_ts, int(o.get("min_samples", 7)))
     sw, sc = float(o.get("storage_warn_pct", 85)), float(o.get("storage_crit_pct", 90))
     slope = t["slope"] if t else None
     return {"name": d.get("name"), "vcenter": d.get("vcenter", ""), "datacenter": d.get("datacenter", ""), "clusters": d.get("clusters") or [],
@@ -403,10 +424,10 @@ def vm_capacity_report(data, opts=None):
     s = ov["storage"]
     rows = [
         _row(["CPU", ghz(ov["cpu"]), ghz(ov["cpu_used"]), pct_text(ov["cpu_pct"]), pct_text(ov["cpu_n1_pct"]),
-              _per_month(ov["cpu_slope"], ghz), runway_text(ov["cpu_days"], now) + " to %s%%" % int(ct)],
+              _per_month(ov["cpu_slope"], ghz), runway_to(ov["cpu_days"], limit_text(ct, fail), now)],
              ["", "", "", level(ov["cpu_pct"], ct, 100), level(ov["cpu_n1_pct"], ct, 100), "", runway_status(ov["cpu_days"], warn_d, crit_d)]),
         _row(["Memory", size(ov["mem"]), size(ov["mem_used"]), pct_text(ov["mem_pct"]), pct_text(ov["mem_n1_pct"]),
-              _per_month(ov["mem_slope"]), runway_text(ov["mem_days"], now) + " to %s%%" % int(mt)],
+              _per_month(ov["mem_slope"]), runway_to(ov["mem_days"], limit_text(mt, fail), now)],
              ["", "", "", level(ov["mem_pct"], mt, 100), level(ov["mem_n1_pct"], mt, 100), "", runway_status(ov["mem_days"], warn_d, crit_d)]),
         _row(["Hosts", "%d usable of %d" % (ov["hosts_usable"], ov["hosts"]), "", "", "", "",
               ("%d recommended now, %d within %d months" % (ov["hosts_now"], ov["hosts_later"], ov["horizon_months"]))
@@ -421,9 +442,11 @@ def vm_capacity_report(data, opts=None):
         _row(["Storage (shared datastores)", "-", "-", "-", "", "", "no shared datastore"]),
     ]
     sections.append(_section("Overall", "All %d cluster(s) of %s together: %d hosts (%d usable), %d VMs powered on. "
-                             "\"After host failure\" is the use with %d host(s) of each cluster down (N+%d). Growth is fitted on vCenter's "
-                             "daily statistics of the last %s days." % (ov["clusters"], vc_text, ov["hosts"], ov["hosts_usable"],
-                                                                        ov["vms_on"], fail, fail, int(float(o.get("trend_days", 30)))),
+                             "\"After host failure\" and \"N-%d\" are the use with %d host(s) of each cluster down (the cluster must still run "
+                             "everything): the CPU and memory runways run to %d%% / %d%% of what is left then, not to 100%% of what is "
+                             "installed. Growth is fitted on vCenter's daily statistics of the last %s days."
+                             % (ov["clusters"], vc_text, ov["hosts"], ov["hosts_usable"], ov["vms_on"], fail, fail, int(ct), int(mt),
+                                int(float(o.get("trend_days", 90)))),
                              ["Resource", "Capacity", "Used", "Used %", "Used after host failure", "Growth", "Runway"], rows, "", keep_order=True))
 
     # ---- per cluster: compute ----
@@ -437,7 +460,8 @@ def vm_capacity_report(data, opts=None):
                           (pct_text(n["mem_n1_pct"]) if n["survives"] else "cannot lose a host") if n["failover_hosts"] else "standalone",
                           n["vcpu_ratio"] if n["vcpu_ratio"] is not None else "?", n["vms_on"], avg_txt,
                           _per_month(n["mem_trend"]["slope"]) if n["mem_trend"] else "not enough history",
-                          runway_text(n["mem_days"], now), ("%d (%s)" % (n["fit"], n["limit"])) if n["fit"] is not None else "?",
+                          runway_to(n["mem_days"], limit_text(mt, n["failover_hosts"]), now),
+                          ("%d (%s)" % (n["fit"], n["limit"])) if n["fit"] is not None else "?",
                           hosts_text(n), "%+d / %d" % (n["added"], -n["removed"]) if (n["added"] or n["removed"]) else "0"],
                          ["", "", c["hosts"], c["cpu"], c["mem"], c["n1"], c["vcpu"], "", "", "", c["mem_days"],
                           "critical" if n["fit"] == 0 and n["vms_on"] else ("warning" if (n["fit"] or 0) < 5 and n["vms_on"] else "ok"),
@@ -445,10 +469,12 @@ def vm_capacity_report(data, opts=None):
     sections.append(_section("Clusters: CPU and memory", "Per cluster: hosts usable (connected, not in maintenance), CPU and memory used now, "
                              "memory used if the biggest %d host(s) fail (the cluster must still run everything: amber from %s%%, red at "
                              "100%%), vCPUs per physical core (amber from %s), VMs powered on and their average size, memory growth, the "
-                             "days until memory after a host failure reaches %s%%, how many more VMs of the average size fit (and what "
+                             "memory runway (days until memory after a host failure reaches %s%% - \"%s\" - not until the hosts are "
+                             "full), how many more VMs of the average size fit (and what "
                              "limits them), how many hosts of the cluster's average size are recommended to keep memory and CPU at %s%% / %s%% "
                              "with a host down (now, and at the current growth within %d months), and VMs added / removed in the last %s days."
-                             % (fail, int(mt), rmax, int(mt), int(mt), int(ct), int(float(o.get("horizon_months", 12))), int(float(o.get("events_days", 30)))),
+                             % (fail, int(mt), rmax, int(mt), limit_text(mt, fail), int(mt), int(ct), int(float(o.get("horizon_months", 12))),
+                                int(float(o.get("events_days", 30)))),
                              ["Cluster", "Datacenter", "Hosts", "CPU used", "Memory used", "Memory after host failure", "vCPU per core",
                               "VMs on", "Average VM", "Memory growth", "Memory runway", "Room for more VMs", "Hosts recommended",
                               "VMs +/- (%s d)" % int(float(o.get("events_days", 30)))],
@@ -511,11 +537,13 @@ def vm_capacity_report(data, opts=None):
         """(days, what) of the limit reached first, from [(days or None, what)]."""
         known = [(dd, w) for dd, w in pairs if dd is not None]
         return min(known) if known else (None, "")
-    od, ow = first([(ov["mem_days"], "memory"), (ov["cpu_days"], "CPU"), (ov["storage"]["days_crit"], "storage")])
+    od, ow = first([(ov["mem_days"], "memory " + limit_text(mt, fail)), (ov["cpu_days"], "CPU " + limit_text(ct, fail)),
+                    (ov["storage"]["days_crit"], "storage %d%%" % int(sc))])
     items = [{"id": "P1", "kind": "overall", "name": "all clusters", "job_days": od, "job_limit": ow,
               "status": worst([n["status"] for n in cls] + [x["status"] for x in shared]) or "ok"}]
     for n in sorted(cls, key=lambda n: RANK.get(n["status"], 9)):
-        dd, w = first([(n["mem_days"], "memory"), (n["cpu_days"], "CPU"), (n["storage"]["days_crit"], "storage")])
+        dd, w = first([(n["mem_days"], "memory " + limit_text(mt, n["failover_hosts"])), (n["cpu_days"], "CPU " + limit_text(ct, n["failover_hosts"])),
+                       (n["storage"]["days_crit"], "storage %d%%" % int(sc))])
         items.append({"kind": "cluster", "name": n["label"], "status": n["status"] or "ok", "job_days": dd, "job_limit": w})
     for x in sorted(shared, key=lambda x: RANK.get(x["status"], 9)):
         items.append({"kind": "datastore", "name": x["label"], "status": x["status"] or "ok", "job_days": x["days_crit"],
@@ -556,7 +584,8 @@ def vm_capacity_report(data, opts=None):
                                                            " - datacenter " + o["datacenter"] if o.get("datacenter") else "",
                                                            " - clusters " + ", ".join(o["clusters"]) if o.get("clusters") else ""),
               "footer": "Estimates from a straight line over the last %s days of vCenter's daily statistics: a guide for planning, not a "
-                        "promise. Read-only." % int(float(o.get("trend_days", 30)))}
+                        "promise. Cluster runways run to %s - %d%% of what is left with %d host(s) down - not to full hosts. Read-only."
+                        % (int(float(o.get("trend_days", 90))), limit_text(mt, fail), int(mt), fail)}
     return {"report": report, "numbers": _plain(N), "items": items}
 
 
@@ -575,34 +604,41 @@ def vm_capacity_evidence(result, opts=None):
     N = result.get("numbers") or {}
     ov = N.get("overall") or {}
     ids = {(i["kind"], i["name"]): i["id"] for i in result.get("items") or []}
-    L = ["vSphere capacity, read %s UTC. Targets: memory and CPU used at most %s%% / %s%% with %s host(s) of each cluster failed; at "
-         "most %s vCPUs per core; datastores amber at %s%%, red at %s%%. Growth: straight line over the last %s days of vCenter's daily "
-         "statistics." % (N.get("now"), o.get("mem_target_pct", 80), o.get("cpu_target_pct", 80), o.get("failover_hosts", 1),
-                          o.get("vcpu_per_core_max", 4), o.get("storage_warn_pct", 85), o.get("storage_crit_pct", 90), o.get("trend_days", 30)), ""]
+    fail = int(o.get("failover_hosts", 1))
+    mlim, clim = limit_text(o.get("mem_target_pct", 80), fail), limit_text(o.get("cpu_target_pct", 80), fail)
+    L = ["vSphere capacity, read %s UTC. Targets: memory and CPU used at most %s%% / %s%% with %s host(s) of each cluster failed (N-%s: the "
+         "cluster must still run everything - the memory and CPU runways run to that, not to full hosts); at most %s vCPUs per core; "
+         "datastores amber at %s%%, red at %s%%. Growth: straight line over the last %s days of vCenter's daily statistics."
+         % (N.get("now"), o.get("mem_target_pct", 80), o.get("cpu_target_pct", 80), fail, fail, o.get("vcpu_per_core_max", 4),
+            o.get("storage_warn_pct", 85), o.get("storage_crit_pct", 90), int(float(o.get("trend_days", 90)))), ""]
     s = ov.get("storage") or {}
     L.append("%s OVERALL: %s clusters, %s hosts (%s usable), %s cores, %s VMs on (%s vCPUs, %s per core); CPU %s of %s used (%s, %s after host "
-             "failure), growth %s; memory %s of %s used (%s, %s after host failure), growth %s, runway to target %s days; shared storage %s of %s "
-             "used (%s, provisioned %s), growth %s, runway to %s%% %s days, to full %s days; VMs net %s per month; room for about %s more average VMs."
+             "failure), growth %s, runway to %s %s days; memory %s of %s used (%s, %s after host failure), growth %s, runway to %s %s days; "
+             "shared storage %s of %s used (%s, provisioned %s), growth %s, runway to %s%% %s days, to full %s days; VMs net %s per month; "
+             "room for about %s more average VMs."
              % (ids.get(("overall", "all clusters"), "P1"), ov.get("clusters"), ov.get("hosts"), ov.get("hosts_usable"), ov.get("cores"), ov.get("vms_on"),
                 ov.get("vcpus_on"), ov.get("vcpu_ratio"), ghz(ov.get("cpu_used")), ghz(ov.get("cpu")), pct_text(ov.get("cpu_pct")),
-                pct_text(ov.get("cpu_n1_pct")), _per_month(ov.get("cpu_slope"), ghz), size(ov.get("mem_used")), size(ov.get("mem")),
-                pct_text(ov.get("mem_pct")), pct_text(ov.get("mem_n1_pct")), _per_month(ov.get("mem_slope")), ov.get("mem_days"),
-                size(s.get("used")), size(s.get("capacity")), pct_text(s.get("pct")), pct_text(s.get("prov_pct")), _per_month(s.get("slope")),
-                o.get("storage_crit_pct", 90), s.get("days_crit"), s.get("days_full"), ov.get("net_per_month"), ov.get("fit")))
+                pct_text(ov.get("cpu_n1_pct")), _per_month(ov.get("cpu_slope"), ghz), clim, ov.get("cpu_days"), size(ov.get("mem_used")),
+                size(ov.get("mem")), pct_text(ov.get("mem_pct")), pct_text(ov.get("mem_n1_pct")), _per_month(ov.get("mem_slope")), mlim,
+                ov.get("mem_days"), size(s.get("used")), size(s.get("capacity")), pct_text(s.get("pct")), pct_text(s.get("prov_pct")),
+                _per_month(s.get("slope")), o.get("storage_crit_pct", 90), s.get("days_crit"), s.get("days_full"), ov.get("net_per_month"),
+                ov.get("fit")))
     L += ["", "CLUSTERS"]
     for n in N.get("clusters") or []:
         tm = n.get("mem_trend") or {}
         L.append("%s cluster %s (datacenter %s, status %s): hosts %s of %s usable, plan for %s failed; %s cores; CPU %s of %s (%s, %s after failure); "
                  "memory %s of %s (%s, %s after failure); vCPU per core %s; %s VMs on, average %s vCPU / %s configured / %s used memory; memory "
-                 "growth %s (fit R2 %s over %s days), runway to target %s days; CPU runway %s days; room for %s more VMs (limit: %s); VMs added %s, "
-                 "removed %s in the last %s days; HA %s; storage %s datastores, %s of %s used, runway to %s%% %s days; hosts recommended "
-                 "(average host here: %s cores, %s memory): %s now, %s within %s months."
+                 "growth %s (fit R2 %s over %s days), runway to %s %s days; CPU runway to %s %s days; room for %s more VMs (limit: %s); VMs "
+                 "added %s, removed %s in the last %s days; HA %s; storage %s datastores, %s of %s used, runway to %s%% %s days; hosts "
+                 "recommended (average host here: %s cores, %s memory): %s now, %s within %s months."
                  % (ids.get(("cluster", n.get("label", n["name"])), "?"), n.get("label", n["name"]), dc_label(n, N.get("multi")),
                     n.get("status") or "ok", n["hosts_usable"], n["hosts_total"],
                     n["failover_hosts"], n["cores"], ghz(n["cpu_used"]), ghz(n["cpu"]), pct_text(n["cpu_pct"]), pct_text(n["cpu_n1_pct"]),
                     size(n["mem_used"]), size(n["mem"]), pct_text(n["mem_pct"]), pct_text(n["mem_n1_pct"]), n["vcpu_ratio"], n["vms_on"],
                     round((n["avg"] or {}).get("vcpu") or 0, 1), size((n["avg"] or {}).get("mem_configured")), size((n["avg"] or {}).get("mem_used")),
-                    _per_month(tm.get("slope")) if tm else "unknown", tm.get("r2", "-"), tm.get("span", "-"), n["mem_days"], n["cpu_days"], n["fit"],
+                    _per_month(tm.get("slope")) if tm else "unknown", tm.get("r2", "-"), tm.get("span", "-"),
+                    limit_text(o.get("mem_target_pct", 80), n["failover_hosts"]), n["mem_days"],
+                    limit_text(o.get("cpu_target_pct", 80), n["failover_hosts"]), n["cpu_days"], n["fit"],
                     n["limit"] or "-", n["added"], n["removed"], o.get("events_days", 30), (n.get("ha") or {}).get("kind") or "off",
                     (n.get("storage") or {}).get("datastores"), size((n.get("storage") or {}).get("used")), size((n.get("storage") or {}).get("capacity")),
                     o.get("storage_warn_pct", 85), (n.get("storage") or {}).get("days_warn"), round(n.get("host_cores") or 0),
@@ -629,8 +665,9 @@ def vm_capacity_act_task(items, opts=None):
     return "\n".join([
         "vSphere capacity planning for an operations team.",
         "You cannot run any commands in this task, and none are needed: the evidence piped to you holds the capacity, usage, growth and "
-        "runways the job computed from vCenter (its own daily statistics over the last %s days). Use those numbers; do not invent others."
-        % o.get("trend_days", 30),
+        "runways the job computed from vCenter (its own daily statistics over the last %s days). Use those numbers; do not invent others. "
+        "A cluster's memory or CPU runway runs to the target with a host down (\"%s\"), not to full hosts."
+        % (int(float(o.get("trend_days", 90))), limit_text(o.get("mem_target_pct", 80), o.get("failover_hosts", 1))),
         "",
         "For each item (%s) give:" % ids,
         "- estimate: when it needs action (a date or a number of months), and what limit it hits first (memory, CPU, vCPUs, storage);",

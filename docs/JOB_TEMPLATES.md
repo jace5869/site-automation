@@ -92,6 +92,7 @@ VMware collection ([VMWARE.md](VMWARE.md#before-you-start)).
 | VM - secure boot report | `playbooks/vm_secure_boot_report.yml` | Report | [VMWARE.md](VMWARE.md#the-templates) |
 | VM - datastore report | `playbooks/vm_datastore_report.yml` | Report | [VMWARE.md](VMWARE.md#the-templates) |
 | VM - inventory report | `playbooks/vm_inventory_report.yml` | Report | [VMWARE.md](VMWARE.md#the-vm-inventory-report) |
+| VM - right-sizing report | `playbooks/vm_rightsizing_report.yml` | Report | [VMWARE.md](VMWARE.md#the-vm-right-sizing-report) |
 | VM - snapshot report | `playbooks/vm_snapshot_report.yml` | Workflow step | [VMWARE.md](VMWARE.md#set-it-up-once), workflow 19: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#19-snapshot-cleanup-with-approval) |
 | VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | After an approval | [VMWARE.md](VMWARE.md#snapshots-the-report-the-cleanup-and-the-approval-workflow) |
 | VM - refresh the pick lists | `playbooks/vm_pick_refresh.yml` | Watch | [VMWARE.md](VMWARE.md#set-it-up-once-1) |

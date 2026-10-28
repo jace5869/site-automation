@@ -14,6 +14,7 @@ System Center Orchestrator):
 | VM - secure boot report | `playbooks/vm_secure_boot_report.yml` | read-only: every VM's firmware and secure boot. Lists BIOS VMs and EFI VMs with secure boot off separately |
 | VM - datastore report | `playbooks/vm_datastore_report.yml` | read-only: every datastore's capacity, free space, used and provisioned %; the ones at 85 / 90 % used listed apart |
 | VM - inventory report | `playbooks/vm_inventory_report.yml` | read-only: every VM of every vCenter, by vCenter and folder - power, the ESXi host it runs on, cluster, guest OS, IP address, vCPUs, memory - and the count; the email attaches every VM as an Excel workbook ("The VM inventory report") |
+| VM - right-sizing report | `playbooks/vm_rightsizing_report.yml` | read-only: every powered-on VM's vCPUs and memory next to what vCenter's statistics say it used (30 days, and its busiest day of the year) - too big, about right or too small, with a suggested size; memory the host took back, guest disks nearly full; optional ACT review. Suggestions only ("The VM right-sizing report") |
 | VM - snapshot report | `playbooks/vm_snapshot_report.yml` | read-only: every snapshot of every VM - name, when taken and by whom, age, size, folder - oldest first; the ones 5 days or older listed apart |
 | VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | deletes the snapshots 5 days or older - never "keep" ones, excluded VMs, datacenters or clusters, the AAP server or ones over 1 TB; or only the patching snapshots (`vm_snapshot_cleanup_name_words`) - then reports what it deleted. Best run in the workflow below, after an approval |
 | VM - refresh the pick lists | `playbooks/vm_pick_refresh.yml` | on a schedule, read-only in vCenter: writes what may be done right now - the snapshots that may be deleted, the VMs that may be restarted (or only the hung ones) - as the choices of a question in the survey of the templates below ("Pick lists") |
@@ -234,6 +235,82 @@ and filter. Schedule it weekly with `report_email_to` on its Variables; on the r
 
 Green unless a vCenter could not be read (it is then listed in red on top, its VMs not counted). The counts are also
 the job artifact `vm_inventory`.
+
+### The VM right-sizing report
+
+*VM - right-sizing report* (`playbooks/vm_rightsizing_report.yml`) puts every powered-on VM's vCPUs and memory next to
+what it actually used, and suggests a size: **too big**, **about right** or **too small**. It reads vCenter's own
+statistics only - the hypervisor's measurements, no login to the guests - so it needs nothing but the VMware vCenter
+credential, and it changes nothing: the suggestions are for you to act on, at a time you choose.
+
+What it reads, per VM: the last 30 days of vCenter's past-month statistics (2-hour averages) - CPU used, CPU ready,
+active memory, consumed, ballooned and swapped memory - and its busiest day of the last year (daily averages), so a
+month-end or yearly peak keeps its size. Statistics level 1, vCenter's default, is enough (swapped memory needs level
+2; the report says when something is missing). VMware Tools' guest disks are read too.
+
+How it decides (each number is a setting below):
+
+- **CPU** (firm: the hypervisor measures it). The busiest 5% of the time is left out (the 95th percentile), or the
+  year's busiest day is used when that was busier; vCPUs are suggested so that use would be about 70%, an even number
+  from 4 up, never fewer than 2, never more than half fewer at once. 85% or more is too small.
+- **CPU ready** is time the VM waited for a physical CPU. 5% or more is said: on a VM that is too big it usually means
+  too many vCPUs; on a busy one, a busy host - check the host before adding vCPUs.
+- **Memory** (the less certain one). vCenter sees the memory a guest touched in the last minutes (active memory), not
+  what it needs - file caches and databases want more. So the suggestion is active memory plus 100%, never more than
+  half less at once, at least 2 GB (Windows 4), and only when it is 25% and 2 GB smaller or more. Active memory at 90%
+  or more of what the VM has is too small.
+- **Memory taken back**: a VM the host ballooned or swapped (100 MB or more), or one with a memory limit below its
+  size, is listed apart - that is its host or the limit, not the VM's size.
+- Fewer than 7 days of statistics (a new VM): **not enough history**, no suggestion.
+
+The email (and the page on the report website's VMware tab) has the counts on top - VMs checked, too big, too small,
+about right, the vCPUs and memory the suggestions would free - then the tables: *Too small* (amber), *Memory taken
+back by the host*, *Too big* (the suggested size in green, the most freed first), *Guest disks nearly full*, *Not
+enough history*, *About right*, and *How the suggestions are worked out*. The workbook it attaches,
+`vm-right-sizing-report_2026-10-28.xlsx`, has every VM with every number (average, 95th percentile and peak CPU, CPU
+ready, active memory, the busiest day, ballooned and swapped memory, the fullest disk) on one sheet and every guest
+disk on another, to sort and filter. The job's output lists each VM to change: `web01: Too big - vCPUs 8 → 4, memory
+32 → 16 GB`; the job artifact `vm_rightsize` has the counts and the changes.
+
+Before you resize a VM: check its own peaks the statistics may not show (patching, backups, a yearly job older than a
+year), and plan the change - removing vCPUs or memory needs the VM shut down, and adding them too unless CPU / memory
+hot add is on (the report says so).
+
+**ACT's review** (`vm_rightsize_act: true`, an ACT model key credential on the template, as for the capacity
+planning): ACT reads the same numbers and the job's suggestion for each VM to change (too small first, then the most
+freed, at most `vm_rightsize_act_max_items`) and answers *Agree* or *Adjust* with its own size, its reasoning and a
+confidence; it often knows that a name or guest OS means a database or Java and keeps more memory. Its review is at
+the top of the email; the job's own math stays below it. Names are masked before anything reaches the model.
+
+Set it up: a template *VM - right-sizing report*, playbook `playbooks/vm_rightsizing_report.yml`, the VMware vCenter
+credential, no Limit; `report_email_to` on its Variables; a schedule, monthly. Its settings, to change on the
+template's Variables (`aap/extra_vars/vm_rightsizing_report.yml` has them all):
+
+| Setting | Default | |
+|---|---|---|
+| `vm_rightsize_days` | `30` | days of history (at most 30: what vCenter keeps of 2-hour averages) |
+| `vm_rightsize_year` | `true` | also each VM's busiest day of the last year |
+| `vm_rightsize_min_days` | `7` | fewer days of statistics = not enough history |
+| `vm_rightsize_clusters` / `vm_rightsize_vms` / `vm_rightsize_exclude` | `[]` | only the VMs of these clusters / only these VMs / never these VMs (names, `*` and `?`) |
+| `vm_rightsize_cpu_target_pct` | `70` | vCPUs suggested for about this % busy (95th percentile) |
+| `vm_rightsize_cpu_high_pct` | `85` | CPU at this % or more = too small |
+| `vm_rightsize_cpu_max_cut_pct` | `50` | never more than this % fewer vCPUs at once |
+| `vm_rightsize_min_vcpus` / `vm_rightsize_min_vcpus_windows` | `2` / `2` | never fewer vCPUs |
+| `vm_rightsize_ready_warn_pct` | `5` | CPU ready at this % or more is said |
+| `vm_rightsize_mem_headroom_pct` | `100` | memory suggested = active memory plus this % |
+| `vm_rightsize_mem_high_pct` | `90` | active memory at this % or more = too small |
+| `vm_rightsize_mem_max_cut_pct` | `50` | never more than this % less memory at once |
+| `vm_rightsize_min_change_pct` | `25` | a smaller memory size only when this % (and 2 GB) smaller or more |
+| `vm_rightsize_min_mem_gb` / `vm_rightsize_min_mem_gb_windows` | `2` / `4` | never less memory (GB) |
+| `vm_rightsize_taken_mb` | `100` | ballooned or swapped memory from this many MB is said |
+| `vm_rightsize_disk_warn_pct` | `90` | guest disks this % used or more are listed |
+| `vm_rightsize_max_rows` | `500` | rows per table in the email (the workbook has every VM) |
+| `vm_rightsize_xlsx` | `true` | `false` = no workbook attached |
+| `vm_rightsize_batch` / `vm_rightsize_workers` | `10` / `4` | VMs per statistics query, and queries at a time (lower the batch if vCenter refuses: `vpxd.stats.maxQueryMetrics`) |
+| `vm_rightsize_act` | `false` | ACT reviews the suggestions (`vm_rightsize_act_max_items` 40, `vm_rightsize_act_batch`, `vm_rightsize_act_model_timeout`) |
+
+The job is green unless a vCenter could not be read, or ACT was asked and did not answer (the report is still
+emailed). The vCenter account needs no more than read-only: the statistics come with it.
 
 ## Snapshots: the report, the cleanup, and the approval workflow
 
@@ -950,8 +1027,8 @@ the first run: nothing has to be collected first.
 
 | Section | What it shows |
 |---|---|
-| **Overall** | all clusters together: CPU and memory capacity, used, used with a host down in each cluster, growth per month and the days until the target; hosts usable and **hosts recommended** (now, and within 12 months); vCPUs per core and room for more VMs; shared storage with its growth and runway |
-| **Clusters: CPU and memory** | per cluster: hosts usable, CPU and memory used, **memory used if the biggest host fails** (N+1: the cluster must still run everything), vCPUs per core, VMs and their average size, memory growth, **memory runway** (days and date until the target with a host down), **room for more VMs** of the average size (and what limits it), **hosts recommended**, VMs added / removed in the last 30 days |
+| **Overall** | all clusters together: CPU and memory capacity, used, used with a host down in each cluster, growth per month and the days until the target - written `to 80% N-1`: 80 % of what is left with a host down, not full hosts; hosts usable and **hosts recommended** (now, and within 12 months); vCPUs per core and room for more VMs; shared storage with its growth and runway |
+| **Clusters: CPU and memory** | per cluster: hosts usable, CPU and memory used, **memory used if the biggest host fails** (N-1: the cluster must still run everything), vCPUs per core, VMs and their average size, memory growth, **memory runway** (days and date until memory reaches `80% N-1`, the target with a host down - not until the hosts are full), **room for more VMs** of the average size (and what limits it), **hosts recommended**, VMs added / removed in the last 30 days |
 | **Clusters: storage** | per cluster, its shared datastores together: capacity, free, used, provisioned (thin disks at full size), growth, days until 85 % and until full |
 | **Datastores: runway** | each shared datastore, the one that fills first on top: growth, days (and date) until 85 %, 90 % and full, and how well a straight line fits its history |
 | **Math vs GenAI** (with `vm_capacity_act: true`) | for every item, the job's runway (the math) next to ACT's own estimate (GenAI), whether they agree, ACT's recommendation and reasoning, and its confidence |
@@ -962,11 +1039,21 @@ memory and CPU at their targets (80 %) with one host down - for example `1 now (
 average then); 2 within 12 months`. "Within 12 months" applies the current growth. It is a
 sizing guide in hosts, not a list of models.
 
-**How the runway is worked out:** a straight line through the last 30 days of vCenter's daily
-values (memory consumed, CPU used, datastore space used), continued until it reaches the limit.
-"Not growing" means the line is flat or falling. The **trend fit** (R²) says how straight the
-history is: poor means jumps (VMs moved, snapshots deleted, a datastore grown), and the runway is a
-rough guide then.
+**How the runway is worked out:** a straight line through the last 90 days of vCenter's daily
+values (memory consumed, CPU used, datastore space used), continued at that rate until it reaches
+the limit. It assumes the last 90 days repeat. Growth usually comes in jumps (VMs deployed in
+batches): a 30-day window turns one build-out into the rate and reads "9 days to full" when it is
+months, so the default fits 90 days, which averages the batches out (`vm_capacity_trend_days: 30`
+reacts faster to a real change of rate). "Not growing" means the line is flat or falling. The
+**trend fit** (R²) says how straight the history is: poor means jumps (VMs moved, snapshots deleted,
+a datastore grown), and the runway is a rough guide then.
+
+**What the cluster runway runs to:** `80% N-1`, written in every cell - 80 % of the memory (or
+CPU) left with one host down, not 100 % of what is installed. A cluster at 65 % used today can be at
+76 % with its biggest host taken out of the math, so `9 days (2026-11-06) to 80% N-1` means nine
+days until that figure crosses 80 % - the point at which the cluster can no longer lose a host and
+stay under its target - not nine days until the hosts are full. `80% N-1 reached` is a cluster past
+that point today. Datastore runways are plainer: to 85 %, to 90 % and to full.
 
 ### Math vs GenAI
 
@@ -976,8 +1063,8 @@ action (in days), what to do, why, and how sure it is. The report puts the two s
 
 | Math (straight line) | GenAI (ACT) | Agreement |
 |---|---|---|
-| 102 days (90 % full) | 55 days | GenAI 47 days sooner |
-| 0 days (memory) | 0 days | agree |
+| 102 days (90% full) | 55 days | GenAI 47 days sooner |
+| 0 days (memory 80% N-1) | 0 days | agree |
 
 They **agree** when they are within 30 days or 25 % of each other. Where they differ, read ACT's
 reasoning (a recent jump, a limit that comes first, a poor fit), and plan for the sooner one. ACT
@@ -1003,13 +1090,13 @@ runs no command (as in "The ACT analysis" above: the same key, URL, proxy and CA
 | Setting | Default | What it does |
 |---|---|---|
 | `vm_capacity_clusters` | `[]` (all) | only these clusters |
-| `vm_capacity_failover_hosts` | `1` | hosts down to plan for (N+1); a larger HA admission control failover level wins |
+| `vm_capacity_failover_hosts` | `1` | hosts down to plan for (`N-1` in the report); a larger HA admission control failover level wins |
 | `vm_capacity_mem_target_pct` / `_cpu_target_pct` | `80` / `80` | memory / CPU used at most this, with those hosts down |
 | `vm_capacity_vcpu_per_core_max` | `4` | vCPUs per physical core (amber from here) |
 | `vm_capacity_storage_warn_pct` / `_crit_pct` | `85` / `90` | datastore used % (the storage runway is to 90 %) |
 | `vm_capacity_runway_warn_days` / `_crit_days` | `90` / `30` | a runway shorter than this is amber / red |
 | `vm_capacity_horizon_months` | `12` | "hosts recommended within N months" |
-| `vm_capacity_trend_days` / `vm_capacity_history_days` | `30` / `90` | the days the trend is fitted on / read |
+| `vm_capacity_trend_days` / `vm_capacity_history_days` | `90` / `120` | the days the trend is fitted on / read: 90 averages growth that comes in batches; 30 reacts faster to a real change of rate |
 | `vm_capacity_include_local_datastores` | `false` | count a host's own datastores too |
 | `vm_capacity_act` | `false` | GenAI's estimate next to the math |
 | `vm_capacity_act_batch` | `site_act_batch` (5) | items per question to ACT: 30 items are six questions, each with the whole evidence (an estimate needs the overall numbers) and asking about its 5 items; `0` = all in one question |

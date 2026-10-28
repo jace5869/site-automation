@@ -229,8 +229,16 @@ def guest():
         extraConfig=[vim.option.OptionValue(key="SET." + kv.split("=", 1)[0], value=kv.split("=", 1)[1]) for kv in sys.argv[3:]])))
 
 
+def size():
+    """size VM VCPUS MEMORY_MB [MEMORY_LIMIT_MB]: the VM's vCPUs and memory (the right-sizing report)."""
+    spec = vim.vm.ConfigSpec(numCPUs=int(sys.argv[3]), memoryMB=int(sys.argv[4]))
+    if len(sys.argv) > 5:
+        spec.memoryAllocation = vim.ResourceAllocationInfo(limit=int(sys.argv[5]))
+    WaitForTask(vm(sys.argv[2]).ReconfigVM_Task(spec))
+
+
 def snap():
     WaitForTask(vm(sys.argv[2]).CreateSnapshot_Task(name=sys.argv[3], description="", memory=False, quiesce=False))
 
 
-{"setup": setup, "state": state, "events": events, "health": health, "guest": guest, "snap": snap, "watch": watch}[sys.argv[1]]()
+{"setup": setup, "state": state, "events": events, "health": health, "guest": guest, "snap": snap, "watch": watch, "size": size}[sys.argv[1]]()

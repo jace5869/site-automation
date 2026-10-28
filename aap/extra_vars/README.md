@@ -75,6 +75,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VM - refresh the pick lists | `playbooks/vm_pick_refresh.yml` | [vm_pick_refresh.yml](vm_pick_refresh.yml) |
 | VM - restart | `playbooks/vm_reboot.yml` | [vm_reboot.yml](vm_reboot.yml) |
 | VM - restart picked VMs | `playbooks/vm_reboot_picked.yml` | [vm_reboot_picked.yml](vm_reboot_picked.yml) |
+| VM - right-sizing report | `playbooks/vm_rightsizing_report.yml` | [vm_rightsizing_report.yml](vm_rightsizing_report.yml) |
 | VM - secure boot report | `playbooks/vm_secure_boot_report.yml` | [vm_secure_boot_report.yml](vm_secure_boot_report.yml) |
 | VM - shut down | `playbooks/vm_shutdown.yml` | [vm_shutdown.yml](vm_shutdown.yml) |
 | VM - snapshot | `playbooks/vm_snapshot.yml` | [vm_snapshot.yml](vm_snapshot.yml) |

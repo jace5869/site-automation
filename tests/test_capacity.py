@@ -3,6 +3,7 @@
 roles/vmware_vm/library/site_vmware_capacity.py), on fixed numbers: python3 tests/test_capacity.py"""
 import json
 import os
+import re
 import sys
 import types
 import unittest
@@ -138,6 +139,37 @@ class Numbers(unittest.TestCase):
         self.assertEqual(self.lab["storage"]["datastores"], 1)
 
 
+class Limits(unittest.TestCase):
+    def test_limit_and_runway_text(self):
+        self.assertEqual(cf.limit_text(80, 1), "80% N-1")
+        self.assertEqual(cf.limit_text(80.0, 2), "80% N-2")
+        self.assertEqual(cf.limit_text(80, 0), "80%")                                          # a standalone host: no N-1
+        self.assertEqual(cf.runway_to(None, "80% N-1"), "not growing (limit 80% N-1)")
+        self.assertEqual(cf.runway_to(0, "80% N-1"), "80% N-1 reached")
+        self.assertTrue(cf.runway_to(10, "80% N-1").startswith("10 days ("))
+        self.assertTrue(cf.runway_to(10, "80% N-1").endswith(") to 80% N-1"))
+        self.assertEqual(cf.runway_to(10 ** 9, "80%"), "10+ years to 80%")
+
+    def test_standalone_host_runway_has_no_failover_term(self):
+        data = json.loads(json.dumps(DATA))
+        data["clusters"] = [dict(data["clusters"][1], name="ONE", standalone=True, hosts=data["clusters"][1]["hosts"][:1],
+                                 history={"mem": line(100 * GB, 1 * GB), "cpu": line(10000, 0)})]
+        data["datastores"] = []
+        rep = cf.vm_capacity_report(data, OPTS)["report"]
+        cell = rep["sections"][1]["rows"][0][10]
+        self.assertTrue(cell.endswith(") to 80%"), cell)
+        self.assertNotIn("N-", cell)
+
+
+class Defaults(unittest.TestCase):
+    def test_trend_is_fitted_on_90_days_and_the_history_read_covers_it(self):
+        """Growth comes in batches: a 30-day line made one build-out the rate. The default is 90 days."""
+        with open(os.path.join(HERE, "..", "roles", "vmware_vm", "defaults", "main.yml")) as f:
+            got = {k: int(v) for k, v in re.findall(r"^(vm_capacity_(?:trend|history)_days):\s*(\d+)", f.read(), re.M)}
+        self.assertEqual(got["vm_capacity_trend_days"], 90)
+        self.assertGreaterEqual(got["vm_capacity_history_days"], got["vm_capacity_trend_days"])
+
+
 class Report(unittest.TestCase):
     def test_report_and_items(self):
         r = cf.vm_capacity_report(DATA, OPTS)
@@ -152,6 +184,14 @@ class Report(unittest.TestCase):
         self.assertEqual(comp["rows"][1][11], "10 (memory)")
         self.assertEqual(comp["rows"][0][12], "1 now (memory 59% on average then); 5 within 12 months")
         self.assertEqual(rep["sections"][0]["rows"][2][6], "1 recommended now, 5 within 12 months")
+        # a cluster runway says what it runs to - the target with a host down, not full hosts
+        self.assertTrue(rep["sections"][0]["rows"][0][6].endswith(" to 80% N-1"), rep["sections"][0]["rows"][0][6])   # CPU overall
+        self.assertEqual(rep["sections"][0]["rows"][1][6], "80% N-1 reached")                                          # memory overall
+        self.assertEqual(comp["rows"][0][10], "80% N-1 reached")                                                       # PROD
+        self.assertEqual(comp["rows"][1][10], "not growing (limit 80% N-1)")                                           # LAB
+        self.assertIn("not to 100% of what is installed", rep["sections"][0]["text"])
+        self.assertIn("Cluster runways run to 80% N-1 - 80% of what is left with 1 host(s) down - not to full hosts", rep["footer"])
+        self.assertEqual([i["job_limit"] for i in r["items"]], ["memory 80% N-1", "memory 80% N-1", "", "90% full", ""])
         self.assertEqual([i["id"] for i in r["items"]], ["P1", "P2", "P3", "P4", "P5"])
         self.assertEqual((r["items"][1]["kind"], r["items"][1]["name"], r["items"][1]["job_days"]), ("cluster", "PROD", 0))
         json.dumps(r["numbers"])                                                               # artifacts must be JSON
@@ -163,6 +203,9 @@ class Report(unittest.TestCase):
         self.assertIn("estimate_days", task)
         self.assertIn("Do not write buy, purchase", task)
         self.assertIn("hosts recommended (average host here: 32 cores, 512.0 GB memory): 1 now, 5 within 12 months", ev)
+        self.assertIn("memory growth +120.0 GB / month (fit R2 1.0 over 30.0 days), runway to 80% N-1 0 days; CPU runway to 80% N-1 680 days", ev)
+        self.assertIn("(N-1: the cluster must still run everything - the memory and CPU runways run to that, not to full hosts)", ev)
+        self.assertIn('with a host down ("80% N-1"), not to full hosts', task)
         self.assertIn("BEGIN_ACT_ANALYSIS", task)
         self.assertIn("esx1", cf.vm_capacity_names(DATA))
 
@@ -200,7 +243,7 @@ class Report(unittest.TestCase):
         t = secs[1]
         p2 = [row for row in t["rows"] if row[0] == "P2"][0]
         p4 = [row for row in t["rows"] if row[0] == "P4"][0]
-        self.assertEqual((p2[2], p2[3], p2[4]), ("0 days (memory)", "0 days", "agree"))
+        self.assertEqual((p2[2], p2[3], p2[4]), ("0 days (memory 80% N-1)", "0 days", "agree"))
         self.assertEqual((p4[2], p4[3], p4[4]), ("102 days (90% full)", "55 days", "GenAI 47 days sooner"))
         no = cf.vm_capacity_act_section(r["items"], {}, {"ran": False, "reason": "no key"})
         self.assertEqual(no[0]["lines"], ["ACT did not run: no key"])

@@ -1,0 +1,120 @@
+---
+# VM RIGHT-SIZING REPORT (playbooks/vm_rightsizing_report.yml): every powered-on VM's vCPUs and memory next to what
+# vCenter's own statistics say it used - the last vm_rightsize_days days and its busiest day of the last year - too
+# big, about right or too small, with a suggested size (plugins/filter/vmware_rightsize_filters.py), and the memory
+# the host took back, CPU waiting for a physical CPU, guest disks nearly full. vCenter only: nothing from inside the
+# guests. Optionally ACT reviews the suggestions (vm_rightsize_act). Printed, published as artifacts (vm_rightsize),
+# emailed with every VM as an Excel workbook (vm_rightsize_xlsx), on the report website. Read-only: suggestions only.
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | read every powered-on VM and vCenter's statistics of its last {{ vm_rightsize_days }} days
+  site_vmware_rightsize:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    clusters: "{{ (vm_rightsize_clusters | replace(',', ' ')).split() if vm_rightsize_clusters is string else vm_rightsize_clusters }}"
+    vms: "{{ (vm_rightsize_vms | replace(',', ' ')).split() if vm_rightsize_vms is string else vm_rightsize_vms }}"
+    exclude: "{{ (vm_rightsize_exclude | replace(',', ' ')).split() if vm_rightsize_exclude is string else vm_rightsize_exclude }}"
+    days: "{{ vm_rightsize_days | int }}"
+    year_days: "{{ 365 if vm_rightsize_year | bool else 0 }}"
+    batch: "{{ vm_rightsize_batch | int }}"
+    workers: "{{ vm_rightsize_workers | int }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    now: "{{ _vm_now | default(omit) }}"
+  register: _vm_rs_read
+  check_mode: false
+
+# one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: VMware | the suggestions
+  ansible.builtin.set_fact:
+    _vm_rs_opts: >-
+      {{ {'min_days': vm_rightsize_min_days | int, 'cpu_target_pct': vm_rightsize_cpu_target_pct | float,
+          'cpu_high_pct': vm_rightsize_cpu_high_pct | float, 'ready_warn_pct': vm_rightsize_ready_warn_pct | float,
+          'min_vcpus': vm_rightsize_min_vcpus | int, 'min_vcpus_windows': vm_rightsize_min_vcpus_windows | int,
+          'cpu_max_cut_pct': vm_rightsize_cpu_max_cut_pct | float,
+          'mem_headroom_pct': vm_rightsize_mem_headroom_pct | float, 'mem_high_pct': vm_rightsize_mem_high_pct | float,
+          'min_mem_gb': vm_rightsize_min_mem_gb | float, 'min_mem_gb_windows': vm_rightsize_min_mem_gb_windows | float,
+          'mem_max_cut_pct': vm_rightsize_mem_max_cut_pct | float, 'min_change_pct': vm_rightsize_min_change_pct | float,
+          'disk_warn_pct': vm_rightsize_disk_warn_pct | float, 'taken_mb': vm_rightsize_taken_mb | float,
+          'max_rows': vm_rightsize_max_rows | int,
+          'days': _vm_rs_read.days | int, 'max_items': vm_rightsize_act_max_items | int} }}
+
+- name: VMware | each VM sized
+  ansible.builtin.set_fact:
+    _vm_rs: "{{ _vm_rs_read.vms | vm_rightsize(_vm_rs_opts) }}"
+
+- name: VMware | GenAI reviews the suggestions (vm_rightsize_act)
+  when: vm_rightsize_act | bool
+  block:
+    - name: VMware | the suggestions ACT reviews
+      ansible.builtin.set_fact:
+        _vm_rs_items: "{{ _vm_rs | vm_rightsize_items(_vm_rs_opts) }}"
+
+    - name: "VMware | ACT reviews {{ _vm_rs_items | default([]) | length }} suggestion(s), {{ vm_rightsize_act_batch }} at a time - evidence mode, ACT runs no command"
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: evidence_batches.yml
+        public: true
+      vars:
+        _eb_batches: >-
+          {%- set out = [] -%}
+          {%- for b in _vm_rs_items | batch(vm_rightsize_act_batch | int if vm_rightsize_act_batch | int > 0 else 100000) -%}
+          {%-   set _ = out.append({'items': b, 'evidence': b | vm_rightsize_evidence(_vm_rs, _vm_rs_opts),
+                                    'task': b | vm_rightsize_act_task({'extra': site_act_extra_instructions | default('')})}) -%}
+          {%- endfor -%}
+          {{ out }}
+        _eb_check_url: "{{ vm_rightsize_act_check_url }}"
+        _ea_names: "{{ _vm_rs_read.vms | vm_rightsize_names }}"
+        _ea_model_timeout: "{{ vm_rightsize_act_model_timeout }}"
+      when: _vm_rs_items | length > 0
+
+    - name: VMware | ACT's review in the report
+      ansible.builtin.set_fact:
+        _vm_rs_act_sections: >-
+          {{ _vm_rs_items | vm_rightsize_act_section(_vm_rs, _ea_parsed,
+               {'ran': _ea_ran | bool, 'reason': _ea_reason, 'raw': _ea_raw}) }}
+      when: _vm_rs_items | length > 0
+
+- name: VMware | the report
+  ansible.builtin.set_fact:
+    _vm_rs_doc: >-
+      {%- set d = _vm_rs_read | vm_rightsize_doc(_vm_rs, _vm_rs_opts) -%}
+      {{ d | combine({'sections': (_vm_rs_act_sections | default([])) + d.sections}) }}
+
+- name: VM right-sizing report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_vcenters: "{{ _vm_rs_read.vcenters }}"
+    _vm_report_doc: "{{ _vm_rs_doc }}"
+    _vm_report_subject: "{{ _vm_rs_doc.title }}"
+    _vm_report_lines: >-
+      {{ [_vm_rs_doc.subtitle]
+         + (_vm_rs_doc.summary | map(attribute='label') | zip(_vm_rs_doc.summary | map(attribute='value'))
+            | map('join', ': ') | list) + _vm_rs_read.notes
+         + (_vm_rs_act_sections | default([]) | selectattr('lines', 'defined') | map(attribute='lines') | flatten
+            | map('regex_replace', '^', 'ACT: ') | list)
+         + (_vm_rs | vm_rightsize_lines) }}
+    _vm_report_xlsx: "{{ _vm_rs | vm_rightsize_xlsx(_vm_rs_opts) if vm_rightsize_xlsx | bool else [] }}"
+
+- name: VMware | the suggestions as job artifacts (vm_rightsize)
+  ansible.builtin.set_stats:
+    data:
+      vm_rightsize: >-
+        {{ {'vcenters': _vm_rs_read.vcenters, 'counts': _vm_rs_doc.summary | items2dict(key_name='label', value_name='value'),
+            'changes': _vm_rs | rejectattr('size.verdict', 'in', ['About right', 'Not enough history'])
+                       | map('vm_rightsize_change') | list} }}
+
+- name: VMware | ACT made its review
+  ansible.builtin.assert:
+    that: _ea_ran | bool and _ea_reason | length == 0
+    fail_msg: >-
+      {{ ('ACT did not review every suggestion: ' ~ _ea_reason ~ ' The rest is in the report (and the email).')
+         if _ea_ran | bool else
+         ('ACT did not review: ' ~ _ea_reason ~ ' The right-sizing report (the math) is above and in the email.') }}
+    quiet: true
+  when: vm_rightsize_act | bool and not ansible_check_mode and _vm_rs_items | default([]) | length > 0
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_rs_read.vcenters }}"

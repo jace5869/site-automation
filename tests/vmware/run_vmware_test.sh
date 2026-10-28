@@ -12,7 +12,8 @@
 # the outage watch (hung VMs by heartbeat and ping, protected ones, HA and storage events, a disconnected host, its
 # incidents opened and resolved in a fake ServiceNow);
 # the vCenter log analysis (vcsim hands out no logs: the job says so); the VM inventory report (and its workbook by email);
-# the ESXi network check (esxcli through vCenter - vcsim has no network diag ping: its answer is said).
+# the ESXi network check (esxcli through vCenter - vcsim has no network diag ping: its answer is said); the VM right-sizing
+# report (a VM made too big, thresholds, its workbook by email, ACT's review).
 #   bash tests/vmware/run_vmware_test.sh
 # Needs: podman or docker; a python with pyVmomi and the vSphere Automation SDK (pip install pyvmomi
 # vmware-vcenter; VMWARE_TEST_PYTHON=... to pick it); the vmware.vmware collection (installed into a
@@ -442,6 +443,19 @@ PY
 }
 check_inv && echo "ok   -   ...the title and the artifact give the same count" || { echo "FAIL -   ...inventory counts"; fails=$((fails + 1)); }
 
+# ---- VM right-sizing report (read-only; vcsim's statistics are generated: about 20% CPU, 40% active memory) -----------------
+VMWARE_PORT=$port "$py" "$here/vcsim.py" size DC0_H0_VM1 16 65536 || { echo "FAIL - vcsim size"; fails=$((fails + 1)); }
+# (the busiest day of the year left out here: vcsim's are random)
+run "VM right-sizing report: a VM with 16 vCPUs is too big, at most half fewer at once" ok vm_rightsizing_report.yml -e vm_rightsize_year=false \
+    -- "VM right-sizing: 1 too big, 0 too small of " '"vm_rightsize"' '"VMs checked": ' "DC0_H0_VM1: Too big - vCPUs 16 → 8, memory "
+run "VM right-sizing report: one VM, CPU busy from 1% (a test threshold): too small" ok vm_rightsizing_report.yml \
+    -e '{"vm_rightsize_vms": ["DC0_H0_VM1"], "vm_rightsize_cpu_high_pct": 1}' -- "0 too big, 1 too small of 1 VM" \
+       "DC0_H0_VM1: Too small - vCPUs 16 → 18, memory "
+run "VM right-sizing report: more days asked than vCenter has: not enough history, no suggestion" ok vm_rightsizing_report.yml \
+    -e vm_rightsize_min_days=60 -- "0 too big, 0 too small of " '"Not enough history": ' '"changes": []'
+run "VM right-sizing report: a VM left out, a cluster that matches nothing" ok vm_rightsizing_report.yml \
+    -e '{"vm_rightsize_exclude": ["DC0_H0_VM1"], "vm_rightsize_clusters": ["nope"]}' -- "of 0 VMs" '"VMs checked": 0'
+
 # ---- ESXi network check (read-only; vcsim's hosts have no vMotion adapter, and its esxcli has no network diag ping) -------
 run "ESXi network check: the adapters read, a cluster without vMotion said, green" ok esxi_network_check.yml \
     -- "ESXi network check: 1 problem(s)" "no host has a VMkernel adapter with vMotion on" '"esxi_network"' '"Hosts checked": '
@@ -506,6 +520,22 @@ assert '<sheet name="VMs"' in z.read("xl/workbook.xml").decode()
 assert sheet.count("<row ") == n + 1, (sheet.count("<row "), n)          # the header and every VM
 PY
 then echo "ok   -   ...the workbook: one sheet, a line per VM"; else echo "FAIL -   ...the inventory workbook"; fails=$((fails + 1)); fi
+run "VM right-sizing report emailed, every VM attached as a workbook" ok vm_rightsizing_report.yml -e "$mail" -e vm_rightsize_year=false -- "emailed"
+emlrs="$(grep -l 'Subject: \[AAP\] VM right-sizing: ' "$work/mail"/*.eml | head -1)"
+if [ -n "$emlrs" ] && "$py" - "$emlrs" <<'PY'
+import email, email.policy, io, re, sys, zipfile
+m = email.message_from_binary_file(open(sys.argv[1], "rb"), policy=email.policy.default)
+n = int(re.search(r"of (\d+) VM", m["Subject"]).group(1))
+html = [p for p in m.walk() if p.get_content_type() == "text/html"][0].get_content()
+assert "Too big" in html and "How the suggestions are worked out" in html and "16 → 8" in html, "the tables"
+att = [p for p in m.walk() if re.match(r"vm-right-sizing-report_\d{4}-\d{2}-\d{2}\.xlsx$", p.get_filename() or "")]
+assert len(att) == 1, [p.get_filename() for p in m.walk()]
+z = zipfile.ZipFile(io.BytesIO(att[0].get_content()))
+wb = z.read("xl/workbook.xml").decode()
+assert '<sheet name="Right-sizing"' in wb and '<sheet name="Guest disks"' in wb, wb
+assert z.read("xl/worksheets/sheet1.xml").decode().count("<row ") == n + 1, "the header and every VM"
+PY
+then echo "ok   -   ...the tables in the email; the workbook: a line per VM, and the guest disks"; else echo "FAIL -   ...the right-sizing email"; fails=$((fails + 1)); fi
 run "snapshot report emailed" ok vm_snapshot_report.yml -e _vm_now=$later -e "$mail" -- "emailed"
 eml4="$(ls "$work/mail"/*.eml | sort -V | tail -1)"
 getpart html "$eml4" | grep -q ">keep-me<" && grep -q "Subject: \[AAP\] VMware snapshot report (older than 5 days): " "$eml4" \
@@ -654,6 +684,18 @@ grep -q "estimate_days" "$work/act/fake-act-task.txt" && grep -q "^P1 OVERALL" "
     && grep -q '"GENAI_MODEL": "gemini-3.8-flash"' "$work/act/fake-act-env.json" \
     && echo "ok   -   ...ACT got the numbers and the days format, streams, 600 s per answer, gemini-3.8-flash; the email has both estimates" \
     || { echo "FAIL -   ...capacity ACT"; head -5 "$work/act/fake-act-stdin.txt"; fails=$((fails + 1)); }
+"$py" - "$work/act/act.json" <<'EOPY'
+import json, sys
+items = [{"id": "P1", "recommendation": "Adjust: 12 vCPUs, it is a build server.", "reasoning": "peaks at 50%", "confidence": 65}]
+json.dump({"summary": "BEGIN_ACT_ANALYSIS\n" + json.dumps({"overall": "Shrink the build VM first.", "items": items}) + "\nEND_ACT_ANALYSIS"},
+          open(sys.argv[1], "w"))
+EOPY
+run "VM right-sizing with GenAI: ACT reviews the suggestion, the review in the email" ok vm_rightsizing_report.yml -e "$mail" -e "$actvars" \
+    -e '{"vm_rightsize_act": true, "vm_rightsize_vms": ["DC0_H0_VM1"], "vm_rightsize_year": false}' -- "ACT: Shrink the build VM first." "emailed"
+grep -q "^P1 VM DC0_H0_VM1" "$work/act/fake-act-stdin.txt" && grep -q "For each item (P1)" "$work/act/fake-act-task.txt" \
+    && getpart html "$(lastmail)" | grep -q "review of each suggestion" && getpart html "$(lastmail)" | grep -q "Adjust: 12 vCPUs" \
+    && echo "ok   -   ...ACT got the VM's numbers and the job's suggestion; the email has its review" \
+    || { echo "FAIL -   ...right-sizing ACT"; head -3 "$work/act/fake-act-stdin.txt"; fails=$((fails + 1)); }
 run "capacity planning with GenAI as a dry run (Check): ACT not called, the math still shown" ok vm_capacity_report.yml --check \
     -e "$actvars" -e vm_capacity_act=true -- "ACT did not run: A dry run (Check)" "Clusters: CPU and memory"
 run "capacity planning for one cluster" ok vm_capacity_report.yml -e '{"vm_capacity_clusters": ["dc0_c0"]}' \

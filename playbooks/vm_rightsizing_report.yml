@@ -1,0 +1,18 @@
+---
+# VM RIGHT-SIZING REPORT (vCenter). Read-only: every powered-on VM's vCPUs and memory next to what vCenter's own
+# statistics say it used - the last 30 days and its busiest day of the year - too big, about right or too small, with
+# a suggested size; memory the host took back, CPU ready, guest disks nearly full. Suggestions only: nothing is changed.
+# vm_rightsize_act: true has ACT (GenAI) review the suggestions. Emailed (report_email_to) with every VM as an Excel
+# workbook (vm_rightsize_xlsx), and on the report website (report_web_dest).
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential (and an "ACT model key" for
+# vm_rightsize_act); no Limit. docs/VMWARE.md, "The VM right-sizing report".
+#   ansible-playbook playbooks/vm_rightsizing_report.yml
+- name: VM right-sizing report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM right-sizing report
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: rightsize.yml

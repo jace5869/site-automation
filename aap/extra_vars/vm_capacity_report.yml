@@ -38,10 +38,12 @@
 ## The history: vCenter's own daily statistics (cluster CPU and memory, datastore space), kept a
 ## year at statistics level 1. Read this many days; the growth is a straight line over the last
 ## vm_capacity_trend_days, with at least vm_capacity_min_samples daily values.
-# vm_capacity_history_days: 90
+# vm_capacity_history_days: 120
 
-## the growth (straight line) is fitted on this many most recent days
-# vm_capacity_trend_days: 30
+## The growth (straight line) is fitted on this many most recent days. Growth comes in jumps (VMs
+## are deployed in batches): over 30 days one build-out becomes the rate and the runway reads days
+## when it is months; 90 days averages the batches out. 30 reacts faster to a real change of rate.
+# vm_capacity_trend_days: 90
 
 ## fewer daily values than this in those days = 'not enough history' (no trend)
 # vm_capacity_min_samples: 7

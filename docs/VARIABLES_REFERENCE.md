@@ -1127,6 +1127,35 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_inventory_by_folder` | `true` | a table per vCenter and folder; false = one table of every VM (vCenter and folder columns) |
 | `vm_inventory_max_rows` | `2000` | VMs listed in the email and the page at most (2000: about 2.5 MB of email; the workbook always has every VM) |
 | `vm_inventory_xlsx` | `true` | attach every VM as an Excel workbook (.xlsx) to the email |
+| `vm_rightsize_days` | `30` | ---- VM right-sizing report (playbooks/vm_rightsizing_report.yml) ---- vCenter's own statistics only (statistics level 1, vCenter's default, is enough). Suggestions only: nothing is changed. days of history (at most 30: what vCenter keeps of 2-hour averages) |
+| `vm_rightsize_year` | `true` | also each VM's busiest day of the last year (daily averages): month-end and yearly peaks |
+| `vm_rightsize_min_days` | `7` | fewer days of statistics than this = 'Not enough history' (no suggestion) |
+| `vm_rightsize_clusters` | `[]` | only the VMs of these clusters (names; * and ? allowed); [] = every VM |
+| `vm_rightsize_vms` | `[]` | only these VMs (names; * and ? allowed) |
+| `vm_rightsize_exclude` | `[]` | never these VMs (names; * and ? allowed) |
+| `vm_rightsize_cpu_target_pct` | `70` | vCPUs suggested so that the 95th percentile of CPU use would be about this |
+| `vm_rightsize_cpu_high_pct` | `85` | CPU at this or more 95% of the time = too small |
+| `vm_rightsize_ready_warn_pct` | `5` | CPU ready (waiting for a physical CPU, per vCPU) at this or more is said |
+| `vm_rightsize_min_vcpus` | `2` | never fewer vCPUs than this |
+| `vm_rightsize_min_vcpus_windows` | `2` | ... for Windows |
+| `vm_rightsize_cpu_max_cut_pct` | `50` | never suggest more than this % fewer vCPUs at once |
+| `vm_rightsize_mem_headroom_pct` | `100` | memory suggested = active memory plus this % (active memory understates real need) |
+| `vm_rightsize_mem_high_pct` | `90` | active memory at this % or more of what the VM has = too small |
+| `vm_rightsize_min_mem_gb` | `2` | never less memory than this (GB) |
+| `vm_rightsize_min_mem_gb_windows` | `4` | ... for Windows |
+| `vm_rightsize_mem_max_cut_pct` | `50` | never suggest more than this % less memory at once |
+| `vm_rightsize_min_change_pct` | `25` | a smaller memory size is suggested only when it is this % (and 2 GB) smaller or more |
+| `vm_rightsize_taken_mb` | `100` | memory ballooned or swapped by the host at this many MB or more (its peak) is said |
+| `vm_rightsize_disk_warn_pct` | `90` | a guest disk this % used or more (VMware Tools' numbers) is listed |
+| `vm_rightsize_max_rows` | `500` | rows per table in the email and the page (the workbook always has every VM) |
+| `vm_rightsize_xlsx` | `true` | attach every VM with every number as an Excel workbook (.xlsx) to the email |
+| `vm_rightsize_batch` | `10` | VMs per statistics query (vCenter refuses large ones: vpxd.stats.maxQueryMetrics) |
+| `vm_rightsize_workers` | `4` | statistics queries at a time |
+| `vm_rightsize_act` | `false` | GenAI (ACT) reviews the suggestions: needs an "ACT model key" credential (docs/VMWARE.md, "ACT analysis") |
+| `vm_rightsize_act_max_items` | `40` | suggestions ACT reviews: too small first, then too big (the most freed first) |
+| `vm_rightsize_act_batch` | `"{{ site_act_batch \| default(5) }}"` | suggestions per question to ACT (0 = all in one) |
+| `vm_rightsize_act_model_timeout` | `"{{ site_act_model_timeout \| default(600) }}"` | seconds the model may take for its answer |
+| `vm_rightsize_act_check_url` | `true` | first check that the AAP node can reach the model's URL |
 | `vm_snapshot_max_age_days` | `5` | Snapshots at least this many days old: listed apart by the report, deleted by the cleanup. |
 | `vm_snapshot_keep_regex` | `'(?i)keep\|do.?not.?delete'` | Never deleted by the cleanup (the report lists them, with the reason): - a snapshot whose name or description matches this |
 | `vm_snapshot_cleanup_exclude_vms` | `[]` | - a snapshot of these VMs: names, * and ? allowed (e.g. [DC*, VCSA01, AAP01]). The VMs in vmware_protected_vms and the AAP server are never cleaned up either. |
@@ -1238,8 +1267,8 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vmware_cert_csr_without_servicenow` | `false` | Without the ServiceNow API credential no CSR is made (nothing would record it: the next run would make another one). true = make them anyway, and print them in the job output. |
 | `vmware_trust_esxi` | `true` | ---- VMware trust store report (playbooks/vmware_trust_report.yml) ---- vCenter's trusted roots and each ESXi host's trusted CAs; false = vCenter only (the ESXi hosts left out) |
 | `vm_capacity_clusters` | `[]` | ---- vSphere capacity planning (playbooks/vm_capacity_report.yml) ---- only these clusters (names; * and ? allowed); [] = every cluster |
-| `vm_capacity_history_days` | `90` | The history: vCenter's own daily statistics (cluster CPU and memory, datastore space), kept a year at statistics level 1. Read this many days; the growth is a straight line over the last vm_capacity_trend_days, with at least vm_capacity_min_samples daily values. |
-| `vm_capacity_trend_days` | `30` | the growth (straight line) is fitted on this many most recent days |
+| `vm_capacity_history_days` | `120` | The history: vCenter's own daily statistics (cluster CPU and memory, datastore space), kept a year at statistics level 1. Read this many days; the growth is a straight line over the last vm_capacity_trend_days, with at least vm_capacity_min_samples daily values. |
+| `vm_capacity_trend_days` | `90` | The growth (straight line) is fitted on this many most recent days. Growth comes in jumps (VMs are deployed in batches): over 30 days one build-out becomes the rate and the runway reads days when it is months; 90 days averages the batches out. 30 reacts faster to a real change of rate. |
 | `vm_capacity_min_samples` | `7` | fewer daily values than this in those days = 'not enough history' (no trend) |
 | `vm_capacity_events_days` | `30` | VMs added and removed (vCenter keeps events 30 days by default) |
 | `vm_capacity_failover_hosts` | `1` | Plan for this many failed hosts per cluster (N+1); a larger HA admission control failover level wins. |
