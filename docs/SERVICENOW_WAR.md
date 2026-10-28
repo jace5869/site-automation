@@ -4,7 +4,7 @@
 plate in the week - incidents, catalog tasks (SCTASK), changes, change tasks, problem tasks, any task - and sorts it
 into what the week did with it: **completed** (resolved or closed, with the date), **opened**, **still open** at the
 week's end (and for how long), **worked on**. Who had what. One line per task ready to paste into the WAR, the whole
-thing as an Excel workbook on the email, the page on the report website, and - if you ask - a narrative written by
+thing as an Excel workbook on the email (the report website only if you ask: `servicenow_war_web`), and - if you ask - a narrative written by
 ACT (GenAI) from the same tables. It runs on the AAP side with the **ServiceNow API** credential and only reads
 (in Check too).
 
@@ -68,8 +68,9 @@ job stays green.
    # servicenow_war_act: true                       # the narrative (an ACT model key credential)
    ```
    `report_time_zone`, the look of the email and the report website come from `all.yml` as for every report.
-3. **Run it** once by hand: the report is in the job output, in your mailbox with the workbook, and on the report
-   website under the *ServiceNow and AAP* tab. A group name ServiceNow does not know fails the job and says so.
+3. **Run it** once by hand: the report is in the job output and in your mailbox with the workbook. It does not go to
+   the report website unless you set `servicenow_war_web: true` (then under the *ServiceNow and AAP* tab). A group
+   name ServiceNow does not know fails the job and says so.
 4. **Schedule** it weekly: a Friday afternoon run reports the last 7 days (the default, `servicenow_war_period: days`),
    a Monday morning run with `servicenow_war_period: last-week` reports the previous calendar week whole. Add the
    template to the *AAP - report email question* job's run so the launch can add recipients
@@ -93,7 +94,7 @@ never cut at its spaces or dashes, `ABC - Ops - IT - Linux` is one group).
   ```
 - **By hand**: **Launch** → the Variables box, the same two lines.
 
-On the report website each team gets its own folder - `servicenow-weekly-activity-report/abc-ops-it-linux/` - so its
+With `servicenow_war_web: true` (the report on the report website), each team gets its own folder - `servicenow-weekly-activity-report/abc-ops-it-linux/` - so its
 own *latest* page and its own line on the index: one team's run never covers another's
 (`servicenow_war_web_per_team: false` puts every team in one folder). The email and the workbook go to the
 `report_email_to` of that launch.
@@ -116,6 +117,7 @@ A week that starts on another day (Friday to Thursday): `servicenow_war_week_sta
 |---|---|---|
 | `servicenow_war_groups` | `[]` | the assignment groups (exact names): a list, or text - one group, or several on separate lines or separated by `;` or `,` (a survey's or a schedule's answer) |
 | `servicenow_war_users` | `[]` | also the tasks assigned to these people, whatever their group (user names or full names; text as for the groups) |
+| `servicenow_war_web` | false | the report on the report website too (`report_web_dest`); false = emailed only |
 | `servicenow_war_web_per_team` | true | each team's runs in its own folder on the report website (its own latest page and line on the index) |
 | `servicenow_war_tables` | `[incident, sc_task, change_request, change_task, problem_task]` | the tables read; `task` = every kind of task in one read; add `problem`, `sc_req_item`, `sc_request` or your own task tables |
 | `servicenow_war_fields_extra` | `[]` | your own columns, read from every table and put on the workbook (`u_customer`) |

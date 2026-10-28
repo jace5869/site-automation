@@ -2,7 +2,7 @@
 # WEEKLY ACTIVITY REPORT (playbooks/servicenow_war.yml, docs/SERVICENOW_WAR.md): everything a ServiceNow assignment group
 # had on its plate in a week - incidents, catalog tasks, changes, change tasks, problem tasks - what was opened, what was
 # completed and when (the date of closure), what is still open and for how long, who had what; the lines to paste into
-# the WAR; the same as an Excel workbook; emailed and on the report website. From the AAP side with the "ServiceNow
+# the WAR; the same as an Excel workbook; emailed (on the report website only with servicenow_war_web). From the AAP side with the "ServiceNow
 # API" credential (the account needs read on the tables: itil). Read-only, in Check too.
 
 # The assignment group(s), exactly as ServiceNow names them: a list, or text - one name, or several on separate lines
@@ -12,7 +12,10 @@
 servicenow_war_groups: []
 # Also the tasks assigned to these people, whatever their group (user names, or full names). Empty = the groups' tasks.
 servicenow_war_users: []
-# On the report website each team's runs go in their own folder ({template}/<the group, lower case with dashes>/...): its
+# The report website: false (the default) = this report is not published there, whatever report_web_dest says - only
+# emailed (and in the job output and artifact); true = published like the other reports.
+servicenow_war_web: false
+# On the report website (servicenow_war_web: true) each team's runs go in their own folder ({template}/<the group, lower case with dashes>/...): its
 # own latest page and its own line on the index, when one template runs for several teams. false: one folder for all.
 servicenow_war_web_per_team: true
 # The tables read: incident (tickets), sc_task (catalog tasks, SCTASK), change_request (changes), change_task (CTASK),

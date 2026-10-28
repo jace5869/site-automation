@@ -122,10 +122,10 @@ mock
 # ---- one template, several teams ----------------------------------------------------------------------
 mkdir -p "$work/site" "$work/site2"
 run "a team as plain text (a survey's or a schedule's answer): one group, not cut at its spaces and dashes" ok \
-    "{$NOW, \"servicenow_war_groups\": \"ABC - Ops - IT - Linux\", \"report_web_dest\": \"$work/site\"}" \
+    "{$NOW, \"servicenow_war_groups\": \"ABC - Ops - IT - Linux\", \"report_web_dest\": \"$work/site\", \"servicenow_war_web\": true}" \
     'Weekly activity report for ABC - Ops - IT - Linux: 5 completed' '!assignment group ABC is not'
 run "  ... another team on the same template, two groups on separate lines" ok \
-    "{$NOW, \"servicenow_war_groups\": \"Windows Operations\\nLinux Operations\", \"report_web_dest\": \"$work/site\"}" \
+    "{$NOW, \"servicenow_war_groups\": \"Windows Operations\\nLinux Operations\", \"report_web_dest\": \"$work/site\", \"servicenow_war_web\": true}" \
     'Weekly activity report for Windows Operations, Linux Operations: 0 completed, 1 opened'
 latest=$(cd "$work/site" && find . -name latest.html | sort | tr '\n' ' ')
 if [ "$latest" = "./servicenow-weekly-activity-report/abc-ops-it-linux/latest.html ./servicenow-weekly-activity-report/windows-operations-linux-operations/latest.html " ] \
@@ -135,10 +135,16 @@ else
     echo "FAIL - the teams' website folders: $latest"; fails=$((fails + 1))
 fi
 run "  ... servicenow_war_web_per_team false: one folder for every team" ok \
-    "{$NOW, \"servicenow_war_groups\": \"ABC - Ops - IT - Linux\", \"report_web_dest\": \"$work/site2\", \"servicenow_war_web_per_team\": false}" \
+    "{$NOW, \"servicenow_war_groups\": \"ABC - Ops - IT - Linux\", \"report_web_dest\": \"$work/site2\", \"servicenow_war_web\": true, \"servicenow_war_web_per_team\": false}" \
     '5 completed'
 [ -f "$work/site2/servicenow-weekly-activity-report/latest.html" ] && echo "ok   -   ... servicenow-weekly-activity-report/latest.html" \
     || { echo "FAIL - no shared latest page"; fails=$((fails + 1)); }
+
+mkdir -p "$work/site3"
+run "report_web_dest set, servicenow_war_web not: not on the report website" ok \
+    "{$NOW, $GROUP, \"report_web_dest\": \"$work/site3\"}" '5 completed'
+[ -z "$(ls -A "$work/site3")" ] && echo "ok   -   ... nothing written to the website folder" \
+    || { echo "FAIL - the website folder has: $(ls -A "$work/site3")"; fails=$((fails + 1)); }
 
 WAR_ENV="SN_PASSWORD=bad" run "a wrong password" fail "{$NOW, $GROUP}" 'HTTP 401: User Not Authenticated'
 WAR_ENV="SN_HOST=" run "no credential" fail "{$NOW, $GROUP}" 'Attach the "ServiceNow API" credential'

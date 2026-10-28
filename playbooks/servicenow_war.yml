@@ -2,7 +2,7 @@
 # WEEKLY ACTIVITY REPORT (WAR) from ServiceNow - weekly. Everything an assignment group had on its plate in the week:
 # incidents, catalog tasks (SCTASK), changes, change tasks, problem tasks - what was opened, what was completed and when
 # (the date of closure), what is still open and for how long, who had what; the lines to paste into the WAR; ACT's
-# narrative when asked. Emailed with an Excel workbook (report_email_to), on the report website (report_web_dest), as
+# narrative when asked. Emailed with an Excel workbook (report_email_to), on the report website only with servicenow_war_web, as
 # the job artifact servicenow_war. Runs on the AAP side with the "ServiceNow API" credential; read-only, in Check too.
 # Set servicenow_war_groups (the group's exact name). Schedule it weekly: a Friday afternoon (the last 7 days), or a
 # Monday morning with servicenow_war_period: last-week. docs/SERVICENOW_WAR.md

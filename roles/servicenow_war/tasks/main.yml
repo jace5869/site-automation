@@ -1,7 +1,7 @@
 ---
 # WEEKLY ACTIVITY REPORT (playbooks/servicenow_war.yml): the week's tasks of the assignment group read from ServiceNow
 # (site_servicenow_war), the report built (servicenow_war_filters), ACT's narrative when asked, the report printed, emailed
-# with the workbook (report_email_to), published (report_web_dest), kept as artifacts (servicenow_war).
+# with the workbook (report_email_to), published only with servicenow_war_web (report_web_dest), kept as artifacts (servicenow_war).
 
 - name: WAR | connection
   ansible.builtin.set_fact:
@@ -100,27 +100,29 @@
         tables: "{{ _war.tables | default([]) }}"
         sla: "{{ _war.sla | default({}) }}"
 
-- name: WAR | one template for several teams - each team's runs in their own folder on the website (servicenow_war_web_per_team)
+- name: WAR | the report website only with servicenow_war_web; there, each team's runs in their own folder (servicenow_war_web_per_team)
   ansible.builtin.set_fact:
     _war_web: >-
       {%- set page = report_web_page | default('{template}/{date}_{time}_job-{job}.html') -%}
       {%- set latest = report_web_latest | default('{template}/latest.html') -%}
       {%- set per = servicenow_war_web_per_team | bool -%}
-      {{ {'names': (report_web_names | default({})) | combine({'team': (_war_groups + _war_users) | join(';') | servicenow_war_web_folder}),
+      {{ {'dest': (report_web_dest | default('', true) | string) if servicenow_war_web | bool else '',
+          'names': (report_web_names | default({})) | combine({'team': (_war_groups + _war_users) | join(';') | servicenow_war_web_folder}),
           'page': page | replace('{template}', '{template}/{team}') if per else page,
           'latest': latest | replace('{template}', '{template}/{team}') if per else latest} }}
 
-- name: WAR | email it with the workbook, publish it (report_email_to, report_web_dest)
+- name: WAR | email it with the workbook (report_email_to), publish it (servicenow_war_web, report_web_dest)
   ansible.builtin.include_role:
     name: site_email
   vars:
     _report: "{{ _war_doc }}"
     _report_xlsx: "{{ _war | servicenow_war_xlsx(_war_opts) if servicenow_war_xlsx | bool and _war.ok | default(false) | bool else [] }}"
     _report_xlsx_name: "{{ awx_job_template_name | default(tower_job_template_name | default('weekly-activity-report')) }}"
+    report_web_dest: "{{ _war_web.dest }}"
     report_web_names: "{{ _war_web.names }}"
     report_web_page: "{{ _war_web.page }}"
     report_web_latest: "{{ _war_web.latest }}"
-  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or _war_web.dest | length > 0
 
 - name: WAR | ServiceNow read, every group there (servicenow_war_fail)
   ansible.builtin.assert:

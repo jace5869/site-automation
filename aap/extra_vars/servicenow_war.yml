@@ -24,9 +24,14 @@ servicenow_war_groups: [YOUR GROUP NAME]
 ## = the groups' tasks.
 # servicenow_war_users: []
 
-## On the report website each team's runs go in their own folder ({template}/<the group, lower case
-## with dashes>/...): its own latest page and its own line on the index, when one template runs for
-## several teams. false: one folder for all.
+## The report website: false (the default) = this report is not published there, whatever
+## report_web_dest says - only emailed (and in the job output and artifact); true = published like
+## the other reports.
+# servicenow_war_web: false
+
+## On the report website (servicenow_war_web: true) each team's runs go in their own folder
+## ({template}/<the group, lower case with dashes>/...): its own latest page and its own line on the
+## index, when one template runs for several teams. false: one folder for all.
 # servicenow_war_web_per_team: true
 
 ## The tables read: incident (tickets), sc_task (catalog tasks, SCTASK), change_request (changes),
