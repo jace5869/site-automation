@@ -36,6 +36,7 @@ INTERNAL = {
     "ad_lockout_now": "the tests' fixed clock (tests/ad)",
     "ad_report_now": "the tests' fixed clock (tests/ad)",
     "horizon_now": "the tests' fixed clock (tests/horizon)",
+    "servicenow_war_now": "the tests' fixed clock (tests/servicenow/run_war_test.sh)",
 }
 READ = re.compile(r"(?<![\w.'\"\[])([a-z][a-z0-9_]*)\s*\|\s*default\(")
 SETS = [re.compile(p, re.M) for p in (r"^\s*-?\s*([a-z_][a-z0-9_]*)\s*:", r"register:\s*([a-z_]\w*)",

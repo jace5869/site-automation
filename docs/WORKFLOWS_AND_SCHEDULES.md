@@ -850,6 +850,7 @@ as Check).
 | Certificate watch | every day 06:30 | workflow 7 |
 | Database watch | hourly | workflow 8 |
 | ServiceNow health | hourly | template *ServiceNow health*, with an email **notification on failure** |
+| ServiceNow - weekly activity report | weekly: Friday 15:00 (the last 7 days), or Monday 07:00 with `servicenow_war_period: last-week` | template *ServiceNow - weekly activity report* ([SERVICENOW_WAR.md](SERVICENOW_WAR.md)) |
 | Weekly compliance | Monday 07:00 | workflow 2 |
 | Security posture | Wednesday 07:00 | workflow 6 |
 | Patch preview | the Monday before patch night | template *Patch hosts*, **Prompts → Job type `Check`** |

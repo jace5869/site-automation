@@ -1,0 +1,136 @@
+---
+# WEEKLY ACTIVITY REPORT (playbooks/servicenow_war.yml): the week's tasks of the assignment group read from ServiceNow
+# (site_servicenow_war), the report built (servicenow_war_filters), ACT's narrative when asked, the report printed, emailed
+# with the workbook (report_email_to), published (report_web_dest), kept as artifacts (servicenow_war).
+
+- name: WAR | connection
+  ansible.builtin.set_fact:
+    _war_url: >-
+      {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+    _war_groups: "{{ servicenow_war_groups | servicenow_war_name_list }}"
+    _war_users: "{{ servicenow_war_users | servicenow_war_name_list }}"
+    _war_tables: "{{ (servicenow_war_tables | replace(',', ' ')).split() if servicenow_war_tables is string else servicenow_war_tables }}"
+
+- name: WAR | the ServiceNow API credential is attached
+  ansible.builtin.assert:
+    that: _war_url | length > 0
+    fail_msg: Attach the "ServiceNow API" credential (it sets SN_HOST, SN_USERNAME, SN_PASSWORD).
+    quiet: true
+
+- name: WAR | an assignment group (or users) to report on
+  ansible.builtin.assert:
+    that: _war_groups | length > 0 or _war_users | length > 0
+    fail_msg: "Set servicenow_war_groups to the assignment group(s), exactly as ServiceNow names them (or servicenow_war_users)."
+    quiet: true
+
+- name: WAR | read the week's tasks of {{ (_war_groups + _war_users) | join(', ') }} from ServiceNow ({{ _war_tables | join(', ') }})
+  site_servicenow_war:
+    url: "{{ _war_url }}"
+    username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    validate_certs: "{{ servicenow_validate_certs | default(true) | bool }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) | int }}"
+    groups: "{{ _war_groups }}"
+    users: "{{ _war_users }}"
+    tables: "{{ _war_tables }}"
+    fields_extra: "{{ servicenow_war_fields_extra | name_list }}"
+    period: "{{ servicenow_war_period }}"
+    days: "{{ servicenow_war_days | float }}"
+    since: "{{ servicenow_war_since | default('', true) | string }}"
+    until: "{{ servicenow_war_until | default('', true) | string }}"
+    week_start: "{{ servicenow_war_week_start }}"
+    time_zone: "{{ report_time_zone | default('', true) | string }}"
+    max_records: "{{ servicenow_war_max_records | int }}"
+    sla: "{{ servicenow_war_sla | bool }}"
+    sla_warn_percent: "{{ servicenow_war_sla_warn_percent | float }}"
+    now: "{{ servicenow_war_now | default(omit, true) }}"
+  register: _war
+  check_mode: false             # only reads
+
+- name: WAR | the report
+  ansible.builtin.set_fact:
+    _war_opts: >-
+      {{ {'title': site_report_title | default('Weekly activity report'), 'old_days': servicenow_war_old_days | float,
+          'max_rows': servicenow_war_max_rows | int, 'notes_chars': servicenow_war_notes_chars | int,
+          'time_zone': report_time_zone | default('', true) | string, 'act': servicenow_war_act | bool} }}
+
+- name: WAR | the report, built
+  ansible.builtin.set_fact:
+    _war_doc: "{{ _war | servicenow_war_report(_war_opts) }}"
+
+- name: WAR | ACT writes the narrative (servicenow_war_act)
+  when: servicenow_war_act | bool and _war.ok | default(false) | bool
+  block:
+    - name: WAR | ACT reads the week's tables and writes the narrative - evidence mode, ACT runs no command
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: evidence_batches.yml
+        public: true
+      vars:
+        _eb_batches: >-
+          {{ [{'items': [{'id': 'accomplishments'}, {'id': 'in_progress'}, {'id': 'issues'}],
+               'evidence': _war | servicenow_war_act_evidence({'max_items': servicenow_war_act_max_items | int, 'notes_chars': 300}),
+               'task': {'extra': site_act_extra_instructions | default('')} | servicenow_war_act_task}] }}
+        _eb_check_url: "{{ servicenow_war_act_check_url | bool }}"
+        _ea_names: "{{ _war | servicenow_war_names }}"
+        _ea_model_timeout: "{{ servicenow_war_act_model_timeout }}"
+
+    - name: WAR | ACT's version of the WAR at the bottom, after the version from the tables
+      ansible.builtin.set_fact:
+        _war_doc: >-
+          {{ _war_doc | combine({'sections': _war_doc.sections + (_ea_raw | default('')
+                                   | servicenow_war_act_section({'ran': _ea_ran | default(false) | bool, 'reason': _ea_reason | default(''),
+                                                                 'provider': site_act_provider | default(''), 'model': _ea_model | default('')}))}) }}
+
+- name: WAR | {{ _war_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_war_doc | report_text).splitlines() }}"
+
+- name: WAR | the week as job artifacts (servicenow_war)
+  ansible.builtin.set_stats:
+    data:
+      servicenow_war:
+        window: "{{ _war.window | default({}) }}"
+        groups: "{{ _war.groups | default([]) }}"
+        counts: "{{ _war.counts | default({}) }}"
+        items: "{{ _war['items'] | default([]) }}"
+        lines: "{{ _war | servicenow_war_lines(_war_opts) }}"
+        tables: "{{ _war.tables | default([]) }}"
+        sla: "{{ _war.sla | default({}) }}"
+
+- name: WAR | one template for several teams - each team's runs in their own folder on the website (servicenow_war_web_per_team)
+  ansible.builtin.set_fact:
+    _war_web: >-
+      {%- set page = report_web_page | default('{template}/{date}_{time}_job-{job}.html') -%}
+      {%- set latest = report_web_latest | default('{template}/latest.html') -%}
+      {%- set per = servicenow_war_web_per_team | bool -%}
+      {{ {'names': (report_web_names | default({})) | combine({'team': (_war_groups + _war_users) | join(';') | servicenow_war_web_folder}),
+          'page': page | replace('{template}', '{template}/{team}') if per else page,
+          'latest': latest | replace('{template}', '{template}/{team}') if per else latest} }}
+
+- name: WAR | email it with the workbook, publish it (report_email_to, report_web_dest)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _war_doc }}"
+    _report_xlsx: "{{ _war | servicenow_war_xlsx(_war_opts) if servicenow_war_xlsx | bool and _war.ok | default(false) | bool else [] }}"
+    _report_xlsx_name: "{{ awx_job_template_name | default(tower_job_template_name | default('weekly-activity-report')) }}"
+    report_web_names: "{{ _war_web.names }}"
+    report_web_page: "{{ _war_web.page }}"
+    report_web_latest: "{{ _war_web.latest }}"
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+
+- name: WAR | ServiceNow read, every group there (servicenow_war_fail)
+  ansible.builtin.assert:
+    that:
+      - _war.ok | default(false) | bool
+      - _war.groups | default([]) | selectattr('found', 'equalto', false) | list | length == 0
+    fail_msg: >-
+      {{ _war.error | default('') or ('assignment group(s) not in ServiceNow: '
+          ~ (_war.groups | default([]) | selectattr('found', 'equalto', false) | map(attribute='name') | join(', '))
+          ~ ' - the exact name, as the group list shows it') }}
+      - servicenow_war_fail: false makes this a report only.
+    quiet: true
+  when: servicenow_war_fail | bool

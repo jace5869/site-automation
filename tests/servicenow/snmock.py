@@ -4,7 +4,7 @@
 Accounts (basic auth):  api / goodpw  = itil (read, create, update)
                         ro  / goodpw  = read only (create/update -> 403 ACL)
 Tables: incident, sc_task, change_request, change_task (each numbered by its prefix; task = all of them,
-with sys_class_name), sys_user_group (Linux Operations), sys_user (svc_aap), ecc_agent.
+with sys_class_name), sys_user_group (Linux Operations, ABC - Ops - IT - Linux), sys_user (svc_aap), ecc_agent.
 Journal fields (comments, work_notes): what is POSTed or PATCHed is kept as entries; with
 sysparm_display_value=true they come back as ServiceNow shows them - newest first, each under a
 header "<date time> - <user> (Additional comments)" / "(Work notes)"; without it, empty.
@@ -39,6 +39,12 @@ MID Servers (the ServiceNow health check): SNMOCK_MID=<file.json> {"agents": [ec
 "issues": [ecc_agent_issue rows]}; without it ecc_agent is empty. GET /api/now/stats/ecc_queue (grouped by agent) answers
 the queue counts; SNMOCK_MID_NO_QUEUE=1: 403 (an account that cannot read ecc_queue); SNMOCK_MID_NO_ISSUES=1: ecc_agent_issue
 is an unknown table (400, a release without it).
+The weekly activity report: SNMOCK_SEED=<file.json> (records to start with, each with its _table and dates), problem_task and
+problem tables, sysparm_display_value=all ({"value", "display_value"} per field), sysparm_offset, the query operators <=, <, >,
+ISEMPTY, ISNOTEMPTY, !=, aINb,c on a reference (by name or sys_id) and ^OR (joins the condition before it); sys_user_group
+nameINa,b and sys_user user_nameINa,b^ORnameINa,b; SNMOCK_NO_GROUPS=1: sys_user_group answers 403; SNMOCK_NO_TABLES=a,b:
+reading those tables answers 403. task_sla: the seed's records with _table task_sla (task = the task's sys_id, sla = its name,
+stage, has_breached, business_percentage, planned_end_time ...), read with taskINa,b and stage!=cancelled; not part of task.
 Usage: snmock.py PORT   (requests appended to $SNMOCK_LOG as JSON lines)
 """
 import base64
@@ -60,9 +66,11 @@ def mid_data():
         return json.load(fh)
 
 
-GROUPS = [{"sys_id": "g1", "name": "Linux Operations", "active": "true"}]
+GROUPS = [{"sys_id": "g1", "name": "Linux Operations", "active": "true"}, {"sys_id": "g2", "name": "Windows Operations", "active": "true"},
+          {"sys_id": "g3", "name": "ABC - Ops - IT - Linux", "active": "true"}]     # a name with " - " in it, as real ones have
 SYSUSERS = [{"sys_id": "u1", "user_name": "svc_aap", "name": "AAP Service", "active": "true"},
-            {"sys_id": "u2", "user_name": "jdoe", "name": "Jane Doe", "active": "true"}]
+            {"sys_id": "u2", "user_name": "jdoe", "name": "Jane Doe", "active": "true"},
+            {"sys_id": "u3", "user_name": "bsmith", "name": "Bob Smith", "active": "true"}]
 LOCATIONS = [{"sys_id": "loc1" + "0" * 28, "name": "Building 100"}]
 CATALOG_ID = "c0ffee" + "0" * 26
 CATALOG = {CATALOG_ID: {"sys_id": CATALOG_ID, "name": "DoD PKI Certificate Request",
@@ -88,7 +96,23 @@ STATE_LABEL = {"1": "New", "2": "In Progress", "6": "Resolved", "7": "Closed"}
 TASK_LABEL = {"1": "Open", "2": "Work in Progress", "3": "Closed Complete", "4": "Closed Incomplete", "7": "Closed Skipped",
               "-5": "New", "-4": "Assess", "-3": "Authorize", "-2": "Scheduled", "-1": "Implement", "0": "Review"}
 PREFIX = {"incident": "INC", "sc_task": "SCTASK", "change_request": "CHG", "change_task": "CTASK", "sc_request": "REQ",
-          "sc_req_item": "RITM"}
+          "sc_req_item": "RITM", "problem_task": "PTASK", "problem": "PRB"}
+
+
+def seed():
+    """SNMOCK_SEED=<file.json>: records to start with (the weekly activity report's week), each with its _table, number,
+    sys_id, state and dates (sys_updated_on ...), as a JSON list - kept in the order given."""
+    path = os.environ.get("SNMOCK_SEED", "")
+    if not path:
+        return
+    with open(path) as fh:
+        for rec in json.load(fh):
+            rec = dict(rec)
+            rec.setdefault("_table", "incident")
+            rec.setdefault("sys_id", uuid.uuid4().hex)
+            rec.setdefault("state", "1")
+            rec.setdefault("work_notes_list", [])
+            INCIDENTS[rec["sys_id"]] = rec
 APPROVAL_LABEL = {"approved": "Approved", "requested": "Requested", "not requested": "Not Yet Requested", "rejected": "Rejected"}
 
 
@@ -101,54 +125,80 @@ def state_label(rec):
     return (STATE_LABEL if rec.get("_table", "incident") == "incident" else TASK_LABEL).get(rec.get("state"), rec.get("state"))
 
 
-def matches(rec, query):
-    """The encoded-query subset the playbooks use, joined by ^: a=b, aSTARTSWITHb and aLIKEb (any case), aINb,c,
-    active=true, a.name=b (a reference by its name: the mock keeps names), ref.field=b (parent /
-    change_request: that field of the ticket the reference holds), a>=javascript:gs.daysAgoStart(N) or
-    a>=YYYY-MM-DD HH:MM:SS (a date), ORDERBY... (the records are kept oldest first; ORDERBYDESC turns the
-    result round, in the handler)."""
-    for cond in [c for c in query.split("^") if c]:
-        if cond.startswith("ORDERBY"):
-            continue
-        if ">=" in cond:
-            field, _, value = cond.partition(">=")
+def _same(rec_value, value):
+    """A field's value is the value asked for - as it is, or the value is the sys_id of what the record names (the mock
+    keeps a group's name, a user's name and a ticket's number in its reference fields)."""
+    rv = str(rec_value or "")
+    if rv == value:
+        return True
+    if any(g["sys_id"] == value and g["name"] == rv for g in GROUPS):
+        return True
+    if any(u["sys_id"] == value and rv in (u["user_name"], u["name"]) for u in SYSUSERS):
+        return True
+    ref = next((x for x in INCIDENTS.values() if rv and x.get("number") == rv), {})
+    return bool(value) and ref.get("sys_id") == value
+
+
+def _cond(rec, cond):
+    """One condition of an encoded query (see matches)."""
+    if cond.startswith("ORDERBY"):
+        return True
+    if cond.endswith("ISEMPTY"):
+        return not str(rec.get(cond[:-7], "") or "")
+    if cond.endswith("ISNOTEMPTY"):
+        return bool(str(rec.get(cond[:-10], "") or ""))
+    for op in (">=", "<=", ">", "<"):
+        if op in cond and not re.search(r"(LIKE|STARTSWITH|IN|!=)", cond):
+            field, _, value = cond.partition(op)
             m = re.match(r"javascript:gs\.daysAgoStart\((\d+)\)$", value)
             if m:
                 value = (datetime.datetime.utcnow() - datetime.timedelta(days=int(m.group(1)))).strftime("%Y-%m-%d 00:00:00")
-            if str(rec.get(field, "")) < value:
+            have = str(rec.get(field, "") or "")
+            if not have:
                 return False
-            continue
-        if "LIKE" in cond and "=" not in cond.partition("LIKE")[0]:
-            field, _, value = cond.partition("LIKE")
-            if value.lower() not in str(rec.get(field, "")).lower():
-                return False
-            continue
-        if "STARTSWITH" in cond:
-            field, _, value = cond.partition("STARTSWITH")
-            if not str(rec.get(field, "")).lower().startswith(value.lower()):
-                return False
-            continue
-        if "IN" in cond and "=" not in cond:
-            field, _, value = cond.partition("IN")
-            if str(rec.get(field, "")) not in value.split(","):
-                return False
-            continue
-        field, _, value = cond.partition("=")
+            return {">=": have >= value, "<=": have <= value, ">": have > value, "<": have < value}[op]
+    if "LIKE" in cond and "=" not in cond.partition("LIKE")[0]:
+        field, _, value = cond.partition("LIKE")
+        return value.lower() in str(rec.get(field, "")).lower()
+    if "STARTSWITH" in cond:
+        field, _, value = cond.partition("STARTSWITH")
+        return str(rec.get(field, "")).lower().startswith(value.lower())
+    if "IN" in cond and "=" not in cond:
+        field, _, value = cond.partition("IN")
         field = field[:-5] if field.endswith(".name") else field
-        if "." in field:
-            ref, _, sub = field.partition(".")
-            target = next((x for x in INCIDENTS.values() if rec.get(ref) and x.get("number") == rec.get(ref)), {})
-            if str(target.get(sub, "")) != value:
-                return False
-        elif field == "active":
-            if (not closed(rec)) != (value == "true"):
-                return False
-        elif str(rec.get(field, "")) != value:
-            # a reference compared with a sys_id (change_request=<sys_id>): the mock keeps the number
-            ref = next((x for x in INCIDENTS.values() if rec.get(field) and x.get("number") == rec.get(field)), {})
-            if not (len(value) == 32 and ref.get("sys_id") == value):
-                return False
-    return True
+        return any(_same(rec.get(field, ""), v) for v in value.split(","))
+    if "!=" in cond:
+        field, _, value = cond.partition("!=")
+        return not _same(rec.get(field, ""), value)
+    field, _, value = cond.partition("=")
+    field = field[:-5] if field.endswith(".name") else field
+    if "." in field:
+        ref, _, sub = field.partition(".")
+        target = next((x for x in INCIDENTS.values() if rec.get(ref) and x.get("number") == rec.get(ref)), {})
+        return str(target.get(sub, "")) == value
+    if field == "active":
+        return (not closed(rec)) == (value == "true")
+    return _same(rec.get(field, ""), value)
+
+
+def matches(rec, query):
+    """The encoded-query subset the playbooks use, joined by ^: a=b, a!=b, aSTARTSWITHb and aLIKEb (any case), aINb,c
+    (a reference also by the sys_id of what it names), active=true, a.name=b / a.nameINb,c (a reference by its name: the
+    mock keeps names), ref.field=b (parent / change_request: that field of the ticket the reference holds),
+    a>=javascript:gs.daysAgoStart(N), a>=, a<=, a>, a<YYYY-MM-DD HH:MM:SS (a date; an empty date never compares),
+    aISEMPTY, aISNOTEMPTY, ORDERBY... (the records are kept oldest first; ORDERBYDESC turns the result round, in the
+    handler). ^OR joins a condition to the one before it, as ServiceNow does: a^ORb^c = (a or b) and c."""
+    groups, cur = [], []
+    for cond in [c for c in query.split("^") if c]:
+        if cond.startswith("OR") and not cond.startswith("ORDERBY"):
+            cur.append(cond[2:])
+        else:
+            if cur:
+                groups.append(cur)
+            cur = [cond]
+    if cur:
+        groups.append(cur)
+    return all(any(_cond(rec, c) for c in g) for g in groups)
 
 
 CLOCK = [0]
@@ -164,6 +214,28 @@ def journal_add(rec, body, user):
 
 
 REFS = ("assignment_group", "location", "caller_id", "parent", "change_request")
+
+
+def show_all(rec):
+    """A record with sysparm_display_value=all: every field as {"value", "display_value"} - a state's label, a
+    reference's name (its sys_id as the value when the mock knows it), the class's label."""
+    plain = show(rec, False, False)
+    shown = show(rec, True, False)
+    out = {}
+    for k, v in plain.items():
+        value = v
+        if k == "assignment_group":
+            value = next((g["sys_id"] for g in GROUPS if g["name"] == v), v)
+        elif k in ("assigned_to", "opened_by", "caller_id", "resolved_by"):
+            value = next((u["sys_id"] for u in SYSUSERS if v in (u["user_name"], u["name"])), v)
+        display = shown.get(k, v)
+        if k in ("assigned_to", "opened_by", "caller_id", "resolved_by"):
+            display = next((u["name"] for u in SYSUSERS if v in (u["user_name"], u["name"])), v)
+        if k == "sys_class_name":
+            display = {"incident": "Incident", "sc_task": "Catalog Task", "change_request": "Change Request", "change_task": "Change Task",
+                       "problem_task": "Problem Task", "problem": "Problem", "sc_req_item": "Requested Item", "sc_request": "Request"}.get(v, v)
+        out[k] = {"value": value, "display_value": display}
+    return out
 
 
 def show(rec, disp, links=True):
@@ -268,10 +340,19 @@ class H(BaseHTTPRequestHandler):
         sys_id = parts[4] if len(parts) > 4 else None
         name, itil = user
         if table == "sys_user_group":
-            want = q.get("sysparm_query", "").partition("=")[2]
+            if os.environ.get("SNMOCK_NO_GROUPS") == "1":
+                return fail("Operation Failed", "ACL Exception: no read access to sys_user_group", 403)
+            query = q.get("sysparm_query", "")
+            if query.startswith("nameIN"):               # nameINa,b (the weekly activity report)
+                want = query[6:].split(",")
+                return 200, {"result": [g for g in GROUPS if g["name"] in want]}
+            want = query.partition("=")[2]
             return 200, {"result": [g for g in GROUPS if g["name"] == want]}
         if table == "sys_user":
             query = q.get("sysparm_query", "")
+            if query.startswith("user_nameIN"):          # user_nameINa,b^ORnameINa,b
+                want = query.partition("^OR")[0][11:].split(",")
+                return 200, {"result": [u for u in SYSUSERS if u["user_name"] in want or u["name"] in want]}
             if "^OR" in query:                          # user_name=x^ORname=x
                 want = [c.partition("=")[2] for c in query.split("^OR")]
                 return 200, {"result": [u for u in SYSUSERS if u["user_name"] == want[0] or u["name"] == want[1]]}
@@ -286,20 +367,35 @@ class H(BaseHTTPRequestHandler):
             if os.environ.get("SNMOCK_MID_NO_ISSUES") == "1":
                 return 400, {"error": {"message": "Invalid table ecc_agent_issue"}}
             return 200, {"result": mid_data().get("issues", [])}
+        if table in os.environ.get("SNMOCK_NO_TABLES", "").split(",") and method == "GET":
+            return fail("Operation Failed", "ACL Exception: no read access to " + table, 403)
+        if table == "task_sla" and method == "GET" and not sys_id:
+            rows = [i for i in INCIDENTS.values() if i.get("_table") == "task_sla" and matches(i, q.get("sysparm_query", ""))]
+            num = dict((i["sys_id"], i.get("number", "")) for i in INCIDENTS.values())
+            shown = [dict((k, {"value": v, "display_value": num.get(v, v) if k == "task" else v}) for k, v in i.items() if not k.startswith("_"))
+                     for i in rows]
+            return 200, {"result": [pick(x, q.get("sysparm_fields")) for x in shown]}
         if table == "task" and method == "GET" and not sys_id:
             # every ticket is a task: the parent table, with sys_class_name naming the real one
             if os.environ.get("SNMOCK_NO_TASK") == "1":
                 return fail("Operation Failed", "ACL Exception: no read access to task", 403)
-            rows = [i for i in INCIDENTS.values() if matches(i, q.get("sysparm_query", ""))]
-            rows = rows[:int(q.get("sysparm_limit", "10000"))]
-            return 200, {"result": [pick(dict(i, sys_class_name=i.get("_table", "incident")), q.get("sysparm_fields")) for i in rows]}
+            rows = [dict(i, sys_class_name=i.get("_table", "incident")) for i in INCIDENTS.values()
+                    if i.get("_table") != "task_sla" and matches(i, q.get("sysparm_query", ""))]
+            offset = int(q.get("sysparm_offset", "0"))
+            rows = rows[offset:offset + int(q.get("sysparm_limit", "10000"))]
+            if q.get("sysparm_display_value") == "all":
+                return 200, {"result": [pick(show_all(i), q.get("sysparm_fields")) for i in rows]}
+            return 200, {"result": [pick(i, q.get("sysparm_fields")) for i in rows]}
         if table not in PREFIX:
             return 400, {"error": {"message": "Invalid table " + table}}
         if method == "GET" and not sys_id:
             rows = [i for i in INCIDENTS.values() if i.get("_table", "incident") == table and matches(i, q.get("sysparm_query", ""))]
             if "ORDERBYDESC" in q.get("sysparm_query", ""):
                 rows.reverse()                                  # newest first
-            rows = rows[:int(q.get("sysparm_limit", "10000"))]
+            offset = int(q.get("sysparm_offset", "0"))
+            rows = rows[offset:offset + int(q.get("sysparm_limit", "10000"))]
+            if q.get("sysparm_display_value") == "all":
+                return 200, {"result": [pick(show_all(i), q.get("sysparm_fields")) for i in rows]}
             disp = q.get("sysparm_display_value") == "true"
             links = q.get("sysparm_exclude_reference_link") != "true"
             return 200, {"result": [pick(show(i, disp, links), q.get("sysparm_fields")) for i in rows]}
@@ -420,4 +516,5 @@ class H(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    seed()
     ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()

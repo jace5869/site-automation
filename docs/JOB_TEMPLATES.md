@@ -154,6 +154,7 @@ credential ([TENABLE.md](TENABLE.md#step-3-the-job-template)).
 | ServiceNow - catalog test | `playbooks/servicenow_catalog_test.yml` | Setup or test | [CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md#step-3---the-catalog-test) |
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | Workflow step | [SETUP_AAP.md](SETUP_AAP.md#servicenow-tickets), [RUNBOOKS.md](RUNBOOKS.md#servicenow-tickets-playbooksservicenow_ticketsyml) |
 | ServiceNow health | `playbooks/servicenow_health.yml` | Watch | [SETUP_AAP.md](SETUP_AAP.md#servicenow-health) |
+| ServiceNow - weekly activity report | `playbooks/servicenow_war.yml` | Report | [SERVICENOW_WAR.md](SERVICENOW_WAR.md#step-2-the-job-template) |
 | AAP - report email question | `playbooks/aap_email_question.yml` | Setup or test | [EMAIL_REPORTS.md](EMAIL_REPORTS.md#also-email-the-report-to-asked-at-launch) |
 | AAP - set execution environment | `playbooks/aap_ee.yml` | Setup or test | [SETUP_AAP.md](SETUP_AAP.md#aap---set-execution-environment), [EXECUTION_ENVIRONMENT.md](EXECUTION_ENVIRONMENT.md#step-3-use-it) |
 | Report website - copy | `playbooks/report_web_copy.yml` | Watch | [WEB_REPORTS.md](WEB_REPORTS.md#the-copy-job-report-templates-in-any-execution-environment) |

@@ -78,7 +78,7 @@ For each file in `aap/credential_types/` that you need now:
 
 | File | Name | Needed for |
 |---|---|---|
-| `servicenow_api.yml` | ServiceNow API | tickets, ServiceNow health (step 10) |
+| `servicenow_api.yml` | ServiceNow API | tickets, ServiceNow health (step 10), the weekly activity report ([SERVICENOW_WAR.md](SERVICENOW_WAR.md)) |
 | `mariadb_monitor.yml` | MariaDB monitor | the MariaDB check on a containerized database (root login refused there); optional on host installs |
 | `keystore_password.yml` | Keystore password | optional: certs check on a PKCS12 keystore |
 | `stigman_api.yml` | STIG Manager API | optional: POA&M cross-check with STIG Manager; the STIG drift report's checklist comparison |

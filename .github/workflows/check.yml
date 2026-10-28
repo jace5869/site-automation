@@ -62,6 +62,7 @@ jobs:
           python tests/test_cert_install.py
           python tests/test_horizon.py
           python tests/test_tenable_scan.py
+          python tests/test_servicenow_war.py
           python tests/test_aap_survey.py
           python tests/test_net_config.py
           python tests/test_trust.py
@@ -199,6 +200,10 @@ jobs:
         run: |
           bash tests/servicenow/run_servicenow_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_servicenow_test.sh
+      - name: ServiceNow weekly activity report against a fake ServiceNow with a week of records (current ansible-core and 2.16)
+        run: |
+          bash tests/servicenow/run_war_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_war_test.sh
       - name: Certificate report finding TLS ports and keystores by itself (in a private namespace; skips where unshare is not allowed)
         run: |
           bash tests/certs/run_certs_test.sh

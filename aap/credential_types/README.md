@@ -13,7 +13,7 @@ into **Injector configuration**. Then create one credential of each type per env
 | `act_model_key.yml` | ACT model key | every ACT playbook, and any runbook run with `use_act=true` (GenAI.mil and Ask Sage keys) |
 | `act_genai_beta_key.yml` | ACT GenAI beta key | the same, with `site_act_provider: genai-beta` |
 | `teams_webhook.yml` | Teams webhook | every playbook's Teams report |
-| `servicenow_api.yml` | ServiceNow API | `servicenow_tickets.yml`, `servicenow_health.yml`, `servicenow_test_ticket.yml` |
+| `servicenow_api.yml` | ServiceNow API | `servicenow_tickets.yml`, `servicenow_health.yml`, `servicenow_test_ticket.yml`, `servicenow_war.yml` (the weekly activity report) |
 | `mariadb_monitor.yml` | MariaDB monitor | `database_health.yml`, `health_check.yml` and `troubleshoot.yml` (the MariaDB / MySQL check) - needed for a database in a container and usually for MySQL; optional for MariaDB on the host (root via socket). Account and grants: `docs/MARIADB.md` |
 | `stigman_api.yml` | STIG Manager API | `poam_status.yml` STIG Manager cross-check - optional |
 | `keystore_password.yml` | Keystore password | `health_check.yml` / `cert_report.yml` for a PKCS12 keystore - optional |

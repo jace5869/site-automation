@@ -151,6 +151,12 @@ cert_renew_catalog_item: YOUR PKI ITEM           # its name exactly as the catal
 ## The MID Server hosts: a group servicenow_mid_hosts in the Windows inventory this template runs with
 # servicenow_mid_expected: [MID01, MID02]          # these must be in the instance's MID Server list
 """),
+    "servicenow_war.yml": ("ServiceNow - weekly activity report", "ServiceNow API (ACT model key: optional)", "", """\
+## The assignment group(s), exactly as ServiceNow names them; the week: the last 7 days (a Friday run), or last-week (a Monday run)
+servicenow_war_groups: [YOUR GROUP NAME]
+# servicenow_war_period: last-week            # days (the last servicenow_war_days), last-week, this-week, dates (servicenow_war_since/_until)
+# servicenow_war_act: true                    # ACT writes the narrative (an ACT model key credential on the template)
+"""),
     "servicenow_test_ticket.yml": ("ServiceNow - test ticket", "ServiceNow API", "", """\
 servicenow_assignment_group: YOUR GROUP NAME   # exactly as in ServiceNow
 # servicenow_test_resolve: false               # leave the test ticket open to look at
