@@ -229,10 +229,14 @@ class Act(unittest.TestCase):
                   "by_id": {"P1": {"recommendation": "Agree: 12 vCPUs.", "reasoning": "90%.", "confidence": 85},
                             "P2": {"recommendation": "Adjust: keep 24 GB, it is a cache.", "reasoning": "x", "confidence": 55}}}
         secs = f.vm_rightsize_act_section(items, sized, parsed, {"ran": True})
-        self.assertEqual([s["title"] for s in secs], ["GenAI (ACT): what to change first", "ACT's review of each suggestion"])
-        self.assertIn("1 of 2 agreed", secs[1]["text"])
-        self.assertEqual(secs[1]["rows"][1][3], "vCPUs 8 → 4; memory 32 → 16 GB")
-        self.assertEqual([c[4] for c in secs[1]["cell_status"]], ["ok", "warning"])
+        self.assertEqual([s["title"] for s in secs], ["ACT's review of each suggestion", "GenAI (ACT): what to change first"])
+        self.assertIn("1 of 2 agreed", secs[0]["text"])
+        self.assertEqual(secs[0]["rows"][1][3], "vCPUs 8 → 4; memory 32 → 16 GB")
+        self.assertEqual([c[4] for c in secs[0]["cell_status"]], ["ok", "warning"])
+        self.assertEqual(secs[1]["lines"], ["Shrink the web tier first."])
+        # asked in batches: a line per batch, not one paragraph
+        parsed["overall_lines"] = ["P1: Shrink the web tier first.", "P2: Then the cache."]
+        self.assertEqual(f.vm_rightsize_act_section(items, sized, parsed, {"ran": True})[1]["lines"], parsed["overall_lines"])
         self.assertEqual(f.vm_rightsize_act_section(items, sized, {}, {"ran": False, "reason": "no key"})[0]["lines"],
                          ["ACT did not run: no key"])
 

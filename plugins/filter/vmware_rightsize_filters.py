@@ -408,7 +408,7 @@ def vm_rightsize_act_task(items, opts=None):
         "",
         "End your answer with exactly one JSON object between a line BEGIN_ACT_ANALYSIS and a line END_ACT_ANALYSIS, nothing else between them:",
         "BEGIN_ACT_ANALYSIS",
-        '{"overall": "three or four sentences: patterns you see, and which changes are the safest to make first",',
+        '{"overall": "one or two short sentences: the safest change to make first (the details belong in the items)",',
         ' "items": [{"id": "P1", "recommendation": "Agree: ...", "reasoning": "...", "confidence": 75}]}',
         "END_ACT_ANALYSIS",
         "Include every id. Use plain text inside the JSON strings (no markdown).",
@@ -438,15 +438,16 @@ def vm_rightsize_act_section(items, sized, parsed=None, opts=None):
                      ("%d%%" % c) if c is not None else ""])
         cells.append(["", "", "", "", "ok" if ok else ("warning" if rec else ""), "",
                       "" if c is None else ("ok" if c >= 80 else ("warning" if c >= 50 else "critical"))])
-    out = []
-    if pa.get("overall"):
-        out.append({"title": "GenAI (ACT): what to change first", "lines": [pa["overall"]]})
-    out.append({"title": "ACT's review of each suggestion",
-                "text": "ACT (an AI assistant) read the same numbers and reviewed the job's suggestion: %d of %d agreed. Where it "
-                        "adjusts one, read its reasoning; the job's own math is in the tables below. Confidence is ACT's own (green "
-                        "80+, amber 50-79, red under 50)." % (agree, len(items or [])),
-                "columns": ["#", "VM", "Job says", "Job's size", "ACT's recommendation", "Reasoning", "Confidence"],
-                "rows": rows, "cell_status": cells})
+    out = [{"title": "ACT's review of each suggestion",
+            "text": "ACT (an AI assistant) read the same numbers and reviewed the job's suggestion: %d of %d agreed. Where it "
+                    "adjusts one, read its reasoning; the job's own math is in the tables above. Confidence is ACT's own (green "
+                    "80+, amber 50-79, red under 50)." % (agree, len(items or [])),
+            "columns": ["#", "VM", "Job says", "Job's size", "ACT's recommendation", "Reasoning", "Confidence"],
+            "rows": rows, "cell_status": cells}]
+    # asked in batches: a line per batch, each its own sentences on a line - not one paragraph
+    lines = [x for x in (pa.get("overall_lines") or [pa.get("overall")]) if x]
+    if lines:
+        out.append({"title": "GenAI (ACT): what to change first", "lines": lines})
     return out
 
 

@@ -719,7 +719,7 @@ def vm_capacity_act_section(items, parsed=None, opts=None):
                          it["status"] if it["status"] in ("critical", "warning") else ""))
     out = []
     if pa.get("overall"):
-        out.append({"title": "GenAI (ACT): what to do first", "lines": [pa["overall"]]})
+        out.append({"title": "GenAI (ACT): what to do first", "lines": pa.get("overall_lines") or [pa["overall"]]})  # a line per batch
     out.append(_section("Math vs GenAI: runway estimates side by side",
                         "Two estimates of when each item needs action. Math: the job's straight line through vCenter's daily statistics "
                         "(the same as in the tables above). GenAI: ACT (an AI assistant) read those numbers and made its own estimate, with "

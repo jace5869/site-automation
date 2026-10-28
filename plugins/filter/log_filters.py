@@ -583,7 +583,8 @@ def log_report(data, parsed=None, opts=None):
         sections.append({"title": "Why ACT did not run", "status": "critical",
                          "lines": [o.get("reason") or "unknown", "The patterns are listed below without an analysis."]})
     elif with_act and pa.get("overall"):
-        sections.append({"title": "What to do first", "status": LEVEL_STATUS.get(ps[0]["severity"], ""), "lines": [pa["overall"]]})
+        sections.append({"title": "What to do first", "status": LEVEL_STATUS.get(ps[0]["severity"], ""),
+                         "lines": pa.get("overall_lines") or [pa["overall"]]})     # asked in batches: a line per batch
     if with_act:
         rows, rs, cs = [], [], []
         for p in ps:

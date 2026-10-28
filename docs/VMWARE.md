@@ -279,8 +279,9 @@ hot add is on (the report says so).
 **ACT's review** (`vm_rightsize_act: true`, an ACT model key credential on the template, as for the capacity
 planning): ACT reads the same numbers and the job's suggestion for each VM to change (too small first, then the most
 freed, at most `vm_rightsize_act_max_items`) and answers *Agree* or *Adjust* with its own size, its reasoning and a
-confidence; it often knows that a name or guest OS means a database or Java and keeps more memory. Its review is at
-the top of the email; the job's own math stays below it. Names are masked before anything reaches the model.
+confidence; it often knows that a name or guest OS means a database or Java and keeps more memory. Its review comes
+after the job's own tables, as a table with a line per VM, and then ACT's short summary (a line per batch it was asked
+in). Names are masked before anything reaches the model.
 
 Set it up: a template *VM - right-sizing report*, playbook `playbooks/vm_rightsizing_report.yml`, the VMware vCenter
 credential, no Limit; `report_email_to` on its Variables; a schedule, monthly. Its settings, to change on the

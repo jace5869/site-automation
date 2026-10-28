@@ -79,7 +79,7 @@
   ansible.builtin.set_fact:
     _vm_rs_doc: >-
       {%- set d = _vm_rs_read | vm_rightsize_doc(_vm_rs, _vm_rs_opts) -%}
-      {{ d | combine({'sections': (_vm_rs_act_sections | default([])) + d.sections}) }}
+      {{ d | combine({'sections': d.sections[:-1] + (_vm_rs_act_sections | default([])) + d.sections[-1:]}) }}
 
 - name: VM right-sizing report
   ansible.builtin.include_tasks: report.yml
@@ -91,9 +91,9 @@
       {{ [_vm_rs_doc.subtitle]
          + (_vm_rs_doc.summary | map(attribute='label') | zip(_vm_rs_doc.summary | map(attribute='value'))
             | map('join', ': ') | list) + _vm_rs_read.notes
+         + (_vm_rs | vm_rightsize_lines)
          + (_vm_rs_act_sections | default([]) | selectattr('lines', 'defined') | map(attribute='lines') | flatten
-            | map('regex_replace', '^', 'ACT: ') | list)
-         + (_vm_rs | vm_rightsize_lines) }}
+            | map('regex_replace', '^', 'ACT: ') | list) }}
     _vm_report_xlsx: "{{ _vm_rs | vm_rightsize_xlsx(_vm_rs_opts) if vm_rightsize_xlsx | bool else [] }}"
 
 - name: VMware | the suggestions as job artifacts (vm_rightsize)

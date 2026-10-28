@@ -641,7 +641,8 @@ def _ids_text(ids):
 def act_batches_merge(batches):
     """The answers of an analysis asked in batches ([{ids, ran, parsed: act_analysis_parse, reason}]) -> one
     act_analysis_parse result: every batch's analyses and overall lines; parsed when any batch's answer was read.
-    A batch that failed or whose answer could not be read is named in the overall lines (one batch: as it was)."""
+    A batch that failed or whose answer could not be read is named in the overall lines (one batch: as it was).
+    overall_lines: the same, a line per batch, for a report that lists them rather than one paragraph."""
     bs = batches or []
     if len(bs) == 1:
         return bs[0].get("parsed") or {"parsed": False, "overall": "", "by_id": {}, "error": "ACT gave no answer"}
@@ -657,7 +658,8 @@ def act_batches_merge(batches):
             errors.append("%s: ACT's answer could not be read (%s)." % (_ids_text(b.get("ids")), pa.get("error") or "no JSON"))
         else:
             errors.append("%s not analyzed: %s" % (_ids_text(b.get("ids")), b.get("reason") or "ACT gave no answer."))
-    return {"parsed": parsed, "overall": " ".join(overall + errors), "by_id": by_id, "error": " ".join(errors)}
+    return {"parsed": parsed, "overall": " ".join(overall + errors), "overall_lines": overall + errors, "by_id": by_id,
+            "error": " ".join(errors)}
 
 
 def act_batches_reason(batches):
@@ -716,7 +718,8 @@ def vm_alarm_act_report(problems, parsed=None, opts=None):
         sections.append({"title": "Why ACT did not run", "status": "critical",
                          "lines": [o.get("reason") or "unknown", "The problems are listed below without an analysis."]})
     elif pa.get("parsed") and pa.get("overall"):
-        sections.append({"title": "What to do first", "status": worst if worst in ("critical", "warning") else "", "lines": [pa["overall"]]})
+        sections.append({"title": "What to do first", "status": worst if worst in ("critical", "warning") else "",
+                         "lines": pa.get("overall_lines") or [pa["overall"]]})     # asked in batches: a line per batch
     rows, rs, cs = [], [], []
     for p in ps:
         a = by.get(p["id"]) or {}

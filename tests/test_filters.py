@@ -428,6 +428,7 @@ class ActBatches(unittest.TestCase):
         m = va.act_batches_merge(bs)
         self.assertEqual((m["parsed"], sorted(m["by_id"], key=lambda x: int(x[1:]))), (True, ["P%d" % i for i in range(1, 8)]))
         self.assertEqual(m["overall"], "P1-P5: Fix the power supply first. P6, P7: Then the logins.")
+        self.assertEqual(m["overall_lines"], ["P1-P5: Fix the power supply first.", "P6, P7: Then the logins."])
         self.assertEqual(va.act_batches_reason(bs), "")
 
     def test_one_batch_failed_the_others_kept(self):
@@ -984,6 +985,8 @@ class VmwareAlarms(unittest.TestCase):
         self.assertEqual(t["cell_status"][0][1], "critical")
         self.assertEqual(t["rows"][3][4], "ACT gave no answer for this one")
         self.assertEqual(r["sections"][0], {"title": "What to do first", "status": "critical", "lines": ["o"]})
+        two = dict(parsed, overall_lines=["P1-P3: Fix the host first.", "P4: Then the datastore."])    # asked in batches
+        self.assertEqual(va.vm_alarm_act_report(p, two, {"ran": True})["sections"][0]["lines"], two["overall_lines"])
         nr = va.vm_alarm_act_report(p, {}, {"ran": False, "reason": "no key"})
         self.assertEqual((nr["status"], nr["sections"][0]["lines"][0]), ("critical", "no key"))
         self.assertIn("ACT did not run", nr["title"])
