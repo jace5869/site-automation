@@ -86,6 +86,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VMware - certificate renewal | `playbooks/vmware_cert_renew.yml` | [vmware_cert_renew.yml](vmware_cert_renew.yml) |
 | VMware - certificate report | `playbooks/vmware_cert_report.yml` | [vmware_cert_report.yml](vmware_cert_report.yml) |
 | VMware - trust store report | `playbooks/vmware_trust_report.yml` | [vmware_trust_report.yml](vmware_trust_report.yml) |
+| VMware - version report | `playbooks/vmware_version_report.yml` | [vmware_version_report.yml](vmware_version_report.yml) |
 | Windows - trust store report | `playbooks/win_trust_report.yml` | [win_trust_report.yml](win_trust_report.yml) |
 | Windows certificate install - approved | `playbooks/win_cert_install_approved.yml` | [win_cert_install_approved.yml](win_cert_install_approved.yml) |
 | Windows certificate install - check | `playbooks/win_cert_install_check.yml` | [win_cert_install_check.yml](win_cert_install_check.yml) |

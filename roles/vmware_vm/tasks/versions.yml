@@ -1,0 +1,46 @@
+---
+# VMWARE VERSION REPORT (playbooks/vmware_version_report.yml): the version and build of each vCenter (vmware_vcenters;
+# or of vmware_datacenter's hosts) and of every ESXi host, the builds in use, the hosts by vCenter and cluster. Printed,
+# published as artifacts (vm_versions), emailed with every host as an Excel workbook (vm_versions_xlsx), on the report
+# website. Read-only; amber when a host is newer than its vCenter, red only when a vCenter could not be read.
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | read the versions of vCenter and every ESXi host
+  site_vmware_versions:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _vm_ver_read
+  check_mode: false
+
+- name: VMware | the report
+  ansible.builtin.set_fact:
+    _vm_ver_doc: >-
+      {{ _vm_ver_read.vcenter_info | vm_versions_doc(_vm_ver_read.hosts, _vm_ver_read.vcenters,
+           {'max_rows': vm_versions_max_rows | int}) }}
+
+- name: VMware version report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_vcenters: "{{ _vm_ver_read.vcenters }}"
+    _vm_report_doc: "{{ _vm_ver_doc }}"
+    _vm_report_subject: "{{ _vm_ver_doc.title }}"
+    _vm_report_lines: >-
+      {{ [_vm_ver_doc.subtitle]
+         + (_vm_ver_doc.summary | map(attribute='label') | zip(_vm_ver_doc.summary | map(attribute='value'))
+            | map('join', ': ') | list)
+         + (_vm_ver_read.vcenter_info | vm_versions_lines(_vm_ver_read.hosts)) }}
+    _vm_report_xlsx: "{{ _vm_ver_read.vcenter_info | vm_versions_xlsx(_vm_ver_read.hosts) if vm_versions_xlsx | bool else [] }}"
+
+- name: VMware | the versions as job artifacts (vm_versions)
+  ansible.builtin.set_stats:
+    data:
+      vm_versions: >-
+        {{ {'vcenters': _vm_ver_read.vcenter_info, 'esxi_builds': _vm_ver_read.hosts | vm_versions_builds,
+            'counts': _vm_ver_doc.summary | items2dict(key_name='label', value_name='value')} }}
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_ver_read.vcenters }}"

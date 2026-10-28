@@ -78,6 +78,7 @@ jobs:
           python tests/test_vm_inventory.py
           python tests/test_esxi_network.py
           python tests/test_vm_rightsize.py
+          python tests/test_vm_versions.py
           python tests/test_limit_localhost.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_limit_localhost.py
           python tests/test_yaml_regex.py

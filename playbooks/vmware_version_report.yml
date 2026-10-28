@@ -1,0 +1,16 @@
+---
+# VMWARE VERSION REPORT (vCenter). Read-only: the version and build of each vCenter and of every ESXi host it manages,
+# by vCenter, datacenter and cluster - the builds in use and how many hosts run each; amber when an ESXi host is at a
+# newer version than its vCenter. Emailed (report_email_to) with every host as an Excel workbook (vm_versions_xlsx), and
+# on the report website (report_web_dest).
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential; no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vmware_version_report.yml
+- name: VMware version report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VMware version report
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: versions.yml

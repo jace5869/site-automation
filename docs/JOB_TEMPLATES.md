@@ -70,6 +70,7 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | VMware - trust store report | `playbooks/vmware_trust_report.yml` | Report | [TRUST_STORES.md](TRUST_STORES.md#vmware) |
 | VMware - certificate report | `playbooks/vmware_cert_report.yml` | Report | [VMWARE.md](VMWARE.md#set-it-up-2) |
 | VMware - certificate renewal | `playbooks/vmware_cert_renew.yml` | Watch | [VMWARE.md](VMWARE.md#certificates-of-vcenter-and-the-esxi-hosts-incidents-and-csrs-weekly) |
+| VMware - version report | `playbooks/vmware_version_report.yml` | Report | [VMWARE.md](VMWARE.md#the-vmware-version-report) |
 | Network device certificate report | `playbooks/net_cert_report.yml` | Report | [NETWORK_CERTS.md](NETWORK_CERTS.md#templates) |
 | Network device certificate renewal | `playbooks/net_cert_renew.yml` | Watch | [NETWORK_CERTS.md](NETWORK_CERTS.md#the-renewal) |
 

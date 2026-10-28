@@ -15,6 +15,7 @@ System Center Orchestrator):
 | VM - datastore report | `playbooks/vm_datastore_report.yml` | read-only: every datastore's capacity, free space, used and provisioned %; the ones at 85 / 90 % used listed apart |
 | VM - inventory report | `playbooks/vm_inventory_report.yml` | read-only: every VM of every vCenter, by vCenter and folder - power, the ESXi host it runs on, cluster, guest OS, IP address, vCPUs, memory - and the count; the email attaches every VM as an Excel workbook ("The VM inventory report") |
 | VM - right-sizing report | `playbooks/vm_rightsizing_report.yml` | read-only: every powered-on VM's vCPUs and memory next to what vCenter's statistics say it used (30 days, and its busiest day of the year) - too big, about right or too small, with a suggested size; memory the host took back, guest disks nearly full; optional ACT review. Suggestions only ("The VM right-sizing report") |
+| VMware - version report | `playbooks/vmware_version_report.yml` | read-only: the version and build of each vCenter and every ESXi host, the builds in use and how many hosts run each, the hosts by vCenter and cluster; amber when a host is newer than its vCenter; the email attaches every host as an Excel workbook ("The VMware version report") |
 | VM - snapshot report | `playbooks/vm_snapshot_report.yml` | read-only: every snapshot of every VM - name, when taken and by whom, age, size, folder - oldest first; the ones 5 days or older listed apart |
 | VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | deletes the snapshots 5 days or older - never "keep" ones, excluded VMs, datacenters or clusters, the AAP server or ones over 1 TB; or only the patching snapshots (`vm_snapshot_cleanup_name_words`) - then reports what it deleted. Best run in the workflow below, after an approval |
 | VM - refresh the pick lists | `playbooks/vm_pick_refresh.yml` | on a schedule, read-only in vCenter: writes what may be done right now - the snapshots that may be deleted, the VMs that may be restarted (or only the hung ones) - as the choices of a question in the survey of the templates below ("Pick lists") |
@@ -312,6 +313,39 @@ template's Variables (`aap/extra_vars/vm_rightsizing_report.yml` has them all):
 
 The job is green unless a vCenter could not be read, or ACT was asked and did not answer (the report is still
 emailed). The vCenter account needs no more than read-only: the statistics come with it.
+
+### The VMware version report
+
+*VMware - version report* (`playbooks/vmware_version_report.yml`) lists the version and build of each vCenter
+(`vmware_vcenters`; `vmware_datacenter` for one datacenter's hosts) and of every ESXi host it manages - no survey,
+read-only, the version and build exactly as vCenter reports them. At the top, the counts: vCenters, ESXi hosts, ESXi
+versions, ESXi builds, clusters on more than one build. Then:
+
+- **vCenters** - each with its version, build and product name, its number of hosts and their versions
+  (`8.0.3 (12), 8.0.2 (4)`);
+- **ESXi builds in use** - each version and build, the newest first, with how many hosts run it, in which vCenters and
+  clusters;
+- **a table per vCenter** - every host by datacenter and cluster, with its version, build and state (not responding,
+  maintenance mode). A cluster whose hosts run more than one build is named above its table (an update in progress, or
+  a host left behind). A host that is not connected may have no version to report: `-`.
+
+Amber only when an ESXi host is at a newer version than the vCenter that manages it - vCenter must be at its hosts'
+version or newer, so update vCenter first (listed on top, *ESXi newer than its vCenter*); red only when a vCenter could
+not be read. Update names (*Update 3*, *P05*) and support dates are not in the report: they are not something vCenter
+says, and a table of them in this job would go out of date - look a build up in VMware's release notes. The email
+attaches every vCenter and host as an Excel workbook (`vmware-version-report_2026-10-28.xlsx`: a sheet of vCenters, a
+sheet of ESXi hosts); the job output has a line per vCenter (`vc01.example.mil: vCenter 8.0.3 build 24322831; ESXi
+8.0.3 build 24022510 (12)`); the artifact `vm_versions` has the vCenters, the builds in use and the counts.
+
+Set it up: a template *VMware - version report*, playbook `playbooks/vmware_version_report.yml`, the VMware vCenter
+credential (read-only is enough), the execution environment of your other VMware jobs, no Limit, no survey;
+`report_email_to` on its Variables, and a schedule (monthly, or after patching). On the report website it is on the
+VMware tab.
+
+| Setting | Default | |
+|---|---|---|
+| `vm_versions_max_rows` | `2000` | ESXi hosts listed in the email and on the page at most - the workbook always has every host |
+| `vm_versions_xlsx` | `true` | `false` = no workbook attached |
 
 ## Snapshots: the report, the cleanup, and the approval workflow
 

@@ -60,6 +60,7 @@
 #   - vm_datastore_report.yml
 #   - vm_inventory_report.yml
 #   - vm_rightsizing_report.yml
+#   - vmware_version_report.yml
 #   - esxi_network_check.yml
 #   - vm_deploy_from_ticket.yml
 #   - vm_deploy_inventory.yml

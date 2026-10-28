@@ -13,7 +13,7 @@
 # incidents opened and resolved in a fake ServiceNow);
 # the vCenter log analysis (vcsim hands out no logs: the job says so); the VM inventory report (and its workbook by email);
 # the ESXi network check (esxcli through vCenter - vcsim has no network diag ping: its answer is said); the VM right-sizing
-# report (a VM made too big, thresholds, its workbook by email, ACT's review).
+# report (a VM made too big, thresholds, its workbook by email, ACT's review); the VMware version report.
 #   bash tests/vmware/run_vmware_test.sh
 # Needs: podman or docker; a python with pyVmomi and the vSphere Automation SDK (pip install pyvmomi
 # vmware-vcenter; VMWARE_TEST_PYTHON=... to pick it); the vmware.vmware collection (installed into a
@@ -456,6 +456,13 @@ run "VM right-sizing report: more days asked than vCenter has: not enough histor
 run "VM right-sizing report: a VM left out, a cluster that matches nothing" ok vm_rightsizing_report.yml \
     -e '{"vm_rightsize_exclude": ["DC0_H0_VM1"], "vm_rightsize_clusters": ["nope"]}' -- "of 0 VMs" '"VMs checked": 0'
 
+# ---- VMware version report (read-only; vcsim says vCenter 6.5.0, its hosts ESXi 8.0.2: newer than their vCenter) ----------
+run "VMware version report: vCenter and every ESXi host with version and build; hosts newer than their vCenter: amber" ok \
+    vmware_version_report.yml -- "VMware versions: 1 vCenter, " "newer than their vCenter" "127.0.0.1: vCenter 6.5.0 build " \
+       "; ESXi 8.0.2 build " '"vm_versions"' '"esxi_builds": ' '"ESXi newer than its vCenter": '
+run "VMware version report: one datacenter that is not there - no hosts, still a report" ok vmware_version_report.yml \
+    -e vmware_datacenter=nope -- "VMware versions: 1 vCenter, 0 ESXi hosts on 0 builds" "; no ESXi hosts"
+
 # ---- ESXi network check (read-only; vcsim's hosts have no vMotion adapter, and its esxcli has no network diag ping) -------
 run "ESXi network check: the adapters read, a cluster without vMotion said, green" ok esxi_network_check.yml \
     -- "ESXi network check: 1 problem(s)" "no host has a VMkernel adapter with vMotion on" '"esxi_network"' '"Hosts checked": '
@@ -750,6 +757,8 @@ getpart html "$(lastmail)" | grep -q "vCenters 127.0.0.1, $vc2" && echo "ok   - 
 run "the same vCenter under a second name is read once" ok vm_datastore_report.yml -e "{\"vmware_vcenters\": [\"localhost:$port\"]}" \
     -- "all 1 below 85% used" "the same vCenter as 127.0.0.1: read once"
 run "alarms report of both vCenters" ok vm_alarm_report.yml -e "$two" -e vm_alarm_hours=0 -- "vCenters 127.0.0.1, $vc2"
+run "version report of both vCenters: a line per vCenter, every host of each" ok vmware_version_report.yml -e "$two" \
+    -- "VMware versions: 2 vCenters, " "127.0.0.1: vCenter " "$vc2: vCenter "
 run "capacity planning of both: the same cluster name in each, never merged" ok vm_capacity_report.yml -e "$two" \
     -- "DC0_C0 (127.0.0.1 / DC0)" "DC0_C0 ($vc2 / DC0)" "vCenters 127.0.0.1, $vc2"
 run "ESXi security settings (dry run) on both vCenters' hosts" ok esxi_security.yml --check -e "$two" \
