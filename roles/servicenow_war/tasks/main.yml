@@ -77,12 +77,12 @@
         _ea_names: "{{ _war | servicenow_war_names }}"
         _ea_model_timeout: "{{ servicenow_war_act_model_timeout }}"
 
-    - name: WAR | ACT's version of the WAR at the bottom, after the version from the tables
+    - name: WAR | ACT's version of the WAR right after the version from the tables (before the SLAs)
       ansible.builtin.set_fact:
         _war_doc: >-
-          {{ _war_doc | combine({'sections': _war_doc.sections + (_ea_raw | default('')
+          {{ _war_doc | servicenow_war_add_act(_ea_raw | default('')
                                    | servicenow_war_act_section({'ran': _ea_ran | default(false) | bool, 'reason': _ea_reason | default(''),
-                                                                 'provider': site_act_provider | default(''), 'model': _ea_model | default('')}))}) }}
+                                                                 'provider': site_act_provider | default(''), 'model': _ea_model | default('')})) }}
 
 - name: WAR | {{ _war_doc.title }}
   ansible.builtin.debug:

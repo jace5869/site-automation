@@ -62,6 +62,9 @@
 <td valign="top" style="padding:2px 18px 2px {{ '0' if loop.first else '14px' }};{{ '' if loop.first else 'border-left:1px solid #d6dce6;' }}">
 <div style="font-size:10px;letter-spacing:1px;color:#5a6779;text-transform:uppercase;">{{ t.label | e }}</div>
 <div style="font-size:24px;font-weight:bold;color:{{ colour[t.status | default('')] | default(navy) }};">{{ t.value | string | e }}</div>
+{%- if t.note | default('') %}
+<div style="font-size:11px;color:#5a6779;">{{ t.note | e }}</div>
+{%- endif %}
 </td>
 {%- endfor %}
 </tr></table>
@@ -74,6 +77,7 @@
 {%- if s.text | default('') %}
 <div style="padding:6px 0;color:#374151;">{{ s.text | e }}</div>
 {%- endif %}
+{%- if s.cards is defined %}{{ s.cards | report_cards_html(navy, '#4b5563', navy) }}{% endif %}
 {%- if s.columns is defined %}
 {%- if s.rows | default([]) %}
 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;border:1px solid #c5cedb;font-size:13px;margin:4px 0 8px 0;">

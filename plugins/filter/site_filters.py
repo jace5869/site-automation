@@ -1376,6 +1376,62 @@ def _cell(v):
     return "" if v is None else " ".join(str(v).split())
 
 
+# "Start here" cards (a section's cards): per status the bar on the left, the chip's colours and the card's tint
+CARD_PAL = {"critical": ("#d64545", "#b42318", "#fdeaea", "#f5c4c4", "#fdf5f5", "Critical"),
+            "warning": ("#d98a1c", "#9a5806", "#fdf2df", "#f3d6a6", "#fdf9f1", "Warning"),
+            "info": ("#4f86d9", "#1d4ed8", "#e6effd", "#c3d5f7", "#f4f8fe", "Info"),
+            "ok": ("#2f9e72", "#13734f", "#e3f5ec", "#bfe6d3", "#f3faf6", "OK")}
+
+
+def report_cards_html(cards, ink="#111827", muted="#4b5563", accent="#0f6b4f"):
+    """A section's cards (roles/site_email: [{status, chip, meta, title, subject, next, code}]) as "Start here" cards in HTML a
+    mail client draws (tables, every style inline): a coloured bar on the left, the status chip and the meta (what kind,
+    the figure) on top, the title (what to do), the subject (the host, the fact) in monospace, Next -> the step, and a
+    command to run under it (code) in monospace."""
+    from html import escape
+    if not cards:
+        return ""
+    mono = "font-family:Consolas,'Cascadia Mono',Menlo,'Courier New',monospace;"
+    out = ['<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin-top:10px;">']
+    for c in cards:
+        st = c.get("status") if c.get("status") in CARD_PAL else "info"
+        bar, fg, bg, bd, tint, word = CARD_PAL[st]
+        out.append('<tr><td style="padding:0 0 8px 0;"><table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" '
+                   'bgcolor="%s" style="width:100%%;background:%s;border-left:4px solid %s;border-radius:0 10px 10px 0;"><tr>'
+                   '<td style="padding:12px 16px 12px 14px;">' % (tint, tint, bar))
+        out.append('<table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" style="width:100%%;"><tr>'
+                   '<td valign="middle"><span style="display:inline-block;background:%s;color:%s;border:1px solid %s;border-radius:6px;'
+                   'padding:1px 8px;font-size:12px;font-weight:700;">%s</span></td>'
+                   '<td align="right" valign="middle" style="font-size:12px;color:%s;">%s</td></tr></table>'
+                   % (bg, fg, bd, escape(str(c.get("chip") or word)), muted, escape(str(c.get("meta") or ""))))
+        out.append('<div style="font-size:15px;font-weight:700;color:%s;margin-top:8px;line-height:1.35;">%s</div>' % (ink, escape(str(c.get("title") or ""))))
+        if c.get("subject"):
+            out.append('<div style="%sfont-size:13px;color:%s;margin-top:4px;word-break:break-word;">%s</div>' % (mono, muted, escape(str(c["subject"]))))
+        if c.get("next") or c.get("code"):
+            out.append('<div style="font-size:13px;color:%s;margin-top:8px;line-height:1.45;"><span style="color:%s;font-weight:700;">Next &rarr;</span> %s</div>'
+                       % (ink, accent, escape(str(c.get("next") or ""))))
+        if c.get("code"):
+            out.append('<div style="%sfont-size:12px;color:%s;background:#ffffff;border:1px solid #e3e7ec;border-radius:6px;padding:6px 8px;'
+                       'margin-top:6px;word-break:break-word;">%s</div>' % (mono, ink, escape(str(c["code"]))))
+        out.append('</td></tr></table></td></tr>')
+    out.append('</table>')
+    return "".join(out)
+
+
+def report_cards_text(cards):
+    """A section's cards as plain text: numbered, the status and the title, the meta, the subject, Next."""
+    out = []
+    for i, c in enumerate(cards or []):
+        st = c.get("status") if c.get("status") in CARD_PAL else "info"
+        out.append("%d. [%s] %s%s" % (i + 1, str(c.get("chip") or CARD_PAL[st][5]).upper(), c.get("title") or "",
+                                      ("  (%s)" % c["meta"]) if c.get("meta") else ""))
+        if c.get("subject"):
+            out.append("   " + str(c["subject"]))
+        if c.get("next") or c.get("code"):
+            out.append("   Next: " + " ".join(x for x in (str(c.get("next") or ""), str(c.get("code") or "")) if x))
+    return out
+
+
 def report_text(report, footer="", runs=None):
     """A report (roles/site_email: title, subtitle, summary, sections with columns/rows or lines,
     footer) as plain text, tables in aligned columns. runs: the strip of past runs (report_runs), as one line."""
@@ -1389,7 +1445,7 @@ def report_text(report, footer="", runs=None):
             b["status"] + (" (this run)" if b.get("current") else "") for b in runs)))
     if r.get("summary"):
         out.append("")
-        out += ["%s: %s" % (t.get("label", ""), t.get("value", "")) for t in r["summary"]]
+        out += ["%s: %s%s" % (t.get("label", ""), t.get("value", ""), (" (%s)" % t["note"]) if t.get("note") else "") for t in r["summary"]]
     for s in r.get("sections") or []:
         head = str(s.get("title") or "")
         if "rows" in s:
@@ -1397,6 +1453,8 @@ def report_text(report, footer="", runs=None):
         out += ["", "", head, "-" * len(head)]
         if s.get("text"):
             out.append(str(s["text"]))
+        if s.get("cards"):
+            out += [""] + report_cards_text(s["cards"])
         if "columns" in s:
             cols = [str(c) for c in s.get("columns") or []]
             rows = [[_cell(c) for c in row] + [""] * (len(cols) - len(row)) for row in s.get("rows") or []]
@@ -1593,6 +1651,37 @@ def email_also_refused(also, domains=None):
     return _email_also(also, domains)[1]
 
 
+# what kind of thing a check is, for the "Start here" cards (a check not here: its own name)
+CHECK_KIND = {"certs": "Certificate", "net_certs": "Certificate", "vmware_certs": "Certificate", "trust": "Trust store", "disk": "Storage",
+              "mounts": "Mounts", "services": "Service", "containers": "Containers", "mariadb": "Database", "auditd": "Audit",
+              "fapolicyd": "fapolicyd", "performance": "Performance", "selinux": "SELinux", "accounts": "Accounts", "time": "Time",
+              "patching": "Patching", "network": "Network", "netperf": "Network", "logging": "Logging", "stig": "STIG",
+              "poam": "POA&M", "reachability": "Reachability", "servicenow": "ServiceNow", "sso": "SSO", "config": "Configuration"}
+
+
+def findings_cards(by_host, missing=None, max_cards=6):
+    """The findings of a check run as "Start here" cards: critical first, then warning (each by host), at most max_cards,
+    then one card for the hosts that did not report -> (cards, how many findings were left out)."""
+    found = []
+    for h in sorted(by_host or {}):
+        for f in by_host.get(h) or []:
+            found.append((0 if str(f.get("severity")) == "critical" else 1, h, f))
+    found.sort(key=lambda x: (x[0], x[1]))
+    cards = []
+    for _, h, f in found[:int(max_cards)]:
+        sev = "critical" if str(f.get("severity")) == "critical" else "warning"
+        nxt = str(f.get("note") or "") or ("Look further:" if f.get("hint") else "")
+        cards.append({"status": sev, "meta": CHECK_KIND.get(str(f.get("check")), str(f.get("check") or "")),
+                      "title": str(f.get("summary") or f.get("check") or ""), "subject": h, "next": nxt, "code": str(f.get("hint") or "")})
+    missing = sorted(missing or [])
+    if missing:
+        cards.append({"status": "warning", "chip": "Not checked", "meta": "Coverage",
+                      "title": "%d host(s) did not report: their health is unknown" % len(missing),
+                      "subject": ", ".join(missing[:6]) + (" and %d more" % (len(missing) - 6) if len(missing) > 6 else ""),
+                      "next": "See why in the job output (unreachable, or failed before the checks ran), then run the job again for them."})
+    return cards, max(len(found) - int(max_cards), 0)
+
+
 def findings_report(by_host, title, missing=None, checks=None, extra=None):
     """The result of a check run (site_findings on every host) as a report for roles/site_email:
     title with the counts, summary boxes, one findings table (critical first), the hosts that did
@@ -1623,17 +1712,22 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
     if missing:
         t += ", %d host(s) did not report" % len(missing)
     status = "critical" if crit else ("warning" if warn or missing else "ok")
-    box = lambda label, value, bad_status: {"label": label, "value": value, "status": bad_status if value else "ok"}
-    summary = [] if single else [{"label": "Hosts checked", "value": len(hosts)},
-                                 {"label": "Healthy", "value": len(hosts) - len(bad), "status": "ok"},
-                                 box("With findings", len(bad), "warning")]
-    summary += [box("Critical", crit, "critical"), box("Warning", warn, "warning")]
+    box = lambda label, value, bad_status, note: {"label": label, "value": value, "status": bad_status if value else "ok", "note": note}
+    summary = [] if single else [{"label": "Hosts checked", "value": len(hosts), "note": "reported this run"},
+                                 {"label": "Healthy", "value": len(hosts) - len(bad), "status": "ok", "note": "no findings"},
+                                 box("With findings", len(bad), "warning", "hosts to look at")]
+    summary += [box("Critical", crit, "critical", "act now"), box("Warning", warn, "warning", "plan a fix")]
     if missing:
-        summary.append(box("Did not report", len(missing), "warning"))
+        summary.append(box("Did not report", len(missing), "warning", "health unknown"))
     top = [s for s in extra or [] if s.get("top")]
     for s in top:
         summary += list(s.get("boxes") or [])
     sections = list(top)
+    cards, more = findings_cards(by_host, missing)
+    if cards:
+        sections.insert(0, {"title": "Start here", "status": status, "cards": cards,
+                            "text": "What to act on first: critical, then warning%s. Every finding is in the tables below."
+                                    % ((" - %d more there" % more) if more else "")})
     if rows:
         sections.append({"title": "Findings", "status": status,
                          "columns": ([] if single else ["Host"]) + ["Severity", "Check", "Finding", "Look further"],
@@ -1756,7 +1850,7 @@ class FilterModule(object):
                 "vm_pick_reboot_plan": vm_pick_reboot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "cert_report_section": cert_report_section,
                 "site_correlation_id": site_correlation_id,
                 "human_size": human_size, "name_matches": name_matches, "name_list": name_list,
-                "report_text": report_text, "findings_report": findings_report,
+                "report_text": report_text, "report_cards_html": report_cards_html, "findings_report": findings_report,
                 "report_headline": report_headline, "report_runs": report_runs,
                 "image_size": image_size, "email_recipients": email_recipients, "email_also_refused": email_also_refused,
                 "report_web_files": report_web_files, "site_web_win_error": site_web_win_error,

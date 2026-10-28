@@ -83,6 +83,9 @@
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;background:#ffffff;border:2px solid {{ pal[ts].fg if hi else edge }};border-radius:18px;box-shadow:0 6px 22px rgba(15,70,52,.08);"><tr><td style="padding:14px 16px 16px 16px;">
 <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:{{ pal[ts].fg if hi else label }};">{{ t.label | e }}</div>
 <div style="{{ mono }}font-size:{{ '30px' if v | length <= 9 else '18px' }};color:{{ ink }};margin-top:8px;line-height:1.1;word-break:break-word;">{{ v | e }}</div>
+{%- if t.note | default('') %}
+<div style="font-size:12px;color:{{ muted }};margin-top:6px;">{{ t.note | e }}</div>
+{%- endif %}
 </td></tr></table>
 </td>
 {%- endfor %}
@@ -142,6 +145,7 @@
 {%- if s.text | default('') %}
 <div style="padding:8px 0 0 0;color:#33413c;">{{ s.text | e }}</div>
 {%- endif %}
+{%- if s.cards is defined %}{{ s.cards | report_cards_html(ink, muted, accent) }}{% endif %}
 {%- if s.columns is defined %}
 {%- if s.rows | default([]) %}
 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;font-size:13px;margin-top:8px;">

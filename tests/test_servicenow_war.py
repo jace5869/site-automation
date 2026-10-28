@@ -254,16 +254,16 @@ class Slas(unittest.TestCase):
         self.assertEqual(st["SCTASK1"], ("", "", None))                                     # no SLA
         self.assertEqual((r["sla"]["read"], r["sla"]["breached"], r["sla"]["at_risk"]), (True, 2, 2))
         rep = wf.servicenow_war_report(r, {"old_days": 30})
-        tiles = dict((t["label"], (t["value"], t.get("status"))) for t in rep["summary"])
-        self.assertEqual((tiles["SLA breached"], tiles["SLA close to breaching"]), ((2, "critical"), (2, "warning")))
+        self.assertNotIn("SLA breached", [t["label"] for t in rep["summary"]])          # the top is the week's results: no SLA tiles
+        self.assertEqual([x["title"] for x in rep["sections"]][-2:], ["SLA breached or close to breaching", "Read"])   # at the bottom
         sec = [x for x in rep["sections"] if x["title"] == "SLA breached or close to breaching"][0]
         self.assertEqual([(row[0], row[6], row[8]) for row in sec["rows"]],
                          [("INC2", "160.2%", "breached"), ("INC3", "82.5%", "close to breaching"), ("SCTASK2", "76%", "close to breaching"),
                           ("CHG1", "130%", "breached, completed")])
         self.assertEqual(sec["row_status"], ["critical", "warning", "warning", "critical"])
         lines = wf.servicenow_war_lines(r)
-        self.assertTrue(lines["completed"][-1].endswith("(Jane Doe) - SLA breached"), lines["completed"])
-        self.assertIn("Incident INC3: Work on INC3 - In Progress, open since 2026-09-10, 43 days (Bob Smith) - SLA at 82.5%", lines["in_progress"])
+        self.assertTrue(lines["completed"][-1].endswith("(Jane Doe)"), lines["completed"])       # the lines to paste: no SLA words
+        self.assertIn("Incident INC3: Work on INC3 - In Progress, open since 2026-09-10, 43 days (Bob Smith)", lines["in_progress"])
         self.assertIn("| SLA breached", wf.servicenow_war_act_evidence(r))
         allx = wf.servicenow_war_xlsx(r)[0]
         row = dict(zip(allx["columns"], allx["rows"][[x[0] for x in allx["rows"]].index("INC3")]))
@@ -297,11 +297,16 @@ class Report(unittest.TestCase):
         self.assertEqual(rep["title"], "Weekly activity report for Linux Operations: 3 completed, 3 opened, 3 open at the end (2026-10-16 20:00 to 2026-10-23 20:00 (UTC))")
         self.assertEqual(rep["status"], "info")
         self.assertEqual([t["label"] + "=" + str(t["value"]) for t in rep["summary"]],
-                         ["Completed=3", "Opened=3", "Open at the end=3", "Older than 30 days=1", "Worked on, still open=1", "SLA breached=0",
-                          "SLA close to breaching=0"])
+                         ["Completed=3", "Opened=3", "Open at the end=3", "Older than 30 days=1", "Worked on, still open=1"])
         secs = dict((s["title"], s) for s in rep["sections"])
-        self.assertEqual(list(secs), ["The week in numbers", "SLA breached or close to breaching", "Completed this week", "Opened this week", "Open at the end of the week", "By person",
-                                      "Read", "For the WAR (from the tables): completed", "For the WAR (from the tables): in progress"])
+        # the results, the WAR from the tables (ACT's version goes right after it), then the SLAs and what was read
+        self.assertEqual(list(secs), ["The week in numbers", "Completed this week", "Opened this week", "Open at the end of the week", "By person",
+                                      "For the WAR (from the tables): completed", "For the WAR (from the tables): in progress",
+                                      "SLA breached or close to breaching", "Read"])
+        act = [{"title": "For the WAR (written by ACT): summary"}]
+        self.assertEqual([x["title"] for x in wf.servicenow_war_add_act(rep, act)["sections"]][5:],
+                         ["For the WAR (from the tables): completed", "For the WAR (from the tables): in progress",
+                          "For the WAR (written by ACT): summary", "SLA breached or close to breaching", "Read"])
         done = secs["Completed this week"]
         self.assertEqual([r[1] for r in done["rows"]], ["SCTASK1", "INC1", "CHG1"])
         self.assertEqual(done["rows"][1][:3], ["2026-10-20 15:30", "INC1", "Incident"])
@@ -338,9 +343,11 @@ class Report(unittest.TestCase):
 
     def test_two_versions_with_act(self):
         rep = wf.servicenow_war_report(result(), {"old_days": 30, "act": True})
-        self.assertEqual([s["title"] for s in rep["sections"]][-2:], ["For the WAR (from the tables): completed", "For the WAR (from the tables): in progress"])
-        self.assertTrue(rep["sections"][-2]["text"].startswith("Two versions of the WAR, to choose from: this one, one line per task from the tables, "
-                                                               "and ACT's"), rep["sections"][-2]["text"])
+        titles = [s["title"] for s in rep["sections"]]
+        i = titles.index("For the WAR (from the tables): completed")
+        self.assertEqual(titles[i:i + 2], ["For the WAR (from the tables): completed", "For the WAR (from the tables): in progress"])
+        self.assertTrue(rep["sections"][i]["text"].startswith("Two versions of the WAR, to choose from: this one, one line per task from the tables, "
+                                                               "and ACT's"), rep["sections"][i]["text"])
         self.assertIn("Dates in UTC", rep["footer"])
 
     def test_a_time_zone_in_the_report(self):

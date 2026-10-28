@@ -15,6 +15,8 @@
 #       # optional colours of a table, one entry per row: row_status tints the row, cell_status
 #       # (one status per cell, '' = none) fills that cell - e.g. the Severity column
 #       - {title: Alarms, columns: [Severity, Host], rows: [[CRITICAL, esx01]], row_status: [critical], cell_status: [[critical, '']]}
+#       # "Start here" cards (site_filters report_cards_html); a summary box may have a note: {label, value, status, note}
+#       - {title: Start here, cards: [{status: critical, chip: Critical, meta: Certificate, title: ..., subject: web01, next: ..., code: ...}]}
 #     footer: "vCenter vcsa01"                                 # optional; the AAP job line is added
 # or plain text: _report_subject and _report_body.
 # The look: report_email_theme (standard | command | portal | glass), report_logo_file. The strip of past runs (all but standard)

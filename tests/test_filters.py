@@ -537,10 +537,29 @@ class FindingsReport(unittest.TestCase):
         self.assertEqual([(b["label"], b["value"], b.get("status")) for b in r["summary"]],
                          [("Hosts checked", 3, None), ("Healthy", 1, "ok"), ("With findings", 2, "warning"),
                           ("Critical", 1, "critical"), ("Warning", 2, "warning"), ("Did not report", 1, "warning")])
-        self.assertEqual([s["title"] for s in r["sections"]], ["Findings", "Did not report", "Extra", "Healthy (1)"])
-        self.assertEqual(r["sections"][0]["rows"][0], ["web01", "CRITICAL", "services", "x is down", "systemctl status x"])
-        self.assertEqual([x[0] for x in r["sections"][0]["rows"][1:]], ["web01", "web02"])
-        self.assertEqual(r["sections"][3]["text"], "db01")
+        self.assertEqual([s["title"] for s in r["sections"]], ["Start here", "Findings", "Did not report", "Extra", "Healthy (1)"])
+        self.assertEqual(r["sections"][1]["rows"][0], ["web01", "CRITICAL", "services", "x is down", "systemctl status x"])
+        self.assertEqual([x[0] for x in r["sections"][1]["rows"][1:]], ["web01", "web02"])
+        self.assertEqual(r["sections"][4]["text"], "db01")
+        self.assertEqual([b.get("note") for b in r["summary"]][3:], ["act now", "plan a fix", "health unknown"])
+        cards = r["sections"][0]["cards"]
+        self.assertEqual([(c["status"], c["subject"], c["meta"]) for c in cards],
+                         [("critical", "web01", "Service"), ("warning", "web01", "Storage"), ("warning", "web02", "Storage"),
+                          ("warning", "web09", "Coverage")])                       # critical first; the hosts not reporting last
+        self.assertEqual((cards[0]["title"], cards[0]["next"], cards[0]["code"]), ("x is down", "Look further:", "systemctl status x"))   # as written
+        self.assertEqual(cards[3]["chip"], "Not checked")
+        cards, more = f.findings_cards({"h%d" % i: [self.W] for i in range(9)}, [], 6)
+        self.assertEqual((len(cards), more), (6, 3))
+        html = f.report_cards_html(r["sections"][0]["cards"])
+        self.assertIn("border-left:4px solid #d64545", html)
+        self.assertIn("Next &rarr;</span> Look further:</div>", html)
+        self.assertIn("monospace;font-size:12px", html)
+        self.assertNotIn("<script", html)
+        self.assertEqual(f.report_cards_html([]), "")
+        self.assertEqual(f.report_cards_html([{"title": "<b>"}]).count("&lt;b&gt;"), 1)       # escaped
+        text = f.report_text(r)
+        self.assertIn("1. [CRITICAL] x is down  (Service)\n   web01\n   Next: Look further: systemctl status x", text)
+        self.assertIn("Critical: 1 (act now)", text)
         self.assertEqual(r["footer"], "Checks run: disk, services")
 
     def test_healthy_and_single(self):
@@ -548,7 +567,7 @@ class FindingsReport(unittest.TestCase):
         self.assertEqual((r["title"], r["status"]), ("Health check: no findings - all 2 host(s) healthy", "ok"))
         r = f.findings_report({"localhost": [self.W]}, "POA&M status")
         self.assertEqual(r["title"], "POA&M status: 1 finding(s)")
-        self.assertEqual(r["sections"][0]["columns"], ["Severity", "Check", "Finding", "Look further"])
+        self.assertEqual(r["sections"][1]["columns"], ["Severity", "Check", "Finding", "Look further"])
         self.assertEqual([b["label"] for b in r["summary"]], ["Critical", "Warning"])
         self.assertEqual(f.findings_report({"localhost": []}, "X")["sections"], [{"title": "Result", "lines": ["No findings."]}])
 

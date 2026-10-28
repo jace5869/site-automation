@@ -12,17 +12,17 @@ ACT (GenAI) from the same tables. It runs on the AAP side with the **ServiceNow 
 
 | Part | What it shows |
 |---|---|
-| The title and the tiles | the assignment group first, exactly as ServiceNow names it (`Weekly activity report for ABC - Ops - IT - Linux: 5 completed, ...`); how many completed, opened and open at the end, the ones older than 30 days, the ones worked on but still open |
-| **SLA breached or close to breaching** | the tasks whose SLA ran past its time (red: the open ones first, then the week's completed ones that breached) and those with an SLA still running at 75% of its time or more (amber; `servicenow_war_sla_warn_percent`): the SLA, the time used, the breach time. Two tiles count them; the WAR lines end in `- SLA breached` / `- SLA at 82%`; ACT is told about them |
+| The title and the tiles | the assignment group first, exactly as ServiceNow names it (`Weekly activity report for ABC - Ops - IT - Linux: 5 completed, ...`); how many completed, opened and open at the end, the ones older than 30 days, the ones worked on but still open - each tile with a line saying what it counts |
 | **The week in numbers** | per kind of task: opened, completed, open at the end, older than 30 days, worked on |
 | **Completed this week** | each task resolved or closed in the week, oldest first: **the date of closure**, number, type, what it was, who had it, its state, priority, when it was opened, days open, the close notes |
 | **Opened this week** | each task new in the week: when, who got it, its state, and whether it was already completed |
 | **Open at the end of the week** | still open at the week's end, oldest first; amber past `servicenow_war_old_days` (30); *This week*: new, worked on (updated in the week) or untouched |
 | **By person** | completed, opened, open and worked on, per assignee |
+| **For the WAR (from the tables): completed** and **in progress** | the first version of the WAR: one line per task, ready to paste: `Incident INC0012345: Mail relay queue growing on mail01 - resolved 2026-10-20 (Jane Doe)`, `Problem task PTASK0012345: NFS mounts hang on the batch hosts - Work in Progress, open since 2026-09-01, 52 days (Jane Doe)` |
+| **For the WAR (written by ACT)** (optional, right after it) | the other version: a summary of two or three sentences, then accomplishments, in progress, what deserves attention - written by GenAI from the tables, one plain sentence per bullet with the ticket numbers. Both versions are there; the lead picks the one to paste |
+| **SLA breached or close to breaching** | the tasks whose SLA ran past its time (red: the open ones first, then the week's completed ones that breached) and those with an SLA still running at 75% of its time or more (amber; `servicenow_war_sla_warn_percent`): the SLA, the time used, the breach time - after the WAR and ACT's version of it: the week's results come first. ACT is told about them for *what deserves attention* |
 | **Not read** | a table the account cannot read, a group or user ServiceNow does not know, a table cut at `servicenow_war_max_records` |
 | **Read** | per table, the records read and kept |
-| **For the WAR (from the tables): completed** and **in progress** | the first version of the WAR: one line per task, ready to paste: `Incident INC0012345: Mail relay queue growing on mail01 - resolved 2026-10-20 (Jane Doe)`, `Problem task PTASK0012345: NFS mounts hang on the batch hosts - Work in Progress, open since 2026-09-01, 52 days (Jane Doe)` |
-| **For the WAR (written by ACT)** (optional, last) | the other version: a summary of two or three sentences, then accomplishments, in progress, what deserves attention - written by GenAI from the tables, one plain sentence per bullet with the ticket numbers. Both versions are there; the lead picks the one to paste |
 | The workbook | every task with every column on one sheet (dates, the link to the record, close notes whole, your own fields), then Completed, Opened, Open at the end, By person, By type |
 
 **What counts as completed.** An incident or a problem counts when it is **resolved** (that is when the work was done;
@@ -144,7 +144,7 @@ bullets, related tickets grouped, the numbers in brackets), **in progress** and 
 or three sentences for a manager. ACT is told to write each bullet as one plain sentence of at most 30 words with
 the ticket numbers in brackets at its end; what it gives anyway is cleaned before it reaches the report (markdown,
 bullet characters, numbering, several bullets in one string, the same bullet twice), and an answer with no readable
-JSON is shown as it came, cut at 40 lines. They go at the very bottom, after the one-line-per-task version, which stays: two
+JSON is shown as it came, cut at 40 lines. They go right after the one-line-per-task version, which stays (and before the SLAs): two
 versions of the same week to choose from, ACT's marked as written by GenAI. People's and groups' names
 and the configuration items are masked before anything reaches the model and put back in the answer. ACT runs on
 the AAP node (`site_act_provider`, `site_act_models`, a proxy in `site_act_env`; [VMWARE.md](VMWARE.md#act-analysis) says

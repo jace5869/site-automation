@@ -159,10 +159,18 @@ broke (a wrong setting, a missing credential). Those always need a look.
 ## What a report looks like
 
 A title (also the subject) in a coloured band - green, amber, red or blue - then summary boxes
-with numbers, then sections: each a heading, a line of advice, and a table (or a list). In tables
+with numbers (each with a short line under it saying what it counts: *Critical 1 - act now*), then a **Start here**
+section where a report has something to act on, then sections: each a heading, a line of advice, and a table (or a list). In tables
 that have a severity, each row is tinted (light red, amber or blue) and the severity cell is filled
 in its colour, so the problems stand out at a glance. Every value
 from a host or vCenter is escaped, so a VM name cannot add markup to the email.
+
+**Start here** is the short list of what to act on first, as cards ordered by priority: a coloured bar and a chip
+(Critical, Warning, Not checked ...), what kind of thing it is on the right (Certificate, Storage, SLA ...), what was
+found, the host in monospace, and **Next ->** with the step - a command to look further in its own monospace box. The
+health checks, the certificate reports, database health and the other findings reports show their most urgent
+findings there (critical first, at most six; every finding stays in the tables below) and a *Not checked* card for
+the hosts that did not report. The ServiceNow weekly activity report has none: it summarizes the week's work.
 
 ## The look: standard, command, portal or glass, your logo, the last runs
 
@@ -298,7 +306,10 @@ localhost:
 A section has `columns` and `rows` (a table; an empty list shows "None."), or `lines`, or just
 `text`. To colour a table, add `row_status` (one status per row: `critical`, `warning`, `info`,
 `ok` or `''`; tints the row) and `cell_status` (per row, one status per cell; fills that cell), e.g.
-`row_status: [critical]` and `cell_status: [[critical, '', '']]` for a red row with a red first cell. In a play that runs on many hosts, build the rows from `hostvars` and add `run_once: true`
+`row_status: [critical]` and `cell_status: [[critical, '', '']]` for a red row with a red first cell. A summary box
+can carry a `note` (the short line under its number), and a section `cards` - "Start here" cards:
+`cards: [{status: critical, chip: Critical, meta: Certificate, title: "...", subject: web01, next: "Look further:", code: "openssl x509 ..."}]`
+(chip, meta, subject, next and code optional), drawn with tables so Outlook shows them too. In a play that runs on many hosts, build the rows from `hostvars` and add `run_once: true`
 to the include, so one email goes out, not one per host.
 
 ## Troubleshooting

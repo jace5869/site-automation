@@ -69,7 +69,7 @@ run "the last 7 days: completed with the date of closure, opened, open at the en
     'Weekly activity report for ABC - Ops - IT - Linux: 5 completed, 6 opened, 6 open at the end (2026-10-16 20:00 to 2026-10-23 20:00 (UTC))' \
     'Assignment group: ABC - Ops - IT - Linux' '!Catalog task (SCTASK)' \
     'SLA breached or close to breaching' 'P2 resolution (2 days)' '160.2%' 'P4 resolution (30 days)' 'close to breaching' \
-    'breached, completed' 'Incident INC0020002: SSH login slow on the jump hosts - In Progress, new this week (Jane Doe) - SLA breached' \
+    'breached, completed' 'Incident INC0020002: SSH login slow on the jump hosts - In Progress, new this week (Jane Doe)' '!(Jane Doe) - SLA breached' \
     '"sla_breached": 2' '"sla_at_risk": 1' '!P2 response (1 hour)' \
     'Completed this week (5)' '2026-10-20 15:30  INC0020001' 'Restarted postfix; the queue drained in 10 minutes.' \
     '2026-10-22 07:45  INC0020004' '2026-10-18 12:00  SCTASK0020001' '2026-10-21 18:00  CHG0020001' '2026-10-21 17:50  CTASK0020001' \

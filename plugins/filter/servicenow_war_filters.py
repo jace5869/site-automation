@@ -135,20 +135,21 @@ def servicenow_war_lines(r, opts=None):
     tz = _tz(((r or {}).get("window") or {}).get("time_zone") or o.get("time_zone"))
     s = war_sets(r, o.get("old_days") or 30)
     done = ["%s %s: %s - %s %s (%s)" % (x.get("type") or "Task", x.get("number"), x.get("short_description") or "(no description)",
-                                        _done_word(x), day_local(x.get("done_at"), tz), x.get("assigned_to") or "unassigned") + _sla_word(x)
+                                        _done_word(x), day_local(x.get("done_at"), tz), x.get("assigned_to") or "unassigned")
             for x in s["done"]]
     prog = []
     for x in sorted(s["open_end"], key=lambda x: (-(x.get("age_days") or 0), x.get("number") or "")):
         age = x.get("age_days") or 0
         since = ("new this week" if x.get("opened") else "open since %s, %s days" % (day_local(x.get("opened_at"), tz), _days(age)))
         prog.append("%s %s: %s - %s, %s (%s)" % (x.get("type") or "Task", x.get("number"), x.get("short_description") or "(no description)",
-                                                x.get("state") or "open", since, x.get("assigned_to") or "unassigned") + _sla_word(x))
+                                                x.get("state") or "open", since, x.get("assigned_to") or "unassigned"))
     return {"completed": done, "in_progress": prog}
 
 
 def servicenow_war_report(r, opts=None):
     """site_servicenow_war's result -> roles/site_email's _report. opts: title, old_days, max_rows, notes_chars, time_zone,
-    act (ACT's version of the WAR follows at the bottom: the one-line-per-task version, last here, says so)."""
+    act (ACT's version of the WAR follows the one-line-per-task version: that one says so). The order: the results, the
+    WAR from the tables, ACT's version (servicenow_war_add_act), the SLAs, what was not read and read."""
     o = opts or {}
     r = r or {}
     win = r.get("window") or {}
@@ -188,13 +189,12 @@ def servicenow_war_report(r, opts=None):
                                                 "The week: %s%s" % (label, (" (%s)" % win["note"]) if win.get("note") else ""),
                                                 ("ServiceNow: %s%s" % (r["url"], (" as " + r["user"]) if r.get("user") else "")) if r.get("url") else "") if x),
         "status": status,
-        "summary": [{"label": "Completed", "value": len(done), "status": "ok" if done else ""},
-                    {"label": "Opened", "value": len(opened)},
-                    {"label": "Open at the end", "value": len(open_end)},
-                    {"label": "Older than %d days" % int(old_days), "value": len(old), "status": "warning" if old else "ok"},
-                    {"label": "Worked on, still open", "value": len(touched)}]
-                   + ([{"label": "SLA breached", "value": len(sla_bad), "status": "critical" if sla_bad else "ok"},
-                       {"label": "SLA close to breaching", "value": len(sla_near), "status": "warning" if sla_near else "ok"}] if sla.get("read") and items else [])
+        "summary": [{"label": "Completed", "value": len(done), "status": "ok" if done else "", "note": "resolved or closed"},
+                    {"label": "Opened", "value": len(opened), "note": "new this week"},
+                    {"label": "Open at the end", "value": len(open_end), "note": "still to do"},
+                    {"label": "Older than %d days" % int(old_days), "value": len(old), "status": "warning" if old else "ok",
+                     "note": "open the longest"},
+                    {"label": "Worked on, still open", "value": len(touched), "note": "updated this week"}]
                    + ([{"label": "Not read", "value": len(bad_tables), "status": "critical"}] if bad_tables else []),
         "sections": [],
         "footer": "ServiceNow at %s. The week: %s. A task counts for the assignment group it has now: one moved to another group "
@@ -224,12 +224,13 @@ def servicenow_war_report(r, opts=None):
     secs.append({"title": "The week in numbers", "columns": ["Type", "Opened", "Completed", "Open at the end", "Older than %d days" % int(old_days), "Worked on, still open"],
                  "rows": rows, "text": "Per kind of task. Opened and completed in the week; open at the end of it, and of those the ones older than "
                                        "%d days; worked on = updated in the week, not new, still open." % int(old_days)})
+    tail = []                                       # after the WAR and ACT's version of it: the SLAs, what was not read, read
     if sla.get("read") and items:
         sla_rows = (sorted([x for x in sla_bad if x.get("open_at_end")], key=lambda x: x.get("sla_breach_at") or "9")
                     + sorted(sla_near, key=lambda x: -(x.get("sla_percent") or 0))
                     + sorted([x for x in sla_bad if not x.get("open_at_end")], key=lambda x: x.get("sla_breach_at") or "9"))
         if sla_rows:
-            secs.append({"title": "SLA breached or close to breaching", "status": "critical" if sla_bad else "warning",
+            tail.append({"title": "SLA breached or close to breaching", "status": "critical" if sla_bad else "warning",
                          "text": "From the tasks' SLAs in ServiceNow (task_sla). Breached: an SLA ran past its time. Close to breaching: an SLA "
                                  "still running with %s%% of its time or more used (servicenow_war_sla_warn_percent) - business time where "
                                  "the SLA has a schedule. Open breaches first, then the closest to breaching, then the week's completed tasks "
@@ -242,7 +243,7 @@ def servicenow_war_report(r, opts=None):
                                    else "close to breaching"] for x in sla_rows],
                          "row_status": ["critical" if x.get("sla_state") == "breached" else "warning" for x in sla_rows]})
         else:
-            secs.append({"title": "SLA breached or close to breaching", "status": "ok",
+            tail.append({"title": "SLA breached or close to breaching", "status": "ok",
                          "lines": ["None of the week's tasks breached an SLA, and none is at %s%% of an SLA's time or more." % _num(warn_pct)]})
     if not items:
         secs.append({"title": "Result", "lines": ["Nothing was opened, completed or open for %s in the week %s." % (glabel, label)]})
@@ -302,14 +303,14 @@ def servicenow_war_report(r, opts=None):
         nr.append("task_sla (the SLAs): %s - no SLA is shown; the API account needs read on task_sla (the itil role has it), "
                   "or set servicenow_war_sla: false" % sla["error"])
     if nr:
-        secs.append({"title": "Not read", "status": "warning", "lines": nr,
+        tail.append({"title": "Not read", "status": "warning", "lines": nr,
                      "text": "A table the API account cannot read needs the role for it (itil reads incidents, catalog tasks and changes; "
                              "problem tasks need problem_read or itil on the problem tables), or take it out of servicenow_war_tables."})
-    secs.append({"title": "Read", "lines": ["%s: %d record(s) kept of %d read" % (t["table"], _n(t.get("rows")), _n(t.get("read"))) for t in tables if not t.get("error")]})
-    # 7. ready to paste, at the bottom: this version from the tables, then ACT's (servicenow_war_act_section) after it
+    tail.append({"title": "Read", "lines": ["%s: %d record(s) kept of %d read" % (t["table"], _n(t.get("rows")), _n(t.get("read"))) for t in tables if not t.get("error")]})
+    # 7. ready to paste: this version from the tables, then ACT's (servicenow_war_add_act puts it here), then the tail
     lines = servicenow_war_lines(r, {"old_days": old_days})
     both = ("Two versions of the WAR, to choose from: this one, one line per task from the tables, and ACT's, written by GenAI "
-            "from the same tables, at the bottom. " if o.get("act") else "")
+            "from the same tables, right after it. " if o.get("act") else "")
     war = []
     if lines["completed"]:
         war.append({"title": "For the WAR (from the tables): completed", "lines": lines["completed"],
@@ -320,7 +321,20 @@ def servicenow_war_report(r, opts=None):
     if war:
         war[0]["text"] = both + war[0]["text"]
     secs.extend(war)
+    for t in tail:
+        t["after_act"] = True                       # servicenow_war_add_act puts ACT's version before these
+    secs.extend(tail)
     return report
+
+
+def servicenow_war_add_act(report, act_sections):
+    """The report with ACT's version of the WAR right after the version from the tables - before the SLAs and what was
+    read (the sections marked after_act)."""
+    rep = dict(report or {})
+    secs = list(rep.get("sections") or [])
+    i = next((n for n, x in enumerate(secs) if x.get("after_act")), len(secs))
+    rep["sections"] = secs[:i] + list(act_sections or []) + secs[i:]
+    return rep
 
 
 def servicenow_war_xlsx(r, opts=None):
@@ -533,8 +547,8 @@ def servicenow_war_act_parse(text):
 
 
 def servicenow_war_act_section(raw, opts=None):
-    """ACT's version of the WAR as report sections, the last of the report, after the version from the tables (or why there
-    is none). opts: ran (bool), reason, model, provider."""
+    """ACT's version of the WAR as report sections (servicenow_war_add_act puts them right after the version from the tables,
+    before the SLAs), or why there is none. opts: ran (bool), reason, model, provider."""
     o = opts or {}
     if not o.get("ran"):
         return [{"title": "For the WAR (written by ACT)", "status": "warning", "lines": ["ACT did not run: %s" % (o.get("reason") or "unknown")],
@@ -561,6 +575,7 @@ def servicenow_war_act_section(raw, opts=None):
 class FilterModule(object):
     def filters(self):
         return {"servicenow_war_report": servicenow_war_report, "servicenow_war_name_list": servicenow_war_name_list,
+                "servicenow_war_add_act": servicenow_war_add_act,
                 "servicenow_war_web_folder": servicenow_war_web_folder, "servicenow_war_xlsx": servicenow_war_xlsx,
                 "servicenow_war_lines": servicenow_war_lines, "servicenow_war_names": servicenow_war_names,
                 "servicenow_war_act_evidence": servicenow_war_act_evidence, "servicenow_war_act_task": servicenow_war_act_task,

@@ -172,6 +172,9 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 <td valign="middle" style="padding:14px 14px 14px 12px;">
 <div style="font-size:13px;font-weight:600;color:{{ pal[ts].fg if hi else label }};">{{ t.label | e }}</div>
 <div style="font-size:{{ '28px' if v | length <= 9 else '17px' }};font-weight:700;color:{{ pal[ts].fg if hi else ink }};margin-top:2px;line-height:1.1;word-break:break-word;">{{ v | e }}</div>
+{%- if t.note | default('') %}
+<div style="font-size:12px;font-weight:400;color:{{ muted }};margin-top:4px;">{{ t.note | e }}</div>
+{%- endif %}
 </td>
 </tr></table>
 </td>
@@ -243,6 +246,7 @@ body>table:first-of-type{position:relative;z-index:1;background:transparent !imp
 <td class="g-sec-pill" align="right" valign="middle">{{ pill(ss) }}</td>
 {%- endif %}
 </tr></table>
+{%- if s.cards is defined %}{{ s.cards | report_cards_html(ink, muted, accent) }}{% endif %}
 {%- if s.columns is defined %}
 {%- if s.rows | default([]) %}
 <div class="g-scroll" style="margin-top:12px;">
