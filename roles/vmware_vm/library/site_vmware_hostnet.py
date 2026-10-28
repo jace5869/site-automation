@@ -45,7 +45,7 @@ options:
   ping: {description: Run the pings (false = the configuration and the latency only)., type: bool, default: true}
   latency: {description: Read the storage latency., type: bool, default: true}
   latency_minutes: {description: Minutes of real-time statistics read (at most 60)., type: int, default: 60}
-  raw: {description: Return esxcli's answer to the first pings as it came (to check what the hosts send)., type: bool, default: false}
+  raw: {description: "Keep the first ping, and the first one that failed, whole: the host's ESXi version, its own parameters of esxcli network diag ping, what was sent, the request and the answer or the fault as the host sent it (to check what the hosts want and send).", type: bool, default: false}
   now: {description: The time to measure from (seconds since 1970; tests only)., type: float}
 author: site automation
 '''
@@ -53,9 +53,10 @@ author: site automation
 RETURN = r'''
 vcenters: {description: Every vCenter read (as each_vcenter returns it - name, ok, error, note)., type: list}
 read:
-  description: What was read from each vCenter that could be read.
+  description: "What was read from each vCenter that could be read. A ping's note: a parameter this host's esxcli does not have, sent without it; raw (with raw: true, the first ping and the first failed one): the host's parameters of the command, what was sent, the request, the answer or the fault."
   type: list
   sample: [{vcenter: vc01.example.mil, hosts: [{name: esx01.example.mil, cluster: CL1, datacenter: DC1, state: ok,
+            version: "VMware ESXi 8.0.3 build-24022510",
             vmks: [{device: vmk1, ip: 192.0.2.11, mask: 255.255.255.0, mtu: 9000, netstack: vmotion, portgroup: vMotion,
                     switch: vSwitch1, switch_mtu: 9000, services: [vmotion]}]}],
             pings: [{datacenter: DC1, cluster: CL1, service: vmotion, from: esx01.example.mil, vmk: vmk1, netstack: vmotion, to: esx02.example.mil,
@@ -71,6 +72,7 @@ import datetime
 import fnmatch
 import re
 import ssl
+import threading
 import time
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
@@ -219,6 +221,46 @@ def soap_fault(text):
     return " ".join(("%s: %s" % (kind, msg) if kind and kind not in msg else msg or kind or text).split())[:300]
 
 
+class EsxcliFault(RuntimeError):
+    """esxcli through vCenter failed: the message in words, and for vm_hostnet_raw the request sent and the fault as it came."""
+
+    def __init__(self, msg, request="", detail=""):
+        RuntimeError.__init__(self, msg)
+        self.request = request
+        self.detail = detail
+
+
+def parse_cli_info(response, method="ping"):
+    """FetchCLIInfo's answer (the XML inside ExecuteSoap's response, the namespace's commands) -> the parameters of the
+    method, [(name, type, flag)], in the host's own order. Every parameter of the answer when no method has that name."""
+    root = ET.fromstring(response)
+    found = [m for m in root.iter() if _local(m.tag) == "method"
+             and any(_local(c.tag) == "name" and (c.text or "").strip() == method for c in m)]
+    out = []
+    for prm in (found[0] if found else root).iter():
+        if _local(prm.tag) != "param":
+            continue
+        f = {_local(c.tag): (c.text or "").strip() for c in prm}
+        if f.get("name"):
+            out.append((f["name"], f.get("type", ""), f.get("flag", "").lower() == "true"))
+    return out
+
+
+def ping_args(p, count, schema=None):
+    """The arguments of one ping, (name, value) pairs - in the host's own order and only the ones its esxcli knows when
+    its parameter list (schema) was read, as govc sends them - and the names it does not know, left out."""
+    want = [("host", p["to_ip"]), ("interface", p["vmk"]), ("count", count), ("size", p["size"])]
+    if p.get("df"):
+        want.append(("df", "true"))
+    if p.get("netstack") and p["netstack"] != "defaultTcpipStack":
+        want.append(("netstack", p["netstack"]))
+    if not schema:
+        return want, []
+    names = [n for n, _, _ in schema]
+    known = dict(want)
+    return [(n, known[n]) for n in names if n in known], [n for n, _ in want if n not in names]
+
+
 # ---- vCenter -----------------------------------------------------------------------------------------------------------
 class Esxcli(object):
     """esxcli on the hosts through vCenter, as SOAP on pyVmomi's logged-in session (pyVmomi has no binding for
@@ -233,6 +275,8 @@ class Esxcli(object):
         self.opener = build_opener(HTTPSHandler(context=ctx))
         self.timeout = timeout
         self.mme = {}
+        self.schemas = {}                               # host moid -> (the ping's parameters [(name, type, flag)] or None, why not)
+        self.lock = threading.Lock()
 
     def _soap(self, body):
         env = ('<?xml version="1.0" encoding="UTF-8"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" '
@@ -245,9 +289,10 @@ class Esxcli(object):
         try:
             return self.opener.open(req, timeout=self.timeout).read().decode("utf-8")
         except HTTPError as e:                          # a SOAP fault comes as HTTP 500
-            raise RuntimeError(soap_fault(e.read().decode("utf-8", "replace")))
+            text = e.read().decode("utf-8", "replace")
+            raise EsxcliFault(soap_fault(text), body, text[:3000])
         except URLError as e:
-            raise RuntimeError("vCenter did not answer: %s" % e.reason)
+            raise EsxcliFault("vCenter did not answer: %s" % e.reason, body)
 
     def executer(self, moid):
         if moid not in self.mme:
@@ -259,39 +304,72 @@ class Esxcli(object):
             self.mme[moid] = (rv.get("type") or "ManagedMethodExecuter", rv.text)
         return self.mme[moid]
 
-    def run(self, host_moid, command, args):
-        """esxcli <command> on the host: the answer's XML (a fault raises RuntimeError, in words)."""
+    def call(self, host_moid, moid, method, args):
+        """One method of the host's dynamic types through ExecuteSoap: the answer's XML (a fault raises EsxcliFault, in words)."""
         kind, mme = self.executer(host_moid)
-        ns = command.split(".")
         argx = "".join("<argument><name>%s</name><val>%s</val></argument>" % (escape(n), escape("<%s>%s</%s>" % (n, escape(str(v)), n)))
                        for n, v in args)
-        res = ET.fromstring(self._soap(
-            '<ExecuteSoap xmlns="urn:vim25"><_this type="%s">%s</_this><moid>ha-cli-handler-%s</moid><version>urn:vim25/5.0</version>'
-            '<method>vim.EsxCLI.%s</method>%s</ExecuteSoap>' % (escape(kind), escape(mme), "-".join(ns[:-1]), command, argx)))
+        body = ('<ExecuteSoap xmlns="urn:vim25"><_this type="%s">%s</_this><moid>%s</moid><version>urn:vim25/5.0</version>'
+                '<method>%s</method>%s</ExecuteSoap>' % (escape(kind), escape(mme), escape(moid), escape(method), argx))
+        res = ET.fromstring(self._soap(body))
         fault = next((e for e in res.iter() if _local(e.tag) == "fault"), None)
         if fault is not None:
             msg = next((e.text for e in fault.iter() if _local(e.tag) == "faultMsg"), "") or ""
             detail = next((e.text for e in fault.iter() if _local(e.tag) == "faultDetail"), "") or ""
-            raise RuntimeError(soap_fault(detail) if detail else msg or "esxcli failed")
+            raise EsxcliFault(soap_fault(detail) if detail else msg or "esxcli failed", body, ET.tostring(fault, encoding="unicode")[:3000])
         resp = next((e for e in res.iter() if _local(e.tag) == "response"), None)
         return resp.text if resp is not None and resp.text else ""
 
+    def run(self, host_moid, command, args):
+        """esxcli <command> on the host: the answer's XML (a fault raises EsxcliFault, in words)."""
+        ns = command.split(".")
+        return self.call(host_moid, "ha-cli-handler-" + "-".join(ns[:-1]), "vim.EsxCLI." + command, args)
+
+    def schema(self, host_moid):
+        """The host's own parameters of esxcli network diag ping, [(name, type, flag)] - read once per host from its CLI
+        info, as govc and PowerCLI do - or None when they could not be read (vcsim; an old host): the pings then go as
+        they are."""
+        with self.lock:
+            if host_moid in self.schemas:
+                return self.schemas[host_moid][0]
+        try:
+            params = parse_cli_info(self.call(host_moid, "ha-dynamic-type-manager-local-cli-cliinfo", "vim.CLIInfo.FetchCLIInfo",
+                                              [("typeName", "vim.EsxCLI.network.diag")]))
+            got = (params or None, "" if params else "no parameter in the answer")
+        except Exception as e:                          # noqa: BLE001
+            got = (None, str(e) or type(e).__name__)
+        with self.lock:
+            self.schemas[host_moid] = got
+        return got[0]
+
+    def schema_text(self, host_moid):
+        params, why = self.schemas.get(host_moid) or (None, "not read")
+        if not params:
+            return "could not be read (%s)" % why
+        return ", ".join("%s%s%s" % (n, " (%s)" % t if t else "", " flag" if f else "") for n, t, f in params)
+
 
 def ping(cli, host_moid, p, count, keep_raw):
-    args = [("host", p["to_ip"]), ("interface", p["vmk"]), ("count", count), ("size", p["size"])]
-    if p.get("df"):
-        args.append(("df", "true"))
-    if p.get("netstack") and p["netstack"] != "defaultTcpipStack":
-        args.append(("netstack", p["netstack"]))
+    """One ping from the host: esxcli network diag ping's numbers, or error (in words). With keep_raw, raw: the host's
+    parameters of the command, the request sent and the answer or the fault as they came."""
+    args, dropped = ping_args(p, count, cli.schema(host_moid))
+    request = ""
     try:
         raw = cli.run(host_moid, "network.diag.ping", args)
         rec = parse_ping(raw)
         rec["error"] = ""
-        if keep_raw:
-            rec["raw"] = raw[:4000]
+        detail = "ANSWER: %s" % raw[:4000]
     except Exception as e:                              # noqa: BLE001 - said in the report, the other pings still run
         rec = {"sent": None, "received": None, "loss_pct": None, "rtt_min_ms": None, "rtt_avg_ms": None, "rtt_max_ms": None,
                "error": str(e) or type(e).__name__}
+        request = getattr(e, "request", "") or ""
+        detail = "FAULT: %s" % ((getattr(e, "detail", "") or str(e) or type(e).__name__)[:3000])
+    if dropped:
+        rec["note"] = "this host's esxcli ping has no %s parameter: sent without it" % " or ".join(dropped)
+    if keep_raw:
+        rec["raw"] = "PARAMETERS OF THE HOST'S esxcli network diag ping: %s\nSENT: %s\n%s%s" % (
+            cli.schema_text(host_moid), ", ".join("%s=%s" % (n, v) for n, v in args),
+            ("REQUEST: %s\n" % request) if request else "", detail)
     return rec
 
 
@@ -392,7 +470,7 @@ def _read(si, content, name, p, now):
             continue
         for o, pr in _props(content, dpr["hostFolder"], vim.HostSystem,
                             ["name", "parent", "runtime.connectionState", "runtime.inMaintenanceMode", "config.network",
-                             "config.virtualNicManagerInfo", "datastore"]):
+                             "config.virtualNicManagerInfo", "datastore", "config.product.fullName"]):
             parent = pr.get("parent")
             cl = parent.name if isinstance(parent, vim.ClusterComputeResource) else ""
             hname = pr.get("name", "")
@@ -400,7 +478,8 @@ def _read(si, content, name, p, now):
                 continue
             if p["clusters"] and not any(fnmatch.fnmatchcase(cl.lower(), str(c).strip().lower()) for c in p["clusters"] if str(c).strip()):
                 continue
-            rec = {"name": hname, "cluster": cl, "datacenter": dc, "obj": o, "vmks": [], "datastores": {}}
+            rec = {"name": hname, "cluster": cl, "datacenter": dc, "obj": o, "vmks": [], "datastores": {},
+                   "version": str(pr.get("config.product.fullName") or "")}
             conn = str(pr.get("runtime.connectionState") or "")
             if name_matches(hname, p["exclude"]):
                 rec["state"] = "excluded"
@@ -452,6 +531,15 @@ def _read(si, content, name, p, now):
                 got = list(pool.map(lambda q: ping(cli, moid[q["from"]], q, p["count"], False), small))
             for q, r in zip(again, got):
                 q["small"] = {k: r.get(k) for k in ("sent", "received", "loss_pct", "rtt_avg_ms", "error")}
+        if p["raw"]:
+            # the first ping that failed, once more with everything kept: what the host answered to what was sent
+            bad = next((q for q in pings if q["error"] and "raw" not in q), None)
+            if bad is not None:
+                bad["raw"] = ping(cli, moid[bad["from"]], bad, p["count"], True).get("raw", "")
+            version = {h["name"]: h.get("version") or "ESXi version not read" for h in hosts}
+            for q in pings:
+                if q.get("raw"):
+                    q["raw"] = "HOST %s (%s)\n%s" % (q["from"], version.get(q["from"]), q["raw"])
     lat, lnote = _latency(content, [h for h in hosts if h["state"] == "ok"], p["latency_minutes"], now) if p["latency"] else ([], "")
     for h in hosts:
         h.pop("obj", None)

@@ -29,6 +29,24 @@ ANSWER = """<obj xmlns:vim25="urn:vim25" xmlns:xsi="http://www.w3.org/2001/XMLSc
 <ReceivedBytes>8980</ReceivedBytes><RoundtripTime>180</RoundtripTime><TTL>64</TTL></Trace></obj>"""
 
 
+# FetchCLIInfo's answer for the namespace network.diag: the ping command's parameters, in the host's order (shortened)
+CLIINFO = """<obj xmlns="urn:vim25" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" versionId="5.0" xsi:type="CLIInfo">
+<name>network.diag</name><displayName>diag</displayName><help>Diagnostic</help><method><name>ping</name><displayName>ping</displayName>
+<help>Send ICMP echo requests to network hosts.</help>
+<param><name>count</name><displayName>count</displayName><help>Specify the number of packets to send.</help><aliases>--count</aliases>
+<aliases>-c</aliases><flag>false</flag><type>long</type></param>
+<param><name>df</name><displayName>df</displayName><help>Set DF bit on IPv4 packets.</help><aliases>--df</aliases><aliases>-d</aliases>
+<flag>true</flag><type>boolean</type></param>
+<param><name>host</name><displayName>host</displayName><help>Specify the target IP address.</help><aliases>--host</aliases>
+<aliases>-H</aliases><flag>false</flag><type>string</type></param>
+<param><name>interface</name><displayName>interface</displayName><help>Specify the outgoing interface.</help><aliases>--interface</aliases>
+<aliases>-I</aliases><flag>false</flag><type>string</type></param>
+<param><name>netstack</name><displayName>netstack</displayName><help>Specify the TCP/IP netstack.</help><aliases>--netstack</aliases>
+<aliases>-S</aliases><flag>false</flag><type>string</type></param>
+<param><name>size</name><displayName>size</displayName><help>Set the payload size.</help><aliases>--size</aliases><aliases>-s</aliases>
+<flag>false</flag><type>long</type></param></method></obj>"""
+
+
 def host(name, cluster="CL1", state="ok", vmks=None, dc="DC1"):
     return {"name": name, "cluster": cluster, "datacenter": dc, "state": state, "vmks": vmks or []}
 
@@ -98,6 +116,34 @@ class Module(unittest.TestCase):
         self.assertEqual(hn.soap_fault(detail), "NotFound: The object or item referred to could not be found.")
         self.assertEqual(hn.soap_fault("not xml <"), "not xml <")
 
+    def test_cli_info_gives_the_hosts_parameters_in_its_order(self):
+        self.assertEqual(hn.parse_cli_info(CLIINFO), [("count", "long", False), ("df", "boolean", True), ("host", "string", False),
+                                                      ("interface", "string", False), ("netstack", "string", False), ("size", "long", False)])
+        self.assertEqual(len(hn.parse_cli_info(CLIINFO, "list")), 6)                 # no method of that name: every parameter
+        self.assertEqual(hn.parse_cli_info("<obj><name>network.diag</name></obj>"), [])
+
+    def test_ping_args_follow_the_hosts_parameter_list(self):
+        p = {"to_ip": "192.0.2.12", "vmk": "vmk1", "size": 8972, "df": True, "netstack": "vmotion"}
+        self.assertEqual(hn.ping_args(p, 3), ([("host", "192.0.2.12"), ("interface", "vmk1"), ("count", 3), ("size", 8972), ("df", "true"),
+                                              ("netstack", "vmotion")], []))                                   # no list read: as before
+        schema = hn.parse_cli_info(CLIINFO)
+        args, dropped = hn.ping_args(p, 3, schema)
+        self.assertEqual(args, [("count", 3), ("df", "true"), ("host", "192.0.2.12"), ("interface", "vmk1"), ("netstack", "vmotion"),
+                                ("size", 8972)])                                                              # the host's order, as govc sends them
+        self.assertEqual(dropped, [])
+        args, dropped = hn.ping_args(dict(p, df=False, netstack="defaultTcpipStack"), 3, schema)
+        self.assertEqual([n for n, _ in args], ["count", "host", "interface", "size"])
+        old = [x for x in schema if x[0] not in ("df", "netstack")]                   # a host without df or netstack
+        args, dropped = hn.ping_args(p, 3, old)
+        self.assertEqual([n for n, _ in args], ["count", "host", "interface", "size"])
+        self.assertEqual(dropped, ["df", "netstack"])
+
+    def test_a_fault_keeps_the_request_and_the_detail(self):
+        e = hn.EsxcliFault("InvalidArgument: A specified parameter was not correct: argument[2]", "<ExecuteSoap/>", "<fault/>")
+        self.assertEqual((str(e), e.request, e.detail), ("InvalidArgument: A specified parameter was not correct: argument[2]",
+                                                         "<ExecuteSoap/>", "<fault/>"))
+        self.assertIsInstance(e, RuntimeError)
+
     def test_name_and_datastore_id(self):
         self.assertTrue(hn.name_matches("esx01.example.mil", ["esx0*"]))
         self.assertTrue(hn.name_matches("esx01.example.mil", ["ESX01"]))
@@ -155,6 +201,30 @@ class Report(unittest.TestCase):
         self.assertIn("round trip 200 ms (from 150 ms is too slow)", text)
         self.assertIn("could not ping", text)
         self.assertEqual([r[0] for r in rows], ["CRITICAL", "CRITICAL", "WARNING", "WARNING", "WARNING"])
+
+    def test_a_host_that_refuses_a_parameter_is_told_apart_from_one_out_of_reach(self):
+        q = ping("esx01", "esx02", error="InvalidArgument: A specified parameter was not correct: argument[2]")
+        fix = rf._ping_fix(q, "could not ping: " + q["error"])
+        self.assertIn("did not take a parameter of the ping", fix)
+        self.assertIn("vm_hostnet_raw: true", fix)
+        self.assertIn("vCenter must be able to reach the host", rf._ping_fix(q, "could not ping: vCenter did not answer: timed out"))
+        self.assertIn("CIM interaction", rf._ping_fix(q, "could not ping: the vCenter account lacks the privilege Host.Cim.CimInteraction"))
+
+    def test_a_parameter_the_host_lacks_is_said_in_the_pings_note(self):
+        pings = [dict(ping("esx01", "esx02"), note="this host's esxcli ping has no df parameter: sent without it"), ping("esx02", "esx01")]
+        doc = rf.esxi_net_doc(read(H3, pings))
+        sec = next(s for s in doc["sections"] if "pings between the hosts" in s["title"])
+        self.assertEqual(sec["columns"][-1], "Note")
+        self.assertEqual([r[-1] for r in sec["rows"]], ["this host's esxcli ping has no df parameter: sent without it", "-"])
+        self.assertEqual(doc["status"], "ok")
+
+    def test_the_adapters_table_shows_each_hosts_esxi_version(self):
+        hosts = [dict(host("esx01", vmks=[vmk("vmk1", "192.0.2.11", ["vmotion"])]), version="VMware ESXi 8.0.3 build-24022510"),
+                 host("esx02", vmks=[vmk("vmk1", "192.0.2.12", ["vmotion"])])]
+        doc = rf.esxi_net_doc(read(hosts))
+        sec = next(s for s in doc["sections"] if s["title"] == "VMkernel adapters")
+        self.assertEqual(sec["columns"][-1], "ESXi")
+        self.assertEqual([r[-1] for r in sec["rows"]], ["8.0.3 build-24022510", "-"])
 
     def test_configuration(self):
         hosts = [host("esx01", vmks=[vmk("vmk1", "192.0.2.11", ["vmotion"])]),

@@ -65,7 +65,7 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
     "esxi_security.yml": ("ESXi - security settings", "VMware vCenter", "", ""),
     "esxi_network_check.yml": ("ESXi - network check", "VMware vCenter", "", """\
 ## The pings need Host > CIM > CIM interaction for the vCenter account (docs/VMWARE.md, "The ESXi network check")
-# vm_hostnet_raw: true   # the first run: the first ping's answer as the host sent it
+# vm_hostnet_raw: true   # the first run, or a host that refuses a parameter: the first ping and the first failed one, whole
 """),
     "health_check.yml": ("Health check", "Machine (ACT model key with use_act)", LINUX_CHECKS, """\
 ## The checks to run: daily, weekly, all, or names, e.g. [disk, services]

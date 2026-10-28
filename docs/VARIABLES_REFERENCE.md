@@ -1121,7 +1121,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_hostnet_latency_minutes` | `60` | minutes of the hosts' real-time statistics read (at most 60) |
 | `vm_hostnet_latency_warn_ms` | `20` | a datastore's average read or write latency from this: warning |
 | `vm_hostnet_latency_crit_ms` | `50` | ... critical |
-| `vm_hostnet_raw` | `false` | true = esxcli's first answer as it came, in the job's output (the first run: to check it) |
+| `vm_hostnet_raw` | `false` | true = the first ping and the first failed one whole, in the job's output: the host's parameters of the command, what was sent, the request, the answer or the fault (the first run, or a host that refuses a parameter) |
 | `vm_hostnet_fail` | `false` | true = the job shows failed when the report has a warning or worse (for workflows) |
 | `vm_inventory_templates` | `false` | ---- VM inventory report (playbooks/vm_inventory_report.yml) ---- true = templates counted and listed as VMs (false: left out, their number in the subtitle) |
 | `vm_inventory_by_folder` | `true` | a table per vCenter and folder; false = one table of every VM (vCenter and folder columns) |

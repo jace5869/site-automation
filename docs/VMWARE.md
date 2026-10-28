@@ -1259,9 +1259,11 @@ adapters, every ping (status, bytes, answered, average and highest round trip) a
    of "Before you start"). Read-only reads the rest.
 2. **The template.** *ESXi - network check*, playbook `playbooks/esxi_network_check.yml`, the VMware vCenter credential,
    the execution environment of your other VMware jobs, no Limit. `report_email_to` on its Variables to email it.
-3. **The first run** with `vm_hostnet_raw: true` on its Variables (or at launch): the job prints the first ping's answer
-   as the host sent it. If the round trips in the report look a thousand times off, send that output - ESXi versions
-   name the fields differently. Then take the setting off.
+3. **The first run** with `vm_hostnet_raw: true` on its Variables (or at launch): the job prints the first ping, and the
+   first one that failed, whole - the host's ESXi version, its own parameters of `esxcli network diag ping`, what was
+   sent, the request and the answer or the fault as the host sent it. If the round trips in the report look a
+   thousand times off, or a host says `could not ping: InvalidArgument` (it refused a parameter of the ping), send
+   that output - ESXi versions name the fields and the parameters differently. Then take the setting off.
 4. Optional: `vm_hostnet_targets`, e.g. `[{name: NFS array, host: 192.0.2.50, interface: vmk2}]` (`interface` - the
    adapter to ping from; default the management one); `vm_hostnet_services: [vmotion, vsan]` for vSAN's network too.
 
@@ -1277,8 +1279,13 @@ adapters, every ping (status, bytes, answered, average and highest round trip) a
 | `vm_hostnet_rtt_warn_ms` / `_crit_ms` | `5` / `150` | round trip |
 | `vm_hostnet_latency` | `true` | read the storage latency |
 | `vm_hostnet_latency_warn_ms` / `_crit_ms` | `20` / `50` | a datastore's average read or write latency |
-| `vm_hostnet_raw` | `false` | print the first ping's answer as the host sent it |
+| `vm_hostnet_raw` | `false` | print the first ping, and the first one that failed, whole: the host's parameters of the command, what was sent, the request, the answer or the fault |
 | `vm_hostnet_fail` | `false` | `true` = the job shows failed on a warning or worse, for workflows |
+
+Each ping is sent the way the host's own esxcli describes the command: its parameter list is read once per host (as
+govc and PowerCLI do), the arguments go in the host's order and only the ones it knows - a parameter the host does not
+have (`df` on an old host) is left out and the ping's note says so. The adapters table shows each host's ESXi version
+and build, so hosts that answer differently show their version next to their adapters.
 
 A host in maintenance mode or not connected is listed under "Hosts not checked" and not pinged from or to. A cluster is
 its datacenter's: when two datacenters both have a *Production*, they are two clusters - the hosts of one are never

@@ -34,6 +34,12 @@ def _svc(s):
     return LABEL.get(s, s)
 
 
+def _esxi(version):
+    """'VMware ESXi 8.0.3 build-24022510' -> '8.0.3 build-24022510'; nothing -> '-'."""
+    v = " ".join(str(version or "").split())
+    return (v[len("VMware ESXi "):] if v.startswith("VMware ESXi ") else v) or "-"
+
+
 def _short(name):
     n = str(name or "")
     return n if n.replace(".", "").isdigit() else n.split(".")[0]
@@ -92,8 +98,12 @@ def _ping_fix(q, what):
         return ("Check the address, VLAN and port group of both adapters, the physical uplinks, and the network stack (%s) - a "
                 "routed network needs its gateway." % (q.get("netstack") or "default"))
     if what.startswith("could not ping"):
-        return ("The account needs Host > CIM > CIM interaction for esxcli through vCenter." if "privilege" in what
-                or "permission" in what else "The host's own answer is in the table below; vCenter must be able to reach the host.")
+        if "privilege" in what or "permission" in what:
+            return "The account needs Host > CIM > CIM interaction for esxcli through vCenter."
+        if "InvalidArgument" in what or "not correct" in what:
+            return ("The host's esxcli did not take a parameter of the ping as the job sent it (another ESXi version?). Run the job "
+                    "once with vm_hostnet_raw: true and send its output: the host's own parameters, the request and the fault.")
+        return "The host's own answer is in the table below; vCenter must be able to reach the host."
     if "lost" in what:
         return "Errors or drops on the uplinks or switch ports (the VM health report's network drops), a busy link."
     return "A long or busy path: vMotion within a site expects well under a millisecond."
@@ -240,11 +250,11 @@ def esxi_net_doc(net, opts=None):
                 rows.append([_short(h["name"]), lab(h.get("datacenter") or "", h.get("cluster")) or "-", v["device"],
                              ", ".join(_svc(s) for s in v.get("services") or []) or "-",
                              v.get("ip") or "-", v.get("mtu") or "-", "%s (%s)" % (v.get("switch") or "-", v.get("switch_mtu") or "?")
-                             if v.get("switch") else "-", v.get("netstack") or "-"])
+                             if v.get("switch") else "-", v.get("netstack") or "-", _esxi(h.get("version"))])
                 rs.append(st)
     if rows:
         sections.append({"title": "VMkernel adapters", "columns": ["Host", "Cluster", "vmk", "Services", "IP address", "MTU",
-                                                                   "Switch (MTU)", "Network stack"],
+                                                                   "Switch (MTU)", "Network stack", "ESXi"],
                          "rows": rows[:o["max_rows"]], "row_status": rs[:o["max_rows"]]})
     pings = [q for r in read for q in r.get("pings") or []]
     by = {}
@@ -260,7 +270,8 @@ def esxi_net_doc(net, opts=None):
                          q.get("to") if svc == "target" else "%s (%s)" % (_short(q.get("to")), q.get("to_ip")),
                          "%s%s" % (q.get("size"), " DF" if q.get("df") else ""),
                          "-" if q.get("error") else "%s/%s" % (q.get("received"), q.get("sent")), _ms(q.get("rtt_avg_ms")),
-                         _ms(q.get("rtt_max_ms")), ("small: %s/%s" % (small.get("received"), small.get("sent")) if small else "") or what or "-"])
+                         _ms(q.get("rtt_max_ms")), ("small: %s/%s" % (small.get("received"), small.get("sent")) if small else "") or what
+                         or q.get("note") or "-"])
             rs.append(st)
         title = "Pings to other targets" if svc == "target" else "%s pings between the hosts of each cluster" % _svc(svc)
         sections.append({"title": title, "columns": ["Status", "From", "To", "Bytes", "Answered", "Avg ms", "Max ms", "Note"],

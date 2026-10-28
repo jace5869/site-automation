@@ -15,7 +15,7 @@
 # ==================================================================================================
 ---
 ## The pings need Host > CIM > CIM interaction for the vCenter account (docs/VMWARE.md, "The ESXi network check")
-# vm_hostnet_raw: true   # the first run: the first ping's answer as the host sent it
+# vm_hostnet_raw: true   # the first run, or a host that refuses a parameter: the first ping and the first failed one, whole
 
 # ---- vmware_vm -----------------------------------------------------------------------------------
 ## only needed when the same VM name exists in two datacenters
