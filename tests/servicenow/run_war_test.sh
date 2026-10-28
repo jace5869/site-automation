@@ -147,7 +147,7 @@ run "report_web_dest set, servicenow_war_web not: not on the report website" ok 
     || { echo "FAIL - the website folder has: $(ls -A "$work/site3")"; fails=$((fails + 1)); }
 
 WAR_ENV="SN_PASSWORD=bad" run "a wrong password" fail "{$NOW, $GROUP}" 'HTTP 401: User Not Authenticated'
-WAR_ENV="SN_HOST=" run "no credential" fail "{$NOW, $GROUP}" 'Attach the "ServiceNow API" credential'
+WAR_ENV="SN_HOST=" run "no credential" fail "{$NOW, $GROUP}" 'it sets SN_HOST, SN_USERNAME, SN_PASSWORD'
 
 # ---- emailed with the workbook ------------------------------------------------------------------------
 mkdir -p "$work/mail"
