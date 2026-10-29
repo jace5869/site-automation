@@ -218,6 +218,11 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets the incidents (exactly
 """),
     "vm_alarm_act_analysis.yml": ("VM - alarms ACT analysis", "VMware vCenter, ACT model key", "", ""),
     "vm_alarm_report.yml": ("VM - alarms report", "VMware vCenter", "", ""),
+    "vm_ask.yml": ("VM - ask a question", "VMware vCenter, ACT model key", "", """\
+## The question comes from the template's survey: a Textarea question whose answer variable is vm_ask_question
+## (docs/VM_ASK.md). The job only reads: a question that asks to restart, delete or change anything is refused.
+# vm_ask_extra_instructions: "A name with DBV is a database server; ACAS is the scanner team's folder."
+"""),
     "vm_capacity_report.yml": ("VM - capacity planning", "VMware vCenter (ACT model key with vm_capacity_act)", "", ""),
     "vm_datastore_report.yml": ("VM - datastore report", "VMware vCenter", "", ""),
     "vm_inventory_report.yml": ("VM - inventory report", "VMware vCenter", "", ""),

@@ -1,0 +1,209 @@
+---
+# VM - ASK A QUESTION (playbooks/vm_ask.yml, docs/VM_ASK.md): a question about vCenter in plain words
+# (vm_ask_question, the survey's box) - "all VMs with dbv in the name", "VMs on datastores under 10% free",
+# "hosts in maintenance mode" - answered from every vCenter. READ-ONLY, whatever the question says:
+#   1. A question that asks to change something (restart, shut down, delete, maintenance mode ...) is refused
+#      here, before GenAI sees it (vm_ask_guard).
+#   2. GenAI (ACT, evidence mode: it runs no command) turns the question into a query of the job's own form -
+#      the object, conditions, joins, columns. It writes no code and no command; it gets only the question and
+#      the list of fields, no data from vCenter. It may refuse too. GenAI not available: the job's own reader
+#      takes the simplest questions (vm_ask_local_fallback). vm_ask_query skips GenAI: the query as given.
+#   3. The query is held to the whitelist (vm_ask_check: eight objects, their fields, a few operators); anything
+#      else stops the job, said in words.
+#   4. Only readers run (site_vmware_vms, _health, _datastores, _snapshots, _alarms), only those the query needs;
+#      the answer is worked out here (vm_ask_run), joins included.
+#   5. The report: how the question was read, the answer - printed, emailed (report_email_to,
+#      report_email_also), on the report website (report_web_dest), every row in a workbook (vm_ask_xlsx).
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | the question
+  ansible.builtin.set_fact:
+    _ask_q: "{{ vm_ask_question | default('', true) | string | trim }}"
+    _ask_given: "{{ vm_ask_query | default({}, true) | vm_ask_given }}"
+    _ask_vcs: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+
+- name: VMware | there is a question
+  ansible.builtin.assert:
+    that: _ask_q | length > 0 or _ask_given | length > 0
+    fail_msg: >-
+      Nothing to answer: type a question in the survey's box (vm_ask_question), e.g. "all VMs with dbv in the
+      name", "VMs in the acas folder", "hosts in maintenance mode", "snapshots older than 7 days". docs/VM_ASK.md
+    quiet: true
+
+- name: VMware | the question only asks to see something (this job never changes anything)
+  ansible.builtin.set_fact:
+    _ask_refused: "{{ _ask_q | vm_ask_guard }}"
+
+- name: VMware | refused before GenAI is asked
+  ansible.builtin.assert:
+    that: _ask_refused | length == 0
+    fail_msg: "Refused: {{ _ask_refused }}"
+    quiet: true
+
+- name: VMware | GenAI reads the question - evidence mode, ACT runs no command
+  ansible.builtin.include_role:
+    name: site_act
+    tasks_from: evidence_analysis.yml
+    public: true
+  vars:
+    _ea_items: [{id: Q1}]
+    _ea_evidence: "{{ _ask_q }}"
+    _ea_task: "{{ {'extra': vm_ask_extra_instructions | default('', true), 'event_days': vm_ask_event_days | int} | vm_ask_task }}"
+    _ea_names: []
+    _ea_model_timeout: "{{ vm_ask_model_timeout }}"
+    _ea_check_url: true
+    _ea_in_check: true                 # the job only reads: a dry run (Check) answers the question too
+  when: _ask_given | length == 0 and vm_ask_genai | bool
+
+# one dict expression, so the query's values keep their types on ansible-core 2.16 too
+- name: VMware | the query - GenAI's, the job's own reader's, or vm_ask_query
+  ansible.builtin.set_fact:
+    _ask: >-
+      {%- set ran = _ea_ran | default(false) | bool -%}
+      {%- if _ask_given | length > 0 -%}
+      {{ {'query': _ask_given, 'refused': '', 'error': '', 'by': 'vm_ask_query (the query as given; GenAI not asked)', 'note': ''} }}
+      {%- elif ran -%}
+      {%- set g = _ea_raw | default('') | vm_ask_parse -%}
+      {{ {'query': g.query, 'refused': g.refused, 'error': g.error, 'note': '',
+          'by': 'GenAI (' ~ site_act_provider ~ ((', ' ~ _ea_model) if _ea_model | default('') | length > 0 else '') ~ ')'} }}
+      {%- else -%}
+      {%- set why = 'GenAI is off (vm_ask_genai: false)' if not vm_ask_genai | bool else 'GenAI did not run: ' ~ (_ea_reason | default('') | trim | regex_replace('[.]$', '')) -%}
+      {%- set l = _ask_q | vm_ask_local if (vm_ask_local_fallback | bool or not vm_ask_genai | bool) else {} -%}
+      {{ {'query': l, 'refused': '',
+          'error': '' if l | length > 0 else why ~ (". The job's own reader takes only simple questions ('VMs with dbv in the name', 'VMs in the "
+                                                    ~ "acas folder', 'hosts in maintenance mode', 'snapshots older than 7 days'), and not this one."
+                                                    if vm_ask_local_fallback | bool or not vm_ask_genai | bool else ' (vm_ask_local_fallback: false).'),
+          'by': "the job's own reader (simple questions only)",
+          'note': why ~ ". The job's own reader read the question: check that 'Read as' is what you asked."} }}
+      {%- endif -%}
+
+- name: VMware | GenAI did not refuse it
+  ansible.builtin.assert:
+    that: _ask.refused | length == 0
+    fail_msg: >-
+      Refused by GenAI: the question asks to change something ({{ _ask.refused }}). This job only reads vCenter:
+      it never restarts, shuts down, deletes, moves or changes anything. Ask what you want to see.
+    quiet: true
+
+- name: VMware | the question was read
+  ansible.builtin.assert:
+    that: _ask.error | length == 0
+    fail_msg: >-
+      The question could not be read: {{ _ask.error }}
+      {{- (' GenAI answered: ' ~ (_ea_raw | default('') | truncate(1500))) if _ea_ran | default(false) | bool else '' }}
+    quiet: true
+
+- name: VMware | the query, held to the whitelist (the objects, their fields, a few operators)
+  ansible.builtin.set_fact:
+    _ask_chk: "{{ _ask.query | vm_ask_check }}"
+
+- name: VMware | the query is one the job can run
+  ansible.builtin.assert:
+    that: _ask_chk.problems | length == 0
+    fail_msg: >-
+      The query is not one this job runs - {{ _ask_chk.problems | join('; ') }}. Nothing was read.
+      {{- (' (' ~ _ask.by ~ ' read the question as: ' ~ (_ask.query | to_json | truncate(1500)) ~ ')') if '_bad' not in _ask.query else '' }}
+      Asking it in other words often helps; docs/VM_ASK.md lists the fields.
+    quiet: true
+
+- name: VMware | what the query needs read
+  ansible.builtin.set_fact:
+    _ask_need: "{{ _ask_chk.query | vm_ask_needs }}"
+
+- name: VMware | {{ _ask_chk.query | vm_ask_text }}
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['Asked: ' ~ (_ask_q or '(vm_ask_query)'), 'Read by: ' ~ _ask.by, 'Read as: ' ~ (_ask_chk.query | vm_ask_text),
+          'Reading: ' ~ (['VMs' ~ (' with their disks' if _ask_need.disks else '') if _ask_need.vm else '',
+                         ("vCenter's events of the last " ~ vm_ask_event_days ~ ' days') if _ask_need.events else '',
+                         'hosts and clusters' if _ask_need.host else '', 'datastores' if _ask_need.datastore else '',
+                         'snapshots' if _ask_need.snapshot else '', 'alarms' if _ask_need.alarm else ''] | select | join(', '))]
+         + (['NOTE: ' ~ _ask.note] if _ask.note else []) }}
+
+- name: VMware | read the VMs
+  site_vmware_vms:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ _ask_vcs }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    disks: "{{ _ask_need.disks | bool }}"
+    events_days: "{{ vm_ask_event_days | float if _ask_need.events | bool else 0 }}"
+    max_events: "{{ vm_ask_max_events | int }}"
+  register: _ask_r_vm
+  check_mode: false
+  when: _ask_need.vm | bool
+
+- name: VMware | read the hosts and clusters
+  site_vmware_health:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ _ask_vcs }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    sensors: false
+    clock: false
+  register: _ask_r_host
+  check_mode: false
+  when: _ask_need.host | bool
+
+- name: VMware | read the datastores
+  site_vmware_datastores:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ _ask_vcs }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    members: true
+  register: _ask_r_ds
+  check_mode: false
+  when: _ask_need.datastore | bool
+
+- name: VMware | read the snapshots
+  site_vmware_snapshots:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ _ask_vcs }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    taken_by: "{{ _ask_need.taken_by | bool }}"
+  register: _ask_r_snap
+  check_mode: false
+  when: _ask_need.snapshot | bool
+
+- name: VMware | read the triggered alarms
+  site_vmware_alarms:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ _ask_vcs }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    types: [vcenter, datacenter, cluster, host, datastore, vm]
+    hours: 0
+    max_alarm_changes: 0
+  register: _ask_r_alarm
+  check_mode: false
+  when: _ask_need.alarm | bool
+
+- name: VMware | the answer
+  ansible.builtin.set_fact:
+    _ask_res: >-
+      {{ {'vms': _ask_r_vm.vms | default([]), 'hosts': _ask_r_host.hosts | default([]), 'clusters': _ask_r_host.clusters | default([]),
+          'datastores': _ask_r_ds.datastores | default([]), 'snapshots': _ask_r_snap.snapshots | default([]),
+          'alarms': _ask_r_alarm.alarms | default([])} | vm_ask_records | vm_ask_run(_ask_chk.query, {'max_rows': vm_ask_max_rows | int}) }}
+    _ask_vcenters: "{{ [_ask_r_vm, _ask_r_host, _ask_r_ds, _ask_r_snap, _ask_r_alarm] | vm_ask_vcenters }}"
+    _ask_ctx: >-
+      {{ {'question': _ask_q, 'query': _ask_chk.query, 'by': _ask.by, 'note': _ask.note, 'xlsx': vm_ask_xlsx | bool,
+          'print_rows': vm_ask_print_rows | int} }}
+
+- name: VMware | the report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_vcenters: "{{ _ask_vcenters }}"
+    _vm_report_doc: "{{ _ask_res | vm_ask_doc(_ask_ctx) }}"
+    _vm_report_subject: "{{ (_ask_res | vm_ask_doc(_ask_ctx)).title }}"
+    _vm_report_lines: "{{ _ask_res | vm_ask_lines(_ask_ctx) }}"
+    _vm_report_xlsx: "{{ _ask_res | vm_ask_xlsx if vm_ask_xlsx | bool and _ask_res.rows | length > 0 else [] }}"
+
+- name: VMware | the answer as job artifacts (vm_ask)
+  ansible.builtin.set_stats:
+    data:
+      vm_ask: >-
+        {{ {'question': _ask_q, 'query': _ask_chk.query, 'read_by': _ask.by, 'object': _ask_res.object, 'total': _ask_res.total,
+            'columns': _ask_res.columns, 'rows': _ask_res.rows[:(vm_ask_artifact_rows | int)], 'vcenters': _ask_vcenters} }}
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _ask_vcenters }}"

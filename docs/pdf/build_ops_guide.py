@@ -36,6 +36,7 @@ DOCS = [  # (file, chapter title)
     ("docs/WINDOWS.md", "Windows servers"),
     ("docs/VMWARE.md", "VMware jobs (vCenter): restart, snapshots, VLAN, reports, alarms and ACT"),
     ("docs/VM_OUTAGE_WATCH.md", "VM outage watch: what is down or hung right now"),
+    ("docs/VM_ASK.md", "VM - ask a question: vCenter in plain words, read-only"),
     ("docs/LOG_ANALYSIS.md", "Log analysis: the patterns in a group of servers' logs, explained by ACT"),
     ("docs/NETAPP.md", "NetApp ONTAP health report"),
     ("docs/NETWORK_CERTS.md", "Network device certificates: report and renewal"),

@@ -224,6 +224,25 @@ def watch():
                                        **where(h0 if type_id.startswith("esx.problem.storage") else h1)))
 
 
+def ask():
+    """VM - ask a question: a restart inside DC0_H0_VM1, a vMotion of DC0_C0_RP0_VM0 from DC0_C0_H0, DC0_C0_RP0_VM1 powered off
+    (an event only: it stays on). vcsim keeps its own time and user for a posted event: now, and the logged-in user."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    em = content.eventManager
+    hosts = {h.name: h for h in content.viewManager.CreateContainerView(content.rootFolder, [vim.HostSystem], True).view}
+    dc = content.rootFolder.childEntity[0]
+
+    def about(v, minutes):
+        h = v.runtime.host
+        return dict(key=0, chainId=0, createdTime=now - datetime.timedelta(minutes=minutes), userName="VSPHERE.LOCAL\\admin",
+                    vm=vim.event.VmEventArgument(name=v.name, vm=v), host=vim.event.HostEventArgument(name=h.name, host=h),
+                    datacenter=vim.event.DatacenterEventArgument(name=dc.name, datacenter=dc))
+    em.PostEvent(vim.event.VmGuestRebootEvent(**about(vm("DC0_H0_VM1"), 0)))
+    h0 = hosts["DC0_C0_H0"]
+    em.PostEvent(vim.event.VmMigratedEvent(sourceHost=vim.event.HostEventArgument(name=h0.name, host=h0), **about(vm("DC0_C0_RP0_VM0"), 30)))
+    em.PostEvent(vim.event.VmPoweredOffEvent(**about(vm("DC0_C0_RP0_VM1"), 3 * 24 * 60)))
+
+
 def guest():
     WaitForTask(vm(sys.argv[2]).ReconfigVM_Task(vim.vm.ConfigSpec(
         extraConfig=[vim.option.OptionValue(key="SET." + kv.split("=", 1)[0], value=kv.split("=", 1)[1]) for kv in sys.argv[3:]])))
@@ -241,4 +260,5 @@ def snap():
     WaitForTask(vm(sys.argv[2]).CreateSnapshot_Task(name=sys.argv[3], description="", memory=False, quiesce=False))
 
 
-{"setup": setup, "state": state, "events": events, "health": health, "guest": guest, "snap": snap, "watch": watch, "size": size}[sys.argv[1]]()
+{"setup": setup, "state": state, "events": events, "health": health, "guest": guest, "snap": snap, "watch": watch, "size": size,
+ "ask": ask}[sys.argv[1]]()

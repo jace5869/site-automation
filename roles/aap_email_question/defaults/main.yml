@@ -39,6 +39,7 @@ aap_email_question_playbooks:
   - troubleshoot.yml
   - trust_report.yml
   - vm_alarm_act_analysis.yml
+  - vm_ask.yml
   - vm_alarm_report.yml
   - vm_capacity_report.yml
   - vm_created_report.yml

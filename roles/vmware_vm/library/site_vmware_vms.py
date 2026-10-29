@@ -23,6 +23,22 @@ options:
   vcenters: {description: More vCenters to read besides the credential's (same account; name or name:port)., type: list, elements: str, default: []}
   validate_certs: {description: Check vCenter's certificate., type: bool, default: true}
   now: {description: The time to measure the time up from (seconds since 1970; tests only)., type: float}
+  disks:
+    description: Also read each VM's virtual disks (size, datastore, thin), the guest's drives as VMware Tools reports
+      them (size and free space), and the datastore space it uses (vdisks, volumes, storage_used_gb,
+      storage_provisioned_gb). For VM - ask a question.
+    type: bool
+    default: false
+  events_days:
+    description: Also read vCenter's events of the last this many days - one query for every VM - for each VM's last
+      restart (power on, guest restart, reset, HA), last power off and last vMotion (last_restart, last_power_off,
+      last_vmotion). 0 = none. vCenter keeps events for a limited time (often 30 days). For VM - ask a question.
+    type: float
+    default: 0
+  max_events:
+    description: Read at most this many of those events (the newest).
+    type: int
+    default: 50000
 author: site automation
 '''
 
@@ -35,6 +51,15 @@ vms:
             esxi_host: esx01.example.mil, template: false, power: poweredOn, hostname: web01.example.mil, ip: 192.0.2.3,
             ips: [192.0.2.3], guest_os: Red Hat Enterprise Linux 9 (64-bit), tools: toolsOk, tools_running: guestToolsRunning,
             heartbeat: green, cpus: 2, memory_mb: 8192, boot_time: "2026-10-01T12:00:00Z", up_minutes: 27360}]
+    # with disks: vdisks [{label: Hard disk 1, size_gb: 100.0, datastore: DS01, file: "[DS01] web01/web01.vmdk", thin: true}],
+    #   volumes [{path: "C:\\", capacity_gb: 99.4, free_gb: 12.1}], storage_used_gb: 54.2, storage_provisioned_gb: 108.0
+    # with events_days: last_restart {time, kind (power on, guest restart, reset, HA restart), by}, last_power_off {time, kind, by},
+    #   last_vmotion {time, kind (vMotion, DRS vMotion, relocate), from_host, to_host, by} - {} when none in the window
+events:
+  description: With events_days, one per vCenter read - its name, the days read, how many events, and whether
+    max_events cut it short (capped).
+  type: list
+  returned: success
 vcenters:
   description: Each vCenter and whether it was read (ok), or why not (error).
   type: list
@@ -42,6 +67,7 @@ vcenters:
 '''
 
 import datetime
+import re
 import time
 
 from ansible.module_utils.basic import AnsibleModule
@@ -81,14 +107,90 @@ def _host(host, seen):
     return seen[host._moId]
 
 
+GB = 1024.0 ** 3
+# the events of a VM's last restart, power off and vMotion: {type: (what, kind)}
+EVENTS = {"VmPoweredOnEvent": ("restart", "power on"), "VmGuestRebootEvent": ("restart", "guest restart"),
+          "VmResettingEvent": ("restart", "reset"), "VmRestartedOnAlternateHostEvent": ("restart", "HA restart"),
+          "com.vmware.vc.ha.VmRestartedByHAEvent": ("restart", "HA restart"),
+          "VmPoweredOffEvent": ("power_off", "power off"), "VmGuestShutdownEvent": ("power_off", "guest shutdown"),
+          "VmMigratedEvent": ("vmotion", "vMotion"), "DrsVmMigratedEvent": ("vmotion", "DRS vMotion"),
+          "VmRelocatedEvent": ("vmotion", "relocate")}
+
+
+def _iso(t):
+    if t is None:
+        return ""
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=datetime.timezone.utc)
+    return t.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _disks(pr):
+    """(virtual disks, the guest's drives, datastore space used and provisioned in GB) from the VM's properties."""
+    vd = []
+    for d in pr.get("config.hardware.device") or []:
+        if not isinstance(d, vim.vm.device.VirtualDisk):
+            continue
+        f = str(getattr(d.backing, "fileName", "") or "")
+        m = re.match(r"^\[([^\]]*)\]", f)
+        vd.append({"label": getattr(d.deviceInfo, "label", "") or "", "size_gb": round(float(d.capacityInKB or 0) / 1024 / 1024, 1),
+                   "datastore": m.group(1) if m else "", "file": f, "thin": bool(getattr(d.backing, "thinProvisioned", False))})
+    vols = [{"path": str(g.diskPath or ""), "capacity_gb": round(float(g.capacity or 0) / GB, 1),
+             "free_gb": round(float(g.freeSpace or 0) / GB, 1)} for g in pr.get("guest.disk") or []]
+    st = pr.get("summary.storage")
+    used = float(getattr(st, "committed", 0) or 0) if st is not None else None
+    unc = float(getattr(st, "uncommitted", 0) or 0) if st is not None else 0
+    return vd, vols, (round(used / GB, 1) if used is not None else None), (round((used + unc) / GB, 1) if used is not None else None)
+
+
+def _vm_events(content, p, now):
+    """{vm moid: {'restart': {...}, 'power_off': {...}, 'vmotion': {...}}} - the newest of each, from one query of the
+    last events_days days - and what was read."""
+    begin = datetime.datetime.fromtimestamp(now - p["events_days"] * 86400, tz=datetime.timezone.utc)
+    spec = vim.event.EventFilterSpec(time=vim.event.EventFilterSpec.ByTime(beginTime=begin), eventTypeId=list(EVENTS))
+    seen, last, n = set(), {}, 0
+    col = content.eventManager.CreateCollectorForEvents(spec)
+    try:
+        col.SetCollectorPageSize(1000)
+        batch = list(col.latestPage or [])
+        while batch and n < p["max_events"]:
+            fresh = [e for e in batch if e.key not in seen]
+            if not fresh:
+                break
+            for e in fresh:
+                seen.add(e.key)
+                n += 1
+                t = getattr(e, "eventTypeId", "") or type(e).__name__.split(".")[-1]
+                what, kind = EVENTS.get(t, ("", ""))
+                vm = getattr(getattr(e, "vm", None), "vm", None)
+                if not what or vm is None:
+                    continue
+                rec = {"time": _iso(e.createdTime), "kind": kind, "by": "DRS" if t == "DrsVmMigratedEvent" else str(e.userName or "")}
+                if what == "vmotion":
+                    rec["from_host"] = str(getattr(getattr(e, "sourceHost", None), "name", "") or "")
+                    rec["to_host"] = str(getattr(getattr(e, "host", None), "name", "") or "")
+                old = last.setdefault(vm._moId, {}).get(what)
+                if old is None or rec["time"] > old["time"]:
+                    last[vm._moId][what] = rec
+            batch = col.ReadPreviousEvents(1000) or []
+    finally:
+        try:
+            col.DestroyCollector()
+        except Exception:
+            pass
+    return last, {"days": p["events_days"], "read": n, "capped": n >= p["max_events"]}
+
+
 def _read(content, p, now, vcenter):
     out, hosts, folders = [], {}, {}
+    props = PROPS + (["config.hardware.device", "guest.disk", "summary.storage"] if p["disks"] else [])
+    evs, ev_info = _vm_events(content, p, now) if p["events_days"] > 0 else ({}, {})
     view = content.viewManager.CreateContainerView(content.rootFolder, [vim.VirtualMachine], True)
     spec = vmodl.query.PropertyCollector.FilterSpec(
         objectSet=[vmodl.query.PropertyCollector.ObjectSpec(
             obj=view, skip=True,
             selectSet=[vmodl.query.PropertyCollector.TraversalSpec(name="v", path="view", skip=False, type=vim.view.ContainerView)])],
-        propSet=[vmodl.query.PropertyCollector.PropertySpec(type=vim.VirtualMachine, pathSet=PROPS)])
+        propSet=[vmodl.query.PropertyCollector.PropertySpec(type=vim.VirtualMachine, pathSet=props)])
     for o in content.propertyCollector.RetrieveContents([spec]):
         pr = {x.name: x.val for x in o.propSet}         # a property vCenter does not have for this VM is left out
         vm = o.obj
@@ -113,14 +215,22 @@ def _read(content, p, now, vcenter):
                     "cpus": pr.get("config.hardware.numCPU"), "memory_mb": pr.get("config.hardware.memoryMB"),
                     "boot_time": boot.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if boot else "",
                     "up_minutes": int(max(now - boot.timestamp(), 0) // 60) if boot else None})
+        if p["disks"]:
+            vd, vols, used, prov = _disks(pr)
+            out[-1].update({"vdisks": vd, "volumes": vols, "storage_used_gb": used, "storage_provisioned_gb": prov})
+        if p["events_days"] > 0:
+            e = evs.get(vm._moId, {})
+            out[-1].update({"last_restart": e.get("restart", {}), "last_power_off": e.get("power_off", {}), "last_vmotion": e.get("vmotion", {})})
     view.Destroy()
-    return out
+    return out, ev_info
 
 
 def main():
     module = AnsibleModule(
         argument_spec=dict(datacenter=dict(type="str"), validate_certs=dict(type="bool", default=True),
-                           vcenters=dict(type="list", elements="str", default=[]), now=dict(type="float")),
+                           vcenters=dict(type="list", elements="str", default=[]), now=dict(type="float"),
+                           disks=dict(type="bool", default=False), events_days=dict(type="float", default=0),
+                           max_events=dict(type="int", default=50000)),
         supports_check_mode=True,
     )
     if not HAS_PYVMOMI:
@@ -129,7 +239,8 @@ def main():
     now = p["now"] or time.time()
     done, statuses = each_vcenter(module, lambda si, content, name: _read(content, p, now, name), p["vcenters"],
                                   p["validate_certs"], "the VMs")
-    module.exit_json(changed=False, vms=[x for _, part in done for x in part], vcenters=statuses)
+    module.exit_json(changed=False, vms=[x for _, part in done for x in part[0]], vcenters=statuses,
+                     events=[dict(part[1], vcenter=name) for name, part in done if part[1]])
 
 
 if __name__ == "__main__":

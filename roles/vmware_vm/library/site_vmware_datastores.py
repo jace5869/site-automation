@@ -19,6 +19,11 @@ options:
   vcenters: {description: More vCenters to read besides the credential's (same account; name or name:port)., type: list, elements: str, default: []}
   validate_certs: {description: Check vCenter's certificate., type: bool, default: true}
   timeout: {description: Seconds to wait for vCenter., type: int, default: 60}
+  members:
+    description: Also give each datastore's ID (moid) and the IDs of the hosts that mount it and of the VMs on it
+      (moid, host_moids, vm_moids) - for VM - ask a question, which joins datastores with hosts and VMs.
+    type: bool
+    default: false
 author: site automation
 '''
 
@@ -29,6 +34,7 @@ datastores:
   returned: success
   sample: [{name: ds01, vcenter: vc01.example.mil, datacenter: DC1, cluster: "", type: VMFS, capacity_gb: 4096.0, free_gb: 512.3,
             used_pct: 87.5, provisioned_pct: 112.4, accessible: true, maintenance: normal, hosts: 4, vms: 37}]
+    # with members: also moid (datastore-15), host_moids ([host-12, ...]) and vm_moids ([vm-42, ...])
 vcenters:
   description: Each vCenter and whether it was read (ok), or why not (error).
   type: list
@@ -82,6 +88,9 @@ def _read(content, p, vcenter):
                     "accessible": bool(pr.get("summary.accessible")),
                     "maintenance": pr.get("summary.maintenanceMode") or "normal",
                     "hosts": len(pr.get("host") or []), "vms": len(pr.get("vm") or [])})
+        if p["members"]:
+            out[-1].update({"moid": o.obj._moId, "host_moids": [m.key._moId for m in pr.get("host") or [] if getattr(m, "key", None)],
+                            "vm_moids": [v._moId for v in pr.get("vm") or []]})
     view.Destroy()
     return out
 
@@ -90,7 +99,7 @@ def main():
     module = AnsibleModule(
         argument_spec=dict(datacenter=dict(type="str"), validate_certs=dict(type="bool", default=True),
                            vcenters=dict(type="list", elements="str", default=[]),
-                           timeout=dict(type="int", default=60)),
+                           timeout=dict(type="int", default=60), members=dict(type="bool", default=False)),
         supports_check_mode=True,
     )
     if not HAS_PYVMOMI:

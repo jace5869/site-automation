@@ -1,0 +1,18 @@
+---
+# VM - ASK A QUESTION (vCenter + GenAI). A question in plain words - "all VMs with dbv in the name", "VMs in the
+# acas folder in all vCenters", "VMs on datastores under 10% free", "hosts in maintenance mode" - answered from
+# every vCenter (vmware_vcenters). GenAI only turns the question into a query of the job's own form, which is held
+# to a whitelist; the job only READS: a question that asks to restart, shut down, delete, move or change anything is
+# refused. Printed, emailed (report_email_to, report_email_also), on the report website (report_web_dest).
+# Attach a "VMware vCenter" credential AND an "ACT model key" credential; a survey with vm_ask_question (a
+# Textarea); no Limit. docs/VM_ASK.md
+#   ansible-playbook playbooks/vm_ask.yml -e 'vm_ask_question="all VMs with dbv in the name"'
+- name: VM - ask a question
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VM - ask a question
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: ask.yml

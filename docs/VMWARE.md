@@ -24,6 +24,7 @@ System Center Orchestrator):
 | VM - health report | `playbooks/vm_health_report.yml` | read-only: every datacenter, cluster and host of every vCenter - vSphere HA and DRS working or not (HA agents, failover capacity, DRS recommendations and faults, vCLS retreat mode), hosts not connected or in maintenance, hardware sensors not green, hosts that need a restart, CPU and memory used, configuration issues and alarms - coloured, with what to do for each problem |
 | VM - alarms report | `playbooks/vm_alarm_report.yml` | read-only: the triggered alarms on vCenter, datacenters, clusters and hosts; the alarms that fired in the last 24 hours (also the ones that cleared since); hosts not connected; the last 24 hours' failed logins, VM shutdowns / HA restarts and other errors and warnings; configuration issues - coloured by severity |
 | VM - alarms ACT analysis | `playbooks/vm_alarm_act_analysis.yml` | read-only: the same problems, with ACT's likely cause, fix and confidence for each. ACT runs on the AAP side, never on the hosts |
+| VM - ask a question | `playbooks/vm_ask.yml` | read-only: a question in plain words (*all VMs with dbv in the name*, *VMs on datastores under 10% free*, *hosts in maintenance mode*) - GenAI turns it into a query the job checks against a whitelist, the job reads every vCenter and answers, joins of VMs, hosts, clusters, datastores, snapshots, alarms, virtual disks and guest drives included; power, last restart, last vMotion, disk sizes and free space. A question that asks for a change is refused. [VM_ASK.md](VM_ASK.md) |
 | VM - outage watch | `playbooks/vm_outage_watch.yml` | every 5 to 15 minutes, read-only: is something down or hung right now - a host not responding, an HA agent isolated, a datastore not accessible, all paths down, an HA restart or failure, a VM waiting on a question, a hung VM (no heartbeat AND no answer on the network). One line when clean; a report, a ServiceNow incident and a red job when not. Restarts nothing (phase 1). [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md) |
 | VM - vCenter log analysis | `playbooks/vm_log_analysis.yml` | read-only: vCenter's own log and each ESXi host's (hostd, vmkernel, vpxa), read through vCenter's API - no SSH - grouped into patterns across hosts, with ACT's likely cause, fix and confidence for each ([LOG_ANALYSIS.md](LOG_ANALYSIS.md)) |
 | VM - capacity planning | `playbooks/vm_capacity_report.yml` | read-only: overall and per cluster - CPU, memory (also with a host down), vCPUs per core, VMs that still fit, hosts recommended, datastores - with growth from vCenter's own history and the days until each limit; optionally GenAI's estimate next to it |
@@ -1050,6 +1051,15 @@ only when it has no guest heartbeat AND does not answer a ping (or `vm_watch_pro
 in every check of the run. A clean run is one line, with no email. Watch only: it restarts nothing, and lists the
 hung VMs a later phase would restart, so the false alarms can be counted first. Everything - what it
 reads, the settings, the workflow, the phase 2 plan - is in [VM_OUTAGE_WATCH.md](VM_OUTAGE_WATCH.md).
+
+## Ask a question: plain words, read-only
+
+`playbooks/vm_ask.yml`, on demand. Someone types a question in the survey's box, for example *all VMs in the
+acas folder in all vCenters*, *VMs on datastores under 10% free* or *snapshots older than 7 days on hosts in
+maintenance mode*. GenAI turns it into a query of the job's own form, which is checked against a whitelist.
+The job reads every vCenter and answers, with joins across VMs, hosts, clusters, datastores, snapshots and
+alarms. It only reads: a question that asks to restart, delete, move or change anything is refused before
+GenAI sees it. The setup, the survey, what you can ask about and the query are in [VM_ASK.md](VM_ASK.md).
 
 ## Capacity planning: overall and per cluster
 

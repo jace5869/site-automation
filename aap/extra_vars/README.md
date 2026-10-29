@@ -62,6 +62,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Trust store report | `playbooks/trust_report.yml` | [trust_report.yml](trust_report.yml) |
 | VM - alarms ACT analysis | `playbooks/vm_alarm_act_analysis.yml` | [vm_alarm_act_analysis.yml](vm_alarm_act_analysis.yml) |
 | VM - alarms report | `playbooks/vm_alarm_report.yml` | [vm_alarm_report.yml](vm_alarm_report.yml) |
+| VM - ask a question | `playbooks/vm_ask.yml` | [vm_ask.yml](vm_ask.yml) |
 | VM - capacity planning | `playbooks/vm_capacity_report.yml` | [vm_capacity_report.yml](vm_capacity_report.yml) |
 | VM - change VLAN | `playbooks/vm_vlan.yml` | [vm_vlan.yml](vm_vlan.yml) |
 | VM - datastore report | `playbooks/vm_datastore_report.yml` | [vm_datastore_report.yml](vm_datastore_report.yml) |
