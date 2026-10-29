@@ -181,8 +181,13 @@
 ## https://)
 # report_web_url: ""
 
-## the page's look: standard, command, portal or glass (as report_email_theme)
-# report_web_theme: portal
+## The website's look (docs/WEB_REPORTS.md, "The look"): atlas = made for a browser, never an email
+## - see-through cards, light and dark (the reader's own setting, or the Light / Auto / Dark switch
+## at the top, kept in that browser), status chips with icons (a check mark for OK), Start here
+## cards with a Copy button, a bar of the sections, tables that sort and filter, rows as cards on a
+## phone; the index page too. Or one of the email looks: standard, command, portal or glass (as
+## report_email_theme - the index page is then in the portal look).
+# report_web_theme: atlas
 
 ## The names inside the folder, with {names} filled in: {template} (the AAP template's name, lower
 ## case with dashes; the play's name outside AAP), {template_id}, {job} (the AAP job; local outside

@@ -19,7 +19,7 @@ spaces.
 | [ACT-5Ws-Leadership-Brief.pdf](ACT-5Ws-Leadership-Brief.pdf) | Leadership brief: ACT with AAP (who, what, when, where, why) | - |
 | [ACT-5Ws-Standalone-Brief.pdf](ACT-5Ws-Standalone-Brief.pdf) | Leadership brief: ACT on its own | - |
 
-**Versions.** All eleven PDFs are for this release (site-automation 0.42.0, ACT 0.6.25) and share one
+**Versions.** All eleven PDFs are for this release (site-automation 0.43.0, ACT 0.6.25) and share one
 look. The four ACT PDFs say GenAI.mil only (Ask Sage is retired for now), what changed in ACT 0.6.22 to
 0.6.25, how site-automation's jobs use ACT (the Triage Guide, section 4.4), and the podman health job's
 containers found by themselves (the AAP 2.7 Runbook, D1).

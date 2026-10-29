@@ -1,8 +1,9 @@
 ---
 # The looks with the strip of past runs, each its own template (report_<look>.html.j2); the others use report.html.j2
-_strip_looks: [command, portal, glass]
+# (atlas: the report website only - report_web_theme)
+_strip_looks: [command, portal, glass, atlas]
 # the logo's greatest height in a look's header card (report_logo_height still applies when it is lower)
-_logo_caps: {portal: 56, glass: 80}
+_logo_caps: {portal: 56, glass: 80, atlas: 56}
 # the tallest bar of the strip of past runs, in pixels (36 in the others)
 _bar_tops: {portal: 44, glass: 54}
 # The copy job (tasks/copy.yml): report_web_host reached as its own host when this job's inventory has it (that host's

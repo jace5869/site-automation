@@ -18,7 +18,7 @@
 - name: Copy | the report website, the look, the logo
   ansible.builtin.set_fact:
     _web_win: "{{ report_web_host | default('') | string | trim | length > 0 }}"
-    _web_theme: "{{ report_web_theme | default('portal') | string | trim | lower }}"
+    _web_theme: "{{ report_web_theme | default('atlas') | string | trim | lower }}"
     _email_logo_file: >-
       {%- set f = report_logo_file | default('') | string | trim -%}
       {{ '' if not f else (f if f.startswith('/') else playbook_dir ~ '/' ~ (f[10:] if f.startswith('playbooks/') else f)) }}
@@ -31,10 +31,10 @@
          if _copy_inv | bool else (report_web_host_connection ~ ', port ' ~ report_web_host_port) }})
   when: _web_win | bool
 
-- name: Copy | report_web_theme is standard, command, portal or glass
+- name: Copy | report_web_theme is atlas, standard, command, portal or glass
   ansible.builtin.assert:
-    that: _web_theme in ['standard', 'command', 'portal', 'glass']
-    fail_msg: "report_web_theme must be standard, command, portal or glass, not '{{ report_web_theme }}' (docs/WEB_REPORTS.md)."
+    that: _web_theme in ['atlas', 'standard', 'command', 'portal', 'glass']
+    fail_msg: "report_web_theme must be atlas, standard, command, portal or glass, not '{{ report_web_theme }}' (docs/WEB_REPORTS.md)."
     quiet: true
 
 - name: Copy | report_web_dest is a folder on report_web_host

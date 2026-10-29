@@ -1,7 +1,7 @@
 # The report website
 
 Every report job ([EMAIL_REPORTS.md](EMAIL_REPORTS.md), "Which jobs email") can also write its report as a
-**web page**: the same report as the email, in the portal look (or `report_web_theme`: standard, command, glass), with your logo. Each run gets its own page,
+**web page**: the same report as the email, in the **atlas** look - made for a browser, light and dark ("The look", below) - with your logo. Each run gets its own page,
 each template a `latest.html` that is always its newest run, and an `index.html` lists every report, worst first,
 each opening to its last 5 runs, with a tab per area (VMware, Linux, Windows...). Older runs' pages are deleted. The report's data is written as JSON beside each page, so a web developer can build their own site
 on it.
@@ -21,6 +21,36 @@ TASK [site_email : Email | the report's address]
 ok: [localhost] => {
     "msg": "Report: https://reports.yoursite.mil/linux-certificate-trust-report/2026-10-23_0605_job-907.html"
 }
+```
+
+## The look
+
+The website has its own look, **atlas** (`report_web_theme: atlas`, the default); the emails keep theirs
+(`report_email_theme`: standard, command, portal or glass - [EMAIL_REPORTS.md](EMAIL_REPORTS.md), "The look"). Atlas
+uses what a browser draws and a mail program does not, so it is never an email's look:
+
+- **See-through cards** over a soft teal and blue background - only the frame: every text sits on a surface solid
+  enough to read as on paper (all text at least 4.5:1 against what is behind it, in both modes).
+- **Light and dark**: the reader's own setting (the phone's or the PC's), or the **Light / Auto / Dark** switch at the
+  top right - kept in that browser, for every page of the website.
+- **Status chips with icons and their word** - a check mark for OK, ! for a warning, x for critical: the tables'
+  Severity and Status columns, a cell that says PASSED or FAILED, the sections' and the cards' status.
+- **Start here cards** with a **Copy** button for their command; the health check's healthy hosts each with a check
+  mark, under *Every check passed* and the checks run.
+- A bar of the sections that stays at the top, sections that fold, tables that sort when a heading is clicked and,
+  past 8 rows, a box to filter them; on a phone, a table's rows as small cards, each value under its column's name.
+- **The index page** in the same look, with the same switch.
+- Printed: white, no effects. One file per page: no fonts or scripts from elsewhere, so a page opens from a share
+  too. Without its script (blocked) it reads the same; only the switch, sorting, filtering and Copy need it.
+
+`report_web_theme: portal` (or standard, command, glass) gives the website an email's look again, as before 0.43.0;
+the index page is then in the portal look.
+
+```yaml
+# playbooks/group_vars/all.yml
+report_email_theme: command                  # the emails: standard, command, portal or glass
+report_web_theme: atlas                      # the website (the default; or an email look)
+report_logo_file: files/report_logo.png      # both
 ```
 
 ## What it writes
@@ -306,7 +336,7 @@ the page is written by the AAP side of the job, which never gets a group's varia
 | `report_web_dest` | `""` (off) | the folder on `report_web_host` (`D:\reports`), the upload address (`https://...`) or the folder (`/mnt/...`) |
 | `report_web_host` | `""` | a Windows server to write the pages on, over WinRM; `report_web_host_*` for the connection ("A Windows server") |
 | `report_web_url` | `""` | the address people open; `""` = `report_web_dest` when it is `https://` (else the job prints where the page is: `web01:D:\reports\...`) |
-| `report_web_theme` | `portal` | `standard`, `command`, `portal` or `glass`, as `report_email_theme`; `glass` adds the blur behind the cards, icons and a plain print |
+| `report_web_theme` | `atlas` | the website's look ("The look"): `atlas`, or an email look - `standard`, `command`, `portal` or `glass` (`glass` with the blur behind the cards, icons and a plain print) |
 | `report_web_json` | `true` | the JSON beside each page |
 | `report_web_history` | `5` | the runs each report keeps: listed under its line of the index, older runs' pages deleted |
 | `report_web_delete_old` | `true` | `false` = older runs' pages stay in the folder (the index lists only the last `report_web_history`) |
@@ -343,7 +373,7 @@ then writes those pages - the same pages, at the same address. So:
    report_web_host: web01.yoursite.mil      # the server's name as the copy job's inventory has it
    report_web_dest: 'D:\reports'
    report_web_url: https://web01.yoursite.mil/reports
-   report_web_theme: glass                  # the pages' look - the copy job draws them
+   report_web_theme: atlas                  # the pages' look (the default) - the copy job draws them
    report_logo_file: files/report_logo.png
    ```
 

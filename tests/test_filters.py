@@ -541,6 +541,7 @@ class FindingsReport(unittest.TestCase):
         self.assertEqual(r["sections"][1]["rows"][0], ["web01", "CRITICAL", "services", "x is down", "systemctl status x"])
         self.assertEqual([x[0] for x in r["sections"][1]["rows"][1:]], ["web01", "web02"])
         self.assertEqual(r["sections"][4]["text"], "db01")
+        self.assertEqual((r["sections"][4]["passed"], r["sections"][4]["passed_checks"]), (["db01"], ["disk", "services"]))   # the web look's
         self.assertEqual([b.get("note") for b in r["summary"]][3:], ["act now", "plan a fix", "health unknown"])
         cards = r["sections"][0]["cards"]
         self.assertEqual([(c["status"], c["subject"], c["meta"]) for c in cards],

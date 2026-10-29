@@ -95,6 +95,46 @@ class Module(unittest.TestCase):
         self.assertIn("body>table:first-of-type{height:100vh}", page.split("</head>")[0])
         self.assertIn('src="data:image/png;base64,', page)
 
+    def test_web_page_atlas(self):
+        page = rw.web_page('<html><head><title>t</title></head><body></body></html>', [], "atlas")
+        self.assertNotIn("first-of-type", page)                                  # a web page already: nothing added
+
+    def test_index_page_atlas(self):
+        runs = [_run(9, "2026-10-09 06:00 UTC", "warning"), _run(8, "2026-10-08 06:00 UTC")]
+        reports = [{"key": "vm/latest.html", "name": "VMware - VM <health>", "status": "warning", "when": runs[0]["when"],
+                    "job": 9, "page": runs[0]["page"], "latest": "vm/latest.html", "title": "2 <VMs>", "runs": runs},
+                   {"key": "p/latest.html", "name": "Patching", "status": "critical", "when": "2026-10-09 04:00 UTC",
+                    "job": "local", "page": "p/b.html", "latest": "p/latest.html"}]
+        html = rw.index_html(reports, "site/index.html", "HQ & ops", ("data:image/png;base64,AA", 42, 56), "now", (), "atlas")
+        self.assertIn('class="seg" id="theme"', html)
+        self.assertIn('@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){', html)
+        self.assertIn('<img class="logo" src="data:image/png;base64,AA" width="42" height="56"', html)
+        self.assertIn("HQ &amp; ops", html)
+        self.assertIn("VMware - VM &lt;health&gt;", html)
+        self.assertIn("2 &lt;VMs&gt;", html)
+        self.assertIn('href="../vm/latest.html"', html)
+        self.assertIn('<label for="t1"><span class="dot c-warning"></span>VMware <span class="n">1</span></label>', html)
+        self.assertIn('#t1:checked~.list .r:not(.a1){display:none}', html)
+        self.assertIn("2 runs</span>", html)
+        self.assertIn("job 9", html)
+        self.assertNotIn("job local", html)
+        self.assertNotRegex(html, r'<link|src="https?:|@import')
+        self.assertIn("No reports yet.", rw.index_html([], "index.html", "x", None, "now", (), "atlas"))
+        self.assertNotIn('class="tab"', rw.index_html([], "index.html", "x", None, "now", (), "atlas"))
+
+    def test_atlas_colours_as_the_page(self):
+        """The index page's colours are the report page's (roles/site_email/templates/report_atlas.html.j2)."""
+        import re
+        with open(os.path.join(REPO, "roles", "site_email", "templates", "report_atlas.html.j2")) as f:
+            tpl = f.read()
+        light = tpl[tpl.index(":root{"):tpl.index("{%- set dark %}")]
+        dark = tpl[tpl.index("{%- set dark %}"):tpl.index("{%- endset %}")]
+        for mine, theirs in ((rw.ATLAS_LIGHT, light), (rw.ATLAS_DARK, dark)):
+            tokens = dict(re.findall(r"(--[\w-]+):([^;]+);", mine))
+            self.assertGreater(len(tokens), 30)
+            for k, v in tokens.items():
+                self.assertIn("%s:%s;" % (k, v), theirs, k)
+
     def test_index_page(self):
         reports = [{"key": "b", "name": "VMware <snapshots>", "title": "3 failed", "status": "critical", "when": "2026-10-23 06:05 UTC",
                     "job": 4182, "page": "vmware/2026-10-23_0605_job-4182.html", "latest": "vmware/latest.html"},

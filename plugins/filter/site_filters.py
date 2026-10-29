@@ -1739,7 +1739,9 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
     sections += [s for s in extra or [] if not s.get("top")]
     healthy = [h for h in hosts if h not in bad]
     if healthy and not single:
-        sections.append({"title": "Healthy (%d)" % len(healthy), "text": ", ".join(healthy)})
+        # passed / passed_checks: the web look (report_web_theme: atlas) shows them with check marks; the emails, the text
+        sections.append({"title": "Healthy (%d)" % len(healthy), "text": ", ".join(healthy), "passed": healthy,
+                         "passed_checks": list(dict.fromkeys(str(c) for c in checks or []))})
     if not sections:
         sections.append({"title": "Result", "lines": ["No findings."]})
     return {"title": t, "status": status, "summary": summary, "sections": sections,

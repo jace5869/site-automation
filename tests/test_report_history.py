@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The reports' look (roles/site_email): the strip of past runs - report_headline, report_runs, the plain-text
 line (plugins/filter/site_filters.py), site_report_history against the fake AAP (tests/servicenow/aapmock.py),
-in this process - the logo's size (image_size), and the command and portal looks' templates rendered with Jinja.
+in this process - the logo's size (image_size), and the command, portal and atlas looks' templates rendered with Jinja.
     python3 tests/test_report_history.py"""
 import importlib.util
 import os
@@ -364,6 +364,71 @@ class GlassLook(PortalLook):
 
     def test_cell_status_as_a_pill(self):
         self.assertIn("color:#b42318;font-weight:600;padding:1px 10px;\">off</span>", self.render())
+
+
+
+class AtlasLook(unittest.TestCase):
+    """roles/site_email/templates/report_atlas.html.j2 (the report website's look), rendered with plain Jinja."""
+
+    def render(self, **v):
+        import jinja2
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(os.path.join(REPO, "roles", "site_email", "templates")),
+                                 autoescape=False)
+        base = {"_report": dict(REPORT, subtitle="<b>sub</b>", sections=[
+                    {"title": "Start here", "status": "critical", "cards": [
+                        {"status": "critical", "chip": "Critical", "meta": "Certificate", "title": "<t>", "subject": "web01",
+                         "next": "Look further:", "code": "openssl x509 -in </x>"}]},
+                    {"title": "Checks", "status": "warning", "columns": ["Host", "Result", "State", "Status"],
+                     "rows": [["<h>", "PASSED", "off", "late"], ["db01", "x", "on", "breached"]],
+                     "row_status": ["", "critical"], "cell_status": [["", "", "warning", ""]]},
+                    {"title": "Healthy (2)", "text": "a, b", "passed": ["web<1>", "web2"], "passed_checks": ["disk", "time"]},
+                    {"title": "Notes", "lines": ["one <line>"]}]),
+                "_email_footer": "AAP job 9", "_page_logo_cid": "", "_page_runs": [],
+                "report_email_header_text": "Site <automation> report"}
+        base.update(v)
+        return env.get_template("report_atlas.html.j2").render(**base)
+
+    def test_escaped_and_self_contained(self):
+        h = self.render()
+        for raw in ("<b>sub</b>", "<h>", "<line>", "<automation>", "<t>", "</x>", "web<1>"):
+            self.assertNotIn(raw, h)
+        self.assertNotRegex(h, r'<link|src="https?:|@import|url\(https?:')        # nothing from elsewhere: it opens from a share
+        self.assertNotIn("cid:", h)
+
+    def test_light_dark_and_the_switch(self):
+        h = self.render()
+        self.assertIn('@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){', h)
+        self.assertIn(':root[data-theme="dark"]{', h)
+        self.assertIn('class="seg" id="theme"', h)
+        self.assertIn("localStorage.getItem('site-report-theme')", h)
+        self.assertIn("@media print", h)
+
+    def test_status_chips_with_words(self):
+        h = self.render()
+        self.assertIn('<span class="chip s-ok"><svg', h)                           # PASSED: a check mark, its word kept
+        self.assertIn("<span>Passed</span>", h)
+        self.assertIn('<span class="chip s-warning"><svg', h)                      # cell_status
+        self.assertIn('<tr class="r-critical">', h)                                # row_status
+        self.assertIn("<span>breached</span>", h)                                  # a Status column: the row's status
+        self.assertNotIn("<span>late</span>", h)                                    # ... a row without one: plain
+        self.assertIn(">late</td>", h)
+
+    def test_start_here_and_passed(self):
+        h = self.render()
+        self.assertIn('<article class="todo c-critical">', h)
+        self.assertIn('<pre>openssl x509 -in &lt;/x&gt;</pre><button class="copy" type="button" hidden>Copy</button>', h)
+        self.assertIn("Every check passed:", h)
+        self.assertIn('<span class="mono">web&lt;1&gt;</span>', h)
+        self.assertNotIn("<p>a, b</p>", h)                                         # the hosts instead of the text
+
+    def test_logo_strip_and_tiles(self):
+        bars = sf.report_runs(past(("successful", "ok", 2), ("failed", None, None)), REPORT)
+        h = self.render(_page_logo_cid="site-report-logo", _page_logo_size=[42, 56], _page_runs=bars)
+        self.assertIn('src="cid:site-report-logo" width="42" height="56"', h)
+        self.assertIn("Last 3 runs", h)
+        self.assertEqual(h.count('<span class="bar c-'), 3)
+        self.assertEqual(h.count('class="card tile'), 3)
+        self.assertIn('<a href="#s2">', h)                                         # the bar of the sections
 
 
 if __name__ == "__main__":

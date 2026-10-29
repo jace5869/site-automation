@@ -88,8 +88,10 @@ page="$(ls "$d" | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4}_job-907\.html$')
 check "named {date}_{time}_job-{job}.html in the template's folder" test -n "$page"
 check "no email (report_email_to empty)" test "$(mails)" = 0
 check "latest.html is the same page" cmp -s "$d/$page" "$d/latest.html"
-check "the page: the portal look, the logo inside it (data:), no cid:" bash -c "grep -q 'AAP job 907 &middot; Linux - Certificate trust report' '$d/$page' \
-    && grep -q 'src=\"data:image/png;base64,' '$d/$page' && ! grep -q 'cid:' '$d/$page' && grep -q 'width=\"42\" height=\"56\"' '$d/$page'"
+check "the page: the atlas look (the default), the logo inside it (data:), no cid:" bash -c "grep -q 'Linux - Certificate trust report · job 907' '$d/$page' \
+    && grep -q 'src=\"data:image/png;base64,' '$d/$page' && ! grep -q 'cid:' '$d/$page' && grep -q 'width=\"42\" height=\"56\"' '$d/$page' \
+    && grep -q 'class=\"seg\" id=\"theme\"' '$d/$page' && grep -q 'prefers-color-scheme:dark' '$d/$page'"
+check "the page: nothing from elsewhere (no web fonts, scripts or styles from another address)" bash -c "! grep -Eq '<link|src=\"https?:|@import|url\\(https?:' '$d/$page'"
 check "the page does not link to itself" bash -c "! grep -q 'Open this report in a browser' '$d/$page'"
 check "the JSON beside it: the report, the job, the address" "$py" -c 'import json, sys
 j = json.load(open(sys.argv[1]))
@@ -117,8 +119,9 @@ check "both runs kept" test "$(ls "$d" | grep -c '_job-90[78]\.html$')" = 2
 check "index.json: its line lists both runs, newest first" "$py" -c 'import json, sys
 r = json.load(open(sys.argv[1]))["reports"][1]
 assert [str(x["job"]) for x in r["runs"]] == ["908", "907"] and r["runs"][1]["page"].endswith("_job-907.html"), r' "$work/reports/index.json"
-check "index.html: the tabs (All, Certificates - a dot, it has a Warning - VMware), the line opening to its 2 runs" bash -c "grep -q '<label for=\"t1\"><span style=\"color:#9a5806;\">&#9679;</span> Certificates <span' '$work/reports/index.html' \
-    && grep -q 'VMware <span' '$work/reports/index.html' && grep -q '2 runs</span>' '$work/reports/index.html' && grep -q '<details class=\"r a1\"' '$work/reports/index.html'"
+check "index.html: the atlas look, the tabs (All, Certificates - a dot, it has a Warning - VMware), the line opening to its 2 runs" bash -c "grep -q '<label for=\"t1\"><span class=\"dot c-warning\"></span>Certificates <span' '$work/reports/index.html' \
+    && grep -q 'VMware <span' '$work/reports/index.html' && grep -q '2 runs</span>' '$work/reports/index.html' && grep -q '<details class=\"r a1\"' '$work/reports/index.html' \
+    && grep -q 'class=\"seg\" id=\"theme\"' '$work/reports/index.html'"
 lin='"awx_job_template_id": 71, "awx_job_template_name": "Linux - Certificate trust report"'
 run "report_web_history 2: a third run - the first run's page deleted" ok \
     "{\"report_web_dest\": \"$work/reports\", \"report_web_history\": 2, \"awx_job_id\": 909, $lin}" "(older runs deleted: linux-certificate-trust-report/$page)"
@@ -161,7 +164,9 @@ run "a folder that is not there (a share not mounted): fails, never makes it" fa
     "is not there - is the share mounted"
 check "nothing made" test ! -e "$work/nomount"
 run "an unknown look: says which there are" fail "{\"report_web_dest\": \"$work/reports\", \"report_web_theme\": \"fancy\"}" \
-    "report_web_theme must be standard, command, portal or glass"
+    "report_web_theme must be atlas, standard, command, portal or glass"
+run "atlas for an email: refused, said why" fail "{\"report_email_to\": [\"ops@example.mil\"], \"report_email_smtp_host\": \"localhost\", \"report_email_smtp_port\": $port, \"report_email_from\": \"aap@example.mil\", \"report_email_security\": \"none\", \"report_email_theme\": \"atlas\"}" \
+    "atlas is the look of the report website only (report_web_theme)"
 mkdir -p "$work/glass"
 run "the glass look: the page gets the blur, icons and a plain print" ok "{\"report_web_dest\": \"$work/glass\", \"report_web_theme\": \"glass\", $aapjob}"
 check "the logo inside it (at most 80 px tall), the blur, line icons, print, phone rules, no cid:" bash -c "p=\"\$(ls '$work'/glass/linux-certificate-trust-report/*_job-907.html)\" \

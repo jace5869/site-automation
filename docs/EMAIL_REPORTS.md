@@ -201,14 +201,18 @@ the hosts that did not report. The ServiceNow weekly activity report has none: i
   numbers as the line under the subject; with the report website (`report_web_dest`) the email ends with
   an **Open the full report** button. On a phone the tiles go two by two and wide tables scroll sideways.
   Mail programs that draw transparency, rounded corners and shadows show the glass; the others (classic
-  desktop Outlook) show the same layout with solid white cards and square corners. The web page
-  (`report_web_theme: glass`) adds what a browser draws and a mail program does not: the blur behind
+  desktop Outlook) show the same layout with solid white cards and square corners. On the report website
+  (`report_web_theme: glass`) the page adds what a browser draws and a mail program does not: the blur behind
   the cards, line icons, and a plain print.
+
+The report website has a look of its own, **atlas** - its default since 0.43.0: light and dark with a switch,
+status chips with check marks, tables that sort and filter ([WEB_REPORTS.md](WEB_REPORTS.md), "The look"). It is
+never an email's: `report_email_theme: atlas` stops the job and says so.
 
 ```yaml
 # playbooks/group_vars/all.yml
 report_email_theme: command                  # or portal, or glass
-report_web_theme: glass                      # the web page's look (docs/WEB_REPORTS.md)
+report_web_theme: atlas                      # the report website's look (the default; docs/WEB_REPORTS.md)
 report_logo_file: files/report_logo.png      # = playbooks/files/report_logo.png
 ```
 

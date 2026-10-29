@@ -1,0 +1,429 @@
+{#- The "atlas" look - the report website only (report_web_theme: atlas), never an email: it uses what a browser
+    draws and Outlook does not - see-through cards over a soft background (backdrop-filter), light and dark (the
+    reader's system setting, or the switch at the top: remembered in this browser), status chips with icons
+    (a check mark for OK, ! for a warning, x for critical - always with the word), a bar of the sections that stays
+    at the top, sections that fold, "Start here" cards with a Copy button for their command, tables that sort when a
+    heading is clicked and, past 8 rows, a box to filter them; printed: white, no effects. One file: the styles and
+    the small script inline, no fonts or scripts from elsewhere (the page opens from a share too, file://). Without
+    the script it reads the same: only the switch, sorting, filtering and Copy need it. Input as report_portal:
+    _report, _page_logo_cid/_page_logo_size, _page_runs, _page_job/_page_template, _email_footer. Every value is
+    escaped. -#}
+{%- set r = _report -%}
+{%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
+{%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}
+{%- set runs = _page_runs | default(_email_runs | default([])) -%}
+{%- set job_id = _page_job | default(awx_job_id | default(tower_job_id | default(''))) | string -%}
+{%- set job_name = _page_template | default(awx_job_template_name | default(tower_job_template_name | default(''))) | string -%}
+{%- set words = {'ok': 'All good', 'warning': 'Needs attention', 'critical': 'Action required', 'info': 'For information', 'unknown': 'Unknown'} -%}
+{%- set chipword = {'ok': 'OK', 'warning': 'Warning', 'critical': 'Critical', 'info': 'Info', 'unknown': 'Unknown'} -%}
+{#- a cell whose whole text is one of these words gets its chip (and icon) even without a cell_status -#}
+{%- set cellword = {'ok': 'ok', 'passed': 'ok', 'pass': 'ok', 'success': 'ok', 'successful': 'ok', 'healthy': 'ok', 'compliant': 'ok',
+                    'valid': 'ok', 'up': 'ok', 'connected': 'ok',
+                    'warning': 'warning', 'warn': 'warning', 'at risk': 'warning', 'expiring': 'warning', 'degraded': 'warning',
+                    'critical': 'critical', 'failed': 'critical', 'fail': 'critical', 'error': 'critical', 'breached': 'critical',
+                    'expired': 'critical', 'down': 'critical', 'unreachable': 'critical', 'not compliant': 'critical',
+                    'info': 'info', 'unknown': 'unknown'} -%}
+{%- set st = r.status | default('info') if r.status | default('info') in words else 'info' -%}
+{%- macro icon(k) -%}
+{%- if k == 'ok' -%}
+<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M4.7 8.4l2.1 2.1 4.5-4.7" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+{%- elif k == 'warning' -%}
+<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.6l6.6 11.6H1.4z" fill="currentColor" opacity=".2" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6v3.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="11.4" r=".95" fill="currentColor"/></svg>
+{%- elif k == 'critical' -%}
+<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+{%- elif k == 'info' -%}
+<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M8 7.2v4.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><circle cx="8" cy="4.8" r="1" fill="currentColor"/></svg>
+{%- else -%}
+<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M6.2 6.2a1.9 1.9 0 113 1.5c-.8.5-1.2.9-1.2 1.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="11.6" r=".95" fill="currentColor"/></svg>
+{%- endif -%}
+{%- endmacro -%}
+{%- macro chip(k, text) -%}
+<span class="chip s-{{ k }}">{{ icon(k) }}<span>{{ text | e }}</span></span>
+{%- endmacro -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{ r.title | e }}</title>
+<script>try{var t=localStorage.getItem('site-report-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>
+<style>
+:root{
+  --ink:#0f1f1a;--muted:#4c5d57;--label:#3d4d48;--accent:#0b7352;--accent-ink:#ffffff;
+  --card:rgba(255,255,255,.72);--card-solid:#ffffff;--card-strong:rgba(255,255,255,.86);--edge:rgba(16,64,52,.13);--line:rgba(16,64,52,.11);
+  --hover:rgba(11,115,82,.06);--code:rgba(16,48,40,.065);--shadow:0 10px 30px rgba(20,60,50,.10);
+  --bg:#e6f1ee;
+  --glow1:rgba(60,190,150,.30);--glow2:rgba(92,140,255,.22);--glow3:rgba(255,190,120,.16);
+  --base1:#e2f2eb;--base2:#e9eff7;
+  --ok:#0f6e4a;--ok-bg:rgba(47,158,114,.14);--ok-bd:rgba(47,158,114,.38);
+  --warning:#8a4f04;--warning-bg:rgba(217,138,28,.16);--warning-bd:rgba(217,138,28,.42);
+  --critical:#b0231a;--critical-bg:rgba(214,69,69,.12);--critical-bd:rgba(214,69,69,.38);
+  --info:#1d4fc4;--info-bg:rgba(79,134,217,.13);--info-bd:rgba(79,134,217,.36);
+  --unknown:#4b5753;--unknown-bg:rgba(120,135,130,.14);--unknown-bd:rgba(120,135,130,.35);
+  --critical-row:rgba(214,69,69,.07);--warning-row:rgba(217,138,28,.08);
+  color-scheme:light;
+}
+{%- set dark %}
+  --ink:#e8f1ef;--muted:#a3b8b3;--label:#bccdc8;--accent:#5fd6aa;--accent-ink:#06231a;
+  --card:rgba(18,38,46,.66);--card-solid:#13262d;--card-strong:rgba(20,42,50,.84);--edge:rgba(255,255,255,.10);--line:rgba(255,255,255,.08);
+  --hover:rgba(95,214,170,.07);--code:rgba(0,0,0,.28);--shadow:0 14px 36px rgba(0,0,0,.40);
+  --bg:#08161b;
+  --glow1:rgba(32,150,118,.34);--glow2:rgba(60,96,220,.26);--glow3:rgba(170,90,40,.12);
+  --base1:#071318;--base2:#0b1b26;
+  --ok:#55e0a3;--ok-bg:rgba(85,224,163,.13);--ok-bd:rgba(85,224,163,.34);
+  --warning:#f6bd5a;--warning-bg:rgba(246,189,90,.14);--warning-bd:rgba(246,189,90,.36);
+  --critical:#ff8d84;--critical-bg:rgba(255,141,132,.13);--critical-bd:rgba(255,141,132,.38);
+  --info:#8dbaff;--info-bg:rgba(141,186,255,.13);--info-bd:rgba(141,186,255,.34);
+  --unknown:#b3c0bc;--unknown-bg:rgba(179,192,188,.12);--unknown-bd:rgba(179,192,188,.30);
+  --critical-row:rgba(255,141,132,.06);--warning-row:rgba(246,189,90,.05);
+  color-scheme:dark;
+{%- endset %}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){ {{- dark -}} }}
+:root[data-theme="dark"]{ {{- dark -}} }
+*{box-sizing:border-box}
+html{background:var(--bg)}
+body{margin:0;color:var(--ink);font:15px/1.5 "Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
+  background:radial-gradient(1100px 620px at 8% -8%,var(--glow1),transparent 62%),radial-gradient(900px 620px at 102% 4%,var(--glow2),transparent 60%),
+  radial-gradient(800px 600px at 50% 110%,var(--glow3),transparent 60%),linear-gradient(160deg,var(--base1),var(--base2));background-attachment:fixed;min-height:100vh}
+a{color:var(--accent)}
+.wrap{max-width:1320px;margin:0 auto;padding:22px 16px 40px}
+.card{background:var(--card);border:1px solid var(--edge);border-radius:20px;box-shadow:var(--shadow);
+  -webkit-backdrop-filter:blur(18px) saturate(150%);backdrop-filter:blur(18px) saturate(150%)}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){.card{background:var(--card-solid)}}
+.ic{width:15px;height:15px;flex:none;display:block}
+.chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 10px 2px 6px;font-size:13px;font-weight:650;white-space:nowrap;border:1px solid}
+.s-ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-bd)}
+.s-warning{color:var(--warning);background:var(--warning-bg);border-color:var(--warning-bd)}
+.s-critical{color:var(--critical);background:var(--critical-bg);border-color:var(--critical-bd)}
+.s-info{color:var(--info);background:var(--info-bg);border-color:var(--info-bd)}
+.s-unknown{color:var(--unknown);background:var(--unknown-bg);border-color:var(--unknown-bd)}
+.mono,code,pre{font-family:"Cascadia Mono",Consolas,"SF Mono",Menlo,"DejaVu Sans Mono",monospace}
+/* the header */
+.hero{padding:22px 24px 20px;position:relative;overflow:hidden}
+.hero:before{content:"";position:absolute;inset:0;background:linear-gradient(135deg,var(--glow1),transparent 55%);opacity:.55;pointer-events:none}
+.hero>*{position:relative}
+.top{display:flex;align-items:center;gap:14px}
+.logo{display:block;border-radius:12px}
+.brand{flex:1;min-width:0}
+.brand b{display:block;font-size:15px}
+.brand span{color:var(--muted);font-size:13px}
+.tools{display:flex;gap:8px}
+.btn{font:inherit;font-size:13px;font-weight:600;color:var(--ink);background:var(--card-strong);border:1px solid var(--edge);border-radius:999px;padding:6px 12px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{border-color:var(--accent)}
+.seg{display:inline-flex;background:var(--card-strong);border:1px solid var(--edge);border-radius:999px;padding:3px;gap:2px}
+.seg button{font:inherit;font-size:13px;font-weight:600;color:var(--muted);background:none;border:0;border-radius:999px;padding:5px 11px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.seg button:hover{color:var(--ink)}
+.seg button[aria-checked="true"]{background:var(--accent);color:var(--accent-ink)}
+.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.btn:focus-visible,summary:focus-visible,th button:focus-visible,.nav a:focus-visible,.filter:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.eyebrow{margin-top:20px;font-size:12px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
+h1{margin:6px 0 0;font-size:clamp(22px,3.4vw,32px);line-height:1.18;letter-spacing:-.01em;font-weight:720}
+.sub{color:var(--muted);margin-top:8px;font-size:14px}
+.state{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+.state .chip{font-size:14px;padding:4px 12px 4px 8px}
+.state .chip .ic{width:17px;height:17px}
+.runs{margin-left:auto;display:flex;align-items:flex-end;gap:4px;height:40px}
+.runs .lbl{font-size:11px;font-weight:700;letter-spacing:.12em;color:var(--label);margin-right:8px;align-self:center;text-transform:uppercase}
+.bar{width:10px;border-radius:4px 4px 2px 2px;background:currentColor;opacity:.85;position:relative}
+.bar.now{outline:2px solid var(--ink);outline-offset:1px;opacity:1}
+.bar:hover{opacity:1}
+.bar[data-tip]:hover:after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);right:-6px;white-space:nowrap;background:var(--card-solid);color:var(--ink);
+  border:1px solid var(--edge);border-radius:8px;padding:4px 8px;font-size:12px;box-shadow:var(--shadow);z-index:5}
+.c-ok{color:var(--ok)}.c-warning{color:var(--warning)}.c-critical{color:var(--critical)}.c-info{color:var(--info)}.c-unknown{color:var(--unknown)}
+/* the tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:14px 0}
+.tile{padding:14px 16px;border-radius:18px;position:relative}
+.tile .k{font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label);display:flex;align-items:center;gap:6px}
+.tile .v{font-size:34px;font-weight:720;line-height:1.1;margin-top:6px;font-variant-numeric:tabular-nums;word-break:break-word}
+.tile .v.long{font-size:20px}
+.tile .n{color:var(--muted);font-size:13px;margin-top:4px}
+.tile.hot-critical{border-color:var(--critical-bd);box-shadow:var(--shadow),inset 0 0 0 1px var(--critical-bd)}
+.tile.hot-warning{border-color:var(--warning-bd)}
+/* the sections bar */
+.nav{position:sticky;top:0;z-index:4;margin:0 -16px;padding:10px 16px;display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;
+  -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);mask-image:linear-gradient(90deg,#000 92%,transparent)}
+.nav::-webkit-scrollbar{display:none}
+.nav a{flex:none;display:inline-flex;align-items:center;gap:6px;text-decoration:none;color:var(--ink);font-size:13px;font-weight:600;
+  background:var(--card-strong);border:1px solid var(--edge);border-radius:999px;padding:5px 12px}
+.nav a:hover{border-color:var(--accent)}
+.dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:none}
+/* the sections */
+.sec{margin-top:14px;scroll-margin-top:60px}
+.sec>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:16px 20px}
+.sec>summary::-webkit-details-marker{display:none}
+.sec>summary h2{margin:0;font-size:18px;font-weight:700;flex:1;min-width:0}
+.sec>summary .count{font-size:13px;font-weight:700;color:var(--muted);background:var(--code);border-radius:999px;padding:1px 9px;margin-left:6px}
+.caret{width:18px;height:18px;flex:none;color:var(--muted);transition:transform .15s}
+.sec:not([open]) .caret{transform:rotate(-90deg)}
+.body{padding:0 20px 18px}
+.body>p{margin:0 0 10px;color:var(--muted)}
+ul.lines{margin:4px 0 0;padding:0;list-style:none}
+ul.lines li{position:relative;padding:5px 0 5px 20px;border-top:1px solid var(--line)}
+ul.lines li:first-child{border-top:0}
+ul.lines li:before{content:"";position:absolute;left:4px;top:13px;width:7px;height:7px;border-radius:50%;background:var(--accent);opacity:.75}
+.passed-checks{display:flex;flex-wrap:wrap;align-items:center;gap:6px;color:var(--muted);font-size:14px;margin-bottom:10px}
+.passed-checks .chip{font-size:12px}
+ul.passed{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px}
+ul.passed li{display:flex;align-items:center;gap:8px;background:var(--card-strong);border:1px solid var(--line);border-radius:12px;padding:8px 12px;font-size:14px;min-width:0}
+ul.passed li .mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ul.passed .ic{width:17px;height:17px}
+/* Start here */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:12px;margin-top:6px}
+.todo{background:var(--card-strong);border:1px solid var(--edge);border-radius:16px;padding:14px 16px 14px 18px;position:relative;overflow:hidden}
+.todo:before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:currentColor}
+.todo.c-ok:before{background:var(--ok)}.todo.c-warning:before{background:var(--warning)}.todo.c-critical:before{background:var(--critical)}.todo.c-info:before{background:var(--info)}
+.todo{color:var(--ink)}
+.todo .row1{display:flex;align-items:center;gap:8px;justify-content:space-between}
+.todo .meta{color:var(--muted);font-size:13px;text-align:right}
+.todo h3{margin:10px 0 0;font-size:16px;line-height:1.35}
+.todo .subj{color:var(--muted);font-size:13.5px;margin-top:4px;word-break:break-word}
+.todo .next{margin-top:10px;font-size:14px}
+.todo .next b{color:var(--accent)}
+.code{display:flex;align-items:flex-start;gap:8px;margin-top:8px;background:var(--code);border:1px solid var(--line);border-radius:10px;padding:8px 8px 8px 12px}
+.code pre{margin:0;flex:1;white-space:pre-wrap;word-break:break-word;font-size:13px}
+.copy{font:inherit;font-size:12px;font-weight:650;color:var(--ink);background:var(--card-strong);border:1px solid var(--edge);border-radius:8px;padding:3px 9px;cursor:pointer}
+.copy:hover{border-color:var(--accent)}
+/* tables */
+.tools2{display:flex;align-items:center;gap:10px;margin:2px 0 8px}
+.filter{font:inherit;font-size:14px;color:var(--ink);background:var(--card-strong);border:1px solid var(--edge);border-radius:10px;padding:7px 12px;width:min(320px,100%)}
+.shown{color:var(--muted);font-size:13px}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:14px;
+  background:linear-gradient(90deg,var(--card-solid) 30%,transparent) left/40px 100% no-repeat local,
+  linear-gradient(270deg,var(--card-solid) 30%,transparent) right/40px 100% no-repeat local,
+  radial-gradient(farthest-side at 0 50%,rgba(0,0,0,.22),transparent) left/14px 100% no-repeat scroll,
+  radial-gradient(farthest-side at 100% 50%,rgba(0,0,0,.22),transparent) right/14px 100% no-repeat scroll,var(--card-strong)}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th{position:sticky;top:0;background:var(--card-solid);text-align:left;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label);
+  border-bottom:1px solid var(--line);padding:0;white-space:nowrap}
+th button{all:unset;display:flex;align-items:center;gap:6px;padding:10px 14px;cursor:pointer;width:100%;box-sizing:border-box}
+th .sort{opacity:.35;font-size:11px}
+th[aria-sort] .sort{opacity:1;color:var(--accent)}
+td{padding:9px 14px;border-top:1px solid var(--line);vertical-align:top}
+tbody tr:first-child td{border-top:0}
+tbody tr:hover td{background:var(--hover)}
+tr.r-critical td{background:var(--critical-row)}tr.r-critical td:first-child{box-shadow:inset 3px 0 0 var(--critical)}
+tr.r-warning td{background:var(--warning-row)}tr.r-warning td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
+tr.r-ok td:first-child{box-shadow:inset 3px 0 0 var(--ok)}
+tr.r-info td:first-child{box-shadow:inset 3px 0 0 var(--info)}
+td.nw{white-space:nowrap}td .chip{white-space:normal;border-radius:12px}td.long{min-width:240px}
+td.lk{font-family:"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;font-size:13px;color:var(--muted)}
+.none{color:var(--muted);padding:4px 0}
+footer{margin-top:22px;text-align:center;color:var(--muted);font-size:13px;line-height:1.7}
+@media (max-width:640px){
+  .wrap{padding:14px 12px 30px}.hero{padding:18px 16px}.runs{margin-left:0;width:100%}
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.tile .v{font-size:28px}
+  .sec>summary{padding:14px 16px}.body{padding:0 14px 14px}.cards{grid-template-columns:1fr}
+  .nav{margin:0 -12px;padding:8px 12px}.tools .btn span,.seg button span{display:none}.seg button{padding:6px 9px}
+  .top{flex-wrap:wrap}.brand{flex:1 1 calc(100% - 70px)}.tools{width:100%;justify-content:flex-end}
+  /* a table's rows as small cards, each value under its column's name */
+  .tw{border:0;background:none;overflow:visible}
+  .tw table,.tw tbody,.tw tr,.tw td{display:block;width:100%}
+  .tw thead{display:none}
+  .tw tbody tr{background:var(--card-strong);border:1px solid var(--line);border-radius:14px;padding:6px 0;margin-bottom:8px}
+  .tw td.nw{white-space:normal}.tw td.long{min-width:0}
+  .tw td{border:0;padding:4px 14px;display:grid;grid-template-columns:minmax(90px,34%) 1fr;gap:10px;align-items:start}
+  .tw td:before{content:attr(data-l);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--label);padding-top:3px}
+  .tw td .chip{justify-self:start}
+  tr.r-critical td:first-child,tr.r-warning td:first-child,tr.r-ok td:first-child,tr.r-info td:first-child{box-shadow:none}
+  tr.r-critical{box-shadow:inset 4px 0 0 var(--critical)}tr.r-warning{box-shadow:inset 4px 0 0 var(--warning)}
+  tr.r-critical td,tr.r-warning td{background:none}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+@media print{
+  html,body{background:#fff!important;color:#000}.card,.todo,.tw{background:#fff!important;box-shadow:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;border-color:#bbb!important}
+  .nav,.tools,.tools2,.copy{display:none!important}.sec{break-inside:avoid-page}th{position:static}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="card hero">
+<div class="top">
+{%- if logo_cid %}
+<img class="logo" src="cid:{{ logo_cid }}" width="{{ logo_size[0] }}" height="{{ logo_size[1] }}" alt="">
+{%- endif %}
+<div class="brand"><b>{{ report_email_header_text | default('Site automation report') | e }}</b>
+<span>{%- if job_name %}{{ job_name | e }}{% endif %}{% if job_id %}{{ ' · ' if job_name else '' }}job {{ job_id | e }}{% endif %}{% if awx_user_name | default('') %} · run by {{ awx_user_name | e }}{% endif %}</span></div>
+<div class="tools">
+<div class="seg" id="theme" role="radiogroup" aria-label="Light or dark" hidden>
+<button type="button" role="radio" data-t="light" title="Light"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.2" fill="currentColor"/><path d="M8 1v1.8M8 13.2V15M1 8h1.8M13.2 8H15M3 3l1.3 1.3M11.7 11.7L13 13M3 13l1.3-1.3M11.7 4.3L13 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>Light</span></button>
+<button type="button" role="radio" data-t="auto" title="As this device is set"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.6a6.4 6.4 0 010 12.8z" fill="currentColor"/></svg><span>Auto</span></button>
+<button type="button" role="radio" data-t="dark" title="Dark"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 10.2A6 6 0 015.8 2.4a6 6 0 107.8 7.8z" fill="currentColor"/></svg><span>Dark</span></button>
+</div>
+<button class="btn" type="button" id="print" hidden><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6V1.8h8V6M4 11.5H2.4V6h11.2v5.5H12M4.2 9.2h7.6v5H4.2z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><span>Print</span></button>
+</div>
+</div>
+{%- if job_name %}
+<div class="eyebrow">{{ job_name | e }}</div>
+{%- endif %}
+<h1>{{ r.title | e }}</h1>
+{%- if r.subtitle | default('') %}
+<div class="sub">{{ r.subtitle | e }}</div>
+{%- endif %}
+<div class="state">
+{{ chip(st, words[st]) }}
+{%- if runs %}
+<div class="runs" role="img" aria-label="The last {{ runs | length }} runs">
+<span class="lbl">Last {{ runs | length }} run{{ 's' if runs | length != 1 else '' }}</span>
+{%- for b in runs %}
+<span class="bar c-{{ b.status if b.status in words else 'unknown' }}{{ ' now' if b.current else '' }}" style="height:{{ [b.height | default(18) | int, 4] | max }}px" data-tip="{{ b.text | default('') | e }}{{ (' (' ~ b.ago ~ ' ago)') if b.ago | default('') else '' }}" title="{{ b.text | default('') | e }}"></span>
+{%- endfor %}
+</div>
+{%- endif %}
+</div>
+</header>
+{%- if r.summary | default([]) %}
+<div class="tiles">
+{%- for t in r.summary %}
+{%- set ts = t.status | default('') %}
+{%- set v = ('' if t.value is none else t.value) | string %}
+<div class="card tile{{ ' hot-' ~ ts if ts in ['critical', 'warning'] and v not in ['0', ''] else '' }}">
+<div class="k">{% if ts in words %}<span class="c-{{ ts }}">{{ icon(ts) }}</span>{% endif %}{{ t.label | e }}</div>
+<div class="v{{ ' long' if v | length > 9 else '' }}{{ (' c-' ~ ts) if ts in ['critical', 'warning'] and v not in ['0', ''] else '' }}">{{ v | e }}</div>
+{%- if t.note | default('') %}
+<div class="n">{{ t.note | e }}</div>
+{%- endif %}
+</div>
+{%- endfor %}
+</div>
+{%- endif %}
+{%- set secs = r.sections | default([]) %}
+{%- if secs | length > 2 %}
+<nav class="nav" aria-label="Sections">
+{%- for s in secs %}
+{%- set ss = s.status | default('') %}
+<a href="#s{{ loop.index }}">{% if ss in words %}<span class="dot c-{{ ss }}"></span>{% endif %}{{ s.title | e }}</a>
+{%- endfor %}
+</nav>
+{%- endif %}
+{%- for s in secs %}
+{%- set ss = s.status | default('') %}
+{%- set si = loop.index %}
+<details class="card sec" id="s{{ si }}" open>
+<summary><h2>{{ s.title | e }}{% if s.rows is defined %}<span class="count">{{ s.rows | length }}</span>{% endif %}</h2>
+{%- if ss in words %}{{ chip(ss, chipword[ss]) }}{% endif %}
+<svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
+<div class="body">
+{%- if s.passed | default([]) %}
+{%- if s.passed_checks | default([]) %}
+<div class="passed-checks">Every check passed: {% for c in s.passed_checks %}{{ chip('ok', c) }} {% endfor %}</div>
+{%- endif %}
+<ul class="passed">
+{%- for h in s.passed %}
+<li><span class="c-ok">{{ icon('ok') }}</span><span class="mono">{{ h | e }}</span></li>
+{%- endfor %}
+</ul>
+{%- elif s.text | default('') %}
+<p>{{ s.text | e }}</p>
+{%- endif %}
+{%- if s.cards | default([]) %}
+<div class="cards">
+{%- for c in s.cards %}
+{%- set cst = c.status if c.status in words else 'info' %}
+<article class="todo c-{{ cst }}">
+<div class="row1">{{ chip(cst, c.chip | default(chipword[cst], true)) }}{% if c.meta | default('') %}<span class="meta">{{ c.meta | e }}</span>{% endif %}</div>
+<h3>{{ c.title | default('') | e }}</h3>
+{%- if c.subject | default('') %}
+<div class="subj mono">{{ c.subject | e }}</div>
+{%- endif %}
+{%- if c.next | default('') %}
+<div class="next"><b>Next &rarr;</b> {{ c.next | e }}</div>
+{%- endif %}
+{%- if c.code | default('') %}
+<div class="code"><pre>{{ c.code | e }}</pre><button class="copy" type="button" hidden>Copy</button></div>
+{%- endif %}
+</article>
+{%- endfor %}
+</div>
+{%- endif %}
+{%- if s.columns is defined %}
+{%- if s.rows | default([]) %}
+{%- if s.rows | length > 8 %}
+<div class="tools2" hidden><input class="filter" type="search" placeholder="Filter these {{ s.rows | length }} rows" aria-label="Filter the rows of {{ s.title | e }}"><span class="shown"></span></div>
+{%- endif %}
+<div class="tw"><table>
+<thead><tr>
+{%- for c in s.columns %}
+<th><button type="button">{{ c | e }}<span class="sort" aria-hidden="true">&#8597;</span></button></th>
+{%- endfor %}
+</tr></thead>
+<tbody>
+{%- for row in s.rows %}
+{%- set rs = (s.row_status[loop.index0] if s.row_status is defined and s.row_status | length > loop.index0 else '') | default('', true) %}
+{%- set cs = (s.cell_status[loop.index0] if s.cell_status is defined and s.cell_status | length > loop.index0 else []) | default([], true) %}
+<tr{% if rs in words %} class="r-{{ rs }}"{% endif %}>
+{%- for cell in row %}
+{%- set text = ('' if cell is none else cell) | string %}
+{%- set lbl = s.columns[loop.index0] | default('') | string %}
+{%- set cst = (cs[loop.index0] if cs | length > loop.index0 else '') | default('', true) %}
+{%- set cst = cst if cst in words else cellword.get(text | trim | lower, '') %}
+{#- a Status or Severity column of a row with its status: that status's chip #}
+{%- set cst = cst or (rs if rs in words and lbl | lower in ['status', 'severity', 'result'] and text | trim else '') %}
+{%- if cst %}
+<td data-l="{{ lbl | e }}" data-v="{{ text | e }}">{{ chip(cst, text | capitalize if text.isupper() else text) }}</td>
+{%- elif s.columns[loop.index0] | default('') | lower in ['look further', 'command', 'hint', 'next step'] %}
+<td class="lk" data-l="{{ lbl | e }}">{{ text | e }}</td>
+{%- else %}
+<td data-l="{{ lbl | e }}"{% if text | length > 40 %} class="long"{% elif text | length <= 20 %} class="nw"{% endif %}>{{ text | e }}</td>
+{%- endif %}
+{%- endfor %}
+</tr>
+{%- endfor %}
+</tbody>
+</table></div>
+{%- else %}
+<div class="none">None.</div>
+{%- endif %}
+{%- endif %}
+{%- if s.lines | default([]) %}
+<ul class="lines">
+{%- for l in s.lines if l | trim %}
+<li>{{ l | e }}</li>
+{%- endfor %}
+</ul>
+{%- endif %}
+</div>
+</details>
+{%- endfor %}
+<footer>
+{%- if r.footer | default('') %}{{ r.footer | e }}<br>{% endif %}
+{{ _email_footer | default('') | e }}
+</footer>
+</div>
+<script>
+(function(){
+  var root=document.documentElement,seg=document.getElementById('theme');
+  function cur(){return root.getAttribute('data-theme')||'auto'}
+  function show(){seg.querySelectorAll('button').forEach(function(x){x.setAttribute('aria-checked',x.getAttribute('data-t')===cur()?'true':'false')})}
+  if(seg){seg.hidden=false;show();seg.querySelectorAll('button').forEach(function(x){x.addEventListener('click',function(){
+    var n=x.getAttribute('data-t');
+    if(n==='auto')root.removeAttribute('data-theme');else root.setAttribute('data-theme',n);
+    try{if(n==='auto')localStorage.removeItem('site-report-theme');else localStorage.setItem('site-report-theme',n)}catch(e){}
+    show()})})}
+  var p=document.getElementById('print');if(p){p.hidden=false;p.addEventListener('click',function(){
+    document.querySelectorAll('details.sec').forEach(function(d){d.open=true});window.print()})}
+  document.querySelectorAll('.copy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(){
+    var t=c.previousElementSibling.textContent;function ok(){c.textContent='Copied';setTimeout(function(){c.textContent='Copy'},1500)}
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(ok,function(){})}
+    else{var a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();try{document.execCommand('copy');ok()}catch(e){}a.remove()}})});
+  document.querySelectorAll('.tw table').forEach(function(tb){
+    var body=tb.tBodies[0],rows=[].slice.call(body.rows);
+    tb.querySelectorAll('th button').forEach(function(btn,i){btn.addEventListener('click',function(){
+      var th=btn.parentNode,asc=th.getAttribute('aria-sort')!=='ascending';
+      tb.querySelectorAll('th').forEach(function(h){h.removeAttribute('aria-sort');h.querySelector('.sort').innerHTML='&#8597;'});
+      th.setAttribute('aria-sort',asc?'ascending':'descending');btn.querySelector('.sort').innerHTML=asc?'&#9650;':'&#9660;';
+      function key(r){var c=r.cells[i];var v=c?(c.getAttribute('data-v')||c.textContent).trim():'';var n=parseFloat(v.replace(/[, %]/g,''));
+        return /^-?[\d.,]+\s*%?$/.test(v)&&!isNaN(n)?[0,n]:[1,v.toLowerCase()]}
+      rows.slice().sort(function(a,b){var x=key(a),y=key(b);var r=x[0]-y[0]||(x[1]<y[1]?-1:x[1]>y[1]?1:0);return asc?r:-r})
+        .forEach(function(r){body.appendChild(r)})})});
+    var tools=tb.parentNode.previousElementSibling;
+    if(tools&&tools.classList.contains('tools2')){tools.hidden=false;var f=tools.querySelector('.filter'),n=tools.querySelector('.shown');
+      f.addEventListener('input',function(){var q=f.value.trim().toLowerCase(),k=0;
+        rows.forEach(function(r){var on=!q||r.textContent.toLowerCase().indexOf(q)>=0;r.hidden=!on;if(on)k++});
+        n.textContent=q?k+' of '+rows.length:''})}
+  });
+})();
+</script>
+</body>
+</html>
