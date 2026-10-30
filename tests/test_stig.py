@@ -331,7 +331,7 @@ class FakeModule(object):
     def __init__(self, **params):
         self.params = dict(dir="", keep=10, save=True, keep_report=True, keep_results=True, oscap="", content_dir="", datastream="",
                            profile="stig", tailoring="", timeout=60, scanner="evaluate_stig", evaluate="", evaluate_select={},
-                           evaluate_args=[], evaluate_read="", pwsh="", benchmarks={"8": "RHEL_8_STIG", "9": "RHEL_9_STIG", "10": "RHEL_10_STIG"})
+                           evaluate_args=[], evaluate_read="", evaluate_output="CKLB", evaluate_rejected=True, pwsh="", benchmarks={"8": "RHEL_8_STIG", "9": "RHEL_9_STIG", "10": "RHEL_10_STIG"})
         self.params.update(params)
 
 
@@ -446,6 +446,56 @@ class Evaluate(unittest.TestCase):
         m = FakeModule(dir=tempfile.mkdtemp(), evaluate="/nowhere/Evaluate-STIG")
         self.assertIn("Evaluate-STIG is not at /nowhere/Evaluate-STIG", scan.Scan(m).run()["why"])
         self.assertIn("check_stig_evaluate is not set", scan.Scan(FakeModule()).run()["why"])
+
+    SAID = """Scanning...
+ERROR: 'WEB01_x_V6R7_20261030-131517.cklb' : failed schema validation. Moving to %(bad)s.
+Scan-RHEL8_Checks (Get-V244531) : Failed. See Evaluate-STIG.log for details.
+Scan-RHEL8_Checks (Get-V244532) : Failed. See Evaluate-STIG.log for details.
+ERROR: 'WEB01_RHEL9_V2R10_20261030-132053.cklb' : failed schema validation. Moving to %(bad)s.
+Please report issues to https://example.mil/evaluate-stig/-/issues
+Done!
+Total checklists in Results Directory : 0"""
+
+    def test_what_it_said(self):
+        t = scan.evaluate_said(self.SAID % {"bad": "/tmp/Evaluate-STIG/Bad_CKL"})
+        self.assertEqual(t["rejected"], ["/tmp/Evaluate-STIG/Bad_CKL/WEB01_x_V6R7_20261030-131517.cklb",
+                                         "/tmp/Evaluate-STIG/Bad_CKL/WEB01_RHEL9_V2R10_20261030-132053.cklb"])
+        self.assertEqual(t["failed"], ["V-244531", "V-244532"])
+        self.assertEqual(len(t["lines"]), 5)
+        self.assertEqual(scan.evaluate_said("Done!"), {"rejected": [], "failed": [], "log": "", "lines": []})
+
+    def test_its_schema_check_rejected_the_checklist(self):
+        d = tempfile.mkdtemp()
+        bad = os.path.join(d, "Evaluate-STIG", "Bad_CKL")
+        os.makedirs(bad)
+        open(os.path.join(d, "Evaluate-STIG", "Evaluate-STIG.log"), "w").close()
+        make_cklb.write(os.path.join(bad, "WEB01_RHEL9_V2R10_20261030-132053.cklb"), {"SV-257985": "open"}, "V2R10")
+        sh = os.path.join(d, "Evaluate-STIG_Bash.sh")
+        with open(sh, "w") as f:
+            f.write("#!/bin/bash\ncat <<'EOT'\n%s\nEOT\n" % (self.SAID % {"bad": bad}))
+        m = FakeModule(dir=tempfile.mkdtemp(), evaluate=sh)
+        with unittest.mock.patch.object(scan, "os_release", return_value={"VERSION_ID": "9.6"}):
+            out = scan.Scan(m).run()
+            self.assertTrue(out["scanned"], out.get("why"))
+            self.assertEqual((out["counts"]["fail"], out["evaluate_failed"]), (1, ["V-244531", "V-244532"]))
+            self.assertEqual(out["evaluate_rejected"], [os.path.join(bad, "WEB01_RHEL9_V2R10_20261030-132053.cklb")])
+            c = sf.stig_compare(out, {}, "web01", scanner="evaluate_stig")
+            self.assertIn("failed Evaluate-STIG's own schema check (moved to %s) - read anyway; its checks that failed: "
+                          "V-244531, V-244532 - see %s" % (bad, os.path.join(d, "Evaluate-STIG", "Evaluate-STIG.log")), c["row"]["cells"][1])
+            self.assertIn("  Evaluate-STIG: its checklist failed", "\n".join(sf.stig_lines(c)))
+            m.params["evaluate_rejected"] = False
+            out = scan.Scan(m).run()
+        self.assertFalse(out["scanned"])
+        self.assertEqual(out["why"], "Evaluate-STIG wrote no checklist (exit 0): its schema check rejected WEB01_x_V6R7_20261030-131517.cklb, "
+                         "WEB01_RHEL9_V2R10_20261030-132053.cklb (moved to %s; check_stig_evaluate_rejected: true reads them); its checks "
+                         "that failed: V-244531, V-244532 - see %s" % (bad, os.path.join(d, "Evaluate-STIG", "Evaluate-STIG.log")))
+        no = sf.stig_compare(out, {}, "web01", scanner="evaluate_stig")
+        self.assertEqual(no["findings"][0]["hint"], "less " + os.path.join(d, "Evaluate-STIG", "Evaluate-STIG.log"))
+        m.params.update(evaluate_rejected=True, evaluate_output="CKL")
+        os.remove(os.path.join(bad, "WEB01_RHEL9_V2R10_20261030-132053.cklb"))
+        with unittest.mock.patch.object(scan, "os_release", return_value={"VERSION_ID": "9.6"}):
+            self.assertIn("rejected WEB01_x_V6R7_20261030-131517.cklb, WEB01_RHEL9_V2R10_20261030-132053.cklb (moved to %s, not there any more)"
+                          % bad, scan.Scan(m).run()["why"])
 
     def test_compare_and_report(self):
         st = scan.pick_stig(scan.read_checklist(self.cklb({"SV-257821": "open"})), "RHEL_9_STIG", "9")

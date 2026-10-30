@@ -668,6 +668,15 @@
 ## host - its own schedule - instead of running it, e.g. /opt/STIG_Compliance ; empty = run it
 # check_stig_evaluate_read: ""
 
+## Evaluate-STIG's --Output: CKLB, or CKL (the older XML checklist) if your version writes CKLB it
+## then rejects itself
+# check_stig_evaluate_output: CKLB
+
+## a checklist Evaluate-STIG's own schema check rejects (it moves it to its Bad_CKL folder and names
+## it - a check of its that failed can do that): true = read it from there anyway, said in the
+## report with the checks that failed; false = the host is not scanned
+# check_stig_evaluate_rejected: true
+
 ## PowerShell 7 for Evaluate-STIG.ps1; empty = pwsh found in PATH
 # check_stig_pwsh: ""
 

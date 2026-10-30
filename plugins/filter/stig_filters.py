@@ -19,6 +19,7 @@ STIG Manager is never written to."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import os
 import re
 
 CAT = {"high": "CAT I", "medium": "CAT II", "low": "CAT III"}
@@ -92,6 +93,19 @@ def check_command(scan, rec):
     return "sudo oscap xccdf eval --profile %s%s --rule %s %s" % (scan.get("profile") or "stig", tail, ids[0], ds)
 
 
+def evaluate_note(scan):
+    """What went wrong in Evaluate-STIG's run that the job worked around: its checklist read although its own schema check
+    rejected it, its checks that failed ('' = nothing)."""
+    out = []
+    if scan.get("evaluate_rejected"):
+        out.append("its checklist failed Evaluate-STIG's own schema check (moved to %s) - read anyway"
+                   % os.path.dirname(scan["evaluate_rejected"][0]))
+    if scan.get("evaluate_failed"):
+        out.append("its checks that failed: %s%s" % (", ".join(scan["evaluate_failed"]),
+                                                                   (" - see " + scan["evaluate_log"]) if scan.get("evaluate_log") else ""))
+    return "; ".join(out)
+
+
 def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stigman_used=False, missing_severity="warning",
                  ignore=None, disagree_severity="none", scanner="openscap"):
     """One host: its scan (site_stig_scan's result), its STIG Manager record (site_stigman_read's hosts[host], {}
@@ -105,6 +119,7 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
     out = {"host": host, "scanned": bool(scan.get("scanned")), "why": scan.get("why", ""), "os": scan.get("os", ""),
            "stig_version": scan.get("stig_version", ""), "ssg_version": scan.get("ssg_version", ""),
            "scanner": scan.get("scanner", "OpenSCAP"), "scanner_before": scan.get("scanner_before", ""),
+           "evaluate_note": evaluate_note(scan),
            "profile": scan.get("profile_title") or scan.get("profile", ""), "counts": scan.get("counts") or {},
            "saved": scan.get("saved") or {}, "stigman": {k: sm.get(k, "") for k in ("status", "why", "collection", "asset", "revision")},
            "previous_time": (scan.get("previous") or {}).get("time", ""),
@@ -114,7 +129,8 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
         es = scanner == "evaluate_stig"
         out["findings"].append({"check": "stig", "id": "stig:not-scanned", "severity": "warning",
                                 "summary": "the STIG scan did not run: " + (out["why"] or "unknown reason"),
-                                "hint": ("ls -l " + (scan.get("evaluate") or "check_stig_evaluate")) if es else "rpm -q openscap-scanner scap-security-guide",
+                                "hint": (("less " + scan["evaluate_log"]) if scan.get("evaluate_log") else ("ls -l " + (scan.get("evaluate") or "check_stig_evaluate")))
+                                if es else "rpm -q openscap-scanner scap-security-guide",
                                 "note": ("Check Evaluate-STIG on the host (check_stig_evaluate, check_stig_evaluate_read; pwsh installed), then run "
                                          "the job again for this host (docs/STIG_DRIFT.md).") if es else
                                         ("Install openscap-scanner and scap-security-guide (or check_stig_install: true), then run the job "
@@ -221,6 +237,8 @@ def stig_host_row(c):
     tool = ("(SSG " + c["ssg_version"] + ")") if c.get("ssg_version") else ("(Evaluate-STIG)" if c.get("scanner") == "Evaluate-STIG" else "")
     if c.get("scanner_before"):
         tool += " - first scan with it, after %s: not compared with the earlier scans" % c["scanner_before"]
+    if c.get("evaluate_note"):
+        tool += " - " + c["evaluate_note"]
     return {"cells": [c["host"], "%s %s" % (c.get("stig_version", ""), tool),
                       smtxt, str(cnt.get("pass", 0)), str(cnt.get("fail", 0)), str(len(c["drift"])), str(len(c["new"])),
                       str(len(c.get("disagree") or [])), str(len(c["fixed_open"])), "-" if c.get("by_hand") is None else str(c["by_hand"]),
@@ -391,6 +409,8 @@ def stig_lines(c):
         len(c["fixed_open"]), ("%s / %s%s" % (sm.get("collection"), sm.get("asset"), (" (" + sm["revision"] + ")") if sm.get("revision") else ""))
         if sm.get("status") == "found" else (sm.get("why") or "not used"), len(c.get("disagree") or []),
         "-" if c.get("by_hand") is None else c["by_hand"], len(c.get("ignored") or []))]
+    if c.get("evaluate_note"):
+        out.append("  Evaluate-STIG: " + c["evaluate_note"])
     for r in c["drift"]:
         out.append("  DRIFT %s %s %s - STIG Manager: %s" % (_rule_label(r), CAT.get(r.get("severity"), ""), r["title"][:90], SM_WORD.get(r["sm"], r["sm"])))
     for r in c["new"]:

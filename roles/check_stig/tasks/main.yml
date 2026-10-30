@@ -70,6 +70,8 @@
     evaluate_select: "{{ check_stig_evaluate_select }}"
     evaluate_args: "{{ check_stig_evaluate_args }}"
     evaluate_read: "{{ check_stig_evaluate_read }}"
+    evaluate_output: "{{ check_stig_evaluate_output }}"
+    evaluate_rejected: "{{ check_stig_evaluate_rejected | bool }}"
     pwsh: "{{ check_stig_pwsh }}"
     benchmarks: "{{ check_stig_stigman_benchmarks }}"
   register: _stig_scan

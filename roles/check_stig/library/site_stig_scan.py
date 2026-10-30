@@ -41,6 +41,8 @@ options:
   evaluate: {description: "Evaluate-STIG on the host: its folder (the script found there or in Src/Evaluate-STIG), or the path of Evaluate-STIG_Bash.sh or Evaluate-STIG.ps1.", type: str, default: ''}
   evaluate_select: {description: "Evaluate-STIG's --SelectSTIG for each RHEL version ({'9': RHEL9}); none = every STIG that applies.", type: dict, default: {}}
   evaluate_args: {description: More arguments for Evaluate-STIG (a list, or a text split as the shell would)., type: raw, default: []}
+  evaluate_output: {description: "Evaluate-STIG's --Output, CKLB or CKL.", type: str, default: CKLB}
+  evaluate_rejected: {description: "Read a checklist Evaluate-STIG's own schema check rejected (it names it and where it moved it).", type: bool, default: true}
   evaluate_read: {description: "A folder on the host to read Evaluate-STIG's newest checklist from instead of running it ('' = run it).", type: str, default: ''}
   pwsh: {description: "PowerShell 7 for Evaluate-STIG.ps1 ('' = found in PATH).", type: str, default: ''}
   benchmarks: {description: "The STIG (its benchmark id) for each RHEL version ({'9': RHEL_9_STIG}): the checklist read.", type: dict, default: {}}
@@ -259,6 +261,24 @@ def find_evaluate(path):
     return ""
 
 
+BAD_RE = re.compile(r"'([^'\n]+\.cklb?)'\s*:\s*failed schema validation", re.I)
+MOVED_RE = re.compile(r"Moving to (/[^\s']+?)\.?(?=\s|$)")
+CHECK_FAILED_RE = re.compile(r"\(Get-(V\d+)\)\s*:\s*Failed", re.I)
+
+
+def evaluate_said(text):
+    """What Evaluate-STIG printed -> {rejected: the checklists its schema check moved away (their paths there), failed:
+    the checks that failed (V-244531 ...), log: its log, lines: the lines worth showing}."""
+    moved = MOVED_RE.search(text or "")
+    where = moved.group(1).rstrip("/") if moved else ""
+    rejected = [os.path.join(where, os.path.basename(n)) for n in BAD_RE.findall(text or "")] if where else []
+    failed = sorted(set("V-" + v[1:] for v in CHECK_FAILED_RE.findall(text or "")))
+    log = os.path.join(os.path.dirname(where), "Evaluate-STIG.log") if where else ""
+    lines = [ln.strip() for ln in (text or "").splitlines()
+             if re.search(r"error|failed|total checklists", ln, re.I)]
+    return {"rejected": rejected, "failed": failed, "log": log if log and os.path.isfile(log) else "", "lines": lines}
+
+
 def checklists_in(d):
     """The checklists (.cklb, .ckl) under d, newest first."""
     found = []
@@ -458,7 +478,7 @@ class Scan(object):
                 cmd, dash = [pwsh, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], "-"
             else:
                 cmd, dash = ["bash", script], "--"
-            cmd += [dash + "Output", "CKLB", dash + "OutputPath", out_dir]
+            cmd += [dash + "Output", p["evaluate_output"], dash + "OutputPath", out_dir]
             sel = (p["evaluate_select"] or {}).get(major) or ""
             if sel:
                 cmd += [dash + "SelectSTIG", str(sel)]
@@ -470,12 +490,30 @@ class Scan(object):
             except subprocess.TimeoutExpired:
                 return self.fail("Evaluate-STIG took longer than %d seconds (check_stig_timeout)" % p["timeout"], **ident)
             said = proc.stdout.decode("utf-8", "replace").strip()
+            told = evaluate_said(said)
             files = checklists_in(out_dir)
-            extra.update(evaluate_exit=proc.returncode, stderr=said[-600:])
+            extra.update(evaluate_exit=proc.returncode, stderr=said[-600:], evaluate_failed=told["failed"], evaluate_log=told["log"])
+            rejected = [f for f in told["rejected"] if os.path.isfile(f)]
+            if not files and rejected and p["evaluate_rejected"]:
+                # its own schema check moved them away (a check of its that failed leaves a field it does not accept):
+                # the statuses are still there - read, and said in the report
+                files = sorted(rejected, key=os.path.getmtime, reverse=True)
+                extra["evaluate_rejected"] = files
             if not files:
-                return self.fail("Evaluate-STIG wrote no checklist (exit %d): %s" % (proc.returncode, said[-600:] or "no message"),
-                                 **dict(ident, **extra))
-            how = "from Evaluate-STIG (%d checklists, exit %d)" % (len(files), proc.returncode)
+                short = " | ".join(told["lines"])[-600:] or said[-600:] or "no message"
+                why = "Evaluate-STIG wrote no checklist (exit %d)" % proc.returncode
+                if told["rejected"]:
+                    why += ": its schema check rejected %s (moved to %s%s)" % (
+                        ", ".join(os.path.basename(f) for f in told["rejected"]), os.path.dirname(told["rejected"][0]),
+                        "; check_stig_evaluate_rejected: true reads them" if not p["evaluate_rejected"] else ", not there any more")
+                    if told["failed"]:
+                        why += "; its checks that failed: %s" % ", ".join(told["failed"])
+                    why += (" - see %s" % told["log"]) if told["log"] else ""
+                else:
+                    why += ": " + short
+                return self.fail(why, **dict(ident, **extra))
+            how = "from Evaluate-STIG (%d checklists%s, exit %d)" % (
+                len(files), ", rejected by its schema check" if extra.get("evaluate_rejected") else "", proc.returncode)
         for path in files:
             try:
                 st = pick_stig(read_checklist(path), want, major)
@@ -578,6 +616,8 @@ def main():
         evaluate_select=dict(type="dict", default={}),
         evaluate_args=dict(type="raw", default=[]),
         evaluate_read=dict(type="str", default=""),
+        evaluate_output=dict(type="str", default="CKLB", choices=["CKLB", "CKL"]),
+        evaluate_rejected=dict(type="bool", default=True),
         pwsh=dict(type="str", default=""),
         benchmarks=dict(type="dict", default={}),
     ), supports_check_mode=True)

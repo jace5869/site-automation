@@ -459,6 +459,8 @@ File: `roles/check_stig/defaults/main.yml`
 | `check_stig_evaluate_select` | `{}` | --SelectSTIG for each RHEL version, e.g. {"8": RHEL8, "9": RHEL9}: only the RHEL STIG is scanned (faster); its short name as your Evaluate-STIG lists it. {} = every STIG that applies to the host (the RHEL one is read) |
 | `check_stig_evaluate_args` | `[]` | more arguments for Evaluate-STIG, e.g. ["--ScanType", "Classified", "--AnswerKey", "SITE"] (Evaluate-STIG.ps1: -ScanType ...); --Output and --OutputPath are the job's |
 | `check_stig_evaluate_read` | (empty) | read the newest checklist (.cklb or .ckl) Evaluate-STIG already wrote under this folder on the host - its own schedule - instead of running it, e.g. /opt/STIG_Compliance ; empty = run it |
+| `check_stig_evaluate_output` | `CKLB` | Evaluate-STIG's --Output: CKLB, or CKL (the older XML checklist) if your version writes CKLB it then rejects itself |
+| `check_stig_evaluate_rejected` | `true` | a checklist Evaluate-STIG's own schema check rejects (it moves it to its Bad_CKL folder and names it - a check of its that failed can do that): true = read it from there anyway, said in the report with the checks that failed; false = the host is not scanned |
 | `check_stig_pwsh` | (empty) | PowerShell 7 for Evaluate-STIG.ps1; empty = pwsh found in PATH |
 | `check_stig_dir` | `/var/lib/site-automation/stig` | ---- Kept on the host ---------------------------------------------------------------------------------------- each scan's HTML report, results (gzip) and summary (JSON), and latest-report.html / latest-summary.json; root-only. A dry run keeps nothing |
 | `check_stig_keep` | `10` | how many scans are kept on the host (the oldest are deleted); the last one is what the next scan is compared with |

@@ -41,6 +41,10 @@ A rule is matched with STIG Manager by its **STIG rule ID** (`SV-257985`), whate
 release does not break the comparison. Only the reviews with a status in `check_stig_stigman_statuses` count as the
 checklist (saved, submitted, accepted - a rejected review does not); `[accepted]` is stricter.
 
+**All zeros on a host** means the scan and the checklist agree: every rule that fails is Open in STIG Manager already
+(known, not a difference), and nothing that passed before fails now. The job shows only what moved or disagrees, not
+the host's known open findings.
+
 The first scan of a host has nothing of its own to compare with: a rule STIG Manager has as Not a Finding that fails
 in it is listed under **Disagree**, not as drift - the job cannot tell whether it moved before that scan. From then
 on, a rule that passed and fails later is drift (with STIG Manager) or a new fail (without).
@@ -134,6 +138,12 @@ check_stig_evaluate_args: ["--AnswerKey", "SITE"]  # optional: your own argument
 - **Switching scanners starts the history again.** The first run with the other scanner is not compared with the
   scans before it: each scanner checks rules its own way, and a rule one passed and the other fails is not drift.
   The every-host table says so for that run.
+- **Its own schema check rejects a checklist** - it prints `'<host>_RHEL8_V2R7_<time>.cklb' : failed schema validation.
+  Moving to /tmp/Evaluate-STIG/Bad_CKL` and leaves none in the results; a check of its that failed (`Scan-RHEL8_Checks
+  (Get-V244531) : Failed`) can do that. The job then reads that checklist from where it was moved, and the every-host
+  table says so, with the checks that failed and Evaluate-STIG's log: look there, and report it to Evaluate-STIG's
+  team as its output asks. `check_stig_evaluate_rejected: false` lists the host as not scanned instead;
+  `check_stig_evaluate_output: CKL` asks for the older XML checklist, if your version writes that one right.
 - Evaluate-STIG needs PowerShell 7 (`pwsh`) on the host and takes longer than OpenSCAP: raise `check_stig_timeout`
   (1800 seconds) if a host needs more. The job never installs or updates Evaluate-STIG.
 
@@ -246,6 +256,7 @@ you are most likely to set:
 | `check_stig_scanner` | `openscap` | `evaluate_stig`: scan with Evaluate-STIG (above) |
 | `check_stig_evaluate` | empty | Evaluate-STIG's folder on the host (or its script) |
 | `check_stig_evaluate_select`, `_args`, `_read` | `{}`, `[]`, empty | `--SelectSTIG` per RHEL version; your own arguments; read its own checklists instead of running it |
+| `check_stig_evaluate_rejected`, `_output` | `true`, `CKLB` | read a checklist its own schema check rejected; CKLB or CKL |
 | `check_stig_profile` | `stig` | `stig_gui` for a host with a desktop, or a full profile id |
 | `check_stig_tailoring` / `_src` | empty | your site's tailoring file (on the host / in your repository) |
 | `check_stig_datastream` / `_src` | the host's SSG | another datastream - newer content, or a DISA SCAP benchmark |

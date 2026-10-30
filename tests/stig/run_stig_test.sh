@@ -10,7 +10,8 @@
 # (several), the collection set; check_stig_stigman_asset; a wrong secret; only GET requests reached STIG Manager;
 # keep 2. Then Evaluate-STIG (a fake Evaluate-STIG_Bash.sh writing the CKLB tests/stig/make_cklb.py makes): the
 # first scan, its checklist kept; drift with what Evaluate-STIG found; after OpenSCAP's scans (not compared with them);
-# not there; check_stig_evaluate_read; check_stig_scanner checked.
+# not there; its own schema check rejecting its checklist (read anyway, or not); check_stig_evaluate_read;
+# check_stig_scanner checked.
 #   bash tests/stig/run_stig_test.sh        (ANSIBLE_PLAYBOOK=... to pick one; STIG_KEEP=FILE keeps the last output)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -240,6 +241,23 @@ run "Evaluate-STIG not there: not scanned, a warning" fail -e "$es_on" -e check_
 "$py" "$here/make_cklb.py" "$work/esout/WEB01/Checklist/WEB01_RHEL9.ckl" '{}' V2R9 ckl
 run "check_stig_evaluate_read: the checklist Evaluate-STIG already wrote (CKL) read, it is not run" ok -e "$es_on" -e check_stig_evaluate=/nowhere \
     -e check_stig_evaluate_read="$work/esout" -e check_stig_dir="$work/kept4" -- "HEALTHY" "Red Hat Enterprise Linux 9 Security Technical Implementation Guide V2R9 - 8 pass, 0 fail"
+mkdir -p "$work/es_bad" "$work/esbad/Bad_CKL"
+: > "$work/esbad/Evaluate-STIG.log"
+cat > "$work/es_bad/Evaluate-STIG_Bash.sh" <<EOF
+#!/bin/bash
+# as Evaluate-STIG does when its own schema check rejects the checklist: moved to Bad_CKL, none in the results
+"$py" "$here/make_cklb.py" "$work/esbad/Bad_CKL/WEB01_RHEL9_V2R10_20261030-132053.cklb" '{"SV-257985": "open"}' V2R10
+echo "ERROR: 'WEB01_RHEL9_V2R10_20261030-132053.cklb' : failed schema validation. Moving to $work/esbad/Bad_CKL."
+echo "Scan-RHEL8_Checks (Get-V244531) : Failed. See Evaluate-STIG.log for details."
+echo "Total checklists in Results Directory : 0"
+EOF
+run "Evaluate-STIG's schema check rejects its checklist: read from Bad_CKL anyway, said, its failed check named" ok -e "$es_on" \
+    -e check_stig_evaluate="$work/es_bad" -e check_stig_dir="$work/kept5" -- "HEALTHY" "7 pass, 1 fail" \
+    "Evaluate-STIG: its checklist failed Evaluate-STIG's own schema check (moved to $work/esbad/Bad_CKL) - read anyway; its checks that failed: V-244531 - see $work/esbad/Evaluate-STIG.log"
+run "check_stig_evaluate_rejected: false - not scanned, said in short" fail -e "$es_on" -e check_stig_evaluate="$work/es_bad" \
+    -e check_stig_dir="$work/kept5" -e check_stig_evaluate_rejected=false -- \
+    "Evaluate-STIG wrote no checklist (exit 0): its schema check rejected WEB01_RHEL9_V2R10_20261030-132053.cklb (moved to $work/esbad/Bad_CKL; check_stig_evaluate_rejected: true reads them); its checks that failed: V-244531" \
+    "!Total checklists"
 run "check_stig_scanner must be openscap or evaluate_stig" fail -e check_stig_scanner=scc -- "check_stig_scanner must be openscap or evaluate_stig (it is scc)"
 
 echo
