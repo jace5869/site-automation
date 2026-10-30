@@ -53,16 +53,18 @@
 # vm_watch_min_up_minutes: 15
 
 ## A VM is hung only when it has no guest heartbeat AND does not answer on the network, in every
-## check: a suspect is checked this many times in one run (1 = once), vm_watch_confirm_seconds
-## apart.
-# vm_watch_confirm_checks: 2
+## check, AND (vm_watch_traffic) vCenter saw it send no network packets: a suspect is checked this
+## many times in one run (1 = once), vm_watch_confirm_seconds apart.
+# vm_watch_confirm_checks: 3
 
 ## seconds between those checks
 # vm_watch_confirm_seconds: 120
 
-## The network probe, from the AAP node, of the suspects only: ping, and a TCP connect to this port
-## too (e.g. 22 or 3389; 0 = ping only). A refused connection counts as an answer (the guest is
-## alive). false = no probe: no VM is then called hung (one signal only)
+## The network probe, from the AAP node, of the suspects only (a VM with a heartbeat is never
+## probed): ping, and a TCP connect. A connection made or refused counts as an answer (the guest is
+## alive); a timeout - a firewall between AAP and the guest, often - is no answer, and never makes a
+## VM hung by itself: only with no heartbeat in every check and (vm_watch_traffic) no packets sent.
+## false = no probe: no VM is then called hung (one signal only)
 # vm_watch_probe: true
 
 ## seconds per address
@@ -70,6 +72,15 @@
 
 ## probe and confirm at most this many suspects in one run
 # vm_watch_max_suspects: 50
+
+## The third signal, from vCenter itself (no network path needed): a silent suspect that sent
+## network packets since the first check - vCenter's real-time statistics, 20-second samples - is
+## alive, not hung (Tools died, or a firewall stops the probe). A hung guest sends none. false = the
+## heartbeat and the probe only
+# vm_watch_traffic: true
+
+## packets sent from which a VM counts as alive
+# vm_watch_traffic_packets: 1
 
 ## A VM with no heartbeat that answers on the network (or cannot be probed): VMware Tools died, not
 ## the guest. warning = in the tickets (servicenow_min_severity warning); info = the job's output

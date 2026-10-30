@@ -654,6 +654,31 @@ class OutageWatch(unittest.TestCase):
     def test_probe_without_address(self):
         self.assertEqual(wt.probe({"name": "", "ip": "", "ips": []})["probe"], "no address")
 
+    def test_port_by_guest_os(self):
+        self.assertEqual(wt.port_for(dict(self.VM, guest_os="Red Hat Enterprise Linux 9 (64-bit)"), "auto"), 22)
+        self.assertEqual(wt.port_for(dict(self.VM, guest_os="Microsoft Windows Server 2022 (64-bit)"), "auto"), 3389)
+        self.assertEqual(wt.port_for(self.VM, ""), 22)
+        self.assertEqual(wt.port_for(self.VM, "5985"), 5985)
+        self.assertEqual((wt.port_for(self.VM, 0), wt.port_for(self.VM, "0"), wt.port_for(self.VM, "x")), (0, 0, 0))
+
+    def test_tcp_refused_is_alive_a_timeout_is_not(self):
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()                                          # nothing listens: refused - the guest's stack answered
+        self.assertEqual(wt._tcp("127.0.0.1", port, 1), "answers")
+
+    def test_alive_by_traffic(self):
+        self.assertEqual(wt.alive_by_traffic({"packets": 0, "minutes": 5.0}), "")
+        self.assertEqual(wt.alive_by_traffic({"packets": None, "note": "x"}), "")
+        self.assertEqual(wt.alive_by_traffic(None), "")
+        self.assertEqual(wt.alive_by_traffic({"packets": 1, "minutes": 5.0}),
+                         "it sent 1 network packet in the last 5 minutes (vCenter's real-time statistics)")
+        self.assertEqual(wt.alive_by_traffic({"packets": 412, "minutes": 7.3}),
+                         "it sent 412 network packets in the last 7.3 minutes (vCenter's real-time statistics)")
+        self.assertEqual(wt.alive_by_traffic({"packets": 5, "minutes": 5.0}, 10), "")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2188,9 +2188,10 @@ unset FAKE_ACT_OUT FAKE_ACT_CONFIG
 
 # ---- the VM outage watch (playbooks/vm_outage_watch.yml) ---------------------------------------------------
 # a fresh simulator; the suspects checked twice, 1 s apart; vcsim's VMs have just booted (no minimum up time).
-# The fake IP addresses (192.0.2.x) do not answer a ping: a VM with no heartbeat there is hung. One at 127.0.0.1 answers.
+# The fake IP addresses (192.0.2.x) do not answer a ping or port 22: a VM with no heartbeat there is hung (vCenter's
+# traffic signal off - vm_watch_traffic, its own cases below). One at 127.0.0.1 answers.
 fresh
-wt='{"vm_watch_confirm_seconds": 1, "vm_watch_probe_timeout": 1, "vm_watch_min_up_minutes": 0}'
+wt='{"vm_watch_confirm_seconds": 1, "vm_watch_probe_timeout": 1, "vm_watch_min_up_minutes": 0, "vm_watch_confirm_checks": 2, "vm_watch_traffic": false}'
 stats() {  # stats FILE: the job's artifacts (the CUSTOM STATS line of the last run) as an extra-vars file
     "$py" - "$work/out.txt" "$1" <<'EOPY'
 import json, sys
@@ -2226,6 +2227,11 @@ run "outage watch with vm_watch_skip_vms: the skipped VMs are not judged" ok vm_
     -e '{"vm_watch_skip_vms": ["DC0_H0_*", "dc0_c0_rp0_vm1"]}' -- "No outage: 4 host(s), 1 datastore(s), 1 powered-on VM(s) checked"
 run "outage watch with vm_watch_probe: false - no VM is hung (one signal only)" ok vm_outage_watch.yml -e "$wt" -e vm_watch_probe=false \
     -- "it could not be probed (unavailable)"
+# vcsim's real-time statistics have the VMs sending packets: the two silent to ping and port 22 are alive - not hung
+run "outage watch, vCenter's traffic signal on (the default): VMs silent to the probe that send packets are not hung" ok vm_outage_watch.yml \
+    -e "$wt" -e vm_watch_traffic=true -- \
+    "VM DC0_H0_VM1 has no guest heartbeat, but it still sends network traffic (vCenter's real-time statistics), though the probe got no answer at 192.0.2.20: not called hung (one signal only)" \
+    "VM DC0_H0_VM0 has no guest heartbeat, but it still sends network traffic"
 # the tickets job after it, in a fake ServiceNow: one incident per condition; resolved once the watch is clean
 wsn_port=$((port + 53))
 SNMOCK_LOG="$work/wsn.jsonl" "$py" "$repo/tests/servicenow/snmock.py" "$wsn_port" >/dev/null 2>&1 &

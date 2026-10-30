@@ -305,16 +305,24 @@ vm_net_errors_warn_per_hour: 10          # network errors an hour (received + se
 vm_watch_window_minutes: 15
 # A VM powered on for less than this is not judged (a VM still starting has no heartbeat yet).
 vm_watch_min_up_minutes: 15
-# A VM is hung only when it has no guest heartbeat AND does not answer on the network, in every check:
-# a suspect is checked this many times in one run (1 = once), vm_watch_confirm_seconds apart.
-vm_watch_confirm_checks: 2
+# A VM is hung only when it has no guest heartbeat AND does not answer on the network, in every check, AND
+# (vm_watch_traffic) vCenter saw it send no network packets: a suspect is checked this many times in one run
+# (1 = once), vm_watch_confirm_seconds apart.
+vm_watch_confirm_checks: 3
 vm_watch_confirm_seconds: 120            # seconds between those checks
-# The network probe, from the AAP node, of the suspects only: ping, and a TCP connect to this port too
-# (e.g. 22 or 3389; 0 = ping only). A refused connection counts as an answer (the guest is alive).
+# The network probe, from the AAP node, of the suspects only (a VM with a heartbeat is never probed): ping, and
+# a TCP connect. A connection made or refused counts as an answer (the guest is alive); a timeout - a firewall
+# between AAP and the guest, often - is no answer, and never makes a VM hung by itself: only with no heartbeat
+# in every check and (vm_watch_traffic) no packets sent.
 vm_watch_probe: true                     # false = no probe: no VM is then called hung (one signal only)
-vm_watch_probe_port: 0                   # TCP port also tried (0 = ping only)
+vm_watch_probe_port: auto                # TCP port also tried: auto = 22, or 3389 for a Windows guest; a number (e.g. 5985); 0 = ping only
 vm_watch_probe_timeout: 3                # seconds per address
 vm_watch_max_suspects: 50                # probe and confirm at most this many suspects in one run
+# The third signal, from vCenter itself (no network path needed): a silent suspect that sent network packets
+# since the first check - vCenter's real-time statistics, 20-second samples - is alive, not hung (Tools died, or a
+# firewall stops the probe). A hung guest sends none.
+vm_watch_traffic: true                   # false = the heartbeat and the probe only
+vm_watch_traffic_packets: 1              # packets sent from which a VM counts as alive
 # A VM with no heartbeat that answers on the network (or cannot be probed): VMware Tools died, not
 # the guest. warning = in the tickets (servicenow_min_severity warning); info = the job's output only.
 vm_watch_one_signal_severity: warning

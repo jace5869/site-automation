@@ -13,10 +13,14 @@ description:
     loss) events of the last I(window_minutes).
   - The VMs that look hung - powered on, VMware Tools installed, up at least I(min_up_minutes), but
     no guest heartbeat (red), or Tools not running with a gray heartbeat. Only those suspects are
-    probed from this node (ping, and a TCP connect to I(probe_port) when set) and read again
-    I(confirm_checks) times, I(confirm_seconds) apart. A VM is hung only when BOTH signals - no
-    heartbeat, no answer on the network - held in every check. A VM with a task running in vCenter
-    (snapshot, migration, clone ...) is not judged.
+    probed from this node (ping, and a TCP connect to I(probe_port): auto = 22, or 3389 for a Windows
+    guest) and read again I(confirm_checks) times, I(confirm_seconds) apart. A connection made or
+    refused is an answer (the guest's network stack is alive); a timeout is no answer. A VM is hung
+    only when BOTH signals - no heartbeat, no answer on the network - held in every check AND, with
+    I(traffic), vCenter's real-time statistics show it sent fewer than I(traffic_packets) network
+    packets since the first check (a hung guest sends none; one that sends is alive - a firewall
+    between this node and the guest, not a hang). A VM with a task running in vCenter (snapshot,
+    migration, clone ...) is not judged.
   - vCenter's address and account come from VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD (and
     VMWARE_PORT), as a "VMware vCenter" credential in AAP gives them; vcenters adds more vCenters
     (the same account). A read-only vCenter role is enough. Changes nothing.
@@ -29,7 +33,9 @@ options:
   skip_vms: {description: VM names never judged (* and ? allowed, any case)., type: list, elements: str, default: []}
   skip_folders: {description: VM folder paths never judged (e.g. /DC1/vm/Lab*)., type: list, elements: str, default: []}
   probe: {description: Probe the suspects from this node (false = the heartbeat alone; nothing is then hung)., type: bool, default: true}
-  probe_port: {description: Also try a TCP connect to this port (0 = ping only)., type: int, default: 0}
+  probe_port: {description: "Also try a TCP connect to this port: auto = 22, 3389 for a Windows guest; a number; 0 = ping only.", type: str, default: auto}
+  traffic: {description: "A hung verdict also needs vCenter's real-time statistics to show (almost) no network packets sent by the VM.", type: bool, default: true}
+  traffic_packets: {description: Packets sent since the first check from which a VM is alive (not hung)., type: int, default: 1}
   probe_timeout: {description: Seconds per probe., type: float, default: 3}
   max_suspects: {description: Probe and confirm at most this many suspects per run (the rest are listed as not probed)., type: int, default: 50}
   confirm_checks: {description: How many times a suspect is checked in this run (1 = once, no waiting)., type: int, default: 2}
@@ -55,7 +61,7 @@ questions:
   type: list
   returned: success
 suspects:
-  description: The VMs that looked hung, each with every check and its verdict (hung, one-signal, unprobed, busy, recovered).
+  description: "The VMs that looked hung, each with every check and its verdict (hung, one-signal, unprobed, busy, recovered); traffic: what vCenter's statistics showed of a VM the probe found silent ({packets, minutes} or {note}), alive_by: why it is not hung after all."
   type: list
   returned: success
 events:
@@ -95,7 +101,7 @@ BUSY_TASKS = ("snapshot", "consolidate", "migrate", "relocate", "clone", "vmotio
               "reconfig", "poweron", "reboot", "reset", "shutdown", "standby", "suspend")
 VM_PROPS = ["name", "config.template", "runtime.powerState", "runtime.connectionState", "runtime.host", "runtime.bootTime",
             "runtime.question", "guest.hostName", "guest.ipAddress", "guest.net", "guest.toolsStatus",
-            "guest.toolsRunningStatus", "guestHeartbeatStatus"]
+            "guest.toolsRunningStatus", "guestHeartbeatStatus", "config.guestFullName"]
 RECHECK_PROPS = ["runtime.powerState", "runtime.bootTime", "guest.ipAddress", "guest.net", "guest.toolsStatus",
                  "guest.toolsRunningStatus", "guestHeartbeatStatus", "recentTask"]
 
@@ -215,6 +221,26 @@ def _tcp(addr, port, timeout):
         return "no answer"
 
 
+def port_for(v, setting):
+    """vm_watch_probe_port for this VM: auto = 3389 for a Windows guest, else 22; a number as it is; 0 = none."""
+    if str(setting).strip().lower() in ("auto", ""):
+        return 3389 if "windows" in str(v.get("guest_os") or "").lower() else 22
+    try:
+        return max(0, int(setting))
+    except (TypeError, ValueError):
+        return 0
+
+
+def alive_by_traffic(traffic, min_packets=1):
+    """vCenter's statistics of a VM the probe found silent -> why it is alive after all ('' = they do not show it):
+    it sent min_packets or more since the first check. A hung guest sends nothing."""
+    n = (traffic or {}).get("packets")
+    if n is None or n < max(1, int(min_packets)):
+        return ""
+    return "it sent %d network packet%s in the last %s minutes (vCenter's real-time statistics)" % (
+        n, "" if n == 1 else "s", ("%.1f" % traffic.get("minutes", 0)).rstrip("0").rstrip("."))
+
+
 def probe(v, port=0, timeout=3.0):
     """Probe one VM -> {'probe': answers / no answer / unavailable / no address, 'address': what was probed,
     'how': ping / tcp:<port>}. Its addresses in order; the first one that answers decides."""
@@ -319,7 +345,8 @@ def _guest(pr, now):
     return {"power": str(pr.get("runtime.powerState") or ""), "ip": pr.get("guest.ipAddress") or "",
             "ips": sorted(set(str(i) for i in ips if i)), "tools": str(pr.get("guest.toolsStatus") or ""),
             "tools_running": str(pr.get("guest.toolsRunningStatus") or ""), "heartbeat": str(pr.get("guestHeartbeatStatus") or ""),
-            "boot_time": _iso(boot) if boot else "", "up_minutes": int(max(now - boot.timestamp(), 0) // 60) if boot else None}
+            "boot_time": _iso(boot) if boot else "", "up_minutes": int(max(now - boot.timestamp(), 0) // 60) if boot else None,
+            "guest_os": str(pr.get("config.guestFullName") or "")}
 
 
 def _tasks(content, refs):
@@ -329,6 +356,28 @@ def _tasks(content, refs):
     for m in got:
         out.append({"id": str(got[m].get("info.descriptionId") or ""), "state": str(got[m].get("info.state") or "")})
     return out
+
+
+def _traffic(content, vms, since):
+    """The network packets these VMs sent since `since`, from vCenter's real-time statistics (20-second samples,
+    counter net.packetsTx.summation, all its adapters) -> ({moid: {packets, minutes}}, note)."""
+    pm = content.perfManager
+    cid = None
+    for c in pm.perfCounter or []:
+        if c.groupInfo.key == "net" and c.nameInfo.key == "packetsTx" and str(c.rollupType) == "summation":
+            cid = c.key
+            break
+    if cid is None:
+        return {}, "vCenter has no counter net.packetsTx.summation"
+    specs = [vim.PerformanceManager.QuerySpec(entity=vim.VirtualMachine(v["moid"], content.rootFolder._stub), intervalId=20,
+                                              startTime=since, metricId=[vim.PerformanceManager.MetricId(counterId=cid, instance="")])
+             for v in vms]
+    out = {}
+    for em in pm.QueryPerf(querySpec=specs) or []:
+        vals = [x for s in em.value or [] if s.id.instance == "" for x in s.value or [] if x is not None and x >= 0]
+        if vals:
+            out[em.entity._moId] = {"packets": int(sum(vals)), "minutes": round(len(em.sampleInfo or vals) * 20 / 60.0, 1)}
+    return out, ""
 
 
 def _events(content, root, begin, types, cap=2000):
@@ -479,7 +528,8 @@ def main():
                            window_minutes=dict(type="float", default=15), min_up_minutes=dict(type="float", default=15),
                            skip_vms=dict(type="list", elements="str", default=[]),
                            skip_folders=dict(type="list", elements="str", default=[]),
-                           probe=dict(type="bool", default=True), probe_port=dict(type="int", default=0),
+                           probe=dict(type="bool", default=True), probe_port=dict(type="str", default="auto"),
+                           traffic=dict(type="bool", default=True), traffic_packets=dict(type="int", default=1),
                            probe_timeout=dict(type="float", default=3), max_suspects=dict(type="int", default=50),
                            confirm_checks=dict(type="int", default=2), confirm_seconds=dict(type="float", default=120),
                            event_types=dict(type="list", elements="str"), now=dict(type="float")),
@@ -498,7 +548,7 @@ def main():
     res = {"vcenter": ", ".join(name for name, _ in done), "vcenters": statuses, "window_minutes": p["window_minutes"],
            "read_at": _iso(datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc)),
            "hosts": [], "datastores": [], "questions": [], "suspects": [], "events": [], "vms_checked": 0, "vms_skipped": 0,
-           "not_probed": [], "probe": {"on": p["probe"], "port": p["probe_port"], "timeout": p["probe_timeout"]},
+           "not_probed": [], "probe": {"on": p["probe"], "port": str(p["probe_port"]), "timeout": p["probe_timeout"]},
            "confirm": {"checks": checks, "seconds": p["confirm_seconds"]}}
     for _, part in done:
         for k in ("hosts", "datastores", "questions", "suspects", "events"):
@@ -520,7 +570,8 @@ def main():
             c = v["checks"][-1]
             if not c.get("reason") or c.get("busy"):
                 continue
-            c.update(probe(v, p["probe_port"], p["probe_timeout"]) if p["probe"] else {"probe": "unavailable", "address": "", "how": "off"})
+            c.update(probe(v, port_for(v, p["probe_port"]), p["probe_timeout"]) if p["probe"]
+                     else {"probe": "unavailable", "address": "", "how": "off"})
     probe_all(judged)
     for _ in range(checks - 1):
         live = [v for v in judged if v["checks"][-1].get("reason") and not v["checks"][-1].get("busy")]
@@ -555,6 +606,30 @@ def main():
         probe_all(live)
     for v in res["suspects"]:
         v["verdict"] = verdict(v["checks"]) if v["name"] not in res["not_probed"] else "unprobed"
+    # the third signal, for the silent ones: did vCenter see the VM send anything since the first check?
+    silent = [v for v in res["suspects"] if v["verdict"] == "hung"]
+    if silent and p["traffic"]:
+        since = datetime.datetime.fromtimestamp(now - 60, tz=datetime.timezone.utc)
+        for name in sorted(set(v["vcenter"] for v in silent)):
+            mine = [v for v in silent if v["vcenter"] == name]
+            try:
+                si = connect(name, p["validate_certs"])
+            except RuntimeError as e:
+                for v in mine:
+                    v["traffic"] = {"packets": None, "note": "vCenter could not be read for its statistics: %s" % e}
+                continue
+            try:
+                got, note = _traffic(si.RetrieveContent(), mine, since)
+            except Exception as e:              # noqa: BLE001
+                got, note = {}, "its statistics could not be read: %s" % e
+            finally:
+                disconnect(si)
+            for v in mine:
+                v["traffic"] = got.get(v["moid"]) or {"packets": None, "note": note or "vCenter has no real-time statistics of it"}
+                why = alive_by_traffic(v["traffic"], p["traffic_packets"])
+                if why:
+                    v["verdict"], v["alive_by"] = "one-signal", why
+    res["traffic"] = {"on": p["traffic"], "packets": p["traffic_packets"]}
     module.exit_json(changed=False, **res)
 
 

@@ -166,7 +166,7 @@ def vm_watch_conditions(data, opts=None):
         elif v.get("verdict") in ("one-signal", "unprobed"):
             c = _cond(one, "no-heartbeat", "vm", v["name"], v,
                       "VM %s has no guest heartbeat, but %s: not called hung (one signal only)"
-                      % (v["name"], "it answers on the network" if v["verdict"] == "one-signal" else "it could not be probed (%s)" % _last_probe(v)),
+                      % (v["name"], _alive_word(v) if v["verdict"] == "one-signal" else "it could not be probed (%s)" % _last_probe(v)),
                       "VMware Tools stopped or hung in a guest that still runs: restart the Tools service in the guest "
                       "(vmtoolsd / VMware Tools), or update Tools.")
         else:
@@ -188,6 +188,14 @@ def _event_todo(type_id, otype):
     return "Check the host's management network and its console (iDRAC / iLO); see the host's condition."
 
 
+def _alive_word(v):
+    """Why a VM with no heartbeat is not hung: it answered the probe, or - no answer to it (a firewall between AAP and
+    the guest, most often) - vCenter saw it send network packets. No numbers: a ticket's summary stays the same."""
+    if v.get("alive_by"):
+        return "it still sends network traffic (vCenter's real-time statistics), though the probe got %s" % _last_probe(v)
+    return "it answers on the network"
+
+
 def _last_probe(v):
     c = (v.get("checks") or [{}])[-1]
     return "%s%s" % (c.get("probe") or "not probed", (" at " + c["address"]) if c.get("address") else "")
@@ -197,7 +205,10 @@ def _signals(v):
     """'no guest heartbeat (red); no answer at 192.0.2.20, in 2 check(s)' - no times: a ticket's summary stays the same."""
     cs = v.get("checks") or []
     first = cs[0] if cs else {}
-    return "%s; %s, in %d check(s)" % (first.get("reason") or "no heartbeat", _last_probe(v), len(cs))
+    tr = v.get("traffic") or {}
+    sent = "; vCenter saw no network packets sent" if tr.get("packets") == 0 else (
+        "; vCenter's statistics not read (%s)" % tr["note"]) if tr.get("note") else ""
+    return "%s; %s, in %d check(s)%s" % (first.get("reason") or "no heartbeat", _last_probe(v), len(cs), sent)
 
 
 def _span(v):
@@ -290,9 +301,11 @@ def vm_watch_report(data, conditions, actions=None, opts=None):
     status = "critical" if crit else "warning" if warn else "ok"
     conf = d.get("confirm") or {}
     pr = d.get("probe") or {}
+    tr = d.get("traffic") or {}
     subtitle = ("Read %s UTC: %s; HA and storage events of the last %s minutes. A VM is hung only when it has no heartbeat AND "
-                "does not answer on the network, in each of %s check(s) %s seconds apart. Watch only: nothing was restarted."
-                % (d.get("read_at", ""), _counts(d), _num(d.get("window_minutes")), conf.get("checks", 1), _num(conf.get("seconds", 0))))
+                "does not answer on the network, in each of %s check(s) %s seconds apart%s. Watch only: nothing was restarted."
+                % (d.get("read_at", ""), _counts(d), _num(d.get("window_minutes")), conf.get("checks", 1), _num(conf.get("seconds", 0)),
+                   " AND vCenter saw it send no network packets" if tr.get("on") else ""))
     summary = [{"label": "Critical", "value": len(crit), "status": "critical" if crit else "ok"},
                {"label": "Warning", "value": len(warn), "status": "warning" if warn else "ok"},
                {"label": "Hung VMs", "value": len(hung), "status": "critical" if hung else "ok"},

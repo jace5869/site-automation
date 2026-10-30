@@ -109,6 +109,21 @@ class Conditions(unittest.TestCase):
         self.assertNotIn("app05", by)
         info = w.vm_watch_conditions(d, {"one_signal_severity": "info"})
         self.assertEqual({c["object"]: c["severity"] for c in info}["app02"], "info")
+        # silent to the probe, but vCenter saw it send packets: alive, said; or saw none: said with the hung line
+        talks = suspect("app07", "one-signal")
+        talks.update(alive_by="it sent 412 network packets in the last 7 minutes (vCenter's real-time statistics)",
+                     traffic={"packets": 412, "minutes": 7.0})
+        quiet = suspect("app08", "hung")
+        quiet["traffic"] = {"packets": 0, "minutes": 7.0}
+        unread = suspect("app09", "hung")
+        unread["traffic"] = {"packets": None, "note": "vCenter has no counter net.packetsTx.summation"}
+        by2 = {c["object"]: c for c in w.vm_watch_conditions(data(suspects=[talks, quiet, unread]))}
+        self.assertEqual((by2["app07"]["kind"], by2["app07"]["severity"]), ("no-heartbeat", "warning"))
+        self.assertIn("it still sends network traffic (vCenter's real-time statistics), though the probe got no answer at 192.0.2.20",
+                      by2["app07"]["summary"])
+        self.assertNotIn("412", by2["app07"]["summary"])          # no numbers: the ticket's summary stays the same
+        self.assertTrue(by2["app08"]["summary"].endswith("in 2 check(s); vCenter saw no network packets sent"))
+        self.assertTrue(by2["app09"]["summary"].endswith("; vCenter's statistics not read (vCenter has no counter net.packetsTx.summation)"))
         nj = {x["name"]: x["why"] for x in w.vm_watch_not_judged(d)}
         self.assertIn("a vCenter task was running", nj["app04"])
         self.assertIn("recovered during the run", nj["app05"])

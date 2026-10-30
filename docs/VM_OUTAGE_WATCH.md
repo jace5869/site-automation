@@ -42,20 +42,25 @@ event is seen once.
 
 ### When is a VM hung?
 
-Only when **two independent signals agree**, in **every** check of the run:
+Only when **three independent signals agree**, in **every** check of the run:
 
 1. **vCenter's signal.** The VM is powered on, has VMware Tools installed, has been up at least
    `vm_watch_min_up_minutes` (15; a VM still starting has no heartbeat yet), and its guest heartbeat is red -
    or Tools stopped answering and the heartbeat is gray.
-2. **The network.** The AAP node probes the VM: a ping, and a TCP connect to `vm_watch_probe_port` when you
-   set one (22 or 3389, say). It tries the IP addresses VMware Tools last reported, then the guest's host
-   name and the VM's name in DNS (Tools that stopped often leave no IP). A refused connection counts as an
-   answer: the guest's network stack is alive.
+2. **The network.** The AAP node probes the VM: a ping, and a TCP connect to `vm_watch_probe_port` - by
+   default 22, or 3389 for a Windows guest. It tries the IP addresses VMware Tools last reported, then the
+   guest's host name and the VM's name in DNS (Tools that stopped often leave no IP). A connection made or
+   refused counts as an answer: the guest's network stack is alive. A timeout is no answer - but a firewall
+   between AAP and the guest gives one too, so it never makes a VM hung on its own.
+3. **The traffic vCenter saw** (`vm_watch_traffic`, on). For a VM silent on both, the watch reads vCenter's
+   real-time statistics: the network packets the VM sent since the first check (20-second samples). A hung
+   guest sends none; a VM that sent any is alive - Tools died or a firewall stops the probe - and is reported
+   with one signal, not hung. This needs no network path from AAP to the guest.
 
 Only the VMs that fail the first signal are probed. The rest of the estate is never pinged.
 
 Then the watch waits `vm_watch_confirm_seconds` (120) and reads those VMs again, for `vm_watch_confirm_checks`
-(2) checks in all. This happens in the same run, because an AAP execution environment keeps nothing
+(3) checks in all. This happens in the same run, because an AAP execution environment keeps nothing
 between runs. What one signal alone means:
 
 - **No heartbeat, but it answers the network.** VMware Tools died in a guest that still runs (common
@@ -131,10 +136,12 @@ Job artifacts, for the next step of a workflow:
 |---|---|---|
 | `vm_watch_window_minutes` | 15 | how far back HA and storage events are read; the schedule's interval |
 | `vm_watch_min_up_minutes` | 15 | a VM up for less than this is not judged |
-| `vm_watch_confirm_checks` | 2 | checks of a suspect in one run (1 = once, no waiting) |
+| `vm_watch_confirm_checks` | 3 | checks of a suspect in one run (1 = once, no waiting) |
 | `vm_watch_confirm_seconds` | 120 | seconds between them |
 | `vm_watch_probe` | true | false = no probe: no VM is then hung, only one-signal warnings |
-| `vm_watch_probe_port` | 0 | also a TCP connect to this port (0 = ping only) |
+| `vm_watch_probe_port` | auto | also a TCP connect: auto = 22, 3389 for a Windows guest; a port; 0 = ping only |
+| `vm_watch_traffic` | true | a silent VM that vCenter saw send network packets is alive, not hung |
+| `vm_watch_traffic_packets` | 1 | packets from which it counts as alive |
 | `vm_watch_probe_timeout` | 3 | seconds per address |
 | `vm_watch_max_suspects` | 50 | suspects probed and confirmed per run; the rest are "not probed" |
 | `vm_watch_one_signal_severity` | warning | `info` keeps one-signal VMs out of the tickets |
@@ -151,9 +158,9 @@ tickets job.
 
 **The probe and the execution environment.** The ping runs inside the AAP execution environment. Without
 a `ping` program there (or without the right to send ICMP), every suspect is "could not be probed" and
-nothing is ever called hung. The job says so ("unavailable"). Set `vm_watch_probe_port` to a port your
-VMs listen on (22 for Linux, 3389 for Windows, or one each, in two templates split by folder). The TCP
-connect needs nothing from the execution environment. The AAP node must be allowed to reach the VMs on
+nothing is ever called hung. The job says so ("unavailable"). The TCP connect (22, or 3389 for Windows, by
+default) needs nothing from the execution environment; set `vm_watch_probe_port` to another port your VMs
+listen on if those are closed. The AAP node must be allowed to reach the VMs on
 that port, or ping them, through the firewalls in between.
 
 ## Phase 2 - the response (not built yet)
@@ -199,7 +206,9 @@ the response always works from a fresh look, never only from the event. Nothing 
 |---|---|
 | Every suspect "could not be probed (unavailable)" | no `ping` in the execution environment, or ICMP not allowed: set `vm_watch_probe_port` |
 | "could not be probed (no address)" | VMware Tools reported no IP, and neither the guest host name nor the VM name is in DNS |
-| A VM that answers is reported hung | the firewall between the AAP node and the VM drops the ping: use `vm_watch_probe_port` with a port it allows |
+| A VM that answers is reported hung | the firewall between the AAP node and the VM drops the ping and the TCP port, and vCenter's statistics show no packets sent (the line says *vCenter saw no network packets sent*). Before 0.45.3: ping only, no traffic signal - update. Still: set `vm_watch_probe_port` to a port the firewall allows |
+| *it still sends network traffic (vCenter's real-time statistics ...)* | no heartbeat, no answer to the probe, but the VM sends packets: alive. VMware Tools stopped (on container hosts open-vm-tools can stall on many container network interfaces - check `vmtoolsd`), and the probe is blocked |
+| *vCenter's statistics not read (...)* | the VM is hung on the first two signals; the third could not be read (the reason is given). It is still called hung |
 | The same one-signal warning every run | VMware Tools is stopped in that guest: restart or update Tools, or add the VM to `vm_watch_skip_vms` |
 | An all-paths-down condition stays after the storage came back | the clear event names another device, or came after the window: it ages out after `vm_watch_window_minutes` |
 | "does not say which VM is the AAP server" | run the template with the inventory that has the `aap` group, or list the AAP VM in `vmware_protected_vms` |
