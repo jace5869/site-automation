@@ -262,7 +262,7 @@ def find_evaluate(path):
 
 
 BAD_RE = re.compile(r"'([^'\n]+\.cklb?)'\s*:\s*failed schema validation", re.I)
-MOVED_RE = re.compile(r"Moving to (/[^\s']+?)\.?(?=\s|$)")
+MOVED_RE = re.compile(r"Moving to\s+(/[^\s']+?)\.?(?=\s|$)")   # \s+: a wrapped line too
 CHECK_FAILED_RE = re.compile(r"\(Get-(V\d+)\)\s*:\s*Failed", re.I)
 
 

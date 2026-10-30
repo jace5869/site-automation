@@ -251,7 +251,8 @@ function Get-Label($S) {
 # What Evaluate-STIG printed: the checklists its own schema check moved away, its checks that failed, its log
 function Get-EvaluateSaid([string] $Text) {
     $where = ''
-    $m = [regex]::Match($Text, '(?im)Moving to ((?:[a-z]:\\|\\\\|/)[^''\r\n]*?)\.?\s*$')
+    # \s+: Windows PowerShell 5.1 can wrap the line before the folder
+    $m = [regex]::Match($Text, '(?im)Moving to\s+((?:[a-z]:\\|\\\\|/)[^''\r\n]*?)\.?\s*$')
     if ($m.Success) { $where = $m.Groups[1].Value.TrimEnd('\', '/') }
     $rejected = @()
     if ($where) {
@@ -286,7 +287,8 @@ function Invoke-Evaluate([string] $Script, [string] $OutDir, [string] $Work) {
         '$ErrorActionPreference = ''Continue''',
         '$global:LASTEXITCODE = 0',
         ('Set-Location -LiteralPath ' + (Get-Quoted (Split-Path -Parent $Script))),
-        ('try { ' + ($call -join ' ') + ' *> ' + (Get-Quoted $log) + '; $c = $LASTEXITCODE }'),
+        # each line as text: *> into a file wraps them at the console's width in Windows PowerShell 5.1
+        ('try { ' + ($call -join ' ') + ' *>&1 | ForEach-Object { [string]$_ } | Set-Content -LiteralPath ' + (Get-Quoted $log) + ' -Encoding UTF8; $c = $LASTEXITCODE }'),
         ('catch { Add-Content -LiteralPath ' + (Get-Quoted $log) + ' -Value ([string]$_); $c = 1 }'),
         'if ($null -eq $c) { $c = 0 }',
         ('Set-Content -LiteralPath ' + (Get-Quoted $codeFile) + ' -Value $c')

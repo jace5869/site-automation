@@ -38,8 +38,8 @@ function Iis {
               version = '2'; release = 'Release: 9 Benchmark Date: 02 Jul 2026'; site = 'Default Web Site'; instance = ''
               rules = @((TRule 'SV-218735' 'medium' 'pass'), (TRule 'SV-218736' 'high' 'fail' 'Found: directory browsing is on.')) }
 }
-function Spec($Checklists, [int] $Exit = 0, [int] $Sleep = 0, [string] $Reject = '', [string[]] $Say = @()) {
-    $s = @{ host = 'WIN01'; exit = $Exit; sleep = $Sleep; reject = $Reject; say = $Say; checklists = @($Checklists) }
+function Spec($Checklists, [int] $Exit = 0, [int] $Sleep = 0, [string] $Reject = '', [string[]] $Say = @(), [switch] $Wrap) {
+    $s = @{ host = 'WIN01'; exit = $Exit; sleep = $Sleep; reject = $Reject; say = $Say; wrap = [bool]$Wrap; checklists = @($Checklists) }
     Set-Content -LiteralPath (Join-Path $es 'spec.json') -Value (ConvertTo-Json -InputObject $s -Depth 6) -Encoding UTF8
 }
 # run the script with these settings -> its facts (or $null)
@@ -122,6 +122,10 @@ Set-Content -LiteralPath (Join-Path (New-Item -ItemType Directory -Path (Split-P
 Spec @((Ws)) -Reject $bad -Say @('ERROR: (Get-V254240) : Failed')
 $f = Scan @{ save = $false }
 Check 'its schema check rejected the checklist: read from Bad_CKL, said' ($f -and $f.scanned -and @($f.evaluate_rejected).Count -eq 1 -and @($f.evaluate_failed) -contains 'V-254240' -and $f.evaluate_log -like '*Evaluate-STIG.log') $f
+Spec @((Ws)) -Reject $bad -Say @('ERROR: (Get-V254240) : Failed') -Wrap
+$f = Scan @{ save = $false }
+Check 'rejected, its line wrapped before the folder (Windows PowerShell 5.1): still read' ($f -and $f.scanned -and @($f.evaluate_rejected).Count -eq 1) $f
+Spec @((Ws)) -Reject $bad -Say @('ERROR: (Get-V254240) : Failed')
 $f = Scan @{ save = $false; rejected = $false }
 Check 'win_check_stig_evaluate_rejected false: not scanned, why' ($f -and -not $f.scanned -and $f.why -match 'schema check rejected WIN01_WinServer2022_V2R4_20261030.cklb' -and $f.why -match 'V-254240') $f
 Spec @() -Exit 3 -Say @('ERROR: no STIG applies')

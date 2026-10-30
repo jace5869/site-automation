@@ -1,6 +1,6 @@
 # A stand-in Evaluate-STIG.ps1 for tests/windows/test_win_stig.ps1: writes the checklists spec.json (next to it) lists
 # into <OutputPath>\<host>\Checklist, as CKLB or CKL (-Output), and records its arguments in args.txt. spec.json:
-#   {"host": "WIN01", "exit": 0, "sleep": 0, "say": ["lines it prints"], "reject": "" (a folder: its schema check
+#   {"host": "WIN01", "exit": 0, "sleep": 0, "wrap": false, "say": ["lines it prints"], "reject": "" (a folder: its schema check
 #    rejects every checklist and moves it there, as Evaluate-STIG's Bad_CKL), "checklists": [{"file", "stig_id",
 #    "display_name", "version", "release", "site", "instance", "rules": [{"sv", "v", "stigid", "sev", "title", "status",
 #    "details"}]}]}
@@ -50,6 +50,8 @@ foreach ($c in @($spec.checklists)) {
                                version = $c.version; release_info = $c.release; rules = $rules }) }
         Set-Content -LiteralPath (Join-Path $dest ($c.file + '.cklb')) -Value (ConvertTo-Json -InputObject $doc -Depth 6) -Encoding UTF8
     }
-    if ($spec.reject) { Write-Host ("'" + $c.file + $(if ($ckl) { '.ckl' } else { '.cklb' }) + "' : failed schema validation. Moving to " + $dest) }
+    $sep = ' '
+    if ($spec.wrap) { $sep = " `r`n" }      # as Windows PowerShell 5.1 wraps a long line into a file
+    if ($spec.reject) { Write-Host ("'" + $c.file + $(if ($ckl) { '.ckl' } else { '.cklb' }) + "' : failed schema validation. Moving to" + $sep + $dest) }
 }
 exit ([int]$spec.exit)

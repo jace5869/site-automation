@@ -477,6 +477,8 @@ Total checklists in Results Directory : 0"""
         self.assertEqual(t["failed"], ["V-244531", "V-244532"])
         self.assertEqual(len(t["lines"]), 5)
         self.assertEqual(scan.evaluate_said("Done!"), {"rejected": [], "failed": [], "log": "", "lines": []})
+        wrapped = scan.evaluate_said("ERROR: 'WEB01_RHEL9_V2R10_20261030-132053.cklb' : failed schema validation. Moving to \n/tmp/Evaluate-STIG/Bad_CKL.")
+        self.assertEqual(wrapped["rejected"], ["/tmp/Evaluate-STIG/Bad_CKL/WEB01_RHEL9_V2R10_20261030-132053.cklb"], "the line wrapped before the folder")
 
     def test_its_schema_check_rejected_the_checklist(self):
         d = tempfile.mkdtemp()
