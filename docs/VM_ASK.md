@@ -9,6 +9,7 @@ Type a question about vCenter in plain words and get the answer as a report:
 - *the 10 biggest snapshots older than a week*
 - *powered-off Windows VMs in cluster PROD-CL01*
 - *how many VMs per cluster*
+- *VMs and their hardware versions, and how many of each*
 - *VMs not restarted in 90 days*, *VMs powered off for more than 2 weeks*
 - *which VMs were vMotioned today, and from which host*
 - *drives under 10% free on the SQL servers*, *the biggest virtual disks on DS-PROD-01*
@@ -93,7 +94,7 @@ Eight objects. A question asks for one of them; its fields can be conditions, co
 
 | Object | Fields |
 |---|---|
-| **VMs** | name, vCenter, datacenter, folder (`DC1 / ACAS / Scanners`: a folder's subfolders count), cluster, ESXi host, power (on, off, suspended), template, guest host name, IP address (and every IP), guest OS, VMware Tools, heartbeat (green, yellow, red, gray), vCPUs, memory (GB), days up, when powered on; **restarts**: last restart, by what (power on, guest restart, reset, HA restart), days since, last powered off, days since; **vMotion**: last vMotion, its kind (vMotion, DRS vMotion, relocate), from which host, by whom, days since; **disks**: size of all its virtual disks, how many, datastore space used, its guest drives' size and free space, the free % of its fullest drive |
+| **VMs** | name, vCenter, datacenter, folder (`DC1 / ACAS / Scanners`: a folder's subfolders count), cluster, ESXi host, power (on, off, suspended), template, guest host name, IP address (and every IP), guest OS, VMware Tools, heartbeat (green, yellow, red, gray), hardware version (`21` for vmx-21; *older than vmx-19* works), VMware Tools version (`12.3.0`, or *guest managed* for open-vm-tools), firmware (bios, efi), vCPUs, memory (GB), days up, when powered on; **restarts**: last restart, by what (power on, guest restart, reset, HA restart), days since, last powered off, days since; **vMotion**: last vMotion, its kind (vMotion, DRS vMotion, relocate), from which host, by whom, days since; **disks**: size of all its virtual disks, how many, datastore space used, its guest drives' size and free space, the free % of its fullest drive |
 | **ESXi hosts** | name, vCenter, datacenter, cluster, connection, power, maintenance mode, status, HA state, CPU and memory used %, CPU (GHz), memory (GB), days up, reboot required, ESXi version and build, vendor, model, configuration issues |
 | **Clusters** | name, vCenter, datacenter, status, HA, DRS (and its automation), EVC mode, hosts, hosts working, CPU and memory used % (of its hosts), configuration issues |
 | **Datastores** | name, vCenter, datacenter, datastore cluster, type, capacity, free (GB and %), used %, provisioned %, accessible, maintenance, hosts, VMs |
@@ -245,6 +246,7 @@ could not be read.
 | `Refused: this job only reads vCenter ...` | The question asks for a change. | Ask what you want to see, or use the template it names. |
 | `Refused by GenAI: the question asks to change something` | GenAI read a change into it. | Ask it as a question: *which VMs are ...* |
 | `... has no field 'owner'` | vCenter has no such thing, as far as the job reads it. | See [What you can ask about](#what-you-can-ask-about). Ask it in other words. |
+| `Not answered: the question asks for VM tags, and this job does not read that` | Nothing the job reads holds it. GenAI says so instead of answering the rest of the question, which would look like an answer and be a different one (before 0.45.2: every VM, listed). | See [What you can ask about](#what-you-can-ask-about); ask without it, or ask for the field to be added. |
 | `GenAI's answer has no query in it` | GenAI answered in prose, twice. | Ask again, more plainly. The job's output shows what GenAI answered. |
 | `GenAI answered with a step of its own (action 'plan' ...) ... (asked twice)` | The model replied as if it would take several steps (a plan, then the query). Here it gets one call, so the plan is all it said; it was asked once more and did it again. | Since 0.44.5 ACT no longer offers the model its own steps here (docs/ADDING_ACT.md, "A plain answer"), which is what made it answer with one: update first. Still there: launch it again; if it keeps happening with one model, set `site_act_model` to another one in the template's Variables. |
 | `GenAI did not run: This job has no API key ...` | No ACT model key credential on the template. | Attach it. Simple questions still work without it. |

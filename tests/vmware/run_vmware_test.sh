@@ -2084,8 +2084,9 @@ run "vCenter log analysis: a wrong window is refused before vCenter is read" fai
     -- "must look like 2026-10-23 08:00"
 
 # ---- VM - ask a question (playbooks/vm_ask.yml): GenAI (the fake ACT) turns the question into a query, the job
-# reads and joins; questions that ask to change something refused before GenAI; the whitelist; no key: the job's
-# own reader (tests/test_vm_ask.py covers the query engine) ----------------------------------------------------
+# reads and joins; questions that ask to change something refused before GenAI; the whitelist; what the job does not
+# read, said; the hardware versions counted; no key: the job's own reader
+# (tests/test_vm_ask.py covers the query engine) -------------------------------------------------------------------
 fresh
 export GENAI_KEY=test-key FAKE_ACT_OUT="$work/act" FAKE_ACT_CONFIG="$work/act/act.json"
 askact() {  # askact JSON: the fake ACT's answer is this query (or refusal), between the markers
@@ -2140,6 +2141,14 @@ askact '{"object": "vm", "where": [{"field": "owner", "op": "eq", "value": "bob"
 run "ask: a query outside the whitelist stops before anything is read" fail vm_ask.yml -e "$actvars" -e 'vm_ask_question="VMs bob owns"' \
     -- "unknown key(s) action" "VMs has no field 'owner'" "Nothing was read."
 grep -qF "VMware | read the VMs" "$work/out.txt" && { echo "FAIL -   ...it read vCenter"; fails=$((fails + 1)); } || echo "ok   -   ...vCenter not read"
+askact '{"missing": "VM tags"}'
+run "ask: GenAI says the job does not read what is asked (tags) - not answered, rather than every VM" fail vm_ask.yml -e "$actvars" \
+    -e 'vm_ask_question="VMs and their tags"' -- "Not answered: the question asks for VM tags, and this job does not read that"
+grep -qF "VMware | read the VMs" "$work/out.txt" && { echo "FAIL -   ...it read vCenter"; fails=$((fails + 1)); } || echo "ok   -   ...vCenter not read, nothing listed"
+askact '{"object": "vm", "columns": ["name", "hw_version", "firmware", "tools_version"], "count_by": "hw_version"}'
+run "ask: VMs and their hardware versions, and how many of each - vCenter's config.version read" ok vm_ask.yml -e "$actvars" \
+    -e 'vm_ask_question="show me vms and their hardware versions and how many of each"' -- \
+    "VM | Hardware version | Firmware | Tools version" "By hardware version: 13 6" "DC0_H0_VM0 | 13 | bios | "
 run "ask: the joins GenAI is not needed for (vm_ask_query) - a cluster's hosts, VMs and datastores (through its hosts), as a dry run" ok \
     vm_ask.yml --check -e '{"vm_ask_query": {"object": "cluster", "columns": ["name", "host.count", "vm.count", "datastore.name"]}}' \
     -- "Read by: vm_ask_query" "Cluster | ESXi hosts (count) | VMs (count) | Datastore" "DC0_C0 | 3 | 4 | LocalDS_0"

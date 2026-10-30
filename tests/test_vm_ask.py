@@ -26,6 +26,7 @@ def read():
          "esxi_host": "esx01.example.mil", "template": False, "power": "poweredOn", "hostname": "dbv01.example.mil", "ip": "192.0.2.11",
          "ips": ["192.0.2.11", "198.51.100.11"], "guest_os": "Microsoft Windows Server 2022 (64-bit)", "tools": "toolsOk",
          "heartbeat": "green", "cpus": 4, "memory_mb": 16384, "boot_time": "2026-10-01T00:00:00Z", "up_minutes": 40320,
+         "hw_version": "vmx-21", "firmware": "efi", "tools_version": "12352",
          "vdisks": [{"label": "Hard disk 1", "size_gb": 100.0, "datastore": "DS-PROD-01", "file": "[DS-PROD-01] dbv01/dbv01.vmdk", "thin": True},
                     {"label": "Hard disk 2", "size_gb": 500.0, "datastore": "DS-PROD-02", "file": "[DS-PROD-02] dbv01/dbv01_1.vmdk", "thin": False}],
          "volumes": [{"path": "C:\\", "capacity_gb": 99.4, "free_gb": 3.98}, {"path": "D:\\", "capacity_gb": 499.9, "free_gb": 250.0}],
@@ -36,7 +37,7 @@ def read():
         {"name": "dbv02", "moid": "vm-2", "vcenter": VC, "datacenter": "DC1", "folder": "/DC1/vm/Linux", "cluster": "CL1",
          "esxi_host": "esx02.example.mil", "template": False, "power": "poweredOff", "hostname": "", "ip": "", "ips": [],
          "guest_os": "Red Hat Enterprise Linux 9 (64-bit)", "tools": "toolsNotRunning", "heartbeat": "gray", "cpus": 2,
-         "memory_mb": 8192, "boot_time": "", "up_minutes": None,
+         "memory_mb": 8192, "boot_time": "", "up_minutes": None, "hw_version": "vmx-19", "firmware": "bios", "tools_version": "2147483647",
          "vdisks": [{"label": "Hard disk 1", "size_gb": 40.0, "datastore": "DS-PROD-01", "file": "[DS-PROD-01] dbv02/dbv02.vmdk", "thin": True}],
          "volumes": [], "storage_used_gb": 12.0, "storage_provisioned_gb": 40.0,
          "last_restart": {}, "last_power_off": {"time": "2026-10-13T12:00:00Z", "kind": "guest shutdown", "by": "CORP\\jdoe"},
@@ -44,7 +45,7 @@ def read():
         {"name": "web01", "moid": "vm-3", "vcenter": VC, "datacenter": "DC1", "folder": "/DC1/vm/acas", "cluster": "CL1",
          "esxi_host": "esx02.example.mil", "template": False, "power": "poweredOn", "hostname": "web01", "ip": "192.0.2.13",
          "ips": ["192.0.2.13"], "guest_os": "Red Hat Enterprise Linux 9 (64-bit)", "tools": "toolsOk", "heartbeat": "green",
-         "cpus": 8, "memory_mb": 32768, "boot_time": "2026-10-20T00:00:00Z", "up_minutes": 12960,
+         "cpus": 8, "memory_mb": 32768, "boot_time": "2026-10-20T00:00:00Z", "up_minutes": 12960, "hw_version": "vmx-21", "firmware": "efi",
          "vdisks": [{"label": "Hard disk 1", "size_gb": 60.0, "datastore": "DS-PROD-02", "file": "[DS-PROD-02] web01/web01.vmdk", "thin": True}],
          "volumes": [{"path": "/", "capacity_gb": 50.0, "free_gb": 40.0}, {"path": "/var", "capacity_gb": 10.0, "free_gb": 0.5}],
          "storage_used_gb": 30.0, "storage_provisioned_gb": 60.0,
@@ -56,7 +57,8 @@ def read():
         # the same moid in another vCenter is another VM
         {"name": "DBV03", "moid": "vm-1", "vcenter": VC2, "datacenter": "DC2", "folder": "/DC2/vm", "cluster": "",
          "esxi_host": "esx09.example.mil", "template": False, "power": "poweredOn", "ip": "192.0.2.19", "ips": ["192.0.2.19"],
-         "guest_os": "Microsoft Windows Server 2019 (64-bit)", "tools": "toolsOld", "heartbeat": "yellow", "cpus": 2, "memory_mb": 4096},
+         "guest_os": "Microsoft Windows Server 2019 (64-bit)", "tools": "toolsOld", "heartbeat": "yellow", "cpus": 2, "memory_mb": 4096,
+         "hw_version": "vmx-13", "firmware": "bios", "tools_version": "11333"},
     ]
     hosts = [
         {"vcenter": VC, "datacenter": "DC1", "cluster": "CL1", "name": "esx01.example.mil", "moid": "host-1", "connection": "connected",
@@ -204,6 +206,8 @@ class GenAIAnswer(unittest.TestCase):
     def test_refused_and_unreadable(self):
         self.assertEqual(a.vm_ask_parse('BEGIN_ACT_ANALYSIS\n{"refused": "restarting a VM"}\nEND_ACT_ANALYSIS')["refused"], "restarting a VM")
         self.assertIn("has no query", a.vm_ask_parse("I cannot help with that.")["error"])
+        m = a.vm_ask_parse('BEGIN_ACT_ANALYSIS\n{"missing": "VM tags"}\nEND_ACT_ANALYSIS')
+        self.assertEqual((m["missing"], m["error"], m["refused"], m["query"]), ("VM tags", "", "", {}))
 
     def test_a_step_of_its_own(self):
         # what Gemini answered in a real run: ACT's plan record, shown as a Python dict - not a query
@@ -236,8 +240,9 @@ class GenAIAnswer(unittest.TestCase):
         for ob in a.OBJECTS:
             self.assertIn("- %s: " % ob, t)
         for q, ans in a.EXAMPLES:          # every example the prompt shows passes the whitelist
-            if "refused" not in ans:
+            if "refused" not in ans and "missing" not in ans:
                 self.assertEqual(a.vm_ask_check(ans)["problems"], [], q)
+        self.assertIn('{"missing": "<what is not there', t)
 
 
 class Whitelist(unittest.TestCase):
@@ -299,6 +304,8 @@ class Records(unittest.TestCase):
         v = RECS["vm"][0]
         self.assertEqual((v["folder"], v["power"], v["memory_gb"], v["up_days"], v["host"]),
                          ("DC1 / ACAS / Scanners", "on", 16.0, 28.0, "esx01.example.mil"))
+        self.assertEqual([(x["hw_version"], x["tools_version"], x["firmware"]) for x in RECS["vm"]],
+                         [(21, "12.2.0", "efi"), (19, "guest managed", "bios"), (21, "", "efi"), (None, "", ""), (13, "11.2.5", "bios")])
         h = RECS["host"][0]
         self.assertEqual((h["cpu_used_pct"], h["mem_used_pct"], h["cpu_ghz"], h["memory_gb"], h["build"], h["power"]),
                          (50.0, 50.0, 60.0, 512.0, "21997540", "on"))
@@ -392,6 +399,14 @@ class Answers(unittest.TestCase):
         self.assertEqual((r["total"], r["shown"], len(r["rows"])), (4, 2, 4))
         r = ask({"object": "vm", "count_by": "datastore.name"})
         self.assertEqual(r["count_by"]["rows"], [["DS-PROD-01", 2], ["DS-PROD-02", 2], ["DS-LOCAL", 1]])   # a VM on two: in both
+
+    def test_hardware_versions_and_how_many_of_each(self):
+        r = ask({"object": "vm", "columns": ["name", "hw_version"], "count_by": "hw_version"})
+        self.assertEqual(r["count_by"]["rows"], [["21", 2], ["13", 1], ["19", 1]])
+        self.assertEqual((col(r, "VM"), col(r, "Hardware version")), (["dbv01", "dbv02", "web01", "DBV03"], ["21", "19", "21", "13"]))
+        chk = a.vm_ask_check({"object": "vm", "where": [{"field": "hw_version", "op": "lt", "value": "vmx-19"}]})
+        self.assertEqual((chk["problems"], chk["query"]["where"][0]["value"]), ([], 19.0))
+        self.assertEqual(col(ask(chk["query"]), "VM"), ["DBV03"])
 
     def test_empty(self):
         r = ask({"object": "vm", "where": [{"field": "name", "op": "eq", "value": "nope"}]})

@@ -100,7 +100,8 @@
       {{ {'query': l, 'refused': '', 'error': '', 'by': "the job's own reader (simple questions only)",
           'note': g.error ~ twice ~ ". The job's own reader read the question: check that 'Read as' is what you asked."} }}
       {%- else -%}
-      {{ {'query': g.query, 'refused': g.refused, 'error': (g.error ~ twice) if g.error else '', 'note': '', 'by': by} }}
+      {{ {'query': g.query, 'refused': g.refused, 'error': (g.error ~ twice) if g.error else '', 'note': '', 'by': by,
+          'missing': g.missing | default('')} }}
       {%- endif -%}
       {%- else -%}
       {%- set why = 'GenAI is off (vm_ask_genai: false)' if not vm_ask_genai | bool else 'GenAI did not run: ' ~ (_ea_reason | default('') | trim | regex_replace('[.]$', '')) -%}
@@ -119,6 +120,15 @@
     fail_msg: >-
       Refused by GenAI: the question asks to change something ({{ _ask.refused }}). This job only reads vCenter:
       it never restarts, shuts down, deletes, moves or changes anything. Ask what you want to see.
+    quiet: true
+
+- name: VMware | the job reads what the question asks for (GenAI found a field for all of it)
+  ansible.builtin.assert:
+    that: _ask.missing | default('') | length == 0
+    fail_msg: >-
+      Not answered: the question asks for {{ _ask.missing | default("") }}, and this job does not read that - none of its fields holds
+      it (GenAI said so rather than answer a different question). docs/VM_ASK.md lists what it reads; ask for the field
+      to be added, or ask without it.
     quiet: true
 
 - name: VMware | the question was read

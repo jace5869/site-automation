@@ -53,6 +53,11 @@ FIELDS = {
         ("guest_os", "str", "Guest OS", "e.g. 'Microsoft Windows Server 2022 (64-bit)', 'Red Hat Enterprise Linux 9 (64-bit)'"),
         ("tools", "str", "VMware Tools", "toolsOk, toolsOld, toolsNotRunning, toolsNotInstalled"),
         ("heartbeat", "str", "Heartbeat", "the guest heartbeat: green, yellow, red, gray (gray = no VMware Tools to tell)"),
+        ("hw_version", "num", "Hardware version", "the virtual hardware version (compatibility): 21 for vmx-21 (ESXi 8.0 U2), 20 for "
+                                                  "vmx-20 (8.0), 19 for vmx-19 (7.0 U2)"),
+        ("tools_version", "str", "Tools version", "the VMware Tools version in the guest, e.g. 12.3.0; 'guest managed' for "
+                                                  "open-vm-tools from the OS; empty: none installed"),
+        ("firmware", "str", "Firmware", "bios or efi"),
         ("cpus", "num", "vCPUs", ""),
         ("memory_gb", "num", "Memory (GB)", ""),
         ("up_days", "num", "Up (days)", "days since it was powered on"),
@@ -292,6 +297,11 @@ EXAMPLES = [
      {"object": "vm", "where": [{"field": "power", "op": "eq", "value": "on"}, {"field": "tools", "op": "ne", "value": "toolsOk"}],
       "join": [{"object": "snapshot", "has": False}]}),
     ("how many VMs per cluster", {"object": "vm", "count_by": "cluster"}),
+    ("show me VMs and their hardware versions and how many of each",
+     {"object": "vm", "columns": ["name", "hw_version", "vcenter", "cluster"], "count_by": "hw_version"}),
+    ("VMs on hardware version older than vmx-19", {"object": "vm", "where": [{"field": "hw_version", "op": "lt", "value": 19}],
+                                                     "columns": ["name", "hw_version", "power", "cluster"]}),
+    ("VMs and their tags", {"missing": "VM tags"}),
     ("VMs not restarted in 90 days", {"object": "vm", "where": [{"field": "power", "op": "eq", "value": "on"},
                                                                 {"field": "restart_days", "op": "gt", "value": 90}],
                                       "columns": ["name", "last_restart", "last_restart_kind", "host"]}),
@@ -320,6 +330,9 @@ def vm_ask_task(opts=None):
         "rename, snapshot, put in or out of maintenance mode, change a setting, a cluster or a VM - do not make a query: answer "
         '{"refused": "<what it asks, in a few words>"}. Asking to SEE such things (e.g. "hosts in maintenance mode", '
         '"VMs that were restarted") is fine.',
+        "If the question asks to see something NONE of the fields below holds (tags, custom attributes, a setting not listed), "
+        "do not leave it out and answer the rest: answer {\"missing\": \"<what is not there, in a few words>\"}. A wrong "
+        "answer is worse than none.",
         "",
         "Objects and their fields (name: type - meaning):",
     ]
@@ -425,14 +438,14 @@ def _json_in(raw, depth=0):
             if v is None:
                 continue
             if isinstance(v, dict):
-                if "object" in v or "refused" in v:
+                if "object" in v or "refused" in v or "missing" in v:
                     return v
                 found.append(v)
             break
     if depth < 2:
         for v in found:
             for s in [x for x in v.values() if isinstance(x, str)]:
-                if MARK_BEGIN in s or '"object"' in s or '"refused"' in s:
+                if MARK_BEGIN in s or '"object"' in s or '"refused"' in s or '"missing"' in s:
                     inner = _json_in(s, depth + 1)
                     if inner is not None:
                         return inner
@@ -453,6 +466,8 @@ def vm_ask_parse(raw):
         return {"query": {}, "refused": "", "error": "GenAI's answer has no query in it (the JSON between %s and %s)" % (MARK_BEGIN, MARK_END)}
     if v.get("refused"):
         return {"query": {}, "refused": str(v.get("refused")), "error": ""}
+    if v.get("missing") and not v.get("object"):
+        return {"query": {}, "refused": "", "error": "", "missing": str(v.get("missing"))[:200]}
     return {"query": v, "refused": "", "error": ""}
 
 
@@ -549,7 +564,7 @@ def _num(v):
     if isinstance(v, (int, float)):
         return float(v)
     try:
-        return float(str(v).strip().rstrip("%").replace(",", ""))
+        return float(re.sub(r"(?i)^vmx-?", "", str(v).strip().rstrip("%").replace(",", "")))
     except (TypeError, ValueError):
         return None
 
@@ -879,6 +894,26 @@ def _vm_disks(v, rec, out):
             "lowest_free_pct": min(pcts) if pcts else None}
 
 
+def _hw_version(v):
+    """'vmx-21' -> 21 (None: not read)."""
+    m = re.match(r"^(?:vmx-?)?(\d+)$", str(v or "").strip(), re.I)
+    return int(m.group(1)) if m else None
+
+
+def _tools_version(v):
+    """vCenter's guest.toolsVersion ('12352': major << 10 | minor << 5 | patch) -> '12.2.0'; 2147483647 = open-vm-tools
+    the guest's OS manages; '' / 0: none."""
+    try:
+        n = int(str(v or "0").strip())
+    except ValueError:
+        return str(v)
+    if n <= 0:
+        return ""
+    if n == 2147483647:
+        return "guest managed"
+    return "%d.%d.%d" % (n >> 10, (n >> 5) & 31, n & 31)
+
+
 def vm_ask_records(read, opts=None):
     """What the readers read -> the query's records: {vm, host, cluster, datastore, snapshot, alarm: [records]}.
     read: {'vms', 'hosts', 'clusters', 'datastores', 'snapshots', 'alarms'} (the modules' lists). Each record has the
@@ -895,6 +930,8 @@ def vm_ask_records(read, opts=None):
             "power": POWER_WORDS.get(_lc(v.get("power")), _lc(v.get("power"))), "template": bool(v.get("template")),
             "hostname": v.get("hostname", ""), "ip": v.get("ip", ""), "ips": list(v.get("ips") or []),
             "guest_os": v.get("guest_os", ""), "tools": v.get("tools", ""), "heartbeat": v.get("heartbeat", ""),
+            "hw_version": _hw_version(v.get("hw_version")), "tools_version": _tools_version(v.get("tools_version")),
+            "firmware": _lc(v.get("firmware")),
             "cpus": v.get("cpus"), "memory_gb": _r1(float(mem) / 1024) if mem is not None else None,
             "up_days": _r1(float(up) / 1440) if up is not None else None, "boot_time": v.get("boot_time", ""),
             "_moid": v.get("moid", "")})

@@ -50,7 +50,7 @@ vms:
   sample: [{name: web01, moid: vm-42, vcenter: vc01.example.mil, datacenter: DC1, folder: /DC1/vm/Linux, cluster: PROD-CL01,
             esxi_host: esx01.example.mil, template: false, power: poweredOn, hostname: web01.example.mil, ip: 192.0.2.3,
             ips: [192.0.2.3], guest_os: Red Hat Enterprise Linux 9 (64-bit), tools: toolsOk, tools_running: guestToolsRunning,
-            heartbeat: green, cpus: 2, memory_mb: 8192, boot_time: "2026-10-01T12:00:00Z", up_minutes: 27360}]
+            heartbeat: green, cpus: 2, memory_mb: 8192, hw_version: vmx-21, firmware: efi, tools_version: "12352", boot_time: "2026-10-01T12:00:00Z", up_minutes: 27360}]
     # with disks: vdisks [{label: Hard disk 1, size_gb: 100.0, datastore: DS01, file: "[DS01] web01/web01.vmdk", thin: true}],
     #   volumes [{path: "C:\\", capacity_gb: 99.4, free_gb: 12.1}], storage_used_gb: 54.2, storage_provisioned_gb: 108.0
     # with events_days: last_restart {time, kind (power on, guest restart, reset, HA restart), by}, last_power_off {time, kind, by},
@@ -81,7 +81,7 @@ except ImportError:
 
 PROPS = ["name", "config.template", "config.guestFullName", "runtime.powerState", "runtime.host", "runtime.bootTime",
          "guest.hostName", "guest.ipAddress", "guest.net", "guest.toolsStatus", "guest.toolsRunningStatus", "guestHeartbeatStatus",
-         "config.hardware.numCPU", "config.hardware.memoryMB"]
+         "config.hardware.numCPU", "config.hardware.memoryMB", "config.version", "config.firmware", "guest.toolsVersion"]
 
 
 def _folder(obj):
@@ -213,6 +213,8 @@ def _read(content, p, now, vcenter):
                     "guest_os": pr.get("config.guestFullName") or "", "tools": str(pr.get("guest.toolsStatus") or ""),
                     "tools_running": str(pr.get("guest.toolsRunningStatus") or ""), "heartbeat": str(pr.get("guestHeartbeatStatus") or ""),
                     "cpus": pr.get("config.hardware.numCPU"), "memory_mb": pr.get("config.hardware.memoryMB"),
+                    "hw_version": str(pr.get("config.version") or ""), "firmware": str(pr.get("config.firmware") or ""),
+                    "tools_version": str(pr.get("guest.toolsVersion") or ""),
                     "boot_time": boot.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if boot else "",
                     "up_minutes": int(max(now - boot.timestamp(), 0) // 60) if boot else None})
         if p["disks"]:
