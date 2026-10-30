@@ -421,6 +421,19 @@ class AtlasLook(unittest.TestCase):
         self.assertIn('<span class="mono">web&lt;1&gt;</span>', h)
         self.assertNotIn("<p>a, b</p>", h)                                         # the hosts instead of the text
 
+    def test_copy_on_tiles_and_sections(self):
+        h = self.render(_report=dict(REPORT, summary=[{"label": "Done <x>", "value": 4, "note": "in \"the\" week"},
+                                                      {"label": "Failed", "value": 0}],
+                                     sections=[{"title": "WAR <lines>", "lines": ["a"]}, {"title": "T", "columns": ["A"], "rows": [["1"]]}]))
+        self.assertIn('aria-label="Copy Done &lt;x&gt;" data-copy="Done &lt;x&gt;: 4 (in &#34;the&#34; week)"', h)
+        self.assertIn('data-copy="Failed: 0">', h)                                 # no note: no brackets
+        self.assertEqual(h.count('<button class="tcopy" type="button" hidden'), 2)  # one per tile, shown by the script
+        self.assertEqual(h.count('<button class="copy scopy" type="button" hidden'), 2)  # one per section
+        self.assertIn('aria-label="Copy WAR &lt;lines&gt;"', h)
+        self.assertIn("e.preventDefault();e.stopPropagation()", h)                 # a click on it does not fold the section
+        self.assertIn("'text/html':new Blob", h)                                   # a table pastes as a table
+        self.assertIn(".copy,.tcopy{display:none!important}", h)                    # not printed
+
     def test_logo_strip_and_tiles(self):
         bars = sf.report_runs(past(("successful", "ok", 2), ("failed", None, None)), REPORT)
         h = self.render(_page_logo_cid="site-report-logo", _page_logo_size=[42, 56], _page_runs=bars)

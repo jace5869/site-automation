@@ -37,11 +37,17 @@ uses what a browser draws and a mail program does not, so it is never an email's
   Severity and Status columns, a cell that says PASSED or FAILED, the sections' and the cards' status.
 - **Start here cards** with a **Copy** button for their command; the health check's healthy hosts each with a check
   mark, under *Every check passed* and the checks run.
+- **Copy** on every number tile (its line: *Completed: 3 (resolved or closed)*) and on every section (next to its
+  fold arrow): all of it - its lines as a list, its table as rows (only the rows the filter shows, in the order sorted).
+  Over https the copy carries the HTML as well, so it pastes into Word or Outlook as a real table or bulleted list,
+  and into Excel as cells; over plain http or from a share, text only (columns separated by tabs, which Excel still
+  splits). The section's one-line description is left out; a section of only words copies its words.
 - A bar of the sections that stays at the top, sections that fold, tables that sort when a heading is clicked and,
   past 8 rows, a box to filter them; on a phone, a table's rows as small cards, each value under its column's name.
 - **The index page** in the same look, with the same switch.
 - Printed: white, no effects. One file per page: no fonts or scripts from elsewhere, so a page opens from a share
-  too. Without its script (blocked) it reads the same; only the switch, sorting, filtering and Copy need it.
+  too. Without its script (blocked) it reads the same; only the switch, sorting, filtering and the Copy
+  buttons need it.
 
 `report_web_theme: portal` (or standard, command, glass) gives the website an email's look again, as before 0.43.0;
 the index page is then in the portal look.

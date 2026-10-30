@@ -104,6 +104,12 @@ own *latest* page and its own line on the index: one team's run never covers ano
 (`servicenow_war_web_per_team: false` puts every team in one folder). The email and the workbook go to the
 `report_email_to` of that launch.
 
+**Copy, on the report website.** On the website's page (the *atlas* look, `report_web_theme: atlas`, the default),
+every tile and every section has a **Copy** button: a tile copies its line (*Completed: 12 (resolved or closed)*), a
+section all of it - *For the WAR* as a bulleted list, ACT's narrative, a table as a table (the rows the filter shows,
+as sorted) - ready to paste into the WAR, Word, Outlook or Excel. The email has no buttons: mail programs run no
+scripts.
+
 ## The week
 
 | `servicenow_war_period` | The week | When to use it |

@@ -2,12 +2,14 @@
     draws and Outlook does not - see-through cards over a soft background (backdrop-filter), light and dark (the
     reader's system setting, or the switch at the top: remembered in this browser), status chips with icons
     (a check mark for OK, ! for a warning, x for critical - always with the word), a bar of the sections that stays
-    at the top, sections that fold, "Start here" cards with a Copy button for their command, tables that sort when a
-    heading is clicked and, past 8 rows, a box to filter them; printed: white, no effects. One file: the styles and
-    the small script inline, no fonts or scripts from elsewhere (the page opens from a share too, file://). Without
-    the script it reads the same: only the switch, sorting, filtering and Copy need it. Input as report_portal:
-    _report, _page_logo_cid/_page_logo_size, _page_runs, _page_job/_page_template, _email_footer. Every value is
-    escaped. -#}
+    at the top, sections that fold, "Start here" cards with a Copy button for their command, a Copy button on every
+    tile (its line: the label, the number, the note) and every section (all of it - its words, its lines as a list, its
+    table as rows, the rows shown in their order - as text and, where the browser allows it, as HTML that pastes as a
+    table or list into Word, Outlook or Excel), tables that sort when a heading is clicked and, past 8 rows, a box to
+    filter them; printed: white, no effects. One file: the styles and the small script inline, no fonts or scripts
+    from elsewhere (the page opens from a share too, file://). Without the script it reads the same: only the switch,
+    sorting, filtering and the Copy buttons need it (hidden without it). Input as report_portal: _report,
+    _page_logo_cid/_page_logo_size, _page_runs, _page_job/_page_template, _email_footer. Every value is escaped. -#}
 {%- set r = _report -%}
 {%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
 {%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}
@@ -36,6 +38,9 @@
 {%- else -%}
 <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/><path d="M6.2 6.2a1.9 1.9 0 113 1.5c-.8.5-1.2.9-1.2 1.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="8" cy="11.6" r=".95" fill="currentColor"/></svg>
 {%- endif -%}
+{%- endmacro -%}
+{%- macro copyicons() -%}
+<svg class="ic i1" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.2" y="5.2" width="8.6" height="8.6" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.8 3.2V3a1.6 1.6 0 00-1.6-1.6H3.4A1.6 1.6 0 001.8 3v5.8a1.6 1.6 0 001.6 1.6h.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><svg class="ic i2" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.4 8.6l3 3 6.2-6.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
 {%- endmacro -%}
 {%- macro chip(k, text) -%}
 <span class="chip s-{{ k }}">{{ icon(k) }}<span>{{ text | e }}</span></span>
@@ -184,6 +189,19 @@ ul.passed .ic{width:17px;height:17px}
 .code pre{margin:0;flex:1;white-space:pre-wrap;word-break:break-word;font-size:13px}
 .copy{font:inherit;font-size:12px;font-weight:650;color:var(--ink);background:var(--card-strong);border:1px solid var(--edge);border-radius:8px;padding:3px 9px;cursor:pointer}
 .copy:hover{border-color:var(--accent)}
+/* Copy on a tile (its line) and on a section (all of it: a table as rows, the lines as a list) */
+.scopy{flex:none;display:inline-flex;align-items:center;gap:5px}
+.scopy .ic{width:14px;height:14px}
+.tile .k{padding-right:26px}
+.tcopy{position:absolute;top:9px;right:9px;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;
+  color:var(--muted);background:none;border:1px solid transparent;border-radius:8px;cursor:pointer;opacity:.55}
+.tcopy .ic{width:15px;height:15px}
+.tile:hover .tcopy,.tcopy:focus-visible{opacity:1}
+.tcopy:hover{color:var(--ink);background:var(--card-strong);border-color:var(--edge)}
+.copy.done,.tcopy.done{color:var(--ok);border-color:var(--ok-bd);opacity:1}
+.tcopy .i2,.scopy .i2,.done .i1{display:none}.done .i2{display:block}
+.copy[hidden],.tcopy[hidden]{display:none}
+@media (hover:none){.tcopy{opacity:.8}}
 /* tables */
 .tools2{display:flex;align-items:center;gap:10px;margin:2px 0 8px}
 .filter{font:inherit;font-size:14px;color:var(--ink);background:var(--card-strong);border:1px solid var(--edge);border-radius:10px;padding:7px 12px;width:min(320px,100%)}
@@ -232,7 +250,7 @@ footer{margin-top:22px;text-align:center;color:var(--muted);font-size:13px;line-
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 @media print{
   html,body{background:#fff!important;color:#000}.card,.todo,.tw{background:#fff!important;box-shadow:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;border-color:#bbb!important}
-  .nav,.tools,.tools2,.copy{display:none!important}.sec{break-inside:avoid-page}th{position:static}
+  .nav,.tools,.tools2,.copy,.tcopy{display:none!important}.sec{break-inside:avoid-page}th{position:static}
 }
 </style>
 </head>
@@ -279,6 +297,7 @@ footer{margin-top:22px;text-align:center;color:var(--muted);font-size:13px;line-
 {%- set ts = t.status | default('') %}
 {%- set v = ('' if t.value is none else t.value) | string %}
 <div class="card tile{{ ' hot-' ~ ts if ts in ['critical', 'warning'] and v not in ['0', ''] else '' }}">
+<button class="tcopy" type="button" hidden title="Copy" aria-label="Copy {{ t.label | e }}" data-copy="{{ t.label | e }}: {{ v | e }}{{ (' (' ~ t.note ~ ')') | e if t.note | default('') else '' }}">{{ copyicons() }}</button>
 <div class="k">{% if ts in words %}<span class="c-{{ ts }}">{{ icon(ts) }}</span>{% endif %}{{ t.label | e }}</div>
 <div class="v{{ ' long' if v | length > 9 else '' }}{{ (' c-' ~ ts) if ts in ['critical', 'warning'] and v not in ['0', ''] else '' }}">{{ v | e }}</div>
 {%- if t.note | default('') %}
@@ -303,6 +322,7 @@ footer{margin-top:22px;text-align:center;color:var(--muted);font-size:13px;line-
 <details class="card sec" id="s{{ si }}" open>
 <summary><h2>{{ s.title | e }}{% if s.rows is defined %}<span class="count">{{ s.rows | length }}</span>{% endif %}</h2>
 {%- if ss in words %}{{ chip(ss, chipword[ss]) }}{% endif %}
+<button class="copy scopy" type="button" hidden title="Copy this section" aria-label="Copy {{ s.title | e }}">{{ copyicons() }}<span class="t">Copy</span></button>
 <svg class="caret" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></summary>
 <div class="body">
 {%- if s.passed | default([]) %}
@@ -403,10 +423,44 @@ footer{margin-top:22px;text-align:center;color:var(--muted);font-size:13px;line-
     show()})})}
   var p=document.getElementById('print');if(p){p.hidden=false;p.addEventListener('click',function(){
     document.querySelectorAll('details.sec').forEach(function(d){d.open=true});window.print()})}
-  document.querySelectorAll('.copy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(){
-    var t=c.previousElementSibling.textContent;function ok(){c.textContent='Copied';setTimeout(function(){c.textContent='Copy'},1500)}
-    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(ok,function(){})}
-    else{var a=document.createElement('textarea');a.value=t;document.body.appendChild(a);a.select();try{document.execCommand('copy');ok()}catch(e){}a.remove()}})});
+  /* Copy: the text, and with it the same as HTML where the browser allows it (a table pastes as a table in Word,
+     Outlook and Excel, the lines as a list); over plain http or from a share the old way, text only */
+  function put(b,plain,html){
+    var c=navigator.clipboard,s=b.querySelector('.t');
+    function ok(){b.classList.add('done');if(s)s.textContent='Copied';else if(!b.querySelector('.i1'))b.textContent='Copied';
+      setTimeout(function(){b.classList.remove('done');if(s)s.textContent='Copy';else if(!b.querySelector('.i1'))b.textContent='Copy'},1500)}
+    function old(){var a=document.createElement('textarea');a.value=plain;a.setAttribute('readonly','');a.style.position='fixed';a.style.opacity='0';
+      document.body.appendChild(a);a.select();try{if(document.execCommand('copy'))ok()}catch(e){}a.remove()}
+    function txt(){if(c&&c.writeText)c.writeText(plain).then(ok,old);else old()}
+    if(html&&c&&c.write&&window.ClipboardItem){try{c.write([new ClipboardItem({'text/plain':new Blob([plain],{type:'text/plain'}),
+      'text/html':new Blob([html],{type:'text/html'})})]).then(ok,txt)}catch(e){txt()}}
+    else txt()}
+  function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+  function one(el){return (el?el.textContent:'').replace(/\s+/g,' ').trim()}
+  function head(th){var b=th.querySelector('button'),f=b&&b.firstChild;return f&&f.nodeType===3?f.textContent.trim():one(th)}
+  function tr(r,t){return '<tr>'+r.map(function(x){return '<'+t+' style="border:1px solid #999;padding:3px 6px;text-align:left">'+esc(x)+'</'+t+'>'}).join('')+'</tr>'}
+  /* a section as text and HTML: its lines as a list, its table (the rows shown, in their order) as rows with tabs
+     between the columns, its cards one after the other; its words (what the section is) only when it has nothing else */
+  function grab(body){var P=[],H=[],W=[],WH=[];
+    [].forEach.call(body.children,function(el){
+      if(el.classList.contains('tools2'))return;
+      if(el.tagName==='UL'){var li=[].map.call(el.children,one).filter(Boolean);
+        P.push(li.map(function(x){return '- '+x}).join('\n'));H.push('<ul>'+li.map(function(x){return '<li>'+esc(x)+'</li>'}).join('')+'</ul>');return}
+      if(el.classList.contains('tw')){var tb=el.querySelector('table'),hd=[].map.call(tb.tHead.rows[0].cells,head),
+          rs=[].filter.call(tb.tBodies[0].rows,function(r){return !r.hidden}).map(function(r){return [].map.call(r.cells,one)});
+        P.push([hd].concat(rs).map(function(r){return r.join('\t')}).join('\n'));
+        H.push('<table style="border-collapse:collapse">'+tr(hd,'th')+rs.map(function(r){return tr(r,'td')}).join('')+'</table>');return}
+      if(el.classList.contains('cards')){[].forEach.call(el.querySelectorAll('.todo'),function(a){
+          var l=[one(a.querySelector('.row1')),one(a.querySelector('h3')),one(a.querySelector('.subj')),one(a.querySelector('.next'))].filter(Boolean),
+              pre=a.querySelector('pre'),code=pre?pre.textContent:'';
+          P.push(l.join('\n')+(code?'\n'+code:''));H.push(l.map(function(x){return '<p>'+esc(x)+'</p>'}).join('')+(code?'<pre>'+esc(code)+'</pre>':''))});return}
+      var t=one(el);if(t){W.push(t);WH.push('<p>'+esc(t)+'</p>')}});
+    return P.length?[P.join('\n\n'),H.join('')]:[W.join('\n\n'),WH.join('')]}
+  document.querySelectorAll('.code .copy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(){
+    put(c,c.previousElementSibling.textContent,'')})});
+  document.querySelectorAll('.tcopy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(){put(c,c.getAttribute('data-copy'),'')})});
+  document.querySelectorAll('.scopy').forEach(function(c){c.hidden=false;c.addEventListener('click',function(e){
+    e.preventDefault();e.stopPropagation();var g=grab(c.closest('details').querySelector('.body'));put(c,g[0],g[1])})});
   document.querySelectorAll('.tw table').forEach(function(tb){
     var body=tb.tBodies[0],rows=[].slice.call(body.rows);
     tb.querySelectorAll('th button').forEach(function(btn,i){btn.addEventListener('click',function(){
