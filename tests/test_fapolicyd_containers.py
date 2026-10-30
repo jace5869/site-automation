@@ -12,6 +12,12 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))
 sys.path.insert(0, os.path.join(HERE, "..", "roles", "fapolicyd_containers", "library"))
+import importlib.util  # noqa: E402
+_spec = importlib.util.spec_from_file_location("ansible.module_utils.site_fapolicyd",
+                                               os.path.join(HERE, "..", "plugins", "module_utils", "site_fapolicyd.py"))
+_sf = importlib.util.module_from_spec(_spec)
+sys.modules["ansible.module_utils.site_fapolicyd"] = _sf
+_spec.loader.exec_module(_sf)
 import fapolicyd_filters as ff  # noqa: E402
 import site_fapolicyd_containers as fc  # noqa: E402
 

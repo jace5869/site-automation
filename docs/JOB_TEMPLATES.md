@@ -40,6 +40,7 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | fapolicyd denials | `playbooks/fapolicyd_denials.yml` | Report | [RUNBOOKS.md](RUNBOOKS.md#fapolicyd-denials-playbooksfapolicyd_denialsyml) |
 | fapolicyd and containers | `playbooks/fapolicyd_containers.yml` | Report; with approved rules, a change | [RUNBOOKS.md](RUNBOOKS.md#fapolicyd-and-containers-playbooksfapolicyd_containersyml) |
 | fapolicyd fix | `playbooks/fapolicyd_fix.yml` | Report; with approved fixes, a change | [RUNBOOKS.md](RUNBOOKS.md#fapolicyd-fix-playbooksfapolicyd_fixyml) |
+| fapolicyd rules | `playbooks/fapolicyd_rules.yml` | Report; with approved changes, a change; workflow 36 (as *fapolicyd rules - check* and *- approved*) | [RUNBOOKS.md](RUNBOOKS.md#fapolicyd-rules-playbooksfapolicyd_rulesyml), [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#36-fapolicyd-rules-with-an-approval-daily) |
 
 ## Windows servers
 

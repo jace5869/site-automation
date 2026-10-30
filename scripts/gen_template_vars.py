@@ -121,7 +121,25 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 # fapolicyd_fix_approved:
 #   - "trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644"
 #   - "db_max_size: 50 -> 200"
+#   - "permissive: 0 -> 1"
 #   - "restart fapolicyd (it is failed)"
+"""),
+    "fapolicyd_rules.yml": ("fapolicyd rules", "Machine (with sudo)", "", """\
+## The hosts: target (a group of this inventory) or the Limit
+# target: app_servers
+## Blocks since (ausearch -ts): recent (10 minutes), today, yesterday, this-week, boot
+# fapolicyd_rules_since: today
+## The approved changes, each exactly as the report's "Changes to approve" gives it - after your security approval.
+## Run in Check first. Empty (the default): read only.
+# fapolicyd_rules_approved:
+#   - "trust file: /opt/app/tool size 51320 sha256 6f0c...e1"
+#   - "allow rule: allow perm=any all : dir=/var/lib/containers/storage/overlay/"
+#   - "remove rule: 99-local.rules: allow perm=any all : dir=/usr/lib/"
+#   - "rename rules file: 99-local.rules -> 39-local.rules"
+#   - "permissive: 1 -> 0"
+## Workflow 36's first template ("fapolicyd rules - check") only: hand each host's changes to the approval and fail
+## on purpose (NEEDS APPROVAL). Not on "fapolicyd rules - approved".
+# fapolicyd_rules_workflow: true
 """),
     "fapolicyd_denials.yml": ("fapolicyd denials", "Machine, ACT model key (Teams webhook: optional)", "", """\
 ## The hosts: target (a group of this inventory) or the Limit

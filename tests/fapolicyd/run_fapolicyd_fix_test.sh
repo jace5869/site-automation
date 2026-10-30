@@ -145,7 +145,7 @@ run all
 [ "$rc" = 0 ] || [ "$rc" = 4 ] && ok "read only: the job runs (rc $rc: gone01 cannot be reached)" || bad "read only: rc $rc" 40
 check "the title: fixes to approve, fapolicyd not running on 1" '"fix(es) to approve on 2 host(s)" in r["title"] and "fapolicyd not running on 1" in r["title"] and r["status"] == "critical"'
 check "fa01: its unreadable trust file, db_max_size 50 -> a number (no auto on 1.3), its restart" \
-      'any(x.startswith("trust file access: ") and "fa01/etc/trust.d/app" in x and "0600 -> " in x for x in s["Fixes to approve"]["lines"]) and any(x.startswith("db_max_size: 50 -> ") and "auto" not in x.split("(")[0] for x in s["Fixes to approve"]["lines"]) and any(x.startswith("restart fapolicyd (it is failed)") for x in s["Fixes to approve"]["lines"])'
+      'any(x.startswith("trust file access: ") and "fa01/etc/trust.d/app" in x and "0600 -> " in x for x in s["Fixes to approve"]["lines"]) and any(x.startswith("db_max_size: 50 -> ") and "auto" not in x.split("(")[0] for x in s["Fixes to approve"]["lines"]) and any(x.startswith("restart fapolicyd (it is failed)") for x in s["Fixes to approve"]["lines"]) and "permissive: 0 -> 1" in s["Fixes to approve"]["lines"]'
 check "fa03: db_max_size 100 -> auto (1.4), its group-writable trust file, its SELinux label" \
       'any(x.startswith("db_max_size: 100 -> auto") for x in s["Fixes to approve"]["lines"]) and any("fa03/etc/trust.d/x" in x and "0664 -> " in x for x in s["Fixes to approve"]["lines"]) and any(x.startswith("SELinux label: ") and "fapolicyd_config_t" in x for x in s["Fixes to approve"]["lines"])'
 check "the why: fapolicyd's own words (Cannot read, db_max_size needs to be increased, 92% capacity)" \
@@ -158,7 +158,7 @@ check "fa01's journal in the report" 'any("db_max_size needs to be increased" in
 
 # ---- Check: what it would change -------------------------------------------------------------------------------
 cat > "$work/ok1.json" <<EOJ
-{"fapolicyd_fix_approved": ["$A1", "db_max_size: 50 -> 200", "restart fapolicyd (it is failed)"]}
+{"fapolicyd_fix_approved": ["$A1", "db_max_size: 50 -> 200", "permissive: 0 -> 1", "restart fapolicyd (it is failed)"]}
 EOJ
 run fa01 -e "@$work/ok1.json" --check
 [ "$rc" = 0 ] && ok "Check with the fixes approved: the job ends well" || bad "Check: rc $rc" 40
@@ -171,7 +171,8 @@ run fa01 -e "@$work/ok1.json"
 [ "$rc" = 0 ] && ok "the fixes approved: the job ends well" || bad "fixes: rc $rc" 40
 [ "$(mode "$work/fa01/etc/trust.d/app")" = 644 ] && ok "  ... the trust file is 0644 (the package's mode)" || bad "the trust file is $(mode "$work/fa01/etc/trust.d/app")"
 grep -q '^db_max_size = 200$' "$work/fa01/etc/fapolicyd.conf" && [ "$(grep -c db_max_size "$work/fa01/etc/fapolicyd.conf")" = 1 ] \
-    && ok "  ... db_max_size = 200, the approver's own number, once" || bad "fapolicyd.conf: $(cat "$work/fa01/etc/fapolicyd.conf")"
+    && grep -q '^permissive = 1$' "$work/fa01/etc/fapolicyd.conf" \
+    && ok "  ... db_max_size = 200, the approver's own number, once; permissive = 1 (it starts without blocking)" || bad "fapolicyd.conf: $(cat "$work/fa01/etc/fapolicyd.conf")"
 [ "$(cat "$work/state/fa01.active")" = active ] && ok "  ... fapolicyd restarted and running" || bad "fapolicyd: $(cat "$work/state/fa01.active" 2>&1)"
 grep -q 'fapolicyd-cli --check-config' "$work/calls/fa01" && grep -q 'systemctl reset-failed fapolicyd' "$work/calls/fa01" \
     && ok "  ... the new fapolicyd.conf checked (--check-config), systemd's start limit reset before the restart" || bad "no check-config or reset-failed: $(cat "$work/calls/fa01")"
@@ -182,7 +183,7 @@ if ls -d /tmp/*.fapolicyd-fix "${TMPDIR:-/tmp}"/*.fapolicyd-fix >/dev/null 2>&1;
 # ---- approved again once fixed: not proposed here, nothing changed ---------------------------------------------
 run fa01 -e "@$work/ok1.json"
 [ "$rc" = 0 ] && check "approved again once fixed: not proposed here, unchanged" \
-    's["What this run fixed"]["rows"][0][1] == "unchanged" and s["What this run fixed"]["rows"][0][4].count("\n") == 2' || bad "again: rc $rc" 40
+    's["What this run fixed"]["rows"][0][1] == "unchanged" and s["What this run fixed"]["rows"][0][4].count("\n") == 3' || bad "again: rc $rc" 40
 
 # ---- a line the job never gives: nothing changed, the host fails after the report -------------------------------
 chmod 600 "$work/fa01/etc/trust.d/app"

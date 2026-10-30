@@ -1,0 +1,224 @@
+---
+# The approved changes this host has (fapolicyd_rules_job_plan): trust entries (fapolicyd-cli --file add, to the job's own
+# trust file, then the package's owner, group and mode on it - a STIG umask leaves it root:root 0600, unreadable to
+# fapolicyd), allow rules (the job's own rules file), rules commented out, rules files renamed, permissive. Then the
+# rules loaded, the trust reloaded or fapolicyd restarted (permissive changed), checked in the same go on the host with
+# the way back sent inline (roles/fapolicyd_fix/files/fapolicyd_fix_reload.sh): running before and not after - or a
+# program no longer starts - every file put back. Then compiled.rules checked against the rules files (fagenrules --check).
+
+- name: Fapolicyd rules | the plan (the approved lines this host has now)
+  ansible.builtin.set_fact:
+    _fr_plan: "{{ _fr | fapolicyd_rules_job_plan(_fr_approved, fapolicyd_rules_when_enforcing | bool) }}"
+
+- name: Fapolicyd rules | a line approved that this job never gives - nothing changed
+  ansible.builtin.set_fact:
+    _fr_apply: {state: refused, error: "a line approved is not one this job gives: nothing changed on any host",
+                bad: "{{ _fr_plan.bad }}", refused: [], applied: [], not_here: "{{ _fr_plan.not_here }}"}
+  when: _fr_plan.bad | length > 0
+
+- name: Fapolicyd rules | nothing approved that this host has
+  ansible.builtin.set_fact:
+    _fr_apply: {state: "{{ 'refused' if _fr_plan.refused else 'unchanged' }}", error: "", bad: [], refused: "{{ _fr_plan.refused }}",
+                applied: [], not_here: "{{ _fr_plan.not_here }}"}
+  when: _fr_apply is not defined and not _fr_plan.changed
+
+# fixed before the block: its condition is checked again for each of its tasks, and "the result" sets _fr_apply
+- name: Fapolicyd rules | anything to change on this host
+  ansible.builtin.set_fact:
+    _fr_go: "{{ _fr_apply is not defined }}"
+
+- name: Fapolicyd rules | change, then load the rules or restart fapolicyd
+  when: _fr_go | bool
+  vars:
+    _fr_rules_d: "{{ fapolicyd_rules_dir }}/rules.d"
+    _fr_conf: "{{ fapolicyd_rules_dir }}/fapolicyd.conf"
+    # the way back, a shell function sent inline with the reload and in the rescue - never a file run on the host
+    _fr_back: "{{ _fr_plan | fapolicyd_rules_job_rollback(_fr, _fr_tmp.path) }}"
+    _fr_rules_changed: "{{ (_fr_plan.add + _fr_plan.rename) | length > 0 or _fr_plan.remove | length > 0 }}"
+  block:
+    - name: Fapolicyd rules | a folder for the way back
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .fapolicyd-rules
+      register: _fr_tmp
+      check_mode: false
+
+    - name: Fapolicyd rules | each file the change touches, as it is now
+      ansible.builtin.copy:
+        src: "{{ item.0 }}"
+        dest: "{{ _fr_tmp.path }}/{{ item.1 }}"
+        remote_src: true
+        mode: preserve
+      loop: "{{ _fr_plan | fapolicyd_rules_job_backups(_fr) }}"
+      loop_control:
+        label: "{{ item.0 }}"
+      check_mode: false
+
+    - name: Fapolicyd rules | trust entries (fapolicyd-cli --file add, to {{ fapolicyd_rules_own_trust }})
+      ansible.builtin.command:
+        argv: [fapolicyd-cli, --file, add, "{{ item }}", --trust-file, "{{ fapolicyd_rules_own_trust }}"]
+      loop: "{{ _fr_plan.trust }}"
+      register: _fr_add
+      changed_when: _fr_add.rc == 0
+      failed_when: _fr_add.rc != 0 and 'nothing to add' not in (_fr_add.stdout ~ _fr_add.stderr)
+      when: not ansible_check_mode
+
+    - name: Fapolicyd rules | the trust file readable to fapolicyd (the package's owner, group and mode)
+      ansible.builtin.file:
+        path: "{{ _fr.own_trust }}"
+        owner: "{{ _fr.trust_ref.owner }}"
+        group: "{{ _fr.trust_ref.group }}"
+        mode: "{{ _fr.trust_ref.mode }}"
+      when: _fr_plan.trust | length > 0 and not ansible_check_mode
+
+    - name: Fapolicyd rules | the trust file as fapolicyd will read it
+      ansible.builtin.slurp:
+        src: "{{ _fr.own_trust }}"
+      register: _fr_trust_now
+      when: _fr_plan.trust | length > 0 and not ansible_check_mode
+
+    - name: Fapolicyd rules | each trust entry is the file as approved (its size and sha256)
+      ansible.builtin.assert:
+        that: _fr_missing | length == 0
+        fail_msg: "{{ _fr.own_trust }} does not hold, as approved: {{ _fr_missing | join('; ') }}"
+        quiet: true
+      vars:
+        _fr_missing: "{{ _fr_plan.trust_lines | difference((_fr_trust_now.content | b64decode).splitlines() | map('trim') | list) }}"
+      when: _fr_plan.trust | length > 0 and not ansible_check_mode
+
+    - name: Fapolicyd rules | the allow rules approved, in {{ fapolicyd_rules_own_rules }}
+      ansible.builtin.copy:
+        dest: "{{ _fr.own_rules }}"
+        content: "{{ _fr.managed | fapolicyd_rules_job_file(_fr_plan.add) }}"
+        owner: "{{ _fr.trust_ref.owner }}"
+        group: "{{ _fr.trust_ref.group }}"
+        mode: "0644"
+      when: _fr_plan.add | length > 0
+
+    - name: Fapolicyd rules | rules commented out, marked
+      ansible.builtin.copy:
+        dest: "{{ _fr_rules_d }}/{{ item.key }}"
+        content: "{{ _fr.rules_files[item.key] | fapolicyd_rules_job_edit(item.value, 'approved ' ~ now(utc=true).strftime('%Y-%m-%d')) }}"
+        owner: "{{ _fr.trust_ref.owner }}"
+        group: "{{ _fr.trust_ref.group }}"
+        mode: "0644"
+      loop: "{{ _fr_plan.remove | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}: {{ item.value | join('; ') }}"
+
+    - name: Fapolicyd rules | rules files renamed (before the stock deny rules)
+      ansible.builtin.command:
+        argv: [mv, -n, "{{ _fr_rules_d }}/{{ item.0 }}", "{{ _fr_rules_d }}/{{ item.1 }}"]
+        creates: "{{ _fr_rules_d }}/{{ item.1 }}"
+      loop: "{{ _fr_plan.rename }}"
+      when: not ansible_check_mode
+
+    - name: Fapolicyd rules | permissive
+      ansible.builtin.lineinfile:
+        path: "{{ _fr_conf }}"
+        regexp: '^\s*permissive\s*='
+        line: "permissive = {{ _fr_plan.permissive_to }}"
+      when: _fr_plan.permissive_to | length > 0
+
+    - name: Fapolicyd rules | fapolicyd takes the new fapolicyd.conf (fapolicyd-cli --check-config)
+      ansible.builtin.command:
+        argv: [fapolicyd-cli, --check-config]
+      register: _fr_check
+      changed_when: false
+      failed_when: _fr_check.rc != 0
+      when: _fr_plan.permissive_to | length > 0 and not ansible_check_mode
+
+    - name: Fapolicyd rules | the rules built from the files before the restart (fagenrules)
+      ansible.builtin.command:
+        argv: [fagenrules]
+      changed_when: true
+      when: _fr_plan.action == 'restart' and _fr_rules_changed | bool and not ansible_check_mode
+
+    - name: Fapolicyd rules | load the rules, reload the trust or restart fapolicyd ({{ _fr_plan.action }}), check it, put back if it broke
+      ansible.builtin.shell:
+        cmd: |
+          {{ _fr_back }}
+          set -- {{ _fr_plan.action }} {{ _fr.active | quote }} {{ _fr.python | default('/usr/bin/python3') | quote }} {{ fapolicyd_rules_wait | int }}
+          {{ lookup('ansible.builtin.file', role_path ~ '/../fapolicyd_fix/files/fapolicyd_fix_reload.sh') }}
+        executable: /bin/sh
+      register: _fr_reload
+      changed_when: true
+      when: not ansible_check_mode and _fr_plan.action != 'none'
+
+    - name: Fapolicyd rules | compiled.rules is what the rules files say (fagenrules --check)
+      ansible.builtin.command:
+        argv: [fagenrules, --check]
+      register: _fr_built
+      changed_when: false
+      failed_when: "'No change' not in _fr_built.stdout"
+      when:
+        - not ansible_check_mode and _fr_rules_changed | bool
+        - not ((_fr_reload.stdout_lines | default([])) | select('match', '^RESULT rolled-back') | list)
+
+    - name: Fapolicyd rules | the result
+      ansible.builtin.set_fact:
+        _fr_apply:
+          state: "{{ 'would change' if ansible_check_mode else ('rolled back' if _fr_word == 'rolled-back' else 'changed') }}"
+          active_after: >-
+            {{ _fr.active if _fr_word == 'none' else ('active' if _fr_word == 'active'
+               else (_fr_res[-1] if _fr_word == 'rolled-back' else _fr_word | regex_replace('^still-', ''))) }}
+          permissive_after: "{{ _fr_plan.permissive_to if _fr_word in ['none', 'active'] or _fr_word.startswith('still-') else '' }}"
+          error: >-
+            {{ ('fapolicyd ' ~ _fr_res[2] ~ ' after the change: every file put back, fapolicyd ' ~ _fr_res[-1])
+               if _fr_word == 'rolled-back' else '' }}
+          note: >-
+            {{ ('fapolicyd is ' ~ _fr.active ~ ': the change takes effect when it starts') if _fr.active != 'active' and not ansible_check_mode else '' }}
+          back: "{{ 'putting it back failed: look at the files by hand' if 'BACK failed' in (_fr_reload.stdout_lines | default([])) else '' }}"
+          applied: "{{ _fr_plan.apply }}"
+          refused: "{{ _fr_plan.refused }}"
+          not_here: "{{ _fr_plan.not_here }}"
+          bad: []
+          journal: "{{ (_fr_reload.stdout_lines | default([])) | select('match', '^JOURNAL ') | map('regex_replace', '^JOURNAL ', '') | list }}"
+      vars:
+        _fr_res: "{{ ((_fr_reload.stdout_lines | default([])) | select('match', '^RESULT ') | list + ['RESULT none'])[0].split() }}"
+        _fr_word: "{{ _fr_res[1] }}"
+  rescue:
+    - name: Fapolicyd rules | put back every file, load the rules as they were
+      ansible.builtin.shell:
+        cmd: |
+          {{ _fr_back }}
+          back; rc=$?
+          command -v fagenrules >/dev/null 2>&1 && fagenrules --load >/dev/null 2>&1
+          fapolicyd-cli --update >/dev/null 2>&1
+          {{ 'systemctl restart fapolicyd' if _fr_plan.permissive_to and _fr.active == 'active' else ':' }}
+          exit $rc
+        executable: /bin/sh
+      register: _fr_putback
+      changed_when: true
+      failed_when: false
+      when: not ansible_check_mode and _fr_tmp.path is defined
+
+    - name: Fapolicyd rules | the change failed - said in the report, the host fails after it
+      ansible.builtin.set_fact:
+        _fr_apply:
+          state: failed
+          active_after: "{{ _fr.active }}"
+          error: >-
+            {{ (ansible_failed_task.name | default('') | regex_replace('^.*[|] ', '')) ~ ': '
+               ~ ((ansible_failed_result.stderr | default('', true)) or (ansible_failed_result.stdout | default('', true))
+                  or (ansible_failed_result.msg | default(''))) | trim | replace('\n', ' ')
+               ~ (' - every file put back' if _fr_putback.rc | default(1) == 0 else ' - putting it back failed: look at the files by hand') }}
+          applied: []
+          refused: "{{ _fr_plan.refused }}"
+          not_here: "{{ _fr_plan.not_here }}"
+          bad: []
+  always:
+    - name: Fapolicyd rules | remove the way back
+      ansible.builtin.file:
+        path: "{{ _fr_tmp.path }}"
+        state: absent
+      check_mode: false
+      when: _fr_tmp.path is defined
+
+- name: Fapolicyd rules | the changes
+  ansible.builtin.debug:
+    msg: >-
+      {{ _fr_apply.state }}{{ (': ' ~ _fr_apply.error) if _fr_apply.error | default('') else '' }}
+      {{- (' - ' ~ _fr_apply.note) if _fr_apply.note | default('') else '' }}
+      {{- (' - made: ' ~ (_fr_apply.applied | map(attribute='line') | join('; '))) if _fr_apply.applied | default([]) else '' }}
+      {{- (' - not proposed here: ' ~ (_fr_apply.not_here | join('; '))) if _fr_apply.not_here | default([]) else '' }}

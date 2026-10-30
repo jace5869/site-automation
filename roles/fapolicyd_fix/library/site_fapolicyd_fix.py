@@ -19,7 +19,8 @@ description:
   - C(db_max_size) against the trust database's needs - fapolicyd's own journal lines (C(db_max_size needs to be
     increased), C(Trust database at N% capacity)) or an estimate from the trust files' size and the RPM files - with
     C(auto) proposed where this fapolicyd sizes its database itself (1.4 and later), else a number.
-  - fapolicyd not running - a restart, approved as its own line.
+  - fapolicyd not running - a restart, approved as its own line; and permissive = 1 first (it blocks nothing, logs what
+    it would block), approved as its own line.
   - A trust file over C(large_mb), listed for a person (every file in it is trusted).
   - Changes nothing; a dry run reads too.
 options:
@@ -72,6 +73,7 @@ import subprocess
 import sys
 
 from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.site_fapolicyd import conf_values, perms_mode, rpm_reference  # noqa: F401
 
 MIB = 1024 * 1024
 ENTRY = 160            # bytes of trust data an RPM file adds (path, size, hash) - before LMDB's own overhead
@@ -96,38 +98,6 @@ def run(args, timeout):
         p.communicate()
         return 124, "", "timed out after %d seconds" % timeout
     return p.returncode, out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
-
-
-def perms_mode(text):
-    """'-rw-r--r--' -> 0o644 (the permission bits only)."""
-    bits = 0
-    for i, ch in enumerate(str(text)[1:10]):
-        if ch not in "-ST":
-            bits |= 1 << (8 - i)
-    return bits
-
-
-def rpm_reference(text):
-    """rpm -q --qf '[%{FILEMODES:perms} %{FILEUSERNAME} %{FILEGROUPNAME} %{FILENAMES}\\n]' fapolicyd ->
-    {'dir' | 'trust' | 'trust.d': (owner, group, mode)} for /etc/fapolicyd, its fapolicyd.trust and trust.d."""
-    keys = {"/etc/fapolicyd": "dir", "/etc/fapolicyd/fapolicyd.trust": "trust", "/etc/fapolicyd/trust.d": "trust.d"}
-    ref = {}
-    for line in str(text).splitlines():
-        parts = line.split(None, 3)
-        if len(parts) == 4 and parts[3].strip() in keys:
-            ref[keys[parts[3].strip()]] = (parts[1], parts[2], perms_mode(parts[0]))
-    return ref
-
-
-def conf_values(text):
-    """fapolicyd.conf -> {key: value} (comments and blank lines left out)."""
-    out = {}
-    for line in str(text).splitlines():
-        line = line.split("#", 1)[0].strip()
-        if "=" in line:
-            k, v = line.split("=", 1)
-            out[k.strip()] = v.strip()
-    return out
 
 
 def who(conf):
@@ -346,7 +316,13 @@ class Reader(object):
             r["by_hand"].append("db_max_size is auto and fapolicyd says its database is full: %s - look at the disk under "
                                 "/var/lib/fapolicyd and the trust files' size" % says[-1])
 
-        # last: fapolicyd not running
+        # last: fapolicyd not running - and the way to start it without blocking anything yet
+        if r["active"] != "active" and conf.get("permissive", "0") != "1":
+            r["fixes"].append({"kind": "permissive", "from": "0", "to": "1",
+                               "why": "start it permissive first: it logs what it would block and blocks nothing. The fapolicyd "
+                                      "rules job then shows what it would block, for approval, and turns it back (permissive: "
+                                      "1 -> 0) - a RHEL STIG requires permissive = 0, so keep it short",
+                               "line": "permissive: 0 -> 1"})
         if r["active"] != "active":
             r["fixes"].append({"kind": "restart", "from": r["active"], "to": "active",
                                "why": "fapolicyd is %s: nothing is allow-listed" % r["active"],

@@ -53,6 +53,7 @@ jobs:
           python tests/test_ontap.py
           python tests/test_fapolicyd_containers.py
           python tests/test_fapolicyd_fix.py
+          python tests/test_fapolicyd_rules.py
           python tests/test_ad.py
           python tests/test_ad_lockout.py
           python tests/test_mariadb_perf.py
@@ -168,6 +169,10 @@ jobs:
         run: |
           bash tests/fapolicyd/run_fapolicyd_fix_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_fix_test.sh
+      - name: fapolicyd rules - blocks and would-be blocks, trust entries and rules approved, the rules files cleaned up, a change that breaks fapolicyd put back (fakes; current ansible-core and 2.16)
+        run: |
+          bash tests/fapolicyd/run_fapolicyd_rules_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_rules_test.sh
       - name: Trust check against a made-up host tree (current ansible-core and 2.16)
         run: |
           bash tests/trust/run_trust_test.sh

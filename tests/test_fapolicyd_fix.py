@@ -11,6 +11,12 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))
 sys.path.insert(0, os.path.join(HERE, "..", "roles", "fapolicyd_fix", "library"))
+import importlib.util  # noqa: E402
+_spec = importlib.util.spec_from_file_location("ansible.module_utils.site_fapolicyd",
+                                               os.path.join(HERE, "..", "plugins", "module_utils", "site_fapolicyd.py"))
+_sf = importlib.util.module_from_spec(_spec)
+sys.modules["ansible.module_utils.site_fapolicyd"] = _sf
+_spec.loader.exec_module(_sf)
 import fapolicyd_filters as ff  # noqa: E402
 import site_fapolicyd_fix as fx  # noqa: E402
 
@@ -88,6 +94,7 @@ def host(**kw):
                     "line": "SELinux label: /etc/fapolicyd/trust.d/vendor-app a_u:object_r:user_tmp_t:s0 -> system_u:object_r:fapolicyd_config_t:s0"},
                    {"kind": "db", "from": "50", "to": "200", "auto": False, "why": "fapolicyd says: db_max_size needs to be increased",
                     "line": "db_max_size: 50 -> 200"},
+                   {"kind": "permissive", "from": "0", "to": "1", "why": "start it permissive", "line": "permissive: 0 -> 1"},
                    {"kind": "restart", "from": "failed", "to": "active", "why": "down", "line": "restart fapolicyd (it is failed)"}]}
     h.update(kw)
     return h
@@ -121,6 +128,10 @@ class PlanTest(unittest.TestCase):
         self.assertEqual([f["kind"] for f in p["apply"]], ["access", "label", "db", "restart"])
         self.assertEqual((p["db_to"], p["apply"][2]["line"], p["apply"][2]["proposed"]), ("400", "db_max_size: 50 -> 400", "db_max_size: 50 -> 200"))
         self.assertEqual((p["restart"], p["update"], p["bad"], p["not_here"]), (True, False, [], []))
+        p = ff.fapolicyd_fix_plan(h, ["restart fapolicyd (it is failed)", "permissive: 0 -> 1"])
+        self.assertEqual(([f["kind"] for f in p["apply"]], p["permissive_to"], p["restart"]), (["permissive", "restart"], "1", True))
+        back = ff.fapolicyd_fix_rollback(ff.fapolicyd_fix_plan(h, ["permissive: 0 -> 1", "db_max_size: 50 -> 100"])["apply"], "/c", "/b")
+        self.assertEqual(back.count("cp -p /b /c"), 1)
 
     def test_not_restarted_unless_approved_while_down(self):
         h = host()
@@ -171,7 +182,7 @@ class ReportTest(unittest.TestCase):
                                     ["fa01", "fa02", "fa04", "gone01"])
         s = {x["title"]: x for x in r["sections"]}
         self.assertEqual(r["status"], "critical")
-        self.assertIn("4 fix(es) to approve on 1 host(s)", r["title"])
+        self.assertIn("5 fix(es) to approve on 1 host(s)", r["title"])
         self.assertIn("fapolicyd not running on 1", r["title"])
         self.assertEqual(s["Fixes to approve"]["lines"][0], "trust file access: /etc/fapolicyd/trust.d/vendor-app root:root 0600 -> root:fapolicyd 0644")
         self.assertTrue(s["Fixes to approve"]["lines"][-1].startswith("restart fapolicyd"))
@@ -182,7 +193,8 @@ class ReportTest(unittest.TestCase):
 
     def test_fixed(self):
         h = host()
-        p = ff.fapolicyd_fix_plan(h, [h["fixes"][0]["line"], "db_max_size: 50 -> 400", "restart fapolicyd (it is failed)"])
+        p = ff.fapolicyd_fix_plan(h, [h["fixes"][0]["line"], "db_max_size: 50 -> 400", "restart fapolicyd (it is failed)",
+                                      "permissive: 0 -> 1"])
         ap = {"state": "changed", "active_after": "active", "error": "", "applied": p["apply"], "not_here": [], "refused": [], "bad": []}
         r = ff.fapolicyd_fix_report([{"_ff": h, "_ff_apply": ap}], ["fa01"])
         s = {x["title"]: x for x in r["sections"]}

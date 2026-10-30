@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd_containers](#fapolicyd_containers), [fapolicyd_fix](#fapolicyd_fix), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd_containers](#fapolicyd_containers), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -573,7 +573,7 @@ File: `roles/fapolicyd_fix/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `fapolicyd_fix_approved` | `[]` | The approved fixes, each exactly as the report's "Fixes to approve" gives it, e.g. - "trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644" - "db_max_size: 50 -> 200" (the number after -> may be your own; auto where fapolicyd 1.4+ runs) - "restart fapolicyd (it is failed)" A line is made… (all of it: the role file) |
+| `fapolicyd_fix_approved` | `[]` | The approved fixes, each exactly as the report's "Fixes to approve" gives it, e.g. - "trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644" - "db_max_size: 50 -> 200" (the number after -> may be your own; auto where fapolicyd 1.4+ runs) - "permissive: 0 -> 1" (start it without blocking:… (all of it: the role file) |
 | `fapolicyd_fix_dir` | `/etc/fapolicyd` | fapolicyd's folder: fapolicyd.conf, fapolicyd.trust, trust.d |
 | `fapolicyd_fix_binary` | `/usr/sbin/fapolicyd` | read to see whether this fapolicyd sizes its database itself (db_max_size = auto) |
 | `fapolicyd_fix_owner` | `root` | The trust files' owner, group and modes come from the fapolicyd package (rpm); these only when rpm gives none. the trust files' owner, when rpm gives none |
@@ -585,6 +585,31 @@ File: `roles/fapolicyd_fix/defaults/main.yml`
 | `fapolicyd_fix_journal_lines` | `400` | fapolicyd's journal lines read, this boot |
 | `fapolicyd_fix_wait` | `30` | seconds fapolicyd may take to be running again after the restart |
 | `fapolicyd_fix_timeout` | `120` | seconds for each command the job reads with |
+
+## fapolicyd_rules
+
+File: `roles/fapolicyd_rules/defaults/main.yml`
+
+> FAPOLICYD RULES (playbooks/fapolicyd_rules.yml, docs/RUNBOOKS.md "fapolicyd rules"): what fapolicyd blocked on each host - or, permissive, would block - and the change that lets each through; the rules files' clean-up; permissive mode on or off. Each change is a line to approve; once approved, the job makes it.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `fapolicyd_rules_approved` | `[]` | The approved changes, each exactly as the report's "Changes to approve" gives it, e.g. - "trust file: /opt/app/tool size 51320 sha256 6f0c...e1" (that file as it is now: a changed file is a new line) - "allow rule: allow perm=any all : dir=/var/lib/containers/storage/overlay/" - "remove rule: 99-local.rules: allow per… (all of it: the role file) |
+| `fapolicyd_rules_workflow` | `false` | THE WORKFLOW (docs/WORKFLOWS_AND_SCHEDULES.md, 36): true on its first template, "fapolicyd rules - check". It reads, changes nothing, hands each host's changes to the approval step and the approved job (set_stats fapolicyd_rules_workflow_plan) and fails on purpose - NEEDS APPROVAL - so the workflow goes to the approva… (all of it: the role file) |
+| `fapolicyd_rules_since` | `today` | ausearch -ts: recent (10 minutes), today, yesterday, this-week, boot |
+| `fapolicyd_rules_dir` | `/etc/fapolicyd` | fapolicyd's folder: fapolicyd.conf, rules.d, trust.d |
+| `fapolicyd_rules_own_rules` | `36-site-approved.rules` | the rules file (in rules.d) this job writes its allow rules to |
+| `fapolicyd_rules_own_trust` | `site-approved` | the trust file (in trust.d) this job writes its trust entries to |
+| `fapolicyd_rules_never_edit` | `[35-site-containers.rules]` | rules files (in rules.d) reviewed, never changed (the containers job's own) |
+| `fapolicyd_rules_when_enforcing` | `false` | A clean-up that blocks more (a rule that opened too much, taken out) is made only while fapolicyd is permissive: a program it would break shows as a would-be block, not as an outage. true: made while it enforces too. |
+| `fapolicyd_rules_container_labels` | `'(^\|:)(container_[a-z0-9_]*_t\|spc_t)(:\|$)'` | A container's denial (as the containers job tells them apart): an SELinux label on the program or the file, a container program, or a path in container storage. |
+| `fapolicyd_rules_container_programs` | `[podman, crun, runc, conmon, buildah, skopeo, catatonit, containerd, containerd-shim-runc…` | container programs |
+| `fapolicyd_rules_container_paths` | `['^/var/lib/containers/', '/\.local/share/containers/', '^/run/containers/', '^/run/user/…` | container storage |
+| `fapolicyd_rules_user_dirs` | `[/home/, /run/user/, /tmp/, /var/tmp/, /dev/shm/]` | folders users can write: a file blocked there gets no trust entry (a person decides) |
+| `fapolicyd_rules_hash_max_mb` | `512` | a file larger than this is not hashed: a person adds it |
+| `fapolicyd_rules_max` | `200` | at most this many block groups per host in the report |
+| `fapolicyd_rules_wait` | `30` | seconds fapolicyd may take to be running again after the change |
+| `fapolicyd_rules_timeout` | `120` | seconds for each command the job reads with |
 
 ## horizon
 

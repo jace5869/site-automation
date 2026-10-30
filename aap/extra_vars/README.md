@@ -29,6 +29,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | fapolicyd and containers | `playbooks/fapolicyd_containers.yml` | [fapolicyd_containers.yml](fapolicyd_containers.yml) |
 | fapolicyd denials | `playbooks/fapolicyd_denials.yml` | [fapolicyd_denials.yml](fapolicyd_denials.yml) |
 | fapolicyd fix | `playbooks/fapolicyd_fix.yml` | [fapolicyd_fix.yml](fapolicyd_fix.yml) |
+| fapolicyd rules | `playbooks/fapolicyd_rules.yml` | [fapolicyd_rules.yml](fapolicyd_rules.yml) |
 | Health check | `playbooks/health_check.yml` | [health_check.yml](health_check.yml) |
 | Horizon - API test | `playbooks/horizon_api_test.yml` | [horizon_api_test.yml](horizon_api_test.yml) |
 | Horizon - capacity report | `playbooks/horizon_capacity_report.yml` | [horizon_capacity_report.yml](horizon_capacity_report.yml) |

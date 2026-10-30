@@ -6,6 +6,7 @@
 # The approved fixes, each exactly as the report's "Fixes to approve" gives it, e.g.
 #   - "trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644"
 #   - "db_max_size: 50 -> 200"              (the number after -> may be your own; auto where fapolicyd 1.4+ runs)
+#   - "permissive: 0 -> 1"                  (start it without blocking: the fapolicyd rules job shows what it would block)
 #   - "restart fapolicyd (it is failed)"
 # A line is made only on a host where this run proposes it again (the state it was approved for). A line this job never
 # gives stops the change on every host. Route each one through your security approval (the ISSO).

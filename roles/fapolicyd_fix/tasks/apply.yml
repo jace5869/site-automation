@@ -47,7 +47,7 @@
         remote_src: true
         mode: preserve
       check_mode: false
-      when: _ff_plan.db_to | length > 0
+      when: _ff_plan.db_to | length > 0 or _ff_plan.permissive_to | length > 0
 
     - name: Fapolicyd fix | trust file access (to the package's owner, group and mode)
       ansible.builtin.file:
@@ -76,13 +76,20 @@
         line: "db_max_size = {{ _ff_plan.db_to }}"
       when: _ff_plan.db_to | length > 0
 
+    - name: Fapolicyd fix | permissive (it logs what it would block, blocks nothing)
+      ansible.builtin.lineinfile:
+        path: "{{ _ff_conf }}"
+        regexp: '^\s*permissive\s*='
+        line: "permissive = {{ _ff_plan.permissive_to }}"
+      when: _ff_plan.permissive_to | length > 0
+
     - name: Fapolicyd fix | fapolicyd takes the new fapolicyd.conf (fapolicyd-cli --check-config)
       ansible.builtin.command:
         argv: [fapolicyd-cli, --check-config]
       register: _ff_check
       changed_when: false
       failed_when: _ff_check.rc != 0
-      when: _ff_plan.db_to | length > 0 and not ansible_check_mode
+      when: (_ff_plan.db_to | length > 0 or _ff_plan.permissive_to | length > 0) and not ansible_check_mode
 
     - name: Fapolicyd fix | {{ 'restart fapolicyd' if _ff_plan.restart else 'reload its trust (fapolicyd-cli --update)' }}, check it, put back if it broke
       ansible.builtin.shell:

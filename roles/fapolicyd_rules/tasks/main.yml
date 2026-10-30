@@ -1,0 +1,43 @@
+---
+# Read (a Check run too); then, when changes are approved, make them (apply.yml).
+
+- name: Fapolicyd rules | what fapolicyd blocked, and the change for each; the rules files' clean-up
+  site_fapolicyd_rules:
+    since: "{{ fapolicyd_rules_since }}"
+    dir: "{{ fapolicyd_rules_dir }}"
+    own_rules: "{{ fapolicyd_rules_own_rules }}"
+    own_trust: "{{ fapolicyd_rules_own_trust }}"
+    never_edit: "{{ fapolicyd_rules_never_edit }}"
+    labels: "{{ fapolicyd_rules_container_labels }}"
+    programs: "{{ fapolicyd_rules_container_programs }}"
+    paths: "{{ fapolicyd_rules_container_paths }}"
+    user_dirs: "{{ fapolicyd_rules_user_dirs }}"
+    hash_max_mb: "{{ fapolicyd_rules_hash_max_mb | int }}"
+    max_groups: "{{ fapolicyd_rules_max | int }}"
+    timeout: "{{ fapolicyd_rules_timeout | int }}"
+  register: _fr
+  check_mode: false
+
+- name: Fapolicyd rules | what this host has
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['fapolicyd ' ~ (_fr.active | default(_fr.state)) ~ (' (permissive)' if _fr.permissive | default(false) else '')
+          ~ (' - ' ~ _fr.error if _fr.error | default('') else '')]
+         + (_fr.changes | default([]) | map(attribute='line') | map('regex_replace', '^', 'CHANGE: ') | list)
+         + (_fr.by_hand | default([]) | map('regex_replace', '^', 'FOR A PERSON: ') | list) }}
+
+# the workflow's approved job: this host's lines from the check (set_stats fapolicyd_rules_workflow_plan), else the
+# lines in the template's Variables; the check itself (fapolicyd_rules_workflow) never changes anything
+- name: Fapolicyd rules | the lines approved for this host
+  ansible.builtin.set_fact:
+    _fr_approved: >-
+      {{ [] if fapolicyd_rules_workflow | bool
+         else ((fapolicyd_rules_workflow_plan[inventory_hostname] | default([])) if fapolicyd_rules_workflow_plan is defined
+               else fapolicyd_rules_approved) }}
+
+- name: Fapolicyd rules | make the approved changes
+  ansible.builtin.include_tasks: apply.yml
+  when:
+    - _fr_approved | length > 0
+    - _fr.state == 'read'
+    - not _fr.error | default('')

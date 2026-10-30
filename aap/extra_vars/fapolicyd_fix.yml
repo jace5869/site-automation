@@ -21,6 +21,7 @@
 # fapolicyd_fix_approved:
 #   - "trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644"
 #   - "db_max_size: 50 -> 200"
+#   - "permissive: 0 -> 1"
 #   - "restart fapolicyd (it is failed)"
 
 # ---- fapolicyd_fix -------------------------------------------------------------------------------

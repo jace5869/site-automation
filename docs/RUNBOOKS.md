@@ -647,7 +647,9 @@ too), proposes one line per fix, and changes only the lines you approve. No ACT.
   and the RPM files, about twice that in the database) over `db_max_size`; the new value is checked with
   `fapolicyd-cli --check-config` before any restart. The fix is `auto` where fapolicyd sizes its database itself (1.4 and
   later: RHEL 9), else a number (RHEL 8's fapolicyd 1.3; its default is 50 MB, RHEL 9's 100).
-- **fapolicyd not running** - its restart, a line of its own.
+- **fapolicyd not running** - its restart, a line of its own; and `permissive: 0 -> 1` beside it, to start it without
+  blocking anything: it logs what it would block, and the [fapolicyd rules](#fapolicyd-rules-playbooksfapolicyd_rulesyml)
+  job turns that into changes to approve, then back to enforcing (`permissive: 1 -> 0`).
 - **For a person** (never changed): a trust file over 20 MB (`fapolicyd_fix_large_mb`). Every file listed in it is
   trusted, the database must hold it, and fapolicyd reads it at each start: check what wrote it and whether all of it
   is needed.
@@ -691,6 +693,79 @@ The job does not clean the trust database or remove trust entries: what a site t
 hand (`fapolicyd-cli --file delete`, then `fapolicyd-cli --update`).
 
 **All settings** of this job, with their defaults: [fapolicyd_fix](VARIABLES_REFERENCE.md#fapolicyd_fix).
+
+## fapolicyd rules (`playbooks/fapolicyd_rules.yml`)
+
+What fapolicyd blocked on each host - or, permissive, **would** block - the change that lets each through, the clean-up
+of the rules files, and permissive mode on or off. The job reads (a Check run too), proposes one line per change, and
+makes only the lines you approve. No ACT.
+
+**Automated:** [workflow 36](WORKFLOWS_AND_SCHEDULES.md#36-fapolicyd-rules-with-an-approval-daily), every morning - the
+check reads, an AAP approval step, then the changes made, each host's own; and `permissive: 1 -> 0` on the first quiet
+day. By hand, as below.
+
+**Bringing fapolicyd back without an outage** (a host where it was down, or never enforced):
+
+1. [fapolicyd fix](#fapolicyd-fix-playbooksfapolicyd_fixyml): approve its fixes, `permissive: 0 -> 1` and the restart.
+   fapolicyd runs and blocks nothing: it logs what it would block.
+2. Let the host work - a day, its containers restarted, its scheduled jobs run, a reboot if you can.
+3. **fapolicyd rules** with `fapolicyd_rules_since: yesterday` (or `this-week`): approve the trust entries and rules it
+   proposes for what would have been blocked, and the rules clean-up. (Workflow 36 does this every morning.)
+4. Run it again. When no new would-be block shows, approve `permissive: 1 -> 0`: fapolicyd enforces. (Workflow 36
+   proposes it itself on the first quiet day.) A RHEL STIG requires
+   `permissive = 0` - the report shows a permissive host in red; keep the window short and agreed with your ISSO.
+
+**What it proposes:**
+
+| Line | For | What it does |
+|---|---|---|
+| `trust file: <file> size <n> sha256 <hash>` | a file on the host that was blocked (not RPM-owned, not in a folder users can write) | that file, **as it is now**, added to the job's own trust file `trust.d/site-approved` (`fapolicyd-cli --file add`), set to the package's `root:fapolicyd 0644` - under a STIG umask fapolicyd-cli leaves it `0600`, unreadable to fapolicyd. A changed file is a new line: an approval is for that content |
+| `allow rule: <rule>` | a container's file (as the [containers](#fapolicyd-and-containers-playbooksfapolicyd_containersyml) job tells them apart) | the rule into the job's own rules file `rules.d/36-site-approved.rules` |
+| `remove rule: <file>: <rule>` | the rules files' clean-up | the rule commented out in its file, marked `# removed by site-automation (fapolicyd rules job, approved DATE)` |
+| `rename rules file: <a> -> <b>` | a file that sorts after `41-shared-obj.rules` | renamed `39-...`: its allow rules are reached before the stock deny rules |
+| `permissive: 1 -> 0` / `0 -> 1` | permissive on (a STIG finding) / blocks while enforcing | fapolicyd.conf, then a restart |
+
+The clean-up, and what each does to what runs:
+
+- **No change in what runs** - a rule repeated (the later copy), a wildcard (`dir=/home/*/bin/`: fapolicyd has none, the
+  rule matches nothing), a rule for an RPM-owned file (trusted already), a line fapolicyd does not read.
+- **Blocks more** - a rule that allows everything, a system folder (`/usr/lib/`) or a user-writable folder opened to any
+  program. Made **only while fapolicyd is permissive** (`fapolicyd_rules_when_enforcing: true` to make them anyway): a
+  program it breaks then shows as a would-be block, not as an outage.
+- **Lets more through** - the file renamed before the stock deny rules; when the file holds deny rules too, they are
+  reached earlier as well: **blocks more**, permissive only.
+
+A change that blocks more is refused in a run that also approves `permissive: 1 -> 0`: make it while permissive, watch
+for would-be blocks, enforce in a later run.
+
+fapolicyd's own rules files, and `35-site-containers.rules` (the containers job's: `fapolicyd_rules_never_edit`), are
+reviewed and never changed: their findings are under **For a person**. So is a blocked file in a folder users can write
+(`/home`, `/tmp` ... - move it to `/opt` first), an RPM-owned file (the trust database is out of date, or the file no
+longer matches its package: `rpm -V`), and a file already trusted that changed since.
+
+**The template:** Playbook `playbooks/fapolicyd_rules.yml`; your Linux inventory; credential **Machine** (with sudo).
+Variables: `target` (or a Limit of hosts - no `localhost` needed), `fapolicyd_rules_since`. Enable **Check** on launch.
+
+**Making changes:** as for the fix job - put the approved lines in `fapolicyd_rules_approved` exactly as the report gave
+them, a Check run, then for real. A line is made only on a host where this run proposes it again. After them: the rules
+loaded (`fagenrules --load`), the trust reloaded (`fapolicyd-cli --update`) or fapolicyd restarted (permissive changed),
+checked in the same go on the host - once fapolicyd says it took them (its *Ruleset identity* or *Updated* line; fapolicyd
+1.3 logs nothing for rules, so the job waits `fapolicyd_rules_wait`), running, and a program (python) starting twice; then `compiled.rules` checked against
+the rules files (`fagenrules --check`). **Running before and not after - or a program no longer starts: every file put
+back** (rules files, the trust file, fapolicyd.conf), the rules loaded as they were, fapolicyd restarted.
+
+| The report shows | Means | Do |
+|---|---|---|
+| *Would be blocked (permissive)* | fapolicyd let it through and logged it | approve its change before `permissive: 1 -> 0` |
+| *rolled back* (red) | fapolicyd failed after the change: all put back | its journal in the report |
+| *refused* - *it blocks more, and fapolicyd is enforcing* | a clean-up that blocks more, while enforcing | approve `permissive: 0 -> 1` first, or set `fapolicyd_rules_when_enforcing: true` |
+| *Approved, made on no host* | made already, outside the Limit, or a file that changed since | nothing - or copy the line again |
+| a rule's number without its text | the rules changed since that block: its number may point at another rule now | read the rule from the time of the block |
+
+Without the rule's number in the audit record (older kernels, RHEL 8), every audited allow while permissive counts as a
+would-be block: an `allow_audit` rule's allows show there too.
+
+**All settings** of this job, with their defaults: [fapolicyd_rules](VARIABLES_REFERENCE.md#fapolicyd_rules).
 
 ## Certificate report (`playbooks/cert_report.yml`)
 
