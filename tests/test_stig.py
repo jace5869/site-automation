@@ -316,6 +316,20 @@ class Sections(unittest.TestCase):
         s = sf.stig_report_sections([sf.stig_compare(scanned({}), {}, "web01")])
         self.assertEqual(s[0]["title"], "No drift")
         self.assertEqual(s[0]["status"], "ok")
+        # a host's first scan fails what STIG Manager has as Not a Finding: disagree - the card must not say every host passes
+        first = sf.stig_compare(scanned({"sshd_disable_root_login": "fail"}), sm(SV_257985=("pass", "accepted")), "web01", stigman_used=True)
+        self.assertEqual((len(first["drift"]), len(first["disagree"])), (0, 1))
+        s = {x["title"]: x for x in sf.stig_report_sections([first])}
+        self.assertNotIn("No drift", s)
+        card = s["No drift - but the scan and the checklist disagree"]
+        self.assertEqual(card["status"], "info")
+        self.assertIn("the scan fails 1 STIG rule STIG Manager has as Not a Finding or Not Applicable, on 1 host", card["lines"][0])
+        self.assertIn("check_stig_disagree_severity: warning (or critical) makes them findings", card["lines"][0])
+        self.assertNotIn("Every host scanned passes", card["lines"][0])
+        made = sf.stig_compare(scanned({"sshd_disable_root_login": "fail"}), sm(SV_257985=("pass", "accepted")), "web01",
+                               stigman_used=True, disagree_severity="warning")
+        card = [x for x in sf.stig_report_sections([made]) if x["title"].startswith("No drift")][0]
+        self.assertEqual((card["status"], card["lines"][0].endswith("They are findings (check_stig_disagree_severity).")), ("warning", True))
 
     def test_unreviewed_capped(self):
         c = sf.stig_compare(scanned({k: "fail" for k, *_ in make_results.RULES}), sm(), "web01", stigman_used=True)

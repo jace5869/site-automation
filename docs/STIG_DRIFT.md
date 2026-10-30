@@ -47,7 +47,11 @@ the host's known open findings.
 
 The first scan of a host has nothing of its own to compare with: a rule STIG Manager has as Not a Finding that fails
 in it is listed under **Disagree**, not as drift - the job cannot tell whether it moved before that scan. From then
-on, a rule that passed and fails later is drift (with STIG Manager) or a new fail (without).
+on, a rule that passed and fails later is drift (with STIG Manager) or a new fail (without). The same goes for a host's
+first scan with another scanner (`check_stig_scanner`). With rules in Disagree and none drifted, the report's card says
+**No drift - but the scan and the checklist disagree** and how many (before 0.45.4 it said every host passes). To have
+them fail the job - the scan says Open, the checklist says Not a Finding - set `check_stig_disagree_severity: warning`
+(or `critical`) in `all.yml`.
 
 ## When OpenSCAP and DISA's checks do not line up
 

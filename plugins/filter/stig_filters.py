@@ -360,10 +360,23 @@ def stig_report_sections(results, list_max=200):
                          "rows": fo_rows, "row_status": ["info"] * len(fo_rows), "cell_status": fo_cs, "status": "info",
                          "text": "No finding: the host passes. Update these reviews in STIG Manager (and close their POA&M items)."})
     if not (drift_rows or new_rows) and results:
-        sections.append({"title": "No drift", "status": "ok",
-                         "lines": ["Every host scanned passes what STIG Manager has as Not a Finding and passed before, and nothing that passed "
-                                   "in an earlier scan fails now."
-                                   + (" %d host%s could not be scanned (below)." % (len(not_scanned), "" if len(not_scanned) == 1 else "s") if not_scanned else "")]})
+        gone = (" %d host%s could not be scanned (below)." % (len(not_scanned), "" if len(not_scanned) == 1 else "s") if not_scanned else "")
+        if dis_rows:
+            # not "every host passes": the scan fails rules the checklist has as Not a Finding - they never passed here, so not drift
+            hosts = len(set(r[0] for r in dis_rows))
+            line = ("No drift: nothing that passed in an earlier scan fails now. But the scan fails %d STIG rule%s STIG Manager has as Not a "
+                    "Finding or Not Applicable, on %d host%s (3. The scan and the checklist disagree): not drift, because %s never "
+                    "passed in a scan here - the host's first scan, or its first with this scanner. "
+                    % (len(dis_rows), "" if len(dis_rows) == 1 else "s", hosts, "" if hosts == 1 else "s",
+                       "it has" if len(dis_rows) == 1 else "they have")
+                    + ("They are findings (check_stig_disagree_severity)." if disagree_found
+                       else "Report only: check_stig_disagree_severity: warning (or critical) makes them findings that fail the job."))
+            sections.append({"title": "No drift - but the scan and the checklist disagree", "status": "warning" if disagree_found else "info",
+                             "lines": [line + gone]})
+        else:
+            sections.append({"title": "No drift", "status": "ok",
+                             "lines": ["Every host scanned passes what STIG Manager has as Not a Finding and passed before, and nothing that passed "
+                                       "in an earlier scan fails now." + gone]})
     for s in sections:
         s["top"] = True
     if sections:

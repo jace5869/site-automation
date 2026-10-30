@@ -170,7 +170,9 @@ run "a host's first scan fails what STIG Manager has as Not a Finding: the scan 
     "DISAGREE V-257821 (RHEL-09-214020) CAT I" "the scan's check: ensure_gpgcheck_local_packages" "!DRIFT"
 decoded "$(ls "$work/mail"/* | head -1)"
 grep -q "3. The scan and the checklist disagree - look at each once" "$work/mail.txt" && grep -q "check_stig_disagree_severity: warning makes them findings" "$work/mail.txt" \
-    && echo "ok   - the email: the scan and the checklist disagree, report only" || { echo "FAIL - the disagree table"; fails=$((fails + 1)); }
+    && grep -q "No drift - but the scan and the checklist disagree" "$work/mail.txt" && ! grep -q "Every host scanned passes" "$work/mail.txt" \
+    && echo "ok   - the email: the scan and the checklist disagree, report only; the No drift card says so, not that every host passes" \
+    || { echo "FAIL - the disagree table or the No drift card"; fails=$((fails + 1)); }
 sleep 1
 run "the next scan fails them again: still disagree (they never passed here); check_stig_disagree_severity: warning - a finding" fail \
     -e "$sm_on" -e check_stig_dir="$work/kept2" -e check_stig_disagree_severity=warning -- \
