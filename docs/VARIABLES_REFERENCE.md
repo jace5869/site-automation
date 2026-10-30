@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd_containers](#fapolicyd_containers), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -539,42 +539,29 @@ File: `roles/check_trust/defaults/main.yml`
 | `check_trust_remove_update_cmd` | (empty) | the command that rebuilds the system trust after blocklisting; empty = the distribution's (update-ca-trust, update-ca-certificates) |
 | `check_trust_keystore_password` | `changeit` | the Java keystores' password (keytool's default) |
 
-## fapolicyd_containers
+## fapolicyd
 
-File: `roles/fapolicyd_containers/defaults/main.yml`
+File: `roles/fapolicyd/defaults/main.yml`
 
-> FAPOLICYD AND CONTAINERS (playbooks/fapolicyd_containers.yml, docs/RUNBOOKS.md "fapolicyd and containers"): what fapolicyd blocked that a container caused, the narrowest allow rule for each, and - once approved - those rules added to the hosts. A container's files are not in fapolicyd's trust database (RPM fills it from the host's packages), so a program in a container image can be denied.
+> FAPOLICYD (playbooks/fapolicyd.yml, docs/RUNBOOKS.md "fapolicyd", workflow 36): fapolicyd in one pass on each host - what keeps it down (trust files it cannot read, SELinux labels, db_max_size, not enabled at boot, not running: it starts permissive), what it blocked or would block (a trust entry pinned to the file, a container's rule), its rules files cleaned up, back to enforcing on a quiet day. One line per change to approve; only approved lines are made.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `fapolicyd_container_since` | `today` | ausearch -ts: recent (10 minutes), today, yesterday, this-week, boot |
-| `fapolicyd_container_rules` | `[]` | The approved rules to add, each exactly as the report's "Rules to approve" gives it (or your own allow rule). Written to fapolicyd_container_rules_file on every host of the run, then loaded (fagenrules --load). A rule that is not a plain allow rule stops the change on every host. Route each one through your security a… (all of it: the role file) |
-| `fapolicyd_container_rules_remove` | `[]` | rules this job added earlier, to take out again |
-| `fapolicyd_container_rules_file` | `/etc/fapolicyd/rules.d/35-site-containers.rules` | The file this job owns - and only this one. 35: after the deny rules of 30-patterns (ld.so tricks), before 40-bad-elf, 41-shared-obj, 42-trusted-elf and 90-deny-execute that deny a container's untrusted files. |
-| `fapolicyd_container_compiled` | `/etc/fapolicyd/compiled.rules` | what fagenrules builds: the rules are checked there |
-| `fapolicyd_container_rules_owner` | `root` | the rules file's owner, as the other rules.d files |
-| `fapolicyd_container_rules_group` | `fapolicyd` | and its group |
-| `fapolicyd_container_scope` | `path` | The proposed rules. A file that is on the host at the path the audit log holds (a bind mount): the narrowest rule - the file (path) or its folder (dir: one rule for every file there; never a system folder), with the program that was denied (exe=..., narrower) or for any program (false). path (the file) or dir (its fol… (all of it: the role file) |
-| `fapolicyd_container_rule_exe` | `true` | the rule names the program denied (false: any program) |
-| `fapolicyd_container_storage_rules` | `true` | A file inside an image is not on the host at that path (the audit log holds the container's path), and its host path changes at each pull of the image: its rule is container storage's folder, for any program - allow perm=any all : dir=/var/lib/containers/storage/overlay/ (storage.conf's graphroot; a user's own rootles… (all of it: the role file) |
-| `fapolicyd_container_review` | `true` | Review the rules files in place (rules.d/*.rules, fapolicyd's own left out) and list what to tighten in the report: a wildcard (fapolicyd has none: the rule matches nothing), a system folder or a user-writable folder opened to any program, a rule that allows everything, a repeated rule, a rule for an RPM-owned file (t… (all of it: the role file) |
-| `fapolicyd_container_labels` | `'(^\|:)(container_[a-z0-9_]*_t\|spc_t)(:\|$)'` | What marks a denial as a container's (any one): an SELinux label on the program or the file, a container program, a path in container storage, or a process in a podman container's cgroup (while it runs). The labels: a regular expression on the program's and the file's SELinux labels. |
-| `fapolicyd_container_programs` | `- podman - crun - runc - conmon - buildah - skopeo - catatonit - netavark - aardvark-dns…` | The container programs (their base names): what they run or open is a container's. |
-| `fapolicyd_container_paths` | `- '^/var/lib/containers/' - '/\.local/share/containers/' - '^/run/containers/' - '^/run/u…` | Container storage: regular expressions on the program's or the file's path. |
-| `fapolicyd_container_names` | `true` | the containers' names (podman ps, root's and each logged-in user's) |
-| `fapolicyd_container_max` | `200` | at most this many groups per host (the most denied first) |
-| `fapolicyd_container_timeout` | `120` | seconds for ausearch |
+| `fapolicyd_approved` | `[]` | The approved changes, each exactly as the report's "Changes to approve" gives it, e.g. - "trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644" - "enable fapolicyd at boot (it is disabled)" - "permissive: 0 -> 1" (with the restart: a stopped fapolicyd starts blocking nothing) - "restart… (all of it: the role file) |
+| `fapolicyd_workflow` | `false` | THE WORKFLOW (docs/WORKFLOWS_AND_SCHEDULES.md, 36): true on its first template, "fapolicyd - check". It reads, changes nothing, hands each host's changes to the approval step and the approved job (set_stats fapolicyd_workflow_plan) and fails on purpose - NEEDS APPROVAL. It holds back for a person: permissive: 0 -> 1 o… (all of it: the role file) |
+| `fapolicyd_since` | `today` | blocks since (ausearch -ts): recent (10 minutes), today, yesterday, this-week, boot |
+| `fapolicyd_dir` | `/etc/fapolicyd` | fapolicyd's folder: fapolicyd.conf, fapolicyd.trust, trust.d, rules.d |
+| `fapolicyd_wait` | `30` | seconds fapolicyd may take to take a change (running, its new rules or trust) |
+| `fapolicyd_act` | `false` | ACT (GenAI) explains what fapolicyd blocked, in the report - evidence only, ACT runs nothing on the host. Needs the "ACT model key" credential on the template and site_act's provider and model (docs/ADDING_ACT.md). |
 
 ## fapolicyd_fix
 
 File: `roles/fapolicyd_fix/defaults/main.yml`
 
-> FAPOLICYD FIX (playbooks/fapolicyd_fix.yml, docs/RUNBOOKS.md "fapolicyd fix"): why fapolicyd is down, or near its limits, on each host - trust files it cannot read, their SELinux labels, db_max_size too small for the trust database, the service not running - with the fix for each as a line to approve; and, once approved, those fixes made.
-
 | Setting | Default | What it does |
 |---|---|---|
-| `fapolicyd_fix_approved` | `[]` | The approved fixes, each exactly as the report's "Fixes to approve" gives it, e.g. - "trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644" - "db_max_size: 50 -> 200" (the number after -> may be your own; auto where fapolicyd 1.4+ runs) - "permissive: 0 -> 1" (start it without blocking:… (all of it: the role file) |
-| `fapolicyd_fix_dir` | `/etc/fapolicyd` | fapolicyd's folder: fapolicyd.conf, fapolicyd.trust, trust.d |
+| `fapolicyd_fix_approved` | `[]` | FAPOLICYD - GETTING IT RUNNING (a part of playbooks/fapolicyd.yml, roles/fapolicyd; docs/RUNBOOKS.md "fapolicyd"): why fapolicyd is down, or near its limits, on each host - trust files it cannot read, their SELinux labels, db_max_size too small for the trust database, not enabled at boot, not running (it starts permis… (all of it: the role file) |
+| `fapolicyd_fix_dir` | `/etc/fapolicyd` | set by roles/fapolicyd: fapolicyd_dir |
 | `fapolicyd_fix_binary` | `/usr/sbin/fapolicyd` | read to see whether this fapolicyd sizes its database itself (db_max_size = auto) |
 | `fapolicyd_fix_owner` | `root` | The trust files' owner, group and modes come from the fapolicyd package (rpm); these only when rpm gives none. the trust files' owner, when rpm gives none |
 | `fapolicyd_fix_group` | `fapolicyd` | their group, when rpm gives none |
@@ -583,24 +570,21 @@ File: `roles/fapolicyd_fix/defaults/main.yml`
 | `fapolicyd_fix_large_mb` | `20` | a trust file larger than this (MB) is listed for a person: every file in it is trusted |
 | `fapolicyd_fix_headroom` | `1.5` | the proposed db_max_size: the estimate times this (where auto is not possible) |
 | `fapolicyd_fix_journal_lines` | `400` | fapolicyd's journal lines read, this boot |
-| `fapolicyd_fix_wait` | `30` | seconds fapolicyd may take to be running again after the restart |
+| `fapolicyd_fix_wait` | `30` | roles/fapolicyd sets it from fapolicyd_wait |
 | `fapolicyd_fix_timeout` | `120` | seconds for each command the job reads with |
 
 ## fapolicyd_rules
 
 File: `roles/fapolicyd_rules/defaults/main.yml`
 
-> FAPOLICYD RULES (playbooks/fapolicyd_rules.yml, docs/RUNBOOKS.md "fapolicyd rules"): what fapolicyd blocked on each host - or, permissive, would block - and the change that lets each through; the rules files' clean-up; permissive mode on or off. Each change is a line to approve; once approved, the job makes it.
-
 | Setting | Default | What it does |
 |---|---|---|
-| `fapolicyd_rules_approved` | `[]` | The approved changes, each exactly as the report's "Changes to approve" gives it, e.g. - "trust file: /opt/app/tool size 51320 sha256 6f0c...e1" (that file as it is now: a changed file is a new line) - "allow rule: allow perm=any all : dir=/var/lib/containers/storage/overlay/" - "remove rule: 99-local.rules: allow per… (all of it: the role file) |
-| `fapolicyd_rules_workflow` | `false` | THE WORKFLOW (docs/WORKFLOWS_AND_SCHEDULES.md, 36): true on its first template, "fapolicyd rules - check". It reads, changes nothing, hands each host's changes to the approval step and the approved job (set_stats fapolicyd_rules_workflow_plan) and fails on purpose - NEEDS APPROVAL - so the workflow goes to the approva… (all of it: the role file) |
-| `fapolicyd_rules_since` | `today` | ausearch -ts: recent (10 minutes), today, yesterday, this-week, boot |
-| `fapolicyd_rules_dir` | `/etc/fapolicyd` | fapolicyd's folder: fapolicyd.conf, rules.d, trust.d |
+| `fapolicyd_rules_approved` | `[]` | FAPOLICYD - BLOCKS AND RULES (a part of playbooks/fapolicyd.yml, roles/fapolicyd; docs/RUNBOOKS.md "fapolicyd"): what fapolicyd blocked on each host - or, permissive, would block - and the change that lets each through; the rules files' clean-up; permissive mode on or off. Each change is a line to approve; once approv… (all of it: the role file) |
+| `fapolicyd_rules_since` | `today` | set by roles/fapolicyd: fapolicyd_since |
+| `fapolicyd_rules_dir` | `/etc/fapolicyd` | set by roles/fapolicyd: fapolicyd_dir |
 | `fapolicyd_rules_own_rules` | `36-site-approved.rules` | the rules file (in rules.d) this job writes its allow rules to |
 | `fapolicyd_rules_own_trust` | `site-approved` | the trust file (in trust.d) this job writes its trust entries to |
-| `fapolicyd_rules_never_edit` | `[35-site-containers.rules]` | rules files (in rules.d) reviewed, never changed (the containers job's own) |
+| `fapolicyd_rules_never_edit` | `[35-site-containers.rules]` | rules files (in rules.d) reviewed, never changed (the old containers job's own) |
 | `fapolicyd_rules_when_enforcing` | `false` | A clean-up that blocks more (a rule that opened too much, taken out) is made only while fapolicyd is permissive: a program it would break shows as a would-be block, not as an outage. true: made while it enforces too. |
 | `fapolicyd_rules_container_labels` | `'(^\|:)(container_[a-z0-9_]*_t\|spc_t)(:\|$)'` | A container's denial (as the containers job tells them apart): an SELinux label on the program or the file, a container program, or a path in container storage. |
 | `fapolicyd_rules_container_programs` | `[podman, crun, runc, conmon, buildah, skopeo, catatonit, containerd, containerd-shim-runc…` | container programs |
@@ -608,7 +592,7 @@ File: `roles/fapolicyd_rules/defaults/main.yml`
 | `fapolicyd_rules_user_dirs` | `[/home/, /run/user/, /tmp/, /var/tmp/, /dev/shm/]` | folders users can write: a file blocked there gets no trust entry (a person decides) |
 | `fapolicyd_rules_hash_max_mb` | `512` | a file larger than this is not hashed: a person adds it |
 | `fapolicyd_rules_max` | `200` | at most this many block groups per host in the report |
-| `fapolicyd_rules_wait` | `30` | seconds fapolicyd may take to be running again after the change |
+| `fapolicyd_rules_wait` | `30` | roles/fapolicyd sets it from fapolicyd_wait |
 | `fapolicyd_rules_timeout` | `120` | seconds for each command the job reads with |
 
 ## horizon

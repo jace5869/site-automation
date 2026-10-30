@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: fapolicyd
+  description: "fapolicyd in one pass: getting it running, what it blocks let through, its rules cleaned up, back to enforcing - each change once approved."
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

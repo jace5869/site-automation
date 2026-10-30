@@ -1,0 +1,110 @@
+---
+# fapolicyd: in one pass on each host - what keeps it down (trust files it cannot read, SELinux labels, db_max_size, not
+# enabled at boot, not running: it starts permissive, blocking nothing); what it blocked or, permissive, would block, and
+# the change that lets each through (a trust entry pinned to the file's size and hash, a container's rule); its rules
+# files cleaned up; back to enforcing on a quiet day. One line per change to approve; only approved lines are made.
+# ONE report of every host: emailed (report_email_to) and on the report website.
+#   target               the hosts (default: all) - or a Limit of hosts
+#   fapolicyd_since      ausearch -ts: recent (10 min), today (the default), yesterday, this-week, boot
+#   fapolicyd_approved   the approved lines, as the report gives them ([] = read only, the default)
+#   fapolicyd_act        true: ACT explains the blocks in the report (the "ACT model key" credential)
+# After a change, fapolicyd is restarted or its rules or trust reloaded and checked in the same go on the host: running
+# before and not after - or a program no longer starts - everything put back. Run it in Check first. Each change is to a
+# security control: route it through your security approval (the ISSO). docs/RUNBOOKS.md, "fapolicyd".
+# THE WORKFLOW (docs/WORKFLOWS_AND_SCHEDULES.md, 36), two templates of this playbook:
+#   [fapolicyd - check] --Run on fail--> [Approval] --Run on success--> [fapolicyd - approved]
+# The check (fapolicyd_workflow: true) hands each host's changes on (set_stats fapolicyd_workflow_plan) and fails on
+# purpose - NEEDS APPROVAL; nothing to approve, it stays green. The approved job makes each host's.
+- name: Fapolicyd - what keeps it down, what it blocks, its rules
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  become: true
+  pre_tasks:
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  roles:
+    - fapolicyd
+
+# on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
+- name: Fapolicyd - the report
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Fapolicyd | email the report, publish it (report_email_to, report_web_dest)
+      ansible.builtin.include_role:
+        name: site_email
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _report: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | list
+             | fapolicyd_all_report(ansible_play_hosts_all, fapolicyd_since | default('today'), site_report_title | default(''),
+                                    ansible_check_mode, fapolicyd_workflow | default(false) | bool) }}
+      when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+
+- name: Fapolicyd - after the report
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Fapolicyd | no email
+      ansible.builtin.debug:
+        msg: "No email: report_email_to is not set (docs/EMAIL_REPORTS.md)."
+      run_once: true
+      when: report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0
+
+    - name: Fapolicyd | not changed on this host (after the report)
+      ansible.builtin.fail:
+        msg: >-
+          {{ _fa_bad | map(attribute='state') | first }}: {{ _fa_bad | map(attribute='error') | select | unique | join('; ') }}{{ (' - '
+          ~ (_fa_why | map(attribute='line') | zip(_fa_why | map(attribute='why')) | map('join', ': ') | join('; '))) if _fa_why else '' }}
+      vars:
+        _fa_bad: >-
+          {{ [_ff_apply | default({}), _fr_apply | default({})]
+             | selectattr('state', 'defined') | selectattr('state', 'in', ['failed', 'refused', 'rolled back', 'still down']) | list }}
+        _fa_why: "{{ _fa_bad | map(attribute='bad') | flatten + _fa_bad | map(attribute='refused') | flatten }}"
+      when: _fa_bad | length > 0
+
+    - name: Fapolicyd | the host could not be read
+      ansible.builtin.fail:
+        msg: "{{ [_ff | default({}), _fr | default({})] | map(attribute='error', default='') | select | join('; ') }}"
+      when: >-
+        [_ff | default({}), _fr | default({})] | selectattr('state', 'defined') | selectattr('state', 'equalto', 'not read') | list | length > 0
+        or [_ff | default({}), _fr | default({})] | map(attribute='error', default='') | select | list | length > 0
+
+    # the workflow's check: each host's changes to the approval step and the approved job, then NEEDS APPROVAL
+    - name: Fapolicyd | the workflow - each host's changes for the approval
+      ansible.builtin.set_fact:
+        _fa_workflow: "{{ ansible_play_hosts_all | map('extract', hostvars) | list | fapolicyd_workflow(ansible_play_hosts_all) }}"
+      run_once: true
+      when: fapolicyd_workflow | default(false) | bool
+
+    - name: Fapolicyd | the workflow - held back for a person
+      ansible.builtin.debug:
+        msg: "{{ _fa_workflow.held | map('join', ': ') | list }}"
+      run_once: true
+      when: fapolicyd_workflow | default(false) | bool and _fa_workflow.held | length > 0
+
+    - name: Fapolicyd | the workflow - hand the plan to the approval step and the approved job (set_stats)
+      ansible.builtin.set_stats:
+        data:
+          fapolicyd_workflow_plan: "{{ _fa_workflow.plan }}"
+        per_host: false
+        aggregate: false
+      run_once: true
+      when: fapolicyd_workflow | default(false) | bool and _fa_workflow.count | int > 0
+
+    - name: Fapolicyd | NEEDS APPROVAL
+      ansible.builtin.fail:
+        msg: >-
+          NEEDS APPROVAL - {{ _fa_workflow.count }} change(s) on {{ _fa_workflow.plan | length }} host(s), in the report
+          ("Changes to approve"). Approve the workflow's step to make them; deny it to make none.
+          {{ _fa_workflow.plan | dict2items | map(attribute='key') | zip(_fa_workflow.plan | dict2items | map(attribute='value') | map('join', ' | '))
+             | map('join', ': ') | join(' || ') }}
+      run_once: true
+      when: fapolicyd_workflow | default(false) | bool and _fa_workflow.count | int > 0

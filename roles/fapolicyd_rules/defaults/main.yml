@@ -1,28 +1,14 @@
 ---
-# FAPOLICYD RULES (playbooks/fapolicyd_rules.yml, docs/RUNBOOKS.md "fapolicyd rules"): what fapolicyd blocked on each
-# host - or, permissive, would block - and the change that lets each through; the rules files' clean-up; permissive
-# mode on or off. Each change is a line to approve; once approved, the job makes it.
-
-# The approved changes, each exactly as the report's "Changes to approve" gives it, e.g.
-#   - "trust file: /opt/app/tool size 51320 sha256 6f0c...e1"        (that file as it is now: a changed file is a new line)
-#   - "allow rule: allow perm=any all : dir=/var/lib/containers/storage/overlay/"
-#   - "remove rule: 99-local.rules: allow perm=any all : dir=/usr/lib/"
-#   - "rename rules file: 99-local.rules -> 39-local.rules"
-#   - "permissive: 1 -> 0"
-# A line is made only on a host where this run proposes it again. A line this job never gives stops the change on
-# every host. Route each one through your security approval (the ISSO).
-fapolicyd_rules_approved: []
-# THE WORKFLOW (docs/WORKFLOWS_AND_SCHEDULES.md, 36): true on its first template, "fapolicyd rules - check". It reads,
-# changes nothing, hands each host's changes to the approval step and the approved job (set_stats
-# fapolicyd_rules_workflow_plan) and fails on purpose - NEEDS APPROVAL - so the workflow goes to the approval. It holds
-# back for a person: permissive: 0 -> 1, a clean-up that blocks more on an enforcing host, and permissive: 1 -> 0 until a
-# quiet day (no would-be block in the window). The approved job ("fapolicyd rules - approved", false) makes each host's.
-fapolicyd_rules_workflow: false
-fapolicyd_rules_since: today              # ausearch -ts: recent (10 minutes), today, yesterday, this-week, boot
-fapolicyd_rules_dir: /etc/fapolicyd       # fapolicyd's folder: fapolicyd.conf, rules.d, trust.d
+# FAPOLICYD - BLOCKS AND RULES (a part of playbooks/fapolicyd.yml, roles/fapolicyd; docs/RUNBOOKS.md "fapolicyd"): what
+# fapolicyd blocked on each host - or, permissive, would block - and the change that lets each through; the rules files'
+# clean-up; permissive mode on or off. Each change is a line to approve; once approved, the job makes it.
+# roles/fapolicyd sets these four from its own: fapolicyd_approved, fapolicyd_since, fapolicyd_dir, fapolicyd_wait
+fapolicyd_rules_approved: []              # set by roles/fapolicyd: the rules lines of fapolicyd_approved
+fapolicyd_rules_since: today              # set by roles/fapolicyd: fapolicyd_since
+fapolicyd_rules_dir: /etc/fapolicyd       # set by roles/fapolicyd: fapolicyd_dir
 fapolicyd_rules_own_rules: 36-site-approved.rules   # the rules file (in rules.d) this job writes its allow rules to
 fapolicyd_rules_own_trust: site-approved  # the trust file (in trust.d) this job writes its trust entries to
-fapolicyd_rules_never_edit: [35-site-containers.rules]   # rules files (in rules.d) reviewed, never changed (the containers job's own)
+fapolicyd_rules_never_edit: [35-site-containers.rules]   # rules files (in rules.d) reviewed, never changed (the old containers job's own)
 # A clean-up that blocks more (a rule that opened too much, taken out) is made only while fapolicyd is permissive: a
 # program it would break shows as a would-be block, not as an outage. true: made while it enforces too.
 fapolicyd_rules_when_enforcing: false
@@ -34,5 +20,5 @@ fapolicyd_rules_container_paths: ['^/var/lib/containers/', '/\.local/share/conta
 fapolicyd_rules_user_dirs: [/home/, /run/user/, /tmp/, /var/tmp/, /dev/shm/]   # folders users can write: a file blocked there gets no trust entry (a person decides)
 fapolicyd_rules_hash_max_mb: 512          # a file larger than this is not hashed: a person adds it
 fapolicyd_rules_max: 200                  # at most this many block groups per host in the report
-fapolicyd_rules_wait: 30                  # seconds fapolicyd may take to be running again after the change
+fapolicyd_rules_wait: 30                  # roles/fapolicyd sets it from fapolicyd_wait
 fapolicyd_rules_timeout: 120              # seconds for each command the job reads with

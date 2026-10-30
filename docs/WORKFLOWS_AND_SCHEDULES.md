@@ -409,38 +409,44 @@ service, checks the port, and puts the old files back if anything is wrong. Wind
 certificate install - check / approved*. Everything else - what stays for a person, the restore:
 [CERT_INSTALL.md](CERT_INSTALL.md).
 
-### 36. fapolicyd rules, with an approval (daily)
+### 36. fapolicyd, with an approval (daily)
 
 ```workflow
-[fapolicyd rules - check]
+[fapolicyd - check]
    |  Run on fail
    v
 [Approval]
    |  Run on success
    v
-[fapolicyd rules - approved]
+[fapolicyd - approved]
 ```
 
 | Step | Template | Link |
 |---|---|---|
-| 1 | fapolicyd rules - check: Variables `fapolicyd_rules_workflow: true`, `fapolicyd_rules_since: yesterday` | (start) |
+| 1 | fapolicyd - check: Variables `fapolicyd_workflow: true`, `fapolicyd_since: yesterday`, and `fapolicyd_act: true` for ACT's explanation (the *ACT model key* credential) | (start) |
 | 2 | *Approval*: `Make the fapolicyd changes the check listed?`, **Timeout** 8 hours. Description: `Open the check job or its report: Changes to approve, and why.` | **Run on fail**, from 1 |
-| 3 | fapolicyd rules - approved (the same playbook, the check's inventory, no Limit, `fapolicyd_rules_workflow` not set) | **Run on success**, from 2 |
+| 3 | fapolicyd - approved (the same playbook, the check's inventory, `fapolicyd_workflow` not set) | **Run on success**, from 2 |
 
-Both templates are `playbooks/fapolicyd_rules.yml` with the *Machine* credential (sudo). **Schedule:** every day
-07:00. The check reads what fapolicyd blocked - or, permissive, would have blocked - since yesterday, and when there is
-something to change it hands **each host's own lines** to step 3 (`fapolicyd_rules_workflow_plan`) and fails on purpose,
+Both templates are `playbooks/fapolicyd.yml` with the *Machine* credential (sudo); tick **Prompt on launch** for
+**Limit** on both, and on the workflow, to run it on some hosts only. **Schedule:** every day 07:00. The check reads
+each host - what keeps fapolicyd down, what it blocked or would have blocked since yesterday, its rules - and when there
+is something to change it hands **each host's own lines** to step 3 (`fapolicyd_workflow_plan`) and fails on purpose,
 `NEEDS APPROVAL`; nothing to change, it stays green and the approval never comes. Approve, and step 3 makes each host's
-lines - a line its host no longer has is not made. Deny, and nothing changes.
+lines - getting fapolicyd running first, then the rest; deny, and nothing changes.
 
-It holds back for a person (the check's job output and report say which, and why): `permissive: 0 -> 1` (fapolicyd would
-stop blocking); a clean-up that blocks more on an enforcing host (made only while permissive); and `permissive: 1 -> 0`
-while the host still has would-be blocks in the window, or a clean-up that blocks more to make first - it comes on the
-first quiet day, so the workflow itself brings a permissive host back to enforcing once nothing more would break. To
-start a host permissive: the *fapolicyd fix* job, by hand. docs/RUNBOOKS.md, "fapolicyd rules".
+The check's report says what Approve makes on each host (*Approve makes these*) and what it holds back (*Held back for
+a person*). **Limit the workflow to the hosts that must run fapolicyd** (an inventory group, as its Limit or the
+schedule's): it starts fapolicyd - permissive - on every host where it is installed and stopped.
 
-The audit log must still hold yesterday at 07:00: on a busy host auditd rotates fast (`ls -l /var/log/audit/`; `num_logs`
-and `max_log_file` in `/etc/audit/auditd.conf`). Approve within the day: step 3 reads the same window again.
+A host where fapolicyd is down comes back by itself, one morning at a time: its trust files, `db_max_size`, enabled at
+boot, started **permissive** (blocking nothing); then the trust entries and rules for what it would block, the rules
+cleaned up; then, on the first quiet day, `permissive: 1 -> 0`. Held back for a person (the check's output and report say
+which, and why): `permissive: 0 -> 1` on a running, enforcing host; a clean-up that blocks more on an enforcing host; and
+`permissive: 1 -> 0` while fapolicyd is not running, still has would-be blocks, or such a clean-up to make first.
+
+A dry run: deny at step 2 - or a copy of the workflow whose step 3 has **Job type Check** (tick Prompt on launch for Job
+type on *fapolicyd - approved*). The audit log must still hold yesterday at 07:00 (`ls -l /var/log/audit/`); approve
+within the day: step 3 reads the same window again. docs/RUNBOOKS.md, "fapolicyd".
 
 ### 33. STIG drift (weekly)
 
@@ -900,7 +906,7 @@ as Check).
 | NetApp ONTAP health | every day 06:00 | template *NetApp ONTAP health report* (21) |
 | vSphere capacity planning / VMs created | Monday 07:00 / Friday 12:00 | templates (22, 23) |
 | Certificate install | every day 07:00 | workflow 29 |
-| fapolicyd rules | every day 07:00 | workflow 36 |
+| fapolicyd | every day 07:00 | workflow 36 |
 | STIG drift | weekly, e.g. Sunday 02:00, and after patch night | workflow 33 |
 | Network performance | hourly (**Concurrent jobs** off) | workflow 34 |
 | Horizon: broken desktops / reports | hourly in working hours / daily | workflows 30 and 32 |

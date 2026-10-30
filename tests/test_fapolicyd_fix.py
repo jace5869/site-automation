@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit tests for the fapolicyd fix job (playbooks/fapolicyd_fix.yml): the read
+"""Unit tests for getting fapolicyd running (playbooks/fapolicyd.yml, roles/fapolicyd_fix): the read
 (roles/fapolicyd_fix/library/site_fapolicyd_fix.py - the package's modes, fapolicyd.conf, who can read a trust file,
 the fix for one), the plan from the approved lines, the way back and the report (plugins/filter/fapolicyd_filters.py).
     python3 tests/test_fapolicyd_fix.py"""
@@ -132,6 +132,11 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(([f["kind"] for f in p["apply"]], p["permissive_to"], p["restart"]), (["permissive", "restart"], "1", True))
         back = ff.fapolicyd_fix_rollback(ff.fapolicyd_fix_plan(h, ["permissive: 0 -> 1", "db_max_size: 50 -> 100"])["apply"], "/c", "/b")
         self.assertEqual(back.count("cp -p /b /c"), 1)
+        # enabled at boot: made, and taken back on the way back
+        h["fixes"].append({"kind": "enable", "from": "disabled", "to": "enabled", "line": "enable fapolicyd at boot (it is disabled)"})
+        p = ff.fapolicyd_fix_plan(h, ["enable fapolicyd at boot (it is disabled)", "restart fapolicyd (it is failed)"])
+        self.assertEqual(([f["kind"] for f in p["apply"]], p["enable"]), (["enable", "restart"], True))
+        self.assertIn("systemctl disable fapolicyd", ff.fapolicyd_fix_rollback(p["apply"]))
 
     def test_not_restarted_unless_approved_while_down(self):
         h = host()

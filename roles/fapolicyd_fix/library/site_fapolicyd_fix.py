@@ -19,6 +19,7 @@ description:
   - C(db_max_size) against the trust database's needs - fapolicyd's own journal lines (C(db_max_size needs to be
     increased), C(Trust database at N% capacity)) or an estimate from the trust files' size and the RPM files - with
     C(auto) proposed where this fapolicyd sizes its database itself (1.4 and later), else a number.
+  - fapolicyd not enabled at boot (systemctl enable), approved as its own line.
   - fapolicyd not running - a restart, approved as its own line; and permissive = 1 first (it blocks nothing, logs what
     it would block), approved as its own line.
   - A trust file over C(large_mb), listed for a person (every file in it is trusted).
@@ -222,6 +223,7 @@ class Reader(object):
         r["version"] = out.strip()
         rc, out, _ = run(["systemctl", "is-active", "fapolicyd"], t)
         r["active"] = out.strip() or "unknown"
+        r["enabled"] = run(["systemctl", "is-enabled", "fapolicyd"], t)[1].strip() or "unknown"
         d = p["dir"].rstrip("/")
         conf_path = d + "/fapolicyd.conf"
         try:
@@ -315,6 +317,14 @@ class Reader(object):
         elif current == "auto" and any("trust DB full" in x or "failed to grow" in x for x in says):
             r["by_hand"].append("db_max_size is auto and fapolicyd says its database is full: %s - look at the disk under "
                                 "/var/lib/fapolicyd and the trust files' size" % says[-1])
+
+        # it starts at boot: a disabled fapolicyd is gone again after the next reboot
+        if r["enabled"] == "disabled":
+            r["fixes"].append({"kind": "enable", "from": "disabled", "to": "enabled",
+                               "why": "fapolicyd does not start at boot: a reboot leaves the host without application allow-listing",
+                               "line": "enable fapolicyd at boot (it is disabled)"})
+        elif r["enabled"] == "masked":
+            r["by_hand"].append("fapolicyd is masked (systemctl mask): find out who masked it and why, then systemctl unmask fapolicyd")
 
         # last: fapolicyd not running - and the way to start it without blocking anything yet
         if r["active"] != "active" and conf.get("permissive", "0") != "1":

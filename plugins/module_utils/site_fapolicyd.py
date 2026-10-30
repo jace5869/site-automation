@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""What the fapolicyd jobs read with (roles/fapolicyd_containers, roles/fapolicyd_rules, roles/fapolicyd_fix): the
+"""What the fapolicyd job reads with (roles/fapolicyd_rules, roles/fapolicyd_fix): the
 audit log's fapolicyd events (ausearch -m FANOTIFY -i, or raw), the file each was about, a block told apart from an
 audited allow (permissive mode answers allow and keeps the audit bit: a would-be denial is resp=allow with a deny
 rule's number), the allow rule for a group, the review of the rules files in place, the fapolicyd package's own owner

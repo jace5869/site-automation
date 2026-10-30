@@ -26,14 +26,9 @@
          + (_fr.changes | default([]) | map(attribute='line') | map('regex_replace', '^', 'CHANGE: ') | list)
          + (_fr.by_hand | default([]) | map('regex_replace', '^', 'FOR A PERSON: ') | list) }}
 
-# the workflow's approved job: this host's lines from the check (set_stats fapolicyd_rules_workflow_plan), else the
-# lines in the template's Variables; the check itself (fapolicyd_rules_workflow) never changes anything
-- name: Fapolicyd rules | the lines approved for this host
+- name: Fapolicyd rules | the lines approved for this host (roles/fapolicyd hands them on)
   ansible.builtin.set_fact:
-    _fr_approved: >-
-      {{ [] if fapolicyd_rules_workflow | bool
-         else ((fapolicyd_rules_workflow_plan[inventory_hostname] | default([])) if fapolicyd_rules_workflow_plan is defined
-               else fapolicyd_rules_approved) }}
+    _fr_approved: "{{ fapolicyd_rules_approved }}"
 
 - name: Fapolicyd rules | make the approved changes
   ansible.builtin.include_tasks: apply.yml

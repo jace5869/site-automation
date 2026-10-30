@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Unit tests for the fapolicyd rules job (playbooks/fapolicyd_rules.yml): a block told apart from an audited allow
+"""Unit tests for fapolicyd's blocks and rules (playbooks/fapolicyd.yml, roles/fapolicyd_rules), the workflow's plan,
+the line split and the one report: a block told apart from an audited allow
 (plugins/module_utils/site_fapolicyd.py), the clean-up each review finding becomes and the file's new name
 (roles/fapolicyd_rules/library/site_fapolicyd_rules.py), the plan from the approved lines, the rules file edit, the way
 back and the report (plugins/filter/fapolicyd_filters.py).
@@ -211,7 +212,7 @@ class WorkflowTest(unittest.TestCase):
         quiet = host(permissive=True, changes=[{"kind": "permissive", "from": "1", "to": "0", "line": "permissive: 1 -> 0"}])
         busy = host(permissive=True, blocks=[{"kind": "would deny", "count": 2}],
                     changes=[enforcing["changes"][0], {"kind": "permissive", "from": "1", "to": "0", "line": "permissive: 1 -> 0"}])
-        w = ff.fapolicyd_rules_job_workflow([{"_fr": enforcing}, {"_fr": quiet}, {"_fr": busy}, {}], ["a", "q", "b", "gone"])
+        w = ff.fapolicyd_workflow([{"_fr": enforcing}, {"_fr": quiet}, {"_fr": busy}, {}], ["a", "q", "b", "gone"])
         self.assertEqual(w["plan"]["a"], [c["line"] for c in enforcing["changes"] if not c.get("stricter") and c["kind"] != "permissive"])
         self.assertEqual(w["plan"]["q"], ["permissive: 1 -> 0"])                 # a quiet day: enforcing proposed
         self.assertEqual(w["plan"]["b"], [enforcing["changes"][0]["line"]])      # would-be blocks: their change first
@@ -222,8 +223,42 @@ class WorkflowTest(unittest.TestCase):
         self.assertNotIn("gone", w["plan"])
         # permissive, a stricter clean-up to make: it goes in, enforcing waits
         p = host(permissive=True, changes=[enforcing["changes"][3], {"kind": "permissive", "from": "1", "to": "0", "line": "permissive: 1 -> 0"}])
-        w = ff.fapolicyd_rules_job_workflow([{"_fr": p}], ["p"])
+        w = ff.fapolicyd_workflow([{"_fr": p}], ["p"])
         self.assertEqual((w["plan"]["p"], w["held"][0][1]), ([enforcing["changes"][3]["line"]], "permissive: 1 -> 0"))
+        # not running: it starts permissive first - never straight to enforcing
+        down = host(active="inactive", permissive=True, changes=[{"kind": "permissive", "from": "1", "to": "0", "line": "permissive: 1 -> 0"}])
+        w = ff.fapolicyd_workflow([{"_fr": down}], ["d"])
+        self.assertEqual((w["plan"], w["held"][0][2]), ({}, "fapolicyd is not running: it starts permissive first"))
+
+    def test_plan_with_getting_it_running(self):
+        fix = {"state": "read", "error": "", "active": "inactive", "fixes": [
+            {"kind": "enable", "line": "enable fapolicyd at boot (it is disabled)"}, {"kind": "permissive", "line": "permissive: 0 -> 1"},
+            {"kind": "restart", "line": "restart fapolicyd (it is inactive)"}]}
+        rules = host(active="inactive", changes=[host()["changes"][2]])
+        w = ff.fapolicyd_workflow([{"_ff": fix, "_fr": rules}], ["h"])
+        self.assertEqual(w["plan"]["h"], ["enable fapolicyd at boot (it is disabled)", "permissive: 0 -> 1", "restart fapolicyd (it is inactive)",
+                                          "remove rule: 50-local.rules: allow perm=open all : dir=/srv/data/"])
+
+    def test_split(self):
+        lines = ["trust file: /opt/app/tool size 51 sha256 " + SHA, "restart fapolicyd (it is inactive)", "permissive: 0 -> 1",
+                 "enable fapolicyd at boot (it is disabled)", "rm -rf /", "db_max_size: 50 -> 100"]
+        s = ff.fapolicyd_split(lines)
+        self.assertEqual(s["fix"], ["restart fapolicyd (it is inactive)", "permissive: 0 -> 1", "enable fapolicyd at boot (it is disabled)",
+                                    "rm -rf /", "db_max_size: 50 -> 100"])
+        self.assertEqual(s["rules"], ["trust file: /opt/app/tool size 51 sha256 " + SHA, "permissive: 0 -> 1", "rm -rf /"])
+
+    def test_all_report(self):
+        fix = {"state": "read", "error": "", "active": "inactive", "enabled": "disabled", "version": "fapolicyd-1.4.5", "by_hand": [], "journal": [],
+               "db": {"current": "100", "need_mb": 5, "trust_mb": 1, "rpm_files": 10},
+               "fixes": [{"kind": "enable", "line": "enable fapolicyd at boot (it is disabled)", "why": "a reboot"}]}
+        r = ff.fapolicyd_all_report([{"_ff": fix, "_fr": host(active="inactive")}], ["h"])
+        s = {x["title"]: x for x in r["sections"]}
+        self.assertEqual(s["Changes to approve"]["lines"][0], "enable fapolicyd at boot (it is disabled)")
+        self.assertIn("trust file: /opt/app/tool size 51 sha256 " + SHA, s["Changes to approve"]["lines"])
+        self.assertEqual(s["Why each change"]["rows"][0][3], "gets fapolicyd running")
+        self.assertEqual(r["title"].count("fapolicyd not running"), 1)
+        self.assertIn("The trust database", s)
+        self.assertEqual([x for x in r["summary"] if x["label"] == "Changes to approve"][0]["value"], len(s["Changes to approve"]["lines"]))
 
 
 class ReportTest(unittest.TestCase):

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# playbooks/fapolicyd_rules.yml: fake rpm / systemctl / journalctl / ausearch / fapolicyd-cli / fagenrules, each host
+# playbooks/fapolicyd.yml, what fapolicyd blocks and its rules (roles/fapolicyd_rules), the workflow and ACT: fake rpm /
+# systemctl / journalctl / ausearch / fapolicyd-cli / fagenrules / selinuxenabled / restorecon and the fake ACT, each host
 # told apart by its python (FAKE_FA_HOST) and its own fapolicyd folder (fapolicyd_rules_dir) under the work folder. The
 # fakes write what the real ones do (fapolicyd-cli --file add: "path size sha256" lines, root's 0600 file under umask
 # 077; fagenrules: compiled.rules from rules.d's rules files, in their order; --check: "No change").
@@ -24,7 +25,8 @@ bad() { echo "FAIL - $1"; fails=$((fails + 1)); [ -n "${2:-}" ] && tail -n "$2" 
 me="$(id -un)"; mygroup="$(id -gn)"
 
 # ---- the fake hosts: their fapolicyd folders --------------------------------------------------------------------
-mkdir -p "$work/bin" "$work/state" "$work/calls" "$work/opt/app"
+mkdir -p "$work/bin" "$work/state" "$work/calls" "$work/opt/app" "$work/act"
+printf '{"summary": "### Blocked\\n1. **tool** is not trusted: add it to the trust database\\n### Risk\\n- it may then run"}' > "$work/act.json"
 printf '#!/bin/sh\necho tool\n' > "$work/opt/app/tool"; chmod 755 "$work/opt/app/tool"
 printf '#!/bin/sh\necho tool2\n' > "$work/opt/app/tool2"; chmod 755 "$work/opt/app/tool2"
 for h in ra01 ra02 ra04; do
@@ -143,6 +145,8 @@ if tool == "fapolicyd-cli":
     if "--check-config" in args:
         print("Daemon config is OK"); sys.exit(0)
     sys.exit(0)
+if tool == "selinuxenabled":
+    sys.exit(1)
 if tool == "fagenrules":
     b = built()
     have = open(d + "/compiled.rules").read() if os.path.exists(d + "/compiled.rules") else ""
@@ -154,7 +158,7 @@ if tool == "fagenrules":
     sys.exit(0)
 sys.exit(0)
 EOP
-for t in rpm systemctl journalctl ausearch fapolicyd-cli fagenrules; do
+for t in rpm systemctl journalctl ausearch fapolicyd-cli fagenrules selinuxenabled restorecon; do
     printf '#!/bin/sh\nexec "%s" "%s" "$0" "$@"\n' "$py" "$work/bin/fake.py" > "$work/bin/$t"; chmod 755 "$work/bin/$t"
     if [ "$(PATH="$work/bin:$PATH" FAKE_FA_WORK="$work" "$t" --is-fake 2>&1)" != "FAKE $t" ]; then
         echo "ABORT - $t is not the fake; not running anything"; exit 1
@@ -165,13 +169,15 @@ inv() {
     echo "all:"; echo "  hosts:"
     for h in ra01 ra02 ra03 ra04; do
         printf '#!/bin/sh\nFAKE_FA_HOST=%s exec "%s" "$@"\n' "$h" "$py" > "$work/py-$h"; chmod 755 "$work/py-$h"
-        echo "    $h.example.mil: {ansible_connection: local, ansible_become: false, ansible_python_interpreter: $work/py-$h, fapolicyd_rules_dir: $work/$h/etc}"
+        echo "    $h.example.mil: {ansible_connection: local, ansible_become: false, ansible_python_interpreter: $work/py-$h, fapolicyd_dir: $work/$h/etc}"
     done
     echo "    gone01.example.mil: {ansible_host: 127.0.0.1, ansible_port: 1, ansible_connection: ssh}"
 }
 inv > "$work/inv.yml"
 cat > "$work/vars.json" <<EOJ
-{"report_web_dest": "$work/site", "site_syslog": false, "fapolicyd_rules_wait": 2,
+{"report_web_dest": "$work/site", "site_syslog": false, "fapolicyd_wait": 2,
+ "act_triage_script_src": "$repo/tests/containers/fake_act.py", "act_triage_dest_dir": "$work/act", "act_triage_poll": 1,
+ "act_triage_python_candidates": ["$py"],
  "fapolicyd_rules_user_dirs": ["/home/", "/run/user/", "/var/tmp/", "/dev/shm/"]}
 EOJ
 
@@ -179,10 +185,11 @@ run() {  # run HOST|all [ansible-playbook args...] -> $work/out.txt, $rc
     local h="$1"; shift
     rm -rf "$work/site"; mkdir -p "$work/site"
     (cd "$repo" && PATH="$work/bin:$PATH" FAKE_FA_WORK="$work" FAKE_FA_USER="$me" FAKE_FA_GROUP="$mygroup" \
+        FAKE_ACT_OUT="$work/act" FAKE_ACT_CONFIG="$work/act.json" \
         FAKE_FA_HOST="$([ "$h" = all ] || echo "$h")" \
         ANSIBLE_STDOUT_CALLBACK=default ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False ANSIBLE_DEPRECATION_WARNINGS=False \
         ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_TIMEOUT=3 \
-        "$ap" -i "$work/inv.yml" playbooks/fapolicyd_rules.yml -e "@$work/vars.json" \
+        "$ap" -i "$work/inv.yml" playbooks/fapolicyd.yml -e "@$work/vars.json" \
         $([ "$h" = all ] || echo "-l $h.example.mil") "$@") > "$work/out.txt" 2>&1
     rc=$?
 }
@@ -224,8 +231,18 @@ check "for a person: the file in a user folder, the RPM-owned file, the containe
 check "what each change does: the system folder's rule blocks more" 'any(row[1].endswith("dir=/usr/lib/") and row[3].startswith("blocks more") for row in s["Why each change"]["rows"])'
 check "ra03 not installed, gone01 not read" '"ra03.example.mil" in s["fapolicyd not installed"]["lines"][0] and "gone01.example.mil" in s["Not read"]["lines"][0]'
 
+# ---- ACT's analysis (fapolicyd_act): in the report, by its headings, for a host with blocks -------------------------
+run ra01 -e '{"fapolicyd_act": true}'
+check "ACT without a key (no ACT model key credential): not run, said in the report" \
+      'any("ACT did not run: the template has no" in x for x in s["For a person"]["lines"]) and "ra01.example.mil: ACT\x27s analysis" not in s'
+GENAI_KEY=test-key run ra01 -e '{"fapolicyd_act": true}'
+check "ACT's analysis of ra01's blocks in the report, by its own headings" \
+      '"ra01.example.mil: ACT\x27s analysis" in s and s["ra01.example.mil: Blocked"]["lines"] == ["1. tool is not trusted: add it to the trust database"] and "ra01.example.mil: Risk" in s'
+grep -q 'trust file: ' "$work/act/fake-act-stdin.txt" 2>/dev/null && grep -q '"ACT_TOOLS": "0"' "$work/act/fake-act-env.json" \
+    && ok "  ... ACT got the job's own reading (the proposed changes) and was asked for a plain answer" || bad "ACT evidence: $(head -c 300 "$work/act/fake-act-stdin.txt" 2>&1)"
+
 # ---- the workflow's check: each host's changes handed on, NEEDS APPROVAL, nothing changed ------------------------
-run all -e '{"fapolicyd_rules_workflow": true}'
+run all -e '{"fapolicyd_workflow": true}'
 [ "$rc" = 2 ] && grep -q 'NEEDS APPROVAL - ' "$work/out.txt" && ! [ -e "$work/ra01/etc/trust.d/site-approved" ] \
     && ok "the workflow's check: NEEDS APPROVAL (exit 2), nothing changed" || bad "workflow check: rc $rc" 40
 grep 'NEEDS APPROVAL' "$work/out.txt" > "$work/needs.txt"
@@ -237,7 +254,7 @@ grep -q 'ra02.example.mil: [^|]*permissive: 1 -> 0' "$work/needs.txt" && bad "pe
     || { grep -q 'ra02.example.mil: permissive: 1 -> 0: 1 would-be block' "$work/out.txt" && ok "  ... permissive: 1 -> 0 held while ra02 has a would-be block" || bad "held line not said"; }
 # the approved job, as the workflow hands it the plan: each host its own lines only
 T2="$(grep '^trust file: .*tool2' "$work/lines.txt")"
-run all -e "{\"fapolicyd_rules_workflow_plan\": {\"ra02.example.mil\": [\"$T2\"]}}"
+run all -e "{\"fapolicyd_workflow_plan\": {\"ra02.example.mil\": [\"$T2\"]}}"
 grep -q "/opt/app/tool2 " "$work/ra02/etc/trust.d/site-approved" && ! [ -e "$work/ra01/etc/trust.d/site-approved" ] && grep -q '^permissive = 1$' "$work/ra02/etc/fapolicyd.conf" \
     && ok "the approved job: ra02's plan made on ra02 only (ra01 has none)" || bad "workflow approved: rc $rc" 40
 
@@ -247,7 +264,7 @@ import json, sys
 lines = [l.strip() for l in open(sys.argv[1]) if l.strip()]
 want = [l for l in lines if l.startswith(("trust file: ", "allow rule: ")) and "tool2" not in l] + \
        [l for l in lines if l.startswith(("remove rule: 50-local", "rename rules file: 50-local"))]
-json.dump({"fapolicyd_rules_approved": want}, open(sys.argv[2], "w"))
+json.dump({"fapolicyd_approved": want}, open(sys.argv[2], "w"))
 EOP
 run ra01 -e "@$work/ok1.json" --check
 [ "$rc" = 0 ] && ! [ -e "$work/ra01/etc/trust.d/site-approved" ] && [ -e "$work/ra01/etc/rules.d/50-local.rules" ] && grep -q "would change - made: " "$work/out.txt" \
@@ -265,11 +282,11 @@ f="$work/ra01/etc/rules.d/39-local.rules"
 [ "$(PATH="$work/bin:$PATH" FAKE_FA_WORK="$work" FAKE_FA_HOST=ra01 fagenrules --check)" = "/usr/sbin/fagenrules: No change" ] && grep -q 'fagenrules --load' "$work/calls/ra01" \
     && ok "  ... the rules loaded (fagenrules --load), compiled.rules as the files say" || bad "compiled.rules not rebuilt"
 check "  ... the report: changed, the stricter one refused - it blocks more while enforcing" \
-      's["What this run changed"]["rows"][0][1] == "changed" and "it blocks more, and fapolicyd is enforcing" in s["What this run changed"]["rows"][0][5]'
+      's["Trust and rules: what this run did"]["rows"][0][1] == "changed" and "it blocks more, and fapolicyd is enforcing" in s["Trust and rules: what this run did"]["rows"][0][5]'
 
 # ---- permissive: 1 -> 0, and its would-be block's trust entry ----------------------------------------------------
 T2="$(grep '^trust file: .*tool2' "$work/lines.txt")"
-run ra02 -e "{\"fapolicyd_rules_approved\": [\"$T2\", \"permissive: 1 -> 0\"]}"
+run ra02 -e "{\"fapolicyd_approved\": [\"$T2\", \"permissive: 1 -> 0\"]}"
 [ "$rc" = 0 ] && grep -q '^permissive = 0$' "$work/ra02/etc/fapolicyd.conf" && grep -q 'systemctl restart fapolicyd' "$work/calls/ra02" \
     && grep -q "/opt/app/tool2 " "$work/ra02/etc/trust.d/site-approved" \
     && ok "ra02: permissive = 0, fapolicyd restarted, the would-be block trusted first" || bad "ra02: rc $rc" 40
@@ -277,14 +294,14 @@ check "  ... the report: permissive no longer counted" '"permissive on" not in r
 
 # ---- fapolicyd fails after a rules change on a host where it ran: every file put back ----------------------------
 cp "$work/ra04/etc/rules.d/50-local.rules" "$work/ra04-before.rules"
-run ra04 -e '{"fapolicyd_rules_approved": ["remove rule: 50-local.rules: allow perm=execute all : dir=/home/*/bin/"]}'
+run ra04 -e '{"fapolicyd_approved": ["remove rule: 50-local.rules: allow perm=execute all : dir=/home/*/bin/"]}'
 [ "$rc" = 2 ] && same "$work/ra04-before.rules" "$work/ra04/etc/rules.d/50-local.rules" && [ "$(cat "$work/state/ra04.active")" = active ] \
     && ok "ra04: fapolicyd failed after the rules change - the file put back, the rules rebuilt, fapolicyd running (exit 2)" || bad "ra04: rc $rc, $(cat "$work/ra04/etc/rules.d/50-local.rules")" 40
-check "  ... the report: rolled back, why" 's["What this run changed"]["rows"][0][1] == "rolled back" and "every file put back" in s["What this run changed"]["rows"][0][5]'
+check "  ... the report: rolled back, why" 's["Trust and rules: what this run did"]["rows"][0][1] == "rolled back" and "every file put back" in s["Trust and rules: what this run did"]["rows"][0][5]'
 
 # ---- a line the job never gives: nothing changed ------------------------------------------------------------------
 cp "$work/ra04/etc/rules.d/50-local.rules" "$work/ra04-before.rules"
-run ra04 -e '{"fapolicyd_rules_approved": ["remove rule: 50-local.rules: allow perm=execute all : dir=/home/*/bin/ (ra04)", "rm -rf /"]}'
+run ra04 -e '{"fapolicyd_approved": ["remove rule: 50-local.rules: allow perm=execute all : dir=/home/*/bin/ (ra04)", "rm -rf /"]}'
 [ "$rc" = 2 ] && same "$work/ra04-before.rules" "$work/ra04/etc/rules.d/50-local.rules" && grep -q 'refused: a line approved is not one this job gives' "$work/out.txt" \
     && ok "a line the job never gives (and one copied with a host name): nothing changed (exit 2)" || bad "refused: rc $rc" 30
 if ls -d /tmp/*.fapolicyd-rules "${TMPDIR:-/tmp}"/*.fapolicyd-rules >/dev/null 2>&1; then bad "a way-back folder was left behind"; else ok "no way-back folder left behind"; fi

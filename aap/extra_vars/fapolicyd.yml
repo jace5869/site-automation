@@ -1,7 +1,7 @@
 # ==================================================================================================
-# Variables for the job template "fapolicyd and containers"
-#   playbook:    playbooks/fapolicyd_containers.yml
-#   credentials: Machine (with sudo)
+# Variables for the job template "fapolicyd"
+#   playbook:    playbooks/fapolicyd.yml
+#   credentials: Machine (with sudo); ACT model key with fapolicyd_act
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -15,93 +15,129 @@
 # ==================================================================================================
 ---
 ## The hosts: target (a group of this inventory) or the Limit
-# target: container_hosts
-## Denials since (ausearch -ts): recent (10 minutes), today, yesterday, this-week, boot
-# fapolicyd_container_since: today
-## The approved rules to add, each as the report's "Rules to approve" gives it - after your security approval.
-## Run in Check first. Empty (the default): read only.
-# fapolicyd_container_rules:
-#   - "allow perm=execute exe=/usr/bin/crun : path=/app/server"
-## Rules this job added, to take out
-# fapolicyd_container_rules_remove: []
+# target: app_servers
+## Blocks since (ausearch -ts): recent (10 minutes), today, yesterday, this-week, boot (the workflow's check: yesterday)
+# fapolicyd_since: today
+## Workflow 36's first template ("fapolicyd - check") only: hand each host's changes to the approval and fail on
+## purpose (NEEDS APPROVAL). Not on "fapolicyd - approved".
+# fapolicyd_workflow: true
+## ACT explains what fapolicyd blocked, in the report (the "ACT model key" credential on the template)
+# fapolicyd_act: true
+## By hand, without the workflow: the approved changes, each exactly as the report's "Changes to approve" gives it -
+## after your security approval. Run in Check first. Empty (the default): read only.
+# fapolicyd_approved:
+#   - "trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644"
+#   - "enable fapolicyd at boot (it is disabled)"
+#   - "permissive: 0 -> 1"
+#   - "restart fapolicyd (it is inactive)"
+#   - "trust file: /opt/app/tool size 51320 sha256 6f0c...e1"
+#   - "remove rule: 99-local.rules: allow perm=any all : dir=/usr/lib/"
+#   - "permissive: 1 -> 0"
 
-# ---- fapolicyd_containers ------------------------------------------------------------------------
-## The file this job owns - and only this one. 35: after the deny rules of 30-patterns (ld.so
-## tricks), before 40-bad-elf, 41-shared-obj, 42-trusted-elf and 90-deny-execute that deny a
-## container's untrusted files.
-# fapolicyd_container_rules_file: /etc/fapolicyd/rules.d/35-site-containers.rules
+# ---- fapolicyd -----------------------------------------------------------------------------------
+## fapolicyd's folder: fapolicyd.conf, fapolicyd.trust, trust.d, rules.d
+# fapolicyd_dir: /etc/fapolicyd
 
-## what fagenrules builds: the rules are checked there
-# fapolicyd_container_compiled: /etc/fapolicyd/compiled.rules
+## seconds fapolicyd may take to take a change (running, its new rules or trust)
+# fapolicyd_wait: 30
 
-## the rules file's owner, as the other rules.d files
-# fapolicyd_container_rules_owner: root
+# ---- fapolicyd_fix -------------------------------------------------------------------------------
+## FAPOLICYD - GETTING IT RUNNING (a part of playbooks/fapolicyd.yml, roles/fapolicyd;
+## docs/RUNBOOKS.md "fapolicyd"): why fapolicyd is down, or near its limits, on each host - trust
+## files it cannot read, their SELinux labels, db_max_size too small for the trust database, not
+## enabled at boot, not running (it starts permissive) - the fix for each as a line to approve; and,
+## once approved, those fixes made. roles/fapolicyd sets these three from its own:
+## fapolicyd_approved, fapolicyd_dir, fapolicyd_wait set by roles/fapolicyd: the fix lines of
+## fapolicyd_approved
+# fapolicyd_fix_approved: []
 
-## and its group
-# fapolicyd_container_rules_group: fapolicyd
+## set by roles/fapolicyd: fapolicyd_dir
+# fapolicyd_fix_dir: /etc/fapolicyd
 
-## The proposed rules. A file that is on the host at the path the audit log holds (a bind mount):
-## the narrowest rule - the file (path) or its folder (dir: one rule for every file there; never a
-## system folder), with the program that was denied (exe=..., narrower) or for any program (false).
-## path (the file) or dir (its folder)
-# fapolicyd_container_scope: path
+## read to see whether this fapolicyd sizes its database itself (db_max_size = auto)
+# fapolicyd_fix_binary: /usr/sbin/fapolicyd
 
-## the rule names the program denied (false: any program)
-# fapolicyd_container_rule_exe: true
+## The trust files' owner, group and modes come from the fapolicyd package (rpm); these only when
+## rpm gives none. the trust files' owner, when rpm gives none
+# fapolicyd_fix_owner: root
 
-## A file inside an image is not on the host at that path (the audit log holds the container's
-## path), and its host path changes at each pull of the image: its rule is container storage's
-## folder, for any program - allow perm=any all : dir=/var/lib/containers/storage/overlay/
-## (storage.conf's graphroot; a user's own rootless storage for a user's denial, which the note
-## warns about). false = a path rule as for a host file (it will match nothing).
-# fapolicyd_container_storage_rules: true
+## their group, when rpm gives none
+# fapolicyd_fix_group: fapolicyd
 
-## Review the rules files in place (rules.d/*.rules, fapolicyd's own left out) and list what to
-## tighten in the report: a wildcard (fapolicyd has none: the rule matches nothing), a system folder
-## or a user-writable folder opened to any program, a rule that allows everything, a repeated rule,
-## a rule for an RPM-owned file (trusted already), a file that sorts after the stock deny rules. The
-## job changes none of them: its own file only.
-# fapolicyd_container_review: true
+## a trust file's mode, when rpm gives none
+# fapolicyd_fix_file_mode: "0644"
 
-## What marks a denial as a container's (any one): an SELinux label on the program or the file, a
-## container program, a path in container storage, or a process in a podman container's cgroup
-## (while it runs). The labels: a regular expression on the program's and the file's SELinux labels.
-# fapolicyd_container_labels: '(^|:)(container_[a-z0-9_]*_t|spc_t)(:|$)'
+## the folders' mode, when rpm gives none
+# fapolicyd_fix_dir_mode: "0750"
 
-## The container programs (their base names): what they run or open is a container's.
-# fapolicyd_container_programs:
-#   - podman
-#   - crun
-#   - runc
-#   - conmon
-#   - buildah
-#   - skopeo
-#   - catatonit
-#   - netavark
-#   - aardvark-dns
-#   - pasta
-#   - slirp4netns
-#   - fuse-overlayfs
-#   - containerd
-#   - containerd-shim-runc-v2
-#   - dockerd
+## a trust file larger than this (MB) is listed for a person: every file in it is trusted
+# fapolicyd_fix_large_mb: 20
 
-## Container storage: regular expressions on the program's or the file's path.
-# fapolicyd_container_paths:
-#   - '^/var/lib/containers/'
-#   - '/\.local/share/containers/'
-#   - '^/run/containers/'
-#   - '^/run/user/[0-9]+/containers/'
-#   - '^/var/lib/docker/'
+## the proposed db_max_size: the estimate times this (where auto is not possible)
+# fapolicyd_fix_headroom: 1.5
 
-## the containers' names (podman ps, root's and each logged-in user's)
-# fapolicyd_container_names: true
+## fapolicyd's journal lines read, this boot
+# fapolicyd_fix_journal_lines: 400
 
-## at most this many groups per host (the most denied first)
-# fapolicyd_container_max: 200
+## roles/fapolicyd sets it from fapolicyd_wait
+# fapolicyd_fix_wait: 30
 
-## seconds for ausearch
-# fapolicyd_container_timeout: 120
+## seconds for each command the job reads with
+# fapolicyd_fix_timeout: 120
+
+# ---- fapolicyd_rules -----------------------------------------------------------------------------
+## FAPOLICYD - BLOCKS AND RULES (a part of playbooks/fapolicyd.yml, roles/fapolicyd;
+## docs/RUNBOOKS.md "fapolicyd"): what fapolicyd blocked on each host - or, permissive, would block
+## - and the change that lets each through; the rules files' clean-up; permissive mode on or off.
+## Each change is a line to approve; once approved, the job makes it. roles/fapolicyd sets these
+## four from its own: fapolicyd_approved, fapolicyd_since, fapolicyd_dir, fapolicyd_wait set by
+## roles/fapolicyd: the rules lines of fapolicyd_approved
+# fapolicyd_rules_approved: []
+
+## set by roles/fapolicyd: fapolicyd_since
+# fapolicyd_rules_since: today
+
+## set by roles/fapolicyd: fapolicyd_dir
+# fapolicyd_rules_dir: /etc/fapolicyd
+
+## the rules file (in rules.d) this job writes its allow rules to
+# fapolicyd_rules_own_rules: 36-site-approved.rules
+
+## the trust file (in trust.d) this job writes its trust entries to
+# fapolicyd_rules_own_trust: site-approved
+
+## rules files (in rules.d) reviewed, never changed (the old containers job's own)
+# fapolicyd_rules_never_edit: [35-site-containers.rules]
+
+## A clean-up that blocks more (a rule that opened too much, taken out) is made only while fapolicyd
+## is permissive: a program it would break shows as a would-be block, not as an outage. true: made
+## while it enforces too.
+# fapolicyd_rules_when_enforcing: false
+
+## A container's denial (as the containers job tells them apart): an SELinux label on the program or
+## the file, a container program, or a path in container storage.
+# fapolicyd_rules_container_labels: '(^|:)(container_[a-z0-9_]*_t|spc_t)(:|$)'
+
+## container programs
+# fapolicyd_rules_container_programs: [podman, crun, runc, conmon, buildah, skopeo, catatonit, containerd, containerd-shim-runc-v2, dockerd]
+
+## container storage
+# fapolicyd_rules_container_paths: ['^/var/lib/containers/', '/\.local/share/containers/', '^/run/containers/', '^/run/user/[0-9]+/containers/']
+
+## folders users can write: a file blocked there gets no trust entry (a person decides)
+# fapolicyd_rules_user_dirs: [/home/, /run/user/, /tmp/, /var/tmp/, /dev/shm/]
+
+## a file larger than this is not hashed: a person adds it
+# fapolicyd_rules_hash_max_mb: 512
+
+## at most this many block groups per host in the report
+# fapolicyd_rules_max: 200
+
+## roles/fapolicyd sets it from fapolicyd_wait
+# fapolicyd_rules_wait: 30
+
+## seconds for each command the job reads with
+# fapolicyd_rules_timeout: 120
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
@@ -312,3 +348,55 @@
 
 ## the kept report's greatest size, packed (a bigger one: its longest tables cut, said on the page)
 # report_web_copy_max_kb: 256
+
+# ---- site_act - usually in all.yml ---------------------------------------------------------------
+## ---- Which model ACT talks to -----------------------------------------------------------------
+## site_act_provider genai GenAI.mil (the default) asksage Ask Sage - RETIRED FOR NOW: do not pick
+## it (kept for when it returns) genai-beta the GenAI.mil beta proxy (preview models)
+## site_act_models the model to use FOR EACH provider, e.g. {genai: gemini-4-argon-withtools,
+## asksage: gpt-5.6-sol-gov} so the model follows whichever provider is picked. A provider not
+## listed uses ACT's own default model. site_act_urls the API URL for each provider, e.g. {asksage:
+## https://<host>/server/openai/v1/chat/completions}; a provider not listed uses ACT's default URL
+## site_act_model one model for this run, whatever the provider (e.g. a survey answer); empty =
+## site_act_models site_act_url one URL for this run; empty = site_act_urls site_act_ca a CA bundle
+## file ON THE HOSTS for the provider's TLS certificate (internal/DoD CA); empty = the host's system
+## trust store The API KEY never goes here: it comes from an AAP credential - "ACT model key" (GenAI
+## and Ask Sage keys) or "ACT GenAI beta key". ACT runs ON EACH HOST, so the hosts must be able to
+## reach the provider's URL (a proxy or firewall rule may be needed).
+# site_act_provider: genai
+
+## the model for each provider (see above): the model follows the provider picked
+# site_act_models: {genai: gemini-4-argon-withtools, asksage: gpt-5.6-sol-gov}
+
+## the API URL for each provider; a provider not listed uses ACT's default
+# site_act_urls: {}
+
+## one model for this run, whatever the provider (e.g. a survey answer); empty = site_act_models
+# site_act_model: ""
+
+## one URL for this run; empty = site_act_urls
+# site_act_url: ""
+
+## a CA bundle file ON THE HOSTS for the provider's certificate; empty = the host's trust store
+# site_act_ca: ""
+
+## Any other ACT environment settings (advanced; these win over the ones above), e.g. {HTTPS_PROXY:
+## "http://proxy.yoursite.mil:8080"}. See the top of vendor/act/act for the list. Every ACT job
+## streams the model's answer (ACT_STREAM=1), so a firewall or proxy idle timeout does not cut a
+## long answer ("connection reset by peer"); {ACT_STREAM: "0"} here turns that off.
+# site_act_env: {}
+
+## Seconds the model may take for ONE answer, retries after a provider hiccup included (ACT's
+## GENAI_TIMEOUT; ACT's own default, 90, is too short for a long analysis or a busy provider). Every
+## ACT job uses it: the runbooks' use_act, the VMware alarms and capacity analyses, service watch.
+# site_act_model_timeout: 600
+
+# ---- site_findings - usually in all.yml ----------------------------------------------------------
+## A host that cannot be reached (switched off, no network, ssh or WinRM refused, its login refused)
+## in the health checks, the certificate report and renewal, database health, the service watch and
+## troubleshoot: listed as NOT REACHED and left out, and the job is not failed for it. It still
+## counts as checked-for, so the ServiceNow step opens its "no result" ticket. When NO host is
+## reached (a wrong or expired machine credential looks like this) the job fails. true = a host not
+## reached fails the job, as before. Patching, fixes, deploys and the Windows connection test always
+## fail for it.
+# site_unreachable_fails: false

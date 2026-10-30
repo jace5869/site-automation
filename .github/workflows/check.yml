@@ -51,7 +51,7 @@ jobs:
           python tests/test_cert_inventory.py
           python tests/test_net_certs.py
           python tests/test_ontap.py
-          python tests/test_fapolicyd_containers.py
+          python tests/test_fapolicyd_read.py
           python tests/test_fapolicyd_fix.py
           python tests/test_fapolicyd_rules.py
           python tests/test_ad.py
@@ -161,15 +161,11 @@ jobs:
         run: |
           bash tests/fapolicyd/run_fapolicyd_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_test.sh
-      - name: fapolicyd and containers - the denials, the rules approved added, a load that fails put back (fake rpm/systemctl/ausearch/fagenrules; current ansible-core and 2.16)
-        run: |
-          bash tests/fapolicyd/run_fapolicyd_containers_test.sh
-          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_containers_test.sh
-      - name: fapolicyd fix - why it is down, the fixes approved made, fapolicyd broken after a fix put back (fake rpm/systemctl/journalctl/restorecon; current ansible-core and 2.16)
+      - name: fapolicyd - getting it running, the fixes approved made, fapolicyd broken after a fix put back (fake rpm/systemctl/journalctl/restorecon; current ansible-core and 2.16)
         run: |
           bash tests/fapolicyd/run_fapolicyd_fix_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_fix_test.sh
-      - name: fapolicyd rules - blocks and would-be blocks, trust entries and rules approved, the rules files cleaned up, a change that breaks fapolicyd put back (fakes; current ansible-core and 2.16)
+      - name: fapolicyd - blocks and would-be blocks, trust entries and rules approved, the rules files cleaned up, the workflow, ACT, a change that breaks fapolicyd put back (fakes; current ansible-core and 2.16)
         run: |
           bash tests/fapolicyd/run_fapolicyd_rules_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/fapolicyd/run_fapolicyd_rules_test.sh

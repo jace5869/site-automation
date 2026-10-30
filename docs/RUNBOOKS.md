@@ -160,7 +160,7 @@ the broken trust with the domain is `network:secure-channel` (the Windows networ
 
 | Finding | Means | Usually |
 |---|---|---|
-| `fapolicyd is inactive` | application allow-listing is off | `systemctl start fapolicyd`; its log says why it stopped - the [fapolicyd fix](#fapolicyd-fix-playbooksfapolicyd_fixyml) job finds why and fixes it after approval |
+| `fapolicyd is inactive` | application allow-listing is off | `systemctl start fapolicyd`; its log says why it stopped - the [fapolicyd](#fapolicyd-playbooksfapolicydyml) job finds why and fixes it after approval |
 | `fapolicyd is in permissive mode` | it logs but blocks nothing | `permissive = 0` in `/etc/fapolicyd/fapolicyd.conf` |
 | `N file(s) no longer match the fapolicyd trust database` | files changed outside RPM | `fapolicyd-cli --update`, or re-add the file's trust entry |
 | `N fapolicyd denial(s) since yesterday - top: /usr/bin/bash -> /opt/app/tool` | it blocked programs | a legitimate program needs a trust entry (`fapolicyd-cli --file add <path>`), after review |
@@ -524,7 +524,7 @@ Playbook to this one.
 | The report shows | Means | Do |
 |---|---|---|
 | a host with denials, ACT's analysis and `ACT proposes (for your security approval): fapolicyd-cli --file add ...` | fapolicyd blocked a program; ACT says whether it looks legitimate and the narrowest trust entry or rule | review it with your ISSO - a trust entry or a rule is a security-control change - then apply it by hand |
-| `fapolicyd not running` (red) | application allow-listing is off | the [fapolicyd fix](#fapolicyd-fix-playbooksfapolicyd_fixyml) job: why, and the fix to approve |
+| `fapolicyd not running` (red) | application allow-listing is off | the [fapolicyd](#fapolicyd-playbooksfapolicydyml) job: why, and the fix to approve |
 | `auditd` not active | denials are not recorded: the job sees none | `systemctl start auditd` |
 | *No denials* while things are blocked | the deny rules do not audit (`deny` or `deny_syslog` instead of `deny_audit`) | `deny_audit` in the rules (the RHEL default rules use it) |
 | *Not read* | the host could not be reached | as for any job: the inventory, the credential |
@@ -540,232 +540,80 @@ hand, and a model your team has no access to fails with *HTTP 403: Your team doe
 A template whose Playbook is `vendor/act/ansible/playbooks/fapolicyd_denials.yml` still has that problem: change it
 to `playbooks/fapolicyd_denials.yml`.
 
-## fapolicyd and containers (`playbooks/fapolicyd_containers.yml`)
+## fapolicyd (`playbooks/fapolicyd.yml`)
 
-What fapolicyd blocked that a **container** caused, the allow rule for each, a review of the rules files already in
-place, and - once approved - the rules added. A container's files are not in fapolicyd's trust database (RPM fills
-it from the host's packages), so a program or a library in a container image can be denied. No ACT: the job reads,
-proposes, and adds only the rules you list.
+fapolicyd in one pass on each host, one report, one list of changes to approve - and, every morning, [workflow
+36](WORKFLOWS_AND_SCHEDULES.md#36-fapolicyd-with-an-approval-daily): the check, an approval step in AAP, the changes
+made. It reads (a Check run too), proposes one line per change, and makes only the lines approved.
 
-**Two kinds of rule.** The audit log holds the path *as the container saw it*. For a file bind-mounted from the
-host at the same path (the job checks: the file is there, with the record's inode), the rule is the narrowest one,
-that program and that file: `allow perm=execute exe=/usr/bin/crun : path=/srv/app/server`. For a file inside an
-image, no rule can name it - `/usr/lib/libapp.so.1` in the log is the container's path, which names nothing (or
-another file) on the host, and the image's layer under `/var/lib/containers/storage/overlay/` changes at each pull -
-so the rule is container storage's folder, for any program: `allow perm=any all :
-dir=/var/lib/containers/storage/overlay/` (storage.conf's `graphroot`; `volumes/` when the file is in a volume;
-Docker's `overlay2/`; a user's own rootless storage for a user's denial - the note warns: anything they put there
-may then run, so on a STIG host prefer rootful containers, as quadlet units). That is the one broad rule containers
-need; the host's own folders (`/usr/lib/`, `/usr/lib64/` ...) never need one - RPM-owned files there are trusted
-already, and a folder rule would allow untrusted files put there too. `fapolicyd_container_storage_rules: false` goes
-back to a path rule for every file (it matches nothing for a file inside an image).
+**What it looks at, in this order:**
 
-**A container's denial** is one with any of: a container SELinux label on the program or the file (`container_t`,
-`container_file_t`, `spc_t` ... - `fapolicyd_container_labels`), a container program (`crun`, `conmon`, `podman` ...
-- `fapolicyd_container_programs`), a path in container storage (`/var/lib/containers/`, `~/.local/share/containers/`
-- `fapolicyd_container_paths`), or a process still in a podman container's cgroup (its name is shown). The other
-denials are counted per host and left to the *fapolicyd denials* job.
+1. **What keeps fapolicyd down.**
+   - Trust files it cannot read: `fapolicyd.trust`, `trust.d` and each file in it, against the owner, group and mode
+     the fapolicyd package gives its own (`root:fapolicyd`, `0644`, folders `0750`). `fapolicyd-cli --file add` under a
+     STIG umask of 077 leaves `root:root 0600`.
+   - SELinux labels not the policy's (`restorecon -n`).
+   - `db_max_size` too small: fapolicyd's own journal lines, or - while it is down - an estimate from the trust files and
+     the RPM files. `auto` where fapolicyd 1.4+ sizes its database itself (RHEL 9), else a number (RHEL 8). The new value
+     is checked with `fapolicyd-cli --check-config` before any restart.
+   - Not enabled at boot: `enable fapolicyd at boot (it is disabled)`.
+   - Not running: `permissive: 0 -> 1` and `restart fapolicyd (it is ...)` - it starts **blocking nothing**, logging what
+     it would block.
+2. **What it blocked - or, permissive, would block** (since `fapolicyd_since`).
+   - A file on the host: `trust file: <file> size <n> sha256 <hash>` - that file as it is now, added to `trust.d/site-approved`,
+     set to the package's `root:fapolicyd 0644`. A changed file is a new line.
+   - A container's file - a container's SELinux label, a container program (`crun`, `conmon`, `podman` ...), a path in
+     container storage, or a process in a podman container's cgroup: `allow rule: ...` into `rules.d/36-site-approved.rules`
+     - that program and that file for a file bind-mounted from the host, container storage's folder (`allow perm=any all :
+     dir=/var/lib/containers/storage/overlay/`) for a file inside an image, whose path in the audit log names nothing on
+     the host. That rule lets anything in container storage run: prefer rootful containers (quadlet units) on a STIG host.
+   - For a person: a file in a folder users can write, an RPM-owned file (the trust database is out of date, or `rpm -V`
+     says it changed), a file already trusted that changed since.
+3. **The rules files' clean-up** - `remove rule: <file>: <rule>` (commented out, marked, never deleted) and
+   `rename rules file: <a> -> <b>`:
+   - no change in what runs: a repeated rule, a wildcard (`dir=/home/*/bin/` - fapolicyd has none, it matches nothing),
+     a rule for an RPM-owned file;
+   - **blocks more** - a rule that allows everything, or a system folder (`/usr/lib/`) or user folder opened to any
+     program; a renamed file that holds deny rules: made **only while fapolicyd is permissive** (or
+     `fapolicyd_rules_when_enforcing: true`), and never beside `permissive: 1 -> 0`;
+   - lets more through: a file that sorts after `41-shared-obj.rules`, renamed `39-...`.
+   fapolicyd's own files and `35-site-containers.rules` are reviewed, never changed.
+4. **Back to enforcing:** `permissive: 1 -> 0`, on a quiet day.
 
-**The template:** Playbook `playbooks/fapolicyd_containers.yml`; your Linux inventory; credential **Machine** (with
-sudo: the audit log and the rules are root's). Variables: `target` (or a Limit of hosts - no `localhost` needed),
-`fapolicyd_container_since` (`recent`, `today` the default, `yesterday`, `this-week`, `boot`). Enable **Check**
-on launch - the dry run shows what would change.
+After the changes, fapolicyd is restarted, or its rules (`fagenrules --load`) or trust (`fapolicyd-cli --update`)
+reloaded, and checked in the same go on the host - once it says it took them (*Ruleset identity*, *Updated*), running,
+and a program (python) starting twice. **Running before and not after - or a program no longer starts: everything put
+back** (owner, mode, label, fapolicyd.conf, the rules and trust files) and fapolicyd restarted. Down before and still
+down: the fixes stay, its journal in the report, the host fails after the report. When getting fapolicyd running fails
+on a host (put back, still down, refused), the trust and rules changes approved for it wait - they come again once it runs. Then `compiled.rules` is checked
+against the rules files (`fagenrules --check`).
 
-**Adding the rules:**
+**ACT** (`fapolicyd_act: true`, the *ACT model key* credential): ACT explains what fapolicyd blocked, in the report, by
+its own headings - evidence only, it runs nothing. The **fapolicyd denials** job (above) remains for that alone.
 
-1. Run it. The report's **Rules to approve** lists one rule per denial - that program, that file, or container
-   storage's folder for a file inside an image - and the hosts it was seen on, e.g.
-   `allow perm=execute exe=/usr/bin/crun : path=/srv/app/server`.
-2. Take them to your security approval (the ISSO): each is a security-control change. A rule lets that program use
-   that file on the host, inside a container or not.
-3. Put the approved ones in the template's Variables, exactly as the report gave them:
-   ```yaml
-   fapolicyd_container_rules:
-     - "allow perm=execute exe=/usr/bin/crun : path=/app/server"
-   ```
-4. Run it in **Check**: the job says `would change - added: ...` for each host. Then run it for real, with a Limit
-   if only some hosts need them. Every host of the run gets every rule listed.
-5. The rules go into a file of their own, `/etc/fapolicyd/rules.d/35-site-containers.rules` - after the ld.so deny
-   rules of `30-patterns`, before `40-bad-elf` ... `90-deny-execute` that deny a container's untrusted files - and
-   are loaded with `fagenrules --load`. The job then checks fapolicyd is running and the rules are in
-   `/etc/fapolicyd/compiled.rules`. If not: the file is put back as it was, loaded again (fapolicyd started if it
-   stopped), and the host fails after the report.
-6. Leave the rules in the Variables: a run that finds them in the file changes nothing. To take one out:
-   `fapolicyd_container_rules_remove: ["<the rule>"]`.
+**The templates:** see [workflow 36](WORKFLOWS_AND_SCHEDULES.md#36-fapolicyd-with-an-approval-daily) - *fapolicyd -
+check* and *fapolicyd - approved*, both `playbooks/fapolicyd.yml`, your Linux inventory, the *Machine* credential (sudo).
+By hand, without the workflow: one template of the same playbook, **Check** on launch, the approved lines in
+`fapolicyd_approved` exactly as the report gives them, a Check run, then for real. A line is made only on a host where
+this run proposes it again; a line the job never gives (or one copied with a host name after it) changes nothing anywhere.
 
-Only plain allow rules are written (`allow` / `allow_audit` / `allow_syslog`, known attributes, full paths, no
-wildcard - fapolicyd has none); one that is not - or `allow perm=any all : all`, which turns fapolicyd off, or
-`dir=/`, or a system folder (`dir=/usr/lib/`) for any program - writes nothing on any host.
-`fapolicyd_container_scope: dir` proposes a host file's folder instead of the file (one rule for every file there;
-never a system folder such as `/usr/lib/`); `fapolicyd_container_rule_exe: false` leaves the program out (any
-program may then use the file). The job never touches the other rules files.
-
-**The rules in place.** The report's **Rules in place: what to tighten** reads every file of `rules.d` on each
-host (fapolicyd's own files left out) and lists what weakens the policy or does nothing - for you to change by
-hand, with your security approval. On a STIG host (`fapolicyd` in deny-all, permit-by-exception mode) these are
-what an auditor flags:
-
-| Finding | Means | Do |
-|---|---|---|
-| *allows everything* (red) | `allow ... all : all` or `dir=/`: fapolicyd is off for that permission | take it out |
-| *fapolicyd has no wildcards* (amber) | `dir=/home/*/...`, `/usr/lib/python*/` - fapolicyd matches the `*` literally: the rule does nothing | name each folder; for a user's rootless storage, prefer rootful containers |
-| *any program may then run any untrusted file under a system folder* (amber) | `allow perm=any all : dir=/usr/lib/` and the like; RPM-owned files there are trusted already | take it out; a pip-installed package goes into the trust database (`fapolicyd-cli --file add`), or gets a rule for its interpreter only |
-| *any user who can write there* (amber) | a folder under `/home/`, `/tmp/`, `/run/user/` for any program | name the program, or take it out |
-| *sorts after 41-shared-obj.rules* (amber) | the file's name puts it after the stock rules that deny untrusted libraries (41) and programs (43): its allow rules are never reached | rename it `3x-...rules` (the job's own is `35-site-containers.rules`) and `fagenrules --load` |
-| *repeats line N* (blue) | the same rule twice | take one out |
-| *RPM-owned ... trusted already* (blue) | a rule for a file the trust database already holds | take it out |
-
-`fapolicyd_container_review: false` leaves the review out.
+**Bringing a host back without an outage:** the workflow does it by itself, one morning at a time - the first approval
+gets fapolicyd running permissive (its trust files, `db_max_size`, enabled, started); the next ones let through what it
+would block and clean up the rules; on the first quiet day it offers `permissive: 1 -> 0`. A RHEL STIG requires
+`permissive = 0`: the report shows a permissive host in red. The audit log must keep a day (`ls -l /var/log/audit/`;
+`num_logs`, `max_log_file` in `/etc/audit/auditd.conf`).
 
 | The report shows | Means | Do |
 |---|---|---|
-| *Container denials*: a program, the file it was denied, `13. deny_audit perm=execute all : all`, *File on: the host* | a host file (a bind mount) the container uses is not trusted | its own rule under *Rules to approve*, after approval |
-| *File on: container storage* | the file is inside an image: its path in the log is the container's | the storage rule under *Rules to approve* (one for every image on the host) |
-| *By hand - ...: the path has a space ...* | a rule cannot hold that path | write the rule yourself, in your own rules file |
-| *The rules: ... failed* (red) | the rules did not load, or fapolicyd stopped after it | the job put the file back; `journalctl -u fapolicyd` says why |
-| *not possible: no rules.d or no fagenrules* | fapolicyd before 1.1 (one `fapolicyd.rules` file) | add the rule by hand above the deny rules |
-| *refused* | a rule asked for is not a plain allow rule | correct it in `fapolicyd_container_rules` |
-| a rule still proposed after it was added | the denials are from before it was added | `fapolicyd_container_since: recent` reads only the last 10 minutes |
+| *Would be blocked (permissive)* | fapolicyd let it through and logged it | approve its change before enforcing |
+| *rolled back* (red) | fapolicyd failed after the change, or a program no longer started: all put back | its journal in the report |
+| *still down* (red) | it was down, the fixes are made, it still does not start | its journal; the next cause |
+| *refused* | a line the job never gives, `auto` where fapolicyd cannot, or a change that blocks more while enforcing | correct the line, or approve permissive first |
+| *Approved, made on no host* | made already, outside the Limit, a file that changed since, or not the report's exact line | nothing - or copy the line again |
+| a rule's number without its text | the rules changed since that block | read the rule from the time of the block |
 
-**All settings** of this job, with their defaults: [fapolicyd_containers](VARIABLES_REFERENCE.md#fapolicyd_containers).
-
-## fapolicyd fix (`playbooks/fapolicyd_fix.yml`)
-
-Why fapolicyd is down, or near its limits, on each host - and, once approved, the fix. The job reads (a Check run
-too), proposes one line per fix, and changes only the lines you approve. No ACT.
-
-**What it looks at:**
-
-- **Trust files fapolicyd cannot read.** `fapolicyd.trust`, the `trust.d` folder and each file in it, and
-  `/etc/fapolicyd`, against the owner, group and mode the fapolicyd package gives its own (`rpm -q --qf ... fapolicyd`:
-  `root:fapolicyd`, `0644` files, `0750` folders on RHEL 8 and 9). A file the fapolicyd user (`uid`/`gid` in
-  `fapolicyd.conf`) cannot read - `root:root 0600`, as `fapolicyd-cli --file add` leaves it under a STIG umask of 077 -
-  or that anyone but root may write. fapolicyd's own *Cannot read ... (Permission denied)* is in the why.
-- **SELinux labels** not the policy's (`restorecon -R -n -v /etc/fapolicyd`): a trust file copied in from `/tmp`.
-- **db_max_size** too small for the trust database: fapolicyd's own words in its journal (*db_max_size needs to be
-  increased*, *Trust database at 92% capacity*), or - while fapolicyd is down - the estimate (the trust files' size
-  and the RPM files, about twice that in the database) over `db_max_size`; the new value is checked with
-  `fapolicyd-cli --check-config` before any restart. The fix is `auto` where fapolicyd sizes its database itself (1.4 and
-  later: RHEL 9), else a number (RHEL 8's fapolicyd 1.3; its default is 50 MB, RHEL 9's 100).
-- **fapolicyd not running** - its restart, a line of its own; and `permissive: 0 -> 1` beside it, to start it without
-  blocking anything: it logs what it would block, and the [fapolicyd rules](#fapolicyd-rules-playbooksfapolicyd_rulesyml)
-  job turns that into changes to approve, then back to enforcing (`permissive: 1 -> 0`).
-- **For a person** (never changed): a trust file over 20 MB (`fapolicyd_fix_large_mb`). Every file listed in it is
-  trusted, the database must hold it, and fapolicyd reads it at each start: check what wrote it and whether all of it
-  is needed.
-
-**The template:** Playbook `playbooks/fapolicyd_fix.yml`; your Linux inventory; credential **Machine** (with sudo).
-Variables: `target` (or a Limit of hosts - no `localhost` needed). Enable **Check** on launch.
-
-**Fixing:**
-
-1. Run it. The report's **Fixes to approve** has one line per fix (copy each line as it is: one with a host name after
-   it is refused), e.g.
-   `trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644`,
-   `db_max_size: 50 -> 200`, `restart fapolicyd (it is failed)`; **Why each fix** says why.
-2. Take them to your security approval (the ISSO): fapolicyd is a security control.
-3. Put the approved ones in the template's Variables, exactly as the report gave them. A `db_max_size` line may end in
-   your own number:
-   ```yaml
-   fapolicyd_fix_approved:
-     - "trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644"
-     - "db_max_size: 50 -> 400"
-     - "restart fapolicyd (it is failed)"
-   ```
-4. Run it in **Check**: the job says `would change - made: ...`. Then for real, with a Limit if only some hosts.
-5. A line is made only on a host where this run proposes it again - the state it was approved for. Approved again once
-   fixed, it is *not proposed here* and nothing changes. A line the job never gives changes nothing on any host.
-6. After the fixes: fapolicyd restarted (its restart line approved, or `db_max_size` changed while it ran) or its trust
-   reloaded (`fapolicyd-cli --update`), and checked in the same go on the host - running, and a program (python) still
-   starts. **Running before and not after - or a program no longer starts: everything put back** (owner, mode, label,
-   `fapolicyd.conf`) and fapolicyd restarted. Down before and still down: the fixes stay, and fapolicyd's journal after
-   them is in the report. Down and not approved for a restart: the fixes are made, fapolicyd is left as it was.
-
-| The report shows | Means | Do |
-|---|---|---|
-| *rolled back* (red) | fapolicyd ran before and not after the fix (or denied a program): all put back | its journal in the report says why |
-| *still down* (red) | it was down, the fixes are made, it still does not start | the journal lines in the report; the next cause |
-| *refused* | a line is not one this job gives, or `auto` where fapolicyd cannot size its database | correct `fapolicyd_fix_approved` |
-| *Not proposed here*, *Approved, made on no host* | approved, but no host of the run has it (now): fixed already, outside the Limit, or not the report's exact line | nothing - or copy the line again |
-| *a large trust file* | every file in it is trusted | with the system's owner: is all of it needed? |
-
-The job does not clean the trust database or remove trust entries: what a site trusts is its own decision, made by
-hand (`fapolicyd-cli --file delete`, then `fapolicyd-cli --update`).
-
-**All settings** of this job, with their defaults: [fapolicyd_fix](VARIABLES_REFERENCE.md#fapolicyd_fix).
-
-## fapolicyd rules (`playbooks/fapolicyd_rules.yml`)
-
-What fapolicyd blocked on each host - or, permissive, **would** block - the change that lets each through, the clean-up
-of the rules files, and permissive mode on or off. The job reads (a Check run too), proposes one line per change, and
-makes only the lines you approve. No ACT.
-
-**Automated:** [workflow 36](WORKFLOWS_AND_SCHEDULES.md#36-fapolicyd-rules-with-an-approval-daily), every morning - the
-check reads, an AAP approval step, then the changes made, each host's own; and `permissive: 1 -> 0` on the first quiet
-day. By hand, as below.
-
-**Bringing fapolicyd back without an outage** (a host where it was down, or never enforced):
-
-1. [fapolicyd fix](#fapolicyd-fix-playbooksfapolicyd_fixyml): approve its fixes, `permissive: 0 -> 1` and the restart.
-   fapolicyd runs and blocks nothing: it logs what it would block.
-2. Let the host work - a day, its containers restarted, its scheduled jobs run, a reboot if you can.
-3. **fapolicyd rules** with `fapolicyd_rules_since: yesterday` (or `this-week`): approve the trust entries and rules it
-   proposes for what would have been blocked, and the rules clean-up. (Workflow 36 does this every morning.)
-4. Run it again. When no new would-be block shows, approve `permissive: 1 -> 0`: fapolicyd enforces. (Workflow 36
-   proposes it itself on the first quiet day.) A RHEL STIG requires
-   `permissive = 0` - the report shows a permissive host in red; keep the window short and agreed with your ISSO.
-
-**What it proposes:**
-
-| Line | For | What it does |
-|---|---|---|
-| `trust file: <file> size <n> sha256 <hash>` | a file on the host that was blocked (not RPM-owned, not in a folder users can write) | that file, **as it is now**, added to the job's own trust file `trust.d/site-approved` (`fapolicyd-cli --file add`), set to the package's `root:fapolicyd 0644` - under a STIG umask fapolicyd-cli leaves it `0600`, unreadable to fapolicyd. A changed file is a new line: an approval is for that content |
-| `allow rule: <rule>` | a container's file (as the [containers](#fapolicyd-and-containers-playbooksfapolicyd_containersyml) job tells them apart) | the rule into the job's own rules file `rules.d/36-site-approved.rules` |
-| `remove rule: <file>: <rule>` | the rules files' clean-up | the rule commented out in its file, marked `# removed by site-automation (fapolicyd rules job, approved DATE)` |
-| `rename rules file: <a> -> <b>` | a file that sorts after `41-shared-obj.rules` | renamed `39-...`: its allow rules are reached before the stock deny rules |
-| `permissive: 1 -> 0` / `0 -> 1` | permissive on (a STIG finding) / blocks while enforcing | fapolicyd.conf, then a restart |
-
-The clean-up, and what each does to what runs:
-
-- **No change in what runs** - a rule repeated (the later copy), a wildcard (`dir=/home/*/bin/`: fapolicyd has none, the
-  rule matches nothing), a rule for an RPM-owned file (trusted already), a line fapolicyd does not read.
-- **Blocks more** - a rule that allows everything, a system folder (`/usr/lib/`) or a user-writable folder opened to any
-  program. Made **only while fapolicyd is permissive** (`fapolicyd_rules_when_enforcing: true` to make them anyway): a
-  program it breaks then shows as a would-be block, not as an outage.
-- **Lets more through** - the file renamed before the stock deny rules; when the file holds deny rules too, they are
-  reached earlier as well: **blocks more**, permissive only.
-
-A change that blocks more is refused in a run that also approves `permissive: 1 -> 0`: make it while permissive, watch
-for would-be blocks, enforce in a later run.
-
-fapolicyd's own rules files, and `35-site-containers.rules` (the containers job's: `fapolicyd_rules_never_edit`), are
-reviewed and never changed: their findings are under **For a person**. So is a blocked file in a folder users can write
-(`/home`, `/tmp` ... - move it to `/opt` first), an RPM-owned file (the trust database is out of date, or the file no
-longer matches its package: `rpm -V`), and a file already trusted that changed since.
-
-**The template:** Playbook `playbooks/fapolicyd_rules.yml`; your Linux inventory; credential **Machine** (with sudo).
-Variables: `target` (or a Limit of hosts - no `localhost` needed), `fapolicyd_rules_since`. Enable **Check** on launch.
-
-**Making changes:** as for the fix job - put the approved lines in `fapolicyd_rules_approved` exactly as the report gave
-them, a Check run, then for real. A line is made only on a host where this run proposes it again. After them: the rules
-loaded (`fagenrules --load`), the trust reloaded (`fapolicyd-cli --update`) or fapolicyd restarted (permissive changed),
-checked in the same go on the host - once fapolicyd says it took them (its *Ruleset identity* or *Updated* line; fapolicyd
-1.3 logs nothing for rules, so the job waits `fapolicyd_rules_wait`), running, and a program (python) starting twice; then `compiled.rules` checked against
-the rules files (`fagenrules --check`). **Running before and not after - or a program no longer starts: every file put
-back** (rules files, the trust file, fapolicyd.conf), the rules loaded as they were, fapolicyd restarted.
-
-| The report shows | Means | Do |
-|---|---|---|
-| *Would be blocked (permissive)* | fapolicyd let it through and logged it | approve its change before `permissive: 1 -> 0` |
-| *rolled back* (red) | fapolicyd failed after the change: all put back | its journal in the report |
-| *refused* - *it blocks more, and fapolicyd is enforcing* | a clean-up that blocks more, while enforcing | approve `permissive: 0 -> 1` first, or set `fapolicyd_rules_when_enforcing: true` |
-| *Approved, made on no host* | made already, outside the Limit, or a file that changed since | nothing - or copy the line again |
-| a rule's number without its text | the rules changed since that block: its number may point at another rule now | read the rule from the time of the block |
-
-Without the rule's number in the audit record (older kernels, RHEL 8), every audited allow while permissive counts as a
-would-be block: an `allow_audit` rule's allows show there too.
-
-**All settings** of this job, with their defaults: [fapolicyd_rules](VARIABLES_REFERENCE.md#fapolicyd_rules).
+**All settings**, with their defaults: [fapolicyd](VARIABLES_REFERENCE.md#fapolicyd), and the advanced ones of its two
+parts, [fapolicyd_fix](VARIABLES_REFERENCE.md#fapolicyd_fix) and [fapolicyd_rules](VARIABLES_REFERENCE.md#fapolicyd_rules).
 
 ## Certificate report (`playbooks/cert_report.yml`)
 

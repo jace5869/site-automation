@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Unit tests for fapolicyd and containers (playbooks/fapolicyd_containers.yml): the audit log read
-(roles/fapolicyd_containers/library/site_fapolicyd_containers.py), what makes a denial a container's, the rule
-proposed for it, the checks of a rule asked for, the rules file's new list and the report
+"""Unit tests for how the fapolicyd jobs read (plugins/module_utils/site_fapolicyd.py): the audit log, what makes a
+denial a container's, the rule proposed for it, the rules files' review; and ACT's answer in the denials report
 (plugins/filter/fapolicyd_filters.py).
-    python3 tests/test_fapolicyd_containers.py"""
+    python3 tests/test_fapolicyd_read.py"""
 import os
 import re
 import sys
@@ -11,7 +10,6 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "plugins", "filter"))
-sys.path.insert(0, os.path.join(HERE, "..", "roles", "fapolicyd_containers", "library"))
 import importlib.util  # noqa: E402
 _spec = importlib.util.spec_from_file_location("ansible.module_utils.site_fapolicyd",
                                                os.path.join(HERE, "..", "plugins", "module_utils", "site_fapolicyd.py"))
@@ -19,7 +17,7 @@ _sf = importlib.util.module_from_spec(_spec)
 sys.modules["ansible.module_utils.site_fapolicyd"] = _sf
 _spec.loader.exec_module(_sf)
 import fapolicyd_filters as ff  # noqa: E402
-import site_fapolicyd_containers as fc  # noqa: E402
+fc = _sf
 
 # ausearch -m FANOTIFY -i, as RHEL 9 prints it: a container's program denied, a library a container opened, a host
 # program (not a container's), and a path relative to its CWD
@@ -185,107 +183,6 @@ class Review(unittest.TestCase):
         self.assertNotIn(("35-site-containers.rules", 0), by)
         self.assertEqual(fc.review_rules([], owned), [])
         self.assertEqual(fc.review_rules([("30-site.rules", "allow perm=execute exe=/usr/bin/crun : path=/srv/app/server\n")], owned), [])
-
-
-class Rules(unittest.TestCase):
-    def test_rule_problem(self):
-        ok = ["allow perm=execute exe=/usr/bin/crun : path=/app/server", "allow perm=open exe=/app/server : dir=/opt/app/lib/",
-              "allow_audit perm=any uid=0 : ftype=application/x-executable", "allow perm=execute exe=/usr/bin/crun : all"]
-        for r in ok:
-            self.assertEqual(ff.fapolicyd_rule_problem(r), "", r)
-        self.assertIn("not an allow rule", ff.fapolicyd_rule_problem("deny perm=any all : all"))
-        self.assertIn("turn fapolicyd off", ff.fapolicyd_rule_problem("allow perm=any all : all"))
-        self.assertIn("every file", ff.fapolicyd_rule_problem("allow perm=any exe=/x : dir=/"))
-        self.assertIn("end with /", ff.fapolicyd_rule_problem("allow perm=any exe=/x : dir=/opt"))
-        self.assertIn("full path", ff.fapolicyd_rule_problem("allow perm=any exe=crun : path=/a"))
-        self.assertIn("not an attribute", ff.fapolicyd_rule_problem("allow perm=any colour=red : path=/a"))
-        self.assertIn("line break", ff.fapolicyd_rule_problem("allow perm=any exe=/x : path=/a\nallow perm=any all : all"))
-        self.assertIn("wildcard", ff.fapolicyd_rule_problem("allow perm=any all : dir=/home/*/.local/share/containers/storage/"))
-        self.assertIn("system folder", ff.fapolicyd_rule_problem("allow perm=any all : dir=/usr/lib/"))
-        self.assertIn("system folder", ff.fapolicyd_rule_problem("allow perm=open all : dir=/usr/lib/python3.9/site-packages/"))
-        self.assertEqual(ff.fapolicyd_rule_problem("allow perm=open exe=/usr/bin/python3.9 : dir=/usr/lib/python3.9/site-packages/"), "")
-        self.assertEqual(ff.fapolicyd_rule_problem("allow perm=any all : dir=/var/lib/containers/storage/overlay/"), "")
-
-    def test_plan(self):
-        a, b, c = ("allow perm=execute exe=/usr/bin/crun : path=/app/%s" % x for x in "abc")
-        p = ff.fapolicyd_rules_plan([a, b], [c, "  " + b.replace(" ", "  ")], [a])
-        self.assertEqual((p["rules"], p["added"], p["removed"], p["changed"]), ([b, c], [c], [a], True))
-        self.assertFalse(ff.fapolicyd_rules_plan([a], [a], [])["changed"])
-        bad = ff.fapolicyd_rules_plan([a], [c, "allow perm=any all : all"], [a])
-        self.assertEqual((bad["rules"], bad["added"], bad["removed"], bad["changed"], len(bad["bad"])), ([a], [], [], False, 1))
-
-    def test_file(self):
-        text = ff.fapolicyd_rules_file(["allow perm=execute exe=/usr/bin/crun : path=/app/a"])
-        self.assertTrue(text.startswith("# Managed by site-automation"))
-        self.assertTrue(text.endswith("allow perm=execute exe=/usr/bin/crun : path=/app/a\n"))
-
-
-class Report(unittest.TestCase):
-    def test_report(self):
-        g = {"exe": "/usr/bin/crun", "path": "/app/server", "perm": "execute", "count": 2, "last": "10/27/2026 08:05:00", "rule_no": "13",
-             "rule": "deny_audit perm=execute all : all", "containers": ["web01"], "why": ["container SELinux label"],
-             "proposal": "allow perm=execute exe=/usr/bin/crun : path=/app/server", "note": ""}
-        h1 = {"_fc": {"state": "read", "error": "", "active": "active", "auditd": "active", "rules_d": True, "fagenrules": True,
-                      "groups": [g], "others": ["/usr/bin/bash -> /opt/tool/run x1"], "counts": {"other": 1}, "managed": []}}
-        h2 = dict(h1, _fc=dict(h1["_fc"], groups=[dict(g, count=1)], others=[]))
-        h3 = {"_fc": {"state": "read", "error": "", "active": "inactive", "auditd": "active", "rules_d": True, "fagenrules": True,
-                      "groups": [], "others": [], "managed": []}}
-        r = ff.fapolicyd_containers_report([h1, h2, h3, {"_fc": {"state": "not installed"}}, {}], ["a", "b", "c", "d", "e"], "today")
-        self.assertEqual(r["status"], "critical")
-        self.assertIn("3 container denial(s) on 2 host(s)", r["title"])
-        self.assertIn("fapolicyd not running on 1", r["title"])
-        sec = {s["title"]: s for s in r["sections"]}
-        self.assertEqual(sec["Container denials"]["rows"][0][:6], ["a", "web01", "/usr/bin/crun", "/app/server", "execute", 2])
-        self.assertEqual(sec["Rules to approve"]["lines"], ["allow perm=execute exe=/usr/bin/crun : path=/app/server     (a, b)"])
-        self.assertTrue(any("other denial" in x for x in sec["The hosts"]["lines"]))
-        self.assertIn("e: could not be reached", sec["Not read"]["lines"][0])
-        self.assertNotIn("The rules: what this run changed", sec)
-        self.assertNotIn("Rules in place: what to tighten", sec)
-
-    def test_report_with_storage_rules_and_a_review(self):
-        base = {"state": "read", "error": "", "active": "active", "auditd": "active", "rules_d": True, "fagenrules": True,
-                "others": [], "managed": []}
-        g1 = {"exe": "/app/server", "path": "/usr/lib/libapp.so.1", "perm": "open", "count": 3, "last": "", "rule_no": "11", "rule": "",
-              "containers": [], "why": ["container SELinux label"], "where": "container storage",
-              "proposal": "allow perm=any all : dir=/var/lib/containers/storage/overlay/", "note": "every file in container storage, for any program"}
-        g2 = dict(g1, exe="/usr/bin/crun", path="/srv/app/server", perm="execute", where="the host",
-                  proposal="allow perm=execute exe=/usr/bin/crun : path=/srv/app/server", note="")
-        rv = [{"file": "99-local.rules", "line": 4, "rule": "allow perm=any all : dir=/usr/lib/", "status": "warning", "what": "any program may then run any untrusted file under a system folder"},
-              {"file": "99-local.rules", "line": 6, "rule": "allow perm=any all : dir=/var/lib/containers/storage/", "status": "info", "what": "repeats line 5 of 99-local.rules"},
-              {"file": "99-local.rules", "line": 0, "rule": "", "status": "warning", "what": "sorts after 41-shared-obj.rules"}]
-        a = {"_fc": dict(base, groups=[g1, g2], rules_review=rv)}
-        b = {"_fc": dict(base, groups=[], rules_review=[{"file": "50-x.rules", "line": 1, "rule": "allow perm=any all : all", "status": "critical", "what": "allows everything (any)"}])}
-        r = ff.fapolicyd_containers_report([a, b], ["a", "b"], "today")
-        sec = {s["title"]: s for s in r["sections"]}
-        self.assertEqual(r["status"], "critical")
-        self.assertIn("3 rule(s) to tighten on 2 host(s)", r["title"])
-        self.assertEqual(sec["Container denials"]["columns"][-1], "File on")
-        self.assertEqual([x[-1] for x in sec["Container denials"]["rows"]], ["container storage", "the host"])
-        self.assertEqual(sec["Rules to approve"]["lines"][:2], ["allow perm=any all : dir=/var/lib/containers/storage/overlay/     (a)",
-                                                                "allow perm=execute exe=/usr/bin/crun : path=/srv/app/server     (a)"])
-        t = sec["Rules in place: what to tighten"]
-        self.assertEqual(t["status"], "critical")
-        self.assertEqual(t["rows"][0], ["b", "50-x.rules", 1, "allow perm=any all : all", "allows everything (any)"])   # the worst first
-        self.assertEqual(t["row_status"], ["critical", "warning", "warning", "info"])
-        self.assertEqual(t["rows"][1][2:4], ["-", "(the file)"])                           # a host's file-level finding first, then its lines
-        self.assertEqual([x["value"] for x in r["summary"] if x["label"] == "Rules to tighten"], [3])
-
-    def test_report_after_a_change(self):
-        rule = "allow perm=execute exe=/usr/bin/crun : path=/app/server"
-        base = {"state": "read", "error": "", "active": "active", "auditd": "active", "rules_d": True, "fagenrules": True,
-                "groups": [], "others": [], "managed": []}
-        ok = {"_fc": base, "_fc_apply": {"state": "changed", "added": [rule], "removed": [], "rules": [rule], "bad": [], "error": ""}}
-        bad = {"_fc": base, "_fc_apply": {"state": "failed", "added": [], "removed": [], "rules": [], "bad": [],
-                                          "error": "fapolicyd still running: rc 3 - the file put back as it was"}}
-        r = ff.fapolicyd_containers_report([ok, bad], ["a", "b"], "today")
-        sec = {s["title"]: s for s in r["sections"]}["The rules: what this run changed"]
-        self.assertEqual([x[:3] for x in sec["rows"]], [["a", "changed", rule], ["b", "failed", "-"]])
-        self.assertEqual(r["status"], "critical")
-        self.assertIn("the rules could not be changed on 1 host(s)", r["title"])
-        r = ff.fapolicyd_containers_report([ok], ["a"], "today", check=True)
-        self.assertIn("rules would change on 1 host(s)", r["title"])
-        self.assertIn("The rules: what this run would change", [s["title"] for s in r["sections"]])
-
 
 
 # the fapolicyd denials report: ACT's Markdown answer by its headings, a line per paragraph, item and command

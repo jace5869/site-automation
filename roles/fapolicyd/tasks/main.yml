@@ -1,0 +1,42 @@
+---
+# One pass on each host: what keeps fapolicyd down, fixed (roles/fapolicyd_fix); then what it blocked - the trust
+# entries and rules to let it through - and the rules files' clean-up (roles/fapolicyd_rules), with fapolicyd running;
+# ACT's analysis when asked (act.yml). The workflow's check (fapolicyd_workflow) never changes anything.
+
+- name: Fapolicyd | the lines approved for this host - the workflow's plan, or fapolicyd_approved - to the part that gives each
+  ansible.builtin.set_fact:
+    _fa_lines: >-
+      {{ ([] if fapolicyd_workflow | bool
+          else ((fapolicyd_workflow_plan[inventory_hostname] | default([])) if fapolicyd_workflow_plan is defined
+                else fapolicyd_approved)) | fapolicyd_split }}
+
+- name: Fapolicyd | getting it running - trust files, labels, db_max_size, at boot, permissive, the restart
+  ansible.builtin.include_role:
+    name: fapolicyd_fix
+  vars:
+    fapolicyd_fix_approved: "{{ _fa_lines.fix }}"
+    fapolicyd_fix_dir: "{{ fapolicyd_dir }}"
+    fapolicyd_fix_wait: "{{ fapolicyd_wait }}"
+
+# getting it running failed here (put back, still down, refused): no trust or rules change on top - read only
+- name: Fapolicyd | the trust and rules changes wait when getting it running failed
+  ansible.builtin.set_fact:
+    _fa_rules_wait: >-
+      {{ (_ff_apply | default({})).state | default('') in ['failed', 'rolled back', 'still down', 'refused']
+         and _fa_lines.rules | length > 0 }}
+
+- name: Fapolicyd | what it blocked - trust entries, container rules - and the rules files' clean-up
+  ansible.builtin.include_role:
+    name: fapolicyd_rules
+  vars:
+    fapolicyd_rules_approved: "{{ [] if _fa_rules_wait | bool else _fa_lines.rules }}"
+    fapolicyd_rules_since: "{{ fapolicyd_since }}"
+    fapolicyd_rules_dir: "{{ fapolicyd_dir }}"
+    fapolicyd_rules_wait: "{{ fapolicyd_wait }}"
+
+- name: Fapolicyd | ACT's analysis of what it blocked (fapolicyd_act)
+  ansible.builtin.include_tasks: act.yml
+  when:
+    - fapolicyd_act | bool
+    - _fr.state | default('') == 'read'
+    - (_fr.blocks | default([]) | length > 0) or (_fr.active | default('') != 'active')

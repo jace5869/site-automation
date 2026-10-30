@@ -15,10 +15,8 @@ aap_email_question_playbooks:
   - cert_report.yml
   - database_health.yml
   - esxi_security.yml
-  - fapolicyd_containers.yml
+  - fapolicyd.yml
   - fapolicyd_denials.yml
-  - fapolicyd_fix.yml
-  - fapolicyd_rules.yml
   - health_check.yml
   - horizon_capacity_report.yml
   - horizon_desktops_check.yml

@@ -76,6 +76,12 @@
         line: "db_max_size = {{ _ff_plan.db_to }}"
       when: _ff_plan.db_to | length > 0
 
+    - name: Fapolicyd fix | enabled at boot
+      ansible.builtin.command:
+        argv: [systemctl, enable, fapolicyd]
+      changed_when: true
+      when: _ff_plan.enable | bool and not ansible_check_mode
+
     - name: Fapolicyd fix | permissive (it logs what it would block, blocks nothing)
       ansible.builtin.lineinfile:
         path: "{{ _ff_conf }}"

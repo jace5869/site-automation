@@ -1,8 +1,0 @@
----
-galaxy_info:
-  author: site automation
-  role_name: fapolicyd_containers
-  description: "fapolicyd denials caused by containers, the allow rule for each, and the approved rules added (rules.d, fagenrules)."
-  license: MIT
-  min_ansible_version: "2.14"
-dependencies: []

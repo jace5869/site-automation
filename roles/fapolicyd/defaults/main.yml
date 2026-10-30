@@ -1,0 +1,28 @@
+---
+# FAPOLICYD (playbooks/fapolicyd.yml, docs/RUNBOOKS.md "fapolicyd", workflow 36): fapolicyd in one pass on each host -
+# what keeps it down (trust files it cannot read, SELinux labels, db_max_size, not enabled at boot, not running: it
+# starts permissive), what it blocked or would block (a trust entry pinned to the file, a container's rule), its rules
+# files cleaned up, back to enforcing on a quiet day. One line per change to approve; only approved lines are made.
+
+# The approved changes, each exactly as the report's "Changes to approve" gives it, e.g.
+#   - "trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644"
+#   - "enable fapolicyd at boot (it is disabled)"
+#   - "permissive: 0 -> 1"                           (with the restart: a stopped fapolicyd starts blocking nothing)
+#   - "restart fapolicyd (it is inactive)"
+#   - "trust file: /opt/app/tool size 51320 sha256 6f0c...e1"
+#   - "remove rule: 99-local.rules: allow perm=any all : dir=/usr/lib/"
+#   - "permissive: 1 -> 0"
+# A line is made only on a host where this run proposes it again. A line this job never gives stops the change on
+# every host. Route each one through your security approval (the ISSO). The workflow fills this in by itself.
+fapolicyd_approved: []
+# THE WORKFLOW (docs/WORKFLOWS_AND_SCHEDULES.md, 36): true on its first template, "fapolicyd - check". It reads,
+# changes nothing, hands each host's changes to the approval step and the approved job (set_stats
+# fapolicyd_workflow_plan) and fails on purpose - NEEDS APPROVAL. It holds back for a person: permissive: 0 -> 1 on a
+# running, enforcing host, a clean-up that blocks more on an enforcing host, and permissive: 1 -> 0 until a quiet day.
+fapolicyd_workflow: false
+fapolicyd_since: today                    # blocks since (ausearch -ts): recent (10 minutes), today, yesterday, this-week, boot
+fapolicyd_dir: /etc/fapolicyd             # fapolicyd's folder: fapolicyd.conf, fapolicyd.trust, trust.d, rules.d
+fapolicyd_wait: 30                        # seconds fapolicyd may take to take a change (running, its new rules or trust)
+# ACT (GenAI) explains what fapolicyd blocked, in the report - evidence only, ACT runs nothing on the host. Needs the
+# "ACT model key" credential on the template and site_act's provider and model (docs/ADDING_ACT.md).
+fapolicyd_act: false

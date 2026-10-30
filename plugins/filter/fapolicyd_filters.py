@@ -3,8 +3,9 @@
 from what ACT's playbook (vendor/act/ansible/playbooks/fapolicyd_denials.yml) left in each host's variables -
 _fa_rpm, _fa_active, _fa_auditd, _fa_count, _fa_paths, _fa_exes, _fa_findings and act_triage_result (only where
 ACT ran: a host with denials or a problem). One report (roles/site_email's _report) for the whole job.
-And playbooks/fapolicyd_containers.yml's: the denials containers caused (roles/fapolicyd_containers: _fc, _fc_apply),
-the allow rules to approve, the rules added - with the checks of a rule asked for and the rules file's new list."""
+And playbooks/fapolicyd.yml's (roles/fapolicyd and its two parts, roles/fapolicyd_fix and roles/fapolicyd_rules):
+getting fapolicyd running, its blocks, trust entries and rules, the rules files' clean-up - the plans, the way back,
+the workflow's plan, one report."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -93,6 +94,28 @@ def host_result(name, hv):
             "findings": list(_get(hv, "_fa_findings", []) or []), "act": act}
 
 
+def act_sections(host, a, findings=None, status=None):
+    """ACT's analysis of one host as report sections: what the job found, then ACT's answer by its own headings (the part
+    before the first heading in the first section, each heading a section of its own), then ACT's proposals."""
+    lines, more = list(findings or []), []
+    if a is None:
+        text = "ACT did not run on this host (a Check run, or the host failed before it): the findings only."
+    elif str(a.get("status")) == "error":
+        text = "ACT could not analyse it: %s" % (a.get("stop_reason") or a.get("summary") or "no reason given")
+    else:
+        blocks = act_md_blocks(a.get("summary") or a.get("stop_reason") or "") or [("", ["(ACT gave no summary)"])]
+        text = "What the job found, then ACT's analysis - it read the evidence only and ran nothing on the host."
+        if not blocks[0][0]:
+            lines += blocks.pop(0)[1]
+        more = [{"title": "%s: %s" % (host, b[0]), "lines": b[1] or ["-"]} for b in blocks]
+    props = ["ACT proposes (for your security approval): %s" % d["command"]
+             for d in (a or {}).get("denied") or [] if isinstance(d, dict) and d.get("command")]
+    first = {"title": "%s: ACT's analysis" % host, "text": text, "lines": lines + props}
+    if status:
+        first["status"] = status
+    return [first] + more
+
+
 def fapolicyd_report(hostvars_list, names, since="today", title=""):
     """[hostvars of each host], [their names], the ausearch -ts keyword, the report title (site_report_title)
     -> roles/site_email's _report."""
@@ -141,23 +164,7 @@ def fapolicyd_report(hostvars_list, names, since="today", title=""):
                      "columns": ["Host", "fapolicyd", "auditd", "Denials", "Files denied", "Programs"],
                      "rows": rows, "row_status": row_status, "cell_status": cell_status})
         for h in problem:
-            a = h["act"]
-            lines, more = list(h["findings"]), []
-            if a is None:
-                text = "ACT did not run on this host (a Check run, or the host failed before it): the findings only."
-            elif str(a.get("status")) == "error":
-                text = "ACT could not analyse it: %s" % (a.get("stop_reason") or a.get("summary") or "no reason given")
-            else:
-                # ACT's answer by its own headings: the part before the first heading here, each heading its own section
-                blocks = act_md_blocks(a.get("summary") or a.get("stop_reason") or "") or [("", ["(ACT gave no summary)"])]
-                text = "What the job found, then ACT's analysis - it read the evidence only and ran nothing on the host."
-                if not blocks[0][0]:
-                    lines += blocks.pop(0)[1]
-                more = [{"title": "%s: %s" % (h["host"], b[0]), "lines": b[1] or ["-"]} for b in blocks]
-            props = ["ACT proposes (for your security approval): %s" % d["command"]
-                     for d in (a or {}).get("denied") or [] if isinstance(d, dict) and d.get("command")]
-            secs.append({"title": "%s: ACT's analysis" % h["host"], "status": h["status"], "text": text, "lines": lines + props})
-            secs.extend(more)
+            secs.extend(act_sections(h["host"], h["act"], h["findings"], h["status"]))
     if quiet:
         secs.append({"title": "No denials", "status": "ok", "lines": ["%d host(s): fapolicyd running, auditd running, nothing "
                                                                         "denied since %s - %s" % (len(quiet), since, ", ".join(sorted(quiet)))]})
@@ -170,258 +177,20 @@ def fapolicyd_report(hostvars_list, names, since="today", title=""):
     return report
 
 
-# ---- playbooks/fapolicyd_containers.yml ----------------------------------------------------------------
-RULE = re.compile(r"^(allow|allow_audit|allow_syslog|allow_log) perm=(open|execute|any) (.+?) : (.+)$")
-SUBJ = ("all", "auid", "uid", "gid", "sessionid", "pid", "ppid", "trust", "comm", "exe", "dir", "ftype", "device")
-OBJ = ("all", "path", "dir", "device", "ftype", "trust", "sha256hash")
-# a folder a rule for any program must not open: the host's own files are under them (as the module's SYSTEM_DIRS)
-SYSTEM_DIRS = ("/", "/bin/", "/sbin/", "/usr/", "/usr/bin/", "/usr/sbin/", "/usr/lib/", "/usr/lib64/", "/usr/libexec/",
-               "/usr/local/", "/usr/local/bin/", "/usr/local/sbin/", "/usr/local/lib/", "/usr/local/lib64/", "/lib/",
-               "/lib64/", "/etc/", "/tmp/", "/var/", "/var/tmp/", "/dev/", "/dev/shm/", "/run/", "/home/", "/root/", "/opt/")
-SYSTEM_ROOTS = ("/usr/", "/lib/", "/lib64/", "/bin/", "/sbin/", "/etc/")
-CNOTE = ("A rule added here lets that program use that file on the host, inside a container or not: approve each one "
-         "through your security approval (e.g. the ISSO) before it is listed in fapolicyd_container_rules.")
-REVIEW_RANK = {"critical": 0, "warning": 1, "info": 2}
-
-
-def _attrs(text, allowed):
-    """'exe=/x dir=/y/' -> '' when every attribute is known and holds a value a rule can, else why not."""
-    parts = text.split()
-    if parts == ["all"]:
-        return ""
-    for a in parts:
-        k, eq, v = a.partition("=")
-        if not eq or k not in allowed or k == "all" or not v or '"' in v or "'" in v:
-            return "%r is not an attribute fapolicyd knows here" % a
-        if k in ("path", "dir", "exe") and not v.startswith("/"):
-            return "%s must be a full path" % k
-        if k in ("path", "dir", "exe") and ("*" in v or "?" in v or "[" in v):
-            return "%s holds a wildcard: fapolicyd has none, the rule would match nothing" % k
-        if k == "dir" and not v.endswith("/"):
-            return "dir must end with /"
-    return ""
-
-
-def fapolicyd_rule_problem(rule):
-    """One rule asked for (fapolicyd_container_rules) -> '' when it may be written, else why not. Only allow rules,
-    with known attributes and no wildcard; never 'all : all', never a folder as wide as /, never a system folder
-    for any program."""
-    if "\n" in str(rule or "").strip() or "\r" in str(rule or ""):
-        return "one rule per item: it holds a line break"
-    m = RULE.match(" ".join(str(rule or "").split()))
-    if not m:
-        return "not an allow rule as fapolicyd writes them: allow perm=open|execute|any SUBJECT : OBJECT"
-    why = _attrs(m.group(3), SUBJ) or _attrs(m.group(4), OBJ)
-    if why:
-        return why
-    if m.group(3) == "all" and m.group(4) == "all":
-        return "all : all would turn fapolicyd off"
-    if re.search(r"(^| )dir=/( |$)", m.group(4)):
-        return "dir=/ is every file"
-    if m.group(3) == "all":
-        for d in re.findall(r"(?:^| )dir=(\S+)", m.group(4)):
-            if d in SYSTEM_DIRS or d.startswith(SYSTEM_ROOTS):
-                return ("dir=%s for any program opens a system folder to every untrusted file put there (RPM-owned files "
-                        "are trusted already): name the file (path=) or the program (exe=)" % d)
-    return ""
-
-
-def fapolicyd_rules_plan(managed, add, remove):
-    """The rules file's rules now, the ones asked for, the ones to take out -> {rules (the file's new list, in
-    order), added, removed, bad [{rule, why}], changed}. One bad rule asked for: nothing is changed."""
-    norm = lambda r: " ".join(str(r or "").split())
-    now = [norm(r) for r in managed or [] if norm(r)]
-    bad = [{"rule": norm(r), "why": fapolicyd_rule_problem(r)} for r in add or [] if norm(r) and fapolicyd_rule_problem(r)]
-    add = [norm(r) for r in add or [] if norm(r)]
-    remove = set(norm(r) for r in remove or [] if norm(r))
-    if bad:
-        return {"rules": now, "added": [], "removed": [], "bad": bad, "changed": False}
-    rules = [r for r in now if r not in remove]
-    added = []
-    for r in add:
-        if r not in rules and r not in remove:
-            rules.append(r)
-            added.append(r)
-    removed = [r for r in now if r in remove]
-    return {"rules": rules, "added": added, "removed": removed, "bad": [], "changed": rules != now}
-
-
-def fapolicyd_rules_file(rules, playbook="playbooks/fapolicyd_containers.yml"):
-    head = ("# Managed by site-automation (%s): the container rules approved for this host.\n"
-            "# Do not edit: list them in fapolicyd_container_rules (fapolicyd_container_rules_remove) and run the job.\n" % playbook)
-    return head + "".join("%s\n" % r for r in rules)
-
-
-def _container_host(name, hv):
-    fc = _get(hv, "_fc")
-    if not hasattr(fc, "keys") or "state" not in fc:
-        return {"host": name, "state": "not read", "error": ""}
-    h = dict(fc)
-    h["host"] = name
-    ap = _get(hv, "_fc_apply")
-    h["apply"] = dict(ap) if hasattr(ap, "keys") else None
-    return h
-
-
-def fapolicyd_containers_report(hostvars_list, names, since="today", title="", rules_file="", check=False):
-    """[hostvars of each host], [their names], the ausearch -ts keyword, the report title, the rules file, a
-    Check run -> roles/site_email's _report: the container denials, the rules to approve, the rules added."""
-    hosts = [_container_host(n, hv) for n, hv in zip(names, hostvars_list)]
-    read = [h for h in hosts if h["state"] == "read" and not h.get("error")]
-    unread = [h for h in hosts if h["state"] == "not read" or (h["state"] == "read" and h.get("error"))]
-    missing = [h["host"] for h in hosts if h["state"] == "not installed"]
-    denied = [h for h in read if h.get("groups")]
-    down = [h for h in read if h.get("active") != "active"]
-    applied = [h for h in hosts if h.get("apply")]
-    failed = [h for h in applied if h["apply"].get("state") in ("failed", "refused", "not possible")]
-    total = sum(sum(g["count"] for g in h["groups"]) for h in denied)
-
-    proposals = {}
-    by_hand = []
-    for h in denied:
-        a = h.get("apply") or {}
-        have = a["rules"] if a.get("state") in ("changed", "unchanged", "would change") else (h.get("managed") or [])
-        for g in h["groups"]:
-            if g.get("proposal") and g["proposal"] not in have:
-                proposals.setdefault(g["proposal"], []).append(h["host"])
-            elif not g.get("proposal"):
-                by_hand.append("%s: %s -> %s - %s" % (h["host"], g["exe"] or "?", g["path"] or "?", g.get("note", "")))
-
-    review = [(h["host"], f) for h in read for f in h.get("rules_review") or []]
-    worst_review = min([REVIEW_RANK.get(f.get("status"), 2) for _, f in review] or [9])
-    tighten = [(hn, f) for hn, f in review if f.get("status") in ("critical", "warning")]
-    status = "critical" if down or failed or worst_review == 0 else ("warning" if denied or unread or tighten else "ok")
-    head = []
-    if denied:
-        head.append("%d container denial(s) on %d host(s)" % (total, len(denied)))
-    if tighten:
-        head.append("%d rule(s) to tighten on %d host(s)" % (len(tighten), len(set(hn for hn, _ in tighten))))
-    if [h for h in applied if h["apply"].get("added") or h["apply"].get("removed")] and not failed:
-        head.append(("rules would change on %d host(s)" if check else "rules changed on %d host(s)")
-                    % len([h for h in applied if h["apply"].get("added") or h["apply"].get("removed")]))
-    if failed:
-        head.append("the rules could not be changed on %d host(s)" % len(failed))
-    if down:
-        head.append("fapolicyd not running on %d" % len(down))
-    report = {
-        "title": "%s: %s" % (title or "fapolicyd and containers", ", ".join(head) if head else "no container denials since %s" % since),
-        "subtitle": "%d host(s) read - fapolicyd denials since %s caused by containers (ausearch -m FANOTIFY -ts %s)%s"
-                    % (len(read), since, since, " - Check: nothing changed" if check else ""),
-        "status": status,
-        "summary": [{"label": "Container denials", "value": total, "status": "warning" if total else "ok"},
-                    {"label": "Hosts with them", "value": len(denied), "status": "warning" if denied else "ok"},
-                    {"label": "Rules to approve", "value": len(proposals), "status": "warning" if proposals else "ok"},
-                    {"label": "Rules to tighten", "value": len(tighten),
-                     "status": "critical" if worst_review == 0 else ("warning" if tighten else "ok")}]
-                   + ([{"label": "Rules not changed" if failed else "Hosts whose rules changed",
-                        "value": len(failed) if failed else len([h for h in applied if h["apply"].get("added") or h["apply"].get("removed")]),
-                        "status": "critical" if failed else "ok"}] if applied else [])
-                   + [{"label": "fapolicyd not running", "value": len(down), "status": "critical" if down else "ok"},
-                      {"label": "Hosts read", "value": len(read)}]
-                   + ([{"label": "Not read", "value": len(unread), "status": "warning"}] if unread else []),
-        "sections": [],
-        "footer": CNOTE,
-    }
-    secs = report["sections"]
-    if applied:
-        rows, rs = [], []
-        for h in applied:
-            a = h["apply"]
-            st = a.get("state", "")
-            rows.append([h["host"], st, "\n".join(a.get("added") or []) or "-", "\n".join(a.get("removed") or []) or "-",
-                         len(a.get("rules") or []), a.get("error") or "; ".join("%s: %s" % (b["rule"], b["why"]) for b in a.get("bad") or [])])
-            rs.append("critical" if st in ("failed", "refused", "not possible") else "ok")
-        secs.append({"title": "The rules: what this run changed" if not check else "The rules: what this run would change",
-                     "status": "critical" if failed else "ok",
-                     "text": "The rules asked for (fapolicyd_container_rules, fapolicyd_container_rules_remove), in %s on each host, "
-                             "loaded with fagenrules --load. A host where they did not load, or fapolicyd stopped: its "
-                             "file put back as it was. One rule that is not a plain allow rule: nothing written anywhere." % (rules_file or "the rules file"),
-                     "columns": ["Host", "Result", "Added", "Taken out", "Rules in the file", "Why"],
-                     "rows": rows, "row_status": rs})
-    if denied:
-        rows, rs = [], []
-        for h in sorted(denied, key=lambda h: -sum(g["count"] for g in h["groups"])):
-            for g in h["groups"]:
-                rows.append([h["host"], ", ".join(g.get("containers") or []) or "-", g["exe"] or "?", g["path"] or "?", g["perm"],
-                             g["count"], g.get("last", ""), ("%s. %s" % (g["rule_no"], g["rule"])) if g.get("rule") else (g.get("rule_no") or "?"),
-                             ", ".join(g.get("why") or []), g.get("where") or "?"])
-                rs.append("warning")
-        secs.append({"title": "Container denials", "status": "warning",
-                     "text": "What fapolicyd blocked since %s that a container caused: the program, the file it was denied, how "
-                             "often, the rule that denied it, and the container while it still runs. A container's files are not "
-                             "in the trust database, which RPM fills from the host's packages. \"File on\": the host (a bind mount: "
-                             "the file is there at that path) or container storage (inside an image: the audit log holds the "
-                             "container's path, which names nothing on the host)." % since,
-                     "columns": ["Host", "Container", "Program", "File denied", "Permission", "Times", "Last", "Denied by rule",
-                                 "Why a container's", "File on"],
-                     "rows": rows, "row_status": rs})
-    if proposals or by_hand:
-        lines = ["%s     (%s)" % (r, ", ".join(sorted(hs))) for r, hs in sorted(proposals.items())]
-        notes = sorted(set("%s: %s" % (g["proposal"], g["note"]) for h in denied for g in h["groups"]
-                           if g.get("proposal") in proposals and g.get("note")))
-        secs.append({"title": "Rules to approve", "status": "warning",
-                     "text": "One allow rule per denial. A file on the host (a bind mount): the narrowest rule, that program, that "
-                             "file. A file inside an image: container storage's folder (dir=.../storage/overlay/, for any program - "
-                             "a rule cannot name a file inside an image: its path in the audit log is the container's, and its "
-                             "layer changes at each pull). To add them, after your security approval, list them in "
-                             "fapolicyd_container_rules (the template's Variables) and run the job again - a Check run first shows "
-                             "what it would change. They are written to %s on every host of the run (use a Limit for fewer)."
-                             % (rules_file or "the rules file"),
-                     "lines": lines + ["Note - %s" % n for n in notes] + ["By hand - %s" % b for b in by_hand]})
-    if review:
-        rows, rs = [], []
-        for hn, f in sorted(review, key=lambda x: (REVIEW_RANK.get(x[1].get("status"), 2), x[0], x[1].get("file", ""), x[1].get("line", 0))):
-            rows.append([hn, f.get("file", ""), f.get("line") or "-", f.get("rule") or "(the file)", f.get("what", "")])
-            rs.append(f.get("status") if f.get("status") in ("critical", "warning") else "info")
-        secs.append({"title": "Rules in place: what to tighten", "status": "critical" if worst_review == 0 else ("warning" if tighten else "info"),
-                     "text": "The rules files in %s on each host, read as fagenrules takes them (fapolicyd's own files left out). Red: "
-                             "a rule that allows everything. Amber: a wildcard (fapolicyd has none: the rule matches nothing), a system "
-                             "folder or a user-writable folder opened to any program, a file that sorts after the stock deny rules (its "
-                             "allow rules are never reached). Blue: a repeated rule, a rule for an RPM-owned file (trusted already). "
-                             "Change these files by hand: the job writes only its own."
-                             % (rules_file.rsplit("/", 1)[0] if rules_file and "/" in rules_file else "rules.d"),
-                     "columns": ["Host", "File", "Line", "Rule", "Finding"], "rows": rows, "row_status": rs})
-    quiet = [h["host"] for h in read if not h.get("groups")]
-    lines = []
-    for h in read:
-        if h.get("active") != "active":
-            lines.append("%s: fapolicyd is %s - nothing is allow-listed" % (h["host"], h.get("active")))
-        if h.get("permissive"):
-            lines.append("%s: fapolicyd is permissive - it logs, it blocks nothing" % h["host"])
-        if h.get("auditd") != "active":
-            lines.append("%s: auditd is %s - denials are not recorded" % (h["host"], h.get("auditd")))
-        if not h.get("rules_d") or not h.get("fagenrules"):
-            lines.append("%s: no rules.d folder or fagenrules (fapolicyd before 1.1): rules cannot be added by this job" % h["host"])
-        if h.get("others"):
-            lines.append("%s: %d other denial(s), not containers' (the fapolicyd denials job): %s"
-                         % (h["host"], (h.get("counts") or {}).get("other", 0), "; ".join(h["others"][:3])))
-    if lines:
-        secs.append({"title": "The hosts", "status": "critical" if down else "warning", "lines": lines})
-    if quiet:
-        secs.append({"title": "No container denials", "status": "ok",
-                     "lines": ["%d host(s), nothing a container caused denied since %s - %s" % (len(quiet), since, ", ".join(sorted(quiet)))]})
-    if missing:
-        secs.append({"title": "fapolicyd not installed", "lines": ["%d host(s), not looked at: %s" % (len(missing), ", ".join(sorted(missing)))]})
-    if unread:
-        secs.append({"title": "Not read", "status": "warning",
-                     "lines": ["%s: %s" % (h["host"], h.get("error") or "could not be reached, or failed before its denials were read")
-                               for h in sorted(unread, key=lambda h: h["host"])]})
-    return report
-
-
-# ---- the fapolicyd fix job (playbooks/fapolicyd_fix.yml, roles/fapolicyd_fix) --------------------------------------
+# ---- getting fapolicyd running (a part of playbooks/fapolicyd.yml: roles/fapolicyd_fix) ----------------------------
 FNOTE = ("Each fix changes how fapolicyd, a security control, runs: approve it through your security approval (e.g. the "
-         "ISSO) before it is listed in fapolicyd_fix_approved. A host where fapolicyd was running and is not after a fix "
+         "ISSO) before it is listed in fapolicyd_approved. A host where fapolicyd was running and is not after a fix "
          "gets everything put back and fapolicyd restarted.")
-FIX_KNOWN = re.compile(r"^(trust file access: |SELinux label: |restart fapolicyd \(it is |db_max_size: |permissive: )")
+FIX_KNOWN = re.compile(r"^(trust file access: |SELinux label: |restart fapolicyd \(it is |db_max_size: |permissive: |enable fapolicyd at boot )")
 FIX_DB = re.compile(r"^db_max_size:\s*(\S+)\s*->\s*(\S+)$")
 # each line exactly as the report gives it - a line copied with anything more (a host name after it) is refused
 FIX_FORM = (re.compile(r"^trust file access: /\S+ \S+:\S+ [0-7]{4} -> \S+:\S+ [0-7]{4}$"),
             re.compile(r"^SELinux label: /\S+ \S+:\S+ -> \S+:\S+$"),
             re.compile(r"^restart fapolicyd \(it is [a-z-]+\)$"),
             re.compile(r"^permissive: [01] -> [01]$"),
+            re.compile(r"^enable fapolicyd at boot \(it is [a-z-]+\)$"),
             FIX_DB)
-FIX_ORDER = {"access": 0, "label": 1, "db": 2, "permissive": 3, "restart": 4}
+FIX_ORDER = {"access": 0, "label": 1, "db": 2, "enable": 3, "permissive": 4, "restart": 5}
 
 
 def _norm(s):
@@ -445,7 +214,7 @@ def fapolicyd_fix_plan(ff, approved):
     for a in want:
         m = FIX_DB.match(a)
         if not FIX_KNOWN.match(a):
-            bad.append({"line": a, "why": "not a line this job gives (trust file access, SELinux label, db_max_size, restart fapolicyd)"})
+            bad.append({"line": a, "why": "not a line this job gives (trust file access, SELinux label, db_max_size, enable at boot, permissive, restart fapolicyd)"})
         elif a.startswith("db_max_size:") and not m:
             bad.append({"line": a, "why": "a db_max_size line is db_max_size: <now> -> <MB or auto>"})
         elif not any(f.match(a) for f in FIX_FORM):
@@ -472,7 +241,8 @@ def fapolicyd_fix_plan(ff, approved):
     active = ff.get("active") == "active"
     restart = "restart" in kinds or (bool(kinds & set(["db", "permissive"])) and active)
     return {"apply": apply, "db_to": ([f["to"] for f in apply if f["kind"] == "db"] + [""])[0],
-            "permissive_to": ([f["to"] for f in apply if f["kind"] == "permissive"] + [""])[0], "bad": bad, "refused": refused,
+            "permissive_to": ([f["to"] for f in apply if f["kind"] == "permissive"] + [""])[0], "enable": "enable" in kinds,
+            "bad": bad, "refused": refused,
             "not_here": [a for a in want if a not in used and a not in badl], "restart": restart,
             "update": active and not restart and bool(kinds & set(["access", "label"])), "changed": bool(apply)}
 
@@ -489,6 +259,8 @@ def fapolicyd_fix_rollback(apply, conf="/etc/fapolicyd/fapolicyd.conf", backup="
             out.append("    chmod %s %s || rc=1" % (quote(mode), quote(f["path"])))
         elif f.get("kind") == "label":
             out.append("    chcon -h %s %s || rc=1" % (quote(f["from"]), quote(f["path"])))
+        elif f.get("kind") == "enable":
+            out.append("    systemctl disable fapolicyd >/dev/null 2>&1 || rc=1")
         elif f.get("kind") in ("db", "permissive") and backup and not any("cp -p" in x for x in out):
             out.append("    cp -p %s %s || rc=1" % (quote(backup), quote(conf)))
     return "\n".join(out + ["    return $rc", "}"]) + "\n"
@@ -565,7 +337,7 @@ def fapolicyd_fix_report(hostvars_list, names, title="", check=False):
             rs.append("critical" if st in bad_states else "ok")
         secs.append({"title": "What this run fixed" if not check else "What this run would fix",
                      "status": "critical" if failed else "ok",
-                     "text": "The fixes approved (fapolicyd_fix_approved) that this run proposed again on the host - a line for "
+                     "text": "The fixes approved (fapolicyd_approved) that this run proposed again on the host - a line for "
                              "a state the host is no longer in is not applied (\"Not proposed here\"). After them: fapolicyd "
                              "restarted (approved, or db_max_size changed while it ran) or its trust reloaded (fapolicyd-cli "
                              "--update), and a program still runs (python). Running before and not after: everything put back."
@@ -580,7 +352,7 @@ def fapolicyd_fix_report(hostvars_list, names, title="", check=False):
     idle = sorted(set(_norm(x) for h in applied for x in h["apply"].get("not_here") or []) - used)
     if idle:
         secs.append({"title": "Approved, made on no host", "status": "warning",
-                     "text": "Lines in fapolicyd_fix_approved that no host of this run has now: fixed already (a run before), for "
+                     "text": "Lines in fapolicyd_approved that no host of this run has now: fixed already (a run before), for "
                              "a host outside this run's Limit, or not exactly the report's line. Nothing was changed for them.",
                      "lines": idle})
     if proposals:
@@ -606,7 +378,7 @@ def fapolicyd_fix_report(hostvars_list, names, title="", check=False):
         rows, rs = [], []
         for h in read:
             d = h.get("db") or {}
-            rows.append([h["host"], h.get("active", "?") + (" (permissive)" if h.get("permissive") else ""), h.get("version", ""),
+            rows.append([h["host"], h.get("active", "?") + (" (permissive)" if h.get("permissive") else ""), h.get("enabled", "?"), h.get("version", ""),
                          "%s%s" % (d.get("current", "?"), " (auto possible)" if d.get("auto") and d.get("current") != "auto" else ""),
                          "%s MB (%s MB of trust files, %s RPM files)" % (d.get("need_mb", "?"), d.get("trust_mb", "?"), d.get("rpm_files", "?")),
                          len(h.get("fixes") or [])])
@@ -614,7 +386,7 @@ def fapolicyd_fix_report(hostvars_list, names, title="", check=False):
         secs.append({"title": "The hosts", "status": "critical" if down else ("warning" if proposals else "ok"),
                      "text": "fapolicyd on each host, db_max_size and the estimate it is weighed against (the trust files and the "
                              "RPM files, about twice that in the database), and how many fixes it has.",
-                     "columns": ["Host", "fapolicyd", "Version", "db_max_size", "Estimate", "Fixes"], "rows": rows, "row_status": rs})
+                     "columns": ["Host", "fapolicyd", "At boot", "Version", "db_max_size", "Estimate", "Fixes"], "rows": rows, "row_status": rs})
     for h in read:
         j = ((h["apply"] or {}).get("journal") or []) or (h.get("journal") if h.get("active") != "active" or h.get("fixes") else [])
         if j:
@@ -631,9 +403,9 @@ def fapolicyd_fix_report(hostvars_list, names, title="", check=False):
     return report
 
 
-# ---- the fapolicyd rules job (playbooks/fapolicyd_rules.yml, roles/fapolicyd_rules) --------------------------------
+# ---- its blocks and rules (a part of playbooks/fapolicyd.yml: roles/fapolicyd_rules) -------------------------------
 RNOTE = ("Each change is to a security control: approve it through your security approval (e.g. the ISSO) before it is "
-         "listed in fapolicyd_rules_approved. A host where fapolicyd was running and is not after the change - or a "
+         "listed in fapolicyd_approved. A host where fapolicyd was running and is not after the change - or a "
          "program no longer starts - gets every file put back.")
 RULES_FORM = (re.compile(r"^trust file: /\S+ size \d+ sha256 [0-9a-f]{64}$"),
               re.compile(r"^allow rule: allow\S* perm=\S+ .+ : .+$"),
@@ -710,7 +482,7 @@ def fapolicyd_rules_job_edit(text, rules, stamp=""):
     return "\n".join(lines)
 
 
-def fapolicyd_rules_job_file(managed, add, playbook="playbooks/fapolicyd_rules.yml"):
+def fapolicyd_rules_job_file(managed, add, playbook="playbooks/fapolicyd.yml"):
     """The job's own rules file: the rules in it now, then the approved ones."""
     rules = list(managed or [])
     rules += [r for r in add or [] if r not in rules]
@@ -758,37 +530,6 @@ def fapolicyd_rules_job_rollback(plan, fr, backup):
     if plan.get("permissive_to"):
         put(conf, True, "fapolicyd.conf")
     return "\n".join(out + ["    return $rc", "}"]) + "\n"
-
-
-def fapolicyd_rules_job_workflow(hostvars_list, names):
-    """The workflow's plan (playbooks/fapolicyd_rules.yml with fapolicyd_rules_workflow: true): {host: [lines]} - what the
-    approval step approves for each host, the approved job then makes - and what it holds back for a person [(host, line,
-    why)]. Held: permissive: 0 -> 1 (fapolicyd stops blocking: a person decides); a clean-up that blocks more on an
-    enforcing host (it is made only while permissive); permissive: 1 -> 0 while the host still has would-be blocks in the
-    window, or a clean-up that blocks more to make first - it comes on a quiet day, after the rest."""
-    plan, held = {}, []
-    for n, hv in zip(names, hostvars_list):
-        h = _rules_host(n, hv)
-        if h["state"] != "read" or h.get("error"):
-            continue
-        changes = h.get("changes") or []
-        would = sum(g.get("count", 0) for g in h.get("blocks") or [] if g.get("kind") == "would deny")
-        stricter = [c for c in changes if c.get("stricter")]
-        lines = []
-        for c in changes:
-            line = _norm(c.get("line"))
-            if line == "permissive: 0 -> 1":
-                held.append((n, line, "fapolicyd would stop blocking: a person decides"))
-            elif c.get("stricter") and not h.get("permissive"):
-                held.append((n, line, "it blocks more and fapolicyd is enforcing: only while permissive"))
-            elif line == "permissive: 1 -> 0" and (would or stricter):
-                held.append((n, line, ("%d would-be block(s) in the window: their changes first, enforcing on a quiet day" % would)
-                             if would else "a clean-up that blocks more comes first, while permissive"))
-            else:
-                lines.append(line)
-        if lines:
-            plan[n] = lines
-    return {"plan": plan, "held": held, "count": sum(len(v) for v in plan.values())}
 
 
 def _rules_host(name, hv):
@@ -872,7 +613,7 @@ def fapolicyd_rules_job_report(hostvars_list, names, since="today", title="", ch
                          "\n".join(a.get("not_here") or []) or "-", why or "-"])
             rs.append("critical" if st in bad_states else "ok")
         secs.append({"title": "What this run changed" if not check else "What this run would change", "status": "critical" if failed else "ok",
-                     "text": "The changes approved (fapolicyd_rules_approved) that this run proposed again on the host. Then: the rules "
+                     "text": "The changes approved (fapolicyd_approved) that this run proposed again on the host. Then: the rules "
                              "loaded (fagenrules --load), the trust reloaded (fapolicyd-cli --update) or fapolicyd restarted (permissive "
                              "changed), checked in the same go - running, a program (python) still starts, the rules as approved. Running "
                              "before and not after: every file put back." + (" Check: nothing was changed." if check else ""),
@@ -885,13 +626,13 @@ def fapolicyd_rules_job_report(hostvars_list, names, since="today", title="", ch
     idle = sorted(set(_norm(x) for h in applied for x in h["apply"].get("not_here") or []) - used)
     if idle:
         secs.append({"title": "Approved, made on no host", "status": "warning",
-                     "text": "Lines in fapolicyd_rules_approved that no host of this run has now: made already (a run before), for a "
+                     "text": "Lines in fapolicyd_approved that no host of this run has now: made already (a run before), for a "
                              "host outside this run's Limit, a file that changed since (its size or hash), or not exactly the report's "
                              "line. Nothing was changed for them.", "lines": idle})
     if proposals:
         secs.append({"title": "Changes to approve", "status": "warning",
                      "text": "Each line is a change (its hosts, why and what it does: below). To make them, after your security approval, "
-                             "list the lines in fapolicyd_rules_approved (the template's Variables) exactly as here and run the job again - "
+                             "list the lines in fapolicyd_approved (the template's Variables) exactly as here and run the job again - "
                              "a Check run first shows what it would change. Trust file: that file, as it is now (its size and sha256: a "
                              "changed file is a new line), added to the job's own trust file. Allow rule: a container's file, to the job's "
                              "own rules file. Remove rule: the rule commented out in its file, marked. A change that blocks more is made only "
@@ -945,9 +686,198 @@ def fapolicyd_rules_job_report(hostvars_list, names, since="today", title="", ch
     return report
 
 
+# ---- the fapolicyd job (playbooks/fapolicyd.yml, roles/fapolicyd): the fix and the rules, one plan, one report ------
+def fapolicyd_split(lines):
+    """The approved lines -> {fix: [...], rules: [...]}: each to the part that gives it (permissive lines to both - each
+    makes it only where it proposes it); a line neither gives goes to both, so each refuses everything."""
+    fix, rules = [], []
+    for a in lines or []:
+        a = _norm(a)
+        if not a:
+            continue
+        f, r = any(x.match(a) for x in FIX_FORM), any(x.match(a) for x in RULES_FORM)
+        if f or not r:
+            fix.append(a)
+        if r or not f:
+            rules.append(a)
+    return {"fix": fix, "rules": rules}
+
+
+def fapolicyd_workflow(hostvars_list, names):
+    """The workflow's plan (playbooks/fapolicyd.yml with fapolicyd_workflow: true): {host: [lines]} - what the approval
+    step approves for each host and the approved job makes - and what it holds back for a person [(host, line, why)].
+    Made: what gets fapolicyd running - trust files it cannot read, labels, db_max_size, enabled at boot, and a stopped
+    fapolicyd started permissive (it blocks nothing) - then trust entries, container rules and the clean-up. Held:
+    permissive: 0 -> 1 on a running, enforcing host; a clean-up that blocks more on an enforcing host; permissive: 1 -> 0
+    while fapolicyd is not running, has would-be blocks in the window, or a clean-up that blocks more to make first -
+    enforcing comes on a quiet day, after the rest."""
+    plan, held = {}, []
+    for n, hv in zip(names, hostvars_list):
+        ff, fr = _fix_host(n, hv), _rules_host(n, hv)
+        lines = []
+        if ff["state"] == "read" and not ff.get("error"):
+            lines += [_norm(f.get("line")) for f in ff.get("fixes") or []]
+        if fr["state"] == "read" and not fr.get("error"):
+            changes = fr.get("changes") or []
+            would = sum(g.get("count", 0) for g in fr.get("blocks") or [] if g.get("kind") == "would deny")
+            stricter = [c for c in changes if c.get("stricter")]
+            running = fr.get("active") == "active"
+            for c in changes:
+                line = _norm(c.get("line"))
+                if line == "permissive: 0 -> 1":
+                    held.append((n, line, "fapolicyd would stop blocking: a person decides"))
+                elif c.get("stricter") and not fr.get("permissive"):
+                    held.append((n, line, "it blocks more and fapolicyd is enforcing: only while permissive"))
+                elif line == "permissive: 1 -> 0" and (would or stricter or not running):
+                    held.append((n, line, ("fapolicyd is not running: it starts permissive first" if not running else
+                                           "%d would-be block(s) in the window: their changes first, enforcing on a quiet day" % would
+                                           if would else "a clean-up that blocks more comes first, while permissive")))
+                elif line not in lines:
+                    lines.append(line)
+        if lines:
+            plan[n] = lines
+    return {"plan": plan, "held": held, "count": sum(len(v) for v in plan.values())}
+
+
+def fapolicyd_act_findings(fr, ff=None):
+    """What ACT is asked about on one host: fapolicyd's state and its blocks, in a line each."""
+    fr, ff = fr or {}, ff or {}
+    out = []
+    if fr.get("active") != "active":
+        out.append("fapolicyd is %s: nothing is allow-listed" % (fr.get("active") or "not running"))
+    if fr.get("permissive"):
+        out.append("fapolicyd is permissive: it blocks nothing, it logs what it would block")
+    for g in (fr.get("blocks") or [])[:20]:
+        out.append("fapolicyd %s %s -> %s (%s) x%d" % ("blocked" if g.get("kind") == "denied" else "would block",
+                                                      g.get("exe") or "?", g.get("path") or "?", g.get("perm", "?"), g.get("count", 0)))
+    return out
+
+
+def fapolicyd_act_evidence(fr, ff=None):
+    """The job's own reading of one host, for ACT: each block group with the rule that decided it and the change the job
+    proposes (or why a person must decide), what keeps fapolicyd down, the rules files' review."""
+    fr, ff = fr or {}, ff or {}
+    out = ["### The job's reading of this host (fapolicyd %s%s)" % (fr.get("active", "?"), ", permissive" if fr.get("permissive") else "")]
+    for g in fr.get("blocks") or []:
+        out.append("- %s %s -> %s (%s) x%d, last %s, rule %s%s; where: %s; the job proposes: %s" % (
+            "blocked" if g.get("kind") == "denied" else "would block", g.get("exe") or "?", g.get("path") or "?", g.get("perm", "?"),
+            g.get("count", 0), g.get("last", "?"), g.get("rule_no") or "?", (" (%s)" % g["rule"]) if g.get("rule") else "",
+            g.get("where", "?"), g.get("change") or g.get("note") or "nothing"))
+    for f in ff.get("fixes") or []:
+        out.append("- what keeps it down: %s - %s" % (f.get("line"), f.get("why", "")))
+    for f in fr.get("review") or []:
+        out.append("- rules file %s%s: %s - %s" % (f.get("file"), (" line %s" % f["line"]) if f.get("line") else "", f.get("rule") or "", f.get("what", "")))
+    for b in (fr.get("by_hand") or []) + (ff.get("by_hand") or []):
+        out.append("- for a person: %s" % b)
+    return "\n".join(out)
+
+
+def fapolicyd_all_report(hostvars_list, names, since="today", title="", check=False, workflow=False):
+    """The fapolicyd job's one report: getting fapolicyd running (the fix's report) and its blocks, trust entries and
+    rules (the rules' report), one list of changes to approve, ACT's analysis when it ran (fapolicyd_act); the workflow's
+    check (workflow): what Approve makes on each host, and what is held back for a person."""
+    fx = fapolicyd_fix_report(hostvars_list, names, "", check)
+    ru = fapolicyd_rules_job_report(hostvars_list, names, since, "", check)
+    fs = dict((x["title"], x) for x in fx["sections"])
+    rs = dict((x["title"], x) for x in ru["sections"])
+    order = {"critical": 0, "warning": 1, "ok": 2}
+    status = min([fx["status"], ru["status"]], key=lambda x: order.get(x, 2))
+    head = []
+    for t in (fx["title"], ru["title"]):
+        for part in t.split(": ", 1)[-1].split(", "):
+            if part not in head and not part.startswith(("nothing to fix", "nothing blocked")):
+                head.append(part)
+    lines = list((fs.get("Fixes to approve") or {}).get("lines") or []) + list((rs.get("Changes to approve") or {}).get("lines") or [])
+    by_label = dict((x["label"], x) for x in ru["summary"])
+    summary = [by_label["Blocked"], by_label["Would be blocked (permissive)"],
+               {"label": "Changes to approve", "value": len(lines), "status": "warning" if lines else "ok"}]
+    summary += [x for x in fx["summary"] if x["label"] in ("fapolicyd not running", "Hosts fixed", "Hosts it would fix", "Not fixed")]
+    summary += [x for x in ru["summary"] if x["label"] in ("Hosts changed", "Hosts it would change", "Not changed", "Permissive",
+                                                            "For a person", "Hosts read", "Not read")]
+    report = {"title": "%s: %s" % (title or "fapolicyd", ", ".join(head) if head else "running, nothing blocked since %s, nothing to change" % since),
+              "subtitle": "%s - and what keeps fapolicyd down: its trust files, SELinux labels, db_max_size, the service"
+                          % ru["subtitle"],
+              "status": status, "summary": summary, "sections": [], "footer": RNOTE}
+    secs = report["sections"]
+    for t, new in (("What this run fixed", "Getting fapolicyd running: what this run did"),
+                   ("What this run would fix", "Getting fapolicyd running: what this run would do")):
+        if t in fs:
+            secs.append(dict(fs[t], title=new))
+    for t, new in (("What this run changed", "Trust and rules: what this run did"),
+                   ("What this run would change", "Trust and rules: what this run would do")):
+        if t in rs:
+            secs.append(dict(rs[t], title=new))
+    # approved lines no part has made: the union of each part's "not here" less what either made or refused
+    used, idle = set(), set()
+    for n, hv in zip(names, hostvars_list):
+        for ap in (_get(hv, "_ff_apply"), _get(hv, "_fr_apply")):
+            if hasattr(ap, "keys"):
+                used |= set(_norm(c.get("proposed") or c.get("line")) for c in ap.get("applied") or [])
+                used |= set(_norm(c.get("line")) for c in ap.get("applied") or [])
+                used |= set(_norm(b.get("line")) for b in (ap.get("refused") or []) + (ap.get("bad") or []))
+                idle |= set(_norm(x) for x in ap.get("not_here") or [])
+    if idle - used:
+        secs.append({"title": "Approved, made on no host", "status": "warning",
+                     "text": "Lines in fapolicyd_approved that no host of this run has now: made already, for a host outside this "
+                             "run's Limit, a file that changed since, or not exactly the report's line. Nothing was changed for them.",
+                     "lines": sorted(idle - used)})
+    if lines:
+        rows = [[r[0], r[1], r[2], "gets fapolicyd running"] for r in (fs.get("Why each fix") or {}).get("rows") or []] \
+            + list((rs.get("Why each change") or {}).get("rows") or [])
+        rstat = list((fs.get("Why each fix") or {}).get("row_status") or []) + list((rs.get("Why each change") or {}).get("row_status") or [])
+        secs.append({"title": "Changes to approve", "status": "warning",
+                     "text": "Each line is a change (its hosts, why and what it does: below). Getting fapolicyd running first - its "
+                             "trust files, labels, db_max_size, enabled at boot, started permissive - then trust entries for what it "
+                             "blocked, container rules, the rules files' clean-up, and back to enforcing on a quiet day. To make them: "
+                             "the workflow's approval step, or by hand - list them in fapolicyd_approved exactly as here and run the "
+                             "job again (a Check run first). A db_max_size line may end in your own number.",
+                     "lines": lines})
+        secs.append({"title": "Why each change", "columns": ["Hosts", "Change", "Why", "What it does"], "rows": rows, "row_status": rstat})
+    if workflow:
+        w = fapolicyd_workflow(hostvars_list, names)
+        if w["plan"]:
+            secs.append({"title": "Approve makes these", "status": "warning",
+                         "text": "What the workflow's approval step makes on each host - getting fapolicyd running first, then the "
+                                 "rest. Deny makes none.",
+                         "lines": ["%s: %s" % (h, l) for h in sorted(w["plan"]) for l in w["plan"][h]]})
+        if w["held"]:
+            secs.append({"title": "Held back for a person", "status": "warning",
+                         "text": "Not in the approval: decide these by hand (fapolicyd_approved on a template of this playbook), or "
+                                 "wait - enforcing comes on a quiet day by itself.",
+                         "lines": ["%s: %s - %s" % x for x in w["held"]]})
+    if "What fapolicyd blocked" in rs:
+        secs.append(rs["What fapolicyd blocked"])
+    for n, hv in zip(names, hostvars_list):
+        a = _get(hv, "act_triage_result")
+        if hasattr(a, "keys") and _get(hv, "_fa_act_ran"):
+            secs.extend(act_sections(n, dict(a)))
+    person = list((fs.get("For a person") or {}).get("lines") or []) + list((rs.get("For a person") or {}).get("lines") or [])
+    for n, hv in zip(names, hostvars_list):
+        if _get(hv, "_fa_rules_wait") is True or str(_get(hv, "_fa_rules_wait", "")).strip() == "True":
+            person.insert(0, "%s: the trust and rules changes approved were not made - getting fapolicyd running failed first "
+                             "(above); they come again once it runs" % n)
+        if _get(hv, "_fa_act_skip"):
+            person.append("%s: %s" % (n, _get(hv, "_fa_act_skip")))
+    if person:
+        secs.append({"title": "For a person", "status": "warning",
+                     "text": "What the job does not change: decide it with the system's owner and your security approval.",
+                     "lines": person})
+    if "The hosts" in rs:
+        secs.append(rs["The hosts"])
+    if "The hosts" in fs:
+        secs.append(dict(fs["The hosts"], title="The trust database"))
+    seen = set()
+    for x in fx["sections"] + ru["sections"]:
+        if x["title"].endswith(": fapolicyd's journal") or x["title"] in ("fapolicyd not installed", "Not read"):
+            if x["title"] not in seen:
+                seen.add(x["title"])
+                secs.append(x)
+    return report
+
+
 def _kind(line):
     for k, p in (("access", "trust file access: "), ("label", "SELinux label: "), ("db", "db_max_size: "), ("permissive", "permissive: "),
-                 ("restart", "restart ")):
+                 ("enable", "enable "), ("restart", "restart ")):
         if line.startswith(p):
             return k
     return ""
@@ -955,11 +885,10 @@ def _kind(line):
 
 class FilterModule(object):
     def filters(self):
-        return {"fapolicyd_report": fapolicyd_report, "fapolicyd_containers_report": fapolicyd_containers_report,
-                "fapolicyd_rule_problem": fapolicyd_rule_problem, "fapolicyd_rules_plan": fapolicyd_rules_plan,
-                "fapolicyd_rules_file": fapolicyd_rules_file, "fapolicyd_fix_plan": fapolicyd_fix_plan,
+        return {"fapolicyd_report": fapolicyd_report, "fapolicyd_fix_plan": fapolicyd_fix_plan,
                 "fapolicyd_fix_rollback": fapolicyd_fix_rollback, "fapolicyd_fix_report": fapolicyd_fix_report,
                 "fapolicyd_rules_job_plan": fapolicyd_rules_job_plan, "fapolicyd_rules_job_edit": fapolicyd_rules_job_edit,
                 "fapolicyd_rules_job_file": fapolicyd_rules_job_file, "fapolicyd_rules_job_rollback": fapolicyd_rules_job_rollback,
                 "fapolicyd_rules_job_backups": fapolicyd_rules_job_backups, "fapolicyd_rules_job_report": fapolicyd_rules_job_report,
-                "fapolicyd_rules_job_workflow": fapolicyd_rules_job_workflow}
+                "fapolicyd_split": fapolicyd_split, "fapolicyd_workflow": fapolicyd_workflow, "fapolicyd_all_report": fapolicyd_all_report,
+                "fapolicyd_act_findings": fapolicyd_act_findings, "fapolicyd_act_evidence": fapolicyd_act_evidence}
