@@ -99,6 +99,13 @@ servicenow_war_groups: [YOUR GROUP NAME]
 ## (whatever report_email_xlsx says). false = only with report_email_xlsx.
 # servicenow_war_xlsx: true
 
+## The voice of ACT's narrative: positive (the default) = confident and forward-looking, the team's
+## achievements and their impact first, open work as progress under way, issues as next steps -
+## still only what the evidence says; neutral = factual, like an operations log; or your own words,
+## e.g. "upbeat and brief, for the commander's weekly update". site_act_extra_instructions is added
+## after it, for anything else ACT should know.
+# servicenow_war_act_tone: positive
+
 ## at most this many tasks per set go to the model (the biggest weeks)
 # servicenow_war_act_max_items: 150
 

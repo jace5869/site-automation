@@ -505,6 +505,25 @@ def servicenow_war_act_evidence(r, opts=None):
     return "\n".join(out) + "\n"
 
 
+# The voice of ACT's narrative (servicenow_war_act_tone): a preset, or a site's own words
+TONES = {
+    "positive": "Tone: positive, confident and forward-looking - this report shows the team's work to its leadership. Lead with what the "
+                "team achieved and why it mattered (service restored, systems kept secure and current, requests delivered); describe open "
+                "work as progress under way and what comes next; phrase what deserves attention constructively, as next steps the team is "
+                "taking or the help it needs - never as blame or failure. Stay factual: every claim from the evidence, no praise, impact "
+                "or numbers the evidence does not support.",
+    "neutral": "Tone: neutral and factual, like an operations log: what was done, what is open, what needs attention.",
+}
+
+
+def servicenow_war_act_tone(tone):
+    """servicenow_war_act_tone -> the line the prompt carries: positive (the default) or neutral, else the site's own words."""
+    t = " ".join(str(tone if tone is not None else "positive").split())
+    if not t:
+        return TONES["neutral"]
+    return TONES.get(t.lower(), "Tone: " + t)
+
+
 def servicenow_war_act_task(opts=None):
     o = opts or {}
     return "\n".join([
@@ -520,8 +539,8 @@ def servicenow_war_act_task(opts=None):
         "the oldest and the highest priorities first; ticket numbers in brackets;",
         "- issues: 0 to 4 bullets of what deserves attention: SLAs breached or close to breaching (the evidence says \"SLA breached\" "
         "or \"SLA at N%\"), old tasks, high priorities not moving, a pile-up of one kind, unassigned work. None: an empty list;",
-        "- overall: two or three short sentences (at most 60 words) a manager reads first - the volume of the week in numbers, "
-        "what stood out.",
+        "- overall: two or three short sentences (about 60 words) a manager reads first - the volume of the week in numbers and "
+        "the highlights.",
         "Rules: use only the evidence; invent nothing; no cost, budget or procurement wording; keep people's names as the evidence "
         "has them. Each bullet is one plain sentence of about 30 words (your estimate: never count words with a command or a tool), one "
         "string in the list, the ticket numbers in brackets at "
@@ -530,6 +549,7 @@ def servicenow_war_act_task(opts=None):
         "work in one section only. Tasks under CANCELLED are not accomplishments and not in progress: name them only under issues, "
         "when the cancellations themselves deserve attention. The JSON must be valid: double quotes only, no comments, nothing "
         "after the END line.",
+        servicenow_war_act_tone(o.get("tone")),
         "",
         "End your answer with exactly one JSON object between a line %s and a line %s, nothing else between them:" % (MARK_BEGIN, MARK_END),
         MARK_BEGIN,
@@ -807,5 +827,5 @@ class FilterModule(object):
                 "servicenow_war_add_act": servicenow_war_add_act,
                 "servicenow_war_web_folder": servicenow_war_web_folder, "servicenow_war_xlsx": servicenow_war_xlsx,
                 "servicenow_war_lines": servicenow_war_lines, "servicenow_war_names": servicenow_war_names,
-                "servicenow_war_act_evidence": servicenow_war_act_evidence, "servicenow_war_act_task": servicenow_war_act_task,
+                "servicenow_war_act_evidence": servicenow_war_act_evidence, "servicenow_war_act_task": servicenow_war_act_task, "servicenow_war_act_tone": servicenow_war_act_tone,
                 "servicenow_war_act_parse": servicenow_war_act_parse, "servicenow_war_act_section": servicenow_war_act_section}

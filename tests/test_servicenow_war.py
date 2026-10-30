@@ -493,6 +493,18 @@ class Act(unittest.TestCase):
         self.assertIn("never count words with a command or a tool", task)
         self.assertIn("answer in ONE step", task)
 
+    def test_the_tone(self):
+        task = wf.servicenow_war_act_task()                                       # positive by default
+        self.assertIn("Tone: positive, confident and forward-looking", task)
+        self.assertIn("no praise, impact or numbers the evidence does not support", task)
+        self.assertLess(task.index("Tone: positive"), task.index("BEGIN_ACT_ANALYSIS"))
+        self.assertIn("Tone: neutral and factual", wf.servicenow_war_act_task({"tone": "Neutral"}))
+        self.assertIn("Tone: neutral and factual", wf.servicenow_war_act_task({"tone": " "}))
+        own = wf.servicenow_war_act_task({"tone": "upbeat and brief, for the commander's update", "extra": "Say ma'am."})
+        self.assertIn("Tone: upbeat and brief, for the commander's update", own)
+        self.assertNotIn("Tone: positive", own)
+        self.assertTrue(own.endswith("Say ma'am."))                              # the site's extra words still last
+
 
 class Cancelled(unittest.TestCase):
     """Cancelled is not completed; only the week's open work is listed (servicenow_war_open_scope)."""

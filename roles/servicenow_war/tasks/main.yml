@@ -75,7 +75,8 @@
           {{ [{'items': [{'id': 'accomplishments'}, {'id': 'in_progress'}, {'id': 'issues'}],
                'evidence': _war | servicenow_war_act_evidence({'max_items': servicenow_war_act_max_items | int, 'notes_chars': 300,
                                                                'open_scope': servicenow_war_open_scope | default('worked', true) | string}),
-               'task': {'extra': site_act_extra_instructions | default('')} | servicenow_war_act_task}] }}
+               'task': {'extra': site_act_extra_instructions | default(''),
+                        'tone': servicenow_war_act_tone | default('positive')} | servicenow_war_act_task}] }}
         _eb_check_url: "{{ servicenow_war_act_check_url | bool }}"
         _ea_names: "{{ _war | servicenow_war_names }}"
         _ea_model_timeout: "{{ servicenow_war_act_model_timeout }}"

@@ -137,6 +137,7 @@ A week that starts on another day (Friday to Thursday): `servicenow_war_week_sta
 | `servicenow_war_sla_warn_percent` | 75 | an SLA still running with this share of its time used or more is close to breaching (business time where the SLA has a schedule) |
 | `servicenow_war_xlsx` | true | the workbook on the email, whatever `report_email_xlsx` says |
 | `servicenow_war_act` | false | ACT writes the narrative (`_act_max_items` 150 tasks per set, `_act_model_timeout` 600 s, `_act_check_url`) |
+| `servicenow_war_act_tone` | `positive` | the voice of ACT's narrative: `positive` = confident and forward-looking, achievements and their impact first, open work as progress, issues as next steps (only what the evidence says); `neutral` = factual, like an operations log; or your own words |
 | `servicenow_war_fail` | true | the job fails when ServiceNow could not be read at all or a group named is not there (false: a report only) |
 | `servicenow_validate_certs`, `servicenow_ca_path`, `servicenow_timeout` | | the connection, as for the tickets |
 
@@ -160,6 +161,13 @@ versions of the same week to choose from, ACT's marked as written by GenAI. Peop
 and the configuration items are masked before anything reaches the model and put back in the answer. ACT runs on
 the AAP node (`site_act_provider`, `site_act_models`, a proxy in `site_act_env`; [VMWARE.md](VMWARE.md#act-analysis) says
 how the node reaches the model). ACT not answering is said in the report; the tables are there either way.
+
+**The tone.** ACT writes in a **positive** voice by default (`servicenow_war_act_tone: positive`): it leads with what the
+team achieved and why it mattered, describes open work as progress under way and what comes next, and puts what
+deserves attention as next steps or help needed - never as blame. It stays factual: no praise, impact or numbers the
+evidence does not support. `neutral` reads like an operations log; anything else is taken as your own words for the
+voice (`servicenow_war_act_tone: "upbeat and brief, for the commander's weekly update"`). `site_act_extra_instructions`
+still comes after it, for anything else ACT should know about your site.
 
 ## What it reads
 
