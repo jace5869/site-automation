@@ -474,6 +474,21 @@ class Act(unittest.TestCase):
         self.assertEqual((secs[0]["status"], secs[0]["lines"][1]), ("warning", "Its reason: Check word count of the cancelled tasks bullet."))
         self.assertTrue(secs[0]["lines"][0].startswith("It wanted to run: python3 -c"))
         self.assertIn("asked to run a command", secs[0]["text"])
+        # the case seen at a site next: the answer wrapped in a reply object, reaching the job as a dict or its Python repr
+        inner = ('BEGIN_ACT_ANALYSIS\n{"overall": "The team completed 10 tasks.", "items": [{"id": "accomplishments", "lines": '
+                 '["Upgraded five cluster hosts to the team\'s build (CHG1)."]}, {"id": "in_progress", "lines": ["NFS (PTASK1)"]}]}\nEND_ACT_ANALYSIS')
+        for wrapped in ({"message": inner}, str({"message": inner}), str({"action": "finish", "message": inner, "done": True}),
+                        '{"message": %s, "done": true}' % __import__("json").dumps(inner)):
+            pa = wf.servicenow_war_act_parse(wrapped)
+            self.assertEqual((pa["parsed"], pa["form"], pa["overall"], pa["accomplishments"], pa["in_progress"]),
+                             (True, "json", "The team completed 10 tasks.", ["Upgraded five cluster hosts to the team's build (CHG1)."], ["NFS (PTASK1)"]),
+                             repr(wrapped)[:60])
+        secs = wf.servicenow_war_act_section(str({"message": inner}), {"ran": True})
+        self.assertEqual(secs[1]["lines"], ["Upgraded five cluster hosts to the team's build (CHG1)."])
+        # unreadable inside the wrapper: its text shown line by line, not the repr
+        secs = wf.servicenow_war_act_section(str({"message": "Here is the week.\nIt went well."}), {"ran": True})
+        self.assertEqual(secs[0]["lines"], ["Here is the week.", "It went well."])
+        self.assertEqual(wf._answer_text(str({"action": "run", "command": "ls"})), str({"action": "run", "command": "ls"}))   # an action: left as it is
         task = wf.servicenow_war_act_task()
         self.assertIn("never count words with a command or a tool", task)
         self.assertIn("answer in ONE step", task)
@@ -547,6 +562,20 @@ class Cancelled(unittest.TestCase):
         self.assertEqual((row["Completed this week"], row["Cancelled this week"], row["Completed"], row["State"]), ("no", "yes", "2026-10-19 09:00", "Canceled"))
         self.assertEqual(sheets[4]["rows"][0][:2], ["INC6", "Incident"])
         # nothing but the backlog open: said in words
+        # opened and cancelled in the week: only under Cancelled - not in Opened, its tile, the numbers, By person, the workbook's Opened
+        both = dict(WEEK, incident=WEEK["incident"] + [rec("incident", "INC9", "2026-10-20 10:00:00", closed="2026-10-21 09:00:00", state=("8", "Canceled"))])
+        r = war.read_week(FakeApi(both), ["Linux Operations"], [], ["incident", "sc_task", "change_request"], war.window("days", 7, now=NOW))
+        self.assertEqual((r["counts"]["opened"], r["counts"]["cancelled"]), (3, 1))
+        rep = wf.servicenow_war_report(r, {"old_days": 30})
+        self.assertIn(": 3 completed, 3 opened,", rep["title"])
+        self.assertEqual([t["value"] for t in rep["summary"] if t["label"] in ("Opened", "Cancelled")], [3, 1])
+        secs = dict((s["title"], s) for s in rep["sections"])
+        self.assertNotIn("INC9", [x[1] for x in secs["Opened this week"]["rows"]])
+        self.assertIn("Opened and cancelled in the week: only under Cancelled this week (1).", secs["Opened this week"]["text"])
+        self.assertEqual(secs["The week in numbers"]["rows"][-1][:4], ["Total", 3, 3, 1])
+        self.assertEqual([x[1] for x in secs["Cancelled this week"]["rows"]], ["INC9"])
+        self.assertEqual(len(dict((s["name"], s) for s in wf.servicenow_war_xlsx(r))["Opened"]["rows"]), 3)
+        self.assertNotIn("INC9 |", wf.servicenow_war_act_evidence(r).split("CANCELLED IN THE WEEK")[0])
         quiet = {"incident": [self.EXTRA[1], WEEK["incident"][0]]}
         rep = wf.servicenow_war_report(war.read_week(FakeApi(quiet), ["Linux Operations"], [], ["incident"], war.window("days", 7, now=NOW)))
         opn = dict((s["title"], s) for s in rep["sections"])["Open at the end of the week"]

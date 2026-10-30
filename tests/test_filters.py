@@ -989,6 +989,11 @@ class VmwareAlarms(unittest.TestCase):
         wrapped = json.dumps({"action": "plan", "next_action": {"action": "finish", "message": inner}})
         w = va.act_analysis_parse(wrapped, p)                       # inside another JSON reply
         self.assertEqual((w["parsed"], w["overall"], w["by_id"]["P2"]["confidence"]), (True, "o", 70))
+        for reply in ({"message": inner}, str({"message": inner})):  # ACT's summary a mapping: a dict, or its Python repr
+            w = va.act_analysis_parse(reply, p)
+            self.assertEqual((w["parsed"], w["overall"]), (True, "o"))
+        self.assertEqual(va.act_answer_text({"message": "plain"}), "plain")
+        self.assertEqual(va.act_answer_text("{'summary': 'two\\nlines'}"), "two\nlines")
         bad = va.act_analysis_parse("ROOT CAUSE: something. CONFIDENCE: high", p)
         self.assertEqual((bad["parsed"], bad["error"]), (False, "ACT's answer has no readable JSON block"))
         self.assertEqual(va.act_analysis_parse("", p)["error"], "ACT gave no answer")

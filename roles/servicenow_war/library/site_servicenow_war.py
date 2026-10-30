@@ -539,7 +539,7 @@ def read_week(api, groups, users, tables, win, extra_fields=None, max_records=50
                            "at_risk": sum(1 for x in items if x.get("sla_state") == "at_risk")})
     elif sla:
         res["sla"]["read"] = True
-    res["counts"] = {"items": len(items), "opened": sum(1 for x in items if x["opened"]), "done": sum(1 for x in items if x["done"]),
+    res["counts"] = {"items": len(items), "opened": sum(1 for x in items if x["opened"] and not x["cancelled"]), "done": sum(1 for x in items if x["done"]),
                      "cancelled": sum(1 for x in items if x["cancelled"]),
                      "open_at_end": sum(1 for x in items if x["open_at_end"]), "touched": sum(1 for x in items if x["touched"]),
                      "sla_breached": res["sla"]["breached"], "sla_at_risk": res["sla"]["at_risk"]}

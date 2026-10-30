@@ -14,8 +14,11 @@ code holding one of those words) is no longer counted as completed and is not in
 accomplishments. It goes in its own section at the bottom, **Cancelled this week** (before *Not read* and *Read*): when,
 what, who had it, how long it was open, the close notes; a *Cancelled* tile, a column in *The week in numbers* and *By
 person*, a *Cancelled* sheet on the workbook and a *Cancelled this week* column on *All items*; the job artifact's
-counts have `cancelled`; ACT sees the list, marked as not accomplishments. `[]` makes every closed task count as
-completed, as before.
+counts have `cancelled`; ACT sees the list, marked as not accomplishments. **Opened leaves them out too**: a task opened
+and cancelled in the same week (a batch of change tasks raised and withdrawn) is only under *Cancelled this week* - not
+in the title's or the tile's *opened*, *The week in numbers*, *By person*, the workbook's *Opened* sheet or ACT's list of
+the week's new tasks; the *Opened this week* section says how many it left out. `[]` makes every closed task count as
+completed and opened, as before.
 
 **Only the week's open work is listed.** *Open at the end of the week*, the WAR's in-progress lines and ACT's evidence
 list the open tasks that are new this week or were updated in it (`servicenow_war_open_scope: worked`, the default); the
@@ -34,7 +37,11 @@ model asked to run a Python one-liner to count the words of a bullet (twelve can
 an accomplishment) instead of answering; evidence mode runs none, and the report showed ACT's action record as "no
 readable JSON block". The report now says what happened - `ACT tried to run a command instead of answering`, the
 command and the model's reason - and the prompt tells the model to answer in one step and never to count words with a
-tool (a bullet is "about 30 words" now, its own estimate).
+tool (a bullet is "about 30 words" now, its own estimate). And the next case seen: the model's answer was right but
+wrapped in a reply object, and ACT's summary reached the job as `{'message': 'BEGIN_ACT_ANALYSIS\n{"overall": ...'}` -
+shown as one long unreadable line. The answer is unwrapped first now (a dict, or its Python or JSON text) and read as
+usual - in the WAR and in the other ACT analyses too (VMware alarms, capacity planning, log analysis, VM questions:
+`act_answer_text`); an answer still unreadable inside it is shown as its own lines, not as the wrapper.
 
 **Monday to Friday**, asked: a Friday run with `servicenow_war_period: this-week` reports Monday 00:00 (in
 `report_time_zone`) to the moment it runs; a Monday run with `last-week`, the previous Monday-to-Sunday week
@@ -43,7 +50,8 @@ tool (a bullet is "about 30 words" now, its own estimate).
 Tested: three cancelled tasks in the week of the end-to-end test (an incident cancelled, a catalog task skipped, a
 change closed incomplete) are out of Completed and the WAR lines and in the Cancelled section, and count again with
 `[]`; the untouched backlog counted, not listed, and listed with `all`; unit tests for the cancelled verdict, the report,
-the workbook, and ACT answers with a raw line break, curly quotes, a cut-short JSON and prose.
+the workbook, and ACT answers with a raw line break, curly quotes, a cut-short JSON and prose, wrapped as
+`{'message': ...}` (a dict, its Python repr, JSON); a task opened and cancelled in the week, only under Cancelled.
 
 
 **To do, if you have not yet: what 0.20.0 to 0.44.1 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 and 0.44.1 add nothing to it).** In order; each step works without

@@ -15,7 +15,7 @@ ACT (GenAI) from the same tables. It runs on the AAP side with the **ServiceNow 
 | The title and the tiles | the assignment group first, exactly as ServiceNow names it (`Weekly activity report for ABC - Ops - IT - Linux: 5 completed, ...`); how many completed, opened and open at the end, the ones older than 30 days, the ones worked on but still open, the ones cancelled - each tile with a line saying what it counts |
 | **The week in numbers** | per kind of task: opened, completed, cancelled, open at the end, older than 30 days, worked on |
 | **Completed this week** | each task resolved or closed in the week, oldest first: **the date of closure**, number, type, what it was, who had it, its state, priority, when it was opened, days open, the close notes. Cancelled is not completed (below) |
-| **Opened this week** | each task new in the week: when, who got it, its state, and whether it was already completed |
+| **Opened this week** | each task new in the week: when, who got it, its state, and whether it was already completed. A task opened and cancelled in the week is only under *Cancelled this week* - not in Opened, its tile, the numbers or By person |
 | **Open at the end of the week** | the week's open work: still open at the week's end **and new this week or worked on in it** (`servicenow_war_open_scope: worked`, the default), oldest first; amber past `servicenow_war_old_days` (30); *This week*: new or worked on (updated in the week). The backlog nobody touched - a task open 90 days and not looked at - is counted in the tiles and on the workbook, not listed; the section says how many. `servicenow_war_open_scope: all` lists every open task, however old |
 | **By person** | completed, opened, open, worked on and cancelled, per assignee |
 | **For the WAR (from the tables): completed** and **in progress** | the first version of the WAR: one line per task, ready to paste: `Incident INC0012345: Mail relay queue growing on mail01 - resolved 2026-10-20 (Jane Doe)`, `Problem task PTASK0012345: NFS mounts hang on the batch hosts - Work in Progress, open since 2026-09-01, 52 days (Jane Doe)` |
@@ -31,7 +31,8 @@ ServiceNow closes it by itself days later), everything else when it is **closed*
 is that date. A task resolved before the week and auto-closed in it is not the week's work and is left out. **Cancelled
 is not completed**: a task closed in a state named in `servicenow_war_cancelled_states` (*Canceled*, *Cancelled*, *Closed
 Skipped*, *Closed Incomplete* - as ServiceNow shows them, any case; or with a close code holding one of those words) goes
-to *Cancelled this week* instead. Your instance's words, if they differ; `[]` = every closed task counts as completed.
+to *Cancelled this week* instead - and one opened in the week too is not counted as opened either. Your instance's words,
+if they differ; `[]` = every closed task counts as completed (and as opened).
 
 **Whose task it is.** A task counts for the assignment group it has **now**. One that was in your group during the
 week and moved to another group since is not in the report (ServiceNow's API gives the current record, not its

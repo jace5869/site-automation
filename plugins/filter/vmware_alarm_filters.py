@@ -7,6 +7,7 @@ prompt, and ACT's answer read back into a table."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import ast
 import datetime
 import json
 import re
@@ -558,13 +559,51 @@ def _strings(v):
                 yield y
 
 
+ANSWER_KEYS = ("message", "summary", "answer", "text", "content", "response")
+
+
+def _answer_text(v, depth=0):
+    """ACT's answer as text. A model that wraps its answer in a reply object ({"message": "BEGIN_ACT_ANALYSIS ..."}) makes
+    ACT's summary a mapping, which reaches the filter (here, as in servicenow_war_filters.py) as a dict or as its Python repr ({'message': '...'}): its text is
+    taken out. An action record ({'action': 'run', 'command': ...}) and the analysis itself are left for the reader."""
+    if depth > 3:
+        return v if isinstance(v, str) else json.dumps(v)
+    if isinstance(v, str):
+        if not re.match(r"""\s*\{\s*['"]\w+['"]\s*:""", v) or not re.search(r"""['"](?:%s)['"]\s*:""" % "|".join(ANSWER_KEYS), v):
+            return v
+        try:
+            d = ast.literal_eval(v.strip())
+        except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+            try:
+                d = json.loads(v.strip(), strict=False)
+            except ValueError:
+                return v
+        return _answer_text(d, depth + 1) if isinstance(d, dict) else v
+    if isinstance(v, dict):
+        if str(v.get("action") or "").lower() in ("run", "edit", "write", "plan", "ask", "wait_job") or any(
+                k in v for k in ("items", "overall", "accomplishments", "in_progress")):
+            return json.dumps(v)
+        for k in ANSWER_KEYS:
+            if isinstance(v.get(k), (str, dict)) and v.get(k):
+                return _answer_text(v[k], depth + 1)
+        return json.dumps(v)
+    if isinstance(v, list):
+        return json.dumps(v)
+    return "" if v is None else str(v)
+
+
+def act_answer_text(value):
+    """ACT's answer as text (a filter): {'message': '...'} unwrapped - see _answer_text."""
+    return _answer_text(value)
+
+
 def act_analysis_parse(text, problems=None, depth=0):
     """ACT's answer -> {'parsed': bool, 'overall': str, 'by_id': {P1: {cause, evidence, fix, confidence} (and
     estimate, estimate_days, recommendation, reasoning when given)},
     'error': why it could not be read}. Reads the JSON between the markers, else a ```json block,
     else the outermost {...}; tolerates trailing commas and a confidence given as 85, "85%", 0.85 or
-    high / medium / low."""
-    t = str(text or "")
+    high / medium / low. An answer wrapped in a reply object ({'message': '...'}) is unwrapped first."""
+    t = _answer_text(text)
     cands = []
     m = re.search(MARK_BEGIN + r"\s*(.*?)\s*" + MARK_END, t, re.S)
     if m:
@@ -776,6 +815,6 @@ class FilterModule(object):
     def filters(self):
         return {"vm_alarm_groups": vm_alarm_groups, "vm_alarm_report": vm_alarm_report, "vm_alarm_history": vm_alarm_history,
                 "vm_alarm_problems": vm_alarm_problems, "vm_alarm_evidence": vm_alarm_evidence,
-                "vm_alarm_act_task": vm_alarm_act_task, "act_analysis_parse": act_analysis_parse,
+                "vm_alarm_act_task": vm_alarm_act_task, "act_analysis_parse": act_analysis_parse, "act_answer_text": act_answer_text,
                 "vm_alarm_act_report": vm_alarm_act_report, "vm_alarm_names": vm_alarm_names,
                 "act_batches_merge": act_batches_merge, "act_batches_reason": act_batches_reason}

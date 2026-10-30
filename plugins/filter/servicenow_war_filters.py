@@ -6,6 +6,7 @@ for ACT (GenAI) to write the narrative."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
+import ast
 import datetime
 import json
 import re
@@ -100,6 +101,11 @@ def _sorted_items(r):
     return list((r or {}).get("items") or [])
 
 
+def _new(x):
+    """Opened in the week and not cancelled in it: a task opened and cancelled the same week is only under Cancelled."""
+    return bool(x.get("opened")) and not x.get("cancelled")
+
+
 def war_sets(r, old_days=30, open_scope="worked"):
     """The week's sets from the module's result -> dict(items, done, cancelled, opened, open_end, open_listed, touched, old,
     open_scope). open_listed = the open tasks the report lists: with open_scope worked (the default) the ones new this week
@@ -108,7 +114,7 @@ def war_sets(r, old_days=30, open_scope="worked"):
     scope = "all" if str(open_scope or "worked").strip().lower() == "all" else "worked"
     done = sorted([x for x in items if x.get("done")], key=lambda x: (x.get("done_at") or "", x.get("number") or ""))
     cancelled = sorted([x for x in items if x.get("cancelled")], key=lambda x: (x.get("done_at") or "", x.get("number") or ""))
-    opened = sorted([x for x in items if x.get("opened")], key=lambda x: (x.get("opened_at") or "", x.get("number") or ""))
+    opened = sorted([x for x in items if _new(x)], key=lambda x: (x.get("opened_at") or "", x.get("number") or ""))
     open_end = sorted([x for x in items if x.get("open_at_end")], key=lambda x: (x.get("opened_at") or "", x.get("number") or ""))
     touched = [x for x in items if x.get("touched")]
     old = [x for x in open_end if (x.get("age_days") or 0) > float(old_days)]
@@ -198,7 +204,7 @@ def servicenow_war_report(r, opts=None):
                                                 ("ServiceNow: %s%s" % (r["url"], (" as " + r["user"]) if r.get("user") else "")) if r.get("url") else "") if x),
         "status": status,
         "summary": [{"label": "Completed", "value": len(done), "status": "ok" if done else "", "note": "resolved or closed"},
-                    {"label": "Opened", "value": len(opened), "note": "new this week"},
+                    {"label": "Opened", "value": len(opened), "note": "new this week, not cancelled"},
                     {"label": "Open at the end", "value": len(open_end), "note": "still to do"},
                     {"label": "Older than %d days" % int(old_days), "value": len(old), "status": "warning" if old else "ok",
                      "note": "open the longest"},
@@ -222,7 +228,7 @@ def servicenow_war_report(r, opts=None):
     by_type = {}
     for x in items:
         t = by_type.setdefault(x.get("type") or "Task", {"opened": 0, "done": 0, "cancelled": 0, "open_end": 0, "old": 0, "touched": 0})
-        t["opened"] += bool(x.get("opened"))
+        t["opened"] += _new(x)
         t["done"] += bool(x.get("done"))
         t["cancelled"] += bool(x.get("cancelled"))
         t["open_end"] += bool(x.get("open_at_end"))
@@ -271,14 +277,17 @@ def servicenow_war_report(r, opts=None):
                                                                                  "Priority", "Opened", "Days open", "Close notes"],
                      "rows": rows, "text": "Resolved or closed in the week, oldest first (an incident counts when it is resolved; its closure "
                                            "follows by itself later). The date of closure is the Completed column.%s" % note})
-    # 3. opened
+    # 3. opened (a task opened and cancelled in the week: only under Cancelled)
+    new_cancelled = [x for x in cancelled if x.get("opened")]
     rows = [[when_local(x.get("opened_at"), tz), x.get("number"), x.get("type"), x.get("short_description"), _who(x), x.get("state"), x.get("priority"),
              when_local(x.get("done_at"), tz) if x.get("done") else "-", x.get("opened_by")] for x in opened]
     rows, note = _cut(rows, max_rows)
     if rows:
         secs.append({"title": "Opened this week", "columns": ["Opened", "Number", "Type", "Short description", "Assigned to", "State", "Priority",
                                                               "Completed", "Opened by"],
-                     "rows": rows, "text": "New in the week, oldest first. Completed: when it was already resolved or closed in the week.%s" % note})
+                     "rows": rows, "text": "New in the week, oldest first. Completed: when it was already resolved or closed in the week.%s%s"
+                                           % ((" Opened and cancelled in the week: only under Cancelled this week (%d)." % len(new_cancelled))
+                                              if new_cancelled else "", note)})
     # 4. open at the end
     rows, rs = [], []
     for x in sorted(open_listed, key=lambda x: (-(x.get("age_days") or 0), x.get("number") or "")):
@@ -305,7 +314,7 @@ def servicenow_war_report(r, opts=None):
     for x in items:
         p = by_who.setdefault(_who(x), {"done": 0, "opened": 0, "open_end": 0, "touched": 0, "cancelled": 0})
         p["done"] += bool(x.get("done"))
-        p["opened"] += bool(x.get("opened"))
+        p["opened"] += _new(x)
         p["open_end"] += bool(x.get("open_at_end"))
         p["touched"] += bool(x.get("touched"))
         p["cancelled"] += bool(x.get("cancelled"))
@@ -413,7 +422,7 @@ def servicenow_war_xlsx(r, opts=None):
         for key, d in ((_who(x), by_who), (x.get("type") or "Task", by_type)):
             p = d.setdefault(key, [0, 0, 0, 0, 0])
             p[0] += bool(x.get("done"))
-            p[1] += bool(x.get("opened"))
+            p[1] += _new(x)
             p[2] += bool(x.get("open_at_end"))
             p[3] += bool(x.get("touched"))
             p[4] += bool(x.get("cancelled"))
@@ -538,6 +547,39 @@ def _act_clean(s):
     return " ".join(s.split()).strip()
 
 
+ANSWER_KEYS = ("message", "summary", "answer", "text", "content", "response")
+
+
+def _answer_text(v, depth=0):
+    """ACT's answer as text. A model that wraps its answer in a reply object ({"message": "BEGIN_ACT_ANALYSIS ..."}) makes
+    ACT's summary a mapping, which reaches the filter as a dict or as its Python repr ({'message': '...'}): its text is
+    taken out. An action record ({'action': 'run', 'command': ...}) and the analysis itself are left for the reader."""
+    if depth > 3:
+        return v if isinstance(v, str) else json.dumps(v)
+    if isinstance(v, str):
+        if not re.match(r"""\s*\{\s*['"]\w+['"]\s*:""", v) or not re.search(r"""['"](?:%s)['"]\s*:""" % "|".join(ANSWER_KEYS), v):
+            return v
+        try:
+            d = ast.literal_eval(v.strip())
+        except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+            try:
+                d = json.loads(v.strip(), strict=False)
+            except ValueError:
+                return v
+        return _answer_text(d, depth + 1) if isinstance(d, dict) else v
+    if isinstance(v, dict):
+        if str(v.get("action") or "").lower() in ("run", "edit", "write", "plan", "ask", "wait_job") or any(
+                k in v for k in ("items", "overall", "accomplishments", "in_progress")):
+            return json.dumps(v)
+        for k in ANSWER_KEYS:
+            if isinstance(v.get(k), (str, dict)) and v.get(k):
+                return _answer_text(v[k], depth + 1)
+        return json.dumps(v)
+    if isinstance(v, list):
+        return json.dumps(v)
+    return "" if v is None else str(v)
+
+
 def _looks_like_war(v):
     return isinstance(v, dict) and (isinstance(v.get("items"), list) or any(k in v for k in ("accomplishments", "in_progress", "overall")))
 
@@ -649,8 +691,9 @@ def _prose(text):
 def servicenow_war_act_parse(text):
     """ACT's answer -> {parsed, form, overall, accomplishments, in_progress, issues, error}: the JSON between the markers,
     else a ```json block, else the outermost {...} - read as it is or repaired (trailing commas, raw line breaks in strings,
-    curly quotes, comments, an answer cut short); with no JSON at all, the prose sorted by its headings (form: prose)."""
-    t = str(text or "")
+    curly quotes, comments, an answer cut short); with no JSON at all, the prose sorted by its headings (form: prose). An
+    answer wrapped in a reply object ({'message': '...'}) is unwrapped first."""
+    t = _answer_text(text)
     cands = []
     m = re.search(MARK_BEGIN + r"\s*(.*?)\s*" + MARK_END, t, re.S)
     if m:
@@ -738,7 +781,7 @@ def servicenow_war_act_section(raw, opts=None):
                          "complete without it.",
                  "lines": ["It wanted to run: %s" % a.get("command"), "Its reason: %s" % (a.get("thought") or "(none given)")]}]
     if not pa["parsed"]:
-        said = [_act_clean(x) for x in str(raw or "").splitlines() if _act_clean(x)]
+        said = [_act_clean(x) for x in _answer_text(raw).splitlines() if _act_clean(x)]
         return [{"title": "For the WAR (written by ACT)", "status": "warning",
                  "text": "%s - its answer as it came (the first 40 lines); the version from the tables, above, is complete without it." % pa["error"],
                  "lines": [x[:400] for x in said[:40]] or ["(empty)"]}]

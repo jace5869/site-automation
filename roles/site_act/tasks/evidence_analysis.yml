@@ -92,7 +92,7 @@
       {{ not _ea_why_not and act_triage_result is defined and act_triage_result.status != 'error'
          and (act_triage_result.summary | default('') | length > 0) }}
     _ea_parsed: "{{ act_triage_result.summary | default('') | act_analysis_parse(_ea_items) }}"
-    _ea_raw: "{{ act_triage_result.summary | default('') }}"
+    _ea_raw: "{{ act_triage_result.summary | default('') | act_answer_text }}"   # {'message': ...} from a model that wraps its answer: its text
     _ea_model: "{{ act_triage_result.model | default(site_act_model or (site_act_models | default({}))[site_act_provider] | default('')) }}"
     _ea_reason: >-
       {{ _ea_why_not or ('ACT failed: ' ~ (act_triage_result.stop_reason | default('') or 'it gave no answer')
