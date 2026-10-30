@@ -8,11 +8,11 @@ its reviews in STIG Manager (site_stigman_read) and with the host's earlier scan
   new          the scan fails a rule that passed in an earlier scan (and STIG Manager does not have it as Open, nor
                as Not a Finding - that is drift) - a finding
   disagree     the scan fails a rule STIG Manager has as Not a Finding, and it has failed in every scan of this host:
-               nothing moved that this job saw - the host was like this before its first scan, or OpenSCAP checks the
-               rule another way than DISA's check text. Report only (check_stig_disagree_severity)
+               nothing moved that this job saw - the host was like this before its first scan, or the scanner checks the
+               rule another way than DISA's check text (OpenSCAP has its own checks). Report only (check_stig_disagree_severity)
   fixed_open   the scan passes a rule STIG Manager still has Open: the checklist is behind - report only
   unreviewed   the scan fails a rule STIG Manager has no review for - report only
-  ignored      a rule in check_stig_ignore_rules (OpenSCAP is known to get it wrong at this site) that fails: listed,
+  ignored      a rule in check_stig_ignore_rules (the scanner is known to get it wrong at this site) that fails: listed,
                never a finding
   by_hand      the rules STIG Manager has a review of that the scan gives no result for (DISA's manual checks)
 STIG Manager is never written to."""
@@ -82,7 +82,8 @@ def _ignored(rec, ign):
 
 
 def check_command(scan, rec):
-    """The command that checks this one rule again on the host, as the scan did (its SCAP rule, profile, datastream)."""
+    """The command that checks this one rule again on the host, as the scan did (its SCAP rule, profile, datastream).
+    Evaluate-STIG: none - what it found is the rule's details."""
     ids = rec.get("scap_ids") or []
     ds = (scan or {}).get("datastream") or ""
     if not ids or not ds:
@@ -92,7 +93,7 @@ def check_command(scan, rec):
 
 
 def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stigman_used=False, missing_severity="warning",
-                 ignore=None, disagree_severity="none"):
+                 ignore=None, disagree_severity="none", scanner="openscap"):
     """One host: its scan (site_stig_scan's result), its STIG Manager record (site_stigman_read's hosts[host], {}
     when STIG Manager is not used) -> {host, scanned, ..., drift, new, disagree, fixed_open, unreviewed, ignored,
     by_hand, findings, row}."""
@@ -103,17 +104,21 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
     ign = ignore_set(ignore)
     out = {"host": host, "scanned": bool(scan.get("scanned")), "why": scan.get("why", ""), "os": scan.get("os", ""),
            "stig_version": scan.get("stig_version", ""), "ssg_version": scan.get("ssg_version", ""),
+           "scanner": scan.get("scanner", "OpenSCAP"), "scanner_before": scan.get("scanner_before", ""),
            "profile": scan.get("profile_title") or scan.get("profile", ""), "counts": scan.get("counts") or {},
            "saved": scan.get("saved") or {}, "stigman": {k: sm.get(k, "") for k in ("status", "why", "collection", "asset", "revision")},
            "previous_time": (scan.get("previous") or {}).get("time", ""),
            "drift": [], "new": [], "disagree": [], "fixed_open": [], "unreviewed": [], "fixed": [], "ignored": [], "by_hand": None,
            "findings": []}
     if not out["scanned"]:
+        es = scanner == "evaluate_stig"
         out["findings"].append({"check": "stig", "id": "stig:not-scanned", "severity": "warning",
                                 "summary": "the STIG scan did not run: " + (out["why"] or "unknown reason"),
-                                "hint": "rpm -q openscap-scanner scap-security-guide",
-                                "note": "Install openscap-scanner and scap-security-guide (or check_stig_install: true), then run the job "
-                                        "again for this host (docs/STIG_DRIFT.md)."})
+                                "hint": ("ls -l " + (scan.get("evaluate") or "check_stig_evaluate")) if es else "rpm -q openscap-scanner scap-security-guide",
+                                "note": ("Check Evaluate-STIG on the host (check_stig_evaluate, check_stig_evaluate_read; pwsh installed), then run "
+                                         "the job again for this host (docs/STIG_DRIFT.md).") if es else
+                                        ("Install openscap-scanner and scap-security-guide (or check_stig_install: true), then run the job "
+                                         "again for this host (docs/STIG_DRIFT.md).")})
         out["row"] = stig_host_row(out)
         return out
     prev_items = (scan.get("previous") or {}).get("items") or {}
@@ -154,6 +159,9 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
         out[k].sort(key=by_sev)
     report = out["saved"].get("report") or ""
     where = (" Every rule, why it failed and its fix: the scan's report on the host, %s." % report) if report else ""
+    if not report and out["saved"].get("results") and out["scanner"] == "Evaluate-STIG":
+        report = out["saved"]["results"]
+        where = " Evaluate-STIG's checklist is kept on the host, %s (STIG Manager imports it)." % report
     again = " To check the first one again on the host:"
     if out["drift"]:
         d = out["drift"]
@@ -183,9 +191,9 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
                                 "summary": "%d STIG %s STIG Manager has as Not a Finding or Not Applicable %s failed in every scan of this host: %s" % (
                                     len(g), _plural(len(g), "rule", "rules"), _plural(len(g), "has", "have"), _short_list(g)),
                                 "hint": cmd or report,
-                                "note": "The host was like this before its first scan, or OpenSCAP checks the rule another way than DISA's check text. "
-                                        "Look at each once: fix the host, set the review to Open, or - OpenSCAP is wrong for your site - add the rule "
-                                        "to check_stig_ignore_rules." + where + (again if cmd else "")})
+                                "note": "The host was like this before its first scan, or the scanner checks the rule another way than DISA's check "
+                                        "text. Look at each once: fix the host, set the review to Open, or - the scanner is wrong for your site - add "
+                                        "the rule to check_stig_ignore_rules." + where + (again if cmd else "")})
     if stigman_used and not found and missing_severity != "none":
         out["findings"].append({"check": "stig", "id": "stig:stigman", "severity": missing_severity,
                                 "summary": "not compared with STIG Manager: " + (sm.get("why") or "not read"),
@@ -210,10 +218,14 @@ def stig_host_row(c):
         smtxt = "not used"
     status = "critical" if any(f["severity"] == "critical" for f in c["findings"]) else (
         "warning" if c["findings"] else "ok")
-    return {"cells": [c["host"], "%s %s" % (c.get("stig_version", ""), ("(SSG " + c["ssg_version"] + ")") if c.get("ssg_version") else ""),
+    tool = ("(SSG " + c["ssg_version"] + ")") if c.get("ssg_version") else ("(Evaluate-STIG)" if c.get("scanner") == "Evaluate-STIG" else "")
+    if c.get("scanner_before"):
+        tool += " - first scan with it, after %s: not compared with the earlier scans" % c["scanner_before"]
+    return {"cells": [c["host"], "%s %s" % (c.get("stig_version", ""), tool),
                       smtxt, str(cnt.get("pass", 0)), str(cnt.get("fail", 0)), str(len(c["drift"])), str(len(c["new"])),
                       str(len(c.get("disagree") or [])), str(len(c["fixed_open"])), "-" if c.get("by_hand") is None else str(c["by_hand"]),
-                      str(len(c.get("ignored") or [])), (c.get("saved") or {}).get("report", "") or "(not kept: dry run)"],
+                      str(len(c.get("ignored") or [])), (c.get("saved") or {}).get("report", "") or (c.get("saved") or {}).get("results", "")
+                      or "(not kept: dry run)"],
             "status": status}
 
 
@@ -257,8 +269,9 @@ def stig_cards(results, max_cards=6):
         cards.append({"status": r.get("level") or "critical", "chip": "CAT I", "meta": label, "title": r["title"],
                       "subject": "%s - %s" % (c["host"], _rule_label(r)),
                       "next": "Passed %s, fails now. %s%s%s" % ((r.get("passed") or "before")[:10], sm, what,
-                                                               " To check it again on the host:" if r.get("check") else ""),
-                      "code": r.get("check") or ""})
+                                                               " To check it again on the host:" if r.get("check") else
+                                                               (" What Evaluate-STIG found:" if r.get("details") else "")),
+                      "code": r.get("check") or r.get("details") or ""})
     return cards, max(len(found) - int(max_cards), 0)
 
 
@@ -278,7 +291,8 @@ def stig_report_sections(results, list_max=200):
         _sm_cell(r) if r.get("sm") else "no review"],
         lambda r: ["", "", r["level"], "", "", "critical", SM_CHIP.get(r.get("sm"), "unknown")])
     dis_rows, dis_rs, dis_cs = _rows(results, "disagree", lambda c, r: [
-        c["host"], _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "FAIL", _sm_cell(r), ", ".join(r.get("scap") or [])],
+        c["host"], _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "FAIL", _sm_cell(r),
+        ", ".join(r.get("scap") or []) or (r.get("details") or "")[:200]],
         lambda r: ["", "", r["level"], "", "critical", SM_CHIP.get(r["sm"], ""), ""])
     fo_rows, fo_rs, fo_cs = _rows(results, "fixed_open", lambda c, r: [
         c["host"], _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "pass",
@@ -317,10 +331,10 @@ def stig_report_sections(results, list_max=200):
                          "rows": dis_rows, "row_status": dis_rs if disagree_found else ["info"] * len(dis_rows), "cell_status": dis_cs,
                          "status": worst(dis_rs) if disagree_found else "info",
                          "text": "The checklist has these as Not a Finding, and they have failed in every scan of the host: nothing moved that "
-                                 "this job saw. Either the host was like this before its first scan, or OpenSCAP checks the rule another way "
-                                 "than DISA's check text (its check is the last column; the scan's report on the host shows what it found). "
-                                 "For each: fix the host, set the review to Open, or - OpenSCAP is wrong for your site - add the rule to "
-                                 "check_stig_ignore_rules. "
+                                 "this job saw. Either the host was like this before its first scan, or the scanner checks the rule another way "
+                                 "than DISA's check text (OpenSCAP's check, or what Evaluate-STIG found, is the last column; the scan's report "
+                                 "on the host shows more). For each: fix the host, set the review to Open, or - the scanner is wrong for your "
+                                 "site - add the rule to check_stig_ignore_rules. "
                                  + ("They are findings here (check_stig_disagree_severity)." if disagree_found
                                     else "Report only (check_stig_disagree_severity: warning makes them findings).")})
     if fo_rows:
@@ -349,13 +363,14 @@ def stig_report_sections(results, list_max=200):
                      "rows": [c["row"]["cells"] for c in hosts], "row_status": hrs,
                      "text": "Pass and Fail count STIG rules (several SCAP checks of one rule count once, one SCAP check of several rules "
                              "counts for each); the rest are not applicable or not checked automatically. By hand: the rules the checklist "
-                             "has a review of that the scan gives no result for - DISA's manual checks, never compared by this job. Left out: "
-                             "fails of the rules in check_stig_ignore_rules. Each scan's HTML report, results and summary stay on the host."})
+                             "has a review of that the scan gives no result for - DISA's manual checks (Evaluate-STIG: Not Reviewed), never "
+                             "compared by this job. Left out: fails of the rules in check_stig_ignore_rules. Each scan's report (OpenSCAP), "
+                             "results or checklist (Evaluate-STIG) and summary stay on the host."})
     if ig_rows:
         sections.append({"title": "Left out on purpose - check_stig_ignore_rules", "columns": cols + ["Scan now", "STIG Manager"],
                          "rows": ig_rows[:list_max], "row_status": ["info"] * len(ig_rows[:list_max]), "cell_status": ig_cs[:list_max], "status": "info",
-                         "text": "Never a finding: OpenSCAP fails these, and check_stig_ignore_rules says it is known to get them wrong here. "
-                                 "Take a rule off the list when OpenSCAP's check is fixed (a newer scap-security-guide)."
+                         "text": "Never a finding: the scan fails these, and check_stig_ignore_rules says the scanner is known to get them "
+                                 "wrong here. Take a rule off the list when its check is fixed (a newer scap-security-guide or Evaluate-STIG)."
                                  + (" The first %d of %d (check_stig_list_max)." % (list_max, len(ig_rows)) if len(ig_rows) > list_max else "")})
     if un_rows:
         sections.append({"title": "Fails STIG Manager has no review for", "columns": cols + ["Scan now"], "rows": un_rows[:list_max],

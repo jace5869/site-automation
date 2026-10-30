@@ -441,11 +441,12 @@ File: `roles/check_sso/defaults/main.yml`
 
 File: `roles/check_stig/defaults/main.yml`
 
-> STIG (drift): scans the Linux host against the DISA STIG with OpenSCAP - the SCAP Security Guide's STIG profile for its RHEL version (RHEL 9: V2R9, RHEL 10: V1R2 in scap-security-guide 0.1.82) - keeps each scan's report on the host, and compares the result with the host's checklist in STIG Manager (read-only: this check never writes to STIG Manager) and with the host's earlier scans. A rule STIG Manager has as Not a Finding that fails now, and passed in an earlier scan, is drift; one that has failed in every scan is listed as "the scan and the checklist disagree"; a rule that passed in an earlier scan and fails now is new. playbooks/stig_drift_report.yml runs it; the health check runs it only when asked by name (health_checks: [stig] - in no shortcut: a scan takes minutes). docs/STIG_DRIFT.md.
+> STIG (drift): scans the Linux host against the DISA STIG with OpenSCAP - the SCAP Security Guide's STIG profile for its RHEL version (RHEL 9: V2R9, RHEL 10: V1R2 in scap-security-guide 0.1.82) - or with Evaluate-STIG (check_stig_scanner), keeps each scan's report on the host, and compares the result with the host's checklist in STIG Manager (read-only: this check never writes to STIG Manager) and with the host's earlier scans. A rule STIG Manager has as Not a Finding that fails now, and passed in an earlier scan, is drift; one that has failed in every scan is listed as "the scan and the checklist disagree"; a rule that passed in an earlier scan and fails now is new. playbooks/stig_drift_report.yml runs it; the health check runs it only when asked by name (health_checks: [stig] - in no shortcut: a scan takes minutes). docs/STIG_DRIFT.md.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `check_stig_install` | `false` | ---- The scan, on the host -------------------------------------------------------------------------------------- true: install openscap-scanner and scap-security-guide when missing (dnf, from the host's own repositories); false: a host without them is listed as not scanned |
+| `check_stig_scanner` | `openscap` | ---- The scan, on the host -------------------------------------------------------------------------------------- openscap: oscap and the SCAP Security Guide (below); evaluate_stig: Evaluate-STIG, already on the host (the settings after these) - closer to checklists Evaluate-STIG filled. Changing it starts the host's… (all of it: the role file) |
+| `check_stig_install` | `false` | true: install openscap-scanner and scap-security-guide when missing (dnf, from the host's own repositories); false: a host without them is listed as not scanned |
 | `check_stig_oscap` | (empty) | the oscap program; empty = found in PATH (/usr/bin/oscap) |
 | `check_stig_profile` | `stig` | the profile: stig, stig_gui (a host with a desktop), or a full profile id (xccdf_...) |
 | `check_stig_content_dir` | `/usr/share/xml/scap/ssg/content` | where scap-security-guide puts its datastreams (ssg-rhel<major>-ds.xml) |
@@ -453,7 +454,12 @@ File: `roles/check_stig/defaults/main.yml`
 | `check_stig_datastream_src` | (empty) | a datastream on the AAP side (in your repository, from playbooks/: files/stig/ssg-rhel9-ds.xml) copied to the host first - newer content than the host's repositories have; empty = none |
 | `check_stig_tailoring` | (empty) | a tailoring file on the host (your site's changes to the profile, made with SCAP Workbench); empty = none |
 | `check_stig_tailoring_src` | (empty) | or a tailoring file on the AAP side (from playbooks/), copied to the host first; empty = none |
-| `check_stig_timeout` | `1800` | seconds the scan may take (a full scan takes one to five minutes) |
+| `check_stig_timeout` | `1800` | seconds the scan may take (OpenSCAP: one to five minutes; Evaluate-STIG: more) |
+| `check_stig_evaluate` | (empty) | ---- Evaluate-STIG (check_stig_scanner: evaluate_stig) ------------------------------------------------------------ Evaluate-STIG runs on the host as root with --Output CKLB into a folder of its own (deleted after), and the job reads the checklist of the host's RHEL STIG (check_stig_stigman_benchmarks: RHEL_9_STIG ...… (all of it: the role file) |
+| `check_stig_evaluate_select` | `{}` | --SelectSTIG for each RHEL version, e.g. {"8": RHEL8, "9": RHEL9}: only the RHEL STIG is scanned (faster); its short name as your Evaluate-STIG lists it. {} = every STIG that applies to the host (the RHEL one is read) |
+| `check_stig_evaluate_args` | `[]` | more arguments for Evaluate-STIG, e.g. ["--ScanType", "Classified", "--AnswerKey", "SITE"] (Evaluate-STIG.ps1: -ScanType ...); --Output and --OutputPath are the job's |
+| `check_stig_evaluate_read` | (empty) | read the newest checklist (.cklb or .ckl) Evaluate-STIG already wrote under this folder on the host - its own schedule - instead of running it, e.g. /opt/STIG_Compliance ; empty = run it |
+| `check_stig_pwsh` | (empty) | PowerShell 7 for Evaluate-STIG.ps1; empty = pwsh found in PATH |
 | `check_stig_dir` | `/var/lib/site-automation/stig` | ---- Kept on the host ---------------------------------------------------------------------------------------- each scan's HTML report, results (gzip) and summary (JSON), and latest-report.html / latest-summary.json; root-only. A dry run keeps nothing |
 | `check_stig_keep` | `10` | how many scans are kept on the host (the oldest are deleted); the last one is what the next scan is compared with |
 | `check_stig_keep_report` | `true` | keep oscap's HTML report of each scan (about 4 MB) |

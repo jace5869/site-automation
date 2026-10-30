@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for the STIG drift check: reading oscap's results (roles/check_stig/library/site_stig_scan.py - one
-item per STIG rule, the worst of its SCAP rules, the STIG version, the runs kept on the host), finding an asset
+item per STIG rule, the worst of its SCAP rules, the STIG version, the runs kept on the host) and Evaluate-STIG's
+checklists (CKLB, CKL; running it, reading what it wrote, the scanner changed), finding an asset
 and its reviews in STIG Manager (roles/check_stig/library/site_stigman_read.py), and the comparison, findings and
 report sections (plugins/filter/stig_filters.py).
 
@@ -12,11 +13,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "roles", "check_stig", "library"))
 sys.path.insert(0, os.path.join(ROOT, "plugins", "filter"))
 sys.path.insert(0, os.path.join(ROOT, "tests", "stig"))
+import make_cklb                   # noqa: E402
 import make_results                # noqa: E402
 import site_stig_scan as scan     # noqa: E402
 import site_stigman_read as smr   # noqa: E402
@@ -320,6 +323,151 @@ class Sections(unittest.TestCase):
         u = [x for x in s if x["title"].startswith("Fails STIG Manager has no review for")][0]
         self.assertEqual(len(u["rows"]), 2)
         self.assertIn("The first 2 of 8", u["text"])
+
+
+class FakeModule(object):
+    check_mode = False
+
+    def __init__(self, **params):
+        self.params = dict(dir="", keep=10, save=True, keep_report=True, keep_results=True, oscap="", content_dir="", datastream="",
+                           profile="stig", tailoring="", timeout=60, scanner="evaluate_stig", evaluate="", evaluate_select={},
+                           evaluate_args=[], evaluate_read="", pwsh="", benchmarks={"8": "RHEL_8_STIG", "9": "RHEL_9_STIG", "10": "RHEL_10_STIG"})
+        self.params.update(params)
+
+
+FAKE_ES = """#!/bin/bash
+# Evaluate-STIG_Bash.sh --Output CKLB --OutputPath DIR [--SelectSTIG S] [...]: writes DIR/HOST/Checklist/HOST_RHEL9.cklb
+out=""; args="$*"
+while [ $# -gt 0 ]; do case "$1" in --OutputPath) out="$2"; shift ;; esac; shift; done
+echo "$args" > "$(dirname "$0")/args.txt"
+mkdir -p "$out/WEB01/Checklist"
+python3 "%s" "$out/WEB01/Checklist/WEB01_RHEL9_V2R10.cklb" "$(cat "$(dirname "$0")/results.json")" V2R10
+echo "Evaluate-STIG done"
+"""
+
+
+class Evaluate(unittest.TestCase):
+    def cklb(self, res=None, fmt="cklb", version="V2R10"):
+        d = tempfile.mkdtemp()
+        p = os.path.join(d, "WEB01_RHEL9." + fmt)
+        make_cklb.write(p, res or {}, version, fmt)
+        return p
+
+    def test_cklb_and_ckl_read_alike(self):
+        res = {"SV-257985": "open", "SV-257821": "not_applicable", "SV-258999": "not_reviewed"}
+        got = []
+        for fmt in ("cklb", "ckl"):
+            stigs = scan.read_checklist(self.cklb(res, fmt))
+            self.assertEqual([s["stig_id"] for s in stigs], ["RHEL_9_STIG", "MOZ_Firefox_STIG"])
+            st = scan.pick_stig(stigs, "RHEL_9_STIG", "9")
+            self.assertEqual(scan.checklist_version(st), "V2R10")
+            its = {i["key"]: i for i in scan.checklist_items(st)}
+            self.assertEqual(its["SV-257985"]["result"], "fail")
+            self.assertEqual(its["SV-257821"]["result"], "notapplicable")
+            self.assertEqual(its["SV-258999"]["result"], "notchecked")
+            self.assertEqual(its["SV-257883"]["result"], "pass")
+            self.assertEqual((its["SV-257985"]["v"], its["SV-257985"]["stigid"], its["SV-257985"]["severity"]), ("V-257985", "RHEL-09-255045", "medium"))
+            self.assertIn("is not set as required", its["SV-257985"]["details"])
+            self.assertNotIn("details", its["SV-257883"])            # only the fails keep what was found
+            self.assertEqual(set(its), {"SV-257985", "SV-257821", "SV-258176", "SV-257883", "SV-257835", "SV-257779", "SV-258012",
+                                        "SV-258013", "SV-258999"})
+            got.append(scan.checklist_items(st))
+        self.assertEqual(got[0], got[1])
+
+    def test_pick_by_benchmark_or_name(self):
+        stigs = scan.read_checklist(self.cklb())
+        self.assertEqual(scan.pick_stig(stigs, "", "9")["stig_id"], "RHEL_9_STIG")
+        self.assertIsNone(scan.pick_stig(stigs, "RHEL_8_STIG", "8"))
+        stigs[0]["stig_id"] = "RHEL9"                                 # named otherwise: by its title
+        self.assertEqual(scan.pick_stig(stigs, "RHEL_9_STIG", "9")["stig_id"], "RHEL9")
+
+    def test_find_evaluate_the_folder_or_the_script(self):
+        d = tempfile.mkdtemp()
+        self.assertEqual(scan.find_evaluate(d), "")
+        os.makedirs(os.path.join(d, "Src", "Evaluate-STIG"))
+        ps1 = os.path.join(d, "Src", "Evaluate-STIG", "Evaluate-STIG.ps1")
+        open(ps1, "w").close()
+        self.assertEqual(scan.find_evaluate(d), ps1)
+        sh = os.path.join(d, "Evaluate-STIG_Bash.sh")
+        open(sh, "w").close()
+        self.assertEqual(scan.find_evaluate(d), sh)
+        self.assertEqual(scan.find_evaluate(ps1), ps1)
+
+    def es(self, res):
+        d = tempfile.mkdtemp()
+        sh = os.path.join(d, "Evaluate-STIG_Bash.sh")
+        open(sh, "w").write(FAKE_ES % os.path.join(ROOT, "tests", "stig", "make_cklb.py"))
+        json.dump(res, open(os.path.join(d, "results.json"), "w"))
+        return d
+
+    def test_run_it_then_compare_then_scanner_changes(self):
+        es = self.es({"SV-257985": "open"})
+        kept = tempfile.mkdtemp()
+        m = FakeModule(dir=kept, evaluate=es, evaluate_select={"9": "RHEL9"}, evaluate_args=["--ScanType", "Classified"])
+        with unittest.mock.patch.object(scan, "os_release", return_value={"VERSION_ID": "9.6", "PRETTY_NAME": "RHEL 9.6"}):
+            out = scan.Scan(m).run()
+        self.assertTrue(out["scanned"], out.get("why"))
+        self.assertEqual((out["scanner"], out["stig_version"], out["benchmark"]), ("Evaluate-STIG", "V2R10", "RHEL_9_STIG"))
+        self.assertEqual(open(os.path.join(es, "args.txt")).read().split()[:2], ["--Output", "CKLB"])
+        self.assertIn("--SelectSTIG RHEL9 --ScanType Classified", open(os.path.join(es, "args.txt")).read())
+        self.assertTrue(out["saved"]["results"].endswith("_results.cklb.gz"))
+        self.assertNotIn("report", out["saved"])
+        self.assertEqual(out["previous"], {})
+        json.dump({}, open(os.path.join(es, "results.json"), "w"))
+        with unittest.mock.patch.object(scan, "os_release", return_value={"VERSION_ID": "9.6"}):
+            out2 = scan.Scan(m).run()
+        self.assertEqual(out2["previous"]["items"]["SV-257985"], "fail")
+        self.assertIn("SV-257883", out2["passed_before"])
+        # an OpenSCAP summary before it: another scanner - not compared with
+        for f in os.listdir(kept):
+            if f.endswith("_summary.json"):
+                j = json.load(open(os.path.join(kept, f)))
+                j["scanner"] = "OpenSCAP"
+                json.dump(j, open(os.path.join(kept, f), "w"))
+        with unittest.mock.patch.object(scan, "os_release", return_value={"VERSION_ID": "9.6"}):
+            out3 = scan.Scan(m).run()
+        self.assertEqual((out3["previous"], out3["passed_before"], out3["scanner_before"]), ({}, {}, "OpenSCAP"))
+
+    def test_read_what_it_wrote_and_why_not(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "WEB01", "Checklist"))
+        m = FakeModule(dir=tempfile.mkdtemp(), evaluate_read=d)
+        with unittest.mock.patch.object(scan, "os_release", return_value={"VERSION_ID": "9.6"}):
+            self.assertIn("no Evaluate-STIG checklist", scan.Scan(m).run()["why"])
+            make_cklb.write(os.path.join(d, "WEB01", "Checklist", "old.ckl"), {"SV-257985": "open"}, "V2R9", "ckl")
+            os.utime(os.path.join(d, "WEB01", "Checklist", "old.ckl"), (1, 1))
+            make_cklb.write(os.path.join(d, "WEB01", "Checklist", "new.cklb"), {}, "V2R10")
+            out = scan.Scan(m).run()
+            self.assertEqual((out["stig_version"], out["checklist"], out["counts"].get("fail", 0)), ("V2R10", "new.cklb", 0))
+            self.assertTrue(out["checklist_time"])
+            m.params["benchmarks"] = {"9": "RHEL_9_STIG"}
+        with unittest.mock.patch.object(scan, "os_release", return_value={"VERSION_ID": "8.10"}):
+            self.assertIn("no checklist of the RHEL 8 STIG", scan.Scan(m).run()["why"])
+        m = FakeModule(dir=tempfile.mkdtemp(), evaluate="/nowhere/Evaluate-STIG")
+        self.assertIn("Evaluate-STIG is not at /nowhere/Evaluate-STIG", scan.Scan(m).run()["why"])
+        self.assertIn("check_stig_evaluate is not set", scan.Scan(FakeModule()).run()["why"])
+
+    def test_compare_and_report(self):
+        st = scan.pick_stig(scan.read_checklist(self.cklb({"SV-257821": "open"})), "RHEL_9_STIG", "9")
+        its = scan.checklist_items(st)
+        sc = {"scanned": True, "items": its, "counts": scan.counts(its), "scanner": "Evaluate-STIG", "stig_version": "V2R10",
+              "previous": {"time": "2026-10-01T10:00:00Z", "items": {"SV-257821": "pass"}}, "passed_before": {"SV-257821": "2026-10-01T10:00:00Z"},
+              "saved": {"results": "/var/lib/site-automation/stig/x_results.cklb.gz"}, "profile_title": "Red Hat Enterprise Linux 9"}
+        c = sf.stig_compare(sc, sm(SV_257821=("pass", "accepted")), "web01", stigman_used=True, scanner="evaluate_stig")
+        self.assertEqual([r["key"] for r in c["drift"]], ["SV-257821"])
+        self.assertEqual(c["drift"][0]["check"], "")
+        self.assertIn("x_results.cklb.gz (STIG Manager imports it)", c["findings"][0]["note"])
+        self.assertEqual(c["findings"][0]["hint"], "/var/lib/site-automation/stig/x_results.cklb.gz")
+        self.assertEqual(c["row"]["cells"][1], "V2R10 (Evaluate-STIG)")
+        self.assertEqual(c["row"]["cells"][-1], "/var/lib/site-automation/stig/x_results.cklb.gz")
+        cards, _ = sf.stig_cards([c])
+        self.assertIn("What Evaluate-STIG found:", cards[0]["next"])
+        self.assertIn("SV-257821 is not set as required", cards[0]["code"])
+        c2 = sf.stig_compare(dict(sc, scanner_before="OpenSCAP"), {}, "web01")
+        self.assertIn("first scan with it, after OpenSCAP", c2["row"]["cells"][1])
+        no = sf.stig_compare({"scanned": False, "why": "Evaluate-STIG is not at /x", "evaluate": ""}, {}, "web01", scanner="evaluate_stig")
+        self.assertIn("Check Evaluate-STIG on the host", no["findings"][0]["note"])
+        self.assertEqual(sf.stig_compare({"scanned": False, "why": "x"}, {}, "web01")["findings"][0]["hint"], "rpm -q openscap-scanner scap-security-guide")
 
 
 class Module(unittest.TestCase):

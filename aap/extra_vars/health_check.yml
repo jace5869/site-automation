@@ -612,8 +612,13 @@
 
 # ---- check_stig ----------------------------------------------------------------------------------
 ## ---- The scan, on the host
-## -------------------------------------------------------------------------------------- true:
-## install openscap-scanner and scap-security-guide when missing (dnf, from the host's own
+## -------------------------------------------------------------------------------------- openscap:
+## oscap and the SCAP Security Guide (below); evaluate_stig: Evaluate-STIG, already on the host (the
+## settings after these) - closer to checklists Evaluate-STIG filled. Changing it starts the host's
+## history again (each scanner checks rules its own way)
+# check_stig_scanner: openscap
+
+## true: install openscap-scanner and scap-security-guide when missing (dnf, from the host's own
 ## repositories); false: a host without them is listed as not scanned
 # check_stig_install: false
 
@@ -641,8 +646,35 @@
 ## or a tailoring file on the AAP side (from playbooks/), copied to the host first; empty = none
 # check_stig_tailoring_src: ""
 
-## seconds the scan may take (a full scan takes one to five minutes)
+## seconds the scan may take (OpenSCAP: one to five minutes; Evaluate-STIG: more)
 # check_stig_timeout: 1800
+
+## ---- Evaluate-STIG (check_stig_scanner: evaluate_stig)
+## ------------------------------------------------------------ Evaluate-STIG runs on the host as
+## root with --Output CKLB into a folder of its own (deleted after), and the job reads the checklist
+## of the host's RHEL STIG (check_stig_stigman_benchmarks: RHEL_9_STIG ...): Not a Finding = pass,
+## Open = fail, Not Applicable, Not Reviewed = by hand. Its CKLB is kept in check_stig_dir (STIG
+## Manager imports it). It needs PowerShell 7 (pwsh) on the host. The job never installs or updates
+## Evaluate-STIG. Evaluate-STIG on the host: its folder, e.g. /opt/Evaluate-STIG - Evaluate-
+## STIG_Bash.sh found there or in Src/Evaluate-STIG (its options start with --), else Evaluate-
+## STIG.ps1 (run with pwsh) - or the script's own path
+# check_stig_evaluate: ""
+
+## --SelectSTIG for each RHEL version, e.g. {"8": RHEL8, "9": RHEL9}: only the RHEL STIG is scanned
+## (faster); its short name as your Evaluate-STIG lists it. {} = every STIG that applies to the host
+## (the RHEL one is read)
+# check_stig_evaluate_select: {}
+
+## more arguments for Evaluate-STIG, e.g. ["--ScanType", "Classified", "--AnswerKey", "SITE"]
+## (Evaluate-STIG.ps1: -ScanType ...); --Output and --OutputPath are the job's
+# check_stig_evaluate_args: []
+
+## read the newest checklist (.cklb or .ckl) Evaluate-STIG already wrote under this folder on the
+## host - its own schedule - instead of running it, e.g. /opt/STIG_Compliance ; empty = run it
+# check_stig_evaluate_read: ""
+
+## PowerShell 7 for Evaluate-STIG.ps1; empty = pwsh found in PATH
+# check_stig_pwsh: ""
 
 ## ---- Kept on the host
 ## ---------------------------------------------------------------------------------------- each

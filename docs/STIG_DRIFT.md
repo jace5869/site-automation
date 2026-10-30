@@ -6,8 +6,8 @@ assessment. The **STIG drift report** finds that on the next scheduled run.
 
 - Each Linux host is **scanned** against the DISA STIG with OpenSCAP: `oscap` and the SCAP
   Security Guide's STIG profile for its RHEL version (scap-security-guide 0.1.82: RHEL 9 **V2R9**,
-  RHEL 10 **V1R2**, RHEL 8 too). The scan's HTML report, results and summary are **kept on the
-  host**.
+  RHEL 10 **V1R2**, RHEL 8 too). Or with **Evaluate-STIG**, if your checklists come from it (below).
+  The scan's report, results and summary are **kept on the host**.
 - The result is **compared with the host's checklist in STIG Manager** - read-only: the job never
   writes to STIG Manager - and with the **host's earlier scans** (every rule that ever passed on it).
 - What moved is a finding; the hosts with one fail, so a workflow can open tickets. The report is
@@ -27,7 +27,7 @@ Linux only. VMware has its own STIG tooling (the appliance), and Windows has no 
 | No review | the scan fails a rule STIG Manager has no review for | no: report only |
 | By hand | a rule the checklist has a review of that the scan gives no result for (DISA's manual checks) | no: counted per host |
 | Not compared | the host's asset was not found in STIG Manager, or matched two | `check_stig_stigman_missing_severity` (warning; or `none`) |
-| Not scanned | no `oscap` or no STIG content on the host, or the scan failed | warning |
+| Not scanned | no `oscap` or no STIG content on the host (Evaluate-STIG: not there, or no checklist of the host's RHEL STIG), or the scan failed | warning |
 
 The report, on the website (atlas) and in the email: the tiles, **Start here** - one card per **CAT I** rule that
 drifted or fails new (at most 6): the rule, its host, when it last passed, STIG Manager's review, and the command that
@@ -102,13 +102,72 @@ hand*), and the report's STIG column then shows no release (it is read from the 
 **Check** with a Limit of one host before you schedule it; the rules that passed before carry over (they are kept by
 SV id).
 
+### Evaluate-STIG instead of OpenSCAP
+
+If your checklists in STIG Manager are filled by **Evaluate-STIG**, scan with it too: the job then compares DISA's
+own checks (and your answer files) with the checklist, so the *Disagree* rows that come from OpenSCAP checking a rule
+its own way go away. The rest of the job is the same: the comparison with STIG Manager, the host's earlier scans,
+the findings and the report.
+
+```yaml
+# all.yml, or the template's Variables
+check_stig_scanner: evaluate_stig
+check_stig_evaluate: /opt/Evaluate-STIG          # the folder it is in on your hosts (or the script's own path)
+check_stig_evaluate_select: {"8": RHEL8, "9": RHEL9}   # optional: scan only the RHEL STIG (faster)
+check_stig_evaluate_args: ["--AnswerKey", "SITE"]  # optional: your own arguments (answer key, scan type ...)
+```
+
+- The job runs `Evaluate-STIG_Bash.sh` (found in that folder or in its `Src/Evaluate-STIG`; `Evaluate-STIG.ps1`
+  with `pwsh` if there is no Bash script) as root, with `--Output CKLB --OutputPath` a folder of its own that is
+  deleted after. Your own Evaluate-STIG runs and their output are not touched, and nothing is sent to STIG Manager.
+- It reads the checklist of the host's RHEL STIG (`check_stig_stigman_benchmarks`: `RHEL_9_STIG` ...); the other
+  STIGs Evaluate-STIG scanned are left. **Not a Finding** is a pass, **Open** a fail, **Not Applicable** not
+  applicable, **Not Reviewed** is counted *By hand*.
+- `check_stig_evaluate_select` gives `--SelectSTIG` for each RHEL version: use the short names your Evaluate-STIG
+  lists. Without it Evaluate-STIG scans every STIG that applies to the host, which takes longer.
+- Evaluate-STIG already runs on its own schedule? `check_stig_evaluate_read: /opt/STIG_Compliance` reads the newest
+  checklist (`.cklb` or `.ckl`) it wrote under that folder instead of running it. The job is then only as fresh as
+  that checklist.
+- On the report, the scan's column says *V2R10 (Evaluate-STIG)*. A **Start here** card shows what Evaluate-STIG found
+  for the rule (its finding details) instead of an `oscap` command, and the rule's checklist is kept on the host
+  (`<time>_results.cklb.gz`, which STIG Manager imports).
+- **Switching scanners starts the history again.** The first run with the other scanner is not compared with the
+  scans before it: each scanner checks rules its own way, and a rule one passed and the other fails is not drift.
+  The every-host table says so for that run.
+- Evaluate-STIG needs PowerShell 7 (`pwsh`) on the host and takes longer than OpenSCAP: raise `check_stig_timeout`
+  (1800 seconds) if a host needs more. The job never installs or updates Evaluate-STIG.
+
+### How much each scanner checks
+
+Measured against DISA's releases of 30 Sep 2026:
+
+| | RHEL 9 V2R10 | RHEL 10 V1R3 |
+|---|---|---|
+| STIG rules | 445 (29 CAT I) | 435 (31 CAT I) |
+| OpenSCAP, scap-security-guide 0.1.82 | 440 | 433 |
+| DISA's SCAP benchmark | - | 396 (V1R1) |
+
+The scap-security-guide 0.1.82 has no check for these rules, so OpenSCAP leaves them *By hand*:
+
+- **RHEL 9:**
+  - SV-288833: DoW-approved encryption in the OpenSSL package (CAT I);
+  - SV-257782: the hardware random number generator;
+  - SV-257823: the system files' hashes;
+  - SV-258228: logon UIDs protected from change;
+  - SV-288832: auditing useradd.
+- **RHEL 10:**
+  - SV-288827: OpenSSL (CAT I);
+  - SV-288828: useradd.
+
+Evaluate-STIG checks what DISA's content lets it.
+
 ## On the host
 
 `check_stig_dir` (`/var/lib/site-automation/stig`, root-only):
 
 ```text
 20261024T184350Z_report.html       oscap's HTML report (open it in a browser: every rule, why it failed, the fix)
-20261024T184350Z_results.xml.gz    the XCCDF results (STIG Manager and eMASS can import them)
+20261024T184350Z_results.xml.gz    the XCCDF results (STIG Manager and eMASS can import them); Evaluate-STIG: _results.cklb.gz, its checklist
 20261024T184350Z_summary.json      one result per STIG rule, and every rule that passed on the host so far: what the next scan is compared with
 latest-report.html, latest-summary.json
 ```
@@ -165,7 +224,7 @@ collection, the asset and the checklist's STIG revision - beside the scan's (*V2
 ## Setting it up
 
 1. On the hosts: `openscap-scanner` and `scap-security-guide`, from your RHEL repositories
-   (Satellite). Or `check_stig_install: true` installs them on the first run.
+   (Satellite). Or `check_stig_install: true` installs them on the first run. With Evaluate-STIG: it and `pwsh`.
 2. In STIG Manager: the client and its grants (above).
 3. In AAP: the job template (docs/SETUP_AAP.md, "STIG drift report"): `playbooks/stig_drift_report.yml`,
    the machine credential and the STIG Manager API credential; `aap/extra_vars/stig_drift_report.yml`
@@ -184,6 +243,9 @@ you are most likely to set:
 | `check_stig_stigman_api` | empty | STIG Manager's API; empty = compared with the host's earlier scans only |
 | `check_stig_stigman_collection` | empty | the host's collection (per group or host) |
 | `check_stig_stigman_asset` | the inventory name | the host's asset name, when it differs |
+| `check_stig_scanner` | `openscap` | `evaluate_stig`: scan with Evaluate-STIG (above) |
+| `check_stig_evaluate` | empty | Evaluate-STIG's folder on the host (or its script) |
+| `check_stig_evaluate_select`, `_args`, `_read` | `{}`, `[]`, empty | `--SelectSTIG` per RHEL version; your own arguments; read its own checklists instead of running it |
 | `check_stig_profile` | `stig` | `stig_gui` for a host with a desktop, or a full profile id |
 | `check_stig_tailoring` / `_src` | empty | your site's tailoring file (on the host / in your repository) |
 | `check_stig_datastream` / `_src` | the host's SSG | another datastream - newer content, or a DISA SCAP benchmark |

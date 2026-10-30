@@ -8,7 +8,9 @@
 # check_stig_ignore_rules; a host whose first scan fails what STIG Manager has as Not a Finding (the scan and the
 # checklist disagree: report only, or a finding with check_stig_disagree_severity); the asset in no collection, in two
 # (several), the collection set; check_stig_stigman_asset; a wrong secret; only GET requests reached STIG Manager;
-# keep 2.
+# keep 2. Then Evaluate-STIG (a fake Evaluate-STIG_Bash.sh writing the CKLB tests/stig/make_cklb.py makes): the
+# first scan, its checklist kept; drift with what Evaluate-STIG found; after OpenSCAP's scans (not compared with them);
+# not there; check_stig_evaluate_read; check_stig_scanner checked.
 #   bash tests/stig/run_stig_test.sh        (ANSIBLE_PLAYBOOK=... to pick one; STIG_KEEP=FILE keeps the last output)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -199,6 +201,46 @@ else echo "ok   - only GET requests reached STIG Manager ($(grep -c '^GET' "$wor
 
 run "keep 2: the oldest scans go" ok -e check_stig_keep=2 -- "HEALTHY"
 [ "$(kept)" -eq 2 ] && [ "$(ls "$work/kept"/*_report.html | wc -l)" -eq 2 ] && echo "ok   - 2 scans kept" || { echo "FAIL - keep 2: $(kept) kept"; fails=$((fails + 1)); }
+
+# ---- Evaluate-STIG (check_stig_scanner: evaluate_stig) ----
+mkdir -p "$work/es" "$work/esout/WEB01/Checklist"
+echo '{}' > "$work/es_results.json"
+cat > "$work/es/Evaluate-STIG_Bash.sh" <<EOF
+#!/bin/bash
+# Evaluate-STIG_Bash.sh --Output CKLB --OutputPath DIR [--SelectSTIG S] ...: DIR/HOST/Checklist/HOST_RHEL9.cklb
+out=""; echo "\$*" > "$work/es_args.txt"
+while [ \$# -gt 0 ]; do case "\$1" in --OutputPath) out="\$2"; shift ;; esac; shift; done
+mkdir -p "\$out/WEB01/Checklist" && "$py" "$here/make_cklb.py" "\$out/WEB01/Checklist/WEB01_RHEL9_V2R10.cklb" "\$(cat "$work/es_results.json")" V2R10
+echo "Done"
+EOF
+es_on="{\"check_stig_scanner\": \"evaluate_stig\", \"check_stig_evaluate\": \"$work/es\", \"check_stig_evaluate_select\": {\"$major\": \"RHEL9\"}}"
+run "Evaluate-STIG, the first scan: its RHEL 9 checklist read (the Firefox one left), kept on the host" ok -e "$es_on" -e check_stig_dir="$work/kept3" -- \
+    "HEALTHY" "Red Hat Enterprise Linux 9 V2R10 - 8 pass, 0 fail; drifted 0, new 0" "!Traceback"
+if ls "$work/kept3"/*_results.cklb.gz >/dev/null 2>&1 && grep -q -- "--Output CKLB --OutputPath .* --SelectSTIG RHEL9" "$work/es_args.txt"; then
+    echo "ok   - Evaluate-STIG ran with --Output CKLB, its own output folder and --SelectSTIG; its checklist kept on the host"
+else echo "FAIL - Evaluate-STIG's arguments or its checklist kept"; cat "$work/es_args.txt"; ls "$work/kept3"; fails=$((fails + 1)); fi
+sleep 1
+echo '{"SV-257821": "open"}' > "$work/es_results.json"
+rm -f "$work/mail"/*
+run "Evaluate-STIG: drift (CAT I critical), what it found in Start here" fail -e "$es_on" -e "$sm_on" -e check_stig_dir="$work/kept3" -- \
+    "[CRITICAL] stig: 1 STIG rule STIG Manager has as Not a Finding or Not Applicable fails now: V-257821 CAT I" "DRIFT V-257821 (RHEL-09-214020) CAT I"
+decoded "$(ls "$work/mail"/* | head -1)"
+grep -q "What Evaluate-STIG found:" "$work/mail.txt" && grep -q "SV-257821 is not set as required" "$work/mail.txt" && grep -q "V2R10 (Evaluate-STIG)" "$work/mail.txt" \
+    && grep -q "_results.cklb.gz" "$work/mail.txt" \
+    && echo "ok   - the email: Start here with what Evaluate-STIG found, the scan's column says Evaluate-STIG, its checklist on the host" || { echo "FAIL - the Evaluate-STIG email"; fails=$((fails + 1)); }
+sleep 1
+echo '{"SV-257985": "open"}' > "$work/es_results.json"
+rm -f "$work/mail"/*
+run "Evaluate-STIG after OpenSCAP's scans: not compared with them - the Not a Finding it fails is disagree, not drift" ok -e "$es_on" -e "$sm_on" -- \
+    "HEALTHY" "disagree 1" "!DRIFT" "!NEW "
+decoded "$(ls "$work/mail"/* | head -1)"
+grep -q "first scan with it, after OpenSCAP" "$work/mail.txt" && echo "ok   - the email says the scanner changed" || { echo "FAIL - scanner changed not said"; fails=$((fails + 1)); }
+run "Evaluate-STIG not there: not scanned, a warning" fail -e "$es_on" -e check_stig_evaluate="$work/nope" -e check_stig_dir="$work/kept3" -- \
+    "[WARNING] stig: the STIG scan did not run: Evaluate-STIG is not at $work/nope: no Evaluate-STIG_Bash.sh or Evaluate-STIG.ps1 there"
+"$py" "$here/make_cklb.py" "$work/esout/WEB01/Checklist/WEB01_RHEL9.ckl" '{}' V2R9 ckl
+run "check_stig_evaluate_read: the checklist Evaluate-STIG already wrote (CKL) read, it is not run" ok -e "$es_on" -e check_stig_evaluate=/nowhere \
+    -e check_stig_evaluate_read="$work/esout" -e check_stig_dir="$work/kept4" -- "HEALTHY" "Red Hat Enterprise Linux 9 Security Technical Implementation Guide V2R9 - 8 pass, 0 fail"
+run "check_stig_scanner must be openscap or evaluate_stig" fail -e check_stig_scanner=scc -- "check_stig_scanner must be openscap or evaluate_stig (it is scc)"
 
 echo
 if [ $fails -eq 0 ]; then echo "all STIG drift scenarios passed"; else echo "$fails STIG drift scenario(s) FAILED"; exit 1; fi
