@@ -960,6 +960,8 @@ File: `roles/servicenow_war/defaults/main.yml`
 | `servicenow_war_since` | (empty) | period dates: the first day (2026-10-20, or 2026-10-20 08:00); given, it wins over the period |
 | `servicenow_war_until` | (empty) | period dates: the last day (through its end), or a date and time; "" = now |
 | `servicenow_war_old_days` | `30` | What the report flags: a task open at the end of the week for more than this many days is amber (Older than N days). |
+| `servicenow_war_open_scope` | `worked` | Which open tasks are listed (Open at the end of the week, the WAR's in-progress lines, ACT's evidence). worked (the default) = the ones new this week or updated in it - the week's work; the rest, the backlog nobody touched (a task open 90 days and not looked at), is counted in the tiles (Open at the end, Older than N… (all of it: the role file) |
+| `servicenow_war_cancelled_states` | `[Canceled, Cancelled, Closed Skipped, Closed Incomplete]` | Cancelled is not completed. A task closed in the week in one of these states (as ServiceNow shows them, any case) - or with a close code holding one of these words - is not counted as completed, not in the WAR lines and not among ACT's accomplishments: it is listed in its own section at the bottom, "Cancelled this wee… (all of it: the role file) |
 | `servicenow_war_max_rows` | `300` | rows per table in the report (the workbook has every row) |
 | `servicenow_war_notes_chars` | `200` | how much of each close note the Completed table shows (0 = the column stays empty; the workbook has it whole) |
 | `servicenow_war_max_records` | `5000` | at most this many records read per table (the rest are said) |

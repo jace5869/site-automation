@@ -15,9 +15,9 @@ description:
     class at once) whose assignment group is one of the groups named (or whose assignee is one of the users named) and
     that the week touched - opened in it, resolved or closed in it, open at its end, or updated in it. The week is the last
     N days, the previous calendar week, this week so far, or two dates, in the time zone given.
-  - Sorts each record - opened, done (with its date, resolved_at for an incident else closed_at), open at the end, touched -
-    on the record's own UTC timestamps, whatever time zone the API account has. Says which tables could not be read and
-    which groups or users ServiceNow does not know.
+  - Sorts each record - opened, done (with its date, resolved_at for an incident else closed_at), cancelled (closed in a
+    state of cancelled_states, not done), open at the end, touched - on the record's own UTC timestamps, whatever time zone
+    the API account has. Says which tables could not be read and which groups or users ServiceNow does not know.
   - Only reads, in check mode too.
 options:
   url: {description: The instance (https://...)., type: str, required: true}
@@ -39,6 +39,11 @@ options:
   max_records: {description: At most this many records per table (the rest are said)., type: int, default: 5000}
   sla: {description: "Read each task's SLAs (task_sla): breached, or close to breaching.", type: bool, default: true}
   sla_warn_percent: {description: "An SLA still running at this share of its time or more is close to breaching.", type: float, default: 75}
+  cancelled_states:
+    description: "The states (as ServiceNow shows them, any case) of a task closed as cancelled, skipped or incomplete - and a close code holding one of these words: closed in the window in one of them, the task is cancelled, not done. An empty list = nothing is cancelled."
+    type: list
+    elements: str
+    default: [Canceled, Cancelled, Closed Skipped, Closed Incomplete]
   now: {description: The clock (ISO 8601, UTC) - for the tests., type: str, default: ''}
 author: site automation
 '''
@@ -55,11 +60,12 @@ items:
   description: >-
     Each task the week touched - sys_id, number, table, type, link, short_description, state, state_value, priority, assigned_to,
     assignment_group, opened_by, cmdb_ci, category, parent, opened_at, closed_at, resolved_at, updated_at, done_at, done_how,
-    close_notes, close_code, active, extra - and the week's verdicts: opened, done, open_at_end, touched, age_days, days_to_done;
+    close_notes, close_code, active, extra - and the week's verdicts: opened, done, cancelled (closed in the window in a state of
+    cancelled_states: not done), is_cancelled (such a state, whenever closed), open_at_end, touched, age_days, days_to_done;
     with sla, slas ([{name, stage, breached, running, percent, breach_at}]) and sla_state (breached, at_risk, ok or empty: none),
     sla_name, sla_percent, sla_breach_at (the SLA that says it: a breached one first, else the one furthest on).
   type: list
-counts: {description: "opened, done, open_at_end, touched, items, sla_breached, sla_at_risk.", type: dict}
+counts: {description: "opened, done, cancelled, open_at_end, touched, items, sla_breached, sla_at_risk.", type: dict}
 sla: {description: "read (task_sla was read), error, warn_percent, breached, at_risk (tasks).", type: dict}
 '''
 
@@ -97,6 +103,9 @@ PARENT_OF = {"sc_task": "request_item", "change_task": "change_request", "proble
 TYPE_LABEL = {"incident": "Incident", "sc_task": "Catalog task", "change_request": "Change", "change_task": "Change task",
               "problem": "Problem", "problem_task": "Problem task", "sc_req_item": "Requested item", "sc_request": "Request",
               "task": "Task"}
+# closed, but not the week's work: a task closed in one of these states (as ServiceNow shows them, any case) - or with a close
+# code holding one of these words - is cancelled, not done (servicenow_war_cancelled_states)
+CANCELLED_STATES = ["Canceled", "Cancelled", "Closed Skipped", "Closed Incomplete"]
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 
@@ -243,6 +252,17 @@ def _in(dt, since, until):
     return dt is not None and since <= dt <= until
 
 
+def is_cancelled(it, states=None):
+    """Closed as cancelled, skipped or incomplete: the state as ServiceNow shows it is one of states (any case, spacing
+    aside), or the close code holds one of those words. None = CANCELLED_STATES; an empty list = never."""
+    want = [" ".join(str(s).split()).lower() for s in (CANCELLED_STATES if states is None else states) if str(s).strip()]
+    if not want:
+        return False
+    state = " ".join(str(it.get("state") or "").split()).lower()
+    code = " ".join(str(it.get("close_code") or "").split()).lower()
+    return state in want or any(w in code for w in want)
+
+
 def normalize(rec, table, url="", extra_fields=None):
     """One record (sysparm_display_value=all) -> the item the report uses (dates as UTC text, people and states as shown)."""
     cls_v, cls_d = _vd(rec, "sys_class_name")
@@ -374,20 +394,22 @@ def read_slas(api, items, warn_percent=75, chunk=100):
     return ""
 
 
-def classify(it, since, until):
-    """The week's verdicts on an item, on its UTC timestamps: opened, done, open_at_end, touched, age_days, days_to_done.
-    None when the week never touched it."""
+def classify(it, since, until, cancelled_states=None):
+    """The week's verdicts on an item, on its UTC timestamps: opened, done, cancelled (closed in the week in a state of
+    cancelled_states: not done), open_at_end, touched, age_days, days_to_done. None when the week never touched it."""
     o, d, u = sn_time(it.get("opened_at")), sn_time(it.get("done_at")), sn_time(it.get("updated_at"))
     opened = _in(o, since, until)
-    done = _in(d, since, until)
+    canc = is_cancelled(it, cancelled_states)
+    closed_in = _in(d, since, until)
+    done, cancelled = closed_in and not canc, closed_in and canc
     open_end = o is not None and o <= until and (d is None or d > until)
     # worked on: updated in the week, still open at its end, not new (one completed before the week and closed by itself
     # in it is nothing the week did)
     touched = _in(u, since, until) and open_end and not opened
-    if not (opened or done or open_end):
+    if not (opened or closed_in or open_end):
         return None
     out = dict(it)
-    out.update({"opened": opened, "done": done, "open_at_end": open_end, "touched": touched,
+    out.update({"opened": opened, "done": done, "cancelled": cancelled, "is_cancelled": canc, "open_at_end": open_end, "touched": touched,
                 "age_days": round((until - o).total_seconds() / 86400.0, 1) if (open_end and o) else None,
                 "days_to_done": round((d - o).total_seconds() / 86400.0, 1) if (d and o and d >= o) else None})
     return out
@@ -454,7 +476,7 @@ def lookup(api, table, names, name_fields):
     return out, ""
 
 
-def read_week(api, groups, users, tables, win, extra_fields=None, max_records=5000, sla=True, sla_warn_percent=75):
+def read_week(api, groups, users, tables, win, extra_fields=None, max_records=5000, sla=True, sla_warn_percent=75, cancelled_states=None):
     """Everything the week touched for the groups (and users): the lookups, the tables, the items sorted. -> the module's result."""
     since, until = sn_time(win["since"]), sn_time(win["until"])
     res = {"ok": False, "error": "", "window": win, "groups": [], "users": [], "tables": [], "items": [], "counts": {}, "lookup_note": "",
@@ -500,7 +522,7 @@ def read_week(api, groups, users, tables, win, extra_fields=None, max_records=50
             for e in enrich(api, found):
                 entry["error"] = (entry["error"] + "; " if entry["error"] else "") + "resolved_at not read from " + e
         for it in found:
-            c = classify(it, since, until)
+            c = classify(it, since, until, cancelled_states)
             if c is None:
                 continue
             items.append(c)
@@ -518,6 +540,7 @@ def read_week(api, groups, users, tables, win, extra_fields=None, max_records=50
     elif sla:
         res["sla"]["read"] = True
     res["counts"] = {"items": len(items), "opened": sum(1 for x in items if x["opened"]), "done": sum(1 for x in items if x["done"]),
+                     "cancelled": sum(1 for x in items if x["cancelled"]),
                      "open_at_end": sum(1 for x in items if x["open_at_end"]), "touched": sum(1 for x in items if x["touched"]),
                      "sla_breached": res["sla"]["breached"], "sla_at_risk": res["sla"]["at_risk"]}
     read_ok = [x for x in res["tables"] if not x["error"] or x["read"]]
@@ -540,6 +563,7 @@ def main():
             until=dict(type="str", default=""), week_start=dict(type="str", default="monday"), time_zone=dict(type="str", default=""),
             max_records=dict(type="int", default=5000), now=dict(type="str", default=""),
             sla=dict(type="bool", default=True), sla_warn_percent=dict(type="float", default=75),
+            cancelled_states=dict(type="list", elements="str", default=None),
         ),
         supports_check_mode=True)
     p = module.params
@@ -558,7 +582,8 @@ def main():
         url = "https://" + url
     api = Api(url, p["username"], p["password"], p["validate_certs"], p["ca_path"], p["timeout"])
     try:
-        res = read_week(api, p["groups"], p["users"], p["tables"], win, p["fields_extra"], p["max_records"], p["sla"], p["sla_warn_percent"])
+        res = read_week(api, p["groups"], p["users"], p["tables"], win, p["fields_extra"], p["max_records"], p["sla"], p["sla_warn_percent"],
+                        p["cancelled_states"])
     except SnError as e:
         res = {"ok": False, "error": str(e), "window": win, "groups": [], "users": [], "tables": [], "items": [], "counts": {}, "lookup_note": ""}
     module.exit_json(changed=False, **res)

@@ -100,15 +100,21 @@ def _sorted_items(r):
     return list((r or {}).get("items") or [])
 
 
-def war_sets(r, old_days=30):
-    """The week's sets from the module's result -> dict(items, done, opened, open_end, touched, old)."""
+def war_sets(r, old_days=30, open_scope="worked"):
+    """The week's sets from the module's result -> dict(items, done, cancelled, opened, open_end, open_listed, touched, old,
+    open_scope). open_listed = the open tasks the report lists: with open_scope worked (the default) the ones new this week
+    or updated in it - the untouched backlog is counted, not listed; all = every task open at the week's end."""
     items = _sorted_items(r)
+    scope = "all" if str(open_scope or "worked").strip().lower() == "all" else "worked"
     done = sorted([x for x in items if x.get("done")], key=lambda x: (x.get("done_at") or "", x.get("number") or ""))
+    cancelled = sorted([x for x in items if x.get("cancelled")], key=lambda x: (x.get("done_at") or "", x.get("number") or ""))
     opened = sorted([x for x in items if x.get("opened")], key=lambda x: (x.get("opened_at") or "", x.get("number") or ""))
     open_end = sorted([x for x in items if x.get("open_at_end")], key=lambda x: (x.get("opened_at") or "", x.get("number") or ""))
     touched = [x for x in items if x.get("touched")]
     old = [x for x in open_end if (x.get("age_days") or 0) > float(old_days)]
-    return {"items": items, "done": done, "opened": opened, "open_end": open_end, "touched": touched, "old": old}
+    listed = open_end if scope == "all" else [x for x in open_end if x.get("opened") or x.get("touched")]
+    return {"items": items, "done": done, "cancelled": cancelled, "opened": opened, "open_end": open_end, "open_listed": listed,
+            "touched": touched, "old": old, "open_scope": scope}
 
 
 def _sla_word(x):
@@ -133,12 +139,12 @@ def servicenow_war_lines(r, opts=None):
     when it was resolved or closed (or how long it has been open) and who had it."""
     o = opts or {}
     tz = _tz(((r or {}).get("window") or {}).get("time_zone") or o.get("time_zone"))
-    s = war_sets(r, o.get("old_days") or 30)
+    s = war_sets(r, o.get("old_days") or 30, o.get("open_scope"))
     done = ["%s %s: %s - %s %s (%s)" % (x.get("type") or "Task", x.get("number"), x.get("short_description") or "(no description)",
                                         _done_word(x), day_local(x.get("done_at"), tz), x.get("assigned_to") or "unassigned")
             for x in s["done"]]
     prog = []
-    for x in sorted(s["open_end"], key=lambda x: (-(x.get("age_days") or 0), x.get("number") or "")):
+    for x in sorted(s["open_listed"], key=lambda x: (-(x.get("age_days") or 0), x.get("number") or "")):
         age = x.get("age_days") or 0
         since = ("new this week" if x.get("opened") else "open since %s, %s days" % (day_local(x.get("opened_at"), tz), _days(age)))
         prog.append("%s %s: %s - %s, %s (%s)" % (x.get("type") or "Task", x.get("number"), x.get("short_description") or "(no description)",
@@ -157,8 +163,10 @@ def servicenow_war_report(r, opts=None):
     old_days = float(o.get("old_days") or 30)
     max_rows = int(o.get("max_rows") or 300)
     notes_chars = int(o.get("notes_chars") if o.get("notes_chars") is not None else 200)
-    s = war_sets(r, old_days)
-    items, done, opened, open_end, touched, old = (s[k] for k in ("items", "done", "opened", "open_end", "touched", "old"))
+    s = war_sets(r, old_days, o.get("open_scope"))
+    items, done, opened, open_end, touched, old, cancelled, open_listed = (s[k] for k in ("items", "done", "opened", "open_end", "touched", "old",
+                                                                                           "cancelled", "open_listed"))
+    scope_all = s["open_scope"] == "all"
     groups = list(r.get("groups") or [])
     users = list(r.get("users") or [])
     glabel = ", ".join(g.get("name", "") for g in groups) or ", ".join(u.get("name", "") for u in users) or "no group"
@@ -194,12 +202,14 @@ def servicenow_war_report(r, opts=None):
                     {"label": "Open at the end", "value": len(open_end), "note": "still to do"},
                     {"label": "Older than %d days" % int(old_days), "value": len(old), "status": "warning" if old else "ok",
                      "note": "open the longest"},
-                    {"label": "Worked on, still open", "value": len(touched), "note": "updated this week"}]
+                    {"label": "Worked on, still open", "value": len(touched), "note": "updated this week"},
+                    {"label": "Cancelled", "value": len(cancelled), "note": "not counted as completed"}]
                    + ([{"label": "Not read", "value": len(bad_tables), "status": "critical"}] if bad_tables else []),
         "sections": [],
         "footer": "ServiceNow at %s. The week: %s. A task counts for the assignment group it has now: one moved to another group "
                   "since is not here. Completed = resolved (an incident, a problem) or closed in the week, on the record's own "
-                  "timestamps; open at the end = opened before the week's end and not completed by then. Dates in %s."
+                  "timestamps; cancelled, skipped or closed incomplete is not completed (servicenow_war_cancelled_states); open at "
+                  "the end = opened before the week's end and not completed by then. Dates in %s."
                   % (r.get("url") or "the credential's URL", label, win.get("time_zone") or "UTC"),
     }
     secs = report["sections"]
@@ -211,19 +221,21 @@ def servicenow_war_report(r, opts=None):
     # 1. the week in numbers, per type
     by_type = {}
     for x in items:
-        t = by_type.setdefault(x.get("type") or "Task", {"opened": 0, "done": 0, "open_end": 0, "old": 0, "touched": 0})
+        t = by_type.setdefault(x.get("type") or "Task", {"opened": 0, "done": 0, "cancelled": 0, "open_end": 0, "old": 0, "touched": 0})
         t["opened"] += bool(x.get("opened"))
         t["done"] += bool(x.get("done"))
+        t["cancelled"] += bool(x.get("cancelled"))
         t["open_end"] += bool(x.get("open_at_end"))
         t["old"] += bool(x.get("open_at_end") and (x.get("age_days") or 0) > old_days)
         t["touched"] += bool(x.get("touched"))
-    rows = [[k, v["opened"], v["done"], v["open_end"], v["old"], v["touched"]]
+    rows = [[k, v["opened"], v["done"], v["cancelled"], v["open_end"], v["old"], v["touched"]]
             for k, v in sorted(by_type.items(), key=lambda kv: (-kv[1]["done"], -kv[1]["open_end"], kv[0]))]
     if len(rows) > 1:
-        rows.append(["Total", len(opened), len(done), len(open_end), len(old), len(touched)])
-    secs.append({"title": "The week in numbers", "columns": ["Type", "Opened", "Completed", "Open at the end", "Older than %d days" % int(old_days), "Worked on, still open"],
-                 "rows": rows, "text": "Per kind of task. Opened and completed in the week; open at the end of it, and of those the ones older than "
-                                       "%d days; worked on = updated in the week, not new, still open." % int(old_days)})
+        rows.append(["Total", len(opened), len(done), len(cancelled), len(open_end), len(old), len(touched)])
+    secs.append({"title": "The week in numbers", "columns": ["Type", "Opened", "Completed", "Cancelled", "Open at the end", "Older than %d days" % int(old_days),
+                                                             "Worked on, still open"],
+                 "rows": rows, "text": "Per kind of task. Opened and completed in the week; cancelled in it (not completed); open at the end of it, and of "
+                                       "those the ones older than %d days; worked on = updated in the week, not new, still open." % int(old_days)})
     tail = []                                       # after the WAR and ACT's version of it: the SLAs, what was not read, read
     if sla.get("read") and items:
         sla_rows = (sorted([x for x in sla_bad if x.get("open_at_end")], key=lambda x: x.get("sla_breach_at") or "9")
@@ -269,29 +281,49 @@ def servicenow_war_report(r, opts=None):
                      "rows": rows, "text": "New in the week, oldest first. Completed: when it was already resolved or closed in the week.%s" % note})
     # 4. open at the end
     rows, rs = [], []
-    for x in sorted(open_end, key=lambda x: (-(x.get("age_days") or 0), x.get("number") or "")):
+    for x in sorted(open_listed, key=lambda x: (-(x.get("age_days") or 0), x.get("number") or "")):
         age = x.get("age_days") or 0
         rows.append([day_local(x.get("opened_at"), tz), x.get("number"), x.get("type"), x.get("short_description"), _who(x), x.get("state"),
                      x.get("priority"), _days(age), when_local(x.get("updated_at"), tz), _week_word(x)])
         rs.append("warning" if age > old_days else "")
     rows, note = _cut(rows, max_rows)
+    rest = len(open_end) - len(open_listed)
+    backlog = ("%d more open task(s) were not touched this week - the backlog: counted in the tiles (Open at the end, Older than %d days) and on "
+               "the workbook's Open at the end sheet, not listed here. servicenow_war_open_scope: all lists them." % (rest, int(old_days))) if rest else ""
     if rows:
-        secs.append({"title": "Open at the end of the week", "status": "warning" if old else "", "row_status": rs[:len(rows)],
+        secs.append({"title": "Open at the end of the week", "status": "warning" if (old and scope_all) or any(rs) else "", "row_status": rs[:len(rows)],
                      "columns": ["Opened", "Number", "Type", "Short description", "Assigned to", "State", "Priority", "Days open", "Last update", "This week"],
-                     "rows": rows, "text": "Still open at the week's end, the oldest first - amber over %d days. This week: new (opened in the week), "
-                                           "worked on (updated in it) or untouched.%s" % (int(old_days), note)})
+                     "rows": rows, "text": "%s, the oldest first - amber over %d days. This week: new (opened in the week)%s.%s%s"
+                                           % ("Still open at the week's end" if scope_all else "Open at the week's end and new this week or worked on in it",
+                                              int(old_days), " or worked on (updated in it)" if not scope_all else ", worked on (updated in it) or untouched",
+                                              note, (" " + backlog) if backlog else "")})
+    elif rest:
+        secs.append({"title": "Open at the end of the week", "status": "warning" if old else "",
+                     "lines": ["No open task was new this week or worked on in it. " + backlog]})
     # 5. by person
     by_who = {}
     for x in items:
-        p = by_who.setdefault(_who(x), {"done": 0, "opened": 0, "open_end": 0, "touched": 0})
+        p = by_who.setdefault(_who(x), {"done": 0, "opened": 0, "open_end": 0, "touched": 0, "cancelled": 0})
         p["done"] += bool(x.get("done"))
         p["opened"] += bool(x.get("opened"))
         p["open_end"] += bool(x.get("open_at_end"))
         p["touched"] += bool(x.get("touched"))
-    rows = [[k, v["done"], v["opened"], v["open_end"], v["touched"]] for k, v in sorted(by_who.items(), key=lambda kv: (-kv[1]["done"], -kv[1]["open_end"], kv[0]))]
+        p["cancelled"] += bool(x.get("cancelled"))
+    rows = [[k, v["done"], v["opened"], v["open_end"], v["touched"], v["cancelled"]]
+            for k, v in sorted(by_who.items(), key=lambda kv: (-kv[1]["done"], -kv[1]["open_end"], kv[0]))]
     if rows:
-        secs.append({"title": "By person", "columns": ["Assigned to", "Completed", "Opened", "Open at the end", "Worked on, still open"], "rows": rows,
-                     "text": "Who had what, by the task's assignee now."})
+        secs.append({"title": "By person", "columns": ["Assigned to", "Completed", "Opened", "Open at the end", "Worked on, still open", "Cancelled"],
+                     "rows": rows, "text": "Who had what, by the task's assignee now."})
+    # 5b. cancelled: at the bottom, before what was not read - not the week's work
+    if cancelled:
+        rows = [[when_local(x.get("done_at"), tz), x.get("number"), x.get("type"), x.get("short_description"), _who(x), x.get("state"), x.get("priority"),
+                 day_local(x.get("opened_at"), tz), _days(x.get("days_to_done")), _short(x.get("close_notes"), notes_chars)] for x in cancelled]
+        rows, note = _cut(rows, max_rows)
+        tail.append({"title": "Cancelled this week",
+                     "columns": ["Cancelled", "Number", "Type", "Short description", "Assigned to", "State", "Priority", "Opened", "Days open", "Close notes"],
+                     "rows": rows, "text": "Closed in the week as %s - not counted as completed, not in the WAR lines, not among ACT's accomplishments "
+                                           "(servicenow_war_cancelled_states). Oldest first.%s"
+                                           % (", ".join(sorted(set(str(x.get("state") or "cancelled") for x in cancelled))).lower(), note)})
     # 6. what was not read
     nr = ["%s: %s" % (t["table"], t["error"]) for t in bad_tables]
     nr += ["%s: more than the first %d records - raise servicenow_war_max_records, or narrow the week" % (t["table"], _n(t.get("read"))) for t in cut_tables]
@@ -344,11 +376,11 @@ def servicenow_war_xlsx(r, opts=None):
     r = r or {}
     win = r.get("window") or {}
     tz = _tz(win.get("time_zone") or o.get("time_zone"))
-    s = war_sets(r, o.get("old_days") or 30)
+    s = war_sets(r, o.get("old_days") or 30, "all")           # the workbook has everything, the backlog too
     extra = sorted(set(k for x in s["items"] for k in (x.get("extra") or {}).keys()))
     cols = ["Number", "Type", "Short description", "State", "Priority", "Assigned to", "Assignment group", "Opened by", "Configuration item",
             "Category", "Parent", "Opened", "Completed", "How", "Resolved", "Closed", "Last update", "Days open", "Days to complete",
-            "Opened this week", "Completed this week", "Open at the end", "Worked on", "SLA", "SLA status", "SLA time used %",
+            "Opened this week", "Completed this week", "Cancelled this week", "Open at the end", "Worked on", "SLA", "SLA status", "SLA time used %",
             "SLA breach time", "Close code", "Close notes", "Link"] + extra
 
     def yn(v):
@@ -359,7 +391,7 @@ def servicenow_war_xlsx(r, opts=None):
                 x.get("assignment_group"), x.get("opened_by"), x.get("cmdb_ci"), x.get("category"), x.get("parent"),
                 when_local(x.get("opened_at"), tz), when_local(x.get("done_at"), tz), x.get("done_how"), when_local(x.get("resolved_at"), tz),
                 when_local(x.get("closed_at"), tz), when_local(x.get("updated_at"), tz), x.get("age_days"), x.get("days_to_done"),
-                yn(x.get("opened")), yn(x.get("done")), yn(x.get("open_at_end")), yn(x.get("touched")), x.get("sla_name") or "",
+                yn(x.get("opened")), yn(x.get("done")), yn(x.get("cancelled")), yn(x.get("open_at_end")), yn(x.get("touched")), x.get("sla_name") or "",
                 {"breached": "breached", "at_risk": "close to breaching", "ok": "within"}.get(x.get("sla_state") or "", ""),
                 x.get("sla_percent"), when_local(x.get("sla_breach_at"), tz), x.get("close_code"),
                 x.get("close_notes"), x.get("link")] + [(x.get("extra") or {}).get(k, "") for k in extra]
@@ -373,18 +405,21 @@ def servicenow_war_xlsx(r, opts=None):
               {"name": "Opened", "columns": CORE + ["Opened", "Completed"],
                "rows": [core(x, "opened_at", "Opened") + [when_local(x.get("done_at"), tz)] for x in s["opened"]]},
               {"name": "Open at the end", "columns": CORE + ["Opened", "Days open", "Last update", "This week"],
-               "rows": [core(x, "opened_at", "Opened") + [x.get("age_days"), when_local(x.get("updated_at"), tz), _week_word(x)] for x in s["open_end"]]}]
+               "rows": [core(x, "opened_at", "Opened") + [x.get("age_days"), when_local(x.get("updated_at"), tz), _week_word(x)] for x in s["open_end"]]},
+              {"name": "Cancelled", "columns": CORE + ["Cancelled", "Opened", "Days open", "Close notes"],
+               "rows": [core(x, "done_at", "Cancelled") + [when_local(x.get("opened_at"), tz), x.get("days_to_done"), x.get("close_notes")] for x in s["cancelled"]]}]
     by_who, by_type = {}, {}
     for x in s["items"]:
         for key, d in ((_who(x), by_who), (x.get("type") or "Task", by_type)):
-            p = d.setdefault(key, [0, 0, 0, 0])
+            p = d.setdefault(key, [0, 0, 0, 0, 0])
             p[0] += bool(x.get("done"))
             p[1] += bool(x.get("opened"))
             p[2] += bool(x.get("open_at_end"))
             p[3] += bool(x.get("touched"))
-    sheets.append({"name": "By person", "columns": ["Assigned to", "Completed", "Opened", "Open at the end", "Worked on"],
+            p[4] += bool(x.get("cancelled"))
+    sheets.append({"name": "By person", "columns": ["Assigned to", "Completed", "Opened", "Open at the end", "Worked on", "Cancelled"],
                    "rows": [[k] + v for k, v in sorted(by_who.items(), key=lambda kv: (-kv[1][0], kv[0]))]})
-    sheets.append({"name": "By type", "columns": ["Type", "Completed", "Opened", "Open at the end", "Worked on"],
+    sheets.append({"name": "By type", "columns": ["Type", "Completed", "Opened", "Open at the end", "Worked on", "Cancelled"],
                    "rows": [[k] + v for k, v in sorted(by_type.items(), key=lambda kv: (-kv[1][0], kv[0]))]})
     return sheets
 
@@ -429,7 +464,7 @@ def servicenow_war_act_evidence(r, opts=None):
     r = r or {}
     win = r.get("window") or {}
     tz = _tz(win.get("time_zone") or o.get("time_zone"))
-    s = war_sets(r, o.get("old_days") or 30)
+    s = war_sets(r, o.get("old_days") or 30, o.get("open_scope"))
     max_items = int(o.get("max_items") or 150)
     notes = int(o.get("notes_chars") if o.get("notes_chars") is not None else 300)
     glabel = ", ".join(g.get("name", "") for g in r.get("groups") or []) or "the team"
@@ -444,11 +479,20 @@ def servicenow_war_act_evidence(r, opts=None):
         out.append("%s | %s | %s | opened %s | %s | priority %s | %s" % (
             x.get("number"), x.get("type"), x.get("short_description"), day_local(x.get("opened_at"), tz), x.get("state") or "-",
             x.get("priority") or "-", _who(x)))
-    out += ["", "OPEN AT THE END OF THE WEEK (%d):" % len(s["open_end"])]
-    for x in sorted(s["open_end"], key=lambda x: -(x.get("age_days") or 0))[:max_items]:
+    rest = len(s["open_end"]) - len(s["open_listed"])
+    out += ["", "OPEN AT THE END OF THE WEEK (%d%s):" % (len(s["open_listed"]), " listed" if rest else "")]
+    for x in sorted(s["open_listed"], key=lambda x: -(x.get("age_days") or 0))[:max_items]:
         out.append("%s | %s | %s | %s | open %s days | this week: %s | priority %s | %s" % (
             x.get("number"), x.get("type"), x.get("short_description"), x.get("state") or "-", _days(x.get("age_days") or 0), _week_word(x),
             x.get("priority") or "-", _who(x)) + _sla_word(x).replace(" - ", " | ", 1))
+    if rest:
+        oldest = max((x.get("age_days") or 0) for x in s["open_end"] if not (x.get("opened") or x.get("touched")))
+        out.append("and %d more open task(s) not touched this week (the backlog; the oldest open %s days) - not listed, not this week's work" % (rest, _days(oldest)))
+    if s["cancelled"]:
+        out += ["", "CANCELLED IN THE WEEK (%d) - not accomplishments, not in progress:" % len(s["cancelled"])]
+        for x in s["cancelled"][:max_items]:
+            out.append("%s | %s | %s | %s %s | %s" % (x.get("number"), x.get("type"), x.get("short_description"), x.get("state") or "cancelled",
+                                                    day_local(x.get("done_at"), tz), _who(x)))
     return "\n".join(out) + "\n"
 
 
@@ -456,7 +500,9 @@ def servicenow_war_act_task(opts=None):
     o = opts or {}
     return "\n".join([
         "Write the narrative of a weekly activity report (WAR) for an IT operations team, from the evidence piped to you: the team's "
-        "ServiceNow tasks completed, opened and still open in the week. You cannot run any commands in this task, and none are needed.",
+        "ServiceNow tasks completed, opened and still open in the week. You cannot run any command in this task and must not try: no run "
+        "action, no tool, no script to count words or check a figure - answer in ONE step, a finish action whose message is your whole "
+        "answer. Estimate lengths; never count them.",
         "",
         "Give:",
         "- accomplishments: 3 to 8 bullet points of what the team completed this week. Group related tasks into one bullet (the same "
@@ -468,10 +514,13 @@ def servicenow_war_act_task(opts=None):
         "- overall: two or three short sentences (at most 60 words) a manager reads first - the volume of the week in numbers, "
         "what stood out.",
         "Rules: use only the evidence; invent nothing; no cost, budget or procurement wording; keep people's names as the evidence "
-        "has them. Each bullet is one plain sentence of at most 30 words, one string in the list, the ticket numbers in brackets at "
+        "has them. Each bullet is one plain sentence of about 30 words (your estimate: never count words with a command or a tool), one "
+        "string in the list, the ticket numbers in brackets at "
         "its end - e.g. \"Patched and rebooted the six web hosts in the October window (CHG0012345, CTASK0012345)\". No markdown "
         "(no **, no #, no backticks), no bullet characters or numbering, no line breaks inside a string, no headings; the same "
-        "work in one section only.",
+        "work in one section only. Tasks under CANCELLED are not accomplishments and not in progress: name them only under issues, "
+        "when the cancellations themselves deserve attention. The JSON must be valid: double quotes only, no comments, nothing "
+        "after the END line.",
         "",
         "End your answer with exactly one JSON object between a line %s and a line %s, nothing else between them:" % (MARK_BEGIN, MARK_END),
         MARK_BEGIN,
@@ -489,35 +538,162 @@ def _act_clean(s):
     return " ".join(s.split()).strip()
 
 
+def _looks_like_war(v):
+    return isinstance(v, dict) and (isinstance(v.get("items"), list) or any(k in v for k in ("accomplishments", "in_progress", "overall")))
+
+
+def _json_variants(c):
+    """A JSON text as the model may have mangled it: as it is; trailing commas gone; curly quotes straightened and //
+    comments dropped. Each is read with strict=False (a raw line break inside a string is let through)."""
+    yield c
+    c2 = re.sub(r",\s*([}\]])", r"\1", c)
+    yield c2
+    c3 = re.sub(r"(?m)(^|[\]},])[ \t]*//[^\n]*$", r"\1", c2.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'"))
+    yield re.sub(r",\s*([}\]])", r"\1", c3)
+
+
+def _close_json(s):
+    """A JSON text cut short (the model's output limit): the open string closed, a dangling key or comma dropped, the open
+    brackets closed."""
+    stack, in_str, esc, start = [], False, False, -1
+    for n, ch in enumerate(s):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str, start = True, n
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]" and stack:
+            stack.pop()
+    t = s[:start] if in_str else s                  # an unterminated string - the partial bullet, or a key - goes
+    for _ in range(2):
+        t = re.sub(r",\s*$", "", t.rstrip())
+        t = re.sub(r'"[^"\n]*"\s*:\s*$', "", t.rstrip())      # a key with no value
+        t = re.sub(r",\s*$", "", t.rstrip())
+    return t.rstrip() + "".join(reversed(stack))
+
+
+def _salvage(c):
+    """The object out of a truncated answer: closed as it is, else cut back a comma at a time (the last, partial bullet is
+    lost, the rest is read)."""
+    t = c
+    for _ in range(40):
+        try:
+            v = json.loads(_close_json(t), strict=False)
+            if _looks_like_war(v):
+                return v
+        except ValueError:
+            pass
+        k = max(t.rfind(","), t.rfind("["), t.rfind("{"))
+        if k <= 0:
+            return None
+        t = t[:k]
+    return None
+
+
+def _act_action(text):
+    """ACT's answer is one of its own action records ({'command': ..., 'thought': ..., 'action': 'run'}): the model asked to
+    run something - count the words of a bullet, check a figure - instead of answering, and evidence mode runs nothing.
+    -> {action, command, thought}, or None."""
+    t = str(text or "")
+    m = re.search(r"""['"]action['"]\s*:\s*['"](run|edit|write|plan|ask|wait_job)['"]""", t)
+    if not m:
+        return None
+
+    def grab(key):
+        g = re.search(r"""['"]%s['"]\s*:\s*(['"])(.*?)\1\s*[,}]""" % key, t, re.S)
+        return " ".join((g.group(2) if g else "").split())[:200]
+    return {"action": m.group(1), "command": grab("command") or "(no command given)", "thought": grab("thought")}
+
+
+PROSE_HEADS = (("accomplishments", r"accomplish|completed|achievement|done this week"), ("in_progress", r"in[ -]?progress|ongoing|still open|carried|open work"),
+               ("issues", r"issue|attention|risk|concern|watch"), ("overall", r"overall|summary|executive|manager"))
+
+
+def _prose(text):
+    """ACT answered in words instead of JSON: its headings (Accomplishments, In progress, Issues / What deserves attention,
+    Summary) and the lines under them, sorted into the sections. None when no section can be told apart."""
+    if re.search(r'"\s*:\s*[\[{"]', str(text or "")):
+        return None                                     # it is JSON the repairs could not read: shown as it came instead
+    out = {"overall": "", "accomplishments": [], "in_progress": [], "issues": []}
+    cur, free = None, []
+    for raw in str(text or "").splitlines():
+        raw = raw.strip()
+        if not raw or raw in (MARK_BEGIN, MARK_END):
+            continue
+        head = re.sub(r"[\s:*#_`\-]+$", "", _act_clean(raw)).strip()
+        marked = bool(re.match(r"^\s*(#+|\*\*|__)", raw)) or raw.endswith(":")
+        key = next((k for k, pat in PROSE_HEADS if re.search(pat, head, re.I)), None) if head and len(head.split()) <= 5 else None
+        if key and (marked or len(head.split()) <= 3):
+            cur = key
+            continue
+        c = _act_clean(raw)
+        if not c:
+            continue
+        if cur == "overall":
+            out["overall"] = (out["overall"] + " " + c).strip()
+        elif cur:
+            out[cur].append(c)
+        else:
+            free.append(c)
+    if not out["overall"] and free:
+        out["overall"] = " ".join(free)[:400]
+    return out if (out["accomplishments"] or out["in_progress"]) else None
+
+
 def servicenow_war_act_parse(text):
-    """ACT's answer -> {parsed, overall, accomplishments, in_progress, issues, error}: the JSON between the markers, else a
-    ```json block, else the outermost {...}; trailing commas tolerated."""
+    """ACT's answer -> {parsed, form, overall, accomplishments, in_progress, issues, error}: the JSON between the markers,
+    else a ```json block, else the outermost {...} - read as it is or repaired (trailing commas, raw line breaks in strings,
+    curly quotes, comments, an answer cut short); with no JSON at all, the prose sorted by its headings (form: prose)."""
     t = str(text or "")
     cands = []
     m = re.search(MARK_BEGIN + r"\s*(.*?)\s*" + MARK_END, t, re.S)
     if m:
         cands.append(m.group(1))
+    elif MARK_BEGIN in t:
+        cands.append(t.split(MARK_BEGIN, 1)[1])                       # the END marker never came: cut short
     cands += re.findall(r"```(?:json)?\s*(.*?)```", t, re.S)
     i, j = t.find("{"), t.rfind("}")
     if 0 <= i < j:
         cands.append(t[i:j + 1])
+    if i >= 0:
+        cands.append(t[i:])
     obj = None
     for c in cands:
         c = c.strip()
-        for attempt in (c, re.sub(r",\s*([}\]])", r"\1", c)):
+        for attempt in _json_variants(c):
             try:
-                v = json.loads(attempt)
+                v = json.loads(attempt, strict=False)
             except ValueError:
                 continue
-            if isinstance(v, dict) and (isinstance(v.get("items"), list) or any(k in v for k in ("accomplishments", "in_progress", "overall"))):
+            if _looks_like_war(v):
                 obj = v
                 break
         if obj is not None:
             break
+    cut = False
     if obj is None:
-        return {"parsed": False, "overall": "", "accomplishments": [], "in_progress": [], "issues": [],
+        for c in cands:
+            obj = _salvage(list(_json_variants(c.strip()))[-1])          # straightened first: curly quotes would hide the strings
+            if obj is not None:
+                cut = True
+                break
+    if obj is None:
+        act = _act_action(t)
+        if act:
+            return {"parsed": False, "form": "action", "overall": "", "accomplishments": [], "in_progress": [], "issues": [], "action": act,
+                    "error": "ACT tried to run a command instead of answering (evidence mode runs none): %s" % act["command"]}
+        prose = _prose(t)
+        if prose is not None:
+            return dict(prose, parsed=True, form="prose", error="")
+        return {"parsed": False, "form": "", "overall": "", "accomplishments": [], "in_progress": [], "issues": [],
                 "error": "ACT's answer has no readable JSON block" if t.strip() else "ACT gave no answer"}
-    out = {"parsed": True, "overall": _act_clean(obj.get("overall") or obj.get("summary") or ""), "error": "",
+    out = {"parsed": True, "form": "json-cut" if cut else "json", "overall": _act_clean(obj.get("overall") or obj.get("summary") or ""), "error": "",
            "accomplishments": [], "in_progress": [], "issues": []}
 
     def lines(v):
@@ -554,15 +730,25 @@ def servicenow_war_act_section(raw, opts=None):
         return [{"title": "For the WAR (written by ACT)", "status": "warning", "lines": ["ACT did not run: %s" % (o.get("reason") or "unknown")],
                  "text": "The version from the tables, above, is complete without it."}]
     pa = servicenow_war_act_parse(raw)
+    if not pa["parsed"] and pa.get("form") == "action":
+        a = pa.get("action") or {}
+        return [{"title": "For the WAR (written by ACT)", "status": "warning",
+                 "text": "ACT did not write the WAR: instead of answering, the model asked to run a command - evidence mode runs none, and the "
+                         "job tells it so. Run the job again; if it repeats, keep these two lines. The version from the tables, above, is "
+                         "complete without it.",
+                 "lines": ["It wanted to run: %s" % a.get("command"), "Its reason: %s" % (a.get("thought") or "(none given)")]}]
     if not pa["parsed"]:
         said = [_act_clean(x) for x in str(raw or "").splitlines() if _act_clean(x)]
         return [{"title": "For the WAR (written by ACT)", "status": "warning",
                  "text": "%s - its answer as it came (the first 40 lines); the version from the tables, above, is complete without it." % pa["error"],
                  "lines": [x[:400] for x in said[:40]] or ["(empty)"]}]
     tag = " (%s%s)" % (o.get("provider") or "ACT", (" " + str(o["model"])) if o.get("model") else "")
+    form = {"prose": " ACT gave no JSON block this time: its words were sorted into these sections by their headings.",
+            "json-cut": " ACT's answer was cut short at the model's output limit and its last bullet is lost: site_act_env: {ACT_MAX_TOKENS: \"8192\"} "
+                        "in all.yml gives it room."}.get(pa.get("form") or "", "")
     out = [{"title": "For the WAR (written by ACT): summary",
             "text": "The other version of the WAR: written by GenAI%s from the tables above - use it or the one-line-per-task version "
-                    "above it, and read it before you paste it: it can only be as right as those tables." % tag,
+                    "above it, and read it before you paste it: it can only be as right as those tables.%s" % (tag, form),
             "lines": [pa["overall"] or "(ACT gave no summary)"]},
            {"title": "For the WAR (written by ACT): accomplishments", "lines": pa["accomplishments"] or ["(ACT named no accomplishment)"]}]
     if pa["in_progress"]:

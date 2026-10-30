@@ -184,7 +184,7 @@ class Reads(unittest.TestCase):
         api = FakeApi(WEEK)
         r = war.read_week(api, ["Linux Operations"], [], ["incident", "sc_task", "change_request", "problem_task"], war.window("days", 7, now=NOW))
         self.assertTrue(r["ok"])
-        self.assertEqual(r["counts"], {"items": 6, "opened": 3, "done": 3, "open_at_end": 3, "touched": 1, "sla_breached": 0, "sla_at_risk": 0})
+        self.assertEqual(r["counts"], {"items": 6, "opened": 3, "done": 3, "cancelled": 0, "open_at_end": 3, "touched": 1, "sla_breached": 0, "sla_at_risk": 0})
         self.assertEqual([x["number"] for x in r["items"] if x["done"]], ["SCTASK1", "INC1", "CHG1"])        # by the date of completion
         self.assertEqual([(t["table"], t["rows"], t["read"]) for t in r["tables"]], [("incident", 3, 5), ("sc_task", 2, 2), ("change_request", 1, 1), ("problem_task", 0, 0)])
         self.assertEqual(r["groups"], [{"name": "Linux Operations", "sys_id": "g1", "found": True}])
@@ -196,7 +196,7 @@ class Reads(unittest.TestCase):
         bare = [dict(x, resolved_at={"value": "", "display_value": ""}) for x in WEEK["incident"]]
         api = FakeApi(dict(WEEK, task=bare + WEEK["sc_task"]))
         r = war.read_week(api, ["Linux Operations"], [], ["task", "incident"], war.window("days", 7, now=NOW))
-        self.assertEqual(r["counts"], {"items": 5, "opened": 3, "done": 2, "open_at_end": 3, "touched": 1, "sla_breached": 0, "sla_at_risk": 0})
+        self.assertEqual(r["counts"], {"items": 5, "opened": 3, "done": 2, "cancelled": 0, "open_at_end": 3, "touched": 1, "sla_breached": 0, "sla_at_risk": 0})
         self.assertEqual([(t["table"], t["rows"], t["error"]) for t in r["tables"]], [("task", 5, ""), ("incident", 0, "")])
         inc1 = next(x for x in r["items"] if x["number"] == "INC1")
         self.assertEqual((inc1["done_at"], inc1["done_how"], inc1["done"]), ("2026-10-20 15:30:00", "resolved", True))
@@ -297,7 +297,7 @@ class Report(unittest.TestCase):
         self.assertEqual(rep["title"], "Weekly activity report for Linux Operations: 3 completed, 3 opened, 3 open at the end (2026-10-16 20:00 to 2026-10-23 20:00 (UTC))")
         self.assertEqual(rep["status"], "info")
         self.assertEqual([t["label"] + "=" + str(t["value"]) for t in rep["summary"]],
-                         ["Completed=3", "Opened=3", "Open at the end=3", "Older than 30 days=1", "Worked on, still open=1"])
+                         ["Completed=3", "Opened=3", "Open at the end=3", "Older than 30 days=1", "Worked on, still open=1", "Cancelled=0"])
         secs = dict((s["title"], s) for s in rep["sections"])
         # the results, the WAR from the tables (ACT's version goes right after it), then the SLAs and what was read
         self.assertEqual(list(secs), ["The week in numbers", "Completed this week", "Opened this week", "Open at the end of the week", "By person",
@@ -316,8 +316,8 @@ class Report(unittest.TestCase):
         self.assertEqual(opn["row_status"], ["warning", "", ""])
         self.assertEqual([r[-1] for r in opn["rows"]], ["worked on", "new", "new"])
         self.assertEqual(opn["rows"][2][4], "(unassigned)")
-        self.assertEqual(secs["By person"]["rows"][0], ["Jane Doe", 2, 1, 1, 0])
-        self.assertEqual(secs["The week in numbers"]["rows"][-1], ["Total", 3, 3, 3, 1, 1])
+        self.assertEqual(secs["By person"]["rows"][0], ["Jane Doe", 2, 1, 1, 0, 0])
+        self.assertEqual(secs["The week in numbers"]["rows"][-1], ["Total", 3, 3, 0, 3, 1, 1])
         self.assertEqual(secs["For the WAR (from the tables): completed"]["lines"][1], "Incident INC1: Work on INC1 - resolved 2026-10-20 (Jane Doe)")
         self.assertEqual(secs["For the WAR (from the tables): in progress"]["lines"][0],
                          "Incident INC3: Work on INC3 - In Progress, open since 2026-09-10, 43 days (Bob Smith)")
@@ -389,14 +389,14 @@ class Report(unittest.TestCase):
     def test_the_workbook(self):
         sheets = wf.servicenow_war_xlsx(result())
         self.assertEqual([(s["name"], len(s["rows"])) for s in sheets],
-                         [("All items", 6), ("Completed", 3), ("Opened", 3), ("Open at the end", 3), ("By person", 3), ("By type", 3)])
+                         [("All items", 6), ("Completed", 3), ("Opened", 3), ("Open at the end", 3), ("Cancelled", 0), ("By person", 3), ("By type", 3)])
         allx = sheets[0]
         row = dict(zip(allx["columns"], allx["rows"][[r[0] for r in allx["rows"]].index("INC1")]))
-        self.assertEqual((row["Completed"], row["How"], row["Completed this week"], row["Open at the end"], row["Days to complete"]),
-                         ("2026-10-20 15:30", "resolved", "yes", "no", 7.3))
+        self.assertEqual((row["Completed"], row["How"], row["Completed this week"], row["Cancelled this week"], row["Open at the end"], row["Days to complete"]),
+                         ("2026-10-20 15:30", "resolved", "yes", "no", "no", 7.3))
         self.assertTrue(row["Link"].endswith("incident.do?sys_id=inc1"))
-        self.assertEqual(sheets[4]["rows"][0], ["Jane Doe", 2, 1, 1, 0])
-        self.assertEqual(sheets[5]["rows"], [["Catalog task", 1, 2, 1, 0], ["Change", 1, 0, 0, 0], ["Incident", 1, 1, 2, 1]])
+        self.assertEqual(sheets[5]["rows"][0], ["Jane Doe", 2, 1, 1, 0, 0])
+        self.assertEqual(sheets[6]["rows"], [["Catalog task", 1, 2, 1, 0, 0], ["Change", 1, 0, 0, 0, 0], ["Incident", 1, 1, 2, 1, 0]])
 
 
 class Act(unittest.TestCase):
@@ -433,6 +433,124 @@ class Act(unittest.TestCase):
         self.assertEqual((secs[0]["status"], secs[0]["lines"]), ("warning", ["ACT did not run: no key"]))
         secs = wf.servicenow_war_act_section("just words", {"ran": True})
         self.assertEqual((secs[0]["status"], secs[0]["lines"]), ("warning", ["just words"]))
+
+    def test_the_answer_mangled(self):
+        # a raw line break inside a string (strict JSON refuses it)
+        pa = wf.servicenow_war_act_parse('{"overall": "A\nsteady week.", "accomplishments": ["Fixed mail (INC1)"], "in_progress": [], "issues": []}')
+        self.assertEqual((pa["parsed"], pa["form"], pa["overall"], pa["accomplishments"]), (True, "json", "A steady week.", ["Fixed mail (INC1)"]))
+        # curly quotes and a comment
+        pa = wf.servicenow_war_act_parse('“overall”: “x”'.join(["{", ", “accomplishments”: [“Fixed mail (INC1)”], // done\n"
+                                                                                     "“in_progress”: [], “issues”: []}"]))
+        self.assertEqual((pa["parsed"], pa["accomplishments"]), (True, ["Fixed mail (INC1)"]))
+        # cut short at the model's output limit: the END marker never came, the partial bullet is lost, the rest is read
+        cut = ('BEGIN_ACT_ANALYSIS\n{"overall": "A steady week.", "items": [{"id": "accomplishments", "lines": ["Fixed mail (INC1)", "Patched web (CHG1)", '
+               '"Half a bul')
+        pa = wf.servicenow_war_act_parse(cut)
+        self.assertEqual((pa["parsed"], pa["form"], pa["overall"], pa["accomplishments"], pa["in_progress"]),
+                         (True, "json-cut", "A steady week.", ["Fixed mail (INC1)", "Patched web (CHG1)"], []))
+        pa = wf.servicenow_war_act_parse('{"overall": "x", "accomplishments": ["Fixed mail (INC1)"], "in_progress": ["NFS (PTASK1)"], "issues":')
+        self.assertEqual((pa["form"], pa["accomplishments"], pa["in_progress"], pa["issues"]), ("json-cut", ["Fixed mail (INC1)"], ["NFS (PTASK1)"], []))
+        secs = wf.servicenow_war_act_section(cut, {"ran": True, "provider": "genai"})
+        self.assertIn("cut short at the model's output limit", secs[0]["text"])
+        self.assertIn('ACT_MAX_TOKENS: "8192"', secs[0]["text"])
+        # no JSON at all: headings and bullets
+        prose = ("Summary:\nA steady week with two fixes.\n\n**Accomplishments**\n- Fixed mail (INC1)\n- Patched web (CHG1)\n\n### In progress\n"
+                 "1. NFS hangs (PTASK1)\n\nWhat deserves attention:\n- Old INC3, 43 days\n")
+        pa = wf.servicenow_war_act_parse(prose)
+        self.assertEqual((pa["parsed"], pa["form"], pa["overall"], pa["accomplishments"], pa["in_progress"], pa["issues"]),
+                         (True, "prose", "A steady week with two fixes.", ["Fixed mail (INC1)", "Patched web (CHG1)"], ["NFS hangs (PTASK1)"], ["Old INC3, 43 days"]))
+        secs = wf.servicenow_war_act_section(prose, {"ran": True})
+        self.assertIn("sorted into these sections by their headings", secs[0]["text"])
+        self.assertEqual([s["title"] for s in secs][-1], "For the WAR (written by ACT): what deserves attention")
+        # words with no headings: shown as they came
+        self.assertEqual(wf.servicenow_war_act_parse("Here is the week.\nIt went well.")["error"], "ACT's answer has no readable JSON block")
+        # the case seen at a site: ACT's own action record - the model asked to count the words of a bullet with Python
+        raw = ("{'command': 'python3 -c \"\\nb = \\'Closed twelve change tasks that were cancelled (CTASK0026485, CTASK0026486).\\'\\nprint(len(b.split()))\\n\"', "
+               "'thought': 'Check word count of the cancelled tasks bullet.', 'action': 'run'}")
+        pa = wf.servicenow_war_act_parse(raw)
+        self.assertEqual((pa["parsed"], pa["form"], pa["action"]["thought"]), (False, "action", "Check word count of the cancelled tasks bullet."))
+        self.assertTrue(pa["error"].startswith("ACT tried to run a command instead of answering (evidence mode runs none): python3 -c"), pa["error"])
+        secs = wf.servicenow_war_act_section(raw, {"ran": True})
+        self.assertEqual((secs[0]["status"], secs[0]["lines"][1]), ("warning", "Its reason: Check word count of the cancelled tasks bullet."))
+        self.assertTrue(secs[0]["lines"][0].startswith("It wanted to run: python3 -c"))
+        self.assertIn("asked to run a command", secs[0]["text"])
+        task = wf.servicenow_war_act_task()
+        self.assertIn("never count words with a command or a tool", task)
+        self.assertIn("answer in ONE step", task)
+
+
+class Cancelled(unittest.TestCase):
+    """Cancelled is not completed; only the week's open work is listed (servicenow_war_open_scope)."""
+    EXTRA = [rec("incident", "INC6", "2026-10-07 10:00:00", closed="2026-10-19 09:00:00", state=("8", "Canceled")),
+             rec("incident", "INC8", "2026-07-20 08:00:00", updated="2026-08-01 09:00:00")]                   # the backlog: old, untouched
+
+    def week(self):
+        return dict(WEEK, incident=WEEK["incident"] + self.EXTRA)
+
+    def test_the_verdict(self):
+        def c(states=None, **kw):
+            return war.classify(war.normalize(rec(**kw), kw["table"]), SINCE, UNTIL, states)
+        v = c(table="incident", number="INC6", opened="2026-10-07 10:00:00", closed="2026-10-19 09:00:00", state=("8", "Canceled"))
+        self.assertEqual((v["opened"], v["done"], v["cancelled"], v["is_cancelled"], v["open_at_end"], v["done_at"]), (False, False, True, True, False, "2026-10-19 09:00:00"))
+        v = c(states=[], table="incident", number="INC6", opened="2026-10-07 10:00:00", closed="2026-10-19 09:00:00", state=("8", "Canceled"))
+        self.assertEqual((v["done"], v["cancelled"]), (True, False))                                              # [] = every closed task counts
+        v = c(table="sc_task", number="SCTASK3", opened="2026-10-09 14:00:00", closed="2026-10-17 11:00:00", state=("7", "closed  skipped"))
+        self.assertEqual((v["done"], v["cancelled"]), (False, True))                                              # any case, spacing aside
+        v = c(table="sc_task", number="SCTASK4", opened="2026-10-09 14:00:00", closed="2026-10-17 11:00:00", state=("3", "Closed Complete"), close_code="Cancelled by requester")
+        self.assertEqual((v["done"], v["cancelled"]), (False, True))                                              # the close code says so
+        v = c(states=["Withdrawn"], table="sc_task", number="SCTASK5", opened="2026-10-09 14:00:00", closed="2026-10-17 11:00:00", state=("9", "Withdrawn"))
+        self.assertEqual((v["done"], v["cancelled"]), (False, True))                                              # the instance's own word
+        self.assertIsNone(c(table="incident", number="INC6", opened="2026-10-01 10:00:00", closed="2026-10-10 09:00:00", state=("8", "Canceled")))  # before the week
+        v = c(table="incident", number="INC6", opened="2026-10-20 10:00:00", closed="2026-10-21 09:00:00", state=("8", "Canceled"))
+        self.assertEqual((v["opened"], v["done"], v["cancelled"]), (True, False, True))                           # opened and cancelled in the week
+
+    def test_the_week_and_the_report(self):
+        r = war.read_week(FakeApi(self.week()), ["Linux Operations"], [], ["incident", "sc_task", "change_request"], war.window("days", 7, now=NOW))
+        self.assertEqual(r["counts"], {"items": 8, "opened": 3, "done": 3, "cancelled": 1, "open_at_end": 4, "touched": 1, "sla_breached": 0, "sla_at_risk": 0})
+        rep = wf.servicenow_war_report(r, {"old_days": 30})
+        self.assertTrue(rep["title"].startswith("Weekly activity report for Linux Operations: 3 completed, 3 opened, 4 open at the end"), rep["title"])
+        self.assertEqual([t["label"] + "=" + str(t["value"]) for t in rep["summary"]],
+                         ["Completed=3", "Opened=3", "Open at the end=4", "Older than 30 days=2", "Worked on, still open=1", "Cancelled=1"])
+        secs = dict((s["title"], s) for s in rep["sections"])
+        self.assertEqual(list(secs)[-3:], ["SLA breached or close to breaching", "Cancelled this week", "Read"])     # at the bottom
+        self.assertEqual([x[1] for x in secs["Completed this week"]["rows"]], ["SCTASK1", "INC1", "CHG1"])
+        canc = secs["Cancelled this week"]
+        self.assertEqual(canc["rows"][0][:6], ["2026-10-19 09:00", "INC6", "Incident", "Work on INC6", "Jane Doe", "Canceled"])
+        self.assertIn("Closed in the week as canceled - not counted as completed", canc["text"])
+        self.assertEqual(secs["The week in numbers"]["rows"][-1], ["Total", 3, 3, 1, 4, 2, 1])
+        self.assertEqual(secs["By person"]["rows"][0], ["Jane Doe", 2, 1, 2, 0, 1])           # INC8, the backlog, is hers too
+        # the week's open work listed, the untouched backlog counted
+        opn = secs["Open at the end of the week"]
+        self.assertEqual([x[1] for x in opn["rows"]], ["INC3", "INC2", "SCTASK2"])
+        self.assertIn("1 more open task(s) were not touched this week - the backlog", opn["text"])
+        lines = wf.servicenow_war_lines(r)
+        self.assertEqual([x.split(":")[0] for x in lines["completed"]], ["Catalog task SCTASK1", "Incident INC1", "Change CHG1"])      # not INC6
+        self.assertEqual([x.split(":")[0] for x in lines["in_progress"]], ["Incident INC3", "Incident INC2", "Catalog task SCTASK2"])   # not INC8
+        ev = wf.servicenow_war_act_evidence(r)
+        self.assertIn("OPEN AT THE END OF THE WEEK (3 listed):", ev)
+        self.assertIn("and 1 more open task(s) not touched this week (the backlog; the oldest open 95 days)", ev)
+        self.assertIn("CANCELLED IN THE WEEK (1) - not accomplishments, not in progress:\nINC6 | Incident | Work on INC6 | Canceled 2026-10-19 | Jane Doe", ev)
+        self.assertNotIn("INC8", ev)
+        # servicenow_war_open_scope: all - every open task, the oldest first
+        rep = wf.servicenow_war_report(r, {"old_days": 30, "open_scope": "all"})
+        opn = dict((s["title"], s) for s in rep["sections"])["Open at the end of the week"]
+        self.assertEqual([x[1] for x in opn["rows"]], ["INC8", "INC3", "INC2", "SCTASK2"])
+        self.assertNotIn("backlog", opn["text"])
+        self.assertEqual(wf.servicenow_war_lines(r, {"open_scope": "all"})["in_progress"][0].split(":")[0], "Incident INC8")
+        self.assertIn("OPEN AT THE END OF THE WEEK (4):", wf.servicenow_war_act_evidence(r, {"open_scope": "all"}))
+        # the workbook has everything: the Cancelled sheet, the backlog on Open at the end
+        sheets = wf.servicenow_war_xlsx(r)
+        self.assertEqual([(s["name"], len(s["rows"])) for s in sheets],
+                         [("All items", 8), ("Completed", 3), ("Opened", 3), ("Open at the end", 4), ("Cancelled", 1), ("By person", 3), ("By type", 3)])
+        allx = sheets[0]
+        row = dict(zip(allx["columns"], allx["rows"][[x[0] for x in allx["rows"]].index("INC6")]))
+        self.assertEqual((row["Completed this week"], row["Cancelled this week"], row["Completed"], row["State"]), ("no", "yes", "2026-10-19 09:00", "Canceled"))
+        self.assertEqual(sheets[4]["rows"][0][:2], ["INC6", "Incident"])
+        # nothing but the backlog open: said in words
+        quiet = {"incident": [self.EXTRA[1], WEEK["incident"][0]]}
+        rep = wf.servicenow_war_report(war.read_week(FakeApi(quiet), ["Linux Operations"], [], ["incident"], war.window("days", 7, now=NOW)))
+        opn = dict((s["title"], s) for s in rep["sections"])["Open at the end of the week"]
+        self.assertTrue(opn["lines"][0].startswith("No open task was new this week or worked on in it. 1 more open task(s)"), opn["lines"])
 
 
 if __name__ == "__main__":

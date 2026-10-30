@@ -3,7 +3,10 @@
 # week of records (war_seed.json) and a fixed clock (Friday 2026-10-23 20:00 UTC): the last 7 days - what was completed (with
 # the date of closure), opened, open at the end (the old ones amber, worked on or not), by person, the lines to paste, a
 # ticket of another group and one opened after the week left out, one resolved before the week and auto-closed in it left
-# out; the previous calendar week; two dates in a time zone; every class in one read (task); a table the account cannot
+# out; three tasks cancelled, skipped or closed incomplete in the week out of Completed and the WAR lines and in their own
+# section (and counted as completed again with servicenow_war_cancelled_states []); the open backlog nobody touched
+# counted, not listed (listed with servicenow_war_open_scope all); the previous calendar week; two dates in a time zone;
+# every class in one read (task); a table the account cannot
 # read (said, not failed); a group that is not there (failed, or not with servicenow_war_fail false); no group set; the
 # tasks of one person; the group table unreadable (matched by name); too many records (said); a wrong password; no
 # credential; Check; emailed with the workbook.
@@ -73,7 +76,10 @@ run "the last 7 days: completed with the date of closure, opened, open at the en
     '"sla_breached": 2' '"sla_at_risk": 1' '!P2 response (1 hour)' \
     'Completed this week (5)' '2026-10-20 15:30  INC0020001' 'Restarted postfix; the queue drained in 10 minutes.' \
     '2026-10-22 07:45  INC0020004' '2026-10-18 12:00  SCTASK0020001' '2026-10-21 18:00  CHG0020001' '2026-10-21 17:50  CTASK0020001' \
-    'Opened this week (6)' 'Open at the end of the week (6)' 'Older than 30 days: 2' 'Worked on, still open: 2' \
+    'Opened this week (6)' 'Open at the end of the week (5)' 'Older than 30 days: 2' 'Worked on, still open: 2' \
+    '1 more open task(s) were not touched this week - the backlog' '!2026-10-16  INC0020008' \
+    'Cancelled: 3 (not counted as completed)' 'Cancelled this week (3)' '2026-10-17 10:00  INC0020009' '2026-10-17 11:00  SCTASK0020003' \
+    'Closed Incomplete' '!Incident INC0020009: Disk alert on the decommissioned host nas02 - closed' '"cancelled": 3' \
     'Incident INC0020001: Mail relay queue growing on mail01 - resolved 2026-10-20 (Jane Doe)' \
     'Change CHG0020001: Kernel patching, web tier (October) - closed 2026-10-21 (Jane Doe)' \
     'Problem task PTASK0020001: Find why the NFS mounts hang on the batch hosts - Work in Progress, open since 2026-09-01, 52 days (Jane Doe)' \
@@ -88,7 +94,12 @@ run "two dates in a time zone: through the end of the last day, the dates in tha
     "{$NOW, $GROUP, \"servicenow_war_since\": \"2026-10-19\", \"servicenow_war_until\": \"2026-10-23\", \"report_time_zone\": \"America/New_York\"}" \
     '(2026-10-19 to 2026-10-23 (America/New_York))' 'INC0020007' '2026-10-20 11:30  INC0020001' 'Dates in America/New_York'
 run "every class in one read: the task table (the incidents' resolution from their own table)" ok "{$NOW, $GROUP, \"servicenow_war_tables\": [\"task\"]}" \
-    '5 completed, 6 opened, 6 open at the end' 'task: 11 record(s) kept of 13 read' 'Problem task' 'Change task' '2026-10-20 15:30  INC0020001' '!INC0020005'
+    '5 completed, 6 opened, 6 open at the end' 'task: 14 record(s) kept of 16 read' 'Problem task' 'Change task' '2026-10-20 15:30  INC0020001' '!INC0020005' \
+    'Cancelled this week (3)'
+run "servicenow_war_cancelled_states [] and servicenow_war_open_scope all: every closed task completed, every open task listed (as before 0.44.1)" ok \
+    "{$NOW, $GROUP, \"servicenow_war_cancelled_states\": [], \"servicenow_war_open_scope\": \"all\"}" \
+    '8 completed, 6 opened, 6 open at the end' 'Open at the end of the week (6)' '2026-10-16  INC0020008' 'untouched' '!Cancelled this week' \
+    'Incident INC0020009: Disk alert on the decommissioned host nas02 - closed 2026-10-17 (Jane Doe)' '!more open task(s)' '"cancelled": 0'
 run "the tasks of one person, whatever the group" ok "{$NOW, \"servicenow_war_users\": [\"bsmith\"]}" \
     'Weekly activity report for bsmith: 2 completed, 3 opened, 2 open at the end' 'Assigned to: bsmith' 'INC0020003' 'SCTASK0020001' '!INC0020001'
 run "too many records: said" ok "{$NOW, $GROUP, \"servicenow_war_max_records\": 3}" \

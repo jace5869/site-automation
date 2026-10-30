@@ -60,6 +60,20 @@ servicenow_war_groups: [YOUR GROUP NAME]
 ## (Older than N days).
 # servicenow_war_old_days: 30
 
+## Which open tasks are listed (Open at the end of the week, the WAR's in-progress lines, ACT's
+## evidence). worked (the default) = the ones new this week or updated in it - the week's work; the
+## rest, the backlog nobody touched (a task open 90 days and not looked at), is counted in the tiles
+## (Open at the end, Older than N days) and on the workbook's Open at the end sheet, not listed. all
+## = every task open at the week's end, however old, as before 0.44.1.
+# servicenow_war_open_scope: worked
+
+## Cancelled is not completed. A task closed in the week in one of these states (as ServiceNow shows
+## them, any case) - or with a close code holding one of these words - is not counted as completed,
+## not in the WAR lines and not among ACT's accomplishments: it is listed in its own section at the
+## bottom, "Cancelled this week" (and on the workbook's Cancelled sheet). Your instance's words, if
+## they differ; [] = every closed task counts as completed.
+# servicenow_war_cancelled_states: [Canceled, Cancelled, Closed Skipped, Closed Incomplete]
+
 ## rows per table in the report (the workbook has every row)
 # servicenow_war_max_rows: 300
 

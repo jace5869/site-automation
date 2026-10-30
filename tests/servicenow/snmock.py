@@ -92,7 +92,7 @@ INCIDENTS = {}
 ATTACHMENTS = []
 COUNTER = [10000]
 LOG = os.environ.get("SNMOCK_LOG", "snmock.jsonl")
-STATE_LABEL = {"1": "New", "2": "In Progress", "6": "Resolved", "7": "Closed"}
+STATE_LABEL = {"1": "New", "2": "In Progress", "6": "Resolved", "7": "Closed", "8": "Canceled"}
 TASK_LABEL = {"1": "Open", "2": "Work in Progress", "3": "Closed Complete", "4": "Closed Incomplete", "7": "Closed Skipped",
               "-5": "New", "-4": "Assess", "-3": "Authorize", "-2": "Scheduled", "-1": "Implement", "0": "Review"}
 PREFIX = {"incident": "INC", "sc_task": "SCTASK", "change_request": "CHG", "change_task": "CTASK", "sc_request": "REQ",
@@ -117,8 +117,8 @@ APPROVAL_LABEL = {"approved": "Approved", "requested": "Requested", "not request
 
 
 def closed(rec):
-    """An incident is closed when Resolved or Closed; the other tables when Closed (3, 4, 7)."""
-    return rec.get("state") in (("6", "7") if rec.get("_table", "incident") == "incident" else ("3", "4", "7"))
+    """An incident is closed when Resolved, Closed or Canceled; the other tables when Closed (3, 4, 7)."""
+    return rec.get("state") in (("6", "7", "8") if rec.get("_table", "incident") == "incident" else ("3", "4", "7"))
 
 
 def state_label(rec):

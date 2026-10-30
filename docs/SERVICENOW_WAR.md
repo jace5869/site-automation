@@ -12,22 +12,26 @@ ACT (GenAI) from the same tables. It runs on the AAP side with the **ServiceNow 
 
 | Part | What it shows |
 |---|---|
-| The title and the tiles | the assignment group first, exactly as ServiceNow names it (`Weekly activity report for ABC - Ops - IT - Linux: 5 completed, ...`); how many completed, opened and open at the end, the ones older than 30 days, the ones worked on but still open - each tile with a line saying what it counts |
-| **The week in numbers** | per kind of task: opened, completed, open at the end, older than 30 days, worked on |
-| **Completed this week** | each task resolved or closed in the week, oldest first: **the date of closure**, number, type, what it was, who had it, its state, priority, when it was opened, days open, the close notes |
+| The title and the tiles | the assignment group first, exactly as ServiceNow names it (`Weekly activity report for ABC - Ops - IT - Linux: 5 completed, ...`); how many completed, opened and open at the end, the ones older than 30 days, the ones worked on but still open, the ones cancelled - each tile with a line saying what it counts |
+| **The week in numbers** | per kind of task: opened, completed, cancelled, open at the end, older than 30 days, worked on |
+| **Completed this week** | each task resolved or closed in the week, oldest first: **the date of closure**, number, type, what it was, who had it, its state, priority, when it was opened, days open, the close notes. Cancelled is not completed (below) |
 | **Opened this week** | each task new in the week: when, who got it, its state, and whether it was already completed |
-| **Open at the end of the week** | still open at the week's end, oldest first; amber past `servicenow_war_old_days` (30); *This week*: new, worked on (updated in the week) or untouched |
-| **By person** | completed, opened, open and worked on, per assignee |
+| **Open at the end of the week** | the week's open work: still open at the week's end **and new this week or worked on in it** (`servicenow_war_open_scope: worked`, the default), oldest first; amber past `servicenow_war_old_days` (30); *This week*: new or worked on (updated in the week). The backlog nobody touched - a task open 90 days and not looked at - is counted in the tiles and on the workbook, not listed; the section says how many. `servicenow_war_open_scope: all` lists every open task, however old |
+| **By person** | completed, opened, open, worked on and cancelled, per assignee |
 | **For the WAR (from the tables): completed** and **in progress** | the first version of the WAR: one line per task, ready to paste: `Incident INC0012345: Mail relay queue growing on mail01 - resolved 2026-10-20 (Jane Doe)`, `Problem task PTASK0012345: NFS mounts hang on the batch hosts - Work in Progress, open since 2026-09-01, 52 days (Jane Doe)` |
 | **For the WAR (written by ACT)** (optional, right after it) | the other version: a summary of two or three sentences, then accomplishments, in progress, what deserves attention - written by GenAI from the tables, one plain sentence per bullet with the ticket numbers. Both versions are there; the lead picks the one to paste |
 | **SLA breached or close to breaching** | the tasks whose SLA ran past its time (red: the open ones first, then the week's completed ones that breached) and those with an SLA still running at 75% of its time or more (amber; `servicenow_war_sla_warn_percent`): the SLA, the time used, the breach time - after the WAR and ACT's version of it: the week's results come first. ACT is told about them for *what deserves attention* |
+| **Cancelled this week** | at the bottom: the tasks closed in the week as *Canceled*, *Closed Skipped* or *Closed Incomplete* (`servicenow_war_cancelled_states`): when, what, who had it, how long it was open, the close notes. Not counted as completed, not in the WAR lines, not among ACT's accomplishments |
 | **Not read** | a table the account cannot read, a group or user ServiceNow does not know, a table cut at `servicenow_war_max_records` |
 | **Read** | per table, the records read and kept |
-| The workbook | every task with every column on one sheet (dates, the link to the record, close notes whole, your own fields), then Completed, Opened, Open at the end, By person, By type |
+| The workbook | every task with every column on one sheet (dates, the link to the record, close notes whole, your own fields; the untouched backlog too), then Completed, Opened, Open at the end, Cancelled, By person, By type |
 
 **What counts as completed.** An incident or a problem counts when it is **resolved** (that is when the work was done;
 ServiceNow closes it by itself days later), everything else when it is **closed**. The date in the *Completed* column
-is that date. A task resolved before the week and auto-closed in it is not the week's work and is left out.
+is that date. A task resolved before the week and auto-closed in it is not the week's work and is left out. **Cancelled
+is not completed**: a task closed in a state named in `servicenow_war_cancelled_states` (*Canceled*, *Cancelled*, *Closed
+Skipped*, *Closed Incomplete* - as ServiceNow shows them, any case; or with a close code holding one of those words) goes
+to *Cancelled this week* instead. Your instance's words, if they differ; `[]` = every closed task counts as completed.
 
 **Whose task it is.** A task counts for the assignment group it has **now**. One that was in your group during the
 week and moved to another group since is not in the report (ServiceNow's API gives the current record, not its
@@ -123,6 +127,8 @@ A week that starts on another day (Friday to Thursday): `servicenow_war_week_sta
 | `servicenow_war_fields_extra` | `[]` | your own columns, read from every table and put on the workbook (`u_customer`) |
 | `servicenow_war_period`, `_days`, `_week_start`, `_since`, `_until` | `days`, 7, `monday`, `""`, `""` | the week (above) |
 | `servicenow_war_old_days` | 30 | a task open longer than this at the week's end is amber |
+| `servicenow_war_open_scope` | `worked` | which open tasks are listed (Open at the end, the WAR's in-progress lines, ACT's evidence): `worked` = new this week or updated in it, the untouched backlog counted but not listed; `all` = every task open at the week's end |
+| `servicenow_war_cancelled_states` | `[Canceled, Cancelled, Closed Skipped, Closed Incomplete]` | a task closed in one of these states (or with a close code holding one of these words) is cancelled, not completed: its own section at the bottom; `[]` = every closed task counts |
 | `servicenow_war_max_rows` | 300 | rows per table in the report (the workbook has every row) |
 | `servicenow_war_notes_chars` | 200 | how much of each close note the Completed table shows (0 = none; the workbook has it whole) |
 | `servicenow_war_max_records` | 5000 | at most this many records per table (more: said) |
@@ -137,14 +143,18 @@ The whole list, with every description: [VARIABLES_REFERENCE.md](VARIABLES_REFER
 
 ## ACT's narrative
 
-With `servicenow_war_act: true` and an *ACT model key* credential on the template, the job hands the week's three
-tables (completed, opened, open at the end - number, type, what it was, dates, state, priority, who, the close
-notes) to ACT in evidence mode: ACT runs no command, it reads and writes. It gives **accomplishments** (3 to 8
-bullets, related tickets grouped, the numbers in brackets), **in progress** and **what deserves attention**, plus two
-or three sentences for a manager. ACT is told to write each bullet as one plain sentence of at most 30 words with
-the ticket numbers in brackets at its end; what it gives anyway is cleaned before it reaches the report (markdown,
-bullet characters, numbering, several bullets in one string, the same bullet twice), and an answer with no readable
-JSON is shown as it came, cut at 40 lines. They go right after the one-line-per-task version, which stays (and before the SLAs): two
+With `servicenow_war_act: true` and an *ACT model key* credential on the template, the job hands the week's lists
+(completed, opened, open at the end - the ones the report lists - and cancelled, marked as not accomplishments: number,
+type, what it was, dates, state, priority, who, the close notes) to ACT in evidence mode: ACT runs no command, it reads
+and writes. It gives **accomplishments** (3 to 8 bullets, related tickets grouped, the numbers in brackets), **in
+progress** and **what deserves attention**, plus two or three sentences for a manager. ACT is told to write each bullet
+as one plain sentence of at most 30 words with the ticket numbers in brackets at its end; what it gives anyway is
+cleaned before it reaches the report (markdown, bullet characters, numbering, several bullets in one string, the same
+bullet twice). An answer the model mangled is read all the same: a line break inside a string, curly quotes, a comment,
+a trailing comma, the JSON cut short at the model's output limit (the last bullet is lost and the report says so), or
+headings and bullets instead of JSON (sorted into the sections by the headings, said so). Only an answer with none of
+that is shown as it came, cut at 40 lines, under *ACT's answer has no readable JSON block*. They go right after the
+one-line-per-task version, which stays (and before the SLAs): two
 versions of the same week to choose from, ACT's marked as written by GenAI. People's and groups' names
 and the configuration items are masked before anything reaches the model and put back in the answer. ACT runs on
 the AAP node (`site_act_provider`, `site_act_models`, a proxy in `site_act_env`; [VMWARE.md](VMWARE.md#act-analysis) says
@@ -177,4 +187,8 @@ sort is made in the job on the records' UTC timestamps.
 | *Not read*: `incident: more than the first 5000 records` | a big backlog | raise `servicenow_war_max_records`, or `servicenow_war_period: dates` for a shorter week |
 | `the window ends (...) before it starts (...)` | `servicenow_war_until` before `servicenow_war_since` | swap them |
 | the dates are a few hours off | `report_time_zone` is empty (UTC) or not a zone the execution environment knows | set it (`America/New_York`); the subtitle says when the zone is unknown |
+| a task closed in the week is not under *Completed* | it was cancelled, skipped or closed incomplete: it is under *Cancelled this week* | that is the point; `servicenow_war_cancelled_states` says which states count as cancelled (`[]`: none) |
+| *Open at the end of the week* lists fewer tasks than its tile counts | the rest is the backlog nobody touched this week - counted, not listed (the section says how many) | `servicenow_war_open_scope: all` lists them; the workbook's *Open at the end* sheet has them either way |
+| `ACT's answer has no readable JSON block` | ACT answered with neither JSON nor headings the job can read; its first 40 lines are under the message | run it again (models slip); if it repeats, keep those lines for the next fix. A long week cut short is read since 0.44.1 and said so: `site_act_env: {ACT_MAX_TOKENS: "8192"}` in `all.yml` gives the model room |
+| `ACT tried to run a command instead of answering` | the model asked to run a script - to count the words of a bullet, as seen - instead of writing; evidence mode runs none. The command and the model's reason are under the message | run it again: the prompt tells the model to answer in one step and never to count with a tool; if it repeats, keep those two lines |
 | a task you handled is missing | it is assigned to another group now, or it was resolved before the week (and only auto-closed in it) | the workbook's *All items* sheet has everything the week touched; `servicenow_war_users` adds a person's tasks whatever their group |

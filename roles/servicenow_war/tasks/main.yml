@@ -45,6 +45,7 @@
     max_records: "{{ servicenow_war_max_records | int }}"
     sla: "{{ servicenow_war_sla | bool }}"
     sla_warn_percent: "{{ servicenow_war_sla_warn_percent | float }}"
+    cancelled_states: "{{ servicenow_war_cancelled_states | name_list }}"
     now: "{{ servicenow_war_now | default(omit, true) }}"
   register: _war
   check_mode: false             # only reads
@@ -54,6 +55,7 @@
     _war_opts: >-
       {{ {'title': site_report_title | default('Weekly activity report'), 'old_days': servicenow_war_old_days | float,
           'max_rows': servicenow_war_max_rows | int, 'notes_chars': servicenow_war_notes_chars | int,
+          'open_scope': servicenow_war_open_scope | default('worked', true) | string,
           'time_zone': report_time_zone | default('', true) | string, 'act': servicenow_war_act | bool} }}
 
 - name: WAR | the report, built
@@ -71,7 +73,8 @@
       vars:
         _eb_batches: >-
           {{ [{'items': [{'id': 'accomplishments'}, {'id': 'in_progress'}, {'id': 'issues'}],
-               'evidence': _war | servicenow_war_act_evidence({'max_items': servicenow_war_act_max_items | int, 'notes_chars': 300}),
+               'evidence': _war | servicenow_war_act_evidence({'max_items': servicenow_war_act_max_items | int, 'notes_chars': 300,
+                                                               'open_scope': servicenow_war_open_scope | default('worked', true) | string}),
                'task': {'extra': site_act_extra_instructions | default('')} | servicenow_war_act_task}] }}
         _eb_check_url: "{{ servicenow_war_act_check_url | bool }}"
         _ea_names: "{{ _war | servicenow_war_names }}"
