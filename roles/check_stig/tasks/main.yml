@@ -3,12 +3,22 @@
 # rule; the scan's report, results and summary kept in check_stig_dir on the host). STIG Manager is read once for
 # every host, from the AAP side (library/site_stigman_read.py, GET only). Then each host is compared
 # (plugins/filter/stig_filters.py):
-#   stig:drift          a rule STIG Manager has as Not a Finding (or Not Applicable) fails now
-#   stig:new            a rule that passed in the host's last scan fails now (and STIG Manager does not have it open)
+#   stig:drift          a rule STIG Manager has as Not a Finding (or Not Applicable) fails now, and it passed on the host
+#                       in an earlier scan
+#   stig:new            a rule that passed in an earlier scan fails now (and STIG Manager does not have it open)
+#   stig:disagree       a rule STIG Manager has as Not a Finding has failed in every scan of the host - only with
+#                       check_stig_disagree_severity warning or critical; by default the report lists them
 #   stig:stigman        the host's asset was not found in STIG Manager, or could not be read (check_stig_stigman_missing_severity)
 #   stig:not-scanned    no oscap or no STIG content on the host, or the scan failed
-# The report (playbooks/stig_drift_report.yml) also lists what is fixed on the host but still Open in STIG Manager,
-# and the fails STIG Manager has no review for.
+# The report (playbooks/stig_drift_report.yml) also lists where the scan and the checklist disagree, what is fixed on
+# the host but still Open in STIG Manager, the rules left out (check_stig_ignore_rules), and the fails STIG Manager
+# has no review for.
+
+- name: STIG | check_stig_disagree_severity is none, warning or critical
+  ansible.builtin.assert:
+    that: check_stig_disagree_severity | string in ['none', 'warning', 'critical']
+    fail_msg: "check_stig_disagree_severity must be none, warning or critical (it is {{ check_stig_disagree_severity }})"
+    quiet: true
 
 - name: STIG | install openscap-scanner and scap-security-guide (check_stig_install)
   ansible.builtin.dnf:
@@ -86,11 +96,12 @@
   run_once: true
   when: check_stig_stigman_api | length > 0 and _stig_sm.error | default('') | length > 0
 
-- name: STIG | compare (STIG Manager, the last scan) and the findings
+- name: STIG | compare (STIG Manager, the earlier scans) and the findings
   ansible.builtin.set_fact:
     check_stig_result: >-
       {{ _stig_scan | stig_compare(_sm_host, inventory_hostname, check_stig_severity, check_stig_stigman_statuses,
-                                   check_stig_stigman_api | length > 0, check_stig_stigman_missing_severity) }}
+                                   check_stig_stigman_api | length > 0, check_stig_stigman_missing_severity,
+                                   check_stig_ignore_rules, check_stig_disagree_severity | string) }}
   vars:
     _sm_host: >-
       {{ (_stig_sm.hosts | default({}))[inventory_hostname]

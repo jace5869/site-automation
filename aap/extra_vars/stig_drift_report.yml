@@ -116,7 +116,18 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## the finding for a drifted or new fail, by the rule's CAT (high = CAT I)
 # check_stig_severity: {high: critical, medium: warning, low: warning}
 
-## at most this many rows in the report's table of fails STIG Manager has no review for
+## a rule STIG Manager has as Not a Finding that has failed in every scan of the host (never passed,
+## so nothing moved that the job saw): none = listed in the report only; warning or critical = a
+## finding
+# check_stig_disagree_severity: none
+
+## rules OpenSCAP is known to get wrong at your site: never a finding, listed in the report as left
+## out. SV-257985, V-257985, RHEL-09-255045 or the SCAP rule's name (sshd_disable_root_login); per
+## group or host too
+# check_stig_ignore_rules: []
+
+## at most this many rows in the report's tables of rules left out and of fails STIG Manager has no
+## review for
 # check_stig_list_max: 200
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------

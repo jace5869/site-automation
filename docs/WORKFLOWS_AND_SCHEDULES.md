@@ -426,8 +426,8 @@ Has a server moved away from its STIG checklist since it was reviewed?
 | 2 | ServiceNow tickets | | **Run always**, from 1 |
 
 **Schedule:** weekly, e.g. Sunday 02:00 (a STIG scan takes a few minutes per host and some CPU), and once
-after patch night. One incident per host with drift (a rule STIG Manager has as Not a Finding fails now) or a
-new fail since its last scan; *Run always*, so the incident of a host that is clean again gets its note.
+after patch night. One incident per host with drift (a rule STIG Manager has as Not a Finding passed before and
+fails now) or a new fail since an earlier scan; *Run always*, so the incident of a host that is clean again gets its note.
 STIG Manager is only read. Click by click: [STIG_DRIFT.md](STIG_DRIFT.md), "Setting it up".
 
 ### 34. Network performance (hourly)

@@ -668,7 +668,7 @@
 ## settings (keep the secret in a vault). The client needs the scope stig-manager:collection:read
 ## and a grant (Restricted is enough) in the collections to read. STIG Manager's API, e.g.
 ## https://stigman.example.mil/api ; empty = not compared with STIG Manager (only with the host's
-## last scan)
+## earlier scans)
 # check_stig_stigman_api: ""
 
 ## Keycloak's token endpoint (https://keycloak.example.mil/realms/stigman/protocol/openid-
@@ -722,6 +722,16 @@
 ## ------------------------------------------------------------------------------------------------
 ## the finding for a drifted or new fail, by the rule's CAT (high = CAT I)
 # check_stig_severity: {high: critical, medium: warning, low: warning}
+
+## a rule STIG Manager has as Not a Finding that has failed in every scan of the host (never passed,
+## so nothing moved that the job saw): none = listed in the report only; warning or critical = a
+## finding
+# check_stig_disagree_severity: none
+
+## rules OpenSCAP is known to get wrong at your site: never a finding, listed in the report as left
+## out. SV-257985, V-257985, RHEL-09-255045 or the SCAP rule's name (sshd_disable_root_login); per
+## group or host too
+# check_stig_ignore_rules: []
 
 # ---- check_time ----------------------------------------------------------------------------------
 ## seconds

@@ -4,9 +4,12 @@
 # Manager (tests/stig/stigman_mock.py, read-only). In order: no oscap (not scanned); the first scan, no STIG Manager
 # (nothing to compare: healthy, the scan kept on the host); a rule that passed fails now (new); STIG Manager with
 # the asset: drift (CAT I critical), fixed but still Open, no review, the new fail that STIG Manager already has
-# open is not new; the email; Check mode keeps nothing; the asset in no collection, in two (several), the
-# collection set; check_stig_stigman_asset; a wrong secret; only GET requests reached STIG Manager; keep 2.
-#   bash tests/stig/run_stig_test.sh        (ANSIBLE_PLAYBOOK=... to pick one)
+# open is not new; the same fails on the next run: still drifted; the email; Check mode keeps nothing;
+# check_stig_ignore_rules; a host whose first scan fails what STIG Manager has as Not a Finding (the scan and the
+# checklist disagree: report only, or a finding with check_stig_disagree_severity); the asset in no collection, in two
+# (several), the collection set; check_stig_stigman_asset; a wrong secret; only GET requests reached STIG Manager;
+# keep 2.
+#   bash tests/stig/run_stig_test.sh        (ANSIBLE_PLAYBOOK=... to pick one; STIG_KEEP=FILE keeps the last output)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
@@ -14,7 +17,7 @@ ap="${ANSIBLE_PLAYBOOK:-ansible-playbook}"
 py="${STIG_TEST_PYTHON:-$(command -v python3)}"
 work="$(mktemp -d)"
 smtp_pid="" sm_pid=""
-cleanup() { [ -n "${STIG_KEEP:-}" ] && { cp "$work/out.txt" /tmp/claude-1000/-opt/dcf7f644-7e80-435c-860b-f5621ee5b376/scratchpad/stig_out.txt; };  [ -n "$smtp_pid" ] && kill "$smtp_pid" 2>/dev/null; [ -n "$sm_pid" ] && kill "$sm_pid" 2>/dev/null; rm -rf "$work"; }
+cleanup() { [ -n "${STIG_KEEP:-}" ] && cp "$work/out.txt" "$STIG_KEEP"; [ -n "$smtp_pid" ] && kill "$smtp_pid" 2>/dev/null; [ -n "$sm_pid" ] && kill "$sm_pid" 2>/dev/null; rm -rf "$work"; }
 trap cleanup EXIT
 fails=0
 port_sm="${STIG_SM_PORT:-12581}" port_smtp="${STIG_SMTP_PORT:-12582}"
@@ -62,7 +65,9 @@ sm_data() {  # sm_data ASSETS_JSON: two collections, the reviews of asset 11
    {"ruleId": "SV-257779r958390_rule", "ruleIds": ["SV-257779r958390_rule"], "result": "pass", "status": {"label": "rejected"}, "ts": "2026-08-15T10:00:00Z",
     "rule": {"ruleId": "SV-257779r958390_rule", "version": "RHEL-09-211020", "severity": "medium", "title": "The banner."}},
    {"ruleId": "SV-258176r1045388_rule", "ruleIds": ["SV-258176r1045388_rule"], "result": "fail", "status": {"label": "accepted"}, "ts": "2026-08-15T10:00:00Z",
-    "rule": {"ruleId": "SV-258176r1045388_rule", "version": "RHEL-09-654225", "severity": "medium", "title": "RHEL 9 must audit all uses of privileged commands."}}]}}
+    "rule": {"ruleId": "SV-258176r1045388_rule", "version": "RHEL-09-654225", "severity": "medium", "title": "RHEL 9 must audit all uses of privileged commands."}},
+   {"ruleId": "SV-258999r1000001_rule", "ruleIds": ["SV-258999r1000001_rule"], "result": "pass", "status": {"label": "accepted"}, "ts": "2026-08-15T10:00:00Z",
+    "rule": {"ruleId": "SV-258999r1000001_rule", "version": "RHEL-09-999990", "severity": "medium", "title": "A manual check: a document, never scanned."}}]}}
 EOF
 }
 web01='{"assetId": "11", "name": "localhost", "fqdn": "", "stigs": [{"benchmarkId": "RHEL_9_STIG", "revisionStr": "V2R7"}]}'
@@ -92,7 +97,7 @@ run "no oscap: not scanned, a warning" fail -e "check_stig_oscap=$work/bin/none"
     "[WARNING] stig: the STIG scan did not run: oscap is not installed (the package openscap-scanner" "NOT SCANNED" "!Traceback"
 
 run "the first scan, no STIG Manager: nothing to compare, healthy, kept on the host" ok -- \
-    "HEALTHY. Checks run: stig" "DISA STIG for Red Hat Enterprise Linux 9 V2R9 - 7 pass, 0 fail; drifted 0, new 0" "STIG Manager: not used" \
+    "HEALTHY. Checks run: stig" "DISA STIG for Red Hat Enterprise Linux 9 V2R9 - 9 pass, 0 fail; drifted 0, new 0" "STIG Manager: not used" \
     "report on the host: $work/kept/" "!is undefined"
 if [ "$(kept)" -eq 1 ] && [ -s "$work/kept/latest-summary.json" ] && [ -s "$work/kept/latest-report.html" ] && ls "$work/kept"/*_results.xml.gz >/dev/null 2>&1 \
    && [ "$(stat -c %a "$work/kept")" = 700 ] && [ "$(stat -c %a "$work/kept/latest-summary.json")" = 600 ]; then echo "ok   - kept on the host: summary, report, results; the folder and files root-only"
@@ -101,8 +106,8 @@ sleep 1
 
 echo '{"accounts_tmout": "fail", "audit_rules_privileged_commands_su": "fail"}' > "$work/results.json"
 run "a rule that passed fails now: new (CAT II: warning); two SCAP rules of one STIG rule count once" fail -- \
-    "[WARNING] stig: 2 STIG rules passed in the last scan" "V-257883 CAT II" "V-258176 CAT II" \
-    "5 pass, 2 fail" "NEW   V-258176 (RHEL-09-654225)" "!CRITICAL"
+    "[WARNING] stig: 2 STIG rules passed in an earlier scan (last 20" "V-257883 CAT II" "V-258176 CAT II" \
+    "7 pass, 2 fail" "NEW   V-258176 (RHEL-09-654225)" "!CRITICAL"
 sleep 1
 
 rm -f "$work/mail"/*
@@ -110,8 +115,8 @@ echo '{"accounts_tmout": "fail", "audit_rules_privileged_commands_su": "fail", "
 run "STIG Manager: drift (CAT I critical), the rejected review does not count, Open + now fail is not drift" fail -e "$sm_on" -- \
     "[CRITICAL] stig: 2 STIG rules STIG Manager has as Not a Finding or Not Applicable fail now: V-257821 CAT I, V-257985 CAT II" \
     "DRIFT V-257821 (RHEL-09-214020) CAT I" "STIG Manager: RHEL Servers / localhost" \
-    "[CRITICAL] stig: 2 STIG rules passed in the last scan" "V-257835 CAT I, V-257779 CAT II" \
-    "!DRIFT V-257779" "!DRIFT V-257883" "!DRIFT V-258176"
+    "[CRITICAL] stig: 2 STIG rules passed in an earlier scan" "V-257835 CAT I, V-257779 CAT II" \
+    "!DRIFT V-257779" "!DRIFT V-257883" "!DRIFT V-258176" "disagree 0, by hand 1, left out 0"
 decoded() {
     "$py" - "$1" > "$work/mail.txt" <<'PY'
 import email, sys
@@ -126,22 +131,48 @@ if [ "$(ls "$work/mail" | wc -l)" -ge 1 ]; then
     decoded "$(ls "$work/mail"/* | head -1)"; m="$work/mail.txt"
     if grep -q "1. Drifted - the host fails what STIG Manager has as Not a Finding" "$m" && grep -q "Every host - the scan, STIG Manager, the counts" "$m" \
        && grep -q "Fails STIG Manager has no review for" "$m" && grep -q "RHEL Servers / localhost (V2R7)" "$m" && grep -q "Subject: .*STIG drift report" "$m" \
-       && grep -q "Not a Finding (submitted)" "$m"; then echo "ok   - the email: drifted, every host (collection / asset, revision), no review"
-    else echo "FAIL - the email's content"; grep -i "subject\|drift\|every host" "$m" | head -8; fails=$((fails + 1)); fi
+       && grep -q "Not a Finding (submitted)" "$m" && grep -q "Last passed" "$m" && grep -q "Start here" "$m" \
+       && grep -q "sudo oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_stig --rule xccdf_org.ssgproject.content_rule_ensure_gpgcheck_local_packages" "$m"
+    then echo "ok   - the email: Start here with the command to check the rule again, drifted (last passed), every host (collection / asset, revision), no review"
+    else echo "FAIL - the email's content"; grep -i "subject\|drift\|every host\|start here\|oscap" "$m" | head -8; fails=$((fails + 1)); fi
 else echo "FAIL - no email arrived"; fails=$((fails + 1)); fi
+sleep 1
+
+run "the same fails on the next run: still drifted (they passed in an earlier scan), still a finding" fail -e "$sm_on" -- \
+    "[CRITICAL] stig: 2 STIG rules STIG Manager has as Not a Finding or Not Applicable fail now: V-257821 CAT I, V-257985 CAT II" \
+    "DRIFT V-257821 (RHEL-09-214020) CAT I" "!DISAGREE"
+sleep 1
+run "check_stig_ignore_rules: a rule left out is never a finding, it is counted" fail -e "$sm_on" -e '{"check_stig_ignore_rules": ["V-257821", "RHEL-09-215040"]}' -- \
+    "[WARNING] stig: 1 STIG rule STIG Manager has as Not a Finding or Not Applicable fails now: V-257985 CAT II" "left out 2" "!DRIFT V-257821" "!CRITICAL"
+run "check_stig_disagree_severity must be none, warning or critical" fail -e check_stig_disagree_severity=high -- \
+    "check_stig_disagree_severity must be none, warning or critical (it is high)"
 sleep 1
 
 echo '{"audit_rules_privileged_commands_su": "fail"}' > "$work/results.json"
 rm -f "$work/mail"/*
 run "fixed on the host, still Open in STIG Manager: report only" ok -e "$sm_on" -- "HEALTHY" "fixed but open 1"
 decoded "$(ls "$work/mail"/* | head -1)"
-grep -q "3. Fixed on the host, still Open in STIG Manager" "$work/mail.txt" && grep -q "Open (saved, 2026-08-15)" "$work/mail.txt" \
+grep -q "4. Fixed on the host, still Open in STIG Manager" "$work/mail.txt" && grep -q "Open (saved, 2026-08-15)" "$work/mail.txt" \
     && echo "ok   - the email: fixed, still Open, with the review's status and date" || { echo "FAIL - the fixed-open table"; fails=$((fails + 1)); }
 
 n=$(kept)
 echo '{"sshd_disable_root_login": "fail"}' > "$work/results.json"
 run "Check mode: scanned and compared, nothing kept" fail --check -e "$sm_on" -- "[WARNING] stig: 1 STIG rule STIG Manager has as Not a Finding or Not Applicable fails now: V-257985 CAT II" "(not kept: dry run)"
 [ "$(kept)" -eq "$n" ] && echo "ok   - Check mode kept nothing on the host" || { echo "FAIL - Check mode kept a scan"; fails=$((fails + 1)); }
+
+echo '{"sshd_disable_root_login": "fail", "ensure_gpgcheck_local_packages": "fail"}' > "$work/results.json"
+rm -f "$work/mail"/*
+run "a host's first scan fails what STIG Manager has as Not a Finding: the scan and the checklist disagree - report only" ok \
+    -e "$sm_on" -e check_stig_dir="$work/kept2" -- "HEALTHY" "drifted 0, new 0" "disagree 2, by hand 1, left out 0" \
+    "DISAGREE V-257821 (RHEL-09-214020) CAT I" "the scan's check: ensure_gpgcheck_local_packages" "!DRIFT"
+decoded "$(ls "$work/mail"/* | head -1)"
+grep -q "3. The scan and the checklist disagree - look at each once" "$work/mail.txt" && grep -q "check_stig_disagree_severity: warning makes them findings" "$work/mail.txt" \
+    && echo "ok   - the email: the scan and the checklist disagree, report only" || { echo "FAIL - the disagree table"; fails=$((fails + 1)); }
+sleep 1
+run "the next scan fails them again: still disagree (they never passed here); check_stig_disagree_severity: warning - a finding" fail \
+    -e "$sm_on" -e check_stig_dir="$work/kept2" -e check_stig_disagree_severity=warning -- \
+    "[WARNING] stig: 2 STIG rules STIG Manager has as Not a Finding or Not Applicable have failed in every scan of this host: V-257821 CAT I, V-257985 CAT II" \
+    "disagree 2" "!DRIFT" "!CRITICAL"
 
 echo '{}' > "$work/results.json"
 sm_data '{"1": [], "2": []}'

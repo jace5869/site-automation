@@ -336,7 +336,7 @@ certificate authority ([TRUST_STORES.md](TRUST_STORES.md)).
 ### STIG drift report
 
 Weekly, and after patching: each Linux host's OpenSCAP STIG scan against its checklist in STIG Manager
-(read-only) and against its last scan; the scans stay on the hosts ([STIG_DRIFT.md](STIG_DRIFT.md)).
+(read-only) and against its earlier scans; the scans stay on the hosts ([STIG_DRIFT.md](STIG_DRIFT.md)).
 
 | Field | Value |
 |---|---|

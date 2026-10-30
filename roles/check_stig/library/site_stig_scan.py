@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """The DISA STIG scan of a Linux host with OpenSCAP (oscap and the SCAP Security Guide's STIG profile, or a
 DISA SCAP benchmark), one result per STIG rule, and the host's own history: each run's report, results and
-summary are kept on the host, and the last summary is returned with this one so the two can be compared.
+summary are kept on the host, and the last summary is returned with this one so the two can be compared - with
+every STIG rule that passed on the host in any scan before this one (passed_before).
 Standard library only."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -13,7 +14,8 @@ short_description: Scan this host against the DISA STIG with OpenSCAP and keep t
 description:
   - Runs C(oscap xccdf eval) with the STIG profile of the SCAP Security Guide for this RHEL version
     (C(content_dir)/ssg-rhel<major>-ds.xml), or the datastream and profile named, and reads the results - one
-    result per STIG rule (several SCAP rules for one STIG rule - the worst counts).
+    result per STIG rule (several SCAP rules for one STIG rule - the worst counts; one SCAP rule for several STIG
+    rules - its result counts for each).
   - Keeps the run on the host in C(dir) - the HTML report, the results (gzip) and a summary (JSON) - and the
     last C(keep) runs; returns the summary before this one (C(previous)) to compare with.
   - In check mode (or with save false) it scans but keeps nothing.
@@ -47,9 +49,15 @@ items:
   returned: success
   sample: [{key: SV-257985, v: V-257985, rule: SV-257985r1069364_rule, stigid: RHEL-09-255045, severity: medium,
             title: "RHEL 9 must not permit direct logons to the root account using remote access through SSH.",
-            result: fail, scap: [sshd_disable_root_login]}]
+            result: fail, scap: [sshd_disable_root_login], scap_ids: [xccdf_org.ssgproject.content_rule_sshd_disable_root_login]}]
 previous:
   description: "The last summary kept on the host before this run ({} = none), with its items as {key: result}."
+  type: dict
+  returned: success
+passed_before:
+  description: "Every STIG rule that passed on the host in a scan before this one, with the time it last passed
+    ({key: time}). Kept in each summary, so it outlives the scans deleted (keep); built from the scans kept when the
+    last summary has none."
   type: dict
   returned: success
 '''
@@ -92,8 +100,9 @@ def short_rule(idref):
 
 def read_results(path):
     """The XCCDF results file oscap wrote (the benchmark and its TestResult in one) -> (meta, rules, results).
-    rules: {idref: {title, severity, sv, rule, v, stigid}}; results: {idref: (result, severity)} of the selected
-    rules. Read as a stream: the file is about 20 MB."""
+    rules: {idref: {title, severity, svs, stigids, sv, rule, v, stigid}} - svs: every STIG rule it checks (SV ids
+    with their revision: one SCAP rule can check several), sv / rule / v / stigid: the first; results: {idref:
+    (result, severity)} of the selected rules. Read as a stream: the file is about 20 MB."""
     rules, results, meta = {}, {}, {"profile_title": "", "profile_text": "", "ssg_version": "", "benchmark": "",
                                      "start": "", "end": ""}
     profile_id = None
@@ -101,21 +110,24 @@ def read_results(path):
         tag = el.tag
         if tag == X + "Rule":
             info = {"title": (el.findtext(X + "title") or "").strip(), "severity": el.get("severity", ""),
-                    "sv": "", "rule": "", "v": "", "stigid": ""}
+                    "svs": [], "stigids": [], "sv": "", "rule": "", "v": "", "stigid": ""}
             for ref in el.findall(X + "reference"):
                 text = (ref.text or "").strip()
-                m = SV_RE.fullmatch(text)
-                if m:
-                    info["sv"], info["rule"] = m.group(1), text
-                elif V_RE.match(text):
-                    info["v"] = text
-                elif STIGID_RE.match(text) and "cyber.mil" in (ref.get("href") or ""):
-                    info["stigid"] = text
+                if SV_RE.fullmatch(text):
+                    if text not in info["svs"]:
+                        info["svs"].append(text)
+                elif STIGID_RE.match(text) and "cyber.mil" in (ref.get("href") or "") and text not in info["stigids"]:
+                    info["stigids"].append(text)
             m = SV_RE.search(el.get("id", ""))           # a DISA benchmark: the rule's own id is the SV id
-            if m and not info["sv"]:
-                info["sv"], info["rule"] = m.group(1), m.group(0)
-            if not info["stigid"]:
-                info["stigid"] = (el.findtext(X + "version") or "").strip()
+            if m and not info["svs"]:
+                info["svs"].append(m.group(0))
+            if not info["stigids"] and (el.findtext(X + "version") or "").strip():
+                info["stigids"].append((el.findtext(X + "version") or "").strip())
+            if info["svs"]:
+                info["rule"] = info["svs"][0]
+                info["sv"] = SV_RE.fullmatch(info["rule"]).group(1)
+                info["v"] = "V-" + info["sv"][3:]
+            info["stigid"] = info["stigids"][0] if info["stigids"] else ""
             rules[el.get("id")] = info
             el.clear()
         elif tag == X + "Group" or tag == X + "Value":
@@ -154,26 +166,50 @@ def stig_version(*texts):
 
 def items_of(rules, results):
     """One item per STIG rule: the SCAP rules that check the same STIG rule (SV id) are one item, and the worst
-    of their results is its result. A SCAP rule with no STIG rule is an item of its own (key = its name)."""
+    of their results is its result; a SCAP rule that checks several STIG rules (dconf_gnome_banner_enabled: two,
+    RHEL 8's configure_crypto_policy: six) counts for each of them. A SCAP rule with no STIG rule is an item of its
+    own (key = its name). The STIG id (RHEL-09-255045) only when the SCAP rule checks one STIG rule: the content
+    lists several in no order that pairs them with their SV ids."""
     by = {}
+    sevs = ["high", "medium", "low"]
     for idref, (res, sev) in results.items():
-        info = rules.get(idref) or {"title": short_rule(idref), "severity": sev, "sv": "", "rule": "", "v": "", "stigid": ""}
-        key = info["sv"] or short_rule(idref)
-        it = by.get(key)
-        if it is None:
-            it = by[key] = {"key": key, "v": info["v"], "rule": info["rule"], "stigid": info["stigid"],
-                            "severity": info["severity"] or sev, "title": info["title"], "results": [], "scap": []}
-        it["results"].append(res)
-        it["scap"].append(short_rule(idref))
-        sevs = ["high", "medium", "low"]
-        if (info["severity"] or sev) in sevs and (it["severity"] not in sevs or sevs.index(info["severity"] or sev) < sevs.index(it["severity"])):
-            it["severity"] = info["severity"] or sev
+        info = rules.get(idref) or {"title": short_rule(idref), "severity": sev, "svs": [], "stigids": []}
+        svs = info.get("svs") or []
+        for full in svs or [""]:
+            key = SV_RE.fullmatch(full).group(1) if full else short_rule(idref)
+            it = by.get(key)
+            if it is None:
+                it = by[key] = {"key": key, "v": ("V-" + key[3:]) if full else "", "rule": full,
+                                "stigid": (info.get("stigids") or [""])[0] if len(svs) <= 1 else "",
+                                "severity": info["severity"] or sev, "title": info["title"], "results": [], "scap": [], "scap_ids": []}
+            if not it["stigid"] and len(svs) == 1:
+                it["stigid"] = (info.get("stigids") or [""])[0]
+            it["results"].append(res)
+            it["scap"].append(short_rule(idref))
+            it["scap_ids"].append(idref)
+            if (info["severity"] or sev) in sevs and (it["severity"] not in sevs or sevs.index(info["severity"] or sev) < sevs.index(it["severity"])):
+                it["severity"] = info["severity"] or sev
     out = []
     for key in sorted(by):
         it = by[key]
         it["result"] = worst(it.pop("results"))
         it["scap"] = sorted(set(it["scap"]))
+        it["scap_ids"] = sorted(set(it["scap_ids"]))
         out.append(it)
+    return out
+
+
+def passed_before(d, stamps, prev):
+    """Every STIG rule that passed on the host before this scan -> {key: the time it last passed}: the last summary's
+    own list, or - a summary from before 0.44.0 has none - built from the scans kept on the host."""
+    if isinstance((prev or {}).get("passed_before"), dict):
+        return dict(prev["passed_before"])
+    out = {}
+    for s in stamps:
+        summ = load_summary(d, s) or {}
+        for k, v in (summ.get("items") or {}).items():
+            if v == "pass":
+                out[k] = summ.get("time") or s
     return out
 
 
@@ -272,12 +308,17 @@ class Scan(object):
                 prev = load_summary(d, s) or {}
                 if prev:
                     break
+            before = passed_before(d, stamps, prev)
+            summary["passed_before"] = dict(before)
+            summary["passed_before"].update((it["key"], summary["time"]) for it in items if it["result"] == "pass")
             saved = {}
             if self.p["save"] and not self.m.check_mode:
                 saved = self.keep(d, stamp, summary, res_xml, rep_html, stamps)
             out = dict(ident)
-            out.update((k, v) for k, v in summary.items() if k != "items")
-            out.update(scanned=True, why="", items=items, previous=prev, saved=saved, oscap_exit=proc.returncode, stderr=err[-600:])
+            out.update((k, v) for k, v in summary.items() if k not in ("items", "passed_before"))
+            prev.pop("passed_before", None)
+            out.update(scanned=True, why="", items=items, previous=prev, passed_before=before, saved=saved, oscap_exit=proc.returncode,
+                       stderr=err[-600:])
             return out
         finally:
             shutil.rmtree(tmp, ignore_errors=True)

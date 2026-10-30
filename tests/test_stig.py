@@ -52,11 +52,33 @@ class Read(unittest.TestCase):
 
     def test_one_item_per_stig_rule_the_worst_counts(self):
         its = {i["key"]: i for i in items({"audit_rules_privileged_commands_su": "fail"})}
-        self.assertEqual(len(its), 7)                       # 8 SCAP rules, two of them one STIG rule
+        self.assertEqual(len(its), 9)                       # 9 SCAP rules: two of them one STIG rule, one of them two
         a = its["SV-258176"]
         self.assertEqual(a["result"], "fail")
         self.assertEqual(a["scap"], ["audit_rules_privileged_commands_su", "audit_rules_privileged_commands_sudo"])
+        self.assertEqual(a["scap_ids"], ["xccdf_org.ssgproject.content_rule_audit_rules_privileged_commands_su",
+                                         "xccdf_org.ssgproject.content_rule_audit_rules_privileged_commands_sudo"])
         self.assertEqual(its["enable_authselect"]["result"], "pass", "a SCAP rule with no STIG rule is its own item")
+
+    def test_one_scap_rule_several_stig_rules(self):
+        """dconf_gnome_banner_enabled checks SV-258012 and SV-258013: its result counts for both (before 0.44.0 only
+        the last one got a result; in scap-security-guide 0.1.82: 7 STIG rules of RHEL 9, 11 of RHEL 8)."""
+        its = {i["key"]: i for i in items({"dconf_gnome_banner_enabled": "fail"})}
+        for k in ("SV-258012", "SV-258013"):
+            self.assertEqual((its[k]["result"], its[k]["v"], its[k]["scap"]), ("fail", "V-" + k[3:], ["dconf_gnome_banner_enabled"]))
+            self.assertEqual(its[k]["stigid"], "", "the content's order does not pair STIG ids with SV ids: none rather than a wrong one")
+        self.assertEqual(its["SV-258013"]["rule"], "SV-258013r1045082_rule")
+        self.assertEqual(its["SV-257985"]["stigid"], "RHEL-09-255045", "one STIG rule: its STIG id")
+
+    def test_passed_before(self):
+        d = tempfile.mkdtemp()
+        for st, items_ in (("20261001T100000Z", {"SV-1": "pass", "SV-2": "fail"}), ("20261008T100000Z", {"SV-1": "fail", "SV-3": "pass"})):
+            with open(os.path.join(d, st + "_summary.json"), "w") as f:
+                json.dump({"time": st, "items": items_}, f)
+        self.assertEqual(scan.passed_before(d, scan.runs_in(d), {"items": {}}), {"SV-1": "20261001T100000Z", "SV-3": "20261008T100000Z"},
+                         "a summary from before 0.44.0: built from the scans kept")
+        self.assertEqual(scan.passed_before(d, scan.runs_in(d), {"passed_before": {"SV-9": "t"}}), {"SV-9": "t"},
+                         "the last summary's own list (it outlives the scans deleted)")
 
     def test_worst(self):
         self.assertEqual(scan.worst(["pass", "notapplicable"]), "pass")
@@ -105,10 +127,15 @@ class StigManager(unittest.TestCase):
         self.assertEqual(smr.sv_of("SV-257985r1069364_rule"), "SV-257985")
 
 
-def scanned(res, prev=None):
+def scanned(res, prev=None, before=None):
+    """A scan: res the SCAP rules' results, prev the last scan's ({key: result}), before passed_before (None: what passed in prev)."""
     its = items(res)
-    return {"scanned": True, "items": its, "counts": scan.counts(its), "previous": {"time": "2026-10-01T10:00:00Z", "items": prev} if prev else {},
-            "saved": {"report": "/var/lib/site-automation/stig/x_report.html"}, "stig_version": "V2R9", "profile_title": "DISA STIG", "os": "RHEL 9"}
+    out = {"scanned": True, "items": its, "counts": scan.counts(its), "previous": {"time": "2026-10-01T10:00:00Z", "items": prev} if prev else {},
+           "saved": {"report": "/var/lib/site-automation/stig/x_report.html"}, "stig_version": "V2R9", "profile_title": "DISA STIG", "os": "RHEL 9",
+           "profile": "xccdf_org.ssgproject.content_profile_stig", "datastream": "/usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml", "tailoring": ""}
+    if before is not None:
+        out["passed_before"] = before
+    return out
 
 
 ALL_PASS = {i["key"]: "pass" for i in items()}
@@ -134,16 +161,70 @@ class Compare(unittest.TestCase):
         self.assertEqual(ids["stig:new"]["severity"], "critical")
         self.assertNotIn("stig:stigman", ids)
 
+    def test_hint_is_the_command_note_says_why(self):
+        """The hint is what to run (the Start here card's Copy, the ticket's "look further"), the note what it means."""
+        c = sf.stig_compare(scanned({"ensure_gpgcheck_local_packages": "fail"}, ALL_PASS), sm(SV_257821=("pass", "accepted")), "web01", stigman_used=True)
+        f = c["findings"][0]
+        self.assertEqual(f["hint"], "sudo oscap xccdf eval --profile xccdf_org.ssgproject.content_profile_stig --rule "
+                                    "xccdf_org.ssgproject.content_rule_ensure_gpgcheck_local_packages /usr/share/xml/scap/ssg/content/ssg-rhel9-ds.xml")
+        self.assertIn("passed on this host in an earlier scan", f["note"])
+        self.assertIn("/var/lib/site-automation/stig/x_report.html", f["note"])
+        t = dict(scanned({}), tailoring="/var/lib/site-automation/stig/content/t.xml")
+        self.assertIn("--tailoring-file /var/lib/site-automation/stig/content/t.xml --rule", sf.check_command(t, {"scap_ids": ["x"]}))
+
+    def test_drift_needs_an_earlier_pass_else_the_two_disagree(self):
+        res = {"ensure_gpgcheck_local_packages": "fail"}
+        review = sm(SV_257821=("pass", "accepted"))
+        c = sf.stig_compare(scanned(res, before={}), review, "web01", stigman_used=True)
+        self.assertEqual(([r["key"] for r in c["drift"]], [r["key"] for r in c["disagree"]]), ([], ["SV-257821"]),
+                         "it never passed here: nothing moved that the job saw")
+        self.assertEqual(c["findings"], [], "report only by default")
+        c = sf.stig_compare(scanned(res, before={}), review, "web01", stigman_used=True, disagree_severity="warning")
+        self.assertEqual([(f["id"], f["severity"]) for f in c["findings"]], [("stig:disagree", "warning")])
+        self.assertIn("1 STIG rule STIG Manager has as Not a Finding or Not Applicable has failed in every scan of this host: V-257821", c["findings"][0]["summary"])
+        self.assertIn("check_stig_ignore_rules", c["findings"][0]["note"])
+
+    def test_drift_stays_while_it_fails(self):
+        """The last scan failed it too, but it passed before that: still drift, every run until it is fixed."""
+        c = sf.stig_compare(scanned({"ensure_gpgcheck_local_packages": "fail"}, dict(ALL_PASS, **{"SV-257821": "fail"}),
+                                    before={"SV-257821": "2026-09-24T10:00:00Z"}),
+                            sm(SV_257821=("pass", "accepted")), "web01", stigman_used=True)
+        self.assertEqual([r["key"] for r in c["drift"]], ["SV-257821"])
+        self.assertEqual(c["drift"][0]["passed"], "2026-09-24T10:00:00Z")
+        c = sf.stig_compare(scanned({"accounts_tmout": "fail"}, dict(ALL_PASS, **{"SV-257883": "fail"}), before={"SV-257883": "2026-09-24T10:00:00Z"}),
+                            {}, "web01")
+        self.assertEqual([r["key"] for r in c["new"]], ["SV-257883"], "a new fail too")
+        self.assertIn("passed in an earlier scan (last 2026-09-24) and fails now", c["findings"][0]["summary"])
+
+    def test_ignore_rules(self):
+        res = {"ensure_gpgcheck_local_packages": "fail", "sshd_disable_root_login": "fail", "accounts_tmout": "fail"}
+        review = sm(SV_257821=("pass", "accepted"), SV_257985=("pass", "accepted"), SV_257883=("pass", "accepted"))
+        for ign in (["V-257821", "RHEL-09-255045", "accounts_tmout"], "SV-257821r1015077_rule, rhel-09-255045, ACCOUNTS_TMOUT"):
+            c = sf.stig_compare(scanned(res, ALL_PASS), review, "web01", stigman_used=True, ignore=ign)
+            self.assertEqual((c["drift"], c["findings"]), ([], []), ign)
+            self.assertEqual([r["key"] for r in c["ignored"]], ["SV-257821", "SV-257883", "SV-257985"])
+        c = sf.stig_compare(scanned({}, ALL_PASS), review, "web01", stigman_used=True, ignore=["V-257821"])
+        self.assertEqual(c["ignored"], [], "a rule left out that passes is not listed")
+
+    def test_by_hand(self):
+        """The rules the checklist has a review of that the scan gives no result for: DISA's manual checks."""
+        review = sm(SV_257821=("pass", "accepted"), SV_999001=("pass", "accepted"), SV_999002=("fail", "saved"), SV_999003=("pass", "rejected"))
+        c = sf.stig_compare(scanned({}), review, "web01", stigman_used=True)
+        self.assertEqual(c["by_hand"], 2)
+        self.assertEqual(c["row"]["cells"][9], "2")
+        self.assertIsNone(sf.stig_compare(scanned({}), {}, "web01")["by_hand"])
+        self.assertEqual(sf.stig_compare(scanned({}), {}, "web01")["row"]["cells"][9], "-")
+
     def test_not_applicable_in_stig_manager_is_drift_rejected_does_not_count(self):
-        c = sf.stig_compare(scanned({"sshd_disable_root_login": "fail", "banner_etc_issue": "fail"}),
+        c = sf.stig_compare(scanned({"sshd_disable_root_login": "fail", "banner_etc_issue": "fail"}, ALL_PASS),
                             sm(SV_257985=("notapplicable", "accepted"), SV_257779=("pass", "rejected")), "web01", stigman_used=True)
         self.assertEqual([r["key"] for r in c["drift"]], ["SV-257985"])
         self.assertEqual([r["key"] for r in c["unreviewed"]], ["SV-257779"])
-        c = sf.stig_compare(scanned({"banner_etc_issue": "fail"}), sm(SV_257779=("pass", "submitted")), "web01", statuses=["accepted"], stigman_used=True)
+        c = sf.stig_compare(scanned({"banner_etc_issue": "fail"}, ALL_PASS), sm(SV_257779=("pass", "submitted")), "web01", statuses=["accepted"], stigman_used=True)
         self.assertEqual(c["drift"], [], "statuses [accepted]: a submitted review is not the checklist")
 
     def test_severity_setting(self):
-        c = sf.stig_compare(scanned({"ensure_gpgcheck_local_packages": "fail"}), sm(SV_257821=("pass", "accepted")), "web01",
+        c = sf.stig_compare(scanned({"ensure_gpgcheck_local_packages": "fail"}, ALL_PASS), sm(SV_257821=("pass", "accepted")), "web01",
                             severity={"high": "warning"}, stigman_used=True)
         self.assertEqual(c["findings"][0]["severity"], "warning")
 
@@ -161,22 +242,72 @@ class Compare(unittest.TestCase):
     def test_not_scanned(self):
         c = sf.stig_compare({"scanned": False, "why": "oscap is not installed"}, {}, "web01")
         self.assertEqual([f["id"] for f in c["findings"]], ["stig:not-scanned"])
-        self.assertIn("oscap is not installed", c["row"]["cells"][2])
+        self.assertIn("oscap is not installed", c["row"]["cells"][1])
 
 
 class Sections(unittest.TestCase):
     def test_order_and_boxes(self):
-        a = sf.stig_compare(scanned({"ensure_gpgcheck_local_packages": "fail", "accounts_tmout": "fail"}, ALL_PASS),
-                            sm(SV_257821=("pass", "accepted"), SV_257985=("fail", "saved")), "web01", stigman_used=True)
+        a = sf.stig_compare(scanned({"ensure_gpgcheck_local_packages": "fail", "accounts_tmout": "fail", "banner_etc_issue": "fail",
+                                     "sshd_disable_root_login": "fail"}, ALL_PASS, before=dict((k, "t") for k in ALL_PASS if k != "SV-257779")),
+                            sm(SV_257821=("pass", "accepted"), SV_257779=("pass", "accepted"), SV_258176=("fail", "saved")), "web01",
+                            stigman_used=True, ignore=["V-257985"])
         b = sf.stig_compare({"scanned": False, "why": "no content"}, {}, "web02")
         s = sf.stig_report_sections([a, b])
         self.assertEqual([x["title"].split(" - ")[0] for x in s],
-                         ["1. Drifted", "2. New fails", "3. Fixed on the host, still Open in STIG Manager", "Every host",
-                          "Fails STIG Manager has no review for"])
-        self.assertTrue(all(x.get("top") for x in s[:3]))
-        self.assertEqual([x["value"] for x in s[0]["boxes"]], [1, 1, 1, 1])
-        self.assertEqual(s[3]["rows"][0][0], "web01", "worst first: the critical host before the one not scanned")
+                         ["1. Drifted", "2. New fails", "3. The scan and the checklist disagree", "4. Fixed on the host, still Open in STIG Manager",
+                          "Every host", "Left out on purpose", "Fails STIG Manager has no review for"])
+        self.assertTrue(all(x.get("top") for x in s[:4]))
+        self.assertEqual([(x["label"], x["value"], x["status"]) for x in s[0]["boxes"]],
+                         [("Drifted", 1, "critical"), ("New fails", 1, "warning"), ("Disagree", 1, "info"),
+                          ("Fixed, still Open", 1, "info"), ("Not scanned", 1, "warning")])
+        self.assertTrue(all(x.get("note") for x in s[0]["boxes"]), "every tile says what it means")
+        self.assertEqual(s[4]["rows"][0][0], "web01", "worst first: the critical host before the one not scanned")
+        self.assertEqual(len(s[4]["rows"][0]), len(s[4]["columns"]))
+        self.assertEqual(len(s[4]["rows"][1]), len(s[4]["columns"]), "a host not scanned: the same number of cells")
         json.dumps(s)
+
+    def test_start_here_only_cat_i(self):
+        """Start here: one card per CAT I rule that drifted or fails new; CAT II, the host not scanned: the tables."""
+        a = sf.stig_compare(scanned({"ensure_gpgcheck_local_packages": "fail", "sshd_disable_root_login": "fail", "package_telnet-server_removed": "fail"},
+                                    ALL_PASS), sm(SV_257821=("pass", "accepted"), SV_257985=("pass", "accepted")), "web01", stigman_used=True)
+        b = sf.stig_compare({"scanned": False, "why": "no content"}, {}, "web02")
+        s = sf.stig_report_sections([a, b])
+        cards = s[0]["start_here"]
+        self.assertEqual([(c["meta"], c["subject"], c["chip"], c["status"]) for c in cards],
+                         [("Drifted", "web01 - V-257821 (RHEL-09-214020)", "CAT I", "critical"),
+                          ("New fail", "web01 - V-257835 (RHEL-09-215040)", "CAT I", "critical")])
+        self.assertIn("Passed 2026-10-01, fails now. STIG Manager: Not a Finding (accepted).", cards[0]["next"])
+        self.assertIn("--rule xccdf_org.ssgproject.content_rule_ensure_gpgcheck_local_packages", cards[0]["code"])
+        self.assertIn("No review in STIG Manager.", cards[1]["next"])
+        n = sf.stig_report_sections([sf.stig_compare(scanned({"package_telnet-server_removed": "fail"}, ALL_PASS), {}, "web01")])
+        self.assertEqual(n[0]["start_here"][0]["next"], "Passed 2026-10-01, fails now. Fix the host. To check it again on the host:",
+                         "no STIG Manager: nothing said about it")
+        sys.path.insert(0, os.path.join(ROOT, "plugins", "filter"))
+        import site_filters
+        rep = site_filters.findings_report({"web01": a["findings"], "web02": b["findings"]}, "STIG drift report", [], ["stig"], s)
+        first = rep["sections"][0]
+        self.assertEqual((first["title"], len(first["cards"])), ("Start here", 2), "the report's own cards, not one per finding")
+        self.assertIn("The CAT I rules that moved", first["text"])
+        q = sf.stig_report_sections([sf.stig_compare(scanned({"sshd_disable_root_login": "fail"}, ALL_PASS), sm(SV_257985=("pass", "accepted")),
+                                                     "web01", stigman_used=True)])
+        rep = site_filters.findings_report({"web01": [{"check": "stig", "severity": "warning", "summary": "x"}]}, "STIG drift report", [], ["stig"], q)
+        self.assertNotEqual(rep["sections"][0]["title"], "Start here", "no CAT I moved: no Start here, the tables lead")
+
+    def test_cells_carry_their_status(self):
+        """CAT, the scan and STIG Manager as chips (the website's icons, the emails' colours): the drifted rule's FAIL
+        critical beside STIG Manager's Not a Finding ok."""
+        a = sf.stig_compare(scanned({"ensure_gpgcheck_local_packages": "fail", "accounts_tmout": "fail"}, ALL_PASS),
+                            sm(SV_257821=("pass", "accepted"), SV_257985=("fail", "saved")), "web01", stigman_used=True)
+        s = {x["title"].split(" - ")[0]: x for x in sf.stig_report_sections([a])}
+        d = s["1. Drifted"]
+        self.assertEqual(d["columns"], ["Host", "STIG rule", "CAT", "Title", "Scan now", "Last passed", "STIG Manager"])
+        self.assertEqual(d["rows"][0][4:], ["FAIL", "2026-10-01", "Not a Finding (accepted)"])
+        self.assertEqual(d["cell_status"][0], ["", "", "critical", "", "critical", "", "ok"])
+        self.assertEqual(s["2. New fails"]["cell_status"][0][2], "warning", "CAT II: the setting's warning")
+        self.assertEqual(s["4. Fixed on the host, still Open in STIG Manager"]["cell_status"][0][4:], ["ok", "warning"])
+        for x in s.values():
+            if x.get("rows"):
+                self.assertEqual(len(x.get("cell_status") or x["rows"]), len(x["rows"]), x["title"])
 
     def test_no_drift(self):
         s = sf.stig_report_sections([sf.stig_compare(scanned({}), {}, "web01")])
@@ -188,7 +319,7 @@ class Sections(unittest.TestCase):
         s = sf.stig_report_sections([c], list_max=2)
         u = [x for x in s if x["title"].startswith("Fails STIG Manager has no review for")][0]
         self.assertEqual(len(u["rows"]), 2)
-        self.assertIn("The first 2 of 6", u["text"])
+        self.assertIn("The first 2 of 8", u["text"])
 
 
 class Module(unittest.TestCase):

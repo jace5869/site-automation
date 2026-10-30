@@ -2,10 +2,13 @@
 # STIG DRIFT REPORT - on a schedule (weekly, or after patching). Each Linux host is scanned against the DISA STIG
 # with OpenSCAP (the SCAP Security Guide's STIG profile for its RHEL version), the scan's report is kept on the
 # host (check_stig_dir), and the result is compared with the host's checklist in STIG Manager - read-only, this
-# job never writes to it - and with the host's last scan:
-#   drifted     a rule STIG Manager has as Not a Finding (or Not Applicable) fails now     -> a finding
-#   new         a rule that passed in the host's last scan fails now                     -> a finding
+# job never writes to it - and with the host's earlier scans:
+#   drifted     a rule STIG Manager has as Not a Finding (or Not Applicable) fails now,
+#               and it passed in an earlier scan                                         -> a finding
+#   new         a rule that passed in an earlier scan fails now                          -> a finding
+#   disagree    a rule STIG Manager has as Not a Finding has failed in every scan        -> report only (check_stig_disagree_severity)
 #   fixed       a rule STIG Manager still has Open passes now (update the checklist)     -> report only
+#   left out    rules OpenSCAP gets wrong at your site (check_stig_ignore_rules)         -> report only
 # Fails the hosts with drift (a workflow can open tickets). Linux only. docs/STIG_DRIFT.md.
 #
 #   ansible-playbook playbooks/stig_drift_report.yml -e target=rhel_servers

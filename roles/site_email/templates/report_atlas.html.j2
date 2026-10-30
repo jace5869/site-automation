@@ -178,7 +178,7 @@ ul.passed .ic{width:17px;height:17px}
 .todo .meta{color:var(--muted);font-size:13px;text-align:right}
 .todo h3{margin:10px 0 0;font-size:16px;line-height:1.35}
 .todo .subj{color:var(--muted);font-size:13.5px;margin-top:4px;word-break:break-word}
-.todo .next{margin-top:10px;font-size:14px}
+.todo .next{margin-top:10px;font-size:14px;overflow-wrap:anywhere}
 .todo .next b{color:var(--accent)}
 .code{display:flex;align-items:flex-start;gap:8px;margin-top:8px;background:var(--code);border:1px solid var(--line);border-radius:10px;padding:8px 8px 8px 12px}
 .code pre{margin:0;flex:1;white-space:pre-wrap;word-break:break-word;font-size:13px}
@@ -206,7 +206,7 @@ tr.r-critical td{background:var(--critical-row)}tr.r-critical td:first-child{box
 tr.r-warning td{background:var(--warning-row)}tr.r-warning td:first-child{box-shadow:inset 3px 0 0 var(--warning)}
 tr.r-ok td:first-child{box-shadow:inset 3px 0 0 var(--ok)}
 tr.r-info td:first-child{box-shadow:inset 3px 0 0 var(--info)}
-td.nw{white-space:nowrap}td .chip{white-space:normal;border-radius:12px}td.long{min-width:240px}
+td.nw{white-space:nowrap}td .chip{white-space:normal;border-radius:12px}td.nw .chip{white-space:nowrap}td.long{min-width:240px}
 td.lk{font-family:"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;font-size:13px;color:var(--muted)}
 .none{color:var(--muted);padding:4px 0}
 footer{margin-top:22px;text-align:center;color:var(--muted);font-size:13px;line-height:1.7}
@@ -358,10 +358,10 @@ footer{margin-top:22px;text-align:center;color:var(--muted);font-size:13px;line-
 {%- set lbl = s.columns[loop.index0] | default('') | string %}
 {%- set cst = (cs[loop.index0] if cs | length > loop.index0 else '') | default('', true) %}
 {%- set cst = cst if cst in words else cellword.get(text | trim | lower, '') %}
-{#- a Status or Severity column of a row with its status: that status's chip #}
+{#- a Status or Severity column of a row with its status: that status's chip (upper case - FAIL - as Fail; a STIG CAT I stays) #}
 {%- set cst = cst or (rs if rs in words and lbl | lower in ['status', 'severity', 'result'] and text | trim else '') %}
 {%- if cst %}
-<td data-l="{{ lbl | e }}" data-v="{{ text | e }}">{{ chip(cst, text | capitalize if text.isupper() else text) }}</td>
+<td data-l="{{ lbl | e }}" data-v="{{ text | e }}"{% if text | length <= 20 %} class="nw"{% endif %}>{{ chip(cst, text | capitalize if text.isupper() and not text.startswith('CAT ') else text) }}</td>
 {%- elif s.columns[loop.index0] | default('') | lower in ['look further', 'command', 'hint', 'next step'] %}
 <td class="lk" data-l="{{ lbl | e }}">{{ text | e }}</td>
 {%- else %}

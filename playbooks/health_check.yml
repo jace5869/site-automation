@@ -44,7 +44,7 @@
 #                unhealthy, crashed, restart loops, OOM kills, users without linger. Hosts without
 #                podman are skipped. docs/RUNBOOKS.md
 #   stig         the STIG drift scan: OpenSCAP's STIG profile, compared with STIG Manager (read-only) and the
-#                host's last scan. In no shortcut (a scan takes minutes): ask for it by name, or use its own
+#                host's earlier scans. In no shortcut (a scan takes minutes): ask for it by name, or use its own
 #                template, playbooks/stig_drift_report.yml. docs/STIG_DRIFT.md
 #
 # Shortcuts: daily = disk mounts services performance time network logging mariadb containers sso

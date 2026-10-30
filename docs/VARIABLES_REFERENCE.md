@@ -441,7 +441,7 @@ File: `roles/check_sso/defaults/main.yml`
 
 File: `roles/check_stig/defaults/main.yml`
 
-> STIG (drift): scans the Linux host against the DISA STIG with OpenSCAP - the SCAP Security Guide's STIG profile for its RHEL version (RHEL 9: V2R9, RHEL 10: V1R2 in scap-security-guide 0.1.82) - keeps each scan's report on the host, and compares the result with the host's checklist in STIG Manager (read-only: this check never writes to STIG Manager) and with the host's last scan. A rule STIG Manager has as Not a Finding that fails now is drift; a rule that passed in the last scan and fails now is new. playbooks/stig_drift_report.yml runs it; the health check runs it only when asked by name (health_checks: [stig] - in no shortcut: a scan takes minutes). docs/STIG_DRIFT.md.
+> STIG (drift): scans the Linux host against the DISA STIG with OpenSCAP - the SCAP Security Guide's STIG profile for its RHEL version (RHEL 9: V2R9, RHEL 10: V1R2 in scap-security-guide 0.1.82) - keeps each scan's report on the host, and compares the result with the host's checklist in STIG Manager (read-only: this check never writes to STIG Manager) and with the host's earlier scans. A rule STIG Manager has as Not a Finding that fails now, and passed in an earlier scan, is drift; one that has failed in every scan is listed as "the scan and the checklist disagree"; a rule that passed in an earlier scan and fails now is new. playbooks/stig_drift_report.yml runs it; the health check runs it only when asked by name (health_checks: [stig] - in no shortcut: a scan takes minutes). docs/STIG_DRIFT.md.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -473,7 +473,9 @@ File: `roles/check_stig/defaults/main.yml`
 | `check_stig_stigman_statuses` | `[saved, submitted, accepted]` | the reviews that count as the checklist (a rejected review does not); [accepted] = only what was accepted |
 | `check_stig_stigman_missing_severity` | `warning` | a host not found in STIG Manager (or its collection not readable): warning; critical; or none = listed in the report only |
 | `check_stig_severity` | `{high: critical, medium: warning, low: warning}` | ---- Findings ------------------------------------------------------------------------------------------------ the finding for a drifted or new fail, by the rule's CAT (high = CAT I) |
-| `check_stig_list_max` | `200` | at most this many rows in the report's table of fails STIG Manager has no review for |
+| `check_stig_disagree_severity` | `none` | a rule STIG Manager has as Not a Finding that has failed in every scan of the host (never passed, so nothing moved that the job saw): none = listed in the report only; warning or critical = a finding |
+| `check_stig_ignore_rules` | `[]` | rules OpenSCAP is known to get wrong at your site: never a finding, listed in the report as left out. SV-257985, V-257985, RHEL-09-255045 or the SCAP rule's name (sshd_disable_root_login); per group or host too |
+| `check_stig_list_max` | `200` | at most this many rows in the report's tables of rules left out and of fails STIG Manager has no review for |
 
 ## check_time
 

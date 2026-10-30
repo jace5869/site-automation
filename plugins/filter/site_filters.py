@@ -1687,7 +1687,9 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
     title with the counts, summary boxes, one findings table (critical first), the hosts that did
     not report, any extra sections the playbook adds (e.g. every certificate), the healthy hosts. An extra
     section with top: true goes ABOVE the findings table (what to act on first), and its boxes (label, value,
-    status) join the summary boxes."""
+    status) join the summary boxes. A top section's start_here (cards, [] = none) and start_here_text replace the
+    "Start here" cards made from the findings: a report that knows better what comes first (the STIG drift
+    report: its CAT I rules)."""
     by_host = by_host or {}
     hosts = sorted(by_host)
     missing = sorted(missing or [])
@@ -1723,11 +1725,16 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
     for s in top:
         summary += list(s.get("boxes") or [])
     sections = list(top)
-    cards, more = findings_cards(by_host, missing)
+    own = [s for s in top if "start_here" in s]
+    if own:
+        cards = list(own[0]["start_here"] or [])
+        text = own[0].get("start_here_text") or "What to act on first. Every finding is in the tables below."
+    else:
+        cards, more = findings_cards(by_host, missing)
+        text = "What to act on first: critical, then warning%s. Every finding is in the tables below." % ((" - %d more there" % more) if more else "")
     if cards:
-        sections.insert(0, {"title": "Start here", "status": status, "cards": cards,
-                            "text": "What to act on first: critical, then warning%s. Every finding is in the tables below."
-                                    % ((" - %d more there" % more) if more else "")})
+        sections.insert(0, {"title": "Start here", "status": "critical" if any(c.get("status") == "critical" for c in cards) else status,
+                            "cards": cards, "text": text})
     if rows:
         sections.append({"title": "Findings", "status": status,
                          "columns": ([] if single else ["Host"]) + ["Severity", "Check", "Finding", "Look further"],
