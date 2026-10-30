@@ -994,7 +994,7 @@ File: `roles/site_act/defaults/main.yml`
 | `site_act_allow` | `[]` | self-heal only: regular expressions of fix commands ACT may run without a person. Each must match the WHOLE command. Keep them narrow, e.g. site_act_allow: ['systemctl restart (chronyd\|rsyslog\|crond)'] |
 | `site_act_diagnose_only_groups` | `[aap, aap_hosts, sat, idm, netapp, netapp_console_hosts]` | Hosts where ACT may only diagnose - never fix by itself, whatever site_act_level says: AAP itself (a fix could stop the job that is running it) and vendor-managed appliances. The apply step (act_fix_approved.yml) skips them too: a person applies the fix there by hand. AAP (groups aap, aap_hosts) is ALWAYS in this list… (all of it: the role file) |
 | `site_act_provider` | `genai` | ---- Which model ACT talks to ----------------------------------------------------------------- site_act_provider genai GenAI.mil (the default) asksage Ask Sage - RETIRED FOR NOW: do not pick it (kept for when it returns) genai-beta the GenAI.mil beta proxy (preview models) site_act_models the model to use FOR EACH pr… (all of it: the role file) |
-| `site_act_models` | `{genai: gemini-3.8-flash, asksage: gpt-5.6-sol-gov}` | the model for each provider (see above): the model follows the provider picked |
+| `site_act_models` | `{genai: gemini-4-argon-withtools, asksage: gpt-5.6-sol-gov}` | the model for each provider (see above): the model follows the provider picked |
 | `site_act_urls` | `{}` | the API URL for each provider; a provider not listed uses ACT's default |
 | `site_act_model` | (empty) | one model for this run, whatever the provider (e.g. a survey answer); empty = site_act_models |
 | `site_act_url` | (empty) | one URL for this run; empty = site_act_urls |

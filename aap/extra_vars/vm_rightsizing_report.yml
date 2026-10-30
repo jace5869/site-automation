@@ -335,9 +335,9 @@
 ## ---- Which model ACT talks to -----------------------------------------------------------------
 ## site_act_provider genai GenAI.mil (the default) asksage Ask Sage - RETIRED FOR NOW: do not pick
 ## it (kept for when it returns) genai-beta the GenAI.mil beta proxy (preview models)
-## site_act_models the model to use FOR EACH provider, e.g. {genai: gemini-3.8-flash, asksage:
-## gpt-5.6-sol-gov} so the model follows whichever provider is picked. A provider not listed uses
-## ACT's own default model. site_act_urls the API URL for each provider, e.g. {asksage:
+## site_act_models the model to use FOR EACH provider, e.g. {genai: gemini-4-argon-withtools,
+## asksage: gpt-5.6-sol-gov} so the model follows whichever provider is picked. A provider not
+## listed uses ACT's own default model. site_act_urls the API URL for each provider, e.g. {asksage:
 ## https://<host>/server/openai/v1/chat/completions}; a provider not listed uses ACT's default URL
 ## site_act_model one model for this run, whatever the provider (e.g. a survey answer); empty =
 ## site_act_models site_act_url one URL for this run; empty = site_act_urls site_act_ca a CA bundle
@@ -348,7 +348,7 @@
 # site_act_provider: genai
 
 ## the model for each provider (see above): the model follows the provider picked
-# site_act_models: {genai: gemini-3.8-flash, asksage: gpt-5.6-sol-gov}
+# site_act_models: {genai: gemini-4-argon-withtools, asksage: gpt-5.6-sol-gov}
 
 ## the API URL for each provider; a provider not listed uses ACT's default
 # site_act_urls: {}

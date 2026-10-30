@@ -23,6 +23,51 @@ def _get(hv, key, default=None):
     return default if v is None else v
 
 
+def act_md_blocks(text):
+    """ACT's answer (Markdown) as [(heading, [lines])]: a block per heading (the text before the first one: heading ""),
+    a line per paragraph, list item and command - no **, `, # or --- left. A report section shows its lines as a list;
+    the answer as one paragraph ran its headings, lists and commands together."""
+    blocks, lines, heading, code, para = [], [], "", False, False
+    for raw in str(text or "").replace("\r\n", "\n").split("\n"):
+        s = raw.strip()
+        if s.startswith("```"):
+            code, para = not code, False
+            continue
+        if code:
+            if s:
+                lines.append(s)
+            continue
+        if not s:
+            para = False
+            continue
+        if re.match(r"^([-*_])(\s*\1){2,}$", s):                   # a rule: ---
+            para = False
+            continue
+        m = re.match(r"^#{1,6}\s+(.*)$", s)
+        if m:
+            if lines or heading:
+                blocks.append((heading, lines))
+            heading, lines, para = _md_plain(m.group(1)).rstrip(":"), [], False
+            continue
+        m = re.match(r"^(?:[-*+\u2022]\s+|(\d{1,2})[.)]\s+)(.*)$", s)
+        if m:
+            lines.append(((m.group(1) + ". ") if m.group(1) else "") + _md_plain(m.group(2)))
+            para = True
+            continue
+        if para and lines:
+            lines[-1] = lines[-1] + " " + _md_plain(s)
+        else:
+            lines.append(_md_plain(s))
+            para = True
+    if lines or heading:
+        blocks.append((heading, lines))
+    return [(h, [x for x in ls if x]) for h, ls in blocks if h or [x for x in ls if x]]
+
+
+def _md_plain(s):
+    return " ".join(re.sub(r"\*\*|__|`+", "", str(s)).split())
+
+
 def _out(reg):
     return str(_get(reg, "stdout", "") if hasattr(reg, "__contains__") else "").strip()
 
@@ -96,17 +141,22 @@ def fapolicyd_report(hostvars_list, names, since="today", title=""):
                      "rows": rows, "row_status": row_status, "cell_status": cell_status})
         for h in problem:
             a = h["act"]
-            lines = list(h["findings"])
+            lines, more = list(h["findings"]), []
             if a is None:
                 text = "ACT did not run on this host (a Check run, or the host failed before it): the findings only."
             elif str(a.get("status")) == "error":
                 text = "ACT could not analyse it: %s" % (a.get("stop_reason") or a.get("summary") or "no reason given")
             else:
-                text = str(a.get("summary") or a.get("stop_reason") or "(ACT gave no summary)")
-            for d in (a or {}).get("denied") or []:
-                if isinstance(d, dict) and d.get("command"):
-                    lines.append("ACT proposes (for your security approval): %s" % d["command"])
-            secs.append({"title": "%s: ACT's analysis" % h["host"], "status": h["status"], "text": text, "lines": lines})
+                # ACT's answer by its own headings: the part before the first heading here, each heading its own section
+                blocks = act_md_blocks(a.get("summary") or a.get("stop_reason") or "") or [("", ["(ACT gave no summary)"])]
+                text = "What the job found, then ACT's analysis - it read the evidence only and ran nothing on the host."
+                if not blocks[0][0]:
+                    lines += blocks.pop(0)[1]
+                more = [{"title": "%s: %s" % (h["host"], b[0]), "lines": b[1] or ["-"]} for b in blocks]
+            props = ["ACT proposes (for your security approval): %s" % d["command"]
+                     for d in (a or {}).get("denied") or [] if isinstance(d, dict) and d.get("command")]
+            secs.append({"title": "%s: ACT's analysis" % h["host"], "status": h["status"], "text": text, "lines": lines + props})
+            secs.extend(more)
     if quiet:
         secs.append({"title": "No denials", "status": "ok", "lines": ["%d host(s): fapolicyd running, auditd running, nothing "
                                                                         "denied since %s - %s" % (len(quiet), since, ", ".join(sorted(quiet)))]})

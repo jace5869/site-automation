@@ -8,10 +8,23 @@
 #   fapolicyd_fail_on  ACT statuses that fail the host after the report (default [error]; [] = never)
 # ACT's proposals (a trust entry, a narrow rule) are security-control changes: route them through your security
 # approval (e.g. the ISSO) before anyone applies them. docs/RUNBOOKS.md, "fapolicyd".
+# ACT's playbook knows nothing of site_act: without this, ACT got no provider and no model and used its own default
+# (or the model in root's ~/.config/act/config.json on the host, from an ACT someone set up there by hand)
+- name: Fapolicyd denials - ACT provider and model (site_act_provider, site_act_models, as every ACT job)
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Fapolicyd denials | ACT provider, model and URL
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: env.yml
+
 - name: Fapolicyd denials - read and analysed (ACT)
   ansible.builtin.import_playbook: ../vendor/act/ansible/playbooks/fapolicyd_denials.yml
   vars:
     act_triage_fail_on: []          # no host fails before the report: fapolicyd_fail_on, below, after it
+    # the provider and model of site_act; ACT only reads here, so a plain answer (no action tools, schema or "{")
+    act_triage_env: "{{ _site_act_env_all | combine(_site_act_plain_env) | combine(site_act_env | default({})) }}"
 
 # on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
 - name: Fapolicyd denials - the report

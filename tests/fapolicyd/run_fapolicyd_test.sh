@@ -3,7 +3,8 @@
 # host): fake rpm / systemctl / ausearch / fapolicyd-cli, each host told apart by its python (FAKE_FA_HOST), and the
 # fake ACT of tests/containers. A host with denials (ACT's analysis and proposal in the report), a quiet host,
 # fapolicyd stopped, fapolicyd not installed, a host that cannot be reached; the report on the report website
-# (report_web_dest) and "No email" without report_email_to; a Limit of hosts only; fapolicyd_fail_on after the report.
+# (report_web_dest) and "No email" without report_email_to; a Limit of hosts only; fapolicyd_fail_on after the report;
+# ACT gets the provider and model of site_act (site_act_provider, site_act_models) and is asked for a plain answer.
 # Runs nothing for real: every tool it touches is fake.      bash tests/fapolicyd/run_fapolicyd_test.sh
 # (FAPOLICYD_TEST_KEEP=1 keeps the work folder: the last run's report page in site/)
 set -u
@@ -103,10 +104,21 @@ check "the summary: 2 denials, 1 host with denials, 1 not running, 3 read, 1 not
 check "the problem table: fa03 (stopped) first, then fa01 with its file and program" \
       '[x["rows"] for x in r["sections"] if x["title"] == "Hosts with denials or a problem"][0][0][:4] == ["fa03.example.mil", "inactive", "active", 0] and [x["rows"] for x in r["sections"] if x["title"] == "Hosts with denials or a problem"][0][1][3] == 2 and "opt/app/tool" in [x["rows"] for x in r["sections"] if x["title"] == "Hosts with denials or a problem"][0][1][4]'
 check "fa01: ACT's analysis and its proposal, for approval" \
-      'any(x["title"] == "fa01.example.mil: ACT\x27s analysis" and x["text"] == "tool is not in the trust database: add it" and any(l.startswith("ACT proposes (for your security approval): fapolicyd-cli --file add") for l in x["lines"]) for x in r["sections"])'
+      'any(x["title"] == "fa01.example.mil: ACT\x27s analysis" and "tool is not in the trust database: add it" in x["lines"] and any(l.startswith("ACT proposes (for your security approval): fapolicyd-cli --file add") for l in x["lines"]) for x in r["sections"])'
 check "the quiet host, the one without fapolicyd and the unreachable one, each named" \
       'any("fa02.example.mil" in " ".join(x.get("lines", [])) for x in r["sections"] if x["title"] == "No denials") and any("fa04.example.mil" in " ".join(x.get("lines", [])) for x in r["sections"] if x["title"] == "fapolicyd not installed") and any("gone01.example.mil" in " ".join(x.get("lines", [])) for x in r["sections"] if x["title"] == "Not read")'
 grep -q 'ACT status needs_approval' "$work/out.txt" && bad "a host failed with fapolicyd_fail_on at its default" 20 || ok "no host failed: needs_approval is not in fapolicyd_fail_on"
+actenv() {  # actenv "label" PYTHON-EXPRESSION-ON-e (the environment the fake ACT got)
+    if "$py" -c 'import json, sys; e = json.load(open(sys.argv[1])); sys.exit(0 if eval(sys.argv[2]) else 1)' "$work/fake-act-env.json" "$2"; then
+        ok "$1"; else bad "$1: $(cat "$work/fake-act-env.json" 2>&1)"; fi
+}
+actenv "ACT got the provider and model of site_act (not its own default), and a plain answer asked (it only reads)" \
+       'e["ACT_PROVIDER"] == "genai" and e["GENAI_MODEL"] == "gemini-4-argon-withtools" and (e["ACT_TOOLS"], e["ACT_JSON_MODE"], e["ACT_PREFILL"]) == ("0", "0", "0") and e["ACT_STREAM"] == "1"'
+run -e target=all -l fa01.example.mil -e '{"site_act_models": {"genai": "my-model", "asksage": "x"}}'
+actenv "  ... site_act_models in the template's Variables: ACT gets that model" 'e["GENAI_MODEL"] == "my-model"'
+run -e target=all -l fa01.example.mil -e '{"site_act_provider": "asksage", "site_act_models": {"asksage": "my-sage-model"}}'
+actenv "  ... site_act_provider asksage: ACT gets that provider and its model, no GenAI model" \
+       'e["ACT_PROVIDER"] == "asksage" and e["ASKSAGE_MODEL"] == "my-sage-model" and e["GENAI_MODEL"] is None'
 
 # ---- a Limit of hosts only: no localhost needed ---------------------------------------------------
 run -e target=all -l fa01.example.mil,fa02.example.mil

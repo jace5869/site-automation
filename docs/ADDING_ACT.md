@@ -80,7 +80,7 @@ The settings:
 | Setting | What | Default |
 |---|---|---|
 | `site_act_provider` | `genai`, `asksage` or `genai-beta` | `genai` |
-| `site_act_models` | the model **for each provider**, so the model follows the provider you pick, e.g. `{genai: gemini-3.8-flash, asksage: gpt-5.6-sol-gov}` | ACT's default for the provider |
+| `site_act_models` | the model **for each provider**, so the model follows the provider you pick, e.g. `{genai: gemini-4-argon-withtools, asksage: gpt-5.6-sol-gov}` | ACT's default for the provider |
 | `site_act_urls` | the API URL for each provider, e.g. `{asksage: https://<host>/server/openai/v1/chat/completions}` | ACT's default for the provider |
 | `site_act_model`, `site_act_url` | one model / URL for this run, whatever the provider (a survey answer) | empty: use the two above |
 | `site_act_ca` | a CA bundle file **on the hosts**, if the provider's certificate comes from a CA the hosts do not trust yet (for example a DoD CA not in `/etc/pki/ca-trust`) | the host's normal trust store |
@@ -93,7 +93,7 @@ The settings:
   ```yaml
   site_act_provider: genai                 # the default provider
   site_act_models:                         # the model follows the provider you pick
-    genai: gemini-3.8-flash
+    genai: gemini-4-argon-withtools
     asksage: gpt-5.6-sol-gov
   site_act_urls:                           # only if your Ask Sage is not ACT's default URL
     asksage: https://<your ask sage host>/server/openai/v1/chat/completions

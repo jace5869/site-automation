@@ -533,6 +533,13 @@ ACT runs only on a host with denials or a problem; the others cost no model call
 `fapolicyd_fail_on` (`[error]`: ACT could not answer) fails after the report; `[]` never fails one. The health
 check's `fapolicyd` check (above) counts the denials without ACT.
 
+ACT uses the provider and model of every ACT job (`site_act_provider`, `site_act_models`, `site_act_model` -
+[ADDING_ACT.md](ADDING_ACT.md)). Before 0.45.5 this job passed neither: ACT used its own default model
+(`gemini-3.1-pro-preview`), or the one in root's `~/.config/act/config.json` on a host where someone set up ACT by
+hand, and a model your team has no access to fails with *HTTP 403: Your team does not have access to this model*.
+A template whose Playbook is `vendor/act/ansible/playbooks/fapolicyd_denials.yml` still has that problem: change it
+to `playbooks/fapolicyd_denials.yml`.
+
 ## fapolicyd and containers (`playbooks/fapolicyd_containers.yml`)
 
 What fapolicyd blocked that a **container** caused, the allow rule for each, a review of the rules files already in

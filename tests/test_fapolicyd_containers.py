@@ -281,5 +281,55 @@ class Report(unittest.TestCase):
         self.assertIn("The rules: what this run would change", [s["title"] for s in r["sections"]])
 
 
+
+# the fapolicyd denials report: ACT's Markdown answer by its headings, a line per paragraph, item and command
+MD = """There are **no blocked accesses** in the evidence.
+---
+### Service Failure Triage (`fapolicyd` is failed)
+While the exact failure message
+is not in the output, two causes:
+1. **Unreadable trust files:** `fapolicyd` runs as `uid = fapolicyd`.
+2. **Missing journal output:** run these read-only commands:
+   - `systemctl status fapolicyd.service`
+   - `journalctl -u fapolicyd.service -n 100`
+```text
+uid = fapolicyd gid = fapolicyd
+```
+### Findings
+**Finding 1: Incorrect ownership**
+* **ROOT CAUSE:** three trust files are 0600."""
+
+
+class ActAnswerTest(unittest.TestCase):
+    def test_blocks(self):
+        b = ff.act_md_blocks(MD)
+        self.assertEqual([h for h, _ in b], ["", "Service Failure Triage (fapolicyd is failed)", "Findings"])
+        self.assertEqual(b[0][1], ["There are no blocked accesses in the evidence."])
+        self.assertEqual(b[1][1], ["While the exact failure message is not in the output, two causes:",
+                                   "1. Unreadable trust files: fapolicyd runs as uid = fapolicyd.",
+                                   "2. Missing journal output: run these read-only commands:",
+                                   "systemctl status fapolicyd.service", "journalctl -u fapolicyd.service -n 100",
+                                   "uid = fapolicyd gid = fapolicyd"])
+        self.assertEqual(b[2][1], ["Finding 1: Incorrect ownership", "ROOT CAUSE: three trust files are 0600."])
+        self.assertEqual(ff.act_md_blocks("one line"), [("", ["one line"])])
+        self.assertEqual(ff.act_md_blocks(""), [])
+
+    def test_report(self):
+        hv = {"_fa_rpm": {"rc": 0}, "_fa_active": {"stdout": "failed"}, "_fa_auditd": {"stdout": "active"}, "_fa_count": "0",
+              "_fa_paths": [], "_fa_exes": [], "_fa_findings": ["fapolicyd is failed"],
+              "act_triage_result": {"status": "done", "summary": MD,
+                                    "denied": [{"command": "chmod 0644 /etc/fapolicyd/trust.d/app", "pre_approvable": True}]}}
+        r = ff.fapolicyd_report([hv], ["fa01"])
+        s = {x["title"]: x for x in r["sections"]}
+        first = s["fa01: ACT's analysis"]
+        self.assertEqual(first["lines"], ["fapolicyd is failed", "There are no blocked accesses in the evidence.",
+                                          "ACT proposes (for your security approval): chmod 0644 /etc/fapolicyd/trust.d/app"])
+        self.assertIn("ran nothing", first["text"])
+        self.assertIn("1. Unreadable trust files: fapolicyd runs as uid = fapolicyd.", s["fa01: Service Failure Triage (fapolicyd is failed)"]["lines"])
+        self.assertEqual(s["fa01: Findings"]["lines"][0], "Finding 1: Incorrect ownership")
+        titles = [x["title"] for x in r["sections"]]
+        self.assertLess(titles.index("fa01: ACT's analysis"), titles.index("fa01: Findings"))
+        self.assertFalse(any("**" in l or "`" in l for x in r["sections"] for l in x.get("lines", [])))
+
 if __name__ == "__main__":
     unittest.main()
