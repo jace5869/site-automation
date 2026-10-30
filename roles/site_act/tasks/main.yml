@@ -57,7 +57,9 @@
       These findings come from automated health checks; each one already says what is wrong. Find
       WHY (the root cause), confirm it with evidence, and give the exact fix. Several findings may
       share one cause: say so. {{ site_act_extra_instructions }}
-    act_triage_env: "{{ _site_act_env_all }}"
+    # explain: ACT reads and answers (evidence mode) - in plain text, as in evidence_analysis.yml; site_act_env wins
+    act_triage_env: >-
+      {{ (_site_act_plain_env | combine(_site_act_env_all)) if _site_act_level == 'explain' else _site_act_env_all }}
     act_triage_timeout: "{{ site_act_timeout }}"
     act_triage_fail_in_role: false        # the report decides pass/fail
     act_triage_write_report: false

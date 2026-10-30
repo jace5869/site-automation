@@ -127,6 +127,10 @@ grep -q -- "-p warning .*-u sssd" "$work/journalctl.args" && grep -Eq -- "-p err
     || { echo "FAIL -   ...no journalctl -u sssd"; cat "$work/journalctl.args"; fails=$((fails + 1)); }
 grep -q "users report slow logins since 08:00" "$work/act/fake-act-task.txt" && grep -q "THE OPERATIONS TEAM ASKS" "$work/act/fake-act-stdin.txt" \
     && echo "ok   -   ...the question reached ACT's prompt and its evidence" || { echo "FAIL -   ...question"; fails=$((fails + 1)); }
+grep -q '"ACT_TOOLS": "0"' "$work/act/fake-act-env.json" && grep -q '"ACT_JSON_MODE": "0"' "$work/act/fake-act-env.json" \
+    && grep -q '"ACT_PREFILL": "0"' "$work/act/fake-act-env.json" \
+    && echo "ok   -   ...ACT asked for a plain answer: no action tools, schema or prefill (not one of its own steps)" \
+    || { echo "FAIL -   ...ACT's plain-answer settings"; cat "$work/act/fake-act-env.json"; fails=$((fails + 1)); }
 grep -q "NOISE we do not want" "$work/act/fake-act-stdin.txt" && { echo "FAIL -   ...an ignored line reached ACT"; fails=$((fails + 1)); } \
     || echo "ok   -   ...log_analysis_ignore_extra kept a line away from ACT and the report"
 grep -q "could not open the database" "$work/act/fake-act-stdin.txt" && { echo "FAIL -   ...a line outside the window reached ACT"; fails=$((fails + 1)); } \

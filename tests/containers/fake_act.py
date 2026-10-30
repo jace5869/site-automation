@@ -6,7 +6,7 @@ written back without the one used), then "summary". Records in $FAKE_ACT_OUT (or
 (the task text), fake-act-allow.json (the --allow patterns), fake-act-evidence.txt (the file the
 task says to `cat`, read while ACT runs - the playbook removes it afterwards), fake-act-stdin.txt
 (what was piped in, with --allow-piped-upload: evidence mode), fake-act-env.json (ACT_STREAM,
-GENAI_TIMEOUT, ACT_PROVIDER, GENAI_MODEL as ACT got them)."""
+GENAI_TIMEOUT, ACT_PROVIDER, GENAI_MODEL, ACT_TOOLS, ACT_JSON_MODE, ACT_PREFILL as ACT got them)."""
 import json
 import os
 import re
@@ -32,7 +32,8 @@ if m:
     with open(os.path.join(out, "fake-act-evidence.txt"), "w") as fh:
         fh.write(text)
 with open(os.path.join(out, "fake-act-env.json"), "w") as fh:
-    json.dump({k: os.environ.get(k) for k in ("ACT_STREAM", "GENAI_TIMEOUT", "ACT_PROVIDER", "GENAI_MODEL")}, fh)
+    json.dump({k: os.environ.get(k) for k in ("ACT_STREAM", "GENAI_TIMEOUT", "ACT_PROVIDER", "GENAI_MODEL",
+                                              "ACT_TOOLS", "ACT_JSON_MODE", "ACT_PREFILL")}, fh)
 if "--allow-piped-upload" in args:
     with open(os.path.join(out, "fake-act-stdin.txt"), "w") as fh:
         fh.write(sys.stdin.read())

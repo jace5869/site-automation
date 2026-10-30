@@ -690,7 +690,9 @@ grep -q "estimate_days" "$work/act/fake-act-task.txt" && grep -q "^P1 OVERALL" "
     && grep -q "cluster DC0_C0" "$work/act/fake-act-stdin.txt" && getpart html "$(lastmail)" | grep -q "Math vs GenAI" \
     && grep -q '"ACT_STREAM": "1"' "$work/act/fake-act-env.json" && grep -q '"GENAI_TIMEOUT": "600"' "$work/act/fake-act-env.json" \
     && grep -q '"GENAI_MODEL": "gemini-3.8-flash"' "$work/act/fake-act-env.json" \
-    && echo "ok   -   ...ACT got the numbers and the days format, streams, 600 s per answer, gemini-3.8-flash; the email has both estimates" \
+    && grep -q '"ACT_TOOLS": "0"' "$work/act/fake-act-env.json" && grep -q '"ACT_JSON_MODE": "0"' "$work/act/fake-act-env.json" \
+    && grep -q '"ACT_PREFILL": "0"' "$work/act/fake-act-env.json" \
+    && echo "ok   -   ...ACT got the numbers and the days format, streams, 600 s per answer, gemini-3.8-flash, a plain answer asked; the email has both estimates" \
     || { echo "FAIL -   ...capacity ACT"; head -5 "$work/act/fake-act-stdin.txt"; fails=$((fails + 1)); }
 "$py" - "$work/act/act.json" <<'EOPY'
 import json, sys

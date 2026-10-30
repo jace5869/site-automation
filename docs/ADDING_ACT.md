@@ -137,6 +137,13 @@ connection reset by peer`, often on the longer answers only) no longer does. Whe
 stream, ACT notices and sends normal requests by itself. To turn it off:
 `site_act_env: {ACT_STREAM: "0"}`.
 
+**A plain answer when ACT only reads (0.44.5).** When a job only asks ACT a question - the evidence mode of the WAR,
+the VMware alarms, capacity planning, log analysis, right-sizing, VM - ask a question, the VM deploy's GenAI proposal
+and the `explain` level - ACT gets `ACT_TOOLS=0`, `ACT_JSON_MODE=0` and `ACT_PREFILL=0`: the model is offered none of
+ACT's own steps (tools, the action schema, a `{` to go on from) and answers in plain text. With them it could only
+answer as a step - `{'action': 'plan', ...}` or `{'message': ...}` instead of the answer. `site_act_env` wins over
+them. ACT's loop (`diagnose`, `self-heal`) keeps its tools.
+
 **"ACT gave no analysis: the model answered as a chat".** Now and then a model loses the thread and
 answers like a chat window ("I am ready. What task or command would you like me to assist you
 with?") instead of analysing the findings; whatever it tried to run then is no fix. The report says
