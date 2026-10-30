@@ -1196,7 +1196,8 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_ask_question` | (empty) | ---- VM - ask a question (playbooks/vm_ask.yml, docs/VM_ASK.md) ---- the question, in plain words (the survey's Textarea), e.g. "all VMs with dbv in the name", "VMs on datastores under 10% free" |
 | `vm_ask_query` | `{}` | or the query itself, in the job's own form (docs/VM_ASK.md, "The query"): GenAI is not asked |
 | `vm_ask_genai` | `true` | GenAI (ACT, evidence mode: it runs no command) turns the question into a query; false = only the job's own reader (simple questions) |
-| `vm_ask_local_fallback` | `true` | GenAI did not run (no key, not reachable): the job's own reader tries it (simple questions only; the report says so) |
+| `vm_ask_local_fallback` | `true` | GenAI did not run (no key, not reachable) or its answer held no query: the job's own reader tries it (simple questions only; the report says so) |
+| `vm_ask_genai_retry` | `true` | GenAI's answer held no query (a plan or a step of its own instead, or prose): it is asked once more, told what it answered; false = not |
 | `vm_ask_model_timeout` | `120` | seconds GenAI may take to answer |
 | `vm_ask_event_days` | `30` | a VM's last power off and vMotion (and a restart inside the guest) come from vCenter's events of this many days: older ones are not found (vCenter keeps events for a limited time, often 30 days) |
 | `vm_ask_max_events` | `50000` | read at most this many of those events per vCenter (the newest) |

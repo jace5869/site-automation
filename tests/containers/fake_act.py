@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """A stand-in for ACT for tests/containers (and the nested-container run): writes an act.result/1
 file and records what it was given. Behaviour from $FAKE_ACT_CONFIG (or /etc/fake-act.json):
-{"propose": ["cmd", ...], "summary": "..."}. Records in $FAKE_ACT_OUT (or /tmp): fake-act-task.txt
+{"propose": ["cmd", ...], "summary": "..."}; "summaries": [...] answers one call each, in order (the config is
+written back without the one used), then "summary". Records in $FAKE_ACT_OUT (or /tmp): fake-act-task.txt
 (the task text), fake-act-allow.json (the --allow patterns), fake-act-evidence.txt (the file the
 task says to `cat`, read while ACT runs - the playbook removes it afterwards), fake-act-stdin.txt
 (what was piped in, with --allow-piped-upload: evidence mode), fake-act-env.json (ACT_STREAM,
@@ -39,9 +40,14 @@ cfg = {}
 path = os.environ.get("FAKE_ACT_CONFIG", "/etc/fake-act.json")
 if os.path.exists(path):
     cfg = json.load(open(path))
+summary = cfg.get("summary", "fake ACT: root cause = stopped on purpose")
+if cfg.get("summaries"):
+    summary = cfg["summaries"].pop(0)
+    with open(path, "w") as fh:
+        json.dump(cfg, fh)
 denied = [{"command": c, "pre_approvable": True, "reason": "needs approval"} for c in cfg.get("propose", [])]
 result = {"schema": "act.result/1", "status": "needs_approval" if denied else "ok", "exit_code": 0,
-          "summary": cfg.get("summary", "fake ACT: root cause = stopped on purpose"), "changed": False,
+          "summary": summary, "changed": False,
           "commands": [], "denied": denied, "files_changed": [], "stop_reason": ""}
 with open(res, "w") as fh:
     json.dump(result, fh)

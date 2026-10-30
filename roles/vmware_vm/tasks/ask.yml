@@ -56,6 +56,33 @@
     _ea_in_check: true                 # the job only reads: a dry run (Check) answers the question too
   when: _ask_given | length == 0 and vm_ask_genai | bool
 
+# a model that answers with a step of its own ({'action': 'plan', ...}) or with no query at all: asked once more,
+# told what it answered (ACT's evidence mode is one call - there is no next step for it to take)
+- name: VMware | GenAI's first answer
+  ansible.builtin.set_fact:
+    _ask_first: "{{ _ea_raw | default('') | vm_ask_parse if _ea_ran | default(false) | bool else {} }}"
+    _ask_first_raw: "{{ _ea_raw | default('') }}"
+  when: _ask_given | length == 0 and vm_ask_genai | bool
+
+- name: VMware | GenAI asked once more - its answer had no query (vm_ask_genai_retry)
+  ansible.builtin.include_role:
+    name: site_act
+    tasks_from: evidence_analysis.yml
+    public: true
+  vars:
+    _ea_items: [{id: Q1}]
+    _ea_evidence: "{{ _ask_q }}"
+    _ea_task: >-
+      {{ {'extra': vm_ask_extra_instructions | default('', true), 'event_days': vm_ask_event_days | int,
+          'retry': _ask_first_raw | trim | truncate(300)} | vm_ask_task }}
+    _ea_names: []
+    _ea_model_timeout: "{{ vm_ask_model_timeout }}"
+    _ea_check_url: false
+    _ea_in_check: true
+  when:
+    - _ask_given | length == 0 and vm_ask_genai | bool and vm_ask_genai_retry | default(true) | bool
+    - _ask_first.error | default('') | length > 0
+
 # one dict expression, so the query's values keep their types on ansible-core 2.16 too
 - name: VMware | the query - GenAI's, the job's own reader's, or vm_ask_query
   ansible.builtin.set_fact:
@@ -63,10 +90,18 @@
       {%- set ran = _ea_ran | default(false) | bool -%}
       {%- if _ask_given | length > 0 -%}
       {{ {'query': _ask_given, 'refused': '', 'error': '', 'by': 'vm_ask_query (the query as given; GenAI not asked)', 'note': ''} }}
-      {%- elif ran -%}
-      {%- set g = _ea_raw | default('') | vm_ask_parse -%}
-      {{ {'query': g.query, 'refused': g.refused, 'error': g.error, 'note': '',
-          'by': 'GenAI (' ~ site_act_provider ~ ((', ' ~ _ea_model) if _ea_model | default('') | length > 0 else '') ~ ')'} }}
+      {%- elif ran or _ask_first.error | default('') -%}
+      {%- set g = _ea_raw | default('') | vm_ask_parse if ran else _ask_first -%}
+      {%- set by = 'GenAI (' ~ site_act_provider ~ ((', ' ~ _ea_model) if _ea_model | default('') | length > 0 else '') ~ ')' -%}
+      {%- set twice = ' (asked twice)' if _ask_first.error | default('') and vm_ask_genai_retry | default(true) | bool else '' -%}
+      {#- GenAI ran but its answer held no query: the job's own reader tries the question (vm_ask_local_fallback) -#}
+      {%- set l = _ask_q | vm_ask_local if g.error and vm_ask_local_fallback | bool else {} -%}
+      {%- if l | length > 0 -%}
+      {{ {'query': l, 'refused': '', 'error': '', 'by': "the job's own reader (simple questions only)",
+          'note': g.error ~ twice ~ ". The job's own reader read the question: check that 'Read as' is what you asked."} }}
+      {%- else -%}
+      {{ {'query': g.query, 'refused': g.refused, 'error': (g.error ~ twice) if g.error else '', 'note': '', 'by': by} }}
+      {%- endif -%}
       {%- else -%}
       {%- set why = 'GenAI is off (vm_ask_genai: false)' if not vm_ask_genai | bool else 'GenAI did not run: ' ~ (_ea_reason | default('') | trim | regex_replace('[.]$', '')) -%}
       {%- set l = _ask_q | vm_ask_local if (vm_ask_local_fallback | bool or not vm_ask_genai | bool) else {} -%}

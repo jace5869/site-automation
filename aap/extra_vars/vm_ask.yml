@@ -46,9 +46,13 @@
 ## job's own reader (simple questions)
 # vm_ask_genai: true
 
-## GenAI did not run (no key, not reachable): the job's own reader tries it (simple questions only;
-## the report says so)
+## GenAI did not run (no key, not reachable) or its answer held no query: the job's own reader tries
+## it (simple questions only; the report says so)
 # vm_ask_local_fallback: true
+
+## GenAI's answer held no query (a plan or a step of its own instead, or prose): it is asked once
+## more, told what it answered; false = not
+# vm_ask_genai_retry: true
 
 ## seconds GenAI may take to answer
 # vm_ask_model_timeout: 120

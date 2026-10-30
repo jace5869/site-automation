@@ -154,8 +154,9 @@ In the template's Variables ([`aap/extra_vars/vm_ask.yml`](../aap/extra_vars/vm_
 | `vm_ask_question` | `""` | The question. The survey sets it. |
 | `vm_ask_query` | `{}` | A query in the job's own form instead, as JSON or YAML ([The query](#the-query)). GenAI is not asked. |
 | `vm_ask_genai` | `true` | `false` = GenAI is never asked; only the job's own reader runs (simple questions only). |
-| `vm_ask_local_fallback` | `true` | When GenAI did not run (no key, not reachable), the job's own reader tries the question, and the report says so. |
-| `vm_ask_extra_instructions` | `""` | More words for GenAI, such as your naming: *"A name with DBV is a database server; ACAS is the scanner team's folder."* |
+| `vm_ask_local_fallback` | `true` | When GenAI did not run (no key, not reachable), or its answer held no query, the job's own reader tries the question, and the report says so. |
+| `vm_ask_genai_retry` | `true` | When GenAI's answer holds no query (a plan or a step of its own instead, or prose), it is asked once more and told what it answered. `false` = asked once. |
+| `vm_ask_extra_instructions` | `""` | More words for GenAI, such as your naming: *"A name with DBV is a database server; ACAS is the scanner team's folder."* Text, not true/false. |
 | `vm_ask_model_timeout` | `120` | Seconds GenAI may take. |
 | `vm_ask_event_days` | `30` | The days of vCenter's events read for the last restart, power off and vMotion. |
 | `vm_ask_max_events` | `50000` | Events read per vCenter at most (the newest). |
@@ -183,8 +184,9 @@ These shared settings apply as for every VMware report:
 - *older than N days*
 - *under N% free*
 
-Anything more, such as a join, a count or a sort, needs GenAI. When the reader cannot take a question, the
-job fails and says so.
+Anything more, such as a join, a count or a sort, needs GenAI. The reader answers only when it understood every
+word of the question (besides words like *all*, *show me*, *the*). When it cannot take a question, the job fails and
+says so. It never answers part of a question: *all VMs vMotioned this week* is not read as *all VMs*.
 
 ## The query
 
@@ -243,7 +245,8 @@ could not be read.
 | `Refused: this job only reads vCenter ...` | The question asks for a change. | Ask what you want to see, or use the template it names. |
 | `Refused by GenAI: the question asks to change something` | GenAI read a change into it. | Ask it as a question: *which VMs are ...* |
 | `... has no field 'owner'` | vCenter has no such thing, as far as the job reads it. | See [What you can ask about](#what-you-can-ask-about). Ask it in other words. |
-| `GenAI's answer has no query in it` | GenAI answered in prose. | Ask again, more plainly. The job's output shows what GenAI answered. |
+| `GenAI's answer has no query in it` | GenAI answered in prose, twice. | Ask again, more plainly. The job's output shows what GenAI answered. |
+| `GenAI answered with a step of its own (action 'plan' ...) ... (asked twice)` | The model replied as if it would take several steps (a plan, then the query). Here it gets one call, so the plan is all it said; it was asked once more and did it again. | Launch it again: it is usually a one-off. If it keeps happening with one model, set `site_act_model` to another one in the template's Variables. |
 | `GenAI did not run: This job has no API key ...` | No ACT model key credential on the template. | Attach it. Simple questions still work without it. |
 | `This AAP node cannot reach the model ...` | Firewall or proxy. | [VMWARE.md](VMWARE.md#the-act-analysis): the firewall rule or the proxy setting. |
 | `Read as:` is not what you asked | GenAI read it differently. | Ask it in other words, or set `vm_ask_extra_instructions` with your naming. |

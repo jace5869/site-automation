@@ -182,6 +182,14 @@ class Local(unittest.TestCase):
         self.assertEqual(a.vm_ask_local("what is going on"), {})
         self.assertEqual(a.vm_ask_local("VMs on datastores under 10% free"), {})       # a join: GenAI's
 
+    def test_never_every_vm_for_a_question_half_read(self):
+        # with GenAI not answering, these came back as every VM: the reader took "all"/"show" and dropped the rest
+        for q in ("give me all VMs vMotioned in the last 7 days", "show all VMs on datastores with less than 10% free",
+                  "all database servers in production", "how many VMs per cluster", "the 10 biggest snapshots older than 2 days",
+                  "show me all hosts not restarted in 30 days"):        # restarts: a VM's field, not a host's
+            self.assertEqual(a.vm_ask_local(q), {}, q)
+        self.assertEqual(a.vm_ask_local("show me all VMs"), {"object": "vm", "where": []})   # asked for every VM: every VM
+
 
 class GenAIAnswer(unittest.TestCase):
     def test_between_the_markers(self):
@@ -196,6 +204,29 @@ class GenAIAnswer(unittest.TestCase):
     def test_refused_and_unreadable(self):
         self.assertEqual(a.vm_ask_parse('BEGIN_ACT_ANALYSIS\n{"refused": "restarting a VM"}\nEND_ACT_ANALYSIS')["refused"], "restarting a VM")
         self.assertIn("has no query", a.vm_ask_parse("I cannot help with that.")["error"])
+
+    def test_a_step_of_its_own(self):
+        # what Gemini answered in a real run: ACT's plan record, shown as a Python dict - not a query
+        raw = "{'requires_host': False, 'thought': 'Construct JSON query for VMs vMotioned in the last 7 days.', 'action': 'plan'}"
+        r = a.vm_ask_parse(raw)
+        self.assertEqual(r["query"], {})
+        self.assertTrue(r["action"])
+        self.assertIn("GenAI answered with a step of its own (action 'plan': Construct JSON query for VMs vMotioned", r["error"])
+        self.assertIn("action 'run': uptime", a.vm_ask_parse(json.dumps({"action": "run", "command": "uptime"}))["error"])
+        self.assertIn("has no query", a.vm_ask_parse('{"answer": "42"}')["error"])            # any other JSON: no query
+        # a query written as a Python dict is still a query
+        self.assertEqual(a.vm_ask_parse("BEGIN_ACT_ANALYSIS\n{'object': 'host', 'where': [{'field': 'maintenance', 'op': 'eq', 'value': True}]}\nEND_ACT_ANALYSIS")
+                         ["query"]["where"][0]["value"], True)
+
+    def test_one_turn_and_the_retry(self):
+        t = a.vm_ask_task({"extra": "DBV are database servers."})
+        self.assertIn("This is your ONLY turn", t)
+        self.assertNotIn("Your previous answer", t)
+        self.assertLess(t.index("DBV are database servers."), t.index("End your answer with"))     # the format comes last
+        self.assertTrue(t.rstrip().endswith("END_ACT_ANALYSIS"))
+        r = a.vm_ask_task({"retry": "{'action': 'plan', 'thought': 'x'}" + "y" * 500})
+        self.assertIn("Your previous answer was not the query - it was: {'action': 'plan'", r)
+        self.assertLess(len(r) - len(a.vm_ask_task({})), 600)                                   # the answer quoted, cut
 
     def test_the_prompt(self):
         t = a.vm_ask_task({"extra": "A name with DBV is a database server."})
@@ -484,7 +515,8 @@ class ReadOnly(unittest.TestCase):
             used |= set(t) - self.KEYS
         self.assertEqual(used - self.ALLOWED, set())
         roles = [t["ansible.builtin.include_role"] for t in tasks if "ansible.builtin.include_role" in t]
-        self.assertEqual([(r["name"], r.get("tasks_from")) for r in roles], [("site_act", "evidence_analysis.yml")])
+        # only ACT in evidence mode (it runs no command): the question, and once more when its answer held no query
+        self.assertEqual([(r["name"], r.get("tasks_from")) for r in roles], [("site_act", "evidence_analysis.yml")] * 2)
         inc = sorted(t["ansible.builtin.include_tasks"] for t in tasks if "ansible.builtin.include_tasks" in t)
         self.assertEqual(inc, ["credential.yml", "report.yml", "vcenters_read.yml"])
 

@@ -2111,6 +2111,26 @@ run "ask: ... and one that asks to put a host in maintenance mode" fail vm_ask.y
     -e 'vm_ask_question="put DC0_C0_H0 in maintenance mode"' -- "Refused: this job only reads vCenter" "does not put a host in maintenance mode"
 [ "$(grep -c call "$work/act/fake-act-calls.log")" = "$calls0" ] && echo "ok   -   ...GenAI was not asked" \
     || { echo "FAIL -   ...GenAI was asked a refused question"; fails=$((fails + 1)); }
+# a model that answers with a step of ACT's own ({'action': 'plan', ...}, seen with Gemini): asked once more, told what it
+# answered; then the query - and twice a plan: said in words, the job's own reader tried
+"$py" -c 'import json, sys; json.dump({"summaries": [{"requires_host": False, "thought": "Construct JSON query for VMs on host DC0_H0.", "action": "plan"},
+    "BEGIN_ACT_ANALYSIS\n{\"object\": \"vm\", \"where\": [{\"field\": \"host\", \"op\": \"eq\", \"value\": \"dc0_h0\"}]}\nEND_ACT_ANALYSIS"]}, open(sys.argv[1], "w"))' \
+    "$work/act/act.json"
+calls0="$(grep -c call "$work/act/fake-act-calls.log")"
+run "ask: GenAI answers with a plan of its own - asked once more, then its query runs" ok vm_ask.yml -e "$actvars" \
+    -e 'vm_ask_question="VMs on host DC0_H0"' -- "GenAI asked once more" "Read by: GenAI (genai" "Found: 2 VMs"
+[ "$(grep -c call "$work/act/fake-act-calls.log")" = $((calls0 + 2)) ] && grep -q "Your previous answer was not the query" "$work/act/fake-act-task.txt" \
+    && grep -q "Construct JSON query for VMs on host DC0_H0" "$work/act/fake-act-task.txt" \
+    && echo "ok   -   ...asked twice, the second time told what it answered" \
+    || { echo "FAIL -   ...the second ask"; tail -c 400 "$work/act/fake-act-task.txt"; fails=$((fails + 1)); }
+"$py" -c 'import json, sys; json.dump({"summary": {"requires_host": False, "thought": "Construct JSON query.", "action": "plan"}}, open(sys.argv[1], "w"))' \
+    "$work/act/act.json"
+run "ask: a plan twice - the job's own reader takes a simple question, and says why" ok vm_ask.yml -e "$actvars" \
+    -e 'vm_ask_question="VMs with h0 in the name"' -- "GenAI answered with a step of its own (action 'plan': Construct JSON query.)" \
+    "(asked twice)" "Read by: the job's own reader"
+run "ask: a plan twice, a question the reader cannot take - fails, said in words" fail vm_ask.yml -e "$actvars" \
+    -e 'vm_ask_question="VMs vMotioned in the last 7 days"' -- "GenAI answered with a step of its own (action 'plan'" "(asked twice)" \
+    "it does not go on to a next step here"
 askact '{"refused": "powering off VMs"}'
 run "ask: GenAI refuses a change the guard did not see" fail vm_ask.yml -e "$actvars" -e 'vm_ask_question="the dbv VMs should all go dark"' \
     -- "Refused by GenAI: the question asks to change something (powering off VMs)"
@@ -2136,6 +2156,8 @@ run "ask without an ACT model key: the job's own reader takes a simple question,
     -- "Read by: the job's own reader" "This job has no API key for provider genai" "Found: 2 VMs" "DC0_H0_VM1"
 run "ask without a key: a question the job's own reader cannot take fails, said in words" fail vm_ask.yml -e "$actvars" \
     -e 'vm_ask_question="VMs on datastores with less than 10% free"' -- "The question could not be read" "takes only simple questions"
+run "ask without a key: a question read only in part is not answered as every VM" fail vm_ask.yml -e "$actvars" \
+    -e 'vm_ask_question="give me all VMs vMotioned in the last 7 days"' -- "The question could not be read" "takes only simple questions"
 run "ask: nothing asked" fail vm_ask.yml -- "Nothing to answer: type a question"
 VMWARE_PORT=$port "$py" "$here/vcsim.py" ask || { echo "ABORT - vcsim ask"; exit 1; }
 run "ask: the last vMotion (vCenter's events, read only when asked) - when, what kind, from which host" ok vm_ask.yml \
