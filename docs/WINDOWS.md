@@ -22,6 +22,7 @@ also in Constrained Language Mode (see step 5).
 | Windows certificate install - check / approved | `playbooks/win_cert_install_check.yml`, `win_cert_install_approved.yml` | the issued certificate from the catalog request: `certreq -accept`, the old certificate's bindings moved to it, after an approval ([CERT_INSTALL.md](CERT_INSTALL.md)) |
 | Windows certificate restore | `playbooks/win_cert_restore.yml` | the bindings back on the old certificate |
 | Windows patch | `playbooks/win_patch.yml` | install what Software Center offers (ConfigMgr); restart only with `automatic_restarts: yes`; prove the server is back |
+| Windows STIG drift report | `playbooks/win_stig_drift_report.yml` | Evaluate-STIG on the servers, each STIG's checklist against STIG Manager (read-only) and the earlier scans ([STIG_DRIFT.md](STIG_DRIFT.md#windows-servers)) |
 | ACT for Windows - install | `playbooks/win_act_install.yml` | put ACT on the servers in `C:\ProgramData\act`, locked down and unblocked; keep it current |
 | ServiceNow tickets, POA&M status | the ones you have | unchanged: they take the Windows results the same way |
 
@@ -40,9 +41,11 @@ also in Constrained Language Mode (see step 5).
 | weekly | `accounts` | Guest enabled; local passwords old or never expiring; inactive local accounts; unexpected local Administrators |
 | weekly | `certs` | certificates that expire or expired, including the WinRM listener AAP connects through |
 | weekly | `patching` | a restart pending for installed updates; days since the last update |
+| by name | `stig` | STIG drift: Evaluate-STIG's checklists against STIG Manager and the earlier scans - in no set (it takes minutes); its own template is the Windows STIG drift report ([STIG_DRIFT.md](STIG_DRIFT.md#windows-servers)) |
 
 Everything is read-only. The one write is one Application event log entry per finding (source
-`site-health`), so a SIEM that collects event logs sees the findings too.
+`site-health`), so a SIEM that collects event logs sees the findings too - and `stig` keeps its scans in
+its own folder on the server (`win_check_stig_dir`).
 
 ## Step 1. WinRM on the servers
 

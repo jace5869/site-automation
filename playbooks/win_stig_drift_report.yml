@@ -1,0 +1,72 @@
+---
+# WINDOWS STIG DRIFT REPORT - on a schedule (weekly, or after patching). On each Windows server Evaluate-STIG runs -
+# as SYSTEM in a one-time scheduled task, every STIG that applies (Windows Server 2019 / 2022 / 2025, Defender,
+# Firewall, .NET, IIS, Edge ...) - or the checklists it already wrote are read (win_check_stig_evaluate_read: auto).
+# Each checklist is kept on the server (win_check_stig_dir) and compared with the server's asset in STIG Manager -
+# read-only, this job never writes to it - and with the server's earlier scans, as playbooks/stig_drift_report.yml
+# does on Linux:
+#   drifted     a rule STIG Manager has as Not a Finding (or Not Applicable) fails now,
+#               and it passed in an earlier scan                                         -> a finding
+#   new         a rule that passed in an earlier scan fails now                          -> a finding
+#   disagree    a rule STIG Manager has as Not a Finding has failed in every scan        -> report only (check_stig_disagree_severity)
+#   fixed       a rule STIG Manager still has Open passes now (update the checklist)     -> report only
+#   left out    rules Evaluate-STIG gets wrong at your site (check_stig_ignore_rules)    -> report only
+# A STIG the asset does not have in STIG Manager is listed, not compared, no finding. Fails the servers with drift (a
+# workflow can open tickets). Windows only (WinRM, no collection needed). docs/STIG_DRIFT.md.
+#
+#   ansible-playbook playbooks/win_stig_drift_report.yml -i <windows inventory>
+#   ansible-playbook playbooks/win_stig_drift_report.yml -i <windows inventory> -e win_check_stig_evaluate_read=auto
+#   ansible-playbook playbooks/win_stig_drift_report.yml -i <windows inventory> --check   # scans and compares, keeps nothing on the servers
+- name: Windows STIG drift report
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  vars:
+    site_os: windows
+    site_report_title: Windows STIG drift report
+  pre_tasks:
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  tasks:
+    - name: Start
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: start.yml
+
+    - name: Scan, read STIG Manager, compare
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: run_check.yml
+      vars:
+        _site_check: stig
+
+    - name: Every server, every checklist
+      ansible.builtin.debug:
+        msg: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts | sort if hostvars[h].check_stig_results is defined -%}
+          {%-   for c in hostvars[h].check_stig_results -%}
+          {%-     for line in c | stig_lines -%}{%- set _ = out.append(line) -%}{%- endfor -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+    - name: The tables for the report email
+      ansible.builtin.set_fact:
+        site_report_sections: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('check_stig_results', 'defined')
+             | map(attribute='check_stig_results') | flatten(levels=1) | stig_report_sections(check_stig_list_max | default(200) | int) }}
+      run_once: true
+
+  post_tasks:
+    - name: Report (fails the hosts with drift or new fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml

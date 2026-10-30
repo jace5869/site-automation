@@ -1,0 +1,32 @@
+---
+# Runs files/win_stig.ps1 on the server (ansible.builtin.script: no collection needed) with the settings from
+# defaults/main.yml: Evaluate-STIG run as SYSTEM in a one-time scheduled task, or what it already wrote read; each
+# checklist's result kept on the server (win_check_stig_dir). Then roles/check_stig (tasks/windows.yml) reads STIG
+# Manager and compares each checklist, as on Linux. playbooks/win_stig_drift_report.yml, docs/STIG_DRIFT.md.
+- name: Windows STIG | scan with Evaluate-STIG (or read what it wrote) and keep each checklist's result on the server
+  ansible.builtin.script: win_stig.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'evaluate': win_check_stig_evaluate, 'read': win_check_stig_evaluate_read,
+          'select': win_check_stig_evaluate_select, 'exclude': win_check_stig_evaluate_exclude,
+          'args': win_check_stig_evaluate_args, 'output': win_check_stig_evaluate_output,
+          'rejected': win_check_stig_evaluate_rejected | bool, 'run_as': win_check_stig_run_as,
+          'powershell': win_check_stig_powershell, 'timeout': win_check_stig_timeout | int,
+          'dir': win_check_stig_dir, 'keep': win_check_stig_keep | int, 'save': not ansible_check_mode,
+          'search': win_check_stig_search, 'search_depth': win_check_stig_search_depth | int} | to_json }}
+  register: _win_check_out
+  changed_when: false
+  failed_when: false
+  check_mode: false             # Evaluate-STIG only reads; in a dry run (save: false) nothing is kept on the server
+
+- name: Windows STIG | the script's result
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: win_result.yml
+  vars:
+    _win_check: stig
+
+- name: Windows STIG | STIG Manager (read-only) and the comparison
+  ansible.builtin.include_role:
+    name: check_stig
+    tasks_from: windows.yml

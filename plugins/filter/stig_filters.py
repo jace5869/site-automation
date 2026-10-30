@@ -37,6 +37,38 @@ CHECKED = ("pass", "fail", "notapplicable")      # a result of the scan's own: t
 RULE_RE = re.compile(r"^S?V-(\d+)", re.I)
 
 
+# Evaluate-STIG's own lines around what it found: "Evaluate-STIG 1.2607.0 (Scan-RHEL8_Checks) found this to be OPEN on
+# 10/30/2026", "ResultHash: <hex>", and rules of ~ or -
+_ES_HEAD_RE = re.compile(r"Evaluate-STIG\s+[\d.]+\s*(\([^)]*\))?\s*found this to be\s+\S+(\s+on\s+\S+)?", re.I)
+_ES_HASH_RE = re.compile(r"ResultHash:\s*[0-9A-Fa-f]{16,}")
+_ES_RULE_RE = re.compile(r"^\s*[~=_*-]{3,}\s*$")
+SHORT_DETAILS = 160
+
+
+def details_text(text):
+    """What Evaluate-STIG found, without its own header (version, date, hash) and separator rules."""
+    t = _ES_HASH_RE.sub("", _ES_HEAD_RE.sub("", text or ""))
+    lines = [ln.rstrip() for ln in t.replace("\r\n", "\n").split("\n")]
+    lines = [("" if _ES_RULE_RE.match(ln) else re.sub(r"\s+[~=_-]{5,}$", "", ln)) for ln in lines]
+    out = "\n".join(lines)
+    out = re.sub(r"[ \t]*~{3,}[ \t]*", " ", out)
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
+
+
+def _details_short(r):
+    """The table cell: the first of what was found, and where the rest is."""
+    t = details_text(r.get("details"))
+    one = re.sub(r"\s+", " ", t)
+    if len(one) <= SHORT_DETAILS:
+        return one
+    return one[:SHORT_DETAILS].rsplit(" ", 1)[0] + " ... (in full: What Evaluate-STIG found, below)"
+
+
+def _who(c):
+    """A result's name in the report: the host, or - a host with several STIGs (Windows) - the host and the STIG."""
+    return c.get("label") or c["host"]
+
+
 def _rule_label(it):
     return it.get("v") or it.get("key", "") if not it.get("stigid") else "%s (%s)" % (it.get("v") or it["key"], it["stigid"])
 
@@ -115,16 +147,34 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
     sm = stigman or {}
     sev_map = dict(DEFAULT_SEVERITY, **(severity or {}))
     ok_status = statuses if statuses is not None else STIGMAN_ACCEPT
+    win = scan.get("platform") == "windows"
+    # a host with several checklists (Windows: one per STIG, web site or database instance): each is a result of its own,
+    # its findings named for it
+    each = scan.get("key") or ""
+    tag = (":" + each) if each else ""
+    say = (scan["label"] + ": ") if scan.get("label") else ""
     ign = ignore_set(ignore)
     out = {"host": host, "scanned": bool(scan.get("scanned")), "why": scan.get("why", ""), "os": scan.get("os", ""),
            "stig_version": scan.get("stig_version", ""), "ssg_version": scan.get("ssg_version", ""),
            "scanner": scan.get("scanner", "OpenSCAP"), "scanner_before": scan.get("scanner_before", ""),
-           "evaluate_note": evaluate_note(scan),
+           "evaluate_note": evaluate_note(scan), "label": ("%s - %s" % (host, scan["label"])) if scan.get("label") else "",
+           "key": each, "benchmark": scan.get("benchmark", ""), "platform": scan.get("platform", ""),
+           "checklist_time": scan.get("checklist_time", ""), "found_by": scan.get("found_by", ""),
            "profile": scan.get("profile_title") or scan.get("profile", ""), "counts": scan.get("counts") or {},
            "saved": scan.get("saved") or {}, "stigman": {k: sm.get(k, "") for k in ("status", "why", "collection", "asset", "revision")},
            "previous_time": (scan.get("previous") or {}).get("time", ""),
            "drift": [], "new": [], "disagree": [], "fixed_open": [], "unreviewed": [], "fixed": [], "ignored": [], "by_hand": None,
            "findings": []}
+    if not out["scanned"] and win:
+        out["findings"].append({"check": "stig", "id": "stig:not-scanned", "severity": "warning",
+                                "summary": "the STIG scan did not run: " + (out["why"] or "unknown reason"),
+                                "hint": (("Get-Content -Tail 40 '%s'" % scan["evaluate_log"]) if scan.get("evaluate_log") else
+                                         ("Get-Item '%s'" % scan["evaluate"]) if scan.get("evaluate") else
+                                         "Get-ChildItem -Path C:\\ -Filter Evaluate-STIG.ps1 -Recurse -Depth 5 -ErrorAction SilentlyContinue"),
+                                "note": "Set win_check_stig_evaluate to Evaluate-STIG's folder on the server, or win_check_stig_evaluate_read to "
+                                        "read the checklists it already writes, then run the job again for this server (docs/STIG_DRIFT.md)."})
+        out["row"] = stig_host_row(out)
+        return out
     if not out["scanned"]:
         es = scanner == "evaluate_stig"
         out["findings"].append({"check": "stig", "id": "stig:not-scanned", "severity": "warning",
@@ -139,6 +189,9 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
         return out
     prev_items = (scan.get("previous") or {}).get("items") or {}
     before = scan.get("passed_before")
+    if scan.get("history") == "items":     # Windows: the scan before and when each rule last passed are on the items
+        prev_items = dict((it["key"], it["prev"]) for it in scan.get("items") or [] if it.get("prev"))
+        before = dict((it["key"], it["passed"]) for it in scan.get("items") or [] if it.get("passed"))
     if not isinstance(before, dict):   # from an older site_stig_scan: the last scan's passes only
         before = dict((k, (scan.get("previous") or {}).get("time", "")) for k, v in prev_items.items() if v == "pass")
     found = sm.get("status") == "found"
@@ -182,8 +235,8 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
     if out["drift"]:
         d = out["drift"]
         cmd = check_command(scan, d[0])
-        out["findings"].append({"check": "stig", "id": "stig:drift", "severity": _worst(d, sev_map),
-                                "summary": "%d STIG %s STIG Manager has as Not a Finding or Not Applicable %s now: %s" % (
+        out["findings"].append({"check": "stig", "id": "stig:drift" + tag, "severity": _worst(d, sev_map),
+                                "summary": say + "%d STIG %s STIG Manager has as Not a Finding or Not Applicable %s now: %s" % (
                                     len(d), _plural(len(d), "rule", "rules"), _plural(len(d), "fails", "fail"), _short_list(d)),
                                 "hint": cmd or report,
                                 "note": "They passed on this host in an earlier scan: the host moved away from its checklist. Fix the host, or - "
@@ -193,8 +246,8 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
         n = out["new"]
         cmd = check_command(scan, n[0])
         last = max((r.get("passed") or "")[:10] for r in n) or "-"
-        out["findings"].append({"check": "stig", "id": "stig:new", "severity": _worst(n, sev_map),
-                                "summary": "%d STIG %s passed in an earlier scan (last %s) and %s now: %s" % (
+        out["findings"].append({"check": "stig", "id": "stig:new" + tag, "severity": _worst(n, sev_map),
+                                "summary": say + "%d STIG %s passed in an earlier scan (last %s) and %s now: %s" % (
                                     len(n), _plural(len(n), "rule", "rules"), last, _plural(len(n), "fails", "fail"), _short_list(n)),
                                 "hint": cmd or report,
                                 "note": "Something changed on the host since they passed (the scans are kept on the host, check_stig_dir). "
@@ -203,19 +256,23 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
     if out["disagree"] and disagree_severity in ("warning", "critical"):
         g = out["disagree"]
         cmd = check_command(scan, g[0])
-        out["findings"].append({"check": "stig", "id": "stig:disagree", "severity": disagree_severity,
-                                "summary": "%d STIG %s STIG Manager has as Not a Finding or Not Applicable %s failed in every scan of this host: %s" % (
+        out["findings"].append({"check": "stig", "id": "stig:disagree" + tag, "severity": disagree_severity,
+                                "summary": say + "%d STIG %s STIG Manager has as Not a Finding or Not Applicable %s failed in every scan of this host: %s" % (
                                     len(g), _plural(len(g), "rule", "rules"), _plural(len(g), "has", "have"), _short_list(g)),
                                 "hint": cmd or report,
                                 "note": "The host was like this before its first scan, or the scanner checks the rule another way than DISA's check "
                                         "text. Look at each once: fix the host, set the review to Open, or - the scanner is wrong for your site - add "
                                         "the rule to check_stig_ignore_rules." + where + (again if cmd else "")})
-    if stigman_used and not found and missing_severity != "none":
+    # Windows: a STIG the asset does not have in STIG Manager is not compared, and no finding (every STIG Evaluate-STIG
+    # finds is scanned; the site tracks the ones it assigned); the asset not there at all is one finding for the host
+    if stigman_used and not found and missing_severity != "none" and not (win and sm.get("status") == "no_stig"):
         out["findings"].append({"check": "stig", "id": "stig:stigman", "severity": missing_severity,
                                 "summary": "not compared with STIG Manager: " + (sm.get("why") or "not read"),
                                 "hint": "",
                                 "note": "Set the asset's name and collection for this host: check_stig_stigman_asset, check_stig_stigman_collection "
-                                        "(docs/STIG_DRIFT.md)."})
+                                        "(docs/STIG_DRIFT.md)."
+                                        + (" A web site or database checklist is the asset STIG Manager named <host>-<site>-<instance> "
+                                           "when it imported it." if (scan.get("site") or scan.get("instance")) else "")})
     out["row"] = stig_host_row(out)
     return out
 
@@ -225,7 +282,7 @@ def stig_host_row(c):
     cnt = c.get("counts") or {}
     sm = c.get("stigman") or {}
     if not c.get("scanned"):
-        return {"cells": [c["host"], "not scanned: " + c.get("why", "")] + [""] * 10, "status": "warning"}
+        return {"cells": [_who(c), "not scanned: " + c.get("why", "")] + [""] * 10, "status": "warning"}
     if sm.get("status") == "found":
         smtxt = "%s / %s%s" % (sm.get("collection", ""), sm.get("asset", ""), (" (" + sm["revision"] + ")") if sm.get("revision") else "")
     elif sm.get("status"):
@@ -239,7 +296,9 @@ def stig_host_row(c):
         tool += " - first scan with it, after %s: not compared with the earlier scans" % c["scanner_before"]
     if c.get("evaluate_note"):
         tool += " - " + c["evaluate_note"]
-    return {"cells": [c["host"], "%s %s" % (c.get("stig_version", ""), tool),
+    if c.get("checklist_time"):
+        tool += " - its checklist of %s" % c["checklist_time"][:10]
+    return {"cells": [_who(c), "%s %s" % (c.get("stig_version", ""), tool),
                       smtxt, str(cnt.get("pass", 0)), str(cnt.get("fail", 0)), str(len(c["drift"])), str(len(c["new"])),
                       str(len(c.get("disagree") or [])), str(len(c["fixed_open"])), "-" if c.get("by_hand") is None else str(c["by_hand"]),
                       str(len(c.get("ignored") or [])), (c.get("saved") or {}).get("report", "") or (c.get("saved") or {}).get("results", "")
@@ -272,7 +331,7 @@ def stig_cards(results, max_cards=6):
     and the rest, are in the tables -> (cards, how many CAT I rules were left out)."""
     found = []
     for kind, label in (("drift", "Drifted"), ("new", "New fail")):
-        for c in sorted(results, key=lambda c: c["host"]):
+        for c in sorted(results, key=_who):
             for r in c.get(kind) or []:
                 if r.get("severity") == "high":
                     found.append((label, c, r))
@@ -285,12 +344,26 @@ def stig_cards(results, max_cards=6):
             what = ("Fix the host, or - if the change was approved - update the review in STIG Manager." if label == "Drifted"
                     else "Fix the host, or set the review to Open.")
         cards.append({"status": r.get("level") or "critical", "chip": "CAT I", "meta": label, "title": r["title"],
-                      "subject": "%s - %s" % (c["host"], _rule_label(r)),
+                      "subject": "%s - %s" % (_who(c), _rule_label(r)),
                       "next": "Passed %s, fails now. %s%s%s" % ((r.get("passed") or "before")[:10], sm, what,
                                                                " To check it again on the host:" if r.get("check") else
                                                                (" What Evaluate-STIG found:" if r.get("details") else "")),
-                      "code": r.get("check") or r.get("details") or ""})
+                      "code": r.get("check") or details_text(r.get("details")) or ""})
     return cards, max(len(found) - int(max_cards), 0)
+
+
+def stig_details_cards(results, list_max=200):
+    """What Evaluate-STIG found, in full, for the drifted, new and disagree rules - one card each (the table cells keep
+    the first line) -> (cards, how many there were)."""
+    found = []
+    for kind, label in (("drift", "Drifted"), ("new", "New fail"), ("disagree", "Disagree")):
+        for c in sorted(results, key=_who):
+            for r in c.get(kind) or []:
+                t = details_text(r.get("details"))
+                if t:
+                    found.append({"status": r.get("level") or "warning", "chip": CAT.get(r.get("severity"), r.get("severity", "")), "meta": label,
+                                  "title": r["title"], "subject": "%s - %s" % (_who(c), _rule_label(r)), "code": t})
+    return found[:int(list_max)], len(found)
 
 
 def stig_report_sections(results, list_max=200):
@@ -302,26 +375,26 @@ def stig_report_sections(results, list_max=200):
     sections = []
     cols = ["Host", "STIG rule", "CAT", "Title"]
     drift_rows, drift_rs, drift_cs = _rows(results, "drift", lambda c, r: [
-        c["host"], _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "FAIL", (r.get("passed") or "-")[:10], _sm_cell(r)],
+        _who(c), _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "FAIL", (r.get("passed") or "-")[:10], _sm_cell(r)],
         lambda r: ["", "", r["level"], "", "critical", "", SM_CHIP.get(r["sm"], "")])
     new_rows, new_rs, new_cs = _rows(results, "new", lambda c, r: [
-        c["host"], _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], (r.get("passed") or "-")[:10], "FAIL",
+        _who(c), _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], (r.get("passed") or "-")[:10], "FAIL",
         _sm_cell(r) if r.get("sm") else "no review"],
         lambda r: ["", "", r["level"], "", "", "critical", SM_CHIP.get(r.get("sm"), "unknown")])
     dis_rows, dis_rs, dis_cs = _rows(results, "disagree", lambda c, r: [
-        c["host"], _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "FAIL", _sm_cell(r),
-        ", ".join(r.get("scap") or []) or (r.get("details") or "")[:200]],
+        _who(c), _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "FAIL", _sm_cell(r),
+        ", ".join(r.get("scap") or []) or _details_short(r)],
         lambda r: ["", "", r["level"], "", "critical", SM_CHIP.get(r["sm"], ""), ""])
     fo_rows, fo_rs, fo_cs = _rows(results, "fixed_open", lambda c, r: [
-        c["host"], _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "pass",
+        _who(c), _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "pass",
         "Open (%s%s)" % (r.get("sm_status") or "-", (", " + r["sm_ts"][:10]) if r.get("sm_ts") else "")],
         lambda r: ["", "", r["level"], "", "ok", "warning"])
     ig_rows, ig_rs, ig_cs = _rows(results, "ignored", lambda c, r: [
-        c["host"], _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "FAIL",
+        _who(c), _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "FAIL",
         _sm_cell(r) if r.get("sm") else "no review"],
         lambda r: ["", "", r["level"], "", "critical", SM_CHIP.get(r.get("sm"), "unknown")])
     un_rows, un_rs, un_cs = _rows(results, "unreviewed", lambda c, r: [
-        c["host"], _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "FAIL"],
+        _who(c), _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "FAIL"],
         lambda r: ["", "", r["level"], "", "critical"])
     disagree_found = any(f["id"] == "stig:disagree" for c in results for f in c.get("findings") or [])
     not_scanned = [c for c in results if not c.get("scanned")]
@@ -363,7 +436,7 @@ def stig_report_sections(results, list_max=200):
         gone = (" %d host%s could not be scanned (below)." % (len(not_scanned), "" if len(not_scanned) == 1 else "s") if not_scanned else "")
         if dis_rows:
             # not "every host passes": the scan fails rules the checklist has as Not a Finding - they never passed here, so not drift
-            hosts = len(set(r[0] for r in dis_rows))
+            hosts = len(set(c["host"] for c in results if c.get("disagree")))
             line = ("No drift: nothing that passed in an earlier scan fails now. But the scan fails %d STIG rule%s STIG Manager has as Not a "
                     "Finding or Not Applicable, on %d host%s (3. The scan and the checklist disagree): not drift, because %s never "
                     "passed in a scan here - the host's first scan, or its first with this scanner. "
@@ -386,7 +459,7 @@ def stig_report_sections(results, list_max=200):
         sections[0]["start_here_text"] = ("The CAT I rules that moved: drifted from the checklist, or failing since they passed. CAT II and III "
                                           "are in the tables below%s." % (", with %d more CAT I" % more if more else ""))
     order = {"critical": 0, "warning": 1, "info": 2, "ok": 3}
-    hosts = sorted(results, key=lambda c: (order.get(c["row"]["status"], 3), c["host"]))
+    hosts = sorted(results, key=lambda c: (order.get(c["row"]["status"], 3), _who(c)))
     hrs = [c["row"]["status"] for c in hosts]
     sections.append({"title": "Every host - the scan, STIG Manager, the counts", "status": "critical" if "critical" in hrs else ("warning" if "warning" in hrs else "ok"),
                      "columns": ["Host", "STIG (scan)", "STIG Manager (collection / asset)", "Pass", "Fail", "Drifted", "New", "Disagree",
@@ -397,6 +470,13 @@ def stig_report_sections(results, list_max=200):
                              "has a review of that the scan gives no result for - DISA's manual checks (Evaluate-STIG: Not Reviewed), never "
                              "compared by this job. Left out: fails of the rules in check_stig_ignore_rules. Each scan's report (OpenSCAP), "
                              "results or checklist (Evaluate-STIG) and summary stay on the host."})
+    full = stig_details_cards(results, list_max)
+    if full[0]:
+        sections.append({"title": "What Evaluate-STIG found - in full", "status": "info", "cards": full[0],
+                         "text": "For each rule above that drifted, fails new or disagrees with the checklist: what Evaluate-STIG found on the "
+                                 "host, as it wrote it in the checklist (its own header and separators left out)."
+                                 + (" The first %d of %d (check_stig_list_max); the rest are in the checklist kept on the host."
+                                    % (list_max, full[1]) if full[1] > list_max else "")})
     if ig_rows:
         sections.append({"title": "Left out on purpose - check_stig_ignore_rules", "columns": cols + ["Scan now", "STIG Manager"],
                          "rows": ig_rows[:list_max], "row_status": ["info"] * len(ig_rows[:list_max]), "cell_status": ig_cs[:list_max], "status": "info",
@@ -414,16 +494,18 @@ def stig_report_sections(results, list_max=200):
 def stig_lines(c):
     """One host's result in plain lines, for the job's output."""
     if not c.get("scanned"):
-        return ["%s: NOT SCANNED - %s" % (c["host"], c.get("why", ""))]
+        return ["%s: NOT SCANNED - %s" % (_who(c), c.get("why", ""))]
     cnt = c.get("counts") or {}
     sm = c.get("stigman") or {}
     out = ["%s: %s %s - %d pass, %d fail; drifted %d, new %d, fixed but open %d; STIG Manager: %s; disagree %d, by hand %s, left out %d" % (
-        c["host"], c.get("profile", ""), c.get("stig_version", ""), cnt.get("pass", 0), cnt.get("fail", 0), len(c["drift"]), len(c["new"]),
+        _who(c), c.get("profile", ""), c.get("stig_version", ""), cnt.get("pass", 0), cnt.get("fail", 0), len(c["drift"]), len(c["new"]),
         len(c["fixed_open"]), ("%s / %s%s" % (sm.get("collection"), sm.get("asset"), (" (" + sm["revision"] + ")") if sm.get("revision") else ""))
         if sm.get("status") == "found" else (sm.get("why") or "not used"), len(c.get("disagree") or []),
         "-" if c.get("by_hand") is None else c["by_hand"], len(c.get("ignored") or []))]
     if c.get("evaluate_note"):
         out.append("  Evaluate-STIG: " + c["evaluate_note"])
+    if c.get("checklist_time"):
+        out.append("  its checklist of %s, read (Evaluate-STIG was not run)" % c["checklist_time"][:10])
     for r in c["drift"]:
         out.append("  DRIFT %s %s %s - STIG Manager: %s" % (_rule_label(r), CAT.get(r.get("severity"), ""), r["title"][:90], SM_WORD.get(r["sm"], r["sm"])))
     for r in c["new"]:
@@ -438,6 +520,22 @@ def stig_lines(c):
     return out
 
 
+def stig_findings(results):
+    """One host's findings from its results (Windows: one per checklist): each finding once; "not compared with STIG
+    Manager" only when none of the host's checklists was (a web site's asset can be missing while the host's is there)."""
+    results = [r for r in (results or []) if r]
+    compared = any((r.get("stigman") or {}).get("status") in ("found", "no_stig") for r in results)
+    out, seen = [], set()
+    for r in results:
+        for f in r.get("findings") or []:
+            if f["id"] in seen or (compared and f["id"] == "stig:stigman"):
+                continue
+            seen.add(f["id"])
+            out.append(f)
+    return out
+
+
 class FilterModule(object):
     def filters(self):
-        return {"stig_compare": stig_compare, "stig_report_sections": stig_report_sections, "stig_lines": stig_lines}
+        return {"stig_compare": stig_compare, "stig_report_sections": stig_report_sections, "stig_lines": stig_lines,
+                "stig_findings": stig_findings}

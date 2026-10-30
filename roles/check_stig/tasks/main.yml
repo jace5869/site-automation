@@ -78,17 +78,9 @@
   check_mode: false             # the scan only reads; in a dry run (save: false) nothing is kept on the host
 
 - name: STIG | read every host's checklist from STIG Manager (read-only, once, from the AAP side)
-  site_stigman_read:
-    api: "{{ check_stig_stigman_api }}"
-    token_url: "{{ check_stig_stigman_token_url or lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') }}"
-    client_id: "{{ check_stig_stigman_client_id or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_ID') }}"
-    client_secret: "{{ check_stig_stigman_client_secret or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET') }}"
-    scope: "{{ check_stig_stigman_scope }}"
-    collections: "{{ check_stig_stigman_collections }}"
-    validate_certs: "{{ check_stig_stigman_validate_certs | bool }}"
-    ca_path: "{{ check_stig_stigman_ca_path }}"
-    timeout: "{{ check_stig_stigman_timeout | int }}"
-    hosts: >-
+  ansible.builtin.import_tasks: stigman.yml
+  vars:
+    _stig_sm_entries: >-
       {%- set out = [] -%}
       {%- for h in ansible_play_hosts if hostvars[h]._stig_scan is defined and hostvars[h]._stig_scan.scanned | default(false) -%}
       {%-   set hv = hostvars[h] -%}
@@ -97,21 +89,6 @@
                                 'benchmark': check_stig_stigman_benchmarks[hv._stig_scan.major | string] | default('')}) -%}
       {%- endfor -%}
       {{ out }}
-  register: _stig_sm
-  delegate_to: localhost
-  run_once: true
-  become: false
-  check_mode: false             # only reads
-  vars:
-    ansible_connection: local
-    ansible_python_interpreter: "{{ ansible_playbook_python }}"
-  when: check_stig_stigman_api | length > 0
-
-- name: STIG | STIG Manager could not be read at all
-  ansible.builtin.debug:
-    msg: "STIG Manager: {{ _stig_sm.error }}"
-  run_once: true
-  when: check_stig_stigman_api | length > 0 and _stig_sm.error | default('') | length > 0
 
 - name: STIG | compare (STIG Manager, the earlier scans) and the findings
   ansible.builtin.set_fact:

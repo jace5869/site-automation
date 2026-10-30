@@ -26,6 +26,9 @@
 #   accounts     Guest, local password age / never-expires / inactive, local Administrators
 #   certs        certificates in the machine stores (and which are in use), TLS endpoints
 #   patching     a restart pending for updates, days since the last update
+#   stig         the STIG drift scan: Evaluate-STIG, each checklist compared with STIG Manager (read-only) and the
+#                server's earlier scans. In no shortcut (a scan takes minutes): ask for it by name, or use its own
+#                template, playbooks/win_stig_drift_report.yml. docs/STIG_DRIFT.md
 #
 # Shortcuts: daily = disk services performance time network eventlog
 #            weekly = security audit accounts certs trust patching
@@ -40,6 +43,7 @@
       daily: [disk, services, performance, time, network, eventlog]
       weekly: [security, audit, accounts, certs, trust, patching]
       all: [disk, services, performance, time, network, eventlog, security, audit, accounts, certs, trust, patching]
+    _health_by_name: [stig]     # known, but in no shortcut: asked for by name only
     # A survey's multiple-choice answer can arrive as a list or as lines of text, a text answer or an extra
     # variable as "disk, services": accept all of them.
     _health_asked: >-
@@ -64,10 +68,10 @@
 
     - name: Only known checks
       ansible.builtin.assert:
-        that: _health_run | difference(_health_sets.all) | length == 0
+        that: _health_run | difference(_health_sets.all + _health_by_name) | length == 0
         fail_msg: >-
-          Unknown check(s): {{ _health_run | difference(_health_sets.all) | join(', ') }}.
-          Known: {{ _health_sets.all | join(', ') }} (or daily, weekly, all).
+          Unknown check(s): {{ _health_run | difference(_health_sets.all + _health_by_name) | join(', ') }}.
+          Known: {{ (_health_sets.all + _health_by_name) | join(', ') }} (or daily, weekly, all).
         quiet: true
       run_once: true
 

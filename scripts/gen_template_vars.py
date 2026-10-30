@@ -289,6 +289,17 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 """),
     "win_connection_test.yml": ("Windows connection test", "Machine (Windows)", "", ""),
     "win_health_check.yml": ("Windows health check", "Machine (Windows)", WIN_CHECKS, ""),
+    "win_stig_drift_report.yml": ("Windows STIG drift report", "Machine (Windows), STIG Manager API", "win_check_stig", """\
+## Evaluate-STIG on the servers: empty = found (a scheduled task that runs it, else a folder named Evaluate-STIG*
+## on the local drives - the report says where). Or read the checklists it already writes: auto
+# win_check_stig_evaluate: 'C:\\Evaluate-STIG'
+# win_check_stig_evaluate_read: auto
+## STIG Manager's API (empty: each checklist is compared only with the server's last scan) - the same settings and
+## "STIG Manager API" credential as the Linux report
+check_stig_stigman_api: https://STIGMAN-SERVER/api
+## Each server's collection: set it per group or host in your inventory (empty: every collection the client reads)
+# check_stig_stigman_collection: Windows Servers
+"""),
     "win_trust_report.yml": ("Windows - trust store report", "Machine (Windows)", "win_check_trust", """\
 ## The trust check's list (roles/check_trust/vars/main.yml ships the October 2026 eMudhra set); add your own in
 ## check_trust_extra, change a severity in check_trust_severity - the same settings as the Linux report

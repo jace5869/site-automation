@@ -9,7 +9,8 @@
 #   disagree    a rule STIG Manager has as Not a Finding has failed in every scan        -> report only (check_stig_disagree_severity)
 #   fixed       a rule STIG Manager still has Open passes now (update the checklist)     -> report only
 #   left out    rules the scanner gets wrong at your site (check_stig_ignore_rules)      -> report only
-# Fails the hosts with drift (a workflow can open tickets). Linux only. docs/STIG_DRIFT.md.
+# Fails the hosts with drift (a workflow can open tickets). Linux only: Windows servers have
+# playbooks/win_stig_drift_report.yml (Evaluate-STIG). docs/STIG_DRIFT.md.
 #
 #   ansible-playbook playbooks/stig_drift_report.yml -e target=rhel_servers
 #   ansible-playbook playbooks/stig_drift_report.yml -e check_stig_stigman_api=https://stigman.example.mil/api

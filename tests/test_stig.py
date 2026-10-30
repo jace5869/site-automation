@@ -534,6 +534,149 @@ Total checklists in Results Directory : 0"""
         self.assertEqual(sf.stig_compare({"scanned": False, "why": "x"}, {}, "web01")["findings"][0]["hint"], "rpm -q openscap-scanner scap-security-guide")
 
 
+def win_scan(key="Windows_Server_2022_STIG", label="Microsoft Windows Server 2022", **results):
+    """A Windows checklist as win_stig.ps1 gives it: the scan before and when each rule last passed on the items."""
+    its = []
+    for k, v in sorted(results.items()):
+        now, prev, passed = (v + (None, None))[:3]
+        it = {"key": k.replace("_", "-"), "v": "V-" + k[3:], "rule": k.replace("_", "-") + "r1_rule", "stigid": "WN22-00-" + k[3:], "severity": "high",
+              "result": now}
+        if now == "fail":
+            it.update(title="Rule " + k, details="Found: it is not set.")
+        if prev:
+            it["prev"] = prev
+        if passed:
+            it["passed"] = passed
+        its.append(it)
+    return {"scanned": True, "key": key, "benchmark": key.split("_Default")[0], "label": label, "profile_title": label, "stig_version": "V2R4",
+            "scanner": "Evaluate-STIG", "platform": "windows", "history": "items", "items": its, "counts": scan.counts(its),
+            "site": "Default Web Site" if "Default_Web_Site" in key else "", "previous": {"time": "2026-10-01T10:00:00Z"}, "saved": {"dir": "C:\\ProgramData\\x", "results": "C:\\ProgramData\\x\\1_checklist.cklb"}}
+
+
+class FakeClient(object):
+    def __init__(self, assets, reviews):
+        self.assets, self.reviews, self.asked = assets, reviews, []
+
+    def get(self, path, **q):
+        self.asked.append((path, q))
+        if path == "/collections":
+            return [{"collectionId": "1", "name": "Windows Servers"}]
+        if path == "/assets":
+            return [a for a in self.assets if "benchmarkId" not in q or q["benchmarkId"] in [x["benchmarkId"] for x in a["stigs"]]]
+        return self.reviews.get(path.split("/")[-1], [])
+
+
+class Windows(unittest.TestCase):
+    """Several checklists per host (Windows, roles/win_check_stig): one result each, named for its STIG."""
+
+    def test_history_on_the_items_label_and_finding_ids(self):
+        c = sf.stig_compare(win_scan(SV_1=("fail", "pass", "2026-10-01T10:00:00Z"), SV_2=("fail",), SV_3=("pass", "fail", "2026-09-01T10:00:00Z")),
+                            sm(SV_1=("pass", "accepted"), SV_2=("pass", "accepted")), "win01", stigman_used=True)
+        self.assertEqual(c["label"], "win01 - Microsoft Windows Server 2022")
+        self.assertEqual([r["key"] for r in c["drift"]], ["SV-1"])
+        self.assertEqual([r["key"] for r in c["disagree"]], ["SV-2"], "never passed: disagree, not drift")
+        self.assertEqual([r["key"] for r in c["fixed"]], ["SV-3"])
+        self.assertEqual([f["id"] for f in c["findings"]], ["stig:drift:Windows_Server_2022_STIG"])
+        self.assertTrue(c["findings"][0]["summary"].startswith("Microsoft Windows Server 2022: 1 STIG rule"))
+        self.assertEqual(c["drift"][0]["details"], "Found: it is not set.")
+        self.assertEqual(c["row"]["cells"][0], "win01 - Microsoft Windows Server 2022")
+        self.assertEqual(c["row"]["cells"][-1], "C:\\ProgramData\\x\\1_checklist.cklb")
+        lines = sf.stig_lines(c)
+        self.assertTrue(lines[0].startswith("win01 - Microsoft Windows Server 2022: "))
+
+    def test_a_stig_the_asset_does_not_have_is_no_finding(self):
+        c = sf.stig_compare(win_scan(SV_1=("fail", "pass", "2026-10-01T10:00:00Z")), {"status": "no_stig", "why": "the asset win01 does not have it"},
+                            "win01", stigman_used=True)
+        self.assertEqual([f["id"] for f in c["findings"]], ["stig:new:Windows_Server_2022_STIG"])
+        self.assertIn("not compared: the asset win01 does not have it", c["row"]["cells"][2])
+        lin = sf.stig_compare(scanned({}), {"status": "no_stig", "why": "x"}, "web01", stigman_used=True)
+        self.assertEqual([f["id"] for f in lin["findings"]], ["stig:stigman"], "Linux: its one STIG not in STIG Manager is still a finding")
+
+    def test_one_not_found_finding_per_host(self):
+        a = sf.stig_compare(win_scan(), {"status": "not_found", "why": "no asset named win01"}, "win01", stigman_used=True)
+        b = sf.stig_compare(win_scan("IIS_10-0_Site_STIG_Default_Web_Site", "Microsoft IIS 10.0 Site - Default Web Site"),
+                            {"status": "not_found", "why": "no asset named win01-Default Web Site-NA"}, "win01", stigman_used=True)
+        self.assertIn("<host>-<site>-<instance>", b["findings"][0]["note"])
+        self.assertEqual([f["id"] for f in sf.stig_findings([a, b])], ["stig:stigman"])
+        found = sf.stig_compare(win_scan(), sm(), "win01", stigman_used=True)
+        self.assertEqual(sf.stig_findings([found, b]), [], "the host's asset is there: its web site's not being there is no finding")
+
+    def test_not_scanned_says_what_to_set(self):
+        c = sf.stig_compare({"scanned": False, "why": "Evaluate-STIG was not found on the server", "platform": "windows"}, {}, "win01", scanner="evaluate_stig")
+        self.assertEqual([f["id"] for f in c["findings"]], ["stig:not-scanned"])
+        self.assertIn("win_check_stig_evaluate", c["findings"][0]["note"])
+        self.assertIn("Evaluate-STIG.ps1", c["findings"][0]["hint"])
+        self.assertEqual(c["row"]["cells"][0], "win01")
+
+    def test_report_names_each_checklist_and_counts_hosts(self):
+        a = sf.stig_compare(win_scan(SV_2=("fail",)), sm(SV_2=("pass", "accepted")), "win01", stigman_used=True)
+        b = sf.stig_compare(win_scan("IIS_10-0_Site_STIG_Default_Web_Site", "Microsoft IIS 10.0 Site - Default Web Site", SV_5=("fail",)),
+                            sm(SV_5=("pass", "accepted")), "win01", stigman_used=True)
+        secs = sf.stig_report_sections([a, b])
+        dis = [s for s in secs if s["title"].startswith("3.")][0]
+        self.assertEqual(sorted(r[0] for r in dis["rows"]), ["win01 - Microsoft IIS 10.0 Site - Default Web Site", "win01 - Microsoft Windows Server 2022"])
+        card = [s for s in secs if s["title"].startswith("No drift")][0]
+        self.assertIn("on 1 host ", card["lines"][0], "two checklists of one server are one host")
+
+    def test_stig_manager_one_entry_per_checklist(self):
+        assets = [{"assetId": "21", "name": "win01", "fqdn": "", "stigs": ["Windows_Server_2022_STIG"]},
+                  {"assetId": "22", "name": "win01-Default Web Site-NA", "fqdn": "", "stigs": ["IIS_10-0_Site_STIG"]}]
+        for a in assets:
+            a["stigs"] = [{"benchmarkId": b} for b in a["stigs"]]
+        client = FakeClient(assets, {"21": [{"ruleId": "SV-1r1_rule", "result": "pass", "status": {"label": "accepted"}}]})
+        p = {"collections": [], "hosts": [
+            {"id": "win01|Windows_Server_2022_STIG", "host": "win01", "names": ["win01"], "benchmark": "Windows_Server_2022_STIG"},
+            {"id": "win01|IIS", "host": "win01", "names": ["win01-Default Web Site-NA"], "benchmark": "IIS_10-0_Site_STIG"},
+            {"id": "win01|MS_Edge_STIG", "host": "win01", "names": ["win01"], "benchmark": "MS_Edge_STIG"},
+            {"id": "win02|MS_Edge_STIG", "host": "win02", "names": ["win02"], "benchmark": "MS_Edge_STIG"}]}
+        out = smr.read(p, client)
+        self.assertEqual(out["win01|Windows_Server_2022_STIG"]["status"], "found")
+        self.assertEqual(out["win01|Windows_Server_2022_STIG"]["reviews"]["SV-1"]["result"], "pass")
+        self.assertEqual(out["win01|IIS"]["asset"], "win01-Default Web Site-NA")
+        self.assertEqual(out["win01|MS_Edge_STIG"]["status"], "no_stig")
+        self.assertIn("does not have MS_Edge_STIG assigned", out["win01|MS_Edge_STIG"]["why"])
+        self.assertEqual(out["win02|MS_Edge_STIG"]["status"], "not_found")
+        self.assertTrue(all(path in ("/collections", "/assets") or "/reviews/" in path for path, _q in client.asked))
+
+
+class Details(unittest.TestCase):
+    """What Evaluate-STIG found: its own header and separators left out, the table cell short, the full text in a card."""
+    HEX = "0123456789abcdef" * 4
+
+    def test_its_header_and_rules_left_out(self):
+        multi = ("Evaluate-STIG 1.2607.0 (Scan-RHEL8_Checks) found this to be OPEN on 10/30/2026\nResultHash: %s\n~~~~~~~~~~~~\n"
+                 "The gssproxy package has been installed on the system.\n\nName : gssproxy\n-------------------------\n" % self.HEX)
+        self.assertEqual(sf.details_text(multi), "The gssproxy package has been installed on the system.\n\nName : gssproxy")
+        one = ("Evaluate-STIG 1.2607.0 (Scan-RHEL8_Checks) found this to be OPEN on 10/30/2026 ResultHash: %s ~~~~ "
+               "The gssproxy package has been installed on the system. -------" % self.HEX)
+        self.assertEqual(sf.details_text(one), "The gssproxy package has been installed on the system.")
+        self.assertEqual(sf.details_text("Found: a --- b"), "Found: a --- b", "a short dash run in the text stays")
+        self.assertEqual(sf.details_text(None), "")
+
+    def test_short_cell_and_full_cards(self):
+        long = "Evaluate-STIG 1.2607.0 (Scan-RHEL8_Checks) found this to be OPEN on 10/30/2026\n" + " ".join("word%d" % i for i in range(200))
+        r = {"key": "SV-1", "v": "V-1", "severity": "medium", "title": "T", "details": long, "level": "warning", "sm": "pass", "scap": []}
+        cell = sf._details_short(r)
+        self.assertTrue(cell.startswith("word0 word1"))
+        self.assertTrue(cell.endswith("(in full: What Evaluate-STIG found, below)"))
+        self.assertLess(len(cell), 220)
+        c = {"host": "web01", "disagree": [r], "drift": [], "new": [], "fixed_open": [], "unreviewed": [], "ignored": [], "findings": [],
+             "scanned": True, "row": {"cells": ["web01"], "status": "ok"}}
+        secs = sf.stig_report_sections([c])
+        dis = [s for s in secs if s["title"].startswith("3.")][0]
+        self.assertEqual(dis["rows"][0][-1], cell)
+        full = [s for s in secs if s["title"] == "What Evaluate-STIG found - in full"][0]
+        self.assertEqual(full["cards"][0]["code"], " ".join("word%d" % i for i in range(200)))
+        self.assertEqual(full["cards"][0]["meta"], "Disagree")
+        self.assertEqual(full["cards"][0]["subject"], "web01 - V-1")
+        cards, n = sf.stig_details_cards([c], 0)
+        self.assertEqual((cards, n), ([], 1))
+
+    def test_kept_up_to_4000(self):
+        st = {"rules": [{"rule": "SV-9r1_rule", "v": "V-9", "stigid": "X", "severity": "medium", "title": "T", "result": "fail", "details": "x" * 5000}]}
+        self.assertEqual(len(scan.checklist_items(st)[0]["details"]), 4000)
+
+
 class Module(unittest.TestCase):
     def test_docs_are_yaml(self):
         import yaml

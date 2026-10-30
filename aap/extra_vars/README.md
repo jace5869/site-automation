@@ -99,4 +99,5 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Windows connection test | `playbooks/win_connection_test.yml` | [win_connection_test.yml](win_connection_test.yml) |
 | Windows health check | `playbooks/win_health_check.yml` | [win_health_check.yml](win_health_check.yml) |
 | Windows patch | `playbooks/win_patch.yml` | [win_patch.yml](win_patch.yml) |
+| Windows STIG drift report | `playbooks/win_stig_drift_report.yml` | [win_stig_drift_report.yml](win_stig_drift_report.yml) |
 | Windows troubleshoot | `playbooks/win_troubleshoot.yml` | [win_troubleshoot.yml](win_troubleshoot.yml) |

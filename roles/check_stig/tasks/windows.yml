@@ -1,0 +1,57 @@
+---
+# Windows (roles/win_check_stig): Evaluate-STIG ran on the server, or what it wrote was read (files/win_stig.ps1 of
+# that role, its result in win_facts.stig): one result per checklist - a STIG, or a STIG of one web site or database
+# instance - with the scan before and when each rule last passed (kept on the server). STIG Manager is read once for
+# every checklist of every server; each checklist is then compared as a Linux host's scan is (stig_compare).
+- name: STIG | every checklist of this server
+  ansible.builtin.set_fact:
+    _stig_win_scans: >-
+      {%- set w = win_facts.stig | default({}) -%}
+      {%- set common = {'evaluate': w.evaluate | default(''), 'found_by': w.found_by | default(''), 'platform': 'windows',
+                        'evaluate_exit': w.evaluate_exit | default(''), 'evaluate_failed': w.evaluate_failed | default([]),
+                        'evaluate_log': w.evaluate_log | default(''), 'evaluate_rejected': w.evaluate_rejected | default([]),
+                        'stderr': w.stderr | default('')} -%}
+      {%- if w.scanned | default(false) -%}
+      {{ w.scans | map('combine', common) | list }}
+      {%- else -%}
+      {{ [common | combine({'scanned': false, 'why': w.why | default('the scan script gave no result'), 'os': w.os | default('')})] }}
+      {%- endif -%}
+
+- name: STIG | read every server's checklists from STIG Manager (read-only, once, from the AAP side)
+  ansible.builtin.import_tasks: stigman.yml
+  vars:
+    # one entry per checklist; a web site or database checklist is the asset STIG Manager names <host>-<site>-<instance>
+    # when it imports it (NA for none)
+    _stig_sm_entries: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts if hostvars[h]._stig_win_scans is defined -%}
+      {%-   set hv = hostvars[h] -%}
+      {%-   set base = [hv.check_stig_stigman_asset] if hv.check_stig_stigman_asset | default('') else [h, h.split('.')[0]] -%}
+      {%-   for s in hv._stig_win_scans if s.scanned | default(false) -%}
+      {%-     set tail = ('-' ~ (s.site or 'NA') ~ '-' ~ (s.instance or 'NA')) if (s.site or s.instance) else '' -%}
+      {%-     set _ = out.append({'id': h ~ '|' ~ s.key, 'host': h, 'names': base | map('regex_replace', '$', tail) | unique | list,
+                                  'collection': hv.check_stig_stigman_collection | default(''), 'benchmark': s.benchmark}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: STIG | compare each checklist (STIG Manager, the earlier scans) and the findings
+  ansible.builtin.set_fact:
+    check_stig_results: >-
+      {%- set out = [] -%}
+      {%- for s in _stig_win_scans -%}
+      {%-   set sm = (_stig_sm.hosts | default({}))[inventory_hostname ~ '|' ~ s.key | default('')]
+                     | default({'status': 'error', 'why': _stig_sm.error} if _stig_sm.error | default('') else {}) -%}
+      {%-   set _ = out.append(s | stig_compare(sm, inventory_hostname, check_stig_severity, check_stig_stigman_statuses,
+                                                check_stig_stigman_api | length > 0, check_stig_stigman_missing_severity,
+                                                check_stig_ignore_rules, check_stig_disagree_severity | string, 'evaluate_stig')) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: STIG | add them to this server's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + (check_stig_results | stig_findings) }}"
+
+- name: STIG | what was found
+  ansible.builtin.debug:
+    msg: "{{ check_stig_results | map('stig_lines') | flatten }}"

@@ -23,7 +23,8 @@ options:
   client_secret: {description: Its secret., type: str, required: true, no_log: true}
   scope: {description: "Scopes to ask for ('' = the client's default scopes).", type: str, default: ''}
   hosts:
-    description: "[{host, names: [asset names to try], collection: '' or a name, benchmark: RHEL_9_STIG}]"
+    description: "[{host, names: [asset names to try], collection: '' or a name, benchmark: RHEL_9_STIG, id: the key of its answer
+      ('' = host; a host with several STIGs has one entry per STIG, each with its own id)}]"
     type: list
     elements: dict
     required: true
@@ -36,8 +37,9 @@ author: site automation
 
 RETURN = r'''
 hosts:
-  description: "Per host: {status: found / not_found / several / no_benchmark / error, why, collection, asset, assetId,
-                revision, reviews: {SV-257985: {result, status, ts, rule, version, severity, title}}}"
+  description: "Per host (per id): {status: found / not_found / no_stig (the asset is there, without this STIG) / several /
+                no_benchmark / error, why, collection, asset, assetId, revision, reviews: {SV-257985: {result, status, ts, rule,
+                version, severity, title}}}"
   type: dict
   returned: always
 error:
@@ -147,20 +149,23 @@ def read(p, client):
     def assets(col, bench):
         key = (col["collectionId"], bench)
         if key not in assets_cache:
-            assets_cache[key] = [dict(a, _col=col) for a in
-                                 client.get("/assets", collectionId=col["collectionId"], benchmarkId=bench, projection="stigs") or []]
+            q = {"collectionId": col["collectionId"], "projection": "stigs"}
+            if bench:
+                q["benchmarkId"] = bench
+            assets_cache[key] = [dict(a, _col=col) for a in client.get("/assets", **q) or []]
         return assets_cache[key]
 
     for h in p["hosts"]:
         host, bench = h.get("host", ""), h.get("benchmark") or ""
+        hid = h.get("id") or host
         names = [n for n in (h.get("names") or [host]) if n]
         if not bench:
-            out[host] = {"status": "no_benchmark", "why": "no STIG Manager benchmark for this host's OS (check_stig_stigman_benchmarks)"}
+            out[hid] = {"status": "no_benchmark", "why": "no STIG Manager benchmark for this host's OS (check_stig_stigman_benchmarks)"}
             continue
         if h.get("collection"):
             col = by_name.get(h["collection"].lower())
             if not col:
-                out[host] = {"status": "error", "why": "the collection %s is not there, or the client has no grant in it" % h["collection"]}
+                out[hid] = {"status": "error", "why": "the collection %s is not there, or the client has no grant in it" % h["collection"]}
                 continue
             search = [col]
         else:
@@ -170,16 +175,27 @@ def read(p, client):
             for col in search:
                 cands += assets(col, bench)
             found = match_assets(names, cands)
+            bare = []
+            if not found:
+                # the asset may be there without this STIG assigned: not the same as no asset
+                for col in search:
+                    bare += assets(col, "")
+                bare = match_assets(names, bare)
         except RuntimeError as e:
-            out[host] = {"status": "error", "why": str(e)}
+            out[hid] = {"status": "error", "why": str(e)}
+            continue
+        if not found and bare:
+            a = bare[0]
+            out[hid] = {"status": "no_stig", "why": "the asset %s (%s) does not have %s assigned in STIG Manager" % (
+                a.get("name"), a["_col"].get("name"), bench), "collection": a["_col"].get("name", ""), "asset": a.get("name", "")}
             continue
         if not found:
-            out[host] = {"status": "not_found", "why": "no asset named %s with %s in %s" % (
+            out[hid] = {"status": "not_found", "why": "no asset named %s with %s in %s" % (
                 " or ".join(names), bench, ("the collection " + search[0]["name"]) if h.get("collection") else
                 "any collection the client can read (%d)" % len(search))}
             continue
         if len(found) > 1:
-            out[host] = {"status": "several", "why": "%d assets match: %s - set check_stig_stigman_collection (or the asset name) for this host" % (
+            out[hid] = {"status": "several", "why": "%d assets match: %s - set check_stig_stigman_collection (or the asset name) for this host" % (
                 len(found), ", ".join("%s in %s" % (a.get("name"), a["_col"].get("name")) for a in found))}
             continue
         a = found[0]
@@ -191,9 +207,9 @@ def read(p, client):
             rows = client.get("/collections/%s/reviews/%s" % (quote(str(a["_col"]["collectionId"])), quote(str(a["assetId"]))),
                               benchmarkId=bench, projection="rule")
         except RuntimeError as e:
-            out[host] = {"status": "error", "why": str(e), "collection": a["_col"].get("name"), "asset": a.get("name")}
+            out[hid] = {"status": "error", "why": str(e), "collection": a["_col"].get("name"), "asset": a.get("name")}
             continue
-        out[host] = {"status": "found", "why": "", "collection": a["_col"].get("name", ""), "asset": a.get("name", ""),
+        out[hid] = {"status": "found", "why": "", "collection": a["_col"].get("name", ""), "asset": a.get("name", ""),
                      "assetId": str(a.get("assetId")), "benchmark": bench, "revision": rev, "reviews": reviews_of(rows)}
     return out
 

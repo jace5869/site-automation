@@ -14,6 +14,9 @@ from xml.sax.saxutils import escape
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import make_results  # noqa: E402
 
+# what Evaluate-STIG writes in an Open rule's finding details: its own header, a hash, separators around what it found
+FOUND = ("Evaluate-STIG 1.2607.0 (Scan-RHEL9_Checks) found this to be OPEN on 10/30/2026\nResultHash: " + "0f" * 32
+         + "\n~~~~~~~~~~~~~~~~~~~~\nFound: %s is not set as required.\n----------------------------------------")
 CKL = {"not_a_finding": "NotAFinding", "open": "Open", "not_applicable": "Not_Applicable", "not_reviewed": "Not_Reviewed"}
 
 
@@ -27,7 +30,7 @@ def rules(results):
             seen.add(key)
             st = results.get(key, "not_a_finding")
             out.append({"rule_id": sv, "group_id": vs.split()[i], "rule_version": ids.split()[i], "severity": sev, "rule_title": title,
-                        "status": st, "finding_details": ("Found: %s is not set as required." % key) if st == "open" else "Compliant."})
+                        "status": st, "finding_details": (FOUND % key) if st == "open" else "Compliant."})
     out.append({"rule_id": "SV-258999r1000001_rule", "group_id": "V-258999", "rule_version": "RHEL-09-999990", "severity": "medium",
                 "rule_title": "A manual check: a document.", "status": results.get("SV-258999", "not_reviewed"), "finding_details": ""})
     return out

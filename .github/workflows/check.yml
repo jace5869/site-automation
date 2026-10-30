@@ -171,6 +171,10 @@ jobs:
         run: |
           bash tests/stig/run_stig_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_test.sh
+      - name: The Windows STIG drift report (PowerShell 7 for Windows, a stand-in Evaluate-STIG and STIG Manager - read-only)
+        run: |
+          bash tests/stig/run_win_stig_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_win_stig_test.sh
       - name: The sso check against fake sssd, realm, Kerberos and adcli tools (current ansible-core and 2.16)
         run: |
           bash tests/sso/run_sso_test.sh
@@ -260,6 +264,7 @@ jobs:
           pwsh -NoProfile -File tests/windows/test_win_checks.ps1
           pwsh -NoProfile -File tests/windows/test_log_collect.ps1
           pwsh -NoProfile -File tests/windows/test_mid_host.ps1
+          pwsh -NoProfile -File tests/windows/test_win_stig.ps1
       - name: Active Directory report scripts with made-up domains (PowerShell 7 on Linux, normal and constrained)
         run: pwsh -NoProfile -File tests/windows/test_ad_collect.ps1
       - name: Account lockout scripts with a made-up domain (PowerShell 7 on Linux, normal and constrained)
@@ -294,6 +299,12 @@ jobs:
       - name: With test data - PowerShell 7
         shell: pwsh
         run: pwsh -NoProfile -File tests/windows/test_win_checks.ps1
+      - name: STIG scan with a stand-in Evaluate-STIG (as SYSTEM in a scheduled task too) - Windows PowerShell 5.1
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows/test_win_stig.ps1
+      - name: STIG scan with a stand-in Evaluate-STIG (as SYSTEM in a scheduled task too) - PowerShell 7
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/windows/test_win_stig.ps1
       - name: ServiceNow MID Server host check with test data - Windows PowerShell 5.1
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/windows/test_mid_host.ps1

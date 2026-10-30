@@ -1412,7 +1412,7 @@ def report_cards_html(cards, ink="#111827", muted="#4b5563", accent="#0f6b4f"):
                        % (ink, accent, escape(str(c.get("next") or ""))))
         if c.get("code"):
             out.append('<div style="%sfont-size:12px;color:%s;background:#ffffff;border:1px solid #e3e7ec;border-radius:6px;padding:6px 8px;'
-                       'margin-top:6px;word-break:break-word;">%s</div>' % (mono, ink, escape(str(c["code"]))))
+                       'margin-top:6px;word-break:break-word;white-space:pre-wrap;">%s</div>' % (mono, ink, escape(str(c["code"]))))
         out.append('</td></tr></table></td></tr>')
     out.append('</table>')
     return "".join(out)

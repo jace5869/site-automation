@@ -236,6 +236,141 @@
 ## this many unexpected stops of one service -> warning
 # win_check_services_crash_warn: 3
 
+# ---- win_check_stig ------------------------------------------------------------------------------
+## ---- Evaluate-STIG on the server
+## ------------------------------------------------------------------------------ its folder on the
+## server (or Evaluate-STIG.ps1), e.g. 'C:\Evaluate-STIG'; empty = found: a scheduled task that runs
+## Evaluate-STIG.ps1, else a folder named Evaluate-STIG* on the local drives
+## (win_check_stig_search_depth levels down; the newest if several) - the report says where
+# win_check_stig_evaluate: ""
+
+## read the checklists Evaluate-STIG already wrote instead of running it: auto = the folder its
+## scheduled task writes to (-OutputPath), else its default
+## C:\Users\Public\Documents\STIG_Compliance; or a folder - this server's newest checklist of each
+## STIG (not its Previous folders, not another server's); empty = run it
+# win_check_stig_evaluate_read: ""
+
+## -SelectSTIG: only these STIGs, by the short names your Evaluate-STIG lists (Evaluate-STIG.ps1
+## -ListSupportedProducts), e.g. [WinServer2022, IIS10Server, IIS10Site]; [] = every STIG that
+## applies to the server
+# win_check_stig_evaluate_select: []
+
+## -ExcludeSTIG: leave these out (short names, as above); [] = none
+# win_check_stig_evaluate_exclude: []
+
+## more arguments for Evaluate-STIG, e.g. ["-ScanType", "Classified", "-AnswerKey", "SITE"]; -Output
+## and -OutputPath are the job's
+# win_check_stig_evaluate_args: []
+
+## -Output: CKLB, or CKL (the older XML checklist)
+# win_check_stig_evaluate_output: CKLB
+
+## a checklist Evaluate-STIG's own schema check rejects (moved to its Bad_CKL folder): true = read
+## it from there anyway, said in the report; false = the server is not scanned
+# win_check_stig_evaluate_rejected: true
+
+## task = as SYSTEM in a one-time scheduled task (deleted after; outside the WinRM session's memory
+## and time limits - Evaluate-STIG wants SYSTEM or an administrator); direct = in the job's own
+## WinRM session, as its user
+# win_check_stig_run_as: task
+
+## the PowerShell that runs Evaluate-STIG.ps1; empty = Windows PowerShell 5.1
+## (C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe)
+# win_check_stig_powershell: ""
+
+## seconds Evaluate-STIG may take (every STIG of a server: five to thirty minutes); then it is
+## stopped and the server not scanned
+# win_check_stig_timeout: 3600
+
+## folders to search for Evaluate-STIG when win_check_stig_evaluate is empty and no scheduled task
+## runs it; [] = the local drives
+# win_check_stig_search: []
+
+## how many folder levels down the search goes (C:\Users\admin\Desktop\Evaluate-STIG is 4)
+# win_check_stig_search_depth: 4
+
+## ---- Kept on the server
+## --------------------------------------------------------------------------------------- one
+## folder per checklist (a STIG, or a STIG of one web site or database instance): each run's summary
+## (JSON) and checklist (STIG Manager imports it), latest-summary.json; only SYSTEM and
+## Administrators can open it. A dry run keeps nothing
+# win_check_stig_dir: 'C:\ProgramData\site-automation\stig'
+
+## runs kept per checklist (the oldest deleted); when each rule last passed is kept in every
+## summary, so it outlives them
+# win_check_stig_keep: 10
+
+# ---- check_stig ----------------------------------------------------------------------------------
+## ---- STIG Manager (read-only)
+## --------------------------------------------------------------------------------- The job logs in
+## as a Keycloak client with the client credentials grant - your autostig client, or another one -
+## from the "STIG Manager API" credential (STIGMAN_TOKEN_URL, STIGMAN_CLIENT_ID,
+## STIGMAN_CLIENT_SECRET), or from the check_stig_stigman_token_url / _client_id / _client_secret
+## settings (keep the secret in a vault). The client needs the scope stig-manager:collection:read
+## and a grant (Restricted is enough) in the collections to read. STIG Manager's API, e.g.
+## https://stigman.example.mil/api ; empty = not compared with STIG Manager (only with the host's
+## earlier scans)
+# check_stig_stigman_api: ""
+
+## Keycloak's token endpoint (https://keycloak.example.mil/realms/stigman/protocol/openid-
+## connect/token); empty = the credential's
+# check_stig_stigman_token_url: ""
+
+## the client, e.g. autostig; empty = the credential's
+# check_stig_stigman_client_id: ""
+
+## its secret (vault it); empty = the credential's
+# check_stig_stigman_client_secret: ""
+
+## scopes to ask for, e.g. "stig-manager:collection:read"; empty = the client's default scopes
+# check_stig_stigman_scope: ""
+
+## check the HTTPS certificates of STIG Manager and Keycloak
+# check_stig_stigman_validate_certs: true
+
+## a CA bundle on the AAP side to check them with (the DoD roots); empty = the execution
+## environment's
+# check_stig_stigman_ca_path: ""
+
+## seconds per request
+# check_stig_stigman_timeout: 60
+
+## Finding each host's asset. Set the collection per group or per host (group_vars, host_vars, or
+## the inventory's variables in AAP): the asset is looked for only there. Empty = every collection
+## the client can read; a host whose name matches assets in two collections is listed and not
+## compared until its collection is set. the collection this host's asset is in, e.g. "RHEL Servers"
+# check_stig_stigman_collection: ""
+
+## with no collection set: search only these collections ([] = every one the client can read)
+# check_stig_stigman_collections: []
+
+## this host's asset name in STIG Manager; empty = the inventory name, then its short name (web01
+## for web01.example.mil); the asset's FQDN field matches too
+# check_stig_stigman_asset: ""
+
+## the reviews that count as the checklist (a rejected review does not); [accepted] = only what was
+## accepted
+# check_stig_stigman_statuses: [saved, submitted, accepted]
+
+## a host not found in STIG Manager (or its collection not readable): warning; critical; or none =
+## listed in the report only
+# check_stig_stigman_missing_severity: warning
+
+## ---- Findings
+## ------------------------------------------------------------------------------------------------
+## the finding for a drifted or new fail, by the rule's CAT (high = CAT I)
+# check_stig_severity: {high: critical, medium: warning, low: warning}
+
+## a rule STIG Manager has as Not a Finding that has failed in every scan of the host (never passed,
+## so nothing moved that the job saw): none = listed in the report only; warning or critical = a
+## finding
+# check_stig_disagree_severity: none
+
+## rules OpenSCAP is known to get wrong at your site: never a finding, listed in the report as left
+## out. SV-257985, V-257985, RHEL-09-255045 or the SCAP rule's name (sshd_disable_root_login); per
+## group or host too
+# check_stig_ignore_rules: []
+
 # ---- win_check_time ------------------------------------------------------------------------------
 ## seconds off its time source -> warning
 # win_check_time_offset_warn_sec: 1

@@ -1,0 +1,31 @@
+---
+# STIG Manager, read once for every host of the play from the AAP side (library/site_stigman_read.py, GET only):
+# _stig_sm_entries is the list to read - one entry per host (Linux, tasks/main.yml) or per checklist of a host
+# (Windows, tasks/windows.yml: each with its id) - and _stig_sm what was read.
+- name: STIG | read every host's checklist from STIG Manager (read-only, once, from the AAP side)
+  site_stigman_read:
+    api: "{{ check_stig_stigman_api }}"
+    token_url: "{{ check_stig_stigman_token_url or lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') }}"
+    client_id: "{{ check_stig_stigman_client_id or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_ID') }}"
+    client_secret: "{{ check_stig_stigman_client_secret or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET') }}"
+    scope: "{{ check_stig_stigman_scope }}"
+    collections: "{{ check_stig_stigman_collections }}"
+    validate_certs: "{{ check_stig_stigman_validate_certs | bool }}"
+    ca_path: "{{ check_stig_stigman_ca_path }}"
+    timeout: "{{ check_stig_stigman_timeout | int }}"
+    hosts: "{{ _stig_sm_entries }}"
+  register: _stig_sm
+  delegate_to: localhost
+  run_once: true
+  become: false
+  check_mode: false             # only reads
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  when: check_stig_stigman_api | length > 0
+
+- name: STIG | STIG Manager could not be read at all
+  ansible.builtin.debug:
+    msg: "STIG Manager: {{ _stig_sm.error }}"
+  run_once: true
+  when: check_stig_stigman_api | length > 0 and _stig_sm.error | default('') | length > 0

@@ -13,7 +13,9 @@ assessment. The **STIG drift report** finds that on the next scheduled run.
 - What moved is a finding; the hosts with one fail, so a workflow can open tickets. The report is
   emailed (`report_email_to`) and published (`report_web_dest`) like every other report.
 
-Linux only. VMware has its own STIG tooling (the appliance), and Windows has no free SCAP content.
+Windows servers have their own template, the **Windows STIG drift report**: Evaluate-STIG on each
+server, every STIG that applies, each checklist compared the same way ([Windows servers](#windows-servers)).
+VMware has its own STIG tooling (the appliance).
 
 ## What it reports
 
@@ -138,7 +140,10 @@ check_stig_evaluate_args: ["--AnswerKey", "SITE"]  # optional: your own argument
   that checklist.
 - On the report, the scan's column says *V2R10 (Evaluate-STIG)*. A **Start here** card shows what Evaluate-STIG found
   for the rule (its finding details) instead of an `oscap` command, and the rule's checklist is kept on the host
-  (`<time>_results.cklb.gz`, which STIG Manager imports).
+  (`<time>_results.cklb.gz`, which STIG Manager imports). The Disagree table's last column has the first line of
+  what it found; **What Evaluate-STIG found - in full**, below the tables, has all of it for every drifted, new and
+  disagree rule (up to 4,000 characters each). Evaluate-STIG's own header in it - *Evaluate-STIG 1.2607.0
+  (Scan-RHEL8_Checks) found this to be OPEN on ...*, its *ResultHash* and the `~~~~` and `----` lines - is left out.
 - **Switching scanners starts the history again.** The first run with the other scanner is not compared with the
   scans before it: each scanner checks rules its own way, and a rule one passed and the other fails is not drift.
   The every-host table says so for that run.
@@ -247,6 +252,65 @@ collection, the asset and the checklist's STIG revision - beside the scan's (*V2
    workflow 33, with the tickets step after it ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#33-stig-drift-weekly))
    - and in the patching workflow after the patch job.
 
+## Windows servers
+
+`playbooks/win_stig_drift_report.yml` (the **Windows STIG drift report** template) does the same on
+Windows, with Evaluate-STIG - there is no free SCAP content for Windows to run OpenSCAP with:
+
+- **Evaluate-STIG runs on the server as SYSTEM**, in a one-time scheduled task the job deletes after
+  (`win_check_stig_run_as: task`): outside the WinRM session's memory and time limits, with the rights
+  Evaluate-STIG wants. It writes CKLB into a folder of the job's own (deleted after); **every STIG that
+  applies** is scanned - Windows Server 2019, 2022 or 2025, Defender, Firewall, .NET, IIS, Edge, and so on -
+  unless `win_check_stig_evaluate_select` names some (Evaluate-STIG's short names, `-SelectSTIG`).
+- **Where it is**: `win_check_stig_evaluate` (its folder, e.g. `C:\Evaluate-STIG`). Empty, the job finds
+  it: a scheduled task that runs `Evaluate-STIG.ps1` (its path, and where it writes), else a folder named
+  `Evaluate-STIG*` on the local drives, four levels down (`C:\Users\admin\Desktop\Evaluate-STIG` is four);
+  the newest if there are several. The report's **Every host** table and the job output say where it was
+  found. Not found, the server is listed as not scanned, with where it looked and what to set.
+- **Or read what it already wrote**: `win_check_stig_evaluate_read: auto` reads the checklists your own
+  Evaluate-STIG runs leave - the folder its scheduled task writes to (`-OutputPath`), else its default,
+  `C:\Users\Public\Documents\STIG_Compliance` - or name a folder. Each STIG's newest checklist of this
+  server is read (its own `<server>\Checklist` folder; never `Previous`, never another server's); the
+  report says the checklist's date (*its checklist of 2026-10-29*). Drift is then as fresh as your runs.
+- **Each checklist is a result of its own**: a STIG, or a STIG of one IIS web site or database instance.
+  Its rows read *win01 - Microsoft Windows Server 2022*, its findings name it, and it is kept in its own
+  folder on the server (below).
+- **STIG Manager**: the server's asset (`check_stig_stigman_asset`, `check_stig_stigman_collection` - the
+  same settings and credential as Linux) and each STIG of it. A **web site or database checklist** is the
+  asset STIG Manager named when it imported it: `<server>-<site>-<instance>`, `NA` for none
+  (*win01-Default Web Site-NA*). A STIG the asset **does not have** in STIG Manager (Evaluate-STIG scans more
+  than a site may track) is listed - *not compared: the asset win01 (Windows Servers) does not have
+  MS_Edge_STIG assigned* - and is **no finding**. The server's asset not there at all is one finding for
+  the server, not one per STIG.
+- Drift, new fails, disagree, fixed but Open, left out (`check_stig_ignore_rules`), the severities and the
+  report are the Linux ones; the `check_stig_*` settings for STIG Manager and the findings apply to both.
+
+On the server, `win_check_stig_dir` (`C:\ProgramData\site-automation\stig`, only SYSTEM and
+Administrators can open it), one folder per checklist:
+
+```text
+Windows_Server_2022_STIG\20261030T120500Z_summary.json     one result per rule, and when each last passed
+Windows_Server_2022_STIG\20261030T120500Z_checklist.cklb   Evaluate-STIG's checklist (STIG Manager imports it)
+Windows_Server_2022_STIG\latest-summary.json
+IIS_10-0_Site_STIG_Default_Web_Site\...
+```
+
+Setting it up: the **Machine (Windows)** credential (an administrator - the scheduled task runs as SYSTEM)
+and the **STIG Manager API** credential on the template ([SETUP_AAP.md](SETUP_AAP.md#windows-stig-drift-report)),
+`aap/extra_vars/win_stig_drift_report.yml`; run it once as **Check** with a Limit of one server (it runs
+Evaluate-STIG and compares, keeps nothing), then for real, then weekly. The Windows health check runs it
+when asked by name (`health_checks: [stig]`).
+
+| Setting | Default | |
+|---|---|---|
+| `win_check_stig_evaluate` | empty: found | Evaluate-STIG's folder on the server (or `Evaluate-STIG.ps1`) |
+| `win_check_stig_evaluate_read` | empty: run it | `auto`, or a folder: read the checklists it already wrote |
+| `win_check_stig_evaluate_select`, `_exclude`, `_args` | `[]` | `-SelectSTIG`, `-ExcludeSTIG` (short names), your own arguments (`-ScanType`, `-AnswerKey`) |
+| `win_check_stig_run_as` | `task` | `direct`: in the job's WinRM session, as its user |
+| `win_check_stig_timeout` | 3600 | seconds Evaluate-STIG may take (all STIGs: five to thirty minutes) |
+| `win_check_stig_search`, `_search_depth` | the local drives, 4 | where and how deep to look for it |
+| `win_check_stig_dir`, `win_check_stig_keep` | `C:\ProgramData\site-automation\stig`, 10 | where the scans are kept, and how many per checklist |
+
 ## Settings
 
 Every one is in `roles/check_stig/defaults/main.yml` and docs/VARIABLES_REFERENCE.md. The ones
@@ -273,6 +337,8 @@ you are most likely to set:
 ## Not in this version
 
 - Nothing is written to STIG Manager - by design. To import a scan, the results file is on the host.
+- Linux scans one STIG per host (its RHEL STIG); Windows every STIG Evaluate-STIG finds. The other STIGs
+  Evaluate-STIG writes on Linux (Firefox, ...) are not compared yet.
 - No remediation. A drifted rule's fix is in the HTML report; fixing it automatically, behind an
   approval, is a possible later step.
 - In no health check shortcut (daily, weekly, all): a scan takes minutes. The health check runs it

@@ -229,8 +229,8 @@ run "Evaluate-STIG: drift (CAT I critical), what it found in Start here" fail -e
     "[CRITICAL] stig: 1 STIG rule STIG Manager has as Not a Finding or Not Applicable fails now: V-257821 CAT I" "DRIFT V-257821 (RHEL-09-214020) CAT I"
 decoded "$(ls "$work/mail"/* | head -1)"
 grep -q "What Evaluate-STIG found:" "$work/mail.txt" && grep -q "SV-257821 is not set as required" "$work/mail.txt" && grep -q "V2R10 (Evaluate-STIG)" "$work/mail.txt" \
-    && grep -q "_results.cklb.gz" "$work/mail.txt" \
-    && echo "ok   - the email: Start here with what Evaluate-STIG found, the scan's column says Evaluate-STIG, its checklist on the host" || { echo "FAIL - the Evaluate-STIG email"; fails=$((fails + 1)); }
+    && grep -q "_results.cklb.gz" "$work/mail.txt" && grep -q "What Evaluate-STIG found - in full" "$work/mail.txt" && ! grep -q "ResultHash" "$work/mail.txt" \
+    && echo "ok   - the email: Start here with what Evaluate-STIG found (its header left out), in full below the tables, the scan's column says Evaluate-STIG, its checklist on the host" || { echo "FAIL - the Evaluate-STIG email"; fails=$((fails + 1)); }
 sleep 1
 echo '{"SV-257985": "open"}' > "$work/es_results.json"
 rm -f "$work/mail"/*

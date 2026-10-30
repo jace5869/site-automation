@@ -88,6 +88,7 @@
 #   - vmware_trust_report.yml
 #   - win_cert_report.yml
 #   - win_health_check.yml
+#   - win_stig_drift_report.yml
 #   - win_troubleshoot.yml
 #   - win_trust_report.yml
 

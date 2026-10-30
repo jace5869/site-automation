@@ -33,6 +33,7 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | Service watch - apply approved fix | `playbooks/service_fix_approved.yml` | After an approval | [SERVICE_WATCH_DEMO.md](SERVICE_WATCH_DEMO.md#part-7-approving-a-fix) |
 | POA&M status | `playbooks/poam_status.yml` | Report | [SETUP_AAP.md](SETUP_AAP.md#poam-status), [RUNBOOKS.md](RUNBOOKS.md#poam-status-playbookspoam_statusyml) |
 | STIG drift report | `playbooks/stig_drift_report.yml` | Report | [STIG_DRIFT.md](STIG_DRIFT.md#setting-it-up), workflow 33: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#33-stig-drift-weekly) |
+| Windows STIG drift report | `playbooks/win_stig_drift_report.yml` | Report | [STIG_DRIFT.md](STIG_DRIFT.md#windows-servers) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | Setup or test | workflow 10: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#10-stig-manager-deploy-with-checks) |
 | Network performance report | `playbooks/net_perf_report.yml` | Report | [NETWORK_PERF.md](NETWORK_PERF.md#set-it-up), workflow 34: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#34-network-performance-hourly) |
 | Log analysis | `playbooks/log_analysis.yml` | On demand | [LOG_ANALYSIS.md](LOG_ANALYSIS.md#set-it-up-in-aap) |

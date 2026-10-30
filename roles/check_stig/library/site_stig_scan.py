@@ -233,7 +233,7 @@ def checklist_version(st):
     return "V%sR%s" % (v, m.group(1)) if v and m else stig_version(st.get("title"), st.get("release"))
 
 
-def checklist_items(st, details_max=600):
+def checklist_items(st, details_max=4000):
     """One item per STIG rule of the checklist (by its SV id); what Evaluate-STIG found is kept for the fails."""
     by = {}
     for r in st["rules"]:

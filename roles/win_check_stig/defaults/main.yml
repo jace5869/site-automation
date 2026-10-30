@@ -1,0 +1,24 @@
+---
+# WINDOWS STIG DRIFT (playbooks/win_stig_drift_report.yml): Evaluate-STIG on the server - every STIG it finds that
+# applies (Windows Server 2019 / 2022 / 2025, Defender, Firewall, .NET, IIS, Edge ...) - each checklist compared with
+# STIG Manager (read-only) and with the server's earlier scans, as on Linux. STIG Manager, the findings and the
+# rules left out are the check_stig_* settings (roles/check_stig/defaults/main.yml), shared with Linux. The job never
+# installs or updates Evaluate-STIG. docs/STIG_DRIFT.md.
+
+# ---- Evaluate-STIG on the server ------------------------------------------------------------------------------
+win_check_stig_evaluate: ""              # its folder on the server (or Evaluate-STIG.ps1), e.g. 'C:\Evaluate-STIG'; empty = found: a scheduled task that runs Evaluate-STIG.ps1, else a folder named Evaluate-STIG* on the local drives (win_check_stig_search_depth levels down; the newest if several) - the report says where
+win_check_stig_evaluate_read: ""         # read the checklists Evaluate-STIG already wrote instead of running it: auto = the folder its scheduled task writes to (-OutputPath), else its default C:\Users\Public\Documents\STIG_Compliance; or a folder - this server's newest checklist of each STIG (not its Previous folders, not another server's); empty = run it
+win_check_stig_evaluate_select: []       # -SelectSTIG: only these STIGs, by the short names your Evaluate-STIG lists (Evaluate-STIG.ps1 -ListSupportedProducts), e.g. [WinServer2022, IIS10Server, IIS10Site]; [] = every STIG that applies to the server
+win_check_stig_evaluate_exclude: []      # -ExcludeSTIG: leave these out (short names, as above); [] = none
+win_check_stig_evaluate_args: []         # more arguments for Evaluate-STIG, e.g. ["-ScanType", "Classified", "-AnswerKey", "SITE"]; -Output and -OutputPath are the job's
+win_check_stig_evaluate_output: CKLB     # -Output: CKLB, or CKL (the older XML checklist)
+win_check_stig_evaluate_rejected: true   # a checklist Evaluate-STIG's own schema check rejects (moved to its Bad_CKL folder): true = read it from there anyway, said in the report; false = the server is not scanned
+win_check_stig_run_as: task              # task = as SYSTEM in a one-time scheduled task (deleted after; outside the WinRM session's memory and time limits - Evaluate-STIG wants SYSTEM or an administrator); direct = in the job's own WinRM session, as its user
+win_check_stig_powershell: ""            # the PowerShell that runs Evaluate-STIG.ps1; empty = Windows PowerShell 5.1 (C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe)
+win_check_stig_timeout: 3600             # seconds Evaluate-STIG may take (every STIG of a server: five to thirty minutes); then it is stopped and the server not scanned
+win_check_stig_search: []                # folders to search for Evaluate-STIG when win_check_stig_evaluate is empty and no scheduled task runs it; [] = the local drives
+win_check_stig_search_depth: 4           # how many folder levels down the search goes (C:\Users\admin\Desktop\Evaluate-STIG is 4)
+
+# ---- Kept on the server ---------------------------------------------------------------------------------------
+win_check_stig_dir: 'C:\ProgramData\site-automation\stig'  # one folder per checklist (a STIG, or a STIG of one web site or database instance): each run's summary (JSON) and checklist (STIG Manager imports it), latest-summary.json; only SYSTEM and Administrators can open it. A dry run keeps nothing
+win_check_stig_keep: 10                  # runs kept per checklist (the oldest deleted); when each rule last passed is kept in every summary, so it outlives them

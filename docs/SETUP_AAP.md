@@ -344,6 +344,18 @@ Weekly, and after patching: each Linux host's OpenSCAP STIG scan against its che
 | Credentials | `Linux ssh (sudo)`, `STIG Manager API` (the client: your autostig one, or another with `stig-manager:collection:read` and a grant in the collections) |
 | Variables | `aap/extra_vars/stig_drift_report.yml`: `check_stig_stigman_api`; each host's `check_stig_stigman_collection` in the inventory (per group or host) |
 
+### Windows STIG drift report
+
+Weekly, and after patching: Evaluate-STIG on each Windows server - every STIG that applies - each checklist against
+the server's asset in STIG Manager (read-only) and against its earlier scans; the scans stay on the servers
+([STIG_DRIFT.md](STIG_DRIFT.md#windows-servers)).
+
+| Field | Value |
+|---|---|
+| Playbook | `playbooks/win_stig_drift_report.yml` |
+| Credentials | `Machine (Windows)` (an administrator: Evaluate-STIG runs as SYSTEM in a one-time scheduled task), `STIG Manager API` (the same as the Linux report) |
+| Variables | `aap/extra_vars/win_stig_drift_report.yml`: `check_stig_stigman_api`; `win_check_stig_evaluate` if Evaluate-STIG is not found; each server's `check_stig_stigman_collection` in the inventory |
+
 ### Network performance report
 
 Hourly or daily, and when users say "the network is slow": latency, loss and jitter from each Linux host to
