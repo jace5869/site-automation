@@ -113,6 +113,16 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 ## Rules this job added, to take out
 # fapolicyd_container_rules_remove: []
 """),
+    "fapolicyd_fix.yml": ("fapolicyd fix", "Machine (with sudo)", "", """\
+## The hosts: target (a group of this inventory) or the Limit
+# target: app_servers
+## The approved fixes, each exactly as the report's "Fixes to approve" gives it - after your security approval.
+## Run in Check first. Empty (the default): read only.
+# fapolicyd_fix_approved:
+#   - "trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644"
+#   - "db_max_size: 50 -> 200"
+#   - "restart fapolicyd (it is failed)"
+"""),
     "fapolicyd_denials.yml": ("fapolicyd denials", "Machine, ACT model key (Teams webhook: optional)", "", """\
 ## The hosts: target (a group of this inventory) or the Limit
 # target: app_servers

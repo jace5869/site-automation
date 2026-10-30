@@ -1,0 +1,164 @@
+---
+# The approved fixes this host has (fapolicyd_fix_plan): trust files' owner, group and mode, SELinux labels,
+# db_max_size; then fapolicyd restarted (its restart approved, or db_max_size changed while it ran) or its trust
+# reloaded (fapolicyd-cli --update), checked in the same go as the way back (fapolicyd_fix_reload.sh). Running before
+# and not after - or a program no longer starts: everything put back. Down before and still down: the fixes stay, its
+# journal in the report, the host fails after the report (_ff_apply.state).
+
+- name: Fapolicyd fix | the plan (the approved lines this host has now)
+  ansible.builtin.set_fact:
+    _ff_plan: "{{ _ff | fapolicyd_fix_plan(fapolicyd_fix_approved) }}"
+
+- name: Fapolicyd fix | a line approved that this job never gives - nothing changed
+  ansible.builtin.set_fact:
+    _ff_apply: {state: refused, error: "a line approved is not one this job gives: nothing changed on any host",
+                bad: "{{ _ff_plan.bad }}", refused: [], applied: [], not_here: "{{ _ff_plan.not_here }}"}
+  when: _ff_plan.bad | length > 0
+
+- name: Fapolicyd fix | nothing approved that this host has
+  ansible.builtin.set_fact:
+    _ff_apply: {state: "{{ 'refused' if _ff_plan.refused else 'unchanged' }}", error: "", bad: [], refused: "{{ _ff_plan.refused }}",
+                applied: [], not_here: "{{ _ff_plan.not_here }}"}
+  when: _ff_apply is not defined and not _ff_plan.changed
+
+# fixed before the block: its condition is checked again for each of its tasks, and "the result" sets _ff_apply
+- name: Fapolicyd fix | anything to make on this host
+  ansible.builtin.set_fact:
+    _ff_go: "{{ _ff_apply is not defined }}"
+
+- name: Fapolicyd fix | make the fixes, then restart or reload fapolicyd
+  when: _ff_go | bool
+  vars:
+    _ff_conf: "{{ fapolicyd_fix_dir }}/fapolicyd.conf"
+    # the way back, a shell function sent inline with the restart and in the rescue - never a file run on the host
+    _ff_back: "{{ _ff_plan.apply | fapolicyd_fix_rollback(_ff_conf, _ff_tmp.path ~ '/fapolicyd.conf') }}"
+  block:
+    - name: Fapolicyd fix | a folder for the way back
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: .fapolicyd-fix
+      register: _ff_tmp
+      check_mode: false
+
+    - name: Fapolicyd fix | fapolicyd.conf as it is now (db_max_size)
+      ansible.builtin.copy:
+        src: "{{ _ff_conf }}"
+        dest: "{{ _ff_tmp.path }}/fapolicyd.conf"
+        remote_src: true
+        mode: preserve
+      check_mode: false
+      when: _ff_plan.db_to | length > 0
+
+    - name: Fapolicyd fix | trust file access (to the package's owner, group and mode)
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+        follow: false
+      loop: "{{ _ff_plan.apply | selectattr('kind', 'equalto', 'access') | list }}"
+      loop_control:
+        label: "{{ item.line }}"
+
+    - name: Fapolicyd fix | SELinux labels (restorecon)
+      ansible.builtin.command:
+        argv: [restorecon, -v, "{{ item.path }}"]
+      loop: "{{ _ff_plan.apply | selectattr('kind', 'equalto', 'label') | list }}"
+      loop_control:
+        label: "{{ item.line }}"
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Fapolicyd fix | db_max_size
+      ansible.builtin.lineinfile:
+        path: "{{ _ff_conf }}"
+        regexp: '^\s*db_max_size\s*='
+        line: "db_max_size = {{ _ff_plan.db_to }}"
+      when: _ff_plan.db_to | length > 0
+
+    - name: Fapolicyd fix | fapolicyd takes the new fapolicyd.conf (fapolicyd-cli --check-config)
+      ansible.builtin.command:
+        argv: [fapolicyd-cli, --check-config]
+      register: _ff_check
+      changed_when: false
+      failed_when: _ff_check.rc != 0
+      when: _ff_plan.db_to | length > 0 and not ansible_check_mode
+
+    - name: Fapolicyd fix | {{ 'restart fapolicyd' if _ff_plan.restart else 'reload its trust (fapolicyd-cli --update)' }}, check it, put back if it broke
+      ansible.builtin.shell:
+        cmd: |
+          {{ _ff_back }}
+          set -- {{ 'restart' if _ff_plan.restart else 'update' }} {{ _ff.active | quote }} {{ _ff.python | default('/usr/bin/python3') | quote }} {{ fapolicyd_fix_wait | int }}
+          {{ lookup('ansible.builtin.file', 'fapolicyd_fix_reload.sh') }}
+        executable: /bin/sh
+      register: _ff_reload
+      changed_when: true
+      when: not ansible_check_mode and (_ff_plan.restart or _ff_plan.update)
+
+    - name: Fapolicyd fix | the result
+      ansible.builtin.set_fact:
+        _ff_apply:
+          state: >-
+            {{ 'would change' if ansible_check_mode else ('changed' if _ff_word in ['none', 'active']
+               else ('rolled back' if _ff_word == 'rolled-back' else 'still down')) }}
+          active_after: >-
+            {{ _ff.active if _ff_word == 'none' else ('active' if _ff_word == 'active'
+               else (_ff_res[-1] if _ff_word == 'rolled-back' else _ff_word | regex_replace('^still-', ''))) }}
+          error: >-
+            {{ '' if _ff_word in ['none', 'active']
+               else ('fapolicyd ' ~ _ff_res[2] ~ ' after the fix: everything put back, fapolicyd ' ~ _ff_res[-1]
+                     if _ff_word == 'rolled-back' else 'fapolicyd is still ' ~ (_ff_word | regex_replace('^still-', ''))
+                     ~ ' after the fix: the fixes stay - its journal below') }}
+          note: >-
+            {{ 'fapolicyd not restarted: it is ' ~ _ff.active ~ ' - approve its restart line to start it'
+               if _ff_word == 'none' and _ff.active != 'active' and not ansible_check_mode else '' }}
+          back: "{{ 'putting it back failed: look at the files by hand' if 'BACK failed' in (_ff_reload.stdout_lines | default([])) else '' }}"
+          applied: "{{ _ff_plan.apply }}"
+          refused: "{{ _ff_plan.refused }}"
+          not_here: "{{ _ff_plan.not_here }}"
+          bad: []
+          journal: "{{ (_ff_reload.stdout_lines | default([])) | select('match', '^JOURNAL ') | map('regex_replace', '^JOURNAL ', '') | list }}"
+      vars:
+        _ff_res: "{{ ((_ff_reload.stdout_lines | default([])) | select('match', '^RESULT ') | list + ['RESULT none'])[0].split() }}"
+        _ff_word: "{{ _ff_res[1] }}"
+  rescue:
+    - name: Fapolicyd fix | put back what was changed
+      ansible.builtin.shell:
+        cmd: |
+          {{ _ff_back }}
+          back
+        executable: /bin/sh
+      register: _ff_putback
+      changed_when: true
+      failed_when: false
+      when: not ansible_check_mode and _ff_tmp.path is defined
+
+    - name: Fapolicyd fix | the fix failed - said in the report, the host fails after it
+      ansible.builtin.set_fact:
+        _ff_apply:
+          state: failed
+          active_after: "{{ _ff.active }}"
+          error: >-
+            {{ (ansible_failed_task.name | default('') | regex_replace('^.*[|] ', '')) ~ ': '
+               ~ ((ansible_failed_result.stderr | default('', true)) or (ansible_failed_result.stdout | default('', true))
+                  or (ansible_failed_result.msg | default(''))) | trim | replace('\n', ' ')
+               ~ (' - what was changed is put back' if _ff_putback.rc | default(1) == 0 else ' - putting it back failed: look at the files by hand') }}
+          applied: []
+          refused: "{{ _ff_plan.refused }}"
+          not_here: "{{ _ff_plan.not_here }}"
+          bad: []
+  always:
+    - name: Fapolicyd fix | remove the way back
+      ansible.builtin.file:
+        path: "{{ _ff_tmp.path }}"
+        state: absent
+      check_mode: false
+      when: _ff_tmp.path is defined
+
+- name: Fapolicyd fix | the fixes
+  ansible.builtin.debug:
+    msg: >-
+      {{ _ff_apply.state }}{{ (': ' ~ _ff_apply.error) if _ff_apply.error | default('') else '' }}
+      {{- (' - ' ~ _ff_apply.note) if _ff_apply.note | default('') else '' }}
+      {{- (' - made: ' ~ (_ff_apply.applied | map(attribute='line') | join('; '))) if _ff_apply.applied | default([]) else '' }}
+      {{- (' - not proposed here: ' ~ (_ff_apply.not_here | join('; '))) if _ff_apply.not_here | default([]) else '' }}

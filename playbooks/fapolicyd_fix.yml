@@ -1,0 +1,61 @@
+---
+# fapolicyd fix: why fapolicyd is down, or near its limits, on each host - trust files it cannot read (owner, group,
+# mode against the fapolicyd package's own), their SELinux labels, db_max_size too small for the trust database, the
+# service not running - the fix for each as a line to approve, and once approved, those fixes made. ONE report of
+# every host: emailed (report_email_to) and on the report website.
+#   target                  the hosts (default: all) - or a Limit of hosts
+#   fapolicyd_fix_approved  the approved lines, as the report gives them ([] = read only, the default)
+# After the fixes, fapolicyd is restarted (its restart line approved, or db_max_size changed while it ran) or its trust
+# reloaded, and checked in the same go on the host: running before and not after - or a program no longer starts -
+# everything put back. Run it in Check first: it shows what would change. Each fix is a change to a security control:
+# route it through your security approval (the ISSO). docs/RUNBOOKS.md, "fapolicyd fix".
+- name: Fapolicyd fix - what keeps it down, the fixes
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  become: true
+  roles:
+    - fapolicyd_fix
+
+# on the hosts, once on the AAP side (run_once, delegated to localhost): a Limit of hosts needs no localhost
+- name: Fapolicyd fix - the report
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Fapolicyd fix | email the report, publish it (report_email_to, report_web_dest)
+      ansible.builtin.include_role:
+        name: site_email
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+        _report: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | list
+             | fapolicyd_fix_report(ansible_play_hosts_all, site_report_title | default(''), ansible_check_mode) }}
+      when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+
+- name: Fapolicyd fix - after the report
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  tasks:
+    - name: Fapolicyd fix | no email
+      ansible.builtin.debug:
+        msg: "No email: report_email_to is not set (docs/EMAIL_REPORTS.md)."
+      run_once: true
+      when: report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0
+
+    - name: Fapolicyd fix | not fixed on this host (after the report)
+      ansible.builtin.fail:
+        msg: >-
+          {{ _ff_apply.state }}: {{ _ff_apply.error }}{{ (' - ' ~ (_ff_why | map(attribute='line') | zip(_ff_why | map(attribute='why'))
+          | map('join', ': ') | join('; '))) if _ff_why else '' }}
+      vars:
+        _ff_why: "{{ (_ff_apply.bad | default([])) + (_ff_apply.refused | default([])) }}"
+      when: _ff_apply is defined and _ff_apply.state in ['failed', 'refused', 'rolled back', 'still down']
+
+    - name: Fapolicyd fix | the host could not be read
+      ansible.builtin.fail:
+        msg: "{{ _ff.error }}"
+      when: _ff is defined and (_ff.state == 'not read' or _ff.error | default('') | length > 0)

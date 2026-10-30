@@ -39,6 +39,7 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | Log analysis | `playbooks/log_analysis.yml` | On demand | [LOG_ANALYSIS.md](LOG_ANALYSIS.md#set-it-up-in-aap) |
 | fapolicyd denials | `playbooks/fapolicyd_denials.yml` | Report | [RUNBOOKS.md](RUNBOOKS.md#fapolicyd-denials-playbooksfapolicyd_denialsyml) |
 | fapolicyd and containers | `playbooks/fapolicyd_containers.yml` | Report; with approved rules, a change | [RUNBOOKS.md](RUNBOOKS.md#fapolicyd-and-containers-playbooksfapolicyd_containersyml) |
+| fapolicyd fix | `playbooks/fapolicyd_fix.yml` | Report; with approved fixes, a change | [RUNBOOKS.md](RUNBOOKS.md#fapolicyd-fix-playbooksfapolicyd_fixyml) |
 
 ## Windows servers
 

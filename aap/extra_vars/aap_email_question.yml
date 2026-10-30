@@ -34,6 +34,7 @@
 #   - esxi_security.yml
 #   - fapolicyd_containers.yml
 #   - fapolicyd_denials.yml
+#   - fapolicyd_fix.yml
 #   - health_check.yml
 #   - horizon_capacity_report.yml
 #   - horizon_desktops_check.yml

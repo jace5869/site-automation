@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd_containers](#fapolicyd_containers), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd_containers](#fapolicyd_containers), [fapolicyd_fix](#fapolicyd_fix), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -564,6 +564,27 @@ File: `roles/fapolicyd_containers/defaults/main.yml`
 | `fapolicyd_container_names` | `true` | the containers' names (podman ps, root's and each logged-in user's) |
 | `fapolicyd_container_max` | `200` | at most this many groups per host (the most denied first) |
 | `fapolicyd_container_timeout` | `120` | seconds for ausearch |
+
+## fapolicyd_fix
+
+File: `roles/fapolicyd_fix/defaults/main.yml`
+
+> FAPOLICYD FIX (playbooks/fapolicyd_fix.yml, docs/RUNBOOKS.md "fapolicyd fix"): why fapolicyd is down, or near its limits, on each host - trust files it cannot read, their SELinux labels, db_max_size too small for the trust database, the service not running - with the fix for each as a line to approve; and, once approved, those fixes made.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `fapolicyd_fix_approved` | `[]` | The approved fixes, each exactly as the report's "Fixes to approve" gives it, e.g. - "trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644" - "db_max_size: 50 -> 200" (the number after -> may be your own; auto where fapolicyd 1.4+ runs) - "restart fapolicyd (it is failed)" A line is made… (all of it: the role file) |
+| `fapolicyd_fix_dir` | `/etc/fapolicyd` | fapolicyd's folder: fapolicyd.conf, fapolicyd.trust, trust.d |
+| `fapolicyd_fix_binary` | `/usr/sbin/fapolicyd` | read to see whether this fapolicyd sizes its database itself (db_max_size = auto) |
+| `fapolicyd_fix_owner` | `root` | The trust files' owner, group and modes come from the fapolicyd package (rpm); these only when rpm gives none. the trust files' owner, when rpm gives none |
+| `fapolicyd_fix_group` | `fapolicyd` | their group, when rpm gives none |
+| `fapolicyd_fix_file_mode` | `"0644"` | a trust file's mode, when rpm gives none |
+| `fapolicyd_fix_dir_mode` | `"0750"` | the folders' mode, when rpm gives none |
+| `fapolicyd_fix_large_mb` | `20` | a trust file larger than this (MB) is listed for a person: every file in it is trusted |
+| `fapolicyd_fix_headroom` | `1.5` | the proposed db_max_size: the estimate times this (where auto is not possible) |
+| `fapolicyd_fix_journal_lines` | `400` | fapolicyd's journal lines read, this boot |
+| `fapolicyd_fix_wait` | `30` | seconds fapolicyd may take to be running again after the restart |
+| `fapolicyd_fix_timeout` | `120` | seconds for each command the job reads with |
 
 ## horizon
 

@@ -9,6 +9,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import re
+from shlex import quote
 
 ORDER = {"critical": 0, "warning": 1, "ok": 2}
 NOTE = ("ACT's proposals (a trust entry, a narrow rule) are security-control changes: route them through your "
@@ -408,8 +409,236 @@ def fapolicyd_containers_report(hostvars_list, names, since="today", title="", r
     return report
 
 
+# ---- the fapolicyd fix job (playbooks/fapolicyd_fix.yml, roles/fapolicyd_fix) --------------------------------------
+FNOTE = ("Each fix changes how fapolicyd, a security control, runs: approve it through your security approval (e.g. the "
+         "ISSO) before it is listed in fapolicyd_fix_approved. A host where fapolicyd was running and is not after a fix "
+         "gets everything put back and fapolicyd restarted.")
+FIX_KNOWN = re.compile(r"^(trust file access: |SELinux label: |restart fapolicyd \(it is |db_max_size: )")
+FIX_DB = re.compile(r"^db_max_size:\s*(\S+)\s*->\s*(\S+)$")
+# each line exactly as the report gives it - a line copied with anything more (a host name after it) is refused
+FIX_FORM = (re.compile(r"^trust file access: /\S+ \S+:\S+ [0-7]{4} -> \S+:\S+ [0-7]{4}$"),
+            re.compile(r"^SELinux label: /\S+ \S+:\S+ -> \S+:\S+$"),
+            re.compile(r"^restart fapolicyd \(it is [a-z-]+\)$"),
+            FIX_DB)
+FIX_ORDER = {"access": 0, "label": 1, "db": 2, "restart": 3}
+
+
+def _norm(s):
+    return " ".join(str(s or "").split())
+
+
+def fapolicyd_fix_plan(ff, approved):
+    """What to change on one host: the read module's result (_ff) and the approved lines (fapolicyd_fix_approved) ->
+    {apply: [fixes], db_to, bad: [{line, why}] (a line this job never gives: nothing changes on any host), refused:
+    [{line, why}] (approved, not possible on this host), not_here: [lines] (not proposed on this host now), restart,
+    update (fapolicyd-cli --update: trust files changed while it runs), changed}. A line is applied only when this run
+    proposes it again - the state it was approved for; a db_max_size line: its "from" must be this host's, its "to" may
+    be the approver's own number (or auto, where this fapolicyd sizes its database itself)."""
+    ff = ff or {}
+    want = []
+    for a in approved or []:
+        a = _norm(a)
+        if a and a not in want:
+            want.append(a)
+    bad, refused, apply, used = [], [], [], set()
+    for a in want:
+        m = FIX_DB.match(a)
+        if not FIX_KNOWN.match(a):
+            bad.append({"line": a, "why": "not a line this job gives (trust file access, SELinux label, db_max_size, restart fapolicyd)"})
+        elif a.startswith("db_max_size:") and not m:
+            bad.append({"line": a, "why": "a db_max_size line is db_max_size: <now> -> <MB or auto>"})
+        elif not any(f.match(a) for f in FIX_FORM):
+            bad.append({"line": a, "why": "not exactly as the report gives it (copied with a host name or more after it?)"})
+        elif m and not (m.group(2) == "auto" or (m.group(2).isdigit() and 1 <= int(m.group(2)) <= 1048576)):
+            bad.append({"line": a, "why": "db_max_size takes a number of MB (1 to 1048576) or auto"})
+    badl = set(b["line"] for b in bad)
+    for f in sorted(ff.get("fixes") or [], key=lambda f: FIX_ORDER.get(f.get("kind"), 9)):
+        if f.get("kind") == "db":
+            for a in want:
+                m = FIX_DB.match(a)
+                if a in badl or not m or m.group(1) != f.get("from"):
+                    continue
+                used.add(a)
+                if m.group(2) == "auto" and not f.get("auto"):
+                    refused.append({"line": a, "why": "this fapolicyd (%s) does not size its database itself: give a number" % ff.get("version", "?")})
+                else:
+                    apply.append(dict(f, to=m.group(2), proposed=f.get("line"), line="db_max_size: %s -> %s" % (f.get("from"), m.group(2))))
+                break
+        elif _norm(f.get("line")) in want:
+            apply.append(f)
+            used.add(_norm(f.get("line")))
+    kinds = set(f["kind"] for f in apply)
+    active = ff.get("active") == "active"
+    restart = "restart" in kinds or ("db" in kinds and active)
+    return {"apply": apply, "db_to": ([f["to"] for f in apply if f["kind"] == "db"] + [""])[0], "bad": bad, "refused": refused,
+            "not_here": [a for a in want if a not in used and a not in badl], "restart": restart,
+            "update": active and not restart and bool(kinds & set(["access", "label"])), "changed": bool(apply)}
+
+
+def fapolicyd_fix_rollback(apply, conf="/etc/fapolicyd/fapolicyd.conf", backup=""):
+    """The shell function back() that puts back what the fixes change (owner, group, mode, SELinux label,
+    fapolicyd.conf), the last change first, and fails when any of it does not go back. Sent inline with the restart
+    (fapolicyd_fix_reload.sh) - never a file run on the host while fapolicyd runs."""
+    out = ["back() {", "    rc=0"]
+    for f in reversed(list(apply or [])):
+        if f.get("kind") == "access":
+            og, mode = (f.get("from") or "").rsplit(" ", 1)
+            out.append("    chown -h %s %s || rc=1" % (quote(og), quote(f["path"])))
+            out.append("    chmod %s %s || rc=1" % (quote(mode), quote(f["path"])))
+        elif f.get("kind") == "label":
+            out.append("    chcon -h %s %s || rc=1" % (quote(f["from"]), quote(f["path"])))
+        elif f.get("kind") == "db" and backup:
+            out.append("    cp -p %s %s || rc=1" % (quote(backup), quote(conf)))
+    return "\n".join(out + ["    return $rc", "}"]) + "\n"
+
+
+def _fix_host(name, hv):
+    ff = _get(hv, "_ff")
+    if not hasattr(ff, "keys") or "state" not in ff:
+        return {"host": name, "state": "not read", "error": "", "fixes": [], "by_hand": [], "journal": [], "db": {}}
+    h = dict(ff)
+    h["host"] = name
+    ap = _get(hv, "_ff_apply")
+    h["apply"] = dict(ap) if hasattr(ap, "keys") else None
+    return h
+
+
+def fapolicyd_fix_report(hostvars_list, names, title="", check=False):
+    """[hostvars of each host], [their names], the report title, a Check run -> roles/site_email's _report: what keeps
+    fapolicyd down or near its limits, the fixes to approve, what this run fixed, what only a person can judge."""
+    hosts = [_fix_host(n, hv) for n, hv in zip(names, hostvars_list)]
+    read = [h for h in hosts if h["state"] == "read" and not h.get("error")]
+    unread = [h for h in hosts if h["state"] == "not read" or (h["state"] == "read" and h.get("error"))]
+    missing = [h["host"] for h in hosts if h["state"] == "not installed"]
+    applied = [h for h in hosts if h.get("apply")]
+    bad_states = ("failed", "rolled back", "refused", "still down")
+    failed = [h for h in applied if h["apply"].get("state") in bad_states]
+    fixed = [h for h in applied if h["apply"].get("state") in ("changed", "would change")]
+    done = {}
+    for h in fixed:
+        done[h["host"]] = set(_norm(f.get("proposed") or f.get("line")) for f in h["apply"].get("applied") or [])
+    down = [h for h in read if (h["apply"] or {}).get("active_after", h.get("active")) != "active"]
+    proposals = {}
+    for h in read:
+        for f in h.get("fixes") or []:
+            if _norm(f.get("line")) not in done.get(h["host"], set()):
+                proposals.setdefault(f["line"], []).append(h["host"])
+    by_hand = [(h["host"], b) for h in read for b in h.get("by_hand") or []]
+    status = "critical" if down or failed else ("warning" if proposals or unread or by_hand else "ok")
+    head = []
+    if proposals:
+        head.append("%d fix(es) to approve on %d host(s)" % (len(proposals), len(set(x for hs in proposals.values() for x in hs))))
+    if fixed:
+        head.append(("would fix %d host(s)" if check else "fixed on %d host(s)") % len(fixed))
+    if failed:
+        head.append("not fixed on %d host(s)" % len(failed))
+    if down:
+        head.append("fapolicyd not running on %d" % len(down))
+    report = {
+        "title": "%s: %s" % (title or "fapolicyd fix", ", ".join(head) if head else "nothing to fix"),
+        "subtitle": "%d host(s) read - fapolicyd's trust files, SELinux labels, db_max_size and service%s"
+                    % (len(read), " - Check: nothing changed" if check else ""),
+        "status": status,
+        "summary": [{"label": "Fixes to approve", "value": len(proposals), "status": "warning" if proposals else "ok"},
+                    {"label": "fapolicyd not running", "value": len(down), "status": "critical" if down else "ok"}]
+                   + ([{"label": "Hosts fixed" if not check else "Hosts it would fix", "value": len(fixed), "status": "ok"}] if applied else [])
+                   + ([{"label": "Not fixed", "value": len(failed), "status": "critical"}] if failed else [])
+                   + [{"label": "For a person", "value": len(by_hand), "status": "warning" if by_hand else "ok"},
+                      {"label": "Hosts read", "value": len(read)}]
+                   + ([{"label": "Not read", "value": len(unread), "status": "warning"}] if unread else []),
+        "sections": [],
+        "footer": FNOTE,
+    }
+    secs = report["sections"]
+    if applied:
+        rows, rs = [], []
+        for h in applied:
+            a = h["apply"]
+            st = a.get("state", "")
+            why = "; ".join([x for x in [a.get("error"), a.get("note"), a.get("back")] if x]
+                            + ["%s: %s" % (b["line"], b["why"]) for b in (a.get("bad") or []) + (a.get("refused") or [])])
+            rows.append([h["host"], st, "\n".join(f["line"] for f in a.get("applied") or []) or "-",
+                         "%s -> %s" % (h.get("active", "?"), a.get("active_after") or h.get("active", "?")),
+                         "\n".join(a.get("not_here") or []) or "-", why or "-"])
+            rs.append("critical" if st in bad_states else "ok")
+        secs.append({"title": "What this run fixed" if not check else "What this run would fix",
+                     "status": "critical" if failed else "ok",
+                     "text": "The fixes approved (fapolicyd_fix_approved) that this run proposed again on the host - a line for "
+                             "a state the host is no longer in is not applied (\"Not proposed here\"). After them: fapolicyd "
+                             "restarted (approved, or db_max_size changed while it ran) or its trust reloaded (fapolicyd-cli "
+                             "--update), and a program still runs (python). Running before and not after: everything put back."
+                             + (" Check: nothing was changed." if check else ""),
+                     "columns": ["Host", "Result", "Fixed", "fapolicyd", "Not proposed here", "Why"], "rows": rows, "row_status": rs})
+    used = set()
+    for h in applied:
+        a = h["apply"]
+        used |= set(_norm(f.get("proposed") or f.get("line")) for f in a.get("applied") or [])
+        used |= set(_norm(f.get("line")) for f in a.get("applied") or [])
+        used |= set(_norm(b.get("line")) for b in (a.get("refused") or []) + (a.get("bad") or []))
+    idle = sorted(set(_norm(x) for h in applied for x in h["apply"].get("not_here") or []) - used)
+    if idle:
+        secs.append({"title": "Approved, made on no host", "status": "warning",
+                     "text": "Lines in fapolicyd_fix_approved that no host of this run has now: fixed already (a run before), for "
+                             "a host outside this run's Limit, or not exactly the report's line. Nothing was changed for them.",
+                     "lines": idle})
+    if proposals:
+        rows, rs = [], []
+        for h in read:
+            for f in h.get("fixes") or []:
+                if f["line"] in proposals:
+                    rows.append([h["host"], f["line"], f.get("why", "")])
+                    rs.append("critical" if f["kind"] == "restart" else "warning")
+        secs.append({"title": "Fixes to approve", "status": "warning",
+                     "text": "Each line is a fix (its hosts and why: below). To apply them, after your security approval, list the "
+                             "lines in fapolicyd_fix_approved (the template's Variables) exactly as here and run the job again - a Check "
+                             "run first shows what it would change. A db_max_size line may end in your own number of MB. A line is "
+                             "applied on every host of the run that has it (use a Limit for fewer). Trust file access: to the "
+                             "owner, group and mode the fapolicyd package gives its own trust files.",
+                     "lines": [line for line, _ in sorted(proposals.items(), key=lambda x: (FIX_ORDER.get(_kind(x[0]), 9), x[0]))]})
+        secs.append({"title": "Why each fix", "columns": ["Host", "Fix", "Why"], "rows": rows, "row_status": rs})
+    if by_hand:
+        secs.append({"title": "For a person", "status": "warning",
+                     "text": "What the job does not change: decide it with the system's owner and your security approval.",
+                     "lines": ["%s: %s" % x for x in by_hand]})
+    if read:
+        rows, rs = [], []
+        for h in read:
+            d = h.get("db") or {}
+            rows.append([h["host"], h.get("active", "?") + (" (permissive)" if h.get("permissive") else ""), h.get("version", ""),
+                         "%s%s" % (d.get("current", "?"), " (auto possible)" if d.get("auto") and d.get("current") != "auto" else ""),
+                         "%s MB (%s MB of trust files, %s RPM files)" % (d.get("need_mb", "?"), d.get("trust_mb", "?"), d.get("rpm_files", "?")),
+                         len(h.get("fixes") or [])])
+            rs.append("critical" if h.get("active") != "active" else ("warning" if h.get("fixes") else "ok"))
+        secs.append({"title": "The hosts", "status": "critical" if down else ("warning" if proposals else "ok"),
+                     "text": "fapolicyd on each host, db_max_size and the estimate it is weighed against (the trust files and the "
+                             "RPM files, about twice that in the database), and how many fixes it has.",
+                     "columns": ["Host", "fapolicyd", "Version", "db_max_size", "Estimate", "Fixes"], "rows": rows, "row_status": rs})
+    for h in read:
+        j = ((h["apply"] or {}).get("journal") or []) or (h.get("journal") if h.get("active") != "active" or h.get("fixes") else [])
+        if j:
+            secs.append({"title": "%s: fapolicyd's journal" % h["host"], "status": "critical" if h.get("active") != "active" else "info",
+                         "text": "fapolicyd's own lines this boot that say something went wrong (journalctl -u fapolicyd -b)"
+                                 + (", after this run's fix" if (h["apply"] or {}).get("journal") else "") + ".",
+                         "lines": [x[:400] for x in j]})
+    if missing:
+        secs.append({"title": "fapolicyd not installed", "lines": ["%d host(s), not looked at: %s" % (len(missing), ", ".join(sorted(missing)))]})
+    if unread:
+        secs.append({"title": "Not read", "status": "warning",
+                     "lines": ["%s: %s" % (h["host"], h.get("error") or "could not be reached, or failed before it was read")
+                               for h in sorted(unread, key=lambda h: h["host"])]})
+    return report
+
+
+def _kind(line):
+    for k, p in (("access", "trust file access: "), ("label", "SELinux label: "), ("db", "db_max_size: "), ("restart", "restart ")):
+        if line.startswith(p):
+            return k
+    return ""
+
+
 class FilterModule(object):
     def filters(self):
         return {"fapolicyd_report": fapolicyd_report, "fapolicyd_containers_report": fapolicyd_containers_report,
                 "fapolicyd_rule_problem": fapolicyd_rule_problem, "fapolicyd_rules_plan": fapolicyd_rules_plan,
-                "fapolicyd_rules_file": fapolicyd_rules_file}
+                "fapolicyd_rules_file": fapolicyd_rules_file, "fapolicyd_fix_plan": fapolicyd_fix_plan,
+                "fapolicyd_fix_rollback": fapolicyd_fix_rollback, "fapolicyd_fix_report": fapolicyd_fix_report}

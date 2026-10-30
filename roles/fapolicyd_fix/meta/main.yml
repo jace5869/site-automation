@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: fapolicyd_fix
+  description: "Why fapolicyd is down or near its limits (trust files, SELinux labels, db_max_size, the service), and the approved fixes made."
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

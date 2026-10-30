@@ -1,0 +1,31 @@
+---
+# Read (a Check run too); then, when fixes are approved, make them (apply.yml).
+
+- name: Fapolicyd fix | what keeps fapolicyd down or near its limits, and the fix for each
+  site_fapolicyd_fix:
+    dir: "{{ fapolicyd_fix_dir }}"
+    binary: "{{ fapolicyd_fix_binary }}"
+    owner: "{{ fapolicyd_fix_owner }}"
+    group: "{{ fapolicyd_fix_group }}"
+    file_mode: "{{ fapolicyd_fix_file_mode | string }}"
+    dir_mode: "{{ fapolicyd_fix_dir_mode | string }}"
+    large_mb: "{{ fapolicyd_fix_large_mb | int }}"
+    headroom: "{{ fapolicyd_fix_headroom | float }}"
+    journal_lines: "{{ fapolicyd_fix_journal_lines | int }}"
+    timeout: "{{ fapolicyd_fix_timeout | int }}"
+  register: _ff
+  check_mode: false
+
+- name: Fapolicyd fix | what this host has
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['fapolicyd ' ~ (_ff.active | default(_ff.state)) ~ (' - ' ~ _ff.error if _ff.error | default('') else '')]
+         + (_ff.fixes | default([]) | map(attribute='line') | map('regex_replace', '^', 'FIX: ') | list)
+         + (_ff.by_hand | default([]) | map('regex_replace', '^', 'FOR A PERSON: ') | list) }}
+
+- name: Fapolicyd fix | make the approved fixes
+  ansible.builtin.include_tasks: apply.yml
+  when:
+    - fapolicyd_fix_approved | length > 0
+    - _ff.state == 'read'
+    - not _ff.error | default('')

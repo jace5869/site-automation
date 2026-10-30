@@ -1,0 +1,24 @@
+---
+# FAPOLICYD FIX (playbooks/fapolicyd_fix.yml, docs/RUNBOOKS.md "fapolicyd fix"): why fapolicyd is down, or near its
+# limits, on each host - trust files it cannot read, their SELinux labels, db_max_size too small for the trust
+# database, the service not running - with the fix for each as a line to approve; and, once approved, those fixes made.
+
+# The approved fixes, each exactly as the report's "Fixes to approve" gives it, e.g.
+#   - "trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644"
+#   - "db_max_size: 50 -> 200"              (the number after -> may be your own; auto where fapolicyd 1.4+ runs)
+#   - "restart fapolicyd (it is failed)"
+# A line is made only on a host where this run proposes it again (the state it was approved for). A line this job never
+# gives stops the change on every host. Route each one through your security approval (the ISSO).
+fapolicyd_fix_approved: []
+fapolicyd_fix_dir: /etc/fapolicyd         # fapolicyd's folder: fapolicyd.conf, fapolicyd.trust, trust.d
+fapolicyd_fix_binary: /usr/sbin/fapolicyd # read to see whether this fapolicyd sizes its database itself (db_max_size = auto)
+# The trust files' owner, group and modes come from the fapolicyd package (rpm); these only when rpm gives none.
+fapolicyd_fix_owner: root                 # the trust files' owner, when rpm gives none
+fapolicyd_fix_group: fapolicyd            # their group, when rpm gives none
+fapolicyd_fix_file_mode: "0644"           # a trust file's mode, when rpm gives none
+fapolicyd_fix_dir_mode: "0750"            # the folders' mode, when rpm gives none
+fapolicyd_fix_large_mb: 20                # a trust file larger than this (MB) is listed for a person: every file in it is trusted
+fapolicyd_fix_headroom: 1.5               # the proposed db_max_size: the estimate times this (where auto is not possible)
+fapolicyd_fix_journal_lines: 400          # fapolicyd's journal lines read, this boot
+fapolicyd_fix_wait: 30                    # seconds fapolicyd may take to be running again after the restart
+fapolicyd_fix_timeout: 120                # seconds for each command the job reads with

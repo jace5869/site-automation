@@ -160,7 +160,7 @@ the broken trust with the domain is `network:secure-channel` (the Windows networ
 
 | Finding | Means | Usually |
 |---|---|---|
-| `fapolicyd is inactive` | application allow-listing is off | `systemctl start fapolicyd`; its log says why it stopped |
+| `fapolicyd is inactive` | application allow-listing is off | `systemctl start fapolicyd`; its log says why it stopped - the [fapolicyd fix](#fapolicyd-fix-playbooksfapolicyd_fixyml) job finds why and fixes it after approval |
 | `fapolicyd is in permissive mode` | it logs but blocks nothing | `permissive = 0` in `/etc/fapolicyd/fapolicyd.conf` |
 | `N file(s) no longer match the fapolicyd trust database` | files changed outside RPM | `fapolicyd-cli --update`, or re-add the file's trust entry |
 | `N fapolicyd denial(s) since yesterday - top: /usr/bin/bash -> /opt/app/tool` | it blocked programs | a legitimate program needs a trust entry (`fapolicyd-cli --file add <path>`), after review |
@@ -524,7 +524,7 @@ Playbook to this one.
 | The report shows | Means | Do |
 |---|---|---|
 | a host with denials, ACT's analysis and `ACT proposes (for your security approval): fapolicyd-cli --file add ...` | fapolicyd blocked a program; ACT says whether it looks legitimate and the narrowest trust entry or rule | review it with your ISSO - a trust entry or a rule is a security-control change - then apply it by hand |
-| `fapolicyd not running` (red) | application allow-listing is off | `systemctl status fapolicyd`; its log says why it stopped |
+| `fapolicyd not running` (red) | application allow-listing is off | the [fapolicyd fix](#fapolicyd-fix-playbooksfapolicyd_fixyml) job: why, and the fix to approve |
 | `auditd` not active | denials are not recorded: the job sees none | `systemctl start auditd` |
 | *No denials* while things are blocked | the deny rules do not audit (`deny` or `deny_syslog` instead of `deny_audit`) | `deny_audit` in the rules (the RHEL default rules use it) |
 | *Not read* | the host could not be reached | as for any job: the inventory, the credential |
@@ -628,6 +628,69 @@ what an auditor flags:
 | a rule still proposed after it was added | the denials are from before it was added | `fapolicyd_container_since: recent` reads only the last 10 minutes |
 
 **All settings** of this job, with their defaults: [fapolicyd_containers](VARIABLES_REFERENCE.md#fapolicyd_containers).
+
+## fapolicyd fix (`playbooks/fapolicyd_fix.yml`)
+
+Why fapolicyd is down, or near its limits, on each host - and, once approved, the fix. The job reads (a Check run
+too), proposes one line per fix, and changes only the lines you approve. No ACT.
+
+**What it looks at:**
+
+- **Trust files fapolicyd cannot read.** `fapolicyd.trust`, the `trust.d` folder and each file in it, and
+  `/etc/fapolicyd`, against the owner, group and mode the fapolicyd package gives its own (`rpm -q --qf ... fapolicyd`:
+  `root:fapolicyd`, `0644` files, `0750` folders on RHEL 8 and 9). A file the fapolicyd user (`uid`/`gid` in
+  `fapolicyd.conf`) cannot read - `root:root 0600`, as `fapolicyd-cli --file add` leaves it under a STIG umask of 077 -
+  or that anyone but root may write. fapolicyd's own *Cannot read ... (Permission denied)* is in the why.
+- **SELinux labels** not the policy's (`restorecon -R -n -v /etc/fapolicyd`): a trust file copied in from `/tmp`.
+- **db_max_size** too small for the trust database: fapolicyd's own words in its journal (*db_max_size needs to be
+  increased*, *Trust database at 92% capacity*), or - while fapolicyd is down - the estimate (the trust files' size
+  and the RPM files, about twice that in the database) over `db_max_size`; the new value is checked with
+  `fapolicyd-cli --check-config` before any restart. The fix is `auto` where fapolicyd sizes its database itself (1.4 and
+  later: RHEL 9), else a number (RHEL 8's fapolicyd 1.3; its default is 50 MB, RHEL 9's 100).
+- **fapolicyd not running** - its restart, a line of its own.
+- **For a person** (never changed): a trust file over 20 MB (`fapolicyd_fix_large_mb`). Every file listed in it is
+  trusted, the database must hold it, and fapolicyd reads it at each start: check what wrote it and whether all of it
+  is needed.
+
+**The template:** Playbook `playbooks/fapolicyd_fix.yml`; your Linux inventory; credential **Machine** (with sudo).
+Variables: `target` (or a Limit of hosts - no `localhost` needed). Enable **Check** on launch.
+
+**Fixing:**
+
+1. Run it. The report's **Fixes to approve** has one line per fix (copy each line as it is: one with a host name after
+   it is refused), e.g.
+   `trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644`,
+   `db_max_size: 50 -> 200`, `restart fapolicyd (it is failed)`; **Why each fix** says why.
+2. Take them to your security approval (the ISSO): fapolicyd is a security control.
+3. Put the approved ones in the template's Variables, exactly as the report gave them. A `db_max_size` line may end in
+   your own number:
+   ```yaml
+   fapolicyd_fix_approved:
+     - "trust file access: /etc/fapolicyd/trust.d/app root:root 0600 -> root:fapolicyd 0644"
+     - "db_max_size: 50 -> 400"
+     - "restart fapolicyd (it is failed)"
+   ```
+4. Run it in **Check**: the job says `would change - made: ...`. Then for real, with a Limit if only some hosts.
+5. A line is made only on a host where this run proposes it again - the state it was approved for. Approved again once
+   fixed, it is *not proposed here* and nothing changes. A line the job never gives changes nothing on any host.
+6. After the fixes: fapolicyd restarted (its restart line approved, or `db_max_size` changed while it ran) or its trust
+   reloaded (`fapolicyd-cli --update`), and checked in the same go on the host - running, and a program (python) still
+   starts. **Running before and not after - or a program no longer starts: everything put back** (owner, mode, label,
+   `fapolicyd.conf`) and fapolicyd restarted. Down before and still down: the fixes stay, and fapolicyd's journal after
+   them is in the report. Down and not approved for a restart: the fixes are made, fapolicyd is left as it was.
+
+| The report shows | Means | Do |
+|---|---|---|
+| *rolled back* (red) | fapolicyd ran before and not after the fix (or denied a program): all put back | its journal in the report says why |
+| *still down* (red) | it was down, the fixes are made, it still does not start | the journal lines in the report; the next cause |
+| *refused* | a line is not one this job gives, or `auto` where fapolicyd cannot size its database | correct `fapolicyd_fix_approved` |
+| *Not proposed here*, *Approved, made on no host* | approved, but no host of the run has it (now): fixed already, outside the Limit, or not the report's exact line | nothing - or copy the line again |
+| *a large trust file* | every file in it is trusted | with the system's owner: is all of it needed? |
+
+The job does not clean the trust database or remove trust entries: what a site trusts is its own decision, made by
+hand (`fapolicyd-cli --file delete`, then `fapolicyd-cli --update`).
+
+**All settings** of this job, with their defaults: [fapolicyd_fix](VARIABLES_REFERENCE.md#fapolicyd_fix).
 
 ## Certificate report (`playbooks/cert_report.yml`)
 
