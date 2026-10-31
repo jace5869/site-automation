@@ -1,0 +1,26 @@
+---
+# OpenSCAP's packages and content on the host (the STIG drift report and the STIG recheck): installed when asked
+# (check_stig_install), the datastream and tailoring file copied from the AAP side.
+- name: STIG | install openscap-scanner and scap-security-guide (check_stig_install)
+  ansible.builtin.dnf:
+    name: [openscap-scanner, scap-security-guide]
+    state: present
+  when: check_stig_install | bool and check_stig_scanner == 'openscap'
+
+- name: STIG | the folder for them on the host (root-only)
+  ansible.builtin.file:
+    path: "{{ check_stig_dir }}/content"
+    state: directory
+    mode: "0700"
+  when: check_stig_datastream_src | length > 0 or check_stig_tailoring_src | length > 0
+
+- name: STIG | the datastream and tailoring file from the AAP side (check_stig_datastream_src, check_stig_tailoring_src)
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ check_stig_dir }}/content/{{ item.src | basename }}"
+    mode: "0600"
+  loop: >-
+    {{ ([{'src': check_stig_datastream_src}] if check_stig_datastream_src else [])
+       + ([{'src': check_stig_tailoring_src}] if check_stig_tailoring_src else []) }}
+  loop_control:
+    label: "{{ item.src }}"

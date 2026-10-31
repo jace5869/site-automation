@@ -2,12 +2,14 @@
 # Run one check role on this host: roles/check_<name> on Linux, roles/win_check_<name> on Windows.
 # If the check itself breaks (a tool is missing, an unexpected error), that becomes a finding and
 # the other checks still run.
-# Input: _site_check (the check name, e.g. disk).
+# Input: _site_check (the check name, e.g. disk); _site_check_tasks: another tasks file of the role (the STIG recheck:
+# recheck), default its main.
 - name: "Check {{ _site_check }}"
   block:
     - name: "Check {{ _site_check }} | run"
       ansible.builtin.include_role:
         name: "{{ site_check_role_prefix }}{{ _site_check }}"
+        tasks_from: "{{ _site_check_tasks | default('main') }}"
 
     - name: "Check {{ _site_check }} | done"
       ansible.builtin.set_fact:

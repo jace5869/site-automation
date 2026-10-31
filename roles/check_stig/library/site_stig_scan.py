@@ -25,6 +25,10 @@ description:
   - Keeps the run on the host in C(dir) - the HTML report, the results (gzip) and a summary (JSON) - and the
     last C(keep) runs; returns the summary before this one (C(previous)) to compare with.
   - In check mode (or with save false) it scans but keeps nothing.
+  - With C(vulns) (the STIG recheck) only those rules are checked - Evaluate-STIG with -SelectVuln when it has it (else it
+    runs in full), oscap with a --rule for each SCAP rule of them - and only they are returned; with C(history) false the
+    run is not compared with the earlier scans nor kept with them (Evaluate-STIG's checklist is kept as
+    recheck/latest-checklist.<ext>, oscap's results as recheck/latest-results.xml).
 options:
   dir: {description: Where the runs are kept on the host (created root-only)., type: str, default: /var/lib/site-automation/stig}
   keep: {description: How many runs are kept (the oldest are deleted)., type: int, default: 10}
@@ -46,6 +50,8 @@ options:
   evaluate_read: {description: "A folder on the host to read Evaluate-STIG's newest checklist from instead of running it ('' = run it).", type: str, default: ''}
   pwsh: {description: "PowerShell 7 for Evaluate-STIG.ps1 ('' = found in PATH).", type: str, default: ''}
   benchmarks: {description: "The STIG (its benchmark id) for each RHEL version ({'9': RHEL_9_STIG}): the checklist read.", type: dict, default: {}}
+  vulns: {description: "Only these STIG rules (V-257985 ...); [] = every rule.", type: list, elements: str, default: []}
+  history: {description: "Compare with the earlier scans and keep this one with them (false - the STIG recheck - neither).", type: bool, default: true}
 author: site automation
 '''
 
@@ -261,6 +267,47 @@ def find_evaluate(path):
     return ""
 
 
+def evaluate_ps1(script):
+    """Evaluate-STIG.ps1 itself: the script, or the one beside Evaluate-STIG_Bash.sh (or in its Src/Evaluate-STIG) ('' = none)."""
+    if script.lower().endswith(".ps1"):
+        return script
+    d = os.path.dirname(os.path.abspath(script))
+    for p in (os.path.join(d, "Evaluate-STIG.ps1"), os.path.join(d, "Src", "Evaluate-STIG", "Evaluate-STIG.ps1")):
+        if os.path.isfile(p):
+            return p
+    return ""
+
+
+def takes_select_vuln(*paths):
+    """Evaluate-STIG has -SelectVuln (only the rules named are checked): its script names it."""
+    for p in paths:
+        try:
+            with open(p, "rb") as f:
+                if b"SelectVuln" in f.read():
+                    return True
+        except (IOError, OSError):
+            pass
+    return False
+
+
+def ps_quote(s):
+    return "'" + str(s).replace("'", "''") + "'"
+
+
+def ps_call(ps1, args):
+    """Evaluate-STIG.ps1 called from pwsh -Command with arguments as PowerShell reads them: a name (--Output or -Output)
+    as -Output, a list as one array ('a','b'), the rest quoted - pwsh -File would pass V-1,V-2 as one text."""
+    out = ["&", ps_quote(ps1)]
+    for a in args:
+        if isinstance(a, list):
+            out.append(",".join(ps_quote(x) for x in a))
+        elif re.match(r"^--?[A-Za-z]\w*$", str(a)):
+            out.append("-" + str(a).lstrip("-"))
+        else:
+            out.append(ps_quote(a))
+    return " ".join(out)
+
+
 BAD_RE = re.compile(r"'([^'\n]+\.cklb?)'\s*:\s*failed schema validation", re.I)
 MOVED_RE = re.compile(r"Moving to\s+(/[^\s']+?)\.?(?=\s|$)")   # \s+: a wrapped line too
 CHECK_FAILED_RE = re.compile(r"\(Get-(V\d+)\)\s*:\s*Failed", re.I)
@@ -401,7 +448,7 @@ class Scan(object):
         tmp = tempfile.mkdtemp(prefix="site-stig-")
         try:
             got = self.evaluate(ident, tmp) if p["scanner"] == "evaluate_stig" else self.oscap(ident, tmp)
-            if not got.get("items_"):
+            if "items_" not in got or (not got["items_"] and not p["vulns"]):
                 return got
             return self.finish(ident, got)
         finally:
@@ -420,12 +467,29 @@ class Scan(object):
         if p["tailoring"] and not os.path.isfile(p["tailoring"]):
             return self.fail("the tailoring file %s is not there" % p["tailoring"], datastream=ds, **ident)
         profile = full_profile(p["profile"])
+        rule_ids = []
+        if p["vulns"]:
+            # the recheck: only the SCAP rules that check the STIG rules asked for
+            want = set(p["vulns"])
+            try:
+                _meta, ds_rules, _res = read_results(ds)
+            except (ET.ParseError, IOError, OSError) as e:
+                return self.fail("the STIG content %s could not be read: %s" % (ds, e), datastream=ds, **ident)
+            rule_ids = sorted(i for i, info in ds_rules.items()
+                              if any("V-" + SV_RE.fullmatch(s).group(1)[3:] in want for s in info["svs"]))
+            if not rule_ids:
+                return {"items_": [], "results_": "", "results_ext": ".xml", "report_": "",
+                        "info": {"scanner": "OpenSCAP", "datastream": ds, "profile": profile, "profile_title": "", "stig_version": "",
+                                 "ssg_version": "", "benchmark": "", "tailoring": p["tailoring"]},
+                        "extra": {"selected": True, "vulns_asked": len(want), "select_note": "the SCAP content has no check for any of them"}}
         res_xml, rep_html = os.path.join(tmp, "results.xml"), os.path.join(tmp, "report.html")
         cmd = [oscap, "xccdf", "eval", "--profile", profile, "--results", res_xml]
         if p["keep_report"]:
             cmd += ["--report", rep_html]
         if p["tailoring"]:
             cmd += ["--tailoring-file", p["tailoring"]]
+        for r in rule_ids:
+            cmd += ["--rule", r]
         cmd.append(ds)
         try:
             proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=p["timeout"])
@@ -441,7 +505,8 @@ class Scan(object):
                 "info": {"scanner": "OpenSCAP", "datastream": ds, "profile": profile, "profile_title": meta["profile_title"],
                          "stig_version": stig_version(meta["profile_title"], meta["profile_text"]), "ssg_version": meta["ssg_version"],
                          "benchmark": meta["benchmark"], "tailoring": p["tailoring"]},
-                "extra": {"oscap_exit": proc.returncode, "stderr": err[-600:]}}
+                "extra": dict({"oscap_exit": proc.returncode, "stderr": err[-600:]},
+                              **({"selected": True, "vulns_asked": len(p["vulns"])} if p["vulns"] else {}))}
 
     def evaluate(self, ident, tmp):
         """Evaluate-STIG: run it (--Output CKLB into a folder of its own), or read the newest checklist it already
@@ -471,27 +536,58 @@ class Scan(object):
             extra["evaluate"] = script
             out_dir = os.path.join(tmp, "out")
             os.makedirs(out_dir)
-            if script.lower().endswith(".ps1"):
-                pwsh = p["pwsh"] or shutil.which("pwsh") or ""
-                if not pwsh:
-                    return self.fail("pwsh (PowerShell 7) is not installed - Evaluate-STIG.ps1 needs it (check_stig_pwsh)", **ident)
-                cmd, dash = [pwsh, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], "-"
-            else:
-                cmd, dash = ["bash", script], "--"
-            cmd += [dash + "Output", p["evaluate_output"], dash + "OutputPath", out_dir]
+            pwsh = p["pwsh"] or shutil.which("pwsh") or ""
+            if script.lower().endswith(".ps1") and not pwsh:
+                return self.fail("pwsh (PowerShell 7) is not installed - Evaluate-STIG.ps1 needs it (check_stig_pwsh)", **ident)
             sel = (p["evaluate_select"] or {}).get(major) or ""
-            if sel:
-                cmd += [dash + "SelectSTIG", str(sel)]
             args = p["evaluate_args"] or []
-            cmd += shlex.split(args) if isinstance(args, str) else [str(a) for a in args]
+            args = shlex.split(args) if isinstance(args, str) else [str(a) for a in args]
+            vulns = list(p["vulns"] or [])
+            ps1 = evaluate_ps1(script) if vulns else ""
+            # the recheck: only the rules asked for, when this Evaluate-STIG has -SelectVuln (else it runs in full)
+            picked = bool(vulns) and takes_select_vuln(*[x for x in (ps1, script) if x])
+            if vulns:
+                extra.update(selected=picked, vulns_asked=len(vulns))
+            def command(pick):
+                """Evaluate-STIG's command line, with -SelectVuln (pick) or without -> (cmd, the script it runs)."""
+                if pick and ps1 and pwsh:
+                    # a list goes to PowerShell as one array: pwsh -Command, not -File
+                    call = (["-Output", p["evaluate_output"], "-OutputPath", out_dir] + (["-SelectSTIG", str(sel)] if sel else [])
+                            + ["-SelectVuln", vulns] + args)
+                    return [pwsh, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps_call(ps1, call) + "; exit $LASTEXITCODE"], ps1
+                if script.lower().endswith(".ps1"):
+                    cmd, dash = [pwsh, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], "-"
+                else:
+                    cmd, dash = ["bash", script], "--"
+                cmd += [dash + "Output", p["evaluate_output"], dash + "OutputPath", out_dir]
+                if sel:
+                    cmd += [dash + "SelectSTIG", str(sel)]
+                if pick:
+                    cmd += [dash + "SelectVuln", ",".join(vulns)]
+                return cmd + args, script
+
+            def run(pick):
+                cmd, ran = command(pick)
+                return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=p["timeout"],
+                                      cwd=os.path.dirname(os.path.abspath(ran)))
             try:
-                proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=p["timeout"],
-                                      cwd=os.path.dirname(os.path.abspath(script)))
+                proc = run(picked)
+                said = proc.stdout.decode("utf-8", "replace").strip()
+                told = evaluate_said(said)
+                files = checklists_in(out_dir)
+                if picked and not files and not [f for f in told["rejected"] if os.path.isfile(f)]:
+                    # nothing written with -SelectVuln (a version that wants -SelectSTIG with it, say): once more, in full
+                    first = " | ".join(told["lines"])[-300:] or said[-300:] or "no message"
+                    extra.update(selected=False, select_note="with -SelectVuln it wrote no checklist (exit %d: %s), so it ran in full"
+                                 % (proc.returncode, first))
+                    shutil.rmtree(out_dir, ignore_errors=True)
+                    os.makedirs(out_dir)
+                    proc = run(False)
+                    said = proc.stdout.decode("utf-8", "replace").strip()
+                    told = evaluate_said(said)
+                    files = checklists_in(out_dir)
             except subprocess.TimeoutExpired:
                 return self.fail("Evaluate-STIG took longer than %d seconds (check_stig_timeout)" % p["timeout"], **ident)
-            said = proc.stdout.decode("utf-8", "replace").strip()
-            told = evaluate_said(said)
-            files = checklists_in(out_dir)
             extra.update(evaluate_exit=proc.returncode, stderr=said[-600:], evaluate_failed=told["failed"], evaluate_log=told["log"])
             rejected = [f for f in told["rejected"] if os.path.isfile(f)]
             if not files and rejected and p["evaluate_rejected"]:
@@ -534,6 +630,8 @@ class Scan(object):
     def finish(self, ident, got):
         """The summary of this run, compared with the last one kept on the host, and kept."""
         p = self.p
+        if not p["history"]:
+            return self.finish_recheck(ident, got)
         items = got["items_"]
         now = datetime.datetime.now(datetime.timezone.utc)
         stamp = now.strftime("%Y%m%dT%H%M%SZ")
@@ -562,6 +660,33 @@ class Scan(object):
         out.update((k, v) for k, v in summary.items() if k not in ("items", "passed_before"))
         prev.pop("passed_before", None)
         out.update(scanned=True, why="", items=items, previous=prev, passed_before=before, saved=saved, **got["extra"])
+        return out
+
+    def finish_recheck(self, ident, got):
+        """The STIG recheck: the rules asked for (vulns), not compared with the earlier scans nor kept with them; the
+        checklist (or oscap's results) kept as recheck/latest-*, root-only - STIG Manager can import it."""
+        p = self.p
+        want = set(p["vulns"] or [])
+        items = [it for it in got["items_"] if not want or it.get("v") in want]
+        now = datetime.datetime.now(datetime.timezone.utc)
+        saved = {}
+        if p["save"] and not self.m.check_mode and got["results_"]:
+            d = os.path.join(p["dir"], "recheck")
+            os.makedirs(d, mode=0o700, exist_ok=True)
+            os.chmod(p["dir"], 0o700)
+            os.chmod(d, 0o700)
+            name = ("latest-checklist" if got["info"]["scanner"] == "Evaluate-STIG" else "latest-results") + got["results_ext"]
+            old = os.umask(0o077)
+            try:
+                shutil.copyfile(got["results_"], os.path.join(d, name + ".tmp"))
+                os.rename(os.path.join(d, name + ".tmp"), os.path.join(d, name))
+            finally:
+                os.umask(old)
+            saved = {"dir": d, "results": os.path.join(d, name)}
+        out = dict(ident)
+        out.update(got["info"])
+        out.update(scanned=True, why="", time=now.strftime("%Y-%m-%dT%H:%M:%SZ"), counts=counts(items), items=items, previous={},
+                   passed_before={}, saved=saved, **got["extra"])
         return out
 
     def keep(self, d, stamp, summary, results, ext, rep_html, stamps):
@@ -620,6 +745,8 @@ def main():
         evaluate_rejected=dict(type="bool", default=True),
         pwsh=dict(type="str", default=""),
         benchmarks=dict(type="dict", default={}),
+        vulns=dict(type="list", elements="str", default=[]),
+        history=dict(type="bool", default=True),
     ), supports_check_mode=True)
     result = Scan(module).run()
     module.exit_json(changed=False, **result)

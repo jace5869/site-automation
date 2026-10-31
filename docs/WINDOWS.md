@@ -23,6 +23,7 @@ also in Constrained Language Mode (see step 5).
 | Windows certificate restore | `playbooks/win_cert_restore.yml` | the bindings back on the old certificate |
 | Windows patch | `playbooks/win_patch.yml` | install what Software Center offers (ConfigMgr); restart only with `automatic_restarts: yes`; prove the server is back |
 | Windows STIG drift report | `playbooks/win_stig_drift_report.yml` | Evaluate-STIG on the servers, each STIG's checklist against STIG Manager (read-only) and the earlier scans ([STIG_DRIFT.md](STIG_DRIFT.md#windows-servers)) |
+| Windows STIG recheck | `playbooks/win_stig_recheck.yml` | only the rules STIG Manager has Open or Not Reviewed, checked again by Evaluate-STIG (-SelectVuln), and what to update in STIG Manager ([STIG_DRIFT.md](STIG_DRIFT.md#the-stig-recheck)) |
 | ACT for Windows - install | `playbooks/win_act_install.yml` | put ACT on the servers in `C:\ProgramData\act`, locked down and unblocked; keep it current |
 | ServiceNow tickets, POA&M status | the ones you have | unchanged: they take the Windows results the same way |
 

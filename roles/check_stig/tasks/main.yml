@@ -28,29 +28,8 @@
     fail_msg: "check_stig_scanner must be openscap or evaluate_stig (it is {{ check_stig_scanner }})"
     quiet: true
 
-- name: STIG | install openscap-scanner and scap-security-guide (check_stig_install)
-  ansible.builtin.dnf:
-    name: [openscap-scanner, scap-security-guide]
-    state: present
-  when: check_stig_install | bool and check_stig_scanner == 'openscap'
-
-- name: STIG | the folder for them on the host (root-only)
-  ansible.builtin.file:
-    path: "{{ check_stig_dir }}/content"
-    state: directory
-    mode: "0700"
-  when: check_stig_datastream_src | length > 0 or check_stig_tailoring_src | length > 0
-
-- name: STIG | the datastream and tailoring file from the AAP side (check_stig_datastream_src, check_stig_tailoring_src)
-  ansible.builtin.copy:
-    src: "{{ item.src }}"
-    dest: "{{ check_stig_dir }}/content/{{ item.src | basename }}"
-    mode: "0600"
-  loop: >-
-    {{ ([{'src': check_stig_datastream_src}] if check_stig_datastream_src else [])
-       + ([{'src': check_stig_tailoring_src}] if check_stig_tailoring_src else []) }}
-  loop_control:
-    label: "{{ item.src }}"
+- name: STIG | OpenSCAP's packages and content (check_stig_install, check_stig_datastream_src, check_stig_tailoring_src)
+  ansible.builtin.import_tasks: content.yml
 
 - name: STIG | scan (oscap with the STIG profile, or Evaluate-STIG) and keep the result on the host
   site_stig_scan:

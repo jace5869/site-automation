@@ -1,0 +1,18 @@
+---
+# The STIG recheck, last step (Linux and Windows): each checklist's rules Open or Not Reviewed in STIG Manager
+# (_stig_recheck_sm) against what the recheck found (_stig_recheck_scans) - fixed, Not Applicable now, answered, still
+# open, by hand (plugins/filter/stig_filters.py, stig_recheck) - into check_stig_results. No finding for what was found
+# (the report says what to update in STIG Manager); a host that could not be rechecked is a warning.
+- name: STIG recheck | sort each rule (fixed, now n/a, answered, still open, by hand)
+  ansible.builtin.set_fact:
+    check_stig_results: >-
+      {{ _stig_recheck_sm | stig_recheck(_stig_recheck_scans, inventory_hostname, check_stig_stigman_statuses, check_stig_ignore_rules,
+                                         check_stig_recheck, check_stig_severity, check_stig_stigman_api | length > 0) }}
+
+- name: STIG recheck | add them to this host's findings
+  ansible.builtin.set_fact:
+    site_findings: "{{ site_findings | default([]) + (check_stig_results | stig_findings) }}"
+
+- name: STIG recheck | what was found
+  ansible.builtin.debug:
+    msg: "{{ check_stig_results | map('stig_recheck_lines') | flatten }}"

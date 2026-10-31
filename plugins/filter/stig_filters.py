@@ -535,7 +535,350 @@ def stig_findings(results):
     return out
 
 
+# ---- The STIG recheck (playbooks/stig_recheck.yml, win_stig_recheck.yml) ----------------------------------------------
+# What STIG Manager has Open or Not Reviewed for a host, checked again on the host (only those rules) - nothing kept with
+# the drift report's scans:
+#   fixed        Open in STIG Manager, the host passes now: set the review to Not a Finding
+#   now_na       Open in STIG Manager, Not Applicable now: set it to Not Applicable
+#   still_open   Open in STIG Manager, the host still fails it: the review is right
+#   answered     Not Reviewed in STIG Manager (no review, or not counted - rejected): the scan has an answer to set
+#   by_hand      the scan gave no answer (a manual check, or not in its checklist): a person reviews it
+RECHECK_WHICH = ("open", "not_reviewed")
+
+
+def _sm_checklists(sm):
+    """site_stigman_read's answer for a host -> its checklists (Linux: the host's one; Windows, every: true: each STIG of
+    the asset and of its web site and database assets)."""
+    sm = sm or {}
+    if sm.get("status") != "found":
+        return []
+    return list(sm["checklists"]) if "checklists" in sm else [sm]
+
+
+def recheck_asked(smc, statuses=None, which=None):
+    """One checklist in STIG Manager -> the rules to check again: {SV id: (open | not_reviewed, its review or None)}. Open: a
+    review that counts (check_stig_stigman_statuses) of Open; Not Reviewed: a rule of the STIG revision with no review that
+    counts, or one of Not Reviewed."""
+    ok = statuses if statuses is not None else STIGMAN_ACCEPT
+    which = list(which) if which is not None else list(RECHECK_WHICH)
+    reviews = smc.get("reviews") or {}
+    rules = smc.get("rules")
+    out = {}
+    for k in sorted(rules.keys() if rules else reviews.keys()):
+        r = reviews.get(k)
+        counted = r if r and r.get("status") in ok else None
+        if counted and counted.get("result") == "fail":
+            if "open" in which:
+                out[k] = ("open", counted)
+        elif not counted or counted.get("result") in ("notchecked", ""):
+            if "not_reviewed" in which:
+                out[k] = ("not_reviewed", r)
+    return out
+
+
+def stig_recheck_vulns(sm, statuses=None, which=None):
+    """A host's answer from STIG Manager -> the STIG rules to check again on it (V-257985 ...), every checklist's."""
+    out = set()
+    for smc in _sm_checklists(sm):
+        rules = smc.get("rules") or {}
+        for k in recheck_asked(smc, statuses, which):
+            out.add((rules.get(k) or {}).get("v") or ("V-" + k[3:]))
+    return sorted(out)
+
+
+def _scan_for(smc, scans):
+    """The scan's checklist of a checklist in STIG Manager: the same STIG, the same web site or database instance (Linux:
+    the one scan); else the only one of that STIG."""
+    scans = [s for s in scans or [] if s and s.get("scanned")]
+    if "checklists" not in smc and len(scans) == 1 and not scans[0].get("key"):
+        return scans[0]
+    b = (smc.get("benchmark") or "").lower()
+    same = [s for s in scans if (s.get("benchmark") or "").lower() == b]
+    for s in same:
+        if (s.get("site") or "") == (smc.get("site") or "") and (s.get("instance") or "") == (smc.get("instance") or ""):
+            return s
+    return same[0] if len(same) == 1 else None
+
+
+def _recheck_how(scan):
+    if scan.get("checklist_time"):
+        return "its checklist of %s, read (Evaluate-STIG was not run)" % scan["checklist_time"][:10]
+    if scan.get("select_note"):
+        return "in full - " + scan["select_note"]
+    if scan.get("selected"):
+        return "only these rules" + (" (-SelectVuln)" if scan.get("scanner") == "Evaluate-STIG" else " (--rule)")
+    if scan.get("vulns_asked"):
+        return "in full - this Evaluate-STIG has no -SelectVuln"
+    return ""
+
+
+def _recheck_result(host, smc, sm, scan, asked, ign, sev_map, label):
+    rules = smc.get("rules") or {}
+    out = {"host": host, "label": ("%s - %s" % (host, label)) if label else "", "benchmark": smc.get("benchmark", ""),
+           "scanned": bool(scan and scan.get("scanned")), "why": (scan or {}).get("why", ""),
+           "scanner": (scan or {}).get("scanner", ""), "stig_version": (scan or {}).get("stig_version", ""),
+           "how": _recheck_how(scan or {}), "evaluate_note": evaluate_note(scan or {}), "saved": (scan or {}).get("saved") or {},
+           "stigman": {"status": sm.get("status", ""), "why": sm.get("why", ""), "collection": sm.get("collection", ""),
+                       "asset": smc.get("asset", "") or sm.get("asset", ""), "revision": smc.get("revision", "")},
+           "asked_open": len([1 for w, _ in asked.values() if w == "open"]),
+           "asked_not_reviewed": len([1 for w, _ in asked.values() if w == "not_reviewed"]),
+           "fixed": [], "now_na": [], "still_open": [], "answered": [], "by_hand": [], "ignored": [], "findings": []}
+    items = dict((it["key"], it) for it in (scan or {}).get("items") or [])
+    # not rechecked: its rules are counted (asked), not sorted
+    for k, (what, r) in sorted(asked.items()) if out["scanned"] else []:
+        info = rules.get(k) or {}
+        it = items.get(k) or {}
+        sev = info.get("severity") or (r or {}).get("severity") or it.get("severity") or ""
+        now = it.get("result") if it else None
+        rec = {"key": k, "v": info.get("v") or it.get("v") or ("V-" + k[3:]), "stigid": info.get("version") or (r or {}).get("version") or it.get("stigid", ""),
+               "severity": sev, "title": info.get("title") or (r or {}).get("title") or it.get("title") or k, "asked": what,
+               "sm": (r or {}).get("result", ""), "sm_status": (r or {}).get("status", ""), "sm_ts": (r or {}).get("ts", ""),
+               "now": now or "", "details": it.get("details", ""), "scap": it.get("scap") or [], "level": sev_map.get(sev, "warning")}
+        if _ignored(rec, ign):
+            out["ignored"].append(rec)
+        elif what == "open" and now == "pass":
+            out["fixed"].append(rec)
+        elif what == "open" and now == "notapplicable":
+            out["now_na"].append(rec)
+        elif what == "open" and now == "fail":
+            out["still_open"].append(rec)
+        elif what == "not_reviewed" and now in CHECKED:
+            out["answered"].append(rec)
+        else:
+            if it:
+                rec["no_answer"] = "Not Reviewed by the scan"
+            elif out["scanner"] == "OpenSCAP":
+                rec["no_answer"] = "no SCAP check for it (a manual check)"
+            else:
+                rec["no_answer"] = "not in the scan's checklist (another STIG revision?)"
+            out["by_hand"].append(rec)
+    by_sev = lambda r: (SEV_ORDER.get(r.get("severity"), 3), r["key"])
+    for k in ("fixed", "now_na", "still_open", "answered", "by_hand", "ignored"):
+        out[k].sort(key=by_sev)
+    return out
+
+
+def stig_recheck(sm, scans, host="", statuses=None, ignore=None, which=None, severity=None, stigman_used=True):
+    """One host: its answer from STIG Manager (site_stigman_read: rules: true, or every: true on Windows) and its recheck
+    scan (site_stig_scan with vulns - or win_facts.stig's scans) -> one result per checklist in STIG Manager:
+    {host, label, scanned, how, stigman, asked_open, asked_not_reviewed, fixed, now_na, still_open, answered, by_hand,
+    ignored, findings, row}. No finding for what was found: the report says what to update in STIG Manager; a host that
+    could not be rechecked is a warning."""
+    sm = sm or {}
+    sev_map = dict(DEFAULT_SEVERITY, **(severity or {}))
+    ign = ignore_set(ignore)
+    scans = [s for s in (scans or []) if s]
+    win = any(s.get("platform") == "windows" for s in scans)
+    empty = {"fixed": [], "now_na": [], "still_open": [], "answered": [], "by_hand": [], "ignored": [], "asked_open": 0,
+             "asked_not_reviewed": 0, "how": "", "evaluate_note": "", "saved": {}, "scanner": "", "stig_version": "", "label": "", "benchmark": ""}
+    if sm.get("status") != "found":
+        why = sm.get("why") or ("STIG Manager is not set (check_stig_stigman_api)" if not stigman_used else "not read")
+        out = dict(empty, host=host, scanned=False, why="nothing to recheck: " + why,
+                   stigman={"status": sm.get("status", ""), "why": why, "collection": "", "asset": "", "revision": ""},
+                   findings=[{"check": "stig", "id": "stig:stigman", "severity": "warning",
+                              "summary": "not rechecked - what to recheck is read from STIG Manager: " + why, "hint": "",
+                              "note": "Set the asset's name and collection for this host: check_stig_stigman_asset, check_stig_stigman_collection "
+                                      "(docs/STIG_DRIFT.md, The STIG recheck)."}])
+        out["row"] = stig_recheck_row(out)
+        return [out]
+    results = []
+    lists = _sm_checklists(sm)
+    asked_any = False
+    for smc in lists:
+        asked = recheck_asked(smc, statuses, which)
+        if not asked:
+            continue
+        asked_any = True
+        scan = _scan_for(smc, scans)
+        label = ""
+        if win:
+            label = (scan or {}).get("label") or smc.get("benchmark", "")
+            if not scan and (smc.get("site") or smc.get("instance")):
+                label += " - " + " / ".join(x for x in (smc.get("site"), smc.get("instance")) if x)
+        r = _recheck_result(host, smc, sm, scan, asked, ign, sev_map, label)
+        if not scan:
+            failed = next((s for s in scans if not s.get("scanned")), None)
+            r["why"] = (failed or {}).get("why") or (
+                "Evaluate-STIG wrote no checklist of %s%s (it may not apply to this server, or win_check_stig_evaluate_select / "
+                "_exclude left it out)" % (smc.get("benchmark", ""), (" for " + smc["site"]) if smc.get("site") else "")
+                if scans else "the scan gave no result")
+        results.append(r)
+    if not asked_any:
+        out = dict(empty, host=host, scanned=True, why="",
+                   stigman={"status": "found", "why": "", "collection": sm.get("collection", ""), "asset": sm.get("asset", ""),
+                            "revision": sm.get("revision", "")}, findings=[], nothing=True)
+        out["row"] = stig_recheck_row(out)
+        return [out]
+    failed = [s for s in scans if not s.get("scanned")]
+    if failed or not scans:
+        s = failed[0] if failed else {}
+        why = s.get("why") or "the scan gave no result"
+        if win:
+            hint = (("Get-Content -Tail 40 '%s'" % s["evaluate_log"]) if s.get("evaluate_log") else ("Get-Item '%s'" % s["evaluate"]) if s.get("evaluate")
+                    else "Get-ChildItem -Path C:\\ -Filter Evaluate-STIG.ps1 -Recurse -Depth 5 -ErrorAction SilentlyContinue")
+        else:
+            hint = ("less " + s["evaluate_log"]) if s.get("evaluate_log") else ""
+        results[0]["findings"].append({"check": "stig", "id": "stig:not-scanned", "severity": "warning",
+                                       "summary": "the STIG recheck did not run: " + why, "hint": hint,
+                                       "note": "The same settings as the STIG drift report (docs/STIG_DRIFT.md): Evaluate-STIG or OpenSCAP on the host."})
+    for r in results:
+        r["row"] = stig_recheck_row(r)
+    return results
+
+
+def stig_recheck_row(c):
+    """The every-host table's row of the recheck and its status."""
+    sm = c.get("stigman") or {}
+    smtxt = ("%s / %s%s" % (sm.get("collection", ""), sm.get("asset", ""), (" (" + sm["revision"] + ")") if sm.get("revision") else "")
+             if sm.get("status") == "found" else "not read: " + sm.get("why", ""))
+    if c.get("nothing"):
+        return {"cells": [_who(c), "nothing to recheck: no rule Open or Not Reviewed", smtxt] + ["0"] * 6 + ["", ""], "status": "ok"}
+    if not c.get("scanned"):
+        return {"cells": [_who(c), "not rechecked: " + c.get("why", ""), smtxt, "%d / %d" % (c.get("asked_open", 0), c.get("asked_not_reviewed", 0))]
+                + [""] * 7, "status": "warning"}
+    tool = "%s %s" % (c.get("stig_version", ""), ("(" + c["scanner"] + ")") if c.get("scanner") else "")
+    if c.get("evaluate_note"):
+        tool += " - " + c["evaluate_note"]
+    status = "info" if (c["fixed"] or c["now_na"] or c["answered"]) else "ok"
+    return {"cells": [_who(c), tool.strip(), smtxt, "%d / %d" % (c["asked_open"], c["asked_not_reviewed"]), str(len(c["fixed"]) + len(c["now_na"])),
+                      str(len(c["answered"])), str(len(c["still_open"])), str(len(c["by_hand"])), str(len(c["ignored"])), c.get("how", ""),
+                      (c.get("saved") or {}).get("results", "") or "(not kept: dry run)"],
+            "status": status}
+
+
+def _ask_cell(r):
+    """STIG Manager's review as it is: Open (accepted, 2026-08-15), Not a Finding (rejected, ...) - one that does not
+    count - or no review."""
+    if not r.get("sm") and not r.get("sm_status"):
+        return "no review"
+    return "%s (%s%s)" % (SM_WORD.get(r.get("sm"), r.get("sm") or "Not Reviewed"), r.get("sm_status") or "-",
+                          (", " + r["sm_ts"][:10]) if r.get("sm_ts") else "")
+
+
+def stig_recheck_sections(results, list_max=200):
+    """Every host's stig_recheck results -> the report's sections: what to update in STIG Manager (fixed, Not Applicable
+    now, the Not Reviewed the scan answered), what is still open, what needs a person, and every host."""
+    results = [r for r in (results or []) if r]
+    cols = ["Host", "STIG rule", "CAT", "Title"]
+    sections = []
+    upd_rows, upd_rs, upd_cs = _rows(results, "fixed", lambda c, r: [
+        _who(c), _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "pass", _ask_cell(r), "Not a Finding"],
+        lambda r: ["", "", r["level"], "", "ok", "warning", "ok"])
+    na_rows, na_rs, na_cs = _rows(results, "now_na", lambda c, r: [
+        _who(c), _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "n/a", _ask_cell(r), "Not Applicable"],
+        lambda r: ["", "", r["level"], "", "info", "warning", "info"])
+    upd_rows, upd_rs, upd_cs = upd_rows + na_rows, upd_rs + na_rs, upd_cs + na_cs
+    an_rows, an_rs, an_cs = _rows(results, "answered", lambda c, r: [
+        _who(c), _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], SCAN_WORD.get(r["now"], r["now"]),
+        _ask_cell(r), SM_WORD.get(r["now"], r["now"]), _details_short(r) if r["now"] == "fail" else ""],
+        lambda r: ["", "", r["level"], "", SCAN_CHIP.get(r["now"], ""), "unknown", SM_CHIP.get(r["now"], ""), ""])
+    so_rows, so_rs, so_cs = _rows(results, "still_open", lambda c, r: [
+        _who(c), _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], "FAIL", _ask_cell(r),
+        ", ".join(r.get("scap") or []) or _details_short(r)],
+        lambda r: ["", "", r["level"], "", "critical", "warning", ""])
+    bh_rows, bh_rs, bh_cs = _rows(results, "by_hand", lambda c, r: [
+        _who(c), _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], _ask_cell(r), r.get("no_answer", "")],
+        lambda r: ["", "", r["level"], "", "warning" if r["asked"] == "open" else "unknown", ""])
+    ig_rows, ig_rs, ig_cs = _rows(results, "ignored", lambda c, r: [
+        _who(c), _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], SCAN_WORD.get(r["now"], r["now"] or "-"), _ask_cell(r)],
+        lambda r: ["", "", r["level"], "", SCAN_CHIP.get(r["now"], ""), ""])
+    not_done = [c for c in results if not c.get("scanned")]
+    boxes = [_box("Fixed, still Open", len(upd_rows), "info", "set Not a Finding (or Not Applicable)"),
+             _box("Answered", len(an_rows), "info", "Not Reviewed: the scan has an answer"),
+             _box("Still open", len(so_rows), "info", "the review is right"),
+             _box("By hand", len(bh_rows), "info", "the scan gave no answer"),
+             _box("Not rechecked", len(not_done), "warning", "no result for these")]
+    if upd_rows:
+        sections.append({"title": "1. Open in STIG Manager - the host passes now: update the review", "columns": cols + ["Scan now", "STIG Manager", "Set it to"],
+                         "rows": upd_rows, "row_status": ["info"] * len(upd_rows), "cell_status": upd_cs, "status": "info",
+                         "text": "Checked again on the host just now: these pass (or no longer apply). Set the reviews in STIG Manager as the last "
+                                 "column says (this job never writes to it), and close their POA&M items. The checklist kept on the host "
+                                 "(the last column of Every host) has these results; STIG Manager can import it."})
+    if an_rows:
+        sections.append({"title": "2. Not Reviewed in STIG Manager - the scan has an answer", "columns": cols + ["Scan now", "STIG Manager", "Set it to", "What was found"],
+                         "rows": an_rows[:list_max], "row_status": ["info"] * len(an_rows[:list_max]), "cell_status": an_cs[:list_max], "status": "info",
+                         "text": "STIG Manager has no review that counts for these (none, Not Reviewed, or one rejected): the scan answered "
+                                 "them. A fail is Open - and a finding to fix or put on the POA&M."
+                                 + (" The first %d of %d (check_stig_list_max)." % (list_max, len(an_rows)) if len(an_rows) > list_max else "")})
+    if so_rows:
+        sections.append({"title": "3. Still open - the scan agrees with STIG Manager", "columns": cols + ["Scan now", "STIG Manager", "What was found"],
+                         "rows": so_rows[:list_max], "row_status": ["info"] * len(so_rows[:list_max]), "cell_status": so_cs[:list_max], "status": "info",
+                         "text": "Open in STIG Manager and the host still fails them: nothing to update."
+                                 + (" The first %d of %d (check_stig_list_max)." % (list_max, len(so_rows)) if len(so_rows) > list_max else "")})
+    if not (upd_rows or an_rows) and results:
+        gone = (" %d could not be rechecked (below)." % len(not_done)) if not_done else ""
+        sections.append({"title": "Nothing to update in STIG Manager", "status": "ok",
+                         "lines": ["No rule STIG Manager has Open passes now, and the scan answered no rule it has Not Reviewed." + gone]})
+    for s in sections:
+        s["top"] = True
+    if sections:
+        sections[0]["boxes"] = boxes
+    order = {"critical": 0, "warning": 1, "info": 2, "ok": 3}
+    hosts = sorted(results, key=lambda c: (order.get(c["row"]["status"], 3), _who(c)))
+    hrs = [c["row"]["status"] for c in hosts]
+    sections.append({"title": "Every host - what STIG Manager has Open / Not Reviewed, and the recheck", "status": "warning" if "warning" in hrs else (
+        "info" if "info" in hrs else "ok"),
+        "columns": ["Host", "STIG (scan)", "STIG Manager (collection / asset)", "Open / Not Reviewed", "Fixed", "Answered", "Still open",
+                    "By hand", "Left out", "Checked", "The checklist on the host"],
+        "rows": [c["row"]["cells"] for c in hosts], "row_status": hrs,
+        "text": "Only the rules STIG Manager has Open or Not Reviewed (check_stig_recheck) were checked; nothing is kept with the STIG drift "
+                "report's scans. Checked: only these rules (Evaluate-STIG's -SelectVuln, or oscap's --rule) - fast - or in full when "
+                "this Evaluate-STIG has no -SelectVuln. The STIG drift report checks every rule."})
+    full = []
+    for kind, lab in (("still_open", "Still open"), ("answered", "Answered: Open")):
+        for c in sorted(results, key=_who):
+            for r in c.get(kind) or []:
+                t = details_text(r.get("details"))
+                if t and r.get("now") == "fail":
+                    full.append({"status": r.get("level") or "warning", "chip": CAT.get(r.get("severity"), r.get("severity", "")), "meta": lab,
+                                 "title": r["title"], "subject": "%s - %s" % (_who(c), _rule_label(r)), "code": t})
+    if full:
+        sections.append({"title": "What Evaluate-STIG found - in full", "status": "info", "cards": full[:list_max],
+                         "text": "For each rule above that fails: what Evaluate-STIG found on the host (its own header and separators left out)."
+                                 + (" The first %d of %d (check_stig_list_max)." % (list_max, len(full)) if len(full) > list_max else "")})
+    if bh_rows:
+        sections.append({"title": "By hand - the scan gave no answer", "columns": cols + ["STIG Manager", "Why"],
+                         "rows": bh_rows[:list_max], "row_status": ["info"] * len(bh_rows[:list_max]), "cell_status": bh_cs[:list_max], "status": "info",
+                         "text": "DISA's manual checks (Evaluate-STIG leaves them Not Reviewed unless an answer file covers them), and rules not in the "
+                                 "scan's STIG revision: a person reviews these."
+                                 + (" The first %d of %d (check_stig_list_max)." % (list_max, len(bh_rows)) if len(bh_rows) > list_max else "")})
+    if ig_rows:
+        sections.append({"title": "Left out on purpose - check_stig_ignore_rules", "columns": cols + ["Scan now", "STIG Manager"],
+                         "rows": ig_rows[:list_max], "row_status": ["info"] * len(ig_rows[:list_max]), "cell_status": ig_cs[:list_max], "status": "info",
+                         "text": "The scanner is known to get these wrong here: not sorted above."})
+    return sections
+
+
+def stig_recheck_lines(c):
+    """One recheck result in plain lines, for the job's output."""
+    sm = c.get("stigman") or {}
+    smtxt = ("%s / %s%s" % (sm.get("collection"), sm.get("asset"), (" (" + sm["revision"] + ")") if sm.get("revision") else "")
+             if sm.get("status") == "found" else (sm.get("why") or "not read"))
+    if c.get("nothing"):
+        return ["%s: nothing to recheck - STIG Manager has no rule Open or Not Reviewed; STIG Manager: %s" % (_who(c), smtxt)]
+    if not c.get("scanned"):
+        return ["%s: NOT RECHECKED - %s" % (_who(c), c.get("why", ""))]
+    out = ["%s: %d Open, %d Not Reviewed in STIG Manager - fixed %d, now n/a %d, answered %d, still open %d, by hand %d, left out %d; "
+           "STIG Manager: %s; checked: %s" % (
+               _who(c), c["asked_open"], c["asked_not_reviewed"], len(c["fixed"]), len(c["now_na"]), len(c["answered"]), len(c["still_open"]),
+               len(c["by_hand"]), len(c["ignored"]), smtxt, c.get("how") or "-")]
+    if c.get("evaluate_note"):
+        out.append("  Evaluate-STIG: " + c["evaluate_note"])
+    for r in c["fixed"]:
+        out.append("  FIXED  %s %s %s - set Not a Finding" % (_rule_label(r), CAT.get(r.get("severity"), ""), r["title"][:90]))
+    for r in c["now_na"]:
+        out.append("  N/A    %s %s %s - set Not Applicable" % (_rule_label(r), CAT.get(r.get("severity"), ""), r["title"][:90]))
+    for r in c["answered"]:
+        out.append("  ANSWER %s %s %s - set %s" % (_rule_label(r), CAT.get(r.get("severity"), ""), r["title"][:90], SM_WORD.get(r["now"], r["now"])))
+    if (c.get("saved") or {}).get("results"):
+        out.append("  checklist on the host: " + c["saved"]["results"])
+    elif not c.get("saved"):
+        out.append("  nothing kept on the host (not kept: dry run)")
+    return out
+
+
 class FilterModule(object):
     def filters(self):
         return {"stig_compare": stig_compare, "stig_report_sections": stig_report_sections, "stig_lines": stig_lines,
-                "stig_findings": stig_findings}
+                "stig_findings": stig_findings, "stig_recheck_vulns": stig_recheck_vulns, "stig_recheck": stig_recheck,
+                "stig_recheck_sections": stig_recheck_sections, "stig_recheck_lines": stig_recheck_lines}

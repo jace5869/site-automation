@@ -345,7 +345,8 @@ class FakeModule(object):
     def __init__(self, **params):
         self.params = dict(dir="", keep=10, save=True, keep_report=True, keep_results=True, oscap="", content_dir="", datastream="",
                            profile="stig", tailoring="", timeout=60, scanner="evaluate_stig", evaluate="", evaluate_select={},
-                           evaluate_args=[], evaluate_read="", evaluate_output="CKLB", evaluate_rejected=True, pwsh="", benchmarks={"8": "RHEL_8_STIG", "9": "RHEL_9_STIG", "10": "RHEL_10_STIG"})
+                           evaluate_args=[], evaluate_read="", evaluate_output="CKLB", evaluate_rejected=True, pwsh="", benchmarks={"8": "RHEL_8_STIG", "9": "RHEL_9_STIG", "10": "RHEL_10_STIG"},
+                           vulns=[], history=True)
         self.params.update(params)
 
 
@@ -556,8 +557,8 @@ def win_scan(key="Windows_Server_2022_STIG", label="Microsoft Windows Server 202
 
 
 class FakeClient(object):
-    def __init__(self, assets, reviews):
-        self.assets, self.reviews, self.asked = assets, reviews, []
+    def __init__(self, assets, reviews, rules=None):
+        self.assets, self.reviews, self.rules, self.asked = assets, reviews, rules or {}, []
 
     def get(self, path, **q):
         self.asked.append((path, q))
@@ -565,7 +566,9 @@ class FakeClient(object):
             return [{"collectionId": "1", "name": "Windows Servers"}]
         if path == "/assets":
             return [a for a in self.assets if "benchmarkId" not in q or q["benchmarkId"] in [x["benchmarkId"] for x in a["stigs"]]]
-        return self.reviews.get(path.split("/")[-1], [])
+        if path.startswith("/stigs/"):
+            return self.rules.get(path.split("/")[2], [])
+        return [r for r in self.reviews.get(path.split("/")[-1], []) if r.get("benchmarkId", q.get("benchmarkId")) == q.get("benchmarkId")]
 
 
 class Windows(unittest.TestCase):
@@ -639,6 +642,189 @@ class Windows(unittest.TestCase):
         self.assertIn("does not have MS_Edge_STIG assigned", out["win01|MS_Edge_STIG"]["why"])
         self.assertEqual(out["win02|MS_Edge_STIG"]["status"], "not_found")
         self.assertTrue(all(path in ("/collections", "/assets") or "/reviews/" in path for path, _q in client.asked))
+
+
+def sm_list(bench="RHEL_9_STIG", rules=("SV-1", "SV-2", "SV-3", "SV-4", "SV-5"), **reviews):
+    """One checklist in STIG Manager with its revision's rules (site_stigman_read with rules: true)."""
+    c = sm(**reviews)
+    c.update(benchmark=bench, revision="V2R7", rules=dict((k, {"v": "V-" + k[3:], "rule": k + "r1_rule", "version": "X-" + k[3:], "severity": "medium",
+                                                                "title": "Rule " + k}) for k in rules))
+    return c
+
+
+def recheck_scan(**results):
+    """The recheck's scan (site_stig_scan with vulns, history false): only the rules asked for."""
+    its = [{"key": k.replace("_", "-"), "v": "V-" + k[3:], "rule": k.replace("_", "-") + "r1_rule", "stigid": "", "severity": "medium", "result": v,
+            "details": "Found: it is not set." if v == "fail" else ""} for k, v in sorted(results.items())]
+    return {"scanned": True, "scanner": "Evaluate-STIG", "stig_version": "V2R10", "items": its, "selected": True, "vulns_asked": len(its),
+            "saved": {"results": "/var/lib/site-automation/stig/recheck/latest-checklist.cklb"}}
+
+
+class Recheck(unittest.TestCase):
+    """The STIG recheck (playbooks/stig_recheck.yml, win_stig_recheck.yml): what STIG Manager has Open or Not Reviewed, checked again."""
+
+    def test_asked_open_and_not_reviewed(self):
+        c = sm_list(SV_1=("fail", "accepted"), SV_2=("pass", "accepted"), SV_3=("pass", "rejected"), SV_4=("notchecked", "saved"))
+        asked = sf.recheck_asked(c)
+        self.assertEqual(dict((k, w) for k, (w, _r) in asked.items()), {"SV-1": "open", "SV-3": "not_reviewed", "SV-4": "not_reviewed", "SV-5": "not_reviewed"})
+        self.assertEqual(list(sf.recheck_asked(c, which=["open"])), ["SV-1"])
+        self.assertEqual(list(sf.recheck_asked(c, statuses=["accepted"], which=["open"])), ["SV-1"])
+        self.assertEqual(list(sf.recheck_asked(sm_list(SV_1=("fail", "saved")), statuses=["accepted"], which=["open"])), [], "saved does not count here")
+        self.assertEqual(sf.stig_recheck_vulns(c), ["V-1", "V-3", "V-4", "V-5"])
+        self.assertEqual(sf.stig_recheck_vulns({"status": "not_found"}), [])
+        no_rules = sm(SV_1=("fail", "accepted"), SV_2=("pass", "accepted"))
+        self.assertEqual(sf.stig_recheck_vulns(no_rules), ["V-1"], "without the revision's rules: only what has a review")
+
+    def test_sorted_linux(self):
+        c = sm_list(SV_1=("fail", "accepted"), SV_2=("fail", "saved"), SV_3=("fail", "accepted"), SV_4=("pass", "rejected"))
+        out = sf.stig_recheck(c, [recheck_scan(SV_1="pass", SV_2="fail", SV_3="notapplicable", SV_4="fail", SV_5="notchecked")], "web01")
+        self.assertEqual(len(out), 1)
+        r = out[0]
+        self.assertEqual([x["key"] for x in r["fixed"]], ["SV-1"])
+        self.assertEqual([x["key"] for x in r["still_open"]], ["SV-2"])
+        self.assertEqual([x["key"] for x in r["now_na"]], ["SV-3"])
+        self.assertEqual([x["key"] for x in r["answered"]], ["SV-4"])
+        self.assertEqual([(x["key"], x["no_answer"]) for x in r["by_hand"]], [("SV-5", "Not Reviewed by the scan")])
+        self.assertEqual((r["asked_open"], r["asked_not_reviewed"]), (3, 2))
+        self.assertEqual(r["findings"], [], "report only")
+        self.assertEqual(r["row"]["status"], "info")
+        self.assertEqual(r["row"]["cells"][9], "only these rules (-SelectVuln)")
+        lines = sf.stig_recheck_lines(r)
+        self.assertIn("web01: 3 Open, 2 Not Reviewed in STIG Manager - fixed 1, now n/a 1, answered 1, still open 1, by hand 1", lines[0])
+        self.assertIn("  ANSWER V-4 (X-4) CAT II Rule SV-4 - set Open", lines)
+        self.assertEqual(sf._ask_cell(r["answered"][0]), "Not a Finding (rejected, 2026-09-01)")
+
+    def test_not_in_the_scan_ignored_and_in_full(self):
+        c = sm_list(rules=("SV-1", "SV-2"), SV_1=("fail", "accepted"))
+        s = dict(recheck_scan(SV_1="fail"), selected=False)
+        r = sf.stig_recheck(c, [s], "web01", ignore=["V-1"])[0]
+        self.assertEqual([x["key"] for x in r["ignored"]], ["SV-1"])
+        self.assertEqual([x["no_answer"] for x in r["by_hand"]], ["not in the scan's checklist (another STIG revision?)"])
+        self.assertEqual(r["how"], "in full - this Evaluate-STIG has no -SelectVuln")
+        o = dict(s, scanner="OpenSCAP", selected=True)
+        r = sf.stig_recheck(c, [o], "web01")[0]
+        self.assertEqual([x["no_answer"] for x in r["by_hand"]], ["no SCAP check for it (a manual check)"])
+        self.assertEqual(r["how"], "only these rules (--rule)")
+
+    def test_nothing_not_found_not_scanned(self):
+        r = sf.stig_recheck(sm_list(rules=("SV-1",), SV_1=("pass", "accepted")), [], "web01")
+        self.assertTrue(r[0]["nothing"])
+        self.assertEqual(r[0]["findings"], [])
+        self.assertIn("nothing to recheck", sf.stig_recheck_lines(r[0])[0])
+        r = sf.stig_recheck({"status": "not_found", "why": "no asset named web01"}, [], "web01")
+        self.assertEqual([f["id"] for f in r[0]["findings"]], ["stig:stigman"])
+        self.assertIn("NOT RECHECKED - nothing to recheck: no asset named web01", sf.stig_recheck_lines(r[0])[0])
+        r = sf.stig_recheck(sm_list(SV_1=("fail", "accepted")), [{"scanned": False, "why": "Evaluate-STIG is not at /x"}], "web01")
+        self.assertEqual([f["id"] for f in r[0]["findings"]], ["stig:not-scanned"])
+        self.assertIn("Evaluate-STIG is not at /x", r[0]["findings"][0]["summary"])
+        self.assertEqual(r[0]["row"]["status"], "warning")
+        self.assertEqual((r[0]["by_hand"], r[0]["asked_open"]), ([], 1), "not rechecked: counted, not sorted")
+
+    def test_windows_each_checklist_its_scan(self):
+        ws = dict(sm_list("Windows_Server_2022_STIG", rules=("SV-1", "SV-2"), SV_1=("fail", "accepted")), asset="win01", site="", instance="")
+        iis = dict(sm_list("IIS_10-0_Site_STIG", rules=("SV-7",), SV_7=("fail", "accepted")), asset="win01-Default Web Site-NA", site="Default Web Site", instance="")
+        dbx = dict(sm_list("MS_SQL_STIG", rules=("SV-9",)), asset="win01-NA-SQL1", site="", instance="SQL1")
+        host = {"status": "found", "why": "", "collection": "Windows Servers", "asset": "win01", "checklists": [ws, iis, dbx]}
+        self.assertEqual(sf.stig_recheck_vulns(host), ["V-1", "V-2", "V-7", "V-9"])
+        a = dict(win_scan(SV_1=("pass",), SV_2=("fail",)), selected=True)
+        b = dict(win_scan("IIS_10-0_Site_STIG_Default_Web_Site", "Microsoft IIS 10.0 Site - Default Web Site", SV_7=("fail",)), selected=True)
+        out = sf.stig_recheck(host, [a, b], "win01")
+        self.assertEqual([r["label"] for r in out], ["win01 - Microsoft Windows Server 2022", "win01 - Microsoft IIS 10.0 Site - Default Web Site",
+                                                     "win01 - MS_SQL_STIG - SQL1"])
+        self.assertEqual([x["key"] for x in out[0]["fixed"]], ["SV-1"])
+        self.assertEqual([x["key"] for x in out[0]["answered"]], ["SV-2"])
+        self.assertEqual([x["key"] for x in out[1]["still_open"]], ["SV-7"])
+        self.assertFalse(out[2]["scanned"])
+        self.assertIn("Evaluate-STIG wrote no checklist of MS_SQL_STIG", out[2]["why"])
+        self.assertEqual(out[1]["stigman"]["asset"], "win01-Default Web Site-NA")
+        secs = sf.stig_recheck_sections(out)
+        self.assertEqual([s["title"][:2] for s in secs[:3]], ["1.", "2.", "3."])
+        self.assertEqual([b["value"] for b in secs[0]["boxes"]], [1, 1, 1, 0, 1], "fixed, answered, still open, by hand, not rechecked")
+        every = [s for s in secs if s["title"].startswith("Every host")][0]
+        self.assertEqual(len(every["rows"]), 3)
+        self.assertTrue(all(len(r) == len(every["columns"]) for r in every["rows"]))
+        full = [s for s in secs if s["title"].startswith("What Evaluate-STIG found")][0]
+        self.assertEqual(len(full["cards"]), 2)
+
+    def test_nothing_to_update_section(self):
+        r = sf.stig_recheck(sm_list(rules=("SV-1",), SV_1=("fail", "accepted")), [recheck_scan(SV_1="fail")], "web01")
+        secs = sf.stig_recheck_sections(r)
+        self.assertEqual([s["title"] for s in secs][:2], ["3. Still open - the scan agrees with STIG Manager", "Nothing to update in STIG Manager"])
+
+    def test_stig_manager_every_and_rules(self):
+        assets = [{"assetId": "21", "name": "win01", "fqdn": "", "stigs": [{"benchmarkId": "W", "revisionStr": "V2R3"}]},
+                  {"assetId": "22", "name": "win01-Default Web Site-NA", "fqdn": "", "stigs": [{"benchmarkId": "I", "revisionStr": ""}]},
+                  {"assetId": "23", "name": "win010-Default Web Site-NA", "fqdn": "", "stigs": [{"benchmarkId": "I"}]},
+                  {"assetId": "24", "name": "win01-old", "fqdn": "", "stigs": [{"benchmarkId": "I"}]}]
+        rules = {"W": [{"ruleId": "SV-1r2_rule", "groupId": "V-1", "version": "WN-1", "severity": "high", "title": "One"}],
+                 "I": [{"ruleId": "SV-7r1_rule", "version": "IIS-7", "severity": "medium", "title": "Seven"}]}
+        client = FakeClient(assets, {"21": [{"benchmarkId": "W", "ruleId": "SV-1r2_rule", "result": "fail", "status": {"label": "accepted"}}]}, rules)
+        out = smr.read({"collections": [], "hosts": [{"host": "win01", "names": ["win01"], "every": True},
+                                                     {"host": "lin01", "names": ["win01"], "benchmark": "W", "rules": True, "id": "lin"}]}, client)
+        w = out["win01"]
+        self.assertEqual(w["status"], "found")
+        self.assertEqual([(c["asset"], c["benchmark"], c["site"], c["instance"]) for c in w["checklists"]],
+                         [("win01", "W", "", ""), ("win01-Default Web Site-NA", "I", "Default Web Site", "")])
+        self.assertEqual(w["checklists"][0]["rules"]["SV-1"]["v"], "V-1")
+        self.assertEqual(w["checklists"][1]["rules"]["SV-7"]["v"], "V-7", "no groupId: from the SV id")
+        self.assertEqual(w["checklists"][0]["reviews"]["SV-1"]["result"], "fail")
+        self.assertEqual(out["lin"]["rules"]["SV-1"]["version"], "WN-1")
+        self.assertIn(("/stigs/I/revisions/latest/rules", {}), client.asked, "no revision on the asset: the latest")
+        self.assertEqual(len([p for p, _q in client.asked if p == "/stigs/W/revisions/V2R3/rules"]), 1, "each revision's rules read once")
+        self.assertEqual(smr.tail_of("win01", "win01-NA-SQL1"), ("", "SQL1"))
+        self.assertEqual(smr.tail_of("win01", "win01-My-Site-NA"), ("My-Site", ""))
+        self.assertIsNone(smr.tail_of("win01", "win01-old"))
+        self.assertIsNone(smr.tail_of("win01", "win010-a-b"))
+        none = smr.read({"collections": [], "hosts": [{"host": "win09", "names": ["win09"], "every": True}]}, client)
+        self.assertEqual(none["win09"]["status"], "not_found")
+
+    def test_evaluate_call(self):
+        self.assertEqual(scan.ps_call("/opt/es/Evaluate-STIG.ps1", ["--Output", "CKLB", "-SelectVuln", ["V-1", "V-2"], "--AnswerKey", "Site's"]),
+                         "& '/opt/es/Evaluate-STIG.ps1' -Output 'CKLB' -SelectVuln 'V-1','V-2' -AnswerKey 'Site''s'")
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "Src", "Evaluate-STIG"))
+        bash = os.path.join(d, "Evaluate-STIG_Bash.sh")
+        ps1 = os.path.join(d, "Src", "Evaluate-STIG", "Evaluate-STIG.ps1")
+        open(bash, "w").write("#!/bin/bash\n")
+        self.assertEqual(scan.evaluate_ps1(bash), "")
+        open(ps1, "w").write("param([string[]] $SelectVuln)\n")
+        self.assertEqual(scan.evaluate_ps1(bash), ps1)
+        self.assertTrue(scan.takes_select_vuln(ps1, bash))
+        self.assertFalse(scan.takes_select_vuln(bash, os.path.join(d, "none")))
+
+    def test_module_recheck_bash(self):
+        d = tempfile.mkdtemp()
+        es = os.path.join(d, "es")
+        os.makedirs(es)
+        open(os.path.join(es, "Evaluate-STIG_Bash.sh"), "w").write(FAKE_ES % os.path.join(ROOT, "tests", "stig", "make_cklb.py") + "# --SelectVuln\n")
+        open(os.path.join(es, "results.json"), "w").write('{"SV-257883": "open"}')
+        m = FakeModule(dir=os.path.join(d, "kept"), evaluate=es, vulns=["V-257883", "V-258176"], history=False)
+        with unittest.mock.patch.object(scan, "os_release", return_value={"ID": "rhel", "VERSION_ID": "9.4", "PRETTY_NAME": "RHEL 9.4"}):
+            r = scan.Scan(m).run()
+        self.assertTrue(r["scanned"], r.get("why"))
+        self.assertEqual(sorted((i["v"], i["result"]) for i in r["items"]), [("V-257883", "fail"), ("V-258176", "pass")])
+        self.assertTrue(r["selected"])
+        self.assertIn("--SelectVuln V-257883,V-258176", open(os.path.join(es, "args.txt")).read())
+        self.assertEqual(r["saved"]["results"], os.path.join(d, "kept", "recheck", "latest-checklist.cklb"))
+        self.assertEqual(os.listdir(os.path.join(d, "kept")), ["recheck"], "nothing kept with the drift report's scans")
+        self.assertEqual(r["previous"], {})
+
+    def test_module_recheck_select_vuln_refused(self):
+        d = tempfile.mkdtemp()
+        es = os.path.join(d, "es")
+        os.makedirs(es)
+        refuse = '[[ "$*" == *--SelectVuln* ]] && { echo "ERROR: --SelectVuln needs --SelectSTIG"; exit 1; }\n'
+        open(os.path.join(es, "Evaluate-STIG_Bash.sh"), "w").write(FAKE_ES.replace('out=""; args="$*"', refuse + 'out=""; args="$*"')
+                                                                   % os.path.join(ROOT, "tests", "stig", "make_cklb.py"))
+        open(os.path.join(es, "results.json"), "w").write('{"SV-257883": "open"}')
+        m = FakeModule(dir=os.path.join(d, "kept"), evaluate=es, vulns=["V-257883"], history=False, save=False)
+        with unittest.mock.patch.object(scan, "os_release", return_value={"ID": "rhel", "VERSION_ID": "9.4", "PRETTY_NAME": "RHEL 9.4"}):
+            r = scan.Scan(m).run()
+        self.assertTrue(r["scanned"], r.get("why"))
+        self.assertFalse(r["selected"])
+        self.assertIn("with -SelectVuln it wrote no checklist (exit 1: ERROR: --SelectVuln needs --SelectSTIG), so it ran in full", r["select_note"])
+        self.assertEqual([(i["v"], i["result"]) for i in r["items"]], [("V-257883", "fail")])
+        self.assertEqual(sf._recheck_how(r), "in full - " + r["select_note"])
 
 
 class Details(unittest.TestCase):

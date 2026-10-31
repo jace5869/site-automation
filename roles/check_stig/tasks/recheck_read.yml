@@ -1,0 +1,60 @@
+---
+# The STIG recheck, first step (Linux: tasks/recheck.yml; Windows: roles/win_check_stig/tasks/recheck.yml): what to check
+# again is read from STIG Manager (read-only, once, from the AAP side) - each host's rules it has Open or Not Reviewed
+# (check_stig_recheck) - into _stig_recheck_vulns (V-257985 ...). Linux: the host's RHEL STIG; Windows
+# (_stig_recheck_windows): every STIG of the server's asset and of its web site and database assets.
+- name: STIG recheck | STIG Manager is set (what to check again is read from it)
+  ansible.builtin.assert:
+    that: check_stig_stigman_api | length > 0
+    fail_msg: >-
+      The STIG recheck reads what to check from STIG Manager: set check_stig_stigman_api and the "STIG Manager API"
+      credential, as for the STIG drift report (docs/STIG_DRIFT.md)
+    quiet: true
+
+- name: STIG recheck | check_stig_recheck is open and / or not_reviewed
+  ansible.builtin.assert:
+    that:
+      - check_stig_recheck | length > 0
+      - check_stig_recheck | difference(['open', 'not_reviewed']) | length == 0
+    fail_msg: "check_stig_recheck must list open, not_reviewed or both (it is {{ check_stig_recheck }})"
+    quiet: true
+
+- name: STIG recheck | the host's RHEL version (its STIG in STIG Manager)
+  ansible.builtin.setup:
+    gather_subset: [min]
+    filter: [ansible_distribution_major_version]
+  when: not _stig_recheck_windows | default(false) and ansible_distribution_major_version is not defined
+
+- name: STIG recheck | read what each host has Open or Not Reviewed in STIG Manager (read-only, once, from the AAP side)
+  ansible.builtin.import_tasks: stigman.yml
+  vars:
+    _stig_sm_entries: >-
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts -%}
+      {%-   set hv = hostvars[h] -%}
+      {%-   set names = [hv.check_stig_stigman_asset] if hv.check_stig_stigman_asset | default('') else [h, h.split('.')[0]] -%}
+      {%-   set e = {'host': h, 'names': names | unique | list, 'collection': hv.check_stig_stigman_collection | default('')} -%}
+      {%-   if _stig_recheck_windows | default(false) -%}
+      {%-     set _ = out.append(e | combine({'every': true})) -%}
+      {%-   else -%}
+      {%-     set _ = out.append(e | combine({'rules': true,
+                'benchmark': check_stig_stigman_benchmarks[hv.ansible_distribution_major_version | default('') | string] | default('')})) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: STIG recheck | the rules to check again on this host
+  ansible.builtin.set_fact:
+    _stig_recheck_vulns: "{{ _sm_host | stig_recheck_vulns(check_stig_stigman_statuses, check_stig_recheck) }}"
+    _stig_recheck_sm: "{{ _sm_host }}"
+  vars:
+    _sm_host: >-
+      {{ (_stig_sm.hosts | default({}))[inventory_hostname]
+         | default({'status': 'error', 'why': _stig_sm.error} if _stig_sm.error | default('') else {}) }}
+
+- name: STIG recheck | what will be checked again
+  ansible.builtin.debug:
+    msg: >-
+      {{ (_stig_recheck_vulns | length) ~ ' rules Open or Not Reviewed in STIG Manager: ' ~ (_stig_recheck_vulns[:20] | join(', '))
+         ~ (' and ' ~ (_stig_recheck_vulns | length - 20) ~ ' more' if _stig_recheck_vulns | length > 20 else '')
+         if _stig_recheck_vulns else 'nothing to check again: ' ~ (_stig_recheck_sm.why | default('') or 'no rule Open or Not Reviewed') }}

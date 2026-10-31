@@ -48,6 +48,10 @@ function Invoke-Native([string] $Exe, [string[]] $Arguments) {
 #              its default, C:\Users\Public\Documents\STIG_Compliance); or that folder
 #   select, exclude, args, output, rejected, run_as (task or direct), powershell, timeout, dir, keep, save,
 #   details_max, search (the folders to search; [] = the local drives), search_depth, host ('' = this computer's name)
+#   vulns      the STIG recheck (playbooks/win_stig_recheck.yml): only these rules (V-254238 ...) - Evaluate-STIG with
+#              -SelectVuln when it has it (else it runs in full) - and only they are printed; [] = every rule
+#   history    $false (the recheck): not compared with the earlier scans nor kept with them - the checklist is kept as
+#              dir\recheck\<checklist>.<ext>
 $onWindows = ($env:OS -eq 'Windows_NT')
 $me = [string](Get-Setting 'host' '')
 if (-not $me) { $me = [string]$env:COMPUTERNAME }
@@ -68,6 +72,11 @@ $extra = @(Get-Setting 'args' @() | Where-Object { $null -ne $_ })
 $searchDepth = [int](Get-Setting 'search_depth' 4)
 $searchIn = @(Get-Setting 'search' @() | Where-Object { $_ })
 $shellSet = [string](Get-Setting 'powershell' '')
+$vulns = @(Get-Setting 'vulns' @() | Where-Object { $_ } | ForEach-Object { [string]$_ })
+$history = [bool](Get-Setting 'history' $true)
+$wanted = @{}
+foreach ($v in $vulns) { $wanted[$v] = $true }
+$pickVulns = $false
 $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd\THHmmss\Z')
 $nowText = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd\THH:mm:ss\Z')
 $facts.scanned = $false
@@ -280,6 +289,7 @@ function Invoke-Evaluate([string] $Script, [string] $OutDir, [string] $Work) {
     $call = @('&', (Get-Quoted $Script), '-Output', (Get-Quoted $output), '-OutputPath', (Get-Quoted $OutDir))
     if ($select.Count) { $call += @('-SelectSTIG', ((@($select | ForEach-Object { Get-Quoted $_ })) -join ',')) }
     if ($exclude.Count) { $call += @('-ExcludeSTIG', ((@($exclude | ForEach-Object { Get-Quoted $_ })) -join ',')) }
+    if ($pickVulns) { $call += @('-SelectVuln', ((@($vulns | ForEach-Object { Get-Quoted $_ })) -join ',')) }
     foreach ($a in $extra) {
         if ([string]$a -match '^-[A-Za-z]\w*$') { $call += @([string]$a) } else { $call += @(Get-Quoted $a) }
     }
@@ -352,7 +362,8 @@ function Get-Scan($S, $File, [bool] $ReadMode) {
     if (-not $key) { $key = 'checklist' }
     $hd = Join-Path $dir $key
     $prev = $null
-    $sums = @(Get-ChildItem -LiteralPath $hd -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{8}T\d{6}Z_summary\.json$' } | Sort-Object -Property Name)
+    $sums = @()
+    if ($history) { $sums = @(Get-ChildItem -LiteralPath $hd -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{8}T\d{6}Z_summary\.json$' } | Sort-Object -Property Name) }
     for ($i = $sums.Count - 1; $i -ge 0 -and $null -eq $prev; $i--) {
         try { $prev = ConvertFrom-Json -InputObject ([string](Get-Content -LiteralPath $sums[$i].FullName -Raw)) } catch { $prev = $null }
     }
@@ -371,6 +382,7 @@ function Get-Scan($S, $File, [bool] $ReadMode) {
         $k = $m.Value
         $v = $r.v
         if (-not $v) { $v = 'V-' + $k.Substring(3) }
+        if ($vulns.Count -and -not $wanted.ContainsKey([string]$v)) { continue }
         $it = @{ key = $k; v = $v; rule = $r.rule; stigid = $r.stigid; severity = $r.severity; result = $r.result }
         if ($r.result -eq 'fail') {
             $it.title = $r.title
@@ -398,6 +410,18 @@ function Get-Scan($S, $File, [bool] $ReadMode) {
         history = 'items'; os = $facts.os; counts = $counts; items = $items; previous = @{ time = $prevTime }; saved = @{}
         checklist = (Split-Path -Leaf $File.FullName) }
     if ($ReadMode) { $scan.checklist_time = $File.LastWriteTimeUtc.ToString('yyyy-MM-dd\THH:mm:ss\Z') }
+    if (-not $history) {
+        $scan.history = ''
+        if ($save) {
+            $rd = Join-Path $dir 'recheck'
+            New-PrivateFolder $dir
+            New-Item -ItemType Directory -Path $rd -Force | Out-Null
+            $kept = Join-Path $rd ($key + ([string]$File.Extension).ToLower())
+            Copy-Item -LiteralPath $File.FullName -Destination $kept -Force
+            $scan.saved = @{ dir = $rd; results = $kept }
+        }
+        return $scan
+    }
     if ($save) {
         New-PrivateFolder $dir
         New-Item -ItemType Directory -Path $hd -Force | Out-Null
@@ -476,6 +500,12 @@ try {
             }
         }
         $facts.evaluate = $script
+        if ($vulns.Count) {
+            # the recheck: only the rules asked for, when this Evaluate-STIG has -SelectVuln (else it runs in full)
+            $pickVulns = [bool](Select-String -LiteralPath $script -Pattern 'SelectVuln' -SimpleMatch -Quiet)
+            $facts.selected = $pickVulns
+            $facts.vulns_asked = $vulns.Count
+        }
         $workBase = [string]$env:TEMP
         if (-not $workBase) { $workBase = '/tmp' }
         if ($save) { New-PrivateFolder $dir; $workBase = $dir }
@@ -483,6 +513,19 @@ try {
         New-Item -ItemType Directory -Path (Join-Path $work 'out') -Force | Out-Null
         try {
             $ran = Invoke-Evaluate $script (Join-Path $work 'out') $work
+            if ($pickVulns -and -not $ran.timed_out -and -not @(Get-Checklists (Join-Path $work 'out')).Count -and
+                -not @((Get-EvaluateSaid $ran.said).rejected | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count) {
+                # nothing written with -SelectVuln (a version that wants -SelectSTIG with it, say): once more, in full
+                $first = ((Get-EvaluateSaid $ran.said).lines -join ' | ')
+                if (-not $first) { $first = ([string]$ran.said).Trim() }
+                if (-not $first) { $first = 'no message' }
+                if ($first.Length -gt 300) { $first = $first.Substring($first.Length - 300) }
+                $facts.select_note = 'with -SelectVuln it wrote no checklist (exit ' + $ran.code + ': ' + $first + '), so it ran in full'
+                $pickVulns = $false
+                $facts.selected = $false
+                Remove-Item -LiteralPath (Join-Path $work 'exit.txt'), (Join-Path $work 'evaluate.txt') -Force -ErrorAction SilentlyContinue
+                $ran = Invoke-Evaluate $script (Join-Path $work 'out') $work
+            }
             $said = Get-EvaluateSaid $ran.said
             $facts.evaluate_exit = $ran.code
             $facts.evaluate_failed = $said.failed

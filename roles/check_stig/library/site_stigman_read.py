@@ -24,7 +24,9 @@ options:
   scope: {description: "Scopes to ask for ('' = the client's default scopes).", type: str, default: ''}
   hosts:
     description: "[{host, names: [asset names to try], collection: '' or a name, benchmark: RHEL_9_STIG, id: the key of its answer
-      ('' = host; a host with several STIGs has one entry per STIG, each with its own id)}]"
+      ('' = host; a host with several STIGs has one entry per STIG, each with its own id), rules: true - the STIG revision's
+      rules too (the STIG recheck: the rules with no review), every: true - no benchmark: every STIG assigned to the host's
+      asset and to its web site and database assets (<asset>-<site>-<instance>), each a checklist}]"
     type: list
     elements: dict
     required: true
@@ -39,7 +41,9 @@ RETURN = r'''
 hosts:
   description: "Per host (per id): {status: found / not_found / no_stig (the asset is there, without this STIG) / several /
                 no_benchmark / error, why, collection, asset, assetId, revision, reviews: {SV-257985: {result, status, ts, rule,
-                version, severity, title}}}"
+                version, severity, title}}, rules (with rules: true): {SV-257985: {v, rule, version, severity, title}}};
+                with every: true {status, why, collection, asset, checklists: [{asset, assetId, benchmark, revision, site,
+                instance, reviews, rules}]}"
   type: dict
   returned: always
 error:
@@ -79,6 +83,30 @@ def match_assets(names, assets):
         return exact
     shorts = set(short(n) for n in want)
     return [a for a in assets if short(a.get("name")) in shorts or (a.get("fqdn") and short(a.get("fqdn")) in shorts)]
+
+
+def rules_of(rows):
+    """A STIG revision's rules -> {SV id: {v, rule, version, severity, title}}."""
+    out = {}
+    for r in rows or []:
+        k = sv_of(r.get("ruleId"))
+        if k and k not in out:
+            out[k] = {"v": r.get("groupId") or ("V-" + k[3:]), "rule": r.get("ruleId") or "", "version": r.get("version") or "",
+                      "severity": r.get("severity") or "", "title": r.get("title") or ""}
+    return out
+
+
+def tail_of(base, name):
+    """A web site or database asset STIG Manager named <host>-<site>-<instance> when it imported its checklist (NA for none)
+    -> (site, instance); None when the name is not one of the host's."""
+    b, n = (base or "").lower(), (name or "")
+    if not b or not n.lower().startswith(b + "-") or len(n) <= len(b) + 1:
+        return None
+    rest = n[len(b) + 1:]
+    if "-" not in rest:
+        return None
+    site, inst = rest.rsplit("-", 1)
+    return ("" if site == "NA" else site, "" if inst == "NA" else inst)
 
 
 def reviews_of(rows):
@@ -144,7 +172,7 @@ def read(p, client):
         want = [c.lower() for c in p["collections"]]
         cols = [c for c in cols if (c.get("name") or "").lower() in want]
     by_name = dict(((c.get("name") or "").lower(), c) for c in cols)
-    assets_cache, out = {}, {}
+    assets_cache, rules_cache, out = {}, {}, {}
 
     def assets(col, bench):
         key = (col["collectionId"], bench)
@@ -155,10 +183,24 @@ def read(p, client):
             assets_cache[key] = [dict(a, _col=col) for a in client.get("/assets", **q) or []]
         return assets_cache[key]
 
+    def rules(bench, rev):
+        """The rules of a STIG revision (the asset's, else the latest STIG Manager has)."""
+        key = (bench, rev or "latest")
+        if key not in rules_cache:
+            rules_cache[key] = rules_of(client.get("/stigs/%s/revisions/%s/rules" % (quote(bench), quote(rev or "latest"))))
+        return rules_cache[key]
+
+    def reviews(a, bench):
+        return reviews_of(client.get("/collections/%s/reviews/%s" % (quote(str(a["_col"]["collectionId"])), quote(str(a["assetId"]))),
+                                     benchmarkId=bench, projection="rule"))
+
     for h in p["hosts"]:
         host, bench = h.get("host", ""), h.get("benchmark") or ""
         hid = h.get("id") or host
         names = [n for n in (h.get("names") or [host]) if n]
+        if h.get("every"):
+            out[hid] = every(h, names, by_name, cols, assets, rules, reviews)
+            continue
         if not bench:
             out[hid] = {"status": "no_benchmark", "why": "no STIG Manager benchmark for this host's OS (check_stig_stigman_benchmarks)"}
             continue
@@ -204,14 +246,58 @@ def read(p, client):
             if s.get("benchmarkId") == bench:
                 rev = s.get("revisionStr") or ""
         try:
-            rows = client.get("/collections/%s/reviews/%s" % (quote(str(a["_col"]["collectionId"])), quote(str(a["assetId"]))),
-                              benchmarkId=bench, projection="rule")
+            rv = reviews(a, bench)
+            rl = rules(bench, rev) if h.get("rules") else None
         except RuntimeError as e:
             out[hid] = {"status": "error", "why": str(e), "collection": a["_col"].get("name"), "asset": a.get("name")}
             continue
         out[hid] = {"status": "found", "why": "", "collection": a["_col"].get("name", ""), "asset": a.get("name", ""),
-                     "assetId": str(a.get("assetId")), "benchmark": bench, "revision": rev, "reviews": reviews_of(rows)}
+                     "assetId": str(a.get("assetId")), "benchmark": bench, "revision": rev, "reviews": rv}
+        if rl is not None:
+            out[hid]["rules"] = rl
     return out
+
+
+def every(h, names, by_name, cols, assets, rules, reviews):
+    """A host's every checklist in STIG Manager (the STIG recheck on Windows): its asset's STIGs, and the STIGs of its web
+    site and database assets (<asset>-<site>-<instance>, in the same collection), each with its reviews and rules."""
+    if h.get("collection"):
+        col = by_name.get(h["collection"].lower())
+        if not col:
+            return {"status": "error", "why": "the collection %s is not there, or the client has no grant in it" % h["collection"]}
+        search = [col]
+    else:
+        search = cols
+    try:
+        cands = []
+        for col in search:
+            cands += assets(col, "")
+        found = match_assets(names, cands)
+        if not found:
+            return {"status": "not_found", "why": "no asset named %s in %s" % (
+                " or ".join(names), ("the collection " + search[0]["name"]) if h.get("collection") else
+                "any collection the client can read (%d)" % len(search))}
+        if len(found) > 1:
+            return {"status": "several", "why": "%d assets match: %s - set check_stig_stigman_collection (or the asset name) for this host" % (
+                len(found), ", ".join("%s in %s" % (a.get("name"), a["_col"].get("name")) for a in found))}
+        a = found[0]
+        mine = [(a, "", "")]
+        for b in assets(a["_col"], ""):
+            t = tail_of(a.get("name"), b.get("name"))
+            if t and b.get("assetId") != a.get("assetId"):
+                mine.append((b, t[0], t[1]))
+        lists = []
+        for x, site, inst in mine:
+            for s in x.get("stigs") or []:
+                bench = s.get("benchmarkId") or ""
+                if not bench:
+                    continue
+                lists.append({"asset": x.get("name", ""), "assetId": str(x.get("assetId")), "benchmark": bench,
+                              "revision": s.get("revisionStr") or "", "site": site, "instance": inst,
+                              "reviews": reviews(x, bench), "rules": rules(bench, s.get("revisionStr") or "")})
+    except RuntimeError as e:
+        return {"status": "error", "why": str(e)}
+    return {"status": "found", "why": "", "collection": a["_col"].get("name", ""), "asset": a.get("name", ""), "checklists": lists}
 
 
 def main():

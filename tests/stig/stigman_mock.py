@@ -3,7 +3,8 @@
   stigman_mock.py PORT DATA.json LOG
 DATA.json: {"secret": "...", "collections": [{"collectionId": "1", "name": "..."}],
             "assets": {"<collectionId>": [{"assetId": "11", "name": "...", "fqdn": "", "stigs": [{"benchmarkId": ..., "revisionStr": ...}]}]},
-            "reviews": {"<assetId>": [{"ruleId": ..., "result": ..., "status": {"label": ...}, "rule": {...}, "benchmarkId": optional}]}}
+            "reviews": {"<assetId>": [{"ruleId": ..., "result": ..., "status": {"label": ...}, "rule": {...}, "benchmarkId": optional}]},
+            "rules": {"<benchmarkId>": [{"ruleId": ..., "groupId": ..., "version": ..., "severity": ..., "title": ...}]} (every revision)}
 Re-read on every request, so a test can change it between runs. Every request is written to LOG (method, path)."""
 import json
 import sys
@@ -60,6 +61,10 @@ class H(BaseHTTPRequestHandler):
             # a review that names its benchmark is only in that STIG's reviews (the hosts with several STIGs)
             return self.send(200, [r for r in d["reviews"].get(parts[5], [])
                                    if "benchmarkId" not in q or r.get("benchmarkId", q["benchmarkId"][0]) == q["benchmarkId"][0]])
+        if len(parts) == 7 and parts[1:3] == ["api", "stigs"] and parts[4] == "revisions" and parts[6] == "rules":
+            if parts[3] not in d.get("rules", {}):
+                return self.send(404, {"error": "no STIG " + parts[3]})
+            return self.send(200, d["rules"][parts[3]])
         self.send(404, {"error": "not here: " + u.path})
 
     do_PUT = do_PATCH = do_DELETE = do_POST

@@ -181,6 +181,12 @@ jobs:
         run: |
           bash tests/stig/run_win_stig_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_win_stig_test.sh
+      - name: The STIG recheck, Linux and Windows (a fake oscap, stand-in Evaluate-STIG and STIG Manager - read-only)
+        run: |
+          bash tests/stig/run_stig_recheck_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_recheck_test.sh
+          bash tests/stig/run_win_stig_recheck_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_win_stig_recheck_test.sh
       - name: The sso check against fake sssd, realm, Kerberos and adcli tools (current ansible-core and 2.16)
         run: |
           bash tests/sso/run_sso_test.sh

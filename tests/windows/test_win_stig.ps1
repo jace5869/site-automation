@@ -3,7 +3,7 @@
 # scheduled task), the history kept per checklist (the result before, when a rule last passed, keep), a dry run (save
 # false), the arguments given to Evaluate-STIG, CKL, checklists its schema check rejected, no checklist, a timeout,
 # found on the drives or not, read what it wrote (this server's newest, not its Previous, not another server's;
-# auto), and Constrained Language Mode. Windows PowerShell 5.1 and PowerShell 7, on Windows and on Linux:
+# auto), the STIG recheck (only the rules asked for, -SelectVuln or not, no history), and Constrained Language Mode. Windows PowerShell 5.1 and PowerShell 7, on Windows and on Linux:
 #   pwsh -File tests/windows/test_win_stig.ps1         powershell -File tests\windows\test_win_stig.ps1
 $ErrorActionPreference = 'Continue'
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
@@ -38,8 +38,8 @@ function Iis {
               version = '2'; release = 'Release: 9 Benchmark Date: 02 Jul 2026'; site = 'Default Web Site'; instance = ''
               rules = @((TRule 'SV-218735' 'medium' 'pass'), (TRule 'SV-218736' 'high' 'fail' 'Found: directory browsing is on.')) }
 }
-function Spec($Checklists, [int] $Exit = 0, [int] $Sleep = 0, [string] $Reject = '', [string[]] $Say = @(), [switch] $Wrap) {
-    $s = @{ host = 'WIN01'; exit = $Exit; sleep = $Sleep; reject = $Reject; say = $Say; wrap = [bool]$Wrap; checklists = @($Checklists) }
+function Spec($Checklists, [int] $Exit = 0, [int] $Sleep = 0, [string] $Reject = '', [string[]] $Say = @(), [switch] $Wrap, [switch] $VulnNeedsStig) {
+    $s = @{ host = 'WIN01'; exit = $Exit; sleep = $Sleep; reject = $Reject; say = $Say; wrap = [bool]$Wrap; vuln_needs_stig = [bool]$VulnNeedsStig; checklists = @($Checklists) }
     Set-Content -LiteralPath (Join-Path $es 'spec.json') -Value (ConvertTo-Json -InputObject $s -Depth 6) -Encoding UTF8
 }
 # run the script with these settings -> its facts (or $null)
@@ -173,7 +173,38 @@ $env:PUBLIC = $oldPublic
 $f = Scan @{ read = (Join-Path $tmp 'nothere'); save = $false }
 Check 'read: no folder - not scanned' ($f -and -not $f.scanned -and $f.why -match 'no folder') $f
 
+# ---- the STIG recheck: only the rules asked for (vulns), the history left alone (history false) ----------------------
+function Recheck($Scan) { return @{ ws = @($Scan.scans | Where-Object { $_.benchmark -eq 'Windows_Server_2022_STIG' })[0]; iis = @($Scan.scans | Where-Object { $_.benchmark -eq 'IIS_10-0_Site_STIG' })[0] } }
+$re = Join-Path $tmp 'kept-re'
+Spec @((Ws), (Iis))
+$f = Scan @{ vulns = @('V-254238', 'V-218736'); history = $false; dir = $re }
+$a = ArgsSaid
+$x = $null
+if ($f) { $x = Recheck $f }
+Check 'recheck: -SelectVuln with the rules asked for' ($f -and $f.scanned -and $f.selected -and $f.vulns_asked -eq 2 -and $a -match 'SelectVuln=V-254238,V-218736') @($f, $a)
+Check 'recheck: only those rules, no history' ($x -and $x.ws -and @($x.ws.items).Count -eq 1 -and $x.ws.items[0].key -eq 'SV-254238' -and $x.ws.items[0].result -eq 'pass' -and -not $x.ws.history -and @($x.iis.items).Count -eq 1 -and $x.iis.items[0].result -eq 'fail') $x
+Check 'recheck: each checklist kept in recheck, nothing with the scans' ($x -and $x.ws.saved.results -like '*recheck*Windows_Server_2022_STIG.cklb' -and (Test-Path -LiteralPath $x.ws.saved.results) -and -not (Test-Path -LiteralPath (Join-Path $re 'Windows_Server_2022_STIG'))) $x
+$old = Join-Path $tmp 'old\Evaluate-STIG'
+New-Item -ItemType Directory -Path $old -Force | Out-Null
+Set-Content -LiteralPath (Join-Path $old 'Evaluate-STIG.ps1') -Value ((Get-Content -LiteralPath (Join-Path $es 'Evaluate-STIG.ps1') -Raw) -replace 'SelectVuln', 'PickVuln') -Encoding UTF8
+Copy-Item -LiteralPath (Join-Path $es 'spec.json') -Destination $old
+$f = Scan @{ evaluate = $old; vulns = @('V-254238'); history = $false; save = $false }
+$x = $null
+if ($f) { $x = Recheck $f }
+Check 'recheck, an Evaluate-STIG without -SelectVuln: run in full, only the rules asked for kept' ($f -and $f.scanned -and -not $f.selected -and [string](Get-Content -LiteralPath (Join-Path $old 'args.txt') -Raw) -match 'PickVuln=\r?\n' -and $x.ws -and @($x.ws.items).Count -eq 1 -and -not $x.iis.items) $f
+Check 'recheck, save false: nothing kept' ($f -and -not $x.ws.saved.results) $x
+Spec @((Ws), (Iis)) -VulnNeedsStig
+$f = Scan @{ vulns = @('V-254238'); history = $false; save = $false }
+$x = $null
+if ($f) { $x = Recheck $f }
+Check 'recheck, -SelectVuln refused (nothing written): once more in full, said' ($f -and $f.scanned -and -not $f.selected -and $f.select_note -match 'needs -SelectSTIG' -and $x.ws -and @($x.ws.items).Count -eq 1) $f
+
 # ---- Constrained Language Mode -------------------------------------------------------------------------------------
+Spec @((Ws), (Iis))
+$f = Scan @{ vulns = @('V-254239'); history = $false; dir = (Join-Path $tmp 'kept-re-clm') } -Clm
+$x = $null
+if ($f) { $x = Recheck $f }
+Check 'Constrained Language Mode: the recheck' ($f -and $f.scanned -and $f.selected -and $x.ws -and @($x.ws.items).Count -eq 1 -and $x.ws.items[0].result -eq 'fail' -and (Test-Path -LiteralPath $x.ws.saved.results)) $f
 Spec @((Ws), (Iis))
 $f = Scan @{ dir = (Join-Path $tmp 'kept-clm') } -Clm
 Check 'Constrained Language Mode: the same' ($f -and $f.scanned -and @($f.scans).Count -eq 2 -and $f.scans[1].counts.fail -eq 1 -and (Test-Path -LiteralPath $f.scans[1].saved.summary)) $f
@@ -194,6 +225,9 @@ if ($admin) {
     $a = ArgsSaid
     Check 'run_as task: Evaluate-STIG ran as SYSTEM, the task deleted' ($f -and $f.scanned -and @($f.scans).Count -eq 2 -and $a -match 'User=(SYSTEM|.*\$)' -and -not @(Get-ScheduledTask -TaskName 'site-automation STIG scan*' -ErrorAction SilentlyContinue).Count) @($f, $a)
     if ($f -and $f.scans) { Remove-Item -LiteralPath (Split-Path -Parent $f.scans[0].saved.dir) -Recurse -Force -ErrorAction SilentlyContinue }
+    $f = Scan @{ run_as = 'task'; vulns = @('V-254238', 'V-218736'); history = $false; save = $false }
+    $a = ArgsSaid
+    Check 'run_as task: the recheck, -SelectVuln as one array' ($f -and $f.scanned -and $f.selected -and $a -match 'SelectVuln=V-254238,V-218736') @($f, $a)
 }
 else { Write-Host 'skip - run_as task (needs Windows and an administrator)' }
 

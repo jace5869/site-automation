@@ -1,0 +1,59 @@
+---
+# THE STIG RECHECK (playbooks/win_stig_recheck.yml), Windows: the rules STIG Manager has Open or Not Reviewed for the
+# server - every STIG of its asset and of its web site and database assets (check_stig_recheck) - checked again by
+# Evaluate-STIG with -SelectVuln (when it has it, else it runs in full), with the settings of the Windows STIG drift
+# report (win_check_stig_*). Nothing is kept with the drift report's scans; each checklist is kept as
+# win_check_stig_dir\recheck\<checklist>. STIG Manager is never written to. docs/STIG_DRIFT.md, "The STIG recheck".
+- name: Windows STIG recheck | what to check again, from STIG Manager
+  ansible.builtin.include_role:
+    name: check_stig
+    tasks_from: recheck_read.yml
+  vars:
+    _stig_recheck_windows: true
+
+- name: Windows STIG recheck | check those rules again with Evaluate-STIG (only those - the scan's history is left alone)
+  ansible.builtin.script: win_stig.ps1
+  environment:
+    SITE_CHECK_CONFIG: >-
+      {{ {'evaluate': win_check_stig_evaluate, 'read': win_check_stig_evaluate_read,
+          'select': win_check_stig_evaluate_select, 'exclude': win_check_stig_evaluate_exclude,
+          'args': win_check_stig_evaluate_args, 'output': win_check_stig_evaluate_output,
+          'rejected': win_check_stig_evaluate_rejected | bool, 'run_as': win_check_stig_run_as,
+          'powershell': win_check_stig_powershell, 'timeout': win_check_stig_timeout | int,
+          'dir': win_check_stig_dir, 'keep': win_check_stig_keep | int, 'save': not ansible_check_mode,
+          'search': win_check_stig_search, 'search_depth': win_check_stig_search_depth | int,
+          'vulns': _stig_recheck_vulns, 'history': false} | to_json }}
+  register: _win_check_out
+  changed_when: false
+  failed_when: false
+  check_mode: false             # Evaluate-STIG only reads; in a dry run (save: false) nothing is kept on the server
+  when: _stig_recheck_vulns | length > 0
+
+- name: Windows STIG recheck | the script's result
+  ansible.builtin.include_role:
+    name: site_findings
+    tasks_from: win_result.yml
+  vars:
+    _win_check: stig
+  when: _stig_recheck_vulns | length > 0
+
+- name: Windows STIG recheck | compare with STIG Manager
+  ansible.builtin.include_role:
+    name: check_stig
+    tasks_from: recheck_compare.yml
+  vars:
+    _stig_recheck_scans: >-
+      {%- set w = win_facts.stig | default({}) if _stig_recheck_vulns | length > 0 else {} -%}
+      {%- set common = {'evaluate': w.evaluate | default(''), 'found_by': w.found_by | default(''), 'platform': 'windows',
+                        'evaluate_exit': w.evaluate_exit | default(''), 'evaluate_failed': w.evaluate_failed | default([]),
+                        'evaluate_log': w.evaluate_log | default(''), 'evaluate_rejected': w.evaluate_rejected | default([]),
+                        'selected': w.selected | default(false), 'vulns_asked': w.vulns_asked | default(0),
+                        'select_note': w.select_note | default(''),
+                        'stderr': w.stderr | default('')} -%}
+      {%- if not w -%}
+      {{ [] }}
+      {%- elif w.scanned | default(false) -%}
+      {{ w.scans | map('combine', common) | list }}
+      {%- else -%}
+      {{ [common | combine({'scanned': false, 'why': w.why | default('the scan script gave no result')})] }}
+      {%- endif -%}

@@ -1,17 +1,20 @@
 # A stand-in Evaluate-STIG.ps1 for tests/windows/test_win_stig.ps1: writes the checklists spec.json (next to it) lists
 # into <OutputPath>\<host>\Checklist, as CKLB or CKL (-Output), and records its arguments in args.txt. spec.json:
+# With -SelectVuln only the rules named are checked: the rest are written Not_Reviewed ("vuln_needs_stig": true - it
+# refuses -SelectVuln without -SelectSTIG, writes nothing).
 #   {"host": "WIN01", "exit": 0, "sleep": 0, "wrap": false, "say": ["lines it prints"], "reject": "" (a folder: its schema check
 #    rejects every checklist and moves it there, as Evaluate-STIG's Bad_CKL), "checklists": [{"file", "stig_id",
 #    "display_name", "version", "release", "site", "instance", "rules": [{"sv", "v", "stigid", "sev", "title", "status",
 #    "details"}]}]}
 param([string[]] $Output = @('CKLB'), [string] $OutputPath = '', [string[]] $SelectSTIG = @(), [string[]] $ExcludeSTIG = @(),
-      [string] $ScanType = 'Unclassified', [string] $AnswerKey = '')
+      [string] $ScanType = 'Unclassified', [string] $AnswerKey = '', [string[]] $SelectVuln = @())
 $ErrorActionPreference = 'Stop'
 $spec = ConvertFrom-Json -InputObject ([string](Get-Content -LiteralPath (Join-Path $PSScriptRoot 'spec.json') -Raw))
 Set-Content -LiteralPath (Join-Path $PSScriptRoot 'args.txt') -Value @(
     ('Output=' + ($Output -join ',')), ('OutputPath=' + $OutputPath), ('SelectSTIG=' + ($SelectSTIG -join ',')),
-    ('ExcludeSTIG=' + ($ExcludeSTIG -join ',')), ('ScanType=' + $ScanType), ('AnswerKey=' + $AnswerKey), ('User=' + [Environment]::UserName))
+    ('ExcludeSTIG=' + ($ExcludeSTIG -join ',')), ('ScanType=' + $ScanType), ('AnswerKey=' + $AnswerKey), ('SelectVuln=' + ($SelectVuln -join ',')), ('User=' + [Environment]::UserName))
 foreach ($l in @($spec.say)) { if ($l) { Write-Host $l } }
+if ($spec.vuln_needs_stig -and $SelectVuln.Count -and -not $SelectSTIG.Count) { Write-Host 'ERROR: -SelectVuln needs -SelectSTIG'; exit 1 }
 if ([int]$spec.sleep) { Start-Sleep -Seconds ([int]$spec.sleep) }
 $ckl = ($Output -join ',') -match '^CKL$'
 $dest = Join-Path (Join-Path $OutputPath $spec.host) 'Checklist'
@@ -29,11 +32,13 @@ foreach ($c in @($spec.checklists)) {
         }
         $x += '</STIG_INFO>'
         foreach ($r in @($c.rules)) {
+            $st = [string]$r.status
+            if ($SelectVuln.Count -and $SelectVuln -notcontains [string]$r.v) { $st = 'nr' }
             $x += '<VULN>'
             foreach ($kv in @(@('Vuln_Num', $r.v), @('Severity', $r.sev), @('Rule_ID', $r.sv + 'r1000_rule'), @('Rule_Ver', $r.stigid), @('Rule_Title', $r.title))) {
                 $x += '<STIG_DATA><VULN_ATTRIBUTE>' + $kv[0] + '</VULN_ATTRIBUTE><ATTRIBUTE_DATA>' + $kv[1] + '</ATTRIBUTE_DATA></STIG_DATA>'
             }
-            $x += '<STATUS>' + $map[[string]$r.status][1] + '</STATUS><FINDING_DETAILS>' + $r.details + '</FINDING_DETAILS><COMMENTS></COMMENTS></VULN>'
+            $x += '<STATUS>' + $map[$st][1] + '</STATUS><FINDING_DETAILS>' + $r.details + '</FINDING_DETAILS><COMMENTS></COMMENTS></VULN>'
         }
         $x += '</iSTIG></STIGS></CHECKLIST>'
         Set-Content -LiteralPath (Join-Path $dest ($c.file + '.ckl')) -Value ($x -join '') -Encoding UTF8
@@ -41,8 +46,10 @@ foreach ($c in @($spec.checklists)) {
     else {
         $rules = @()
         foreach ($r in @($c.rules)) {
+            $st = [string]$r.status
+            if ($SelectVuln.Count -and $SelectVuln -notcontains [string]$r.v) { $st = 'nr' }
             $rules += @(@{ rule_id = $r.sv + 'r1000_rule'; group_id = $r.v; rule_version = $r.stigid; severity = $r.sev; rule_title = $r.title
-                           status = $map[[string]$r.status][0]; finding_details = [string]$r.details; comments = '' })
+                           status = $map[$st][0]; finding_details = [string]$r.details; comments = '' })
         }
         $doc = @{ title = 'Evaluate-STIG'; cklb_version = '1.0'
                   target_data = @{ host_name = $spec.host; is_web_database = $web; web_db_site = [string]$c.site; web_db_instance = [string]$c.instance }

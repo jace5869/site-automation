@@ -1,0 +1,49 @@
+---
+# THE STIG RECHECK (playbooks/stig_recheck.yml), Linux: the rules STIG Manager has Open or Not Reviewed for the host
+# (check_stig_recheck) checked again on the host - only those: Evaluate-STIG with -SelectVuln (when it has it, else it
+# runs in full), or oscap with a --rule for each of their SCAP rules - with the scanner and settings of the STIG drift
+# report (check_stig_scanner ...). Nothing is kept with the drift report's scans (they are not compared with); the
+# checklist (or oscap's results) is kept as check_stig_dir/recheck/latest-*, STIG Manager can import it. STIG
+# Manager is never written to. docs/STIG_DRIFT.md, "The STIG recheck".
+- name: STIG | check_stig_scanner is openscap or evaluate_stig
+  ansible.builtin.assert:
+    that: check_stig_scanner | string in ['openscap', 'evaluate_stig']
+    fail_msg: "check_stig_scanner must be openscap or evaluate_stig (it is {{ check_stig_scanner }})"
+    quiet: true
+
+- name: STIG recheck | what to check again, from STIG Manager
+  ansible.builtin.import_tasks: recheck_read.yml
+
+- name: STIG | OpenSCAP's packages and content (check_stig_install, check_stig_datastream_src, check_stig_tailoring_src)
+  ansible.builtin.include_tasks: content.yml
+  when: _stig_recheck_vulns | length > 0
+
+- name: STIG recheck | check those rules again on the host (only those - the scan's history is left alone)
+  site_stig_scan:
+    dir: "{{ check_stig_dir }}"
+    save: "{{ not ansible_check_mode }}"   # a dry run checks (it only reads) and keeps nothing
+    oscap: "{{ check_stig_oscap }}"
+    content_dir: "{{ check_stig_content_dir }}"
+    datastream: "{{ (check_stig_dir ~ '/content/' ~ (check_stig_datastream_src | basename)) if check_stig_datastream_src else check_stig_datastream }}"
+    profile: "{{ check_stig_profile }}"
+    tailoring: "{{ (check_stig_dir ~ '/content/' ~ (check_stig_tailoring_src | basename)) if check_stig_tailoring_src else check_stig_tailoring }}"
+    timeout: "{{ check_stig_timeout | int }}"
+    scanner: "{{ check_stig_scanner }}"
+    evaluate: "{{ check_stig_evaluate }}"
+    evaluate_select: "{{ check_stig_evaluate_select }}"
+    evaluate_args: "{{ check_stig_evaluate_args }}"
+    evaluate_read: "{{ check_stig_evaluate_read }}"
+    evaluate_output: "{{ check_stig_evaluate_output }}"
+    evaluate_rejected: "{{ check_stig_evaluate_rejected | bool }}"
+    pwsh: "{{ check_stig_pwsh }}"
+    benchmarks: "{{ check_stig_stigman_benchmarks }}"
+    vulns: "{{ _stig_recheck_vulns }}"
+    history: false
+  register: _stig_scan
+  check_mode: false             # only reads; in a dry run (save: false) nothing is kept on the host
+  when: _stig_recheck_vulns | length > 0
+
+- name: STIG recheck | compare with STIG Manager
+  ansible.builtin.import_tasks: recheck_compare.yml
+  vars:
+    _stig_recheck_scans: "{{ [_stig_scan] if _stig_scan.scanned is defined else [] }}"

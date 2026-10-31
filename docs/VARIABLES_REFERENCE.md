@@ -484,6 +484,7 @@ File: `roles/check_stig/defaults/main.yml`
 | `check_stig_disagree_severity` | `none` | a rule STIG Manager has as Not a Finding that has failed in every scan of the host (never passed, so nothing moved that the job saw): none = listed in the report only; warning or critical = a finding |
 | `check_stig_ignore_rules` | `[]` | rules OpenSCAP is known to get wrong at your site: never a finding, listed in the report as left out. SV-257985, V-257985, RHEL-09-255045 or the SCAP rule's name (sshd_disable_root_login); per group or host too |
 | `check_stig_list_max` | `200` | at most this many rows in the report's tables of rules left out and of fails STIG Manager has no review for |
+| `check_stig_recheck` | `[open, not_reviewed]` | ---- The STIG recheck (playbooks/stig_recheck.yml, win_stig_recheck.yml) ---------------------------------------- what STIG Manager has for a rule that the recheck checks again: open (a review of Open that counts), not_reviewed (no review that counts, or Not Reviewed); the rest is left to the STIG drift report |
 
 ## check_time
 

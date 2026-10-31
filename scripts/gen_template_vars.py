@@ -196,6 +196,15 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## Each host's collection: set it per group or host in your inventory (empty: every collection the client reads)
 # check_stig_stigman_collection: RHEL Servers
 """),
+    "stig_recheck.yml": ("STIG recheck", "Machine, STIG Manager API", "check_stig", """\
+## What to check again is read from STIG Manager (the same settings and "STIG Manager API" credential as the STIG
+## drift report); the scanner too (check_stig_scanner, check_stig_evaluate ...)
+check_stig_stigman_api: https://STIGMAN-SERVER/api
+## Each host's collection: set it per group or host in your inventory (empty: every collection the client reads)
+# check_stig_stigman_collection: RHEL Servers
+## Only what STIG Manager has Open (default: Open and Not Reviewed)
+# check_stig_recheck: [open]
+"""),
     "stigman_deploy.yml": ("STIG Manager - deploy", "Machine, STIG Manager database, TLS certificate", "", ""),
     "trust_report.yml": ("Trust store report", "Machine", "check_trust", """\
 ## Only the certificates this list names are looked for (roles/check_trust/vars/main.yml ships the October 2026
@@ -309,6 +318,17 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## Each server's collection: set it per group or host in your inventory (empty: every collection the client reads)
 # check_stig_stigman_collection: Windows Servers
+"""),
+    "win_stig_recheck.yml": ("Windows STIG recheck", "Machine (Windows), STIG Manager API", "win_check_stig", """\
+## What to check again is read from STIG Manager (the same settings and "STIG Manager API" credential as the drift
+## reports): every STIG of the server's asset and of its web site and database assets
+check_stig_stigman_api: https://STIGMAN-SERVER/api
+## Each server's collection: set it per group or host in your inventory (empty: every collection the client reads)
+# check_stig_stigman_collection: Windows Servers
+## Evaluate-STIG on the servers, as for the Windows STIG drift report (empty = found)
+# win_check_stig_evaluate: 'C:\\Evaluate-STIG'
+## Only what STIG Manager has Open (default: Open and Not Reviewed)
+# check_stig_recheck: [open]
 """),
     "win_trust_report.yml": ("Windows - trust store report", "Machine (Windows)", "win_check_trust", """\
 ## The trust check's list (roles/check_trust/vars/main.yml ships the October 2026 eMudhra set); add your own in

@@ -57,6 +57,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | [servicenow_tickets.yml](servicenow_tickets.yml) |
 | STIG drift report | `playbooks/stig_drift_report.yml` | [stig_drift_report.yml](stig_drift_report.yml) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | [stigman_deploy.yml](stigman_deploy.yml) |
+| STIG recheck | `playbooks/stig_recheck.yml` | [stig_recheck.yml](stig_recheck.yml) |
 | Tenable.sc - scan | `playbooks/tenable_scan.yml` | [tenable_scan.yml](tenable_scan.yml) |
 | Troubleshoot | `playbooks/troubleshoot.yml` | [troubleshoot.yml](troubleshoot.yml) |
 | Trust store report | `playbooks/trust_report.yml` | [trust_report.yml](trust_report.yml) |
@@ -100,4 +101,5 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Windows health check | `playbooks/win_health_check.yml` | [win_health_check.yml](win_health_check.yml) |
 | Windows patch | `playbooks/win_patch.yml` | [win_patch.yml](win_patch.yml) |
 | Windows STIG drift report | `playbooks/win_stig_drift_report.yml` | [win_stig_drift_report.yml](win_stig_drift_report.yml) |
+| Windows STIG recheck | `playbooks/win_stig_recheck.yml` | [win_stig_recheck.yml](win_stig_recheck.yml) |
 | Windows troubleshoot | `playbooks/win_troubleshoot.yml` | [win_troubleshoot.yml](win_troubleshoot.yml) |

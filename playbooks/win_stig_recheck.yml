@@ -1,0 +1,73 @@
+---
+# WINDOWS STIG RECHECK - after fixing servers, or before updating STIG Manager: the rules STIG Manager has Open or Not
+# Reviewed for each Windows server (check_stig_recheck) - every STIG of its asset and of its web site and database
+# assets (<server>-<site>-<instance>) - checked again by Evaluate-STIG with -SelectVuln: only those rules, minutes, not a
+# full scan. STIG Manager is read-only - this job never writes to it:
+#   fixed        Open in STIG Manager, the server passes now         -> set the review to Not a Finding
+#   now n/a      Open in STIG Manager, Not Applicable now            -> set it to Not Applicable
+#   answered     Not Reviewed in STIG Manager, the scan answered it  -> set it (a fail is Open)
+#   still open   Open, and the server still fails it                 -> nothing to update
+#   by hand      the scan gave no answer (a manual check)            -> a person reviews it
+# Report only: no finding for what was found; a server that could not be rechecked is a warning. Nothing is kept with
+# the Windows STIG drift report's scans (playbooks/win_stig_drift_report.yml checks every rule and keeps the history);
+# each checklist is kept on the server (win_check_stig_dir\recheck), STIG Manager can import it. The Evaluate-STIG and
+# STIG Manager settings are the drift report's (win_check_stig_*, check_stig_*). Windows only (WinRM, no collection
+# needed). docs/STIG_DRIFT.md.
+#
+#   ansible-playbook playbooks/win_stig_recheck.yml -i <windows inventory>
+#   ansible-playbook playbooks/win_stig_recheck.yml -i <windows inventory> -e '{"check_stig_recheck": ["open"]}'
+#   ansible-playbook playbooks/win_stig_recheck.yml -i <windows inventory> --check   # checks and compares, keeps nothing
+- name: Windows STIG recheck
+  hosts: "{{ target | default('all') }}"
+  gather_facts: false
+  vars:
+    site_os: windows
+    site_report_title: Windows STIG recheck
+  pre_tasks:
+    - name: Windows hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  tasks:
+    - name: Start
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: start.yml
+
+    - name: Read STIG Manager, check those rules again, compare
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: run_check.yml
+      vars:
+        _site_check: stig
+        _site_check_tasks: recheck
+
+    - name: Every server, every checklist
+      ansible.builtin.debug:
+        msg: >-
+          {%- set out = [] -%}
+          {%- for h in ansible_play_hosts | sort if hostvars[h].check_stig_results is defined -%}
+          {%-   for c in hostvars[h].check_stig_results -%}
+          {%-     for line in c | stig_recheck_lines -%}{%- set _ = out.append(line) -%}{%- endfor -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+    - name: The tables for the report email
+      ansible.builtin.set_fact:
+        site_report_sections: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('check_stig_results', 'defined')
+             | map(attribute='check_stig_results') | flatten(levels=1) | stig_recheck_sections(check_stig_list_max | default(200) | int) }}
+      run_once: true
+
+  post_tasks:
+    - name: Report (a server that could not be rechecked is a warning)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml

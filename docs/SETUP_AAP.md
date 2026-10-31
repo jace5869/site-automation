@@ -356,6 +356,18 @@ the server's asset in STIG Manager (read-only) and against its earlier scans; th
 | Credentials | `Machine (Windows)` (an administrator: Evaluate-STIG runs as SYSTEM in a one-time scheduled task), `STIG Manager API` (the same as the Linux report) |
 | Variables | `aap/extra_vars/win_stig_drift_report.yml`: `check_stig_stigman_api`; `win_check_stig_evaluate` if Evaluate-STIG is not found; each server's `check_stig_stigman_collection` in the inventory |
 
+### STIG recheck
+
+After fixing hosts, or before updating STIG Manager: the rules STIG Manager has Open or Not Reviewed for each host
+checked again on it - only those - and what to update in STIG Manager (read-only); report only
+([STIG_DRIFT.md](STIG_DRIFT.md#the-stig-recheck)). Two templates, as for the drift report.
+
+| Field | Value |
+|---|---|
+| Playbook | `playbooks/stig_recheck.yml` (Linux), `playbooks/win_stig_recheck.yml` (Windows) |
+| Credentials | as the STIG drift report and the Windows STIG drift report: the machine credential and `STIG Manager API` |
+| Variables | `aap/extra_vars/stig_recheck.yml`, `win_stig_recheck.yml`: `check_stig_stigman_api` (required: what to recheck is read from it); the scanner settings of the drift report |
+
 ### Network performance report
 
 Hourly or daily, and when users say "the network is slow": latency, loss and jitter from each Linux host to

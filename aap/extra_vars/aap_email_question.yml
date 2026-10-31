@@ -53,6 +53,7 @@
 #   - servicenow_health.yml
 #   - servicenow_war.yml
 #   - stig_drift_report.yml
+#   - stig_recheck.yml
 #   - troubleshoot.yml
 #   - trust_report.yml
 #   - vm_alarm_act_analysis.yml
@@ -89,6 +90,7 @@
 #   - win_cert_report.yml
 #   - win_health_check.yml
 #   - win_stig_drift_report.yml
+#   - win_stig_recheck.yml
 #   - win_troubleshoot.yml
 #   - win_trust_report.yml
 

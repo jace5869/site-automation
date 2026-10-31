@@ -17,6 +17,9 @@ Windows servers have their own template, the **Windows STIG drift report**: Eval
 server, every STIG that applies, each checklist compared the same way ([Windows servers](#windows-servers)).
 VMware has its own STIG tooling (the appliance).
 
+To check only what STIG Manager has **Open or Not Reviewed** - after fixing hosts, or before updating the
+checklist - run the **STIG recheck** ([below](#the-stig-recheck)): only those rules, in minutes.
+
 ## What it reports
 
 | | When | Finding |
@@ -311,6 +314,47 @@ when asked by name (`health_checks: [stig]`).
 | `win_check_stig_search`, `_search_depth` | the local drives, 4 | where and how deep to look for it |
 | `win_check_stig_dir`, `win_check_stig_keep` | `C:\ProgramData\site-automation\stig`, 10 | where the scans are kept, and how many per checklist |
 
+## The STIG recheck
+
+`playbooks/stig_recheck.yml` (Linux) and `playbooks/win_stig_recheck.yml` (Windows) - the **STIG recheck** and
+**Windows STIG recheck** templates - answer "is what STIG Manager says is open still open?" without a full scan:
+
+1. **STIG Manager is read first** (read-only): each host's rules it has **Open** (a review that counts,
+   `check_stig_stigman_statuses`) or **Not Reviewed** (no review that counts - none, Not Reviewed, or one that was
+   rejected). Linux: the host's RHEL STIG. Windows: every STIG of the server's asset **and of its web site and
+   database assets** (`<server>-<site>-<instance>`, as STIG Manager names them when it imports a checklist).
+   `check_stig_recheck: [open]` leaves the Not Reviewed out.
+2. **Only those rules are checked on the host**: Evaluate-STIG with `-SelectVuln` and the rules' V-numbers (Linux
+   and Windows), or `oscap` with a `--rule` for each of their SCAP checks. The scanner and its settings are the
+   drift report's (`check_stig_scanner`, `check_stig_evaluate*`, `win_check_stig_*`). An Evaluate-STIG from before
+   `-SelectVuln` runs in full - the same answers, a full scan's time - and the report says so (*checked: in full*);
+   so does one that writes no checklist when given `-SelectVuln` (a version that wants `-SelectSTIG` with it): it runs
+   once more, in full, and the report says what it printed the first time.
+3. **Each rule is sorted**, and the report says what to do in STIG Manager:
+
+| | STIG Manager | The host now | Do |
+|---|---|---|---|
+| Fixed | Open | passes | set the review to Not a Finding (close its POA&M item) |
+| Not Applicable now | Open | Not Applicable | set it to Not Applicable |
+| Answered | Not Reviewed | pass, fail or n/a | set it as the scan says (a fail is Open: fix it or put it on the POA&M) |
+| Still open | Open | fails | nothing: the review is right |
+| By hand | Open or Not Reviewed | no answer (DISA's manual checks; a rule not in the scan's STIG revision) | a person reviews it |
+
+It is **report only**: what it finds is no finding, and the job does not fail for it - a host it could not recheck
+(the asset not in STIG Manager, Evaluate-STIG not found) is a warning. It **leaves the drift report's history
+alone**: nothing is compared with the earlier scans or kept with them. The checklist it wrote (Evaluate-STIG) or
+oscap's results are kept on the host as `check_stig_dir/recheck/latest-checklist.cklb` (`latest-results.xml`), on
+Windows `win_check_stig_dir\recheck\<checklist>.cklb`: STIG Manager can import it - every rule not rechecked is
+Not Reviewed in it, so look at your collection's import options before you do. STIG Manager is never written to.
+
+Then the **STIG drift report** checks every rule, as before, on its schedule: the recheck is for the rules you are
+working on, the drift report for everything.
+
+Setting it up: two templates like the drift reports, with the same credentials
+([SETUP_AAP.md](SETUP_AAP.md#stig-recheck)) and `aap/extra_vars/stig_recheck.yml`, `win_stig_recheck.yml`;
+`check_stig_stigman_api` is required (what to recheck comes from it). Run it on demand, or as the step after a
+patch or fix job in a workflow. **Check** mode checks and sorts, and keeps nothing on the hosts.
+
 ## Settings
 
 Every one is in `roles/check_stig/defaults/main.yml` and docs/VARIABLES_REFERENCE.md. The ones
@@ -333,6 +377,7 @@ you are most likely to set:
 | `check_stig_ignore_rules` | `[]` | rules OpenSCAP gets wrong at your site (SV-, V-, STIG id or SCAP check name): never a finding, listed as left out |
 | `check_stig_stigman_statuses` | saved, submitted, accepted | the reviews that count as the checklist |
 | `check_stig_dir`, `check_stig_keep` | `/var/lib/site-automation/stig`, 10 | where the scans are kept, and how many |
+| `check_stig_recheck` | `[open, not_reviewed]` | the STIG recheck: what STIG Manager has for a rule it checks again |
 
 ## Not in this version
 
