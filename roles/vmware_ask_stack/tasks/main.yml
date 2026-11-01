@@ -1,0 +1,373 @@
+---
+# Deploy / reconcile VMware ask. Idempotent: a second run changes nothing. The vCenter password and the GenAI key
+# arrive as environment variables from AAP credentials and are handed to podman as secrets over stdin: never on a
+# command line, never in a unit file or the settings file, never printed (no_log), never shown as a diff.
+# It makes only what is named vmware-ask*: the reverse proxy's nginx, its files, its network and every other container
+# are only read (the network's DNS address) - the nginx lines to add are written to a file for a person to paste.
+
+- name: Stack | paths for this scope
+  ansible.builtin.set_fact:
+    _ask_quadlet_dir: >-
+      {{ (ansible_user_dir ~ '/.config/containers/systemd') if vmware_ask_scope == 'user'
+         else '/etc/containers/systemd' }}
+
+# ---------------------------------------------------------------- preflight
+- name: Preflight | the vCenter account is there (from the AAP credential)
+  ansible.builtin.assert:
+    that:
+      - vmware_ask_vcenter_host | length > 0
+      - vmware_ask_vcenter_user | length > 0
+      - vmware_ask_vcenter_password | length > 0
+    fail_msg: >-
+      Missing credentials. Attach the "VMware vCenter" credential (a read-only account is enough) to the job
+      template. docs/VMWARE_ASK.md
+    quiet: true
+  no_log: true
+
+- name: Preflight | the reverse proxy's network and the page's path are set
+  ansible.builtin.assert:
+    that:
+      - vmware_ask_network | length > 0
+      - vmware_ask_network != 'podman'
+      - vmware_ask_path is match('^/[A-Za-z0-9_-]+/$')
+    fail_msg: >-
+      Set vmware_ask_network to the podman network of your reverse proxy's nginx container (sudo podman ps --format
+      "{{ '{{' }}.Names{{ '}}' }} {{ '{{' }}.Networks{{ '}}' }}" shows it; not podman's default network "podman", which has no DNS),
+      and vmware_ask_path to a path like /ask/. docs/VMWARE_ASK.md
+    quiet: true
+
+- name: Preflight | podman version
+  ansible.builtin.command:
+    argv: [podman, version, --format, "{{ '{{' }}.Client.Version{{ '}}' }}"]
+  register: _ask_podman
+  changed_when: false
+  check_mode: false                       # only reads: a dry run needs the answer too
+
+- name: Preflight | podman supports Quadlet (4.4 or newer)
+  ansible.builtin.assert:
+    that: _ask_podman.stdout is version('4.4', '>=')
+    fail_msg: "podman {{ _ask_podman.stdout }} is too old for Quadlet; RHEL 9.2+/8.8+ ship 4.4 or newer."
+    quiet: true
+
+# only read: the network is the reverse proxy's (made with it); its DNS address is the resolver in the nginx lines
+- name: Preflight | the reverse proxy's network
+  ansible.builtin.command:
+    argv: [podman, network, inspect, "{{ vmware_ask_network }}", --format,
+           "{{ '{{' }}.DNSEnabled{{ '}}' }} {{ '{{' }}range .Subnets{{ '}}' }}{{ '{{' }}.Gateway{{ '}}' }} {{ '{{' }}end{{ '}}' }}"]
+  register: _ask_net
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads
+
+- name: Preflight | the network exists, with DNS (its nginx finds the service by name)
+  ansible.builtin.assert:
+    that:
+      - _ask_net.rc == 0
+      - (_ask_net.stdout.split() | first | default('')) == 'true'
+      - _ask_resolvers | length > 0
+    fail_msg: >-
+      {{ ('The podman network ' ~ vmware_ask_network ~ ' does not exist' ~ (' for this user (vmware_ask_scope: user)'
+          if vmware_ask_scope == 'user' else '') ~ ': ' ~ (_ask_net.stderr | trim)) if _ask_net.rc != 0
+         else ('The podman network ' ~ vmware_ask_network ~ ' has no DNS, so its nginx cannot find the service by name.') }}
+      Set vmware_ask_network to the network your reverse proxy's nginx container is on (sudo podman ps --format
+      "{{ '{{' }}.Names{{ '}}' }} {{ '{{' }}.Networks{{ '}}' }}"). docs/VMWARE_ASK.md
+    quiet: true
+  vars:
+    _ask_resolvers: "{{ _ask_net.stdout.split()[1:] | select('match', '^[0-9.]+$') | list }}"
+
+- name: Preflight | the network's DNS address (the resolver in the nginx lines)
+  ansible.builtin.set_fact:
+    _ask_resolvers: "{{ _ask_net.stdout.split()[1:] | select('match', '^[0-9.]+$') | list }}"
+
+# ---------------------------------------------------------------- GenAI: ACT's settings, the key
+- name: GenAI | ACT's settings (site_act_provider, site_act_models, site_act_urls ...)
+  ansible.builtin.include_role:
+    name: site_act
+    tasks_from: env.yml
+    public: true                          # site_act_provider and the rest, for the tasks below
+  when: vmware_ask_genai | bool
+
+- name: GenAI | the key for {{ site_act_provider | default('genai') }}
+  ansible.builtin.set_fact:
+    _ask_key_env: "{{ {'genai': 'GENAI_KEY', 'genai-beta': 'GENAI_BETA_KEY', 'asksage': 'ASKSAGE_API_KEY'}[site_act_provider | default('genai')] }}"
+    _ask_key: >-
+      {{ '' if not vmware_ask_genai | bool
+         else lookup('ansible.builtin.env', 'GENAI_KEY') if site_act_provider == 'genai'
+         else lookup('ansible.builtin.env', 'GENAI_BETA_KEY') if site_act_provider == 'genai-beta'
+         else (lookup('ansible.builtin.env', 'ASKSAGE_API_KEY') or lookup('ansible.builtin.env', 'ASKSAGE_KEY')) }}
+  no_log: true
+
+- name: GenAI | no key - the page answers only the simplest questions
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: no API key for provider {{ site_act_provider | default('genai') }} - attach the "ACT model key" credential
+      to this job template, or the page answers only the simplest questions (the job's own reader).
+  when: vmware_ask_genai | bool and _ask_key | length == 0
+
+# ---------------------------------------------------------------- directories, the service's files
+- name: Files | directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ _ask_quadlet_dir }}", mode: "0755"}
+    - {path: "{{ vmware_ask_config_dir }}", mode: "0750"}
+    - {path: "{{ vmware_ask_config_dir }}/app", mode: "0755"}
+    - {path: "{{ vmware_ask_config_dir }}/app/static", mode: "0755"}
+    - {path: "{{ vmware_ask_config_dir }}/app/library", mode: "0755"}
+    - {path: "{{ vmware_ask_config_dir }}/app/module_utils", mode: "0755"}
+    - {path: "{{ vmware_ask_config_dir }}/trust.d", mode: "0750"}
+  loop_control:
+    label: "{{ item.path }}"
+  register: _ask_dirs
+
+# the service, the job's engine and readers, and ACT - the same files as the AAP job runs
+- name: Files | the service, the engine of VM - ask a question, its readers, ACT
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ vmware_ask_config_dir }}/app/{{ item.dest }}"
+    mode: "0644"
+  loop:
+    - {src: vmware_ask.py, dest: vmware_ask.py}
+    - {src: start.sh, dest: start.sh}
+    - {src: refresh.yml, dest: refresh.yml}
+    - {src: static/index.html, dest: static/index.html}
+    - {src: static/app.js, dest: static/app.js}
+    - {src: static/app.css, dest: static/app.css}
+    - {src: "{{ role_path }}/../../plugins/filter/vmware_ask_filters.py", dest: vmware_ask_filters.py}
+    - {src: "{{ role_path }}/../../plugins/filter/vmware_alarm_filters.py", dest: vmware_alarm_filters.py}
+    - {src: "{{ role_path }}/../../vendor/act/act", dest: act}
+    - {src: "{{ role_path }}/../vmware_vm/module_utils/site_vcenters.py", dest: module_utils/site_vcenters.py}
+    - {src: "{{ role_path }}/../vmware_vm/library/site_vmware_vms.py", dest: library/site_vmware_vms.py}
+    - {src: "{{ role_path }}/../vmware_vm/library/site_vmware_health.py", dest: library/site_vmware_health.py}
+    - {src: "{{ role_path }}/../vmware_vm/library/site_vmware_datastores.py", dest: library/site_vmware_datastores.py}
+    - {src: "{{ role_path }}/../vmware_vm/library/site_vmware_snapshots.py", dest: library/site_vmware_snapshots.py}
+    - {src: "{{ role_path }}/../vmware_vm/library/site_vmware_alarms.py", dest: library/site_vmware_alarms.py}
+  loop_control:
+    label: "{{ item.dest }}"
+  register: _ask_app_files
+
+# ---------------------------------------------------------------- the CAs the service trusts
+- name: Trust | what this server trusts
+  ansible.builtin.stat:
+    path: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+  register: _ask_host_bundle
+  when: vmware_ask_trust_host_cas | bool
+
+- name: Trust | the server's CAs
+  ansible.builtin.copy:
+    src: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+    dest: "{{ vmware_ask_config_dir }}/trust.d/10-host.pem"
+    remote_src: true
+    mode: "0644"
+  # a dry run on a new server: trust.d is not there yet (the task above only said it would make it)
+  when: >-
+    vmware_ask_trust_host_cas | bool and _ask_host_bundle.stat.exists | default(false)
+    and not (ansible_check_mode and _ask_dirs.results[-1] is changed)
+
+- name: Trust | which CAs
+  ansible.builtin.find:
+    paths: "{{ vmware_ask_config_dir }}/trust.d"
+    patterns: "*.pem"
+  register: _ask_trust_parts
+  check_mode: false                       # only reads
+
+- name: Trust | one bundle for the service (SSL_CERT_FILE)
+  ansible.builtin.assemble:
+    src: "{{ vmware_ask_config_dir }}/trust.d"
+    dest: "{{ vmware_ask_config_dir }}/trust.pem"
+    regexp: '\.pem$'
+    mode: "0644"
+  register: _ask_trust
+  when: _ask_trust_parts.matched | int > 0
+
+- name: Trust | the image's own CAs only
+  ansible.builtin.file:
+    path: "{{ vmware_ask_config_dir }}/trust.pem"
+    state: absent
+  register: _ask_trust_gone
+  when: _ask_trust_parts.matched | int == 0
+
+# ---------------------------------------------------------------- registry login (optional)
+- name: Registry | log in (only when the registry credential is attached)
+  ansible.builtin.command:
+    argv: [podman, login, --username, "{{ lookup('ansible.builtin.env', 'REGISTRY_USERNAME') }}",
+           --password-stdin, "{{ lookup('ansible.builtin.env', 'REGISTRY_HOST') }}"]
+    stdin: "{{ lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') }}"
+  changed_when: false
+  no_log: true
+  when: lookup('ansible.builtin.env', 'REGISTRY_PASSWORD') | length > 0
+
+# ---------------------------------------------------------------- podman secrets
+# A label holds the SHA-256 of each value, so the role knows whether it changed without reading the secret back (as
+# roles/stigman_stack). Unlike a database password, these may simply be replaced: the service reads them at start.
+- name: Secrets | current state
+  ansible.builtin.command:
+    argv: [podman, secret, inspect, "{{ item }}", --format, "{{ '{{' }}index .Spec.Labels \"site.sha256\"{{ '}}' }}"]
+  loop: [vmware-ask-vcenter, vmware-ask-genai]
+  register: _ask_secret_state
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads the label
+
+- name: Secrets | desired state
+  ansible.builtin.set_fact:
+    _ask_secrets:
+      - name: vmware-ask-vcenter
+        sha: "{{ vmware_ask_vcenter_password | hash('sha256') }}"
+        have: "{{ (_ask_secret_state.results[0].stdout | trim) if _ask_secret_state.results[0].rc == 0 else '' }}"
+        want: true
+      - name: vmware-ask-genai
+        sha: "{{ _ask_key | hash('sha256') if _ask_key else '' }}"
+        have: "{{ (_ask_secret_state.results[1].stdout | trim) if _ask_secret_state.results[1].rc == 0 else '' }}"
+        want: "{{ _ask_key | length > 0 }}"
+  no_log: true
+
+- name: Secrets | create or replace
+  ansible.builtin.command:
+    argv: [podman, secret, create, --replace, --label, "site.sha256={{ item.sha }}", "{{ item.name }}", "-"]
+    stdin: "{{ vmware_ask_vcenter_password if item.name == 'vmware-ask-vcenter' else _ask_key }}"
+    stdin_add_newline: false
+  loop: "{{ _ask_secrets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.want | bool and item.have != item.sha
+  changed_when: true                      # runs only when the secret is missing or differs
+  no_log: true
+  register: _ask_secret_set
+
+- name: Secrets | the GenAI key removed (no key now)
+  ansible.builtin.command:
+    argv: [podman, secret, rm, vmware-ask-genai]
+  when: not _ask_secrets[1].want | bool and _ask_secrets[1].have | length > 0
+  changed_when: true
+  register: _ask_secret_rm
+
+# ---------------------------------------------------------------- configuration + units
+# The settings as a file (JSON), not in the unit: free text (vmware_ask_extra_instructions) needs no quoting there
+- name: Config | the service's settings
+  ansible.builtin.copy:
+    dest: "{{ vmware_ask_config_dir }}/settings.json"
+    mode: "0644"
+    content: "{{ _ask_settings | to_nice_json }}\n"
+  vars:
+    # ACT's settings as the AAP jobs resolve them (site_act env.yml) - but not GENAI_CA: site_act_ca is a path in the
+    # execution environment; here the service's trust (SSL_CERT_FILE) is ACT's too
+    _ask_act_env: "{{ (_site_act_env_all | default({})) | dict2items | rejectattr('key', 'in', ['GENAI_CA']) | items2dict }}"
+    _ask_settings: >-
+      {{ _ask_act_env | combine({
+           'ASK_PUBLIC_URL': vmware_ask_public_url, 'ASK_TITLE': vmware_ask_title, 'ASK_CLASSIFICATION': vmware_ask_classification,
+           'ASK_VCENTERS': ((vmware_ask_vcenters | replace(',', ' ')).split() if vmware_ask_vcenters is string
+                            else vmware_ask_vcenters) | join(' '),
+           'ASK_VALIDATE_CERTS': 'true' if vmware_ask_validate_certs | bool else 'false',
+           'ASK_DATACENTER': vmware_ask_datacenter, 'ASK_REFRESH_MINUTES': vmware_ask_refresh_minutes | string,
+           'ASK_REFRESH_TIMEOUT': vmware_ask_refresh_timeout | string, 'ASK_EVENT_DAYS': vmware_ask_event_days | string,
+           'ASK_MAX_EVENTS': vmware_ask_max_events | string, 'ASK_GENAI': '1' if vmware_ask_genai | bool else '0',
+           'ASK_LOCAL_FALLBACK': '1' if vmware_ask_local_fallback | bool else '0',
+           'ASK_GENAI_RETRY': '1' if vmware_ask_genai_retry | bool else '0',
+           'ASK_MODEL_TIMEOUT': vmware_ask_model_timeout | string, 'ASK_EXTRA_INSTRUCTIONS': vmware_ask_extra_instructions,
+           'ASK_MAX_ROWS': vmware_ask_max_rows | string, 'ASK_KEEP_DAYS': vmware_ask_keep_days | string,
+           'ASK_PARALLEL': vmware_ask_parallel | string, 'ASK_PER_USER': vmware_ask_per_user | string,
+           'ASK_DATA': '/data', 'VMWARE_HOST': vmware_ask_vcenter_host, 'VMWARE_USER': vmware_ask_vcenter_user}) }}
+  register: _ask_settings_file
+
+# for a person to paste into the reverse proxy's nginx: the role never changes that nginx
+- name: Config | the nginx lines to add (nginx-ask.conf)
+  ansible.builtin.template:
+    src: nginx-ask.conf.j2
+    dest: "{{ vmware_ask_config_dir }}/nginx-ask.conf"
+    mode: "0644"
+
+- name: Units | Quadlet files
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ _ask_quadlet_dir }}/{{ item.dest }}"
+    mode: "0644"
+  loop:
+    - {src: vmware-ask-data.volume.j2, dest: vmware-ask-data.volume}
+    - {src: vmware-ask-app.container.j2, dest: vmware-ask-app.container}
+  loop_control:
+    label: "{{ item.dest }}"
+  vars:
+    _ask_has_trust: "{{ _ask_trust_parts.matched | int > 0 }}"
+    _ask_has_key: "{{ _ask_key | length > 0 }}"
+  register: _ask_units
+
+- name: Units | reload systemd so Quadlet regenerates the services  # noqa: no-handler (must run before the next task, not at the end)
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+    scope: "{{ vmware_ask_scope }}"
+  when: _ask_units is changed
+
+- name: Units | was the service already running
+  ansible.builtin.command:
+    argv: "{{ ['systemctl'] + (['--user'] if vmware_ask_scope == 'user' else []) + ['is-active', 'vmware-ask-app.service'] }}"
+  register: _ask_pre
+  changed_when: false
+  failed_when: false
+  check_mode: false                       # only reads
+
+- name: Units | started
+  ansible.builtin.systemd_service:
+    name: vmware-ask-app.service
+    state: started
+    scope: "{{ vmware_ask_scope }}"
+  # a dry run of a FIRST deployment has no units yet (their files were not written): "would start"
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# Restart the service only when it was ALREADY running and its inputs changed (started just above: it has them already)
+- name: Units | restart the service (what it runs changed)
+  ansible.builtin.systemd_service:
+    name: vmware-ask-app.service
+    state: restarted
+    scope: "{{ vmware_ask_scope }}"
+  vars:
+    _ask_changed_units: "{{ _ask_units.results | selectattr('changed') | map(attribute='item.dest') | list }}"
+  when: >-
+    _ask_pre.stdout in ['active', 'activating', 'reloading']
+    and ('vmware-ask-app.container' in _ask_changed_units or _ask_app_files is changed or _ask_settings_file is changed
+         or _ask_secret_set is changed or _ask_secret_rm is changed or _ask_trust is changed or _ask_trust_gone is changed)
+
+# ---------------------------------------------------------------- verify
+- name: Verify | DRY RUN - nothing was changed or started, so there is nothing to verify
+  ansible.builtin.debug:
+    msg: >-
+      DRY RUN (Check mode): the tasks above marked "changed" are what a real run would change
+      (tick Show changes, or --diff, to see the file changes). Nothing was changed or restarted.
+  when: ansible_check_mode
+
+# inside the container (it publishes no port): the service answers, and how its first vCenter read is going
+- name: Verify | the service answers
+  ansible.builtin.command:
+    argv: [podman, exec, vmware-ask-app, /bin/sh, -c,
+           "for p in python3.13 python3.12 python3.11 python3; do command -v $p >/dev/null 2>&1 && exec $p -c 'import urllib.request;
+           print(urllib.request.urlopen(\"http://127.0.0.1:8080/healthz\", timeout=5).read().decode())'; done; exit 1"]
+  register: _ask_ready
+  until: _ask_ready.rc == 0
+  retries: "{{ vmware_ask_ready_retries }}"
+  delay: "{{ vmware_ask_ready_delay }}"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify | the nginx lines to add
+  ansible.builtin.slurp:
+    src: "{{ vmware_ask_config_dir }}/nginx-ask.conf"
+  register: _ask_lines
+  when: not ansible_check_mode
+
+- name: Verify | summary
+  when: not ansible_check_mode
+  ansible.builtin.debug:
+    msg:
+      - >-
+        VMware ask is up on the podman network {{ vmware_ask_network }}, GenAI
+        {{ ('through ' ~ site_act_provider) if vmware_ask_genai | bool and _ask_key | length > 0 else "not used (the job's own reader only)" }}.
+        vCenter: {{ {'ok': 'read', 'reading': 'being read for the first time', 'never': 'not read yet - the first read starts now',
+                     'failed': 'NOT READ', 'stale': 'the last read failed'}[(_ask_ready.stdout | default('{}') | from_json).vcenter | default('never')] }}
+        (every {{ vmware_ask_refresh_minutes }} minutes; journalctl{{ ' --user' if vmware_ask_scope == 'user' else '' }} -u vmware-ask-app says how it went).
+      - >-
+        Once, by hand: paste the lines of {{ vmware_ask_config_dir }}/nginx-ask.conf (below) inside your reverse proxy's
+        server block, above its location /, then sudo podman exec <nginx> nginx -t and sudo podman exec <nginx> nginx -s reload.
+        The page is then {{ vmware_ask_public_url }} (docs/VMWARE_ASK.md, "Add /ask/ to your nginx").
+      - "{{ (_ask_lines.content | b64decode).splitlines() | reject('match', '^#') | list }}"

@@ -1,0 +1,77 @@
+---
+# VMware ask: what vCenter says, read for the questions (vmware_ask.py runs this every ASK_REFRESH_MINUTES, in its own
+# container). The read-only modules of "VM - ask a question" (roles/vmware_vm/tasks/ask.yml) - all five, with all
+# that a question may need (disks, events, who took a snapshot) - and nothing else. The vCenter account comes from the
+# environment (VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD; ASK_VCENTERS: more vCenters, the same account). A vCenter
+# that cannot be read does not stop the others: each module says so in its 'vcenters'.
+- name: VMware ask - read vCenter
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ask_python }}"
+    _vcs: "{{ lookup('ansible.builtin.env', 'ASK_VCENTERS') | replace(',', ' ') | split }}"
+    _dc: "{{ lookup('ansible.builtin.env', 'ASK_DATACENTER') }}"
+    _certs: "{{ lookup('ansible.builtin.env', 'ASK_VALIDATE_CERTS') | default('true', true) | bool }}"
+  tasks:
+    - name: Read the VMs, with their disks and vCenter's events
+      site_vmware_vms:
+        datacenter: "{{ _dc | default(omit, true) }}"
+        vcenters: "{{ _vcs }}"
+        validate_certs: "{{ _certs }}"
+        disks: true
+        events_days: "{{ ask_event_days | float }}"
+        max_events: "{{ lookup('ansible.builtin.env', 'ASK_MAX_EVENTS') | default(50000, true) | int }}"
+      register: _vm
+      failed_when: false
+
+    - name: Read the hosts and clusters
+      site_vmware_health:
+        datacenter: "{{ _dc | default(omit, true) }}"
+        vcenters: "{{ _vcs }}"
+        validate_certs: "{{ _certs }}"
+        sensors: false
+        clock: false
+      register: _host
+      failed_when: false
+
+    - name: Read the datastores
+      site_vmware_datastores:
+        datacenter: "{{ _dc | default(omit, true) }}"
+        vcenters: "{{ _vcs }}"
+        validate_certs: "{{ _certs }}"
+        members: true
+      register: _ds
+      failed_when: false
+
+    - name: Read the snapshots, and who took them
+      site_vmware_snapshots:
+        datacenter: "{{ _dc | default(omit, true) }}"
+        vcenters: "{{ _vcs }}"
+        validate_certs: "{{ _certs }}"
+        taken_by: true
+      register: _snap
+      failed_when: false
+
+    - name: Read the triggered alarms
+      site_vmware_alarms:
+        datacenter: "{{ _dc | default(omit, true) }}"
+        vcenters: "{{ _vcs }}"
+        validate_certs: "{{ _certs }}"
+        types: [vcenter, datacenter, cluster, host, datastore, vm]
+        hours: 0
+        max_alarm_changes: 0
+      register: _alarm
+      failed_when: false
+
+    - name: Keep what was read
+      ansible.builtin.copy:
+        dest: "{{ ask_out }}"
+        mode: "0600"
+        content: >-
+          {%- set keep = ['vms', 'hosts', 'clusters', 'datastores', 'snapshots', 'alarms', 'vcenters', 'failed', 'msg'] -%}
+          {%- set out = {'read_at': now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ')} -%}
+          {%- for k, r in {'vm': _vm, 'host': _host, 'datastore': _ds, 'snapshot': _snap, 'alarm': _alarm}.items() -%}
+          {%- set _ = out.update({k: r | dict2items | selectattr('key', 'in', keep) | items2dict}) -%}
+          {%- endfor -%}
+          {{ out | to_json }}

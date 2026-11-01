@@ -244,7 +244,10 @@ SEVERITY_WORDS = {"red": "critical", "crit": "critical", "error": "critical", "y
 _LEAD = r"(?:^|[.;!?\n,]\s*|\b(?:and|then|&)\s+(?:then\s+)?)"
 _POLITE = r"(?:(?:please|pls|kindly|now|also|just|go ahead and|can you|could you|would you|will you|i need you to|i want you to|" \
           r"i'?d like you to|let'?s|we need to|i need to|i want to)\s+)*"
-_VERBS = (r"re-?boot|restart|reset|hard[\s-]*reset|shut[\s-]*down|power[\s-]*(?:off|on|cycle|down|up)|turn\s+(?:off|on)|stop|start|"
+# shut / power / turn / switch with what between it and its word: "shut them down", "power web01 off", "turn it back on"
+_SPLIT = r"(?:shut|power|turn|switch)\s+(?:[\w.\-*]+\s+){1,4}?(?:back\s+)?(?:down|off|on|up)"
+_VERBS = (_SPLIT + r"|re-?boot|restart|reset|hard[\s-]*reset|shut[\s-]*down|power[\s-]*(?:off|on|cycle|down|up)|turn\s+(?:off|on)|"
+          r"switch\s+(?:off|on)|stop|start|"
           r"suspend|pause|resume|delete|remove|destroy|kill|unregister|wipe|erase|purge|consolidate|revert|roll[\s-]*back|clone|deploy|"
           r"migrate|v-?motion|move|relocate|rename|reconfigure|resize|upgrade|patch|enable|disable|disconnect|reconnect|evacuate|"
           r"acknowledge|ack|clear|unmount|dismount|detach|expand|extend|shrink|uninstall|install")
@@ -257,7 +260,7 @@ _SNAP = re.compile(_LEAD + _POLITE + r"(?:take|create|make|add|delete|remove|rev
 _CHANGE = re.compile(_LEAD + _POLITE + r"(?:change|set|modify|edit|update|increase|decrease|raise|lower)\b[^.;!?\n]{0,40}?\b(?:to|by)\s+\d",
                      re.I)
 TEMPLATE_FOR = [(re.compile(r"boot|restart|reset", re.I), "VM - restart"),
-                (re.compile(r"shut|power|turn|stop|suspend|pause", re.I), "VM - shut down"),
+                (re.compile(r"shut|power|turn|switch|stop|suspend|pause", re.I), "VM - shut down"),
                 (re.compile(r"snap", re.I), "VM - snapshot, or VM - delete snapshot"),
                 (re.compile(r"vlan|port\s*group|network", re.I), "VM - change VLAN")]
 

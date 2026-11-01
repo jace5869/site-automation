@@ -14,6 +14,8 @@ Type a question about vCenter in plain words and get the answer as a report:
 - *which VMs were vMotioned today, and from which host*
 - *drives under 10% free on the SQL servers*, *the biggest virtual disks on DS-PROD-01*
 
+As a web page, for people without AAP - at STIG Manager's /ask/, with the card, the answer in seconds: [VMWARE_ASK.md](VMWARE_ASK.md).
+
 The job reads every vCenter it is given and answers. It shows how it read the question, so a wrong reading
 is plain to see. The answer is printed in the job's output, and can be emailed with a workbook of every row
 and published on the report website.

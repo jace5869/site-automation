@@ -77,6 +77,7 @@ can change it with one `target:` line:
 | Health check, Troubleshoot, Certificate report, Apply approved ACT fix | **every host** in the template's inventory (the built-in group `all`) | one run: the **Limit** at launch (tick **Prompt on launch** next to Limit). Always: `target: "rhel8_all:rhel9_all"` |
 | Database health - MariaDB / MySQL | the groups `mariadb_hosts`, `mysql_hosts`, `database_hosts`, `mariadb`, `mysql` | `target: <group or host>` (a Limit only narrows those groups; it cannot add a server outside them) |
 | Service watch, Service watch - apply approved fix, STIG Manager - deploy | the group `stigman` | `target: <group>` |
+| VMware ask - deploy | the group `vmware_ask` | `target: <group or host>` |
 | Patch hosts | the group `patch_hosts` only (no such group: the job stops and lists your groups) | **always set it**, for example `target: "rhel8_all:rhel9_all"`, and pick the hosts with the Limit at launch. `target` is a group or host **inside** the inventory, never the inventory's own name |
 
 `target` and the Limit take group names, host names, or several joined with `:`.
@@ -151,6 +152,7 @@ A host can be in many groups. Creating these groups leaves your existing groups 
 | `patch_hosts` | the servers monthly patching may touch | *Patch hosts* only patches these | only for patching |
 | `mariadb_hosts`, `mysql_hosts`, `database_hosts` | the database host(s), MariaDB or MySQL (any of the three, or the groups `mariadb` / `mysql`; the check treats them alike) | the database check runs here, and the **Database health** template targets these by default | only for the database check |
 | `stigman` | the STIG Manager host(s) | service watch and STIG Manager deploy run here | only for those |
+| `vmware_ask` | the VMware ask page's server | VMware ask - deploy runs here | only for it |
 
 **The clicks:**
 

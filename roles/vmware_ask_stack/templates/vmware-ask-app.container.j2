@@ -1,0 +1,34 @@
+# Managed by Ansible (vmware_ask_stack) - do not edit on the host
+[Unit]
+Description=VMware ask - the service (questions, GenAI, the vCenter reads)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=vmware-ask-app
+# the site's execution environment: Python, ansible-core and pyVmomi are in it
+Image={{ vmware_ask_image }}
+# the reverse proxy's network (its nginx reaches the service by name); no port on the server
+Network={{ vmware_ask_network }}
+Volume={{ vmware_ask_config_dir }}/app:/app:ro,Z
+Volume={{ vmware_ask_config_dir }}/settings.json:/etc/vmware-ask/settings.json:ro,Z
+Volume=vmware-ask-data.volume:/data:U,Z
+Environment=ASK_SETTINGS=/etc/vmware-ask/settings.json
+{% if _ask_has_trust | bool %}
+# the CAs vCenter and GenAI are checked against (this server's)
+Volume={{ vmware_ask_config_dir }}/trust.pem:/etc/vmware-ask/trust.pem:ro,Z
+Environment=SSL_CERT_FILE=/etc/vmware-ask/trust.pem
+{% endif %}
+# the secrets come from podman secrets: not in this file, not in `podman inspect`
+Secret=vmware-ask-vcenter,type=env,target=VMWARE_PASSWORD
+{% if _ask_has_key | bool %}
+Secret=vmware-ask-genai,type=env,target={{ _ask_key_env }}
+{% endif %}
+Exec=/bin/sh /app/start.sh
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy={{ 'default.target' if vmware_ask_scope == 'user' else 'multi-user.target' }}

@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -1180,6 +1180,45 @@ File: `roles/troubleshoot/defaults/main.yml`
 | `ts_since` | `"-2h"` | how far back logs are read (journalctl --since) |
 | `ts_output_lines` | `60` | keep the last this-many lines of each command |
 | `ts_areas` | `overview: checks: [disk, mounts, services, performance, time, logging] commands: - {why:…` | What each area runs. `why` is printed above the command's output. Commands must be read-only. |
+
+## vmware_ask_stack
+
+File: `roles/vmware_ask_stack/defaults/main.yml`
+
+> VMware ask - the web page of "VM - ask a question" - one container on podman, managed by systemd through a Quadlet unit file: vmware-ask-app (the service: questions, GenAI through ACT, the vCenter reads). It sits behind the reverse proxy you have - STIG Manager's nginx, in its podman container - at /ask/: that nginx does TLS and the client certificates (mTLS, the CAC), and passes who it verified. The role joins the service to that nginx's podman network and writes the nginx lines to add (vmware_ask_config_dir/nginx-ask.conf); it never changes the nginx, its files, its network or any other container (docs/VMWARE_ASK.md). Needs podman >= 4.4 (Quadlet): RHEL 9.2+ / RHEL 8.8+.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `vmware_ask_scope` | `system` | system = rootful (/etc/containers/systemd, systemctl) <- production user = rootless (~/.config/containers/systemd, systemctl --user) <- tests / rootless hosts |
+| `vmware_ask_image` | `aap.example.mil/site-ee-all:1` | the service's image: the site's execution environment (ee/all-in-one) - Python, ansible-core and pyVmomi are in it already, so nothing is installed on the server or downloaded at start. Pull it from your automation hub. |
+| `vmware_ask_config_dir` | `/etc/vmware-ask` | the service's files, and nginx-ask.conf (the nginx lines to add) |
+| `vmware_ask_network` | (empty) | the podman network of the reverse proxy's nginx container (required): `sudo podman ps --format "{{.Names}} {{.Networks}}"` shows it. It must exist with DNS on (a network you made, not podman's default "podman"); the service joins it, the role never creates or changes it |
+| `vmware_ask_path` | `/ask/` | the page's path on the reverse proxy (nginx-ask.conf's location) |
+| `vmware_ask_public_url` | `"https://{{ inventory_hostname }}{{ vmware_ask_path }}"` | the page's address, as people open it (said at the end, and logged) |
+| `vmware_ask_title` | `Ask VMware` | the page's title |
+| `vmware_ask_classification` | `U` | banner: U, CUI, C, S, TS, SCI, NONE |
+| `vmware_ask_vcenters` | `"{{ vmware_vcenters \| default([]) }}"` | vCenter: the "VMware vCenter" credential's account (read-only is enough) and vCenter, and these vCenters with it more vCenters, the same account (as vmware_vcenters) |
+| `vmware_ask_validate_certs` | `"{{ vmware_validate_certs \| default(true) }}"` | check vCenter's certificate (the CAs: vmware_ask_trust_host_cas) |
+| `vmware_ask_datacenter` | (empty) | only this datacenter; "" = all |
+| `vmware_ask_refresh_minutes` | `10` | read vCenter every this many minutes (the answers are as of the last read) |
+| `vmware_ask_refresh_timeout` | `1800` | seconds one read may take |
+| `vmware_ask_event_days` | `"{{ vm_ask_event_days \| default(30) }}"` | a VM's last power off, restart and vMotion: from vCenter's events of this many days |
+| `vmware_ask_max_events` | `"{{ vm_ask_max_events \| default(50000) }}"` | at most this many of those events per vCenter |
+| `vmware_ask_genai` | `true` | GenAI: ACT's settings (site_act_provider, site_act_models, site_act_urls ...: roles/site_act/defaults/main.yml) and the key of the "ACT model key" credential. No key: the job's own reader answers the simplest questions. false = only the job's own reader |
+| `vmware_ask_local_fallback` | `"{{ vm_ask_local_fallback \| default(true) }}"` | GenAI did not run or gave no query: the job's own reader tries it (said) |
+| `vmware_ask_genai_retry` | `"{{ vm_ask_genai_retry \| default(true) }}"` | GenAI's answer held no query: asked once more, told what it answered |
+| `vmware_ask_model_timeout` | `"{{ vm_ask_model_timeout \| default(120) }}"` | seconds GenAI may take to answer |
+| `vmware_ask_extra_instructions` | `"{{ vm_ask_extra_instructions \| default('') }}"` | more words for GenAI, e.g. your naming |
+| `vmware_ask_max_rows` | `"{{ vm_ask_max_rows \| default(500) }}"` | rows shown on the page (the CSV has every row) |
+| `vmware_ask_keep_days` | `365` | keep who asked what this many days (0 = for ever) |
+| `vmware_ask_parallel` | `4` | questions with GenAI at once (the rest wait) |
+| `vmware_ask_per_user` | `2` | questions one person may have running at once |
+| `vmware_ask_trust_host_cas` | `true` | the service trusts what the server trusts (/etc/pki/ca-trust): vCenter, GenAI |
+| `vmware_ask_ready_retries` | `30` | How long to wait after (re)starting for the service to answer |
+| `vmware_ask_ready_delay` | `4` | seconds between those tries |
+| `vmware_ask_vcenter_host` | `"{{ lookup('ansible.builtin.env', 'VMWARE_HOST') }}"` | ---- Secrets: NEVER set these in a vars file or inventory ----------------------------------- They come from AAP credentials as environment variables / files on the controller (execution environment). the "VMware vCenter" credential |
+| `vmware_ask_vcenter_user` | `"{{ lookup('ansible.builtin.env', 'VMWARE_USER') }}"` | its account |
+| `vmware_ask_vcenter_password` | `"{{ lookup('ansible.builtin.env', 'VMWARE_PASSWORD') }}"` | its password: a podman secret on the server |
 
 ## vmware_vm
 

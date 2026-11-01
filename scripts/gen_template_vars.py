@@ -206,6 +206,15 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # check_stig_recheck: [open]
 """),
     "stigman_deploy.yml": ("STIG Manager - deploy", "Machine, STIG Manager database, TLS certificate", "", ""),
+    "vmware_ask_deploy.yml": ("VMware ask - deploy", "Machine, VMware vCenter, ACT model key", "", """\
+## The podman network of STIG Manager's nginx container (docs/VMWARE_ASK.md, step 1: sudo podman ps): the page joins
+## it and sits behind that nginx at /ask/ - its mTLS (the card) says who asks; the job never changes STIG Manager
+vmware_ask_network: stigman
+## The site's execution environment image (Python, ansible-core and pyVmomi are in it), from your automation hub
+vmware_ask_image: aap.example.mil/site-ee-all:1
+## The page's address, as people open it
+vmware_ask_public_url: https://stigman.example.mil/ask/
+"""),
     "trust_report.yml": ("Trust store report", "Machine", "check_trust", """\
 ## Only the certificates this list names are looked for (roles/check_trust/vars/main.yml ships the October 2026
 ## eMudhra set); add your own in check_trust_extra, change a severity in check_trust_severity

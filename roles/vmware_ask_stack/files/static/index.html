@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ask VMware</title>
+<link rel="stylesheet" href="static/app.css">
+<script src="static/app.js" defer></script>
+</head>
+<body>
+<div class="banner" id="banner-top" hidden></div>
+<header>
+  <h1 id="title">Ask VMware</h1>
+  <span class="who" id="user"></span>
+</header>
+<p class="read" id="read">Reading what vCenter last said…</p>
+<main>
+  <section id="log" aria-live="polite"></section>
+  <section class="hello" id="hello">
+    <p>Ask about vCenter in plain words. This page only <b>reads</b>: it never restarts, shuts down, deletes, moves or
+      changes anything.</p>
+    <div class="examples" id="examples">
+      <button type="button">all VMs with dbv in the name</button>
+      <button type="button">VMs on datastores with less than 10% free</button>
+      <button type="button">hosts in maintenance mode, and how many VMs each has</button>
+      <button type="button">the 10 biggest snapshots older than a week</button>
+      <button type="button">how many VMs per cluster</button>
+      <button type="button">VMs not restarted in 90 days</button>
+    </div>
+  </section>
+</main>
+<form id="ask" autocomplete="off">
+  <textarea id="q" rows="2" maxlength="2000" placeholder="Ask a question about vCenter…" aria-label="Your question"></textarea>
+  <button type="submit" id="go">Ask</button>
+</form>
+<div class="banner" id="banner-bottom" hidden></div>
+</body>
+</html>

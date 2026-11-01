@@ -46,6 +46,7 @@ jobs:
           python tests/test_vmware_modules.py
           python tests/test_vm_watch.py
           python tests/test_vm_ask.py
+          python tests/test_vmware_ask.py
           python tests/test_log_analysis.py
           python tests/test_servicenow_mid.py
           python tests/test_cert_inventory.py
@@ -149,6 +150,10 @@ jobs:
         run: |
           bash tests/vmware/run_vmware_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vmware/run_vmware_test.sh
+      - name: VMware ask, the service's vCenter read against vcsim (current ansible-core and 2.16)
+        run: |
+          bash tests/vmware_ask/run_vmware_ask_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vmware_ask/run_vmware_ask_test.sh
       - name: Log analysis, this runner as a Linux host with made-up logs (stand-in journalctl and podman, fake ACT; current ansible-core and 2.16)
         run: |
           bash tests/logs/run_log_test.sh

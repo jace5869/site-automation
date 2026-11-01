@@ -1,0 +1,28 @@
+---
+# Deploy / reconcile VMware ask: the web page of "VM - ask a question" - people open it with their card at /ask/ behind
+# STIG Manager's nginx (its mTLS says who asks) and ask about vCenter in plain words; it only reads. One container on
+# podman, on that nginx's podman network (docs/VMWARE_ASK.md). It never changes STIG Manager: the lines nginx needs are
+# written to /etc/vmware-ask/nginx-ask.conf and shown at the end, for a person to add.
+#
+# AAP job template credentials: Machine (ssh + sudo), "VMware vCenter" (a read-only account), "ACT model key", and
+# optionally "Container registry login (hosts)". Nothing secret goes in variables.
+#
+#   ansible-playbook playbooks/vmware_ask_deploy.yml -l ask01.example.mil
+- name: Target check (stops with a clear message when target matches no host)
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: The target leaves at least one host to run on
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: target_check.yml
+      vars:
+        _target_pattern: "{{ target | default('vmware_ask') }}"
+
+- name: VMware ask
+  hosts: "{{ target | default('vmware_ask') }}"
+  become: true
+  gather_facts: true
+  gather_subset: [min]
+  roles:
+    - role: vmware_ask_stack

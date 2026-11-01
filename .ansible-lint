@@ -3,6 +3,9 @@
 profile: production
 exclude_paths:
   - vendor/          # ACT-Linux, linted in its own repository
+  # VMware ask's vCenter read: a playbook the service runs in its container, with the readers of roles/vmware_vm
+  # on its library path (yamllint and tests/test_vmware_ask.py check it)
+  - roles/vmware_ask_stack/files/refresh.yml
   - .github/
 skip_list:
   # The check roles share one fact on purpose (site_findings, the findings contract), and their
