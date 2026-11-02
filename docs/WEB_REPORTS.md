@@ -29,25 +29,62 @@ The website has its own look, **atlas** (`report_web_theme: atlas`, the default)
 (`report_email_theme`: standard, command, portal or glass - [EMAIL_REPORTS.md](EMAIL_REPORTS.md), "The look"). Atlas
 uses what a browser draws and a mail program does not, so it is never an email's look:
 
-- **See-through cards** over a soft teal and blue background - only the frame: every text sits on a surface solid
-  enough to read as on paper (all text at least 4.5:1 against what is behind it, in both modes).
-- **Light and dark**: the reader's own setting (the phone's or the PC's), or the **Light / Auto / Dark** switch at the
-  top right - kept in that browser, for every page of the website.
-- **Status chips with icons and their word** - a check mark for OK, ! for a warning, x for critical: the tables'
-  Severity and Status columns, a cell that says PASSED or FAILED, the sections' and the cards' status.
-- **Start here cards** with a **Copy** button for their command; the health check's healthy hosts each with a check
+Since 0.53.0:
+
+- **Wide, and easy to read.** The page uses up to 1760 px, with side margins that grow with the window. Tables use
+  all of it, while words stay at a length you can read (about 80 to 90 characters a line).
+- **Columns sized by what they hold.** Each column is sized from its values:
+  - **numbers:** right-aligned, every digit the same width (`1,200` lines up with `37`);
+  - **short values** (hosts, dates, ids up to 24 characters): never broken;
+  - **ids like `V-257800 (RHEL-09-412035)`:** broken at a space only, never at a hyphen;
+  - **titles and findings:** given room to wrap;
+  - **paths, addresses and hashes:** shown in a fixed-width font and broken after a `/` or `\`. A long path never runs
+    off the edge, and nothing is added to what you copy.
+  - A table that still does not fit (many columns on a small window) scrolls sideways, with a shadow at the edge.
+- **A bar at the top that stays:**
+  - the report's sections, with the one you are reading marked, and each table's row count;
+  - **Compact / Comfortable** rows;
+  - **Light / Auto / Dark**, which follows the reader's own setting on Auto;
+  - **Print**.
+  - The rows and light/dark choices are kept in that browser, for every page of the website.
+- **Headings that stay at the top** of a long table while you scroll it, rows striped, and the row under the
+  pointer marked.
+- **Status chips with icons and their word**, never colour alone: a check mark for OK, ! for a warning, x for
+  critical.
+  - **Where they appear:** the tables' Severity and Status columns, a cell that says PASSED or FAILED, the sections' and
+    the cards' status, and a coloured edge on the header and on each tile that needs a look.
+  - **Contrast:** every text colour is at least 4.5:1 against what it is on, in light and in dark (most over 7:1).
+- **Start here cards** with a **Copy** button for their command. The health check's healthy hosts each get a check
   mark, under *Every check passed* and the checks run.
-- **Copy** on every number tile (its line: *Completed: 3 (resolved or closed)*) and on every section (next to its
-  fold arrow): all of it - its lines as a list, its table as rows (only the rows the filter shows, in the order sorted).
-  Over https the copy carries the HTML as well, so it pastes into Word or Outlook as a real table or bulleted list,
-  and into Excel as cells; over plain http or from a share, text only (columns separated by tabs, which Excel still
-  splits). The section's one-line description is left out; a section of only words copies its words.
-- A bar of the sections that stays at the top, sections that fold, tables that sort when a heading is clicked and,
-  past 8 rows, a box to filter them; on a phone, a table's rows as small cards, each value under its column's name.
+- **Copy** on every number tile (its line: *Completed: 3 (resolved or closed)*) and on every section: all of it, with
+  its lines as a list and its table as rows (only the rows the filter shows, in the order sorted).
+  - Over https the copy carries the HTML as well, so it pastes into Word or Outlook as a real table or bulleted list,
+    and into Excel as cells.
+  - Over plain http or from a share, text only (columns separated by tabs, which Excel still splits).
+- Sections that fold, tables that sort when a heading is clicked and, past 8 rows, a box to filter them. On a phone,
+  a table's rows become small cards, each value under its column's name.
 - **The index page** in the same look, with the same switch.
-- Printed: white, no effects. One file per page: no fonts or scripts from elsewhere, so a page opens from a share
-  too. Without its script (blocked) it reads the same; only the switch, sorting, filtering and the Copy
-  buttons need it.
+- **Printed:** white, landscape, every section open, each table's headings repeated on every page.
+- **One file per page:** no fonts or scripts from elsewhere (system fonts: Segoe UI and Cascadia Mono on Windows), so
+  a page opens from a share too. Without its script (blocked) it reads the same; only the switches, sorting,
+  filtering and the Copy buttons need it.
+
+**Where the design comes from** - the guidance it follows, for anyone who wants to change it:
+
+| Source | What it gave the look |
+|---|---|
+| [U.S. Web Design System - Table](https://designsystem.digital.gov/components/table/) | Headings that stay at the top, striped rows for dense data, rows as cards on a narrow screen |
+| [U.S. Web Design System - Typography](https://designsystem.digital.gov/components/typography/) | Lines of 45 to 90 characters, line height of at least 1.5 for text |
+| [GitHub Primer - DataTable guidelines](https://primer.style/product/components/data-table/guidelines/) | Columns that grow within limits; wrapping preferred over cutting text off; numbers right-aligned in tabular figures; density steps |
+| [IBM Carbon - Data table](https://carbondesignsystem.com/components/data-table/usage/) | Row heights (the Compact and Comfortable steps); zebra stripes for reading across |
+| [IBM Carbon - Status indicators](https://carbondesignsystem.com/patterns/status-indicator-pattern/) | Status shown with colour, shape and word together, so it still reads in grey |
+| [GOV.UK Design System - Table](https://design-system.service.gov.uk/components/table/) | Numbers aligned right; headings marked as column headings |
+| [Nielsen Norman Group - Data tables](https://www.nngroup.com/articles/data-tables/) | Frozen headings; a readable identifier first; row highlighting to keep your place |
+| [WCAG 2.2 - Use of colour](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html), [Non-text contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html) | Never colour alone; 4.5:1 for text, 3:1 for icons and borders |
+| [MDN - overflow-wrap](https://developer.mozilla.org/en-US/docs/Web/CSS/overflow-wrap), [text-wrap](https://developer.mozilla.org/en-US/docs/Web/CSS/text-wrap), [font-variant-numeric](https://developer.mozilla.org/en-US/docs/Web/CSS/font-variant-numeric), [position: sticky](https://developer.mozilla.org/en-US/docs/Web/CSS/position), [Printing](https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Media_queries/Printing) | How long paths break without widening a table, balanced headings, aligned digits, the headings that stay, the printed page |
+
+Everything it uses works in Microsoft Edge and Chrome 2024 or later. An older Edge draws the page the same, without
+the balanced headings.
 
 `report_web_theme: portal` (or standard, command, glass) gives the website an email's look again, as before 0.43.0;
 the index page is then in the portal look.

@@ -88,7 +88,7 @@ page="$(ls "$d" | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4}_job-907\.html$')
 check "named {date}_{time}_job-{job}.html in the template's folder" test -n "$page"
 check "no email (report_email_to empty)" test "$(mails)" = 0
 check "latest.html is the same page" cmp -s "$d/$page" "$d/latest.html"
-check "the page: the atlas look (the default), the logo inside it (data:), no cid:" bash -c "grep -q 'Linux - Certificate trust report · job 907' '$d/$page' \
+check "the page: the atlas look (the default), the logo inside it (data:), no cid:" bash -c "grep -q '<div class=\"eyebrow\">Linux - Certificate trust report</div>' '$d/$page' && grep -q '<span>AAP job 907</span>' '$d/$page' \
     && grep -q 'src=\"data:image/png;base64,' '$d/$page' && ! grep -q 'cid:' '$d/$page' && grep -q 'width=\"42\" height=\"56\"' '$d/$page' \
     && grep -q 'class=\"seg\" id=\"theme\"' '$d/$page' && grep -q 'prefers-color-scheme:dark' '$d/$page'"
 check "the page: nothing from elsewhere (no web fonts, scripts or styles from another address)" bash -c "! grep -Eq '<link|src=\"https?:|@import|url\\(https?:' '$d/$page'"

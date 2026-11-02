@@ -432,7 +432,7 @@ class AtlasLook(unittest.TestCase):
         self.assertIn('aria-label="Copy WAR &lt;lines&gt;"', h)
         self.assertIn("e.preventDefault();e.stopPropagation()", h)                 # a click on it does not fold the section
         self.assertIn("'text/html':new Blob", h)                                   # a table pastes as a table
-        self.assertIn(".copy,.tcopy{display:none!important}", h)                    # not printed
+        self.assertIn(".appbar,.tools2,.copy,.tcopy,.hero:after{display:none!important}", h)   # not printed
 
     def test_logo_strip_and_tiles(self):
         bars = sf.report_runs(past(("successful", "ok", 2), ("failed", None, None)), REPORT)
@@ -442,6 +442,32 @@ class AtlasLook(unittest.TestCase):
         self.assertEqual(h.count('<span class="bar c-'), 3)
         self.assertEqual(h.count('class="card tile'), 3)
         self.assertIn('<a href="#s2">', h)                                         # the bar of the sections
+
+    def test_columns_sized_by_what_they_hold(self):
+        """0.53.0: numbers right-aligned, short values whole, a mid one broken only at its spaces, paths at / and \\."""
+        h = self.render(_report=dict(REPORT, sections=[{"title": "T", "columns": ["Host", "Rule", "Bytes", "Where", "Title", "Win"],
+            "rows": [["web01.example.mil", "V-257800 (RHEL-09-412035)", "1,200", "/var/lib/containers/storage/overlay/abc/diff",
+                      "RHEL 9 must automatically exit interactive command shell user sessions after 10 minutes of inactivity.", "C:\\x\\y.exe"],
+                     ["db01", "V-1 (X-1)", "37", "/opt/a <b>", "short", "D:\\z"]]}]))
+        self.assertIn('<th class="k-nw" scope="col"><button type="button">Host', h)
+        self.assertIn('<th class="k-mid" scope="col"><button type="button">Rule', h)
+        self.assertIn('<th class="k-num" scope="col"><button type="button">Bytes', h)
+        self.assertIn('<th class="k-path" scope="col"><button type="button">Where', h)
+        self.assertIn('<th class="k-long" scope="col"><button type="button">Title', h)
+        self.assertIn('<td class="k-num" data-l="Bytes">1,200</td>', h)
+        self.assertIn('<span class="w">V-257800</span> <span class="w">(RHEL-09-412035)</span>', h)
+        self.assertIn('/<wbr>var/<wbr>lib/<wbr>', h)
+        self.assertIn('/<wbr>opt/<wbr>a &lt;b&gt;</td>', h)                        # escaped first, then the breaks
+        self.assertIn('C:\\<wbr>x\\<wbr>y.exe', h)
+
+    def test_density_and_bar(self):
+        h = self.render()
+        self.assertIn('class="seg" id="density"', h)
+        self.assertIn(":root[data-density=\"compact\"]{", h)
+        self.assertIn("localStorage.getItem('site-report-density')", h)
+        self.assertIn('<div class="appbar">', h)
+        self.assertIn("max-width:1760px", h)
+        self.assertIn("IntersectionObserver", h)                                   # the section in view, marked
 
 
 if __name__ == "__main__":

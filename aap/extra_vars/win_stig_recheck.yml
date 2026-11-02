@@ -264,11 +264,12 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # report_web_url: ""
 
 ## The website's look (docs/WEB_REPORTS.md, "The look"): atlas = made for a browser, never an email
-## - see-through cards, light and dark (the reader's own setting, or the Light / Auto / Dark switch
-## at the top, kept in that browser), status chips with icons (a check mark for OK), Start here
-## cards with a Copy button, a bar of the sections, tables that sort and filter, rows as cards on a
-## phone; the index page too. Or one of the email looks: standard, command, portal or glass (as
-## report_email_theme - the index page is then in the portal look).
+## - a wide page whose tables use all of it (columns sized by what they hold: numbers right-aligned,
+## short values whole, paths broken at / and \), a bar at the top that stays (the sections, Compact
+## / Comfortable rows, Light / Auto / Dark - the reader's own setting on Auto -, Print), status
+## chips with icons (a check mark for OK), Start here cards with a Copy button, tables that sort and
+## filter, rows as cards on a phone; the index page too. Or one of the email looks: standard,
+## command, portal or glass (as report_email_theme - the index page is then in the portal look).
 # report_web_theme: atlas
 
 ## The names inside the folder, with {names} filled in: {template} (the AAP template's name, lower
