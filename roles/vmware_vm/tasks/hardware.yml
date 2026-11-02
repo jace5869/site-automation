@@ -1,0 +1,47 @@
+---
+# VMWARE HARDWARE INVENTORY (playbooks/vmware_hardware_report.yml): every ESXi host of every vCenter (vmware_vcenters; or
+# of vmware_datacenter) - vendor, model, serial number, BIOS version and date, CPUs, memory, ESXi version and build,
+# image profile, NICs, storage adapters, the software components the hardware status shows (drivers and firmware with
+# their versions) and every VIB (vm_hardware_vibs). Printed, published as artifacts (vm_hardware), emailed with all of
+# it as an Excel workbook (vm_hardware_xlsx), on the report website. Read-only, from vCenter's API: nothing is run on a
+# host. Amber when a host is not connected, red only when a vCenter could not be read.
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | read every ESXi host's hardware and software
+  site_vmware_hardware:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    vibs: "{{ vm_hardware_vibs | bool }}"
+  register: _vm_hw_read
+  check_mode: false
+
+- name: VMware | the report
+  ansible.builtin.set_fact:
+    _vm_hw_doc: "{{ _vm_hw_read.hosts | vm_hardware_doc(_vm_hw_read.vcenters, {'max_rows': vm_hardware_max_rows | int}) }}"
+
+- name: VMware hardware inventory
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_vcenters: "{{ _vm_hw_read.vcenters }}"
+    _vm_report_doc: "{{ _vm_hw_doc }}"
+    _vm_report_subject: "{{ _vm_hw_doc.title }}"
+    _vm_report_lines: >-
+      {{ [_vm_hw_doc.subtitle]
+         + (_vm_hw_doc.summary | map(attribute='label') | zip(_vm_hw_doc.summary | map(attribute='value'))
+            | map('join', ': ') | list)
+         + (_vm_hw_read.hosts | vm_hardware_lines) }}
+    _vm_report_xlsx: "{{ _vm_hw_read.hosts | vm_hardware_xlsx if vm_hardware_xlsx | bool else [] }}"
+
+- name: VMware | the models as job artifacts (vm_hardware)
+  ansible.builtin.set_stats:
+    data:
+      vm_hardware: >-
+        {{ {'models': _vm_hw_read.hosts | vm_hardware_models,
+            'counts': _vm_hw_doc.summary | items2dict(key_name='label', value_name='value')} }}
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_hw_read.vcenters }}"

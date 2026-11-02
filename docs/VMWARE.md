@@ -16,6 +16,7 @@ System Center Orchestrator):
 | VM - inventory report | `playbooks/vm_inventory_report.yml` | read-only: every VM of every vCenter, by vCenter and folder - power, the ESXi host it runs on, cluster, guest OS, IP address, vCPUs, memory - and the count; the email attaches every VM as an Excel workbook ("The VM inventory report") |
 | VM - right-sizing report | `playbooks/vm_rightsizing_report.yml` | read-only: every powered-on VM's vCPUs and memory next to what vCenter's statistics say it used (30 days, and its busiest day of the year) - too big, about right or too small, with a suggested size; memory the host took back, guest disks nearly full; optional ACT review. Suggestions only ("The VM right-sizing report") |
 | VMware - version report | `playbooks/vmware_version_report.yml` | read-only: the version and build of each vCenter and every ESXi host, the builds in use and how many hosts run each, the hosts by vCenter and cluster; amber when a host is newer than its vCenter; the email attaches every host as an Excel workbook ("The VMware version report") |
+| VMware - hardware inventory | `playbooks/vmware_hardware_report.yml` | read-only: every ESXi host's vendor, model, serial number, BIOS version and date, CPUs, memory, ESXi build, image profile, NICs and storage adapters with their drivers, the drivers and firmware its hardware status shows, and every VIB; the models in use with their BIOS versions; the email attaches all of it as an Excel workbook ("The VMware hardware inventory") |
 | VM - snapshot report | `playbooks/vm_snapshot_report.yml` | read-only: every snapshot of every VM - name, when taken and by whom, age, size, folder - oldest first; the ones 5 days or older listed apart |
 | VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | deletes the snapshots 5 days or older - never "keep" ones, excluded VMs, datacenters or clusters, the AAP server or ones over 1 TB; or only the patching snapshots (`vm_snapshot_cleanup_name_words`) - then reports what it deleted. Best run in the workflow below, after an approval |
 | VM - refresh the pick lists | `playbooks/vm_pick_refresh.yml` | on a schedule, read-only in vCenter: writes what may be done right now - the snapshots that may be deleted, the VMs that may be restarted (or only the hung ones) - as the choices of a question in the survey of the templates below ("Pick lists") |
@@ -342,6 +343,43 @@ Set it up: a template *VMware - version report*, playbook `playbooks/vmware_vers
 credential (read-only is enough), the execution environment of your other VMware jobs, no Limit, no survey;
 `report_email_to` on its Variables, and a schedule (monthly, or after patching). On the report website it is on the
 VMware tab.
+
+### The VMware hardware inventory
+
+*VMware - hardware inventory* (`playbooks/vmware_hardware_report.yml`) lists the hardware and software of every ESXi
+host of each vCenter (`vmware_vcenters`; `vmware_datacenter` for one datacenter's hosts) - no survey, read-only, all
+from vCenter's API: nothing is run on a host, and the read-only vCenter account is enough. At the top, the counts: ESXi
+hosts, models, BIOS versions, ESXi builds, hosts with a serial number. Then:
+
+- **Models** - each server model (vendor and model), how many hosts, the BIOS versions they run and how many hosts run
+  each (`1.10.2 (12), 1.9.0 (2)`: two hosts left behind by a BIOS update), and their ESXi builds;
+- **ESXi hosts** - every host: vCenter, cluster, vendor, model, **serial number** (the service tag), BIOS version and
+  date, CPUs (sockets, model, cores), memory, ESXi version and build, its NICs (`2x bnxtnet 25G`) and storage adapters
+  (`lpfc (Fibre Channel)`), and its state;
+- **Not all read** - what could not be read for a host (its VIBs or image profile), with the rest of the host in.
+
+The email attaches all of it as an Excel workbook (`vmware-hardware-inventory_2026-11-02.xlsx`), a row each:
+
+| Sheet | What |
+|---|---|
+| ESXi hosts | everything above, plus the asset tag, CPU threads and the image profile (the vendor's ESXi image, e.g. `(Updated) DEL-ESXi-...`) |
+| NICs | each physical NIC: driver, speed (`down` when it has no link), MAC, PCI slot |
+| Storage adapters | each adapter: kind (Fibre Channel, iSCSI, local / RAID, SAS, NVMe), model, driver, status |
+| Software components | what vCenter's *Hardware Status > Software components* shows for the host: the drivers and the firmware the server's vendor reports (CIM), each with its version |
+| VIBs | every installed VIB: name, version, vendor, install date (`vm_hardware_vibs: false` to leave them out) |
+
+**Firmware:** vCenter has no field for a NIC's or adapter's firmware. The BIOS version is in the report, and the other
+firmware versions are in *Software components* only as far as the server vendor's CIM provider reports them there
+(Dell, HPE and Lenovo images usually do; a plain VMware image shows the drivers only).
+
+Amber when a host is not connected (what vCenter last knew of it; its software not read); red only when a vCenter could
+not be read. The job output has a line per model (`Dell Inc. PowerEdge R750: 14 host(s); BIOS 1.10.2 (12), 1.9.0 (2);
+ESXi 8.0.3 build 24022510 (14)`); the artifact `vm_hardware` has the models and the counts.
+
+Set it up: a template *VMware - hardware inventory*, playbook `playbooks/vmware_hardware_report.yml`, the VMware vCenter
+credential (read-only is enough), the execution environment of your other VMware jobs, no Limit, no survey;
+`report_email_to` on its Variables. Run it when you need the inventory, or on a schedule (monthly). On the report
+website it is on the VMware tab.
 
 | Setting | Default | |
 |---|---|---|

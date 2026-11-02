@@ -1354,6 +1354,9 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_ask_xlsx` | `true` | attach every row of the answer as an Excel workbook (.xlsx) to the email |
 | `vm_versions_max_rows` | `2000` | ---- VMware version report (playbooks/vmware_version_report.yml) ---- ESXi hosts listed in the email and the page at most (the workbook always has every host) |
 | `vm_versions_xlsx` | `true` | attach every vCenter and ESXi host as an Excel workbook (.xlsx) to the email |
+| `vm_hardware_vibs` | `true` | ---- VMware hardware inventory (playbooks/vmware_hardware_report.yml) ---- also read every installed VIB of each host (the workbook's VIBs sheet; one call per host) |
+| `vm_hardware_max_rows` | `2000` | ESXi hosts listed in the email and the page at most (the workbook always has every host) |
+| `vm_hardware_xlsx` | `true` | attach every host, NIC, storage adapter, software component and VIB as an Excel workbook |
 | `vm_rightsize_days` | `30` | ---- VM right-sizing report (playbooks/vm_rightsizing_report.yml) ---- vCenter's own statistics only (statistics level 1, vCenter's default, is enough). Suggestions only: nothing is changed. days of history (at most 30: what vCenter keeps of 2-hour averages) |
 | `vm_rightsize_year` | `true` | also each VM's busiest day of the last year (daily averages): month-end and yearly peaks |
 | `vm_rightsize_min_days` | `7` | fewer days of statistics than this = 'Not enough history' (no suggestion) |

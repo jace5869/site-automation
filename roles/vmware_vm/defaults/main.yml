@@ -118,6 +118,12 @@ vm_ask_xlsx: true                        # attach every row of the answer as an 
 vm_versions_max_rows: 2000               # ESXi hosts listed in the email and the page at most (the workbook always has every host)
 vm_versions_xlsx: true                   # attach every vCenter and ESXi host as an Excel workbook (.xlsx) to the email
 
+# ---- VMware hardware inventory (playbooks/vmware_hardware_report.yml) ----
+
+vm_hardware_vibs: true                   # also read every installed VIB of each host (the workbook's VIBs sheet; one call per host)
+vm_hardware_max_rows: 2000               # ESXi hosts listed in the email and the page at most (the workbook always has every host)
+vm_hardware_xlsx: true                   # attach every host, NIC, storage adapter, software component and VIB as an Excel workbook
+
 # ---- VM right-sizing report (playbooks/vm_rightsizing_report.yml) ----
 # vCenter's own statistics only (statistics level 1, vCenter's default, is enough). Suggestions only: nothing is changed.
 vm_rightsize_days: 30                    # days of history (at most 30: what vCenter keeps of 2-hour averages)

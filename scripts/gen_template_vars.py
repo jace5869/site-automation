@@ -284,6 +284,7 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets the incidents (exactly
     "vm_datastore_report.yml": ("VM - datastore report", "VMware vCenter", "", ""),
     "vm_inventory_report.yml": ("VM - inventory report", "VMware vCenter", "", ""),
     "vm_rightsizing_report.yml": ("VM - right-sizing report", "VMware vCenter (ACT model key with vm_rightsize_act)", "", ""),
+    "vmware_hardware_report.yml": ("VMware - hardware inventory", "VMware vCenter (read-only is enough)", "", ""),
     "vmware_version_report.yml": ("VMware - version report", "VMware vCenter", "", ""),
     "vm_deploy_from_ticket.yml": ("VM - deploy from ServiceNow ticket", "VMware vCenter, ServiceNow API, ACT model key "
                                   "(Red Hat Ansible Automation Platform with vm_deploy_services inventories)", "", """\

@@ -93,6 +93,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VM - VMs created report | `playbooks/vm_created_report.yml` | [vm_created_report.yml](vm_created_report.yml) |
 | VMware - certificate renewal | `playbooks/vmware_cert_renew.yml` | [vmware_cert_renew.yml](vmware_cert_renew.yml) |
 | VMware - certificate report | `playbooks/vmware_cert_report.yml` | [vmware_cert_report.yml](vmware_cert_report.yml) |
+| VMware - hardware inventory | `playbooks/vmware_hardware_report.yml` | [vmware_hardware_report.yml](vmware_hardware_report.yml) |
 | VMware - trust store report | `playbooks/vmware_trust_report.yml` | [vmware_trust_report.yml](vmware_trust_report.yml) |
 | VMware - version report | `playbooks/vmware_version_report.yml` | [vmware_version_report.yml](vmware_version_report.yml) |
 | VMware ask - deploy | `playbooks/vmware_ask_deploy.yml` | [vmware_ask_deploy.yml](vmware_ask_deploy.yml) |

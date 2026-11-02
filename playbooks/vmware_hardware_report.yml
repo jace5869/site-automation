@@ -1,0 +1,18 @@
+---
+# VMWARE HARDWARE INVENTORY (vCenter). Read-only: every ESXi host's vendor, model, serial number, BIOS version and date,
+# CPUs, memory, ESXi version and build, image profile, NICs and storage adapters (with their drivers), the software
+# components its hardware status shows (drivers and firmware, with their versions) and every VIB - the models in use
+# with their BIOS versions and ESXi builds. Emailed (report_email_to) with all of it as an Excel workbook
+# (vm_hardware_xlsx), and on the report website (report_web_dest). From vCenter's API: nothing is run on a host.
+# Runs on the AAP side against vCenter: attach a "VMware vCenter" credential (read-only is enough); no Limit.
+# docs/VMWARE.md
+#   ansible-playbook playbooks/vmware_hardware_report.yml
+- name: VMware hardware inventory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VMware hardware inventory
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: hardware.yml

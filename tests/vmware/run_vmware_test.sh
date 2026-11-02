@@ -457,6 +457,14 @@ run "VM right-sizing report: more days asked than vCenter has: not enough histor
 run "VM right-sizing report: a VM left out, a cluster that matches nothing" ok vm_rightsizing_report.yml \
     -e '{"vm_rightsize_exclude": ["DC0_H0_VM1"], "vm_rightsize_clusters": ["nope"]}' -- "of 0 VMs" '"VMs checked": 0'
 
+# ---- VMware hardware inventory (read-only; vcsim's hosts are VMware Virtual Platform, BIOS 6.00; vcsim has no image config
+# manager - the VIBs and image profile not read, said per host, the rest in) -----------------------------------------------
+run "VMware hardware inventory: model, serial, BIOS, CPUs, NICs, adapters per host; what vcsim cannot give, said" ok \
+    vmware_hardware_report.yml -- "VMware hardware: 4 ESXi hosts, 1 model" "VMware, Inc. VMware Virtual Platform: 4 host(s); BIOS 6.00 (4)" \
+    "With a serial number: 4 of 4" "VIBs not read" '"vm_hardware"' '"model": "VMware Virtual Platform"'
+run "VMware hardware inventory with vm_hardware_vibs false: the VIBs not asked for" ok vmware_hardware_report.yml \
+    -e vm_hardware_vibs=false -- "VMware hardware: 4 ESXi hosts" "image profile not read"
+
 # ---- VMware version report (read-only; vcsim says vCenter 6.5.0, its hosts ESXi 8.0.2: newer than their vCenter) ----------
 run "VMware version report: vCenter and every ESXi host with version and build; hosts newer than their vCenter: amber" ok \
     vmware_version_report.yml -- "VMware versions: 1 vCenter, " "newer than their vCenter" "127.0.0.1: vCenter 6.5.0 build " \
