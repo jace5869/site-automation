@@ -177,6 +177,20 @@ servicenow_assignment_group: YOUR GROUP NAME   # exactly as in ServiceNow
     "servicenow_tickets.yml": ("ServiceNow tickets", "ServiceNow API", "", """\
 servicenow_assignment_group: YOUR GROUP NAME   # exactly as in ServiceNow
 """),
+    "mail_relay_approved.yml": ("Mail relay - apply the approved whitelist change", "Machine", "", ""),
+    "mail_relay_format.yml": ("Mail relay - format the whitelist", "Machine, VMware vCenter (read-only; optional: the service)", "", """\
+mail_relay_group: mail                   # your mail relay group
+## launch it as Check first: the report shows each relay's new list and the names found
+"""),
+    "mail_relay_plan.yml": ("Mail relay - whitelist plan", "Machine", "", """\
+## Usually set on the two workflows, not here: Variables of "Mail relay - add an IP" = mail_relay_action: add,
+## of "Mail relay - remove an IP" = mail_relay_action: remove; a survey on each: mail_relay_ip (textarea, required:
+## one address, a subnet or several separated by commas), mail_relay_comment (add only: text, required, 3-200
+## characters); report_email_to for both emails; mail_relay_group: your relay group (on both workflows)
+# mail_relay_action: add
+# mail_relay_ip: 198.51.100.3, 203.0.113.0/28
+# mail_relay_comment: "Payroll app (svc-payroll)"
+"""),
     "net_cert_report.yml": ("Network device certificate report", "none - no login to the devices "
                             "(SQL Server (certificate inventory): optional)", "", ""),
     "net_cert_renew.yml": ("Network device certificate renewal", "ServiceNow API (Machine for the Cisco devices, network_cli: only with "

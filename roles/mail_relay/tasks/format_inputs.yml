@@ -1,0 +1,30 @@
+---
+# On localhost, before any relay is read (format job): which relays it formats, and the stamp its comment lines
+# end with ("[AAP mail relay format 2026-11-02 job 4711]"). Sets _mr_targets and _mr_fmt: {date, by, job, stamp}.
+- name: Mail relay | the relay servers this job formats
+  ansible.builtin.set_fact:
+    _mr_targets: >-
+      {{ query('ansible.builtin.inventory_hostnames', mail_relay_group)
+         | select('in', query('ansible.builtin.inventory_hostnames', ansible_limit | default('all', true))) | list }}
+
+- name: Mail relay | there is at least one relay server in the inventory
+  ansible.builtin.assert:
+    that: _mr_targets | length > 0
+    fail_msg: >-
+      No relay server to format: the inventory has no host in '{{ mail_relay_group }}'{{ (' within the Limit ' ~
+      ansible_limit) if ansible_limit | default('', true) else '' }}. Put the mail relay server(s) in a group named
+      {{ mail_relay_group }} (or set mail_relay_group to your group's name).
+    quiet: true
+
+- name: Mail relay | the stamp of the comment lines
+  ansible.builtin.set_fact:
+    _mr_fmt:
+      date: "{{ now(fmt='%Y-%m-%d') }}"
+      time: "{{ now(fmt='%Y%m%d-%H%M%S') }}"
+      by: >-
+        {{ ((awx_user_name | default(tower_user_name | default('', true), true)) | string | trim
+            | regex_replace('[^A-Za-z0-9._@-]', '')) or 'unknown' }}
+      job: "{{ awx_job_id | default(tower_job_id | default(''), true) | string }}"
+      stamp: >-
+        {{ now(fmt='%Y-%m-%d') ~ ((' job ' ~ (awx_job_id | default(tower_job_id | default(''), true) | string))
+           if awx_job_id | default(tower_job_id | default(''), true) | string | length > 0 else '') }}

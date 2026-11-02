@@ -1,0 +1,70 @@
+---
+# On localhost, after every relay of the plan (approved job): the result - printed and emailed (report_email_to).
+# The job fails when a relay failed or was not reached.
+
+- name: Mail relay | the result on each relay
+  ansible.builtin.set_fact:
+    _mr_results: >-
+      {{ _mr_results | default([]) + [hostvars[item]['_mr_result'] | default({'host': item, 'status': 'failed',
+         'detail': 'not reached (unreachable, or no longer in the group ' ~ mail_relay_group ~ ')', 'lines': []}, true)] }}
+  loop: "{{ _mr_targets }}"
+
+- name: Mail relay | the report
+  ansible.builtin.set_fact:
+    _mr_failed: "{{ _mr_results | selectattr('status', 'equalto', 'failed') | list }}"
+    _mr_done: "{{ _mr_results | selectattr('status', 'in', ['done', 'dry run']) | list }}"
+    _mr_what: >-
+      {{ ('add ' ~ (_mr_todo | mail_relay_short) ~ ' (' ~ _mr_req.comment ~ ')') if _mr_req.action == 'add'
+         else ('remove ' ~ (_mr_todo | mail_relay_short)) }}
+    _mr_did: >-
+      {{ ('added ' ~ (_mr_todo | mail_relay_short) ~ ' (' ~ _mr_req.comment ~ ')') if _mr_req.action == 'add'
+         else ('removed ' ~ (_mr_todo | mail_relay_short)) }}
+
+- name: Mail relay | the report to print and email
+  ansible.builtin.set_fact:
+    _mr_doc:
+      title: >-
+        {{ 'Mail relay whitelist - ' ~ ('FAILED: ' ~ _mr_what if _mr_failed else
+           ('dry run: ' ~ _mr_what) if ansible_check_mode else
+           (_mr_did if _mr_done else 'nothing changed: ' ~ _mr_what)) }}
+      status: "{{ 'critical' if _mr_failed else ('ok' if _mr_done | length == _mr_results | length else 'warning') }}"
+      subtitle: >-
+        {{ _mr_done | length }} of {{ _mr_results | length }} relay(s) changed{{ (', ' ~ _mr_failed | length ~ ' failed') if _mr_failed else '' }}.
+        Requested by {{ _mr_req.by }}, planned {{ _mr_plan.planned | default('') }}, approved in AAP.
+      summary:
+        - {label: "{{ 'Add' if _mr_req.action == 'add' else 'Remove' }}", value: "{{ _mr_todo | map('mail_relay_size') | join(', ') }}"}
+        - {label: Changed, value: "{{ _mr_done | length }} of {{ _mr_results | length }}", status: "{{ 'ok' if _mr_done else 'warning' }}"}
+        - {label: Failed, value: "{{ _mr_failed | length }}", status: "{{ 'critical' if _mr_failed else 'ok' }}"}
+      sections: >-
+        {{ [{'title': 'Relay servers', 'columns': ['Relay', 'Result', 'Detail'],
+             'rows': _mr_results | map(attribute='host') | zip(_mr_results | map(attribute='status'),
+                       _mr_results | map(attribute='detail')) | map('list') | list,
+             'row_status': _mr_results | map(attribute='status') | map('regex_replace', '^failed$', 'critical')
+                           | map('regex_replace', '^(done|dry run)$', '') | map('regex_replace', '^skipped$', 'warning') | list}]
+           + ([{'title': ('The lines added' if _mr_req.action == 'add' else 'The lines removed'),
+                'lines': (_mr_done | first).lines}] if _mr_done else [])
+           + ([{'title': 'Note', 'lines': _mr_plan.relays | mail_relay_notes}]
+              if _mr_done and _mr_plan.relays | mail_relay_notes else []) }}
+      footer: "The approved plan of job {{ _mr_plan.job | default('') }} ({{ _mr_plan.planned | default('') }})."
+
+- name: Mail relay | {{ _mr_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_mr_doc | report_text).splitlines() }}"
+
+- name: Mail relay | the report website only with mail_relay_web
+  ansible.builtin.set_fact:
+    _mr_web_dest: "{{ (report_web_dest | default('', true) | string) if mail_relay_web | bool else '' }}"
+
+- name: Mail relay | email it (report_email_to)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _mr_doc }}"
+    report_web_dest: "{{ _mr_web_dest }}"
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
+
+- name: Mail relay | every relay was changed or had nothing left to change
+  ansible.builtin.assert:
+    that: _mr_failed | length == 0
+    fail_msg: "{{ _mr_failed | map(attribute='host') | zip(_mr_failed | map(attribute='detail')) | map('join', ': ') | join('; ') }}"
+    quiet: true

@@ -26,6 +26,9 @@ aap_email_question_playbooks:
   - horizon_image_push_plan.yml
   - horizon_session_cleanup.yml
   - log_analysis.yml
+  - mail_relay_approved.yml
+  - mail_relay_format.yml
+  - mail_relay_plan.yml
   - net_cert_renew.yml
   - net_cert_report.yml
   - net_perf_report.yml

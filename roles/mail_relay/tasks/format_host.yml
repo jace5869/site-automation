@@ -1,0 +1,102 @@
+---
+# On each relay (format job): main.cf with the list one address per line (plugins/filter/mail_relay_filters.py,
+# mail_relay_format: the same words, only their order and the comment lines change). Check mode: the new list is
+# shown, nothing written. Else: a copy of main.cf kept first (main.cf.before-format-DATE-TIME), written, then the
+# configuration check and the read-back (use_list.yml: Postfix must read exactly the new list - else the file is
+# put back from that copy). Postfix is not reloaded (mail_relay_format_reload): the list is the same.
+# Sets _mr_result: {host, status (done | dry run | as it is | failed), detail, lines, named, moved, count, copy}.
+- name: Mail relay | format {{ mail_relay_file }}
+  when: _mr_fmt_read.problem == ''
+  block:
+    - name: Mail relay | the file's owner and mode (kept)
+      ansible.builtin.stat:
+        path: "{{ mail_relay_file }}"
+      register: _mr_stat
+
+    - name: Mail relay | read it again
+      ansible.builtin.slurp:
+        src: "{{ mail_relay_file }}"
+      register: _mr_read
+
+    - name: Mail relay | the list one address per line
+      ansible.builtin.set_fact:
+        _mr_new: >-
+          {{ _mr_read.content | b64decode | mail_relay_format(hostvars['localhost']['_mr_names'], mail_relay_parameter,
+             hostvars['localhost']['_mr_fmt'].stamp, mail_relay_format_blank_lines | bool, mail_relay_format_refresh | bool) }}
+
+    - name: Mail relay | the list keeps exactly its addresses
+      ansible.builtin.assert:
+        that: _mr_new.problem == ''
+        fail_msg: "{{ _mr_new.problem }}"
+        quiet: true
+
+    - name: Mail relay | keep a copy of {{ mail_relay_file }} first
+      ansible.builtin.copy:
+        src: "{{ mail_relay_file }}"
+        dest: "{{ mail_relay_file }}.before-format-{{ hostvars['localhost']['_mr_fmt'].time }}"
+        remote_src: true
+        mode: preserve
+      register: _mr_copy
+      when: _mr_new.rewrite
+
+    - name: Mail relay | write it
+      ansible.builtin.copy:
+        dest: "{{ mail_relay_file }}"
+        content: "{{ _mr_new.text }}"
+        owner: "{{ _mr_stat.stat.pw_name }}"
+        group: "{{ _mr_stat.stat.gr_name }}"
+        mode: "{{ _mr_stat.stat.mode }}"
+      register: _mr_write
+      when: _mr_new.rewrite
+
+    - name: Mail relay | check, and read back
+      ansible.builtin.include_tasks: use_list.yml
+      vars:
+        _mr_file: "{{ mail_relay_file }}"
+        _mr_backup: "{{ _mr_copy.dest }}"
+        _mr_style: main_cf
+        _mr_param: "{{ mail_relay_parameter }}"
+        _mr_expect: "{{ _mr_new.words }}"
+        _mr_reload: "{{ mail_relay_format_reload | bool }}"
+      when: _mr_write is changed and not ansible_check_mode
+
+    - name: Mail relay | the result here
+      ansible.builtin.set_fact:
+        _mr_result:
+          host: "{{ inventory_hostname }}"
+          status: "{{ ('dry run' if ansible_check_mode else 'done') if _mr_new.rewrite else 'as it is' }}"
+          detail: >-
+            {{ ('Check mode: nothing was written' if ansible_check_mode else
+                ('a copy of the file before: ' ~ _mr_copy.dest | default('-')))
+               if _mr_new.rewrite else 'already one address per line, nothing new to name' }}
+          lines: "{{ _mr_new.lines }}"
+          named: "{{ _mr_new.named }}"
+          moved: "{{ _mr_new.moved }}"
+          count: "{{ _mr_new.words | length }}"
+          copy: "{{ _mr_copy.dest | default('') }}"
+
+  rescue:
+    - name: Mail relay | the format failed here
+      ansible.builtin.set_fact:
+        _mr_result:
+          host: "{{ inventory_hostname }}"
+          status: failed
+          detail: "{{ ansible_failed_result.msg | default('failed') | string | truncate(400) }}"
+          lines: []
+          named: []
+          moved: []
+          count: 0
+          copy: "{{ _mr_copy.dest | default('') }}"
+
+- name: Mail relay | this relay could not be read
+  ansible.builtin.set_fact:
+    _mr_result:
+      host: "{{ inventory_hostname }}"
+      status: failed
+      detail: "{{ _mr_fmt_read.problem }}"
+      lines: []
+      named: []
+      moved: []
+      count: 0
+      copy: ""
+  when: _mr_fmt_read.problem != ''

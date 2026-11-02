@@ -1,0 +1,71 @@
+---
+# On localhost, after every relay (format job): the result - printed and emailed (report_email_to): each relay, the
+# new list, and the name and service found for each address. The job fails when a relay failed or was not reached.
+- name: Mail relay | the result on each relay
+  ansible.builtin.set_fact:
+    _mr_results: >-
+      {{ _mr_results | default([]) + [hostvars[item]['_mr_result'] | default({'host': item, 'status': 'failed',
+         'detail': 'not reached (unreachable, or no longer in the group ' ~ mail_relay_group ~ ')', 'lines': [],
+         'named': [], 'moved': [], 'count': 0, 'copy': ''}, true)] }}
+  loop: "{{ _mr_targets }}"
+
+- name: Mail relay | the report
+  ansible.builtin.set_fact:
+    _mr_failed: "{{ _mr_results | selectattr('status', 'equalto', 'failed') | list }}"
+    _mr_done: "{{ _mr_results | selectattr('status', 'in', ['done', 'dry run']) | list }}"
+    _mr_named_rows: >-
+      {{ _mr_names | dict2items | map(attribute='key')
+         | zip(_mr_names | dict2items | map(attribute='value.name'), _mr_names | dict2items | map(attribute='value.vm'),
+               _mr_names | dict2items | map(attribute='value.service'), _mr_names | dict2items | map(attribute='value.how'))
+         | map('list') | list }}
+
+- name: Mail relay | the report to print and email
+  ansible.builtin.set_fact:
+    _mr_doc:
+      title: >-
+        {{ 'Mail relay whitelist - ' ~ ('FAILED: one address per line' if _mr_failed else
+           'dry run: one address per line' if ansible_check_mode else
+           'one address per line' if _mr_done else 'one address per line already') }}
+      status: "{{ 'critical' if _mr_failed else 'ok' }}"
+      subtitle: >-
+        {{ _mr_done | length }} of {{ _mr_results | length }} relay(s) {{ 'would be ' if ansible_check_mode else '' }}formatted{{
+           (', ' ~ _mr_failed | length ~ ' failed') if _mr_failed else '' }}. The list keeps exactly its addresses;
+        {{ _mr_names | length }} of {{ _mr_ask_all | length }} address(es) without a comment named.
+        {{ 'Check mode: nothing was written.' if ansible_check_mode else '' }}
+      summary:
+        - {label: Formatted, value: "{{ _mr_done | length }} of {{ _mr_results | length }}"}
+        - {label: Named, value: "{{ _mr_names | length }} of {{ _mr_ask_all | length }}"}
+        - {label: Failed, value: "{{ _mr_failed | length }}", status: "{{ 'critical' if _mr_failed else 'ok' }}"}
+      sections: >-
+        {{ [{'title': 'Relay servers', 'columns': ['Relay', 'Result', 'Addresses', 'Detail'],
+             'rows': _mr_results | map(attribute='host') | zip(_mr_results | map(attribute='status'),
+                       _mr_results | map(attribute='count'), _mr_results | map(attribute='detail')) | map('list') | list,
+             'row_status': _mr_results | map(attribute='status') | map('regex_replace', '^failed$', 'critical')
+                           | map('regex_replace', '^(done|dry run|as it is)$', '') | list}]
+           + ([{'title': 'The names found', 'columns': ['Address', 'Name', 'VM', 'Service (folder)', 'VM found by'],
+                'rows': _mr_named_rows}] if _mr_named_rows else [])
+           + ([{'title': 'Note', 'lines': [_mr_vm_note]}] if _mr_vm_note else [])
+           + (_mr_done | map('mail_relay_format_section') | list) }}
+      footer: "Job {{ _mr_fmt.job or '-' }} by {{ _mr_fmt.by }}, {{ _mr_fmt.date }}. The copy of main.cf before is next to it on each relay."
+
+- name: Mail relay | {{ _mr_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_mr_doc | report_text).splitlines() }}"
+
+- name: Mail relay | the report website only with mail_relay_web
+  ansible.builtin.set_fact:
+    _mr_web_dest: "{{ (report_web_dest | default('', true) | string) if mail_relay_web | bool else '' }}"
+
+- name: Mail relay | email it (report_email_to)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _mr_doc }}"
+    report_web_dest: "{{ _mr_web_dest }}"
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
+
+- name: Mail relay | every relay was formatted or was already
+  ansible.builtin.assert:
+    that: _mr_failed | length == 0
+    fail_msg: "{{ _mr_failed | map(attribute='host') | zip(_mr_failed | map(attribute='detail')) | map('join', ': ') | join('; ') }}"
+    quiet: true

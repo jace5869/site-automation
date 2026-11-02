@@ -10,6 +10,8 @@
                    tests/test_filters.py covers triggered ones)
   vcsim.py guest VM PROPERTY=VALUE...   set read-only properties of a VM (the pick lists: a hung VM is
                    guestHeartbeatStatus=red guest.toolsStatus=toolsNotRunning)
+  vcsim.py folder VM FOLDER   move VM into the folder FOLDER of its datacenter's VMs (made if needed: the mail
+                   relay format reads a VM's folder as its service)
   vcsim.py snap VM NAME   take a snapshot NAME (again: two of the same name - the collection takes a name once)
   vcsim.py watch   for the outage watch: HA restarted DC0_C0_RP0_VM0 on another host (a warning), all paths
                    down to a device on DC0_C0_H0 (not cleared: critical), a VMFS heartbeat that timed out on
@@ -256,9 +258,19 @@ def size():
     WaitForTask(vm(sys.argv[2]).ReconfigVM_Task(spec))
 
 
+def folder():
+    v = vm(sys.argv[2])
+    dc = v.parent
+    while not isinstance(dc, vim.Datacenter):
+        dc = dc.parent
+    sub = [f for f in dc.vmFolder.childEntity if isinstance(f, vim.Folder) and f.name == sys.argv[3]]
+    target = sub[0] if sub else dc.vmFolder.CreateFolder(sys.argv[3])
+    WaitForTask(target.MoveIntoFolder_Task([v]))
+
+
 def snap():
     WaitForTask(vm(sys.argv[2]).CreateSnapshot_Task(name=sys.argv[3], description="", memory=False, quiesce=False))
 
 
 {"setup": setup, "state": state, "events": events, "health": health, "guest": guest, "snap": snap, "watch": watch, "size": size,
- "ask": ask}[sys.argv[1]]()
+ "ask": ask, "folder": folder}[sys.argv[1]]()

@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: mail_relay
+  description: "Mail relay whitelist with an approval: add an IP address with a required comment, or remove one; plan, approval email, apply, result email."
+  license: MIT
+  min_ansible_version: "2.16"
+dependencies: []

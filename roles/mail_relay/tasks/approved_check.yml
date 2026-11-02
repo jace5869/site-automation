@@ -1,0 +1,49 @@
+---
+# On localhost (approved job): the plan the approval let through (mail_relay_plan, handed on by AAP from the plan
+# job). Without one the job refuses: it runs only in the workflow, after the plan job and the approval. Every field
+# is checked again as the plan job made it - the lines written are built from these fields, never taken as text.
+# Sets _mr_plan, _mr_req (what to change) and _mr_targets (the relays to change).
+
+- name: Mail relay | an approved plan reached this job
+  ansible.builtin.assert:
+    that:
+      - mail_relay_plan is defined
+      - mail_relay_plan is mapping
+      - mail_relay_plan.action | default('') in ['add', 'remove']
+      - mail_relay_plan.relays | default([]) | length > 0
+    fail_msg: >-
+      Nothing to change: no approved plan (mail_relay_plan) reached this job. It runs only in the mail relay
+      workflow, after the plan job and the approval. docs/MAIL_RELAY.md
+    quiet: true
+
+- name: Mail relay | the plan is one this repository's plan job makes
+  ansible.builtin.assert:
+    that:
+      # the addresses: each by the plan job's rules (one address, or a subnet as allowed), each once
+      - mail_relay_plan.ips | default('') is not string and mail_relay_plan.ips is iterable and mail_relay_plan.ips is not mapping
+      - mail_relay_plan.ips | length > 0 and mail_relay_plan.ips | length <= mail_relay_max_ips | int
+      - mail_relay_plan.ips | unique | length == mail_relay_plan.ips | length
+      - >-
+        mail_relay_plan.ips | map('string') | map('mail_relay_ip_problem', mail_relay_plan.action,
+        mail_relay_allow_subnets | bool, mail_relay_min_prefix | int) | reject('equalto', '') | list | length == 0
+      - mail_relay_plan.date | default('') is match('^[0-9]{4}-[0-9]{2}-[0-9]{2}\Z')
+      - mail_relay_plan.by | default('') is match('^[A-Za-z0-9._@-]+\Z')
+      - mail_relay_plan.action == 'remove' or mail_relay_plan.comment | default('') is match("^[A-Za-z0-9 ._,:;()/@&'+-]{3,}\Z")
+      # each relay: what plan job read, what to change there - only addresses of the request
+      - mail_relay_plan.relays | rejectattr('host', 'defined') | list | length == 0
+      - mail_relay_plan.relays | map(attribute='style', default='') | reject('in', ['main_cf', 'file']) | list | length == 0
+      - mail_relay_plan.relays | map(attribute='file', default='') | map('string') | reject('match', '^/[^\r\n]+\Z') | list | length == 0
+      - mail_relay_plan.relays | map(attribute='parameter', default='') | map('string') | reject('match', '^[A-Za-z0-9_]+\Z') | list | length == 0
+      - mail_relay_plan.relays | map(attribute='suffix', default='') | map('string') | reject('match', '^[ \t]*[A-Za-z0-9_.:-]*\Z') | list | length == 0
+      - mail_relay_plan.relays | map(attribute='todo', default=[]) | select('string') | list | length == 0
+      - mail_relay_plan.relays | map(attribute='todo', default=[]) | reject | list | length == 0
+      - mail_relay_plan.relays | map(attribute='todo', default=[]) | flatten | difference(mail_relay_plan.ips) | length == 0
+    fail_msg: "mail_relay_plan is not a plan of playbooks/mail_relay_plan.yml: nothing was changed."
+    quiet: true
+
+- name: Mail relay | what to change, and where
+  ansible.builtin.set_fact:
+    _mr_plan: "{{ mail_relay_plan }}"
+    _mr_req: "{{ mail_relay_plan | dict2items | selectattr('key', 'in', ['action', 'ips', 'comment', 'by', 'date']) | items2dict }}"
+    _mr_targets: "{{ mail_relay_plan.relays | map(attribute='host') | list }}"
+    _mr_todo: "{{ mail_relay_plan.relays | map(attribute='todo') | flatten | unique | list }}"   # the addresses to change

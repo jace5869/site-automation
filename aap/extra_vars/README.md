@@ -39,6 +39,9 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Horizon - session cleanup | `playbooks/horizon_session_cleanup.yml` | [horizon_session_cleanup.yml](horizon_session_cleanup.yml) |
 | Horizon - user help | `playbooks/horizon_user_help.yml` | [horizon_user_help.yml](horizon_user_help.yml) |
 | Log analysis | `playbooks/log_analysis.yml` | [log_analysis.yml](log_analysis.yml) |
+| Mail relay - apply the approved whitelist change | `playbooks/mail_relay_approved.yml` | [mail_relay_approved.yml](mail_relay_approved.yml) |
+| Mail relay - format the whitelist | `playbooks/mail_relay_format.yml` | [mail_relay_format.yml](mail_relay_format.yml) |
+| Mail relay - whitelist plan | `playbooks/mail_relay_plan.yml` | [mail_relay_plan.yml](mail_relay_plan.yml) |
 | NetApp ONTAP health report | `playbooks/ontap_health_report.yml` | [ontap_health_report.yml](ontap_health_report.yml) |
 | Network config backup | `playbooks/net_config_backup.yml` | [net_config_backup.yml](net_config_backup.yml) |
 | Network config load | `playbooks/net_config_load.yml` | [net_config_load.yml](net_config_load.yml) |

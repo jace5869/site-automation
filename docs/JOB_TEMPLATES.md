@@ -135,12 +135,15 @@ read only or acting ([HORIZON.md](HORIZON.md#step-3-the-job-templates)).
 | Horizon - user help | `playbooks/horizon_user_help.yml` | On demand | [HORIZON.md](HORIZON.md#user-help-the-service-desk) |
 | Horizon - session cleanup | `playbooks/horizon_session_cleanup.yml` | Watch | [HORIZON.md](HORIZON.md#session-cleanup) |
 
-## Network devices and storage
+## Network devices, mail relays and storage
 
 | Job template | Playbook | Kind | How-to |
 |---|---|---|---|
 | Network config backup | `playbooks/net_config_backup.yml` | Watch | [NETWORK_CONFIG.md](NETWORK_CONFIG.md#templates) |
 | Network config load | `playbooks/net_config_load.yml` | Workflow step | [NETWORK_CONFIG.md](NETWORK_CONFIG.md#a-load-with-an-approval) |
+| Mail relay - whitelist plan | `playbooks/mail_relay_plan.yml` | Workflow step | [MAIL_RELAY.md](MAIL_RELAY.md#set-it-up-once), workflow 38: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#38-add-or-remove-a-mail-relay-whitelist-address-with-an-approval) |
+| Mail relay - apply the approved whitelist change | `playbooks/mail_relay_approved.yml` | After an approval | [MAIL_RELAY.md](MAIL_RELAY.md#set-it-up-once) |
+| Mail relay - format the whitelist | `playbooks/mail_relay_format.yml` | On demand (Check first) | [MAIL_RELAY.md](MAIL_RELAY.md#format-the-list-one-address-per-line) |
 | NetApp ONTAP health report | `playbooks/ontap_health_report.yml` | Report | [NETAPP.md](NETAPP.md#set-it-up) |
 
 ## Tenable.sc (ACAS)

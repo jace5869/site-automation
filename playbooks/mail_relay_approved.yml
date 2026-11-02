@@ -1,0 +1,42 @@
+---
+# Job 3 of the mail relay workflows: the step after the approval. AAP hands it the plan job's plan
+# (mail_relay_plan); on each relay of the plan the file is read again and exactly the approved lines are written
+# (or the addresses removed), the file backed up first; then postmap (mail_relay_postmap), the configuration
+# check, the read-back (postconf: Postfix must read the list as written; a failure of either puts the file back)
+# and the reload. The result is emailed (report_email_to). It refuses
+# to run on its own. Do not tick "Prompt on launch" for Variables on its template. docs/MAIL_RELAY.md
+- name: Mail relay whitelist - the approved plan
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The approved plan reached this job
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: approved_check.yml
+
+- name: Mail relay whitelist - change each relay server of the plan
+  hosts: "{{ mail_relay_group | default('mail_relays') }}"
+  gather_facts: false
+  become: "{{ mail_relay_become | default(true) | bool }}"
+  tasks:
+    - name: The job's Limit includes localhost
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: limit_check.yml
+
+    - name: The approved change on this relay
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: apply_host.yml
+      when: inventory_hostname in hostvars['localhost']['_mr_targets']
+
+- name: Mail relay whitelist - the result
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Email the result
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: apply_report.yml

@@ -524,6 +524,25 @@ STIG Manager is only read. Click by click: [STIG_DRIFT.md](STIG_DRIFT.md), "Sett
 usual - needs a few runs before it says anything. When users say "the network is slow", launch the template
 on its own with the group they use: the report shows where. [NETWORK_PERF.md](NETWORK_PERF.md).
 
+### 38. Add or remove a mail relay whitelist address, with an approval
+
+```workflow
+[Mail relay - whitelist plan]
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[Mail relay - apply the approved whitelist change]
+```
+
+Two workflows with these steps: *Mail relay - add an IP* (Variables `mail_relay_action: add`, a survey with the IP
+addresses - one, a subnet or several separated by commas - and the required comment) and *Mail relay - remove an IP*
+(`mail_relay_action: remove`, the IP addresses). The plan emails the exact lines "waiting for approval"; nothing to
+change stops it before the approval. Started from Orchestrator: launch the workflow ([MAIL_RELAY.md](MAIL_RELAY.md)).
+No schedule. *Mail relay - format the whitelist* (one address per line, each named) is a job of its own, run as Check
+first.
+
 ### 8. Database watch: MariaDB and MySQL (hourly)
 
 ```workflow

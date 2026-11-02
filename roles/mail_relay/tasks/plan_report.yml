@@ -1,0 +1,107 @@
+---
+# On localhost, after every relay was read (plan job): the plan for the approver - printed, emailed
+# ("waiting for approval", report_email_to) and handed to the approved job (set_stats mail_relay_plan). Nothing
+# to change (already on the list / not on it) or a relay that cannot take it: the email says so and the job fails
+# here, so the workflow never asks to approve it.
+
+- name: Mail relay | what each relay would change
+  ansible.builtin.set_fact:
+    _mr_relays: >-
+      {{ _mr_relays | default([]) + [hostvars[item]['_mr_relay'] | default({'host': item, 'file': '', 'change': 'none',
+         'todo': [], 'already': [], 'lines': [], 'notes': [],
+         'problem': 'not reached (unreachable, or it failed before reading)'}, true)] }}
+  loop: "{{ _mr_targets }}"
+
+- name: Mail relay | the plan
+  ansible.builtin.set_fact:
+    _mr_problems: "{{ _mr_relays | rejectattr('problem', 'equalto', '') | list }}"
+    _mr_changes: "{{ _mr_relays | rejectattr('change', 'equalto', 'none') | list }}"
+    # for the approver: already on the list / not on it, a subnet on the list that holds an address, addresses inside a subnet
+    _mr_notes: "{{ _mr_relays | mail_relay_notes }}"
+
+- name: Mail relay | the lines, once when every relay changes the same lines, else per relay
+  ansible.builtin.set_fact:
+    _mr_show_lines: >-
+      {{ (_mr_changes | first).lines if _mr_changes | map(attribute='lines') | map('join', ' | ') | unique | list | length == 1
+         else _mr_changes | map(attribute='host') | zip(_mr_changes | map(attribute='lines') | map('join', '  |  '))
+              | map('join', ':  ') | list }}
+    _mr_ready: "{{ _mr_problems | length == 0 and _mr_changes | length > 0 }}"
+    # the title: the addresses that change (one already on the list everywhere is in the notes, not here)
+    _mr_what: >-
+      {{ (('add ' if _mr_req.action == 'add' else 'remove ')
+          ~ (((_mr_changes | map(attribute='todo') | flatten | unique | list) if _mr_changes else _mr_req.ips) | mail_relay_short))
+         ~ ((' (' ~ _mr_req.comment ~ ')') if _mr_req.action == 'add' else '') }}
+
+- name: Mail relay | the plan for the approver
+  ansible.builtin.set_fact:
+    _mr_doc:
+      title: "Mail relay whitelist - {{ 'waiting for approval: ' if _mr_ready | bool else 'nothing to approve: ' }}{{ _mr_what }}"
+      status: "{{ ('warning' if _mr_notes else 'info') if _mr_ready | bool else ('critical' if _mr_problems else 'warning') }}"
+      subtitle: >-
+        {{ ('Requested by ' ~ _mr_req.by ~ '. Nothing changes until a person approves it in AAP.')
+           if _mr_ready | bool else
+           ('Requested by ' ~ _mr_req.by ~ '. Nothing was changed and nothing waits for approval: '
+            ~ ('a relay could not be read, or cannot take the change (see Relay servers).' if _mr_problems else
+               ((_mr_req.ips | join(', ')) ~ (' is' if _mr_req.ips | length == 1 else ' are')
+                ~ (' already on the list.' if _mr_req.action == 'add' else ' not on the list.')
+                ~ (' See the note.' if _mr_notes else '')))) }}
+      summary:
+        - label: "{{ 'Add' if _mr_req.action == 'add' else 'Remove' }}"
+          value: >-
+            {{ ((_mr_changes | map(attribute='todo') | flatten | unique | list) if _mr_changes else _mr_req.ips)
+               | map('mail_relay_size') | join(', ') }}
+        - {label: Relays to change, value: "{{ _mr_changes | length }} of {{ _mr_relays | length }}"}
+        - {label: Requested by, value: "{{ _mr_req.by }}"}
+      sections: >-
+        {{ ([{'title': ('The lines to be added' if _mr_req.action == 'add' else 'The lines to be removed'),
+              'lines': _mr_show_lines}] if _mr_changes else [])
+           + ([{'title': 'Note', 'lines': _mr_notes}] if _mr_notes else [])
+           + [{'title': 'Relay servers', 'columns': ['Relay', 'File', 'Change', 'Problem'],
+               'rows': _mr_relays | map(attribute='host') | zip(_mr_relays | map(attribute='file'),
+                         _mr_relays | map(attribute='change'),
+                         _mr_relays | map(attribute='problem')) | map('list') | list,
+               'row_status': _mr_relays | map(attribute='problem') | map('regex_replace', '^.+$', 'critical') | list}]
+           + ([{'title': 'To approve or deny',
+                'lines': ['In AAP: Automation Execution > Administration > Workflow Approvals, or open the workflow job'
+                          ~ ((' ' ~ awx_workflow_job_id | string) if awx_workflow_job_id is defined else '') ~ '.']
+                         + ([mail_relay_approve_url] if mail_relay_approve_url else [])
+                         + ['Once approved, the lines above are written exactly as shown (the file is backed up first), the mail '
+                            ~ 'configuration is checked and Postfix reloaded. You get an email with the result.']}]
+              if _mr_ready | bool else []) }}
+      footer: "Read-only: nothing was changed. {{ 'The change waits for approval.' if _mr_ready | bool else '' }}"
+
+- name: Mail relay | {{ _mr_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_mr_doc | report_text).splitlines() }}"
+
+- name: Mail relay | the report website only with mail_relay_web
+  ansible.builtin.set_fact:
+    _mr_web_dest: "{{ (report_web_dest | default('', true) | string) if mail_relay_web | bool else '' }}"
+
+- name: Mail relay | email it (report_email_to)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _mr_doc }}"
+    report_web_dest: "{{ _mr_web_dest }}"
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
+
+- name: Mail relay | hand the plan to the approval step and the approved job (set_stats)
+  ansible.builtin.set_stats:
+    data:
+      mail_relay_plan: >-
+        {{ _mr_req | combine({'relays': _mr_changes, 'planned': now(utc=true).strftime('%Y-%m-%d %H:%M UTC'),
+                              'job': awx_job_id | default('') | string}) }}
+    per_host: false
+  when: _mr_ready | bool
+
+- name: Mail relay | waiting for approval
+  ansible.builtin.debug:
+    msg: "READY FOR APPROVAL: {{ _mr_what }} on {{ _mr_changes | map(attribute='host') | join(', ') }}"
+  when: _mr_ready | bool
+
+- name: Mail relay | there is something to approve
+  ansible.builtin.assert:
+    that: _mr_ready | bool
+    fail_msg: "Nothing goes to the approval: {{ _mr_doc.subtitle }}"
+    quiet: true

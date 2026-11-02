@@ -1,0 +1,68 @@
+---
+# On each relay (format job): read the list and look up the name of each single address that has no comment yet
+# (mail_relay_format_refresh: also the ones this job named before) - on the relay, as nslookup would from there
+# (getent hosts: DNS and /etc/hosts; a reverse lookup, mail_relay_format_dns_timeout seconds each). Changes
+# nothing, in Check mode too. Sets _mr_fmt_read: {host, file, ips, ask (looked up), dns {address: name}, problem}.
+- name: Mail relay | read the list on {{ inventory_hostname }}
+  block:
+    - name: Mail relay | the file is there
+      ansible.builtin.stat:
+        path: "{{ mail_relay_file }}"
+      register: _mr_stat
+
+    - name: Mail relay | {{ mail_relay_file }} exists
+      ansible.builtin.assert:
+        that:
+          - _mr_stat.stat.exists and _mr_stat.stat.isreg
+          - mail_relay_style == 'main_cf'
+        fail_msg: >-
+          {{ (mail_relay_file ~ ' is not on ' ~ inventory_hostname ~ ': set mail_relay_file to main.cf.')
+             if mail_relay_style == 'main_cf' else
+             ('mail_relay_style is ' ~ mail_relay_style ~ ': the format job is for the mynetworks line of main.cf (main_cf).') }}
+        quiet: true
+
+    - name: Mail relay | read it
+      ansible.builtin.slurp:
+        src: "{{ mail_relay_file }}"
+      register: _mr_read
+
+    - name: Mail relay | the single addresses on the list
+      ansible.builtin.set_fact:
+        _mr_singles: "{{ _mr_read.content | b64decode | mail_relay_singles(mail_relay_parameter) }}"
+
+    - name: Mail relay | the addresses to look up
+      ansible.builtin.set_fact:
+        _mr_ask: >-
+          {{ _mr_singles.ips if mail_relay_format_refresh | bool else _mr_singles.ips | reject('in', _mr_singles.named) | list }}
+
+    # one command for all of them: one address an argument (only addresses: mail_relay_singles checked each)
+    - name: Mail relay | look up their names on the relay (getent hosts)
+      ansible.builtin.command:
+        argv: >-
+          {{ ['sh', '-c', 'for ip do n=$(timeout ' ~ (mail_relay_format_dns_timeout | int) ~
+              ' getent hosts "$ip" | awk "{print \$2; exit}"); echo "$ip ${n:--}"; done', 'sh'] + _mr_ask }}
+      register: _mr_getent
+      changed_when: false
+      check_mode: false
+      when: mail_relay_format_dns | bool and _mr_ask | length > 0
+
+    - name: Mail relay | what was read here
+      ansible.builtin.set_fact:
+        _mr_fmt_read:
+          host: "{{ inventory_hostname }}"
+          file: "{{ mail_relay_file }}"
+          ips: "{{ _mr_singles.ips }}"
+          ask: "{{ _mr_ask }}"
+          dns: "{{ _mr_getent.stdout | default('') | mail_relay_getent }}"
+          problem: ""
+
+  rescue:
+    - name: Mail relay | this relay could not be read
+      ansible.builtin.set_fact:
+        _mr_fmt_read:
+          host: "{{ inventory_hostname }}"
+          file: "{{ mail_relay_file }}"
+          ips: []
+          ask: []
+          dns: {}
+          problem: "{{ ansible_failed_result.msg | default('could not be read') | string | truncate(300) }}"

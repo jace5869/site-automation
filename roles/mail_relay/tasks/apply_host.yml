@@ -1,0 +1,84 @@
+---
+# On each relay of the approved plan (approved job): read the list again and make the approved change - only the
+# addresses of the plan still to be changed (another change in between: those are skipped and the result says so).
+# The new text comes from the same code as the plan (plugins/filter/mail_relay_filters.py). Then postmap, the
+# configuration check, the read-back and the reload (use_list.yml). Sets _mr_result: {host, status (done | dry run
+# | skipped | failed), detail, lines}.
+
+- name: Mail relay | the approved change for this relay
+  ansible.builtin.set_fact:
+    _mr_req: "{{ hostvars['localhost']['_mr_req'] }}"
+    _mr_planned: "{{ hostvars['localhost']['_mr_plan'].relays | selectattr('host', 'equalto', inventory_hostname) | first }}"
+
+- name: Mail relay | change {{ _mr_planned.file }}
+  block:
+    - name: Mail relay | the file's owner and mode (kept)
+      ansible.builtin.stat:
+        path: "{{ _mr_planned.file }}"
+      register: _mr_stat
+
+    - name: Mail relay | read the list again
+      ansible.builtin.slurp:
+        src: "{{ _mr_planned.file }}"
+      register: _mr_read
+
+    - name: Mail relay | is the change still to be made?
+      ansible.builtin.set_fact:
+        _mr_now: >-
+          {{ _mr_read.content | b64decode | mail_relay_plan(_mr_req | combine({'ips': _mr_planned.todo}), _mr_planned.style,
+             _mr_planned.parameter, _mr_planned.suffix, mail_relay_postmap | bool) }}
+
+    - name: Mail relay | this relay can take it
+      ansible.builtin.assert:
+        that: _mr_now.problem == ''
+        fail_msg: "{{ _mr_now.problem }}"
+        quiet: true
+
+    - name: Mail relay | the new list
+      ansible.builtin.set_fact:
+        _mr_edit: >-
+          {{ _mr_read.content | b64decode | mail_relay_edit(_mr_req, _mr_now.todo, _mr_planned.style, _mr_planned.parameter,
+             _mr_planned.suffix) }}
+
+    - name: Mail relay | write it
+      ansible.builtin.copy:
+        dest: "{{ _mr_planned.file }}"
+        content: "{{ _mr_edit.text }}"
+        owner: "{{ _mr_stat.stat.pw_name }}"
+        group: "{{ _mr_stat.stat.gr_name }}"
+        mode: "{{ _mr_stat.stat.mode }}"
+        backup: true
+      register: _mr_write
+      when: _mr_edit.done | length > 0 and _mr_edit.problem == ''
+
+    - name: Mail relay | postmap, check, read back and reload
+      ansible.builtin.include_tasks: use_list.yml
+      vars:
+        _mr_file: "{{ _mr_planned.file }}"
+        _mr_backup: "{{ _mr_write.backup_file }}"
+        _mr_style: "{{ _mr_planned.style }}"
+        _mr_param: "{{ _mr_planned.parameter }}"
+        _mr_expect: "{{ _mr_edit.words }}"
+      when: _mr_write is changed and not ansible_check_mode
+
+    - name: Mail relay | the result here
+      ansible.builtin.set_fact:
+        _mr_result:
+          host: "{{ inventory_hostname }}"
+          status: "{{ ('dry run' if ansible_check_mode else 'done') if _mr_write is changed else 'skipped' }}"
+          detail: >-
+            {{ (('backup: ' ~ _mr_write.backup_file | default('-')) if not ansible_check_mode else 'Check mode: nothing was changed')
+               ~ ((' - left as they are, changed since the plan: ' ~ _mr_now.already | join(', ')) if _mr_now.already else '')
+               if _mr_write is changed else
+               ((_mr_now.already | join(', ')) ~ (' already on the list now' if _mr_req.action == 'add' else ' no longer on the list')
+                ~ ' (changed since the plan) - left as it is') }}
+          lines: "{{ _mr_edit.lines if _mr_write is changed else [] }}"
+
+  rescue:
+    - name: Mail relay | the change failed here
+      ansible.builtin.set_fact:
+        _mr_result:
+          host: "{{ inventory_hostname }}"
+          status: failed
+          detail: "{{ ansible_failed_result.msg | default('failed') | string | truncate(400) }}"
+          lines: []

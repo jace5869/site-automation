@@ -1,0 +1,44 @@
+---
+# On localhost, between reading the relays and formatting them (format job): the name and service of each address
+# looked up - its name in DNS (format_read.yml) and the VM that has it, read from vCenter once for all relays
+# (mail_relay_format_vmware; the "VMware vCenter" credential: without it, names from DNS only - said). The service
+# is the folder the VM is in ('/DC1/vm/Finance/Payroll' -> 'Payroll'). Sets _mr_names {address: {name, vm, service,
+# how}}, _mr_vm_note.
+- name: Mail relay | what each relay read
+  ansible.builtin.set_fact:
+    _mr_reads: "{{ _mr_targets | map('extract', hostvars, '_mr_fmt_read') | select('defined') | list }}"
+
+- name: Mail relay | the addresses to name, and their DNS names
+  ansible.builtin.set_fact:
+    _mr_ask_all: "{{ _mr_reads | map(attribute='ask') | flatten | unique | list }}"
+    _mr_dns_all: "{{ _mr_reads | map(attribute='dns') | combine }}"
+
+- name: Mail relay | the VMs in vCenter
+  when:
+    - mail_relay_format_vmware | bool
+    - _mr_ask_all | length > 0
+    - lookup('ansible.builtin.env', 'VMWARE_HOST') | length > 0
+  block:
+    - name: Mail relay | read every VM
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: vms_read.yml
+
+  # vCenter is only for the service: without it the names from DNS still go in (said)
+  rescue:
+    - name: Mail relay | vCenter could not be read
+      ansible.builtin.set_fact:
+        _mr_vm_fail: "{{ ansible_failed_result.msg | default('could not be read') | string | truncate(200) }}"
+
+- name: Mail relay | each address's name and service
+  ansible.builtin.set_fact:
+    _mr_names: "{{ _mr_ask_all | mail_relay_names(_mr_dns_all, (_vm_read | default({})).vms | default([])) }}"
+    _mr_vm_note: >-
+      {{ '' if not mail_relay_format_vmware | bool or _mr_ask_all | length == 0 else
+         ('vCenter could not be read (' ~ _mr_vm_fail ~ '): the names are from DNS only, with no service (folder).')
+         if _mr_vm_fail is defined else
+         'No VMware vCenter credential on the template: the names are from DNS only, with no service (folder).'
+         if _vm_read is not defined or _vm_read is skipped else
+         ('vCenter not read: ' ~ (_vm_read.vcenters | rejectattr('ok') | map(attribute='name') | join(', ')) ~ ' - '
+          ~ (_vm_read.vcenters | rejectattr('ok') | map(attribute='error') | first | default('') | string | truncate(150)))
+         if _vm_read.vcenters | rejectattr('ok') | list else '' }}

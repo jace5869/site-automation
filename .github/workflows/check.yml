@@ -69,6 +69,7 @@ jobs:
           python tests/test_servicenow_war.py
           python tests/test_aap_survey.py
           python tests/test_net_config.py
+          python tests/test_mail_relay.py
           python tests/test_trust.py
           python tests/test_stig.py
           python tests/test_sso.py
@@ -218,6 +219,10 @@ jobs:
         run: |
           bash tests/horizon/run_horizon_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/horizon/run_horizon_test.sh
+      - name: Mail relay whitelist - format, plan -> approval -> apply, with a fake mail relay (current ansible-core and 2.16)
+        run: |
+          bash tests/mail_relay/run_mail_relay_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/mail_relay/run_mail_relay_test.sh
       - name: Tenable.sc scan job against a fake Tenable.sc (tests/tenable/scmock.py; current ansible-core and 2.16)
         run: |
           bash tests/tenable/run_tenable_test.sh

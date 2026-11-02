@@ -1,0 +1,63 @@
+---
+# After the list changed on this relay: rebuild the map (mail_relay_postmap), check the mail configuration
+# (mail_relay_check_command), read the list back as Postfix reads it (main_cf, mail_relay_postconf) - it must be
+# exactly the list that was written - and reload the mail service (mail_relay_reload_service). If any of it fails,
+# the file is put back from its backup (and the map rebuilt from it), nothing is reloaded and this fails.
+# Input: _mr_file, _mr_backup, _mr_style, _mr_param, _mr_expect (the parameter's words after the change).
+
+- name: Mail relay | use the new list
+  block:
+    - name: Mail relay | rebuild the map from the file (postmap)
+      ansible.builtin.command:
+        argv: [postmap, "{{ _mr_file }}"]
+      changed_when: true
+      when: mail_relay_postmap | bool
+
+    - name: Mail relay | check the mail configuration ({{ mail_relay_check_command }})
+      ansible.builtin.command:
+        cmd: "{{ mail_relay_check_command }}"
+      changed_when: false
+      when: mail_relay_check_command | length > 0
+
+    - name: Mail relay | read {{ _mr_param }} back as Postfix reads it
+      ansible.builtin.command:
+        argv: ["{{ mail_relay_postconf }}", -c, "{{ _mr_file | dirname }}", -h, "{{ _mr_param }}"]
+      register: _mr_readback
+      changed_when: false
+      when: _mr_style == 'main_cf' and mail_relay_postconf | length > 0
+
+    - name: Mail relay | Postfix reads exactly the list that was written
+      ansible.builtin.assert:
+        that: _mr_readback.stdout | regex_findall('[^\s,]+') == _mr_expect
+        fail_msg: >-
+          Postfix reads {{ _mr_param }} as "{{ _mr_readback.stdout | trim | truncate(200) }}", not as written
+          ("{{ _mr_expect | join(', ') | truncate(200) }}")
+        quiet: true
+      when: _mr_style == 'main_cf' and mail_relay_postconf | length > 0
+
+  rescue:
+    - name: Mail relay | put the file back as it was
+      ansible.builtin.copy:
+        src: "{{ _mr_backup }}"
+        dest: "{{ _mr_file }}"
+        remote_src: true
+        mode: preserve
+
+    - name: Mail relay | rebuild the map from the restored file
+      ansible.builtin.command:
+        argv: [postmap, "{{ _mr_file }}"]
+      changed_when: true
+      when: mail_relay_postmap | bool
+
+    - name: Mail relay | the change was undone
+      ansible.builtin.fail:
+        msg: >-
+          The new list did not pass: {{ (ansible_failed_result.stderr | default('') or ansible_failed_result.msg | default(''))
+          | trim | truncate(300) | regex_replace('[.]$', '') }}. {{ _mr_file }} is back as it was (from {{ _mr_backup }})
+          and the mail service was not reloaded.
+
+- name: Mail relay | reload the mail service ({{ mail_relay_reload_service }})
+  ansible.builtin.service:
+    name: "{{ mail_relay_reload_service }}"
+    state: reloaded
+  when: mail_relay_reload_service | length > 0 and _mr_reload | default(true) | bool

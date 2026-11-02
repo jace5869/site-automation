@@ -1,0 +1,75 @@
+---
+# On localhost, before any relay is read: is the request usable, and which relays does it change? Every
+# value is trimmed first (Orchestrator may send a trailing line break). Input: mail_relay_action, _ip (one or
+# several, IP_address - the older playbook's name - works too), _comment, _requested_by. Sets _mr_targets (the
+# relay servers) and _mr_req: {action, ips, comment, by, date}.
+
+- name: Mail relay | add or remove
+  ansible.builtin.assert:
+    that: mail_relay_action in ['add', 'remove']
+    fail_msg: >-
+      mail_relay_action is '{{ mail_relay_action }}': set it to add or remove in the workflow's Variables
+      (one workflow adds, the other removes). docs/MAIL_RELAY.md
+    quiet: true
+
+- name: Mail relay | the relay servers this job changes
+  ansible.builtin.set_fact:
+    # the job's Limit too (with localhost in it): a relay left out by it is not "not reached"
+    _mr_targets: >-
+      {{ query('ansible.builtin.inventory_hostnames', mail_relay_group)
+         | select('in', query('ansible.builtin.inventory_hostnames', ansible_limit | default('all', true))) | list }}
+
+- name: Mail relay | there is at least one relay server in the inventory
+  ansible.builtin.assert:
+    that: _mr_targets | length > 0
+    fail_msg: >-
+      No relay server to change: the inventory has no host in '{{ mail_relay_group }}'. Put the mail relay
+      server(s) in a group named {{ mail_relay_group }} (or set mail_relay_group to your group's name).
+    quiet: true
+
+- name: Mail relay | read the IP addresses
+  ansible.builtin.set_fact:
+    _mr_ips: >-
+      {{ (mail_relay_ip | default('', true) or IP_address | default('', true)) | string
+         | mail_relay_ips(mail_relay_action, mail_relay_allow_subnets | bool, mail_relay_min_prefix | int, mail_relay_max_ips | int) }}
+
+# each one IPv4 address, or a subnet (mail_relay_allow_subnets) no wider than /mail_relay_min_prefix from its first address
+- name: Mail relay | the IP addresses are usable
+  ansible.builtin.assert:
+    that: _mr_ips.problem == ''
+    fail_msg: "mail_relay_ip '{{ (mail_relay_ip | default('', true) or IP_address | default('', true)) | string | trim }}': {{ _mr_ips.problem }}"
+    quiet: true
+
+- name: Mail relay | read the comment, and who asked
+  ansible.builtin.set_fact:
+    _mr_comment: "{{ mail_relay_comment | default('', true) | string | trim | regex_replace('[ \t]+', ' ') }}"
+    _mr_by: >-
+      {{ ((mail_relay_requested_by | default('', true) or awx_user_name | default(tower_user_name | default('', true), true))
+          | string | trim | regex_replace('[^A-Za-z0-9._@-]', '')) or 'unknown' }}
+
+- name: Mail relay | the comment says who or what the address is for
+  ansible.builtin.assert:
+    that:
+      - _mr_comment | length >= mail_relay_comment_min | int
+      - _mr_comment | length <= mail_relay_comment_max | int
+      - '_mr_comment is match("^[A-Za-z0-9 ._,:;()/@&''+-]+$")'
+    fail_msg: >-
+      mail_relay_comment is required: the name and/or service the address is for, for example
+      "Payroll app (svc-payroll)" or "J. Smith - scanner, room 210".
+      {{ 'It is empty.' if _mr_comment | length == 0 else
+         ('It is too short (at least ' ~ mail_relay_comment_min ~ ' characters).')
+         if _mr_comment | length < mail_relay_comment_min | int else
+         ('It is too long (at most ' ~ mail_relay_comment_max ~ ' characters).')
+         if _mr_comment | length > mail_relay_comment_max | int else
+         "It may only have letters, digits, spaces and . _ , : ; ( ) / @ & ' + - (no #, no [ ], no line breaks)." }}
+    quiet: true
+  when: mail_relay_action == 'add'
+
+- name: Mail relay | the request
+  ansible.builtin.set_fact:
+    _mr_req:
+      action: "{{ mail_relay_action }}"
+      ips: "{{ _mr_ips.ips }}"
+      comment: "{{ _mr_comment if mail_relay_action == 'add' else '' }}"
+      by: "{{ _mr_by }}"
+      date: "{{ now(fmt='%Y-%m-%d') }}"

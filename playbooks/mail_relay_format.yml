@@ -1,0 +1,67 @@
+---
+# Mail relay - format the whitelist: each relay's mynetworks (main.cf) one address or subnet per line - subnets
+# first, then the single addresses, in number order - with a comment line above each single address: its name in
+# DNS (looked up on the relay) and the folder of the VM that has it in vCenter (its service):
+#     # web01.example.mil - Payroll  [AAP mail relay format 2026-11-02 job 4711]
+#     198.51.100.7
+# An address with a comment keeps it. The list keeps exactly its addresses (Postfix reads the same list); a copy of
+# main.cf is kept first (main.cf.before-format-DATE-TIME), then the configuration check and the read-back. Run it as
+# Check first: it shows the new list and writes nothing. Credentials: Machine; VMware vCenter (optional: the
+# service). The add and remove workflows keep the layout. docs/MAIL_RELAY.md
+#   ansible-playbook playbooks/mail_relay_format.yml --check
+- name: Mail relay format - the relays
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The relays and the stamp
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: format_inputs.yml
+
+- name: Mail relay format - read each list, look up the names
+  hosts: "{{ mail_relay_group | default('mail_relays') }}"
+  gather_facts: false
+  become: "{{ mail_relay_become | default(true) | bool }}"
+  tasks:
+    - name: The job's Limit includes localhost
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: limit_check.yml
+
+    - name: Read the list and look up the names on this relay
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: format_read.yml
+      when: inventory_hostname in hostvars['localhost']['_mr_targets']
+
+- name: Mail relay format - the VMs that have the addresses
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Name and service of each address
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: format_names.yml
+
+- name: Mail relay format - write each list
+  hosts: "{{ mail_relay_group | default('mail_relays') }}"
+  gather_facts: false
+  become: "{{ mail_relay_become | default(true) | bool }}"
+  tasks:
+    - name: One address per line on this relay
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: format_host.yml
+      when: inventory_hostname in hostvars['localhost']['_mr_targets'] and _mr_fmt_read is defined
+
+- name: Mail relay format - the result
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Email the result
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: format_report.yml

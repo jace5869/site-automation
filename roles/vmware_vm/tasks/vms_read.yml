@@ -1,0 +1,11 @@
+---
+# Every VM of every vCenter (vmware_vcenters; or of vmware_datacenter), read-only, for another job's use - the mail
+# relay format (roles/mail_relay/tasks/format_names.yml: which VM has an address, and its folder). Sets _vm_read
+# (site_vmware_vms: vms, vcenters). A vCenter that cannot be read is in _vm_read.vcenters with its error.
+- name: VMware | read every VM
+  site_vmware_vms:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _vm_read
+  check_mode: false

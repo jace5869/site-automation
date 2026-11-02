@@ -1,0 +1,48 @@
+---
+# On each relay server (plan job, read-only): what the request would change in this relay's list
+# (plugins/filter/mail_relay_filters.py, the same code that makes the change after the approval). Sets _mr_relay:
+# {host, file, style, parameter, suffix, change (add | remove | none), todo (the addresses to change here), already
+# (on the list already / not on it), lines (the lines to be added or removed), notes (for the approver), problem}.
+
+- name: Mail relay | the request
+  ansible.builtin.set_fact:
+    _mr_req: "{{ hostvars['localhost']['_mr_req'] }}"
+
+- name: Mail relay | read {{ mail_relay_file }}
+  block:
+    - name: Mail relay | the file is there
+      ansible.builtin.stat:
+        path: "{{ mail_relay_file }}"
+      register: _mr_stat
+
+    - name: Mail relay | {{ mail_relay_file }} exists
+      ansible.builtin.assert:
+        that: _mr_stat.stat.exists and _mr_stat.stat.isreg
+        fail_msg: "{{ mail_relay_file }} is not on {{ inventory_hostname }}: set mail_relay_file to the file with the list."
+        quiet: true
+
+    - name: Mail relay | read the list
+      ansible.builtin.slurp:
+        src: "{{ mail_relay_file }}"
+      register: _mr_read
+
+    - name: Mail relay | what would change here
+      ansible.builtin.set_fact:
+        _mr_relay: >-
+          {{ {'host': inventory_hostname, 'file': mail_relay_file, 'style': mail_relay_style,
+              'parameter': mail_relay_parameter, 'suffix': mail_relay_entry_suffix}
+             | combine(_mr_read.content | b64decode | mail_relay_plan(_mr_req, mail_relay_style, mail_relay_parameter,
+                                                                     mail_relay_entry_suffix, mail_relay_postmap | bool)) }}
+
+  rescue:
+    - name: Mail relay | this relay could not be read
+      ansible.builtin.set_fact:
+        _mr_relay:
+          host: "{{ inventory_hostname }}"
+          file: "{{ mail_relay_file }}"
+          change: none
+          todo: []
+          already: []
+          lines: []
+          notes: []
+          problem: "{{ ansible_failed_result.msg | default('could not be read') | string | truncate(300) }}"

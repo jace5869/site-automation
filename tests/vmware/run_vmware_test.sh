@@ -2260,4 +2260,20 @@ VMWARE_PORT=$port "$py" "$here/vcsim.py" events >/dev/null
 run "outage watch: a host disconnected" fail vm_outage_watch.yml -e "$wt" -e vm_watch_window_minutes=0 \
     -- "ESXi host DC0_C0_H2 is disconnected (cluster DC0_C0): its VMs may be down"
 
+# ---- mail relay format: the VM of each address, its folder as the service ---------------------------------------------
+# a relay here (main.cf in a folder): 192.0.2.40 = DC0_C0_RP0_VM1, moved into folder Finance; 192.0.2.20 = DC0_H0_VM1 (web01,
+# at the top: no service); 127.0.0.1 = localhost in /etc/hosts (no VM); 192.0.2.0/28 a subnet (not looked up)
+VMWARE_PORT=$port "$py" "$here/vcsim.py" folder DC0_C0_RP0_VM1 Finance
+VMWARE_PORT=$port "$py" "$here/vcsim.py" guest DC0_C0_RP0_VM1 guest.ipAddress=192.0.2.40
+mkdir -p "$work/relay"
+printf 'myhostname = relay1.example.mil\nmynetworks = 192.0.2.40, 192.0.2.0/28, 127.0.0.1, 192.0.2.20\n' > "$work/relay/main.cf"
+printf 'all:\n  hosts:\n    localhost: {ansible_connection: local, ansible_python_interpreter: %s}\n  children:\n    mail_relays:\n      hosts:\n        relay1: {ansible_connection: local, ansible_python_interpreter: %s, mail_relay_file: %s}\n' \
+    "$py" "$py" "$work/relay/main.cf" > "$work/inv-relay.yml"
+INV="$work/inv-relay.yml" run "mail relay format: names from DNS, the VM and its folder from vCenter" ok mail_relay_format.yml \
+    -e '{"mail_relay_become": false, "mail_relay_check_command": "true", "mail_relay_postconf": "", "mail_relay_format_dns_timeout": 2}' \
+    -- "Finance" "1 of 1 relay(s) formatted"
+printf 'myhostname = relay1.example.mil\nmynetworks =\n    192.0.2.0/28\n\n    # localhost  [AAP mail relay format %s job 4711]\n    127.0.0.1\n\n    # DC0_H0_VM1  [AAP mail relay format %s job 4711]\n    192.0.2.20\n\n    # DC0_C0_RP0_VM1 - Finance  [AAP mail relay format %s job 4711]\n    192.0.2.40\n' \
+    "$(date +%F)" "$(date +%F)" "$(date +%F)" | cmp -s - "$work/relay/main.cf" \
+    && echo "ok   -   ...main.cf one address per line, each named" || { echo "FAIL -   ...main.cf:"; cat "$work/relay/main.cf"; fails=$((fails + 1)); }
+
 if [ "$fails" -eq 0 ]; then echo "ok   - all VMware scenarios passed"; else echo "$fails FAILED"; exit 1; fi

@@ -22,7 +22,7 @@ REPO = os.environ.get("SITE_AUTOMATION_DIR") or (
     os.path.dirname(os.path.dirname(_HERE)) if os.path.isfile(os.path.join(_HERE, "..", "START_HERE.md"))
     else sys.exit("build_ops_guide.py: cannot find the site-automation repository; "
                   "run the script from <repo>/docs/pdf or set SITE_AUTOMATION_DIR=<repo>"))
-SA_VERSION = "0.53.0"
+SA_VERSION = "0.54.0"
 DOCS = [  # (file, chapter title)
     ("docs/START_HERE.md", "Start here: the pieces and how they fit"),
     ("docs/SETUP_AAP.md", "Setting up AAP, step by step"),
@@ -45,6 +45,7 @@ DOCS = [  # (file, chapter title)
     ("docs/STIG_DRIFT.md", "STIG drift: has a server moved away from its checklist?"),
     ("docs/NETWORK_PERF.md", "Network performance: is the network slow, and where?"),
     ("docs/NETWORK_CONFIG.md", "Network device configurations: backup and load"),
+    ("docs/MAIL_RELAY.md", "Mail relay whitelist: one address per line; add or remove with an approval"),
     ("docs/CERT_INVENTORY.md", "The certificate inventory: CSV, JSON and SQL Server, for a dashboard"),
     ("docs/CERT_RENEWAL_CATALOG.md", "Certificate renewal through the PKI's ServiceNow catalog item"),
     ("docs/CERT_INSTALL.md", "Installing the issued certificate: from the request, with an approval"),

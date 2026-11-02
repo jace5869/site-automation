@@ -1,0 +1,44 @@
+---
+# Job 1 of the mail relay workflows ("Mail relay - add an IP", "Mail relay - remove an IP"). Read-only: checks the
+# request (mail_relay_ip - one address, a subnet or several separated by commas - and for add the required
+# mail_relay_comment), reads the list (mynetworks in main.cf) on every relay server (group mail_relays) and emails the plan - "waiting for approval", with the exact lines to be added or
+# removed (report_email_to). A good plan goes on (set_stats mail_relay_plan) -> approval ->
+# mail_relay_approved.yml. Nothing to change (already on the list / not on it) or a relay that could not be read:
+# the job fails here and nothing waits for approval. A survey on the workflow: the IP and the comment; each
+# workflow's Variables: mail_relay_action (add or remove). docs/MAIL_RELAY.md
+#   ansible-playbook playbooks/mail_relay_plan.yml -e mail_relay_action=add -e mail_relay_ip=198.51.100.3 \
+#     -e 'mail_relay_comment="Payroll app (svc-payroll)"'
+- name: Mail relay whitelist plan - the request
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The request is usable
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: inputs.yml
+
+- name: Mail relay whitelist plan - read the whitelist on each relay server
+  hosts: "{{ mail_relay_group | default('mail_relays') }}"
+  gather_facts: false
+  become: "{{ mail_relay_become | default(true) | bool }}"
+  tasks:
+    - name: The job's Limit includes localhost
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: limit_check.yml
+
+    - name: What would change on this relay
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: read.yml
+
+- name: Mail relay whitelist plan - the plan for the approver
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Email the plan, hand it on
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: plan_report.yml
