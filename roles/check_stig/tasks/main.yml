@@ -37,6 +37,11 @@
       {{ check_stig_scanner | string == 'evaluate_stig' and check_stig_evaluate_answers | length > 0
          and not check_stig_evaluate_read | default('') | length > 0 }}
 
+- name: STIG | answer files - used in this run?
+  ansible.builtin.debug:
+    msg: "{{ check_stig_scanner | stig_answers_why(check_stig_evaluate_answers, check_stig_evaluate_read | default('')) }}"
+  run_once: true
+
 - name: STIG | answer files - read, and copied to each host for this run
   ansible.builtin.include_tasks: answers.yml
   when: _stig_af_on | bool
@@ -76,6 +81,13 @@
     - name: STIG | answer files - this run's folders removed
       ansible.builtin.include_tasks: answers_done.yml
       when: _stig_af_on | bool
+
+- name: STIG | answer files - what Evaluate-STIG did with them on this host
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: given {{ _stig_scan.answers.count }} answer file(s) from {{ _stig_scan.answers.source }};
+      {{ _stig_scan.answers | stig_answers_used }}
+  when: _stig_af_on | bool and _stig_scan.answers.used is defined
 
 - name: STIG | read every host's checklist from STIG Manager (read-only, once, from the AAP side)
   ansible.builtin.import_tasks: stigman.yml

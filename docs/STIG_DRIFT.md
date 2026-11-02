@@ -184,8 +184,28 @@ What happens on each run:
    `check_stig_evaluate_answers_arg` if it is spelled otherwise.
 4. **The folder is removed after the scan**, on the host and on the AAP side. Nothing is kept, and a Check run copies
    them just the same.
-5. **The report says it**: `with 2 answer files from \\fileserver.yourdomain.mil\stig\AnswerFiles`, in the every-host
-   table and the job output, with the files' names.
+5. **The report says it**: `with 2 answer files from \\fileserver.yourdomain.mil\stig\AnswerFiles; 42 rules answered
+   from them (answer key DEFAULT)`, in the every-host table and the job output.
+
+**Were they used?** The job output says it at each step. Search it for `answer files`:
+
+```
+answer files: USED - read from \\fileserver.yourdomain.mil\stig\AnswerFiles, copied to each host for this run
+2 answer file(s) from \\fileserver.yourdomain.mil\stig\AnswerFiles as svc_stig@YOURDOMAIN.MIL: RHEL_9_STIG.xml, Firefox.xml
+RHEL_9_STIG.xml - 48211 bytes, changed 2026-10-30 14:05 UTC, SHA-256 9f2c...
+web01.yoursite.mil: given 2 answer file(s) from \\fileserver.yourdomain.mil\stig\AnswerFiles; 42 rules answered from them (answer key DEFAULT)
+```
+
+- **`NOT USED - ...`** says why: the scanner is OpenSCAP; `check_stig_evaluate_answers` is not set *in this run* (look
+  at the job's Details, Variables - a value in `all.yml` needs the project synced after the edit); or
+  `check_stig_evaluate_read` is set (the job reads the checklist Evaluate-STIG already wrote, and runs nothing).
+- **The SHA-256** is the file's own: compare it with the file on the share (`Get-FileHash` in PowerShell) to see that
+  the job read the current one.
+- **Rules answered from them** are the rules whose checklist entry says an answer file answered them (Evaluate-STIG
+  writes *Evaluate-STIG answer file for Key 'DEFAULT' ...* in the rule's comment). **None answered** is a warning for the
+  host in the report: each answer file names the STIG it answers (`<STIGComments Name="...">`, as Evaluate-STIG's
+  `--ListSupportedProducts` names it) and holds answer keys - `DEFAULT`, or one you give with
+  `check_stig_evaluate_args: ["--AnswerKey", "SITE"]`. A file for another STIG, or another key, answers nothing here.
 
 **If the share cannot be read** (it is down, the password is wrong, the folder is not there), Evaluate-STIG is **not
 run**. Each host is then listed as not scanned, with the reason and what to check. Scanning without the answers would

@@ -236,17 +236,18 @@ sleep 1
 echo '{"SV-257985": "open"}' > "$work/es_results.json"
 rm -f "$work/mail"/*
 run "Evaluate-STIG after OpenSCAP's scans: not compared with them - the Not a Finding it fails is disagree, not drift" ok -e "$es_on" -e "$sm_on" -- \
-    "HEALTHY" "disagree 1" "!DRIFT" "!NEW "
+    "HEALTHY" "disagree 1" "!DRIFT" "!NEW " "- STIG Manager: Not a Finding; Evaluate-STIG found: Found: SV-257985 is not set as required."
 decoded "$(ls "$work/mail"/* | head -1)"
 grep -q "first scan with it, after OpenSCAP" "$work/mail.txt" && echo "ok   - the email says the scanner changed" || { echo "FAIL - scanner changed not said"; fails=$((fails + 1)); }
 run "Evaluate-STIG not there: not scanned, a warning" fail -e "$es_on" -e check_stig_evaluate="$work/nope" -e check_stig_dir="$work/kept3" -- \
     "[WARNING] stig: the STIG scan did not run: Evaluate-STIG is not at $work/nope: no Evaluate-STIG_Bash.sh or Evaluate-STIG.ps1 there"
 # ---- answer files (check_stig_evaluate_answers, 0.55.0): copied down for the run, Evaluate-STIG given them, removed after ----
 mkdir -p "$work/answers" && echo '<answers/>' > "$work/answers/RHEL_9.xml" && echo 'x' > "$work/answers/readme.txt"
-echo '{}' > "$work/es_results.json"
+echo '{"SV-257985": "af:not_a_finding"}' > "$work/es_results.json"   # a rule answered from an answer file (0.58.0)
 run "answer files from a folder: copied to the host for this run, Evaluate-STIG given them (--AFPath), said in the report" ok -e "$es_on" \
     -e check_stig_evaluate_answers="$work/answers" -e check_stig_dir="$work/kept3" -- \
-    "1 answer file(s) from $work/answers: RHEL_9.xml" "Evaluate-STIG: with 1 answer file from $work/answers"
+    "answer files: USED - read from $work/answers" "1 answer file(s) from $work/answers: RHEL_9.xml" "RHEL_9.xml - 11 bytes, changed 20" \
+    "Evaluate-STIG: with 1 answer file from $work/answers; 1 rule answered from them (answer key DEFAULT)"
 afd="$(sed -n 's/.*--AFPath \([^ ]*\).*/\1/p' "$work/es_args.txt")"
 [ "$(head -1 "$work/es_af.txt")" = RHEL_9.xml ] && [ "$(wc -l < "$work/es_af.txt")" = 2 ] && [ "$(tail -1 "$work/es_af.txt")" = 700 ] && [ -n "$afd" ] && [ ! -e "$afd" ] \
     && echo "ok   - ... only the .xml there, in a root-only folder of this run, removed after the scan" \

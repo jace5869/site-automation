@@ -34,8 +34,13 @@ author: site automation
 
 RETURN = r'''
 files:
-  description: "Each file taken: [{name, size, sha256}], by name."
+  description: "Each file taken: [{name, size, sha256, modified, line}], by name (modified: when it last changed, UTC;
+    line: the three in words, for the job output)."
   type: list
+  returned: always
+account:
+  description: The account the share was read as ('' for a folder on the AAP side) - never its password.
+  type: str
   returned: always
 source:
   description: Where they were read from, as given (the report says it).
@@ -47,6 +52,7 @@ error:
   returned: always
 '''
 
+import datetime
 import fnmatch
 import hashlib
 import os
@@ -77,13 +83,20 @@ def smb_path(src):
     return parts[0], "\\\\" + "\\".join(parts)
 
 
+def smb_path_safe(src):
+    try:
+        return smb_path(src)
+    except Fail:
+        return None
+
+
 def wanted(name, patterns):
     n = name.lower()
     return any(fnmatch.fnmatchcase(n, p.lower()) for p in patterns or ["*"])
 
 
-def keep(p, name, read, size):
-    """Copy one file (read: a function giving its bytes) into dest -> its record."""
+def keep(p, name, read, size, modified=""):
+    """Copy one file (read: a function giving its bytes) into dest -> its record (modified: when it last changed, UTC)."""
     if size > p["max_mb"] * 1024 * 1024:
         raise Fail("%s is %.1f MB - over check_stig_evaluate_answers_max_mb (%d)" % (name, size / 1048576.0, p["max_mb"]))
     if name in (".", "..") or "/" in name or "\\" in name:
@@ -91,7 +104,21 @@ def keep(p, name, read, size):
     data = read()
     with open(os.path.join(p["dest"], name), "wb") as f:
         f.write(data)
-    return {"name": name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    sha = hashlib.sha256(data).hexdigest()
+    return {"name": name, "size": len(data), "sha256": sha, "modified": modified,
+            "line": "%s - %s bytes%s, SHA-256 %s" % (name, len(data), (", changed " + modified) if modified else "", sha)}
+
+
+def when(t):
+    """A time (seconds, or a datetime) -> 'YYYY-MM-DD HH:MM UTC' ('' when not known)."""
+    try:
+        if isinstance(t, datetime.datetime):
+            d = t.astimezone(datetime.timezone.utc) if t.tzinfo else t
+        else:
+            d = datetime.datetime.fromtimestamp(float(t), datetime.timezone.utc)
+        return d.strftime("%Y-%m-%d %H:%M UTC")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return ""
 
 
 def from_folder(p):
@@ -105,7 +132,8 @@ def from_folder(p):
             with open(path, "rb") as f:
                 return f.read()
         return read
-    return names, lambda n: keep(p, n, reader(os.path.join(src, n)), os.path.getsize(os.path.join(src, n)))
+    return names, lambda n: keep(p, n, reader(os.path.join(src, n)), os.path.getsize(os.path.join(src, n)),
+                                 when(os.path.getmtime(os.path.join(src, n))))
 
 
 def why(what, e, p):
@@ -160,6 +188,7 @@ def from_share(p, server, unc):
         entries = [x for x in smbclient.scandir(unc, **kw) if x.is_file() and wanted(x.name, p["patterns"])]
         # the size the listing gave (an entry's own stat() would connect again, on the default port)
         sizes = dict((x.name, size_of(x, unc, smbclient, kw)) for x in entries)
+        changed = dict((x.name, when(getattr(getattr(x, "smb_info", None), "last_write_time", None))) for x in entries)
     except Exception as e:                              # noqa: BLE001
         raise Fail(why("reading the folder %s" % unc, e, p))
     names = sorted(sizes)
@@ -171,7 +200,7 @@ def from_share(p, server, unc):
                     return f.read()
             except Exception as e:                      # noqa: BLE001
                 raise Fail(why("reading %s\\%s" % (unc, n), e, p))
-        return keep(p, n, read, sizes[n])
+        return keep(p, n, read, sizes[n], changed[n])
     return names, take
 
 
@@ -204,12 +233,14 @@ def main():
         max_mb=dict(type="int", default=20),
     ), supports_check_mode=True)
     p = module.params
+    # who read it, for the job output: the share's account (never its password), or the Kerberos ticket
+    account = (p["username"] or ("the Kerberos ticket" if p["auth"] == "kerberos" else "")) if smb_path_safe(p["src"]) else ""
     try:
         files = read_all(p)
     except Fail as e:
         shutil.rmtree(p["dest"], ignore_errors=True)
-        module.exit_json(changed=False, files=[], source=p["src"], error=str(e))
-    module.exit_json(changed=False, files=files, source=p["src"], error="")
+        module.exit_json(changed=False, files=[], source=p["src"], account=account, error=str(e))
+    module.exit_json(changed=False, files=files, source=p["src"], account=account, error="")
 
 
 if __name__ == "__main__":

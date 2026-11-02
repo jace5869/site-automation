@@ -43,8 +43,15 @@
   ansible.builtin.debug:
     msg: >-
       {{ ('NOT READ - Evaluate-STIG is not run: ' ~ _stig_af.error) if _stig_af.error else
-         ((_stig_af.files | length) ~ ' answer file(s) from ' ~ _stig_af.source ~ ': ' ~ (_stig_af.files | map(attribute='name') | join(', '))) }}
+         ((_stig_af.files | length) ~ ' answer file(s) from ' ~ _stig_af.source ~ (' as ' ~ _stig_af.account if _stig_af.account | default('') else '')
+          ~ ': ' ~ (_stig_af.files | map(attribute='name') | join(', '))) }}
   run_once: true
+
+- name: STIG | answer files - each one read (its size and SHA-256, to compare with the share)
+  ansible.builtin.debug:
+    msg: "{{ _stig_af.files | map(attribute='line') | list }}"
+  run_once: true
+  when: not _stig_af.error
 
 - name: STIG | answer files - a folder for this run on the host (root-only)
   ansible.builtin.tempfile:

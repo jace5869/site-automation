@@ -189,8 +189,9 @@ if grep -q -- "--SelectSTIG RHEL9 --SelectVuln V-257779,V-257835,V-257883,V-2580
 else echo "FAIL - Evaluate-STIG's arguments or what was kept"; cat "$work/es_args.txt"; ls -R "$work/kept"; fails=$((fails + 1)); fi
 mkdir -p "$work/answers" && echo '<answers/>' > "$work/answers/RHEL_9.xml"
 run "the recheck with answer files (check_stig_evaluate_answers): Evaluate-STIG given them with -SelectVuln" ok -e "$es_on" \
-    -e check_stig_evaluate_answers="$work/answers" -- "1 answer file(s) from $work/answers: RHEL_9.xml" "checked: only these rules (-SelectVuln)" \
-    "Evaluate-STIG: with 1 answer file from $work/answers"
+    -e check_stig_evaluate_answers="$work/answers" -- "answer files: USED - read from $work/answers" "1 answer file(s) from $work/answers: RHEL_9.xml" "checked: only these rules (-SelectVuln)" \
+    "Evaluate-STIG: with 1 answer file from $work/answers; none of the rules checked again was answered from them" \
+    "localhost: given 1 answer file(s) from $work/answers; none of the rules checked again"
 grep -q -- "--SelectVuln V-257779,.* --AFPath /" "$work/es_args.txt" && echo "ok   - ... --AFPath with --SelectVuln" \
     || { echo "FAIL - the recheck's Evaluate-STIG arguments"; cat "$work/es_args.txt"; fails=$((fails + 1)); }
 run "an Evaluate-STIG without --SelectVuln: run in full, the same answers" ok -e "$es_on" -e check_stig_evaluate="$work/es_old" -- \

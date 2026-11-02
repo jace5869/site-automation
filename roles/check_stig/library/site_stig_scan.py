@@ -195,7 +195,7 @@ def _plain(s):
 
 def read_checklist(path):
     """An Evaluate-STIG checklist - CKLB (JSON, as STIG Viewer 3 and STIG Manager read it) or CKL (XML) -> its STIGs:
-    [{stig_id, title, version, release, rules: [{rule, v, stigid, severity, title, result, details}]}]."""
+    [{stig_id, title, version, release, rules: [{rule, v, stigid, severity, title, result, details, comments}]}]."""
     with open(path, "rb") as f:
         data = f.read()
     out = []
@@ -207,7 +207,8 @@ def read_checklist(path):
                         "rules": [{"rule": r.get("rule_id") or "", "v": r.get("group_id") or "", "stigid": r.get("rule_version") or "",
                                    "severity": CKL_SEV.get(_plain(r.get("severity")), ""), "title": r.get("rule_title") or "",
                                    "result": CKL_STATUS.get(_plain(r.get("status")), "notchecked"),
-                                   "details": r.get("finding_details") or ""} for r in s.get("rules") or []]})
+                                   "details": r.get("finding_details") or "", "comments": r.get("comments") or ""}
+                                  for r in s.get("rules") or []]})
         return out
     root = ET.fromstring(data)
     for ist in root.iter("iSTIG"):
@@ -219,7 +220,8 @@ def read_checklist(path):
                 a.setdefault(sd.findtext("VULN_ATTRIBUTE") or "", sd.findtext("ATTRIBUTE_DATA") or "")
             rules.append({"rule": a.get("Rule_ID", ""), "v": a.get("Vuln_Num", ""), "stigid": a.get("Rule_Ver", ""),
                           "severity": CKL_SEV.get(_plain(a.get("Severity")), ""), "title": a.get("Rule_Title", ""),
-                          "result": CKL_STATUS.get(_plain(v.findtext("STATUS")), "notchecked"), "details": v.findtext("FINDING_DETAILS") or ""})
+                          "result": CKL_STATUS.get(_plain(v.findtext("STATUS")), "notchecked"), "details": v.findtext("FINDING_DETAILS") or "",
+                          "comments": v.findtext("COMMENTS") or ""})
         out.append({"stig_id": info.get("stigid", ""), "title": info.get("title", ""), "version": info.get("version", ""),
                     "release": info.get("releaseinfo", ""), "rules": rules})
     return out
@@ -235,6 +237,22 @@ def pick_stig(stigs, want, major):
                 re.search(r"Red Hat Enterprise Linux %s\b" % re.escape(str(major)), s["title"]):
             return s
     return None
+
+
+AF_RE = re.compile(r"answer\s*file", re.I)
+AF_KEY_RE = re.compile(r"answer\s*file for key\s*'([^']+)'|answer\s*key\s*:\s*(\S+)", re.I)
+
+
+def answered_from_files(st):
+    """The rules Evaluate-STIG answered from an answer file - their checklist entry names one (its comment: "Evaluate-STIG
+    answer file for Key 'DEFAULT' ...") -> {used, keys, rules (V ids)}: the answer files were not only given, they were used."""
+    rules, keys = [], set()
+    for r in st["rules"]:
+        text = (r.get("comments") or "") + "\n" + (r.get("details") or "")
+        if AF_RE.search(text):
+            rules.append(r["v"] or r["rule"])
+            keys.update(a or b for a, b in AF_KEY_RE.findall(text))
+    return {"used": len(rules), "keys": sorted(k for k in keys if k), "rules": sorted(rules)[:200]}
 
 
 def checklist_version(st):
@@ -641,6 +659,8 @@ class Scan(object):
                 break
         else:
             return self.fail("no checklist of %s %s" % (what, how), **ident)
+        if extra.get("answers"):
+            extra["answers"].update(answered_from_files(st))
         info = {"scanner": "Evaluate-STIG", "datastream": "", "profile": "", "profile_title": st["title"],
                 "stig_version": checklist_version(st), "ssg_version": "", "benchmark": st["stig_id"], "tailoring": "",
                 "checklist": os.path.basename(path)}

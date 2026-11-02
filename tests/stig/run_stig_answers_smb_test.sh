@@ -65,7 +65,7 @@ cat > "$work/es/Evaluate-STIG_Bash.sh" <<EOF
 out=""; af=""; echo "\$*" > "$work/es_args.txt"
 while [ \$# -gt 0 ]; do case "\$1" in --OutputPath) out="\$2"; shift ;; --AFPath) af="\$2"; shift ;; esac; shift; done
 [ -n "\$af" ] && ls "\$af" > "$work/es_af.txt" && cat "\$af"/* > "$work/es_af_content.txt"
-mkdir -p "\$out/WEB01/Checklist" && "$py" "$here/make_cklb.py" "\$out/WEB01/Checklist/WEB01_RHEL9_V2R10.cklb" '{}' V2R10
+mkdir -p "\$out/WEB01/Checklist" && "$py" "$here/make_cklb.py" "\$out/WEB01/Checklist/WEB01_RHEL9_V2R10.cklb" "\$(cat "$work/es_results.json")" V2R10
 echo "Done"
 EOF
 cat > "$work/settings.yml" <<EOF
@@ -77,6 +77,8 @@ check_stig_evaluate_answers: '\\\\127.0.0.1\\stig\\AnswerFiles'
 check_stig_evaluate_answers_port: $port
 check_stig_evaluate_answers_auth: ntlm
 EOF
+
+echo '{"SV-257985": "af:not_a_finding"}' > "$work/es_results.json"   # one rule answered from an answer file
 
 run() {  # run NAME EXPECT(ok|fail) [args...] -- TEXT...
     local tname="$1" want="$2"; shift 2
@@ -99,8 +101,11 @@ run() {  # run NAME EXPECT(ok|fail) [args...] -- TEXT...
 }
 
 run "the answer files read from the share, copied to the host for this run, Evaluate-STIG given them" ok -- \
-    '2 answer file(s) from \\\\127.0.0.1\\stig\\AnswerFiles: Firefox.XML, RHEL_9_STIG_Answers.xml' \
-    'Evaluate-STIG: with 2 answer files from \\\\127.0.0.1\\stig\\AnswerFiles'
+    'answer files: USED - read from \\\\127.0.0.1\\stig\\AnswerFiles' \
+    '2 answer file(s) from \\\\127.0.0.1\\stig\\AnswerFiles as svc_stig: Firefox.XML, RHEL_9_STIG_Answers.xml' \
+    "RHEL_9_STIG_Answers.xml - 35 bytes, changed 20" "SHA-256 $(printf '%s\n' '<STIGComments Name="RHEL_9_STIG"/>' | sha256sum | cut -c1-64)" \
+    'localhost: given 2 answer file(s) from \\\\127.0.0.1\\stig\\AnswerFiles; 1 rule answered from them (answer key DEFAULT)' \
+    'Evaluate-STIG: with 2 answer files from \\\\127.0.0.1\\stig\\AnswerFiles; 1 rule answered from them (answer key DEFAULT)'
 afd="$(sed -n 's/.*--AFPath \([^ ]*\).*/\1/p' "$work/es_args.txt" 2>/dev/null)"
 if [ "$(tr '\n' ' ' < "$work/es_af.txt" 2>/dev/null)" = "Firefox.XML RHEL_9_STIG_Answers.xml " ] && grep -q 'Name="RHEL_9_STIG"' "$work/es_af_content.txt" \
    && [ -n "$afd" ] && [ ! -e "$afd" ]; then
@@ -113,6 +118,16 @@ run "a dry run (Check): the answer files given too, nothing kept" ok --check -- 
 if "$engine" exec "$name" sh -c 'find /srv/stig -type f | sort | xargs md5sum | diff - /srv/before.md5' >/dev/null 2>&1; then
     echo "ok   - the share as it was: only read"
 else echo "FAIL - something on the share changed"; fails=$((fails + 1)); fi
+
+echo '{}' > "$work/es_results.json"
+run "given, but no rule answered from them: said, a warning in the report" fail -- \
+    'localhost: given 2 answer file(s) from \\\\127.0.0.1\\stig\\AnswerFiles; NO rule answered from them' \
+    'Evaluate-STIG was given 2 answer files from \\\\127.0.0.1\\stig\\AnswerFiles and answered no rule from them'
+echo '{"SV-257985": "af:not_a_finding"}' > "$work/es_results.json"
+run "not set in this run: said, Evaluate-STIG run with its own" ok -e '{"check_stig_evaluate_answers": ""}' -- \
+    'answer files: NOT USED - check_stig_evaluate_answers is not set in this run'
+grep -q -- '--AFPath' "$work/es_args.txt" && { echo "FAIL - given answer files when none were set"; fails=$((fails + 1)); } \
+    || echo "ok   - ... Evaluate-STIG not given any"
 
 SMB_PW=Not-it-9 run "a wrong password: Evaluate-STIG not run, the host not scanned, said why" fail -- \
     'NOT READ - Evaluate-STIG is not run: logging in to 127.0.0.1 as svc_stig' 'the user name or password is wrong' \

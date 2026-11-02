@@ -7,6 +7,7 @@ report sections (plugins/filter/stig_filters.py).
 
     python tests/test_stig.py
 """
+import datetime
 import json
 import os
 import re
@@ -1004,7 +1005,7 @@ class AnswerFiles(unittest.TestCase):
 
             @property
             def smb_info(self):
-                return type("I", (), {"end_of_file": len(self.data)})()
+                return type("I", (), {"end_of_file": len(self.data), "last_write_time": datetime.datetime(2026, 10, 30, 14, 5, 7)})()
 
         share = {"RHEL_9.xml": b"<answers/>", "readme.txt": b"x"}
 
@@ -1028,6 +1029,9 @@ class AnswerFiles(unittest.TestCase):
         with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}):
             got = saf.read_all(self.params(src="\\\\fs01\\stig\\AF", username="svc@EXAMPLE.MIL", password="pw"))
             self.assertEqual([f["name"] for f in got], ["RHEL_9.xml"])
+            self.assertEqual(got[0]["modified"], "2026-10-30 14:05 UTC")
+            self.assertEqual(got[0]["line"], "RHEL_9.xml - 10 bytes, changed 2026-10-30 14:05 UTC, SHA-256 "
+                             + __import__("hashlib").sha256(b"<answers/>").hexdigest())
             self.assertEqual(calls, [("login", "fs01", "svc@EXAMPLE.MIL", 445), ("list", "\\\\fs01\\stig\\AF"),
                                      ("read", "\\\\fs01\\stig\\AF\\RHEL_9.xml", "rb")])   # only read, only what matches
             with self.assertRaises(saf.Fail) as e:
@@ -1056,8 +1060,43 @@ class AnswerFiles(unittest.TestCase):
         self.assertTrue(out["scanned"], out.get("why"))
         with open(os.path.join(es, "args.txt")) as f:
             self.assertIn("--AFPath /tmp/x.stig-answers", f.read())
-        self.assertEqual(out["answers"], {"count": 3, "source": "\\\\fs01\\stig\\AF"})
-        self.assertEqual(sf.evaluate_note(out), "with 3 answer files from \\\\fs01\\stig\\AF")
+        self.assertEqual(out["answers"], {"count": 3, "source": "\\\\fs01\\stig\\AF", "used": 0, "keys": [], "rules": []})
+        self.assertEqual(sf.evaluate_note(out), "with 3 answer files from \\\\fs01\\stig\\AF; NO rule answered from them - check that "
+                         "each file's STIG name matches the host's STIG and its answer key (DEFAULT, or the host's own) is in it")
+        warn = [f for f in sf.stig_compare(out, host="web01", scanner="evaluate_stig")["findings"] if f["id"] == "stig:answers-unused"]
+        self.assertEqual(len(warn), 1)
+        self.assertEqual(warn[0]["severity"], "warning")
+        self.assertIn("was given 3 answer files from \\\\fs01\\stig\\AF and answered no rule from them", warn[0]["summary"])
+
+    def test_the_rules_answered_from_them(self):
+        """0.58.0: the checklist's comments say which rules an answer file answered - counted, their answer keys named."""
+        es = self.es()
+        with open(os.path.join(es, "results.json"), "w") as f:
+            json.dump({"SV-257985": "af:not_a_finding", "SV-258999": "af:not_applicable"}, f)
+        m = FakeModule(dir=tempfile.mkdtemp(), evaluate=es, answers="/tmp/x.stig-answers", answers_source="\\\\fs01\\stig\\AF", answers_count=2)
+        with unittest.mock.patch.object(scan, "os_release", return_value={"VERSION_ID": "9.6"}):
+            out = scan.Scan(m).run()
+        self.assertEqual(out["answers"]["used"], 2)
+        self.assertEqual(out["answers"]["keys"], ["DEFAULT"])
+        self.assertEqual(out["answers"]["rules"], ["V-257985", "V-258999"])
+        self.assertEqual(sf.answers_used(out["answers"]), "2 rules answered from them (answer key DEFAULT)")
+        self.assertIn("2 rules answered from them", sf.stig_compare(out, host="web01", scanner="evaluate_stig")["row"]["cells"][1])
+        self.assertFalse([f for f in sf.stig_compare(out, host="web01")["findings"] if f["id"] == "stig:answers-unused"])
+        p = os.path.join(tempfile.mkdtemp(), "c.ckl")
+        make_cklb.write(p, {"SV-257985": "af:not_a_finding"}, "V2R10", "ckl")             # the CKL's COMMENTS too
+        self.assertEqual(scan.answered_from_files(scan.read_checklist(p)[0])["used"], 1)
+
+    def test_why_used_or_not(self):
+        """0.58.0: one line in every run - whether the answer files from your share are used, and when not, why."""
+        self.assertIn("NOT USED - the scanner is openscap", sf.answers_why("openscap", "\\\\fs01\\stig\\AF"))
+        self.assertIn("NOT USED - check_stig_evaluate_answers is not set in this run", sf.answers_why("evaluate_stig", ""))
+        self.assertIn("NOT USED - check_stig_evaluate_read is set (/opt/STIG_Compliance)",
+                      sf.answers_why("evaluate_stig", "\\\\fs01\\s", "/opt/STIG_Compliance"))
+        self.assertIn("not needed - no rule to check again", sf.answers_why("evaluate_stig", "\\\\fs01\\s", "", []))
+        self.assertTrue(sf.answers_why("evaluate_stig", "\\\\fs01\\s", "", [["V-1"]]).startswith("answer files: USED - read from \\\\fs01\\s"))
+        self.assertTrue(sf.answers_why("evaluate_stig", "\\\\fs01\\s").startswith("answer files: USED"))
+        self.assertEqual(sf.answers_used({"used": 1, "keys": ["DEFAULT", "WEB"]}), "1 rule answered from them (answer keys DEFAULT, WEB)")
+        self.assertEqual(sf.answers_used({"used": 0}, True), "none of the rules checked again was answered from them")
 
     def test_not_run_without_them_or_without_the_option(self):
         m = FakeModule(dir=tempfile.mkdtemp(), evaluate=self.es(), answers_error="reading the folder \\\\fs01\\stig: refused")

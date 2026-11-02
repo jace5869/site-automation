@@ -3,8 +3,9 @@
 the STIG drift tests: the STIG rules of make_results.py, each with the status given, plus another STIG (Firefox) in
 the same file, as Evaluate-STIG's combined checklists have.
   make_cklb.py OUT.cklb '{"SV-257985": "open", ...}' [V2R10] [cklb|ckl]
-A rule not given is not_a_finding; a status is not_a_finding, open, not_applicable or not_reviewed. An open rule's
-finding details say what was found."""
+A rule not given is not_a_finding; a status is not_a_finding, open, not_applicable or not_reviewed - "af:" before it:
+answered from an answer file (its comment says so, as Evaluate-STIG writes it). An open rule's finding details say what
+was found."""
 import json
 import os
 import re
@@ -17,6 +18,9 @@ import make_results  # noqa: E402
 # what Evaluate-STIG writes in an Open rule's finding details: its own header, a hash, separators around what it found
 FOUND = ("Evaluate-STIG 1.2607.0 (Scan-RHEL9_Checks) found this to be OPEN on 10/30/2026\nResultHash: " + "0f" * 32
          + "\n~~~~~~~~~~~~~~~~~~~~\nFound: %s is not set as required.\n----------------------------------------")
+# what Evaluate-STIG writes in the comment of a rule an answer file answered
+AF_COMMENT = ("Evaluate-STIG answer file for Key 'DEFAULT' is changing the Status from Open to %s and providing the below "
+              "comment on 10/30/2026:\n\nApproved by the site's ISSM: documented in the SSP.")
 CKL = {"not_a_finding": "NotAFinding", "open": "Open", "not_applicable": "Not_Applicable", "not_reviewed": "Not_Reviewed"}
 
 
@@ -29,10 +33,13 @@ def rules(results):
                 continue
             seen.add(key)
             st = results.get(key, "not_a_finding")
-            out.append({"rule_id": sv, "group_id": vs.split()[i], "rule_version": ids.split()[i], "severity": sev, "rule_title": title,
+            af = st.startswith("af:")
+            st = st[3:] if af else st
+            out.append({"comments": (AF_COMMENT % CKL[st]) if af else "", "rule_id": sv, "group_id": vs.split()[i], "rule_version": ids.split()[i], "severity": sev, "rule_title": title,
                         "status": st, "finding_details": (FOUND % key) if st == "open" else "Compliant."})
     out.append({"rule_id": "SV-258999r1000001_rule", "group_id": "V-258999", "rule_version": "RHEL-09-999990", "severity": "medium",
-                "rule_title": "A manual check: a document.", "status": results.get("SV-258999", "not_reviewed"), "finding_details": ""})
+                "rule_title": "A manual check: a document.", "status": results.get("SV-258999", "not_reviewed").replace("af:", ""), "finding_details": "",
+                "comments": (AF_COMMENT % CKL[results["SV-258999"][3:]]) if results.get("SV-258999", "").startswith("af:") else ""})
     return out
 
 
@@ -60,7 +67,8 @@ def write(out, results, version="V2R10", fmt="cklb"):
             for k, val in (("Vuln_Num", x["group_id"]), ("Severity", x["severity"]), ("Rule_ID", x["rule_id"]), ("Rule_Ver", x["rule_version"]),
                            ("Rule_Title", x["rule_title"]), ("CCI_REF", "CCI-000001"), ("CCI_REF", "CCI-000002")):
                 parts.append("<STIG_DATA><VULN_ATTRIBUTE>%s</VULN_ATTRIBUTE><ATTRIBUTE_DATA>%s</ATTRIBUTE_DATA></STIG_DATA>" % (k, escape(val)))
-            parts.append("<STATUS>%s</STATUS><FINDING_DETAILS>%s</FINDING_DETAILS></VULN>" % (CKL[x["status"]], escape(x["finding_details"])))
+            parts.append("<STATUS>%s</STATUS><FINDING_DETAILS>%s</FINDING_DETAILS><COMMENTS>%s</COMMENTS></VULN>"
+                         % (CKL[x["status"]], escape(x["finding_details"]), escape(x.get("comments", ""))))
         parts.append("</iSTIG>")
     parts.append("</STIGS></CHECKLIST>\n")
     with open(out, "w") as f:

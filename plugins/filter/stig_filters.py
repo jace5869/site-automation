@@ -126,6 +126,39 @@ def check_command(scan, rec):
     return "sudo oscap xccdf eval --profile %s%s --rule %s %s" % (scan.get("profile") or "stig", tail, ids[0], ds)
 
 
+def answers_why(scanner, answers, read="", rules=None):
+    """Whether this run gives Evaluate-STIG the answer files from your share (check_stig_evaluate_answers), and when not,
+    why - one line for the job output, whatever the settings (rules: the recheck's rules to check again, None = the
+    drift report)."""
+    if str(scanner) != "evaluate_stig":
+        return ("answer files: NOT USED - the scanner is %s (answer files are Evaluate-STIG's: check_stig_scanner: evaluate_stig)"
+                % (scanner or "openscap"))
+    if not answers:
+        return ("answer files: NOT USED - check_stig_evaluate_answers is not set in this run, so Evaluate-STIG uses its own "
+                "AnswerFiles folder on each host. To use your share: set it in this template's Variables (or "
+                "playbooks/group_vars/all.yml, then sync the project)")
+    if read:
+        return ("answer files: NOT USED - check_stig_evaluate_read is set (%s): the job reads the checklist Evaluate-STIG "
+                "already wrote on its own schedule, with its own answer files, and runs nothing" % read)
+    if rules is not None and not len(rules):
+        return "answer files: not needed - no rule to check again on any host"
+    return "answer files: USED - read from %s, copied to each host for this run (the next tasks say what was read)" % answers
+
+
+def answers_used(af, recheck=False):
+    """What Evaluate-STIG did with the answer files it was given (site_stig_scan: answers.used, the rules whose
+    checklist entry names an answer file) -> a line for the report and the job output (recheck: only some rules were
+    checked again - none of them answered can be right)."""
+    if not af.get("used") and recheck:
+        return "none of the rules checked again was answered from them"
+    if not af.get("used"):
+        return ("NO rule answered from them - check that each file's STIG name matches the host's STIG and its answer "
+                "key (DEFAULT, or the host's own) is in it")
+    keys = af.get("keys") or []
+    return "%d rule%s answered from them%s" % (af["used"], "" if af["used"] == 1 else "s",
+                                               (" (answer key%s %s)" % ("" if len(keys) == 1 else "s", ", ".join(keys))) if keys else "")
+
+
 def evaluate_note(scan):
     """How Evaluate-STIG ran, past the usual: with answer files copied down for it (check_stig_evaluate_answers); and what
     went wrong that the job worked around: its checklist read although its own schema check rejected it, its checks that
@@ -134,6 +167,8 @@ def evaluate_note(scan):
     af = scan.get("answers") or {}
     if af:
         out.append("with %d answer file%s from %s" % (af.get("count", 0), "" if af.get("count") == 1 else "s", af.get("source") or "the share"))
+        if "used" in af:
+            out.append(answers_used(af, bool(scan.get("vulns_asked"))))
     if scan.get("evaluate_rejected"):
         out.append("its checklist failed Evaluate-STIG's own schema check (moved to %s) - read anyway"
                    % os.path.dirname(scan["evaluate_rejected"][0]))
@@ -192,6 +227,16 @@ def stig_compare(scan, stigman=None, host="", severity=None, statuses=None, stig
                                          "again for this host (docs/STIG_DRIFT.md).")})
         out["row"] = stig_host_row(out)
         return out
+    af = scan.get("answers") or {}
+    if af and "used" in af and not af["used"]:
+        # given, not used: its rules came out as without them (Open, Not Reviewed) - the drift below is not to be trusted
+        out["findings"].append({"check": "stig", "id": "stig:answers-unused" + tag, "severity": "warning",
+                                "summary": "%sEvaluate-STIG was given %d answer file%s from %s and answered no rule from them"
+                                           % (say, af.get("count", 0), "" if af.get("count") == 1 else "s", af.get("source") or "the share"),
+                                "hint": "grep -o '<STIGComments Name=\"[^\"]*\"' *.xml   (in the answer files' folder: the STIG each file answers)",
+                                "note": "Each answer file names the STIG it answers (STIGComments Name=, as Evaluate-STIG's own "
+                                        "--ListSupportedProducts names it) and holds answer keys: DEFAULT, or a key named for the host "
+                                        "(check_stig_evaluate_args: --AnswerKey ...). Fix the file on the share, then run the job again."})
     prev_items = (scan.get("previous") or {}).get("items") or {}
     before = scan.get("passed_before")
     if scan.get("history") == "items":     # Windows: the scan before and when each rule last passed are on the items
@@ -516,8 +561,12 @@ def stig_lines(c):
     for r in c["new"]:
         out.append("  NEW   %s %s %s" % (_rule_label(r), CAT.get(r.get("severity"), ""), r["title"][:90]))
     for r in c.get("disagree") or []:
-        out.append("  DISAGREE %s %s %s - STIG Manager: %s; the scan's check: %s" % (
-            _rule_label(r), CAT.get(r.get("severity"), ""), r["title"][:90], SM_WORD.get(r["sm"], r["sm"]), ", ".join(r.get("scap") or [])))
+        # OpenSCAP: its check's name; Evaluate-STIG has none - the start of what it found
+        found = re.sub(r"\s+", " ", details_text(r.get("details")))
+        why = ("the scan's check: " + ", ".join(r["scap"])) if r.get("scap") else \
+            ("Evaluate-STIG found: " + (found[:160].rsplit(" ", 1)[0] + " ..." if len(found) > 160 else found)) if found else "the scan: Open"
+        out.append("  DISAGREE %s %s %s - STIG Manager: %s; %s" % (
+            _rule_label(r), CAT.get(r.get("severity"), ""), r["title"][:90], SM_WORD.get(r["sm"], r["sm"]), why))
     if (c.get("saved") or {}).get("report"):
         out.append("  report on the host: " + c["saved"]["report"])
     elif not c.get("saved"):
@@ -1025,4 +1074,5 @@ class FilterModule(object):
                 "stig_findings": stig_findings, "stig_recheck_vulns": stig_recheck_vulns, "stig_recheck": stig_recheck,
                 "stig_recheck_sections": stig_recheck_sections, "stig_recheck_lines": stig_recheck_lines,
                 "stig_update_plan": stig_update_plan, "stig_update_sections": stig_update_sections,
-                "stig_update_report": stig_update_report, "stig_recheck_headline": recheck_headline}
+                "stig_update_report": stig_update_report, "stig_recheck_headline": recheck_headline,
+                "stig_answers_why": answers_why, "stig_answers_used": answers_used}
