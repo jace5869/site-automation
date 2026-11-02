@@ -1,8 +1,10 @@
 # Credential type: "STIG Manager API"
-# Optional, for the STIG Manager cross-check in playbooks/poam_status.yml and the checklist comparison in
-# playbooks/stig_drift_report.yml (both only read). The client is created
-# by your Keycloak realm owner (client-credentials grant, scope stig-manager:collection:read, and
-# a grant in the collections to read) - this repository never changes the realm.
+# Optional, for the STIG Manager cross-check in playbooks/poam_status.yml, the checklist comparison in
+# playbooks/stig_drift_report.yml and the STIG recheck (all only read): a client with the client-credentials grant,
+# the scope stig-manager:collection:read and a grant in the collections to read. Workflow 37's
+# playbooks/stigman_update.yml gets a second credential of this type: a client that may write reviews (the scope
+# stig-manager:collection). Both clients are created by your Keycloak realm owner - this repository never changes the
+# realm.
 inputs:
   fields:
     - id: token_url

@@ -205,6 +205,38 @@ class PlanTest(unittest.TestCase):
         self.assertIn("mv -f /etc/fapolicyd/rules.d/39-local.rules /etc/fapolicyd/rules.d/50-local.rules", back)
         self.assertLess(back.index("mv -f"), back.index("cp -p /tmp/x/rules.50-local.rules"))   # renamed back before restored
 
+    def test_lines_for_what_was_for_a_person(self):
+        h = host(changes=[
+            {"kind": "reinstall", "package": "coreutils-8.32-35.el9.x86_64", "path": "/usr/bin/ls",
+             "line": "reinstall package: coreutils-8.32-35.el9.x86_64 (/usr/bin/ls does not match it)"},
+            {"kind": "update", "path": "/opt/v/tool", "size": 9, "sha256": SHA, "file": "/etc/fapolicyd/trust.d/vendor",
+             "line": "trust update: /opt/v/tool size 9 sha256 " + SHA},
+            {"kind": "reload", "path": "/opt/v/x", "line": fr.RELOAD_LINE}])
+        p = ff.fapolicyd_rules_job_plan(h, [fr.RELOAD_LINE, h["changes"][1]["line"], h["changes"][0]["line"]])
+        self.assertEqual(([c["kind"] for c in p["apply"]], p["action"], p["bad"]), (["reinstall", "update", "reload"], "update", []))
+        self.assertEqual(p["reinstall"], [{"package": "coreutils-8.32-35.el9.x86_64", "path": "/usr/bin/ls"}])
+        self.assertEqual(p["trust_update"], [{"path": "/opt/v/tool", "file": "/etc/fapolicyd/trust.d/vendor", "entry": "/opt/v/tool 9 " + SHA}])
+        self.assertEqual(ff.fapolicyd_split([fr.RELOAD_LINE, h["changes"][0]["line"]])["fix"], [])    # the rules part's
+        names = [n for _, n in ff.fapolicyd_rules_job_backups(p, h)]
+        self.assertEqual(names, ["upd._etc_fapolicyd_trust.d_vendor"])      # the vendor's trust file kept, put back
+        self.assertIn("cp -p /tmp/x/upd._etc_fapolicyd_trust.d_vendor /etc/fapolicyd/trust.d/vendor", ff.fapolicyd_rules_job_rollback(p, h, "/tmp/x"))
+        self.assertEqual(len(ff.fapolicyd_rules_job_plan(h, ["reinstall package: coreutils; rm -rf / (/usr/bin/ls does not match it)"])["bad"]), 1)
+
+    def test_rpm_verify(self):
+        class M(object):
+            params = {"offer": ["update", "reload", "reinstall", "large"]}
+        r = fr.Reader(M())
+        out = "S.5....T.  c /etc/x.conf\n.......T.    /usr/bin/ls\nS.5....T.    /usr/bin/cat\nmissing     /usr/bin/gone\n"
+        orig = fr.run
+        fr.run = lambda argv, t: (1, out, "")
+        try:
+            self.assertEqual((r.rpm_changed("coreutils", "/usr/bin/cat"), r.rpm_changed("coreutils", "/usr/bin/ls"),
+                              r.rpm_changed("coreutils", "/usr/bin/true")), (True, False, False))
+            fr.run = lambda argv, t: (2, "", "error")
+            self.assertIsNone(r.rpm_changed("other", "/usr/bin/x"))       # rpm cannot say: for a person, as before
+        finally:
+            fr.run = orig
+
 
 class WorkflowTest(unittest.TestCase):
     def test_plan_per_host_and_held(self):

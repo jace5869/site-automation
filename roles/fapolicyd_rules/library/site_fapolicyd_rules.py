@@ -17,7 +17,12 @@ description:
     while permissive) - grouped by program, file, permission.
   - For each group, the change that lets it through - a trust entry for a host file (pinned to its size and sha256:
     a changed file is a new line), an allow rule for a container's file (as the containers job) - or why a person must
-    decide (a file in a folder users can write, an RPM-owned file, a file already trusted that changed since).
+    decide (a file in a folder users can write, ...).
+  - With C(offer), lines for what was for a person before - a trusted file that changed since (C(update): its trust
+    entry updated, pinned to its size and sha256 now), a file trusted as it is but not loaded, or an RPM-owned file that
+    still matches its package (C(reload): the trust database reloaded), an RPM-owned file that no longer matches its
+    package (C(reinstall): the package reinstalled, the same version), a file over C(hash_max_mb) up to C(large_mb)
+    (C(large): hashed, its trust entry). A file in a folder users can write stays for a person.
   - Reviews the rules files (rules.d, fapolicyd's own and those listed in never_edit left out) and proposes their
     clean-up - a rule commented out, a file renamed - saying whether it changes what runs.
   - Proposes permissive = 0 (it is on: a STIG finding) or permissive = 1 (blocks seen while enforcing: to see all it
@@ -33,7 +38,13 @@ options:
   programs: {description: Container programs (base names)., type: list, elements: str, default: []}
   paths: {description: Regular expressions on the program's or the file's path that mark container storage., type: list, elements: str, default: []}
   user_dirs: {description: "Folders users can write: a blocked file there gets no trust entry (a person decides).", type: list, elements: str, default: [/home/, /run/user/, /tmp/, /var/tmp/, /dev/shm/]}
-  hash_max_mb: {description: A file larger than this is not hashed (a person adds it)., type: int, default: 512}
+  hash_max_mb: {description: A file larger than this is not hashed (a person adds it - or large in offer)., type: int, default: 512}
+  large_mb: {description: "With large in offer: a file up to this many MB is hashed too, and gets its trust entry.", type: int, default: 4096}
+  offer:
+    description: "Lines offered for what was for a person before: update, reload, reinstall, large ([] = all for a person)."
+    type: list
+    elements: str
+    default: [update, reload, reinstall, large]
   max_groups: {description: At most this many groups returned (the most blocked first)., type: int, default: 200}
   timeout: {description: Seconds for each command., type: int, default: 120}
 author: site automation
@@ -45,7 +56,8 @@ state:
   type: str
   returned: always
 changes:
-  description: "Each change with its approval line: [{kind (trust, rule, remove, rename, permissive), line, why, effect}]."
+  description: "Each change with its approval line: [{kind (trust, update, reload, reinstall, rule, remove, rename, permissive), line, why,
+    effect}]."
   type: list
   returned: success
 blocks:
@@ -71,6 +83,7 @@ from ansible.module_utils.site_fapolicyd import (
 MIB = 1024 * 1024
 # what each review finding becomes: (the change, its effect on what runs)
 SAME = "no change in what runs"
+RELOAD_LINE = "reload trust database (fapolicyd-cli --update)"
 STRICTER = "blocks more: what the rule let through is checked again"
 LOOSER = "lets more through: its allow rules are reached"
 RENAMED_DENY = "blocks more and lets more through: its allow rules and its deny rules are reached before the stock ones"
@@ -138,6 +151,7 @@ class Reader(object):
         self.p = module.params
         self._cg = {}
         self._rpm = {}
+        self._verify = {}
 
     def cgroup_of(self, pid):
         if not str(pid).isdigit():
@@ -158,6 +172,25 @@ class Reader(object):
             rc, out, _ = run(["rpm", "-qf", path], 30)
             self._rpm[path] = out.strip().splitlines()[0] if rc == 0 and out.strip() and "not owned" not in out else ""
         return self._rpm[path]
+
+    def rpm_changed(self, pkg, path):
+        """True when rpm -V says the package's file is not as installed (its size or digest), False when it is, None when rpm
+        cannot say."""
+        if pkg not in self._verify:
+            if len(self._verify) >= 50:
+                return None
+            rc, out, _ = run(["rpm", "-V", pkg], 120)
+            got = {}
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) >= 2 and parts[-1].startswith("/") and len(parts[0]) >= 9 and parts[0] != "missing":
+                    got[parts[-1]] = parts[0]
+            self._verify[pkg] = got if rc in (0, 1) else None
+        got = self._verify[pkg]
+        if got is None:
+            return None
+        flags = got.get(path, "")
+        return bool(flags) and (flags[0] == "S" or flags[2] == "5")
 
     def user_of(self, name):
         if not name or name in ("root", "unset", "?"):
@@ -182,21 +215,41 @@ class Reader(object):
             return None, "%s is not a regular file" % real
         if not SAFE.match(real):
             return None, "%s has a space or a character a trust line cannot hold: add it by hand (fapolicyd-cli --file add)" % real
+        offer = self.p["offer"]
         pkg = self.rpm_owned(real)
         if pkg:
+            changed = self.rpm_changed(pkg, real) if ("reinstall" in offer or "reload" in offer) else None
+            if changed and "reinstall" in offer:
+                return {"kind": "reinstall", "package": pkg, "path": real,
+                        "line": "reinstall package: %s (%s does not match it)" % (pkg, real),
+                        "effect": "puts the package's own file back (dnf reinstall, the same version)"}, ""
+            if changed is False and "reload" in offer:
+                return {"kind": "reload", "line": RELOAD_LINE, "path": real,
+                        "effect": "lets through what is trusted already (the RPM database as it is now)"}, ""
             return None, ("%s is RPM-owned (%s), so trusted already: fapolicyd's trust database is out of date (fapolicyd-cli "
                           "--update) or the file no longer matches the package (rpm -V %s)" % (real, pkg, pkg.rsplit("-", 2)[0]))
-        if st.st_size > self.p["hash_max_mb"] * MIB:
+        large = st.st_size > self.p["hash_max_mb"] * MIB
+        if large and ("large" not in offer or st.st_size > self.p["large_mb"] * MIB):
             return None, "%s is %.0f MB: not hashed here - add it by hand after review" % (real, st.st_size / float(MIB))
         sha = sha256_of(real)
         if real in trusted:
             size, hx, where = trusted[real]
             if (size, hx) == (str(st.st_size), sha):
+                if "reload" in offer:
+                    return {"kind": "reload", "line": RELOAD_LINE, "path": real,
+                            "effect": "lets through what is trusted already (the trust files as they are now)"}, ""
                 return None, "%s is in %s already as it is now: fapolicyd has not loaded it (fapolicyd-cli --update)" % (real, where)
+            if "update" in offer:
+                return {"kind": "update", "path": real, "size": st.st_size, "sha256": sha, "file": where,
+                        "line": "trust update: %s size %d sha256 %s" % (real, st.st_size, sha),
+                        "effect": "lets the file through as it is now (its trust entry in %s, was %s bytes)" % (os.path.basename(where), size)}, ""
             return None, ("%s is in %s, but it changed since it was trusted (now %d bytes): if the change is approved, "
                           "fapolicyd-cli --file update %s" % (real, where, st.st_size, real))
-        return {"kind": "trust", "path": real, "size": st.st_size, "sha256": sha,
-                "line": "trust file: %s size %d sha256 %s" % (real, st.st_size, sha)}, ""
+        out = {"kind": "trust", "path": real, "size": st.st_size, "sha256": sha,
+               "line": "trust file: %s size %d sha256 %s" % (real, st.st_size, sha)}
+        if large:
+            out["effect"] = "lets this through - a large file, %.0f MB: look at what it is first" % (st.st_size / float(MIB))
+        return out, ""
 
     def read(self):
         p, t, d = self.p, self.p["timeout"], self.p["dir"].rstrip("/")
@@ -323,7 +376,7 @@ class Reader(object):
                 seen.add(change["line"])
                 change["why"] = "%s %s %s x%d (%s%s)" % (g["kind"], g["exe"] or "?", g["path"], g["count"], g["perm"],
                                                         ", rule %s" % g["rule_no"] if g["rule_no"] else "")
-                change["effect"] = "lets this through"
+                change.setdefault("effect", "lets this through")
                 if change["kind"] == "rule" and note:
                     change["why"] += " - " + note
                 r["changes"].append(change)
@@ -391,6 +444,8 @@ def main():
         paths=dict(type="list", elements="str", default=[]),
         user_dirs=dict(type="list", elements="str", default=["/home/", "/run/user/", "/tmp/", "/var/tmp/", "/dev/shm/"]),
         hash_max_mb=dict(type="int", default=512),
+        large_mb=dict(type="int", default=4096),
+        offer=dict(type="list", elements="str", default=["update", "reload", "reinstall", "large"]),
         max_groups=dict(type="int", default=200),
         timeout=dict(type="int", default=120),
     ), supports_check_mode=True)

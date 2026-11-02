@@ -345,7 +345,8 @@ It is **report only**: what it finds is no finding, and the job does not fail fo
 alone**: nothing is compared with the earlier scans or kept with them. The checklist it wrote (Evaluate-STIG) or
 oscap's results are kept on the host as `check_stig_dir/recheck/latest-checklist.cklb` (`latest-results.xml`), on
 Windows `win_check_stig_dir\recheck\<checklist>.cklb`: STIG Manager can import it - every rule not rechecked is
-Not Reviewed in it, so look at your collection's import options before you do. STIG Manager is never written to.
+Not Reviewed in it, so look at your collection's import options before you do. This job never writes to STIG Manager;
+[workflow 37](#updating-stig-manager-with-an-approval) does, after an approval.
 
 Then the **STIG drift report** checks every rule, as before, on its schedule: the recheck is for the rules you are
 working on, the drift report for everything.
@@ -354,6 +355,68 @@ Setting it up: two templates like the drift reports, with the same credentials
 ([SETUP_AAP.md](SETUP_AAP.md#stig-recheck)) and `aap/extra_vars/stig_recheck.yml`, `win_stig_recheck.yml`;
 `check_stig_stigman_api` is required (what to recheck comes from it). Run it on demand, or as the step after a
 patch or fix job in a workflow. **Check** mode checks and sorts, and keeps nothing on the hosts.
+
+## Updating STIG Manager, with an approval
+
+Workflow 37 ([WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#37-stig-manager-updated-with-an-approval)) does
+the recheck's "update the review" for you, once a person approves it:
+
+```workflow
+[STIG recheck - check]
+   |  Run on fail
+   v
+[Approval]
+   |  Run on success
+   v
+[STIG Manager - update]
+```
+
+1. **The check** is the STIG recheck with `check_stig_update_workflow: true`. Its report starts with **Approve writes
+   these reviews to STIG Manager**: each review, as STIG Manager has it now and as it will be written. It hands that
+   list on to the next steps and fails on purpose (`NEEDS APPROVAL`). With nothing to write it stays green, and no
+   approval is asked for.
+2. **The approval**: open the check's report, then Approve or Deny.
+3. **STIG Manager - update** (`playbooks/stigman_update.yml`) writes those reviews and nothing else.
+
+What it writes (`check_stig_update`):
+
+| The recheck found | Written as | Detail | Comment |
+|---|---|---|---|
+| Fixed: Open, passes now | Not a Finding | what the scan found | the review's own, kept |
+| Not Applicable now: Open | Not Applicable | what the scan found | the review's own, kept |
+| Answered: Not Reviewed, the scan passes it | Not a Finding | what the scan found | the review's own, kept (or the job's line if it has none) |
+| Answered: Not Reviewed, the scan fails it | Open | what the scan found | the job's line: *Set by the STIG recheck (site-automation), approved in AAP: ...* |
+
+- **Never written:** Still open, By hand, and the rules in `check_stig_ignore_rules`.
+- **Status:** each review is written with the status `check_stig_update_status`. The default is `submitted`, which
+  leaves Accept to your reviewers in STIG Manager. `accepted` works only if the collection allows Accept and the
+  client's grant is Manage or higher.
+- **Result engine:** set to the scanner, OpenSCAP or Evaluate-STIG, as STIG Manager shows it for an imported scan.
+- **History:** STIG Manager keeps each review's history, so the earlier review stays there.
+
+**How the update keeps your STIG Manager safe:**
+
+- **Only the approved reviews.** Its only requests to STIG Manager are a GET of each review and one POST of an
+  asset's reviews (`/collections/{id}/reviews/{asset}`). It never changes a collection, asset, user, grant or STIG.
+- **Only if nothing changed since.** Each review is read again first. If a person changed it after the check read it,
+  it is left as it is, and the report says so (*changed since*).
+- **Read back.** Each review is read again after it is written. If STIG Manager refused one (the collection requires
+  a field, a grant is missing), the report says why and the job fails.
+- **Check mode** (Job type **Check** on the update template) reads everything and writes nothing. It says what it would
+  write.
+- **Run twice**, it writes nothing the second time (*already so*).
+
+**The client that writes.** The update gets its own *STIG Manager API* credential:
+
+- The reports keep their read-only client.
+- Ask your Keycloak realm owner for a client with the client-credentials grant and the scope `stig-manager:collection`.
+- In STIG Manager, give its service account a grant in each collection: **Restricted** with the assets it may write,
+  or **Full**. **Manage** is needed only for `accepted`.
+- In AAP, create a *STIG Manager API* credential with that client, and attach it to *STIG Manager - update* only.
+
+Tested end to end against STIG Manager 1.6.17 with its demo Keycloak (`tests/stig/run_stigman_real_test.sh`): a
+collection that requires a detail always and a comment for findings, Accept for Manage, Open reviews with POA&M
+comments.
 
 ## Settings
 
@@ -378,10 +441,14 @@ you are most likely to set:
 | `check_stig_stigman_statuses` | saved, submitted, accepted | the reviews that count as the checklist |
 | `check_stig_dir`, `check_stig_keep` | `/var/lib/site-automation/stig`, 10 | where the scans are kept, and how many |
 | `check_stig_recheck` | `[open, not_reviewed]` | the STIG recheck: what STIG Manager has for a rule it checks again |
+| `check_stig_update_workflow` | `false` | `true` on workflow 37's check: what to write, handed on, `NEEDS APPROVAL` |
+| `check_stig_update`, `check_stig_update_status` | `[fixed, now_na, answered]`, `submitted` | workflow 37: what is written, and with which status |
 
 ## Not in this version
 
-- Nothing is written to STIG Manager - by design. To import a scan, the results file is on the host.
+- The drift report and the recheck never write to STIG Manager. Workflow 37 writes the recheck's reviews after an
+  approval. Drift (a rule that passed and fails now) is not written yet. To import a whole scan, the results file is
+  on the host.
 - Linux scans one STIG per host (its RHEL STIG); Windows every STIG Evaluate-STIG finds. The other STIGs
   Evaluate-STIG writes on Linux (Firefox, ...) are not compared yet.
 - No remediation. A drifted rule's fix is in the HTML report; fixing it automatically, behind an

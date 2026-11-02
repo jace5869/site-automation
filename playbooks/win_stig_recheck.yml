@@ -2,7 +2,7 @@
 # WINDOWS STIG RECHECK - after fixing servers, or before updating STIG Manager: the rules STIG Manager has Open or Not
 # Reviewed for each Windows server (check_stig_recheck) - every STIG of its asset and of its web site and database
 # assets (<server>-<site>-<instance>) - checked again by Evaluate-STIG with -SelectVuln: only those rules, minutes, not a
-# full scan. STIG Manager is read-only - this job never writes to it:
+# full scan. STIG Manager is only read - this job never writes to it (workflow 37 does, after an approval):
 #   fixed        Open in STIG Manager, the server passes now         -> set the review to Not a Finding
 #   now n/a      Open in STIG Manager, Not Applicable now            -> set it to Not Applicable
 #   answered     Not Reviewed in STIG Manager, the scan answered it  -> set it (a fail is Open)
@@ -66,8 +66,50 @@
              | map(attribute='check_stig_results') | flatten(levels=1) | stig_recheck_sections(check_stig_list_max | default(200) | int) }}
       run_once: true
 
+    # workflow 37's check (check_stig_update_workflow: true): the reviews to write, in the report, handed to the approval
+    # step and the job after it (playbooks/stigman_update.yml) - nothing is written here
+    - name: STIG Manager - the reviews to write once approved (check_stig_update_workflow)
+      ansible.builtin.set_fact:
+        _stig_update_plan: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | selectattr('check_stig_results', 'defined')
+             | map(attribute='check_stig_results') | flatten(levels=1)
+             | stig_update_plan(check_stig_update | default(['fixed', 'now_na', 'answered']), check_stig_update_status | default('submitted'),
+                                check_stig_update_detail_max | default(8000) | int, now(utc=true).strftime('%Y-%m-%d')) }}
+      run_once: true
+      when: check_stig_update_workflow | default(false) | bool
+
+    - name: STIG Manager - what Approve writes, at the top of the report
+      ansible.builtin.set_fact:
+        site_report_sections: "{{ (_stig_update_plan | stig_update_sections(check_stig_list_max | default(200) | int)) + site_report_sections }}"
+      run_once: true
+      when: check_stig_update_workflow | default(false) | bool
+
+    - name: STIG Manager - the reviews to write
+      ansible.builtin.debug:
+        msg: "{{ _stig_update_plan | map(attribute='line') | list or 'nothing to write to STIG Manager' }}"
+      run_once: true
+      when: check_stig_update_workflow | default(false) | bool
+
+    - name: STIG Manager - hand them to the approval step and the job after it (set_stats stigman_update_plan)
+      ansible.builtin.set_stats:
+        data:
+          stigman_update_plan: "{{ _stig_update_plan }}"
+        per_host: false
+        aggregate: false
+      run_once: true
+      when: check_stig_update_workflow | default(false) | bool and _stig_update_plan | length > 0
+
   post_tasks:
     - name: Report (a server that could not be rechecked is a warning)
       ansible.builtin.include_role:
         name: site_findings
         tasks_from: report.yml
+
+    - name: STIG Manager - NEEDS APPROVAL
+      ansible.builtin.fail:
+        msg: >-
+          NEEDS APPROVAL - {{ _stig_update_plan | length }} review(s) of {{ _stig_update_plan | map(attribute='assetId') | unique | list | length }}
+          asset(s) to write to STIG Manager, in the report ("Approve writes these reviews to STIG Manager"). Approve the workflow's
+          step to write them; deny it to write none. {{ _stig_update_plan | map(attribute='line') | join(' || ') }}
+      run_once: true
+      when: check_stig_update_workflow | default(false) | bool and _stig_update_plan | length > 0

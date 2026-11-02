@@ -368,6 +368,21 @@ checked again on it - only those - and what to update in STIG Manager (read-only
 | Credentials | as the STIG drift report and the Windows STIG drift report: the machine credential and `STIG Manager API` |
 | Variables | `aap/extra_vars/stig_recheck.yml`, `win_stig_recheck.yml`: `check_stig_stigman_api` (required: what to recheck is read from it); the scanner settings of the drift report |
 
+For workflow 37, make a copy of each, *STIG recheck - check* (and *Windows STIG recheck - check*), with
+`check_stig_update_workflow: true` in its Variables.
+
+### STIG Manager - update
+
+Workflow 37's step after the approval: it writes the reviews the STIG recheck's check listed to STIG Manager, each only
+if it is unchanged since the check, and nothing else ([STIG_DRIFT.md](STIG_DRIFT.md#updating-stig-manager-with-an-approval)).
+
+| Field | Value |
+|---|---|
+| Playbook | `playbooks/stigman_update.yml` |
+| Inventory | any (it runs on the controller) |
+| Credentials | a second `STIG Manager API` credential: the client that may write reviews (scope `stig-manager:collection`, a grant in the collections). The reports keep their read-only one |
+| Variables | `aap/extra_vars/stigman_update.yml`: none needed when `check_stig_stigman_api` is in `all.yml`. Tick **Prompt on launch** for Job type, for a dry run |
+
 ### Network performance report
 
 Hourly or daily, and when users say "the network is slow": latency, loss and jitter from each Linux host to

@@ -40,10 +40,10 @@ author: site automation
 RETURN = r'''
 hosts:
   description: "Per host (per id): {status: found / not_found / no_stig (the asset is there, without this STIG) / several /
-                no_benchmark / error, why, collection, asset, assetId, revision, reviews: {SV-257985: {result, status, ts, rule,
-                version, severity, title}}, rules (with rules: true): {SV-257985: {v, rule, version, severity, title}}};
-                with every: true {status, why, collection, asset, checklists: [{asset, assetId, benchmark, revision, site,
-                instance, reviews, rules}]}"
+                no_benchmark / error, why, collection, collectionId, asset, assetId, revision, reviews: {SV-257985: {result,
+                status, ts, rule, comment (true: it has one), version, severity, title}}, rules (with rules: true): {SV-257985:
+                {v, rule, version, severity, title}}}; with every: true {status, why, collection, collectionId, asset,
+                checklists: [{asset, assetId, benchmark, revision, site, instance, reviews, rules}]}"
   type: dict
   returned: always
 error:
@@ -117,7 +117,7 @@ def reviews_of(rows):
         rule = r.get("rule") or {}
         st = r.get("status") or {}
         rec = {"result": r.get("result") or "", "status": st.get("label", "") if isinstance(st, dict) else str(st),
-               "ts": r.get("ts") or r.get("touchTs") or "", "rule": r.get("ruleId") or "",
+               "ts": r.get("ts") or r.get("touchTs") or "", "rule": r.get("ruleId") or "", "comment": bool(r.get("comment")),
                "version": rule.get("version") or "", "severity": rule.get("severity") or "", "title": rule.get("title") or ""}
         for rid in [r.get("ruleId")] + list(r.get("ruleIds") or []):
             k = sv_of(rid)
@@ -251,7 +251,8 @@ def read(p, client):
         except RuntimeError as e:
             out[hid] = {"status": "error", "why": str(e), "collection": a["_col"].get("name"), "asset": a.get("name")}
             continue
-        out[hid] = {"status": "found", "why": "", "collection": a["_col"].get("name", ""), "asset": a.get("name", ""),
+        out[hid] = {"status": "found", "why": "", "collection": a["_col"].get("name", ""), "collectionId": str(a["_col"].get("collectionId", "")),
+                     "asset": a.get("name", ""),
                      "assetId": str(a.get("assetId")), "benchmark": bench, "revision": rev, "reviews": rv}
         if rl is not None:
             out[hid]["rules"] = rl
@@ -297,7 +298,8 @@ def every(h, names, by_name, cols, assets, rules, reviews):
                               "reviews": reviews(x, bench), "rules": rules(bench, s.get("revisionStr") or "")})
     except RuntimeError as e:
         return {"status": "error", "why": str(e)}
-    return {"status": "found", "why": "", "collection": a["_col"].get("name", ""), "asset": a.get("name", ""), "checklists": lists}
+    return {"status": "found", "why": "", "collection": a["_col"].get("name", ""), "collectionId": str(a["_col"].get("collectionId", "")),
+            "asset": a.get("name", ""), "checklists": lists}
 
 
 def main():

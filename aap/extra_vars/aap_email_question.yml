@@ -54,6 +54,7 @@
 #   - servicenow_war.yml
 #   - stig_drift_report.yml
 #   - stig_recheck.yml
+#   - stigman_update.yml
 #   - troubleshoot.yml
 #   - trust_report.yml
 #   - vm_alarm_act_analysis.yml

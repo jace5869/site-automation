@@ -1,0 +1,14 @@
+---
+# STIG MANAGER - UPDATE (playbooks/stigman_update.yml): workflow 37's step after the approval. It writes the reviews the
+# STIG recheck's check listed (stigman_update_plan, handed on by the workflow) - each only if STIG Manager still has it
+# as the check read it - and nothing else. Its own "STIG Manager API" credential: a client that may write reviews
+# (scope stig-manager:collection, a grant in the collections); the reports keep their read-only one. docs/STIG_DRIFT.md.
+# STIG Manager's address and certificates: the drift report's settings (all.yml), unless set here.
+stigman_update_api: "{{ check_stig_stigman_api | default('') }}"                    # STIG Manager's API
+stigman_update_token_url: "{{ check_stig_stigman_token_url | default('') }}"        # empty = the credential's
+stigman_update_client_id: "{{ check_stig_stigman_client_id | default('') }}"        # empty = the credential's
+stigman_update_client_secret: "{{ check_stig_stigman_client_secret | default('') }}"  # empty = the credential's (vault it)
+stigman_update_scope: ""                    # scopes to ask for, e.g. "stig-manager:collection"; empty = the client's default scopes
+stigman_update_validate_certs: "{{ check_stig_stigman_validate_certs | default(true) }}"   # check the HTTPS certificates
+stigman_update_ca_path: "{{ check_stig_stigman_ca_path | default('') }}"            # a CA bundle on the AAP side to check them with
+stigman_update_timeout: "{{ check_stig_stigman_timeout | default(60) }}"            # seconds per request

@@ -1,7 +1,9 @@
 ---
-# The approved changes this host has (fapolicyd_rules_job_plan): trust entries (fapolicyd-cli --file add, to the job's own
-# trust file, then the package's owner, group and mode on it - a STIG umask leaves it root:root 0600, unreadable to
-# fapolicyd), allow rules (the job's own rules file), rules commented out, rules files renamed, permissive. Then the
+# The approved changes this host has (fapolicyd_rules_job_plan): packages reinstalled (dnf reinstall, the same version:
+# a file that no longer matches its package), trust entries (fapolicyd-cli --file add, to the job's own trust file, then
+# the package's owner, group and mode on it - a STIG umask leaves it root:root 0600, unreadable to fapolicyd), trust
+# entries updated (a trusted file that changed: its size and sha256 now, in the trust file it is in), allow rules (the
+# job's own rules file), rules commented out, rules files renamed, permissive. Then the
 # rules loaded, the trust reloaded or fapolicyd restarted (permissive changed), checked in the same go on the host with
 # the way back sent inline (roles/fapolicyd_fix/files/fapolicyd_fix_reload.sh): running before and not after - or a
 # program no longer starts - every file put back. Then compiled.rules checked against the rules files (fagenrules --check).
@@ -54,6 +56,25 @@
         label: "{{ item.0 }}"
       check_mode: false
 
+    - name: Fapolicyd rules | packages reinstalled, the same version - each file as its package has it (dnf reinstall)
+      ansible.builtin.command:
+        argv: "{{ ['dnf', '-y', 'reinstall'] + (_fr_plan.reinstall | map(attribute='package') | unique | list) }}"
+      register: _fr_reinstall
+      changed_when: true
+      when: _fr_plan.reinstall | length > 0 and not ansible_check_mode
+
+    - name: Fapolicyd rules | each file matches its package now (rpm -V)
+      ansible.builtin.command:
+        argv: [rpm, -V, "{{ item.package }}"]
+      loop: "{{ _fr_plan.reinstall }}"
+      loop_control:
+        label: "{{ item.path }}"
+      register: _fr_rpmv
+      changed_when: false
+      failed_when: >-
+        _fr_rpmv.stdout_lines | select('search', ' ' ~ (item.path | regex_escape) ~ '$') | select('match', '^(S|..5)') | list | length > 0
+      when: _fr_plan.reinstall | length > 0 and not ansible_check_mode
+
     - name: Fapolicyd rules | trust entries (fapolicyd-cli --file add, to {{ fapolicyd_rules_own_trust }})
       ansible.builtin.command:
         argv: [fapolicyd-cli, --file, add, "{{ item }}", --trust-file, "{{ fapolicyd_rules_own_trust }}"]
@@ -85,6 +106,15 @@
       vars:
         _fr_missing: "{{ _fr_plan.trust_lines | difference((_fr_trust_now.content | b64decode).splitlines() | map('trim') | list) }}"
       when: _fr_plan.trust | length > 0 and not ansible_check_mode
+
+    - name: Fapolicyd rules | trust entries updated - the file as it is now, as approved (its size and sha256)
+      ansible.builtin.lineinfile:
+        path: "{{ item.file }}"
+        regexp: "^{{ item.path | regex_escape }} "
+        line: "{{ item.entry }}"
+      loop: "{{ _fr_plan.trust_update }}"
+      loop_control:
+        label: "{{ item.entry }}"
 
     - name: Fapolicyd rules | the allow rules approved, in {{ fapolicyd_rules_own_rules }}
       ansible.builtin.copy:

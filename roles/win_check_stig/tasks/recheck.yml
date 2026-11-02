@@ -3,7 +3,8 @@
 # server - every STIG of its asset and of its web site and database assets (check_stig_recheck) - checked again by
 # Evaluate-STIG with -SelectVuln (when it has it, else it runs in full), with the settings of the Windows STIG drift
 # report (win_check_stig_*). Nothing is kept with the drift report's scans; each checklist is kept as
-# win_check_stig_dir\recheck\<checklist>. STIG Manager is never written to. docs/STIG_DRIFT.md, "The STIG recheck".
+# win_check_stig_dir\recheck\<checklist>. STIG Manager is never written to here (workflow 37
+# writes, after an approval: playbooks/stigman_update.yml). docs/STIG_DRIFT.md, "The STIG recheck".
 - name: Windows STIG recheck | what to check again, from STIG Manager
   ansible.builtin.include_role:
     name: check_stig

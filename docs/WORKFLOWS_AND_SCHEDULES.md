@@ -56,6 +56,7 @@ Approvals**, and in the workflow job's view.
 | Certificate report / Windows certificate report | a certificate expires soon | the findings | ServiceNow tickets (**always**) |
 | POA&M status | an item is overdue / due soon | the findings | ServiceNow tickets (**always**) |
 | STIG drift report | a host drifted from its checklist, or fails a rule it passed last time | the findings | ServiceNow tickets (**always**) |
+| STIG recheck - check (`check_stig_update_workflow: true`) | reviews to write to STIG Manager (NEEDS APPROVAL) | the reviews (`stigman_update_plan`) | an approval (**on fail**), then STIG Manager - update |
 | Network performance report | loss, latency, a refused port, drops or an OCSP responder over its limits | the findings | ServiceNow tickets (**always**) |
 | Troubleshoot / Windows troubleshoot | never for findings (a look, not a verdict) | the findings | a health check, tickets if you want them |
 | Patch hosts / Windows patch | a host fails, or its services do not come back | - | a health check (**always**) |
@@ -447,6 +448,42 @@ which, and why): `permissive: 0 -> 1` on a running, enforcing host; a clean-up t
 A dry run: deny at step 2 - or a copy of the workflow whose step 3 has **Job type Check** (tick Prompt on launch for Job
 type on *fapolicyd - approved*). The audit log must still hold yesterday at 07:00 (`ls -l /var/log/audit/`); approve
 within the day: step 3 reads the same window again. docs/RUNBOOKS.md, "fapolicyd".
+
+### 37. STIG Manager updated, with an approval
+
+The STIG recheck's "update the review", written to STIG Manager after a person approves it.
+
+```workflow
+[STIG recheck - check]
+   |  Run on fail
+   v
+[Approval]
+   |  Run on success
+   v
+[STIG Manager - update]
+```
+
+| Step | Template | Link |
+|---|---|---|
+| 1 | STIG recheck - check: the *STIG recheck* playbook (`playbooks/stig_recheck.yml`) with Variables `check_stig_update_workflow: true` | (start) |
+| 2 | *Approval*: `Write the reviews the check listed to STIG Manager?`, **Timeout** 8 hours. Description: `Open the check's report: Approve writes these reviews to STIG Manager.` | **Run on fail**, from 1 |
+| 3 | STIG Manager - update (`playbooks/stigman_update.yml`, its own *STIG Manager API* credential: the client that may write reviews) | **Run on success**, from 2 |
+
+- **The check template:** a copy of *STIG recheck*, with the same inventory and credentials (the machine credential and
+  the read-only *STIG Manager API*). Tick **Prompt on launch** for **Limit**.
+- **Windows:** a second workflow of the same shape, with *Windows STIG recheck - check*
+  (`playbooks/win_stig_recheck.yml`, the same Variable). It uses the same *STIG Manager - update* template.
+- **The update template:** inventory any (it runs on the controller). Its only credential is the writing client's
+  *STIG Manager API*.
+- **What happens:** the check fails on purpose (`NEEDS APPROVAL`) when there is something to write, and hands the list
+  on. With nothing to write it stays green, and the approval never comes. Approve, and step 3 writes exactly those
+  reviews, each only if STIG Manager still has it as the check read it. Deny, and nothing is written.
+- **Schedule:** on demand after fixing hosts, or after patch night. Approve the same day, so few reviews change in
+  between.
+- **A dry run:** deny at step 2, or give a copy of the workflow a step 3 with **Job type Check** (tick **Prompt on
+  launch** for Job type on *STIG Manager - update*).
+
+Everything else, including what is written, the client and its grant: [STIG_DRIFT.md](STIG_DRIFT.md#updating-stig-manager-with-an-approval).
 
 ### 33. STIG drift (weekly)
 
@@ -908,6 +945,7 @@ as Check).
 | Certificate install | every day 07:00 | workflow 29 |
 | fapolicyd | every day 07:00 | workflow 36 |
 | STIG drift | weekly, e.g. Sunday 02:00, and after patch night | workflow 33 |
+| STIG Manager updated from the recheck | on demand, or after patch night | workflow 37 |
 | Network performance | hourly (**Concurrent jobs** off) | workflow 34 |
 | Horizon: broken desktops / reports | hourly in working hours / daily | workflows 30 and 32 |
 | VM outage watch | every 5 to 15 minutes (**Concurrent jobs** off) | workflow 28 |

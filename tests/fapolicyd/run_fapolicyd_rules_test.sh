@@ -9,7 +9,9 @@
 # rule, a rule that opens a system folder, a file that sorts after the stock deny rules); a permissive host with
 # would-be blocks (and an allow_audit allow, not a block); fapolicyd not installed; a host that cannot be reached. Read
 # only; Check; the changes made (the stricter clean-up refused while enforcing); permissive: 1 -> 0; fapolicyd failing
-# after a rules change (every file put back); a line the job never gives.
+# after a rules change (every file put back); a line the job never gives. 0.52.0: what was for a person before - an RPM
+# file that no longer matches its package (reinstall), a trusted file that changed (trust update), a file trusted but
+# not loaded (reload), a large file (its trust entry) - and fapolicyd_rules_offer: [] (for a person, as before).
 # Runs nothing for real: every tool it touches is fake.      bash tests/fapolicyd/run_fapolicyd_rules_test.sh
 # (FAPOLICYD_TEST_KEEP=1 keeps the work folder)
 set -u
@@ -29,6 +31,8 @@ mkdir -p "$work/bin" "$work/state" "$work/calls" "$work/opt/app" "$work/act"
 printf '{"summary": "### Blocked\\n1. **tool** is not trusted: add it to the trust database\\n### Risk\\n- it may then run"}' > "$work/act.json"
 printf '#!/bin/sh\necho tool\n' > "$work/opt/app/tool"; chmod 755 "$work/opt/app/tool"
 printf '#!/bin/sh\necho tool2\n' > "$work/opt/app/tool2"; chmod 755 "$work/opt/app/tool2"
+printf '#!/bin/sh\necho tool3 v2\n' > "$work/opt/app/tool3"; chmod 755 "$work/opt/app/tool3"
+printf '#!/bin/sh\necho tool4\n' > "$work/opt/app/tool4"; chmod 755 "$work/opt/app/tool4"
 for h in ra01 ra02 ra04; do
     d="$work/$h/etc"; mkdir -p "$d/rules.d" "$d/trust.d"
     printf 'permissive = %s\nuid = fapolicyd\ngid = fapolicyd\ndb_max_size = 100\n' "$([ $h = ra02 ] && echo 1 || echo 0)" > "$d/fapolicyd.conf"
@@ -50,12 +54,16 @@ allow perm=execute all : path=/usr/bin/ls
 allow perm=any all : dir=/usr/lib/
 EOR
 cp "$work/ra01/etc/rules.d/50-local.rules" "$work/ra04/etc/rules.d/50-local.rules"
+# a vendor's trust file on ra01: tool3 trusted before it changed (its old size and hash), tool4 trusted as it is
+{ printf '%s 20 %s\n' "$work/opt/app/tool3" "$(printf '%064d' 0)"
+  printf '%s %s %s\n' "$work/opt/app/tool4" "$(stat -c %s "$work/opt/app/tool4")" "$(sha256sum "$work/opt/app/tool4" | cut -d' ' -f1)"; } > "$work/ra01/etc/trust.d/vendor"
 printf 'allow_audit perm=open all : dir=/srv/audited/\n' > "$work/ra02/etc/rules.d/36-audited.rules"
 cat > "$work/hosts.json" <<EOJ
 {"ra01": {"installed": true, "active": "active",
           "events": [["/usr/bin/bash", "$work/opt/app/tool", "execve", "deny", "deny"], ["/usr/bin/bash", "$work/opt/app/tool", "execve", "deny", "deny"],
                      ["/usr/bin/crun", "/app/server", "execve", "deny", "deny"],
-                     ["/usr/bin/bash", "/home/u/bin/x", "execve", "deny", "deny"], ["/usr/bin/bash", "/usr/bin/ls", "execve", "deny", "deny"]]},
+                     ["/usr/bin/bash", "/home/u/bin/x", "execve", "deny", "deny"], ["/usr/bin/bash", "/usr/bin/ls", "execve", "deny", "deny"],
+                     ["/usr/bin/bash", "$work/opt/app/tool3", "execve", "deny", "deny"], ["/usr/bin/bash", "$work/opt/app/tool4", "execve", "deny", "deny"]]},
  "ra02": {"installed": true, "active": "active", "restarts": ["active"],
           "events": [["/usr/bin/bash", "$work/opt/app/tool2", "execve", "allow", "deny"], ["/usr/bin/cat", "/srv/audited/x", "openat", "allow", "allow_audit"]]},
  "ra04": {"installed": true, "active": "active", "restarts": ["active"], "break_on_load": true,
@@ -98,6 +106,15 @@ if tool == "rpm":
         if args[1] in ("/usr/bin/ls",):
             print("coreutils-8.32-35.el9.x86_64"); sys.exit(0)
         print("file %s is not owned by any package" % args[1]); sys.exit(1)
+    if args[:1] == ["-V"]:
+        # coreutils' ls changed since it was installed - until dnf reinstall puts it back
+        if args[1].startswith("coreutils") and not os.path.exists(os.path.join(work, "state", name + ".reinstalled")):
+            print("S.5....T.    /usr/bin/ls"); sys.exit(1)
+        sys.exit(0)
+    sys.exit(1)
+if tool == "dnf":
+    if args[:2] == ["-y", "reinstall"]:
+        open(os.path.join(work, "state", name + ".reinstalled"), "w").write(" ".join(args[2:])); sys.exit(0)
     sys.exit(1)
 if tool == "systemctl":
     unit = args[-1]
@@ -158,7 +175,7 @@ if tool == "fagenrules":
     sys.exit(0)
 sys.exit(0)
 EOP
-for t in rpm systemctl journalctl ausearch fapolicyd-cli fagenrules selinuxenabled restorecon; do
+for t in rpm dnf systemctl journalctl ausearch fapolicyd-cli fagenrules selinuxenabled restorecon; do
     printf '#!/bin/sh\nexec "%s" "%s" "$0" "$@"\n' "$py" "$work/bin/fake.py" > "$work/bin/$t"; chmod 755 "$work/bin/$t"
     if [ "$(PATH="$work/bin:$PATH" FAKE_FA_WORK="$work" "$t" --is-fake 2>&1)" != "FAKE $t" ]; then
         echo "ABORT - $t is not the fake; not running anything"; exit 1
@@ -223,11 +240,20 @@ grep -qxF "remove rule: 50-local.rules: allow perm=any all : dir=/usr/lib/" "$wo
 grep -qxF "permissive: 0 -> 1" "$work/lines.txt" && grep -qxF "permissive: 1 -> 0" "$work/lines.txt" && ok "permissive: 0 -> 1 offered (ra01 blocks while enforcing); 1 -> 0 (ra02 is permissive)" || bad "permissive lines"
 grep -q "35-site-containers.rules" "$work/lines.txt" && bad "a line for the containers job's own file" || ok "  ... nothing for the containers job's own file (its wildcard: for a person)"
 check "the report: blocked, would be blocked (permissive), permissive on 1 - critical" \
-      '[(x["label"], x["value"]) for x in r["summary"]][:2] == [("Blocked", 6), ("Would be blocked (permissive)", 1)] and "permissive on 1" in r["title"] and r["status"] == "critical"'
+      '[(x["label"], x["value"]) for x in r["summary"]][:2] == [("Blocked", 8), ("Would be blocked (permissive)", 1)] and "permissive on 1" in r["title"] and r["status"] == "critical"'
 check "ra02's would-be block gets its trust entry; its allow_audit allow is not a block" \
       'any(row[0] == "ra02.example.mil" and row[1] == "would be (permissive)" and row[3].endswith("/opt/app/tool2") for row in s["What fapolicyd blocked"]["rows"]) and not any("/srv/audited/" in row[3] for row in s["What fapolicyd blocked"]["rows"])'
-check "for a person: the file in a user folder, the RPM-owned file, the containers job's wildcard" \
-      'any("/home/u/bin/x is in a folder users can write" in x for x in s["For a person"]["lines"]) and any("/usr/bin/ls is RPM-owned" in x for x in s["For a person"]["lines"]) and any("35-site-containers.rules" in x and "the containers job" in x for x in s["For a person"]["lines"])'
+check "for a person: the file in a user folder, the containers job's wildcard" \
+      'any("/home/u/bin/x is in a folder users can write" in x for x in s["For a person"]["lines"]) and any("35-site-containers.rules" in x and "the containers job" in x for x in s["For a person"]["lines"]) and not any("/usr/bin/ls" in x or "tool3" in x or "tool4" in x for x in s["For a person"]["lines"])'
+sha3="$(sha256sum "$work/opt/app/tool3" | cut -d' ' -f1)"; size3="$(stat -c %s "$work/opt/app/tool3")"
+R="reinstall package: coreutils-8.32-35.el9.x86_64 (/usr/bin/ls does not match it)"
+U="trust update: $work/opt/app/tool3 size $size3 sha256 $sha3"
+L="reload trust database (fapolicyd-cli --update)"
+grep -qxF "$R" "$work/lines.txt" && grep -qxF "$U" "$work/lines.txt" && grep -qxF "$L" "$work/lines.txt" \
+    && ok "0.52.0: lines for what was for a person - the RPM file that changed (reinstall), the trusted file that changed (trust update), the file trusted but not loaded (reload)" \
+    || bad "new lines: $(cat "$work/lines.txt")"
+check "  ... what each does, in the report" \
+      'any(row[1].startswith("reinstall package:") and "dnf reinstall" in row[3] for row in s["Why each change"]["rows"]) and any(row[1].startswith("trust update:") and "vendor" in row[3] for row in s["Why each change"]["rows"])'
 check "what each change does: the system folder's rule blocks more" 'any(row[1].endswith("dir=/usr/lib/") and row[3].startswith("blocks more") for row in s["Why each change"]["rows"])'
 check "ra03 not installed, gone01 not read" '"ra03.example.mil" in s["fapolicyd not installed"]["lines"][0] and "gone01.example.mil" in s["Not read"]["lines"][0]'
 
@@ -283,6 +309,28 @@ f="$work/ra01/etc/rules.d/39-local.rules"
     && ok "  ... the rules loaded (fagenrules --load), compiled.rules as the files say" || bad "compiled.rules not rebuilt"
 check "  ... the report: changed, the stricter one refused - it blocks more while enforcing" \
       's["Trust and rules: what this run did"]["rows"][0][1] == "changed" and "it blocks more, and fapolicyd is enforcing" in s["Trust and rules: what this run did"]["rows"][0][5]'
+
+# ---- 0.52.0: the reinstall, the trust update and the reload, approved ---------------------------------------------
+run ra01 -e "{\"fapolicyd_approved\": [\"$R\", \"$U\", \"$L\"]}" --check
+[ "$rc" = 0 ] && ! [ -e "$work/state/ra01.reinstalled" ] && grep -q "^$work/opt/app/tool3 20 " "$work/ra01/etc/trust.d/vendor" \
+    && ok "Check with them approved: nothing reinstalled, the vendor's trust file as it was" || bad "Check new lines: rc $rc" 40
+run ra01 -e "{\"fapolicyd_approved\": [\"$R\", \"$U\", \"$L\"]}"
+[ "$rc" = 0 ] && [ "$(cat "$work/state/ra01.reinstalled" 2>/dev/null)" = "coreutils-8.32-35.el9.x86_64" ] \
+    && ok "  ... the package reinstalled, the same version (dnf -y reinstall), and rpm -V clean after" || bad "reinstall: rc $rc" 40
+grep -qxF "$work/opt/app/tool3 $size3 $sha3" "$work/ra01/etc/trust.d/vendor" && [ "$(grep -c 'tool3' "$work/ra01/etc/trust.d/vendor")" = 1 ] \
+    && grep -q "/opt/app/tool4 " "$work/ra01/etc/trust.d/vendor" \
+    && ok "  ... tool3's entry updated in the vendor's trust file (its size and sha256 now), tool4's left as it was" || bad "trust update: $(cat "$work/ra01/etc/trust.d/vendor")"
+[ "$(grep -c '^fapolicyd-cli --update' "$work/calls/ra01")" -ge 1 ] && ok "  ... the trust database reloaded (fapolicyd-cli --update)" || bad "no reload"
+run ra01
+lines_of > "$work/lines2.txt"
+grep -q '^reinstall package: \|^trust update: ' "$work/lines2.txt" && bad "offered again after it was made: $(cat "$work/lines2.txt")" || ok "  ... not offered again on the next run"
+
+# ---- 0.52.0: a large file gets its trust entry; fapolicyd_rules_offer: [] leaves all of it for a person -------------
+run ra04 -e '{"fapolicyd_rules_hash_max_mb": 0}'
+check "a file over fapolicyd_rules_hash_max_mb: hashed (up to fapolicyd_rules_large_mb), its trust entry, said to be large" \
+      'any(row[1].startswith("trust file: ") and row[1].split()[2].endswith("/opt/app/tool") and "a large file" in row[3] for row in s["Why each change"]["rows"])'
+run ra04 -e '{"fapolicyd_rules_hash_max_mb": 0, "fapolicyd_rules_offer": []}'
+check "  ... with fapolicyd_rules_offer: [] it is for a person, as before" 'any("/opt/app/tool is 0 MB: not hashed here" in x for x in s["For a person"]["lines"])'
 
 # ---- permissive: 1 -> 0, and its would-be block's trust entry ----------------------------------------------------
 T2="$(grep '^trust file: .*tool2' "$work/lines.txt")"

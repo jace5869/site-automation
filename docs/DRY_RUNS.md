@@ -40,6 +40,7 @@ line-by-line changes it would make to files, for example in STIG Manager's confi
 | Service watch - check | checks the containers and shows what it would propose. Writes no incident, does not call ACT |
 | Service watch - apply approved fix | `DRY RUN on <host>: approved, and would run: <commands>` (or `Refused on <host>: ...`, as above) |
 | STIG Manager - deploy | says which files and units would change (with Show changes: how), and verifies nothing (nothing was started). Changes nothing. *Not yet tried on a real server: try it once on the test server* |
+| STIG Manager - update | reads each review the plan names, and prints `would write - ...` (or `changed since`, `already so`). **Nothing is written to STIG Manager** |
 | VMware ask - deploy | the same: which files, units and secrets would change, nothing started or verified; STIG Manager's nginx is never changed ([VMWARE_ASK.md](VMWARE_ASK.md#3-the-job-template)) |
 | Windows health check, troubleshoot, certificate report, connection test | as usual: they only read |
 | Windows patch | asks Software Center to rescan (without starting anything) and prints `DRY RUN (Check mode): would install <updates>` |

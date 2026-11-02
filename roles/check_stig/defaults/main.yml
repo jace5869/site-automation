@@ -71,3 +71,10 @@ check_stig_list_max: 200                 # at most this many rows in the report'
 
 # ---- The STIG recheck (playbooks/stig_recheck.yml, win_stig_recheck.yml) ----------------------------------------
 check_stig_recheck: [open, not_reviewed]  # what STIG Manager has for a rule that the recheck checks again: open (a review of Open that counts), not_reviewed (no review that counts, or Not Reviewed); the rest is left to the STIG drift report
+# Workflow 37 - STIG Manager updated, with an approval (docs/STIG_DRIFT.md, "Updating STIG Manager, with an approval"):
+# the recheck's check lists the reviews to write and hands them to the approval step; playbooks/stigman_update.yml
+# writes them after it. This job itself never writes to STIG Manager.
+check_stig_update_workflow: false         # true on workflow 37's check only: the reviews to write in the report, handed on (set_stats stigman_update_plan), the job fails on purpose (NEEDS APPROVAL)
+check_stig_update: [fixed, now_na, answered]  # what is written once approved: fixed (Open, passes now: Not a Finding), now_na (Open, Not Applicable now), answered (Not Reviewed: as the scan says - a fail is Open)
+check_stig_update_status: submitted       # the reviews' status as written: saved, submitted, or accepted (the collection must allow it, and the client's grant)
+check_stig_update_detail_max: 8000        # at most this many characters of what the scan found, as each review's detail

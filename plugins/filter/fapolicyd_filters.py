@@ -408,17 +408,21 @@ RNOTE = ("Each change is to a security control: approve it through your security
          "listed in fapolicyd_approved. A host where fapolicyd was running and is not after the change - or a "
          "program no longer starts - gets every file put back.")
 RULES_FORM = (re.compile(r"^trust file: /\S+ size \d+ sha256 [0-9a-f]{64}$"),
+              re.compile(r"^trust update: /\S+ size \d+ sha256 [0-9a-f]{64}$"),
+              re.compile(r"^reload trust database \(fapolicyd-cli --update\)$"),
+              re.compile(r"^reinstall package: \S+ \(/\S+ does not match it\)$"),
               re.compile(r"^allow rule: allow\S* perm=\S+ .+ : .+$"),
               re.compile(r"^remove rule: [A-Za-z0-9._+-]+\.rules: \S.*$"),
               re.compile(r"^rename rules file: [A-Za-z0-9._+-]+\.rules -> [A-Za-z0-9._+-]+\.rules$"),
               re.compile(r"^permissive: [01] -> [01]$"))
-RULES_ORDER = {"trust": 0, "rule": 1, "remove": 2, "rename": 3, "permissive": 4}
+RULES_ORDER = {"reinstall": 0, "trust": 1, "update": 2, "reload": 3, "rule": 4, "remove": 5, "rename": 6, "permissive": 7}
 
 
 def fapolicyd_rules_job_plan(fr, approved, when_enforcing=False):
     """What to change on one host: the read module's result (_fr) and the approved lines (fapolicyd_rules_approved) ->
-    {apply, trust: [paths], add: [rules], remove: {file: [rules]}, rename: [[from, to]], permissive_to, action (restart,
-    rules, update or none), bad, refused, not_here, changed}. A line is applied only when this run proposes it again.
+    {apply, trust: [paths], trust_update: [{path, file, entry}], reinstall: [packages], add: [rules], remove: {file: [rules]},
+    rename: [[from, to]], permissive_to, action (restart, rules, update or none), bad, refused, not_here, changed}. A line
+    is applied only when this run proposes it again.
     A clean-up that blocks more (a rule that opened too much, taken out) is applied only while fapolicyd is permissive,
     unless when_enforcing - a program it would break shows up as a would-be block, not as an outage."""
     fr = fr or {}
@@ -427,8 +431,9 @@ def fapolicyd_rules_job_plan(fr, approved, when_enforcing=False):
         a = _norm(a)
         if a and a not in want:
             want.append(a)
-    bad = [{"line": a, "why": "not exactly a line this job gives (trust file, allow rule, remove rule, rename rules file, "
-                              "permissive) - copied with a host name or more after it?"}
+    bad = [{"line": a, "why": "not exactly a line this job gives (trust file, trust update, reload trust database, reinstall "
+                              "package, allow rule, remove rule, rename rules file, permissive) - copied with a host name or more "
+                              "after it?"}
            for a in want if not any(f.match(a) for f in RULES_FORM)]
     badl = set(b["line"] for b in bad)
     permissive = bool(fr.get("permissive"))
@@ -457,12 +462,15 @@ def fapolicyd_rules_job_plan(fr, approved, when_enforcing=False):
         action = "restart"
     elif kinds & set(["rule", "remove", "rename"]):
         action = "rules"
-    elif "trust" in kinds:
+    elif kinds & set(["trust", "update", "reload", "reinstall"]):
         action = "update"
     else:
         action = "none"
     return {"apply": apply, "trust": [c["path"] for c in apply if c["kind"] == "trust"],
             "trust_lines": ["%s %s %s" % (c["path"], c["size"], c["sha256"]) for c in apply if c["kind"] == "trust"],
+            "trust_update": [{"path": c["path"], "file": c["file"], "entry": "%s %s %s" % (c["path"], c["size"], c["sha256"])}
+                       for c in apply if c["kind"] == "update"],
+            "reinstall": [{"package": c["package"], "path": c["path"]} for c in apply if c["kind"] == "reinstall"],
             "add": [c["rule"] for c in apply if c["kind"] == "rule"], "remove": remove,
             "rename": [[c["file"], c["to"]] for c in apply if c["kind"] == "rename"],
             "permissive_to": ([c["to"] for c in apply if c["kind"] == "permissive"] + [""])[0], "action": action,
@@ -500,6 +508,8 @@ def fapolicyd_rules_job_backups(plan, fr):
         out.append([fr["own_rules"], "own.rules"])
     if plan.get("trust") and fr.get("own_trust_exists"):
         out.append([fr["own_trust"], "own.trust"])
+    for f in _update_files(plan, fr):
+        out.append([f, "upd." + f.replace("/", "_")])
     out += [[rules_d + "/" + f, "rules." + f] for f in sorted((plan.get("remove") or {}).keys())]
     if plan.get("permissive_to"):
         out.append([rules_d.rsplit("/", 1)[0] + "/fapolicyd.conf", "fapolicyd.conf"])
@@ -527,9 +537,18 @@ def fapolicyd_rules_job_rollback(plan, fr, backup):
         put(fr.get("own_rules"), fr.get("own_rules_exists"), "own.rules")
     if plan.get("trust"):
         put(fr.get("own_trust"), fr.get("own_trust_exists"), "own.trust")
+    for f in _update_files(plan, fr):
+        put(f, True, "upd." + f.replace("/", "_"))
     if plan.get("permissive_to"):
         put(conf, True, "fapolicyd.conf")
+    # a package reinstalled stays: it is the package's own file back, not a change of fapolicyd's
     return "\n".join(out + ["    return $rc", "}"]) + "\n"
+
+
+def _update_files(plan, fr):
+    """The trust files a trust update edits - the job's own trust file not twice (its copy is own.trust)."""
+    own = (fr or {}).get("own_trust") if plan.get("trust") else None
+    return sorted(set(u["file"] for u in plan.get("trust_update") or [] if u.get("file") and u["file"] != own))
 
 
 def _rules_host(name, hv):

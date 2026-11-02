@@ -57,6 +57,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | [servicenow_tickets.yml](servicenow_tickets.yml) |
 | STIG drift report | `playbooks/stig_drift_report.yml` | [stig_drift_report.yml](stig_drift_report.yml) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | [stigman_deploy.yml](stigman_deploy.yml) |
+| STIG Manager - update | `playbooks/stigman_update.yml` | [stigman_update.yml](stigman_update.yml) |
 | STIG recheck | `playbooks/stig_recheck.yml` | [stig_recheck.yml](stig_recheck.yml) |
 | Tenable.sc - scan | `playbooks/tenable_scan.yml` | [tenable_scan.yml](tenable_scan.yml) |
 | Troubleshoot | `playbooks/troubleshoot.yml` | [troubleshoot.yml](troubleshoot.yml) |

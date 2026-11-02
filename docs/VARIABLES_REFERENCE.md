@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [log_analysis](#log_analysis), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -485,6 +485,10 @@ File: `roles/check_stig/defaults/main.yml`
 | `check_stig_ignore_rules` | `[]` | rules OpenSCAP is known to get wrong at your site: never a finding, listed in the report as left out. SV-257985, V-257985, RHEL-09-255045 or the SCAP rule's name (sshd_disable_root_login); per group or host too |
 | `check_stig_list_max` | `200` | at most this many rows in the report's tables of rules left out and of fails STIG Manager has no review for |
 | `check_stig_recheck` | `[open, not_reviewed]` | ---- The STIG recheck (playbooks/stig_recheck.yml, win_stig_recheck.yml) ---------------------------------------- what STIG Manager has for a rule that the recheck checks again: open (a review of Open that counts), not_reviewed (no review that counts, or Not Reviewed); the rest is left to the STIG drift report |
+| `check_stig_update_workflow` | `false` | Workflow 37 - STIG Manager updated, with an approval (docs/STIG_DRIFT.md, "Updating STIG Manager, with an approval"): the recheck's check lists the reviews to write and hands them to the approval step; playbooks/stigman_update.yml writes them after it. This job itself never writes to STIG Manager. true on workflow 37'… (all of it: the role file) |
+| `check_stig_update` | `[fixed, now_na, answered]` | what is written once approved: fixed (Open, passes now: Not a Finding), now_na (Open, Not Applicable now), answered (Not Reviewed: as the scan says - a fail is Open) |
+| `check_stig_update_status` | `submitted` | the reviews' status as written: saved, submitted, or accepted (the collection must allow it, and the client's grant) |
+| `check_stig_update_detail_max` | `8000` | at most this many characters of what the scan found, as each review's detail |
 
 ## check_time
 
@@ -591,7 +595,9 @@ File: `roles/fapolicyd_rules/defaults/main.yml`
 | `fapolicyd_rules_container_programs` | `[podman, crun, runc, conmon, buildah, skopeo, catatonit, containerd, containerd-shim-runc…` | container programs |
 | `fapolicyd_rules_container_paths` | `['^/var/lib/containers/', '/\.local/share/containers/', '^/run/containers/', '^/run/user/…` | container storage |
 | `fapolicyd_rules_user_dirs` | `[/home/, /run/user/, /tmp/, /var/tmp/, /dev/shm/]` | folders users can write: a file blocked there gets no trust entry (a person decides) |
-| `fapolicyd_rules_hash_max_mb` | `512` | a file larger than this is not hashed: a person adds it |
+| `fapolicyd_rules_hash_max_mb` | `512` | a file larger than this is not hashed: a person adds it (or large, below) |
+| `fapolicyd_rules_offer` | `[update, reload, reinstall, large]` | Lines for what only a person could do before - each still a line to approve: update a trusted file that changed since: its trust entry updated (its size and sha256 now) reload a file trusted as it is (or an RPM file that matches its package) that fapolicyd has not loaded: the trust database reloaded (fapolicyd-cli --u… (all of it: the role file) |
+| `fapolicyd_rules_large_mb` | `4096` | with large: a file up to this many MB is hashed and gets its trust entry |
 | `fapolicyd_rules_max` | `200` | at most this many block groups per host in the report |
 | `fapolicyd_rules_wait` | `30` | roles/fapolicyd sets it from fapolicyd_wait |
 | `fapolicyd_rules_timeout` | `120` | seconds for each command the job reads with |
@@ -1140,6 +1146,21 @@ File: `roles/stigman_stack/defaults/main.yml`
 | `stigman_tls_key_src` | `"{{ lookup('ansible.builtin.env', 'TLS_KEY_FILE') }}"` | its private key file, from the credential (TLS_KEY_FILE) |
 | `stigman_tls_ca_src` | `"{{ lookup('ansible.builtin.env', 'TLS_CA_FILE') }}"` | the CA bundle file, from the credential (TLS_CA_FILE) |
 | `stigman_replace_secrets` | `false` | A deploy refuses to change a database password secret already deployed: in MySQL the password stays the old one, and STIG Manager would lose its database. true = replace the secrets anyway - ONE launch only, when the database is being created again (Prompt on launch, Variables); never save it in the template. |
+
+## stigman_update
+
+File: `roles/stigman_update/defaults/main.yml`
+
+| Setting | Default | What it does |
+|---|---|---|
+| `stigman_update_api` | `"{{ check_stig_stigman_api \| default('') }}"` | STIG MANAGER - UPDATE (playbooks/stigman_update.yml): workflow 37's step after the approval. It writes the reviews the STIG recheck's check listed (stigman_update_plan, handed on by the workflow) - each only if STIG Manager still has it as the check read it - and nothing else. Its own "STIG Manager API" credential: a… (all of it: the role file) |
+| `stigman_update_token_url` | `"{{ check_stig_stigman_token_url \| default('') }}"` | empty = the credential's |
+| `stigman_update_client_id` | `"{{ check_stig_stigman_client_id \| default('') }}"` | empty = the credential's |
+| `stigman_update_client_secret` | `"{{ check_stig_stigman_client_secret \| default('') }}"` | empty = the credential's (vault it) |
+| `stigman_update_scope` | (empty) | scopes to ask for, e.g. "stig-manager:collection"; empty = the client's default scopes |
+| `stigman_update_validate_certs` | `"{{ check_stig_stigman_validate_certs \| default(true) }}"` | check the HTTPS certificates |
+| `stigman_update_ca_path` | `"{{ check_stig_stigman_ca_path \| default('') }}"` | a CA bundle on the AAP side to check them with |
+| `stigman_update_timeout` | `"{{ check_stig_stigman_timeout \| default(60) }}"` | seconds per request |
 
 ## tenable_scan
 

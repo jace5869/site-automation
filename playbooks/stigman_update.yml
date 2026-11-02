@@ -1,0 +1,22 @@
+---
+# STIG MANAGER - UPDATE: workflow 37's step after the approval. The STIG recheck's check (check_stig_update_workflow:
+# true) lists the reviews to write - Open in STIG Manager and the host passes now (Not a Finding), Not Applicable now,
+# Not Reviewed and the scan answered it - and hands them on (stigman_update_plan); the approval allows them; this job
+# writes them to STIG Manager:
+#   - only the reviews of the plan: GET and POST /collections/{c}/reviews/{asset}[/{rule}] - no collection, asset,
+#     user, STIG or grant is changed;
+#   - each read again first, written only if it is still as the check read it (one changed since is left, and said);
+#   - each read back after; the report says what became of each, and the job fails for one not written.
+# Check (Job type): reads, writes nothing, and says what it would write. Its own "STIG Manager API" credential: a client
+# with the scope stig-manager:collection and a grant that lets it write reviews. docs/STIG_DRIFT.md, "Updating STIG
+# Manager, with an approval"; docs/WORKFLOWS_AND_SCHEDULES.md, 37.
+- name: STIG Manager - update
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Write the approved reviews
+      ansible.builtin.include_role:
+        name: stigman_update

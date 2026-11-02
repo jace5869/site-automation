@@ -120,6 +120,9 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 #   - "permissive: 0 -> 1"
 #   - "restart fapolicyd (it is inactive)"
 #   - "trust file: /opt/app/tool size 51320 sha256 6f0c...e1"
+#   - "trust update: /opt/vendor/agent size 90112 sha256 1d4e...07"
+#   - "reload trust database (fapolicyd-cli --update)"
+#   - "reinstall package: coreutils-8.32-35.el9.x86_64 (/usr/bin/ls does not match it)"
 #   - "remove rule: 99-local.rules: allow perm=any all : dir=/usr/lib/"
 #   - "permissive: 1 -> 0"
 """),
@@ -204,6 +207,15 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # check_stig_stigman_collection: RHEL Servers
 ## Only what STIG Manager has Open (default: Open and Not Reviewed)
 # check_stig_recheck: [open]
+## Workflow 37's check ("STIG recheck - check") only: what to write to STIG Manager in the report, handed to the
+## approval and "STIG Manager - update", the job fails on purpose (NEEDS APPROVAL). This job itself never writes.
+# check_stig_update_workflow: true
+"""),
+    "stigman_update.yml": ("STIG Manager - update", "STIG Manager API (the client that may write reviews)", "", """\
+## Workflow 37's step after the approval: it writes the reviews the STIG recheck's check listed (stigman_update_plan,
+## handed on by the workflow) and nothing else. STIG Manager's address: check_stig_stigman_api, as for the reports
+## (usually in all.yml)
+# check_stig_stigman_api: https://STIGMAN-SERVER/api
 """),
     "stigman_deploy.yml": ("STIG Manager - deploy", "Machine, STIG Manager database, TLS certificate", "", ""),
     "vmware_ask_deploy.yml": ("VMware ask - deploy", "Machine, VMware vCenter, ACT model key", "", """\
@@ -338,6 +350,9 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # win_check_stig_evaluate: 'C:\\Evaluate-STIG'
 ## Only what STIG Manager has Open (default: Open and Not Reviewed)
 # check_stig_recheck: [open]
+## Workflow 37's check ("Windows STIG recheck - check") only: what to write to STIG Manager in the report, handed to
+## the approval and "STIG Manager - update", the job fails on purpose (NEEDS APPROVAL). This job itself never writes.
+# check_stig_update_workflow: true
 """),
     "win_trust_report.yml": ("Windows - trust store report", "Machine (Windows)", "win_check_trust", """\
 ## The trust check's list (roles/check_trust/vars/main.yml ships the October 2026 eMudhra set); add your own in

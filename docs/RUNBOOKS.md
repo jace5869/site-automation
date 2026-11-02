@@ -567,8 +567,20 @@ made. It reads (a Check run too), proposes one line per change, and makes only t
      - that program and that file for a file bind-mounted from the host, container storage's folder (`allow perm=any all :
      dir=/var/lib/containers/storage/overlay/`) for a file inside an image, whose path in the audit log names nothing on
      the host. That rule lets anything in container storage run: prefer rootful containers (quadlet units) on a STIG host.
-   - For a person: a file in a folder users can write, an RPM-owned file (the trust database is out of date, or `rpm -V`
-     says it changed), a file already trusted that changed since.
+   - What a person had to do by hand before 0.52.0 is now a line to approve too:
+     - **`trust update: <file> size <n> sha256 <hash>`**: a trusted file that changed since. Its entry in the trust
+       file that holds it (the vendor's too) gets the file's size and hash as they are now.
+     - **`reload trust database (fapolicyd-cli --update)`**: a file trusted as it is (or an RPM file that still matches
+       its package) that fapolicyd has not loaded.
+     - **`reinstall package: <name-version> (<file> does not match it)`**: an RPM file `rpm -V` says changed. The package
+       is reinstalled at the same version (`dnf reinstall`), checked with `rpm -V` after. A reinstall is not put back
+       if fapolicyd fails later: it only restores the package's own files.
+     - A file over `fapolicyd_rules_hash_max_mb` (512 MB), up to `fapolicyd_rules_large_mb` (4096): a `trust file:`
+       line like any other, marked *a large file* in the report.
+     - `fapolicyd_rules_offer` turns each of these off (`[]`: all for a person, as before).
+   - Still for a person: a file in a folder users can write (move it to a system folder first, and the next run offers
+     its trust entry), a file too large even so, one whose path a trust line cannot hold, rules in fapolicyd's own
+     files.
 3. **The rules files' clean-up** - `remove rule: <file>: <rule>` (commented out, marked, never deleted) and
    `rename rules file: <a> -> <b>`:
    - no change in what runs: a repeated rule, a wildcard (`dir=/home/*/bin/` - fapolicyd has none, it matches nothing),

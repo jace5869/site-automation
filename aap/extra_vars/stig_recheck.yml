@@ -21,6 +21,9 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # check_stig_stigman_collection: RHEL Servers
 ## Only what STIG Manager has Open (default: Open and Not Reviewed)
 # check_stig_recheck: [open]
+## Workflow 37's check ("STIG recheck - check") only: what to write to STIG Manager in the report, handed to the
+## approval and "STIG Manager - update", the job fails on purpose (NEEDS APPROVAL). This job itself never writes.
+# check_stig_update_workflow: true
 
 # ---- check_stig ----------------------------------------------------------------------------------
 ## ---- The scan, on the host
@@ -172,6 +175,17 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## at most this many rows in the report's tables of rules left out and of fails STIG Manager has no
 ## review for
 # check_stig_list_max: 200
+
+## what is written once approved: fixed (Open, passes now: Not a Finding), now_na (Open, Not
+## Applicable now), answered (Not Reviewed: as the scan says - a fail is Open)
+# check_stig_update: [fixed, now_na, answered]
+
+## the reviews' status as written: saved, submitted, or accepted (the collection must allow it, and
+## the client's grant)
+# check_stig_update_status: submitted
+
+## at most this many characters of what the scan found, as each review's detail
+# check_stig_update_detail_max: 8000
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no

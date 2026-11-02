@@ -15,7 +15,8 @@ its reviews in STIG Manager (site_stigman_read) and with the host's earlier scan
   ignored      a rule in check_stig_ignore_rules (the scanner is known to get it wrong at this site) that fails: listed,
                never a finding
   by_hand      the rules STIG Manager has a review of that the scan gives no result for (DISA's manual checks)
-STIG Manager is never written to."""
+STIG Manager is never written to here: stig_update_plan only lists what workflow 37 writes after an approval
+(playbooks/stigman_update.yml)."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -620,6 +621,9 @@ def _recheck_result(host, smc, sm, scan, asked, ign, sev_map, label):
            "how": _recheck_how(scan or {}), "evaluate_note": evaluate_note(scan or {}), "saved": (scan or {}).get("saved") or {},
            "stigman": {"status": sm.get("status", ""), "why": sm.get("why", ""), "collection": sm.get("collection", ""),
                        "asset": smc.get("asset", "") or sm.get("asset", ""), "revision": smc.get("revision", "")},
+           # what a write needs (playbooks/stigman_update.yml): the collection's and the asset's ids, when the scan answered
+           "collectionId": str(sm.get("collectionId") or ""), "assetId": str(smc.get("assetId") or sm.get("assetId") or ""),
+           "scan_time": (scan or {}).get("checklist_time") or (scan or {}).get("time") or "",
            "asked_open": len([1 for w, _ in asked.values() if w == "open"]),
            "asked_not_reviewed": len([1 for w, _ in asked.values() if w == "not_reviewed"]),
            "fixed": [], "now_na": [], "still_open": [], "answered": [], "by_hand": [], "ignored": [], "findings": []}
@@ -633,6 +637,9 @@ def _recheck_result(host, smc, sm, scan, asked, ign, sev_map, label):
         rec = {"key": k, "v": info.get("v") or it.get("v") or ("V-" + k[3:]), "stigid": info.get("version") or (r or {}).get("version") or it.get("stigid", ""),
                "severity": sev, "title": info.get("title") or (r or {}).get("title") or it.get("title") or k, "asked": what,
                "sm": (r or {}).get("result", ""), "sm_status": (r or {}).get("status", ""), "sm_ts": (r or {}).get("ts", ""),
+               "sm_comment": bool((r or {}).get("comment")),
+               # the review's own rule (it may be of an earlier revision: STIG Manager keeps one review for both), else the asset's
+               "rule_id": (r or {}).get("rule") or info.get("rule") or "",
                "now": now or "", "details": it.get("details", ""), "scap": it.get("scap") or [], "level": sev_map.get(sev, "warning")}
         if _ignored(rec, ign):
             out["ignored"].append(rec)
@@ -877,8 +884,116 @@ def stig_recheck_lines(c):
     return out
 
 
+# ---- the STIG recheck, with an approval: what to write to STIG Manager (playbooks/stigman_update.yml) ------------------
+UPDATE_KINDS = ("fixed", "now_na", "answered")
+UPDATE_STATUS = ("saved", "submitted", "accepted")
+ENGINE = {"Evaluate-STIG": "script", "OpenSCAP": "scap"}
+
+
+def stig_update_plan(results, kinds=None, status="submitted", detail_max=8000, day=""):
+    """Every host's stig_recheck results -> the reviews to write to STIG Manager once approved, one per rule: [{host, label,
+    collection, collectionId, asset, assetId, benchmark, ruleId, v, title, severity, kind, was: {result, status, ts}, result,
+    status, detail, comment (None: the review's own kept), engine, line}]. Only what the recheck found and was asked for
+    (kinds: fixed -> Not a Finding, now_na -> Not Applicable, answered -> what the scan said); still open, by hand and left
+    out are never written. A rule without the ids a write needs is left out (none such from site_stigman_read)."""
+    kinds = list(kinds) if kinds is not None else list(UPDATE_KINDS)
+    out = []
+    for c in results or []:
+        if not c or not c.get("scanned") or not c.get("collectionId") or not c.get("assetId"):
+            continue
+        sm = c.get("stigman") or {}
+        scanner = c.get("scanner") or "the scan"
+        for kind in UPDATE_KINDS:
+            if kind not in kinds:
+                continue
+            for r in c.get(kind) or []:
+                to = "pass" if kind == "fixed" else "notapplicable" if kind == "now_na" else r.get("now")
+                if to not in CHECKED or not r.get("rule_id"):
+                    continue
+                word = SM_WORD.get(to, to)
+                detail = (r.get("details") or "").strip() or "%s on %s%s: %s" % (
+                    scanner, c.get("host", ""), (" (" + ", ".join(r.get("scap") or []) + ")") if r.get("scap") else "", SCAN_WORD.get(to, to))
+                if len(detail) > detail_max:
+                    detail = detail[:detail_max - 40].rstrip() + "\n[... cut at %d characters]" % detail_max
+                note = "Set by the STIG recheck (site-automation), approved in AAP: %s checked it again on %s%s - %s." % (
+                    scanner, c.get("host", ""), (" on " + day) if day else "", word)
+                # a finding needs its comment (the collection may require one); a review that has one keeps it otherwise
+                comment = None if (r.get("sm_comment") and to != "fail") else note
+                engine = {"type": ENGINE.get(c.get("scanner"), "other"), "product": c.get("scanner") or "site-automation"}
+                if c.get("scan_time"):
+                    engine["time"] = c["scan_time"]
+                was = {"result": r.get("sm") or "", "status": r.get("sm_status") or "", "ts": r.get("sm_ts") or ""}
+                asset = sm.get("asset") or c.get("host", "")
+                out.append({"host": c.get("host", ""), "label": _who(c), "collection": sm.get("collection", ""), "collectionId": c["collectionId"],
+                            "asset": asset, "assetId": c["assetId"], "benchmark": c.get("benchmark", ""), "ruleId": r["rule_id"],
+                            "v": r.get("v", ""), "title": r.get("title", ""), "severity": r.get("severity", ""), "kind": kind,
+                            "was": was, "result": to, "status": status, "detail": detail, "comment": comment, "engine": engine,
+                            "line": "%s %s %s: %s -> %s (%s)" % (asset, c.get("benchmark", ""), r.get("v", ""),
+                                                                  SM_WORD.get(was["result"], "no review") if was["result"] else "no review", word, status)})
+    return out
+
+
+def stig_update_sections(plan, list_max=200):
+    """The check's section in workflow 37: what Approve writes to STIG Manager, review by review."""
+    plan = plan or []
+    if not plan:
+        return [{"title": "Nothing to write to STIG Manager", "status": "ok", "top": True,
+                 "lines": ["No review to change: the approval step is not asked for."]}]
+    rows = [[p["label"], "%s / %s" % (p["collection"], p["asset"]), p["benchmark"], p["v"], CAT.get(p["severity"], p["severity"]),
+             p["title"], ("%s (%s)" % (SM_WORD.get(p["was"]["result"], "Not Reviewed"), p["was"]["status"] or "-")) if p["was"]["result"] else "no review",
+             SM_WORD.get(p["result"], p["result"]), p["status"], "kept" if p["comment"] is None else "set"] for p in plan]
+    return [{"title": "Approve writes these reviews to STIG Manager", "status": "warning", "top": True,
+             "columns": ["Host", "Collection / asset", "STIG", "Rule", "CAT", "Title", "STIG Manager now", "Written as", "Status", "Comment"],
+             "rows": rows[:list_max], "row_status": ["info"] * len(rows[:list_max]),
+             "text": "The approval step's next job writes exactly these reviews - nothing else: no collection, asset, user or other "
+                     "review is changed. Each is written only if it is still as it was read here (STIG Manager now); one changed since "
+                     "is left, and said. The detail is what the scan found; a review that has a comment keeps it (a finding gets one)."
+                     + (" The first %d of %d (check_stig_list_max)." % (list_max, len(rows)) if len(rows) > list_max else "")}]
+
+
+UPDATE_BAD = ("rejected", "error", "bad", "not as written")
+
+
+def stig_update_report(items, check=False, error="", planned=0):
+    """playbooks/stigman_update.yml's report: each review of the plan, what became of it in STIG Manager."""
+    items = items or []
+    n = dict((k, len([i for i in items if i.get("state") == k])) for k in (
+        "written", "would write", "already so", "changed since", "rejected", "error", "bad", "not as written"))
+    bad = sum(n[k] for k in UPDATE_BAD)
+    status = "critical" if (error or bad) else "warning" if n["changed since"] else "ok"
+    chip = {"written": "ok", "would write": "info", "already so": "ok", "changed since": "warning"}
+    word = lambda h: ("%s (%s)" % (SM_WORD.get(h.get("result"), h.get("result")), h.get("status") or "-")) if (h or {}).get("result") else "no review"
+    rows = [[i.get("host", ""), i.get("asset", ""), i.get("v", "") or i.get("ruleId", ""), word(i.get("was") or {}),
+             word(i.get("before") or {}) if "before" in i else "-", "%s (%s)" % (SM_WORD.get(i.get("result"), i.get("result")), i.get("status")),
+             i.get("state", ""), i.get("why", "")] for i in items]
+    title = ("STIG Manager update (Check): %d review(s) would be written" % n["would write"]) if check else (
+        "STIG Manager update: %d review(s) written" % n["written"])
+    if bad:
+        title += ", %d not" % bad
+    sections = []
+    if error:
+        sections.append({"title": "Nothing written", "status": "critical", "lines": [error]})
+    if rows:
+        sections.append({"title": "Each review of the plan", "status": status,
+                         "columns": ["Host", "Asset", "Rule", "Read by the check", "STIG Manager before", "Written as", "Result", "Why"],
+                         "rows": rows, "row_status": ["critical" if i.get("state") in UPDATE_BAD else chip.get(i.get("state"), "") for i in items],
+                         "text": "Only the reviews the approval allowed (the check's plan). Each was read again first: one changed in STIG "
+                                 "Manager since the check is left as it is. A written review was read back. STIG Manager keeps each "
+                                 "review's history: what it was is there too. No collection, asset, user or other review was changed."})
+    elif not error:
+        sections.append({"title": "Nothing to write", "status": "ok", "lines": ["The check's plan has no review (%d)." % planned]})
+    return {"title": title, "status": status, "subtitle": "The reviews approved in workflow 37 (the STIG recheck)",
+            "summary": [{"label": "Written" if not check else "Would write", "value": n["would write"] if check else n["written"], "status": "ok"},
+                        {"label": "Already so", "value": n["already so"]},
+                        {"label": "Changed since the check", "value": n["changed since"], "status": "warning" if n["changed since"] else "ok"},
+                        {"label": "Not written", "value": bad, "status": "critical" if bad else "ok"}],
+            "sections": sections,
+            "footer": "STIG Manager: GET and POST of these reviews only (playbooks/stigman_update.yml)."}
+
 class FilterModule(object):
     def filters(self):
         return {"stig_compare": stig_compare, "stig_report_sections": stig_report_sections, "stig_lines": stig_lines,
                 "stig_findings": stig_findings, "stig_recheck_vulns": stig_recheck_vulns, "stig_recheck": stig_recheck,
-                "stig_recheck_sections": stig_recheck_sections, "stig_recheck_lines": stig_recheck_lines}
+                "stig_recheck_sections": stig_recheck_sections, "stig_recheck_lines": stig_recheck_lines,
+                "stig_update_plan": stig_update_plan, "stig_update_sections": stig_update_sections,
+                "stig_update_report": stig_update_report}

@@ -36,6 +36,7 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | Windows STIG drift report | `playbooks/win_stig_drift_report.yml` | Report | [STIG_DRIFT.md](STIG_DRIFT.md#windows-servers) |
 | STIG recheck | `playbooks/stig_recheck.yml` | Report | [STIG_DRIFT.md](STIG_DRIFT.md#the-stig-recheck) |
 | Windows STIG recheck | `playbooks/win_stig_recheck.yml` | Report | [STIG_DRIFT.md](STIG_DRIFT.md#the-stig-recheck) |
+| STIG Manager - update | `playbooks/stigman_update.yml` | Change (STIG Manager's reviews), only as workflow 37's step after the approval | [STIG_DRIFT.md](STIG_DRIFT.md#updating-stig-manager-with-an-approval) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | Setup or test | workflow 10: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#10-stig-manager-deploy-with-checks) |
 | Network performance report | `playbooks/net_perf_report.yml` | Report | [NETWORK_PERF.md](NETWORK_PERF.md#set-it-up), workflow 34: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#34-network-performance-hourly) |
 | Log analysis | `playbooks/log_analysis.yml` | On demand | [LOG_ANALYSIS.md](LOG_ANALYSIS.md#set-it-up-in-aap) |

@@ -9,6 +9,7 @@ report sections (plugins/filter/stig_filters.py).
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -825,6 +826,101 @@ class Recheck(unittest.TestCase):
         self.assertIn("with -SelectVuln it wrote no checklist (exit 1: ERROR: --SelectVuln needs --SelectSTIG), so it ran in full", r["select_note"])
         self.assertEqual([(i["v"], i["result"]) for i in r["items"]], [("V-257883", "fail")])
         self.assertEqual(sf._recheck_how(r), "in full - " + r["select_note"])
+
+
+sys.path.insert(0, os.path.join(ROOT, "roles", "stigman_update", "library"))
+import site_stigman_update as smu  # noqa: E402
+
+
+class Update(unittest.TestCase):
+    """Workflow 37: the recheck's plan (stig_update_plan) and the write after the approval (site_stigman_update)."""
+
+    def plan(self, **kw):
+        c = sm_list(SV_1=("fail", "accepted"), SV_2=("fail", "saved"), SV_3=("fail", "accepted"), SV_4=("pass", "rejected"))
+        c["reviews"]["SV-1"].update(comment=True, rule="SV-1r0_rule")      # its review on an earlier revision, with a comment
+        c.update(collectionId="7", assetId="42")
+        out = sf.stig_recheck(c, [dict(recheck_scan(SV_1="pass", SV_2="fail", SV_3="notapplicable", SV_4="fail", SV_5="notchecked"),
+                                       time="2026-11-02T08:00:00Z")], "web01")
+        return sf.stig_update_plan(out, day="2026-11-02", **kw)
+
+    def test_plan(self):
+        p = self.plan()
+        self.assertEqual([(x["v"], x["kind"], x["result"]) for x in p], [("V-1", "fixed", "pass"), ("V-3", "now_na", "notapplicable"), ("V-4", "answered", "fail")])
+        one = p[0]
+        self.assertEqual((one["collectionId"], one["assetId"], one["ruleId"], one["status"]), ("7", "42", "SV-1r0_rule", "submitted"))
+        self.assertEqual(one["was"], {"result": "fail", "status": "accepted", "ts": "2026-09-01T00:00:00Z"})
+        self.assertIsNone(one["comment"], "a review with a comment keeps it")
+        self.assertTrue(p[2]["comment"].startswith("Set by the STIG recheck (site-automation), approved in AAP: Evaluate-STIG checked it again on web01 on 2026-11-02"))
+        self.assertEqual(p[2]["detail"], "Found: it is not set.")
+        self.assertEqual(p[0]["engine"], {"type": "script", "product": "Evaluate-STIG", "time": "2026-11-02T08:00:00Z"})
+        self.assertEqual(p[0]["line"], "web01 RHEL_9_STIG V-1: Open -> Not a Finding (submitted)")
+        self.assertEqual([x["v"] for x in self.plan(kinds=["fixed"], status="saved")], ["V-1"])
+        self.assertEqual(self.plan(kinds=["fixed"], status="saved")[0]["status"], "saved")
+        self.assertTrue(all(len(x["detail"]) <= 60 for x in self.plan(detail_max=60)))
+        self.assertEqual(sf.stig_update_plan([{"scanned": True, "fixed": [{"rule_id": "SV-1r1_rule"}]}]), [], "no ids: nothing written")
+        sec = sf.stig_update_sections(p)[0]
+        self.assertEqual((sec["title"], len(sec["rows"]), sec["rows"][0][9]), ("Approve writes these reviews to STIG Manager", 3, "kept"))
+        self.assertEqual(sf.stig_update_sections([])[0]["title"], "Nothing to write to STIG Manager")
+
+    def test_plan_windows_each_checklist_its_asset(self):
+        site = sm_list(bench="IIS_10-0_Site_STIG", SV_1=("fail", "accepted"))
+        site.update(asset="win01-Default Web Site-NA", assetId="9", site="Default Web Site", instance="")
+        server = sm_list(bench="MS_Windows_Server_2022_STIG", SV_2=("fail", "accepted"))
+        server.update(asset="win01", assetId="8")
+        smh = {"status": "found", "collection": "Windows Servers", "collectionId": "3", "asset": "win01", "checklists": [server, site]}
+        scans = [dict(recheck_scan(SV_2="pass"), platform="windows", benchmark="MS_Windows_Server_2022_STIG", label="Windows Server 2022"),
+                 dict(recheck_scan(SV_1="pass"), platform="windows", benchmark="IIS_10-0_Site_STIG", site="Default Web Site", instance="",
+                      label="IIS 10.0 Site - Default Web Site")]
+        p = sf.stig_update_plan(sf.stig_recheck(smh, scans, "win01"))
+        self.assertEqual(sorted((x["collectionId"], x["assetId"], x["benchmark"], x["v"]) for x in p),
+                         [("3", "8", "MS_Windows_Server_2022_STIG", "V-2"), ("3", "9", "IIS_10-0_Site_STIG", "V-1")])
+
+    def test_write(self):
+        p = self.plan()
+        p.append(dict(p[0], ruleId="SV-9/../users", line="bad"))
+
+        class C(object):
+            def __init__(self):
+                self.db = {"SV-1r0_rule": {"result": "fail", "status": {"label": "accepted"}, "ts": "2026-09-01T00:00:00Z"},
+                           "SV-3r1_rule": {"result": "notapplicable", "status": {"label": "submitted"}, "ts": "2026-10-01T00:00:00Z"},
+                           "SV-4r1_rule": {"result": "pass", "status": {"label": "rejected"}, "ts": "2026-09-01T00:00:00Z"}}
+                self.posts = []
+
+            def review(self, c, a, rule):
+                return self.db.get(rule)
+
+            def write(self, c, a, reviews):
+                self.posts.append((c, a, reviews))
+                for r in reviews:
+                    if r["ruleId"] == "SV-4r1_rule":
+                        continue
+                    self.db[r["ruleId"]] = {"result": r["result"], "status": {"label": r["status"]}, "ts": "now"}
+                return {"affected": {"updated": 1, "inserted": 0}, "rejected": [{"ruleId": "SV-4r1_rule", "reason": "comment is required"}]}
+        c = C()
+        items = smu.update({"plan": p}, c, False)
+        self.assertEqual([i["state"] for i in items], ["written", "already so", "rejected", "bad"])
+        self.assertEqual([r["ruleId"] for r in c.posts[0][2]], ["SV-1r0_rule", "SV-4r1_rule"])
+        self.assertEqual((c.posts[0][0], c.posts[0][1]), ("7", "42"))
+        self.assertIsNone(c.posts[0][2][0]["comment"])
+        self.assertEqual(sorted(c.posts[0][2][0]), ["comment", "detail", "result", "resultEngine", "ruleId", "status"])
+        c = C()
+        c.db["SV-1r0_rule"]["ts"] = "2026-10-30T00:00:00Z"                  # a person changed it since the check
+        items = smu.update({"plan": p[:1]}, c, False)
+        self.assertEqual((items[0]["state"], c.posts), ("changed since", []))
+        c = C()
+        self.assertEqual([i["state"] for i in smu.update({"plan": p[:3]}, c, True)], ["would write", "already so", "would write"])
+        self.assertEqual(c.posts, [], "check mode writes nothing")
+        r = sf.stig_update_report(items, False, "", 1)
+        self.assertEqual((r["status"], r["sections"][0]["rows"][0][6]), ("warning", "changed since"))
+
+    def test_writes_only_reviews(self):
+        """The module's only requests: the token, GET of one review, POST of an asset's reviews."""
+        with open(os.path.join(ROOT, "roles", "stigman_update", "library", "site_stigman_update.py")) as f:
+            src = f.read()
+        self.assertEqual(sorted(set(re.findall(r'"%s(/[^"]*)"', src))), ["/collections/%s/reviews/%s", "/collections/%s/reviews/%s/%s"])
+        self.assertEqual(re.findall(r'get_method = lambda: "(\w+)"', src), ["POST"])
+        for word in ("DELETE", "PATCH", "PUT", "/assets", "/users", "/grants", "/stigs"):
+            self.assertNotIn(word, src)
 
 
 class Details(unittest.TestCase):
