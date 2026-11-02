@@ -14,7 +14,7 @@
     msg: >-
       {%- set out = [] -%}
       {%- if site_findings | length == 0 -%}
-      {%-   set _ = out.append('HEALTHY. Checks run: ' ~ (site_checks_run | join(', ') or 'none')) -%}
+      {%-   set _ = out.append((site_report_no_findings | default('HEALTHY')) ~ '. Checks run: ' ~ (site_checks_run | join(', ') or 'none')) -%}
       {%- else -%}
       {%-   set _ = out.append((site_findings | length) ~ ' finding(s). Checks run: ' ~ (site_checks_run | join(', '))) -%}
       {%-   for f in site_findings | sort(attribute='severity') -%}

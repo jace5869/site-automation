@@ -121,7 +121,7 @@ PY
 # OpenSCAP: the session timeout still fails, the audit rules pass now, the banner fails, the rest pass
 echo '{"accounts_tmout": "fail", "banner_etc_issue": "fail"}' > "$work/results.json"
 run "OpenSCAP: only the rules Open or Not Reviewed checked, each sorted, report only" ok -- \
-    "HEALTHY. Checks run: stig" "7 rules Open or Not Reviewed in STIG Manager: V-257779, V-257835, V-257883, V-258012, V-258013, V-258176, V-258999" \
+    "REPORT ONLY - what is open and what to update in STIG Manager are listed above. Checks run: stig" "!HEALTHY" "7 rules Open or Not Reviewed in STIG Manager: V-257779, V-257835, V-257883, V-258012, V-258013, V-258176, V-258999" \
     "localhost: 2 Open, 5 Not Reviewed in STIG Manager - fixed 1, now n/a 0, answered 4, still open 1, by hand 1, left out 0; STIG Manager: RHEL Servers / localhost (V2R7); checked: only these rules (--rule)" \
     "FIXED  V-258176 (RHEL-09-654225) CAT II" "ANSWER V-257779 (RHEL-09-211020) CAT II" "- set Open" "ANSWER V-257835 (RHEL-09-215040) CAT I" "- set Not a Finding" \
     "checklist on the host: $work/kept/recheck/latest-results.xml" "!Traceback" "!is undefined"
@@ -134,11 +134,12 @@ if [ -s "$work/kept/recheck/latest-results.xml" ] && ! ls "$work/kept"/*_summary
 else echo "FAIL - what was kept"; ls -laR "$work/kept"; fails=$((fails + 1)); fi
 if [ "$(ls "$work/mail" | wc -l)" -ge 1 ]; then
     decoded "$(ls "$work/mail"/* | head -1)"; m="$work/mail.txt"
-    if grep -q "Subject: .*STIG recheck" "$m" && grep -q "1. Open in STIG Manager - the host passes now: update the review" "$m" \
+    if grep -q "Subject: .*STIG recheck: 2 rules open" "$m" && grep -q "2 rules open, 5 reviews to update in STIG Manager, 1 by hand" "$m" && ! grep -qi "no findings" "$m" \
+       && grep -q "1. Open in STIG Manager - the host passes now: update the review" "$m" \
        && grep -q "2. Not Reviewed in STIG Manager - the scan has an answer" "$m" && grep -q "3. Still open - the scan agrees with STIG Manager" "$m" \
        && grep -q "By hand - the scan gave no answer" "$m" && grep -q "no SCAP check for it (a manual check)" "$m" \
        && grep -q "Open (accepted, 2026-08-15)" "$m" && grep -q "Not a Finding (rejected, 2026-08-15)" "$m" && grep -q ">no review<" "$m"
-    then echo "ok   - the email: update the review (fixed), Not Reviewed answered (a rejected review counts as none), still open, by hand"
+    then echo "ok   - the email: its subject says what is open and what to update (never no findings); update the review (fixed), Not Reviewed answered (a rejected review counts as none), still open, by hand"
     else echo "FAIL - the email's content"; grep -i "subject\|open in\|not reviewed\|still open\|by hand" "$m" | head -8; fails=$((fails + 1)); fi
 else echo "FAIL - no email arrived"; fails=$((fails + 1)); fi
 
@@ -154,7 +155,7 @@ run "check_stig_recheck must be open and / or not_reviewed" fail -e '{"check_sti
 sm_data "$web01" pass
 rm -f "$work/oscap_args.txt"
 run "nothing Open or Not Reviewed: nothing checked, healthy" ok -- \
-    "HEALTHY" "localhost: nothing to recheck - STIG Manager has no rule Open or Not Reviewed"
+    "REPORT ONLY" "localhost: nothing to recheck - STIG Manager has no rule Open or Not Reviewed"
 [ ! -e "$work/oscap_args.txt" ] && echo "ok   - ... oscap was not run" || { echo "FAIL - oscap ran with nothing to check"; fails=$((fails + 1)); }
 
 sm_data '{"1": []}'
@@ -177,15 +178,21 @@ mkdir -p "\$out/WEB01/Checklist" && "$py" "$here/make_cklb.py" "\$out/WEB01/Chec
 echo "Done"
 EOF
 done
-echo '# its options: --SelectSTIG, --SelectVuln, --ExcludeSTIG ...' >> "$work/es/Evaluate-STIG_Bash.sh"
+echo '# its options: --SelectSTIG, --SelectVuln, --ExcludeSTIG, --AFPath ...' >> "$work/es/Evaluate-STIG_Bash.sh"
 es_on="{\"check_stig_scanner\": \"evaluate_stig\", \"check_stig_evaluate\": \"$work/es\", \"check_stig_evaluate_select\": {\"$major\": \"RHEL9\"}}"
 run "Evaluate-STIG with --SelectVuln: only those rules, sorted, its checklist kept" ok -e "$es_on" -- \
-    "HEALTHY" "localhost: 2 Open, 5 Not Reviewed in STIG Manager - fixed 1, now n/a 0, answered 4, still open 1, by hand 1" \
+    "REPORT ONLY" "localhost: 2 Open, 5 Not Reviewed in STIG Manager - fixed 1, now n/a 0, answered 4, still open 1, by hand 1" \
     "checked: only these rules (-SelectVuln)" "checklist on the host: $work/kept/recheck/latest-checklist.cklb"
 if grep -q -- "--SelectSTIG RHEL9 --SelectVuln V-257779,V-257835,V-257883,V-258012,V-258013,V-258176,V-258999" "$work/es_args.txt" \
    && [ -s "$work/kept/recheck/latest-checklist.cklb" ] && ! ls "$work/kept"/*_summary.json >/dev/null 2>&1; then
     echo "ok   - Evaluate-STIG ran with --SelectVuln (the rules asked for); its checklist kept, nothing with the drift report's scans"
 else echo "FAIL - Evaluate-STIG's arguments or what was kept"; cat "$work/es_args.txt"; ls -R "$work/kept"; fails=$((fails + 1)); fi
+mkdir -p "$work/answers" && echo '<answers/>' > "$work/answers/RHEL_9.xml"
+run "the recheck with answer files (check_stig_evaluate_answers): Evaluate-STIG given them with -SelectVuln" ok -e "$es_on" \
+    -e check_stig_evaluate_answers="$work/answers" -- "1 answer file(s) from $work/answers: RHEL_9.xml" "checked: only these rules (-SelectVuln)" \
+    "Evaluate-STIG: with 1 answer file from $work/answers"
+grep -q -- "--SelectVuln V-257779,.* --AFPath /" "$work/es_args.txt" && echo "ok   - ... --AFPath with --SelectVuln" \
+    || { echo "FAIL - the recheck's Evaluate-STIG arguments"; cat "$work/es_args.txt"; fails=$((fails + 1)); }
 run "an Evaluate-STIG without --SelectVuln: run in full, the same answers" ok -e "$es_on" -e check_stig_evaluate="$work/es_old" -- \
     "fixed 1, now n/a 0, answered 4, still open 1, by hand 1" "checked: in full - this Evaluate-STIG has no -SelectVuln"
 grep -q "SelectVuln" "$work/es_old_args.txt" && { echo "FAIL - --SelectVuln given to an Evaluate-STIG without it"; fails=$((fails + 1)); } \

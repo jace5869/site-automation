@@ -210,9 +210,10 @@ mkdir -p "$work/es" "$work/esout/WEB01/Checklist"
 echo '{}' > "$work/es_results.json"
 cat > "$work/es/Evaluate-STIG_Bash.sh" <<EOF
 #!/bin/bash
-# Evaluate-STIG_Bash.sh --Output CKLB --OutputPath DIR [--SelectSTIG S] ...: DIR/HOST/Checklist/HOST_RHEL9.cklb
-out=""; echo "\$*" > "$work/es_args.txt"
-while [ \$# -gt 0 ]; do case "\$1" in --OutputPath) out="\$2"; shift ;; esac; shift; done
+# Evaluate-STIG_Bash.sh --Output CKLB --OutputPath DIR [--SelectSTIG S] [--AFPath DIR] ...: DIR/HOST/Checklist/HOST_RHEL9.cklb
+out=""; af=""; echo "\$*" > "$work/es_args.txt"
+while [ \$# -gt 0 ]; do case "\$1" in --OutputPath) out="\$2"; shift ;; --AFPath) af="\$2"; shift ;; esac; shift; done
+[ -n "\$af" ] && { ls "\$af" > "$work/es_af.txt"; stat -c %a "\$af" >> "$work/es_af.txt"; }
 mkdir -p "\$out/WEB01/Checklist" && "$py" "$here/make_cklb.py" "\$out/WEB01/Checklist/WEB01_RHEL9_V2R10.cklb" "\$(cat "$work/es_results.json")" V2R10
 echo "Done"
 EOF
@@ -240,6 +241,25 @@ decoded "$(ls "$work/mail"/* | head -1)"
 grep -q "first scan with it, after OpenSCAP" "$work/mail.txt" && echo "ok   - the email says the scanner changed" || { echo "FAIL - scanner changed not said"; fails=$((fails + 1)); }
 run "Evaluate-STIG not there: not scanned, a warning" fail -e "$es_on" -e check_stig_evaluate="$work/nope" -e check_stig_dir="$work/kept3" -- \
     "[WARNING] stig: the STIG scan did not run: Evaluate-STIG is not at $work/nope: no Evaluate-STIG_Bash.sh or Evaluate-STIG.ps1 there"
+# ---- answer files (check_stig_evaluate_answers, 0.55.0): copied down for the run, Evaluate-STIG given them, removed after ----
+mkdir -p "$work/answers" && echo '<answers/>' > "$work/answers/RHEL_9.xml" && echo 'x' > "$work/answers/readme.txt"
+echo '{}' > "$work/es_results.json"
+run "answer files from a folder: copied to the host for this run, Evaluate-STIG given them (--AFPath), said in the report" ok -e "$es_on" \
+    -e check_stig_evaluate_answers="$work/answers" -e check_stig_dir="$work/kept3" -- \
+    "1 answer file(s) from $work/answers: RHEL_9.xml" "Evaluate-STIG: with 1 answer file from $work/answers"
+afd="$(sed -n 's/.*--AFPath \([^ ]*\).*/\1/p' "$work/es_args.txt")"
+[ "$(head -1 "$work/es_af.txt")" = RHEL_9.xml ] && [ "$(wc -l < "$work/es_af.txt")" = 2 ] && [ "$(tail -1 "$work/es_af.txt")" = 700 ] && [ -n "$afd" ] && [ ! -e "$afd" ] \
+    && echo "ok   - ... only the .xml there, in a root-only folder of this run, removed after the scan" \
+    || { echo "FAIL - the answer files' folder: $(cat "$work/es_af.txt") ($afd)"; fails=$((fails + 1)); }
+rm -f "$work/es_args.txt"
+run "answer files that cannot be read: Evaluate-STIG not run, not scanned (a warning) - not scanned without them" fail -e "$es_on" \
+    -e check_stig_evaluate_answers="$work/no-answers" -e check_stig_dir="$work/kept3" -- \
+    "NOT READ - Evaluate-STIG is not run: no folder $work/no-answers on the AAP side" \
+    "[WARNING] stig: the STIG scan did not run: Evaluate-STIG was not run: its answer files could not be read - no folder $work/no-answers"
+[ ! -e "$work/es_args.txt" ] && echo "ok   - ... Evaluate-STIG was not run" || { echo "FAIL - Evaluate-STIG ran without its answer files"; fails=$((fails + 1)); }
+mkdir -p "$work/es_noaf" && grep -v -- '--AFPath' "$work/es/Evaluate-STIG_Bash.sh" > "$work/es_noaf/Evaluate-STIG_Bash.sh"
+run "an Evaluate-STIG without the option: not run, said what to set" fail -e "$es_on" -e check_stig_evaluate="$work/es_noaf" \
+    -e check_stig_evaluate_answers="$work/answers" -e check_stig_dir="$work/kept3" -- "this Evaluate-STIG has no AFPath option"
 "$py" "$here/make_cklb.py" "$work/esout/WEB01/Checklist/WEB01_RHEL9.ckl" '{}' V2R9 ckl
 run "check_stig_evaluate_read: the checklist Evaluate-STIG already wrote (CKL) read, it is not run" ok -e "$es_on" -e check_stig_evaluate=/nowhere \
     -e check_stig_evaluate_read="$work/esout" -e check_stig_dir="$work/kept4" -- "HEALTHY" "Red Hat Enterprise Linux 9 Security Technical Implementation Guide V2R9 - 8 pass, 0 fail"

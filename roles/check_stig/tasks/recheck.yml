@@ -19,30 +19,51 @@
   ansible.builtin.include_tasks: content.yml
   when: _stig_recheck_vulns | length > 0
 
-- name: STIG recheck | check those rules again on the host (only those - the scan's history is left alone)
-  site_stig_scan:
-    dir: "{{ check_stig_dir }}"
-    save: "{{ not ansible_check_mode }}"   # a dry run checks (it only reads) and keeps nothing
-    oscap: "{{ check_stig_oscap }}"
-    content_dir: "{{ check_stig_content_dir }}"
-    datastream: "{{ (check_stig_dir ~ '/content/' ~ (check_stig_datastream_src | basename)) if check_stig_datastream_src else check_stig_datastream }}"
-    profile: "{{ check_stig_profile }}"
-    tailoring: "{{ (check_stig_dir ~ '/content/' ~ (check_stig_tailoring_src | basename)) if check_stig_tailoring_src else check_stig_tailoring }}"
-    timeout: "{{ check_stig_timeout | int }}"
-    scanner: "{{ check_stig_scanner }}"
-    evaluate: "{{ check_stig_evaluate }}"
-    evaluate_select: "{{ check_stig_evaluate_select }}"
-    evaluate_args: "{{ check_stig_evaluate_args }}"
-    evaluate_read: "{{ check_stig_evaluate_read }}"
-    evaluate_output: "{{ check_stig_evaluate_output }}"
-    evaluate_rejected: "{{ check_stig_evaluate_rejected | bool }}"
-    pwsh: "{{ check_stig_pwsh }}"
-    benchmarks: "{{ check_stig_stigman_benchmarks }}"
-    vulns: "{{ _stig_recheck_vulns }}"
-    history: false
-  register: _stig_scan
-  check_mode: false             # only reads; in a dry run (save: false) nothing is kept on the host
-  when: _stig_recheck_vulns | length > 0
+- name: STIG | answer files from your share for Evaluate-STIG (check_stig_evaluate_answers)
+  ansible.builtin.set_fact:
+    _stig_af_on: >-
+      {{ check_stig_scanner | string == 'evaluate_stig' and check_stig_evaluate_answers | length > 0
+         and not check_stig_evaluate_read | default('') | length > 0 and _stig_recheck_vulns | length > 0 }}
+
+- name: STIG | answer files - read, and copied to each host for this run
+  ansible.builtin.include_tasks: answers.yml
+  when: _stig_af_on | bool
+
+- name: STIG | the scan, then the answer files' folders removed
+  block:
+    - name: STIG recheck | check those rules again on the host (only those - the scan's history is left alone)
+      site_stig_scan:
+        dir: "{{ check_stig_dir }}"
+        save: "{{ not ansible_check_mode }}"   # a dry run checks (it only reads) and keeps nothing
+        oscap: "{{ check_stig_oscap }}"
+        content_dir: "{{ check_stig_content_dir }}"
+        datastream: "{{ (check_stig_dir ~ '/content/' ~ (check_stig_datastream_src | basename)) if check_stig_datastream_src else check_stig_datastream }}"
+        profile: "{{ check_stig_profile }}"
+        tailoring: "{{ (check_stig_dir ~ '/content/' ~ (check_stig_tailoring_src | basename)) if check_stig_tailoring_src else check_stig_tailoring }}"
+        timeout: "{{ check_stig_timeout | int }}"
+        scanner: "{{ check_stig_scanner }}"
+        evaluate: "{{ check_stig_evaluate }}"
+        evaluate_select: "{{ check_stig_evaluate_select }}"
+        evaluate_args: "{{ check_stig_evaluate_args }}"
+        evaluate_read: "{{ check_stig_evaluate_read }}"
+        evaluate_output: "{{ check_stig_evaluate_output }}"
+        evaluate_rejected: "{{ check_stig_evaluate_rejected | bool }}"
+        pwsh: "{{ check_stig_pwsh }}"
+        benchmarks: "{{ check_stig_stigman_benchmarks }}"
+        answers: "{{ _stig_af_host.path | default('') if _stig_af_on | bool else '' }}"
+        answers_arg: "{{ check_stig_evaluate_answers_arg }}"
+        answers_error: "{{ _stig_af.error | default('') if _stig_af_on | bool else '' }}"
+        answers_source: "{{ check_stig_evaluate_answers }}"
+        answers_count: "{{ _stig_af.files | default([]) | length }}"
+        vulns: "{{ _stig_recheck_vulns }}"
+        history: false
+      register: _stig_scan
+      check_mode: false             # only reads; in a dry run (save: false) nothing is kept on the host
+      when: _stig_recheck_vulns | length > 0
+  always:
+    - name: STIG | answer files - this run's folders removed
+      ansible.builtin.include_tasks: answers_done.yml
+      when: _stig_af_on | bool
 
 - name: STIG recheck | compare with STIG Manager
   ansible.builtin.import_tasks: recheck_compare.yml

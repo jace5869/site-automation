@@ -1,0 +1,19 @@
+# Credential type: "Windows file share"
+# The account that reads a Windows file share over SMB from the AAP side (no mount) - for now, Evaluate-STIG's answer
+# files the STIG drift report and the STIG recheck copy to each Linux host before it runs (check_stig_evaluate_answers,
+# docs/STIG_DRIFT.md). Read on the share and the folder is enough: the job never writes there. The user name as
+# user@YOURDOMAIN.MIL (Kerberos - a FIPS execution environment has no NTLM) or DOMAIN\user.
+inputs:
+  fields:
+    - id: username
+      type: string
+      label: User name (user@YOURDOMAIN.MIL, or DOMAIN\user)
+    - id: password
+      type: string
+      label: Password
+      secret: true
+  required: [username, password]
+injectors:
+  env:
+    SMB_SHARE_USERNAME: "{{ username }}"
+    SMB_SHARE_PASSWORD: "{{ password }}"

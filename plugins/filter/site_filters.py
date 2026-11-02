@@ -1689,7 +1689,10 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
     section with top: true goes ABOVE the findings table (what to act on first), and its boxes (label, value,
     status) join the summary boxes. A top section's start_here (cards, [] = none) and start_here_text replace the
     "Start here" cards made from the findings: a report that knows better what comes first (the STIG drift
-    report: its CAT I rules)."""
+    report: its CAT I rules). A top section's headline (and headline_status) says what the run found when its own
+    findings are not that - the STIG recheck, report only, whose open rules are no finding of the job's: the title
+    is the headline (not "no findings"), the status the worse of the two, and with summary_only its boxes are the
+    only ones (no Healthy / With findings boxes, no list of healthy hosts)."""
     by_host = by_host or {}
     hosts = sorted(by_host)
     missing = sorted(missing or [])
@@ -1722,6 +1725,15 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
     if missing:
         summary.append(box("Did not report", len(missing), "warning", "health unknown"))
     top = [s for s in extra or [] if s.get("top")]
+    head = next((s for s in top if s.get("headline")), None)
+    if head:
+        t = "%s: %s" % (title, head["headline"]) + ((" - %d finding(s)" % n) if n else "")
+        if missing:
+            t += ", %d host(s) did not report" % len(missing)
+        order = {"critical": 0, "warning": 1, "info": 2, "ok": 3}
+        status = min(status, head.get("headline_status") or status, key=lambda x: order.get(x, 2))
+        if head.get("summary_only"):
+            summary = [box("Did not report", len(missing), "warning", "health unknown")] if missing else []
     for s in top:
         summary += list(s.get("boxes") or [])
     sections = list(top)
@@ -1745,7 +1757,7 @@ def findings_report(by_host, title, missing=None, checks=None, extra=None):
                          "lines": missing})
     sections += [s for s in extra or [] if not s.get("top")]
     healthy = [h for h in hosts if h not in bad]
-    if healthy and not single:
+    if healthy and not single and not (head and head.get("summary_only")):
         # passed / passed_checks: the web look (report_web_theme: atlas) shows them with check marks; the emails, the text
         sections.append({"title": "Healthy (%d)" % len(healthy), "text": ", ".join(healthy), "passed": healthy,
                          "passed_checks": list(dict.fromkeys(str(c) for c in checks or []))})

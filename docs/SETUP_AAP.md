@@ -341,7 +341,7 @@ Weekly, and after patching: each Linux host's OpenSCAP STIG scan against its che
 | Field | Value |
 |---|---|
 | Playbook | `playbooks/stig_drift_report.yml` |
-| Credentials | `Linux ssh (sudo)`, `STIG Manager API` (the client: your autostig one, or another with `stig-manager:collection:read` and a grant in the collections) |
+| Credentials | `Linux ssh (sudo)`, `STIG Manager API` (the client: your autostig one, or another with `stig-manager:collection:read` and a grant in the collections); `Windows file share` when Evaluate-STIG's answer files are on a share (`check_stig_evaluate_answers`) |
 | Variables | `aap/extra_vars/stig_drift_report.yml`: `check_stig_stigman_api`; each host's `check_stig_stigman_collection` in the inventory (per group or host) |
 
 ### Windows STIG drift report
@@ -365,7 +365,7 @@ checked again on it - only those - and what to update in STIG Manager (read-only
 | Field | Value |
 |---|---|
 | Playbook | `playbooks/stig_recheck.yml` (Linux), `playbooks/win_stig_recheck.yml` (Windows) |
-| Credentials | as the STIG drift report and the Windows STIG drift report: the machine credential and `STIG Manager API` |
+| Credentials | as the STIG drift report and the Windows STIG drift report: the machine credential and `STIG Manager API` (Linux: and `Windows file share` with `check_stig_evaluate_answers` on a share) |
 | Variables | `aap/extra_vars/stig_recheck.yml`, `win_stig_recheck.yml`: `check_stig_stigman_api` (required: what to recheck is read from it); the scanner settings of the drift report |
 
 For workflow 37, make a copy of each, *STIG recheck - check* (and *Windows STIG recheck - check*), with

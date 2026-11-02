@@ -206,14 +206,17 @@ net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # your PRIVATE, i
 net_config_git_repo: ssh://git@GIT-SERVER/netops/configs.git   # the backups' repository (for a restore)
 ## net_config_change (the change request, in Implement): a survey question, or the launch's extra variables
 """),
-    "stig_drift_report.yml": ("STIG drift report", "Machine, STIG Manager API", "check_stig", """\
+    "stig_drift_report.yml": ("STIG drift report", "Machine, STIG Manager API; Windows file share with check_stig_evaluate_answers", "check_stig", """\
 ## STIG Manager's API (empty: each scan is compared only with the host's last one). The login: the "STIG
 ## Manager API" credential - your autostig client, or another with stig-manager:collection:read
 check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## Each host's collection: set it per group or host in your inventory (empty: every collection the client reads)
 # check_stig_stigman_collection: RHEL Servers
+## Evaluate-STIG's answer files on a Windows share, copied to each host for the run (the "Windows file share"
+## credential; docs/STIG_DRIFT.md, "Answer files from a Windows share") - usually in all.yml
+# check_stig_evaluate_answers: '\\\\fileserver.yourdomain.mil\\stig\\AnswerFiles'
 """),
-    "stig_recheck.yml": ("STIG recheck", "Machine, STIG Manager API", "check_stig", """\
+    "stig_recheck.yml": ("STIG recheck", "Machine, STIG Manager API; Windows file share with check_stig_evaluate_answers", "check_stig", """\
 ## What to check again is read from STIG Manager (the same settings and "STIG Manager API" credential as the STIG
 ## drift report); the scanner too (check_stig_scanner, check_stig_evaluate ...)
 check_stig_stigman_api: https://STIGMAN-SERVER/api

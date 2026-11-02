@@ -347,7 +347,7 @@ class FakeModule(object):
         self.params = dict(dir="", keep=10, save=True, keep_report=True, keep_results=True, oscap="", content_dir="", datastream="",
                            profile="stig", tailoring="", timeout=60, scanner="evaluate_stig", evaluate="", evaluate_select={},
                            evaluate_args=[], evaluate_read="", evaluate_output="CKLB", evaluate_rejected=True, pwsh="", benchmarks={"8": "RHEL_8_STIG", "9": "RHEL_9_STIG", "10": "RHEL_10_STIG"},
-                           vulns=[], history=True)
+                           vulns=[], history=True, answers="", answers_arg="--AFPath", answers_error="", answers_source="", answers_count=0)
         self.params.update(params)
 
 
@@ -707,6 +707,22 @@ class Recheck(unittest.TestCase):
         self.assertEqual([x["no_answer"] for x in r["by_hand"]], ["no SCAP check for it (a manual check)"])
         self.assertEqual(r["how"], "only these rules (--rule)")
 
+    def test_headline_says_what_is_open(self):
+        """The recheck's report title and status: what is open - never "no findings" over open rules."""
+        c = sm_list(SV_1=("fail", "accepted"), SV_2=("fail", "saved"))
+        c["rules"]["SV-2"]["severity"] = "high"
+        out = sf.stig_recheck(c, [recheck_scan(SV_1="pass", SV_2="fail", SV_3="fail", SV_4="pass", SV_5="notchecked")], "web01")
+        h = sf.recheck_headline(out)
+        self.assertEqual((h["text"], h["status"]), ("2 rules open (CAT I: 1), 3 reviews to update in STIG Manager, 1 by hand", "critical"))
+        rep = __import__("site_filters").findings_report({"web01": []}, "STIG recheck", [], ["stig"], sf.stig_recheck_sections(out))
+        self.assertEqual((rep["title"], rep["status"]), ("STIG recheck: 2 rules open (CAT I: 1), 3 reviews to update in STIG Manager, 1 by hand", "critical"))
+        self.assertNotIn("Healthy", [b["label"] for b in rep["summary"]])
+        nothing = sf.stig_recheck(sm_list(rules=("SV-1",), SV_1=("pass", "accepted")), [], "web01")
+        self.assertEqual(sf.recheck_headline(nothing)["status"], "ok")
+        fixed_only = sf.stig_recheck(sm_list(rules=("SV-1",), SV_1=("fail", "accepted")), [recheck_scan(SV_1="pass")], "web01")
+        self.assertEqual(sf.recheck_headline(fixed_only), {"text": "0 rules open, 1 review to update in STIG Manager", "status": "info",
+                                                           "open": 0, "open_status": "ok"})
+
     def test_nothing_not_found_not_scanned(self):
         r = sf.stig_recheck(sm_list(rules=("SV-1",), SV_1=("pass", "accepted")), [], "web01")
         self.assertTrue(r[0]["nothing"])
@@ -740,7 +756,9 @@ class Recheck(unittest.TestCase):
         self.assertEqual(out[1]["stigman"]["asset"], "win01-Default Web Site-NA")
         secs = sf.stig_recheck_sections(out)
         self.assertEqual([s["title"][:2] for s in secs[:3]], ["1.", "2.", "3."])
-        self.assertEqual([b["value"] for b in secs[0]["boxes"]], [1, 1, 1, 0, 1], "fixed, answered, still open, by hand, not rechecked")
+        self.assertEqual([b["value"] for b in secs[0]["boxes"]], [2, 2, 0, 1], "open now (still open, answered Open), to update, by hand, not rechecked")
+        self.assertEqual((secs[0]["headline"], secs[0]["headline_status"], secs[0]["summary_only"]),
+                         ("2 rules open, 2 reviews to update in STIG Manager, 1 not rechecked", "warning", True))
         every = [s for s in secs if s["title"].startswith("Every host")][0]
         self.assertEqual(len(every["rows"]), 3)
         self.assertTrue(all(len(r) == len(every["columns"]) for r in every["rows"]))
@@ -921,6 +939,139 @@ class Update(unittest.TestCase):
         self.assertEqual(re.findall(r'get_method = lambda: "(\w+)"', src), ["POST"])
         for word in ("DELETE", "PATCH", "PUT", "/assets", "/users", "/grants", "/stigs"):
             self.assertNotIn(word, src)
+
+
+import site_answer_files as saf  # noqa: E402
+
+
+class AnswerFiles(unittest.TestCase):
+    """0.55.0: Evaluate-STIG's answer files from a Windows share (or a folder on the AAP side), copied down for the scan."""
+
+    def params(self, **kw):
+        p = dict(src="", dest=os.path.join(tempfile.mkdtemp(), "files"), base="", patterns=["*.xml"], username="", password="",
+                 auth="negotiate", encrypt=False, port=445, timeout=5, max_files=500, max_mb=20)
+        p.update(kw)
+        return p
+
+    def folder(self, **files):
+        d = tempfile.mkdtemp()
+        for n, t in files.items():
+            with open(os.path.join(d, n.replace("_xml", ".xml").replace("_txt", ".txt")), "w") as f:
+                f.write(t)
+        return d
+
+    def test_smb_path(self):
+        self.assertEqual(saf.smb_path("\\\\fs01\\stig\\AnswerFiles\\"), ("fs01", "\\\\fs01\\stig\\AnswerFiles"))
+        self.assertEqual(saf.smb_path("smb://fs01.example.mil/stig/AF"), ("fs01.example.mil", "\\\\fs01.example.mil\\stig\\AF"))
+        self.assertEqual(saf.smb_path("//fs01/stig"), ("fs01", "\\\\fs01\\stig"))
+        for local in ("/srv/answers", "files/stig/answers"):
+            self.assertIsNone(saf.smb_path(local))
+        with self.assertRaises(saf.Fail):
+            saf.smb_path("\\\\fs01")
+
+    def test_from_a_folder(self):
+        d = self.folder(RHEL_9_xml="<a/>", Firefox_XML="<b/>", notes_txt="x")
+        os.rename(os.path.join(d, "Firefox_XML"), os.path.join(d, "Firefox.XML"))
+        os.makedirs(os.path.join(d, "old.xml"))                          # a folder: not read
+        p = self.params(src=d)
+        os.makedirs(p["dest"])
+        open(os.path.join(p["dest"], "stale.xml"), "w").close()             # emptied first
+        got = saf.read_all(p)
+        self.assertEqual([f["name"] for f in got], ["Firefox.XML", "RHEL_9.xml"])
+        self.assertEqual(sorted(os.listdir(p["dest"])), ["Firefox.XML", "RHEL_9.xml"])
+        self.assertEqual(got[1]["sha256"], __import__("hashlib").sha256(b"<a/>").hexdigest())
+        rel = self.params(src=os.path.basename(d), base=os.path.dirname(d))  # from playbooks/: files/stig/answers
+        self.assertEqual(len(saf.read_all(rel)), 2)
+
+    def test_refused(self):
+        for p, why in ((self.params(src="/nowhere"), "no folder /nowhere"),
+                       (self.params(src=self.folder(a_txt="x")), "no answer file (*.xml)"),
+                       (self.params(src=self.folder(a_xml="x" * 2048), max_mb=0), "over check_stig_evaluate_answers_max_mb"),
+                       (self.params(src=self.folder(a_xml="x", b_xml="y"), max_files=1), "over check_stig_evaluate_answers_max_files")):
+            with self.assertRaises(saf.Fail) as e:
+                saf.read_all(p)
+            self.assertIn(why, str(e.exception))
+
+    def test_from_a_share(self):
+        calls = []
+
+        class Entry(object):
+            def __init__(self, name, data, folder=False):
+                self.name, self.data, self.folder = name, data, folder
+
+            def is_file(self):
+                return not self.folder
+
+            @property
+            def smb_info(self):
+                return type("I", (), {"end_of_file": len(self.data)})()
+
+        share = {"RHEL_9.xml": b"<answers/>", "readme.txt": b"x"}
+
+        class Smb(object):
+            fail_login = None
+
+            def register_session(self, server, **kw):
+                calls.append(("login", server, kw["username"], kw["port"]))
+                if self.fail_login:
+                    raise ValueError(self.fail_login)
+
+            def scandir(self, path, **kw):
+                calls.append(("list", path))
+                return [Entry(n, d) for n, d in share.items()] + [Entry("sub", b"", True)]
+
+            def open_file(self, path, mode="rb", **kw):
+                calls.append(("read", path, mode))
+                import io
+                return io.BytesIO(share[path.rsplit("\\", 1)[1]])
+        fake = Smb()
+        with unittest.mock.patch.dict(sys.modules, {"smbclient": fake}):
+            got = saf.read_all(self.params(src="\\\\fs01\\stig\\AF", username="svc@EXAMPLE.MIL", password="pw"))
+            self.assertEqual([f["name"] for f in got], ["RHEL_9.xml"])
+            self.assertEqual(calls, [("login", "fs01", "svc@EXAMPLE.MIL", 445), ("list", "\\\\fs01\\stig\\AF"),
+                                     ("read", "\\\\fs01\\stig\\AF\\RHEL_9.xml", "rb")])   # only read, only what matches
+            with self.assertRaises(saf.Fail) as e:
+                saf.read_all(self.params(src="\\\\fs01\\stig"))
+            self.assertIn('attach the "Windows file share" credential', str(e.exception))
+            fake.fail_login = "STATUS_LOGON_FAILURE"
+            with self.assertRaises(saf.Fail) as e:
+                saf.read_all(self.params(src="\\\\fs01\\stig", username="svc", password="bad"))
+            self.assertIn("the user name or password is wrong", str(e.exception))
+
+    def es(self, options="--AFPath"):
+        d = tempfile.mkdtemp()
+        sh = os.path.join(d, "Evaluate-STIG_Bash.sh")
+        with open(sh, "w") as f:
+            f.write(FAKE_ES.replace("# Evaluate-STIG_Bash.sh", "# its options: %s\n# Evaluate-STIG_Bash.sh" % options)
+                    % os.path.join(ROOT, "tests", "stig", "make_cklb.py"))
+        with open(os.path.join(d, "results.json"), "w") as f:
+            json.dump({}, f)
+        return d
+
+    def test_the_scan_given_them(self):
+        es = self.es()
+        m = FakeModule(dir=tempfile.mkdtemp(), evaluate=es, answers="/tmp/x.stig-answers", answers_source="\\\\fs01\\stig\\AF", answers_count=3)
+        with unittest.mock.patch.object(scan, "os_release", return_value={"VERSION_ID": "9.6"}):
+            out = scan.Scan(m).run()
+        self.assertTrue(out["scanned"], out.get("why"))
+        with open(os.path.join(es, "args.txt")) as f:
+            self.assertIn("--AFPath /tmp/x.stig-answers", f.read())
+        self.assertEqual(out["answers"], {"count": 3, "source": "\\\\fs01\\stig\\AF"})
+        self.assertEqual(sf.evaluate_note(out), "with 3 answer files from \\\\fs01\\stig\\AF")
+
+    def test_not_run_without_them_or_without_the_option(self):
+        m = FakeModule(dir=tempfile.mkdtemp(), evaluate=self.es(), answers_error="reading the folder \\\\fs01\\stig: refused")
+        with unittest.mock.patch.object(scan, "os_release", return_value={"VERSION_ID": "9.6"}):
+            out = scan.Scan(m).run()
+        self.assertFalse(out["scanned"])
+        self.assertIn("Evaluate-STIG was not run: its answer files could not be read", out["why"])
+        es = self.es(options="--SelectSTIG")
+        m = FakeModule(dir=tempfile.mkdtemp(), evaluate=es, answers="/tmp/x")
+        with unittest.mock.patch.object(scan, "os_release", return_value={"VERSION_ID": "9.6"}):
+            out = scan.Scan(m).run()
+        self.assertFalse(out["scanned"])
+        self.assertIn("this Evaluate-STIG has no AFPath option", out["why"])
+        self.assertFalse(os.path.exists(os.path.join(es, "args.txt")), "not run")
 
 
 class Details(unittest.TestCase):

@@ -127,9 +127,13 @@ def check_command(scan, rec):
 
 
 def evaluate_note(scan):
-    """What went wrong in Evaluate-STIG's run that the job worked around: its checklist read although its own schema check
-    rejected it, its checks that failed ('' = nothing)."""
+    """How Evaluate-STIG ran, past the usual: with answer files copied down for it (check_stig_evaluate_answers); and what
+    went wrong that the job worked around: its checklist read although its own schema check rejected it, its checks that
+    failed ('' = nothing)."""
     out = []
+    af = scan.get("answers") or {}
+    if af:
+        out.append("with %d answer file%s from %s" % (af.get("count", 0), "" if af.get("count") == 1 else "s", af.get("source") or "the share"))
     if scan.get("evaluate_rejected"):
         out.append("its checklist failed Evaluate-STIG's own schema check (moved to %s) - read anyway"
                    % os.path.dirname(scan["evaluate_rejected"][0]))
@@ -790,9 +794,9 @@ def stig_recheck_sections(results, list_max=200):
         _who(c), _rule_label(r), CAT.get(r.get("severity"), r.get("severity", "")), r["title"], SCAN_WORD.get(r["now"], r["now"] or "-"), _ask_cell(r)],
         lambda r: ["", "", r["level"], "", SCAN_CHIP.get(r["now"], ""), ""])
     not_done = [c for c in results if not c.get("scanned")]
-    boxes = [_box("Fixed, still Open", len(upd_rows), "info", "set Not a Finding (or Not Applicable)"),
-             _box("Answered", len(an_rows), "info", "Not Reviewed: the scan has an answer"),
-             _box("Still open", len(so_rows), "info", "the review is right"),
+    head = recheck_headline(results)
+    boxes = [_box("Open now", head["open"], head["open_status"], "still open, or Not Reviewed and failing: fix or POA&M"),
+             _box("To update in STIG Manager", len(upd_rows) + len(an_rows), "info", "fixed, Not Applicable now, or answered"),
              _box("By hand", len(bh_rows), "info", "the scan gave no answer"),
              _box("Not rechecked", len(not_done), "warning", "no result for these")]
     if upd_rows:
@@ -819,7 +823,9 @@ def stig_recheck_sections(results, list_max=200):
     for s in sections:
         s["top"] = True
     if sections:
-        sections[0]["boxes"] = boxes
+        # the title and status say what is open and what to update - the recheck raises no finding of its own, so
+        # "no findings" and a green page would say nothing is open
+        sections[0].update(boxes=boxes, headline=head["text"], headline_status=head["status"], summary_only=True)
     order = {"critical": 0, "warning": 1, "info": 2, "ok": 3}
     hosts = sorted(results, key=lambda c: (order.get(c["row"]["status"], 3), _who(c)))
     hrs = [c["row"]["status"] for c in hosts]
@@ -854,6 +860,29 @@ def stig_recheck_sections(results, list_max=200):
                          "rows": ig_rows[:list_max], "row_status": ["info"] * len(ig_rows[:list_max]), "cell_status": ig_cs[:list_max], "status": "info",
                          "text": "The scanner is known to get these wrong here: not sorted above."})
     return sections
+
+
+def recheck_headline(results):
+    """The recheck in one line, and its status: what is open now (still open, and Not Reviewed rules the scan fails),
+    what to update in STIG Manager, what a person reviews, what could not be rechecked."""
+    results = [r for r in (results or []) if r]
+    opened = [r for c in results for r in (c.get("still_open") or []) + [x for x in c.get("answered") or [] if x.get("now") == "fail"]]
+    update = sum(len(c.get(k) or []) for c in results for k in ("fixed", "now_na", "answered"))
+    hand = sum(len(c.get("by_hand") or []) for c in results)
+    gone = len([c for c in results if not c.get("scanned")])
+    cat1 = len([r for r in opened if r.get("severity") == "high"])
+    if not opened and not update and not hand and not gone:
+        text = "nothing open - STIG Manager has no rule Open or Not Reviewed that the scan fails"
+    else:
+        text = "%d rule%s open%s" % (len(opened), "" if len(opened) == 1 else "s", (" (CAT I: %d)" % cat1) if cat1 else "")
+        text += ", %d review%s to update in STIG Manager" % (update, "" if update == 1 else "s")
+        if hand:
+            text += ", %d by hand" % hand
+        if gone:
+            text += ", %d not rechecked" % gone
+    open_status = "critical" if cat1 else ("warning" if opened else "ok")
+    status = "critical" if cat1 else ("warning" if opened or gone else ("info" if update or hand else "ok"))
+    return {"text": text, "status": status, "open": len(opened), "open_status": open_status}
 
 
 def stig_recheck_lines(c):
@@ -996,4 +1025,4 @@ class FilterModule(object):
                 "stig_findings": stig_findings, "stig_recheck_vulns": stig_recheck_vulns, "stig_recheck": stig_recheck,
                 "stig_recheck_sections": stig_recheck_sections, "stig_recheck_lines": stig_recheck_lines,
                 "stig_update_plan": stig_update_plan, "stig_update_sections": stig_update_sections,
-                "stig_update_report": stig_update_report}
+                "stig_update_report": stig_update_report, "stig_recheck_headline": recheck_headline}

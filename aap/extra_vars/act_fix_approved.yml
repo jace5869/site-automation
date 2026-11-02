@@ -664,6 +664,45 @@
 ## (Evaluate-STIG.ps1: -ScanType ...); --Output and --OutputPath are the job's
 # check_stig_evaluate_args: []
 
+## Evaluate-STIG's answer files (docs/STIG_DRIFT.md, "Answer files from a Windows share"): copied to
+## each host before it runs, into a folder of this run (removed after it) that Evaluate-STIG is
+## given - nothing kept on the host. From a Windows file share, read over SMB from the AAP side (no
+## mount; the "Windows file share" credential): e.g. '\\fileserver.yourdomain.mil\stig\AnswerFiles';
+## or a folder on the AAP side (in your repository, from playbooks/: files/stig/answers). Not read
+## (the share down, a wrong password): Evaluate-STIG is not run - each host is listed as not
+## scanned, rather than scanned without its answers (which would mark Open what they answer, as
+## drift). where your answer files are; "" = none copied: Evaluate-STIG uses its own (its
+## AnswerFiles folder)
+# check_stig_evaluate_answers: ""
+
+## Evaluate-STIG's option for their folder (the job checks the script has it; .ps1: -AFPath)
+# check_stig_evaluate_answers_arg: --AFPath
+
+## the files taken (any case); sub-folders are not read
+# check_stig_evaluate_answers_patterns: ["*.xml"]
+
+## the share's account (user@YOURDOMAIN.MIL); empty = the "Windows file share" credential's
+# check_stig_evaluate_answers_user: ""
+
+## its password (vault it); empty = the credential's
+# check_stig_evaluate_answers_password: ""
+
+## negotiate (Kerberos - FIPS too: user@YOURDOMAIN.MIL, the server's full name - else NTLM), ntlm,
+## or kerberos (a ticket already in the job)
+# check_stig_evaluate_answers_auth: negotiate
+
+## true = encrypt (SMB 3) even when the share does not require it
+# check_stig_evaluate_answers_encrypt: false
+
+## the share's port
+# check_stig_evaluate_answers_port: 445
+
+## more files than this in the folder: not read (a wrong folder)
+# check_stig_evaluate_answers_max_files: 500
+
+## a file larger than this: not read
+# check_stig_evaluate_answers_max_mb: 20
+
 ## read the newest checklist (.cklb or .ckl) Evaluate-STIG already wrote under this folder on the
 ## host - its own schedule - instead of running it, e.g. /opt/STIG_Compliance ; empty = run it
 # check_stig_evaluate_read: ""

@@ -159,6 +159,46 @@ check_stig_evaluate_args: ["--AnswerKey", "SITE"]  # optional: your own argument
 - Evaluate-STIG needs PowerShell 7 (`pwsh`) on the host and takes longer than OpenSCAP: raise `check_stig_timeout`
   (1800 seconds) if a host needs more. The job never installs or updates Evaluate-STIG.
 
+### Answer files from a Windows share (Linux)
+
+If your Evaluate-STIG answer files live on a Windows file share, the job can copy them to each Linux host before
+Evaluate-STIG runs. That way every scan uses the same, current answers. It applies to the STIG drift report and the
+STIG recheck. Windows servers are not touched: their own Evaluate-STIG run uses their answer files.
+
+```yaml
+# all.yml, or the template's Variables
+check_stig_evaluate_answers: '\\fileserver.yourdomain.mil\stig\AnswerFiles'   # or a folder in your repository: files/stig/answers
+```
+
+Then attach a **Windows file share** credential (`aap/credential_types/windows_share.yml`) to the template. Its account
+needs only Read on the share and the folder; write the user name as `user@YOURDOMAIN.MIL`.
+
+What happens on each run:
+
+1. **The share is read once**, from the AAP side, over SMB (smbprotocol in the execution environment). Nothing is
+   mounted, and nothing on the share is written. It takes the `.xml` files of that folder
+   (`check_stig_evaluate_answers_patterns`), not its sub-folders.
+2. **They are copied to each host**, into a root-only folder made for this run.
+3. **Evaluate-STIG is given that folder** (`--AFPath`, `check_stig_evaluate_answers_arg`). The job first checks that
+   your Evaluate-STIG has that option: run `Evaluate-STIG_Bash.sh --help` on a host to see its name, and set
+   `check_stig_evaluate_answers_arg` if it is spelled otherwise.
+4. **The folder is removed after the scan**, on the host and on the AAP side. Nothing is kept, and a Check run copies
+   them just the same.
+5. **The report says it**: `with 2 answer files from \\fileserver.yourdomain.mil\stig\AnswerFiles`, in the every-host
+   table and the job output, with the files' names.
+
+**If the share cannot be read** (it is down, the password is wrong, the folder is not there), Evaluate-STIG is **not
+run**. Each host is then listed as not scanned, with the reason and what to check. Scanning without the answers would
+mark Open everything they answer, and that would show as drift.
+
+| Setting | Default | |
+|---|---|---|
+| `check_stig_evaluate_answers` | empty: none copied | the share's folder (`\\server\share\folder`, `smb://server/share/folder`), or a folder on the AAP side |
+| `check_stig_evaluate_answers_arg` | `--AFPath` | Evaluate-STIG's option for the answer files' folder |
+| `check_stig_evaluate_answers_patterns` | `["*.xml"]` | the files taken (any case) |
+| `check_stig_evaluate_answers_auth` | `negotiate` | Kerberos, else NTLM; a FIPS execution environment needs Kerberos: `user@YOURDOMAIN.MIL` and the server's full name |
+| `check_stig_evaluate_answers_max_files`, `_max_mb` | 500, 20 | more files, or a larger one: not read (a wrong folder) |
+
 ### How much each scanner checks
 
 Measured against DISA's releases of 30 Sep 2026:
@@ -341,7 +381,10 @@ when asked by name (`health_checks: [stig]`).
 | By hand | Open or Not Reviewed | no answer (DISA's manual checks; a rule not in the scan's STIG revision) | a person reviews it |
 
 It is **report only**: what it finds is no finding, and the job does not fail for it - a host it could not recheck
-(the asset not in STIG Manager, Evaluate-STIG not found) is a warning. It **leaves the drift report's history
+(the asset not in STIG Manager, Evaluate-STIG not found) is a warning. Its report never says *no findings* over
+open rules. Its title says what is open and what to update - *STIG recheck: 2 rules open (CAT I: 1), 5 reviews to
+update in STIG Manager, 1 by hand*. Its status is red when a CAT I rule is open, amber when another rule is open, and
+blue when there is only something to update. The job's output says *REPORT ONLY*, never *HEALTHY*. It **leaves the drift report's history
 alone**: nothing is compared with the earlier scans or kept with them. The checklist it wrote (Evaluate-STIG) or
 oscap's results are kept on the host as `check_stig_dir/recheck/latest-checklist.cklb` (`latest-results.xml`), on
 Windows `win_check_stig_dir\recheck\<checklist>.cklb`: STIG Manager can import it - every rule not rechecked is
@@ -431,6 +474,7 @@ you are most likely to set:
 | `check_stig_scanner` | `openscap` | `evaluate_stig`: scan with Evaluate-STIG (above) |
 | `check_stig_evaluate` | empty | Evaluate-STIG's folder on the host (or its script) |
 | `check_stig_evaluate_select`, `_args`, `_read` | `{}`, `[]`, empty | `--SelectSTIG` per RHEL version; your own arguments; read its own checklists instead of running it |
+| `check_stig_evaluate_answers` | empty | Linux: Evaluate-STIG's answer files from a Windows share (or a folder here), copied to each host for the run (above) |
 | `check_stig_evaluate_rejected`, `_output` | `true`, `CKLB` | read a checklist its own schema check rejected; CKLB or CKL |
 | `check_stig_profile` | `stig` | `stig_gui` for a host with a desktop, or a full profile id |
 | `check_stig_tailoring` / `_src` | empty | your site's tailoring file (on the host / in your repository) |

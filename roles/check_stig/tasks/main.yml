@@ -31,30 +31,51 @@
 - name: STIG | OpenSCAP's packages and content (check_stig_install, check_stig_datastream_src, check_stig_tailoring_src)
   ansible.builtin.import_tasks: content.yml
 
-- name: STIG | scan (oscap with the STIG profile, or Evaluate-STIG) and keep the result on the host
-  site_stig_scan:
-    dir: "{{ check_stig_dir }}"
-    keep: "{{ check_stig_keep | int }}"
-    save: "{{ not ansible_check_mode }}"   # a dry run scans (it only reads) and keeps nothing
-    keep_report: "{{ check_stig_keep_report | bool }}"
-    keep_results: "{{ check_stig_keep_results | bool }}"
-    oscap: "{{ check_stig_oscap }}"
-    content_dir: "{{ check_stig_content_dir }}"
-    datastream: "{{ (check_stig_dir ~ '/content/' ~ (check_stig_datastream_src | basename)) if check_stig_datastream_src else check_stig_datastream }}"
-    profile: "{{ check_stig_profile }}"
-    tailoring: "{{ (check_stig_dir ~ '/content/' ~ (check_stig_tailoring_src | basename)) if check_stig_tailoring_src else check_stig_tailoring }}"
-    timeout: "{{ check_stig_timeout | int }}"
-    scanner: "{{ check_stig_scanner }}"
-    evaluate: "{{ check_stig_evaluate }}"
-    evaluate_select: "{{ check_stig_evaluate_select }}"
-    evaluate_args: "{{ check_stig_evaluate_args }}"
-    evaluate_read: "{{ check_stig_evaluate_read }}"
-    evaluate_output: "{{ check_stig_evaluate_output }}"
-    evaluate_rejected: "{{ check_stig_evaluate_rejected | bool }}"
-    pwsh: "{{ check_stig_pwsh }}"
-    benchmarks: "{{ check_stig_stigman_benchmarks }}"
-  register: _stig_scan
-  check_mode: false             # the scan only reads; in a dry run (save: false) nothing is kept on the host
+- name: STIG | answer files from your share for Evaluate-STIG (check_stig_evaluate_answers)
+  ansible.builtin.set_fact:
+    _stig_af_on: >-
+      {{ check_stig_scanner | string == 'evaluate_stig' and check_stig_evaluate_answers | length > 0
+         and not check_stig_evaluate_read | default('') | length > 0 }}
+
+- name: STIG | answer files - read, and copied to each host for this run
+  ansible.builtin.include_tasks: answers.yml
+  when: _stig_af_on | bool
+
+- name: STIG | the scan, then the answer files' folders removed
+  block:
+    - name: STIG | scan (oscap with the STIG profile, or Evaluate-STIG) and keep the result on the host
+      site_stig_scan:
+        dir: "{{ check_stig_dir }}"
+        keep: "{{ check_stig_keep | int }}"
+        save: "{{ not ansible_check_mode }}"   # a dry run scans (it only reads) and keeps nothing
+        keep_report: "{{ check_stig_keep_report | bool }}"
+        keep_results: "{{ check_stig_keep_results | bool }}"
+        oscap: "{{ check_stig_oscap }}"
+        content_dir: "{{ check_stig_content_dir }}"
+        datastream: "{{ (check_stig_dir ~ '/content/' ~ (check_stig_datastream_src | basename)) if check_stig_datastream_src else check_stig_datastream }}"
+        profile: "{{ check_stig_profile }}"
+        tailoring: "{{ (check_stig_dir ~ '/content/' ~ (check_stig_tailoring_src | basename)) if check_stig_tailoring_src else check_stig_tailoring }}"
+        timeout: "{{ check_stig_timeout | int }}"
+        scanner: "{{ check_stig_scanner }}"
+        evaluate: "{{ check_stig_evaluate }}"
+        evaluate_select: "{{ check_stig_evaluate_select }}"
+        evaluate_args: "{{ check_stig_evaluate_args }}"
+        evaluate_read: "{{ check_stig_evaluate_read }}"
+        evaluate_output: "{{ check_stig_evaluate_output }}"
+        evaluate_rejected: "{{ check_stig_evaluate_rejected | bool }}"
+        pwsh: "{{ check_stig_pwsh }}"
+        benchmarks: "{{ check_stig_stigman_benchmarks }}"
+        answers: "{{ _stig_af_host.path | default('') if _stig_af_on | bool else '' }}"
+        answers_arg: "{{ check_stig_evaluate_answers_arg }}"
+        answers_error: "{{ _stig_af.error | default('') if _stig_af_on | bool else '' }}"
+        answers_source: "{{ check_stig_evaluate_answers }}"
+        answers_count: "{{ _stig_af.files | default([]) | length }}"
+      register: _stig_scan
+      check_mode: false             # the scan only reads; in a dry run (save: false) nothing is kept on the host
+  always:
+    - name: STIG | answer files - this run's folders removed
+      ansible.builtin.include_tasks: answers_done.yml
+      when: _stig_af_on | bool
 
 - name: STIG | read every host's checklist from STIG Manager (read-only, once, from the AAP side)
   ansible.builtin.import_tasks: stigman.yml

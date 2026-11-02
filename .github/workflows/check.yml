@@ -133,6 +133,10 @@ jobs:
           /tmp/ac216/bin/pip -q install smbprotocol
           bash tests/email/run_smb_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14452 bash tests/email/run_smb_test.sh
+      - name: Evaluate-STIG's answer files from a Windows file share over SMB (check_stig_evaluate_answers), against Samba in a container (current ansible-core and 2.16)
+        run: |
+          bash tests/stig/run_stig_answers_smb_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14462 bash tests/stig/run_stig_answers_smb_test.sh
       - name: Active Directory health report, the Ansible side with made-up DCs (current ansible-core and 2.16)
         run: |
           bash tests/ad/run_ad_test.sh

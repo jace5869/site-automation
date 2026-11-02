@@ -1,0 +1,21 @@
+---
+# After the scan: the answer files' folders of this run removed - on the host, and once on the AAP side (answers.yml).
+- name: STIG | answer files - the host's folder removed
+  ansible.builtin.file:
+    path: "{{ _stig_af_host.path }}"
+    state: absent
+  check_mode: false
+  when: _stig_af_host.path is defined
+
+- name: STIG | answer files - the folder on the AAP side removed
+  ansible.builtin.file:
+    path: "{{ _stig_af_stage.path }}"
+    state: absent
+  delegate_to: localhost
+  run_once: true
+  become: false
+  check_mode: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  when: _stig_af_stage.path is defined

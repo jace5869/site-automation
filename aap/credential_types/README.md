@@ -16,6 +16,7 @@ into **Injector configuration**. Then create one credential of each type per env
 | `servicenow_api.yml` | ServiceNow API | `servicenow_tickets.yml`, `servicenow_health.yml`, `servicenow_test_ticket.yml`, `servicenow_war.yml` (the weekly activity report) |
 | `mariadb_monitor.yml` | MariaDB monitor | `database_health.yml`, `health_check.yml` and `troubleshoot.yml` (the MariaDB / MySQL check) - needed for a database in a container and usually for MySQL; optional for MariaDB on the host (root via socket). Account and grants: `docs/MARIADB.md` |
 | `stigman_api.yml` | STIG Manager API | `poam_status.yml` STIG Manager cross-check - optional |
+| `windows_share.yml` | Windows file share | the STIG drift report and STIG recheck with `check_stig_evaluate_answers` on a share: Evaluate-STIG's answer files read over SMB (read only) and copied to each Linux host (`docs/STIG_DRIFT.md`) |
 | `keystore_password.yml` | Keystore password | `health_check.yml` / `cert_report.yml` for a PKCS12 keystore - optional |
 | `smtp_relay.yml` | SMTP relay | any job that emails a report (`report_email_to`; the VMware jobs, `docs/VMWARE.md`) - only when the mail relay needs a login |
 | `report_web.yml` | Report website | any report job with `report_web_host` (the pages written on a Windows server over WinRM: its user name and password; without it, the template's Machine credential) or `report_web_dest: https://...` (an upload with HTTP PUT that needs a login: a token or a user name and password) (`docs/WEB_REPORTS.md`) |

@@ -434,7 +434,7 @@ footer{margin-top:28px;text-align:center;color:var(--muted);font-size:13px;line-
 {#- a Status or Severity column of a row with its status: that status's chip (upper case - FAIL - as Fail; a STIG CAT I stays) #}
 {%- set cst = cst or (rs if rs in words and lbl | lower in ['status', 'severity', 'result'] and text | trim else '') %}
 {%- if cst %}
-<td data-l="{{ lbl | e }}" data-v="{{ text | e }}"{% if text | length <= 20 %} class="nw"{% endif %}>{{ chip(cst, text | capitalize if text.isupper() and not text.startswith('CAT ') else text) }}</td>
+<td data-l="{{ lbl | e }}" data-v="{{ text | e }}"{% if text | length <= 32 %} class="nw"{% else %} class="k-mid"{% endif %}>{{ chip(cst, text | capitalize if text.isupper() and not text.startswith('CAT ') else text) }}</td>
 {%- elif lbl | lower in ['look further', 'command', 'hint', 'next step'] %}
 <td class="lk" data-l="{{ lbl | e }}">{{ breakable(text) }}</td>
 {%- elif kd == 'path' %}

@@ -1,0 +1,64 @@
+---
+# Evaluate-STIG's answer files for this run (check_stig_evaluate_answers): read once from where your site keeps them -
+# a Windows file share (over SMB from the AAP side, the "Windows file share" credential: no mount, nothing written
+# there) or a folder on the AAP side - then copied to a folder of this run's on each host (root-only), given to
+# Evaluate-STIG (check_stig_evaluate_answers_arg) and removed after the scan (answers_done.yml). Nothing is kept on the
+# host. Not read: Evaluate-STIG is not run on any host (a scan without its answers would mark Open what they answer).
+- name: STIG | answer files - a folder for them here, on the AAP side
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: .stig-answers
+  register: _stig_af_stage
+  delegate_to: localhost
+  run_once: true
+  become: false
+  check_mode: false             # this run's own folder, removed after the scan
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+- name: STIG | answer files - read once from {{ check_stig_evaluate_answers }}
+  site_answer_files:
+    src: "{{ check_stig_evaluate_answers }}"
+    dest: "{{ _stig_af_stage.path }}/files"
+    base: "{{ playbook_dir }}"
+    patterns: "{{ check_stig_evaluate_answers_patterns }}"
+    username: "{{ check_stig_evaluate_answers_user or lookup('ansible.builtin.env', 'SMB_SHARE_USERNAME') }}"
+    password: "{{ check_stig_evaluate_answers_password or lookup('ansible.builtin.env', 'SMB_SHARE_PASSWORD') }}"
+    auth: "{{ check_stig_evaluate_answers_auth }}"
+    encrypt: "{{ check_stig_evaluate_answers_encrypt | bool }}"
+    port: "{{ check_stig_evaluate_answers_port | int }}"
+    max_files: "{{ check_stig_evaluate_answers_max_files | int }}"
+    max_mb: "{{ check_stig_evaluate_answers_max_mb | int }}"
+  register: _stig_af
+  delegate_to: localhost
+  run_once: true
+  become: false
+  check_mode: false             # only reads the share
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+- name: STIG | answer files - what was read
+  ansible.builtin.debug:
+    msg: >-
+      {{ ('NOT READ - Evaluate-STIG is not run: ' ~ _stig_af.error) if _stig_af.error else
+         ((_stig_af.files | length) ~ ' answer file(s) from ' ~ _stig_af.source ~ ': ' ~ (_stig_af.files | map(attribute='name') | join(', '))) }}
+  run_once: true
+
+- name: STIG | answer files - a folder for this run on the host (root-only)
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: .stig-answers
+  register: _stig_af_host
+  check_mode: false             # removed after the scan, as Evaluate-STIG's own output folder
+  when: not _stig_af.error
+
+- name: STIG | answer files - copied to it
+  ansible.builtin.copy:
+    src: "{{ _stig_af_stage.path }}/files/"
+    dest: "{{ _stig_af_host.path }}/"
+    mode: "0600"
+    directory_mode: "0700"
+  check_mode: false
+  when: not _stig_af.error

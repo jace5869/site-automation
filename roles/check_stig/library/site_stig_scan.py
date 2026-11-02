@@ -52,6 +52,11 @@ options:
   benchmarks: {description: "The STIG (its benchmark id) for each RHEL version ({'9': RHEL_9_STIG}): the checklist read.", type: dict, default: {}}
   vulns: {description: "Only these STIG rules (V-257985 ...); [] = every rule.", type: list, elements: str, default: []}
   history: {description: "Compare with the earlier scans and keep this one with them (false - the STIG recheck - neither).", type: bool, default: true}
+  answers: {description: "Evaluate-STIG: the folder on the host its answer files were copied to for this run ('' = its own).", type: str, default: ''}
+  answers_arg: {description: "Evaluate-STIG's option for that folder (checked in its script).", type: str, default: --AFPath}
+  answers_error: {description: "Why the answer files could not be read: Evaluate-STIG is not run, the host is not scanned.", type: str, default: ''}
+  answers_source: {description: Where they came from (for the report)., type: str, default: ''}
+  answers_count: {description: How many there are (for the report)., type: int, default: 0}
 author: site automation
 '''
 
@@ -278,16 +283,21 @@ def evaluate_ps1(script):
     return ""
 
 
-def takes_select_vuln(*paths):
-    """Evaluate-STIG has -SelectVuln (only the rules named are checked): its script names it."""
+def takes_option(name, *paths):
+    """Evaluate-STIG has this option (SelectVuln, AFPath ...): one of its scripts names it."""
     for p in paths:
         try:
             with open(p, "rb") as f:
-                if b"SelectVuln" in f.read():
+                if name.encode("ascii") in f.read():
                     return True
         except (IOError, OSError):
             pass
     return False
+
+
+def takes_select_vuln(*paths):
+    """Evaluate-STIG has -SelectVuln (only the rules named are checked): its script names it."""
+    return takes_option("SelectVuln", *paths)
 
 
 def ps_quote(s):
@@ -542,6 +552,16 @@ class Scan(object):
             sel = (p["evaluate_select"] or {}).get(major) or ""
             args = p["evaluate_args"] or []
             args = shlex.split(args) if isinstance(args, str) else [str(a) for a in args]
+            # the answer files copied down for this run (check_stig_evaluate_answers): Evaluate-STIG is pointed at them
+            if p["answers_error"]:
+                return self.fail("Evaluate-STIG was not run: its answer files could not be read - %s (check_stig_evaluate_answers; "
+                                 "without them it would mark Open what they answer)" % p["answers_error"], **dict(ident, **extra))
+            af = p["answers_arg"].lstrip("-")
+            if p["answers"]:
+                if not takes_option(af, *[x for x in (evaluate_ps1(script), script) if x]):
+                    return self.fail("this Evaluate-STIG has no %s option for its answer files (check_stig_evaluate_answers_arg: "
+                                     "its option, as %s --help lists it)" % (af, os.path.basename(script)), **dict(ident, **extra))
+                extra["answers"] = {"count": p["answers_count"], "source": p["answers_source"]}
             vulns = list(p["vulns"] or [])
             ps1 = evaluate_ps1(script) if vulns else ""
             # the recheck: only the rules asked for, when this Evaluate-STIG has -SelectVuln (else it runs in full)
@@ -553,7 +573,7 @@ class Scan(object):
                 if pick and ps1 and pwsh:
                     # a list goes to PowerShell as one array: pwsh -Command, not -File
                     call = (["-Output", p["evaluate_output"], "-OutputPath", out_dir] + (["-SelectSTIG", str(sel)] if sel else [])
-                            + ["-SelectVuln", vulns] + args)
+                            + ["-SelectVuln", vulns] + (["-" + af, p["answers"]] if p["answers"] else []) + args)
                     return [pwsh, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps_call(ps1, call) + "; exit $LASTEXITCODE"], ps1
                 if script.lower().endswith(".ps1"):
                     cmd, dash = [pwsh, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], "-"
@@ -564,6 +584,8 @@ class Scan(object):
                     cmd += [dash + "SelectSTIG", str(sel)]
                 if pick:
                     cmd += [dash + "SelectVuln", ",".join(vulns)]
+                if p["answers"]:
+                    cmd += [dash + af, p["answers"]]
                 return cmd + args, script
 
             def run(pick):
@@ -747,6 +769,11 @@ def main():
         benchmarks=dict(type="dict", default={}),
         vulns=dict(type="list", elements="str", default=[]),
         history=dict(type="bool", default=True),
+        answers=dict(type="str", default=""),
+        answers_arg=dict(type="str", default="--AFPath"),
+        answers_error=dict(type="str", default=""),
+        answers_source=dict(type="str", default=""),
+        answers_count=dict(type="int", default=0),
     ), supports_check_mode=True)
     result = Scan(module).run()
     module.exit_json(changed=False, **result)

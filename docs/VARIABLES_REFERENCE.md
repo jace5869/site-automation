@@ -458,6 +458,16 @@ File: `roles/check_stig/defaults/main.yml`
 | `check_stig_evaluate` | (empty) | ---- Evaluate-STIG (check_stig_scanner: evaluate_stig) ------------------------------------------------------------ Evaluate-STIG runs on the host as root with --Output CKLB into a folder of its own (deleted after), and the job reads the checklist of the host's RHEL STIG (check_stig_stigman_benchmarks: RHEL_9_STIG ...… (all of it: the role file) |
 | `check_stig_evaluate_select` | `{}` | --SelectSTIG for each RHEL version, e.g. {"8": RHEL8, "9": RHEL9}: only the RHEL STIG is scanned (faster); its short name as your Evaluate-STIG lists it. {} = every STIG that applies to the host (the RHEL one is read) |
 | `check_stig_evaluate_args` | `[]` | more arguments for Evaluate-STIG, e.g. ["--ScanType", "Classified", "--AnswerKey", "SITE"] (Evaluate-STIG.ps1: -ScanType ...); --Output and --OutputPath are the job's |
+| `check_stig_evaluate_answers` | (empty) | Evaluate-STIG's answer files (docs/STIG_DRIFT.md, "Answer files from a Windows share"): copied to each host before it runs, into a folder of this run (removed after it) that Evaluate-STIG is given - nothing kept on the host. From a Windows file share, read over SMB from the AAP side (no mount; the "Windows file share"… (all of it: the role file) |
+| `check_stig_evaluate_answers_arg` | `--AFPath` | Evaluate-STIG's option for their folder (the job checks the script has it; .ps1: -AFPath) |
+| `check_stig_evaluate_answers_patterns` | `["*.xml"]` | the files taken (any case); sub-folders are not read |
+| `check_stig_evaluate_answers_user` | (empty) | the share's account (user@YOURDOMAIN.MIL); empty = the "Windows file share" credential's |
+| `check_stig_evaluate_answers_password` | (empty) | its password (vault it); empty = the credential's |
+| `check_stig_evaluate_answers_auth` | `negotiate` | negotiate (Kerberos - FIPS too: user@YOURDOMAIN.MIL, the server's full name - else NTLM), ntlm, or kerberos (a ticket already in the job) |
+| `check_stig_evaluate_answers_encrypt` | `false` | true = encrypt (SMB 3) even when the share does not require it |
+| `check_stig_evaluate_answers_port` | `445` | the share's port |
+| `check_stig_evaluate_answers_max_files` | `500` | more files than this in the folder: not read (a wrong folder) |
+| `check_stig_evaluate_answers_max_mb` | `20` | a file larger than this: not read |
 | `check_stig_evaluate_read` | (empty) | read the newest checklist (.cklb or .ckl) Evaluate-STIG already wrote under this folder on the host - its own schedule - instead of running it, e.g. /opt/STIG_Compliance ; empty = run it |
 | `check_stig_evaluate_output` | `CKLB` | Evaluate-STIG's --Output: CKLB, or CKL (the older XML checklist) if your version writes CKLB it then rejects itself |
 | `check_stig_evaluate_rejected` | `true` | a checklist Evaluate-STIG's own schema check rejects (it moves it to its Bad_CKL folder and names it - a check of its that failed can do that): true = read it from there anyway, said in the report with the checks that failed; false = the host is not scanned |

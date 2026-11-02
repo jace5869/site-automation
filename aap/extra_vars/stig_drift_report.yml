@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "STIG drift report"
 #   playbook:    playbooks/stig_drift_report.yml
-#   credentials: Machine, STIG Manager API
+#   credentials: Machine, STIG Manager API; Windows file share with check_stig_evaluate_answers
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -19,6 +19,9 @@
 check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## Each host's collection: set it per group or host in your inventory (empty: every collection the client reads)
 # check_stig_stigman_collection: RHEL Servers
+## Evaluate-STIG's answer files on a Windows share, copied to each host for the run (the "Windows file share"
+## credential; docs/STIG_DRIFT.md, "Answer files from a Windows share") - usually in all.yml
+# check_stig_evaluate_answers: '\\fileserver.yourdomain.mil\stig\AnswerFiles'
 
 # ---- check_stig ----------------------------------------------------------------------------------
 ## ---- The scan, on the host
@@ -78,6 +81,34 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## more arguments for Evaluate-STIG, e.g. ["--ScanType", "Classified", "--AnswerKey", "SITE"]
 ## (Evaluate-STIG.ps1: -ScanType ...); --Output and --OutputPath are the job's
 # check_stig_evaluate_args: []
+
+## Evaluate-STIG's option for their folder (the job checks the script has it; .ps1: -AFPath)
+# check_stig_evaluate_answers_arg: --AFPath
+
+## the files taken (any case); sub-folders are not read
+# check_stig_evaluate_answers_patterns: ["*.xml"]
+
+## the share's account (user@YOURDOMAIN.MIL); empty = the "Windows file share" credential's
+# check_stig_evaluate_answers_user: ""
+
+## its password (vault it); empty = the credential's
+# check_stig_evaluate_answers_password: ""
+
+## negotiate (Kerberos - FIPS too: user@YOURDOMAIN.MIL, the server's full name - else NTLM), ntlm,
+## or kerberos (a ticket already in the job)
+# check_stig_evaluate_answers_auth: negotiate
+
+## true = encrypt (SMB 3) even when the share does not require it
+# check_stig_evaluate_answers_encrypt: false
+
+## the share's port
+# check_stig_evaluate_answers_port: 445
+
+## more files than this in the folder: not read (a wrong folder)
+# check_stig_evaluate_answers_max_files: 500
+
+## a file larger than this: not read
+# check_stig_evaluate_answers_max_mb: 20
 
 ## read the newest checklist (.cklb or .ckl) Evaluate-STIG already wrote under this folder on the
 ## host - its own schedule - instead of running it, e.g. /opt/STIG_Compliance ; empty = run it
