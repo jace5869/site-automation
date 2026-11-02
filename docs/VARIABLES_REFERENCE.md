@@ -743,6 +743,7 @@ File: `roles/mail_relay/defaults/main.yml`
 | `mail_relay_format_blank_lines` | `true` | a blank line between the single addresses (Postfix skips it) |
 | `mail_relay_format_refresh` | `false` | true = look up again the addresses this job named before (others kept) |
 | `mail_relay_format_reload` | `false` | true = reload Postfix after (the list is the same: no need) |
+| `mail_relay_format_check_email` | `true` | a dry run (Check) emails its report too, marked DRY RUN (false = only printed) |
 | `mail_relay_approve_url` | (empty) | ---- The approval email ------------------------------------------------------------------------- Both emails (waiting for approval, and the result) go to report_email_to (set it on the workflow). A link for the approvers in the first one: your AAP's Workflow Approvals page, copied from the browser ("" = no link). |
 | `mail_relay_web` | `false` | The report website (report_web_dest): the plan, the result and the format's report are emailed only; true = also published there, as the other reports (a website that cannot be written then fails the job before the approval). |
 

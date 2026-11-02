@@ -1,6 +1,7 @@
 ---
-# On localhost, after every relay (format job): the result - printed and emailed (report_email_to): each relay, the
-# new list, and the name and service found for each address. The job fails when a relay failed or was not reached.
+# On localhost, after every relay (format job): the result - printed and emailed (report_email_to; a dry run too,
+# mail_relay_format_check_email): each relay, the new list, what vCenter gave (VMs read, addresses matched), and every
+# address looked up with what was found. The job fails when a relay failed or was not reached.
 - name: Mail relay | the result on each relay
   ansible.builtin.set_fact:
     _mr_results: >-
@@ -13,11 +14,12 @@
   ansible.builtin.set_fact:
     _mr_failed: "{{ _mr_results | selectattr('status', 'equalto', 'failed') | list }}"
     _mr_done: "{{ _mr_results | selectattr('status', 'in', ['done', 'dry run']) | list }}"
-    _mr_named_rows: >-
-      {{ _mr_names | dict2items | map(attribute='key')
-         | zip(_mr_names | dict2items | map(attribute='value.name'), _mr_names | dict2items | map(attribute='value.vm'),
-               _mr_names | dict2items | map(attribute='value.service'), _mr_names | dict2items | map(attribute='value.how'))
-         | map('list') | list }}
+    # every address looked up, found or not: [address, DNS name, VM, folder, found by]
+    _mr_lookup_rows: "{{ _mr_ask_all | mail_relay_lookup_rows(_mr_dns_all, _mr_names) }}"
+    # what vCenter gave: VMs read per vCenter, addresses matched, and what to do when it found nothing
+    _mr_vc: >-
+      {{ (_vm_read | default({})).vms | default([]) | mail_relay_vcenter((_vm_read | default({})).vcenters | default([]),
+         _mr_ask_all, _mr_names, (_vm_read | default({})).vms is defined) }}
 
 - name: Mail relay | the report to print and email
   ansible.builtin.set_fact:
@@ -28,13 +30,17 @@
            'one address per line' if _mr_done else 'one address per line already') }}
       status: "{{ 'critical' if _mr_failed else 'ok' }}"
       subtitle: >-
-        {{ _mr_done | length }} of {{ _mr_results | length }} relay(s) {{ 'would be ' if ansible_check_mode else '' }}formatted{{
+        {{ 'DRY RUN (Check mode): nothing was written - this is what a Run would write. ' if ansible_check_mode else '' }}{{
+           _mr_done | length }} of {{ _mr_results | length }} relay(s) {{ 'would be ' if ansible_check_mode else '' }}formatted{{
            (', ' ~ _mr_failed | length ~ ' failed') if _mr_failed else '' }}. The list keeps exactly its addresses;
-        {{ _mr_names | length }} of {{ _mr_ask_all | length }} address(es) without a comment named.
-        {{ 'Check mode: nothing was written.' if ansible_check_mode else '' }}
+        {{ _mr_names | length }} of {{ _mr_ask_all | length }} address(es) without a comment named, {{ _mr_vc.matched }}
+        matched a VM in vCenter, {{ _mr_vc.folder }} with its folder.
       summary:
+        - {label: Named, value: "{{ _mr_names | length }}"}
+        - {label: Looked up, value: "{{ _mr_ask_all | length }}"}
+        - {label: Matched a VM, value: "{{ _mr_vc.matched }} ({{ _mr_vc.folder }} with a folder)"}
+        - {label: VMs read in vCenter, value: "{{ _mr_vc.vms if (_vm_read | default({})).vms is defined else 'not read' }}"}
         - {label: Formatted, value: "{{ _mr_done | length }} of {{ _mr_results | length }}"}
-        - {label: Named, value: "{{ _mr_names | length }} of {{ _mr_ask_all | length }}"}
         - {label: Failed, value: "{{ _mr_failed | length }}", status: "{{ 'critical' if _mr_failed else 'ok' }}"}
       sections: >-
         {{ [{'title': 'Relay servers', 'columns': ['Relay', 'Result', 'Addresses', 'Detail'],
@@ -42,9 +48,10 @@
                        _mr_results | map(attribute='count'), _mr_results | map(attribute='detail')) | map('list') | list,
              'row_status': _mr_results | map(attribute='status') | map('regex_replace', '^failed$', 'critical')
                            | map('regex_replace', '^(done|dry run|as it is)$', '') | list}]
-           + ([{'title': 'The names found', 'columns': ['Address', 'Name', 'VM', 'Service (folder)', 'VM found by'],
-                'rows': _mr_named_rows}] if _mr_named_rows else [])
-           + ([{'title': 'Note', 'lines': [_mr_vm_note]}] if _mr_vm_note else [])
+           + ([{'title': 'vCenter', 'lines': ([_mr_vm_note] if _mr_vm_note else []) + _mr_vc.lines}]
+              if _mr_vm_note or _mr_vc.lines else [])
+           + ([{'title': 'Each address looked up', 'columns': ['Address', 'DNS name', 'VM', 'Folder', 'VM found by'],
+                'rows': _mr_lookup_rows}] if _mr_lookup_rows else [])
            + (_mr_done | map('mail_relay_format_section') | list) }}
       footer: "Job {{ _mr_fmt.job or '-' }} by {{ _mr_fmt.by }}, {{ _mr_fmt.date }}. The copy of main.cf before is next to it on each relay."
 
@@ -52,13 +59,17 @@
   ansible.builtin.debug:
     msg: "{{ (_mr_doc | report_text).splitlines() }}"
 
+# never on the website from a dry run (it would write the page)
 - name: Mail relay | the report website only with mail_relay_web
   ansible.builtin.set_fact:
-    _mr_web_dest: "{{ (report_web_dest | default('', true) | string) if mail_relay_web | bool else '' }}"
+    _mr_web_dest: "{{ (report_web_dest | default('', true) | string) if mail_relay_web | bool and not ansible_check_mode else '' }}"
 
+# a dry run emails too (mail_relay_format_check_email): it says what a Run would write
 - name: Mail relay | email it (report_email_to)
   ansible.builtin.include_role:
     name: site_email
+    apply:
+      check_mode: "{{ ansible_check_mode and not mail_relay_format_check_email | bool }}"
   vars:
     _report: "{{ _mr_doc }}"
     report_web_dest: "{{ _mr_web_dest }}"

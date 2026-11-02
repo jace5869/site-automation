@@ -96,8 +96,17 @@ one address or subnet per line, the way the example above reads:
 
 **Do it:** a job template *Mail relay - format the whitelist*, playbook `playbooks/mail_relay_format.yml`,
 credentials **Machine** and **VMware vCenter** (read-only is enough), Variables `mail_relay_group: <your group>`
-and `report_email_to`. Launch it as **Check** first: the report (and its email) shows each relay's new list and the
-names found, and nothing is written. Then **Run**. To go back: copy `main.cf.before-format-...` over `main.cf`
+and `report_email_to`. Launch it as **Check** first: nothing is written, and its report is printed and **emailed**
+too, titled *dry run* (`mail_relay_format_check_email: false` to only print it). It shows:
+
+- **vCenter:** how many VMs each vCenter gave, how many addresses matched a VM (by its IP address or its DNS name) and
+  how many of those are in a folder - and, when that is none, why that usually is (the account sees no VM; or the
+  addresses are not the VMs' own: NAT, a load balancer, servers that are not VMs).
+- **Each address looked up:** every single address with no comment yet - its DNS name, the VM and its folder, or `-`
+  where nothing was found.
+- **The list on each relay,** as a Run would write it.
+
+Then **Run**. To go back: copy `main.cf.before-format-...` over `main.cf`
 (`postfix check`, `systemctl reload postfix`).
 
 ## What it refuses

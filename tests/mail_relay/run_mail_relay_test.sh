@@ -270,12 +270,13 @@ printf '%b' "$fmt_before" > "$work/r1/main.cf"
 cp "$work/r1/main.cf" "$work/fmt_before"
 FMT='{"mail_relay_group": "relays_fmt", "mail_relay_format_dns_timeout": 2}'
 CHECK=1 run "format as Check: shows the new list, writes nothing" ok mail_relay_format.yml "$FMT" \
-    'DRY RUN: would email' 'Mail relay whitelist - dry run: one address per line' 'Check mode: nothing was written' \
+    'Subject: [AAP] Mail relay whitelist - dry run: one address per line' 'DRY RUN (Check mode): nothing was written' 'Check mode: nothing was written' \
+    'Each address looked up' '127.0.0.1   localhost' '192.0.2.10  -' \
     '# localhost  [AAP mail relay format' '# Printer  [added 2026-10-22 by jdoe]' 'No VMware vCenter credential on the template'
 check "  ...main.cf as it was, no copy made" bash -c "cmp -s '$work/fmt_before' '$work/r1/main.cf' && ! ls '$work'/r1/main.cf.before-format-* 2>/dev/null"
 run "format: one address per line, the add's comment on its address, named from DNS" ok mail_relay_format.yml "$FMT" \
     'Subject: [AAP] Mail relay whitelist - one address per line' '2 of 2 relay(s) formatted' 'a copy of the file before:' \
-    'The list on relay1' '127.0.0.1  localhost'
+    'The list on relay1' '127.0.0.1   localhost' 'matched a VM'
 check "  ...relay1 one address per line, every other line as it was" same "$work/r1/main.cf" "$fmt_after"
 check "  ...Postfix reads the same addresses" postfix_reads "$work/r1" "127.0.0.0/8 127.0.0.1 192.0.2.10 192.0.2.11"
 check "  ...the copy before is the file as it was" bash -c "cmp -s '$work/fmt_before' $work/r1/main.cf.before-format-*"

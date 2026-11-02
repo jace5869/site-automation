@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "Mail relay - format the whitelist"
 #   playbook:    playbooks/mail_relay_format.yml
-#   credentials: Machine, VMware vCenter (read-only; optional: the service)
+#   credentials: Machine and VMware vCenter (read-only), both
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -63,6 +63,9 @@ mail_relay_group: mail                   # your mail relay group
 
 ## true = reload Postfix after (the list is the same: no need)
 # mail_relay_format_reload: false
+
+## a dry run (Check) emails its report too, marked DRY RUN (false = only printed)
+# mail_relay_format_check_email: true
 
 ## The report website (report_web_dest): the plan, the result and the format's report are emailed
 ## only; true = also published there, as the other reports (a website that cannot be written then

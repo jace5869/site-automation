@@ -178,7 +178,7 @@ servicenow_assignment_group: YOUR GROUP NAME   # exactly as in ServiceNow
 servicenow_assignment_group: YOUR GROUP NAME   # exactly as in ServiceNow
 """),
     "mail_relay_approved.yml": ("Mail relay - apply the approved whitelist change", "Machine", "", ""),
-    "mail_relay_format.yml": ("Mail relay - format the whitelist", "Machine, VMware vCenter (read-only; optional: the service)", "", """\
+    "mail_relay_format.yml": ("Mail relay - format the whitelist", "Machine and VMware vCenter (read-only), both", "", """\
 mail_relay_group: mail                   # your mail relay group
 ## launch it as Check first: the report shows each relay's new list and the names found
 """),

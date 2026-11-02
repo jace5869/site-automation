@@ -658,6 +658,52 @@ def mail_relay_plan(text, req, style="main_cf", param="mynetworks", suffix="", p
     return out
 
 
+def mail_relay_lookup_rows(ips, dns=None, names=None):
+    """The table of every address looked up (format job): [address, DNS name, VM, folder, found by] - '-' where
+    nothing was found, so an address with no name shows too."""
+    dns, names = dns or {}, names or {}
+    rows = []
+    for ip in sorted(ips or [], key=_order):
+        n = names.get(ip) or {}
+        rows.append([ip, dns.get(ip) or "-", n.get("vm") or "-", n.get("service") or "", n.get("how") or ""])
+    return rows
+
+
+def mail_relay_vcenter(vms=None, vcenters=None, ips=None, names=None, read=True):
+    """What vCenter gave the format job, for its report: {'vms': VMs read (templates left out), 'matched': addresses
+    that matched a VM, 'by_ip', 'by_name', 'folder': with a folder, 'lines': one per vCenter and what to do when it
+    found nothing}. read: false = vCenter was not read (no credential, mail_relay_format_vmware: false)."""
+    vms = [v for v in (vms or []) if not v.get("template")]
+    names = names or {}
+    ips = list(ips or [])
+    found = [names[ip] for ip in ips if (names.get(ip) or {}).get("vm")]
+    out = {"vms": len(vms), "matched": len(found), "by_ip": sum(1 for n in found if n.get("how") == "IP address"),
+           "by_name": sum(1 for n in found if n.get("how") == "DNS name"),
+           "folder": sum(1 for n in found if n.get("service")), "lines": []}
+    if not read or not ips:
+        return out
+    for vc in vcenters or []:
+        name = str(vc.get("name") or "")
+        if vc.get("ok"):
+            out["lines"].append("vCenter %s: %d VM(s) read%s." % (name, sum(1 for v in vms if v.get("vcenter") == name),
+                                                                 (" (%s)" % vc["note"]) if vc.get("note") else ""))
+        else:
+            out["lines"].append("vCenter %s: not read - %s" % (name, str(vc.get("error") or "")[:200]))
+    out["lines"].append("%d of %d address(es) looked up matched a VM (%d by its IP address, %d by its DNS name); %d "
+                        "of them in a folder." % (out["matched"], len(ips), out["by_ip"], out["by_name"], out["folder"]))
+    if not vms:
+        out["lines"].append("No VM was read: the vCenter account sees none. Give it the Read-only role at the top of "
+                            "vCenter with Propagate to children ticked (docs/VMWARE.md), and check vmware_datacenter.")
+    elif not found:
+        out["lines"].append("None of the VMs has these addresses (VMware Tools reports a VM's addresses; a VM without "
+                            "it running shows none). Mail from behind NAT or a load balancer, or from servers that are "
+                            "not VMs, cannot be matched.")
+    elif out["folder"] < out["matched"]:
+        out["lines"].append("%d matched VM(s) sit at the top of their datacenter (no folder), or two VMs in different "
+                            "folders matched (no guess)." % (out["matched"] - out["folder"]))
+    return out
+
+
 def mail_relay_format_section(result):
     """A report section with a relay's new list (format job)."""
     result = result or {}
@@ -682,4 +728,5 @@ class FilterModule(object):
                 "mail_relay_edit": mail_relay_edit, "mail_relay_plan": mail_relay_plan,
                 "mail_relay_notes": mail_relay_notes, "mail_relay_singles": mail_relay_singles,
                 "mail_relay_getent": mail_relay_getent, "mail_relay_names": mail_relay_names,
-                "mail_relay_format": mail_relay_format, "mail_relay_format_section": mail_relay_format_section}
+                "mail_relay_format": mail_relay_format, "mail_relay_format_section": mail_relay_format_section,
+                "mail_relay_lookup_rows": mail_relay_lookup_rows, "mail_relay_vcenter": mail_relay_vcenter}

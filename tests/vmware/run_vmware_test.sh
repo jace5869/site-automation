@@ -2271,7 +2271,8 @@ printf 'all:\n  hosts:\n    localhost: {ansible_connection: local, ansible_pytho
     "$py" "$py" "$work/relay/main.cf" > "$work/inv-relay.yml"
 INV="$work/inv-relay.yml" run "mail relay format: names from DNS, the VM and its folder from vCenter" ok mail_relay_format.yml \
     -e '{"mail_relay_become": false, "mail_relay_check_command": "true", "mail_relay_postconf": "", "mail_relay_format_dns_timeout": 2}' \
-    -- "Finance" "1 of 1 relay(s) formatted"
+    -- "Finance" "1 of 1 relay(s) formatted" "2 of 3 address(es) looked up matched a VM (2 by its IP address, 0 by its DNS name); 1 of them in a folder." \
+       "VM(s) read." "1 matched VM(s) sit at the top of their datacenter"
 printf 'myhostname = relay1.example.mil\nmynetworks =\n    192.0.2.0/28\n\n    # localhost  [AAP mail relay format %s job 4711]\n    127.0.0.1\n\n    # DC0_H0_VM1  [AAP mail relay format %s job 4711]\n    192.0.2.20\n\n    # DC0_C0_RP0_VM1 - Finance  [AAP mail relay format %s job 4711]\n    192.0.2.40\n' \
     "$(date +%F)" "$(date +%F)" "$(date +%F)" | cmp -s - "$work/relay/main.cf" \
     && echo "ok   -   ...main.cf one address per line, each named" || { echo "FAIL -   ...main.cf:"; cat "$work/relay/main.cf"; fails=$((fails + 1)); }

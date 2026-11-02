@@ -49,6 +49,7 @@ mail_relay_format_vmware: true           # find the VM that has the address (nee
 mail_relay_format_blank_lines: true      # a blank line between the single addresses (Postfix skips it)
 mail_relay_format_refresh: false         # true = look up again the addresses this job named before (others kept)
 mail_relay_format_reload: false          # true = reload Postfix after (the list is the same: no need)
+mail_relay_format_check_email: true      # a dry run (Check) emails its report too, marked DRY RUN (false = only printed)
 
 # ---- The approval email -------------------------------------------------------------------------
 # Both emails (waiting for approval, and the result) go to report_email_to (set it on the workflow). A link for

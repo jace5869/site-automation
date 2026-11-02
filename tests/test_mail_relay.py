@@ -386,6 +386,25 @@ class Names(unittest.TestCase):
         self.assertEqual(n["198.51.100.70"], {"name": "top", "vm": "top", "service": "", "how": "IP address"})
         self.assertNotIn("198.51.100.99", n)
 
+    def test_lookup_rows_and_vcenter(self):
+        names = m.mail_relay_names(["198.51.100.30", "198.51.100.70", "198.51.100.99"],
+                                   {"198.51.100.30": "web01.example.mil"}, self.VMS)
+        rows = m.mail_relay_lookup_rows(["198.51.100.99", "198.51.100.30", "198.51.100.70"], {"198.51.100.30": "web01.example.mil"}, names)
+        self.assertEqual(rows, [["198.51.100.30", "web01.example.mil", "WEB01", "Payroll", "IP address"],
+                                ["198.51.100.70", "-", "top", "", "IP address"], ["198.51.100.99", "-", "-", "", ""]])
+        vms = [dict(v, vcenter="vc01.example.mil") for v in self.VMS]
+        vc = m.mail_relay_vcenter(vms, [{"name": "vc01.example.mil", "ok": True}, {"name": "vc02.example.mil", "ok": False,
+                                  "error": "login refused"}], ["198.51.100.30", "198.51.100.70", "198.51.100.99"], names)
+        self.assertEqual((vc["vms"], vc["matched"], vc["by_ip"], vc["folder"]), (7, 2, 2, 1))
+        self.assertIn("vCenter vc01.example.mil: 7 VM(s) read.", vc["lines"])
+        self.assertIn("vCenter vc02.example.mil: not read - login refused", vc["lines"])
+        self.assertTrue(any("sit at the top of their datacenter" in x for x in vc["lines"]))
+        none = m.mail_relay_vcenter([], [{"name": "vc01.example.mil", "ok": True}], ["198.51.100.99"], {})
+        self.assertTrue(any("sees none" in x for x in none["lines"]))
+        other = m.mail_relay_vcenter(vms, [{"name": "vc01.example.mil", "ok": True}], ["198.51.100.99"], {})
+        self.assertTrue(any("None of the VMs has these addresses" in x for x in other["lines"]))
+        self.assertEqual(m.mail_relay_vcenter([], [], ["198.51.100.99"], {}, read=False)["lines"], [])
+
     def test_getent_and_folder(self):
         self.assertEqual(m.mail_relay_getent("198.51.100.30 web01.example.mil.\n198.51.100.31 -\nnoise\n"),
                          {"198.51.100.30": "web01.example.mil"})
