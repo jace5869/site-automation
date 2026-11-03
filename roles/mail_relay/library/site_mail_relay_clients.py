@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 """On a mail relay: which client addresses sent mail through Postfix, and when they last did - from the mail logs
-(/var/log/maillog and its rotated copies, .gz too) or, without them, from the journal. Read-only. For the job that
+(/var/log/maillog, its rotated copies, .gz too, and an archive folder of them) or, without them, from the journal. Read-only. For the job that
 finds the whitelisted addresses that sent nothing for months (playbooks/mail_relay_unused.yml). Standard library only."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -12,14 +12,18 @@ short_description: Which clients sent mail through Postfix, and when they last d
 description:
   - Reads Postfix's lines in the mail log files (C(paths), rotated copies included - gzip, bzip2 or xz) or, when none is
     there (C(journal=auto)), in the journal (journalctl).
+  - A pattern that names a folder (an archive of old mail logs, /var/log/maillog_archive): every file in it and in its
+    folders whose path has "mail" in it (any case) - so an archive of other logs beside them is not read. ** in a
+    pattern goes into folders too.
   - A client B(sent mail) when smtpd accepted a message from it - its C(client=NAME[ADDRESS]) line. A connection
     without a message (C(connect from NAME[ADDRESS]) only) is counted apart: a scanner or a monitor connects and
     sends nothing.
   - Says how far back the logs go - the oldest line read - so a job can tell whether they cover the time asked.
-  - A syslog line without a year (C(Nov  3 06:15:01)) gets the year from its file's last change (a line of a later
-    month than that is of the year before).
+  - A syslog line without a year (C(Nov  3 06:15:01)) gets the year from its file: the date in its name
+    (C(maillog-20260101), as logrotate's dateext names it - an archive's copies keep it), else the file's last change
+    (a line of a later month than that is of the year before).
 options:
-  paths: {description: "The log files (shell patterns).", type: list, elements: str, default: ['/var/log/maillog*']}
+  paths: {description: "The log files or folders (shell patterns).", type: list, elements: str, default: ['/var/log/maillog*']}
   journal: {description: "auto (when no file matches), true (as well) or false.", type: str, default: auto, choices: [auto, 'true', 'false']}
   identifier: {description: "The journal's identifier of Postfix's smtpd.", type: str, default: postfix/smtpd}
   max_connect_only: {description: At most this many clients that only connected are returned., type: int, default: 500}
@@ -130,10 +134,41 @@ class Seen(object):
         return t
 
 
+def log_files(patterns):
+    """The files the patterns name, sorted; a folder one names: the files in it and in its folders with "mail" in
+    their path (a folder of old mail logs - /var/log/maillog_archive - not a folder of every log)."""
+    out = set()
+    for pat in patterns:
+        for f in glob.glob(pat, recursive=True):
+            if os.path.isfile(f):
+                out.add(f)
+            elif os.path.isdir(f):
+                for root, _, names in os.walk(f):
+                    out.update(os.path.join(root, n) for n in names
+                               if "mail" in os.path.join(root, n).lower() and os.path.isfile(os.path.join(root, n)))
+    return sorted(out)
+
+
+NAME_DATE = re.compile(r"(?<!\d)(20\d\d)-?(\d\d)-?(\d\d)(?!\d)")
+
+
+def file_date(path):
+    """When a log file was rotated, from the date in its name (maillog-20260101.gz, maillog-2026-01-01), at the end of
+    that day; else when it last changed. A copy in an archive keeps its name but often not its time."""
+    m = NAME_DATE.search(os.path.basename(path))
+    if m:
+        try:
+            return time.mktime((int(m.group(1)), int(m.group(2)), int(m.group(3)), 23, 59, 59, 0, 0, -1)) \
+                if 1 <= int(m.group(2)) <= 12 and 1 <= int(m.group(3)) <= 31 else os.path.getmtime(path)
+        except (OverflowError, ValueError):
+            pass
+    return os.path.getmtime(path)
+
+
 def read_file(path, seen):
     """Every line of one log file; how far it goes: the time of its first and last line."""
     out = {"source": path, "lines": 0, "oldest": "", "newest": "", "error": ""}
-    ref = os.path.getmtime(path)
+    ref = file_date(path)
     first, last_line = None, ""
     try:
         with open(path, "rb") as raw:
@@ -198,7 +233,7 @@ def main():
     ), supports_check_mode=True)
     p = module.params
     seen = Seen()
-    files = sorted(set(f for pat in p["paths"] for f in glob.glob(pat) if os.path.isfile(f)))
+    files = log_files(p["paths"])
     sources = [read_file(f, seen) for f in files]
     if p["journal"] == "true" or (p["journal"] == "auto" and not files):
         sources.append(read_journal(module, seen, p["identifier"]))

@@ -150,6 +150,11 @@ net_perf_targets: [{name: Gateway, host: GATEWAY-ADDRESS}, {name: DC01, host: DC
 """),
     "ontap_health_report.yml": ("NetApp ONTAP health report", "NetApp ONTAP", "", ""),
     "ontap_hardware_report.yml": ("NetApp ONTAP hardware inventory", "NetApp ONTAP", "", ""),
+    "ucs_inventory_report.yml": ("Cisco UCS inventory", "Cisco UCS Manager", "", """\
+## Each domain's UCS Manager address (the fabric interconnects' cluster address); put it in all.yml if you like
+ucs_domains: [ucs01.yoursite.mil]
+# ucs_validate_certs: false                    # UCS Manager's own self-signed certificate (or ucs_ca_path: its CA file)
+"""),
     "patch_hosts.yml": ("Patch hosts", "Machine", "", ""),
     "poam_status.yml": ("POA&M status", "STIG Manager API (optional)", "", ""),
     "report_web_copy.yml": ("Report website - copy", "Machine (Windows), Red Hat Ansible Automation Platform", "", """\

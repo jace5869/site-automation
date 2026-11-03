@@ -21,6 +21,7 @@ into **Injector configuration**. Then create one credential of each type per env
 | `smtp_relay.yml` | SMTP relay | any job that emails a report (`report_email_to`; the VMware jobs, `docs/VMWARE.md`) - only when the mail relay needs a login |
 | `report_web.yml` | Report website | any report job with `report_web_host` (the pages written on a Windows server over WinRM: its user name and password; without it, the template's Machine credential) or `report_web_dest: https://...` (an upload with HTTP PUT that needs a login: a token or a user name and password) (`docs/WEB_REPORTS.md`) |
 | `netapp_ontap.yml` | NetApp ONTAP | `ontap_health_report.yml` - a read-only account on the clusters (`docs/NETAPP.md`) |
+| `cisco_ucs_manager.yml` | Cisco UCS Manager | `ucs_inventory_report.yml` - a read-only UCS Manager account on the domains (`docs/UCS.md`) |
 | `cert_inventory_sql.yml` | SQL Server (certificate inventory) | the certificate reports with `cert_inventory_sql: true` - a login that adds and updates the inventory table (`docs/CERT_INVENTORY.md`) - optional |
 | `vcenter_sso_test.yml` | vCenter SSO test account | `vm_health_report.yml`, `vm_outage_watch.yml`: a domain account that logs in to vCenter each run (single sign-on works) - optional |
 | `horizon_api.yml` | Horizon API | every `horizon_*.yml` job - an AD account with a Horizon administrator role (`docs/HORIZON.md`) |

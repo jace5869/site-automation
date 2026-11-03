@@ -54,7 +54,7 @@ mail_relay_format_check_email: true      # a dry run (Check) emails its report t
 
 # ---- The unused addresses (playbooks/mail_relay_unused.yml: workflow "Mail relay - remove unused addresses") ------
 mail_relay_unused_days: 183              # an address that sent no mail through any relay in this many days is unused (183: six months)
-mail_relay_unused_logs: ["/var/log/maillog*"]  # Postfix's log files on each relay (patterns; rotated and .gz copies too)
+mail_relay_unused_logs: ["/var/log/maillog*"]  # Postfix's log files on each relay (patterns; rotated and .gz copies too; a folder - /var/log/maillog_archive: every file in it and its folders)
 mail_relay_unused_journal: auto          # auto = read the journal when no log file is there; true = as well; false = never
 mail_relay_unused_keep: []               # addresses or subnets never proposed, e.g. [198.51.100.7, 203.0.113.0/28] (127.0.0.0/8 never is)
 mail_relay_unused_max: 50                # the most addresses one plan removes (the next run takes the rest)

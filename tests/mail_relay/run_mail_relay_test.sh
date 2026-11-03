@@ -368,8 +368,10 @@ ts() { LC_ALL=C date -d "-$1 days" '+%b %e %H:%M:%S'; }
 { echo "$(ts 200) relay1 postfix/smtpd[100]: connect from scanner.example.mil[203.0.113.50]"
   echo "$(ts 190) relay1 postfix/smtpd[101]: connect from app11.example.mil[192.0.2.11]"
   echo "$(ts 190) relay1 postfix/smtpd[101]: 4AbCd1: client=app11.example.mil[192.0.2.11]"
-  echo "$(ts 150) relay1 postfix/qmgr[90]: 4AbCd1: removed"; } | gzip > "$work/log1/maillog-old.gz"
-touch -d "-150 days" "$work/log1/maillog-old.gz"
+  echo "$(ts 150) relay1 postfix/qmgr[90]: 4AbCd1: removed"; } | gzip > "$work/log1/old.gz"
+mkdir -p "$work/log1/maillog_archive/2026"                # an archive folder: its files are read too
+mv "$work/log1/old.gz" "$work/log1/maillog_archive/2026/old.gz"
+touch -d "-150 days" "$work/log1/maillog_archive/2026/old.gz"
 { echo "$(ts 30) relay1 postfix/smtpd[102]: connect from app10.example.mil[192.0.2.10]"
   echo "$(ts 10) relay1 postfix/smtpd[102]: 4AbCd2: client=app10.example.mil[192.0.2.10]"
   echo "$(ts 5) relay1 postfix/smtpd[103]: connect from app11.example.mil[192.0.2.11]"

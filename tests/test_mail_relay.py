@@ -506,12 +506,45 @@ class LogLines(unittest.TestCase):
         self.assertEqual(clients.iso(seen.clients["192.0.2.10"]["last_sent"]), "2026-10-30T09:00:00Z")
         self.assertEqual((seen.clients["192.0.2.11"]["sent"], seen.clients["192.0.2.11"]["connects"]), (0, 1))
 
+    def test_log_files_and_archive_folders(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            for f in ("maillog", "maillog-20261101.gz", "_archive/maillog-2025.xz", "_archive/messages-2025.gz", "secure"):
+                os.makedirs(os.path.dirname(os.path.join(d, "v", f)), exist_ok=True)
+                open(os.path.join(d, "v", f), "w").close()
+            got = lambda pats: [os.path.relpath(x, os.path.join(d, "v")) for x in clients.log_files([os.path.join(d, "v", p) for p in pats])]
+            self.assertEqual(got(["maillog*"]), ["maillog", "maillog-20261101.gz"])
+            self.assertEqual(got(["_archive"]), ["_archive/maillog-2025.xz"])       # not the archive's other logs
+            self.assertEqual(got(["_archive/*"]), ["_archive/maillog-2025.xz", "_archive/messages-2025.gz"])   # named: read
+        with tempfile.TemporaryDirectory() as d:                                    # /var/log/maillog_archive
+            for f in ("maillog", "maillog-20261101.gz", "maillog_archive/2025/old.gz", "maillog_archive/x.log"):
+                os.makedirs(os.path.dirname(os.path.join(d, f)), exist_ok=True)
+                open(os.path.join(d, f), "w").close()
+            files = [os.path.relpath(x, d) for x in clients.log_files([os.path.join(d, "maillog*")])]
+            self.assertEqual(files, ["maillog", "maillog-20261101.gz", "maillog_archive/2025/old.gz", "maillog_archive/x.log"])
+
     def test_syslog_year_from_the_file(self):
         import time
         ref = time.mktime((2026, 1, 15, 12, 0, 0, 0, 0, -1))           # a file last changed mid-January 2026
         self.assertEqual(time.localtime(clients.stamp("Dec 30 23:59:59 relay1 postfix/smtpd[1]: x", ref)).tm_year, 2025)
         self.assertEqual(time.localtime(clients.stamp("Jan  2 08:00:00 relay1 postfix/smtpd[1]: x", ref)).tm_year, 2026)
         self.assertIsNone(clients.stamp("garbage", ref))
+
+    def test_year_from_the_file_name(self):
+        import tempfile
+        import time
+        with tempfile.TemporaryDirectory() as d:
+            f = os.path.join(d, "maillog-20260105.gz")
+            open(f, "w").close()                                          # copied into an archive now: a new mtime
+            self.assertEqual(time.localtime(clients.file_date(f))[:3], (2026, 1, 5))
+            line = "Dec 30 23:59:59 relay1 postfix/smtpd[1]: x"
+            self.assertEqual(time.localtime(clients.stamp(line, clients.file_date(f))).tm_year, 2025)
+            g = os.path.join(d, "maillog.3")
+            open(g, "w").close()
+            self.assertAlmostEqual(clients.file_date(g), os.path.getmtime(g))
+            h = os.path.join(d, "maillog-20261399")                       # not a date: the file's time
+            open(h, "w").close()
+            self.assertAlmostEqual(clients.file_date(h), os.path.getmtime(h))
 
 
 if __name__ == "__main__":

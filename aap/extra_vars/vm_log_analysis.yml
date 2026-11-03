@@ -293,7 +293,7 @@
 #   - {tab: Horizon, match: ["Horizon*"]}
 #   - {tab: Tenable.sc, match: ["Tenable*"]}
 #   - {tab: Windows, match: ["Windows*", "Active Directory*", "AD *", "ACT for Windows*"]}
-#   - {tab: Network and storage, match: ["Network*", "NetApp*", "ONTAP*"]}
+#   - {tab: Network and storage, match: ["Network*", "NetApp*", "ONTAP*", "Cisco UCS*", "UCS*"]}
 #   - {tab: Linux, match: ["Linux*", "Health check*", "Troubleshoot*", "Patch*", "Database*", "Service watch*", "POA&M*", "STIG*",
 #                          "Log analysis*", "fapolicyd*", "Apply approved*", "Mail relay*"]}
 #   - {tab: ServiceNow and AAP, match: ["ServiceNow*", "AAP *", "Report website*"]}

@@ -45,7 +45,8 @@ mail_relay_group: mail                   # your mail relay group
 ## (183: six months)
 # mail_relay_unused_days: 183
 
-## Postfix's log files on each relay (patterns; rotated and .gz copies too)
+## Postfix's log files on each relay (patterns; rotated and .gz copies too; a folder -
+## /var/log/maillog_archive: every file in it and its folders)
 # mail_relay_unused_logs: ["/var/log/maillog*"]
 
 ## auto = read the journal when no log file is there; true = as well; false = never
@@ -221,7 +222,7 @@ mail_relay_group: mail                   # your mail relay group
 #   - {tab: Horizon, match: ["Horizon*"]}
 #   - {tab: Tenable.sc, match: ["Tenable*"]}
 #   - {tab: Windows, match: ["Windows*", "Active Directory*", "AD *", "ACT for Windows*"]}
-#   - {tab: Network and storage, match: ["Network*", "NetApp*", "ONTAP*"]}
+#   - {tab: Network and storage, match: ["Network*", "NetApp*", "ONTAP*", "Cisco UCS*", "UCS*"]}
 #   - {tab: Linux, match: ["Linux*", "Health check*", "Troubleshoot*", "Patch*", "Database*", "Service watch*", "POA&M*", "STIG*",
 #                          "Log analysis*", "fapolicyd*", "Apply approved*", "Mail relay*"]}
 #   - {tab: ServiceNow and AAP, match: ["ServiceNow*", "AAP *", "Report website*"]}

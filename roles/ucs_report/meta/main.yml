@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: ucs_report
+  description: "Cisco UCS inventory through the UCS Manager XML API (read-only): fabric interconnects, chassis, IO modules, servers, firmware, faults."
+  license: MIT
+  min_ansible_version: "2.16"
+dependencies: []

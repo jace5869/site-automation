@@ -23,6 +23,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Certificate renewal - CSRs | `playbooks/cert_renew_csr.yml` | [cert_renew_csr.yml](cert_renew_csr.yml) |
 | Certificate report | `playbooks/cert_report.yml` | [cert_report.yml](cert_report.yml) |
 | Certificate restore | `playbooks/cert_restore.yml` | [cert_restore.yml](cert_restore.yml) |
+| Cisco UCS inventory | `playbooks/ucs_inventory_report.yml` | [ucs_inventory_report.yml](ucs_inventory_report.yml) |
 | Database health - MariaDB / MySQL | `playbooks/database_health.yml` | [database_health.yml](database_health.yml) |
 | ESXi - network check | `playbooks/esxi_network_check.yml` | [esxi_network_check.yml](esxi_network_check.yml) |
 | ESXi - security settings | `playbooks/esxi_security.yml` | [esxi_security.yml](esxi_security.yml) |

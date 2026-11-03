@@ -1,0 +1,19 @@
+# Credential type: "Cisco UCS Manager"
+# A read-only UCS Manager account for the Cisco UCS inventory (playbooks/ucs_inventory_report.yml). The same account
+# (user name and password) must be able to log in to every domain in ucs_domains, with UCS Manager's read-only role
+# (docs/UCS.md). An account of a remote authentication domain (LDAP, TACACS+, RADIUS) that is not the default one:
+# its user name as ucs-DOMAIN\user.
+inputs:
+  fields:
+    - id: username
+      type: string
+      label: UCS Manager user name
+    - id: password
+      type: string
+      label: UCS Manager password
+      secret: true
+  required: [username, password]
+injectors:
+  env:
+    UCSM_USERNAME: "{{ username }}"
+    UCSM_PASSWORD: "{{ password }}"

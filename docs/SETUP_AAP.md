@@ -624,6 +624,11 @@ schedule (every 15 minutes). [WEB_REPORTS.md](WEB_REPORTS.md), "The copy job".
 It reads the storage clusters' REST API, not your hosts: a read-only ONTAP account, a NetApp
 ONTAP credential, one template. Follow [NETAPP.md](NETAPP.md).
 
+### Cisco UCS inventory
+
+It reads UCS Manager's XML API, not your hosts: a read-only UCS Manager account, a Cisco UCS Manager
+credential, one template. Follow [UCS.md](UCS.md).
+
 ### Active Directory - account lockout
 
 For the service desk: is an account locked out, and which computer is locking it out (the DCs'

@@ -1,0 +1,22 @@
+---
+# What the inventory reads from each UCS Manager domain: XML API class IDs and the attributes used, checked against
+# Cisco's UCS Manager object model (the class definitions in Cisco's ucsmsdk 0.9.27). Each class is read with
+# configResolveClass (inHierarchical false); a class this UCS Manager does not know is listed in Not all read and the
+# others are still read. max: the most objects kept of a class (the rest: "only the first N").
+_ucs_classes:
+  - {class: topSystem}                   # the domain: name, address (the cluster address), mode, systemUpTime
+  - {class: mgmtEntity}                  # each fabric interconnect's UCS Manager: leadership (primary, subordinate), state, haReady
+  - {class: networkElement}              # the fabric interconnects: id (A, B), model, serial, vendor, oobIfIp, totalMemory, operability
+  - {class: firmwareRunning, max: 50000} # every running firmware: dn (whose), type, deployment (system, kernel, boot-loader), version, packageVersion
+  - {class: equipmentChassis}            # chassis: id, model, serial, operability, power, thermal
+  - {class: equipmentIOCard}             # IO modules (IOM / FEX cards): chassisId, id, side, switchId, model, serial, operability
+  - {class: equipmentFex}                # fabric extenders (rack servers): id, switchId, model, serial, operability
+  - {class: computeBlade}                # blades: chassisId, slotId, model, serial, numOfCpus, numOfCores, numOfThreads, totalMemory, assignedToDn, operability
+  - {class: computeRackUnit}             # rack servers: id, the same
+  - {class: adaptorUnit, max: 50000}     # adapters (VIC, mLOM): dn, id, model, serial, pciSlot, operability
+  - {class: processorUnit, max: 50000}   # CPUs: dn, model, cores, threads, speed, socketDesignation
+  - {class: memoryUnit, max: 100000}     # DIMMs: dn, capacity (MB), presence, model, serial, location, clock
+  - {class: storageController, max: 50000}  # RAID / storage controllers: dn, model, serial, type, vendor, operability
+  - {class: equipmentPsu, max: 50000}    # power supplies (chassis, FIs, rack servers): dn, model, serial, operability, psuFirmwareVersion
+  - {class: lsServer, max: 50000}        # service profiles: dn, name, type (instance / template), pnDn (the server), assocState, operState
+  - {class: faultInst, max: 50000}       # UCS Manager's faults: dn, code, severity, descr, created, ack

@@ -1,0 +1,20 @@
+---
+# Cisco UCS inventory (playbooks/ucs_inventory_report.yml). Read-only: XML API queries to each UCS Manager domain over
+# HTTPS (port 443), with the account of a "Cisco UCS Manager" credential - its read-only role is enough (docs/UCS.md).
+
+# Each domain's UCS Manager address: the fabric interconnects' cluster (virtual) address, by name or IP, e.g.
+# [ucs01.yoursite.mil, ucs02.yoursite.mil]. The credential's account must be able to log in to each of them.
+ucs_domains: []
+# Check UCS Manager's HTTPS certificate. Its own certificate is self-signed unless a key ring with your CA's
+# certificate was made: then put that CA in ucs_ca_path (a file in the project, e.g. "{{ playbook_dir }}/files/ca/ucs-ca.pem"),
+# or set false.
+ucs_validate_certs: true
+ucs_ca_path: ""                          # the CA file (PEM) UCS Manager's certificate is checked with; empty = the execution environment's own trust
+ucs_timeout: 60                          # seconds for one request (no answer: asked once more)
+ucs_tls_legacy: false                    # true = connect to an older UCS Manager whose TLS the execution environment refuses (UNSAFE_LEGACY_RENEGOTIATION_DISABLED, KEY_TOO_SMALL, SHA-1)
+
+ucs_inventory_max_rows: 2000             # servers, chassis and faults listed in the email and the page at most (the workbook always has all)
+ucs_inventory_xlsx: true                 # attach every fabric interconnect, chassis, IO module, server, adapter, CPU, DIMM, storage controller, power supply, firmware, service profile and fault as an Excel workbook (.xlsx) to the email
+ucs_inventory_fault_severities: [critical, major]   # UCS Manager's faults listed in the report (all of them are in the workbook); [] = no fault table
+ucs_inventory_fail: false                # true = mark the job FAILED when a domain could not be read (the report still goes out), for workflows
+ucs_inventory_raw: false                 # true = also print the first objects of each class as UCS Manager gave them (to see what a field is called on your UCS Manager)

@@ -129,8 +129,13 @@ through any relay in the last six months, and removes them after an approval:
 ```
 
 1. **The plan** (`playbooks/mail_relay_unused.yml`, read-only) reads on each relay its list and its **mail logs** -
-   `/var/log/maillog` and every rotated copy next to it (`maillog-20260501`, `maillog.1`, gzipped or not;
-   `mail_relay_unused_logs`), or the journal when there is no log file. An address **sent mail** when a relay
+   `/var/log/maillog` and every rotated copy next to it (`maillog-20260501`, `maillog.1`, gzipped or not), and an
+   archive folder of old mail logs (`/var/log/maillog_archive`, and any folder the patterns name: every file in it and
+   its folders with "mail" in its path, gzip, bzip2 or xz too; `mail_relay_unused_logs`), or the journal when there is
+   no log file. The email's *How far back the logs go* table says how many files were read on each relay. A log line
+   without a year gets it from its file's name (`maillog-20260101.gz`), else from when the file last changed. Months of
+   logs on a busy relay can be gigabytes: reading them takes minutes per relay (line by line, little memory). A `.zip`
+   archive is not read - unzip it into the folder. An address **sent mail** when a relay
    accepted a message from it: Postfix's `smtpd[...]: 4AbCd1: client=name[198.51.100.7]` line. A connection without a
    message (`connect from ...` only - a monitor, a scanner, a load balancer's health check) does **not** count; the
    table shows those connections apart. All relays' logs are read together: an address that sends through one relay
@@ -171,7 +176,7 @@ the same report (`DRY RUN: would email`) - the plan itself changes nothing eithe
 | Setting | Default | |
 |---|---|---|
 | `mail_relay_unused_days` | `183` | days without mail that make an address unused (six months) |
-| `mail_relay_unused_logs` | `["/var/log/maillog*"]` | the log files on each relay (patterns; a relay's own `host_vars` may differ) |
+| `mail_relay_unused_logs` | `["/var/log/maillog*"]` | the log files on each relay (patterns; a folder - `/var/log/maillog_archive` - its mail log files, its folders too - an archive elsewhere: add its folder, e.g. `["/var/log/maillog*", "/data/mail-archive"]`; a relay's own `host_vars` may differ) |
 | `mail_relay_unused_journal` | `auto` | `auto`: the journal when no log file is there; `true`: as well; `false`: never |
 | `mail_relay_unused_keep` | `[]` | addresses or subnets never proposed, e.g. a backup server that mails twice a year |
 | `mail_relay_unused_max` | `50` | the most addresses one plan removes |

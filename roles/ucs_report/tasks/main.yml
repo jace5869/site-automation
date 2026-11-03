@@ -1,0 +1,78 @@
+---
+# CISCO UCS INVENTORY (playbooks/ucs_inventory_report.yml). Read-only: the collector logs in to each UCS Manager domain,
+# sends XML API queries only (configResolveClass) and logs out (roles/ucs_report/library/site_ucs_collect.py; what it
+# reads: _ucs_classes in roles/ucs_report/vars/main.yml). Every domain's fabric interconnects, chassis with their IO
+# modules, blades and rack servers (model, serial, service profile, CPUs, memory, BIOS, CIMC, adapters, storage
+# controllers), power supplies, every running firmware and UCS Manager's faults. The report
+# (plugins/filter/ucs_inventory_filters.py) is printed, emailed (report_email_to) with all of it as an Excel workbook
+# (ucs_inventory_xlsx), on the report website, and published as artifacts (ucs_inventory). Amber when a component is
+# not operable, HA is not ready or there is a critical fault; red when a domain could not be read.
+- name: UCS | read the domains (XML API queries only)
+  site_ucs_collect:
+    domains: "{{ (ucs_domains | replace(',', ' ')).split() if ucs_domains is string else ucs_domains }}"
+    classes: "{{ _ucs_classes }}"
+    validate_certs: "{{ ucs_validate_certs | bool }}"
+    ca_path: "{{ ucs_ca_path | default(omit, true) }}"
+    timeout: "{{ ucs_timeout | int }}"
+    tls_legacy: "{{ ucs_tls_legacy | bool }}"
+  register: _ucs_read
+  check_mode: false                     # it only reads: a dry run (Check) shows the real report
+
+- name: UCS | the report
+  ansible.builtin.set_fact:
+    _ucs_doc: >-
+      {{ _ucs_read | ucs_inventory_doc({'max_rows': ucs_inventory_max_rows | int,
+                                        'severities': ucs_inventory_fault_severities}) }}
+    _ucs_xlsx: "{{ _ucs_read | ucs_inventory_xlsx if ucs_inventory_xlsx | bool else [] }}"
+
+- name: UCS | the server models and domains (one line each) and what could not be read
+  ansible.builtin.debug:
+    msg: "{{ _ucs_read | ucs_inventory_lines }}"
+
+- name: UCS | the first objects of each class as UCS Manager gave them (ucs_inventory_raw)
+  ansible.builtin.debug:
+    msg: "{{ _ucs_read | ucs_inventory_raw }}"
+  when: ucs_inventory_raw | bool
+
+- name: UCS | the report as job artifacts (ucs_report)
+  ansible.builtin.set_stats:
+    data:
+      ucs_report:
+        subject: "{{ _ucs_doc.title }}"
+        lines: "{{ (_ucs_doc | report_text).splitlines() }}"
+
+- name: UCS | {{ _ucs_doc.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_ucs_doc | report_text).splitlines() }}"
+
+- name: UCS | email it, publish it (report_email_to, report_web_dest)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _ucs_doc | combine({'footer': 'Read-only: XML API queries to UCS Manager (configResolveClass), the session logged out after.'}) }}"
+    _report_xlsx: "{{ _ucs_xlsx }}"
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+
+- name: UCS | no email
+  ansible.builtin.debug:
+    msg: "No email: report_email_to is not set (docs/EMAIL_REPORTS.md)."
+  when: report_email_to | default([]) | length == 0 and report_email_also | default([]) | length == 0
+
+- name: UCS | the models and counts as job artifacts (ucs_inventory)
+  ansible.builtin.set_stats:
+    data:
+      ucs_inventory: >-
+        {{ {'models': _ucs_read | ucs_inventory_models,
+            'counts': _ucs_doc.summary | items2dict(key_name='label', value_name='value'),
+            'domains': _ucs_read.domains | map(attribute='address') | list,
+            'not_read': _ucs_read.domains | rejectattr('reachable') | map(attribute='address') | list,
+            'read_at': _ucs_read.read_at} }}
+
+- name: UCS | every domain was read
+  ansible.builtin.assert:
+    that: _ucs_read.domains | rejectattr('reachable') | list | length == 0
+    fail_msg: >-
+      Not read: {{ _ucs_read.domains | rejectattr('reachable') | map(attribute='address') | join(', ') }} (the report
+      above says why, and covers the others). ucs_inventory_fail: false (the default) keeps the job green.
+    quiet: true
+  when: ucs_inventory_fail | bool

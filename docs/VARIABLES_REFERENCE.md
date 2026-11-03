@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -748,7 +748,7 @@ File: `roles/mail_relay/defaults/main.yml`
 | `mail_relay_format_reload` | `false` | true = reload Postfix after (the list is the same: no need) |
 | `mail_relay_format_check_email` | `true` | a dry run (Check) emails its report too, marked DRY RUN (false = only printed) |
 | `mail_relay_unused_days` | `183` | ---- The unused addresses (playbooks/mail_relay_unused.yml: workflow "Mail relay - remove unused addresses") ------ an address that sent no mail through any relay in this many days is unused (183: six months) |
-| `mail_relay_unused_logs` | `["/var/log/maillog*"]` | Postfix's log files on each relay (patterns; rotated and .gz copies too) |
+| `mail_relay_unused_logs` | `["/var/log/maillog*"]` | Postfix's log files on each relay (patterns; rotated and .gz copies too; a folder - /var/log/maillog_archive: every file in it and its folders) |
 | `mail_relay_unused_journal` | `auto` | auto = read the journal when no log file is there; true = as well; false = never |
 | `mail_relay_unused_keep` | `[]` | addresses or subnets never proposed, e.g. [198.51.100.7, 203.0.113.0/28] (127.0.0.0/8 never is) |
 | `mail_relay_unused_max` | `50` | the most addresses one plan removes (the next run takes the rest) |
@@ -1261,6 +1261,25 @@ File: `roles/troubleshoot/defaults/main.yml`
 | `ts_since` | `"-2h"` | how far back logs are read (journalctl --since) |
 | `ts_output_lines` | `60` | keep the last this-many lines of each command |
 | `ts_areas` | `overview: checks: [disk, mounts, services, performance, time, logging] commands: - {why:…` | What each area runs. `why` is printed above the command's output. Commands must be read-only. |
+
+## ucs_report
+
+File: `roles/ucs_report/defaults/main.yml`
+
+> Cisco UCS inventory (playbooks/ucs_inventory_report.yml). Read-only: XML API queries to each UCS Manager domain over HTTPS (port 443), with the account of a "Cisco UCS Manager" credential - its read-only role is enough (docs/UCS.md).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ucs_domains` | `[]` | Each domain's UCS Manager address: the fabric interconnects' cluster (virtual) address, by name or IP, e.g. [ucs01.yoursite.mil, ucs02.yoursite.mil]. The credential's account must be able to log in to each of them. |
+| `ucs_validate_certs` | `true` | Check UCS Manager's HTTPS certificate. Its own certificate is self-signed unless a key ring with your CA's certificate was made: then put that CA in ucs_ca_path (a file in the project, e.g. "{{ playbook_dir }}/files/ca/ucs-ca.pem"), or set false. |
+| `ucs_ca_path` | (empty) | the CA file (PEM) UCS Manager's certificate is checked with; empty = the execution environment's own trust |
+| `ucs_timeout` | `60` | seconds for one request (no answer: asked once more) |
+| `ucs_tls_legacy` | `false` | true = connect to an older UCS Manager whose TLS the execution environment refuses (UNSAFE_LEGACY_RENEGOTIATION_DISABLED, KEY_TOO_SMALL, SHA-1) |
+| `ucs_inventory_max_rows` | `2000` | servers, chassis and faults listed in the email and the page at most (the workbook always has all) |
+| `ucs_inventory_xlsx` | `true` | attach every fabric interconnect, chassis, IO module, server, adapter, CPU, DIMM, storage controller, power supply, firmware, service profile and fault as an Excel workbook (.xlsx) to the email |
+| `ucs_inventory_fault_severities` | `[critical, major]` | UCS Manager's faults listed in the report (all of them are in the workbook); [] = no fault table |
+| `ucs_inventory_fail` | `false` | true = mark the job FAILED when a domain could not be read (the report still goes out), for workflows |
+| `ucs_inventory_raw` | `false` | true = also print the first objects of each class as UCS Manager gave them (to see what a field is called on your UCS Manager) |
 
 ## vmware_ask_stack
 
