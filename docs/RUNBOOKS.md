@@ -567,6 +567,12 @@ made. It reads (a Check run too), proposes one line per change, and makes only t
      - that program and that file for a file bind-mounted from the host, container storage's folder (`allow perm=any all :
      dir=/var/lib/containers/storage/overlay/`) for a file inside an image, whose path in the audit log names nothing on
      the host. That rule lets anything in container storage run: prefer rootful containers (quadlet units) on a STIG host.
+   - **A podman host, before anything is blocked:** a host whose podman storage has images - root's
+     (`/var/lib/containers/storage`, or `graphroot` in `/etc/containers/storage.conf`), or a user's own
+     (`~/.local/share/containers/storage`, or `rootless_storage_path`) - gets that same `allow rule: allow perm=any all :
+     dir=<storage>/overlay/` as a line to approve, so the containers keep running when fapolicyd starts enforcing. Not
+     offered when a rules file already has it. A user's own storage says so in the line: anything they put there may then
+     run. `podman` in `fapolicyd_rules_offer` (on by default; take it out to wait for a block, as before).
    - What a person had to do by hand before 0.52.0 is now a line to approve too:
      - **`trust update: <file> size <n> sha256 <hash>`**: a trusted file that changed since. Its entry in the trust
        file that holds it (the vendor's too) gets the file's size and hash as they are now.

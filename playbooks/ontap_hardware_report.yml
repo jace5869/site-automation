@@ -1,0 +1,17 @@
+---
+# NETAPP ONTAP HARDWARE INVENTORY. Read-only (GET requests to each cluster's REST API): every controller's model, serial
+# number, system ID, ONTAP version, CPUs, memory, firmware, service processor / BMC firmware, NVRAM battery and Flash
+# Cache; every shelf's model, serial number and module firmware; every disk's vendor, model, firmware and size; the
+# Ethernet and FC ports - the models in use with their ONTAP and firmware versions. Emailed (report_email_to) with all of
+# it as an Excel workbook (ontap_hardware_xlsx), and on the report website (report_web_dest).
+# Runs on the AAP side: attach a "NetApp ONTAP" credential, set ontap_clusters; no Limit. docs/NETAPP.md
+#   ansible-playbook playbooks/ontap_hardware_report.yml -e '{"ontap_clusters": ["cluster1.example.mil"]}'
+- name: NetApp ONTAP hardware inventory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: NetApp ONTAP hardware inventory
+      ansible.builtin.include_role:
+        name: ontap_report
+        tasks_from: hardware.yml

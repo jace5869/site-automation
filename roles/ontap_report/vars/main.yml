@@ -119,3 +119,42 @@ _ontap_queries:
   - key: ntp
     path: /api/cluster/ntp/servers
     fields: [server, version, authentication_enabled]
+
+# What the hardware inventory reads (playbooks/ontap_hardware_report.yml): the controllers, shelves, disks and ports,
+# with their models, serial numbers and firmware versions. Fields checked against the same reference (ONTAP 9.10 to
+# 9.16); an older ONTAP that refuses one: asked again as above.
+_ontap_hw_queries:
+  - key: cluster
+    path: /api/cluster
+    fields: [name, version.full, uuid, location, contact]
+    fallback_fields: [name, version.full]
+  - key: nodes
+    path: /api/cluster/nodes
+    fields: [name, state, model, serial_number, system_id, vendor_serial_number, version.full, location, uptime,
+             ha.partners.name, controller.board, controller.cpu.count, controller.cpu.processor,
+             controller.cpu.firmware_release, controller.memory_size, controller.flash_cache, service_processor.type,
+             service_processor.firmware_version, service_processor.state, service_processor.ipv4_interface.address,
+             nvram.battery_state]
+    fallback_fields: [name, state, model, serial_number, system_id, version.full, uptime]
+  - key: shelves
+    path: /api/storage/shelves
+    fields: [name, id, uid, model, serial_number, module_type, connection_type, internal, state, disk_count, modules]
+    fallback_fields: [name, id, uid, model, serial_number, state]
+  - key: disks
+    path: /api/storage/disks
+    fields: [name, vendor, model, serial_number, firmware_version, type, class, container_type, state, node.name,
+             home_node.name, shelf.uid, bay, physical_size, usable_size, rpm]
+    fallback_fields: [name, vendor, model, serial_number, firmware_version, type, class, container_type, state, node.name,
+                      home_node.name, shelf.uid, bay, physical_size]      # no usable_size, rpm
+    max: 50000
+  - key: ports
+    path: /api/network/ethernet/ports
+    fields: [name, node.name, type, speed, state, enabled, mac_address, broadcast_domain.name]
+    fallback_fields: [name, node.name, type, speed, state]
+    max: 20000
+  - key: fc_ports
+    path: /api/network/fc/ports
+    fields: [name, node.name, wwpn, physical_protocol, speed.maximum, speed.configured, state, enabled,
+             transceiver.form_factor, transceiver.manufacturer, transceiver.part_number]
+    fallback_fields: [name, node.name, wwpn, state, speed.maximum]
+    max: 20000

@@ -1,0 +1,65 @@
+---
+# On each relay (unused job, read-only): the words of its list, and which clients sent mail through it and when -
+# from the mail logs (mail_relay_unused_logs, rotated and .gz copies too; else the journal), with how far back they
+# go (site_mail_relay_clients). Changes nothing, in Check mode too. Sets _mr_unused_read: {host, words, logs, problem}.
+- name: Mail relay | read the list and the mail logs on {{ inventory_hostname }}
+  block:
+    - name: Mail relay | the file is there
+      ansible.builtin.stat:
+        path: "{{ mail_relay_file }}"
+      register: _mr_stat
+
+    - name: Mail relay | {{ mail_relay_file }} exists
+      ansible.builtin.assert:
+        that: _mr_stat.stat.exists and _mr_stat.stat.isreg
+        fail_msg: "{{ mail_relay_file }} is not on {{ inventory_hostname }}: set mail_relay_file to the file with the list."
+        quiet: true
+
+    - name: Mail relay | read the list
+      ansible.builtin.slurp:
+        src: "{{ mail_relay_file }}"
+      register: _mr_read
+
+    - name: Mail relay | the words of the list
+      ansible.builtin.set_fact:
+        _mr_words: "{{ _mr_read.content | b64decode | mail_relay_list_words(mail_relay_style, mail_relay_parameter) }}"
+
+    - name: Mail relay | the list is there
+      ansible.builtin.assert:
+        that: _mr_words is not none
+        fail_msg: "no '{{ mail_relay_parameter }} =' line in {{ mail_relay_file }}: set mail_relay_file, mail_relay_parameter."
+        quiet: true
+
+    - name: Mail relay | who sent mail, from the mail logs
+      site_mail_relay_clients:
+        paths: "{{ mail_relay_unused_logs }}"
+        journal: "{{ mail_relay_unused_journal | string | lower }}"
+      register: _mr_logs
+      check_mode: false                 # it only reads: a dry run (Check) shows the real result
+
+    - name: Mail relay | the mail logs were read
+      ansible.builtin.assert:
+        that: _mr_logs.oldest | length > 0
+        fail_msg: >-
+          No mail log line was read on {{ inventory_hostname }} ({{ mail_relay_unused_logs | join(', ') }}{{
+          ', the journal' if mail_relay_unused_journal | string | lower != 'false' else '' }}){{ (': ' ~
+          (_mr_logs.sources | selectattr('error') | map(attribute='error') | join('; '))) if _mr_logs.sources | selectattr('error') | list else '' }}.
+          Set mail_relay_unused_logs to where Postfix logs.
+        quiet: true
+
+    - name: Mail relay | what was read here
+      ansible.builtin.set_fact:
+        _mr_unused_read:
+          host: "{{ inventory_hostname }}"
+          words: "{{ _mr_words }}"
+          logs: "{{ _mr_logs | dict2items | selectattr('key', 'in', ['clients', 'oldest', 'newest', 'sources', 'connect_only_left_out']) | items2dict }}"
+          problem: ""
+
+  rescue:
+    - name: Mail relay | this relay could not be read
+      ansible.builtin.set_fact:
+        _mr_unused_read:
+          host: "{{ inventory_hostname }}"
+          words: []
+          logs: {}
+          problem: "{{ ansible_failed_result.msg | default('could not be read') | string | truncate(400) }}"

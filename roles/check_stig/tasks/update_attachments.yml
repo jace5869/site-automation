@@ -1,0 +1,43 @@
+---
+# Workflow 37's check (playbooks/stig_recheck.yml, win_stig_recheck.yml), after the plan is made: the reviews of the plan
+# that have attachments in STIG Manager (library/site_stigman_attachments.py, GET only) are left out of it - evidence a
+# person attached stays with the result they gave - and listed in the report. check_stig_update_skip_attachments: false =
+# no such check. Input and output: _stig_update_plan; site_report_sections gets the list at the top.
+- name: STIG Manager - which reviews of the plan have attachments (read-only)
+  site_stigman_attachments:
+    api: "{{ check_stig_stigman_api }}"
+    token_url: "{{ check_stig_stigman_token_url or lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') }}"
+    client_id: "{{ check_stig_stigman_client_id or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_ID') }}"
+    client_secret: "{{ check_stig_stigman_client_secret or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET') }}"
+    scope: "{{ check_stig_stigman_scope }}"
+    validate_certs: "{{ check_stig_stigman_validate_certs | bool }}"
+    ca_path: "{{ check_stig_stigman_ca_path }}"
+    timeout: "{{ check_stig_stigman_timeout | int }}"
+    items: "{{ _stig_update_plan | map('dict2items') | map('selectattr', 'key', 'in', ['collectionId', 'assetId', 'ruleId'])
+               | map('items2dict') | list }}"
+  register: _stig_att
+  delegate_to: localhost
+  run_once: true
+  become: false
+  check_mode: false             # only reads
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+- name: STIG Manager - the plan without them
+  ansible.builtin.set_fact:
+    _stig_att_split: "{{ _stig_update_plan | stig_update_attachments(_stig_att.reviews | default([]), _stig_att.error | default('')) }}"
+  run_once: true
+
+- name: STIG Manager - the reviews left as they are (attachments)
+  ansible.builtin.debug:
+    msg: >-
+      {{ _stig_att_split.left | map(attribute='line') | map('regex_replace', '$', ' - LEFT AS IT IS: it has attachments in STIG Manager')
+         | list if _stig_att_split.left else 'no review of the plan has attachments' }}
+  run_once: true
+
+- name: STIG Manager - the plan, and the list in the report
+  ansible.builtin.set_fact:
+    _stig_update_plan: "{{ _stig_att_split.plan }}"
+    site_report_sections: "{{ ([_stig_att_split.section] if _stig_att_split.section else []) + site_report_sections | default([]) }}"
+  run_once: true

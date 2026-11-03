@@ -25,9 +25,12 @@ fapolicyd_rules_hash_max_mb: 512          # a file larger than this is not hashe
 #              database reloaded (fapolicyd-cli --update)
 #   reinstall  an RPM file that no longer matches its package (rpm -V): the package reinstalled, the same version
 #   large      a file over fapolicyd_rules_hash_max_mb, up to fapolicyd_rules_large_mb: hashed, its trust entry
+#   podman     a host whose podman storage has images (root's, or a user's own): the container storage's allow rule
+#              before fapolicyd blocks anything of theirs - the rule a container's block gets anyway
 # [] = all of them for a person, as before 0.52.0. A file in a folder users can write is always for a person.
-fapolicyd_rules_offer: [update, reload, reinstall, large]
+fapolicyd_rules_offer: [update, reload, reinstall, large, podman]
 fapolicyd_rules_large_mb: 4096            # with large: a file up to this many MB is hashed and gets its trust entry
 fapolicyd_rules_max: 200                  # at most this many block groups per host in the report
 fapolicyd_rules_wait: 30                  # roles/fapolicyd sets it from fapolicyd_wait
 fapolicyd_rules_timeout: 120              # seconds for each command the job reads with
+fapolicyd_rules_storage_conf: /etc/containers/storage.conf   # podman's storage.conf: where root's and users' storage is

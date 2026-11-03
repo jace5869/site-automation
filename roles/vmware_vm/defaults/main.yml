@@ -98,6 +98,13 @@ vm_inventory_by_folder: true             # a table per vCenter and folder; false
 vm_inventory_max_rows: 2000              # VMs listed in the email and the page at most (2000: about 2.5 MB of email; the workbook always has every VM)
 vm_inventory_xlsx: true                  # attach every VM as an Excel workbook (.xlsx) to the email
 
+# ---- VMware Tools inventory (playbooks/vm_tools_report.yml) ----
+
+vm_tools_templates: false                # true = templates counted and listed as VMs (false: left out, their number in the subtitle)
+vm_tools_by_folder: true                 # a table per vCenter and folder; false = one table of every VM (vCenter and folder columns)
+vm_tools_max_rows: 2000                  # VMs listed in the email and the page at most (the workbook always has every VM)
+vm_tools_xlsx: true                      # attach every VM, the Tools versions and the hardware versions as an Excel workbook (.xlsx) to the email
+
 # ---- VM - ask a question (playbooks/vm_ask.yml, docs/VM_ASK.md) ----
 vm_ask_question: ""                      # the question, in plain words (the survey's Textarea), e.g. "all VMs with dbv in the name", "VMs on datastores under 10% free"
 vm_ask_query: {}                         # or the query itself, in the job's own form (docs/VM_ASK.md, "The query"): GenAI is not asked

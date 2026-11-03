@@ -14,6 +14,7 @@ System Center Orchestrator):
 | VM - secure boot report | `playbooks/vm_secure_boot_report.yml` | read-only: every VM's firmware and secure boot. Lists BIOS VMs and EFI VMs with secure boot off separately |
 | VM - datastore report | `playbooks/vm_datastore_report.yml` | read-only: every datastore's capacity, free space, used and provisioned %; the ones at 85 / 90 % used listed apart |
 | VM - inventory report | `playbooks/vm_inventory_report.yml` | read-only: every VM of every vCenter, by vCenter and folder - power, the ESXi host it runs on, cluster, guest OS, IP address, vCPUs, memory - and the count; the email attaches every VM as an Excel workbook ("The VM inventory report") |
+| VM - VMware Tools inventory | `playbooks/vm_tools_report.yml` | read-only: every VM's VMware Tools version and status (current, upgrade available, not installed, not running, guest managed), hardware version and guest OS, by vCenter and folder; the Tools versions, hardware versions and guest OSes in use with how many VMs each; the email attaches every VM as an Excel workbook ("The VMware Tools inventory") |
 | VM - right-sizing report | `playbooks/vm_rightsizing_report.yml` | read-only: every powered-on VM's vCPUs and memory next to what vCenter's statistics say it used (30 days, and its busiest day of the year) - too big, about right or too small, with a suggested size; memory the host took back, guest disks nearly full; optional ACT review. Suggestions only ("The VM right-sizing report") |
 | VMware - version report | `playbooks/vmware_version_report.yml` | read-only: the version and build of each vCenter and every ESXi host, the builds in use and how many hosts run each, the hosts by vCenter and cluster; amber when a host is newer than its vCenter; the email attaches every host as an Excel workbook ("The VMware version report") |
 | VMware - hardware inventory | `playbooks/vmware_hardware_report.yml` | read-only: every ESXi host's vendor, model, serial number, BIOS version and date, CPUs, memory, ESXi build, image profile, NICs and storage adapters with their drivers, the drivers and firmware its hardware status shows, and every VIB; the models in use with their BIOS versions; the email attaches all of it as an Excel workbook ("The VMware hardware inventory") |
@@ -239,6 +240,53 @@ and filter. Schedule it weekly with `report_email_to` on its Variables; on the r
 Green unless a vCenter could not be read (it is then listed in red on top, its VMs not counted). The counts are also
 the job artifact `vm_inventory`.
 
+### The VMware Tools inventory
+
+*VM - VMware Tools inventory* (`playbooks/vm_tools_report.yml`) lists every VM of every vCenter (`vmware_vcenters`;
+`vmware_datacenter` for one datacenter) with its **VMware Tools version**, **hardware version** and **guest OS**, by
+vCenter and **folder** - no survey, read-only; the read-only vCenter account is enough. At the top, the counts: VMs,
+Tools current, upgrade available, guest managed, no Tools, not running, not supported, how many Tools and hardware
+versions. Then:
+
+- **To look at** - powered-on VMs with no VMware Tools, Tools not running, or a Tools version vCenter does not support
+  on the host the VM runs on (too old, too new, or one with a known problem);
+- **VMware Tools versions** - each version (`12.3.5`), how many VMs run it and how many are on, what vCenter says of
+  it (current, upgrade available ...) and how it was installed (open-vm-tools, MSI on Windows);
+- **Hardware versions** - each virtual hardware version (`vmx-21`), the oldest ESXi that runs it
+  (`ESXi 8.0 U2 and later`), how many VMs;
+- **Guest OS** - each guest OS with the Tools and hardware versions its VMs have;
+- a table per vCenter and folder (`vc01 - DC1 / Linux / Web`, as in the VM inventory report), each VM with its power
+  state, guest OS, Tools version, Tools status and hardware version; an upgrade available in blue, a VM to look at in
+  amber.
+
+**Tools status** is vCenter's own verdict for the ESXi host the VM runs on (`guest.toolsVersionStatus2`): *current*,
+*upgrade available*, *too old (not supported)* ... The report keeps no list of versions of its own. **Guest managed**:
+open-vm-tools installed from the guest's OS (RHEL, most Linux) - it is updated with the OS (`dnf update`), not from
+vCenter, and vCenter does not judge its version. The **guest OS** is the one VMware Tools reports (`Red Hat Enterprise
+Linux 9.4 (64-bit)`), else the one the VM is configured with; the workbook has both. A VM that is off keeps the Tools
+version vCenter last saw, and is not listed under *To look at*.
+
+The email attaches an Excel workbook (`vm-vmware-tools-inventory_2026-11-03.xlsx`): **VMs** - a line per VM with its
+vCenter, datacenter, folder, power, both guest OS names, Tools version, status (in words and as vCenter says it),
+running or not, how it was installed, heartbeat, hardware version, what it is compatible with, firmware, ESXi host,
+cluster and IP address; **Tools versions** and **Hardware versions** with their counts.
+
+Amber when a VM is to look at; red only when a vCenter could not be read. The job output has a line per Tools version
+(`VMware Tools 12.3.5: 140 VM(s) - current (120), guest managed (updated by the OS) (20)`), per hardware version, and
+each VM to look at; the artifact `vm_tools` has the versions and the counts.
+
+Set it up: a template *VM - VMware Tools inventory*, playbook `playbooks/vm_tools_report.yml`, the VMware vCenter
+credential (read-only is enough), the execution environment of your other VMware jobs, no Limit, no survey;
+`report_email_to` on its Variables, and a schedule (monthly, or after patching). On the report website it is on the
+VMware tab.
+
+| Setting | Default | |
+|---|---|---|
+| `vm_tools_templates` | `false` | `true` = templates counted and listed as VMs (else left out, their number in the subtitle) |
+| `vm_tools_by_folder` | `true` | `false` = one table of every VM, with vCenter and folder columns |
+| `vm_tools_max_rows` | `2000` | VMs listed in the email and on the page at most - the workbook always has every VM |
+| `vm_tools_xlsx` | `true` | `false` = no workbook attached |
+
 ### The VM right-sizing report
 
 *VM - right-sizing report* (`playbooks/vm_rightsizing_report.yml`) puts every powered-on VM's vCPUs and memory next to
@@ -383,8 +431,9 @@ website it is on the VMware tab.
 
 | Setting | Default | |
 |---|---|---|
-| `vm_versions_max_rows` | `2000` | ESXi hosts listed in the email and on the page at most - the workbook always has every host |
-| `vm_versions_xlsx` | `true` | `false` = no workbook attached |
+| `vm_hardware_vibs` | `true` | `false` = the VIBs not read (one call per host) |
+| `vm_hardware_max_rows` | `2000` | ESXi hosts listed in the email and on the page at most - the workbook always has every host |
+| `vm_hardware_xlsx` | `true` | `false` = no workbook attached |
 
 ## Snapshots: the report, the cleanup, and the approval workflow
 

@@ -12,6 +12,7 @@
 # the outage watch (hung VMs by heartbeat and ping, protected ones, HA and storage events, a disconnected host, its
 # incidents opened and resolved in a fake ServiceNow);
 # the vCenter log analysis (vcsim hands out no logs: the job says so); the VM inventory report (and its workbook by email);
+# the VMware Tools inventory;
 # the ESXi network check (esxcli through vCenter - vcsim has no network diag ping: its answer is said); the VM right-sizing
 # report (a VM made too big, thresholds, its workbook by email, ACT's review); the VMware version report; VM - ask a question
 # (GenAI's query run with joins, questions that ask for a change refused, the whitelist, the job's own reader without a key).
@@ -443,6 +444,12 @@ assert re.search(r'"VMs": %s\b' % m.group(1), t), "the artifact's count"
 PY
 }
 check_inv && echo "ok   -   ...the title and the artifact give the same count" || { echo "FAIL -   ...inventory counts"; fails=$((fails + 1)); }
+
+# ---- VMware Tools inventory (read-only; vcsim's VMs: its own Tools status and hardware versions) ----------------------
+run "VMware Tools inventory: every VM's Tools version and status, hardware version and guest OS, by vCenter and folder" ok \
+    vm_tools_report.yml -- "VMware Tools: " " without Tools" '"vm_tools"' '"vmx-13": ' "Hardware vmx-13 (ESXi 6.5 and later): " \
+    "VMware Tools (not installed): " '"Tools current": 0'
+run "VMware Tools inventory, one table of every VM" ok vm_tools_report.yml -e vm_tools_by_folder=false -- "VMware Tools: "
 
 # ---- VM right-sizing report (read-only; vcsim's statistics are generated: about 20% CPU, 40% active memory) -----------------
 VMWARE_PORT=$port "$py" "$here/vcsim.py" size DC0_H0_VM1 16 65536 || { echo "FAIL - vcsim size"; fails=$((fails + 1)); }
@@ -2281,8 +2288,8 @@ INV="$work/inv-relay.yml" run "mail relay format: names from DNS, the VM and its
     -e '{"mail_relay_become": false, "mail_relay_check_command": "true", "mail_relay_postconf": "", "mail_relay_format_dns_timeout": 2}' \
     -- "Finance" "1 of 1 relay(s) formatted" "2 of 3 address(es) looked up matched a VM (2 by its IP address, 0 by its DNS name); 1 of them in a folder." \
        "VM(s) read." "1 matched VM(s) sit at the top of their datacenter"
-printf 'myhostname = relay1.example.mil\nmynetworks =\n    192.0.2.0/28\n\n    # localhost  [AAP mail relay format %s job 4711]\n    127.0.0.1\n\n    # DC0_H0_VM1  [AAP mail relay format %s job 4711]\n    192.0.2.20\n\n    # DC0_C0_RP0_VM1 - Finance  [AAP mail relay format %s job 4711]\n    192.0.2.40\n' \
-    "$(date +%F)" "$(date +%F)" "$(date +%F)" | cmp -s - "$work/relay/main.cf" \
+printf 'myhostname = relay1.example.mil\nmynetworks =\n    192.0.2.0/28\n\n    # localhost [AAP]\n    127.0.0.1\n\n    # DC0_H0_VM1 [AAP]\n    192.0.2.20\n\n    # DC0_C0_RP0_VM1  Finance [AAP]\n    192.0.2.40\n' \
+    | cmp -s - "$work/relay/main.cf" \
     && echo "ok   -   ...main.cf one address per line, each named" || { echo "FAIL -   ...main.cf:"; cat "$work/relay/main.cf"; fails=$((fails + 1)); }
 
 if [ "$fails" -eq 0 ]; then echo "ok   - all VMware scenarios passed"; else echo "$fails FAILED"; exit 1; fi

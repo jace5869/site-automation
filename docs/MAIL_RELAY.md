@@ -1,7 +1,8 @@
 # Mail relay whitelist - one address per line; add or remove an IP address, with an approval
 
 One job puts the list one address per line, each named ([Format the list](#format-the-list-one-address-per-line)).
-Two AAP workflows change the list of addresses your mail relay accepts mail from - Postfix's `mynetworks`:
+Two AAP workflows change the list of addresses your mail relay accepts mail from - Postfix's `mynetworks` (a third
+removes the ones that sent no mail in six months: [Remove the addresses that sent no mail](#remove-the-addresses-that-sent-no-mail)):
 
 - **Mail relay - add an IP**: the IP address(es) and a **required comment** (the name and/or service they are for).
 - **Mail relay - remove an IP**: the IP address(es).
@@ -51,7 +52,7 @@ mynetworks =
     # Payroll app (svc-payroll)  [added 2026-10-22 by jdoe]
     198.51.100.3
 
-    # web01.example.mil - Payroll  [AAP mail relay format 2026-11-02 job 4711]
+    # web01.example.mil  Payroll [AAP]
     198.51.100.7
 mynetworks_style = host
 ```
@@ -82,7 +83,10 @@ one address or subnet per line, the way the example above reads:
     report says so.
   - Neither: no comment line, the address as it is.
 
-  The comment line says where it came from: `# NAME - SERVICE  [AAP mail relay format DATE job N]`.
+  The comment line: `# NAME  SERVICE [AAP]` - the DNS name, two spaces, the service (the VM's folder), and `[AAP]`:
+  this job wrote it. No name and no VM found (`-` in the report's *Each address looked up*): no comment line, the
+  address as it is. Lines an older version wrote (`# NAME - SERVICE  [AAP mail relay format DATE job N]`) are still
+  known as this job's: `mail_relay_format_refresh: true` looks those addresses up again and writes them the new way.
 - **Comments kept:** a comment line an add wrote above `mynetworks` (`# 198.51.100.3   Payroll app ...  [added ...]`)
   goes onto its address, and that address is not looked up. A comment you wrote inside the list stays above its
   address (or at the top of the list). Comment lines above `mynetworks` you wrote by hand stay where they are.
@@ -108,6 +112,70 @@ too, titled *dry run* (`mail_relay_format_check_email: false` to only print it).
 
 Then **Run**. To go back: copy `main.cf.before-format-...` over `main.cf`
 (`postfix check`, `systemctl reload postfix`).
+
+## Remove the addresses that sent no mail
+
+A third workflow, **Mail relay - remove unused addresses**, finds the addresses on the list that sent no mail
+through any relay in the last six months, and removes them after an approval:
+
+```workflow
+[Mail relay - unused addresses plan]
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[Mail relay - apply the approved whitelist change]
+```
+
+1. **The plan** (`playbooks/mail_relay_unused.yml`, read-only) reads on each relay its list and its **mail logs** -
+   `/var/log/maillog` and every rotated copy next to it (`maillog-20260501`, `maillog.1`, gzipped or not;
+   `mail_relay_unused_logs`), or the journal when there is no log file. An address **sent mail** when a relay
+   accepted a message from it: Postfix's `smtpd[...]: 4AbCd1: client=name[198.51.100.7]` line. A connection without a
+   message (`connect from ...` only - a monitor, a scanner, a load balancer's health check) does **not** count; the
+   table shows those connections apart. All relays' logs are read together: an address that sends through one relay
+   only is in use on all.
+2. **How far back the logs go**, per relay: the oldest line read. When a relay's logs do not reach back the six
+   months asked (`mail_relay_unused_days`, 183), nothing is proposed - a quiet address could not be told from an
+   unused one - and the email says how far back each relay's logs go. (RHEL's default keeps about 5 weeks of
+   `/var/log/maillog`: keep them longer in `/etc/logrotate.d/syslog`, or set `mail_relay_unused_accept_short_logs:
+   true` to go by what they cover.)
+3. **The removal** of the single addresses that sent nothing goes on as a plan of the remove workflow: the email
+   *Mail relay whitelist - waiting for approval: unused - remove ...* has the exact lines to be removed, each
+   address with its last mail, and the table of every address on the list. Never proposed: `127.0.0.0/8`, anything
+   that is not an address, `mail_relay_unused_keep`, and **subnets** - a subnet that sent nothing is listed, to
+   remove with *Mail relay - remove an IP* if it is no longer needed. At most 50 at once (`mail_relay_unused_max`;
+   the next run takes the rest).
+4. **Approve** it, and the apply step removes exactly those lines (with their comment lines), as for *Mail relay -
+   remove an IP*: the file backed up, `postfix check`, the read-back, the reload, the result emailed.
+5. Then run **Mail relay - format the whitelist** to put the list in order and name what has no name yet.
+
+Nothing unused, logs too short, or a relay that could not be read: the email says so, the job fails, and nothing
+waits for approval.
+
+The email's tables:
+
+| Table | What |
+|---|---|
+| How far back the logs go | each relay: its oldest and newest log line, how many days back, whether that covers the days asked, how many log files (or the journal) were read, any file it could not read |
+| Each address on the list | address, address or subnet, on which relays, its **last mail** (the newest message any relay accepted from it, or from an address inside the subnet - `never in the logs`), how many messages the logs hold, how often it connected, and the verdict: *in use*, **UNUSED**, *UNUSED subnet - listed only*, *kept* |
+
+**Set it up:** a job template **Mail relay - unused addresses plan**, playbook `playbooks/mail_relay_unused.yml`,
+credential **Machine** (sudo on the relays: the logs are root's), Variables `mail_relay_group: <your group>`. Then the
+workflow **Mail relay - remove unused addresses**: Variables `report_email_to: [mail-team@yoursite.mil]` (and
+`mail_relay_group`); steps *Mail relay - unused addresses plan* -> **Run on success** -> *Approval* (`Remove these
+unused addresses from the mail relay whitelist?`) -> **Run on success** -> *Mail relay - apply the approved
+whitelist change*. No survey. Try the plan template alone with Job type **Check** first: it reads the logs and prints
+the same report (`DRY RUN: would email`) - the plan itself changes nothing either way.
+
+| Setting | Default | |
+|---|---|---|
+| `mail_relay_unused_days` | `183` | days without mail that make an address unused (six months) |
+| `mail_relay_unused_logs` | `["/var/log/maillog*"]` | the log files on each relay (patterns; a relay's own `host_vars` may differ) |
+| `mail_relay_unused_journal` | `auto` | `auto`: the journal when no log file is there; `true`: as well; `false`: never |
+| `mail_relay_unused_keep` | `[]` | addresses or subnets never proposed, e.g. a backup server that mails twice a year |
+| `mail_relay_unused_max` | `50` | the most addresses one plan removes |
+| `mail_relay_unused_accept_short_logs` | `false` | `true` = propose even when a relay's logs do not reach back the days asked |
 
 ## What it refuses
 

@@ -18,6 +18,9 @@ description:
     check read it (its result, status or time) is left as it is (state C(changed since)).
   - Writes the rest of an asset's reviews in one POST /collections/{collectionId}/reviews/{assetId} - result, detail,
     comment (null keeps the review's own), resultEngine, status - and reads each again after.
+  - A review with attachments in STIG Manager (its metadata key C(artifacts): the files a person attached as evidence)
+    is left as it is (state C(has attachments)) - unless C(skip_attachments) is false. Read again just before the
+    write, so one attached after the check is left too.
   - In check mode reads, and writes nothing (state C(would write)).
 options:
   api: {description: "STIG Manager's API (https://stigman.example.mil/api).", type: str, required: true}
@@ -34,12 +37,13 @@ options:
   validate_certs: {description: Check the HTTPS certificates., type: bool, default: true}
   ca_path: {description: "A CA bundle to check them with ('' = the system's).", type: str, default: ''}
   timeout: {description: Seconds per request., type: int, default: 60}
+  skip_attachments: {description: Leave a review that has attachments as it is., type: bool, default: true}
 author: site automation
 '''
 
 RETURN = r'''
 items:
-  description: "Each review of the plan with its state - written, would write, changed since, rejected (STIG Manager's reason),
+  description: "Each review of the plan with its state - written, would write, changed since, has attachments, rejected (STIG Manager's reason),
                 not as written (read back otherwise), bad (not a plan item), error - and why, and what STIG Manager holds now."
   type: list
   returned: always
@@ -65,6 +69,10 @@ STATUSES = ("saved", "submitted", "accepted")
 ENGINES = ("scap", "script", "other")
 
 
+class NotFound(RuntimeError):
+    pass
+
+
 class Client(object):
     def __init__(self, p):
         self.p = p
@@ -81,6 +89,8 @@ class Client(object):
             return json.loads(resp.read().decode("utf-8") or "null")
         except HTTPError as e:
             body = e.read().decode("utf-8", "replace")[:300]
+            if e.code == 404:
+                raise NotFound("HTTP 404 from %s: %s" % (req.get_full_url().split("?")[0], body.strip() or e.reason))
             raise RuntimeError("HTTP %d from %s: %s" % (e.code, req.get_full_url().split("?")[0], body.strip() or e.reason))
         except URLError as e:
             raise RuntimeError("cannot reach %s: %s" % (req.get_full_url().split("?")[0], e.reason))
@@ -103,6 +113,29 @@ class Client(object):
         req = Request("%s/collections/%s/reviews/%s/%s" % (self.api, quote(c), quote(a), quote(rule)),
                       headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"})
         return self._open(req)
+
+    def attachments(self, c, a, rule):
+        """(how many attachments the review has, their names) - STIG Manager keeps them in the review's metadata, the key
+        'artifacts' (a JSON text of their list); 0 without the key, or without a review. -1: the key is there, its value
+        not such a list."""
+        base = "%s/collections/%s/reviews/%s/%s/metadata/keys" % (self.api, quote(c), quote(a), quote(rule))
+        hdr = {"Authorization": "Bearer " + self.token, "Accept": "application/json"}
+        try:
+            keys = self._open(Request(base, headers=hdr)) or []
+            if "artifacts" not in keys:
+                return 0, []
+            v = self._open(Request(base + "/artifacts", headers=hdr))
+        except NotFound:
+            return 0, []
+        for _ in range(2):
+            if isinstance(v, str):
+                try:
+                    v = json.loads(v)
+                except ValueError:
+                    return (-1, []) if v.strip() not in ("", "[]") else (0, [])
+        if isinstance(v, list):
+            return len(v), [str((x or {}).get("name") or "") for x in v if isinstance(x, dict)]
+        return (0, []) if v in (None, "", {}) else (-1, [])
 
     def write(self, c, a, reviews):
         """POST /collections/{c}/reviews/{a}: the asset's reviews of the plan -> {affected, rejected}."""
@@ -186,6 +219,16 @@ def update(p, client, check):
                 row.update(state="changed since", why="STIG Manager has it as %s (%s, %s) now, not as the check read it - left as it is" % (
                     now["result"] or "no review", now["status"] or "-", now["ts"] or "-"))
                 continue
+            if p.get("skip_attachments", True):
+                try:
+                    n, names = client.attachments(c, a, it["ruleId"])
+                except RuntimeError as e:
+                    row.update(state="error", why="its attachments could not be read - not written: %s" % e)
+                    continue
+                if n:
+                    row.update(state="has attachments", why="%s in STIG Manager%s - left as it is (the evidence stays with its result)" % (
+                        ("%d attachment(s)" % n) if n > 0 else "attachments", (": " + ", ".join(names[:5])) if names else ""))
+                    continue
             go.append((row, it))
         if not go:
             continue
@@ -228,6 +271,7 @@ def main():
         validate_certs=dict(type="bool", default=True),
         ca_path=dict(type="str", default=""),
         timeout=dict(type="int", default=60),
+        skip_attachments=dict(type="bool", default=True),
     ), supports_check_mode=True)
     p = module.params
     client = Client(p)

@@ -191,8 +191,10 @@ inv() {
     echo "    gone01.example.mil: {ansible_host: 127.0.0.1, ansible_port: 1, ansible_connection: ssh}"
 }
 inv > "$work/inv.yml"
+# podman's storage.conf: users' own storage under the work folder (not this machine's), root's as podman's default
+printf 'rootless_storage_path = "%s/rootless/$USER"\n' "$work" > "$work/storage.conf"
 cat > "$work/vars.json" <<EOJ
-{"report_web_dest": "$work/site", "site_syslog": false, "fapolicyd_wait": 2,
+{"report_web_dest": "$work/site", "site_syslog": false, "fapolicyd_wait": 2, "fapolicyd_rules_storage_conf": "$work/storage.conf",
  "act_triage_script_src": "$repo/tests/containers/fake_act.py", "act_triage_dest_dir": "$work/act", "act_triage_poll": 1,
  "act_triage_python_candidates": ["$py"],
  "fapolicyd_rules_user_dirs": ["/home/", "/run/user/", "/var/tmp/", "/dev/shm/"]}
@@ -326,6 +328,32 @@ lines_of > "$work/lines2.txt"
 grep -q '^reinstall package: \|^trust update: ' "$work/lines2.txt" && bad "offered again after it was made: $(cat "$work/lines2.txt")" || ok "  ... not offered again on the next run"
 
 # ---- 0.52.0: a large file gets its trust entry; fapolicyd_rules_offer: [] leaves all of it for a person -------------
+# ---- podman's storage before anything of it is blocked (fapolicyd_rules_offer: podman) ---------------------------
+# ra04 has no container's block: its podman lines come from the storage alone
+mkdir -p "$work/podgraph/overlay/l" "$work/podgraph/overlay/0a1b2c" "$work/rootless/$me/overlay/l" "$work/rootless/$me/overlay/9f8e7d"
+printf 'graphroot = "%s/podgraph"\nrootless_storage_path = "%s/rootless/$USER"\n' "$work" "$work" > "$work/storage2.conf"
+P1="allow rule: allow perm=any all : dir=$work/podgraph/overlay/"
+P2="allow rule: allow perm=any all : dir=$work/rootless/$me/overlay/"
+run ra04 -e "{\"fapolicyd_rules_storage_conf\": \"$work/storage2.conf\"}"
+lines_of > "$work/plines.txt"
+grep -qxF "$P1" "$work/plines.txt" && ok "podman: root's storage with an image gets its rule before anything of it is blocked" || bad "no podman line: $(cat "$work/plines.txt")"
+check "  ... why: the storage and its image layers" \
+      'any(row[1] == "'"$P1"'" and "root\x27s storage '"$work"'/podgraph has 1 image layer(s)" in row[2] for row in s["Why each change"]["rows"])'
+if [ "$(id -u)" -ge 1000 ]; then
+    grep -qxF "$P2" "$work/plines.txt" && ok "  ... and $me's own storage (rootless_storage_path), said to be theirs" || bad "no rootless podman line"
+    check "  ... the user's own storage: anything they put there may then run" \
+          'any(row[1] == "'"$P2"'" and "own storage: anything they put there may then run" in row[2] for row in s["Why each change"]["rows"])'
+fi
+run ra04 -e "{\"fapolicyd_rules_storage_conf\": \"$work/storage2.conf\", \"fapolicyd_rules_offer\": [\"update\"]}"
+lines_of > "$work/plines.txt"
+grep -qF "/overlay/" "$work/plines.txt" && bad "a podman line without podman in fapolicyd_rules_offer" || ok "  ... none without podman in fapolicyd_rules_offer"
+run ra01 -e "{\"fapolicyd_rules_storage_conf\": \"$work/storage2.conf\", \"fapolicyd_approved\": [\"$P1\"]}"
+[ "$rc" = 0 ] && grep -qxF "${P1#allow rule: }" "$work/ra01/etc/rules.d/36-site-approved.rules" && ok "  ... approved (ra01): the rule in 36-site-approved.rules" || bad "podman rule not written: rc $rc" 30
+run ra01 -e "{\"fapolicyd_rules_storage_conf\": \"$work/storage2.conf\"}"
+lines_of > "$work/plines.txt"
+grep -qxF "$P1" "$work/plines.txt" && bad "the podman line offered again once in a rules file" || ok "  ... not offered again once a rules file has it"
+rm -rf "$work/rootless/$me/overlay"
+
 run ra04 -e '{"fapolicyd_rules_hash_max_mb": 0}'
 check "a file over fapolicyd_rules_hash_max_mb: hashed (up to fapolicyd_rules_large_mb), its trust entry, said to be large" \
       'any(row[1].startswith("trust file: ") and row[1].split()[2].endswith("/opt/app/tool") and "a large file" in row[3] for row in s["Why each change"]["rows"])'

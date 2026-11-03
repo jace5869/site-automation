@@ -1,0 +1,53 @@
+---
+# VMWARE TOOLS INVENTORY (playbooks/vm_tools_report.yml): every VM of every vCenter (vmware_vcenters; or of
+# vmware_datacenter), by vCenter and folder - its VMware Tools version and what vCenter says of it (current, upgrade
+# available, not installed, not running ...), its hardware version (VM compatibility) and guest OS - with the Tools
+# versions, hardware versions and guest OSes in use and how many VMs each. Printed, published as artifacts (vm_tools),
+# emailed with every VM as an Excel workbook (vm_tools_xlsx), on the report website. Read-only. Amber when a powered-on
+# VM has no Tools, Tools not running or a version vCenter does not support; red only when a vCenter could not be read.
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | read every VM
+  site_vmware_vms:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _vm_tools_read
+  check_mode: false
+
+# one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+- name: VMware | the report
+  ansible.builtin.set_fact:
+    _vm_tools_opts: >-
+      {{ {'templates': vm_tools_templates | bool, 'by_folder': vm_tools_by_folder | bool, 'max_rows': vm_tools_max_rows | int} }}
+
+- name: VMware | the report's content
+  ansible.builtin.set_fact:
+    _vm_tools_doc: "{{ _vm_tools_read.vms | vm_tools_doc(_vm_tools_read.vcenters, _vm_tools_opts) }}"
+
+- name: VMware Tools inventory
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _vm_vcenters: "{{ _vm_tools_read.vcenters }}"
+    _vm_report_doc: "{{ _vm_tools_doc }}"
+    _vm_report_subject: "{{ _vm_tools_doc.title }}"
+    _vm_report_lines: >-
+      {{ [_vm_tools_doc.subtitle]
+         + (_vm_tools_doc.summary | map(attribute='label') | zip(_vm_tools_doc.summary | map(attribute='value'))
+            | map('join', ': ') | list)
+         + (_vm_tools_read.vms | vm_tools_lines(_vm_tools_opts)) }}
+    _vm_report_xlsx: "{{ _vm_tools_read.vms | vm_tools_xlsx(_vm_tools_opts) if vm_tools_xlsx | bool else [] }}"
+
+- name: VMware | the versions and counts as job artifacts (vm_tools)
+  ansible.builtin.set_stats:
+    data:
+      vm_tools: >-
+        {{ (_vm_tools_read.vms | vm_tools_versions(_vm_tools_opts))
+           | combine({'vcenters': _vm_tools_read.vcenters,
+                      'counts': _vm_tools_doc.summary | items2dict(key_name='label', value_name='value')}) }}
+
+- name: VMware | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vm_tools_read.vcenters }}"

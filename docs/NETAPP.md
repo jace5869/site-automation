@@ -1,7 +1,8 @@
 # NetApp ONTAP health report
 
 One job, `playbooks/ontap_health_report.yml`, reads every NetApp ONTAP cluster you list and emails
-one report: what is broken first, then capacity, protection and services. Each row is coloured: red
+one report: what is broken first, then capacity, protection and services. A second, *NetApp ONTAP hardware inventory*,
+lists their hardware - models, serial numbers, firmware ([The hardware inventory](#the-hardware-inventory)). Each row is coloured: red
 = critical, amber = warning, green = OK, blue = for your information.
 
 **It only reads.** It sends GET requests to each cluster's REST API (the same API System Manager
@@ -129,6 +130,61 @@ A dry run (Check) reads and prints the same report, and sends no email.
 
 **SnapMirror** relationships are read on their **destination** cluster: list the destination
 clusters too, or the relationships into them are not checked.
+
+## The hardware inventory
+
+*NetApp ONTAP hardware inventory* (`playbooks/ontap_hardware_report.yml`) lists the hardware of every cluster in
+`ontap_clusters`, like *VMware - hardware inventory* does for the ESXi hosts - no survey, read-only (GET requests to the
+REST API, the same read-only account and credential as the health report). At the top, the counts: clusters,
+controllers, models, ONTAP versions, shelves, disks, controllers with a serial number. Then:
+
+- **Models** - each controller model, how many controllers, and the ONTAP, system firmware and service processor
+  (SP / BMC) versions they run, with how many run each (`11.10 (6), 11.9 (2)`: two controllers left behind by a
+  firmware update);
+- **Controllers** - every controller (node): cluster, model, **serial number**, system ID, ONTAP version, HA partner,
+  CPU, memory, system firmware, SP / BMC and its firmware, NVRAM battery, Flash Cache modules, its ports
+  (`2x 25G, 4x 10G; 4x 32G FC`: the physical Ethernet ports by speed, then the FC ports), time up, state;
+- **Shelves** - every disk shelf: model, serial number, its modules (IOM12, NSM100 ...) and their firmware, how it is
+  connected (SAS, NVMe), how many disks, state;
+- **Disks by model** - each disk model of each cluster: vendor, model, type, size, how many, how many are spares, and
+  the firmware versions they run (`NA02 (46), NA01 (2)`: two disks the disk firmware update did not reach);
+- **Not all read** - what a cluster's ONTAP or the account's role did not give (`reduced detail`), the rest in.
+
+The email attaches all of it as an Excel workbook (`netapp-ontap-hardware-inventory_2026-11-03.xlsx`), a row each:
+
+| Sheet | What |
+|---|---|
+| Clusters | each cluster: address, ONTAP, location, contact, how many controllers, shelves and disks; a cluster not read with the reason |
+| Controllers | everything above, plus the vendor serial number, board, CPU count and the SP / BMC address and state |
+| Shelves | each shelf: model, serial, module type, module firmware, connection, internal or not, disks, state |
+| Shelf modules | each shelf module (IOM): part number, serial number, firmware, state |
+| Disks | every disk: owner and home node, shelf and bay, vendor, model, **serial number**, **firmware**, type, class, size, usable size, RPM, container (aggregate, spare, shared ...), state |
+| Ethernet ports | each port: type (physical, VLAN, interface group), speed (`down` without a link), state, MAC, broadcast domain |
+| FC ports | each FC port: WWPN, protocol, speed, state, its transceiver (form factor, maker, part number) |
+
+**Firmware:** ONTAP reports the system firmware (the controller's BIOS / LOADER), the SP / BMC firmware, each shelf
+module's firmware and each disk's firmware - all four are in. It has no field for a network card's or HBA's firmware.
+The report says what ONTAP says: it does not know which versions are current (NetApp's *Upgrade Advisor* in Active IQ
+does).
+
+Amber when a controller is not up (what the cluster last knew of it) or a shelf is not OK; red when a cluster could not
+be read (the others are still in; `ontap_hardware_fail: true` also marks the job failed, for workflows). The job output
+has a line per model (`AFF-A400: 4 controller(s); ONTAP 9.14.1P3 (4); firmware 11.10 (4); SP / BMC BMC 13.10 (4)`) and
+per cluster; the artifact `ontap_hardware` has the models and the counts.
+
+Set it up: a template *NetApp ONTAP hardware inventory*, playbook `playbooks/ontap_hardware_report.yml`, the
+**NetApp ONTAP read-only** credential, any execution environment with Python 3, no Limit, no survey; on its Variables
+`ontap_clusters` (unless it is in `all.yml`) and `report_email_to`. Run it when you need the inventory, or on a
+schedule (monthly). On the report website it is on the *Network and storage* tab.
+
+| Setting | Default | |
+|---|---|---|
+| `ontap_hardware_max_rows` | `2000` | controllers, shelves and disk models listed in the email and on the page at most - the workbook always has all |
+| `ontap_hardware_xlsx` | `true` | `false` = no workbook attached |
+| `ontap_hardware_fail` | `false` | `true` = the job is marked failed when a cluster could not be read |
+
+The connection settings (`ontap_clusters`, `ontap_validate_certs`, `ontap_ca_path`, `ontap_timeout`,
+`ontap_tls_legacy`) are the health report's: set them once in `all.yml` for both.
 
 ## Settings
 

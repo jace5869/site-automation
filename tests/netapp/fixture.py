@@ -181,6 +181,42 @@ paths = {
     "/api/cluster/ntp/servers": {"fields": ["server", "version", "authentication_enabled"], "records": [{"server": "ntp1.example.mil"}]},
     "/api/name-services/ldap": {"fields": ["svm.name", "servers"], "records": []},       # no SVM has an LDAP client: LDAP events are noise
 }
+
+# The hardware inventory's fields (playbooks/ontap_hardware_report.yml): cluster1-01 with all of them, cluster1-02 (down)
+# with few; the disks path does not know usable_size and rpm and refuses ignore_unknown_fields, like an older ONTAP:
+# the hardware report falls back (reduced detail), the health report (which asks for neither) does not.
+paths["/api/cluster"]["fields"] += ["contact"]
+paths["/api/cluster/nodes"]["fields"] += [
+    "system_id", "vendor_serial_number", "location", "controller.board", "controller.cpu.count", "controller.cpu.processor",
+    "controller.cpu.firmware_release", "controller.memory_size", "controller.flash_cache", "service_processor.type",
+    "service_processor.firmware_version", "service_processor.ipv4_interface.address"]
+n1, n2 = paths["/api/cluster/nodes"]["records"]
+n1.update({"serial_number": "SN0001", "system_id": "0537000001", "ha": dict(n1.get("ha", {}), partners=[{"name": "cluster1-02"}]),
+           "service_processor": {"state": "online", "type": "bmc", "firmware_version": "13.10",
+                                 "ipv4_interface": {"address": "192.0.2.51"}}})
+n1["controller"].update({"board": "System Board XXVIII", "cpu": {"count": 20, "processor": "Intel(R) Xeon(R) Silver 4210",
+                                                                 "firmware_release": "11.10"},
+                         "memory_size": 128 * GB, "flash_cache": [{"model": "X1970A", "capacity": TB}]})
+n2.update({"serial_number": "SN0002", "version": {"full": "9.13.1P8"}, "controller": dict(n2["controller"], cpu={"firmware_release": "11.9"})})
+paths["/api/storage/shelves"]["fields"] += ["module_type", "connection_type", "internal", "disk_count", "modules"]
+paths["/api/storage/shelves"]["records"][0].update({
+    "serial_number": "SHFMS0001", "module_type": "iom12f", "connection_type": "nvme", "internal": False, "disk_count": 4,
+    "modules": [{"id": 0, "part_number": "111-04208", "serial_number": "IOM-A", "firmware_version": "0220", "state": "ok"},
+                {"id": 1, "part_number": "111-04208", "serial_number": "IOM-B", "firmware_version": "0210", "state": "ok"}]})
+paths["/api/storage/disks"]["fields"] += ["vendor", "firmware_version", "physical_size"]
+paths["/api/storage/disks"]["supports_ignore"] = False
+for d, fw in zip(paths["/api/storage/disks"]["records"], ("NA01", "NA02", "NA02", "NA01")):
+    d.update({"vendor": "NETAPP  ", "model": "X357", "firmware_version": fw, "type": "ssd", "physical_size": 3840 * GB})
+paths["/api/network/ethernet/ports"]["fields"] += ["mac_address"]
+paths["/api/network/ethernet/ports"]["records"] += [
+    {"name": "e1a", "node": {"name": "cluster1-01"}, "state": "up", "enabled": True, "type": "physical", "speed": 25000,
+     "mac_address": "00:a0:98:00:00:01"},
+    {"name": "e1b", "node": {"name": "cluster1-01"}, "state": "up", "enabled": True, "type": "physical", "speed": 25000},
+    {"name": "a0a", "node": {"name": "cluster1-01"}, "state": "up", "enabled": True, "type": "lag", "speed": 50000}]
+paths["/api/network/fc/ports"]["fields"] += ["wwpn", "transceiver.form_factor", "transceiver.manufacturer", "transceiver.part_number"]
+for p in paths["/api/network/fc/ports"]["records"]:
+    p.update({"speed": {"maximum": "32"}, "wwpn": "50:0a:09:81:00:00:00:0" + p["name"][1], "transceiver": {"form_factor": "SFP"}})
+
 user = sys.argv[2] if len(sys.argv) > 2 else "svc_ro"
 password = sys.argv[3] if len(sys.argv) > 3 else "readonly-test"
 with open(sys.argv[1], "w") as fh:

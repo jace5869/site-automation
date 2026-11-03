@@ -50,6 +50,10 @@
 ## seconds per request
 # stigman_update_timeout: "{{ check_stig_stigman_timeout | default(60) }}"
 
+## a review with attachments in STIG Manager (evidence a person attached) is never written; false =
+## write it like the others
+# stigman_update_skip_attachments: "{{ check_stig_update_skip_attachments | default(true) }}"
+
 # ---- check_stig ----------------------------------------------------------------------------------
 ## Keycloak's token endpoint (https://keycloak.example.mil/realms/stigman/protocol/openid-
 ## connect/token); empty = the credential's
@@ -70,6 +74,10 @@
 
 ## seconds per request
 # check_stig_stigman_timeout: 60
+
+## a review with attachments in STIG Manager (evidence a person attached) is left out of the plan
+## and never written; false = written like the others
+# check_stig_update_skip_attachments: true
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no

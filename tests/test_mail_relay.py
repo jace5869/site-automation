@@ -258,7 +258,7 @@ mynetworks =
     # the scanner in room 210
     198.51.100.9
 
-    # web01.example.mil - Payroll  [AAP mail relay format 2026-11-02 job 4711]
+    # web01.example.mil  Payroll [AAP]
     198.51.100.30
 mynetworks_style = host
 smtpd_relay_restrictions = permit_mynetworks,
@@ -273,7 +273,7 @@ def words(text):
 
 class Format(unittest.TestCase):
     def fmt(self, text=OLD_CF, names=NAMES, **kw):
-        return m.mail_relay_format(text, names, "mynetworks", kw.pop("stamp", "2026-11-02 job 4711"), **kw)
+        return m.mail_relay_format(text, names, "mynetworks", **kw)
 
     def test_one_column(self):
         f = self.fmt()
@@ -285,18 +285,32 @@ class Format(unittest.TestCase):
         self.assertEqual(f["words"], words(FORMATTED))
 
     def test_again_changes_nothing(self):
-        f = self.fmt(FORMATTED, stamp="2026-12-01 job 9")
+        f = self.fmt(FORMATTED)
         self.assertFalse(f["rewrite"])
         self.assertEqual(f["text"], FORMATTED)
 
     def test_refresh_only_its_own(self):
         f = self.fmt(FORMATTED, {"198.51.100.30": {"name": "web02.example.mil", "service": "HR"},
                                  "198.51.100.9": {"name": "scan.example.mil"}, "198.51.100.3": {"name": "x"}},
-                     stamp="2026-12-01", refresh=True)
-        self.assertIn("    # web02.example.mil - HR  [AAP mail relay format 2026-12-01]\n    198.51.100.30\n", f["text"])
+                     refresh=True)
+        self.assertIn("    # web02.example.mil  HR [AAP]\n    198.51.100.30\n", f["text"])
         self.assertIn("    # the scanner in room 210\n", f["text"])          # a person's comment stays
         self.assertIn("    # Payroll app (svc-payroll)  [added 2026-10-22 by jdoe]\n", f["text"])
         self.assertEqual(f["named"], ["198.51.100.30"])
+
+    def test_refresh_rewrites_the_older_form(self):
+        old = FORMATTED.replace("# web01.example.mil  Payroll [AAP]", "# web01.example.mil - Payroll  [AAP mail relay format 2026-11-02 job 4711]")
+        self.assertEqual(self.fmt(old)["text"], old)                    # without refresh: as it is (it has a comment)
+        f = self.fmt(old, refresh=True)
+        self.assertEqual(f["text"], FORMATTED)
+        self.assertEqual(m.mail_relay_plan(old, {"action": "add", "ips": ["198.51.100.30"], "comment": "x", "date": "d", "by": "x"})["notes"],
+                         ["198.51.100.30 is on the list already (web01.example.mil - Payroll) - left as it is."])
+        r = m.mail_relay_edit(old, {"action": "remove", "ips": ["198.51.100.30"], "date": "d", "by": "x"})
+        self.assertNotIn("web01", r["text"])                            # its comment line goes with it
+
+    def test_no_name_no_comment(self):
+        f = self.fmt("mynetworks = 192.0.2.10, 192.0.2.11\n", {"192.0.2.11": {"name": "", "service": "Payroll"}})
+        self.assertEqual(f["text"], "mynetworks =\n    192.0.2.10\n\n    # Payroll [AAP]\n    192.0.2.11\n")
 
     def test_no_blank_lines(self):
         f = self.fmt(blank=False)
@@ -317,7 +331,7 @@ class Format(unittest.TestCase):
     def test_names_cleaned(self):
         f = self.fmt("mynetworks = 192.0.2.10\n", {"192.0.2.10": {"name": "a [b]\nc", "service": "x" * 300}})
         line = f["text"].splitlines()[1]
-        self.assertTrue(line.startswith("    # a b c - xxx") and line.endswith("[AAP mail relay format 2026-11-02 job 4711]"), line)
+        self.assertTrue(line.startswith("    # a b c  xxx") and line.endswith("x [AAP]"), line)
         self.assertLess(len(line), 300)
         self.assertEqual(m.mail_relay_singles(f["text"])["named"], ["192.0.2.10"])
 
@@ -347,14 +361,14 @@ class Column(unittest.TestCase):
         r = m.mail_relay_edit(FORMATTED, {"action": "remove", "ips": ["198.51.100.30", "198.51.100.9"], "date": "d", "by": "x"})
         self.assertNotIn("web01", r["text"])
         self.assertNotIn("scanner", r["text"])
-        self.assertIn("# web01.example.mil - Payroll  [AAP mail relay format 2026-11-02 job 4711]", r["lines"])
+        self.assertIn("# web01.example.mil  Payroll [AAP]", r["lines"])
         self.assertTrue(r["text"].endswith("    198.51.100.3\nmynetworks_style = host\nsmtpd_relay_restrictions = permit_mynetworks,\n"
                                            "    reject_unauth_destination\n"), r["text"])
 
     def test_plan_says_who_it_is(self):
         p = m.mail_relay_plan(FORMATTED, dict(self.ADD, ips=["198.51.100.30", "198.51.100.3"]))
         self.assertEqual(p["change"], "none")
-        self.assertIn("198.51.100.30 is on the list already (web01.example.mil - Payroll) - left as it is.", p["notes"])
+        self.assertIn("198.51.100.30 is on the list already (web01.example.mil  Payroll) - left as it is.", p["notes"])
         self.assertIn("198.51.100.3 is on the list already (Payroll app (svc-payroll), added 2026-10-22 by jdoe) - left as it is.",
                       p["notes"])
 
@@ -410,6 +424,94 @@ class Names(unittest.TestCase):
                          {"198.51.100.30": "web01.example.mil"})
         self.assertEqual(m.mail_relay_service("/DC1/vm/Finance/Payroll"), "Payroll")
         self.assertEqual(m.mail_relay_service("/DC1/vm"), "")
+
+
+# ---- the addresses that sent nothing (playbooks/mail_relay_unused.yml) ------------------------------------------------
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "roles", "mail_relay", "library"))
+import site_mail_relay_clients as clients  # noqa: E402
+
+NOW = 1793600000.0                                       # 2026-11-02 UTC
+DAY = 86400
+
+
+def iso(days_ago):
+    import time
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(NOW - days_ago * DAY))
+
+
+def relay(host, words, oldest, sent=None, connects=None, problem=""):
+    c = {}
+    for ip, ago in (sent or {}).items():
+        c[ip] = {"sent": 3, "last_sent": iso(ago), "first_sent": iso(ago + 5), "connects": 3, "last_connect": iso(ago)}
+    for ip, ago in (connects or {}).items():
+        c.setdefault(ip, {"sent": 0, "last_sent": "", "first_sent": "", "connects": 0, "last_connect": ""})
+        c[ip]["connects"] += 4
+        c[ip]["last_connect"] = iso(ago)
+    return {"host": host, "words": words, "problem": problem,
+            "logs": {"oldest": iso(oldest) if oldest is not None else "", "newest": iso(0), "clients": c,
+                     "sources": [{"source": "/var/log/maillog", "error": ""}]}}
+
+
+class Unused(unittest.TestCase):
+    def test_list_words(self):
+        self.assertEqual(m.mail_relay_list_words("mynetworks = 127.0.0.0/8, 192.0.2.10\n    192.0.2.11/32\nx = 1\n"),
+                         ["127.0.0.0/8", "192.0.2.10", "192.0.2.11/32"])
+        self.assertIsNone(m.mail_relay_list_words("relayhost = [192.0.2.25]\n"))
+        self.assertEqual(m.mail_relay_list_words("# Printers\n192.0.2.10 OK\n192.0.2.12 REJECT\n198.51.100 OK\n", "file"),
+                         ["192.0.2.10", "198.51.100"])
+
+    def test_unused_across_relays(self):
+        r1 = relay("relay1", ["127.0.0.0/8", "192.0.2.10", "192.0.2.11/32", "192.0.2.12", "203.0.113.0/28", "$config"],
+                   330, sent={"192.0.2.10": 300, "203.0.113.5": 400}, connects={"192.0.2.12": 2})
+        r2 = relay("relay2", ["127.0.0.0/8", "192.0.2.10", "192.0.2.13"], 300, sent={"192.0.2.10": 4, "192.0.2.13": 20})
+        u = m.mail_relay_unused([r1, r2], {"days": 183, "now": NOW})
+        self.assertTrue(u["covered"])
+        self.assertEqual(u["unused"], ["192.0.2.11", "192.0.2.12"])          # 192.0.2.10 sent through relay2 4 days ago
+        self.assertEqual(u["unused_subnets"], ["203.0.113.0/28"])            # its address sent 400 days ago: listed only
+        rows = dict((r[0], r) for r in u["rows"])
+        self.assertEqual(rows["192.0.2.10"][2:], ["all", m.time_text(NOW - 4 * DAY), 6, "6 connection(s)", "in use"])
+        self.assertEqual(rows["192.0.2.12"][3:], ["never in the logs", 0, "4 connection(s), never mail", "UNUSED"])
+        self.assertEqual(rows["203.0.113.0/28"][3:5], [m.time_text(NOW - 400 * DAY), 3])      # sent, but before the 183 days
+        self.assertEqual(rows["192.0.2.13"][2], "relay2")
+        self.assertEqual(rows["127.0.0.0/8"][-1], "kept: the relay itself")
+        self.assertEqual(rows["$config"][-1], "kept: not an address")
+        self.assertEqual(u["used"], 2)
+        self.assertIn("Subnets that sent nothing are listed", " ".join(u["notes"]))
+        self.assertEqual(m.mail_relay_coverage_row(u["coverage"][0])[:5], ["relay1", iso(330)[:10], iso(0)[:10], 330, "yes"])
+
+    def test_logs_too_short_keep_and_max(self):
+        r1 = relay("relay1", ["192.0.2.10", "192.0.2.11", "192.0.2.12"], 35)
+        u = m.mail_relay_unused([r1], {"days": 183, "now": NOW})
+        self.assertFalse(u["covered"])
+        self.assertIn("The logs do not go back 183 days on relay1: relay1 back to %s (35 days)" % iso(35)[:10], u["notes"][0])
+        u = m.mail_relay_unused([relay("relay1", ["192.0.2.10", "192.0.2.11", "192.0.2.12"], 200)],
+                                {"days": 183, "now": NOW, "keep": ["192.0.2.12", "nonsense"], "max": 1})
+        self.assertEqual((u["unused"], u["later"]), (["192.0.2.10"], ["192.0.2.11"]))
+        self.assertEqual(dict((r[0], r[-1]) for r in u["rows"])["192.0.2.12"], "kept: mail_relay_unused_keep")
+        self.assertIn("1 more unused address(es) are not in this plan (mail_relay_unused_max: 1)", " ".join(u["notes"]))
+        bad = m.mail_relay_unused([relay("relay1", [], None, problem="unreachable")], {"days": 183, "now": NOW})
+        self.assertEqual((bad["covered"], bad["problems"]), (False, [{"host": "relay1", "problem": "unreachable"}]))
+
+
+class LogLines(unittest.TestCase):
+    def test_sent_connect_and_times(self):
+        seen = clients.Seen()
+        ref = NOW
+        seen.line("2026-10-30T10:00:00.123456+01:00 relay1 postfix/smtpd[9]: 4AbC: client=app.example.mil[192.0.2.10]\n", ref)
+        seen.line("2026-10-31T10:00:00+0100 relay1 postfix/submission/smtpd[9]: connect from x[192.0.2.11]\n", ref)
+        seen.line("2026-10-31T10:00:01+0100 relay1 postfix/smtpd[9]: disconnect from x[192.0.2.11] commands=2\n", ref)
+        seen.line("2026-10-31T10:00:02+0100 relay1 postfix/smtpd[9]: NOQUEUE: reject: RCPT from x[192.0.2.12]: 554\n", ref)
+        self.assertEqual(sorted(seen.clients), ["192.0.2.10", "192.0.2.11"])
+        self.assertEqual(seen.clients["192.0.2.10"]["sent"], 1)
+        self.assertEqual(clients.iso(seen.clients["192.0.2.10"]["last_sent"]), "2026-10-30T09:00:00Z")
+        self.assertEqual((seen.clients["192.0.2.11"]["sent"], seen.clients["192.0.2.11"]["connects"]), (0, 1))
+
+    def test_syslog_year_from_the_file(self):
+        import time
+        ref = time.mktime((2026, 1, 15, 12, 0, 0, 0, 0, -1))           # a file last changed mid-January 2026
+        self.assertEqual(time.localtime(clients.stamp("Dec 30 23:59:59 relay1 postfix/smtpd[1]: x", ref)).tm_year, 2025)
+        self.assertEqual(time.localtime(clients.stamp("Jan  2 08:00:00 relay1 postfix/smtpd[1]: x", ref)).tm_year, 2026)
+        self.assertIsNone(clients.stamp("garbage", ref))
 
 
 if __name__ == "__main__":

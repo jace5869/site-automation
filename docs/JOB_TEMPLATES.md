@@ -98,6 +98,7 @@ VMware collection ([VMWARE.md](VMWARE.md#before-you-start)).
 | VM - secure boot report | `playbooks/vm_secure_boot_report.yml` | Report | [VMWARE.md](VMWARE.md#the-templates) |
 | VM - datastore report | `playbooks/vm_datastore_report.yml` | Report | [VMWARE.md](VMWARE.md#the-templates) |
 | VM - inventory report | `playbooks/vm_inventory_report.yml` | Report | [VMWARE.md](VMWARE.md#the-vm-inventory-report) |
+| VM - VMware Tools inventory | `playbooks/vm_tools_report.yml` | Report | [VMWARE.md](VMWARE.md#the-vmware-tools-inventory) |
 | VM - right-sizing report | `playbooks/vm_rightsizing_report.yml` | Report | [VMWARE.md](VMWARE.md#the-vm-right-sizing-report) |
 | VM - snapshot report | `playbooks/vm_snapshot_report.yml` | Workflow step | [VMWARE.md](VMWARE.md#set-it-up-once), workflow 19: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#19-snapshot-cleanup-with-approval) |
 | VM - snapshot cleanup | `playbooks/vm_snapshot_cleanup.yml` | After an approval | [VMWARE.md](VMWARE.md#snapshots-the-report-the-cleanup-and-the-approval-workflow) |
@@ -144,8 +145,10 @@ read only or acting ([HORIZON.md](HORIZON.md#step-3-the-job-templates)).
 | Network config load | `playbooks/net_config_load.yml` | Workflow step | [NETWORK_CONFIG.md](NETWORK_CONFIG.md#a-load-with-an-approval) |
 | Mail relay - whitelist plan | `playbooks/mail_relay_plan.yml` | Workflow step | [MAIL_RELAY.md](MAIL_RELAY.md#set-it-up-once), workflow 38: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#38-add-or-remove-a-mail-relay-whitelist-address-with-an-approval) |
 | Mail relay - apply the approved whitelist change | `playbooks/mail_relay_approved.yml` | After an approval | [MAIL_RELAY.md](MAIL_RELAY.md#set-it-up-once) |
+| Mail relay - unused addresses plan | `playbooks/mail_relay_unused.yml` | Workflow step | [MAIL_RELAY.md](MAIL_RELAY.md#remove-the-addresses-that-sent-no-mail), workflow 38: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#38-add-or-remove-a-mail-relay-whitelist-address-with-an-approval) |
 | Mail relay - format the whitelist | `playbooks/mail_relay_format.yml` | On demand (Check first) | [MAIL_RELAY.md](MAIL_RELAY.md#format-the-list-one-address-per-line) |
 | NetApp ONTAP health report | `playbooks/ontap_health_report.yml` | Report | [NETAPP.md](NETAPP.md#set-it-up) |
+| NetApp ONTAP hardware inventory | `playbooks/ontap_hardware_report.yml` | Report | [NETAPP.md](NETAPP.md#the-hardware-inventory) |
 
 ## Tenable.sc (ACAS)
 

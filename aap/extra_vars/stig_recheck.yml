@@ -223,6 +223,10 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## the client's grant)
 # check_stig_update_status: submitted
 
+## a review with attachments in STIG Manager (evidence a person attached) is left out of the plan
+## and never written; false = written like the others
+# check_stig_update_skip_attachments: true
+
 ## at most this many characters of what the scan found, as each review's detail
 # check_stig_update_detail_max: 8000
 

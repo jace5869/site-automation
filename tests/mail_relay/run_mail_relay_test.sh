@@ -8,7 +8,9 @@
 # touching 198.51.100.30 and 203.0.113.0 never 203.0.113.0/24, other settings' addresses never read as the list, the
 # notes (a subnet that lets an address relay, addresses inside a subnet), a list file and an access map (style
 # file), refused requests, an unreachable relay, a plan changed since, a failed configuration check and a wrong
-# read-back putting the file back, a dry run, and the approved job refusing a plan it did not get from the plan job.
+# read-back putting the file back, a dry run, and the approved job refusing a plan it did not get from the plan job;
+# the addresses that sent no mail (playbooks/mail_relay_unused.yml: mail logs with a gzipped rotated file, how far
+# back they go, connections without mail, the plan, approved and removed, logs too short, kept, no logs).
 # No Postfix service here: mail_relay_check_command is "true", no reload; the read-back uses postconf when the
 # machine has it (tests/mail_relay/README or the real-Postfix run in CI checks it against a running Postfix).
 #   bash tests/mail_relay/run_mail_relay_test.sh            (ANSIBLE_PLAYBOOK=... to pick one)
@@ -265,14 +267,14 @@ check "  ...file as it was" cmp "$work/orig/r1" "$work/r1/main.cf"
 # relay1: an add's table line from before (192.0.2.11), 127.0.0.1 (localhost in /etc/hosts), 192.0.2.10 (no name)
 reset
 fmt_before="# Postfix main.cf - relay1\nmyhostname = relay1.example.mil\n$(c 192.0.2.11 Printer 2026-10-22 jdoe)\nmynetworks = 127.0.0.0/8, 192.0.2.11, 127.0.0.1, 192.0.2.10\nmynetworks_style = host\n"
-fmt_after="# Postfix main.cf - relay1\nmyhostname = relay1.example.mil\nmynetworks =\n    127.0.0.0/8\n\n    # localhost  [AAP mail relay format $today]\n    127.0.0.1\n\n    192.0.2.10\n\n    # Printer  [added 2026-10-22 by jdoe]\n    192.0.2.11\nmynetworks_style = host\n"
+fmt_after="# Postfix main.cf - relay1\nmyhostname = relay1.example.mil\nmynetworks =\n    127.0.0.0/8\n\n    # localhost [AAP]\n    127.0.0.1\n\n    192.0.2.10\n\n    # Printer  [added 2026-10-22 by jdoe]\n    192.0.2.11\nmynetworks_style = host\n"
 printf '%b' "$fmt_before" > "$work/r1/main.cf"
 cp "$work/r1/main.cf" "$work/fmt_before"
 FMT='{"mail_relay_group": "relays_fmt", "mail_relay_format_dns_timeout": 2}'
 CHECK=1 run "format as Check: shows the new list, writes nothing" ok mail_relay_format.yml "$FMT" \
     'Subject: [AAP] Mail relay whitelist - dry run: one address per line' 'DRY RUN (Check mode): nothing was written' 'Check mode: nothing was written' \
     'Each address looked up' '127.0.0.1   localhost' '192.0.2.10  -' \
-    '# localhost  [AAP mail relay format' '# Printer  [added 2026-10-22 by jdoe]' 'No VMware vCenter credential on the template'
+    '# localhost [AAP]' '# Printer  [added 2026-10-22 by jdoe]' 'No VMware vCenter credential on the template'
 check "  ...main.cf as it was, no copy made" bash -c "cmp -s '$work/fmt_before' '$work/r1/main.cf' && ! ls '$work'/r1/main.cf.before-format-* 2>/dev/null"
 run "format: one address per line, the add's comment on its address, named from DNS" ok mail_relay_format.yml "$FMT" \
     'Subject: [AAP] Mail relay whitelist - one address per line' '2 of 2 relay(s) formatted' 'a copy of the file before:' \
@@ -294,7 +296,7 @@ run "plan add on the formatted list" ok mail_relay_plan.yml \
     '{"mail_relay_group": "relays_fmt", "mail_relay_action": "add", "mail_relay_ip": "192.0.2.4, 203.0.113.0/28", "mail_relay_comment": "Scanner"}' \
     "# Scanner  [added $today by jdoe]" '!mynetworks = ..., '
 run "approved add: each on its line in its place, its comment above it" ok mail_relay_approved.yml "$(stats mail_relay_plan)" 'added 192.0.2.4'
-check "  ...in their places" same "$work/r1/main.cf" "# Postfix main.cf - relay1\nmyhostname = relay1.example.mil\nmynetworks =\n    127.0.0.0/8\n    # Scanner  [added $today by jdoe]\n    203.0.113.0/28\n\n    # localhost  [AAP mail relay format $today]\n    127.0.0.1\n\n    # Scanner  [added $today by jdoe]\n    192.0.2.4\n\n    192.0.2.10\n\n    # Printer  [added 2026-10-22 by jdoe]\n    192.0.2.11\nmynetworks_style = host\n"
+check "  ...in their places" same "$work/r1/main.cf" "# Postfix main.cf - relay1\nmyhostname = relay1.example.mil\nmynetworks =\n    127.0.0.0/8\n    # Scanner  [added $today by jdoe]\n    203.0.113.0/28\n\n    # localhost [AAP]\n    127.0.0.1\n\n    # Scanner  [added $today by jdoe]\n    192.0.2.4\n\n    192.0.2.10\n\n    # Printer  [added 2026-10-22 by jdoe]\n    192.0.2.11\nmynetworks_style = host\n"
 check "  ...Postfix reads them" postfix_reads "$work/r1" "127.0.0.0/8 203.0.113.0/28 127.0.0.1 192.0.2.4 192.0.2.10 192.0.2.11"
 run "plan remove on the formatted list: the lines and their comments" ok mail_relay_plan.yml \
     '{"mail_relay_group": "relays_fmt", "mail_relay_action": "remove", "mail_relay_ip": "192.0.2.4, 203.0.113.0/28"}' \
@@ -356,6 +358,56 @@ run "a file that is not there: nothing to approve, says mail_relay_file" fail ma
 run "a main.cf without the parameter: nothing to approve, says so" fail mail_relay_plan.yml \
     '{"mail_relay_action": "add", "mail_relay_ip": "203.0.113.9", "mail_relay_comment": "No line", "mail_relay_parameter": "no_such"}' \
     "no 'no_such =' line in it"
+
+# ---- the addresses that sent nothing (playbooks/mail_relay_unused.yml -> approval -> mail_relay_approved.yml) ------------
+# the mail logs as rsyslog writes them (no year; the rotated one gzipped, its file dated by its last line): relay1 -
+# 192.0.2.10 sent 10 days ago, 192.0.2.11 sent 190 days ago and only connected since (a monitor); relay2 - 192.0.2.10
+# sent 3 days ago; both go back 200 days
+mkdir -p "$work/log1" "$work/log2"
+ts() { LC_ALL=C date -d "-$1 days" '+%b %e %H:%M:%S'; }
+{ echo "$(ts 200) relay1 postfix/smtpd[100]: connect from scanner.example.mil[203.0.113.50]"
+  echo "$(ts 190) relay1 postfix/smtpd[101]: connect from app11.example.mil[192.0.2.11]"
+  echo "$(ts 190) relay1 postfix/smtpd[101]: 4AbCd1: client=app11.example.mil[192.0.2.11]"
+  echo "$(ts 150) relay1 postfix/qmgr[90]: 4AbCd1: removed"; } | gzip > "$work/log1/maillog-old.gz"
+touch -d "-150 days" "$work/log1/maillog-old.gz"
+{ echo "$(ts 30) relay1 postfix/smtpd[102]: connect from app10.example.mil[192.0.2.10]"
+  echo "$(ts 10) relay1 postfix/smtpd[102]: 4AbCd2: client=app10.example.mil[192.0.2.10]"
+  echo "$(ts 5) relay1 postfix/smtpd[103]: connect from app11.example.mil[192.0.2.11]"
+  echo "$(ts 5) relay1 postfix/smtpd[103]: disconnect from app11.example.mil[192.0.2.11] ehlo=1 quit=1 commands=2"; } > "$work/log1/maillog"
+{ echo "$(ts 200) relay2 systemd[1]: Started Postfix Mail Transport Agent."
+  echo "$(ts 3) relay2 postfix/smtpd[200]: 5XyZ: client=unknown[192.0.2.10]"; } > "$work/log2/maillog"
+sed -e "s#mail_relay_file: $work/r1/main.cf}#mail_relay_file: $work/r1/main.cf, mail_relay_unused_logs: ['$work/log1/maillog*']}#" \
+    -e "s#mail_relay_file: $work/r2/main.cf}#mail_relay_file: $work/r2/main.cf, mail_relay_unused_logs: ['$work/log2/maillog*']}#" \
+    "$work/inv.yml" > "$work/inv-unused.yml"
+reset
+INV="$work/inv-unused.yml" run "unused: 192.0.2.11 sent nothing in 183 days (connections only) - its removal waits for approval" ok \
+    mail_relay_unused.yml '{}' \
+    'Subject: [AAP] Mail relay whitelist - waiting for approval: unused - remove 192.0.2.11' 'How far back the logs go' \
+    'Each address on the list' '192.0.2.11' 'UNUSED' '2 connection(s)' 'in use' 'kept: the relay itself' \
+    'READY FOR APPROVAL: remove 192.0.2.11 on relay1' '"kind": "unused"' '!remove 192.0.2.10'
+check "  ...the plan changed no file" cmp -s "$work/orig/r1" "$work/r1/main.cf"
+INV="$work/inv-unused.yml" run "unused: approved - 192.0.2.11 removed from relay1" ok mail_relay_approved.yml "$(stats mail_relay_plan)" \
+    'removed 192.0.2.11'
+check "  ...relay1's list without it" grep -q '^mynetworks = 127.0.0.0/8, 192.0.2.10$' "$work/r1/main.cf"
+INV="$work/inv-unused.yml" run "unused again: every address sent mail - nothing to approve" fail mail_relay_unused.yml '{}' \
+    'Subject: [AAP] Mail relay whitelist - unused addresses: none' 'every address on the list sent mail in the last 183 days' \
+    '!"mail_relay_plan": {'
+reset
+INV="$work/inv-unused.yml" run "unused, 400 days asked: the logs go back 200 - nothing proposed, says how far they go" fail \
+    mail_relay_unused.yml '{"mail_relay_unused_days": 400}' 'unused addresses: logs too short to tell' \
+    'the mail logs do not go back 400 days on every relay' 'The logs do not go back 400 days on relay1, relay2' '(200 days)' \
+    '!"mail_relay_plan": {'
+INV="$work/inv-unused.yml" run "unused, logs of 30 days with mail_relay_unused_accept_short_logs: proposed anyway, the note says so" ok \
+    mail_relay_unused.yml "{\"mail_relay_unused_logs\": [\"$work/log1/maillog\"], \"mail_relay_unused_accept_short_logs\": true}" \
+    'waiting for approval: unused - remove 192.0.2.11' 'The logs do not go back 183 days' '(30 days)'
+INV="$work/inv-unused.yml" run "unused, 192.0.2.11 in mail_relay_unused_keep: nothing to approve" fail mail_relay_unused.yml \
+    '{"mail_relay_unused_keep": ["192.0.2.0/28"]}' 'kept: mail_relay_unused_keep' '!"mail_relay_plan": {'
+INV="$work/inv-unused.yml" run "unused, no log file and no journal: the relay not read, nothing to approve" fail mail_relay_unused.yml \
+    "{\"mail_relay_unused_logs\": [\"$work/nope*\"], \"mail_relay_unused_journal\": \"false\"}" 'No mail log line was read on relay1' \
+    'FAILED: a relay could not be read' '!"mail_relay_plan": {'
+CHECK=1 INV="$work/inv-unused.yml" run "unused, a dry run (Check): the same plan, nothing written" ok mail_relay_unused.yml '{}' \
+    'READY FOR APPROVAL: remove 192.0.2.11 on relay1'
+check "  ...nothing was written" cmp -s "$work/orig/r1" "$work/r1/main.cf"
 
 echo
 if [ "$fails" -eq 0 ]; then echo "All mail relay tests passed."; else echo "$fails mail relay test(s) FAILED."; fi

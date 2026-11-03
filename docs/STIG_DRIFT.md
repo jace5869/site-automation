@@ -450,7 +450,8 @@ What it writes (`check_stig_update`):
 | Answered: Not Reviewed, the scan passes it | Not a Finding | what the scan found | the review's own, kept (or the job's line if it has none) |
 | Answered: Not Reviewed, the scan fails it | Open | what the scan found | the job's line: *Set by the STIG recheck (site-automation), approved in AAP: ...* |
 
-- **Never written:** Still open, By hand, and the rules in `check_stig_ignore_rules`.
+- **Never written:** Still open, By hand, the rules in `check_stig_ignore_rules`, and **a review with attachments** in
+  STIG Manager (below).
 - **Status:** each review is written with the status `check_stig_update_status`. The default is `submitted`, which
   leaves Accept to your reviewers in STIG Manager. `accepted` works only if the collection allows Accept and the
   client's grant is Manage or higher.
@@ -463,6 +464,18 @@ What it writes (`check_stig_update`):
   asset's reviews (`/collections/{id}/reviews/{asset}`). It never changes a collection, asset, user, grant or STIG.
 - **Only if nothing changed since.** Each review is read again first. If a person changed it after the check read it,
   it is left as it is, and the report says so (*changed since*).
+- **Never a review with attachments.** When a person attached evidence to a review in STIG Manager (the paper clip in
+  the review panel: a screenshot, a POA&M document), that review is left as it is - the evidence stays with the result
+  it was attached for. STIG Manager keeps the attachments in the review's metadata (the key `artifacts`); the job reads
+  only that key's list (`GET .../reviews/{asset}/{rule}/metadata/keys`), never the files. Twice:
+  - **the check** leaves those reviews out of what it hands to the approval, and its report lists them under *Left as
+    they are: reviews with attachments*, with the files' names - to review by hand if the scan's result is right;
+  - **the update** reads each review's attachments again just before writing, so one attached between the check and
+    the approval is left too (*has attachments*).
+
+  A review whose attachments cannot be read is left out as well. `check_stig_update_skip_attachments: false` writes
+  them like the others. This is about attachments only: answer files change what Evaluate-STIG reports, not what is
+  attached in STIG Manager.
 - **Read back.** Each review is read again after it is written. If STIG Manager refused one (the collection requires
   a field, a grant is missing), the report says why and the job fails.
 - **Check mode** (Job type **Check** on the update template) reads everything and writes nothing. It says what it would

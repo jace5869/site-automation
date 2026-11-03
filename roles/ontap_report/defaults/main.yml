@@ -42,3 +42,8 @@ ontap_snapshot_top: 25                   # the snapshot space table: the volumes
 # The job stays green when it finds problems: the report and email say what. true = mark it
 # FAILED when there is a critical finding or a cluster could not be read, for workflows.
 ontap_report_fail: false
+
+# ---- NetApp ONTAP hardware inventory (playbooks/ontap_hardware_report.yml) ----
+ontap_hardware_max_rows: 2000            # controllers, shelves and disk models listed in the email and the page at most (the workbook always has all)
+ontap_hardware_xlsx: true                # attach every controller, shelf, shelf module, disk and port as an Excel workbook (.xlsx) to the email
+ontap_hardware_fail: false               # true = mark the job FAILED when a cluster could not be read (the report still goes out), for workflows

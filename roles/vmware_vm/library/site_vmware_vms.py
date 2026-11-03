@@ -13,7 +13,8 @@ short_description: Read every VM in vCenter, with VMware Tools and its heartbeat
 description:
   - Lists every VM (templates included, marked) of the credential's vCenter and of vcenters - name, ID
     (moid), vCenter, datacenter, folder, cluster, ESXi host, power state, guest host name and IP
-    addresses, guest OS, VMware Tools (installed, running) and the guest heartbeat vCenter shows
+    addresses, guest OS (configured, and as VMware Tools reports it), VMware Tools (installed, running, its version,
+    whether it is current for the host, how it was installed) and the guest heartbeat vCenter shows
     (green, yellow, red; gray = no VMware Tools to tell), its vCPUs and memory, and when it was powered on.
   - vCenter's address and account come from VMWARE_HOST, VMWARE_USER, VMWARE_PASSWORD (and
     VMWARE_PORT), as a "VMware vCenter" credential in AAP gives them; vcenters adds more vCenters
@@ -50,7 +51,12 @@ vms:
   sample: [{name: web01, moid: vm-42, vcenter: vc01.example.mil, datacenter: DC1, folder: /DC1/vm/Linux, cluster: PROD-CL01,
             esxi_host: esx01.example.mil, template: false, power: poweredOn, hostname: web01.example.mil, ip: 192.0.2.3,
             ips: [192.0.2.3], guest_os: Red Hat Enterprise Linux 9 (64-bit), tools: toolsOk, tools_running: guestToolsRunning,
-            heartbeat: green, cpus: 2, memory_mb: 8192, hw_version: vmx-21, firmware: efi, tools_version: "12352", boot_time: "2026-10-01T12:00:00Z", up_minutes: 27360}]
+            heartbeat: green, cpus: 2, memory_mb: 8192, hw_version: vmx-21, firmware: efi, tools_version: "12352",
+            tools_status: guestToolsCurrent, tools_install_type: guestToolsTypeOpenVMTools,
+            guest_os_running: Red Hat Enterprise Linux 9 (64-bit), boot_time: "2026-10-01T12:00:00Z", up_minutes: 27360}]
+    # tools_status: vCenter's guest.toolsVersionStatus2 (guestToolsCurrent, guestToolsNeedUpgrade, guestToolsSupportedOld,
+    #   guestToolsTooOld, guestToolsUnmanaged ...); guest_os_running: the guest OS as VMware Tools reports it ('' without
+    #   Tools), guest_os the one the VM is configured with
     # with disks: vdisks [{label: Hard disk 1, size_gb: 100.0, datastore: DS01, file: "[DS01] web01/web01.vmdk", thin: true}],
     #   volumes [{path: "C:\\", capacity_gb: 99.4, free_gb: 12.1}], storage_used_gb: 54.2, storage_provisioned_gb: 108.0
     # with events_days: last_restart {time, kind (power on, guest restart, reset, HA restart), by}, last_power_off {time, kind, by},
@@ -81,7 +87,8 @@ except ImportError:
 
 PROPS = ["name", "config.template", "config.guestFullName", "runtime.powerState", "runtime.host", "runtime.bootTime",
          "guest.hostName", "guest.ipAddress", "guest.net", "guest.toolsStatus", "guest.toolsRunningStatus", "guestHeartbeatStatus",
-         "config.hardware.numCPU", "config.hardware.memoryMB", "config.version", "config.firmware", "guest.toolsVersion"]
+         "config.hardware.numCPU", "config.hardware.memoryMB", "config.version", "config.firmware", "guest.toolsVersion",
+         "guest.toolsVersionStatus2", "guest.toolsInstallType", "guest.guestFullName"]
 
 
 def _folder(obj):
@@ -215,6 +222,9 @@ def _read(content, p, now, vcenter):
                     "cpus": pr.get("config.hardware.numCPU"), "memory_mb": pr.get("config.hardware.memoryMB"),
                     "hw_version": str(pr.get("config.version") or ""), "firmware": str(pr.get("config.firmware") or ""),
                     "tools_version": str(pr.get("guest.toolsVersion") or ""),
+                    "tools_status": str(pr.get("guest.toolsVersionStatus2") or ""),
+                    "tools_install_type": str(pr.get("guest.toolsInstallType") or ""),
+                    "guest_os_running": pr.get("guest.guestFullName") or "",
                     "boot_time": boot.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if boot else "",
                     "up_minutes": int(max(now - boot.timestamp(), 0) // 60) if boot else None})
         if p["disks"]:

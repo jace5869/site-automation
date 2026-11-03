@@ -41,7 +41,9 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Log analysis | `playbooks/log_analysis.yml` | [log_analysis.yml](log_analysis.yml) |
 | Mail relay - apply the approved whitelist change | `playbooks/mail_relay_approved.yml` | [mail_relay_approved.yml](mail_relay_approved.yml) |
 | Mail relay - format the whitelist | `playbooks/mail_relay_format.yml` | [mail_relay_format.yml](mail_relay_format.yml) |
+| Mail relay - unused addresses plan | `playbooks/mail_relay_unused.yml` | [mail_relay_unused.yml](mail_relay_unused.yml) |
 | Mail relay - whitelist plan | `playbooks/mail_relay_plan.yml` | [mail_relay_plan.yml](mail_relay_plan.yml) |
+| NetApp ONTAP hardware inventory | `playbooks/ontap_hardware_report.yml` | [ontap_hardware_report.yml](ontap_hardware_report.yml) |
 | NetApp ONTAP health report | `playbooks/ontap_health_report.yml` | [ontap_health_report.yml](ontap_health_report.yml) |
 | Network config backup | `playbooks/net_config_backup.yml` | [net_config_backup.yml](net_config_backup.yml) |
 | Network config load | `playbooks/net_config_load.yml` | [net_config_load.yml](net_config_load.yml) |
@@ -91,6 +93,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | VM - snapshot report | `playbooks/vm_snapshot_report.yml` | [vm_snapshot_report.yml](vm_snapshot_report.yml) |
 | VM - vCenter log analysis | `playbooks/vm_log_analysis.yml` | [vm_log_analysis.yml](vm_log_analysis.yml) |
 | VM - VMs created report | `playbooks/vm_created_report.yml` | [vm_created_report.yml](vm_created_report.yml) |
+| VM - VMware Tools inventory | `playbooks/vm_tools_report.yml` | [vm_tools_report.yml](vm_tools_report.yml) |
 | VMware - certificate renewal | `playbooks/vmware_cert_renew.yml` | [vmware_cert_renew.yml](vmware_cert_renew.yml) |
 | VMware - certificate report | `playbooks/vmware_cert_report.yml` | [vmware_cert_report.yml](vmware_cert_report.yml) |
 | VMware - hardware inventory | `playbooks/vmware_hardware_report.yml` | [vmware_hardware_report.yml](vmware_hardware_report.yml) |

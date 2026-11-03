@@ -124,8 +124,11 @@ inv() {
     echo "    gone01.example.mil: {ansible_host: 127.0.0.1, ansible_port: 1, ansible_connection: ssh}"
 }
 inv > "$work/inv.yml"
+# podman's storage.conf: users' own storage under the work folder, so this machine's own podman images are no change here
+printf 'rootless_storage_path = "%s/rootless/$USER"\n' "$work" > "$work/storage.conf"
 cat > "$work/vars.json" <<EOJ
-{"report_web_dest": "$work/site", "site_syslog": false, "fapolicyd_fix_large_mb": 1, "fapolicyd_wait": 2}
+{"report_web_dest": "$work/site", "site_syslog": false, "fapolicyd_fix_large_mb": 1, "fapolicyd_wait": 2,
+ "fapolicyd_rules_storage_conf": "$work/storage.conf"}
 EOJ
 
 run() {  # run HOST|all [ansible-playbook args...] -> $work/out.txt, $rc (one host: its fakes know it in the restart script too)

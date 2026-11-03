@@ -2,7 +2,8 @@
 # On localhost, after every relay was read (plan job): the plan for the approver - printed, emailed
 # ("waiting for approval", report_email_to) and handed to the approved job (set_stats mail_relay_plan). Nothing
 # to change (already on the list / not on it) or a relay that cannot take it: the email says so and the job fails
-# here, so the workflow never asks to approve it.
+# here, so the workflow never asks to approve it. From the unused job: _mr_kind (unused) and _mr_extra_sections (its
+# tables, after the plan's own) too.
 
 - name: Mail relay | what each relay would change
   ansible.builtin.set_fact:
@@ -35,7 +36,9 @@
 - name: Mail relay | the plan for the approver
   ansible.builtin.set_fact:
     _mr_doc:
-      title: "Mail relay whitelist - {{ 'waiting for approval: ' if _mr_ready | bool else 'nothing to approve: ' }}{{ _mr_what }}"
+      title: >-
+        Mail relay whitelist - {{ 'waiting for approval: ' if _mr_ready | bool else 'nothing to approve: ' }}{{
+        'unused - ' if _mr_kind | default('') == 'unused' else '' }}{{ _mr_what }}
       status: "{{ ('warning' if _mr_notes else 'info') if _mr_ready | bool else ('critical' if _mr_problems else 'warning') }}"
       subtitle: >-
         {{ ('Requested by ' ~ _mr_req.by ~ '. Nothing changes until a person approves it in AAP.')
@@ -56,6 +59,7 @@
         {{ ([{'title': ('The lines to be added' if _mr_req.action == 'add' else 'The lines to be removed'),
               'lines': _mr_show_lines}] if _mr_changes else [])
            + ([{'title': 'Note', 'lines': _mr_notes}] if _mr_notes else [])
+           + _mr_extra_sections | default([])
            + [{'title': 'Relay servers', 'columns': ['Relay', 'File', 'Change', 'Problem'],
                'rows': _mr_relays | map(attribute='host') | zip(_mr_relays | map(attribute='file'),
                          _mr_relays | map(attribute='change'),
@@ -91,7 +95,7 @@
     data:
       mail_relay_plan: >-
         {{ _mr_req | combine({'relays': _mr_changes, 'planned': now(utc=true).strftime('%Y-%m-%d %H:%M UTC'),
-                              'job': awx_job_id | default('') | string}) }}
+                              'job': awx_job_id | default('') | string, 'kind': _mr_kind | default('request')}) }}
     per_host: false
   when: _mr_ready | bool
 

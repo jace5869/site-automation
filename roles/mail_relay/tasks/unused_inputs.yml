@@ -1,0 +1,30 @@
+---
+# On localhost, before any relay is read (unused job): which relays, and the settings. Sets _mr_targets and _mr_by.
+- name: Mail relay | the relay servers this job reads
+  ansible.builtin.set_fact:
+    _mr_targets: >-
+      {{ query('ansible.builtin.inventory_hostnames', mail_relay_group)
+         | select('in', query('ansible.builtin.inventory_hostnames', ansible_limit | default('all', true))) | list }}
+    _mr_by: >-
+      {{ ((awx_user_name | default(tower_user_name | default('', true), true)) | string | trim
+          | regex_replace('[^A-Za-z0-9._@-]', '')) or 'unknown' }}
+
+- name: Mail relay | there is at least one relay server in the inventory
+  ansible.builtin.assert:
+    that: _mr_targets | length > 0
+    fail_msg: >-
+      No relay server to read: the inventory has no host in '{{ mail_relay_group }}'{{ (' within the Limit ' ~
+      ansible_limit) if ansible_limit | default('', true) else '' }}. Put the mail relay server(s) in a group named
+      {{ mail_relay_group }} (or set mail_relay_group to your group's name).
+    quiet: true
+
+- name: Mail relay | the settings are usable
+  ansible.builtin.assert:
+    that:
+      - mail_relay_unused_days | int >= 7
+      - mail_relay_unused_max | int >= 1
+      - mail_relay_unused_journal | string | lower in ['auto', 'true', 'false']
+    fail_msg: >-
+      mail_relay_unused_days must be 7 or more (it is {{ mail_relay_unused_days }}), mail_relay_unused_max 1 or more,
+      mail_relay_unused_journal auto, true or false.
+    quiet: true

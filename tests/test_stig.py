@@ -25,6 +25,7 @@ import make_cklb                   # noqa: E402
 import make_results                # noqa: E402
 import site_stig_scan as scan     # noqa: E402
 import site_stigman_read as smr   # noqa: E402
+import site_stigman_attachments as sma  # noqa: E402
 import stig_filters as sf         # noqa: E402
 
 
@@ -908,6 +909,11 @@ class Update(unittest.TestCase):
             def review(self, c, a, rule):
                 return self.db.get(rule)
 
+            def attachments(self, c, a, rule):
+                return self.files.get(rule, (0, []))
+
+            files = {}
+
             def write(self, c, a, reviews):
                 self.posts.append((c, a, reviews))
                 for r in reviews:
@@ -931,15 +937,51 @@ class Update(unittest.TestCase):
         self.assertEqual(c.posts, [], "check mode writes nothing")
         r = sf.stig_update_report(items, False, "", 1)
         self.assertEqual((r["status"], r["sections"][0]["rows"][0][6]), ("warning", "changed since"))
+        c = C()
+        c.files = {"SV-1r0_rule": (1, ["poam.pdf"])}                        # a person attached evidence to it
+        items = smu.update({"plan": p[:1]}, c, False)
+        self.assertEqual((items[0]["state"], c.posts), ("has attachments", []))
+        self.assertIn("1 attachment(s) in STIG Manager: poam.pdf - left as it is", items[0]["why"])
+        self.assertEqual(smu.update({"plan": p[:1], "skip_attachments": False}, C(), False)[0]["state"], "written")
+        r = sf.stig_update_report(items, False, "", 1)
+        self.assertEqual(dict((s["label"], s["value"]) for s in r["summary"])["Has attachments (left)"], 1)
 
     def test_writes_only_reviews(self):
-        """The module's only requests: the token, GET of one review, POST of an asset's reviews."""
+        """The module's only requests: the token, GET of one review (and of its metadata keys, for its attachments), POST of
+        an asset's reviews."""
         with open(os.path.join(ROOT, "roles", "stigman_update", "library", "site_stigman_update.py")) as f:
             src = f.read()
-        self.assertEqual(sorted(set(re.findall(r'"%s(/[^"]*)"', src))), ["/collections/%s/reviews/%s", "/collections/%s/reviews/%s/%s"])
+        self.assertEqual(sorted(set(re.findall(r'"%s(/[^"]*)"', src))), ["/collections/%s/reviews/%s", "/collections/%s/reviews/%s/%s",
+                                                                        "/collections/%s/reviews/%s/%s/metadata/keys"])
         self.assertEqual(re.findall(r'get_method = lambda: "(\w+)"', src), ["POST"])
         for word in ("DELETE", "PATCH", "PUT", "/assets", "/users", "/grants", "/stigs"):
             self.assertNotIn(word, src)
+
+
+class Attachments(unittest.TestCase):
+    def test_what_the_review_panel_writes(self):
+        import json as _j
+        self.assertEqual(sma.artifacts_of(_j.dumps([{"name": "a.png", "digest": "d1"}, {"name": "b.pdf"}])), (2, ["a.png", "b.pdf"]))
+        self.assertEqual(sma.artifacts_of("[]"), (0, []))
+        self.assertEqual(sma.artifacts_of(""), (0, []))
+        self.assertEqual(sma.artifacts_of(None), (0, []))
+        self.assertEqual(sma.artifacts_of("not json"), (-1, []))                 # there, but not readable: counts as some
+
+    def test_the_plan_without_them(self):
+        plan = [{"label": "web01", "collection": "C", "asset": "web01", "v": "V-1", "result": "pass", "line": "one",
+                 "was": {"result": "fail", "status": "accepted"}},
+                {"label": "web01", "collection": "C", "asset": "web01", "v": "V-2", "result": "pass", "line": "two", "was": {}},
+                {"label": "web01", "collection": "C", "asset": "web01", "v": "V-3", "result": "fail", "line": "three", "was": {}}]
+        out = sf.stig_update_attachments(plan, [{"attachments": 1, "names": ["poam.pdf"]}, {"attachments": 0},
+                                                {"attachments": -1, "error": "HTTP 500"}])
+        self.assertEqual([p["line"] for p in out["plan"]], ["two"])
+        self.assertEqual([r[2] for r in out["section"]["rows"]], ["V-1", "V-3"])
+        self.assertEqual(out["section"]["rows"][0][3:], ["Open (accepted)", "Not a Finding", "poam.pdf"])
+        self.assertEqual(out["section"]["rows"][1][5], "could not be read: HTTP 500")
+        self.assertIsNone(sf.stig_update_attachments(plan[1:2], [{"attachments": 0}])["section"])
+        bad = sf.stig_update_attachments(plan, [], "no token")
+        self.assertEqual((bad["plan"], len(bad["left"])), ([], 3))
+        self.assertIn("no token", " ".join(bad["section"]["lines"]))
 
 
 import site_answer_files as saf  # noqa: E402

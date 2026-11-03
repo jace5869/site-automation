@@ -12,3 +12,5 @@ stigman_update_scope: ""                    # scopes to ask for, e.g. "stig-mana
 stigman_update_validate_certs: "{{ check_stig_stigman_validate_certs | default(true) }}"   # check the HTTPS certificates
 stigman_update_ca_path: "{{ check_stig_stigman_ca_path | default('') }}"            # a CA bundle on the AAP side to check them with
 stigman_update_timeout: "{{ check_stig_stigman_timeout | default(60) }}"            # seconds per request
+# a review with attachments in STIG Manager (evidence a person attached) is never written; false = write it like the others
+stigman_update_skip_attachments: "{{ check_stig_update_skip_attachments | default(true) }}"

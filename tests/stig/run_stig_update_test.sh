@@ -7,7 +7,8 @@
 # Check mode writes nothing; with the read-only client STIG Manager refuses and the job fails; with the writing client
 # each review is written, read back, as planned (result, status, detail, comment, result engine); run again: already so;
 # a review changed in STIG Manager since the check is left; a review STIG Manager rejects fails the job; a plan item
-# that is not one the check gives is refused; no plan: nothing written. Only GET, the token POSTs and the reviews' POST
+# that is not one the check gives is refused; no plan: nothing written; a review with attachments in STIG Manager is
+# left out of the check's plan, and left as it is by the update. Only GET, the token POSTs and the reviews' POST
 # reach STIG Manager.
 #   bash tests/stig/run_stig_update_test.sh        (ANSIBLE_PLAYBOOK=... to pick one; STIG_KEEP=FILE keeps the last output)
 set -u
@@ -188,6 +189,40 @@ play stigman_update.yml "plan items the check never gives: refused, nothing writ
 [ "$(writes)" = "$n" ] && echo "ok   - ... nothing posted" || { echo "FAIL - a bad item was posted"; fails=$((fails + 1)); }
 play stigman_update.yml "no plan (not run from workflow 37): nothing written, said why" fail -e "$writer" -- \
     "No plan: this job writes only the reviews the STIG recheck's check listed"
+
+# ---- a review with attachments in STIG Manager (evidence a person attached): never written ------------------------------
+cp "$work/sm-first.json" "$work/sm.json"
+"$py" -c 'import json, sys; d = json.load(open(sys.argv[1]))
+for r in d["reviews"]["11"]:
+    if r["ruleId"] == "SV-258176r1045388_rule":       # as the review panel writes it: the list, and each file under its digest
+        r["metadata"] = {"artifacts": json.dumps([{"name": "auditd-plan.pdf", "digest": "ab12", "type": "application/pdf", "size": 9}]),
+                         "ab12": "JVBERi0xLjQK"}
+json.dump(d, open(sys.argv[1], "w"))' "$work/sm.json"
+rm -f "$work/sm.log.writes"
+play stig_recheck.yml "the check: a review with attachments left out of the plan, listed" 2 -e '{"check_stig_update_workflow": true}' -- \
+    "NEEDS APPROVAL - 4 review(s) of 1 asset(s)" \
+    "localhost RHEL_9_STIG V-258176: Open -> Not a Finding (submitted) - LEFT AS IT IS: it has attachments in STIG Manager" \
+    "localhost RHEL_9_STIG V-257779: Not a Finding -> Open (submitted)"
+if "$py" - "$work/site" <<'PY'
+import glob, json, sys
+r = json.load(open(sorted(glob.glob(sys.argv[1] + "/*/latest.json"))[-1]))
+r = r.get("report", r)
+t = [s["title"] for s in r["sections"]]
+assert t[:2] == ["Approve writes these reviews to STIG Manager", "Left as they are: reviews with attachments (1)"], t
+left = r["sections"][1]["rows"]
+assert left == [[left[0][0], "RHEL Servers / localhost", "V-258176", "Open (accepted)", "Not a Finding", "auditd-plan.pdf"]], left
+assert all(x[3] != "V-258176" for x in r["sections"][0]["rows"])
+PY
+then echo "ok   - ... the report lists it apart, with the file's name; not in what Approve writes"
+else echo "FAIL - the report's attachments section"; fails=$((fails + 1)); fi
+play stig_recheck.yml "the check with check_stig_update_skip_attachments: false: in the plan like the others" 2 \
+    -e '{"check_stig_update_workflow": true, "check_stig_update_skip_attachments": false}' -- "NEEDS APPROVAL - 5 review(s)" "!LEFT AS IT IS"
+play stigman_update.yml "the update: a review given attachments after the check - left as it is, said; the rest written" ok \
+    -e "@$work/plan.json" -e "$writer" -- \
+    "has attachments - localhost RHEL_9_STIG V-258176: Open -> Not a Finding (submitted) - 1 attachment(s) in STIG Manager: auditd-plan.pdf" \
+    "written - localhost RHEL_9_STIG V-257779"
+[ "$(review SV-258176r1045388_rule)" = "fail accepted" ] && [ "$(review SV-257779r958390_rule)" = "fail submitted" ] \
+    && echo "ok   - ... the review with attachments as it was; the others written" || { echo "FAIL - $(review SV-258176r1045388_rule)"; fails=$((fails + 1)); }
 
 if grep -qvE '^(GET /api/|POST /token$|POST /api/collections/1/reviews/11$)' "$work/sm.log"; then
     echo "FAIL - a request other than a read, the token or the asset's reviews reached STIG Manager"; grep -vE '^(GET /api/|POST /token$|POST /api/collections/1/reviews/11$)' "$work/sm.log" | head -3; fails=$((fails + 1))

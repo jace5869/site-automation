@@ -15,6 +15,7 @@
     hash_max_mb: "{{ fapolicyd_rules_hash_max_mb | int }}"
     large_mb: "{{ fapolicyd_rules_large_mb | int }}"
     offer: "{{ fapolicyd_rules_offer }}"
+    storage_conf: "{{ fapolicyd_rules_storage_conf }}"
     max_groups: "{{ fapolicyd_rules_max | int }}"
     timeout: "{{ fapolicyd_rules_timeout | int }}"
   register: _fr

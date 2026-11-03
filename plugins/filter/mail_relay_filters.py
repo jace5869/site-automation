@@ -3,8 +3,10 @@ relay's list - the mynetworks line of Postfix's main.cf (style main_cf) or a lis
 (style file) - the new text, and the notes the approver reads. Everything that reads or writes a list is here, so the
 plan the approver sees and the change the approved job makes come from the same code. Only the list's own lines and
 the comment lines an add wrote are ever touched: every other byte of the file stays as it is."""
+import calendar
 import ipaddress
 import re
+import time
 
 OCTET = r"(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])"
 SHAPE = re.compile(r"^(%s[.]){3}%s(/([0-9]|[12][0-9]|3[0-2]))?\Z" % (OCTET, OCTET))
@@ -212,7 +214,7 @@ def _bad_request(req, ips):
 #     127.0.0.0/8
 #     192.0.2.0/24
 #
-#     # web01.example.mil - Payroll  [AAP mail relay format 2026-11-02 job 4711]
+#     # web01.example.mil  Payroll [AAP]
 #     198.51.100.7
 #
 #     # Scanner, room 210  [added 2026-10-22 by jdoe]
@@ -222,9 +224,10 @@ def _bad_request(req, ips):
 # inside a parameter: postconf reads "127.0.0.0/8 192.0.2.0/24 198.51.100.7 198.51.100.9").
 
 INDENT = "    "
-# the end of a comment line a job of this repository wrote: an add's [added DATE by WHO], the format's [AAP ...]
-FORMAT_STAMP = re.compile(r"\[AAP mail relay format [^\]\r\n]*\][ \t]*$")
-OUR_STAMP = re.compile(r"(%s|\[AAP mail relay format [^\]\r\n]*\][ \t]*$)" % STAMP)
+# the end of a comment line a job of this repository wrote: an add's [added DATE by WHO], the format's [AAP] (before
+# 0.59.0: [AAP mail relay format DATE job N] - still known as the format's, so mail_relay_format_refresh rewrites it)
+FORMAT_STAMP = re.compile(r"\[AAP(?: mail relay format [^\]\r\n]*)?\][ \t]*$")
+OUR_STAMP = re.compile(r"(%s|\[AAP(?: mail relay format [^\]\r\n]*)?\][ \t]*$)" % STAMP)
 
 
 def _kind(word):
@@ -382,9 +385,9 @@ def mail_relay_names(ips, dns=None, vms=None):
     return out
 
 
-def mail_relay_format(text, names=None, param="mynetworks", stamp="", blank=True, refresh=False):
+def mail_relay_format(text, names=None, param="mynetworks", blank=True, refresh=False):
     """main.cf with the list in the one-column layout. names: {address: {'name', 'service'}} (mail_relay_names) - a
-    comment line '# NAME - SERVICE  [STAMP]' for an address with no comment yet (refresh: also in place of one the
+    comment line '# NAME  SERVICE [AAP]' for an address with no comment yet (refresh: also in place of one the
     format wrote before); an add's comment line above the list goes onto its address; comment lines inside the list
     stay (above their address, or at the top). Every other line of the file stays as it is, and the list keeps
     exactly its words (only their order changes): else nothing is changed and problem says why.
@@ -400,7 +403,6 @@ def mail_relay_format(text, names=None, param="mynetworks", stamp="", blank=True
     before = _main_cf_words(lines, first, more)
     top, entries = _entries(lines, first, more)
     old = _old_table(lines, first, [e["word"] for e in entries])
-    stamp = _clean(stamp, 80)
     for e in entries:
         if _kind(e["word"]) != 2:
             continue
@@ -411,9 +413,9 @@ def mail_relay_format(text, names=None, param="mynetworks", stamp="", blank=True
             out["moved"].append(ip)
         if ip in names and (not e["comments"] or (refresh and all(FORMAT_STAMP.search(c) for c in e["comments"]))):
             n = names[ip]
-            label = _clean(n.get("name", "")) + ((" - " + _clean(n.get("service", ""))) if n.get("service") else "")
-            if label.strip(" -"):
-                new = ["# %s  [AAP mail relay format%s]" % (label.strip(" -"), (" " + stamp) if stamp else "")]
+            label = "  ".join(x for x in (_clean(n.get("name", "")), _clean(n.get("service", ""))) if x)
+            if label:
+                new = ["# %s [AAP]" % label]
                 if new != e["comments"]:
                     e["comments"] = new
                     out["named"].append(ip)
@@ -558,7 +560,7 @@ def mail_relay_edit(text, req, ips=None, style="main_cf", param="mynetworks", su
 
 
 def _who(lines, i, ip, style, param="mynetworks"):
-    """'COMMENT, added DATE by WHO' of an entry, from the comment line an add wrote - or the format's 'NAME - SERVICE'
+    """'COMMENT, added DATE by WHO' of an entry, from the comment line an add wrote - or the format's 'NAME  SERVICE'
     ('' = none)."""
     line = ""
     if style == "main_cf":
@@ -721,6 +723,152 @@ def mail_relay_notes(relays):
     return ["%s: %s" % (r.get("host", ""), n) for r in read for n in (r.get("notes") or [])]
 
 
+# ---- the addresses that sent nothing (playbooks/mail_relay_unused.yml) ------------------------------------------------
+
+def mail_relay_list_words(text, style="main_cf", param="mynetworks"):
+    """Every word of a relay's list, as Postfix reads it: main_cf - the parameter's words; file - each line's address
+    (a map line that rejects is left out). None when the list is not there."""
+    lines = str(text or "").splitlines(True)
+    if style == "file":
+        return [w for line in lines for _, w in _networks(line)]
+    first, more = _logical(lines, param)
+    return None if first is None else _main_cf_words(lines, first, more)
+
+
+def _epoch(text):
+    """'2026-11-03T06:15:01Z' -> seconds (None for '')."""
+    m = re.match(r"^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)Z$", str(text or ""))
+    if not m:
+        return None
+    return calendar.timegm(tuple(int(x) for x in m.groups()))
+
+
+def _day(text):
+    return str(text or "")[:10] or "-"
+
+
+def mail_relay_unused(relays, opts=None):
+    """Which addresses on the relays' lists sent no mail in the last opts.days days, by every relay's logs together.
+    relays: [{host, words (mail_relay_list_words), logs (site_mail_relay_clients), problem}]. opts: days, now (seconds),
+    keep (addresses or subnets never proposed), max (the most proposed at once), accept_short (propose even when a
+    relay's logs do not go back days days). Only single addresses are proposed for removal; a subnet that sent nothing
+    is listed only. -> {cutoff, days, covered, coverage, rows, row_status, unused, unused_subnets, later, used,
+    problems, notes}"""
+    o = opts or {}
+    days = float(o.get("days") or 183)
+    now = float(o.get("now") or 0)
+    cutoff = now - days * 86400
+    most = int(o.get("max") or 50)
+    keep = []
+    for k in o.get("keep") or []:
+        try:
+            keep.append(ipaddress.ip_network(str(k).strip(), strict=False))
+        except ValueError:
+            pass
+    relays = list(relays or [])
+    problems = [r for r in relays if r.get("problem")]
+    ok = [r for r in relays if not r.get("problem")]
+    coverage = []
+    for r in ok:
+        logs = r.get("logs") or {}
+        oldest = _epoch(logs.get("oldest"))
+        back = (now - oldest) / 86400.0 if oldest is not None else 0
+        errs = [x["source"] + ": " + x["error"] for x in logs.get("sources") or [] if x.get("error")]
+        coverage.append({"host": r.get("host", ""), "oldest": logs.get("oldest", ""), "newest": logs.get("newest", ""),
+                         "days_back": int(round(back)), "ok": oldest is not None and oldest <= cutoff + 86400,
+                         "sources": len(logs.get("sources") or []), "errors": errs})
+    covered = bool(ok) and all(c["ok"] for c in coverage)
+    # every client of every relay: address -> the newest mail, messages since the cutoff, connections only
+    clients = {}
+    for r in ok:
+        for ip, c in ((r.get("logs") or {}).get("clients") or {}).items():
+            a = clients.setdefault(ip, {"last_sent": None, "sent": 0, "connects": 0, "last_connect": None})
+            ls, lc = _epoch(c.get("last_sent")), _epoch(c.get("last_connect"))
+            if ls is not None and (a["last_sent"] is None or ls > a["last_sent"]):
+                a["last_sent"] = ls
+            a["sent"] += int(c.get("sent") or 0)
+            a["connects"] += int(c.get("connects") or 0)
+            if lc is not None and (a["last_connect"] is None or lc > a["last_connect"]):
+                a["last_connect"] = lc
+    nets = {}
+    for ip in clients:
+        try:
+            nets[ip] = ipaddress.ip_address(ip)
+        except ValueError:
+            pass
+    listed = {}
+    for r in ok:
+        for w in r.get("words") or []:
+            listed.setdefault(w[:-3] if w.endswith("/32") else w, []).append(r.get("host", ""))
+    hosts = [r.get("host", "") for r in ok]
+
+    def when(t):
+        return time_text(t) if t else ""
+    rows, status, unused, unused_nets, used = [], [], [], [], 0
+    for w in sorted(listed, key=lambda x: (_kind(x) == 0, _order(x) if _kind(x) else (0, 0), x)):
+        on = "all" if sorted(set(listed[w])) == sorted(hosts) else ", ".join(sorted(set(listed[w])))
+        k = _kind(w)
+        if k == 0:
+            rows.append([w, "not an address", on, "", "", "", "kept: not an address"])
+            status.append("")
+            continue
+        net = ipaddress.ip_network(w, strict=False)
+        inside = [ip for ip, a in nets.items() if a in net]
+        last = max([clients[ip]["last_sent"] for ip in inside if clients[ip]["last_sent"]] or [None])
+        recent = [ip for ip in inside if clients[ip]["last_sent"] and clients[ip]["last_sent"] >= cutoff]
+        conn = sum(clients[ip]["connects"] for ip in inside)
+        kind = "subnet" if k == 1 else "address"
+        last_text = when(last) or "never in the logs"
+        conn_text = ("%d connection(s)%s" % (conn, "" if last else ", never mail")) if conn else ""
+        if net.subnet_of(LOOPBACK):
+            verdict, st = "kept: the relay itself", ""
+        elif any(net.subnet_of(x) for x in keep):
+            verdict, st = "kept: mail_relay_unused_keep", ""
+        elif recent:
+            verdict, st = "in use" + ((" (%d address(es) in it)" % len(recent)) if k == 1 else ""), ""
+            used += 1
+        elif k == 1:
+            verdict, st = "UNUSED subnet - listed only, not removed", "warning"
+            unused_nets.append(w)
+        else:
+            verdict, st = "UNUSED", "warning"
+            unused.append(w)
+        rows.append([w, kind, on, last_text, sum(clients[ip]["sent"] for ip in inside), conn_text, verdict])
+        status.append(st)
+    later = unused[most:]
+    unused = unused[:most]
+    notes = []
+    if not covered and ok:
+        short = [c for c in coverage if not c["ok"]]
+        notes.append("The logs do not go back %d days on %s: %s. An address may have sent mail before that and be "
+                     "called unused. Keep the mail logs longer (logrotate: /etc/logrotate.d/syslog), or set "
+                     "mail_relay_unused_days to what they cover." % (
+                         days, ", ".join(c["host"] for c in short),
+                         "; ".join("%s back to %s (%d days)" % (c["host"], _day(c["oldest"]), c["days_back"])
+                                   if c["oldest"] else "%s none read" % c["host"] for c in short)))
+    if later:
+        notes.append("%d more unused address(es) are not in this plan (mail_relay_unused_max: %d): the next run takes "
+                     "them - %s." % (len(later), most, mail_relay_short(later, 5)))
+    if unused_nets:
+        notes.append("Subnets that sent nothing are listed, not removed: remove one with the Mail relay - remove an IP "
+                     "workflow if it is no longer needed.")
+    return {"cutoff": time_text(cutoff), "days": int(days), "covered": covered, "coverage": coverage, "rows": rows,
+            "row_status": status, "unused": unused, "unused_subnets": unused_nets, "later": later, "used": used,
+            "problems": [{"host": r.get("host", ""), "problem": r.get("problem", "")} for r in problems], "notes": notes}
+
+
+def mail_relay_coverage_row(c):
+    """A row of 'How far back the logs go': [relay, oldest, newest, days back, covers, logs read (files, journal), errors]."""
+    c = c or {}
+    return [c.get("host", ""), _day(c.get("oldest")), _day(c.get("newest")), c.get("days_back", 0),
+            "yes" if c.get("ok") else "NO", c.get("sources", 0), "; ".join(c.get("errors") or [])[:300]]
+
+
+def time_text(t):
+    """seconds -> '2026-11-03 06:15 UTC'."""
+    return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(t))
+
+
 class FilterModule(object):
     def filters(self):
         return {"mail_relay_ip_problem": mail_relay_ip_problem, "mail_relay_ips": mail_relay_ips,
@@ -729,4 +877,6 @@ class FilterModule(object):
                 "mail_relay_notes": mail_relay_notes, "mail_relay_singles": mail_relay_singles,
                 "mail_relay_getent": mail_relay_getent, "mail_relay_names": mail_relay_names,
                 "mail_relay_format": mail_relay_format, "mail_relay_format_section": mail_relay_format_section,
-                "mail_relay_lookup_rows": mail_relay_lookup_rows, "mail_relay_vcenter": mail_relay_vcenter}
+                "mail_relay_lookup_rows": mail_relay_lookup_rows, "mail_relay_vcenter": mail_relay_vcenter,
+                "mail_relay_list_words": mail_relay_list_words, "mail_relay_unused": mail_relay_unused,
+                "mail_relay_coverage_row": mail_relay_coverage_row}

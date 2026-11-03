@@ -498,6 +498,7 @@ File: `roles/check_stig/defaults/main.yml`
 | `check_stig_update_workflow` | `false` | Workflow 37 - STIG Manager updated, with an approval (docs/STIG_DRIFT.md, "Updating STIG Manager, with an approval"): the recheck's check lists the reviews to write and hands them to the approval step; playbooks/stigman_update.yml writes them after it. This job itself never writes to STIG Manager. true on workflow 37'… (all of it: the role file) |
 | `check_stig_update` | `[fixed, now_na, answered]` | what is written once approved: fixed (Open, passes now: Not a Finding), now_na (Open, Not Applicable now), answered (Not Reviewed: as the scan says - a fail is Open) |
 | `check_stig_update_status` | `submitted` | the reviews' status as written: saved, submitted, or accepted (the collection must allow it, and the client's grant) |
+| `check_stig_update_skip_attachments` | `true` | a review with attachments in STIG Manager (evidence a person attached) is left out of the plan and never written; false = written like the others |
 | `check_stig_update_detail_max` | `8000` | at most this many characters of what the scan found, as each review's detail |
 
 ## check_time
@@ -606,11 +607,12 @@ File: `roles/fapolicyd_rules/defaults/main.yml`
 | `fapolicyd_rules_container_paths` | `['^/var/lib/containers/', '/\.local/share/containers/', '^/run/containers/', '^/run/user/…` | container storage |
 | `fapolicyd_rules_user_dirs` | `[/home/, /run/user/, /tmp/, /var/tmp/, /dev/shm/]` | folders users can write: a file blocked there gets no trust entry (a person decides) |
 | `fapolicyd_rules_hash_max_mb` | `512` | a file larger than this is not hashed: a person adds it (or large, below) |
-| `fapolicyd_rules_offer` | `[update, reload, reinstall, large]` | Lines for what only a person could do before - each still a line to approve: update a trusted file that changed since: its trust entry updated (its size and sha256 now) reload a file trusted as it is (or an RPM file that matches its package) that fapolicyd has not loaded: the trust database reloaded (fapolicyd-cli --u… (all of it: the role file) |
+| `fapolicyd_rules_offer` | `[update, reload, reinstall, large, podman]` | Lines for what only a person could do before - each still a line to approve: update a trusted file that changed since: its trust entry updated (its size and sha256 now) reload a file trusted as it is (or an RPM file that matches its package) that fapolicyd has not loaded: the trust database reloaded (fapolicyd-cli --u… (all of it: the role file) |
 | `fapolicyd_rules_large_mb` | `4096` | with large: a file up to this many MB is hashed and gets its trust entry |
 | `fapolicyd_rules_max` | `200` | at most this many block groups per host in the report |
 | `fapolicyd_rules_wait` | `30` | roles/fapolicyd sets it from fapolicyd_wait |
 | `fapolicyd_rules_timeout` | `120` | seconds for each command the job reads with |
+| `fapolicyd_rules_storage_conf` | `/etc/containers/storage.conf` | podman's storage.conf: where root's and users' storage is |
 
 ## horizon
 
@@ -714,7 +716,7 @@ File: `roles/log_analysis/defaults/main.yml`
 
 File: `roles/mail_relay/defaults/main.yml`
 
-> MAIL RELAY WHITELIST, with an approval: add IP addresses or subnets to the list of clients the mail relay lets relay - with a comment saying who or what they are for - or remove them. The plan job (playbooks/mail_relay_plan.yml) checks the request, reads the list on every relay server and emails what would change - "waiting for approval"; it changes nothing. After a person approves in AAP, the approved job (playbooks/mail_relay_approved.yml) writes exactly that (the file backed up first), checks the mail configuration and that Postfix reads the list as written, reloads Postfix and emails the result; a failed check puts the file back. The format job (playbooks/mail_relay_format.yml) puts each relay's list one address or subnet per line - subnets first, then the single addresses, in number order - each single address with a comment line above it: its name in DNS (looked up on the relay) and the folder the VM that has it is in, in vCenter ("# web01.example.mil - Payroll  [AAP mail relay format DATE job N]"); the list keeps exactly its addresses, a copy of main.cf is kept first. docs/MAIL_RELAY.md
+> MAIL RELAY WHITELIST, with an approval: add IP addresses or subnets to the list of clients the mail relay lets relay - with a comment saying who or what they are for - or remove them. The plan job (playbooks/mail_relay_plan.yml) checks the request, reads the list on every relay server and emails what would change - "waiting for approval"; it changes nothing. After a person approves in AAP, the approved job (playbooks/mail_relay_approved.yml) writes exactly that (the file backed up first), checks the mail configuration and that Postfix reads the list as written, reloads Postfix and emails the result; a failed check puts the file back. The format job (playbooks/mail_relay_format.yml) puts each relay's list one address or subnet per line - subnets first, then the single addresses, in number order - each single address with a comment line above it: its name in DNS (looked up on the relay) and the folder the VM that has it is in, in vCenter ("# web01.example.mil Payroll [AAP]"); the list keeps exactly its addresses, a copy of main.cf is kept first. The unused job (playbooks/mail_relay_unused.yml) reads each relay's mail logs and plans the removal of the addresses that sent no mail in mail_relay_unused_days - the same approval and apply step as a removal. docs/MAIL_RELAY.md
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -744,6 +746,12 @@ File: `roles/mail_relay/defaults/main.yml`
 | `mail_relay_format_refresh` | `false` | true = look up again the addresses this job named before (others kept) |
 | `mail_relay_format_reload` | `false` | true = reload Postfix after (the list is the same: no need) |
 | `mail_relay_format_check_email` | `true` | a dry run (Check) emails its report too, marked DRY RUN (false = only printed) |
+| `mail_relay_unused_days` | `183` | ---- The unused addresses (playbooks/mail_relay_unused.yml: workflow "Mail relay - remove unused addresses") ------ an address that sent no mail through any relay in this many days is unused (183: six months) |
+| `mail_relay_unused_logs` | `["/var/log/maillog*"]` | Postfix's log files on each relay (patterns; rotated and .gz copies too) |
+| `mail_relay_unused_journal` | `auto` | auto = read the journal when no log file is there; true = as well; false = never |
+| `mail_relay_unused_keep` | `[]` | addresses or subnets never proposed, e.g. [198.51.100.7, 203.0.113.0/28] (127.0.0.0/8 never is) |
+| `mail_relay_unused_max` | `50` | the most addresses one plan removes (the next run takes the rest) |
+| `mail_relay_unused_accept_short_logs` | `false` | The logs must go back mail_relay_unused_days on every relay (RHEL keeps about 5 weeks of /var/log/maillog): else nothing is proposed. true = propose anyway, from what the logs cover (the email says how far back they go). |
 | `mail_relay_approve_url` | (empty) | ---- The approval email ------------------------------------------------------------------------- Both emails (waiting for approval, and the result) go to report_email_to (set it on the workflow). A link for the approvers in the first one: your AAP's Workflow Approvals page, copied from the browser ("" = no link). |
 | `mail_relay_web` | `false` | The report website (report_web_dest): the plan, the result and the format's report are emailed only; true = also published there, as the other reports (a website that cannot be written then fails the job before the approval). |
 
@@ -892,6 +900,9 @@ File: `roles/ontap_report/defaults/main.yml`
 | `ontap_report_max_rows` | `50` | rows per table (problems first); the job's artifacts have all |
 | `ontap_snapshot_top` | `25` | the snapshot space table: the volumes whose snapshots use the most |
 | `ontap_report_fail` | `false` | The job stays green when it finds problems: the report and email say what. true = mark it FAILED when there is a critical finding or a cluster could not be read, for workflows. |
+| `ontap_hardware_max_rows` | `2000` | ---- NetApp ONTAP hardware inventory (playbooks/ontap_hardware_report.yml) ---- controllers, shelves and disk models listed in the email and the page at most (the workbook always has all) |
+| `ontap_hardware_xlsx` | `true` | attach every controller, shelf, shelf module, disk and port as an Excel workbook (.xlsx) to the email |
+| `ontap_hardware_fail` | `false` | true = mark the job FAILED when a cluster could not be read (the report still goes out), for workflows |
 
 ## patch
 
@@ -1208,6 +1219,7 @@ File: `roles/stigman_update/defaults/main.yml`
 | `stigman_update_validate_certs` | `"{{ check_stig_stigman_validate_certs \| default(true) }}"` | check the HTTPS certificates |
 | `stigman_update_ca_path` | `"{{ check_stig_stigman_ca_path \| default('') }}"` | a CA bundle on the AAP side to check them with |
 | `stigman_update_timeout` | `"{{ check_stig_stigman_timeout \| default(60) }}"` | seconds per request |
+| `stigman_update_skip_attachments` | `"{{ check_stig_update_skip_attachments \| default(true) }}"` | a review with attachments in STIG Manager (evidence a person attached) is never written; false = write it like the others |
 
 ## tenable_scan
 
@@ -1339,6 +1351,10 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_inventory_by_folder` | `true` | a table per vCenter and folder; false = one table of every VM (vCenter and folder columns) |
 | `vm_inventory_max_rows` | `2000` | VMs listed in the email and the page at most (2000: about 2.5 MB of email; the workbook always has every VM) |
 | `vm_inventory_xlsx` | `true` | attach every VM as an Excel workbook (.xlsx) to the email |
+| `vm_tools_templates` | `false` | ---- VMware Tools inventory (playbooks/vm_tools_report.yml) ---- true = templates counted and listed as VMs (false: left out, their number in the subtitle) |
+| `vm_tools_by_folder` | `true` | a table per vCenter and folder; false = one table of every VM (vCenter and folder columns) |
+| `vm_tools_max_rows` | `2000` | VMs listed in the email and the page at most (the workbook always has every VM) |
+| `vm_tools_xlsx` | `true` | attach every VM, the Tools versions and the hardware versions as an Excel workbook (.xlsx) to the email |
 | `vm_ask_question` | (empty) | ---- VM - ask a question (playbooks/vm_ask.yml, docs/VM_ASK.md) ---- the question, in plain words (the survey's Textarea), e.g. "all VMs with dbv in the name", "VMs on datastores under 10% free" |
 | `vm_ask_query` | `{}` | or the query itself, in the job's own form (docs/VM_ASK.md, "The query"): GenAI is not asked |
 | `vm_ask_genai` | `true` | GenAI (ACT, evidence mode: it runs no command) turns the question into a query; false = only the job's own reader (simple questions) |

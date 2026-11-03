@@ -21,7 +21,10 @@
     that:
       # the addresses: each by the plan job's rules (one address, or a subnet as allowed), each once
       - mail_relay_plan.ips | default('') is not string and mail_relay_plan.ips is iterable and mail_relay_plan.ips is not mapping
-      - mail_relay_plan.ips | length > 0 and mail_relay_plan.ips | length <= mail_relay_max_ips | int
+      # a plan of the unused job may remove up to mail_relay_unused_max at once
+      - >-
+        mail_relay_plan.ips | length > 0 and mail_relay_plan.ips | length <= (mail_relay_unused_max | int
+        if mail_relay_plan.kind | default('') == 'unused' and mail_relay_plan.action == 'remove' else mail_relay_max_ips | int)
       - mail_relay_plan.ips | unique | length == mail_relay_plan.ips | length
       - >-
         mail_relay_plan.ips | map('string') | map('mail_relay_ip_problem', mail_relay_plan.action,

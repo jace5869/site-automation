@@ -1032,14 +1032,47 @@ def stig_update_sections(plan, list_max=200):
 UPDATE_BAD = ("rejected", "error", "bad", "not as written")
 
 
+def stig_update_attachments(plan, reviews=None, error=""):
+    """Workflow 37's check: the plan without the reviews that have attachments in STIG Manager (site_stigman_attachments:
+    reviews, in the plan's order) -> {plan, left: [plan items, with attachments and names], section (for the report) or
+    None}. Attachments that could not be read count as attachments; STIG Manager not read at all (error): nothing goes on."""
+    plan = list(plan or [])
+    if error:
+        return {"plan": [], "left": plan, "section": {
+            "title": "Nothing handed to the approval: attachments not checked", "status": "warning", "top": True,
+            "lines": ["STIG Manager could not be read to see which reviews have attachments: %s" % error,
+                      "Nothing goes to the approval step. check_stig_update_skip_attachments: false skips this check."]}}
+    keep, left = [], []
+    for i, p in enumerate(plan):
+        r = (reviews or [])[i] if i < len(reviews or []) else {"attachments": -1, "error": "not read"}
+        if r.get("attachments"):
+            left.append(dict(p, attachments=r.get("attachments"), attachment_names=r.get("names") or [], attachment_error=r.get("error") or ""))
+        else:
+            keep.append(p)
+    section = None
+    if left:
+        section = {"title": "Left as they are: reviews with attachments (%d)" % len(left), "status": "info", "top": True,
+                   "columns": ["Host", "Collection / asset", "Rule", "STIG Manager now", "The scan says", "Attachments"],
+                   "rows": [[p.get("label", ""), "%s / %s" % (p.get("collection", ""), p.get("asset", "")), p.get("v", ""),
+                             ("%s (%s)" % (SM_WORD.get(p["was"]["result"], p["was"]["result"]), p["was"].get("status") or "-"))
+                             if (p.get("was") or {}).get("result") else "no review",
+                             SM_WORD.get(p.get("result"), p.get("result")),
+                             (", ".join(p["attachment_names"][:5]) or "%d file(s)" % p["attachments"]) if p["attachments"] > 0
+                             else "could not be read: %s" % (p["attachment_error"] or "-")] for p in left],
+                   "text": "A person attached evidence to these reviews in STIG Manager: they are not handed to the approval and "
+                           "never written by workflow 37 (check_stig_update_skip_attachments). Review them in STIG Manager if the "
+                           "scan's result is right."}
+    return {"plan": keep, "left": left, "section": section}
+
+
 def stig_update_report(items, check=False, error="", planned=0):
     """playbooks/stigman_update.yml's report: each review of the plan, what became of it in STIG Manager."""
     items = items or []
     n = dict((k, len([i for i in items if i.get("state") == k])) for k in (
-        "written", "would write", "already so", "changed since", "rejected", "error", "bad", "not as written"))
+        "written", "would write", "already so", "changed since", "has attachments", "rejected", "error", "bad", "not as written"))
     bad = sum(n[k] for k in UPDATE_BAD)
     status = "critical" if (error or bad) else "warning" if n["changed since"] else "ok"
-    chip = {"written": "ok", "would write": "info", "already so": "ok", "changed since": "warning"}
+    chip = {"written": "ok", "would write": "info", "already so": "ok", "changed since": "warning", "has attachments": "info"}
     word = lambda h: ("%s (%s)" % (SM_WORD.get(h.get("result"), h.get("result")), h.get("status") or "-")) if (h or {}).get("result") else "no review"
     rows = [[i.get("host", ""), i.get("asset", ""), i.get("v", "") or i.get("ruleId", ""), word(i.get("was") or {}),
              word(i.get("before") or {}) if "before" in i else "-", "%s (%s)" % (SM_WORD.get(i.get("result"), i.get("result")), i.get("status")),
@@ -1056,7 +1089,8 @@ def stig_update_report(items, check=False, error="", planned=0):
                          "columns": ["Host", "Asset", "Rule", "Read by the check", "STIG Manager before", "Written as", "Result", "Why"],
                          "rows": rows, "row_status": ["critical" if i.get("state") in UPDATE_BAD else chip.get(i.get("state"), "") for i in items],
                          "text": "Only the reviews the approval allowed (the check's plan). Each was read again first: one changed in STIG "
-                                 "Manager since the check is left as it is. A written review was read back. STIG Manager keeps each "
+                                 "Manager since the check is left as it is, and so is one with attachments (evidence a person "
+                                 "attached stays with its result). A written review was read back. STIG Manager keeps each "
                                  "review's history: what it was is there too. No collection, asset, user or other review was changed."})
     elif not error:
         sections.append({"title": "Nothing to write", "status": "ok", "lines": ["The check's plan has no review (%d)." % planned]})
@@ -1064,6 +1098,7 @@ def stig_update_report(items, check=False, error="", planned=0):
             "summary": [{"label": "Written" if not check else "Would write", "value": n["would write"] if check else n["written"], "status": "ok"},
                         {"label": "Already so", "value": n["already so"]},
                         {"label": "Changed since the check", "value": n["changed since"], "status": "warning" if n["changed since"] else "ok"},
+                        {"label": "Has attachments (left)", "value": n["has attachments"]},
                         {"label": "Not written", "value": bad, "status": "critical" if bad else "ok"}],
             "sections": sections,
             "footer": "STIG Manager: GET and POST of these reviews only (playbooks/stigman_update.yml)."}
@@ -1074,5 +1109,5 @@ class FilterModule(object):
                 "stig_findings": stig_findings, "stig_recheck_vulns": stig_recheck_vulns, "stig_recheck": stig_recheck,
                 "stig_recheck_sections": stig_recheck_sections, "stig_recheck_lines": stig_recheck_lines,
                 "stig_update_plan": stig_update_plan, "stig_update_sections": stig_update_sections,
-                "stig_update_report": stig_update_report, "stig_recheck_headline": recheck_headline,
+                "stig_update_report": stig_update_report, "stig_update_attachments": stig_update_attachments, "stig_recheck_headline": recheck_headline,
                 "stig_answers_why": answers_why, "stig_answers_used": answers_used}

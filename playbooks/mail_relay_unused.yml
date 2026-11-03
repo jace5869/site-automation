@@ -1,0 +1,68 @@
+---
+# Mail relay - unused addresses: job 1 of the workflow "Mail relay - remove unused addresses". Read-only: reads each
+# relay's list (mynetworks) and its mail logs (/var/log/maillog and its rotated copies, mail_relay_unused_logs; else
+# the journal) and finds the addresses on the list that sent no mail in the last mail_relay_unused_days days (183:
+# six months) - a message accepted from it by any relay; a connection without mail does not count. It says how far
+# back each relay's logs go: when that is less than the days asked, nothing is proposed (a quiet address could not be
+# told from an unused one). The single addresses that sent nothing (not 127.0.0.0/8, not mail_relay_unused_keep; at
+# most mail_relay_unused_max) go into the removal plan of the remove workflow, emailed "waiting for approval" with the
+# tables (report_email_to) -> approval -> mail_relay_approved.yml removes exactly them. Subnets that sent nothing are
+# listed, never removed. Nothing unused, logs too short or a relay not read: emailed, the job fails here and nothing
+# waits for approval. Then run "Mail relay - format the whitelist". docs/MAIL_RELAY.md
+#   ansible-playbook playbooks/mail_relay_unused.yml
+- name: Mail relay unused addresses - the relays
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The relays and the settings
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: unused_inputs.yml
+
+- name: Mail relay unused addresses - read each list and its mail logs
+  hosts: "{{ mail_relay_group | default('mail_relays') }}"
+  gather_facts: false
+  become: "{{ mail_relay_become | default(true) | bool }}"
+  tasks:
+    - name: The job's Limit includes localhost
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: limit_check.yml
+
+    - name: The list and who sent mail through this relay
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: unused_read.yml
+      when: inventory_hostname in hostvars['localhost']['_mr_targets']
+
+- name: Mail relay unused addresses - which sent nothing
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The addresses that sent no mail, and whether the logs tell
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: unused_plan.yml
+
+- name: Mail relay unused addresses - what their removal changes on each relay
+  hosts: "{{ mail_relay_group | default('mail_relays') }}"
+  gather_facts: false
+  become: "{{ mail_relay_become | default(true) | bool }}"
+  tasks:
+    - name: What would change on this relay
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: read.yml
+      when: inventory_hostname in hostvars['localhost']['_mr_targets'] and hostvars['localhost']['_mr_unused_go'] | bool
+
+- name: Mail relay unused addresses - the plan for the approver
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Email the plan, hand it on
+      ansible.builtin.include_role:
+        name: mail_relay
+        tasks_from: plan_report.yml

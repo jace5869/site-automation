@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Workflow 37 against a real STIG Manager - not in CI: it needs podman and three images already pulled (it never pulls):
+# Workflow 37 against a real STIG Manager (a review with an attachment left as it is, too) - not in CI: it needs podman and three images already pulled (it never pulls):
 # docker.io/library/mysql:8.4, docker.io/nuwcdivnpt/stig-manager:<STIGMAN_TEST_TAG, latest> and its demo Keycloak,
 # docker.io/nuwcdivnpt/stig-manager-auth:latest (realm stigman, its confidential client stigman-watcher stands in for the
 # client that writes reviews). One pod, sa-stigman-test, on 127.0.0.1 only; removed at the end (by name).
@@ -156,6 +156,29 @@ json.dump(d, open(sys.argv[1], "w"))' "$work/plan.json"
 play stigman_update.yml -e "@$work/plan.json"
 [ "$rc" = 0 ] && grep -q '"changed since - localhost RHEL_9_STIG V-257835' "$work/out.txt" && [ "$(rv SV-257835r1044874_rule | cut -d'|' -f1)" = "notapplicable saved " ] \
     && ok "a review a person changed since the check: left as the person set it" || bad "changed since: rc $rc, $(rv SV-257835r1044874_rule)"
+
+# ---- a review with attachments (as STIG Manager's review panel stores them: the key artifacts, each file under its digest)
+api "$atok" PATCH "/collections/$col/reviews/$asset/SV-258176r1045388_rule" \
+    '{"result": "fail", "detail": "No audit rules for sudo.", "comment": "POA&M 14: evidence attached", "status": "saved"}' >/dev/null
+play stig_recheck.yml -e '{"check_stig_update_workflow": true}'
+grep -P '^\tRUN: ' "$work/out.txt" | sed 's/^\tRUN: //' | "$py" -c 'import json, sys; json.dump({"stigman_update_plan": json.load(sys.stdin)["stigman_update_plan"]}, open(sys.argv[1], "w"))' "$work/plan2.json"
+[ "$rc" = 2 ] && grep -q "NEEDS APPROVAL - 1 review(s) of 1 asset(s)" "$work/out.txt" && ok "Open again, passes: the check plans it (no attachment yet)" \
+    || { bad "the check before the attachment: rc $rc"; grep -n "NEEDS\|LEFT\|fatal" "$work/out.txt" | head -5; }
+art=$("$py" -c 'import json; print(json.dumps(json.dumps([{"name": "auditd-plan.pdf", "digest": "ab12", "type": "application/pdf", "size": 9,
+  "date": "2026-11-03T09:00:00Z", "user": "admin"}])))')
+api "$atok" PUT "/collections/$col/reviews/$asset/SV-258176r1045388_rule/metadata/keys/ab12" '"JVBERi0xLjQK"' >/dev/null
+api "$atok" PUT "/collections/$col/reviews/$asset/SV-258176r1045388_rule/metadata/keys/artifacts" "$art" >/dev/null
+api "$atok" GET "/collections/$col/reviews/$asset/SV-258176r1045388_rule/metadata/keys" | grep -q artifacts \
+    && ok "an attachment put on it, as the review panel does (metadata key artifacts, the file under its digest)" || bad "no attachment put"
+play stig_recheck.yml -e '{"check_stig_update_workflow": true}'
+[ "$rc" = 0 ] && grep -q "V-258176: Open -> Not a Finding (submitted) - LEFT AS IT IS: it has attachments in STIG Manager" "$work/out.txt" \
+    && ok "the check: left out of the plan - nothing to approve - and said" || { bad "the check with an attachment: rc $rc"; grep -n "NEEDS\|LEFT\|fatal" "$work/out.txt" | head -5; }
+play stigman_update.yml -e "@$work/plan2.json"
+[ "$rc" = 0 ] && grep -q '"has attachments - localhost RHEL_9_STIG V-258176: .* - 1 attachment(s) in STIG Manager: auditd-plan.pdf' "$work/out.txt" \
+    && [ "$(rv SV-258176r1045388_rule | cut -d'|' -f1)" = "fail saved " ] \
+    && ok "the update with the plan from before the attachment: left as it is, said" || { bad "update with an attachment: rc $rc, $(rv SV-258176r1045388_rule)"; grep -n "attach\|written\|fatal" "$work/out.txt" | head -5; }
+api "$atok" GET "/collections/$col/reviews/$asset/SV-258176r1045388_rule/metadata/keys" | grep -q ab12 \
+    && ok "  ... its attachment still there" || bad "the attachment is gone"
 
 echo
 if [ $fails -eq 0 ]; then echo "all real STIG Manager scenarios passed"; else echo "$fails real STIG Manager scenario(s) FAILED"; exit 1; fi

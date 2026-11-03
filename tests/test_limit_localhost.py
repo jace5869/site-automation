@@ -27,7 +27,8 @@ AP = os.environ.get("ANSIBLE_PLAYBOOK", "ansible-playbook")
 GUARDS = {("site_findings", "limit_check.yml"), ("net_config", "limit_check.yml")}
 # they work on the AAP side (the instance, the network devices' backups and changes, the mail relay's plan and
 # report): a Limit must take localhost in
-GUARDED = {"mail_relay_approved.yml", "mail_relay_format.yml", "mail_relay_plan.yml", "net_cert_renew.yml", "net_config_backup.yml",
+GUARDED = {"mail_relay_approved.yml", "mail_relay_format.yml", "mail_relay_plan.yml", "mail_relay_unused.yml",
+           "net_cert_renew.yml", "net_config_backup.yml",
            "net_config_load.yml", "servicenow_health.yml"}
 # their report part runs on the hosts, once, on the AAP side (0.32.0): a Limit of hosts needs no localhost
 AAP_SIDE = {"ad_health_report.yml", "ad_lockout.yml", "cert_install_approved.yml", "cert_install_check.yml",

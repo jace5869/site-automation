@@ -1,6 +1,7 @@
 ---
 # Print the report, publish it as artifacts and email it (report_email_to). Input: _ontap_doc (a
-# report in the layout roles/site_email/tasks/main.yml describes).
+# report in the layout roles/site_email/tasks/main.yml describes); optional _ontap_xlsx, the sheets of the workbook the
+# email attaches (roles/site_email/library/site_xlsx.py).
 - name: NetApp | the report as job artifacts (ontap_report)
   ansible.builtin.set_stats:
     data:
@@ -17,6 +18,7 @@
     name: site_email
   vars:
     _report: "{{ _ontap_doc | combine({'footer': (_ontap_doc.footer ~ ' ' if _ontap_doc.footer is defined else '') ~ 'Read-only: GET requests to the ONTAP REST API.'}) }}"
+    _report_xlsx: "{{ _ontap_xlsx | default([]) }}"
   when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
 
 - name: NetApp | no email

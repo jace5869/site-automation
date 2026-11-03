@@ -44,6 +44,9 @@
 ## the most addresses in one request
 # mail_relay_max_ips: 20
 
+## the most addresses one plan removes (the next run takes the rest)
+# mail_relay_unused_max: 50
+
 ## The report website (report_web_dest): the plan, the result and the format's report are emailed
 ## only; true = also published there, as the other reports (a website that cannot be written then
 ## fails the job before the approval).

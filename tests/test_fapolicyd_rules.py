@@ -99,7 +99,8 @@ class CleanupTest(unittest.TestCase):
     def read_changes(d):
         class M(object):
             params = {"since": "today", "dir": d, "own_rules": "36-site-approved.rules", "own_trust": "site-approved", "never_edit": [],
-                      "labels": "", "programs": [], "paths": [], "user_dirs": ["/home/"], "hash_max_mb": 1, "max_groups": 10, "timeout": 5}
+                      "labels": "", "programs": [], "paths": [], "user_dirs": ["/home/"], "hash_max_mb": 1, "max_groups": 10, "timeout": 5,
+                      "offer": [], "storage_conf": os.path.join(d, "no-storage.conf")}
 
             @staticmethod
             def get_bin_path(name):
@@ -148,6 +149,33 @@ def host(**kw):
                      {"kind": "permissive", "from": "0", "to": "1", "line": "permissive: 0 -> 1"}]}
     h.update(kw)
     return h
+
+
+class PodmanTest(unittest.TestCase):
+    """podman's storage before anything of it is blocked (fapolicyd_rules_offer: podman)"""
+    DIRS = {"/var/lib/containers/storage/overlay": ["l", "a1", "b2"], "/home/ann/.local/share/containers/storage/overlay": ["l", "c3"],
+            "/home/bob/.local/share/containers/storage/overlay": ["l"], "/srv/c/joe/overlay": ["d4"]}
+    USERS = [{"name": "ann", "uid": 1001, "home": "/home/ann"}, {"name": "bob", "uid": 1002, "home": "/home/bob"},
+             {"name": "svc", "uid": 999, "home": "/home/svc"}]
+
+    def test_root_and_users_with_images(self):
+        got = sf.podman_storage_rules("/var/lib/containers/storage", "", self.USERS, self.DIRS.get)
+        self.assertEqual([(x["user"], x["rule"]) for x in got],
+                         [("root", "allow perm=any all : dir=/var/lib/containers/storage/overlay/"),
+                          ("ann", "allow perm=any all : dir=/home/ann/.local/share/containers/storage/overlay/")])   # bob: no image
+        self.assertIn("root's storage /var/lib/containers/storage has 2 image layer(s)", got[0]["why"])
+        self.assertNotIn("own storage", got[0]["note"])
+        self.assertIn("ann's own storage: anything they put there may then run", got[1]["note"])
+
+    def test_storage_conf_paths_and_none(self):
+        got = sf.podman_storage_rules("/srv/graph", "/srv/c/$USER", [{"name": "joe", "uid": 1003, "home": "/home/joe"}], self.DIRS.get)
+        self.assertEqual([x["rule"] for x in got], ["allow perm=any all : dir=/srv/c/joe/overlay/"])
+        self.assertEqual(sf.podman_storage_rules("/var/lib/containers/storage", "", [], lambda d: None), [])
+        self.assertEqual(sf.podman_storage_rules("/srv/my graph", "", [], lambda d: ["x"]), [])          # a space: no rule
+
+    def test_storage_rule_unchanged(self):
+        self.assertEqual(sf.user_storage({"name": "ann", "uid": 1001, "home": "/home/ann/"}, ""), "/home/ann/.local/share/containers/storage")
+        self.assertEqual(sf.user_storage({"name": "ann", "uid": 1001, "home": "/home/ann"}, "$HOME/ct/$UID"), "/home/ann/ct/1001")
 
 
 class PlanTest(unittest.TestCase):

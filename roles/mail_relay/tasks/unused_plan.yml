@@ -1,0 +1,100 @@
+---
+# On localhost, after every relay was read (unused job): the addresses on the lists that sent no mail in the last
+# mail_relay_unused_days days, by every relay's logs together (mail_relay_unused). When every relay was read, its logs
+# go back that far (or mail_relay_unused_accept_short_logs) and there are such addresses: the removal of them goes on
+# to the plan of the remove workflow (read.yml on each relay, then plan_report.yml: "waiting for approval"), with this
+# job's tables in its email. Else the report is printed and emailed, and the job fails here: nothing waits for approval.
+- name: Mail relay | what each relay gave
+  ansible.builtin.set_fact:
+    _mr_unused_relays: >-
+      {{ _mr_unused_relays | default([]) + [hostvars[item]['_mr_unused_read'] | default({'host': item, 'words': [],
+         'logs': {}, 'problem': 'not reached (unreachable, or it failed before reading)'}, true)] }}
+  loop: "{{ _mr_targets }}"
+
+- name: Mail relay | the addresses that sent nothing
+  ansible.builtin.set_fact:
+    _mr_unused: >-
+      {{ _mr_unused_relays | mail_relay_unused({'days': mail_relay_unused_days | float, 'now': now(utc=true).timestamp(),
+           'keep': mail_relay_unused_keep, 'max': mail_relay_unused_max | int}) }}
+
+- name: Mail relay | the decision
+  ansible.builtin.set_fact:
+    _mr_unused_go: >-
+      {{ _mr_unused.problems | length == 0 and _mr_unused.unused | length > 0
+         and (_mr_unused.covered or mail_relay_unused_accept_short_logs | bool) }}
+    _mr_unused_why: >-
+      {{ ('a relay could not be read: ' ~ (_mr_unused.problems | map(attribute='host') | zip(_mr_unused.problems | map(attribute='problem'))
+           | map('join', ': ') | join('; '))) if _mr_unused.problems else
+         ('the mail logs do not go back ' ~ _mr_unused.days ~ ' days on every relay (How far back the logs go), so a quiet '
+          ~ 'address cannot be told from an unused one') if not _mr_unused.covered and not mail_relay_unused_accept_short_logs | bool else
+         ('every address on the list sent mail in the last ' ~ _mr_unused.days ~ ' days, or is kept') if not _mr_unused.unused else '' }}
+    _mr_extra_sections: >-
+      {{ [{'title': 'How far back the logs go',
+           'text': 'An address is unused when no relay accepted a message from it since ' ~ _mr_unused.cutoff ~ ' ('
+                   ~ _mr_unused.days ~ ' days, mail_relay_unused_days). The logs of each relay must go back that far.',
+           'columns': ['Relay', 'Oldest line', 'Newest line', 'Days back', 'Covers ' ~ _mr_unused.days ~ ' days', 'Logs read', 'Errors'],
+           'rows': _mr_unused.coverage | map('mail_relay_coverage_row') | list,
+           'row_status': _mr_unused.coverage | map(attribute='ok') | map('ternary', '', 'warning') | list}]
+         + [{'title': 'Each address on the list',
+             'text': 'Last mail: the newest message any relay accepted from it (or from an address inside the subnet). '
+                     ~ 'Connections: how often it connected (a monitor or a scanner connects and sends nothing - that does not count as sending).',
+             'columns': ['Address', 'Kind', 'On relays', 'Last mail', 'Messages in the logs',
+                         'Connections', 'Verdict'],
+             'rows': _mr_unused.rows, 'row_status': _mr_unused.row_status}]
+         + ([{'title': 'Note', 'lines': _mr_unused.notes}] if _mr_unused.notes else []) }}
+
+- name: Mail relay | the unused addresses go on to the removal plan
+  ansible.builtin.set_fact:
+    _mr_kind: unused
+    _mr_req:
+      action: remove
+      ips: "{{ _mr_unused.unused }}"
+      comment: ""
+      by: "{{ _mr_by }}"
+      date: "{{ now(fmt='%Y-%m-%d') }}"
+  when: _mr_unused_go | bool
+
+- name: Mail relay | nothing to remove - the report
+  when: not _mr_unused_go | bool
+  block:
+    - name: Mail relay | the report to print and email
+      ansible.builtin.set_fact:
+        _mr_doc:
+          title: >-
+            Mail relay whitelist - unused addresses: {{ 'FAILED: a relay could not be read' if _mr_unused.problems else
+            'logs too short to tell' if not _mr_unused.covered and not mail_relay_unused_accept_short_logs | bool else 'none' }}
+          status: "{{ 'critical' if _mr_unused.problems else ('warning' if not _mr_unused.covered else 'ok') }}"
+          subtitle: "Nothing was changed and nothing waits for approval: {{ _mr_unused_why }}."
+          summary:
+            - {label: Addresses in use, value: "{{ _mr_unused.used }}"}
+            - {label: Unused, value: "{{ _mr_unused.unused | length + _mr_unused.later | length }}"}
+            - {label: Unused subnets, value: "{{ _mr_unused.unused_subnets | length }}"}
+            - {label: "Days asked", value: "{{ _mr_unused.days }}"}
+            - label: Logs cover them
+              value: "{{ 'yes' if _mr_unused.covered else 'NO' }}"
+              status: "{{ 'ok' if _mr_unused.covered else 'warning' }}"
+          sections: >-
+            {{ ([{'title': 'Relays not read', 'lines': _mr_unused.problems | map(attribute='host')
+                  | zip(_mr_unused.problems | map(attribute='problem')) | map('join', ': ') | list}] if _mr_unused.problems else [])
+               + _mr_extra_sections }}
+          footer: "Read-only: nothing was changed."
+
+    - name: Mail relay | {{ _mr_doc.title }}
+      ansible.builtin.debug:
+        msg: "{{ (_mr_doc | report_text).splitlines() }}"
+
+    - name: Mail relay | the report website only with mail_relay_web
+      ansible.builtin.set_fact:
+        _mr_web_dest: "{{ (report_web_dest | default('', true) | string) if mail_relay_web | bool else '' }}"
+
+    - name: Mail relay | email it (report_email_to)
+      ansible.builtin.include_role:
+        name: site_email
+      vars:
+        _report: "{{ _mr_doc }}"
+        report_web_dest: "{{ _mr_web_dest }}"
+      when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
+
+    - name: Mail relay | nothing goes to the approval
+      ansible.builtin.fail:
+        msg: "Nothing goes to the approval: {{ _mr_unused_why }}."

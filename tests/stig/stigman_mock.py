@@ -101,6 +101,15 @@ class H(BaseHTTPRequestHandler):
                     if "benchmarkId" not in q or q["benchmarkId"][0] in [s["benchmarkId"] for s in a.get("stigs", [])]]
             col = [c for c in d["collections"] if c["collectionId"] == q["collectionId"][0]][0]
             return self.send(200, [dict(a, collection={"collectionId": col["collectionId"], "name": col["name"]}) for a in rows])
+        if len(parts) in (9, 10) and parts[1:3] == ["api", "collections"] and parts[4] == "reviews" and parts[7:9] == ["metadata", "keys"]:
+            # a review's metadata (STIG Manager keeps a review's attachments there: the key "artifacts"); no review: 404
+            r = next((r for r in d["reviews"].get(parts[5], []) if parts[6] in [r["ruleId"]] + r.get("ruleIds", [])), None)
+            if not r:
+                return self.send(404, {"error": "metadata keys not found"})
+            md = r.get("metadata") or {}
+            if len(parts) == 9:
+                return self.send(200, sorted(md))
+            return self.send(200, md[parts[9]]) if parts[9] in md else self.send(404, {"error": "metadata key not found"})
         if len(parts) == 7 and parts[1:3] == ["api", "collections"] and parts[4] == "reviews":
             r = next((r for r in d["reviews"].get(parts[5], []) if parts[6] in [r["ruleId"]] + r.get("ruleIds", [])), None)
             if not r:

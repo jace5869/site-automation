@@ -22,7 +22,7 @@
       ansible.builtin.set_fact:
         _mr_new: >-
           {{ _mr_read.content | b64decode | mail_relay_format(hostvars['localhost']['_mr_names'], mail_relay_parameter,
-             hostvars['localhost']['_mr_fmt'].stamp, mail_relay_format_blank_lines | bool, mail_relay_format_refresh | bool) }}
+             mail_relay_format_blank_lines | bool, mail_relay_format_refresh | bool) }}
 
     - name: Mail relay | the list keeps exactly its addresses
       ansible.builtin.assert:

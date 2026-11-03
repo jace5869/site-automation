@@ -18,6 +18,8 @@ description:
   - For each group, the change that lets it through - a trust entry for a host file (pinned to its size and sha256:
     a changed file is a new line), an allow rule for a container's file (as the containers job) - or why a person must
     decide (a file in a folder users can write, ...).
+  - With C(podman) in C(offer), a host whose podman storage (root's, or a user's own) has images gets the container
+    storage's allow rule as a line before fapolicyd blocks anything of theirs - the rule a container's block would get.
   - With C(offer), lines for what was for a person before - a trusted file that changed since (C(update): its trust
     entry updated, pinned to its size and sha256 now), a file trusted as it is but not loaded, or an RPM-owned file that
     still matches its package (C(reload): the trust database reloaded), an RPM-owned file that no longer matches its
@@ -41,12 +43,14 @@ options:
   hash_max_mb: {description: A file larger than this is not hashed (a person adds it - or large in offer)., type: int, default: 512}
   large_mb: {description: "With large in offer: a file up to this many MB is hashed too, and gets its trust entry.", type: int, default: 4096}
   offer:
-    description: "Lines offered for what was for a person before: update, reload, reinstall, large ([] = all for a person)."
+    description: "Lines offered for what was for a person before: update, reload, reinstall, large ([] = all for a person); and
+      podman: the container storage's rule on a host with podman images, before anything is blocked."
     type: list
     elements: str
-    default: [update, reload, reinstall, large]
+    default: [update, reload, reinstall, large, podman]
   max_groups: {description: At most this many groups returned (the most blocked first)., type: int, default: 200}
   timeout: {description: Seconds for each command., type: int, default: 120}
+  storage_conf: {description: podman's storage.conf (its storage folders)., type: str, default: /etc/containers/storage.conf}
 author: site automation
 '''
 
@@ -77,7 +81,7 @@ import time
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.site_fapolicyd import (
-    CGROUP_ID, RULE, SAFE, STOCK_RULES, block_kind, fan_rule, conf_values, event_path, parse_events, perm_of, propose,
+    CGROUP_ID, RULE, SAFE, STOCK_RULES, block_kind, fan_rule, conf_values, event_path, parse_events, perm_of, podman_storage_rules, propose,
     review_rules, rpm_reference, rule_list, run, same_file, storage_conf, storage_rule, why_container)
 
 MIB = 1024 * 1024
@@ -192,6 +196,21 @@ class Reader(object):
         flags = got.get(path, "")
         return bool(flags) and (flags[0] == "S" or flags[2] == "5")
 
+    def users(self):
+        """The accounts that may have their own podman storage: uid 1000 and up (not nobody)."""
+        try:
+            return [{"name": u.pw_name, "uid": u.pw_uid, "home": u.pw_dir} for u in pwd.getpwall()
+                    if 1000 <= u.pw_uid < 65534 and u.pw_dir.startswith("/")]
+        except Exception:                       # noqa: BLE001
+            return []
+
+    @staticmethod
+    def listdir(path):
+        try:
+            return os.listdir(path)
+        except (OSError, ValueError):
+            return None
+
     def user_of(self, name):
         if not name or name in ("root", "unset", "?"):
             return None
@@ -304,7 +323,7 @@ class Reader(object):
             r["error"] = "ausearch failed (exit %d): %s" % (rc, (err or out).strip()[:200])
             return r
         try:
-            with open("/etc/containers/storage.conf") as f:
+            with open(p["storage_conf"]) as f:
                 graph, rootless = storage_conf(f.read())
         except (IOError, OSError, UnicodeDecodeError):
             graph, rootless = storage_conf("")
@@ -384,6 +403,16 @@ class Reader(object):
                 r["by_hand"].append("%s %s -> %s: %s" % (g["kind"], g["exe"] or "?", g["path"] or "?", note))
             r["blocks"].append(g)
 
+        # podman's storage before anything of it is blocked: its rule, as a container's block would get it
+        if "podman" in p["offer"]:
+            for s in podman_storage_rules(graph, rootless, self.users(), self.listdir):
+                line = "allow rule: %s" % s["rule"]
+                if s["rule"] in in_files or line in seen:
+                    continue
+                seen.add(line)
+                r["changes"].append({"kind": "rule", "rule": s["rule"], "line": line, "effect": "lets the containers' files run",
+                                     "why": "%s - %s" % (s["why"], s["note"])})
+
         # the rules files: their review, and the clean-up of the ones this job may edit
         names = set(n for n, _ in files)
         review = review_rules(files, self.rpm_owned)
@@ -445,7 +474,8 @@ def main():
         user_dirs=dict(type="list", elements="str", default=["/home/", "/run/user/", "/tmp/", "/var/tmp/", "/dev/shm/"]),
         hash_max_mb=dict(type="int", default=512),
         large_mb=dict(type="int", default=4096),
-        offer=dict(type="list", elements="str", default=["update", "reload", "reinstall", "large"]),
+        offer=dict(type="list", elements="str", default=["update", "reload", "reinstall", "large", "podman"]),
+        storage_conf=dict(type="str", default="/etc/containers/storage.conf"),
         max_groups=dict(type="int", default=200),
         timeout=dict(type="int", default=120),
     ), supports_check_mode=True)

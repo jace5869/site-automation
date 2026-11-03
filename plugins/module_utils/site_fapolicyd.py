@@ -124,6 +124,38 @@ def storage_conf(text):
     return graph.rstrip("/") or "/var/lib/containers/storage", rootless.rstrip("/")
 
 
+def user_storage(user, rootless):
+    """A user's own (rootless) podman storage: storage.conf's rootless_storage_path for them, or podman's default."""
+    own = (rootless.replace("$HOME", user.get("home", "")).replace("$USER", user.get("name", ""))
+           .replace("$UID", str(user.get("uid", ""))).rstrip("/")) if rootless else ""
+    return own or (user.get("home", "").rstrip("/") + "/.local/share/containers/storage")
+
+
+def podman_storage_rules(graph, rootless, users, listdir):
+    """[{rule, why, note}]: the container-storage rule of each podman storage on the host that has image layers in it -
+    root's (graph), then each user's own (users: [{name, uid, home}]) - offered before fapolicyd blocks a container's
+    file. listdir(path) -> its names, or None when it is not there or cannot be read. Pure: testable on its own."""
+    out = []
+    note = ("every file in container storage, for any program: a file inside an image has no host path of its own to "
+            "name, and the image's layers change at each pull")
+
+    def layers(storage):
+        return len([n for n in listdir(storage + "/overlay") or [] if n != "l"])    # l: overlay's short links
+    for who, storage in [(None, graph)] + [(u, user_storage(u, rootless)) for u in users if u.get("uid", 0) >= 1000]:
+        n = layers(storage) if storage.startswith("/") else 0
+        if not n:
+            continue
+        root = storage + "/overlay/"
+        if not SAFE.match(root):
+            continue
+        out.append({"rule": "allow perm=any all : dir=%s" % root, "user": who["name"] if who else "root",
+                    "why": "podman on this host: %s's storage %s has %d image layer(s) - the containers' files allowed before "
+                           "fapolicyd blocks one" % (who["name"] if who else "root", storage, n),
+                    "note": note + ("; %s's own storage: anything they put there may then run - on a STIG host, prefer "
+                                    "rootful containers (quadlet units)" % who["name"] if who else "")})
+    return out
+
+
 def storage_rule(path, exe, user, graph, rootless):
     """The rule for a file in container storage, and its note. user: {name, uid, home} of the denial's user (None =
     root, or not known). Docker's storage when the program or the file is under /var/lib/docker; the user's own
@@ -140,8 +172,7 @@ def storage_rule(path, exe, user, graph, rootless):
         if path.startswith(graph + "/volumes/"):
             root = graph + "/volumes/"
         if user and user.get("uid", 0) >= 1000:
-            own = ((rootless.replace("$HOME", user.get("home", "")).replace("$USER", user.get("name", ""))
-                    .replace("$UID", str(user.get("uid", ""))).rstrip("/")) if rootless else "") or (user.get("home", "").rstrip("/") + "/.local/share/containers/storage")
+            own = user_storage(user, rootless)
             if own.startswith("/") and os.path.isdir(own):
                 root = own + ("/volumes/" if path.startswith(own + "/volumes/") else "/overlay/")
                 note += ("; %s's own storage: anything they put there may then run - on a STIG host, prefer rootful "

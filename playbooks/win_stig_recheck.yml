@@ -81,6 +81,15 @@
       run_once: true
       when: check_stig_update_workflow | default(false) | bool
 
+    # a review with attachments in STIG Manager (evidence a person attached) is never handed to the approval
+    - name: STIG Manager - leave out the reviews that have attachments (check_stig_update_skip_attachments)
+      ansible.builtin.include_role:
+        name: check_stig
+        tasks_from: update_attachments.yml
+      when: >-
+        check_stig_update_workflow | default(false) | bool and _stig_update_plan | length > 0
+        and check_stig_update_skip_attachments | default(true) | bool and check_stig_stigman_api | default('') | length > 0
+
     - name: STIG Manager - what Approve writes, at the top of the report
       ansible.builtin.set_fact:
         site_report_sections: "{{ (_stig_update_plan | stig_update_sections(check_stig_list_max | default(200) | int)) + site_report_sections }}"

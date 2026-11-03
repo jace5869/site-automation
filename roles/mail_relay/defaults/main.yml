@@ -8,8 +8,9 @@
 # back. The format job (playbooks/mail_relay_format.yml) puts each relay's list one address or subnet per line -
 # subnets first, then the single addresses, in number order - each single address with a comment line above it:
 # its name in DNS (looked up on the relay) and the folder the VM that has it is in, in vCenter ("# web01.example.mil
-# - Payroll  [AAP mail relay format DATE job N]"); the list keeps exactly its addresses, a copy of main.cf is
-# kept first. docs/MAIL_RELAY.md
+# Payroll [AAP]"); the list keeps exactly its addresses, a copy of main.cf is
+# kept first. The unused job (playbooks/mail_relay_unused.yml) reads each relay's mail logs and plans the removal of the
+# addresses that sent no mail in mail_relay_unused_days - the same approval and apply step as a removal. docs/MAIL_RELAY.md
 
 # ---- The request (a survey on the workflow) -----------------------------------------------------
 mail_relay_action: ""                    # add or remove: set in each workflow's Variables (one workflow per action)
@@ -50,6 +51,16 @@ mail_relay_format_blank_lines: true      # a blank line between the single addre
 mail_relay_format_refresh: false         # true = look up again the addresses this job named before (others kept)
 mail_relay_format_reload: false          # true = reload Postfix after (the list is the same: no need)
 mail_relay_format_check_email: true      # a dry run (Check) emails its report too, marked DRY RUN (false = only printed)
+
+# ---- The unused addresses (playbooks/mail_relay_unused.yml: workflow "Mail relay - remove unused addresses") ------
+mail_relay_unused_days: 183              # an address that sent no mail through any relay in this many days is unused (183: six months)
+mail_relay_unused_logs: ["/var/log/maillog*"]  # Postfix's log files on each relay (patterns; rotated and .gz copies too)
+mail_relay_unused_journal: auto          # auto = read the journal when no log file is there; true = as well; false = never
+mail_relay_unused_keep: []               # addresses or subnets never proposed, e.g. [198.51.100.7, 203.0.113.0/28] (127.0.0.0/8 never is)
+mail_relay_unused_max: 50                # the most addresses one plan removes (the next run takes the rest)
+# The logs must go back mail_relay_unused_days on every relay (RHEL keeps about 5 weeks of /var/log/maillog): else
+# nothing is proposed. true = propose anyway, from what the logs cover (the email says how far back they go).
+mail_relay_unused_accept_short_logs: false
 
 # ---- The approval email -------------------------------------------------------------------------
 # Both emails (waiting for approval, and the result) go to report_email_to (set it on the workflow). A link for

@@ -29,12 +29,14 @@ aap_email_question_playbooks:
   - mail_relay_approved.yml
   - mail_relay_format.yml
   - mail_relay_plan.yml
+  - mail_relay_unused.yml
   - net_cert_renew.yml
   - net_cert_report.yml
   - net_perf_report.yml
   - net_config_backup.yml
   - net_config_load.yml
   - ontap_health_report.yml
+  - ontap_hardware_report.yml
   - poam_status.yml
   - servicenow_health.yml
   - servicenow_war.yml
@@ -50,6 +52,7 @@ aap_email_question_playbooks:
   - vm_created_report.yml
   - vm_datastore_report.yml
   - vm_inventory_report.yml
+  - vm_tools_report.yml
   - vm_rightsizing_report.yml
   - vmware_hardware_report.yml
   - vmware_version_report.yml

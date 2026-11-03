@@ -2,7 +2,7 @@
 # Mail relay - format the whitelist: each relay's mynetworks (main.cf) one address or subnet per line - subnets
 # first, then the single addresses, in number order - with a comment line above each single address: its name in
 # DNS (looked up on the relay) and the folder of the VM that has it in vCenter (its service):
-#     # web01.example.mil - Payroll  [AAP mail relay format 2026-11-02 job 4711]
+#     # web01.example.mil  Payroll [AAP]
 #     198.51.100.7
 # An address with a comment keeps it. The list keeps exactly its addresses (Postfix reads the same list); a copy of
 # main.cf is kept first (main.cf.before-format-DATE-TIME), then the configuration check and the read-back. Run it as

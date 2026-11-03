@@ -147,6 +147,7 @@ net_perf_targets: [{name: Gateway, host: GATEWAY-ADDRESS}, {name: DC01, host: DC
 # net_perf_ocsp: [{name: OCSP, url: "http://OCSP-SERVER", cert: files/ocsp/test-user.pem, issuer: files/ocsp/issuing-ca.pem}]
 """),
     "ontap_health_report.yml": ("NetApp ONTAP health report", "NetApp ONTAP", "", ""),
+    "ontap_hardware_report.yml": ("NetApp ONTAP hardware inventory", "NetApp ONTAP", "", ""),
     "patch_hosts.yml": ("Patch hosts", "Machine", "", ""),
     "poam_status.yml": ("POA&M status", "STIG Manager API (optional)", "", ""),
     "report_web_copy.yml": ("Report website - copy", "Machine (Windows), Red Hat Ansible Automation Platform", "", """\
@@ -181,6 +182,11 @@ servicenow_assignment_group: YOUR GROUP NAME   # exactly as in ServiceNow
     "mail_relay_format.yml": ("Mail relay - format the whitelist", "Machine and VMware vCenter (read-only), both", "", """\
 mail_relay_group: mail                   # your mail relay group
 ## launch it as Check first: the report shows each relay's new list and the names found
+"""),
+    "mail_relay_unused.yml": ("Mail relay - unused addresses plan", "Machine", "", """\
+mail_relay_group: mail                   # your mail relay group
+## step 1 of the workflow "Mail relay - remove unused addresses" (then Approval, then the apply template);
+## report_email_to on the workflow. Six months by default: mail_relay_unused_days
 """),
     "mail_relay_plan.yml": ("Mail relay - whitelist plan", "Machine", "", """\
 ## Usually set on the two workflows, not here: Variables of "Mail relay - add an IP" = mail_relay_action: add,
@@ -283,6 +289,7 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets the incidents (exactly
     "vm_capacity_report.yml": ("VM - capacity planning", "VMware vCenter (ACT model key with vm_capacity_act)", "", ""),
     "vm_datastore_report.yml": ("VM - datastore report", "VMware vCenter", "", ""),
     "vm_inventory_report.yml": ("VM - inventory report", "VMware vCenter", "", ""),
+    "vm_tools_report.yml": ("VM - VMware Tools inventory", "VMware vCenter (read-only is enough)", "", ""),
     "vm_rightsizing_report.yml": ("VM - right-sizing report", "VMware vCenter (ACT model key with vm_rightsize_act)", "", ""),
     "vmware_hardware_report.yml": ("VMware - hardware inventory", "VMware vCenter (read-only is enough)", "", ""),
     "vmware_version_report.yml": ("VMware - version report", "VMware vCenter", "", ""),

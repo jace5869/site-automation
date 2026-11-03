@@ -1,0 +1,17 @@
+---
+# VMWARE TOOLS INVENTORY (vCenter). Read-only: every VM of every vCenter, by vCenter and folder - its VMware Tools
+# version and status (current, upgrade available, not installed, not running, guest managed), hardware version (VM
+# compatibility) and guest OS - with the Tools versions, hardware versions and guest OSes in use and how many VMs each.
+# Emailed (report_email_to) with every VM as an Excel workbook (vm_tools_xlsx), and on the report website
+# (report_web_dest). Runs on the AAP side against vCenter: attach a "VMware vCenter" credential (read-only is enough);
+# no Limit. docs/VMWARE.md
+#   ansible-playbook playbooks/vm_tools_report.yml
+- name: VMware Tools inventory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: VMware Tools inventory
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: tools.yml

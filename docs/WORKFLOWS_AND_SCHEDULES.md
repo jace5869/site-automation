@@ -540,7 +540,13 @@ Two workflows with these steps: *Mail relay - add an IP* (Variables `mail_relay_
 addresses - one, a subnet or several separated by commas - and the required comment) and *Mail relay - remove an IP*
 (`mail_relay_action: remove`, the IP addresses). The plan emails the exact lines "waiting for approval"; nothing to
 change stops it before the approval. Started from Orchestrator: launch the workflow ([MAIL_RELAY.md](MAIL_RELAY.md)).
-No schedule. *Mail relay - format the whitelist* (one address per line, each named) is a job of its own, run as Check
+No schedule.
+
+A third, *Mail relay - remove unused addresses*, has *Mail relay - unused addresses plan*
+(`playbooks/mail_relay_unused.yml`) as its first step: it reads the relays' mail logs and plans the removal of the
+addresses that sent no mail in six months; the approval and the apply step are the same
+([MAIL_RELAY.md](MAIL_RELAY.md#remove-the-addresses-that-sent-no-mail)). No survey; a schedule if you like (twice a
+year) - nothing unused stops it before the approval. *Mail relay - format the whitelist* (one address per line, each named) is a job of its own, run as Check
 first.
 
 ### 8. Database watch: MariaDB and MySQL (hourly)
