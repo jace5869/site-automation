@@ -47,6 +47,9 @@ Since 0.53.0:
   - **Light / Auto / Dark**, which follows the reader's own setting on Auto;
   - **Print**.
   - The rows and light/dark choices are kept in that browser, for every page of the website.
+  - The two switches work even where the page's script is blocked (a web server whose Content-Security-Policy allows
+    no inline script - common on a hardened IIS or nginx); the choice is then for that page only. Print needs the
+    script, so it is not shown then.
 - **Headings that stay at the top** of a long table while you scroll it, rows striped, and the row under the
   pointer marked.
 - **Status chips with icons and their word**, never colour alone: a check mark for OK, ! for a warning, x for
@@ -66,8 +69,12 @@ Since 0.53.0:
 - **The index page** in the same look, with the same switch.
 - **Printed:** white, landscape, every section open, each table's headings repeated on every page.
 - **One file per page:** no fonts or scripts from elsewhere (system fonts: Segoe UI and Cascadia Mono on Windows), so
-  a page opens from a share too. Without its script (blocked) it reads the same; only the switches, sorting,
-  filtering and the Copy buttons need it.
+  a page opens from a share too. Without its script (blocked) it reads the same, and Light / Auto / Dark and the row
+  height still switch; only remembering them, sorting, filtering, Print and the Copy buttons need it.
+  - **To have all of it with a Content-Security-Policy:** allow the pages' inline script and style on the report
+    site only (`script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'`). To see whether one blocks it:
+    F12 > Console on a report page shows *Refused to execute inline script because it violates the following Content
+    Security Policy directive*.
 
 **Where the design comes from** - the guidance it follows, for anyone who wants to change it:
 

@@ -403,6 +403,23 @@ class AtlasLook(unittest.TestCase):
         self.assertIn("localStorage.getItem('site-report-theme')", h)
         self.assertIn("@media print", h)
 
+    def test_switches_without_the_script(self):
+        """Light / auto / dark and the row height are radio buttons the CSS acts on: they work where a web server's
+        Content-Security-Policy blocks the page's script (it only keeps the choice); Print needs it, so hidden then."""
+        h = self.render()
+        self.assertIn('<div class="seg" id="theme" role="radiogroup" aria-label="Light or dark">', h)
+        self.assertIn('<div class="seg" id="density" role="radiogroup" aria-label="Row height">', h)
+        for t in ("light", "auto", "dark"):
+            self.assertIn('<input type="radio" name="site-report-theme" id="theme-%s" value="%s"' % (t, t), h)
+        self.assertIn('id="theme-auto" value="auto" checked>', h)
+        self.assertIn('id="density-comfortable" value="comfortable" checked>', h)
+        self.assertIn(":root:has(#theme-light:checked){--ink:#111827;", h.replace("\n", "").replace(" ", ""))
+        self.assertIn(":root:has(#theme-dark:checked){--ink:#e6edf3;", h.replace("\n", "").replace(" ", ""))
+        self.assertIn(":root:has(#density-compact:checked){--cy:5px;", h)
+        self.assertIn(".btn[hidden]{display:none}", h)
+        self.assertIn('<button class="btn" type="button" id="print" hidden>', h)
+        self.assertNotIn('role="radio"', h)
+
     def test_status_chips_with_words(self):
         h = self.render()
         self.assertIn('<span class="chip s-ok"><svg', h)                           # PASSED: a check mark, its word kept

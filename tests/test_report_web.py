@@ -127,13 +127,28 @@ class Module(unittest.TestCase):
         import re
         with open(os.path.join(REPO, "roles", "site_email", "templates", "report_atlas.html.j2")) as f:
             tpl = f.read()
-        light = tpl[tpl.index(":root{"):tpl.index("{%- set dark %}")]
-        dark = tpl[tpl.index("{%- set dark %}"):tpl.index("{%- endset %}")]
+        light = tpl[tpl.index("{%- set light %}"):tpl.index("{%- set dark %}")]
+        dark = tpl[tpl.index("{%- set dark %}"):tpl.index("{%- endset %}", tpl.index("{%- set dark %}"))]
         for mine, theirs in ((rw.ATLAS_LIGHT, light), (rw.ATLAS_DARK, dark)):
             tokens = dict(re.findall(r"(--[\w-]+):([^;]+);", mine))
             self.assertGreater(len(tokens), 30)
             for k, v in tokens.items():
                 self.assertIn("%s:%s;" % (k, v), theirs, k)
+
+    def test_atlas_switch_without_the_script(self):
+        """The index page's light / auto / dark switch: radio buttons the CSS acts on, so it works where a web server's
+        Content-Security-Policy blocks the page's script; the script only keeps the choice."""
+        html = rw.index_html([], "index.html", "x", None, "now", (), "atlas")
+        self.assertIn('<div class="seg" id="theme" role="radiogroup" aria-label="Light or dark">', html)   # not hidden
+        for t in ("light", "auto", "dark"):
+            self.assertIn('<input type="radio" name="site-report-theme" id="theme-%s" value="%s"' % (t, t), html)
+            self.assertIn('<label for="theme-%s"' % t, html)
+        self.assertIn('id="theme-auto" value="auto" checked>', html)
+        self.assertIn(":root:has(#theme-light:checked){--ink:#111827;", html)
+        self.assertIn(":root:has(#theme-dark:checked){--ink:#e6edf3;", html)
+        self.assertIn(':root[data-theme="dark"]{--ink:#e6edf3;', html)      # older browsers without :has(): the script
+        self.assertIn("localStorage.setItem('site-report-theme',n)", html)
+        self.assertNotIn("<button", html)
 
     def test_index_page(self):
         reports = [{"key": "b", "name": "VMware <snapshots>", "title": "3 failed", "status": "critical", "when": "2026-10-23 06:05 UTC",

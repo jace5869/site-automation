@@ -691,6 +691,8 @@ ATLAS_DARK = """--ink:#e6edf3;--muted:#9aa7b4;--label:#c2ccd6;--accent:#3ecf98;-
 ATLAS_STYLE = """:root{%(light)s}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){%(dark)s}}
 :root[data-theme="dark"]{%(dark)s}
+:root:has(#theme-light:checked){%(light)s}
+:root:has(#theme-dark:checked){%(dark)s}
 *{box-sizing:border-box}
 html{background:var(--bg)}
 body{margin:0;color:var(--ink);font:15px/1.55 "Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
@@ -716,11 +718,12 @@ a{color:var(--accent)}
 .brand{flex:1;min-width:0}
 .brand h1{margin:0;font-size:clamp(21px,2.4vw,28px);line-height:1.2;font-weight:750;letter-spacing:-.01em}
 .brand span{color:var(--muted);font-size:14px}
-.seg{display:inline-flex;background:var(--card-strong);border:1px solid var(--edge);border-radius:10px;padding:2px;gap:2px}
-.seg button{font:inherit;font-size:12.5px;font-weight:600;color:var(--muted);background:none;border:0;border-radius:8px;padding:5px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
-.seg button:hover{color:var(--ink)}
-.seg button[aria-checked="true"]{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12),inset 0 0 0 1px var(--edge)}
-.seg button:focus-visible,.bar label:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.seg{display:inline-flex;position:relative;background:var(--card-strong);border:1px solid var(--edge);border-radius:10px;padding:2px;gap:2px}
+.seg input{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
+.seg label{font-size:12.5px;font-weight:600;color:var(--muted);border-radius:8px;padding:5px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;user-select:none}
+.seg label:hover{color:var(--ink)}
+.seg input:checked+label{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12),inset 0 0 0 1px var(--edge)}
+.seg input:focus-visible+label,.bar label:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:16px 0}
 .tile{padding:16px 18px;position:relative;overflow:hidden}
 .tile .k{font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--label);display:flex;align-items:center;gap:7px}
@@ -757,7 +760,7 @@ padding:5px 13px;font-size:13px;font-weight:650;color:var(--ink)}
 footer{margin-top:22px;text-align:center;color:var(--muted);font-size:13px}
 @media (max-width:700px){
 .wrap{padding:14px 12px 30px}.hero{padding:18px 16px}.top{flex-wrap:wrap}.brand{flex:1 1 calc(100%% - 70px)}.tools{width:100%%;display:flex;justify-content:flex-end}
-.seg button span{display:none}.seg button{padding:6px 9px}
+.seg label span{display:none}.seg label{padding:6px 9px}
 .tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.tile .v{font-size:26px}
 .r>summary{grid-template-columns:16px minmax(0,1fr);padding:12px 14px}
 .r>summary .st{grid-column:2}.r>summary .nm{grid-column:1 / span 2}.r>summary .lr{grid-column:1 / span 2;text-align:left;white-space:normal}
@@ -782,28 +785,26 @@ ATLAS_ICON = {
     'unknown': '<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7.3" fill="currentColor" opacity=".2"/>'
                '<path d="M6.2 6.2a1.9 1.9 0 113 1.5c-.8.5-1.2.9-1.2 1.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>'
                '<circle cx="8" cy="11.6" r=".95" fill="currentColor"/></svg>'}
-# the light / auto / dark switch (the choice kept in this browser, the same key as the report pages')
+# the light / auto / dark switch: radio buttons, so it works without the script too (a web server's
+# Content-Security-Policy can block it); the script keeps the choice in this browser (the report pages' key)
 ATLAS_SWITCH = (
-    '<div class="seg" id="theme" role="radiogroup" aria-label="Light or dark" hidden>'
-    '<button type="button" role="radio" data-t="light" title="Light"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.2" '
+    '<div class="seg" id="theme" role="radiogroup" aria-label="Light or dark">'
+    '<input type="radio" name="site-report-theme" id="theme-light" value="light"><label for="theme-light" title="Light"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.2" '
     'fill="currentColor"/><path d="M8 1v1.8M8 13.2V15M1 8h1.8M13.2 8H15M3 3l1.3 1.3M11.7 11.7L13 13M3 13l1.3-1.3M11.7 4.3L13 3" stroke="currentColor" '
-    'stroke-width="1.5" stroke-linecap="round"/></svg><span>Light</span></button>'
-    '<button type="button" role="radio" data-t="auto" title="As this device is set"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" '
-    'cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.6a6.4 6.4 0 010 12.8z" fill="currentColor"/></svg><span>Auto</span></button>'
-    '<button type="button" role="radio" data-t="dark" title="Dark"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 10.2A6 6 0 015.8 2.4a6 6 '
-    '0 107.8 7.8z" fill="currentColor"/></svg><span>Dark</span></button></div>')
+    'stroke-width="1.5" stroke-linecap="round"/></svg><span>Light</span></label>'
+    '<input type="radio" name="site-report-theme" id="theme-auto" value="auto" checked><label for="theme-auto" title="As this device is set"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" '
+    'cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.6a6.4 6.4 0 010 12.8z" fill="currentColor"/></svg><span>Auto</span></label>'
+    '<input type="radio" name="site-report-theme" id="theme-dark" value="dark"><label for="theme-dark" title="Dark"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 10.2A6 6 0 015.8 2.4a6 6 '
+    '0 107.8 7.8z" fill="currentColor"/></svg><span>Dark</span></label></div>')
 ATLAS_EARLY = ("<script>try{var t=localStorage.getItem('site-report-theme');if(t==='light'||t==='dark')"
                "document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>")
 ATLAS_SCRIPT = """<script>
 (function(){
-  var root=document.documentElement,seg=document.getElementById('theme');
-  function cur(){return root.getAttribute('data-theme')||'auto'}
-  function show(){seg.querySelectorAll('button').forEach(function(x){x.setAttribute('aria-checked',x.getAttribute('data-t')===cur()?'true':'false')})}
-  if(seg){seg.hidden=false;show();seg.querySelectorAll('button').forEach(function(x){x.addEventListener('click',function(){
-    var n=x.getAttribute('data-t');
+  var root=document.documentElement,seg=document.getElementById('theme');if(!seg)return;
+  var c=seg.querySelector('input[value="'+(root.getAttribute('data-theme')||'auto')+'"]');if(c)c.checked=true;
+  seg.addEventListener('change',function(ev){var n=ev.target.value;
     if(n==='auto')root.removeAttribute('data-theme');else root.setAttribute('data-theme',n);
-    try{if(n==='auto')localStorage.removeItem('site-report-theme');else localStorage.setItem('site-report-theme',n)}catch(e){}
-    show()})})}
+    try{if(n==='auto')localStorage.removeItem('site-report-theme');else localStorage.setItem('site-report-theme',n)}catch(e){}})
 })();
 </script>"""
 

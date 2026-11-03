@@ -62,7 +62,7 @@
 <script>try{var t=localStorage.getItem('site-report-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);
 var d=localStorage.getItem('site-report-density');if(d==='compact')document.documentElement.setAttribute('data-density',d)}catch(e){}</script>
 <style>
-:root{
+{%- set light %}
   --ink:#111827;--muted:#4b5563;--label:#374151;--accent:#0b7352;--accent-ink:#ffffff;--accent-soft:#e3f3ec;
   --bg:#f3f5f7;--bg2:#e9eef2;--card:#ffffff;--card-solid:#ffffff;--card-strong:#f7f9fb;--edge:#dde3ea;--line:#e8ecf1;
   --zebra:#fafbfc;--hover:#eef6f2;--code:#f1f4f7;--bar:rgba(255,255,255,.82);
@@ -75,7 +75,7 @@ var d=localStorage.getItem('site-report-density');if(d==='compact')document.docu
   --unknown:#4b5563;--unknown-bg:#eef1f4;--unknown-bd:#c9d1da;
   --critical-row:#fff6f5;--warning-row:#fffaf0;
   color-scheme:light;
-}
+{%- endset %}
 {%- set dark %}
   --ink:#e6edf3;--muted:#9aa7b4;--label:#c2ccd6;--accent:#3ecf98;--accent-ink:#04221a;--accent-soft:#12302a;
   --bg:#0b0f14;--bg2:#0e141b;--card:#121820;--card-solid:#121820;--card-strong:#171f29;--edge:#263243;--line:#1e2834;
@@ -90,10 +90,15 @@ var d=localStorage.getItem('site-report-density');if(d==='compact')document.docu
   --critical-row:rgba(255,138,128,.06);--warning-row:rgba(242,180,80,.05);
   color-scheme:dark;
 {%- endset %}
+:root{ {{- light -}} }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){ {{- dark -}} }}
 :root[data-theme="dark"]{ {{- dark -}} }
+/* the switches work without the page's script too (a web server's Content-Security-Policy can block it): radio buttons */
+:root:has(#theme-light:checked){ {{- light -}} }
+:root:has(#theme-dark:checked){ {{- dark -}} }
 :root{--cy:10px;--cx:14px;--fs:14px;--appbar:58px}
 :root[data-density="compact"]{--cy:5px;--cx:10px;--fs:13.5px}
+:root:has(#density-compact:checked){--cy:5px;--cx:10px;--fs:13.5px}
 *{box-sizing:border-box}
 html{background:var(--bg);scroll-padding-top:calc(var(--appbar) + 12px)}
 body{margin:0;color:var(--ink);font:15px/1.55 "Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Helvetica Neue",Arial,sans-serif;
@@ -129,11 +134,12 @@ a{color:var(--accent)}
 .tools{display:flex;gap:8px;align-items:center;flex:none;margin-left:auto}
 .btn{font:inherit;font-size:13px;font-weight:600;color:var(--ink);background:var(--card);border:1px solid var(--edge);border-radius:10px;padding:6px 11px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
 .btn:hover{border-color:var(--accent)}
-.seg{display:inline-flex;background:var(--card-strong);border:1px solid var(--edge);border-radius:10px;padding:2px;gap:2px}
-.seg button{font:inherit;font-size:12.5px;font-weight:600;color:var(--muted);background:none;border:0;border-radius:8px;padding:5px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
-.seg button:hover{color:var(--ink)}
-.seg button[aria-checked="true"]{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12),inset 0 0 0 1px var(--edge)}
-.seg button:focus-visible,.btn:focus-visible,summary:focus-visible,th button:focus-visible,.nav a:focus-visible,.filter:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.seg{display:inline-flex;position:relative;background:var(--card-strong);border:1px solid var(--edge);border-radius:10px;padding:2px;gap:2px}
+.seg input{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
+.seg label{font-size:12.5px;font-weight:600;color:var(--muted);border-radius:8px;padding:5px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;user-select:none}
+.seg label:hover{color:var(--ink)}
+.seg input:checked+label{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12),inset 0 0 0 1px var(--edge)}
+.seg input:focus-visible+label,.btn:focus-visible,summary:focus-visible,th button:focus-visible,.nav a:focus-visible,.filter:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 /* the header */
 .hero{padding:26px clamp(18px,2.4vw,32px) 22px;position:relative;overflow:hidden}
 .hero:before{content:"";position:absolute;left:0;right:0;top:0;height:4px;background:var(--unknown)}
@@ -211,7 +217,7 @@ ul.passed .ic{width:17px;height:17px}
 .tcopy:hover{color:var(--ink);background:var(--card-strong);border-color:var(--edge)}
 .copy.done,.tcopy.done{color:var(--ok);border-color:var(--ok-bd);opacity:1}
 .tcopy .i2,.scopy .i2,.done .i1{display:none}.done .i2{display:block}
-.copy[hidden],.tcopy[hidden]{display:none}
+.copy[hidden],.tcopy[hidden],.btn[hidden]{display:none}
 @media (hover:none){.tcopy{opacity:.8}}
 /* tables: the columns sized by what they hold (k-num, k-nw, k-mid, k-long, k-path); the headings stay at the top */
 .tools2{display:flex;align-items:center;gap:10px;margin:0 0 10px}
@@ -258,7 +264,7 @@ footer{margin-top:28px;text-align:center;color:var(--muted);font-size:13px;line-
   .wrap{padding:12px 12px 30px}.hero{padding:20px 16px 16px}.runs{margin-left:0;width:100%}
   .tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.tile .v{font-size:28px}
   .sec>summary{padding:14px 16px}.body{padding:12px 14px 14px}
-  .seg button span,.tools .btn span{display:none}.seg button{padding:6px 8px}
+  .seg label span,.tools .btn span{display:none}.seg label{padding:6px 8px}
   /* a table's rows as small cards, each value under its column's name */
   .tw,.tw.scroll{border:0;background:none;overflow:visible}
   .tw table,.tw tbody,.tw tr,.tw td{display:block;width:100%}
@@ -299,14 +305,14 @@ footer{margin-top:28px;text-align:center;color:var(--muted);font-size:13px;line-
 </nav>
 {%- endif %}
 <div class="tools">
-<div class="seg" id="density" role="radiogroup" aria-label="Row height" hidden>
-<button type="button" role="radio" data-d="compact" title="Compact rows"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h12M2 6.5h12M2 9.5h12M2 12.5h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>Compact</span></button>
-<button type="button" role="radio" data-d="comfortable" title="Comfortable rows"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>Comfortable</span></button>
+<div class="seg" id="density" role="radiogroup" aria-label="Row height">
+<input type="radio" name="site-report-density" id="density-compact" value="compact"><label for="density-compact" title="Compact rows"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3.5h12M2 6.5h12M2 9.5h12M2 12.5h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>Compact</span></label>
+<input type="radio" name="site-report-density" id="density-comfortable" value="comfortable" checked><label for="density-comfortable" title="Comfortable rows"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>Comfortable</span></label>
 </div>
-<div class="seg" id="theme" role="radiogroup" aria-label="Light or dark" hidden>
-<button type="button" role="radio" data-t="light" title="Light"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.2" fill="currentColor"/><path d="M8 1v1.8M8 13.2V15M1 8h1.8M13.2 8H15M3 3l1.3 1.3M11.7 11.7L13 13M3 13l1.3-1.3M11.7 4.3L13 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>Light</span></button>
-<button type="button" role="radio" data-t="auto" title="As this device is set"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.6a6.4 6.4 0 010 12.8z" fill="currentColor"/></svg><span>Auto</span></button>
-<button type="button" role="radio" data-t="dark" title="Dark"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 10.2A6 6 0 015.8 2.4a6 6 0 107.8 7.8z" fill="currentColor"/></svg><span>Dark</span></button>
+<div class="seg" id="theme" role="radiogroup" aria-label="Light or dark">
+<input type="radio" name="site-report-theme" id="theme-light" value="light"><label for="theme-light" title="Light"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.2" fill="currentColor"/><path d="M8 1v1.8M8 13.2V15M1 8h1.8M13.2 8H15M3 3l1.3 1.3M11.7 11.7L13 13M3 13l1.3-1.3M11.7 4.3L13 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>Light</span></label>
+<input type="radio" name="site-report-theme" id="theme-auto" value="auto" checked><label for="theme-auto" title="As this device is set"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.6a6.4 6.4 0 010 12.8z" fill="currentColor"/></svg><span>Auto</span></label>
+<input type="radio" name="site-report-theme" id="theme-dark" value="dark"><label for="theme-dark" title="Dark"><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 10.2A6 6 0 015.8 2.4a6 6 0 107.8 7.8z" fill="currentColor"/></svg><span>Dark</span></label>
 </div>
 <button class="btn" type="button" id="print" hidden><svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6V1.8h8V6M4 11.5H2.4V6h11.2v5.5H12M4.2 9.2h7.6v5H4.2z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg><span>Print</span></button>
 </div>
@@ -472,15 +478,14 @@ footer{margin-top:28px;text-align:center;color:var(--muted);font-size:13px;line-
 <script>
 (function(){
   var root=document.documentElement;
-  /* a switch of the bar: its buttons, what is set now, and what a click sets (kept in this browser) */
+  /* a switch of the bar: its radio buttons work by themselves (CSS); here the choice is kept in this browser and set
+     again on the next page */
   function seg(id,attr,key,def){var g=document.getElementById(id);if(!g)return;
-    function cur(){return root.getAttribute(attr)||def}
-    function show(){g.querySelectorAll('button').forEach(function(x){x.setAttribute('aria-checked',x.getAttribute(attr==='data-theme'?'data-t':'data-d')===cur()?'true':'false')})}
-    g.hidden=false;show();g.querySelectorAll('button').forEach(function(x){x.addEventListener('click',function(){
-      var n=x.getAttribute(attr==='data-theme'?'data-t':'data-d');
+    var c=g.querySelector('input[value="'+(root.getAttribute(attr)||def)+'"]');if(c)c.checked=true;
+    g.addEventListener('change',function(ev){var n=ev.target.value;
       if(n===def)root.removeAttribute(attr);else root.setAttribute(attr,n);
       try{if(n===def)localStorage.removeItem(key);else localStorage.setItem(key,n)}catch(e){}
-      show();fit()})})}
+      fit()})}
   seg('theme','data-theme','site-report-theme','auto');
   seg('density','data-density','site-report-density','comfortable');
   var p=document.getElementById('print');if(p){p.hidden=false;p.addEventListener('click',function(){

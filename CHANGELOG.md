@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.62.0 — 2026-11-03
+
+**Updating without scripts:** paste `site-automation-0.62.0-changed-since-0.61.0.zip` as it is (from an older version,
+its own zip). They leave out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. Nothing to set up in AAP; the next run of each report writes its page with the fix, and the index page
+with the next report.
+
+**Report website - Light / Auto / Dark works where the page's script is blocked.** A web server that sends a
+Content-Security-Policy allowing no inline script (common on a hardened IIS or nginx) stopped the pages' script: the
+switch was still shown, and clicking it did nothing. The light / auto / dark switch and the row height (Compact /
+Comfortable) are now radio buttons the page's CSS acts on, on the report pages and the index page; the script, where
+it runs, only keeps the choice in the browser for every page, as before. *Print* needs the script and is no longer
+shown without it. In browsers older than Chrome / Edge 105 or Firefox 121, the switch still needs the script.
+`docs/WEB_REPORTS.md` says how to see whether a policy blocks the script (F12 > Console) and what to allow on the report
+site for sorting, filtering and Copy as well (`report_atlas.html.j2`; `site_report_web.py`: `ATLAS_SWITCH`,
+`ATLAS_STYLE`, `ATLAS_SCRIPT`). Tests: `tests/test_report_history.py`, `tests/test_report_web.py`.
+
 ## 0.61.0 — 2026-11-03
 
 **Updating without scripts:** paste `site-automation-0.61.0-changed-since-0.60.0.zip` as it is - from 0.59.0 or older, its
