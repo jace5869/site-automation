@@ -4,6 +4,7 @@
 - name: Execution environment | the job templates, in AAP
   site_aap_ee:
     ee: "{{ aap_ee_name | string }}"
+    image: "{{ aap_ee_image | default('') | string | trim }}"
     project: "{{ aap_ee_project }}"
     # names have spaces: text (a survey's) is split at commas and line breaks only
     from_ee: >-
@@ -25,13 +26,18 @@
       {%- if _aee.ee -%}
       {%-   set _ = out.append("the execution environment: '" ~ _aee.ee.name ~ "' (ID " ~ _aee.ee.id ~ ", " ~ _aee.ee.organization
                              ~ "): image " ~ (_aee.ee.image or '(none)') ~ ", " ~ _aee.ee.pull) -%}
+      {%-   if _aee.ee.new_image | default('') -%}
+      {%-     set _ = out.append(('its image changed: ' if _aee.ee.image_written else 'its image would be changed: ') ~ (_aee.ee.image or '(none)')
+                               ~ ' -> ' ~ _aee.ee.new_image ~ ' - every job template on it runs the new one') -%}
+      {%-   endif -%}
       {%- endif -%}
       {%- for r in _aee.results -%}
       {%-   set act = ('FAILED: ' ~ r.error) if not r.ok else (('would be ' if r.changed and not r.written else '') ~ r.action) -%}
       {%-   set _ = out.append('job template ' ~ r.id ~ " '" ~ r.template ~ "' (" ~ (r.project or 'no project') ~ '): ' ~ act) -%}
       {%- endfor -%}
-      {{ out if _aee.results else out + ['no job template picked - check aap_ee_project, aap_ee_from and aap_ee_templates, '
-                                         ~ 'or that the AAP user can see the templates'] }}
+      {{ out if _aee.results or (_aee.ee.new_image | default('') and not (aap_ee_project or aap_ee_from or aap_ee_templates))
+         else out + ['no job template picked - check aap_ee_project, aap_ee_from and aap_ee_templates, '
+                     ~ 'or that the AAP user can see the templates'] }}
 
 - name: Execution environment | AAP could not be read, or a name matches nothing (or two) - nothing was changed
   ansible.builtin.fail:

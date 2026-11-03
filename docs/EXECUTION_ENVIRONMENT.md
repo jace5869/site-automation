@@ -98,6 +98,7 @@ Each folder has the same kinds of files:
 | `ca/` | your CA certificates | you put them in (step 5) |
 | `check-ee.sh`, `check-list.txt` | `ee-check`: a test that runs inside the finished image | no |
 | `krb5-ad-enctypes.conf` | Kerberos to Active Directory from a FIPS host (Windows and all-in-one only) | no |
+| `freetds.tar.gz` | not in the zip: FreeTDS's source, which pymssql (SQL Server) is built with - step 7 gets it (Windows and all-in-one only) | no |
 
 ## Step 3. Your base EE: base-ee:1.0
 
@@ -360,6 +361,20 @@ With a PyPI mirror, `PIP_TRUSTED_HOST` is its host instead (e.g. `nexus.example.
 `podman pull --tls-verify=false ...`, `podman push --tls-verify=false ...`. The `ca/` folder (step 6) puts your CA
 in the finished EE for the jobs; it does not help the build itself, which runs before it.
 
+**And FreeTDS, for SQL Server** (the Windows and all-in-one EEs). `pymssql`, which the `mssql_*` modules use, is
+built from its source during the build, with FreeTDS (SQL Server's network protocol) and the EE's own OpenSSL and
+Kerberos - PyPI's ready-made `pymssql` brings its own OpenSSL, which stops Python on a FIPS host. Put FreeTDS's
+source in each of the two folders:
+
+```bash
+cd ~/ee/windows && curl -fo freetds.tar.gz https://www.freetds.org/files/stable/freetds-1.5.20.tar.gz
+cp freetds.tar.gz ~/ee/all-in-one/
+```
+
+> **You should see:** no output, and `ls -l freetds.tar.gz` about 5.5 MB. Behind TLS inspection, `curl -k`. No
+> internet on the build machine: download that address on another machine and copy the file in. The build checks
+> its SHA-256, so only that version works (`build-ee.sh` downloads it by itself).
+
 You are ready. Go to the chapter of the EE you want.
 
 **Or let a script do it.** `build-ee.sh` (in `~/ee`) does the checks of steps 3 to 7, then an EE's
@@ -394,13 +409,13 @@ Everything `base-ee:1.0` has, plus:
 |---|---|---|
 | **Windows** | `ansible.windows`, `community.windows` | `pywinrm` with Kerberos, `pypsrp`, `requests-kerberos`, `requests-ntlm`; `kinit`, `klist` |
 | **Active Directory** | `microsoft.ad` | `pyspnego`, `gssapi`, `krb5`, `sansldap`, `ldap3`, `dnspython`; `dig` |
-| **SQL Server** | `community.general` (`mssql_db`, `mssql_script`), `lowlydba.sqlserver` | `pymssql` |
+| **SQL Server** | `community.general` (`mssql_db`, `mssql_script`), `lowlydba.sqlserver` | `pymssql`, built in the build with FreeTDS and the EE's own OpenSSL and Kerberos (works on a FIPS host); `mssql-python`, Microsoft's driver, for your own Python |
 | **MySQL and MariaDB** | `ansible.mysql` | `PyMySQL` |
 | **The report website on an SMB share** | | `smbprotocol` (Kerberos through `pyspnego` and `gssapi`) |
 
 There are two ways to reach SQL Server:
 
-- **Over the network, port 1433, with a SQL login.** These are the `community.general.mssql_*`
+- **Over the network, port 1433, with a SQL login - or a domain account, with Kerberos.** These are the `community.general.mssql_*`
   modules. They run inside the EE.
 - **On the Windows server, with Windows authentication.** These are the `lowlydba.sqlserver`
   modules: logins, databases, agent jobs, backups. They run on the SQL Server over WinRM and use the
@@ -417,9 +432,9 @@ ls
 ```
 
 > **You should see:** `ansible.cfg  ansible.cfg.example  bindep.txt  ca  check-ee.sh  check-list.txt
-> execution-environment.yml  krb5-ad-enctypes.conf  requirements.txt  requirements.yml`
+> execution-environment.yml  freetds.tar.gz  krb5-ad-enctypes.conf  requirements.txt  requirements.yml`
 
-`ansible.cfg` is missing? Do chapter 2, step 4.
+`ansible.cfg` is missing? Do chapter 2, step 4. `freetds.tar.gz` is missing? Chapter 2, step 7, *And FreeTDS*.
 
 ## Step 2. Build it
 
@@ -536,6 +551,54 @@ For a first try, give `mssql_user` and `mssql_password` when you launch: on the 
 6 shows how to make one.
 
 > **You should see:** the list of databases, each with `ONLINE`.
+
+**3b. SQL Server with a domain account (Kerberos),** `ee-test-mssql-kerberos.yml`. The same, as a domain account:
+a Kerberos ticket first (`kinit`, in the EE), then no `login_user` - pymssql then logs in with the ticket.
+
+```yaml
+---
+- name: Try the EE - SQL Server with Kerberos
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: A Kerberos ticket for the domain account
+      ansible.builtin.command: kinit {{ mssql_kerberos_user }}
+      args:
+        stdin: "{{ mssql_kerberos_password }}"
+      changed_when: false
+      no_log: true
+    - name: The databases, as that account
+      community.general.mssql_script:
+        login_host: sql01.example.mil
+        db: master
+        script: SELECT SUSER_SNAME() AS login_name, name, state_desc FROM sys.databases
+      register: dbs
+    - name: Show them
+      ansible.builtin.debug:
+        var: dbs.query_results
+```
+
+`mssql_kerberos_user` is the account as `svc_aap@EXAMPLE.MIL` (the domain in capital letters). `login_host` is the
+server's **full DNS name**: the ticket asked for is `MSSQLSvc/sql01.example.mil:1433`, which must be the SQL Server
+service's SPN in AD (`setspn -L` on its service account) - an IP address or a short name gets no ticket. Run it
+without Check (in Check the `kinit` is skipped).
+
+> **You should see:** the databases, and in `login_name` the domain account (`EXAMPLE\svc_aap`).
+
+**3c. Your own Python with Microsoft's driver, `mssql-python`.** The `mssql_*` modules use pymssql; for a script of
+your own, `mssql-python` (with Microsoft's ODBC Driver 18 inside it - nothing to install - using the EE's own OpenSSL
+and Kerberos) is in the EE too. With a ticket from `kinit`, as in *3b*:
+
+```python
+import mssql_python
+conn = mssql_python.connect("Server=sql01.example.mil,1433;Database=master;Trusted_Connection=yes;Encrypt=yes")
+for row in conn.cursor().execute("SELECT SUSER_SNAME(), @@VERSION"):
+    print(row)
+```
+
+`Encrypt=yes` checks the server's certificate against the EE's CAs (`ca/`, chapter 2, step 6); a SQL login instead
+of the ticket: `UID=...;PWD=...` in place of `Trusted_Connection=yes`. `No Kerberos credentials available`: no
+`kinit` in that job.
 
 **4. SQL Server with Windows authentication,** `ee-test-sqlwin.yml`. It runs on the SQL Server
 itself, over WinRM. Put your SQL Servers in an inventory group, here `sqlservers`, and use your
@@ -840,7 +903,9 @@ ls
 ```
 
 > **You should see:** `ansible.cfg  ansible.cfg.example  bindep.txt  ca  check-ee.sh  check-list.txt
-> execution-environment.yml  krb5-ad-enctypes.conf  requirements.txt  requirements.yml`
+> execution-environment.yml  freetds.tar.gz  krb5-ad-enctypes.conf  requirements.txt  requirements.yml`
+
+`freetds.tar.gz` is missing? Chapter 2, step 7, *And FreeTDS*.
 
 ## Step 2. Build it
 
@@ -943,9 +1008,18 @@ aap_ee_project: "Site automation"           # your project's name in AAP
 aap_ee_exclude: [Network config backup]     # jobs that stay on another EE
 ```
 
-Run it with **Check** first: it lists every template it would change, from which EE to which. Later
-rebuilds need no run: change the EE's **Image** to the next tag (chapter 7), and every template on it
-follows. Never push a rebuild under a tag already on the hub: an execution node that has `:1` keeps it.
+Run it with **Check** first: it lists every template it would change, from which EE to which.
+
+**A rebuild, published:** push it with the next tag (chapter 7), then run the same job with the EE and its new image
+- every template already on that EE runs the new image; none need be picked:
+
+```yaml
+aap_ee_name: "All-in-one EE"
+aap_ee_image: aap.example.mil/site-ee-all:3     # the tag you just pushed
+```
+
+(Or change the EE's **Image** in AAP by hand.) Never push a rebuild under a tag already on the hub: an execution node
+that has `:1` keeps it - the job refuses the image the EE has now.
 
 # Keep them up to date
 
@@ -989,12 +1063,36 @@ have on the build machine and in the base image: a script user 1000 can run but 
 0.33.1 make them readable, whatever modes they came with. An EE that shows that error: build it
 again from the 0.33.1 files with the next tag (below). One that runs `ee-check` is fine as it is.
 
+## 0.60.0: pymssql on a FIPS host
+
+PyPI's ready-made `pymssql` brings its own OpenSSL 1.1.1k: on a FIPS host it stops Python at `import pymssql`
+(`FATAL FIPS SELFTEST FAILURE`), so an EE built on a FIPS machine said `no pymssql`, and it was left out. From 0.60.0
+the Windows and all-in-one EEs build pymssql from its source, with FreeTDS 1.5.20 (`freetds.tar.gz`, chapter 2, step
+7) and the EE's own OpenSSL 3 and Kerberos - the SQL Server modules work on a FIPS host, with a SQL login or a domain
+account's Kerberos ticket (chapter 3, step 6, *3b*). Nothing of FreeTDS or the compiler stays in the image. Microsoft's
+own driver, `mssql-python`, is in both EEs too, for your own Python (*3c*). To get them:
+
+1. Take 0.60.0's `execution-environment.yml` and `check-ee.sh` into your EE folders (keep your own `ansible.cfg`,
+   `ca/`, and any lines you took out of the other files), and put `pymssql` back in `requirements.txt` and `lib
+   pymssql pymssql` in `check-list.txt` if you took them out; add `mssql-python` and `lib mssql_python mssql-python`.
+2. Put `freetds.tar.gz` in the folder (chapter 2, step 7), or let `build-ee.sh` download it.
+3. Build with the next tag, check it - `ee-check` now also says `YES  no library with its own OpenSSL 1.1 (FIPS)` -
+   push it, and give the EE in AAP its new image (chapter 6, step 3, *A rebuild*).
+
+```bash
+podman run --rm site-ee-all:3 ee-check | grep -iE 'pymssql|OpenSSL'
+#   YES  pymssql
+#   YES  mssql-python
+#   YES  no library with its own OpenSSL 1.1 (FIPS)
+```
+
 ## Rebuild with a new tag
 
 1. Change the files: a collection added, a version pinned or raised.
 2. Build with the **next tag**, for example `-t site-ee-windows:2` (step 2 of the EE's chapter).
 3. Check it with `ee-check`, then push or load it (chapter 6, step 1).
-4. In AAP, change the EE's **Image** to `:2`. If a job breaks, change it back to `:1`.
+4. In AAP, change the EE's **Image** to `:2` - or run **AAP - set execution environment** with `aap_ee_name` and
+   `aap_ee_image` (chapter 6, step 3). If a job breaks, change it back to `:1`.
 
 Rebuild every few months, even without changes. That is how the Python libraries get their fixes.
 
@@ -1041,7 +1139,10 @@ If you build a new base EE, for example `base-ee:1.1`, change the `name:` line i
 | `unauthorized` pulling `aap.example.mil/base-ee:1.0` or `registry.redhat.io/...` | podman is not logged in to that registry | `podman login aap.example.mil` (or `registry.redhat.io`) |
 | `bash: /opt/builder/bin/entrypoint: Permission denied` | the image's start script cannot be read by the user it runs as (1000) | the base EE: run its commands with `--entrypoint` (chapter 2, step 3); an EE you built: build the next tag from 0.33.1's `execution-environment.yml`, which makes it readable |
 | `WARN[0000] Failed to mount subscriptions ... permission denied` | podman, run as you, cannot hand this machine's RHEL subscription to the container | nothing, unless the build stops at `No match for argument` or a repository error: then build as root (chapter 2, step 3) |
-| `ee-check`: `no pymssql - its own OpenSSL stops in FIPS mode` (before 0.33.1: `Aborted (core dumped)` at `import pymssql`) | pymssql from PyPI brings its own OpenSSL 1.1.1k, which on a FIPS host runs a self-test that fails (`FATAL FIPS SELFTEST FAILURE`) and stops Python | on a FIPS host pymssql cannot load: take its lines out of `requirements.txt` and `check-list.txt`. Only the certificate inventory's SQL Server output (`cert_inventory_sql`) uses it; `lowlydba.sqlserver` reaches SQL Server through a Windows host and works |
+| `ee-check`: `no pymssql - its own OpenSSL stops in FIPS mode`, or `pymssql brings its own OpenSSL 1.1 (pymssql.libs)` (before 0.33.1: `Aborted (core dumped)` at `import pymssql`) | the EE has PyPI's ready-made pymssql, which brings its own OpenSSL 1.1.1k: on a FIPS host its self-test fails (`FATAL FIPS SELFTEST FAILURE`) and stops Python | build it again from 0.60.0's files or later (chapter 7, *0.60.0*): they build pymssql from its source, with the EE's own OpenSSL |
+| `additional_build_files ... freetds.tar.gz ... does not exist` | FreeTDS's source is not in the folder | chapter 2, step 7, *And FreeTDS* (or build with `build-ee.sh`, which downloads it) |
+| `freetds.tar.gz is not FreeTDS 1.5.20` | another file, or a download cut short | download it again: chapter 2, step 7 |
+| SQL Server with Kerberos: `GSSAPI ... Server not found in Kerberos database`, or `Login failed` / `TDS server connection failed` | the ticket asked for is `MSSQLSvc/<login_host>:<port>`: no such SPN (an IP address or short name as `login_host`, or the SPN not in AD), or no ticket (`kinit` not run in that job) | the server's full DNS name as `login_host`; `setspn -L` on the SQL Server service account shows its SPNs; `klist` in the job after `kinit` |
 | pip: `msal ... requires cryptography<47, but you have cryptography 50...` | Palo Alto's `panos-upgrade-assurance` needs a newer `cryptography` than the base EE's `msal` takes | 0.33.1's `requirements.txt` asks for `msal>=1.37.0`, which takes it; or, without Palo Alto in the EE, take `paloaltonetworks.panos` out of `requirements.yml` (and its lines out of `check-list.txt`) |
 | `pasta ... permission denied` or `netavark` errors | rootless podman's network helper is blocked | keep `--network=host` on `podman build` |
 | `additional_build_files ... ansible.cfg ... does not exist` | `ansible.cfg` is not in this folder | chapter 2, step 4 |

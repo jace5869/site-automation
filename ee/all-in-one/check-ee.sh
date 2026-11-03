@@ -20,6 +20,15 @@ while read -r kind a b; do
   elif [[ $err == *"FIPS SELFTEST FAILURE"* ]]; then no "$b - its own OpenSSL stops in FIPS mode (EXECUTION_ENVIRONMENT.md, chapter 8)"
   else no "$b"; fi
 done < $list
+# a library that brings its own OpenSSL 1.1 (PyPI's ready-made pymssql): on a FIPS host it stops Python
+own=0
+for d in $($py -c 'import site; print(" ".join(site.getsitepackages()))' 2>/dev/null); do
+  for f in "$d"/*.libs/libcrypto-*.so.1.1*; do
+    [ -e "$f" ] || continue
+    own=1; f=${f%/*}; f=${f##*/}; no "${f%.libs} brings its own OpenSSL 1.1 ($f), which stops Python on a FIPS host: build the EE again from the current ee/ files (EXECUTION_ENVIRONMENT.md, chapter 8)"
+  done
+done
+[ "$own" = 1 ] || yes "no library with its own OpenSSL 1.1 (FIPS)"
 echo "== Collections"
 have=$(ansible-galaxy collection list 2>/dev/null)
 while read -r kind a _; do

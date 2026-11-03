@@ -2,6 +2,7 @@
 # The all-in-one execution environment: Linux, Windows and Active Directory, VMware, NetApp, databases
 # (MySQL, MariaDB, SQL Server), Cisco, Palo Alto, ServiceNow - and every site-automation job.
 #   cp ansible.cfg.example ansible.cfg            # your automation hub's address
+#   curl -fo freetds.tar.gz https://www.freetds.org/files/stable/freetds-1.5.20.tar.gz   # for pymssql (build-ee.sh does it)
 #   ansible-builder create -f execution-environment.yml -c context
 #   podman build --network=host --build-arg ANSIBLE_GALAXY_SERVER_RH_CERTIFIED_TOKEN=... \
 #     -f context/Containerfile -t site-ee-all:1 context
@@ -43,6 +44,8 @@ additional_build_files:
     dest: configs
   - src: ca
     dest: ca
+  - src: freetds.tar.gz
+    dest: freetds
 
 additional_build_steps:
   prepend_base:
@@ -53,7 +56,8 @@ additional_build_steps:
     - ARG PIP_INDEX_URL
     - ARG PIP_TRUSTED_HOST
     - ENV PIP_CONFIG_FILE=/etc/pip-ee-build.conf
-    - RUN { echo '[global]'; [ -z "$PIP_INDEX_URL" ] || echo "index-url = $PIP_INDEX_URL"; [ -z "$PIP_TRUSTED_HOST" ] || echo "trusted-host = $PIP_TRUSTED_HOST"; } > /etc/pip-ee-build.conf
+    # no-binary: pymssql from its source, never PyPI's ready-made one (prepend_builder says why)
+    - RUN { echo '[global]'; echo 'no-binary = pymssql'; [ -z "$PIP_INDEX_URL" ] || echo "index-url = $PIP_INDEX_URL"; [ -z "$PIP_TRUSTED_HOST" ] || echo "trusted-host = $PIP_TRUSTED_HOST"; } > /etc/pip-ee-build.conf
   prepend_galaxy:
     - COPY _build/configs/ansible.cfg /etc/ansible/ansible.cfg
     # the automation hub token, given at build time - never written in a file
@@ -65,6 +69,15 @@ additional_build_steps:
     # wheel package: pykerberos (WinRM's Kerberos) is then built here, not in the image, which has no compiler
     - RUN $PKGMGR install -y python$($PYCMD -c 'import sys; print("%d.%d" % sys.version_info[:2])')-devel && $PKGMGR clean all
     - RUN $PYCMD -m pip install --no-cache-dir wheel
+    # pymssql (SQL Server) built here, against the image's own OpenSSL and Kerberos: PyPI's ready-made pymssql brings
+    # its own OpenSSL 1.1.1k, which stops Python on a FIPS host (FATAL FIPS SELFTEST FAILURE). Its SQL Server client,
+    # FreeTDS 1.5.20 (freetds.tar.gz, from www.freetds.org - build-ee.sh fetches it), with Kerberos, built into
+    # pymssql itself: nothing of FreeTDS stays in the image
+    - COPY _build/freetds/freetds.tar.gz /tmp/freetds.tar.gz
+    - RUN echo "2e4d2d50840c8d4423aa9df7ef5de8b5f1f1881f72d402ed70c4ea55a464e31e  /tmp/freetds.tar.gz" | sha256sum -c - || { echo "freetds.tar.gz is not FreeTDS 1.5.20 - get it with curl -fo freetds.tar.gz https://www.freetds.org/files/stable/freetds-1.5.20.tar.gz" >&2; exit 1; }
+    - RUN $PKGMGR install -y gcc make tar gzip openssl-devel krb5-devel && $PKGMGR clean all
+    - RUN mkdir /tmp/freetds && tar -xzf /tmp/freetds.tar.gz -C /tmp/freetds --strip-components 1 && cd /tmp/freetds && CFLAGS="-fPIC -O2" ./configure --prefix=/opt/freetds --with-tdsver=7.4 --enable-msdblib --enable-krb5 --with-openssl --with-gnutls=no --disable-odbc --disable-server --disable-pool --disable-apps --enable-static --disable-shared > /dev/null && make -j"$(nproc)" > /dev/null && make install > /dev/null && cd / && rm -rf /tmp/freetds /tmp/freetds.tar.gz
+    - ENV PYMSSQL_FREETDS=/opt/freetds
   prepend_final:
     # the collections exactly as the galaxy stage left them: copied on top of the base EE's own, the files of a
     # newer version a pin replaces would stay (community.general 12's next to 11.4.9's)

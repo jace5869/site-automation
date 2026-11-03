@@ -6,8 +6,11 @@ requests-ntlm          # NTLM: not on a FIPS host (no MD4); Kerberos is the way 
 pypsrp[kerberos]       # the psrp connection, an alternative to winrm
 # Active Directory from the EE itself, over LDAP (microsoft.ad brings sansldap, pyspnego, dnspython)
 ldap3                  # pure Python: your own scripts, no compiler
-# SQL Server (community.general.mssql_db, mssql_script)
+# SQL Server (community.general.mssql_db, mssql_script): built from its source, against the EE's own OpenSSL - PyPI's
+# ready-made one stops Python on a FIPS host (execution-environment.yml, prepend_builder; freetds.tar.gz)
 pymssql
+mssql-python           # Microsoft's SQL Server driver, for your own Python (import mssql_python; the mssql_* modules
+                       # use pymssql): its ODBC Driver 18 is in the wheel, Kerberos through the system's krb5
 # Linux and general
 jmespath               # the json_query filter
 dnspython              # the community.general.dig lookup

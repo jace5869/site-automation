@@ -32,6 +32,7 @@ DOMAINS = (
     "redhat.io", "redhat.com", "ansible.com", "mariadb.com", "mariadb.org", "netapp.com", "vmware.com",
     "broadcom.com", "microsoft.com", "adaptivecards.io", "python.org", "pypi.org", "pythonhosted.org", "servicenow.com", "w3.org",
     "nist.gov", "cyber.mil",                                        # XCCDF's namespace; DISA's STIG references (the STIG drift report)
+    "freetds.org",                                                  # FreeTDS, pymssql is built with in the EEs (ee/*/execution-environment.yml)
     "openxmlformats.org", "xmlsoap.org",                            # the Excel workbook's and SOAP's namespaces (site_xlsx, esxcli via vCenter)
     "designsystem.digital.gov", "carbondesignsystem.com", "design-system.service.gov", "nngroup.com",
     "developer.mozilla.org",                                        # the design guidance the report website follows (docs/WEB_REPORTS.md)

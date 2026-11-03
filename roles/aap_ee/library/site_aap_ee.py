@@ -3,7 +3,8 @@
 """Put one execution environment on many AAP job templates at once - the templates of a project, those on a given
 EE now, or named ones - through AAP's own API (playbooks/aap_ee.yml). The address and login come from the "Red Hat
 Ansible Automation Platform" credential's variables (plugins/module_utils/site_aap.py). Standard library only.
-A template with no EE set (it uses the project's or organization's default) is changed only when asked for."""
+A template with no EE set (it uses the project's or organization's default) is changed only when asked for. With an
+image, the EE's own Image first (a rebuild's next tag): every template on that EE follows."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -14,15 +15,20 @@ description:
   - Finds the job templates of O(project), and - O(from_ee) - those whose execution environment is one of these now,
     plus the ones named in O(templates); O(exclude) leaves some out. With none of O(project), O(from_ee) and
     O(templates) it changes nothing - never every template in AAP.
+  - With O(image), the execution environment's own Image is changed to it first (a rebuild's next tag): every template
+    already on that EE then runs the new image - no template need be picked. The same image it has now is refused: an
+    execution node that has a tag keeps it, so a rebuild needs a new tag.
   - A template with no execution environment set uses its project's or organization's default. It is changed only
     when O(from_ee) has C(none) or it is named in O(templates); otherwise it is listed, left as it is.
   - Each one picked gets O(ee) (its name, or its ID when two have that name). One already on it is left as it is.
   - In check mode it only reads, and says what it would change. With a problem (a name in O(from_ee), O(templates) or
     O(exclude) that matches nothing, or a template name two have) it changes nothing either, and says what it would.
   - AAP's address and login come from the environment, as the "Red Hat Ansible Automation Platform" credential
-    sets it. Its user needs the Admin role on each template, and Use on the execution environment.
+    sets it. Its user needs the Admin role on each template, and Use on the execution environment (Admin on it with
+    O(image)).
 options:
   ee: {description: "The execution environment to put on the templates: its name in AAP, or its ID.", type: str, required: true}
+  image: {description: "The execution environment's new Image (registry/name:tag) - the rebuild's next tag; empty = left as it is.", type: str, default: ''}
   project: {description: "The job templates of this AAP project (its name); empty = any project.", type: str, default: ''}
   from_ee: {description: "Only the templates on one of these execution environments now (names or IDs); none = those with
     no execution environment set. Empty = any one set.", type: list, elements: str, default: []}
@@ -35,7 +41,8 @@ author: site automation
 
 RETURN = r'''
 api: {description: The API path that answered., type: str, sample: api/controller/v2/}
-ee: {description: "The execution environment put on the templates: id, name, image, pull, organization.", type: dict}
+ee: {description: "The execution environment put on the templates: id, name, image, pull, organization - and, with image,
+  new_image and image_written (false in check mode or when there was a problem).", type: dict}
 problems: {description: AAP could not be read, the execution environment or a template named is not there (or is two), or nothing was picked., type: list}
 results:
   description: "Each template picked: its execution environment before, what was done - changed (written: true when it was,
@@ -44,6 +51,8 @@ results:
   sample: [{template: VM - health report, id: 12, project: Site automation, before: Minimal execution environment, action: changed,
             changed: true, ok: true, error: ""}]
 '''
+
+import re
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.site_aap import Api, connection, error_text
@@ -94,6 +103,19 @@ def ee_of(jt):
     return i, (n or ("ID %s" % i if i else NO_EE))
 
 
+def image_problem(now, new):
+    """Why the execution environment's image may not become new ('' = it may): the same image (an execution node
+    that has the tag keeps it), no tag, or not an image name. Pure."""
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*(@sha256:[0-9a-f]{64})?$", new):
+        return "%s is not an image name (registry/name:tag)" % new
+    if new == (now or "").strip():
+        return ("its image is %s already: an execution node that has that tag keeps the image it pulled - build and push "
+                "the next tag (site-ee-all:2), then give that" % new)
+    if "@" not in new and ":" not in new.rsplit("/", 1)[-1]:
+        return "%s has no tag: give the one you built and pushed (:2)" % new
+    return ""
+
+
 def pick(jobs, project="", from_ids=None, from_none=False, named_ids=(), exclude_ids=()):
     """[(template, why: 'picked' or 'unset')]: the templates of the project (any project when '' and from is given),
     those on from_ids (or with none set, from_none) when from is given; named_ids whatever they are on; not
@@ -119,12 +141,23 @@ def pick(jobs, project="", from_ids=None, from_none=False, named_ids=(), exclude
     return out
 
 
+def set_image(api, ee, problems):
+    """The execution environment's Image to ee['new_image']; False (and the problem said) when AAP refuses."""
+    code, d = api.call("PATCH", "execution_environments/%s/" % ee["id"], {"image": ee["new_image"]})
+    ee["image_written"] = code in (200, 201, 202, 204)
+    if not ee["image_written"]:
+        problems.append("aap_ee_image: AAP refused the change (HTTP %d): %s" % (code, error_text(d)))
+    return ee["image_written"]
+
+
 def run(api, p, check_mode):
     """(the EE, results, problems). With a problem - a name that matches nothing, or two - nothing is written: the
     results say what would change (a misspelled exclude must not move the templates it was meant to keep)."""
-    if not (str(p["project"]).strip() or p["from_ee"] or p["templates"]):
+    image = str(p.get("image") or "").strip()
+    picks = bool(str(p["project"]).strip() or p["from_ee"] or p["templates"])
+    if not (picks or image):
         return {}, [], ["which templates? set aap_ee_project (your site-automation project's name), aap_ee_from or aap_ee_templates "
-                        "- this job never changes every template in AAP"]
+                        "- this job never changes every template in AAP; or aap_ee_image, the execution environment's new image"]
     ees, why = _all(api, "execution_environments/")
     if why:
         return {}, [], ["the execution environments: " + why]
@@ -134,6 +167,17 @@ def run(api, p, check_mode):
     ee = {"id": target.get("id"), "name": target.get("name") or "", "image": target.get("image") or "",
           "pull": PULL.get(target.get("pull") or "", target.get("pull")), "organization": _org(target)}
     problems, from_ids, from_none = [], set(), False
+    if image:
+        ee.update(new_image=image, image_written=False)
+        why = image_problem(ee["image"], image)
+        if why:
+            problems.append("aap_ee_image: " + why)
+        elif (target.get("summary_fields") or {}).get("user_capabilities", {}).get("edit") is False:
+            problems.append("aap_ee_image: the AAP user may not change the execution environment %s: give it the Admin role on it" % ee["name"])
+    if not picks:
+        if image and not problems and not check_mode:
+            set_image(api, ee, problems)
+        return ee, [], problems
     for f in p["from_ee"]:
         if str(f).strip().lower() == NONE:
             from_none = True
@@ -162,6 +206,8 @@ def run(api, p, check_mode):
     if p["project"] and not any(((j.get("summary_fields") or {}).get("project") or {}).get("name") == p["project"] for j in jobs):
         problems.append("aap_ee_project: no job template of a project named %s that the AAP user can see" % p["project"])
     write = not check_mode and not problems
+    if image and write:
+        write = set_image(api, ee, problems)       # refused: no template changed either
     results = []
     for jt, why in sorted(pick(jobs, p["project"], from_ids, from_none, named_ids, exclude_ids),
                           key=lambda x: (str(x[0].get("name")).lower(), x[0].get("id"))):
@@ -189,7 +235,7 @@ def run(api, p, check_mode):
 
 def main():
     module = AnsibleModule(argument_spec={
-        "ee": dict(type="str", required=True), "project": dict(type="str", default=""),
+        "ee": dict(type="str", required=True), "image": dict(type="str", default=""), "project": dict(type="str", default=""),
         "from_ee": dict(type="list", elements="str", default=[]), "templates": dict(type="list", elements="str", default=[]),
         "exclude": dict(type="list", elements="str", default=[]), "ca_path": dict(type="str", default=""),
         "timeout": dict(type="int", default=30)}, supports_check_mode=True)
@@ -201,7 +247,8 @@ def main():
     if why:
         module.exit_json(changed=False, api=api.base, ee={}, problems=[why], results=[])
     ee, results, problems = run(api, p, module.check_mode)
-    module.exit_json(changed=any(r["changed"] for r in results), api=api.base, ee=ee, problems=problems, results=results)
+    module.exit_json(changed=any(r["changed"] for r in results) or bool(ee.get("new_image") and not problems),
+                     api=api.base, ee=ee, problems=problems, results=results)
 
 
 if __name__ == "__main__":

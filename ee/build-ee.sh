@@ -92,6 +92,20 @@ pypi=${PIP_INDEX_URL:-https://pypi.org/simple}
 why=$(curl -sSfI "${curl_k[@]}" --max-time 20 "${pypi%/}/pip/" 2>&1 >/dev/null) \
   || stop "cannot reach ${pypi%/}/pip/ ($(said)): set PIP_INDEX_URL to your PyPI mirror (chapter 2, step 7)$tls_hint"
 ok "PyPI: $pypi"
+# pymssql's SQL Server client, FreeTDS, built into it from its source (execution-environment.yml, prepend_builder): the
+# file the recipe names, checked against the SHA-256 it gives - downloaded here when it is not in the folder yet
+if grep -q 'src: freetds.tar.gz' "$yml"; then
+  ft_url=$(grep -o 'https://www\.freetds\.org/files/stable/freetds-[0-9.]*\.tar\.gz' "$yml" | head -1)
+  ft_sum=$(grep -o '"[0-9a-f]\{64\}  /tmp/freetds.tar.gz"' "$yml" | head -1 | cut -c2-65)
+  ft=$folder/freetds.tar.gz
+  if [ ! -s "$ft" ]; then
+    why=$(curl -sSfL "${curl_k[@]}" --max-time 300 -o "$ft.part" "$ft_url" 2>&1) && mv "$ft.part" "$ft" \
+      || { rm -f "$ft.part"; stop "cannot download $ft_url ($(said)): download it on another machine and put it here as $ft (chapter 2, step 7)$tls_hint"; }
+  fi
+  echo "$ft_sum  $ft" | sha256sum -c --status - \
+    || stop "$ft is not ${ft_url##*/} (its SHA-256 differs): rm $ft and run this again, or put that file there (chapter 2, step 7)"
+  ok "FreeTDS for pymssql: $ft (${ft_url##*/})"
+fi
 [ -z "$hub" ] || why=$(curl -sSI "${curl_k[@]}" --max-time 20 "$hub" 2>&1 >/dev/null) \
   || stop "cannot reach your hub at $hub ($(said)) (chapter 2, step 4)$tls_hint"
 [ -z "$hub" ] || ok "the hub answers"
@@ -146,3 +160,5 @@ step "Done. In AAP: Automation Execution > Infrastructure > Execution Environmen
 echo "   Name:  $aap"
 echo "   Image: $where"
 echo "   Pull:  $pull"
+echo "   An EE already in AAP: give it the new Image - the job AAP - set execution environment, aap_ee_name: \"$aap\""
+echo "   and aap_ee_image: $where (Check first) - and every job template on it runs the new image (chapter 6, step 3)"

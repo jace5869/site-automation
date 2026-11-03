@@ -15,6 +15,7 @@ lib ldap3 ldap3
 lib dns dnspython
 # ---- SQL ----
 lib pymssql pymssql
+lib mssql_python mssql-python
 lib pymysql PyMySQL
 # ---- general ----
 lib jmespath jmespath

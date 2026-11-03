@@ -25,3 +25,6 @@ secrets.yml
 __pycache__/
 act-reports/
 !tests/trust/fixtures/*.pem
+# the FreeTDS source build-ee.sh downloads into an EE folder (docs/EXECUTION_ENVIRONMENT.md)
+ee/*/freetds.tar.gz
+ee/*/freetds.tar.gz.part

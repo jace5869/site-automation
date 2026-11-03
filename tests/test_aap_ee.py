@@ -25,9 +25,10 @@ _spec.loader.exec_module(_aap)
 import site_aap_ee as m  # noqa: E402
 
 
-def _ee(i, name, image, org=None, pull="missing"):
-    return {"id": i, "name": name, "image": image, "pull": pull, "organization": 1 if org else None,
-            "summary_fields": {"organization": {"name": org}} if org else {}}
+def _ee(i, name, image, org=None, pull="missing", edit=True):
+    sf = {"organization": {"name": org}} if org else {}
+    sf["user_capabilities"] = {"edit": edit}
+    return {"id": i, "name": name, "image": image, "pull": pull, "organization": 1 if org else None, "summary_fields": sf}
 
 
 def _jt(i, name, ee, eename=None, project="Site automation", edit=True):
@@ -70,7 +71,7 @@ class FakeAap(object):
         self.ees = [_ee(1, MIN, "registry.redhat.io/ansible-automation-platform-25/ee-minimal-rhel9:latest", pull="always"),
                     _ee(2, "Default execution environment", "registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel9:latest"),
                     _ee(7, "All-in-one EE", "hub.example.mil/site-ee-all:1", org="Site"),
-                    _ee(8, "Network EE", "hub.example.mil/site-ee-network:1", org="Site"),
+                    _ee(8, "Network EE", "hub.example.mil/site-ee-network:1", org="Site", edit=False),
                     _ee(9, "Old EE", "hub.example.mil/old:3", org="Site"),
                     _ee(10, "Old EE", "hub.example.mil/old:2")]
         self.jobs = [_jt(11, "Health check", 1, MIN), _jt(12, "VM - health report", 1, MIN),
@@ -82,6 +83,7 @@ class FakeAap(object):
         self.writes = []
         self.page_size = 3
         self.refuse = set()
+        self.refuse_ee = False
         fake = self
 
         class H(BaseHTTPRequestHandler):
@@ -130,6 +132,13 @@ class FakeAap(object):
             return 200, {"results": [{"username": "admin"}]}
         if rest == ["execution_environments"] and method == "GET":
             return self.page(self.ees, qs, path)
+        if rest[:1] == ["execution_environments"] and method == "PATCH":
+            ee = next(e for e in self.ees if str(e["id"]) == rest[1])
+            if self.refuse_ee:
+                return 403, {"detail": "You do not have permission to perform this action."}
+            ee["image"] = body["image"]
+            self.writes.append(("ee%s" % ee["id"], body))
+            return 200, ee
         if rest[:1] != ["job_templates"]:
             return 404, {"detail": "Not found."}
         if len(rest) == 1 and method == "GET":
@@ -256,6 +265,48 @@ class AgainstFakeAap(unittest.TestCase):
         self.assertEqual(r["error"], "AAP refused the change (HTTP 400): execution_environment: You do not have permission to use this "
                                      "execution environment.")
 
+    def test_image_only(self):
+        """a rebuild's next tag: only the EE's image - no template picked, none changed; every template on it follows"""
+        ee, results, problems = m.run(self.api, params(project="", image="hub.example.mil/site-ee-all:2"), True)
+        self.assertEqual((problems, results, self.aap.writes), ([], [], []))
+        self.assertEqual((ee["image"], ee["new_image"], ee["image_written"]), ("hub.example.mil/site-ee-all:1", "hub.example.mil/site-ee-all:2", False))
+        ee, results, problems = m.run(self.api, params(project="", image="hub.example.mil/site-ee-all:2"), False)
+        self.assertEqual((problems, results, ee["image_written"]), ([], [], True))
+        self.assertEqual(self.aap.writes, [("ee7", {"image": "hub.example.mil/site-ee-all:2"})])
+
+    def test_image_the_same_tag_refused(self):
+        _, _, problems = m.run(self.api, params(project="", image="hub.example.mil/site-ee-all:1"), False)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("its image is hub.example.mil/site-ee-all:1 already: an execution node that has that tag keeps", problems[0])
+        self.assertEqual(self.aap.writes, [])
+
+    def test_image_and_templates(self):
+        ee, results, problems = m.run(self.api, params(image="hub.example.mil/site-ee-all:2", exclude=["Read only report"]), False)
+        self.assertEqual((problems, ee["image_written"]), ([], True))
+        self.assertEqual(self.aap.writes[0], ("ee7", {"image": "hub.example.mil/site-ee-all:2"}))     # the image first
+        self.assertEqual(sorted(w[0] for w in self.aap.writes[1:]), [11, 12, 13])
+        # a misspelled exclude: neither the image nor a template written
+        self.aap.writes = []
+        ee, _, problems = m.run(self.api, params(image="hub.example.mil/site-ee-all:3", exclude=["Read only reprot"]), False)
+        self.assertEqual((len(problems), ee["image_written"], self.aap.writes), (1, False, []))
+
+    def test_image_refused(self):
+        self.aap.refuse_ee = True
+        ee, results, problems = m.run(self.api, params(image="hub.example.mil/site-ee-all:2"), False)
+        self.assertEqual(problems, ["aap_ee_image: AAP refused the change (HTTP 403): You do not have permission to perform this action."])
+        self.assertFalse(ee["image_written"])
+        self.assertEqual(self.aap.writes, [])                                   # no template moved onto an EE left as it was
+        self.assertTrue(all(not r["written"] for r in results))
+        _, _, problems = m.run(self.api, params(ee="Network EE", project="", image="hub.example.mil/site-ee-network:2"), True)
+        self.assertIn("may not change the execution environment Network EE: give it the Admin role on it", problems[0])
+
+    def test_image_problem(self):
+        self.assertEqual(m.image_problem("hub.example.mil/site-ee-all:1", "hub.example.mil/site-ee-all:2"), "")
+        self.assertEqual(m.image_problem("localhost/site-ee-all:1", "hub.example.mil:5000/site-ee-all@sha256:" + "a" * 64), "")
+        self.assertIn("has no tag", m.image_problem("hub.example.mil/site-ee-all:1", "hub.example.mil:5000/site-ee-all"))
+        self.assertIn("is not an image name", m.image_problem("", "hub.example.mil/site ee:2"))
+        self.assertIn("already", m.image_problem(" hub.example.mil/site-ee-all:1", "hub.example.mil/site-ee-all:1"))
+
     def test_no_credential(self):
         self.assertIn("Use on the execution environment", m.Api(m.connection({}), no_credential=m.NO_CREDENTIAL).probe())
 
@@ -297,6 +348,19 @@ class AgainstFakeAap(unittest.TestCase):
         self.assertIn("job template 13 'Network config backup' (Site automation): would be Network EE -> Old EE", out.stdout)
         self.assertIn("aap_ee_exclude: no job template Netwrok config backup", out.stdout)
         self.assertEqual(len(self.aap.writes), before)
+        # the next tag: the EE's image, Check first, then for real
+        out = run({"aap_ee_name": "All-in-one EE", "aap_ee_image": "hub.example.mil/site-ee-all:2"}, "--check")
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("its image would be changed: hub.example.mil/site-ee-all:1 -> hub.example.mil/site-ee-all:2 - every job template on it", out.stdout)
+        self.assertNotIn("no job template picked", out.stdout)
+        self.assertEqual(len(self.aap.writes), before)
+        out = run({"aap_ee_name": "All-in-one EE", "aap_ee_image": "hub.example.mil/site-ee-all:2"})
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertIn("its image changed: hub.example.mil/site-ee-all:1 -> hub.example.mil/site-ee-all:2", out.stdout)
+        self.assertEqual(self.aap.writes[-1], ("ee7", {"image": "hub.example.mil/site-ee-all:2"}))
+        out = run({"aap_ee_name": "All-in-one EE", "aap_ee_image": "hub.example.mil/site-ee-all:2"})
+        self.assertNotEqual(out.returncode, 0)
+        self.assertIn("its image is hub.example.mil/site-ee-all:2 already", out.stdout)
 
 
 if __name__ == "__main__":

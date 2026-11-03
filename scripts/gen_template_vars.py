@@ -39,6 +39,8 @@ TEMPLATES = {
 aap_ee_name: "All-in-one EE"                  # its name in AAP (Automation Execution > Infrastructure > Execution Environments)
 aap_ee_project: "Site automation"             # your site-automation project's name in AAP
 # aap_ee_exclude: [Network config backup, Network config load]   # e.g. Palo Alto jobs staying on the network EE
+## A rebuild pushed with the next tag: the EE's new image - every template on it then runs it (no template need be picked)
+# aap_ee_image: hub.example.mil/site-ee-all:3
 """),
     "act_fix_approved.yml": ("Apply approved ACT fix", "Machine", LINUX_CHECKS, ""),
     "ad_health_report.yml": ("Active Directory health report", "Machine (Windows)", "", ""),

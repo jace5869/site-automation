@@ -21,6 +21,7 @@ lib requests requests
 lib solidfire solidfire-sdk-python
 # ---- SQL ----
 lib pymssql pymssql
+lib mssql_python mssql-python
 lib pymysql PyMySQL
 # ---- Cisco and the network connections ----
 lib pylibsshext ansible-pylibssh

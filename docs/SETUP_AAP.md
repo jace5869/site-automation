@@ -600,7 +600,14 @@ Launch it with Job type **Check** first: it lists every template it would change
 the EE's image - nothing is changed. Then for real. A template with no EE set uses the project's or
 organization's default: it is listed and left as it is, unless `aap_ee_from` has `none`. A name that matches
 nothing - a misspelled exclude, say - or two templates changes nothing at all: the job lists what it would change,
-and fails. Later rebuilds need no run: change that EE's **Image** to the next tag, and every template on it follows.
+and fails.
+
+**A rebuild:** build and push the EE with the next tag (`PUSH=hub.example.mil bash build-ee.sh all-in-one 3`), then
+run this job with `aap_ee_name` and `aap_ee_image` (the new image, `hub.example.mil/site-ee-all:3`) - Check first:
+it changes that EE's **Image**, and every template already on it runs the new image; no template need be picked
+(add `aap_ee_project` to move the others onto it in the same run). The image it has now is refused: an execution
+node that has pulled a tag keeps it, so a rebuild pushed under the same tag would never reach the jobs. Its user
+needs **Admin** on the execution environment for this. (By hand: change the EE's **Image** in AAP.)
 
 ### Report website - copy
 

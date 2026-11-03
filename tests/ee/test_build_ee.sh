@@ -37,11 +37,18 @@ cat > "$work/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 echo "curl $*" >> "$FAKE_LOG"
 if [ -n "${FAKE_NO_PYPI:-}" ] && [[ "$*" == */pip/* ]]; then echo "curl: (60) SSL certificate problem: unable to get local issuer certificate" >&2; exit 60; fi
+if [[ "$*" == *freetds-*.tar.gz* ]]; then  # FreeTDS's source: the fake one (its SHA-256 is in the copied recipes)
+  [ -z "${FAKE_NO_FTDS:-}" ] || { echo "curl: (6) Could not resolve host: www.freetds.org" >&2; exit 6; }
+  while [ "$1" != -o ]; do shift; done; cp "$FAKE_FTDS" "$2"
+fi
 EOF
 chmod 755 "$work/bin/"*
 
-fresh() {  # a copy of ee/ as the build machine has it, ansible.cfg with a real-looking hub
-  rm -rf "$work/ee"; cp -a "$repo/ee" "$work/ee"
+echo "not really FreeTDS" > "$work/ftds"
+ftds_sum=$(sha256sum "$work/ftds" | cut -c1-64)
+fresh() {  # a copy of ee/ as the build machine has it, ansible.cfg with a real-looking hub; the fake FreeTDS's SHA-256
+  rm -rf "$work/ee"; cp -a "$repo/ee" "$work/ee"; rm -f "$work"/ee/*/freetds.tar.gz
+  sed -i "s/\"[0-9a-f]\{64\}  \/tmp\/freetds.tar.gz\"/\"$ftds_sum  \/tmp\/freetds.tar.gz\"/" "$work"/ee/*/execution-environment.yml
   for d in windows network all-in-one; do
     sed 's/aap\.example\.mil/hub.lab.test/' "$work/ee/$d/ansible.cfg.example" > "$work/ee/$d/ansible.cfg"
   done
@@ -49,7 +56,7 @@ fresh() {  # a copy of ee/ as the build machine has it, ansible.cfg with a real-
 }
 run() {  # run [VAR=value ...] -- args: build-ee.sh with the fakes first on PATH
   local envs=(); while [ "$1" != -- ]; do envs+=("$1"); shift; done; shift
-  env PATH="$work/bin:$PATH" FAKE_LOG="$work/log" FAKE_GRAPH="$work/graph" FAKE_BASE=1 "${envs[@]}" \
+  env PATH="$work/bin:$PATH" FAKE_LOG="$work/log" FAKE_GRAPH="$work/graph" FAKE_FTDS="$work/ftds" FAKE_BASE=1 "${envs[@]}" \
       bash "$work/ee/build-ee.sh" "$@" > "$work/out.txt" 2>&1 < /dev/null
   rc=$?
 }
@@ -65,12 +72,33 @@ has "PIP_INDEX_URL" "$work/log" && bad "PIP_INDEX_URL passed without being set" 
 has "podman push" "$work/log" && bad "pushed without PUSH" || ok "  ... nothing pushed without PUSH"
 grep -q -- '--tls-verify\|ignore-certs\|PIP_TRUSTED_HOST\|curl -k\|curl -sSfI -k\|curl -sSI -k' "$work/log" && bad "certificates not checked without INSECURE" || ok "  ... every certificate checked (no INSECURE)"
 
+has "curl -sSfL --max-time 300 -o all-in-one/freetds.tar.gz.part https://www.freetds.org/files/stable/freetds-1.5.20.tar.gz" "$work/log" \
+  && has "ok    FreeTDS for pymssql: all-in-one/freetds.tar.gz (freetds-1.5.20.tar.gz)" && cmp -s "$work/ftds" "$work/ee/all-in-one/freetds.tar.gz" \
+  && ok "  ... FreeTDS for pymssql downloaded into the folder, its SHA-256 checked" || bad "FreeTDS download: $(grep freetds "$work/log")"
+has 'aap_ee_name: "All-in-one EE"' && has "aap_ee_image: localhost/site-ee-all:2" && ok "  ... and how to give an EE already in AAP the new image" || bad "the aap_ee_image line"
+: > "$work/log"; run TOKEN=t -- all-in-one 2
+[ "$rc" = 0 ] && ! has "freetds" "$work/log" && has "FreeTDS for pymssql" && ok "  ... there already: not downloaded again" || bad "FreeTDS downloaded twice (rc $rc)"
+echo changed > "$work/ee/all-in-one/freetds.tar.gz"; : > "$work/log"; run TOKEN=t -- all-in-one 2
+[ "$rc" = 1 ] && has "STOP  all-in-one/freetds.tar.gz is not freetds-1.5.20.tar.gz (its SHA-256 differs)" && ! has "podman build" "$work/log" \
+  && ok "another file as freetds.tar.gz: stops before the build" || bad "FreeTDS SHA-256 (rc $rc)"
+fresh; run TOKEN=t FAKE_NO_FTDS=1 -- windows 2
+[ "$rc" = 1 ] && has "cannot download https://www.freetds.org/files/stable/freetds-1.5.20.tar.gz ((6) Could not resolve host: www.freetds.org)" \
+  && has "put it here as windows/freetds.tar.gz" && [ ! -e "$work/ee/windows/freetds.tar.gz.part" ] && ok "FreeTDS not downloadable (windows): stops, says where to put it" || bad "FreeTDS no download (rc $rc)"
+fresh; run TOKEN=t -- network 2
+[ "$rc" = 0 ] && ! has "freetds" "$work/log" && ! has "FreeTDS" && ok "the network EE (no pymssql): no FreeTDS" || bad "network FreeTDS (rc $rc)"
+n=0; for d in windows all-in-one; do
+  grep -q "^    - RUN { echo '\[global\]'; echo 'no-binary = pymssql';" "$repo/ee/$d/execution-environment.yml" \
+    && grep -q '^    - ENV PYMSSQL_FREETDS=/opt/freetds$' "$repo/ee/$d/execution-environment.yml" && n=$((n + 1))
+done
+[ "$n" = 2 ] && ok "windows, all-in-one: pymssql from its source in every stage (no-binary), against the FreeTDS built in the builder" || bad "pymssql from source in $((2 - n)) EE(s)"
+
 fresh; run TOKEN=t INSECURE=1 PUSH=hub.lab.test -- all-in-one 2
 [ "$rc" = 0 ] && ok "INSECURE=1: builds" || bad "INSECURE (rc $rc)"
 has "--build-arg PIP_TRUSTED_HOST=pypi.org files.pythonhosted.org" "$work/log" && ok "  ... pip trusts PyPI's two hosts" || bad "trusted hosts: $(grep 'podman build' "$work/log")"
 has "--build-arg ANSIBLE_GALAXY_CLI_COLLECTION_OPTS=--ignore-certs --build-arg ANSIBLE_GALAXY_CLI_ROLE_OPTS=--ignore-certs" "$work/log" && ok "  ... ansible-galaxy --ignore-certs" || bad "ignore-certs"
 has "podman build --network=host --tls-verify=false" "$work/log" && has "podman push --tls-verify=false hub.lab.test/site-ee-all:2" "$work/log" && ok "  ... podman build and push --tls-verify=false" || bad "tls-verify"
-grep -q '^curl -sSfI -k ' "$work/log" && grep -q '^curl -sSI -k ' "$work/log" && ok "  ... curl -k for PyPI and the hub" || bad "curl -k: $(grep '^curl' "$work/log")"
+grep -q '^curl -sSfI -k ' "$work/log" && grep -q '^curl -sSI -k ' "$work/log" && grep -q '^curl -sSfL -k .*freetds' "$work/log" \
+  && ok "  ... curl -k for PyPI, the hub and FreeTDS" || bad "curl -k: $(grep '^curl' "$work/log")"
 has "INSECURE=1: no certificate is checked" && ok "  ... and it says so" || bad "INSECURE note"
 fresh; run TOKEN=t INSECURE=1 PIP_INDEX_URL=https://reader:pw@mirror.lab.test:8443/pypi/simple -- all-in-one
 has "--build-arg PIP_TRUSTED_HOST=mirror.lab.test:8443" "$work/log" && ok "INSECURE=1 with a mirror: pip trusts the mirror's host:port (no user, no path)" || bad "mirror trusted host: $(grep 'podman build' "$work/log")"

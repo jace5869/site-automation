@@ -4,11 +4,13 @@
 # the templates by project (aap_ee_project: your site-automation project), by the EE they are on now (aap_ee_from:
 # the Minimal one, say), or by name (aap_ee_templates); aap_ee_exclude leaves some out - the jobs that need another
 # EE. A template with no EE set (it uses the project's or organization's default) is left as it is unless asked for.
-# Later rebuilds need no run: change the EE's Image to the next tag in AAP, and every template on it follows.
+# A rebuild pushed with the next tag: aap_ee_image gives the EE that image (or change its Image in AAP by hand), and every
+# template on it follows - no template need be picked.
 # Runs on the AAP side: attach a "Red Hat Ansible Automation Platform" credential (its user: Admin on the job
 # templates, Use on the execution environment); no Limit. Run it with Check first: it then only reads, and lists every
 # template it would change, from which EE to which. docs/EXECUTION_ENVIRONMENT.md, chapter 6, step 3.
 #   ansible-playbook playbooks/aap_ee.yml --check -e aap_ee_name="All-in-one EE" -e aap_ee_project="Site automation"
+#   ansible-playbook playbooks/aap_ee.yml --check -e aap_ee_name="All-in-one EE" -e aap_ee_image=hub.example.mil/site-ee-all:3
 - name: AAP - set execution environment
   hosts: localhost
   connection: local

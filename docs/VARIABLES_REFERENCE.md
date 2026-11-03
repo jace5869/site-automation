@@ -17,12 +17,13 @@ to it. Repeat the entries you want to keep.
 
 File: `roles/aap_ee/defaults/main.yml`
 
-> SET THE EXECUTION ENVIRONMENT (playbooks/aap_ee.yml): puts one execution environment on many job templates at once, through AAP's API - after you add a new EE to AAP (docs/EXECUTION_ENVIRONMENT.md, chapter 6). Run it with Check first: it lists every template it would change, from which EE to which. Later rebuilds need no run: change the EE's Image in AAP (the next tag), and every template on it follows.
+> SET THE EXECUTION ENVIRONMENT (playbooks/aap_ee.yml): puts one execution environment on many job templates at once, through AAP's API - after you add a new EE to AAP (docs/EXECUTION_ENVIRONMENT.md, chapter 6). Run it with Check first: it lists every template it would change, from which EE to which. A rebuild pushed with the next tag: aap_ee_image gives the EE that image (or change its Image in AAP by hand), and every template on it follows.
 
 | Setting | Default | What it does |
 |---|---|---|
 | `aap_ee_name` | (empty) | The execution environment to put on the templates: its name in AAP (Automation Execution > Infrastructure > Execution Environments), or its ID when two have that name. |
-| `aap_ee_project` | (empty) | Which job templates (at least one of the three; never every template in AAP): the templates of this AAP project (its name): your site-automation project |
+| `aap_ee_image` | (empty) | Its new Image (registry/name:tag): a rebuild's next tag, pushed - every job template on this EE then runs it; none need be picked below. The image it has now is refused (an execution node that has a tag keeps it). "" = as it is. |
+| `aap_ee_project` | (empty) | Which job templates (at least one of the three, or only aap_ee_image; never every template in AAP): the templates of this AAP project (its name): your site-automation project |
 | `aap_ee_from` | `[]` | Only the templates on one of these execution environments now (names or IDs); none = those with no execution environment set, which use the project's or organization's default (left as they are otherwise). Empty = any. |
 | `aap_ee_templates` | `[]` | more job templates, by name or ID - whatever they are on |
 | `aap_ee_exclude` | `[]` | templates left out, by name or ID (jobs that stay on another EE) |
