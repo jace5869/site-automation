@@ -680,6 +680,7 @@ File: `roles/incident_docs/defaults/main.yml`
 | `incident_docs_sop_file` | `SOP` | the SOP attachment's first part |
 | `incident_impact_levels` | `[MINOR, MODERATE, MAJOR, CRITICAL]` | The impact levels the survey offers (the setup job writes them into the survey). |
 | `incident_docs_email_to` | `[]` | Who gets the documents: the addresses typed in the survey (report_email_also - held to report_email_also_domains when that is set), plus these. The reports' usual recipients (report_email_to) are NOT used here: an AAR goes only where it is sent. Nor is report_email_cc. |
+| `incident_sop_draft_clear` | `true` | The SOP job empties the draft the AAR job put in its form (incident_sop_draft) once it made the SOP from it - only when launched with that draft's outage. Needs the AAP credential on the SOP template (incident_docs_draft_credential). |
 | `incident_name` | (empty) | What was typed: the jobs' surveys ask these (the setup job writes the questions); empty unless answered. The AAR's boxes and the SOP's steps take a line or several. the outage's name or number (in the file name and the email) |
 | `incident_start` | (empty) | the AAR: its start date and time (required) |
 | `incident_end` | (empty) | its end date and time (optional) |
@@ -692,7 +693,8 @@ File: `roles/incident_docs/defaults/main.yml`
 | `incident_successes` | (empty) | what went well |
 | `incident_improvements` | (empty) | areas to improve |
 | `incident_tasks` | (empty) | the improvements as tasks, each with who does it |
-| `incident_make_sop` | `"No"` | Yes = the AAR job attaches an SOP from the sop_ boxes too |
+| `incident_make_sop` | `"No"` | Yes = the AAR job attaches an SOP too: a sop_ step box left empty = the AAR's Actions / Recovery |
+| `incident_sop_draft` | `"No"` | Yes = the AAR job fills in the SOP job's survey from the AAR, to review and launch |
 | `sop_title` | (empty) | the SOP's title |
 | `sop_purpose` | (empty) | the symptoms that send someone to the SOP |
 | `sop_troubleshoot` | (empty) | the steps to troubleshoot, one per line |
@@ -701,6 +703,7 @@ File: `roles/incident_docs/defaults/main.yml`
 | `sop_escalate` | (empty) | who to call when the steps do not fix it |
 | `incident_act_tidy` | `false` | ACT (GenAI, evidence mode: it runs no command, only reads what was typed). Each is a Yes/No in the survey; these are the defaults when the survey does not ask. Needs the "ACT model key" credential on the template when either is Yes. tidy the spelling and wording; facts, names and numbers stay as typed |
 | `incident_act_suggest` | `false` | a "From ACT" section: what may be missing or better, to review |
+| `incident_act_sop` | `false` | the AAR job's SOP: ACT writes the empty step boxes from the AAR's Actions and Recovery |
 | `incident_act_max_suggestions` | `8` | suggestions from ACT at most |
 | `incident_act_extra_instructions` | (empty) | the site's own words for ACT, e.g. "Our monitoring tool is called X." |
 | `incident_act_model_timeout` | `120` | seconds GenAI may take to answer |
@@ -708,6 +711,7 @@ File: `roles/incident_docs/defaults/main.yml`
 | `incident_docs_survey_project` | (empty) | only job templates of this AAP project (its name); empty = any project |
 | `incident_docs_survey_ca_path` | (empty) | a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts) |
 | `incident_docs_survey_max` | `8000` | characters a text box takes at most (AAP's own default is 1024) |
+| `incident_docs_draft_credential` | (empty) | The SOP draft (incident_sop_draft) is written through AAP's API by the AAR job: name a "Red Hat Ansible Automation Platform" credential here and the setup job attaches it to the AAR and SOP templates (its user: Admin on the SOP template). Empty = attach it by hand, or no draft. |
 
 ## log_analysis
 

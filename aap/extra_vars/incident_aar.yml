@@ -68,6 +68,11 @@
 ## (report_email_to) are NOT used here: an AAR goes only where it is sent. Nor is report_email_cc.
 # incident_docs_email_to: []
 
+## The SOP job empties the draft the AAR job put in its form (incident_sop_draft) once it made the
+## SOP from it - only when launched with that draft's outage. Needs the AAP credential on the SOP
+## template (incident_docs_draft_credential).
+# incident_sop_draft_clear: true
+
 ## What was typed: the jobs' surveys ask these (the setup job writes the questions); empty unless
 ## answered. The AAR's boxes and the SOP's steps take a line or several. the outage's name or number
 ## (in the file name and the email)
@@ -106,8 +111,11 @@
 ## the improvements as tasks, each with who does it
 # incident_tasks: ""
 
-## Yes = the AAR job attaches an SOP from the sop_ boxes too
+## Yes = the AAR job attaches an SOP too: a sop_ step box left empty = the AAR's Actions / Recovery
 # incident_make_sop: "No"
+
+## Yes = the AAR job fills in the SOP job's survey from the AAR, to review and launch
+# incident_sop_draft: "No"
 
 ## the SOP's title
 # sop_title: ""
@@ -136,6 +144,9 @@
 ## a "From ACT" section: what may be missing or better, to review
 # incident_act_suggest: false
 
+## the AAR job's SOP: ACT writes the empty step boxes from the AAR's Actions and Recovery
+# incident_act_sop: false
+
 ## suggestions from ACT at most
 # incident_act_max_suggestions: 8
 
@@ -144,6 +155,12 @@
 
 ## seconds GenAI may take to answer
 # incident_act_model_timeout: 120
+
+## only job templates of this AAP project (its name); empty = any project
+# incident_docs_survey_project: ""
+
+## a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts)
+# incident_docs_survey_ca_path: ""
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no

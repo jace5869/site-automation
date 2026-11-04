@@ -11,6 +11,7 @@
       - playbook: incident_sop.yml
         questions: "{{ 'sop' | incident_survey({'levels': incident_impact_levels, 'most': incident_docs_survey_max | int}) }}"
     project: "{{ incident_docs_survey_project }}"
+    credential: "{{ incident_docs_draft_credential if incident_docs_survey_state == 'present' else '' }}"
     state: "{{ incident_docs_survey_state }}"
     ca_path: "{{ incident_docs_survey_ca_path }}"
   register: _ids
@@ -23,6 +24,10 @@
       {%-   set act = ('FAILED: ' ~ r.error) if not r.ok else (('would be: ' if ansible_check_mode and r.changed else '') ~ r.action) -%}
       {%-   set _ = out.append('job template ' ~ r.id ~ " '" ~ r.template ~ "': " ~ act) -%}
       {%- endfor -%}
+      {%- if incident_docs_survey_state == 'present' and not incident_docs_draft_credential -%}
+      {%-   set _ = out.append('The SOP draft (incident_sop_draft) needs an AAP credential on the AAR and SOP templates: set '
+                               ~ 'incident_docs_draft_credential to its name and run this again, or attach it by hand') -%}
+      {%- endif -%}
       {%- for m in _ids.missing -%}
       {%-   set _ = out.append('no job template runs playbooks/' ~ m ~ ' - make it first (docs/INCIDENT_DOCS.md), then run this again') -%}
       {%- endfor -%}

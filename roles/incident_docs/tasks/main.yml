@@ -5,8 +5,14 @@
 #      and suggests what may be missing. Its answer is held to what was typed (incident_act_apply): a tidied text that
 #      drops a number or an address is not used, and suggestions only go in a "From ACT" section of their own. ACT not
 #      reachable, or an answer that cannot be read: the text as typed, said in the email.
-#   3. The Word documents (library/site_docx.py): the AAR, and the SOP when asked (the SOP job: only the SOP), with the
+#      With incident_act_sop it also writes the SOP's steps from the AAR (for the step boxes left empty); a step with a
+#      host, address or number the AAR does not have is not used.
+#   3. The Word documents (library/site_docx.py): the AAR, and the SOP when asked (the SOP job: only the SOP) - in the AAR
+#      job, a step box left empty takes the AAR's Actions (troubleshoot) and Recovery (fix), as written - with the
 #      logo and the marking banner - written to a temporary folder on the AAP side, emailed, deleted.
+#   3a. incident_sop_draft (the AAR job): the SOP job's survey filled in from the AAR (library/site_aap_survey_add.py,
+#      the template's AAP credential) - someone reviews it, adds to it and launches the SOP job, which then empties it
+#      again (incident_sop_draft_clear) when it was launched from that draft.
 #   4. Emailed to the addresses typed in the survey (report_email_also) and incident_docs_email_to - never to the
 #      reports' usual recipients, never on the report website. A dry run (Check) makes the documents and sends nothing.
 - name: Incident docs | what was typed
@@ -18,11 +24,13 @@
           'root_cause': incident_root_cause | default(''), 'recovery': incident_recovery | default(''),
           'successes': incident_successes | default(''), 'improvements': incident_improvements | default(''),
           'tasks': incident_tasks | default(''), 'make_sop': incident_make_sop | default('No'),
+          'sop_draft': incident_sop_draft | default('No'),
           'sop_title': sop_title | default(''), 'sop_purpose': sop_purpose | default(''), 'sop_troubleshoot': sop_troubleshoot | default(''),
           'sop_fix': sop_fix | default(''), 'sop_verify': sop_verify | default(''), 'sop_escalate': sop_escalate | default(''),
           'by': awx_user_name | default(tower_user_name | default(''), true), 'date': now(fmt='%Y-%m-%d')} | incident_record }}
     _inc_tidy: "{{ incident_act_tidy | default(false) | string | lower in ['yes', 'true', '1', 'on', 'y'] }}"
     _inc_suggest: "{{ incident_act_suggest | default(false) | string | lower in ['yes', 'true', '1', 'on', 'y'] }}"
+    _inc_sop_write: "{{ incident_act_sop | default(false) | string | lower in ['yes', 'true', '1', 'on', 'y'] }}"
     _inc_to: >-
       {{ incident_docs_email_to | email_recipients(report_email_also | default([]), report_email_also_domains | default([])) }}
 
@@ -55,34 +63,41 @@
     _ea_items: [{id: "{{ _inc.kind | upper }}"}]
     _ea_evidence: "{{ _inc | incident_act_evidence }}"
     _ea_task: >-
-      {{ _inc | incident_act_task({'tidy': _inc_tidy | bool, 'suggest': _inc_suggest | bool,
+      {{ _inc | incident_act_task({'tidy': _inc_tidy | bool, 'suggest': _inc_suggest | bool, 'sop': _inc_sop_write | bool,
                                    'max': incident_act_max_suggestions | int, 'extra': incident_act_extra_instructions}) }}
     _ea_names: []
     _ea_model_timeout: "{{ incident_act_model_timeout }}"
     _ea_check_url: true
     _ea_in_check: false                # a dry run (Check) does not ask GenAI
-  when: _inc_tidy | bool or _inc_suggest | bool
+  when: _inc_tidy | bool or _inc_suggest | bool or _inc_sop_write | bool
 
 - name: Incident docs | ACT's answer, held to what was typed
   ansible.builtin.set_fact:
     _inc_act: >-
       {{ _inc | incident_act_apply(_ea_raw | default(''), {'tidy': _inc_tidy | bool, 'suggest': _inc_suggest | bool,
-                                                          'max': incident_act_max_suggestions | int})
-         if (_inc_tidy | bool or _inc_suggest | bool) and _ea_ran | default(false) | bool
-         else {'record': _inc, 'suggestions': [], 'tidied': [], 'kept': [],
-               'error': (_ea_reason | default('') | trim) if (_inc_tidy | bool or _inc_suggest | bool) else ''} }}
+                                                          'sop': _inc_sop_write | bool, 'max': incident_act_max_suggestions | int})
+         if (_inc_tidy | bool or _inc_suggest | bool or _inc_sop_write | bool) and _ea_ran | default(false) | bool
+         else {'record': _inc, 'suggestions': [], 'tidied': [], 'sop': [], 'kept': [],
+               'error': (_ea_reason | default('') | trim) if (_inc_tidy | bool or _inc_suggest | bool or _inc_sop_write | bool) else ''} }}
 
 - name: Incident docs | what ACT did
   ansible.builtin.set_fact:
     _inc_act_lines: >-
       {%- set out = [] -%}
-      {%- if _inc_tidy | bool or _inc_suggest | bool -%}
+      {%- if _inc_tidy | bool or _inc_suggest | bool or _inc_sop_write | bool -%}
       {%-   if _inc_act.error -%}
       {%-     set _ = out.append('ACT was not used: ' ~ _inc_act.error ~ ' The documents use the text as typed.') -%}
       {%-   else -%}
       {%-     if _inc_tidy | bool -%}
       {%-       set _ = out.append(('Wording tidied: ' ~ (_inc_act.tidied | map('regex_replace', '^sop_', 'SOP ') | map('replace', '_', ' ') | join(', ')))
                                    if _inc_act.tidied else 'Wording: nothing needed tidying.') -%}
+      {%-       for k in _inc_act.kept -%}{%- set _ = out.append(k) -%}{%- endfor -%}
+      {%-     endif -%}
+      {%-     if _inc_sop_write | bool and _inc_act.sop -%}
+      {%-       set _ = out.append('SOP steps written by ACT from the AAR: ' ~ (_inc_act.sop | map('regex_replace', '^sop_', '') | join(', '))
+                                   ~ ' - review them before use.') -%}
+      {%-     endif -%}
+      {%-     if _inc_sop_write | bool and not _inc_tidy | bool -%}
       {%-       for k in _inc_act.kept -%}{%- set _ = out.append(k) -%}{%- endfor -%}
       {%-     endif -%}
       {%-     if _inc_suggest | bool -%}
@@ -113,7 +128,8 @@
     _inc_files: >-
       {{ ([{'kind': 'aar', 'name': _inc_act.record | incident_file_name('aar', _inc_names), 'what': 'the after action report'}]
           if _inc.kind == 'aar' else [])
-         + ([{'kind': 'sop', 'name': _inc_act.record | incident_file_name('sop', _inc_names), 'what': 'the SOP'}] if _inc_sop | bool else []) }}
+         + ([{'kind': 'sop', 'name': _inc_act.record | incident_file_name('sop', _inc_names), 'what': _inc_act.record | incident_sop_what}]
+            if _inc_sop | bool else []) }}
 
 - name: Incident docs | made, sent, and deleted
   block:
@@ -133,7 +149,7 @@
                                                  _inc_act.suggestions, _inc_act.tidied | reject('match', '^sop_') | list | length > 0)
              if item.kind == 'aar' else
              _inc_act.record | incident_sop_docx(_inc_opts | combine({'instructions': incident_sop_instructions, 'status': incident_sop_status}),
-                                                 _inc_act.suggestions, _inc_act.tidied | select('match', '^sop_') | list | length > 0) }}
+                                                 _inc_act.suggestions, _inc_act.tidied) }}
       loop: "{{ _inc_files }}"
       loop_control:
         label: "{{ item.name }}"
@@ -145,19 +161,58 @@
         msg: "{{ _inc_written.results | map(attribute='notes') | flatten | unique | list }}"
       when: _inc_written.results | map(attribute='notes') | flatten | length > 0
 
+    - name: Incident docs | the SOP draft, in the SOP job's form - to review, add to and launch
+      site_aap_survey_add:
+        surveys:
+          - playbook: incident_sop.yml
+            questions: []
+            defaults: "{{ _inc_act.record | incident_sop_draft }}"
+        project: "{{ incident_docs_survey_project }}"
+        ca_path: "{{ incident_docs_survey_ca_path }}"
+      register: _inc_drafted
+      when: _inc.sop_draft | bool      # Check: only reads, says what it would write
+
+    - name: Incident docs | what became of the SOP draft
+      ansible.builtin.set_fact:
+        _inc_draft_lines: >-
+          {%- set out = [] -%}
+          {%- if _inc.sop_draft | bool -%}
+          {%-   if _inc_drafted.problems | default([]) -%}
+          {%-     set _ = out.append('No SOP draft: ' ~ (_inc_drafted.problems | join('; ')) ~ '. docs/INCIDENT_DOCS.md') -%}
+          {%-   endif -%}
+          {%-   for m in _inc_drafted.missing | default([]) -%}
+          {%-     set _ = out.append('No SOP draft: no job template runs playbooks/' ~ m ~ '.') -%}
+          {%-   endfor -%}
+          {%-   for r in _inc_drafted.results | default([]) -%}
+          {%-     if not r.ok -%}
+          {%-       set _ = out.append("No SOP draft in '" ~ r.template ~ "': " ~ r.error) -%}
+          {%-     else -%}
+          {%-       set _ = out.append("The form of '" ~ r.template ~ "' is filled in from this AAR"
+                                      ~ (' (a dry run: not written)' if ansible_check_mode else '')
+                                      ~ ': launch it, review and add to the answers, then launch - it makes the SOP.') -%}
+          {%-       if r.cut -%}{%- set _ = out.append('Cut to the box\'s maximum length: ' ~ (r.cut | join(', ')) ~ '.') -%}{%- endif -%}
+          {%-       if r.no_question -%}
+          {%-         set _ = out.append('Its survey has no question for ' ~ (r.no_question | join(', '))
+                                         ~ ': run "AAP - incident document surveys".') -%}
+          {%-       endif -%}
+          {%-     endif -%}
+          {%-   endfor -%}
+          {%- endif -%}
+          {{ out }}
+
     - name: Incident docs | {{ _inc_files | map(attribute='name') | join(', ') }}
       ansible.builtin.debug:
         msg: >-
           {{ ['Made: ' ~ (_inc_files | map(attribute='name') | join(', ')),
               'To: ' ~ (_inc_to | join(', ')) ~ (' (a dry run: not sent)' if ansible_check_mode else '')]
-             + _inc_act_lines + ([_inc | incident_sop_skipped] if _inc | incident_sop_skipped else []) }}
+             + _inc_act_lines + _inc_draft_lines + ([_inc | incident_sop_skipped] if _inc | incident_sop_skipped else []) }}
 
     - name: Incident docs | email them
       ansible.builtin.include_role:
         name: site_email
       vars:
         _report: >-
-          {{ _inc_act.record | incident_email({'files': _inc_files, 'act': _inc_act_lines,
+          {{ _inc_act.record | incident_email({'files': _inc_files, 'act': _inc_act_lines, 'draft': _inc_draft_lines,
                                                'notes': [_inc | incident_sop_skipped] | select | list}) }}
         _report_attachments: >-
           {%- set out = [] -%}
@@ -168,12 +223,33 @@
         report_email_xlsx: false
         report_history: false          # no strip of past runs: the email lists only this run's documents
 
+    - name: Incident docs | the SOP draft this job was launched from, emptied in the SOP job's form
+      site_aap_survey_add:
+        surveys:
+          - playbook: incident_sop.yml
+            questions: []
+            defaults: "{{ {} | incident_sop_draft_empty }}"
+            match: {incident_name: "{{ _inc.name }}"}     # only the draft of this outage
+        project: "{{ incident_docs_survey_project }}"
+        ca_path: "{{ incident_docs_survey_ca_path }}"
+      register: _inc_cleared
+      when: _inc.kind == 'sop' and _inc.name | length > 0 and incident_sop_draft_clear | bool and not ansible_check_mode
+
+    - name: Incident docs | the SOP draft
+      ansible.builtin.debug:
+        msg: >-
+          {{ ('The draft stays in the form: ' ~ (_inc_cleared.problems | join('; ')))
+             if _inc_cleared.problems | default([]) else
+             (_inc_cleared.results | default([]) | map(attribute='template') | zip(_inc_cleared.results | default([]) | map(attribute='action'))
+              | map('join', ': ') | list) }}
+      when: _inc_cleared.results is defined or _inc_cleared.problems is defined
+
     - name: Incident docs | as job artifacts (incident_docs) - the names, not the text
       ansible.builtin.set_stats:
         data:
           incident_docs: >-
             {{ {'kind': _inc.kind, 'outage': _inc.name, 'files': _inc_files | map(attribute='name') | list,
-                'tidied': _inc_act.tidied, 'suggestions': _inc_act.suggestions | length, 'act_error': _inc_act.error,
+                'tidied': _inc_act.tidied, 'sop_by_act': _inc_act.sop | default([]), 'suggestions': _inc_act.suggestions | length, 'act_error': _inc_act.error,
                 'dry_run': ansible_check_mode} }}
   always:
     - name: Incident docs | the temporary folder, deleted

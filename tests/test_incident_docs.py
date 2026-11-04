@@ -81,9 +81,14 @@ class Record(unittest.TestCase):
         self.assertIn("no steps", f.incident_problems(f.incident_record({"kind": "sop", "sop_title": "x"}))[0])
 
     def test_sop_asked_without_steps_is_left_out_and_said(self):
-        r = f.incident_record(dict(TYPED, sop_troubleshoot="", sop_fix=" \n"))
+        r = f.incident_record(dict(TYPED, sop_troubleshoot="", sop_fix=" \n", actions="", recovery=""))
         self.assertIn("No SOP", f.incident_sop_skipped(r))
         self.assertFalse(f.incident_sop_on(r))
+        # its own steps empty, but the AAR has Actions or Recovery: the SOP is made from the AAR
+        r = f.incident_record(dict(TYPED, sop_troubleshoot="", sop_fix="", actions=""))
+        self.assertEqual(f.incident_sop_skipped(r), "")
+        self.assertTrue(f.incident_sop_on(r))
+        self.assertFalse(f.incident_sop_on(f.incident_record({"kind": "sop", "actions": "a", "recovery": "b"})))  # the SOP job: its own
         self.assertTrue(f.incident_sop_on(f.incident_record(TYPED)))
         self.assertFalse(f.incident_sop_on(f.incident_record(dict(TYPED, make_sop="No"))))
 
@@ -136,11 +141,38 @@ class Layout(unittest.TestCase):
     def test_sop(self):
         doc = f.incident_sop_docx(f.incident_record(TYPED), {"status": "Draft"})
         heads = [b["text"] for b in doc["blocks"] if b["type"] == "heading"]
-        self.assertEqual(heads, ["Purpose and when to use", "Troubleshooting steps", "Fix steps", "Revision history"])
+        self.assertEqual(heads, ["Purpose and when to use", "Signs it is happening", "Troubleshooting steps", "Fix steps", "Revision history"])
         steps = [b["items"] for b in doc["blocks"] if b["type"] == "steps"]
         self.assertEqual(steps, [["Check the status page", "Read the error log"], ["Restart the app pool", "Fail over"]])
         self.assertIn(["Status", "Draft"], doc["blocks"][2]["rows"])
         self.assertIn("Its root cause was: A PHP patch (CVE-2026-0001) broke sessions.", texts(doc["blocks"]))
+        self.assertIn("Monitoring alert", texts(doc["blocks"]))
+        self.assertFalse([b for b in doc["blocks"] if "as written" in str(b.get("text"))])     # typed steps: no "from the AAR" note
+        sop_job = f.incident_sop_docx(f.incident_record(dict(TYPED, kind="sop")), {})
+        self.assertNotIn("Signs it is happening", [b.get("text") for b in sop_job["blocks"]])
+
+    def test_sop_from_the_aar(self):
+        r = f.incident_record(dict(TYPED, sop_troubleshoot="", sop_fix="", sop_title=""))
+        self.assertEqual(f.incident_sop_from_aar(r), [("sop_troubleshoot", "actions", "aar"), ("sop_fix", "recovery", "aar")])
+        doc = f.incident_sop_docx(r, {})
+        steps = [b["items"] for b in doc["blocks"] if b["type"] == "steps"]
+        self.assertEqual(steps[:2], [["Opened a bridge", "Failed over to 192.0.2.30"], ["Rolled the package back."]])
+        notes = [b["text"] for b in doc["blocks"] if b["type"] == "note"]
+        self.assertIn(f.FROM_AAR_NOTE % "Actions", notes)
+        self.assertIn(f.FROM_AAR_NOTE % "Recovery", notes)
+        self.assertEqual(doc["blocks"][1]["text"], "Troubleshoot and fix: Web portal outage")
+        self.assertIn("Actions and Recovery as written", f.incident_sop_what(r))
+        self.assertEqual(f.incident_file_name(r, "sop"), "SOP-Web-portal-outage.docx")
+        # a typed box wins, box by box
+        r2 = f.incident_record(dict(TYPED, sop_troubleshoot=""))
+        self.assertEqual(f.incident_sop_from_aar(r2), [("sop_troubleshoot", "actions", "aar")])
+        steps = [b["items"] for b in f.incident_sop_docx(r2, {})["blocks"] if b["type"] == "steps"]
+        self.assertEqual(steps[1], ["Restart the app pool", "Fail over"])
+        self.assertEqual(f.incident_sop_what(f.incident_record(TYPED)), "the SOP")
+        # the tidy note: an AAR box the SOP is made from counts; one it does not use does not
+        self.assertTrue(f.incident_sop_tidied(r, ["actions"]))
+        self.assertFalse(f.incident_sop_tidied(f.incident_record(TYPED), ["actions", "tasks"]))
+        self.assertTrue(f.incident_sop_tidied(f.incident_record(TYPED), ["sop_fix"]))
 
 
 class Act(unittest.TestCase):
@@ -190,6 +222,61 @@ class Act(unittest.TestCase):
         self.assertEqual(out["suggestions"], [{"for": "sop_verify", "text": "Log in.", "why": "proof"},
                                               {"for": "improvements", "text": "Keep spares.", "why": ""}])
 
+    def test_sop_written_from_the_aar(self):
+        r = f.incident_record(dict(TYPED, sop_troubleshoot="", sop_fix="", sop_verify=""))
+        task = f.incident_act_task(r, {"sop": True})
+        self.assertIn("SOP: the SOP is made from this outage", task)
+        self.assertIn("sop_troubleshoot, sop_fix, sop_verify", task)
+        self.assertNotIn("SOP: the SOP", f.incident_act_task(f.incident_record(TYPED), {"sop": True}))     # all typed: nothing to write
+        out = f.incident_act_apply(r, self.answer({"sop": {
+            "sop_troubleshoot": ["Open a bridge with the on-call teams.", "Fail over to 192.0.2.30."],
+            "sop_fix": ["Roll the PHP package back (CVE-2026-0001)."],
+            "sop_verify": ["Log in to the portal."]}}), {"sop": True})
+        self.assertEqual(out["sop"], ["sop_troubleshoot", "sop_fix", "sop_verify"])
+        rec = out["record"]
+        self.assertEqual(f.incident_sop_from_aar(rec), [("sop_troubleshoot", "actions", "act"), ("sop_fix", "recovery", "act"),
+                                                        ("sop_verify", "", "act")])
+        doc = f.incident_sop_docx(rec, {})
+        self.assertEqual([b["items"] for b in doc["blocks"] if b["type"] == "steps"][2], ["Log in to the portal."])
+        self.assertEqual([b["text"] for b in doc["blocks"] if b["type"] == "note"].count(f.FROM_ACT_NOTE), 3)
+        self.assertIn("written by GenAI", f.incident_sop_what(rec))
+        self.assertEqual(r["sop_fix"], "")                                                   # the record given is not changed
+        # a host, address or number the AAR does not have: not used - the AAR's lines as written
+        out = f.incident_act_apply(r, self.answer({"sop": {"sop_troubleshoot": ["Fail over to 192.0.2.99."],
+                                                           "sop_fix": "Restart [REDACTED] service"}}), {"sop": True})
+        self.assertEqual(out["sop"], [])
+        kept = " ".join(out["kept"])
+        self.assertIn("192.0.2.99, not in the AAR", kept)
+        self.assertIn("masked word", kept)
+        self.assertEqual(f.incident_sop_from_aar(out["record"]), [("sop_troubleshoot", "actions", "aar"), ("sop_fix", "recovery", "aar")])
+        # a typed box is never replaced by ACT's steps
+        out = f.incident_act_apply(f.incident_record(TYPED), self.answer({"sop": {"sop_fix": ["x"]}}), {"sop": True})
+        self.assertEqual(out["record"]["sop_fix"], TYPED["sop_fix"])
+
+    def test_sop_draft_for_the_sop_jobs_form(self):
+        # the draft only (Also make an SOP: No): ACT still writes the steps, the SOP job's form gets them
+        r = f.incident_record(dict(TYPED, make_sop="No", sop_draft="Yes", sop_title="", sop_troubleshoot="", sop_fix=""))
+        self.assertFalse(f.incident_sop_on(r))
+        self.assertIn("sop_troubleshoot, sop_fix, sop_verify", f.incident_act_task(r, {"sop": True}))
+        draft = f.incident_sop_draft(r)
+        self.assertEqual(draft["incident_name"], "Web portal outage")
+        self.assertEqual(draft["sop_title"], "Troubleshoot and fix: Web portal outage")
+        self.assertEqual(draft["sop_troubleshoot"], "Opened a bridge\nFailed over to 192.0.2.30")
+        self.assertEqual(draft["sop_fix"], "Rolled the package back.")
+        self.assertEqual(draft["sop_purpose"].split("\n"), ["Use it when this outage's symptoms are seen again:", "Monitoring alert",
+                                                             "Customer reports", "Its root cause was: A PHP patch (CVE-2026-0001) broke sessions."])
+        self.assertEqual((draft["sop_verify"], draft["sop_escalate"]), ("", ""))                     # every box set: no old draft stays
+        out = f.incident_act_apply(r, self.answer({"sop": {"sop_troubleshoot": ["Fail over to 192.0.2.30."], "sop_fix": ["Roll back."],
+                                                           "sop_verify": ["Log in."]}}), {"sop": True})
+        self.assertEqual(f.incident_sop_draft(out["record"])["sop_verify"], "Log in.")
+        self.assertEqual(f.incident_sop_draft(out["record"])["sop_troubleshoot"], "Fail over to 192.0.2.30.")
+        # typed boxes as typed; the SOP job never drafts
+        self.assertEqual(f.incident_sop_draft(f.incident_record(dict(TYPED, sop_draft="Yes")))["sop_fix"], "Restart the app pool\nFail over")
+        self.assertFalse(f.incident_record(dict(TYPED, kind="sop", sop_draft="Yes"))["sop_draft"])
+        self.assertEqual(f.incident_sop_draft_empty(), dict((k, "") for k in f.SOP_DRAFT_KEYS))
+        e = json.dumps(f.incident_email(r, {"files": [], "draft": ["The form of 'SOP' is filled in"]}))
+        self.assertIn("SOP draft", e)
+
     def test_unreadable_answer_and_a_wrapped_one(self):
         self.assertIn("no JSON", f.incident_act_apply(self.r, "I cannot help.", {"tidy": True})["error"])
         wrapped = {"message": self.answer({"suggestions": [{"for": "tasks", "text": "T"}]})}
@@ -214,7 +301,7 @@ class Survey(unittest.TestCase):
         names = [q["variable"] for q in aar]
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual(names[:4], ["incident_name", "incident_start", "incident_end", "incident_impact_level"])
-        for v in ("report_email_also", "incident_make_sop", "sop_fix", "incident_act_tidy", "incident_act_suggest"):
+        for v in ("report_email_also", "incident_make_sop", "sop_fix", "incident_act_tidy", "incident_act_suggest", "incident_act_sop"):
             self.assertIn(v, names)
         q = dict((x["variable"], x) for x in aar)
         self.assertEqual(q["incident_impact_level"]["choices"], ["LOW", "HIGH"])
@@ -230,7 +317,7 @@ class Survey(unittest.TestCase):
             block = fh.read().split("# What was typed:", 1)[1].split("\n\n", 1)[0]
         typed = re.findall(r"^([a-z_]+):", block, re.M)
         self.assertGreater(len(typed), 15)
-        for v in typed + ["incident_act_tidy", "incident_act_suggest"]:
+        for v in typed + ["incident_act_tidy", "incident_act_suggest", "incident_act_sop"]:
             self.assertTrue(v in q or v in sop, v)
 
 
@@ -308,9 +395,31 @@ class Writer(unittest.TestCase):
         self.assertIn("<w:tblHeader/>", body)
 
 
+class FakeAapCredentials(FakeAap):
+    """FakeAap with credentials: credentials/?name=, job_templates/N/credentials/ (GET, POST)."""
+
+    def __init__(self):
+        FakeAap.__init__(self)
+        self.creds = [{"id": 51, "name": "AAP draft writer", "credential_type": 18}, {"id": 52, "name": "Machine", "credential_type": 1},
+                      {"id": 53, "name": "AAP admin", "credential_type": 18}]
+        self.attached = {}
+
+    def answer(self, method, rest, qs, body, path):
+        if rest == ["credentials"] and method == "GET":
+            return self.page([c for c in self.creds if not qs.get("name") or c["name"] == qs["name"]], qs, path)
+        if len(rest) == 3 and rest[0] == "job_templates" and rest[2] == "credentials":
+            have = self.attached.setdefault(int(rest[1]), [])
+            if method == "GET":
+                return self.page(have, qs, path)
+            have.append(next(c for c in self.creds if c["id"] == body["id"]))
+            self.writes.append((method, "job", int(rest[1]), "credentials", body))
+            return 204, {}
+        return FakeAap.answer(self, method, rest, qs, body, path)
+
+
 class SurveyWriter(unittest.TestCase):
     def setUp(self):
-        self.aap = FakeAap()
+        self.aap = FakeAapCredentials()
         self.aap.jobs = [_jt(1, "Outage AAR", "playbooks/incident_aar.yml"), _jt(2, "SOP", "playbooks/incident_sop.yml", enabled=True),
                          _jt(3, "Other", "playbooks/cert_report.yml")]
         mine = {"variable": "incident_start", "type": "text", "question_name": "When it began (mine)", "question_description": "",
@@ -374,7 +483,52 @@ class SurveyWriter(unittest.TestCase):
         levels = [q for q in self.aap.specs[("job", 1)]["spec"] if q["variable"] == "incident_impact_level"][0]
         self.assertEqual(levels["choices"], ["SEV1", "SEV2"])
 
+    def test_sop_draft_written_and_cleared(self):
+        sv.run(self.api, self.p, False)
+        self.aap.writes = []
+        draft = f.incident_sop_draft(f.incident_record(dict(TYPED, sop_draft="Yes", sop_troubleshoot="", sop_fix="x" * 9000)))
+        p = {"surveys": [{"playbook": "incident_sop.yml", "questions": [], "defaults": draft}], "project": "", "state": "present"}
+        results, problems, _ = sv.run(self.api, dict(p), True)                           # Check: reads only
+        self.assertEqual((problems, self.aap.writes), ([], []))
+        self.assertIn("5 default answer(s) written", results[0]["action"])        # verify, escalate: already empty
+        results, _, _ = sv.run(self.api, p, False)
+        self.assertEqual(results[0]["cut"], ["sop_fix"])
+        spec = dict((q["variable"], q) for q in self.aap.specs[("job", 2)]["spec"])
+        self.assertEqual(spec["sop_troubleshoot"]["default"], "Opened a bridge\nFailed over to 192.0.2.30")
+        self.assertEqual(len(spec["sop_fix"]["default"]), 8000)
+        self.assertEqual(self.aap.specs[("job", 1)]["spec"][1]["default"], "")         # the AAR template: untouched
+        # cleared only when launched with that draft's outage
+        clear = {"surveys": [{"playbook": "incident_sop.yml", "questions": [], "defaults": f.incident_sop_draft_empty(),
+                              "match": {"incident_name": "Another outage"}}], "project": "", "state": "present"}
+        results, _, _ = sv.run(self.api, clear, False)
+        self.assertIn("is not 'Another outage'", results[0]["action"])
+        now = dict((q["variable"], q["default"]) for q in self.aap.specs[("job", 2)]["spec"])
+        self.assertEqual(now["sop_troubleshoot"], "Opened a bridge\nFailed over to 192.0.2.30")                 # left as it is
+        clear["surveys"][0]["match"] = {"incident_name": "Web portal outage"}
+        results, _, _ = sv.run(self.api, clear, False)
+        self.assertTrue(results[0]["ok"])
+        self.assertEqual([q["default"] for q in self.aap.specs[("job", 2)]["spec"] if q["variable"] in f.SOP_DRAFT_KEYS], [""] * 7)
+
+    def test_credential_attached_once(self):
+        self.aap.attached[1] = [self.aap.creds[2]]                                        # the AAR template has an AAP credential
+        results, problems, _ = sv.run(self.api, dict(self.p, credential="AAP draft writer"), True)
+        self.assertEqual(self.aap.writes, [])
+        by = dict((r["template"], r["action"]) for r in results)
+        self.assertIn("has 'AAP admin' of that credential type already", by["Outage AAR"])
+        self.assertIn("credential 'AAP draft writer' attached", by["SOP"])
+        sv.run(self.api, dict(self.p, credential="AAP draft writer"), False)
+        self.assertEqual([c["name"] for c in self.aap.attached[2]], ["AAP draft writer"])
+        self.assertEqual([c["name"] for c in self.aap.attached[1]], ["AAP admin"])
+        results, _, _ = sv.run(self.api, dict(self.p, credential="AAP draft writer"), False)
+        self.assertIn("credential 'AAP draft writer' already there", dict((r["template"], r["action"]) for r in results)["SOP"])
+        self.assertIn("not there", sv.run(self.api, dict(self.p, credential="Nope"), False)[1][0])
+
     def test_pure_parts(self):
+        spec = {"spec": [{"variable": "a", "type": "textarea", "default": "", "max": 3}, {"variable": "c", "type": "multiplechoice", "default": "No"}]}
+        new, done, cut, missing, why = sv.set_defaults(spec, {"a": "abcdef", "b": "x", "c": "Yes"})
+        self.assertEqual((new["spec"][0]["default"], done, cut, missing, why), ("abc", ["a"], ["a"], ["b"], ""))
+        self.assertEqual(new["spec"][1]["default"], "No")                                   # a pick list keeps its own
+        self.assertIsNone(sv.set_defaults(spec, {"a": "x"}, {"a": "y"})[0])
         q = sv.clean_question({"variable": "a", "type": "textarea", "choices": ["x"], "junk": 1, "max": 9})
         self.assertEqual(q, {"variable": "a", "type": "textarea", "choices": "", "max": 9, "question_name": "a",
                              "question_description": "", "required": False, "default": ""})

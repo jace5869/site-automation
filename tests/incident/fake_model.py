@@ -5,7 +5,8 @@
 
 Answers an OpenAI-style chat completion. It reads the typed boxes ACT pipes to it (the JSON with "fields") and answers
 as the outage AAR / SOP prompt asks - MODE good: each box tidied ("teh" -> "the", "recieved" -> "received") and two
-suggestions; drop: the first box's text loses its numbers (the job must keep that box as typed); junk: no JSON at all.
+suggestions, and the SOP's steps written from the AAR when asked; drop: the first box's text loses its numbers (the job
+must keep that box as typed) and the SOP's steps name an address the AAR does not have (not used); junk: no JSON at all.
 Each request's body is appended to LOG, one JSON per line."""
 import http.server
 import json
@@ -49,6 +50,10 @@ class Model(http.server.BaseHTTPRequestHandler):
                 out["tidy"] = tidy
             if "SUGGEST:" in text:
                 out["suggestions"] = sugg
+            if "SOP: the SOP is made from this outage" in text:
+                out["sop"] = {"sop_troubleshoot": ["Open a bridge with the on-call teams.",
+                                                   "Fail over to 192.0.2.%s." % ("99" if mode == "drop" else "30")],
+                              "sop_fix": ["Roll the PHP package back."], "sop_verify": ["Log in to the portal from outside."]}
             answer = "Done.\n\nBEGIN_ACT_ANALYSIS\n%s\nEND_ACT_ANALYSIS\n" % json.dumps(out, indent=1)
         reply = json.dumps({"choices": [{"index": 0, "message": {"role": "assistant", "content": answer}, "finish_reason": "stop"}]}).encode()
         self.send_response(200)

@@ -2,8 +2,10 @@
 # playbooks/incident_aar.yml and playbooks/incident_sop.yml, run for real against a fake mail relay (tests/email/fake_smtp.py)
 # and a scripted GenAI model (tests/incident/fake_model.py): the AAR and the SOP attached as Word documents (every part
 # well-formed XML, the logo and banner in them), sent only to the addresses typed - not to the reports' report_email_to -
-# and never written to the report website even with report_web_dest given at launch; no SOP when its steps are empty
-# (said in the email); ACT tidying and suggesting, a tidied box that dropped a number kept as typed, an answer with no
+# and never written to the report website even with report_web_dest given at launch; the SOP made from the AAR when its
+# step boxes are empty (Actions, Recovery as written; or written by ACT, a step with an address the AAR does not have
+# not used); no SOP when there are no steps at all (said in the email); the SOP draft put in the SOP job's form of a
+# fake AAP (tests/incident/fake_aap.py) and emptied by the SOP job launched from it - no AAP credential: said; ACT tidying and suggesting, a tidied box that dropped a number kept as typed, an answer with no
 # JSON (the typed text, said), no API key (said); the SOP job; no address, no start, no steps (refused); a dry run.
 #   bash tests/incident/run_incident_test.sh            (ANSIBLE_PLAYBOOK=... to pick one)
 set -u
@@ -32,7 +34,18 @@ mkdir -p "$work/mail"
 "$py" "$here/fake_model.py" $((port + 1)) "$work/good.log" good & pids+=($!)
 "$py" "$here/fake_model.py" $((port + 2)) "$work/drop.log" drop & pids+=($!)
 "$py" "$here/fake_model.py" $((port + 3)) "$work/junk.log" junk & pids+=($!)
+"$py" "$here/fake_aap.py" "$work/aap.url" & pids+=($!)
 wait_port "$port"; wait_port $((port + 1)); wait_port $((port + 2)); wait_port $((port + 3))
+for _ in $(seq 1 50); do [ -s "$work/aap.url" ] && break; sleep 0.1; done
+aap_url="$(cat "$work/aap.url" 2>/dev/null)"
+# the SOP job's survey in the fake AAP: VARIABLE -> its default answer
+draft() { "$py" - "$aap_url" "$1" <<'PY'
+import json, sys, urllib.request
+req = urllib.request.Request(sys.argv[1] + "/api/controller/v2/job_templates/2/survey_spec/", headers={"Authorization": "Bearer goodtoken"})
+spec = json.load(urllib.request.urlopen(req))
+print([q for q in spec["spec"] if q["variable"] == sys.argv[2]][0]["default"])
+PY
+}
 model() { echo "{\"site_act_urls\": {\"genai\": \"http://127.0.0.1:$1/v1/chat/completions\"}}"; }
 
 cat > "$work/aar.yml" <<YML
@@ -86,8 +99,48 @@ if [ -e "$work/web" ]; then echo "FAIL -   the report website was written"; fail
 run "AAR only" ok incident_aar.yml -e @"$work/aar.yml" -e incident_make_sop=No -- "Made: AAR-Web-portal-outage.docx\""
 mail "one attachment" attach=AAR-Web-portal-outage.docx
 
-run "SOP asked for with no steps: AAR only, said" ok incident_aar.yml -e @"$work/aar.yml" -e '{"sop_troubleshoot": "", "sop_fix": ""}' -- "No SOP:"
+run "SOP from the AAR: its step boxes empty" ok incident_aar.yml -e @"$work/aar.yml" -e '{"sop_troubleshoot": "", "sop_fix": ""}' \
+    -- "Made: AAR-Web-portal-outage.docx, SOP-Web-portal-returns-503.docx"
+mail "the AAR's Actions and Recovery as the SOP's steps, said" attach=AAR-Web-portal-outage.docx,SOP-Web-portal-returns-503.docx \
+    "SOP-Web-portal-returns-503.docx~Failed over to 192.0.2.30" "SOP-Web-portal-returns-503.docx~Rolled teh package back." \
+    "SOP-Web-portal-returns-503.docx~Taken from the AAR's Actions as written" "SOP-Web-portal-returns-503.docx~Signs it is happening" \
+    "body=steps from the AAR's Actions and Recovery as written"
+
+run "ACT writes the SOP's steps from the AAR" ok incident_aar.yml -e @"$work/aar.yml" -e '{"sop_troubleshoot": "", "sop_fix": ""}' \
+    -e incident_act_sop=Yes -e "$(model $((port + 1)))" -- "SOP steps written by ACT from the AAR: troubleshoot, fix, verify"
+mail "ACT's steps, marked for review; the AAR as typed" "SOP-Web-portal-returns-503.docx~Roll the PHP package back." \
+    "SOP-Web-portal-returns-503.docx~Log in to the portal from outside." "SOP-Web-portal-returns-503.docx~Written by GenAI (ACT) from the AAR" \
+    "AAR-Web-portal-outage.docx~Rolled teh package back." "body=steps written by GenAI (ACT) from the AAR"
+
+run "ACT's steps name an address the AAR does not have: not used" ok incident_aar.yml -e @"$work/aar.yml" \
+    -e '{"sop_troubleshoot": "", "sop_fix": ""}' -e incident_act_sop=Yes -e "$(model $((port + 2)))" -- "192.0.2.99, not in the AAR"
+mail "the AAR's Actions as written instead" "SOP-Web-portal-returns-503.docx~Failed over to 192.0.2.30" \
+    "SOP-Web-portal-returns-503.docx~Roll the PHP package back."
+
+run "SOP asked for with no steps at all: AAR only, said" ok incident_aar.yml -e @"$work/aar.yml" \
+    -e '{"sop_troubleshoot": "", "sop_fix": "", "incident_actions": "", "incident_recovery": ""}' -- "No SOP:"
 mail "the email says why" attach=AAR-Web-portal-outage.docx "body=No SOP:"
+
+run "SOP draft asked, no AAP credential: the AAR sent, said" ok incident_aar.yml -e @"$work/aar.yml" -e incident_make_sop=No \
+    -e incident_sop_draft=Yes -- "Made: AAR-Web-portal-outage.docx\"" "No SOP draft: No AAP connection"
+mail "said in the email" attach=AAR-Web-portal-outage.docx "body=No SOP draft"
+
+export CONTROLLER_HOST="$aap_url" CONTROLLER_OAUTH_TOKEN=goodtoken
+run "SOP draft: the SOP job's form filled in from the AAR" ok incident_aar.yml -e @"$work/aar.yml" -e incident_make_sop=No \
+    -e incident_sop_draft=Yes -e '{"sop_troubleshoot": "", "sop_fix": "", "sop_title": ""}' -- "The form of 'SOP - Word document' is filled in"
+mail "the email says so" attach=AAR-Web-portal-outage.docx "body=The form of 'SOP - Word document' is filled in"
+if [ "$(draft sop_troubleshoot)" = "$(printf 'Opened a bridge\nFailed over to 192.0.2.30\nBell pasted')" ] \
+   && [ "$(draft sop_title)" = "Troubleshoot and fix: Web portal outage" ] && [ "$(draft incident_name)" = "Web portal outage" ]; then
+    echo "ok   -   the form's answers: the AAR's Actions as the steps, its title, the outage"
+else echo "FAIL -   the form's answers: $(draft sop_troubleshoot) / $(draft sop_title)"; fails=$((fails + 1)); fi
+run "the SOP job launched from another outage: the draft stays" ok incident_sop.yml -e @"$work/aar.yml" -e incident_name=Other \
+    -- "is not 'Other'"
+[ "$(draft sop_title)" = "Troubleshoot and fix: Web portal outage" ] && echo "ok   -   the draft is still there" \
+    || { echo "FAIL -   the draft was emptied"; fails=$((fails + 1)); }
+run "the SOP job launched from the draft: made, the draft emptied" ok incident_sop.yml -e @"$work/aar.yml" -- "default answer(s) written"
+[ -z "$(draft sop_troubleshoot)$(draft incident_name)" ] && echo "ok   -   the form is empty again" \
+    || { echo "FAIL -   the form still has the draft"; fails=$((fails + 1)); }
+unset CONTROLLER_HOST CONTROLLER_OAUTH_TOKEN
 
 run "ACT tidies and suggests" ok incident_aar.yml -e @"$work/aar.yml" -e incident_act_tidy=Yes -e incident_act_suggest=Yes -e "$(model $((port + 1)))" \
     -- "Wording tidied:" "2 suggestion(s) from ACT"

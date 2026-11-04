@@ -21,6 +21,9 @@
 ## The impact levels the survey offers (the setup job writes them into the survey).
 # incident_impact_levels: [MINOR, MODERATE, MAJOR, CRITICAL]
 
+## Yes = the AAR job fills in the SOP job's survey from the AAR, to review and launch
+# incident_sop_draft: "No"
+
 ## The survey setup job (playbooks/incident_docs_survey.yml): adds the questions to the job
 ## templates that run incident_aar.yml and incident_sop.yml (found by their playbook). A question
 ## already there is left as it is. present = add the questions; absent = take them out again
@@ -31,3 +34,8 @@
 
 ## characters a text box takes at most (AAP's own default is 1024)
 # incident_docs_survey_max: 8000
+
+## The SOP draft (incident_sop_draft) is written through AAP's API by the AAR job: name a "Red Hat
+## Ansible Automation Platform" credential here and the setup job attaches it to the AAR and SOP
+## templates (its user: Admin on the SOP template). Empty = attach it by hand, or no draft.
+# incident_docs_draft_credential: ""
