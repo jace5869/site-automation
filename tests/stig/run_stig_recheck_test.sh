@@ -121,7 +121,7 @@ PY
 # OpenSCAP: the session timeout still fails, the audit rules pass now, the banner fails, the rest pass
 echo '{"accounts_tmout": "fail", "banner_etc_issue": "fail"}' > "$work/results.json"
 run "OpenSCAP: only the rules Open or Not Reviewed checked, each sorted, report only" ok -- \
-    "REPORT ONLY - what is open and what to update in STIG Manager are listed above. Checks run: stig" "!HEALTHY" "7 rules Open or Not Reviewed in STIG Manager: V-257779, V-257835, V-257883, V-258012, V-258013, V-258176, V-258999" \
+    "REPORT ONLY - the open findings and STIG Manager's status updates are listed above. Checks run: stig" "!HEALTHY" "7 rules Open or Not Reviewed in STIG Manager: V-257779, V-257835, V-257883, V-258012, V-258013, V-258176, V-258999" \
     "localhost: 2 Open, 5 Not Reviewed in STIG Manager - fixed 1, now n/a 0, answered 4, still open 1, by hand 1, left out 0; STIG Manager: RHEL Servers / localhost (V2R7); checked: only these rules (--rule)" \
     "FIXED  V-258176 (RHEL-09-654225) CAT II" "ANSWER V-257779 (RHEL-09-211020) CAT II" "- set Open" "ANSWER V-257835 (RHEL-09-215040) CAT I" "- set Not a Finding" \
     "checklist on the host: $work/kept/recheck/latest-results.xml" "!Traceback" "!is undefined"
@@ -134,10 +134,10 @@ if [ -s "$work/kept/recheck/latest-results.xml" ] && ! ls "$work/kept"/*_summary
 else echo "FAIL - what was kept"; ls -laR "$work/kept"; fails=$((fails + 1)); fi
 if [ "$(ls "$work/mail" | wc -l)" -ge 1 ]; then
     decoded "$(ls "$work/mail"/* | head -1)"; m="$work/mail.txt"
-    if grep -q "Subject: .*STIG recheck: 2 rules open" "$m" && grep -q "2 rules open, 5 reviews to update in STIG Manager, 1 by hand" "$m" && ! grep -qi "no findings" "$m" \
+    if grep -q "Subject: .*STIG recheck: 2 rules open" "$m" && grep -q "2 rules open, 5 status updates in STIG Manager, 1 for manual review" "$m" && ! grep -qi "no findings" "$m" \
        && grep -q "1. Open in STIG Manager - the host passes now: update the review" "$m" \
        && grep -q "2. Not Reviewed in STIG Manager - the scan has an answer" "$m" && grep -q "3. Still open - the scan agrees with STIG Manager" "$m" \
-       && grep -q "By hand - the scan gave no answer" "$m" && grep -q "no SCAP check for it (a manual check)" "$m" \
+       && grep -q "Manual review - the scan gave no answer" "$m" && grep -q "no SCAP check for it (a manual check)" "$m" \
        && grep -q "Open (accepted, 2026-08-15)" "$m" && grep -q "Not a Finding (rejected, 2026-08-15)" "$m" && grep -q ">no review<" "$m"
     then echo "ok   - the email: its subject says what is open and what to update (never no findings); update the review (fixed), Not Reviewed answered (a rejected review counts as none), still open, by hand"
     else echo "FAIL - the email's content"; grep -i "subject\|open in\|not reviewed\|still open\|by hand" "$m" | head -8; fails=$((fails + 1)); fi

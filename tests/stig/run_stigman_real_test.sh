@@ -180,5 +180,26 @@ play stigman_update.yml -e "@$work/plan2.json"
 api "$atok" GET "/collections/$col/reviews/$asset/SV-258176r1045388_rule/metadata/keys" | grep -q ab12 \
     && ok "  ... its attachment still there" || bad "the attachment is gone"
 
+# ---- 0.67.0: a later release in which DISA changed a rule (SV-257835: a new rule id, other words in its check) ----------
+# STIG Manager keeps the review of the old rule apart; the scan (of another revision, with the old rule) is not written for it
+"$py" "$here/make_stig_xccdf.py" "$work/stig8.xml" 8 SV-257835r1044874_rule=SV-257835r1099999_rule
+curl -s -H "Authorization: Bearer $atok" -F "importFile=@$work/stig8.xml" "$A/stigs?elevate=true" > "$work/imp8.json"
+rev=$(api "$atok" GET "/assets/$asset?projection=stigs" | j '[s["revisionStr"] for s in d["stigs"] if s["benchmarkId"] == "RHEL_9_STIG"][0]')
+[ "$rev" = V2R8 ] && ok "release 8 imported: the collection's revision is V2R8, SV-257835 changed in it" || bad "release 8: revision $rev, $(head -c 300 "$work/imp8.json")"
+api "$wtok" GET "/collections/$col/reviews/$asset?benchmarkId=RHEL_9_STIG&projection=rule" | grep -q 'SV-257835' \
+    && bad "STIG Manager carried SV-257835's review to V2R8" || ok "  ... STIG Manager has no review of SV-257835 in V2R8"
+api "$wtok" GET "/collections/$col/reviews/$asset?benchmarkId=RHEL_9_STIG&rules=all&projection=rule&projection=stigs" | "$py" -c 'import json, sys
+d = [r for r in json.load(sys.stdin) if r["ruleId"] == "SV-257835r1044874_rule"]
+sys.exit(0 if d and d[0]["result"] == "notapplicable" and [(s["revisionStr"], s["isDefault"]) for s in d[0]["stigs"]] == [("V2R7", False)] else 1)' \
+    && ok "  ... its V2R7 review comes with rules=all (projection stigs: V2R7 only, not the default)" || bad "no V2R7 review of SV-257835 with rules=all"
+play stig_recheck.yml -e '{"check_stig_update_workflow": true}'
+html=$(grep -rl "STIG recheck" "$work/site" --include='*.html' | grep -v index | xargs ls -t | head -1)
+[ "$rc" = 0 ] && grep -q "REVISION scanned with V2R9, STIG Manager has V2R8 - 1 answer not written: the rule changed" "$work/out.txt" \
+    && ! grep -q 'V-257835: .* -> ' "$work/out.txt" && ok "the check: SV-257835 not planned - the scan checked the old rule - and said" \
+    || { bad "the check with release 8: rc $rc"; grep -n "REVISION\|NEEDS\|V-257835\|fatal" "$work/out.txt" | head -5; }
+grep -q "the rule changed - the scan checked SV-257835r1044874_rule, STIG Manager has SV-257835r1099999_rule" "$html" \
+    && grep -q "no review in V2R8 - V2R7: Not Applicable (saved)" "$html" \
+    && ok "  ... the report: By hand, why, and the review of V2R7 beside no review" || bad "the report ($html) does not say it"
+
 echo
 if [ $fails -eq 0 ]; then echo "all real STIG Manager scenarios passed"; else echo "$fails real STIG Manager scenario(s) FAILED"; exit 1; fi

@@ -571,7 +571,11 @@ class FakeClient(object):
             return [a for a in self.assets if "benchmarkId" not in q or q["benchmarkId"] in [x["benchmarkId"] for x in a["stigs"]]]
         if path.startswith("/stigs/"):
             return self.rules.get(path.split("/")[2], [])
-        return [r for r in self.reviews.get(path.split("/")[-1], []) if r.get("benchmarkId", q.get("benchmarkId")) == q.get("benchmarkId")]
+        # a review with a revision is of an earlier revision's rule only: with rules=all, as STIG Manager
+        every = q.get("rules") == "all"
+        return [dict(r, stigs=[{"benchmarkId": q.get("benchmarkId"), "revisionStr": r.get("revision") or "V2R9", "isDefault": not r.get("revision")}])
+                if every else r for r in self.reviews.get(path.split("/")[-1], [])
+                if r.get("benchmarkId", q.get("benchmarkId")) == q.get("benchmarkId") and (every or not r.get("revision"))]
 
 
 class Windows(unittest.TestCase):
@@ -715,14 +719,14 @@ class Recheck(unittest.TestCase):
         c["rules"]["SV-2"]["severity"] = "high"
         out = sf.stig_recheck(c, [recheck_scan(SV_1="pass", SV_2="fail", SV_3="fail", SV_4="pass", SV_5="notchecked")], "web01")
         h = sf.recheck_headline(out)
-        self.assertEqual((h["text"], h["status"]), ("2 rules open (CAT I: 1), 3 reviews to update in STIG Manager, 1 by hand", "critical"))
+        self.assertEqual((h["text"], h["status"]), ("2 rules open (CAT I: 1), 3 status updates in STIG Manager, 1 for manual review", "critical"))
         rep = __import__("site_filters").findings_report({"web01": []}, "STIG recheck", [], ["stig"], sf.stig_recheck_sections(out))
-        self.assertEqual((rep["title"], rep["status"]), ("STIG recheck: 2 rules open (CAT I: 1), 3 reviews to update in STIG Manager, 1 by hand", "critical"))
+        self.assertEqual((rep["title"], rep["status"]), ("STIG recheck: 2 rules open (CAT I: 1), 3 status updates in STIG Manager, 1 for manual review", "critical"))
         self.assertNotIn("Healthy", [b["label"] for b in rep["summary"]])
         nothing = sf.stig_recheck(sm_list(rules=("SV-1",), SV_1=("pass", "accepted")), [], "web01")
         self.assertEqual(sf.recheck_headline(nothing)["status"], "ok")
         fixed_only = sf.stig_recheck(sm_list(rules=("SV-1",), SV_1=("fail", "accepted")), [recheck_scan(SV_1="pass")], "web01")
-        self.assertEqual(sf.recheck_headline(fixed_only), {"text": "0 rules open, 1 review to update in STIG Manager", "status": "info",
+        self.assertEqual(sf.recheck_headline(fixed_only), {"text": "0 rules open, 1 status update in STIG Manager", "status": "info",
                                                            "open": 0, "open_status": "ok"})
 
     def test_nothing_not_found_not_scanned(self):
@@ -759,8 +763,11 @@ class Recheck(unittest.TestCase):
         secs = sf.stig_recheck_sections(out)
         self.assertEqual([s["title"][:2] for s in secs[:3]], ["1.", "2.", "3."])
         self.assertEqual([b["value"] for b in secs[0]["boxes"]], [2, 2, 0, 1], "open now (still open, answered Open), to update, by hand, not rechecked")
+        self.assertEqual([b["label"] for b in secs[0]["boxes"]], ["Open findings", "Status updates", "Manual review", "Not rechecked"])
+        self.assertEqual(secs[0]["boxes"][1]["note"], "no fix needed: the host passes, no longer applies, or was answered - only STIG "
+                                                      "Manager's review changes (1 answered as a fail: also under Open findings)")
         self.assertEqual((secs[0]["headline"], secs[0]["headline_status"], secs[0]["summary_only"]),
-                         ("2 rules open, 2 reviews to update in STIG Manager, 1 not rechecked", "warning", True))
+                         ("2 rules open, 2 status updates in STIG Manager, 1 not rechecked", "warning", True))
         every = [s for s in secs if s["title"].startswith("Every host")][0]
         self.assertEqual(len(every["rows"]), 3)
         self.assertTrue(all(len(r) == len(every["columns"]) for r in every["rows"]))
@@ -850,6 +857,81 @@ class Recheck(unittest.TestCase):
 
 sys.path.insert(0, os.path.join(ROOT, "roles", "stigman_update", "library"))
 import site_stigman_update as smu  # noqa: E402
+
+
+class RevisionGuard(unittest.TestCase):
+    """0.67.0: an answer to a rule that changed between the scan's STIG revision and STIG Manager's is never written; a
+    review STIG Manager keeps for an earlier revision of the rule is said beside "no review"."""
+
+    def setUp(self):
+        c = sm_list(rules=("SV-1", "SV-2", "SV-3"), SV_1=("fail", "accepted"))
+        c.update(revision="V2R9", collectionId="7", assetId="42",
+                 earlier={"SV-3": {"result": "pass", "status": "accepted", "revision": "V2R8", "comment": True}})
+        c["rules"]["SV-1"]["rule"], c["rules"]["SV-3"]["rule"] = "SV-1r2_rule", "SV-3r2_rule"     # changed in V2R9
+        self.c = c
+
+    def scan(self, version="V2R8", ids=True):
+        s = dict(recheck_scan(SV_1="pass", SV_2="pass", SV_3="pass"), stig_version=version)
+        for it in s["items"]:
+            it["rule"] = it["rule"] if ids else ""
+        return s
+
+    def test_changed_rules_held_back(self):
+        r = sf.stig_recheck(self.c, [self.scan()], "web01")[0]
+        self.assertEqual([x["key"] for x in r["answered"]], ["SV-2"], "SV-2 did not change (r1 in both): written")
+        self.assertEqual([x["key"] for x in r["fixed"]], [])
+        self.assertEqual([x["key"] for x in r["by_hand"]], ["SV-1", "SV-3"])
+        self.assertEqual(r["by_hand"][0]["no_answer"], "the rule changed - the scan checked SV-1r1_rule, STIG Manager has SV-1r2_rule - the scan says "
+                                                     "pass, not written (update the scan's STIG to V2R9, or review it)")
+        self.assertEqual(r["revision_other"], "scanned with V2R8, STIG Manager has V2R9")
+        self.assertEqual(r["findings"], [], "no finding: the check's job fails only to ask for the approval")
+        self.assertEqual(r["changed"], 2)
+        self.assertEqual(r["row"]["status"], "warning")
+        self.assertIn("2 answers not written: the rule changed since (manual review)", r["row"]["cells"][1])
+        self.assertIn("  REVISION scanned with V2R8, STIG Manager has V2R9 - 2 answers not written: the rule changed (manual review below)", sf.stig_recheck_lines(r))
+        p = sf.stig_update_plan([r])
+        self.assertEqual([x["v"] for x in p], ["V-2"], "never written: SV-1 (Open, passes the old check), SV-3")
+        self.assertEqual(sf._ask_cell(r["by_hand"][1]), "no review in V2R9 - V2R8: Not a Finding (accepted)")
+        self.assertEqual(sf._ask_cell(r["answered"][0]), "no review")
+
+    def test_same_revision_or_no_rule_ids(self):
+        r = sf.stig_recheck(self.c, [self.scan("V2R9", ids=False)], "web01")[0]
+        self.assertEqual(([x["key"] for x in r["fixed"]], [x["key"] for x in r["answered"]], r["by_hand"]), (["SV-1"], ["SV-2", "SV-3"], []),
+                         "the same revision, no rule ids: as before")
+        r = sf.stig_recheck(self.c, [self.scan("V2R8", ids=False)], "web01")[0]
+        self.assertEqual([x["key"] for x in r["by_hand"]], ["SV-1", "SV-2", "SV-3"], "another revision, no rule ids to tell: none written")
+        self.assertEqual(sf.stig_update_plan([r]), [])
+        r = sf.stig_recheck(self.c, [self.scan("", ids=False)], "web01")[0]
+        self.assertEqual(r["by_hand"], [], "the scan's revision unknown, no ids: as before")
+        plan = sf.stig_update_plan(sf.stig_recheck(self.c, [self.scan("V2R9", ids=False)], "web01"))
+        sec = sf.stig_update_sections(plan)[0]
+        self.assertEqual([row[6] for row in sec["rows"]], ["Open (accepted)", "no review", "no review in V2R9 - V2R8: Not a Finding (accepted)"])
+
+    def test_helpers(self):
+        self.assertTrue(sf.other_revision("V2R8", "V2R9"))
+        self.assertFalse(sf.other_revision("V2R9", "v2r9"))
+        self.assertFalse(sf.other_revision("", "V2R9"))
+        self.assertTrue(sf.rule_changed("SV-1r1_rule", "SV-1r2_rule", False))
+        self.assertFalse(sf.rule_changed("SV-1r2_rule", "SV-1r2_rule", True), "the same rule id: the same check, whatever the revision")
+        self.assertTrue(sf.rule_changed("", "SV-1r2_rule", True))
+        self.assertFalse(sf.rule_changed("", "", False))
+
+    def test_read_earlier_reviews(self):
+        assets = [{"assetId": "11", "name": "web01", "fqdn": "", "stigs": [{"benchmarkId": "RHEL_8_STIG", "revisionStr": "V2R9"}]}]
+        reviews = {"11": [{"ruleId": "SV-2r1_rule", "ruleIds": ["SV-2r1_rule"], "result": "pass", "status": {"label": "accepted"}},
+                          {"ruleId": "SV-3r1_rule", "result": "pass", "status": {"label": "accepted"}, "comment": "ok", "revision": "V2R8"},
+                          {"ruleId": "SV-3r0_rule", "result": "fail", "status": {"label": "accepted"}, "revision": "V2R7"},
+                          {"ruleId": "SV-2r0_rule", "result": "fail", "status": {"label": "accepted"}, "revision": "V2R7"}]}
+        client = FakeClient(assets, reviews, {"RHEL_8_STIG": [{"ruleId": "SV-%dr2_rule" % i, "groupId": "V-%d" % i} for i in (1, 2, 3)]})
+        out = smr.read({"collections": [], "hosts": [{"host": "web01", "names": ["web01"], "benchmark": "RHEL_8_STIG", "rules": True}]}, client)
+        h = out["web01"]
+        self.assertEqual(sorted(h["reviews"]), ["SV-2"])
+        self.assertEqual(h["earlier"], {"SV-3": dict(smr.reviews_of([reviews["11"][1]])["SV-3"], revision="V2R8")},
+                         "the newest earlier revision's; SV-2 has a review in V2R9")
+        self.assertIn(("/collections/1/reviews/11", {"benchmarkId": "RHEL_8_STIG", "rules": "all", "projection": ["rule", "stigs"]}),
+                      client.asked)
+        out = smr.read({"collections": [], "hosts": [{"host": "web01", "names": ["web01"], "benchmark": "RHEL_8_STIG"}]}, client)
+        self.assertNotIn("earlier", out["web01"], "only with rules: true (the recheck)")
 
 
 class Update(unittest.TestCase):

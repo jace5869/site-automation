@@ -41,9 +41,11 @@ RETURN = r'''
 hosts:
   description: "Per host (per id): {status: found / not_found / no_stig (the asset is there, without this STIG) / several /
                 no_benchmark / error, why, collection, collectionId, asset, assetId, revision, reviews: {SV-257985: {result,
-                status, ts, rule, comment (true: it has one), version, severity, title}}, rules (with rules: true): {SV-257985:
-                {v, rule, version, severity, title}}}; with every: true {status, why, collection, collectionId, asset,
-                checklists: [{asset, assetId, benchmark, revision, site, instance, reviews, rules}]}"
+                status, ts, rule, comment (true: it has one), version, severity, title}}, earlier: {SV-257985: the same, and
+                revision} (with rules: true - a review of the rule in an earlier revision of the STIG, whose check changed since:
+                STIG Manager does not carry it to the revision in use), rules (with rules: true): {SV-257985: {v, rule, version,
+                severity, title}}}; with every: true {status, why, collection, collectionId, asset, checklists: [{asset, assetId,
+                benchmark, revision, site, instance, reviews, earlier, rules}]}"
   type: dict
   returned: always
 error:
@@ -109,6 +111,31 @@ def tail_of(base, name):
     return ("" if site == "NA" else site, "" if inst == "NA" else inst)
 
 
+def earlier_of(rows, bench, current, now):
+    """The asset's reviews of every revision (rules=all, projection=stigs: each review with the revisions its rule is in)
+    -> the reviews of rules only in other revisions than the one in use (current): a rule DISA changed has a new id, and
+    STIG Manager keeps the review of the old one apart - {SV id: record and the newest of those revisions ('V2R8')}; a
+    rule with a review in the revision in use (now) is left out. (rules=not-default-mapped answers none of them: proven
+    on STIG Manager 1.6.17, tests/stig/run_stigman_real_test.sh.)"""
+    out = {}
+    for r in rows or []:
+        mine = [s for s in (r.get("stigs") or []) if s.get("benchmarkId") == bench]
+        if any(s.get("isDefault") or s.get("revisionStr") == current for s in mine):
+            continue
+        revs = [s.get("revisionStr") or "" for s in mine]
+        rev = max([v for v in revs if v and v != current] or [""], key=revision_key)
+        for k, rec in reviews_of([r]).items():
+            if k not in now and (k not in out or revision_key(rev) > revision_key(out[k]["revision"])):
+                out[k] = dict(rec, revision=rev)
+    return out
+
+
+def revision_key(rev):
+    """'V2R10' -> (2, 10), for order ('' first)."""
+    m = re.match(r"V(\d+)R(\d+)$", (rev or "").strip().upper())
+    return (int(m.group(1)), int(m.group(2))) if m else (-1, -1)
+
+
 def reviews_of(rows):
     """STIG Manager's reviews of one asset -> {SV id: record}; a review that covers several revisions of a rule
     (ruleIds) counts for each of them."""
@@ -160,7 +187,7 @@ class Client(object):
         self.token = ans["access_token"]
 
     def get(self, path, **query):
-        q = urlencode(sorted(query.items()))
+        q = urlencode(sorted(query.items()), doseq=True)                # projection=rule&projection=stigs
         req = Request(self.api + path + ("?" + q if q else ""),
                       headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"})
         return self._open(req)
@@ -194,12 +221,21 @@ def read(p, client):
         return reviews_of(client.get("/collections/%s/reviews/%s" % (quote(str(a["_col"]["collectionId"])), quote(str(a["assetId"]))),
                                      benchmarkId=bench, projection="rule"))
 
+    def earlier(a, bench, rev, now):
+        """The reviews of the rules' other revisions (what the recheck says beside a rule with no review in rev); {} when
+        STIG Manager does not answer it - the recheck reads the same without them."""
+        try:
+            return earlier_of(client.get("/collections/%s/reviews/%s" % (quote(str(a["_col"]["collectionId"])), quote(str(a["assetId"]))),
+                                         benchmarkId=bench, rules="all", projection=["rule", "stigs"]), bench, rev, now)
+        except RuntimeError:
+            return {}
+
     for h in p["hosts"]:
         host, bench = h.get("host", ""), h.get("benchmark") or ""
         hid = h.get("id") or host
         names = [n for n in (h.get("names") or [host]) if n]
         if h.get("every"):
-            out[hid] = every(h, names, by_name, cols, assets, rules, reviews)
+            out[hid] = every(h, names, by_name, cols, assets, rules, reviews, earlier)
             continue
         if not bench:
             out[hid] = {"status": "no_benchmark", "why": "no STIG Manager benchmark for this host's OS (check_stig_stigman_benchmarks)"}
@@ -256,10 +292,11 @@ def read(p, client):
                      "assetId": str(a.get("assetId")), "benchmark": bench, "revision": rev, "reviews": rv}
         if rl is not None:
             out[hid]["rules"] = rl
+            out[hid]["earlier"] = earlier(a, bench, rev, rv)
     return out
 
 
-def every(h, names, by_name, cols, assets, rules, reviews):
+def every(h, names, by_name, cols, assets, rules, reviews, earlier):
     """A host's every checklist in STIG Manager (the STIG recheck on Windows): its asset's STIGs, and the STIGs of its web
     site and database assets (<asset>-<site>-<instance>, in the same collection), each with its reviews and rules."""
     if h.get("collection"):
@@ -293,9 +330,11 @@ def every(h, names, by_name, cols, assets, rules, reviews):
                 bench = s.get("benchmarkId") or ""
                 if not bench:
                     continue
+                rv = reviews(x, bench)
                 lists.append({"asset": x.get("name", ""), "assetId": str(x.get("assetId")), "benchmark": bench,
                               "revision": s.get("revisionStr") or "", "site": site, "instance": inst,
-                              "reviews": reviews(x, bench), "rules": rules(bench, s.get("revisionStr") or "")})
+                              "reviews": rv, "earlier": earlier(x, bench, s.get("revisionStr") or "", rv),
+                              "rules": rules(bench, s.get("revisionStr") or "")})
     except RuntimeError as e:
         return {"status": "error", "why": str(e)}
     return {"status": "found", "why": "", "collection": a["_col"].get("name", ""), "collectionId": str(a["_col"].get("collectionId", "")),

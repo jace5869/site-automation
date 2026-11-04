@@ -3,7 +3,10 @@
   stigman_mock.py PORT DATA.json LOG
 DATA.json: {"secret": "...", "collections": [{"collectionId": "1", "name": "..."}],
             "assets": {"<collectionId>": [{"assetId": "11", "name": "...", "fqdn": "", "stigs": [{"benchmarkId": ..., "revisionStr": ...}]}]},
-            "reviews": {"<assetId>": [{"ruleId": ..., "result": ..., "status": {"label": ...}, "rule": {...}, "benchmarkId": optional}]},
+            "reviews": {"<assetId>": [{"ruleId": ..., "result": ..., "status": {"label": ...}, "rule": {...}, "benchmarkId": optional,
+                                       "revision": optional - "V2R8": a review of that earlier revision's rule only (its check
+                                       changed), served only with rules=all (projection=stigs: its revision, not
+                                       the default), as STIG Manager does}]},
             "rules": {"<benchmarkId>": [{"ruleId": ..., "groupId": ..., "version": ..., "severity": ..., "title": ...}]} (every revision),
             "writers": ["<client>", ...] (optional: the clients that may write reviews - none: read-only),
             "reject_fail_without_comment": true (optional: a finding without a comment is rejected, as a collection may say)}
@@ -118,9 +121,15 @@ class H(BaseHTTPRequestHandler):
                 return
             return self.send(200, r)
         if len(parts) == 6 and parts[1:3] == ["api", "collections"] and parts[4] == "reviews":
-            # a review that names its benchmark is only in that STIG's reviews (the hosts with several STIGs)
-            return self.send(200, [r for r in d["reviews"].get(parts[5], [])
-                                   if "benchmarkId" not in q or r.get("benchmarkId", q["benchmarkId"][0]) == q["benchmarkId"][0]])
+            # a review that names its benchmark is only in that STIG's reviews (the hosts with several STIGs); one of an
+            # earlier revision only with rules=all (the default: default-mapped - the revision in use)
+            every = q.get("rules", ["default-mapped"])[0] == "all"
+            rows = [r for r in d["reviews"].get(parts[5], [])
+                    if ("benchmarkId" not in q or r.get("benchmarkId", q["benchmarkId"][0]) == q["benchmarkId"][0]) and (every or not r.get("revision"))]
+            if "stigs" in q.get("projection", []):
+                rows = [dict(r, stigs=[{"benchmarkId": r.get("benchmarkId") or (q.get("benchmarkId") or [""])[0],
+                                        "revisionStr": r.get("revision") or "", "isDefault": not r.get("revision")}]) for r in rows]
+            return self.send(200, [dict((k, v) for k, v in r.items() if k != "revision") for r in rows])
         if len(parts) == 7 and parts[1:3] == ["api", "stigs"] and parts[4] == "revisions" and parts[6] == "rules":
             if parts[3] not in d.get("rules", {}):
                 return self.send(404, {"error": "no STIG " + parts[3]})

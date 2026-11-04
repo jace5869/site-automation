@@ -25,7 +25,7 @@
     site_report_title: Windows STIG recheck
     # report only: no finding is raised for what is open, so the job never says HEALTHY - what is open and what to
     # update are its lines above, and the report's title
-    site_report_no_findings: REPORT ONLY - what is open and what to update in STIG Manager are listed above
+    site_report_no_findings: REPORT ONLY - the open findings and STIG Manager's status updates are listed above
   pre_tasks:
     - name: Windows hosts only
       ansible.builtin.include_role:

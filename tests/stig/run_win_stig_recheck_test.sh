@@ -132,7 +132,7 @@ PY
 }
 
 run "every STIG of the server's asset and its web site's: only their Open and Not Reviewed rules checked, sorted" ok -- \
-    "REPORT ONLY - what is open and what to update in STIG Manager are listed above. Checks run: stig" "!HEALTHY" "5 rules Open or Not Reviewed in STIG Manager: V-218735, V-218736, V-254238, V-254239, V-254241" \
+    "REPORT ONLY - the open findings and STIG Manager's status updates are listed above. Checks run: stig" "!HEALTHY" "5 rules Open or Not Reviewed in STIG Manager: V-218735, V-218736, V-254238, V-254239, V-254241" \
     "win01 - Microsoft Windows Server 2022: 2 Open, 1 Not Reviewed in STIG Manager - fixed 1, now n/a 0, answered 0, still open 1, by hand 1, left out 0; STIG Manager: Windows Servers / win01 (V2R3); checked: only these rules (-SelectVuln)" \
     "win01 - Microsoft IIS 10.0 Site - Default Web Site: 1 Open, 1 Not Reviewed in STIG Manager - fixed 1, now n/a 0, answered 1, still open 0, by hand 0, left out 0; STIG Manager: Windows Servers / win01-Default Web Site-NA (V2R9)" \
     "FIXED  V-254238 (X-254238) CAT I" "ANSWER V-218735 (X-218735) CAT II" "!Microsoft Edge" "!win010" "!win01-old" "!Traceback" "!is undefined"
