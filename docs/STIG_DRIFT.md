@@ -556,6 +556,13 @@ you are most likely to set:
 | `check_stig_update_workflow` | `false` | `true` on workflow 37's check: what to write, handed on, `NEEDS APPROVAL` |
 | `check_stig_update`, `check_stig_update_status` | `[fixed, now_na, answered]`, `submitted` | workflow 37: what is written, and with which status |
 
+## Updating Evaluate-STIG
+
+The STIG jobs never install or update Evaluate-STIG. *Evaluate-STIG - update* (`playbooks/evaluate_stig_update.yml`)
+does, on the RHEL hosts, from the zip you keep in your own repository - only where it is newer:
+[EVALUATE_STIG_UPDATE.md](EVALUATE_STIG_UPDATE.md). After it, the recheck's *STIG (scan)* column should match STIG
+Manager's revision and *Held back* drop to about 0; `check_stig_recheck_carry_forward` can then be off again.
+
 ## Not in this version
 
 - The drift report and the recheck never write to STIG Manager. Workflow 37 writes the recheck's reviews after an

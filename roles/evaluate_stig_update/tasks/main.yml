@@ -1,0 +1,139 @@
+---
+# EVALUATE-STIG - UPDATE. 1. The zip, read once on the AAP side (library/site_evaluate_stig.py, action zip): its
+# version and STIG content. 2. Each host's Evaluate-STIG read (action inspect - also in Check): update, up to date,
+# newer than the zip, not installed, version unknown, or running now (a scan: left for later). 3. Only the hosts to
+# update: the zip copied (its SHA-256 checked), unpacked beside the folder, its version checked, the answer files
+# carried over, swapped in, a quick run - which failing puts the old one back - and the zip deleted.
+- name: Evaluate-STIG | the zip, on the AAP side
+  site_evaluate_stig:
+    action: zip
+    path: >-
+      {%- set z = evaluate_stig_update_zip | string -%}
+      {{ z if z.startswith('/') else playbook_dir ~ '/' ~ (z[10:] if z.startswith('playbooks/') else z) }}
+    version_regex: "{{ evaluate_stig_update_version_regex }}"
+  register: _esu_zip
+  delegate_to: localhost
+  run_once: true
+  become: false
+  check_mode: false               # only reads
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+- name: Evaluate-STIG | a zip to install
+  ansible.builtin.assert:
+    that: not _esu_zip.zip.error
+    fail_msg: "Nothing done: {{ _esu_zip.zip.error }}"
+    quiet: true
+  run_once: true
+
+- name: Evaluate-STIG | the zip
+  ansible.builtin.debug:
+    msg: >-
+      {{ ['Evaluate-STIG ' ~ _esu_zip.zip.version ~ ' (read from ' ~ _esu_zip.zip.from ~ '): ' ~ (_esu_zip.zip.path | basename)
+          ~ ', ' ~ _esu_zip.zip.files ~ ' files, ' ~ ((_esu_zip.zip.bytes / 1048576) | round(0) | int) ~ ' MB unpacked',
+          'RHEL STIG content: ' ~ (_esu_zip.zip.content.items() | map('join', ' ') | join(', ') or 'none named U_RHEL_..._VnRn')]
+         + (['Not used (an older version): ' ~ (_esu_zip.others | join(', '))] if _esu_zip.others else []) }}
+  run_once: true
+
+- name: Evaluate-STIG | the folder on the hosts
+  ansible.builtin.set_fact:
+    _esu_dest: "{{ evaluate_stig_update_dest or check_stig_evaluate | default('') }}"
+
+- name: Evaluate-STIG | a folder to update
+  ansible.builtin.assert:
+    that: _esu_dest | length > 0
+    fail_msg: >-
+      Nothing done: no Evaluate-STIG folder - set check_stig_evaluate (the STIG jobs' setting, e.g. /opt/Evaluate-STIG) in
+      all.yml, or evaluate_stig_update_dest.
+    quiet: true
+
+- name: Evaluate-STIG | what each host has
+  site_evaluate_stig:
+    action: inspect
+    dest: "{{ _esu_dest }}"
+    want: "{{ _esu_zip.zip.version }}"
+    force: "{{ evaluate_stig_update_force | bool }}"
+    install_missing: "{{ evaluate_stig_update_install_missing | bool }}"
+    version_regex: "{{ evaluate_stig_update_version_regex }}"
+  register: _esu_host
+  check_mode: false               # only reads
+
+- name: Evaluate-STIG | updated where the zip is newer
+  when: _esu_host.decision == 'update' and not ansible_check_mode
+  block:
+    - name: Evaluate-STIG | the zip, copied to the host
+      ansible.builtin.copy:
+        src: "{{ _esu_zip.zip.path }}"
+        dest: "{{ evaluate_stig_update_tmp }}/{{ _esu_zip.zip.path | basename }}"
+        mode: "0600"
+
+    - name: Evaluate-STIG | put in place
+      site_evaluate_stig:
+        action: install
+        dest: "{{ _esu_dest }}"
+        zip: "{{ evaluate_stig_update_tmp }}/{{ _esu_zip.zip.path | basename }}"
+        want: "{{ _esu_zip.zip.version }}"
+        sha256: "{{ _esu_zip.zip.sha256 }}"
+        force: "{{ evaluate_stig_update_force | bool }}"
+        install_missing: "{{ evaluate_stig_update_install_missing | bool }}"
+        keep: "{{ evaluate_stig_update_keep }}"
+        backups: "{{ evaluate_stig_update_backups | int }}"
+        smoke: "{{ evaluate_stig_update_smoke }}"
+        smoke_timeout: "{{ evaluate_stig_update_smoke_timeout | int }}"
+        pwsh: "{{ check_stig_pwsh | default('') }}"
+        version_regex: "{{ evaluate_stig_update_version_regex }}"
+      register: _esu_done
+  always:
+    - name: Evaluate-STIG | the copied zip, deleted
+      ansible.builtin.file:
+        path: "{{ evaluate_stig_update_tmp }}/{{ _esu_zip.zip.path | basename }}"
+        state: absent
+
+- name: Evaluate-STIG | this host
+  ansible.builtin.set_fact:
+    evaluate_stig_update_result: >-
+      {%- set d = _esu_done if (_esu_done is defined and _esu_done.decision is defined) else _esu_host -%}
+      {%- set line = inventory_hostname ~ ': ' -%}
+      {%- if d.error | default('') -%}
+      {%-   set line = line ~ 'NOT UPDATED - ' ~ d.error -%}
+      {%- elif d.changed | default(false) -%}
+      {%-   set line = line ~ 'updated ' ~ (d.version_before or 'none') ~ ' -> ' ~ d.version
+                       ~ ((' (RHEL STIG content ' ~ (d.content_before.items() | map('join', ' ') | join(', ') or '-') ~ ' -> '
+                          ~ (d.content.items() | map('join', ' ') | join(', ')) ~ ')') if d.content else '')
+                       ~ ('; the old one kept as ' ~ d.previous if d.previous else '')
+                       ~ ('; answer files carried over: ' ~ (d.kept | length) if d.kept else '')
+                       ~ ('; yours kept over the zip\'s: ' ~ (d.replaced | join(', ')) if d.replaced else '')
+                       ~ ('; ' ~ d.smoke if d.smoke else '') ~ ('; ' ~ d.preferences if d.preferences else '') -%}
+      {%- elif d.decision == 'update' -%}
+      {%-   set line = line ~ ('would be updated: ' if ansible_check_mode else '') ~ d.why -%}
+      {%- else -%}
+      {%-   set line = line ~ d.why -%}
+      {%- endif -%}
+      {{ {'host': inventory_hostname, 'decision': d.decision, 'changed': d.changed | default(false), 'error': d.error | default(''),
+          'before': d.version_before | default(d.version | default('')), 'line': line} }}
+
+- name: Evaluate-STIG | every host
+  ansible.builtin.debug:
+    msg: >-
+      {{ ansible_play_hosts | map('extract', hostvars) | selectattr('evaluate_stig_update_result', 'defined')
+         | map(attribute='evaluate_stig_update_result') | map(attribute='line') | list
+         + (["After the update: run the STIG recheck - its STIG (scan) column should match STIG Manager's revision, and Held back
+              drop to about 0 (then check_stig_recheck_carry_forward can be off again)."]
+            if ansible_play_hosts | map('extract', hostvars) | selectattr('evaluate_stig_update_result', 'defined')
+               | map(attribute='evaluate_stig_update_result') | selectattr('changed') | list else []) }}
+  run_once: true
+
+- name: Evaluate-STIG | as job artifacts (evaluate_stig_update)
+  ansible.builtin.set_stats:
+    data:
+      evaluate_stig_update: >-
+        {{ {'version': _esu_zip.zip.version, 'hosts': ansible_play_hosts | map('extract', hostvars)
+            | selectattr('evaluate_stig_update_result', 'defined') | map(attribute='evaluate_stig_update_result') | list,
+            'dry_run': ansible_check_mode} }}
+  run_once: true
+
+- name: Evaluate-STIG | a host that could not be updated fails the job
+  ansible.builtin.fail:
+    msg: "{{ evaluate_stig_update_result.line }}"
+  when: evaluate_stig_update_result.error | length > 0

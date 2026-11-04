@@ -1,0 +1,18 @@
+---
+# EVALUATE-STIG - UPDATE (playbooks/evaluate_stig_update.yml; docs/EVALUATE_STIG_UPDATE.md). The new Evaluate-STIG zip
+# (downloaded by you - its site needs a CAC) is kept in YOUR repository, never the public one, and listed in .site-local.
+# Each host's Evaluate-STIG is updated only when the zip is newer; Check only reads and says what it would do.
+evaluate_stig_update_zip: files/evaluate-stig     # the zip, or a folder of zips (the newest version is taken); from playbooks/ (files/... = playbooks/files/...) or an absolute path on the AAP side
+evaluate_stig_update_dest: ""                     # Evaluate-STIG on the hosts: its folder (or Src/Evaluate-STIG, or the script); "" = check_stig_evaluate - the folder the STIG jobs run it from
+evaluate_stig_update_force: false                 # true = put the zip's in place even when the host's is the same version or newer (or its version cannot be read)
+evaluate_stig_update_install_missing: false       # true = a host without Evaluate-STIG in that folder gets it; false = listed, left as it is
+evaluate_stig_update_keep: [AnswerFiles]          # folders of the old Evaluate-STIG whose files are carried into the new one (your own answer files); a file the zip also has: yours
+evaluate_stig_update_backups: 1                   # earlier folders kept beside it (<folder>.previous-<version>); 0 = none
+# The quick run after the update: auto = Evaluate-STIG_Bash.sh --ListSupportedProducts (else pwsh Evaluate-STIG.ps1
+# -ListSupportedProducts); none; or your own command ({dir} = the script's folder). It fails: the old one is put back.
+evaluate_stig_update_smoke: auto
+evaluate_stig_update_smoke_timeout: 600           # seconds the quick run may take
+evaluate_stig_update_tmp: /var/tmp                # where the zip is copied on the host before it is unpacked (deleted after)
+# Where the version is in Evaluate-STIG.ps1 (its first group): its header line "# # Version:     1.2604.0" (or a
+# $EvaluateStigVersion = "..." line); the zip's file name is tried when it is not there.
+evaluate_stig_update_version_regex: (?:^[ \t]*#[ \t#]*Version:[ \t]*|\$EvaluateStigVersion\s*=\s*["'])([0-9]+(?:\.[0-9]+)+)

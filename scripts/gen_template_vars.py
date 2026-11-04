@@ -240,6 +240,14 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## credential; docs/STIG_DRIFT.md, "Answer files from a Windows share") - usually in all.yml
 # check_stig_evaluate_answers: '\\\\fileserver.yourdomain.mil\\stig\\AnswerFiles'
 """),
+    "evaluate_stig_update.yml": ("Evaluate-STIG - update", "Machine (with sudo)", "", """\
+## The new Evaluate-STIG zip: in YOUR repository (listed in .site-local), playbooks/files/evaluate-stig/ - the newest
+## version there is taken. The folder on the hosts is check_stig_evaluate (all.yml, as for the STIG jobs).
+## Run it with Check first: it lists each host's version and what it would do.
+# target: rhel_servers
+# evaluate_stig_update_zip: files/evaluate-stig
+# evaluate_stig_update_keep: [AnswerFiles]          # your own answer files in Evaluate-STIG's folder, carried over
+"""),
     "stig_recheck.yml": ("STIG recheck", "Machine, STIG Manager API; Windows file share with check_stig_evaluate_answers", "check_stig", """\
 ## What to check again is read from STIG Manager (the same settings and "STIG Manager API" credential as the STIG
 ## drift report); the scanner too (check_stig_scanner, check_stig_evaluate ...)

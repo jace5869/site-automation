@@ -28,6 +28,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Database health - MariaDB / MySQL | `playbooks/database_health.yml` | [database_health.yml](database_health.yml) |
 | ESXi - network check | `playbooks/esxi_network_check.yml` | [esxi_network_check.yml](esxi_network_check.yml) |
 | ESXi - security settings | `playbooks/esxi_security.yml` | [esxi_security.yml](esxi_security.yml) |
+| Evaluate-STIG - update | `playbooks/evaluate_stig_update.yml` | [evaluate_stig_update.yml](evaluate_stig_update.yml) |
 | fapolicyd | `playbooks/fapolicyd.yml` | [fapolicyd.yml](fapolicyd.yml) |
 | fapolicyd denials | `playbooks/fapolicyd_denials.yml` | [fapolicyd_denials.yml](fapolicyd_denials.yml) |
 | Health check | `playbooks/health_check.yml` | [health_check.yml](health_check.yml) |

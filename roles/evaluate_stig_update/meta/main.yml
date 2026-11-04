@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: evaluate_stig_update
+  description: "Evaluate-STIG on RHEL hosts updated from the zip kept in your repository - only where it is newer; the answer files carried over, the old folder kept."
+  license: MIT
+  min_ansible_version: "2.16"
+dependencies: []

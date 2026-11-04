@@ -1,0 +1,28 @@
+---
+# EVALUATE-STIG - UPDATE. Evaluate-STIG on the RHEL hosts updated from the zip you keep in your repository
+# (playbooks/files/evaluate-stig/, listed in .site-local - never the public one): each host only when the zip is newer
+# than what it has. The old folder is kept beside it (<folder>.previous-<version>), your own answer files
+# (AnswerFiles) are carried over, a quick run proves the new one works - and puts the old one back when it does not.
+# A host running a scan now is left for later. The folder is check_stig_evaluate, where the STIG jobs run it from.
+# Check (dry run) only reads: each host's version, and what would be done. docs/EVALUATE_STIG_UPDATE.md
+#
+#   ansible-playbook playbooks/evaluate_stig_update.yml -e target=rhel_servers --check
+#   ansible-playbook playbooks/evaluate_stig_update.yml -e target=rhel_servers
+- name: Evaluate-STIG - update
+  hosts: "{{ target | default('all') }}"
+  become: true
+  gather_facts: false
+  pre_tasks:
+    - name: Linux hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  tasks:
+    - name: Update Evaluate-STIG where the zip is newer
+      ansible.builtin.include_role:
+        name: evaluate_stig_update
