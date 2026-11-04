@@ -5,7 +5,9 @@ in this process - the logo's size (image_size), and the command, portal and atla
     python3 tests/test_report_history.py"""
 import importlib.util
 import os
+import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import threading
@@ -486,6 +488,59 @@ class AtlasLook(unittest.TestCase):
         self.assertIn("max-width:1760px", h)
         self.assertIn("IntersectionObserver", h)                                   # the section in view, marked
 
+
+    def test_rail_search_columns_csv(self):
+        """0.63.0: the section rail (more than two sections), the search box, Columns (check boxes the CSS acts on, a
+        rule per place up to the most columns here) and CSV; what needs the script hidden until it runs."""
+        h = self.render()
+        self.assertIn('<div class="wrap has-rail">', h)
+        self.assertIn('<nav class="card rail" aria-label="Sections of this report">', h)
+        self.assertIn('<a href="#s2"><span class="dot c-warning"></span><span class="t">Checks</span><span class="m"></span><span class="n">2</span></a>', h)
+        self.assertIn('<nav class="nav railed" aria-label="Sections">', h)
+        self.assertIn('<main class="main" id="top">', h)
+        self.assertIn('<div class="find" role="search" hidden>', h)
+        self.assertIn('<input id="find" type="search"', h)
+        self.assertIn("[hidden]{display:none!important}", h)                        # a hidden tool is never shown dead
+        self.assertIn('<details class="cols"><summary class="btn"', h)
+        for i, c in enumerate(["Host", "Result", "State", "Status"], 1):
+            self.assertIn('<label><input type="checkbox" class="c%d" checked>%s</label>' % (i, c), h)
+            self.assertIn(".body:has(.cols .c%d:not(:checked)) .tw :is(th,td):nth-child(%d){display:none!important}" % (i, i), h)
+        self.assertNotIn(".cols .c5", h)
+        self.assertIn('<button class="btn csv" type="button" hidden', h)
+        self.assertIn('<button class="call" type="button" hidden>Show all</button>', h)
+        self.assertNotIn('class="filter"', h)                                      # 2 rows: no filter
+        h = self.render(_report=dict(REPORT, sections=[{"title": "A", "lines": ["x"]}, {"title": "B", "columns": ["One"], "rows": [[str(i)] for i in range(9)]}]))
+        self.assertNotIn('class="card rail"', h)                                    # two sections: no rail, no list in the bar
+        self.assertIn('<div class="wrap">', h)
+        self.assertNotIn('<details class="cols">', h)                               # one column: nothing to take off
+        self.assertIn('<input class="filter" type="search" hidden placeholder="Filter these 9 rows"', h)
+
+    def test_copy_beside_a_command(self):
+        h = self.render(_report=dict(REPORT, sections=[{"title": "F", "columns": ["Host", "Look further"],
+                                                        "rows": [["web01", "systemctl status chronyd; journalctl -u chronyd <x>"], ["web02", ""]]}]))
+        self.assertIn('<td class="lk" data-l="Look further" data-v="systemctl status chronyd; journalctl -u chronyd &lt;x&gt;"><span class="cv">'
+                      '<span class="cmd">systemctl status chronyd; journalctl -u chronyd &lt;x&gt;</span><button class="ccopy" type="button" hidden '
+                      'title="Copy" aria-label="Copy the command">', h)
+        self.assertEqual(h.count('class="ccopy"'), 1)                               # an empty cell: no button
+        self.assertIn(":root:not(.js) td.lk .cmd,:root:not(.js) .code pre{-webkit-user-select:all;user-select:all}", h)
+
+    def test_the_script_loaded_from_the_site_and_inline(self):
+        """The page loads site-report.js (site_report_web makes the address relative to the page) and carries the same
+        script inline, which runs once."""
+        h = self.render()
+        self.assertIn('<script src="site-report.js"></script>', h)
+        with open(os.path.join(REPO, "roles", "site_email", "templates", "site_report.js")) as f:
+            js = f.read()
+        self.assertIn('<script id="site-report-js">\n' + js, h)
+        self.assertIn("if(window.siteReport)return;window.siteReport=1;", js)
+        js.encode("ascii")                                                          # the Windows writer writes ASCII
+        for t in ("{{", "{%", "{#", "</script"):
+            self.assertNotIn(t, js)
+        node = shutil.which("node")
+        if node:
+            out = subprocess.run([node, "--check", os.path.join(REPO, "roles", "site_email", "templates", "site_report.js")],
+                                 capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stderr)
 
 if __name__ == "__main__":
     unittest.main()

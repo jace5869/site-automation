@@ -10,6 +10,7 @@ runs passed over, max_pages, named jobs, a report that cannot be read.
 import base64
 import datetime
 import gzip
+import hashlib
 import importlib.util
 import json
 import os
@@ -603,6 +604,38 @@ def clm(script, env=None):
     line = [x for x in out.stdout.splitlines() if x.startswith("###SITE-JSON### ")]
     assert line, (out.stdout, out.stderr)
     return json.loads(line[-1][16:])
+
+
+class SiteScript(unittest.TestCase):
+    """0.63.0: an atlas page's script, written beside the index as site-report.js, and loaded from there by the page
+    and the index (a Content-Security-Policy with script-src 'self' runs it)."""
+    PAGE = ('<html><head><script>try{}catch(e){}</script>\n<script src="site-report.js"></script>\n</head><body>'
+            '<script id="site-report-js">\n(function(){if(window.siteReport)return;window.siteReport=1;})();\n\n</script></body></html>')
+
+    def test_the_script_out_of_the_page(self):
+        self.assertEqual(rw.page_script(self.PAGE), "(function(){if(window.siteReport)return;window.siteReport=1;})();\n")
+        self.assertEqual(rw.page_script("<html><script>x</script></html>"), "")       # an email look: none
+
+    def test_loaded_from_the_top_of_the_folder(self):
+        js = rw.page_script(self.PAGE)
+        v = hashlib.sha1(js.encode("utf-8")).hexdigest()[:10]
+        self.assertEqual(rw.script_tag("Linux - health check/latest.html", js), '<script src="../site-report.js?v=%s"></script>' % v)
+        self.assertEqual(rw.script_tag("site/a/b/p.html", js), '<script src="../../../site-report.js?v=%s"></script>' % v)
+        self.assertEqual(rw.script_tag("index.html", js), '<script src="site-report.js?v=%s"></script>' % v)
+        self.assertNotEqual(rw.script_tag("index.html", js + " "), rw.script_tag("index.html", js))   # a new script: a new address
+
+    def test_the_index_loads_it(self):
+        html = rw.index_html([], "index.html", "x", None, "now", (), "atlas", "var a;\n")
+        self.assertIn(rw.ATLAS_EARLY + "\n" + rw.script_tag("index.html", "var a;\n"), html)
+        self.assertIn("if(window.siteReport)return;", html)                           # its own script then does nothing
+        self.assertNotIn("<script src=", rw.index_html([], "index.html", "x", None, "now", (), "atlas"))
+        self.assertNotIn("<script src=", rw.index_html([], "index.html", "x", None, "now", (), "portal", "var a;\n"))
+
+    def test_the_real_script_parses_and_is_ascii(self):
+        with open(os.path.join(REPO, "roles", "site_email", "templates", "site_report.js")) as f:
+            js = f.read()
+        js.encode("ascii")
+        self.assertIn("window.siteReport", js)
 
 
 class Windows(unittest.TestCase):

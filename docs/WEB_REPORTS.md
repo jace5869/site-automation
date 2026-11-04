@@ -69,12 +69,49 @@ Since 0.53.0:
 - **The index page** in the same look, with the same switch.
 - **Printed:** white, landscape, every section open, each table's headings repeated on every page.
 - **One file per page:** no fonts or scripts from elsewhere (system fonts: Segoe UI and Cascadia Mono on Windows), so
-  a page opens from a share too. Without its script (blocked) it reads the same, and Light / Auto / Dark and the row
-  height still switch; only remembering them, sorting, filtering, Print and the Copy buttons need it.
-  - **To have all of it with a Content-Security-Policy:** allow the pages' inline script and style on the report
-    site only (`script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'`). To see whether one blocks it:
-    F12 > Console on a report page shows *Refused to execute inline script because it violates the following Content
-    Security Policy directive*.
+  a page opens from a share too. The page's script is in it, and since 0.63.0 also in **`site-report.js`** at the top
+  of the website (below).
+
+Since 0.63.0:
+
+- **A rail of the sections** beside the report on a wide screen (1200 px and up; on a narrower one, the bar's list of
+  them, with the switches and Print as icons beside the search): each section with its status dot and row count, the
+  one you are reading marked, *Top* to go back up.
+- **Search** in the bar, for the whole report: type a word, a host or an id and only the rows, lines and cards that
+  have it stay, in every section; a section without any is put away (all of it stays when its title has the word).
+  The rail shows how many each section has, the bar how many in all, and the words are marked where the browser can
+  (Chrome and Edge 105 and newer). **/** or **Ctrl+K** goes to the box, **Enter** to the first section with a match,
+  **Esc** clears it. The table's own filter box (past 8 rows) still works, with the search or alone.
+- **Columns** above each table: tick the columns to see, *Show all* to have them back. It works without the script
+  too, and what you take off is left out of Print, Copy and CSV as well.
+- **CSV** above each table: the table **as shown** - its columns, the rows the search and the filter leave, in the order
+  sorted - as a `.csv` file named after the report and the section, that opens in Excel (accents and all: it starts
+  with a byte order mark). A value that Excel would read as a formula (`=`, `+`, `-` or `@` at its start, and not a
+  number) gets a `'` before it, so a host name or log line can never run as one.
+- **Copy beside every command** in a table (the *Look further*, *Command*, *Hint* and *Next step* columns), as on the
+  Start here cards: it copies the command alone. Where the script is blocked, a click on a command selects all of it
+  (then Ctrl+C).
+- **`site-report.js`**: the job writes the pages' script beside the index too (into `report_web_dest`'s top folder,
+  only when it changed - by the same login, the same way as the pages) and each page loads it from there. A web
+  server whose Content-Security-Policy allows no inline script but scripts from the site itself (`script-src 'self'`,
+  the usual hardening) runs it, so sorting, filtering, the search, CSV, Copy and Print work there now. The page
+  still carries the script too, for a page saved or copied by itself; it runs once.
+
+**Where the page's script is blocked.**
+
+| What you see | Why, and what to do |
+|---|---|
+| Everything works | The script ran - from `site-report.js` or from the page |
+| No search box, no CSV, no Copy buttons; the rail, Columns and Light / Auto / Dark work | No script runs on the site at all (`script-src 'none'`, or `site-report.js` not there yet: the next report run writes it). F12 > Console says which: *Loading the script ... violates the following Content Security Policy directive* - allow scripts from the site itself on the report site only: `script-src 'self'` |
+| F12 > Console: *Executing inline script violates ... 'script-src 'self''* (twice) and everything works | Expected: the copy of the script in the page was blocked and `site-report.js` ran instead. Nothing to do |
+
+To see the policy the site sends (on any Linux box that reaches it; the site's own address in place of the example):
+
+```bash
+curl -skI --noproxy '*' https://reports.yoursite.mil/index.html | grep -i content-security
+```
+
+On Windows: F12 > Network > the page > Response Headers > `Content-Security-Policy`.
 
 **Where the design comes from** - the guidance it follows, for anyone who wants to change it:
 

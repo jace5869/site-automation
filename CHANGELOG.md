@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.63.0 — 2026-11-04
+
+**Updating without scripts:** paste `site-automation-0.63.0-changed-since-0.62.0.zip` as it is (from an older version,
+its own zip). They leave out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. (Never paste the full `site-automation-0.63.0.zip` over your copy: it carries the example
+`group_vars`.) Nothing to set up in AAP; the next run of each report writes its page with all of this, and
+`site-report.js` at the top of the website.
+
+**Report website - a section rail, search, Columns, CSV and Copy on commands, and its script where inline script is
+blocked.** On the report pages (the atlas look):
+- **The section rail:** beside the report on a wide screen, each section with its status and row count, the one in
+  view marked (the bar's list of them on a narrower screen).
+- **Search** for the whole report in the bar: the rows, lines and cards that have the words stay, sections without any
+  are put away, the rail counts each section's matches; `/` or Ctrl+K, Enter, Esc.
+- **Columns** on each table (check boxes - no script needed) and **CSV** (the table as shown: its columns, the rows
+  searched and filtered, sorted; a byte order mark for Excel; a value that would be a formula made text).
+- **Copy beside each command** in a table's *Look further* / *Command* / *Hint* / *Next step* column.
+- **`site-report.js`:** the web server that blocks inline script (0.62.0) blocked sorting, filtering and Copy too. The
+  pages' script (`roles/site_email/templates/site_report.js`) is now written beside the index as `site-report.js`
+  by every way the website is written (a folder, a share over SMB, an upload, a Windows server's script, the copy job),
+  and each page and the index load it from there - a policy of `script-src 'self'` runs it. A page keeps a copy
+  inline for where the file is not there; it runs once.
+- Narrower than 1200 px (a laptop at 125 or 150%), the bar's switches and Print are icons, so its list of sections
+  keeps room beside the search.
+- On a phone, a value of several words (or a command and its Copy) stays one value beside its column's name (they
+  were split onto lines of their own).
+`report_atlas.html.j2`, `site_report.js` (new), `site_report_web.py` (`page_script`, `script_tag`, the index loads it
+too); `docs/WEB_REPORTS.md` (since 0.63.0; where the script is blocked, how to see the site's policy). Tests:
+`tests/test_report_history.py`, `tests/test_report_web.py`.
+
 ## 0.62.0 — 2026-11-03
 
 **Updating without scripts:** paste `site-automation-0.62.0-changed-since-0.61.0.zip` as it is (from an older version,

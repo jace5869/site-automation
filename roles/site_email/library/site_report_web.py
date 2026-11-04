@@ -40,6 +40,9 @@ description:
     are returned packed (packed, at most max_kb) for the copy job; a report too big even with its longest tables cut
     returns packed empty, and msg says so.
   - In check mode nothing is written; the address is returned.
+  - A page in the atlas look carries its script (roles/site_email/templates/site_report.js); it is written beside the
+    folder's top as site-report.js too (when it changed), and the page and the index load it from there - a web server
+    whose Content-Security-Policy allows no inline script (script-src 'self') runs that one.
 options:
   dest: {description: The report folder (an absolute path) or the http(s) address it is uploaded to., type: str, required: true}
   url: {description: The address people open the folder at (default - dest when it is http(s))., type: str, default: ''}
@@ -72,7 +75,7 @@ RETURN = r'''
 url: {description: The page's address ('' without url or an http dest)., type: str}
 latest_url: {description: The template's latest page., type: str}
 index_url: {description: The index of every report., type: str}
-written: {description: The files written (inside the folder)., type: list}
+written: {description: "The files written (inside the folder; site-report.js when it changed).", type: list}
 deleted: {description: "The pages (and JSON) of older runs deleted (with windows_host - to be deleted by the script).", type: list}
 not_deleted: {description: "Older runs' files that could not be deleted: [[file, why]].", type: list}
 place: {description: "Where the page is, without an address (/mnt/reports/..., web01:D:\\reports\\...).", type: str}
@@ -88,6 +91,7 @@ import base64
 import datetime
 import errno
 import fnmatch
+import hashlib
 import html as htmllib
 import json
 import os
@@ -114,6 +118,9 @@ PAL = {
 IN_USE = (errno.EACCES, errno.EBUSY, errno.EPERM, errno.ETXTBSY)    # a mounted share's file open in a browser
 RUN_KEYS = ('page', 'status', 'when', 'job', 'title')
 WAIT = (0.5, 1, 2, 3, 4)                                 # a file in use: written again after these seconds
+SCRIPT = 'site-report.js'                                # the atlas pages' script, at the folder's top
+SCRIPT_TAG = '<script src="site-report.js"></script>'    # the atlas page's link to it, made relative to each page
+INLINE_RE = re.compile(r'<script id="site-report-js">\s*(.*?)\s*</script>', re.S)
 
 
 def again(what, retry):
@@ -520,6 +527,18 @@ def web_page(page, images, theme='portal'):
     return page if theme == 'atlas' else page.replace('</head>', WEB_STYLE + '\n</head>', 1)
 
 
+def page_script(html):
+    """The script an atlas page carries (roles/site_email/templates/site_report.js, inline in it); '' for a page without."""
+    m = INLINE_RE.search(html or '')
+    return (m.group(1) + '\n') if m else ''
+
+
+def script_tag(rel, js):
+    """The <script> that loads site-report.js into the file rel (a page or the index), its version in the address - a
+    browser that keeps a copy takes the new one."""
+    return '<script src="%s?v=%s"></script>' % (_href(rel, SCRIPT), hashlib.sha1(js.encode('utf-8')).hexdigest()[:10])
+
+
 def _href(src, dst):
     """A link from the file src to the file dst, both inside the folder."""
     return quote(posixpath.relpath(dst, posixpath.dirname(src) or '.'))
@@ -599,10 +618,10 @@ INDEX_PAGE = """<!DOCTYPE html>
 """
 
 
-def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal'):
+def index_html(reports, index, header_text, logo, generated, tabs=(), theme='portal', js=''):
     """The index page: a tab per area (All first), every report's line - worst first - opening to its last runs."""
     if theme == 'atlas':
-        return index_atlas(reports, index, header_text, logo, generated, tabs)
+        return index_atlas(reports, index, header_text, logo, generated, tabs, js)
     e = htmllib.escape
     counts = dict((k, 0) for k in PAL)
     for r in reports:
@@ -800,6 +819,7 @@ ATLAS_EARLY = ("<script>try{var t=localStorage.getItem('site-report-theme');if(t
                "document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>")
 ATLAS_SCRIPT = """<script>
 (function(){
+  if(window.siteReport)return;                     // site-report.js ran: it does this
   var root=document.documentElement,seg=document.getElementById('theme');if(!seg)return;
   var c=seg.querySelector('input[value="'+(root.getAttribute('data-theme')||'auto')+'"]');if(c)c.checked=true;
   seg.addEventListener('change',function(ev){var n=ev.target.value;
@@ -814,7 +834,7 @@ def _chip(status, text=None):
     return '<span class="chip s-%s">%s<span>%s</span></span>' % (k, ATLAS_ICON[k], htmllib.escape(text or PAL[k][3]))
 
 
-def index_atlas(reports, index, header_text, logo, generated, tabs=()):
+def index_atlas(reports, index, header_text, logo, generated, tabs=(), js=''):
     """The index page in the atlas look: the header card with the light / auto / dark switch, a tile per status, a tab
     per area (All first; radio buttons and their labels, no script), every report's line - worst first - opening to its
     last runs."""
@@ -872,7 +892,7 @@ def index_atlas(reports, index, header_text, logo, generated, tabs=()):
             '<span>Every report&#39;s last runs &middot; %(n)d report(s) &middot; updated %(generated)s</span></div>'
             '<div class="tools">%(switch)s</div></div></header>\n'
             '<div class="tiles">%(tiles)s</div>\n%(tabs)s<div class="card list">\n%(rows)s\n</div>\n</div>\n%(script)s\n</body>\n</html>\n') % {
-        'header': e(header_text), 'early': ATLAS_EARLY, 'logo': logo_img, 'n': len(reports), 'generated': e(generated),
+        'header': e(header_text), 'early': ATLAS_EARLY + ('\n' + script_tag(index, js) if js else ''), 'logo': logo_img, 'n': len(reports), 'generated': e(generated),
         'style': ATLAS_STYLE % {'light': ATLAS_LIGHT, 'dark': ATLAS_DARK, 'tabs': ''.join(rules)},
         'switch': ATLAS_SWITCH, 'tiles': tiles,
         'tabs': (''.join(inputs) + '\n<div class="bar">' + ''.join(labels) + '</div>\n') if reports else '',
@@ -1002,6 +1022,7 @@ def main():
         else:
             target = Target(dest, p['ca_path'], p['timeout'])
         html = web_page(p['html'], p['images'], p['theme'])
+        js = page_script(html)
         written = []
         entry = dict(p['entry'], page=page, latest=latest)
         reports = _reports(target.read(_json_name(index))) if index else []
@@ -1020,11 +1041,18 @@ def main():
         for rel in (page, latest if is_newest else ''):
             if not rel:
                 continue
-            put(rel, html, 'text/html; charset=utf-8', rel == latest)
+            put(rel, html.replace(SCRIPT_TAG, script_tag(rel, js), 1) if js else html, 'text/html; charset=utf-8', rel == latest)
             if p['json']:
                 doc = dict(p['data'], page=page, url=urls['url'], latest=latest, index=index)
                 put(_json_name(rel), json.dumps(doc, indent=2, sort_keys=True, default=str) + '\n',
                     'application/json; charset=utf-8', rel == latest)
+        if js:                                           # the pages' script, where they load it from - when it changed
+            try:
+                there = target.read(SCRIPT)
+            except Fail:
+                there = None
+            if there != js:
+                put(SCRIPT, js, 'text/javascript; charset=utf-8', True)
         index_text = ''
         deleted, not_deleted = [], []
         if index:
@@ -1038,7 +1066,7 @@ def main():
                 logo = (uri, p['logo_size'][0], p['logo_size'][1]) if uri.startswith('data:') else None
             index_text = json.dumps({'generated': generated, 'reports': reports}, indent=2, sort_keys=True, default=str) + '\n'
             put(_json_name(index), index_text, 'application/json; charset=utf-8')
-            put(index, index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme']),
+            put(index, index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], js),
                 'text/html; charset=utf-8', True)
             # the pages of the runs that fell off this template's line - after the index, which no longer lists them
             kept = set([index, _json_name(index)])
@@ -1071,7 +1099,7 @@ def main():
     if win:
         fd, script = tempfile.mkstemp(prefix='site_report_web_', suffix='.ps1')
         with os.fdopen(fd, 'wb') as f:
-            f.write(windows_script(dest, target.files, target.removed, [latest, _json_name(latest) if latest else '', index]).encode('utf-8-sig'))   # PowerShell 5.1 reads it as UTF-8
+            f.write(windows_script(dest, target.files, target.removed, [latest, _json_name(latest) if latest else '', index, SCRIPT]).encode('utf-8-sig'))   # PowerShell 5.1 reads it as UTF-8
         module.exit_json(changed=False, written=written, script=script, place=_place(where, page, bs), index_text=index_text,
                          newest=is_newest, deleted=deleted, not_deleted=not_deleted, not_written=busy, msg='Made, for %s: %s' % (win, ', '.join(written)), **urls)
     module.exit_json(changed=True, written=written, place=_place(where, page, bs), index_text=index_text, newest=is_newest,
