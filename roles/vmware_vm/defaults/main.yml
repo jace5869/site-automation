@@ -416,6 +416,21 @@ esxi_security_lockdown: normal
 esxi_security_lockdown_exception_users: []
 # The email (report_email_to): true = only when a host was changed or failed; false = every run.
 esxi_security_email_only_if_changed: true
+# The vCenter appliance's own access - its VAMI's Access page (https://vcenter:5480 > Access) - on
+# every vCenter of the job: enabled, disabled, or "" = leave it (the default: nothing changes until
+# you set one). Set through vCenter's API with the same "VMware vCenter" credential: its account must
+# be in vCenter's single sign-on group SystemConfiguration.Administrators (administrator@vsphere.local
+# is), else the job says so and fails. E.g. SSH Login and Bash Shell disabled every night, the
+# console (DCUI, Console CLI) left as it is. SSH Login:
+esxi_security_vcsa_ssh: ""
+# DCUI - the appliance's console screen.
+esxi_security_vcsa_dcui: ""
+# Console CLI - the appliance shell on its console.
+esxi_security_vcsa_consolecli: ""
+# Bash Shell.
+esxi_security_vcsa_shell: ""
+# Seconds Bash Shell stays on when this job turns it on (1 to 86400).
+esxi_security_vcsa_shell_timeout: 3600
 
 # ---- VMware certificate renewal (playbooks/vmware_cert_renew.yml), e.g. every week ----
 

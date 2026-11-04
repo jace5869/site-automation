@@ -593,6 +593,11 @@ run "ESXi security with the defaults where the host cannot do it: the host fails
 run "ESXi security: strict lockdown is refused" fail esxi_security.yml -e esxi_security_lockdown=strict -- "lockdown strict is refused"
 run "ESXi security: a host name that matches nothing is an error, not a silent no-op" fail esxi_security.yml -e esxi_security_hosts=nope \
     -- "No host matches (hosts: nope; clusters: all; datacenter: all)"
+# 0.68.0: the vCenter appliance's access (tests/test_vmware_modules.py sets it on a fake appliance API); vcsim has none:
+# asked for, it is said for the vCenter and the job fails - the hosts are still done
+run "ESXi security with the vCenter appliance's SSH Login: vcsim has no appliance API - said, the job fails" fail esxi_security.yml \
+    -e "$only" -e '{"esxi_security_vcsa_ssh": "disabled"}' -- "vCenter appliance: 0 changed, 1 failed" "vCenter appliance 127.0.0.1" \
+    "SSH Login: reading ssh: HTTP 404"
 
 # ---- alarms report and its ACT analysis (vcsim triggers no alarms: tests/test_filters.py covers them) --
 http_port=$((port + 38))

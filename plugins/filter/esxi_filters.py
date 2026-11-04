@@ -29,7 +29,32 @@ def esxi_wanted(opts):
         parts.append("lockdown " + o["lockdown"])
     if o.get("exception_users"):
         parts.append("exception users " + ", ".join(o["exception_users"]))
+    vcsa = ["%s %s" % (k, v) for k, v in (o.get("vcsa") or {}).items() if v]
+    if vcsa:
+        parts.append("vCenter appliance: " + ", ".join(vcsa))
     return "; ".join(parts) or "nothing"
+
+
+def _appliance_section(apps, dry):
+    """0.68.0: the vCenter appliance's access settings (its VAMI's Access page), one row per vCenter."""
+    keys = []
+    for a in apps:
+        for k in (a.get("before") or {}):
+            if k not in keys:
+                keys.append(k)
+    rows, rs, cs = [], [], []
+    for a in apps:
+        st = a.get("status", "")
+        rows.append([a["name"], st.upper()] + [(a.get("before") or {}).get(k, "") for k in keys]
+                    + ["; ".join((a.get("changes") or []) + (a.get("errors") or []))])
+        rs.append(ROW.get(st, ""))
+        cs.append(["", CELL.get(st, "")] + [""] * (len(keys) + 1))
+    worst = "critical" if "failed" in [a.get("status") for a in apps] else ("warning" if "changed" in [a.get("status") for a in apps] else "ok")
+    return {"title": "vCenter appliance access", "status": worst, "columns": ["vCenter", "Result"] + ["%s (before)" % k for k in keys]
+            + ["What"], "rows": rows, "row_status": rs, "cell_status": cs,
+            "text": "The appliance's own SSH Login, DCUI, Console CLI and Bash Shell (its VAMI's Access page, port 5480), set "
+                    "through vCenter's API. CHANGED = %s; a refusal (HTTP 403) means the credential's account is not in "
+                    "SystemConfiguration.Administrators." % ("a real run would set it" if dry else "set by this run, and read back")}
 
 
 def esxi_security_report(hosts, opts=None):
@@ -48,7 +73,11 @@ def esxi_security_report(hosts, opts=None):
         title = "ESXi security settings%s: all %d host(s) already set" % (" (dry run)" if dry else "", acted - len(by["skipped"]))
     if by["skipped"]:
         title += ", %d skipped (not connected)" % len(by["skipped"])
-    status = "critical" if by["failed"] else ("warning" if by["changed"] else "ok")
+    apps = o.get("appliances") or []
+    app_by = {k: [a for a in apps if a.get("status") == k] for k in ("failed", "changed")}
+    if app_by["changed"] or app_by["failed"]:
+        title += "; vCenter appliance: %d %s" % (len(app_by["changed"]), verb) + (", %d failed" % len(app_by["failed"]) if app_by["failed"] else "")
+    status = "critical" if by["failed"] or app_by["failed"] else ("warning" if by["changed"] or app_by["changed"] else "ok")
     sections = []
     if by["failed"]:
         sections.append({"title": "Failed", "status": "critical", "columns": ["Host", "Cluster", "Error"],
@@ -62,6 +91,8 @@ def esxi_security_report(hosts, opts=None):
                          "row_status": ["warning"] * len(by["changed"]), "cell_status": [["warning", "", ""]] * len(by["changed"]),
                          "text": ("A real run would change these." if dry else
                                   "These had drifted (someone turned SSH on, changed a timeout or left lockdown) and were set again.")})
+    if apps:
+        sections.append(_appliance_section(apps, dry))
     if by["skipped"] or by["excluded"]:
         rows = [[h["name"], h.get("cluster", ""), "; ".join(h.get("notes") or [])] for h in by["skipped"] + by["excluded"]]
         sections.append({"title": "Not touched", "columns": ["Host", "Cluster", "Why"], "rows": rows})
@@ -89,7 +120,9 @@ def esxi_security_report(hosts, opts=None):
                         {"label": "Failed", "value": len(by["failed"]), "status": "critical" if by["failed"] else "ok"},
                         {"label": "Already set", "value": len(by["ok"]), "status": "ok"},
                         {"label": "Skipped (not connected)", "value": len(by["skipped"]), "status": "warning" if by["skipped"] else "ok"}]
-                       + ([{"label": "Excluded", "value": len(by["excluded"])}] if by["excluded"] else []),
+                       + ([{"label": "Excluded", "value": len(by["excluded"])}] if by["excluded"] else [])
+                       + ([{"label": "vCenter appliances", "value": len(apps),
+                            "status": "critical" if app_by["failed"] else ("warning" if app_by["changed"] else "ok")}] if apps else []),
             "sections": sections}
 
 

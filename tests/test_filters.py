@@ -1052,6 +1052,29 @@ class EsxiSecurityReport(unittest.TestCase):
         ok = ef.esxi_security_report([self.H[2]], self.O)
         self.assertEqual((ok["title"], ok["status"]), ("ESXi security settings: all 1 host(s) already set", "ok"))
 
+    def test_vcenter_appliance(self):
+        """0.68.0: the vCenter appliance's access settings - a section, the title, the status, a tile."""
+        apps = [{"name": "vc01.example.mil", "status": "changed", "before": {"SSH Login": "Activated", "DCUI": "Deactivated",
+                                                                           "Console CLI": "Activated", "Bash Shell": "Deactivated"},
+                 "changes": ["SSH Login: Activated -> Deactivated"], "errors": []},
+                {"name": "vc02.example.mil", "status": "failed", "before": {}, "changes": [],
+                 "errors": ["SSH Login: the account may not change the appliance's settings (HTTP 403 reading ssh)"]}]
+        o = dict(self.O, appliances=apps, vcsa={"SSH Login": "disabled", "DCUI": "", "Console CLI": "", "Bash Shell": "disabled"})
+        r = ef.esxi_security_report([self.H[2]], o)
+        self.assertEqual((r["title"], r["status"]), ("ESXi security settings: all 1 host(s) already set; vCenter appliance: 1 changed, 1 failed",
+                                                     "critical"))
+        self.assertTrue(r["subtitle"].endswith("lockdown normal; vCenter appliance: SSH Login disabled, Bash Shell disabled"))
+        sec = {x["title"]: x for x in r["sections"]}["vCenter appliance access"]
+        self.assertEqual(sec["columns"], ["vCenter", "Result", "SSH Login (before)", "DCUI (before)", "Console CLI (before)",
+                                          "Bash Shell (before)", "What"])
+        self.assertEqual(sec["rows"][0][1:3] + sec["rows"][0][-1:], ["CHANGED", "Activated", "SSH Login: Activated -> Deactivated"])
+        self.assertEqual((sec["row_status"], sec["status"]), (["warning", "critical"], "critical"))
+        self.assertEqual(r["summary"][-1], {"label": "vCenter appliances", "value": 2, "status": "critical"})
+        plain = ef.esxi_security_report([self.H[2]], self.O)
+        self.assertNotIn("vCenter appliance access", [x["title"] for x in plain["sections"]], "none set: no section")
+        dry = ef.esxi_security_report([self.H[2]], dict(o, check_mode=True, appliances=apps[:1]))
+        self.assertEqual(dry["title"], "ESXi security settings (dry run): all 1 host(s) already set; vCenter appliance: 1 would change")
+
 
 def _hl_host(name, cluster, dc="DC1", vc="vc01.example.mil", **kw):
     h = {"vcenter": vc, "datacenter": dc, "cluster": cluster, "standalone": not cluster, "name": name, "moid": "host-" + name,

@@ -34,7 +34,7 @@ System Center Orchestrator):
 | VM - deploy settings finder | `playbooks/vm_deploy_inventory.yml` | read-only: every vCenter's datacenters, clusters, templates, datastores, folders and networks, by the names the deploy's settings use - with the lines to paste into the deploy template's Variables |
 | VM - pick up deploy tickets | `playbooks/vm_deploy_poll.yml` | on a schedule: finds new VM request tickets in ServiceNow and starts the deploy workflow for each. Builds nothing itself; the approval stays |
 | VM - VMs created report | `playbooks/vm_created_report.yml` | read-only: how many VMs were created in the last 7 days and each one - when, by whom, how (cloned, deployed from a template, new), the ticket when the AAP deploy built it, where, its size - by person and by day, and the ones created and deleted since. Schedule it weekly (e.g. Fridays at noon) |
-| ESXi - security settings | `playbooks/esxi_security.yml` | on every ESXi host: SSH off, the shell timeouts at 600 s, lockdown mode normal. Changes only what differs, so it can run every night and puts back whatever drifted |
+| ESXi - security settings | `playbooks/esxi_security.yml` | on every ESXi host: SSH off, the shell timeouts at 600 s, lockdown mode normal; the vCenter appliance's SSH Login, DCUI, Console CLI and Bash Shell when set (`esxi_security_vcsa_*`). Changes only what differs, so it can run every night and puts back whatever drifted |
 | ESXi - network check | `playbooks/esxi_network_check.yml` | read-only: every host's VMkernel adapters and MTUs; vmkping between the hosts of each cluster on the vMotion network, full size with don't fragment (jumbo frames proven end to end); pings to targets you name; the storage latency each host sees. No VM is moved ("The ESXi network check") |
 | VMware - certificate report | `playbooks/vmware_cert_report.yml` | read-only: every certificate of vCenter and its ESXi hosts, soonest expiry first, and for each one due what the renewal would do. Never ServiceNow, never a CSR |
 | VMware - certificate renewal | `playbooks/vmware_cert_renew.yml` | the certificates of vCenter and every ESXi host: each one that expires within 30 days gets a ServiceNow incident, and a CSR - made where its key stays, by vCenter or the host - attached to it with what to do next. The days can be raised to try it on certificates years from expiring |
@@ -100,6 +100,7 @@ A service account with a vCenter role that has only what the jobs need:
 | change VLAN | Virtual machine > Change configuration > Modify device settings, and Network > Assign network on the port groups |
 | ESXi network check (the pings) | Host > CIM > CIM interaction, on the hosts: the pings run as esxcli on each host through vCenter. Without it the report says so once, and still shows the adapters and the storage latency |
 | ESXi security settings | Host > Configuration > Security profile and firewall (the SSH service), Advanced settings (the timeouts), Change settings (lockdown mode and its exception users). If one is missing, the job's error names it (e.g. `lacks the privilege Host.Config.Settings`) |
+| ESXi security settings: the vCenter appliance's access (`esxi_security_vcsa_*`, since 0.68.0) | the account in the single sign-on group **SystemConfiguration.Administrators** (Administration > Single Sign On > Users and Groups > Groups > SystemConfiguration.Administrators > Add members); administrator@vsphere.local is in it. Without it vCenter answers 403 and the job says so |
 | certificate renewal: an ESXi host's CSR | Certificates > Manage certificates, on the hosts. If it is missing, the job's error names it |
 | certificate renewal: vCenter's CSR | Certificate Management (`CertificateManagement.Manage` and `CertificateManagement.Administer`), in a role given as a **Global Permission** - or the account in the single sign-on group **CAAdmins** (Administration > Single Sign On > Users and Groups > Groups > CAAdmins > Add members), as the vSphere Client's own CSR needs; administrator@vsphere.local has it |
 | all (to read), and the alarms report | Read-only, which every vCenter role includes |
@@ -1264,7 +1265,7 @@ hosts. Read-only; a hit fails the job; emailed as the other VMware reports. With
 true` the chain is deleted from vCenter's trusted roots and each ESXi host's trusted CA list is
 replaced without it (Check mode shows what would go). [TRUST_STORES.md](TRUST_STORES.md).
 
-## ESXi security settings (every night): SSH off, timeouts, lockdown
+## ESXi security settings (every night): SSH off, timeouts, lockdown - and the vCenter appliance's access
 
 One job, `playbooks/esxi_security.yml`, sets these on every ESXi host, through vCenter:
 
@@ -1274,6 +1275,29 @@ One job, `playbooks/esxi_security.yml`, sets these on every ESXi host, through v
 | **ESXi Shell** off (the host's local shell, a separate service from SSH): the same | `esxi_security_shell` | `disabled` (`enabled`, or `""` = leave it) |
 | **Timeouts** at 600 s (10 minutes): SSH and the ESXi Shell stop by themselves 600 s after someone starts them (`UserVars.ESXiShellTimeOut`), and an idle SSH or shell session is logged out after 600 s (`UserVars.ESXiShellInteractiveTimeOut`) | `esxi_security_settings` | those two, at `600` |
 | **Lockdown mode normal**: the host is managed only through vCenter; the DCUI (the host's console) still works | `esxi_security_lockdown` | `normal` (`disabled`, or `""` = leave it). **strict is refused**, and a host already in strict is left alone |
+
+**The vCenter appliance itself** (since 0.68.0) - its VAMI's Access page (`https://<vcenter>:5480` > Access) - on
+every vCenter of the job, when you set one (all are `""` by default, so nothing changes until you do):
+
+| VAMI says | Setting | Values |
+|---|---|---|
+| SSH Login | `esxi_security_vcsa_ssh` | `disabled`, `enabled`, or `""` = leave it |
+| DCUI (the appliance's console screen) | `esxi_security_vcsa_dcui` | the same |
+| Console CLI (the appliance shell on its console) | `esxi_security_vcsa_consolecli` | the same |
+| Bash Shell | `esxi_security_vcsa_shell` | the same; turned on, it turns itself off after `esxi_security_vcsa_shell_timeout` seconds (3600) |
+
+```yaml
+esxi_security_vcsa_ssh: disabled       # SSH off every night, as on the hosts
+esxi_security_vcsa_shell: disabled
+# DCUI and Console CLI left as they are: the console is the way in when the network is not
+```
+
+No new credential: the job uses its **VMware vCenter** credential through vCenter's API (`/api/appliance/access`,
+vCenter 7 and 8; `/rest` on 6.7). Its account must be in the single sign-on group
+**SystemConfiguration.Administrators** (administrator@vsphere.local is); otherwise vCenter answers 403, the report
+says so for that vCenter, and the job fails after the hosts are done. Each setting is read back after it is set. The
+report has a section **vCenter appliance access** (each setting before, what changed) and the email goes out when
+one changed or failed, as for the hosts.
 
 It changes **only what differs**: a host that already matches is not touched. So it is safe to run
 every night: it puts back whatever someone changed (SSH turned on, a timeout changed, lockdown

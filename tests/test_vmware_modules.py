@@ -21,6 +21,7 @@ import site_vmware_health as hl  # noqa: E402
 import site_vmware_vm_created as vc  # noqa: E402
 import site_vmware_certs as vcert  # noqa: E402
 import site_vmware_watch as wt  # noqa: E402
+import site_vcsa_access as va  # noqa: E402
 
 G = 1024 ** 3
 
@@ -599,6 +600,143 @@ class VmwareCerts(unittest.TestCase):
         os.environ["VMWARE_PASSWORD"] = "wrong"
         with self.assertRaisesRegex(RuntimeError, r"refused the login to its API \(HTTP 401\)"):
             self._csr("api")
+
+
+class _FakeAppliance(object):
+    """vCenter's appliance access API over HTTPS in this process: /api (mode api) or /rest (6.7: /api 404), forbidden
+    (the account logs in, every access call is 403), stuck (a PUT is taken, nothing changes)."""
+
+    def __init__(self, mode="api", state=None):
+        import http.server
+        import ssl
+        import tempfile
+        import threading
+        self.mode, self.calls = mode, []
+        self.state = state or {"ssh": True, "dcui": False, "consolecli": True, "shell": {"enabled": False, "timeout": 0}}
+        key, pem, _ = _self_signed("localhost", 5, ["localhost"])
+        d = tempfile.mkdtemp()
+        for f, data in (("k.pem", key), ("c.pem", pem)):
+            with open(os.path.join(d, f), "wb") as fh:
+                fh.write(data)
+        app = self
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _send(self, code, body=None):
+                raw = json.dumps(body).encode() if body is not None else b""
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def _what(self):
+                base = "/rest/appliance/access/" if app.mode == "rest" else "/api/appliance/access/"
+                return self.path[len(base):] if self.path.startswith(base) and self.path[len(base):] in app.state else None
+
+            def _ok(self):
+                return self.headers.get("vmware-api-session-id") == "tok1"
+
+            def do_POST(self):
+                app.calls.append(("POST", self.path, None))
+                old = app.mode == "rest"
+                if self.path == ("/rest/com/vmware/cis/session" if old else "/api/session"):
+                    ok = self.headers.get("Authorization") == "Basic " + __import__("base64").b64encode(b"user:pass").decode()
+                    return self._send(200, {"value": "tok1"} if old else "tok1") if ok else self._send(401, {})
+                self._send(404, {})
+
+            def do_GET(self):
+                app.calls.append(("GET", self.path, None))
+                w = self._what()
+                if not w or not self._ok():
+                    return self._send(404 if not w else 401, {})
+                if app.mode == "forbidden":
+                    return self._send(403, {"error_type": "UNAUTHORIZED", "messages": [{"default_message": "Permission denied."}]})
+                return self._send(200, {"value": app.state[w]} if app.mode == "rest" else app.state[w])
+
+            def do_PUT(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(n)) if n else None
+                app.calls.append(("PUT", self.path, body))
+                w = self._what()
+                if not w or not self._ok():
+                    return self._send(404 if not w else 401, {})
+                if app.mode == "forbidden":
+                    return self._send(403, {"error_type": "UNAUTHORIZED", "messages": [{"default_message": "Permission denied."}]})
+                spec = body["config"] if app.mode == "rest" and w == "shell" else body
+                if app.mode != "stuck":
+                    app.state[w] = {"enabled": spec["enabled"], "timeout": spec["timeout"]} if w == "shell" else spec["enabled"]
+                self._send(204 if app.mode != "rest" else 200)
+
+            def do_DELETE(self):
+                app.calls.append(("DELETE", self.path, None))
+                self._send(200, {})
+
+        self.httpd = http.server.HTTPServer(("127.0.0.1", 0), H)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(os.path.join(d, "c.pem"), os.path.join(d, "k.pem"))
+        self.httpd.socket = ctx.wrap_socket(self.httpd.socket, server_side=True)
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+class VcsaAccess(unittest.TestCase):
+    """0.68.0 site_vcsa_access: the vCenter appliance's SSH Login, DCUI, Console CLI and Bash Shell (its VAMI's Access page)."""
+    WANT = {"ssh": "disabled", "dcui": "", "consolecli": "", "shell": "enabled"}
+
+    def setUp(self):
+        os.environ.update(VMWARE_USER="user", VMWARE_PASSWORD="pass")
+
+    def run_one(self, mode="api", want=None, check=False, state=None):
+        app = _FakeAppliance(mode, state)
+        try:
+            rec = va.appliance(va.Api("127.0.0.1", app.port, False, 5), "vc01", want or self.WANT, 900, check)
+            return rec, app
+        finally:
+            app.close()
+
+    def test_sets_what_differs_and_reads_back(self):
+        rec, app = self.run_one()
+        self.assertEqual(rec["status"], "changed")
+        self.assertEqual(rec["before"], {"SSH Login": "Activated", "DCUI": "Deactivated", "Console CLI": "Activated", "Bash Shell": "Deactivated"})
+        self.assertEqual(rec["changes"], ["SSH Login: Activated -> Deactivated", "Bash Shell: Deactivated -> Activated (turns off in 900 s)"])
+        self.assertEqual([c for c in app.calls if c[0] == "PUT"], [("PUT", "/api/appliance/access/ssh", {"enabled": False}),
+                                                                   ("PUT", "/api/appliance/access/shell", {"enabled": True, "timeout": 900})])
+        self.assertEqual((app.state["ssh"], app.state["dcui"], app.state["consolecli"]), (False, False, True), "DCUI and Console CLI left")
+        self.assertEqual(app.calls[-1][:2], ("DELETE", "/api/session"))
+        again, app = self.run_one(state={"ssh": False, "dcui": False, "consolecli": True, "shell": {"enabled": True, "timeout": 120}})
+        self.assertEqual((again["status"], again["changes"]), ("ok", []), "already so; a shell already on keeps its own countdown")
+        self.assertEqual(again["before"]["Bash Shell"], "Activated (turns off in 120 s)")
+        self.assertFalse([c for c in app.calls if c[0] == "PUT"])
+
+    def test_check_mode_changes_nothing(self):
+        rec, app = self.run_one(check=True)
+        self.assertEqual((rec["status"], len(rec["changes"])), ("changed", 2))
+        self.assertFalse([c for c in app.calls if c[0] == "PUT"])
+        self.assertTrue(app.state["ssh"])
+
+    def test_rest_67(self):
+        rec, app = self.run_one("rest")
+        self.assertEqual(rec["status"], "changed")
+        self.assertIn(("PUT", "/rest/appliance/access/shell", {"config": {"enabled": True, "timeout": 900}}), app.calls)
+        self.assertEqual(app.calls[-1][:2], ("DELETE", "/rest/com/vmware/cis/session"))
+
+    def test_refused_and_stuck(self):
+        rec, _ = self.run_one("forbidden")
+        self.assertEqual(rec["status"], "failed")
+        self.assertEqual(len(rec["errors"]), 4)
+        self.assertIn("SystemConfiguration.Administrators", rec["errors"][0])
+        rec, _ = self.run_one("stuck")
+        self.assertEqual(rec["errors"], ["SSH Login: set, but it reads Activated after", "Bash Shell: set, but it reads Deactivated after"])
+        os.environ["VMWARE_PASSWORD"] = "wrong"
+        with self.assertRaisesRegex(RuntimeError, r"refused the login to its API \(HTTP 401\)"):
+            self.run_one()
 
 
 class OutageWatch(unittest.TestCase):

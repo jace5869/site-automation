@@ -5,6 +5,8 @@
 # (esxi_security_lockdown) after adding esxi_security_lockdown_exception_users. Only what differs is
 # changed; Check changes nothing. Printed, emailed (report_email_to; by default only when a host was
 # changed or failed), published as artifacts (esxi_security). The job fails when a host could not be set.
+# 0.68.0: the vCenter appliance's own access too (esxi_security_vcsa_*: SSH Login, DCUI, Console CLI, Bash Shell - its
+# VAMI's Access page), only when one is set.
 - name: VMware | a vCenter credential is attached
   ansible.builtin.include_tasks: credential.yml
 
@@ -27,6 +29,20 @@
          else esxi_security_lockdown_exception_users }}
   register: _esx
 
+- name: "VMware | vCenter appliance access{{ ' - DRY RUN, nothing is changed' if ansible_check_mode else '' }}"
+  site_vcsa_access:
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    ssh: "{{ esxi_security_vcsa_ssh | default('', true) | string | lower }}"
+    dcui: "{{ esxi_security_vcsa_dcui | default('', true) | string | lower }}"
+    consolecli: "{{ esxi_security_vcsa_consolecli | default('', true) | string | lower }}"
+    shell: "{{ esxi_security_vcsa_shell | default('', true) | string | lower }}"
+    shell_timeout: "{{ esxi_security_vcsa_shell_timeout | default(3600, true) | int }}"
+  register: _vcsa
+  when: >-
+    (esxi_security_vcsa_ssh | default('', true) ~ esxi_security_vcsa_dcui | default('', true)
+     ~ esxi_security_vcsa_consolecli | default('', true) ~ esxi_security_vcsa_shell | default('', true)) | length > 0
+
 - name: VMware | the report
   ansible.builtin.set_fact:
     _esx_doc: >-
@@ -35,7 +51,11 @@
            'settings': esxi_security_settings | default({}, true), 'lockdown': esxi_security_lockdown | default('', true),
            'exception_users': esxi_security_lockdown_exception_users if esxi_security_lockdown_exception_users is not string
                               else (esxi_security_lockdown_exception_users | replace(',', ' ')).split(),
-           'check_mode': ansible_check_mode, 'multi': _esx.vcenters | default([]) | vm_vcenters_read | length > 1}) }}
+           'check_mode': ansible_check_mode, 'multi': _esx.vcenters | default([]) | vm_vcenters_read | length > 1,
+           'appliances': _vcsa.appliances | default([]),
+           'vcsa': {'SSH Login': esxi_security_vcsa_ssh | default('', true), 'DCUI': esxi_security_vcsa_dcui | default('', true),
+                    'Console CLI': esxi_security_vcsa_consolecli | default('', true),
+                    'Bash Shell': esxi_security_vcsa_shell | default('', true)}}) }}
 
 - name: VMware | ESXi security settings report
   ansible.builtin.include_tasks: report.yml
@@ -47,8 +67,11 @@
     _vm_report_no_email: >-
       {{ esxi_security_email_only_if_changed | bool
          and _esx.hosts | selectattr('status', 'in', ['changed', 'failed']) | list | length == 0
+         and _vcsa.appliances | default([]) | selectattr('status', 'in', ['changed', 'failed']) | list | length == 0
          and _esx.vcenters | default([]) | selectattr('error') | list | length == 0 }}
-    _vm_report_no_email_why: "no host was changed or failed, and every vCenter was read (esxi_security_email_only_if_changed)."
+    _vm_report_no_email_why: >-
+      no host{{ ' or vCenter appliance' if _vcsa.appliances is defined else '' }} was changed or failed, and every vCenter was read
+      (esxi_security_email_only_if_changed).
 
 - name: VMware | the result as job artifacts (esxi_security)
   ansible.builtin.set_stats:
@@ -57,7 +80,8 @@
         {{ {'dry_run': ansible_check_mode, 'vcenters': _esx.vcenters, 'hosts': _esx.hosts,
             'changed': _esx.hosts | selectattr('status', 'equalto', 'changed') | map(attribute='name') | list,
             'failed': _esx.hosts | selectattr('status', 'equalto', 'failed') | map(attribute='name') | list,
-            'skipped': _esx.hosts | selectattr('status', 'equalto', 'skipped') | map(attribute='name') | list} }}
+            'skipped': _esx.hosts | selectattr('status', 'equalto', 'skipped') | map(attribute='name') | list,
+            'appliances': _vcsa.appliances | default([])} }}
 
 - name: VMware | every host is set
   ansible.builtin.assert:
@@ -65,6 +89,14 @@
     fail_msg: >-
       {% for h in _esx.hosts | selectattr('status', 'equalto', 'failed') %}{{ h.name }}: {{ h.errors | join('; ') }}. {% endfor %}
       The other hosts are done; the report (and the email) has the details.
+    quiet: true
+
+- name: VMware | every vCenter appliance is set
+  ansible.builtin.assert:
+    that: _vcsa.appliances | default([]) | selectattr('status', 'equalto', 'failed') | list | length == 0
+    fail_msg: >-
+      {% for a in _vcsa.appliances | default([]) | selectattr('status', 'equalto', 'failed') %}vCenter appliance {{ a.name }}:
+      {{ a.errors | join('; ') }}. {% endfor %}The report (and the email) has the details.
     quiet: true
 
 - name: VMware | every vCenter was read

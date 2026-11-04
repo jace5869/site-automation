@@ -1579,6 +1579,11 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `esxi_security_lockdown` | `normal` | Lockdown mode: normal = the host is managed only through vCenter (the DCUI still works); disabled; "" = leave it as it is. strict is refused, and a host already strict is left alone. |
 | `esxi_security_lockdown_exception_users` | `[]` | Accounts that must keep logging in to the hosts directly under lockdown (a vulnerability scanner, a monitoring tool): host-local accounts, or Active Directory accounts with their own permission on the host (not vsphere.local, not an AD group). Added before lockdown is turned on; never removed. |
 | `esxi_security_email_only_if_changed` | `true` | The email (report_email_to): true = only when a host was changed or failed; false = every run. |
+| `esxi_security_vcsa_ssh` | (empty) | The vCenter appliance's own access - its VAMI's Access page (https://vcenter:5480 > Access) - on every vCenter of the job: enabled, disabled, or "" = leave it (the default: nothing changes until you set one). Set through vCenter's API with the same "VMware vCenter" credential: its account must be in vCenter's single s… (all of it: the role file) |
+| `esxi_security_vcsa_dcui` | (empty) | DCUI - the appliance's console screen. |
+| `esxi_security_vcsa_consolecli` | (empty) | Console CLI - the appliance shell on its console. |
+| `esxi_security_vcsa_shell` | (empty) | Bash Shell. |
+| `esxi_security_vcsa_shell_timeout` | `3600` | Seconds Bash Shell stays on when this job turns it on (1 to 86400). |
 | `vmware_cert_warn_days` | `30` | A certificate of vCenter (its Machine SSL certificate, the one its web pages show) or of an ESXi host that expires within this many days (or has expired) is due: a ServiceNow incident, and a CSR made where its key stays - vCenter, or the host - attached to the incident with what to do next. To try the job on certifica… (all of it: the role file) |
 | `vmware_cert_crit_days` | `7` | within this many days (or expired) the incident is critical, else warning |
 | `vmware_cert_esxi` | `true` | the ESXi hosts' certificates too; false = vCenter's only |
