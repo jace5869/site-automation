@@ -515,6 +515,23 @@ class AtlasLook(unittest.TestCase):
         self.assertNotIn('<details class="cols">', h)                               # one column: nothing to take off
         self.assertIn('<input class="filter" type="search" hidden placeholder="Filter these 9 rows"', h)
 
+    def test_rail_put_away(self):
+        """0.66.0: the rail's button puts it away without the script (a check box the CSS acts on): a strip with the
+        button, the tables get the width and the bar lists the sections again; the script keeps the choice."""
+        h = self.render()
+        self.assertIn('<div class="top"><div class="lbl">Sections</div><input type="checkbox" id="rail-hide"', h)
+        self.assertIn('<label class="railx" for="rail-hide"', h)
+        hid = ':is(:root:has(#rail-hide:checked),:root[data-rail="hidden"])'
+        self.assertIn(hid + " .wrap.has-rail{grid-template-columns:44px minmax(0,1fr)}", h)
+        self.assertIn(hid + " .rail>:not(.top),", h)
+        self.assertIn(hid + " .nav.railed{display:flex}", h)
+        self.assertIn("localStorage.getItem('site-report-rail')==='hidden'", h)   # set before the page is drawn
+        self.assertIn("localStorage.setItem('site-report-rail','hidden')", h)
+        css = h[h.index("<style>"):h.index("</style>")]
+        self.assertLess(css.index("  .nav.railed{display:none}"), css.index(hid + " .nav.railed{display:flex}"))  # the later rule wins
+        h = self.render(_report=dict(REPORT, sections=[{"title": "A", "lines": ["x"]}, {"title": "B", "lines": ["y"]}]))
+        self.assertNotIn('id="rail-hide"', h)                                       # no rail, no button
+
     def test_copy_beside_a_command(self):
         h = self.render(_report=dict(REPORT, sections=[{"title": "F", "columns": ["Host", "Look further"],
                                                         "rows": [["web01", "systemctl status chronyd; journalctl -u chronyd <x>"], ["web02", ""]]}]))

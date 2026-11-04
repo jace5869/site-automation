@@ -2,8 +2,9 @@
    site_report_web writes it beside the index (site-report.js) and each page loads it from there, in its head - a web
    server whose Content-Security-Policy allows no inline script (script-src 'self') still runs it; the page carries it
    inline too, for where the file is not there (a page saved or copied by itself), and it runs once. Without it the
-   page reads the same: Light / Auto / Dark, the row height, the section rail and Columns are HTML and CSS; this adds
-   keeping those choices, Print, sorting, filtering, the search, CSV and the Copy buttons. It looks for each part of
+   page reads the same: Light / Auto / Dark, the row height, the section rail (and putting it away, 0.66.0) and
+   Columns are HTML and CSS; this adds keeping those choices, Print, sorting, filtering, the search, CSV and the Copy
+   buttons. It looks for each part of
    the page before it uses it - a page from an older release loads the newest script too. ASCII only (the Windows
    writer writes it as ASCII). */
 (function(){
@@ -11,7 +12,8 @@
   var root=document.documentElement;
   /* the choices of the last page, before this one is drawn (no light page flashing before a dark one) */
   try{var t=localStorage.getItem('site-report-theme');if(t==='light'||t==='dark')root.setAttribute('data-theme',t);
-    var d=localStorage.getItem('site-report-density');if(d==='compact')root.setAttribute('data-density',d)}catch(e){}
+    var d=localStorage.getItem('site-report-density');if(d==='compact')root.setAttribute('data-density',d);
+    if(localStorage.getItem('site-report-rail')==='hidden')root.setAttribute('data-rail','hidden')}catch(e){}
   function ready(f){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',f);else f()}
   ready(function(){
   root.classList.add('js');
@@ -26,6 +28,11 @@
       fit()})}
   seg('theme','data-theme','site-report-theme','auto');
   seg('density','data-density','site-report-density','comfortable');
+  /* the rail put away (0.66.0): its check box works by itself (CSS); kept here like the switches */
+  var rh=document.getElementById('rail-hide');if(rh){rh.checked=root.getAttribute('data-rail')==='hidden';
+    rh.addEventListener('change',function(){if(rh.checked)root.setAttribute('data-rail','hidden');else root.removeAttribute('data-rail');
+      try{if(rh.checked)localStorage.setItem('site-report-rail','hidden');else localStorage.removeItem('site-report-rail')}catch(e){}
+      fit()})}
   var p=document.getElementById('print');if(p){p.hidden=false;p.addEventListener('click',function(){
     all('details.sec').forEach(function(d){d.open=true});window.print()})}
   /* a table wider than its card scrolls sideways (its headings then stay in it); one that fits keeps them at the top */

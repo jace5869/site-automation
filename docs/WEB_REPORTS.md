@@ -77,6 +77,9 @@ Since 0.63.0:
 - **A rail of the sections** beside the report on a wide screen (1200 px and up; on a narrower one, the bar's list of
   them, with the switches and Print as icons beside the search): each section with its status dot and row count, the
   one you are reading marked, *Top* to go back up.
+  - **Put it away** (since 0.66.0): the **«** button at the top of the rail folds it to a narrow strip, so a wide
+    table (the STIG recheck's, say) gets the whole width; the bar lists the sections again. **»** brings the rail
+    back. It works without the script too; with it, this browser keeps the choice for the next report.
 - **Search** in the bar, for the whole report: type a word, a host or an id and only the rows, lines and cards that
   have it stay, in every section; a section without any is put away (all of it stays when its title has the word).
   The rail shows how many each section has, the bar how many in all, and the words are marked where the browser can

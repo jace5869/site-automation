@@ -17,7 +17,9 @@
     in the bar for the whole report (rows, lines and cards; / or Ctrl+K); on each table Columns (check boxes, CSS) and
     CSV (the table as shown: its columns, filtered and sorted rows); a Copy button beside each command in a table. The
     script is site_report.js: loaded from the website (site-report.js, written there by site_report_web - a
-    Content-Security-Policy with script-src 'self' runs it) and inline as well, for a page without the file. -#}
+    Content-Security-Policy with script-src 'self' runs it) and inline as well, for a page without the file. 0.66.0:
+    the rail can be put away (its button: a check box the CSS acts on) - a narrow strip with the button to bring it
+    back, the tables get its width and the bar lists the sections again; the script keeps the choice. -#}
 {%- set r = _report -%}
 {%- set logo_cid = _page_logo_cid | default(_email_logo_cid | default('')) -%}
 {%- set logo_size = _page_logo_size | default(_email_logo_size | default([0, 0])) -%}
@@ -260,6 +262,25 @@ ul.passed .ic{width:17px;height:17px}
   .has-rail>.rail{display:block;position:sticky;top:calc(var(--appbar) + 20px);margin-top:0;max-height:calc(100vh - var(--appbar) - 40px);overflow:auto;padding:12px 8px;scrollbar-width:thin}
   .nav.railed{display:none}
 }
+/* the rail put away (0.66.0): its button is a check box the CSS acts on (no script needed; the script keeps the
+   choice - data-rail on the page before it is drawn); a strip with the button to bring it back, the bar's list again */
+.rail .top{display:flex;align-items:flex-start;justify-content:space-between;gap:4px}
+#rail-hide{position:absolute;opacity:0;width:1px;height:1px;margin:0;pointer-events:none}
+.railx{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:-2px 2px 0 0;border-radius:8px;
+  color:var(--muted);border:1px solid transparent;cursor:pointer}
+.railx:hover{color:var(--ink);background:var(--card-strong);border-color:var(--edge)}
+#rail-hide:focus-visible+.railx{outline:2px solid var(--accent);outline-offset:2px}
+.railx .ic-show{display:none}
+@media (min-width:1200px){
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .wrap.has-rail{grid-template-columns:44px minmax(0,1fr)}
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .has-rail>.rail{padding:8px 3px;overflow:visible}
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .rail>:not(.top),
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .rail .lbl,
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .railx .ic-hide{display:none}
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .railx .ic-show{display:block}
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .railx{margin:0 auto}
+  :is(:root:has(#rail-hide:checked),:root[data-rail="hidden"]) .nav.railed{display:flex}
+}
 /* above a table: its filter (the script's), Columns (check boxes the CSS acts on) and CSV (the script's) */
 .tools2{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin:0 0 10px}
 .tools2 .sp{flex:1}
@@ -386,7 +407,7 @@ footer{margin-top:28px;text-align:center;color:var(--muted);font-size:13px;line-
 <div class="wrap{{ ' has-rail' if secs | length > 2 else '' }}">
 {%- if secs | length > 2 %}
 <nav class="card rail" aria-label="Sections of this report">
-<div class="lbl">Sections</div>
+<div class="top"><div class="lbl">Sections</div><input type="checkbox" id="rail-hide" aria-label="Put the sections away (wider tables)"><label class="railx" for="rail-hide" title="Put the sections away - the tables get the width; again to bring them back"><svg class="ic ic-hide" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 3.5L5 8l4.5 4.5M13 3.5L8.5 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="ic ic-show" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 3.5L11 8l-4.5 4.5M3 3.5L7.5 8 3 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></label></div>
 <a class="up" href="#top"><span class="t">&uarr; Top</span></a>
 {%- for s in secs %}
 {%- set ss = s.status | default('') %}
