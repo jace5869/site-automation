@@ -68,7 +68,8 @@ from email.utils import formatdate, make_msgid
 from ansible.module_utils.basic import AnsibleModule
 
 IMAGE_TYPES = {'.png': 'png', '.jpg': 'jpeg', '.jpeg': 'jpeg', '.gif': 'gif'}
-FILE_TYPES = {'.xlsx': ('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet'), '.csv': ('text', 'csv'),
+FILE_TYPES = {'.xlsx': ('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+              '.docx': ('application', 'vnd.openxmlformats-officedocument.wordprocessingml.document'), '.csv': ('text', 'csv'),
               '.pdf': ('application', 'pdf'), '.json': ('application', 'json'), '.txt': ('text', 'plain'),
               '.zip': ('application', 'zip')}
 

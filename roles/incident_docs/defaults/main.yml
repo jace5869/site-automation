@@ -1,0 +1,73 @@
+---
+# OUTAGE AAR AND SOP - WORD DOCUMENTS (playbooks/incident_aar.yml, playbooks/incident_sop.yml; docs/INCIDENT_DOCS.md).
+# What is typed in the job's survey becomes an after action report (AAR.docx) - and, when asked, an SOP - with the
+# site's logo (report_logo_file) and marking banner, emailed to the addresses typed in the survey (report_email_also).
+# Never on the report website. The survey itself: the job "AAP - incident document surveys" writes it
+# (playbooks/incident_docs_survey.yml).
+
+# The marking at the top and bottom of every page ("" = none).
+incident_docs_banner: CONTROLLED UNCLASSIFIED INFORMATION (CUI)
+# Its colour (bold text): "" = the marking's usual one - CUI purple (502B85), UNCLASSIFIED green (007A33), CONFIDENTIAL
+# blue (0033A0), SECRET red (C8102E), TOP SECRET orange (FF8C00); or your own, hex RRGGBB in quotes.
+incident_docs_banner_color: ""
+# The logo at the top of the first page: report_logo_file, the reports' logo, unless this names another file
+# (files/aar_logo.png = playbooks/files/aar_logo.png, in YOUR repository). "" = report_logo_file.
+incident_docs_logo_file: ""
+incident_docs_logo_height: 64            # pixels (its width follows)
+incident_docs_font: Times New Roman       # the documents' font
+incident_docs_font_size: 12              # points
+incident_docs_heading_color: "1F2D86"    # the headings' colour (hex RRGGBB, in quotes) - dark blue
+# The site's own instructions at the end of each document, a numbered list (your all.yml: your teams' names and steps).
+# [] = none.
+incident_aar_instructions:
+  - Save this file as AAR.docx.
+  - Send it to your manager for review and approval before it is posted.
+  - Attach this file, and any logs and screenshots, to the outage's record.
+incident_sop_instructions: []             # the same at the end of the SOP; [] = none
+incident_sop_status: Draft - review before use   # the SOP's Status line
+# The attachments' names: AAR.docx (AAR-<outage>.docx when the outage is named), SOP-<title>.docx.
+incident_docs_aar_file: AAR              # the AAR attachment's first part
+incident_docs_sop_file: SOP              # the SOP attachment's first part
+# The impact levels the survey offers (the setup job writes them into the survey).
+incident_impact_levels: [MINOR, MODERATE, MAJOR, CRITICAL]
+# Who gets the documents: the addresses typed in the survey (report_email_also - held to report_email_also_domains
+# when that is set), plus these. The reports' usual recipients (report_email_to) are NOT used here: an AAR goes only
+# where it is sent. Nor is report_email_cc.
+incident_docs_email_to: []
+
+# What was typed: the jobs' surveys ask these (the setup job writes the questions); empty unless answered. The AAR's
+# boxes and the SOP's steps take a line or several.
+incident_name: ""                        # the outage's name or number (in the file name and the email)
+incident_start: ""                       # the AAR: its start date and time (required)
+incident_end: ""                         # its end date and time (optional)
+incident_impact_level: ""                # one of incident_impact_levels
+incident_impact: ""                      # why: "it is affecting users enterprise-wide"
+incident_detection: ""                   # how the event was detected
+incident_actions: ""                     # key response steps and the teams involved
+incident_root_cause: ""                  # the reason for the outage (RFO)
+incident_recovery: ""                    # the fix action
+incident_successes: ""                   # what went well
+incident_improvements: ""                # areas to improve
+incident_tasks: ""                       # the improvements as tasks, each with who does it
+incident_make_sop: "No"                  # Yes = the AAR job attaches an SOP from the sop_ boxes too
+sop_title: ""                            # the SOP's title
+sop_purpose: ""                          # the symptoms that send someone to the SOP
+sop_troubleshoot: ""                     # the steps to troubleshoot, one per line
+sop_fix: ""                              # the steps to fix, one per line
+sop_verify: ""                           # how to check it is fixed, one per line
+sop_escalate: ""                         # who to call when the steps do not fix it
+
+# ACT (GenAI, evidence mode: it runs no command, only reads what was typed). Each is a Yes/No in the survey; these are
+# the defaults when the survey does not ask. Needs the "ACT model key" credential on the template when either is Yes.
+incident_act_tidy: false                 # tidy the spelling and wording; facts, names and numbers stay as typed
+incident_act_suggest: false              # a "From ACT" section: what may be missing or better, to review
+incident_act_max_suggestions: 8          # suggestions from ACT at most
+incident_act_extra_instructions: ""      # the site's own words for ACT, e.g. "Our monitoring tool is called X."
+incident_act_model_timeout: 120          # seconds GenAI may take to answer
+
+# The survey setup job (playbooks/incident_docs_survey.yml): adds the questions to the job templates that run
+# incident_aar.yml and incident_sop.yml (found by their playbook). A question already there is left as it is.
+incident_docs_survey_state: present      # present = add the questions; absent = take them out again
+incident_docs_survey_project: ""         # only job templates of this AAP project (its name); empty = any project
+incident_docs_survey_ca_path: ""         # a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts)
+incident_docs_survey_max: 8000           # characters a text box takes at most (AAP's own default is 1024)

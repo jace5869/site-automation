@@ -1,0 +1,18 @@
+---
+# OUTAGE AAR - WORD DOCUMENT. What is typed in the survey - the outage's start, impact, detection, actions, root cause,
+# recovery, successes, improvements, tasks - becomes an after action report (AAR.docx) with the site's logo and marking
+# banner, emailed to the addresses typed in the survey. "Also make an SOP: Yes" attaches an SOP from the steps typed
+# too. Optional: ACT tidies the wording, and/or adds a "From ACT" section of suggestions to review. Never on the report
+# website. The survey: run "AAP - incident document surveys" once (playbooks/incident_docs_survey.yml).
+# No Limit; no machine credential; an "ACT model key" credential only for the ACT options. docs/INCIDENT_DOCS.md
+#   ansible-playbook playbooks/incident_aar.yml -e @my_outage.yml
+- name: Outage AAR - Word document
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The AAR (and the SOP, when asked)
+      ansible.builtin.include_role:
+        name: incident_docs
+      vars:
+        _incident_kind: aar

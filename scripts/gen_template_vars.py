@@ -148,6 +148,17 @@ net_perf_targets: [{name: Gateway, host: GATEWAY-ADDRESS}, {name: DC01, host: DC
 ## The OCSP responders, asked from every host (with cert and issuer: a real OCSP request)
 # net_perf_ocsp: [{name: OCSP, url: "http://OCSP-SERVER", cert: files/ocsp/test-user.pem, issuer: files/ocsp/issuing-ca.pem}]
 """),
+    "incident_aar.yml": ("Outage AAR - Word document", "none (ACT model key for the ACT options)", "", """\
+## What to write comes from the template's survey: run "AAP - incident document surveys" once (docs/INCIDENT_DOCS.md).
+## The logo, banner and instructions are usually in all.yml (report_logo_file, incident_docs_banner, incident_aar_instructions).
+"""),
+    "incident_sop.yml": ("SOP - Word document", "none (ACT model key for the ACT options)", "", """\
+## What to write comes from the template's survey: run "AAP - incident document surveys" once (docs/INCIDENT_DOCS.md).
+"""),
+    "incident_docs_survey.yml": ("AAP - incident document surveys", "Red Hat Ansible Automation Platform", "", """\
+## Run it with Check first: it then only reads, and lists the questions it would add to the two templates
+# incident_docs_survey_project: "Site automation"   # only the templates of your project (its name in AAP)
+"""),
     "ontap_health_report.yml": ("NetApp ONTAP health report", "NetApp ONTAP", "", ""),
     "ontap_hardware_report.yml": ("NetApp ONTAP hardware inventory", "NetApp ONTAP", "", ""),
     "ucs_inventory_report.yml": ("Cisco UCS inventory", "Cisco UCS Manager", "", """\

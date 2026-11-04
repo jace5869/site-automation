@@ -381,10 +381,15 @@ def emailing_playbooks():
     return out
 
 
+# playbooks whose own survey asks report_email_also (required, in their words): the setup job leaves those templates alone
+OWN_QUESTION = {"incident_aar.yml", "incident_sop.yml"}
+
+
 class PlaybookList(unittest.TestCase):
     def test_every_emailing_playbook_is_listed(self):
         listed = (_load(os.path.join(REPO, "roles", "aap_email_question", "defaults", "main.yml")) or {})["aap_email_question_playbooks"]
-        found = emailing_playbooks()
+        found = [p for p in emailing_playbooks() if p not in OWN_QUESTION]
+        self.assertEqual(sorted(OWN_QUESTION - set(emailing_playbooks())), [])
         self.assertGreater(len(found), 40)
         self.assertIn("cert_report.yml", found)
         self.assertNotIn("patch_hosts.yml", found)

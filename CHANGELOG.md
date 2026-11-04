@@ -1,5 +1,346 @@
 # Changelog
 
+## 0.64.0 — 2026-11-04
+
+**Updating without scripts:** paste `site-automation-0.64.0-changed-since-0.63.0.zip` as it is (from an older version,
+its own zip). They leave out `playbooks/group_vars`, `playbooks/host_vars`, `inventories/site`, `.site-local` and
+`poam/poam.csv`. (Never paste the full `site-automation-0.64.0.zip` over your copy: it carries the example
+`group_vars`.) In AAP: three job templates for the new jobs (step 48) - nothing else changes (the UCS change below needs nothing).
+
+**Outage AAR and SOP - Word documents (new).** *Outage AAR - Word document* (`playbooks/incident_aar.yml`) turns what is
+typed in its survey - the outage's start and end, impact level and why, detection, actions, root cause, recovery,
+successes, improvements, tasks - into an after action report in Word (`AAR.docx`) with your logo and a marking banner
+(`incident_docs_banner`, e.g. CUI - in bold, in the marking's colour: CUI purple, UNCLASSIFIED green, ...;
+`incident_docs_banner_color`) at the top and bottom of every page, in the usual AAR layout: OVERVIEW, Event
+Response, Reason for Outage (RFO) & Recovery, Lessons Learned & Action Plan, then your own instructions
+(`incident_aar_instructions`). **Also make an SOP: Yes** attaches an SOP from the steps typed in the same survey;
+*SOP - Word document* (`playbooks/incident_sop.yml`) makes an SOP on its own: title, purpose and when to use, numbered
+steps to troubleshoot, to fix and to check, escalation, revision history.
+- **Who gets them:** only the addresses typed in the survey (`report_email_also`, held to `report_email_also_domains`)
+  and `incident_docs_email_to` - never the reports' `report_email_to` or `report_email_cc`, and never the report
+  website, whatever `report_web_dest` says. The email names the attachments and holds none of their text.
+- **ACT (optional, two Yes/No questions):** *tidy the wording* (spelling and wording; a box whose tidied text drops a
+  number, an address or a step, or has a masked word in it, stays as typed) and *suggest what may be missing* (a
+  **From ACT** section of its own - the AAR's and the SOP's - with steps or checks to review; what was typed is never
+  changed). Evidence mode: ACT runs no command. ACT not reachable or its answer unreadable: the text as typed, said in
+  the email; the job does not fail for it.
+- **The survey is written for you:** *AAP - incident document surveys* (`playbooks/incident_docs_survey.yml`) adds the
+  questions to the two templates (found by their playbook) through AAP's API - text boxes up to 8000 characters
+  (`incident_docs_survey_max`; AAP's default of 1024 would cut a list of steps) - and leaves a question that is
+  already there as it is.
+- The Word documents are written with Python's standard library (`roles/incident_docs/library/site_docx.py`), so any
+  execution environment runs the job. Everything the documents use comes from one record made from the survey
+  (`incident_record`), which a later version can fill from the outage's record in ServiceNow.
+- The email role takes files to attach from a job (`_report_attachments`), a job's own recipients only
+  (`_report_to_only`) and a never-on-the-website switch (`_report_web_skip`); `.docx` attachments go as Word documents.
+
+`roles/incident_docs` (new: `site_docx.py`, `site_aap_survey_add.py`), `plugins/filter/incident_doc_filters.py`,
+`roles/site_email`; docs/INCIDENT_DOCS.md (new), README, START_HERE, JOB_TEMPLATES, VARIABLES_REFERENCE; aap/extra_vars.
+Tests: `tests/test_incident_docs.py`, `tests/incident/run_incident_test.sh` (a fake mail relay and a scripted GenAI model,
+in CI on the current ansible-core and 2.16).
+
+**Cisco UCS inventory - the faults newest first.** The report's *Faults (critical, major)* table lists the faults by
+**Since**, the newest first, whatever their severity (a critical one keeps its amber row); a fault without a time
+comes last, so `ucs_inventory_max_rows` keeps the newest. The workbook's *Faults* sheet is in the same order
+(`ucs_inventory_filters.py`: `_faults`). Tests: `tests/test_ucs_inventory.py`; docs/UCS.md.
+
+**To do, if you have not yet: what 0.20.0 to 0.64.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 0.64.0 add nothing to it; 0.64.0 adds step 48).** In order; each step works without
+the ones after it.
+
+1. **Your logo** (0.20.0). A PNG with a transparent background, about 160 px tall and under 100 KB, in
+   *your* repository - never the public one: `playbooks/files/report_logo.png`. In `all.yml`:
+   `report_logo_file: files/report_logo.png`. Add the line `playbooks/files/report_logo.png` to `.site-local`,
+   or `scripts/update-from-release` deletes it.
+2. **The strip of past runs** (0.20.0, 0.21.0). Attach a **Red Hat Ansible Automation Platform** credential to
+   every report template (the pick lists' one works). Give its user **Organization Auditor** on the templates'
+   organization: Access Management > Users > the user > Roles > Assign roles, resource type Organization.
+   Without it the reports go out without the strip, and the job says why.
+3. **The look** (0.20.0, 0.21.0, 0.24.0). In `all.yml`: `report_email_theme: glass` (or `command`, `portal`)
+   and, if you like, `report_email_header_text: <your line above the title>`.
+4. **"Also email the report to" on every report** (0.22.0). Create the job template **AAP - report email
+   question**: playbook `playbooks/aap_email_question.yml`, only the Red Hat Ansible Automation Platform
+   credential (its user: **Admin** on the report templates and their workflows), any inventory, no Limit.
+   Launch it with Job type **Check** first - it only lists the templates and workflows it would change -
+   then for real. It adds the optional box to every report template's survey and to the workflows that run
+   them. Run it again whenever you add a report template. Optional, in `all.yml`:
+   `report_email_also_domains: [yoursite.mil]`, so typed addresses outside your domains get nothing. The
+   mail relay must be set (`report_email_smtp_host`, `report_email_from`). docs/SETUP_AAP.md, "AAP - report
+   email question"; docs/EMAIL_REPORTS.md, "Also email the report to".
+5. **The report website** (0.23.0, 0.27.0). In `all.yml`, `report_web_url: https://web01.yoursite.mil/reports`,
+   `report_web_theme: atlas` (0.43.0; glass before it), and where the pages go - for a Windows server (IIS serving the folder):
+   `report_web_host: web01.yoursite.mil` and `report_web_dest: 'D:\reports'` (the folder already there). Then one
+   of two ways to write them:
+   - **every report template in an execution environment with WinRM (and Kerberos)** - the all-in-one EE, say: the
+     report jobs write their own pages. The login: a **Report website** credential (`user@YOURSITE.MIL` for
+     Kerberos) on the report templates - or, without it, the template's Machine credential; for WinRM over HTTP with
+     Kerberos also `report_web_host_port: 5985`, `report_web_host_scheme: http`, `report_web_host_transport: kerberos`.
+     The **Report website** credential type: create it from `aap/credential_types/report_web.yml`.
+   - **report templates in other execution environments** - the copy job (new in 0.27.0):
+     1. Create the job template **Report website - copy**: playbook `playbooks/report_web_copy.yml`; the execution
+        environment your Windows jobs work with; your Windows inventory - it must have the web server, and
+        `report_web_host` is its name there - no Limit; its Machine credential (an account with **Modify** on
+        `D:\reports`); a **Red Hat Ansible Automation Platform** credential whose user has **Organization Auditor**
+        on the report templates' organizations. *Concurrent jobs* off.
+     2. Try it on one report template: `report_web_copy: true` on its Variables, run it (Run, not Check), then look
+        at that job in AAP (Details > Artifacts: `site_report_page`).
+     3. Launch **Report website - copy** with **Check** (`Would copy: job ...`), then for real: the page appears at the
+        address the report job printed, and the job says how it reached the server - *from this job's inventory*.
+     4. Then `report_web_copy: true` in `all.yml`, and a schedule for the copy job (every 15 minutes). An email's
+        button answers *not found* until the copy job's next run.
+
+     Both ways can be mixed: `report_web_copy: false` on one template's Variables and it writes its own pages.
+   - Or an upload (WebDAV) or a folder (a share on the execution nodes): docs/WEB_REPORTS.md, "Where the files go".
+
+   Run one report with **Check** (it prints the address it would use), then for real: the job prints
+   `Report: https://...`, and its email gets the **Open the full report** button. docs/WEB_REPORTS.md.
+6. **Certificate install** (0.25.0) - only when the renewals order from the PKI's catalog item
+   ([CERT_RENEWAL_CATALOG.md](docs/CERT_RENEWAL_CATALOG.md)). Ask the PKI to attach DISA's files (the .cer and
+   the .p7b) to the request or to its catalog task. Create six templates: *Certificate install - check*
+   (`playbooks/cert_install_check.yml`: Machine, ServiceNow API), *Certificate install - approved*
+   (`playbooks/cert_install_approved.yml`: the same, the same inventory, no Limit, Variables not prompted),
+   *Certificate restore* (`playbooks/cert_restore.yml`), and the three `win_` ones (`win_cert_install_check.yml`,
+   `win_cert_install_approved.yml`, `win_cert_restore.yml`). Make the workflow with an **Approval** on the
+   check's **Run on fail** (workflow 29 in docs/WORKFLOWS_AND_SCHEDULES.md) and schedule it daily; try the check
+   as **Check** with a Limit first. The optional settings: the 0.25.0 notes, "To set it up"; docs/CERT_INSTALL.md.
+7. **VM outage watch and log analysis** (0.26.0). Each does nothing until you make its template.
+   - *VM - outage watch* (`playbooks/vm_outage_watch.yml`): the VMware vCenter credential, the inventory that has
+     your `aap` group, no Limit. Run it once by hand (a clean estate is one green line). Then the workflow
+     `[VM - outage watch] --Always--> [ServiceNow tickets]` (*Always*, so a clean run notes or resolves the
+     incident), scheduled every 5 to 15 minutes with **Concurrent jobs off**, and `vm_watch_window_minutes` set to
+     that interval. It restarts nothing. docs/VM_OUTAGE_WATCH.md, "Set it up".
+   - *Log analysis* (`playbooks/log_analysis.yml`): one template per inventory (Linux with its Machine credential,
+     Windows with its Machine (Windows) credential), plus the **ACT model key**; Limit prompted on launch and a
+     survey with `target`, `log_analysis_question`, `log_analysis_since` / `log_analysis_until`. And
+     *VM - vCenter log analysis* (`playbooks/vm_log_analysis.yml`): VMware vCenter and ACT model key, no Limit.
+     Run each as **Check** first (it reads and reports, ACT is not called). docs/LOG_ANALYSIS.md, "Set it up in
+     AAP". With `report_web_copy: true` their pages go through the copy job too.
+8. **The patch batch size** (0.28.0) - only if you set `patch_serial` or `win_patch_serial` in `all.yml` or in a
+   group's or host's file: it never worked there. Move it to the *Patch hosts* / *Windows patch* template's
+   Variables (or a survey).
+9. **STIG drift report** (0.28.0). On the hosts, `openscap-scanner` and `scap-security-guide` from your RHEL
+   repositories (or `check_stig_install: true`). In STIG Manager, a Keycloak client for the job - your autostig
+   one, or another - with the scope `stig-manager:collection:read` and a grant in the collections (Full, or
+   Restricted with these hosts' assets). In AAP, the template *STIG drift report* (`playbooks/stig_drift_report.yml`):
+   the Machine credential and a **STIG Manager API** credential with that client; `check_stig_stigman_api` in its
+   Variables, and each host's `check_stig_stigman_collection` in the inventory, per group or host. Run it as
+   **Check** with a Limit first (it scans and compares, keeps nothing), then weekly and after patching: the
+   workflow 33 (new in 0.30.0) runs the tickets step after it. docs/STIG_DRIFT.md, "Setting it up".
+10. **The MID Server hosts** (0.29.0). Move them to a group `servicenow_mid_hosts` of your **Windows**
+    inventory, then on the *ServiceNow health* template: that inventory, and its Machine (Windows) credential next
+    to the ServiceNow API one. The API account needs read on `ecc_agent`, `ecc_queue` and `ecc_agent_issue` (e.g.
+    the `mid_server` role). Optional: `servicenow_mid_expected: [mid01, mid02]`. Launch it once by hand.
+    docs/SERVICENOW_SETUP.md, "MID Servers".
+11. **Single sign-on** (0.30.0). Linux: nothing to set - `sso` runs in the health check's daily set; optional
+    `check_sso_test_users: [svc_monitor@yoursite.mil]` in `all.yml`. Add `sso` to the *Health check* survey's
+    `health_checks` choices to run it on its own. vCenter: create the credential type **vCenter SSO test account**
+    from `aap/credential_types/vcenter_sso_test.yml`, a credential with an AD account made for it (Read-only on
+    vCenter's root, not propagated, or no permission at all), and attach it to the *VM - health report* and *VM -
+    outage watch* templates. OCSP (0.31.1): a certificate the responder knows, committed in `playbooks/files/ocsp/`,
+    named once in `all.yml` - `site_ocsp_certs: [files/ocsp/test-user.pem]` - or the responders' addresses alone
+    (`vm_sso_ocsp: [{url: "http://ocsp.example.mil"}]`). Run the VM - health report once by hand: its section
+    **Single sign-on and OCSP**. docs/VMWARE.md, "Single sign-on and OCSP (vCenter 8.0)".
+12. **Network performance report** (0.30.0). In `all.yml`, `net_perf_targets` (the gateway, the domain
+    controllers with port 389, the web servers with 443) and, if you like, `net_perf_ocsp` (the same responders).
+    Create the template *Network performance report* (`playbooks/net_perf_report.yml`): the Machine credential,
+    `target:` the group to measure from. Run it as **Check** first (it measures and keeps nothing), then schedule
+    it hourly as workflow 34, the tickets step after it (Concurrent jobs off) - the trend needs a few runs.
+    docs/NETWORK_PERF.md, "Set it up".
+13. **The hosts' and VMs' network drops** (0.31.0). Nothing to set: the *VM - health report* has the new section
+    **Network drops and errors**. It reads the past day only when vCenter's 5-minute statistics are at level 2 -
+    at level 1 (the default) the last hour, and it says so. To raise it: vSphere Client > the vCenter > Configure >
+    Settings > General > Edit > Statistics, the 5-minute row to **Level 2** (check the database estimate the dialog
+    shows). docs/VMWARE.md, "Network drops and errors".
+14. **A Limit is the hosts, nothing more** (0.32.0) - nothing to set. *Log analysis*, the certificate install and
+    renewal (CSR) jobs and the *Active Directory* reports take a Limit of hosts (`web01,web02`); the `,localhost` you
+    may have added still works. Only *ServiceNow health* and the network config and certificate jobs need `localhost`
+    in a Limit - or no Limit - and they say so.
+15. **Your time zone** (0.32.0) - optional. In `all.yml`: `report_time_zone: America/New_York` (a name as
+    `timedatectl list-timezones` prints it): the VMware health and alarms reports then show each time in it, next to
+    UTC. Then run the *VM - health report* once and look at its **Clock** column and any NTP warnings.
+    docs/VMWARE.md, "Times and clocks".
+16. **ACT asks 5 at a time, and the CRL** (0.32.0) - nothing to set. The alarms analysis, capacity planning and
+    log analysis ask ACT 5 items per question (`site_act_batch`): a `log_analysis_max_items: 5` you set to make it
+    finish can go. The VM - health report also checks the CRL of your `site_ocsp_certs` certificate
+    (`vm_sso_crl: false` turns it off).
+17. **fapolicyd denials by email** (0.32.0) - only if you run ACT's fapolicyd job. On its template, **Playbook**
+    `playbooks/fapolicyd_denials.yml` instead of `vendor/act/ansible/playbooks/fapolicyd_denials.yml`, and
+    `report_email_to` in its **Variables** (or all.yml): one report of every host by email and on the website, the
+    Teams card as before. docs/RUNBOOKS.md, "fapolicyd denials".
+18. **Your execution environments** (0.32.0, 0.33.0, 0.33.1) - when you next build one: from `ee/` and the EE guide
+    PDF (*Execution Environments - step by step*), on your base EE - by hand, or `bash build-ee.sh all-in-one 2` in
+    `~/ee` (`INSECURE=1` behind TLS inspection; as root with `sudo` when podman cannot give the build your RHEL
+    subscription - it says so). An EE that answers `bash: /opt/builder/bin/entrypoint: Permission denied`: build
+    the next tag from 0.33.1's files. Then on your templates in one run: the job template **AAP - set execution
+    environment** (`playbooks/aap_ee.yml`, the Red Hat Ansible Automation Platform credential, Check first);
+    later tags: the EE's Image in AAP. Never push a rebuild under a tag already on the hub. docs/EXECUTION_ENVIRONMENT.md.
+19. **The report website on a Windows share** (0.33.0, 0.33.1) - optional, instead of a mount or a web server:
+    `report_web_dest: '\\fileserver.yourdomain.mil\reports\aap'` in `all.yml` (the server by its full name), and
+    the **Report website** credential (`svc_aap_reports@YOURDOMAIN.MIL`, the realm in capitals; Modify on that
+    folder) on the report templates, which run in an EE with `smbprotocol` (step 18). Leave `report_web_smb_auth` at
+    `negotiate`, on FIPS too. Run one report as **Check** first: it logs in and checks the folder.
+    docs/REPORT_SHARE.md and its PDF.
+20. **Each report's last runs on the website** (0.34.0) - nothing to set; only if you use the report website.
+    Each report keeps its last 5 runs (`report_web_history`) and the job deletes the pages of older ones, so the
+    account that writes there needs **Modify** on the folder (a share, or `report_web_host`) - Write alone cannot
+    delete; an upload address needs `DELETE` (nginx: `dav_methods PUT DELETE MKCOL;`). To keep every page:
+    `report_web_delete_old: false`. Pages from before 0.34.0 are not in the lists - delete them on the server once
+    if you like. Templates named otherwise than in docs/JOB_TEMPLATES.md: check which tab each is on, and set
+    `report_web_tabs` in `all.yml` if you want them elsewhere. docs/WEB_REPORTS.md, "The index page: tabs, and each
+    report's last runs".
+21. **Containers in the certificate trust check** (0.34.0) - nothing to set: it no longer reads inside containers.
+    To read them again, once your security team has cleared the `podman exec` it runs:
+    `check_trust_containers: true` in `all.yml`. docs/TRUST_STORES.md.
+22. **fapolicyd and containers** (0.34.0) - now in step 34: the *fapolicyd* job proposes the container rules. Delete
+    the template *fapolicyd and containers*.
+23. **VM inventory report** (0.35.0) - optional. Create the job template *VM - inventory report*: playbook
+    `playbooks/vm_inventory_report.yml`, the VMware vCenter credential, the execution environment of your other VMware
+    jobs, no Limit, no survey; `report_email_to` on its Variables, and a weekly schedule. Its email carries every VM as
+    a workbook. docs/VMWARE.md, "The VM inventory report".
+24. **ESXi network check** (0.35.0) - optional. First give the vCenter account **Host > CIM > CIM interaction** on the
+    hosts (a role with it on the datacenter or the clusters). Then the job template *ESXi - network check*: playbook
+    `playbooks/esxi_network_check.yml`, the VMware vCenter credential, no Limit, no survey. Run it once with
+    `vm_hostnet_raw: true` at launch: it prints the first ping's answer as the host sent it - if the round trips in
+    the report look a thousand times off, send that output. Optional: `vm_hostnet_targets` (an NFS array, a gateway),
+    `vm_hostnet_services: [vmotion, vsan]`. docs/VMWARE.md, "The ESXi network check".
+25. **A workbook on any report's email** (0.35.0) - optional: `report_email_xlsx: true` in `all.yml`, or on one
+    template's Variables. docs/EMAIL_REPORTS.md, "A workbook attached".
+26. **VM right-sizing report** (0.36.0) - optional. Create the job template *VM - right-sizing report*: playbook
+    `playbooks/vm_rightsizing_report.yml`, the VMware vCenter credential, the execution environment of your other
+    VMware jobs, no Limit, no survey; `report_email_to` on its Variables, and a monthly schedule. Read-only: it only
+    suggests. For ACT's review, `vm_rightsize_act: true` and the **ACT model key** credential. docs/VMWARE.md, "The VM
+    right-sizing report".
+27. **Capacity planning's growth line** (0.36.0) - nothing to set: it is fitted on 90 days now. Only if you set
+    `vm_capacity_trend_days: 30` on the *VM - capacity planning* template on purpose, keep it; otherwise delete it there.
+28. **fapolicyd and containers: the storage rule and the review** (0.37.0) - now in step 34.
+29. **VMware version report** (0.38.0) - optional. Create the job template *VMware - version report*: playbook
+    `playbooks/vmware_version_report.yml`, the VMware vCenter credential (read-only is enough), the execution
+    environment of your other VMware jobs, no Limit, no survey; `report_email_to` on its Variables, and a schedule
+    (monthly, or after patching). docs/VMWARE.md, "The VMware version report".
+30. **Tenable.sc - scan** (0.39.0) - optional. First the credential type *Tenable.sc API* (`aap/credential_types/tenable_sc_api.yml`) and a
+    credential with a Tenable.sc user's API keys. Then the job template *Tenable.sc - scan*: playbook `playbooks/tenable_scan.yml`,
+    the inventory with the hosts, that credential, no Limit; run it with nothing set - the report lists the zones, scanners,
+    policies and repositories - then `tenable_scan_target`, `tenable_scan_policy` and `tenable_scan_repository` on its Variables,
+    a Check run, and the real one. docs/TENABLE.md.
+31. **ServiceNow - weekly activity report** (0.40.0) - optional. The job template *ServiceNow - weekly activity report*: playbook
+    `playbooks/servicenow_war.yml`, any inventory, the *ServiceNow API* credential (its account reads the tables: itil), no Limit;
+    on its Variables `servicenow_war_groups: [<the assignment group's exact name>]` and `report_email_to`; run it once, then a
+    weekly schedule (a Friday afternoon, or a Monday morning with `servicenow_war_period: last-week`). Run *AAP - report email
+    question* again so the launch can add recipients. `servicenow_war_act: true` with an *ACT model key* credential for the
+    narrative. Several teams on the same template: a survey question `servicenow_war_groups` (Text or Textarea), or a
+    schedule per team with its own `servicenow_war_groups` and `report_email_to` (docs/SERVICENOW_WAR.md, "Several
+    teams"). docs/SERVICENOW_WAR.md.
+32. **VM - ask a question** (0.42.0) - optional. The job template *VM - ask a question*: playbook `playbooks/vm_ask.yml`,
+    any inventory, the *VMware vCenter* credential (read-only is enough) and the *ACT model key* credential, the execution
+    environment of your other VMware jobs, no Limit. A survey with one question: *What do you want to know?*, answer
+    variable `vm_ask_question`, type **Textarea**, required. Run *AAP - report email question* again so the launch can add
+    recipients. Try it with *all VMs with dbv in the name* (any part of a name you know). docs/VM_ASK.md, "Set it up in AAP".
+33. **Windows STIG drift report** (0.46.0) - optional. The job template *Windows STIG drift report*: playbook
+    `playbooks/win_stig_drift_report.yml`, your Windows inventory, the *Machine (Windows)* credential (an administrator)
+    and the *STIG Manager API* credential, the execution environment of your other Windows jobs. Variables from
+    `aap/extra_vars/win_stig_drift_report.yml`: `check_stig_stigman_api` and, per group or host in the inventory,
+    `check_stig_stigman_collection`. Run it as **Check** with a Limit of one server: the job output says where it found
+    Evaluate-STIG (or where it looked - then set `win_check_stig_evaluate`). Then weekly. docs/STIG_DRIFT.md, "Windows
+    servers"; docs/SETUP_AAP.md, "Windows STIG drift report".
+34. **fapolicyd** (0.49.0) - optional: the one fapolicyd job and its daily workflow. Two job templates of
+    `playbooks/fapolicyd.yml` - your Linux inventory, the *Machine* credential (with sudo), **Prompt on launch** for
+    Limit: *fapolicyd - check* (Variables `fapolicyd_workflow: true`, `fapolicyd_since: yesterday`, and for ACT's
+    explanation `fapolicyd_act: true` with the *ACT model key* credential) and *fapolicyd - approved* (no Variables). Then
+    workflow 36: check -> (on fail) Approval, 8 hours -> (on success) approved; a schedule, daily 07:00, **limited to the
+    hosts that must run fapolicyd** (an inventory group); on the workflow's Notifications tab, **Approval** on.
+    docs/WORKFLOWS_AND_SCHEDULES.md, 36; docs/RUNBOOKS.md, "fapolicyd".
+35. **The old fapolicyd templates** (0.49.0): delete *fapolicyd fix*, *fapolicyd rules*, *fapolicyd rules - check*,
+    *fapolicyd rules - approved*, *fapolicyd and containers* and the old workflow 36 - their playbooks are gone. Keep
+    *fapolicyd denials* if you use it (ACT's explanation alone).
+36. **STIG recheck** (0.50.0) - optional. Two job templates like the STIG drift reports, with the same inventories and
+    credentials (the machine credential and *STIG Manager API*): *STIG recheck* (`playbooks/stig_recheck.yml`) and
+    *Windows STIG recheck* (`playbooks/win_stig_recheck.yml`), Variables from `aap/extra_vars/stig_recheck.yml`,
+    `win_stig_recheck.yml` (`check_stig_stigman_api`), **Prompt on launch** for Limit. Run each as **Check** with a Limit
+    of one host: it lists what STIG Manager has Open or Not Reviewed and how the host answers now. On demand, or after a
+    patch or fix job. docs/STIG_DRIFT.md, "The STIG recheck"; docs/SETUP_AAP.md, "STIG recheck".
+37. **VMware ask** (0.51.0) - optional: *VM - ask a question* as a web page at STIG Manager's `/ask/`, for people
+    without AAP. On the STIG Manager server, look up its nginx container's podman network (`sudo podman ps`); put the
+    server in the inventory group `vmware_ask`; the job template *VMware ask - deploy*: playbook
+    `playbooks/vmware_ask_deploy.yml`, credentials Machine, VMware vCenter (read-only), ACT model key; Variables from
+    `aap/extra_vars/vmware_ask_deploy.yml` (`vmware_ask_network`, `vmware_ask_image`: your execution environment image,
+    `vmware_ask_public_url`). Run it as **Check**, then **Run**. Then, once, by hand: a copy of nginx's file, the lines of
+    `/etc/vmware-ask/nginx-ask.conf` inside its `server` block above `location /`, `nginx -t`, `nginx -s reload`.
+    docs/VMWARE_ASK.md, "Set it up".
+38. **fapolicyd: what was for a person** (0.52.0) - nothing to set. The *fapolicyd* job and workflow 36 now offer lines
+    for a trusted file that changed (`trust update:`), a file trusted but not loaded (`reload trust database`), an RPM
+    file that no longer matches its package (`reinstall package:`) and a file over 512 MB; each is approved like the
+    rest. To keep them for a person: `fapolicyd_rules_offer: []` (or leave out one of them). docs/RUNBOOKS.md, "fapolicyd".
+39. **STIG Manager updated from the recheck** (0.52.0) - optional: workflow 37. First the client: ask your Keycloak realm
+    owner for a client that may write reviews (client-credentials grant, scope `stig-manager:collection`), and in STIG
+    Manager give its service account a grant in the collections (Restricted with the assets, or Full). In AAP: a
+    second *STIG Manager API* credential with it; the template *STIG Manager - update* (playbook
+    `playbooks/stigman_update.yml`, that credential only, **Prompt on launch** for Job type); a copy of *STIG recheck*
+    as *STIG recheck - check* with `check_stig_update_workflow: true`; workflow 37: check -> (on fail) Approval, 8 hours
+    -> (on success) update. Windows: a second workflow with a copy of *Windows STIG recheck*. Try it once with a Limit
+    of one host and **Deny**: the check's report shows what Approve would write. docs/STIG_DRIFT.md, "Updating STIG
+    Manager, with an approval"; docs/WORKFLOWS_AND_SCHEDULES.md, 37.
+40. **The mail relay whitelist** (0.54.0) - optional.
+    - Put your relay servers in the inventory group `mail_relays`, or set `mail_relay_group: <your group>` on each
+      mail relay template and workflow.
+    - **One address per line, named:** create the job template *Mail relay - format the whitelist*: playbook
+      `playbooks/mail_relay_format.yml`, credentials Machine (sudo on the relays) and VMware vCenter (read-only),
+      Variables `mail_relay_group` and `report_email_to`. Run it as **Check**: its report shows each relay's new list
+      and the names found, and nothing is written. Then **Run**: it keeps `main.cf.before-format-DATE-TIME` first.
+    - **Add and remove with an approval:** if you pasted the mail relay zip of 10/22, these are the same files, now
+      in the repository - keep your templates and workflows. If not: the templates *Mail relay - whitelist plan* and
+      *Mail relay - apply the approved whitelist change*, and the workflow *Mail relay - add an IP* (workflow 38).
+      *Mail relay - remove an IP* uses the same two templates; build it when you are ready.
+    - Run *AAP - report email question* again (step 4), so the three templates get the "Also email the report to"
+      box.
+    - docs/MAIL_RELAY.md.
+41. **Evaluate-STIG's answer files from a Windows share** (0.55.0) - optional, Linux. In AAP, the credential type
+    *Windows file share* (`aap/credential_types/windows_share.yml`) and a credential of it: an account with Read on the
+    share's folder (`user@YOURDOMAIN.MIL`). Attach it to the *STIG drift report* and *STIG recheck* templates. In
+    `all.yml` or the templates' Variables: `check_stig_evaluate_answers: '\\fileserver.yourdomain.mil\stig\AnswerFiles'`.
+    Run the drift report once as **Check** with a Limit of one host: its output says *answer files: USED* (or why not),
+    lists each file read, and how many rules Evaluate-STIG answered from them (0.58.0); it says too if your
+    Evaluate-STIG names the option otherwise (`check_stig_evaluate_answers_arg`, default `--AFPath`).
+    docs/STIG_DRIFT.md, "Answer files from a Windows share".
+42. **VMware hardware inventory** (0.57.0) - optional. The job template *VMware - hardware inventory*: playbook
+    `playbooks/vmware_hardware_report.yml`, the VMware vCenter credential (read-only is enough), the execution environment
+    of your other VMware jobs, no Limit; `report_email_to` on its Variables. Run it once, or monthly on a schedule. Then
+    run *AAP - report email question* again (step 4), so it gets the "Also email the report to" box. docs/VMWARE.md,
+    "The VMware hardware inventory".
+43. **VMware Tools inventory** (0.59.0) - optional. The job template *VM - VMware Tools inventory*: playbook
+    `playbooks/vm_tools_report.yml`, the VMware vCenter credential (read-only is enough), the execution environment of
+    your other VMware jobs, no Limit; `report_email_to` on its Variables. Run it once, or monthly on a schedule. Then
+    run *AAP - report email question* again (step 4). docs/VMWARE.md, "The VMware Tools inventory".
+44. **NetApp ONTAP hardware inventory** (0.59.0) - optional. The job template *NetApp ONTAP hardware inventory*:
+    playbook `playbooks/ontap_hardware_report.yml`, the *NetApp ONTAP read-only* credential of the health report, any
+    execution environment with Python 3, no Limit; `ontap_clusters` (unless in `all.yml`) and `report_email_to` on its
+    Variables. Run it once, or monthly on a schedule. Then run *AAP - report email question* again (step 4).
+    docs/NETAPP.md, "The hardware inventory".
+45. **Mail relay - remove unused addresses** (0.59.0) - optional. The job template *Mail relay - unused addresses plan*:
+    playbook `playbooks/mail_relay_unused.yml`, the Machine credential of your other mail relay templates, Variables
+    `mail_relay_group`. Then the workflow *Mail relay - remove unused addresses*: that template -> Approval -> *Mail
+    relay - apply the approved whitelist change*, `report_email_to` on its Variables. Run the template once as **Check**:
+    its output says how far back each relay's logs go and which addresses sent nothing. docs/MAIL_RELAY.md, "Remove the
+    addresses that sent no mail".
+46. **SQL Server from the EE on a FIPS host** (0.60.0) - only if jobs use the `mssql_*` modules (or
+    `cert_inventory_sql`). Build the Windows or all-in-one EE again from 0.60.0's `execution-environment.yml` and
+    `check-ee.sh` with the next tag (`build-ee.sh` downloads `freetds.tar.gz`; keep your own `ansible.cfg`, `ca/` and
+    the lines you took out), with `pymssql` back and `mssql-python` added in `requirements.txt` and `check-list.txt`.
+    `ee-check`: *YES pymssql*, *YES mssql-python*.
+    Push it, then *AAP - set execution environment* with `aap_ee_name` and `aap_ee_image` (Check first).
+    docs/EXECUTION_ENVIRONMENT.md, "0.60.0: pymssql on a FIPS host".
+47. **Cisco UCS inventory** (0.61.0) - optional. In UCS Manager, a user with only the read-only role on every domain
+    (the same name and password). In AAP, the credential type *Cisco UCS Manager*
+    (`aap/credential_types/cisco_ucs_manager.yml`) and a credential of it; the job template *Cisco UCS inventory*:
+    playbook `playbooks/ucs_inventory_report.yml`, that credential, any execution environment with Python 3, no Limit;
+    `ucs_domains` (each domain's UCS Manager cluster address) and `report_email_to` on its Variables. Run it once, or
+    monthly on a schedule. Then run *AAP - report email question* again (step 4). docs/UCS.md.
+48. **Outage AAR and SOP - Word documents** (0.64.0) - optional. In your `all.yml`: `incident_docs_banner` (the marking
+    at the top and bottom of every page), `incident_aar_instructions` (your own numbered instructions at the end), and
+    `incident_impact_levels`; the logo is `report_logo_file`. Two job templates: *Outage AAR - Word document* (playbook
+    `playbooks/incident_aar.yml`) and *SOP - Word document* (`playbooks/incident_sop.yml`), any inventory, no Limit,
+    any execution environment with Python 3, no credential - the **ACT model key** only for the ACT options. Then
+    *AAP - incident document surveys* (`playbooks/incident_docs_survey.yml`, the *Red Hat Ansible Automation Platform*
+    credential): Check, then run - it writes both surveys. docs/INCIDENT_DOCS.md.
+
 ## 0.63.0 — 2026-11-04
 
 **Updating without scripts:** paste `site-automation-0.63.0-changed-since-0.62.0.zip` as it is (from an older version,

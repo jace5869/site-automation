@@ -18,23 +18,28 @@
 #       # "Start here" cards (site_filters report_cards_html); a summary box may have a note: {label, value, status, note}
 #       - {title: Start here, cards: [{status: critical, chip: Critical, meta: Certificate, title: ..., subject: web01, next: ..., code: ...}]}
 #     footer: "vCenter vcsa01"                                 # optional; the AAP job line is added
-# or plain text: _report_subject and _report_body.
+# or plain text: _report_subject and _report_body. _report_attachments: files the email attaches, [{path, filename}].
 # The look: report_email_theme (standard | command | portal | glass), report_logo_file. The strip of past runs (all but standard)
 # reads this template's earlier jobs from AAP (site_report_history); each run keeps its report's status and
 # first plain-number summary value as the job artifact site_report_run, the height of its bar.
 # The website (report_web_dest; docs/WEB_REPORTS.md): the page in report_web_theme's look, named by report_web_page,
 # a copy as report_web_latest, the data as JSON beside each, and report_web_index; the page's address is printed
 # ("Report: https://...") and kept as the job artifact site_report_url. _report_email_skip: true = only the website.
+# _report_to_only: [addresses] = only these get it (no report_email_to, no report_email_cc).
+# _report_web_skip: true = never on the website, whatever report_web_dest says (the outage AAR's documents).
 # report_web_copy: true = the page is not written here - the report is kept as the job artifact site_report_page for the
 # job "Report website - copy" (tasks/copy.yml), which writes it at the same address; nothing here reaches report_web_host.
 - name: Email | who gets the report
   ansible.builtin.set_fact:
     # report_email_to, and report_email_also: the "Also email the report to" box asked at launch (this run only)
+    # _report_to_only: the job's own recipients, none else - no report_email_to, no report_email_cc (the outage AAR)
     _email_to: >-
-      {{ report_email_to | email_recipients(report_email_also | default([]), report_email_also_domains)
+      {{ (_report_to_only if _report_to_only is defined
+          else report_email_to | email_recipients(report_email_also | default([]), report_email_also_domains))
          if not _report_email_skip | default(false) | bool else [] }}
     _email_cc: >-
-      {{ ((report_email_cc | replace(',', ' ') | replace(';', ' ')).split() if report_email_cc is string
+      {{ [] if _report_to_only is defined else
+         ((report_email_cc | replace(',', ' ') | replace(';', ' ')).split() if report_email_cc is string
           else report_email_cc) | map('string') | map('trim') | select | unique | list }}
     _email_also_refused: >-
       {{ report_email_also | default([]) | email_also_refused(report_email_also_domains)
@@ -47,17 +52,17 @@
 
 - name: Email | the report website (report_web_dest)
   ansible.builtin.set_fact:
-    _web_on: "{{ report_web_dest | default('') | string | trim | length > 0 }}"
-    _web_copy: "{{ report_web_dest | default('') | string | trim | length > 0 and report_web_copy | default(false) | bool }}"
+    _web_on: "{{ (report_web_dest | default('') | string | trim | length > 0 and not _report_web_skip | default(false) | bool) }}"
+    _web_copy: "{{ (report_web_dest | default('') | string | trim | length > 0 and not _report_web_skip | default(false) | bool) and report_web_copy | default(false) | bool }}"
     _web_win: >-
-      {{ report_web_dest | default('') | string | trim | length > 0 and report_web_host | default('') | string | trim | length > 0
+      {{ (report_web_dest | default('') | string | trim | length > 0 and not _report_web_skip | default(false) | bool) and report_web_host | default('') | string | trim | length > 0
          and not report_web_copy | default(false) | bool }}
     _web_theme: "{{ report_web_theme | default('atlas') | string | trim | lower }}"
     _web_report: >-
       {{ _report if _report is defined else
          {'title': _report_subject | default('Report'), 'status': 'info',
           'sections': [{'title': 'Report', 'lines': (_report_body | default('')).splitlines()}]} }}
-    _email_any: "{{ _email_to | length > 0 or report_web_dest | default('') | string | trim | length > 0 }}"
+    _email_any: "{{ _email_to | length > 0 or (report_web_dest | default('') | string | trim | length > 0 and not _report_web_skip | default(false) | bool) }}"
 
 - name: Email | the mail settings are complete
   ansible.builtin.assert:
@@ -357,7 +362,8 @@
         body: "{{ _report | report_text(_email_footer ~ _email_web_line, _email_runs | default([])) if _report is defined else _report_body ~ '\n\n--\n' ~ _email_footer ~ _email_web_line }}"
         html: "{{ lookup('ansible.builtin.template', _email_template) if _email_html | bool else omit }}"
         images: "{{ [{'cid': _email_logo_cid, 'path': _email_logo_file}] if _email_html | bool and _email_logo_cid else [] }}"
-        attachments: "{{ [{'path': _email_xlsx.path, 'filename': _email_xlsx_name}] if _email_xlsx.path | default('') else [] }}"
+        # the workbook, and the files the job hands over (_report_attachments: [{path, filename}] - the outage AAR's Word documents)
+        attachments: "{{ ([{'path': _email_xlsx.path, 'filename': _email_xlsx_name}] if _email_xlsx.path | default('') else []) + _report_attachments | default([]) }}"
         ca_path: "{{ report_email_ca_path | default(omit, true) }}"
       when: _email_to | length > 0
       vars:

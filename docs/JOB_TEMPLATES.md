@@ -173,6 +173,14 @@ credential ([TENABLE.md](TENABLE.md#step-3-the-job-template)).
 | AAP - set execution environment | `playbooks/aap_ee.yml` | Setup or test | [SETUP_AAP.md](SETUP_AAP.md#aap---set-execution-environment), [EXECUTION_ENVIRONMENT.md](EXECUTION_ENVIRONMENT.md#step-3-use-it) |
 | Report website - copy | `playbooks/report_web_copy.yml` | Watch | [WEB_REPORTS.md](WEB_REPORTS.md#the-copy-job-report-templates-in-any-execution-environment) |
 
+## Outage documents (AAR and SOP)
+
+| Job template | Playbook | Kind | How-to |
+|---|---|---|---|
+| Outage AAR - Word document | `playbooks/incident_aar.yml` | On demand (a survey) | [INCIDENT_DOCS.md](INCIDENT_DOCS.md#set-it-up) |
+| SOP - Word document | `playbooks/incident_sop.yml` | On demand (a survey) | [INCIDENT_DOCS.md](INCIDENT_DOCS.md#set-it-up) |
+| AAP - incident document surveys | `playbooks/incident_docs_survey.yml` | Setup or test | [INCIDENT_DOCS.md](INCIDENT_DOCS.md#set-it-up) |
+
 ## What one job hands to the next
 
 In a workflow, a job hands its results to the steps after it as **job artifacts** (`set_stats`; on a

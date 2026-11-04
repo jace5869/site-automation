@@ -114,6 +114,25 @@ class Report(unittest.TestCase):
         none = ucs.ucs_inventory_doc(self.c, {"severities": []})
         self.assertFalse([s for s in none["sections"] if s["title"].startswith("Faults")])
 
+    def test_faults_newest_first(self):
+        """The newest Since first whatever the severity, one without a time last; the cut keeps the newest; the
+        workbook's Faults sheet in the same order."""
+        c = collected()
+        data = c["domains"][0]["data"]
+        for f in data["faultInst"]["objects"]:
+            f["created"] = {"F0369": "2026-10-20T08:00:00.000", "F0283": "2026-11-02T09:30:00.000"}.get(f["code"], f["created"])
+        data["faultInst"]["objects"].append({"dn": "sys/chassis-1/blade-1/fault-F0999", "code": "F0999", "severity": "major",
+                                             "ack": "no", "descr": "no time", "cause": "x", "created": "", "occur": "1"})
+        f = sec(ucs.ucs_inventory_doc(c), "Faults (critical, major)")
+        self.assertEqual([r[2] for r in f["rows"]], ["F0283", "F0369", "F0999"])
+        self.assertEqual([r[5] for r in f["rows"]], ["2026-11-02 09:30:00", "2026-10-20 08:00:00", ""])
+        self.assertEqual(f["row_status"], ["", "warning", ""])
+        self.assertIn("the newest first", f["text"])
+        cut = sec(ucs.ucs_inventory_doc(c, {"max_rows": 1}), "Faults (critical, major)")
+        self.assertEqual([r[2] for r in cut["rows"]], ["F0283"])
+        book = {s["name"]: s for s in ucs.ucs_inventory_xlsx(c)}
+        self.assertEqual([r[2] for r in book["Faults"]["rows"]], ["F0283", "F0727", "F0369", "F0999"])   # minor too
+
     def test_healthy_is_green_and_ha_not_ready_is_amber(self):
         c = collected()
         c["domains"] = c["domains"][:1]

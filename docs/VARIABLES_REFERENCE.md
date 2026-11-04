@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -657,6 +657,57 @@ File: `roles/horizon/defaults/main.yml`
 | `horizon_push_logoff_policy` | `WAIT_FOR_LOGOFF` | WAIT_FOR_LOGOFF (each desktop is replaced when its user logs off) or FORCE_LOGOFF (users are logged off) |
 | `horizon_push_stop_on_first_error` | `true` | stop the push at the first desktop that fails |
 | `horizon_test_user` | (empty) | ---- API test (playbooks/horizon_api_test.yml) -------------------------------------------------- also look up this user (e.g. jdoe), as the user-help job does |
+
+## incident_docs
+
+File: `roles/incident_docs/defaults/main.yml`
+
+> OUTAGE AAR AND SOP - WORD DOCUMENTS (playbooks/incident_aar.yml, playbooks/incident_sop.yml; docs/INCIDENT_DOCS.md). What is typed in the job's survey becomes an after action report (AAR.docx) - and, when asked, an SOP - with the site's logo (report_logo_file) and marking banner, emailed to the addresses typed in the survey (report_email_also). Never on the report website. The survey itself: the job "AAP - incident document surveys" writes it (playbooks/incident_docs_survey.yml).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `incident_docs_banner` | `CONTROLLED UNCLASSIFIED INFORMATION (CUI)` | The marking at the top and bottom of every page ("" = none). |
+| `incident_docs_banner_color` | (empty) | Its colour (bold text): "" = the marking's usual one - CUI purple (502B85), UNCLASSIFIED green (007A33), CONFIDENTIAL blue (0033A0), SECRET red (C8102E), TOP SECRET orange (FF8C00); or your own, hex RRGGBB in quotes. |
+| `incident_docs_logo_file` | (empty) | The logo at the top of the first page: report_logo_file, the reports' logo, unless this names another file (files/aar_logo.png = playbooks/files/aar_logo.png, in YOUR repository). "" = report_logo_file. |
+| `incident_docs_logo_height` | `64` | pixels (its width follows) |
+| `incident_docs_font` | `Times New Roman` | the documents' font |
+| `incident_docs_font_size` | `12` | points |
+| `incident_docs_heading_color` | `"1F2D86"` | the headings' colour (hex RRGGBB, in quotes) - dark blue |
+| `incident_aar_instructions` | `- Save this file as AAR.docx. - Send it to your manager for review and approval before it…` | The site's own instructions at the end of each document, a numbered list (your all.yml: your teams' names and steps). [] = none. |
+| `incident_sop_instructions` | `[]` | the same at the end of the SOP; [] = none |
+| `incident_sop_status` | `Draft - review before use` | the SOP's Status line |
+| `incident_docs_aar_file` | `AAR` | The attachments' names: AAR.docx (AAR-<outage>.docx when the outage is named), SOP-<title>.docx. the AAR attachment's first part |
+| `incident_docs_sop_file` | `SOP` | the SOP attachment's first part |
+| `incident_impact_levels` | `[MINOR, MODERATE, MAJOR, CRITICAL]` | The impact levels the survey offers (the setup job writes them into the survey). |
+| `incident_docs_email_to` | `[]` | Who gets the documents: the addresses typed in the survey (report_email_also - held to report_email_also_domains when that is set), plus these. The reports' usual recipients (report_email_to) are NOT used here: an AAR goes only where it is sent. Nor is report_email_cc. |
+| `incident_name` | (empty) | What was typed: the jobs' surveys ask these (the setup job writes the questions); empty unless answered. The AAR's boxes and the SOP's steps take a line or several. the outage's name or number (in the file name and the email) |
+| `incident_start` | (empty) | the AAR: its start date and time (required) |
+| `incident_end` | (empty) | its end date and time (optional) |
+| `incident_impact_level` | (empty) | one of incident_impact_levels |
+| `incident_impact` | (empty) | why: "it is affecting users enterprise-wide" |
+| `incident_detection` | (empty) | how the event was detected |
+| `incident_actions` | (empty) | key response steps and the teams involved |
+| `incident_root_cause` | (empty) | the reason for the outage (RFO) |
+| `incident_recovery` | (empty) | the fix action |
+| `incident_successes` | (empty) | what went well |
+| `incident_improvements` | (empty) | areas to improve |
+| `incident_tasks` | (empty) | the improvements as tasks, each with who does it |
+| `incident_make_sop` | `"No"` | Yes = the AAR job attaches an SOP from the sop_ boxes too |
+| `sop_title` | (empty) | the SOP's title |
+| `sop_purpose` | (empty) | the symptoms that send someone to the SOP |
+| `sop_troubleshoot` | (empty) | the steps to troubleshoot, one per line |
+| `sop_fix` | (empty) | the steps to fix, one per line |
+| `sop_verify` | (empty) | how to check it is fixed, one per line |
+| `sop_escalate` | (empty) | who to call when the steps do not fix it |
+| `incident_act_tidy` | `false` | ACT (GenAI, evidence mode: it runs no command, only reads what was typed). Each is a Yes/No in the survey; these are the defaults when the survey does not ask. Needs the "ACT model key" credential on the template when either is Yes. tidy the spelling and wording; facts, names and numbers stay as typed |
+| `incident_act_suggest` | `false` | a "From ACT" section: what may be missing or better, to review |
+| `incident_act_max_suggestions` | `8` | suggestions from ACT at most |
+| `incident_act_extra_instructions` | (empty) | the site's own words for ACT, e.g. "Our monitoring tool is called X." |
+| `incident_act_model_timeout` | `120` | seconds GenAI may take to answer |
+| `incident_docs_survey_state` | `present` | The survey setup job (playbooks/incident_docs_survey.yml): adds the questions to the job templates that run incident_aar.yml and incident_sop.yml (found by their playbook). A question already there is left as it is. present = add the questions; absent = take them out again |
+| `incident_docs_survey_project` | (empty) | only job templates of this AAP project (its name); empty = any project |
+| `incident_docs_survey_ca_path` | (empty) | a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts) |
+| `incident_docs_survey_max` | `8000` | characters a text box takes at most (AAP's own default is 1024) |
 
 ## log_analysis
 

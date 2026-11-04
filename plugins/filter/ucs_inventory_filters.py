@@ -285,10 +285,13 @@ def _psus(o):
 
 
 def _faults(ds, sev=None):
+    """The faults not cleared (of the severities sev), the newest first (Since: created), one without a time last - so
+    ucs_inventory_max_rows keeps the newest; the same moment: the most severe first, then by domain."""
     out = [dict(f, _d=d) for d in ds if d.reachable for f in d.objs("faultInst")
            if _s(f.get("severity")).lower() != "cleared" and (sev is None or _s(f.get("severity")).lower() in sev)]
-    return sorted(out, key=lambda f: (SEVERITY_ORDER.get(_s(f.get("severity")).lower(), 9), f["_d"].name.lower(),
-                                      str(f.get("created", ""))), reverse=False)
+    out.sort(key=lambda f: (SEVERITY_ORDER.get(_s(f.get("severity")).lower(), 9), f["_d"].name.lower()))
+    out.sort(key=lambda f: _s(f.get("created")), reverse=True)           # stable: '' (no time) sorts last
+    return out
 
 
 def _fault_where(f):
@@ -456,7 +459,7 @@ def ucs_inventory_doc(collected, opts=None):
     if faults:
         part = faults[:o["max_rows"]]
         sec = {"title": "Faults (%s)" % ", ".join(o["severities"]),
-               "text": "UCS Manager's own fault list, the most severe first. Acknowledged: someone in UCS Manager marked it "
+               "text": "UCS Manager's own fault list, the newest first (Since). Acknowledged: someone in UCS Manager marked it "
                        "seen.",
                "columns": ["Domain", "Severity", "Code", "Component", "Description", "Since", "Acknowledged"],
                "rows": [[f["_d"].name, _s(f.get("severity")), _s(f.get("code")), _fault_where(f), _s(f.get("descr")),

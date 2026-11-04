@@ -387,6 +387,8 @@ class History(unittest.TestCase):
         with open(os.path.join(REPO, "docs", "JOB_TEMPLATES.md")) as f:
             names = re.findall(r"^\| ([^|]+?) \| `playbooks/", f.read(), re.M)
         self.assertGreater(len(names), 70)
+        never = {"Outage AAR - Word document", "SOP - Word document"}      # emailed only, never on the website (_report_web_skip)
+        names = [n for n in names if n not in never]
         self.assertEqual([n for n in names if rw.area(n, tabs) == "Other" or rw.area(n, tabs) not in [t["tab"] for t in tabs]], [])
 
 

@@ -90,6 +90,7 @@ jobs:
           python tests/test_vm_tools.py
           python tests/test_ontap_hardware.py
           python tests/test_ucs_inventory.py
+          python tests/test_incident_docs.py
           python tests/test_limit_localhost.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_limit_localhost.py
           python tests/test_yaml_regex.py
@@ -157,6 +158,10 @@ jobs:
         run: |
           bash tests/ucs/run_ucs_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/ucs/run_ucs_test.sh
+      - name: Outage AAR and SOP Word documents, emailed, with a scripted GenAI model (current ansible-core and 2.16)
+        run: |
+          bash tests/incident/run_incident_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/incident/run_incident_test.sh
       - name: VMware jobs against vcsim, the vCenter simulator (current ansible-core and 2.16)
         env:
           VMWARE_COLLECTIONS: /home/runner/.ansible/collections

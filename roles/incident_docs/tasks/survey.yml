@@ -1,0 +1,39 @@
+---
+# AAP - INCIDENT DOCUMENT SURVEYS (playbooks/incident_docs_survey.yml): the questions of the outage AAR job and the SOP job,
+# written into the job templates that run playbooks/incident_aar.yml and playbooks/incident_sop.yml (found by their
+# playbook, whatever you named them; library/site_aap_survey_add.py). A question already there is left as it is. Runs on
+# localhost, with the "Red Hat Ansible Automation Platform" credential's variables. A Check run only reads.
+- name: Incident docs survey | the questions in the job templates' surveys
+  site_aap_survey_add:
+    surveys:
+      - playbook: incident_aar.yml
+        questions: "{{ 'aar' | incident_survey({'levels': incident_impact_levels, 'most': incident_docs_survey_max | int}) }}"
+      - playbook: incident_sop.yml
+        questions: "{{ 'sop' | incident_survey({'levels': incident_impact_levels, 'most': incident_docs_survey_max | int}) }}"
+    project: "{{ incident_docs_survey_project }}"
+    state: "{{ incident_docs_survey_state }}"
+    ca_path: "{{ incident_docs_survey_ca_path }}"
+  register: _ids
+
+- name: Incident docs survey | what was done
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for r in _ids.results -%}
+      {%-   set act = ('FAILED: ' ~ r.error) if not r.ok else (('would be: ' if ansible_check_mode and r.changed else '') ~ r.action) -%}
+      {%-   set _ = out.append('job template ' ~ r.id ~ " '" ~ r.template ~ "': " ~ act) -%}
+      {%- endfor -%}
+      {%- for m in _ids.missing -%}
+      {%-   set _ = out.append('no job template runs playbooks/' ~ m ~ ' - make it first (docs/INCIDENT_DOCS.md), then run this again') -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Incident docs survey | AAP could not be read
+  ansible.builtin.fail:
+    msg: "{{ _ids.problems }}"
+  when: _ids.problems | length > 0
+
+- name: Incident docs survey | a template could not be changed
+  ansible.builtin.fail:
+    msg: "{{ _ids.results | rejectattr('ok') | map(attribute='template') | list }}: see what was done, above"
+  when: _ids.results | rejectattr('ok') | list | length > 0

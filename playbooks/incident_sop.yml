@@ -1,0 +1,17 @@
+---
+# SOP - WORD DOCUMENT. An SOP on its own (not from an outage AAR): its title, purpose, the steps to troubleshoot, to
+# fix and to check, escalation - typed in the survey - as a Word document with the site's logo and marking banner,
+# emailed to the addresses typed in the survey. Optional: ACT tidies the wording, and/or adds a "From ACT" section of
+# steps to consider. The survey: run "AAP - incident document surveys" once (playbooks/incident_docs_survey.yml).
+# No Limit; no machine credential; an "ACT model key" credential only for the ACT options. docs/INCIDENT_DOCS.md
+#   ansible-playbook playbooks/incident_sop.yml -e @my_sop.yml
+- name: SOP - Word document
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The SOP
+      ansible.builtin.include_role:
+        name: incident_docs
+      vars:
+        _incident_kind: sop

@@ -12,6 +12,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 
 | Job template | Playbook | File |
 |---|---|---|
+| AAP - incident document surveys | `playbooks/incident_docs_survey.yml` | [incident_docs_survey.yml](incident_docs_survey.yml) |
 | AAP - report email question | `playbooks/aap_email_question.yml` | [aap_email_question.yml](aap_email_question.yml) |
 | AAP - set execution environment | `playbooks/aap_ee.yml` | [aap_ee.yml](aap_ee.yml) |
 | ACT for Windows - install | `playbooks/win_act_install.yml` | [win_act_install.yml](win_act_install.yml) |
@@ -51,6 +52,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Network device certificate renewal | `playbooks/net_cert_renew.yml` | [net_cert_renew.yml](net_cert_renew.yml) |
 | Network device certificate report | `playbooks/net_cert_report.yml` | [net_cert_report.yml](net_cert_report.yml) |
 | Network performance report | `playbooks/net_perf_report.yml` | [net_perf_report.yml](net_perf_report.yml) |
+| Outage AAR - Word document | `playbooks/incident_aar.yml` | [incident_aar.yml](incident_aar.yml) |
 | Patch hosts | `playbooks/patch_hosts.yml` | [patch_hosts.yml](patch_hosts.yml) |
 | POA&M status | `playbooks/poam_status.yml` | [poam_status.yml](poam_status.yml) |
 | Report website - copy | `playbooks/report_web_copy.yml` | [report_web_copy.yml](report_web_copy.yml) |
@@ -61,6 +63,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | ServiceNow - weekly activity report | `playbooks/servicenow_war.yml` | [servicenow_war.yml](servicenow_war.yml) |
 | ServiceNow health | `playbooks/servicenow_health.yml` | [servicenow_health.yml](servicenow_health.yml) |
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | [servicenow_tickets.yml](servicenow_tickets.yml) |
+| SOP - Word document | `playbooks/incident_sop.yml` | [incident_sop.yml](incident_sop.yml) |
 | STIG drift report | `playbooks/stig_drift_report.yml` | [stig_drift_report.yml](stig_drift_report.yml) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | [stigman_deploy.yml](stigman_deploy.yml) |
 | STIG Manager - update | `playbooks/stigman_update.yml` | [stigman_update.yml](stigman_update.yml) |

@@ -33,7 +33,7 @@ Then, in this order:
 | **Server models** | each server model, how many servers, and the **BIOS** and **CIMC** versions they run with how many run each (`4.2(3d) (12), 4.2(1f) (2)`: two servers left behind by a firmware update), and their adapters' firmware | |
 | **Servers** | every blade (`chassis-1/blade-3`) and rack server (`rack-unit-1`): its name, **service profile**, model, **serial number**, CPUs (`2 x Intel(R) Xeon(R) Gold 6248 CPU @ 2.50GHz, 40 cores`), memory, BIOS, CIMC, adapters with their firmware, storage controllers with theirs, power, state | amber not operable |
 | **Firmware in use** | each component and model - UCS Manager, FI system and kernel, IO module, BIOS, CIMC, board controller, adapter, storage controller - and the firmware versions running on them, with how many of each | |
-| **Faults (critical, major)** | UCS Manager's own fault list, the most severe first: severity, code (`F0369`), the component, the description, since when, acknowledged or not (`ucs_inventory_fault_severities`) | amber critical |
+| **Faults (critical, major)** | UCS Manager's own fault list, the newest first (Since; one without a time last, so `ucs_inventory_max_rows` keeps the newest): severity, code (`F0369`), the component, the description, since when, acknowledged or not (`ucs_inventory_fault_severities`) | amber critical |
 | **Not all read** | a kind of object this UCS Manager did not give (an older version without it, or the account's role), the rest in | |
 
 Amber when something is not operable, HA is not ready or there is a critical fault; red when a domain could not be read
@@ -57,7 +57,7 @@ The email attaches all of it as an Excel workbook (`cisco-ucs-inventory_2026-11-
 | Power supplies | each power supply of the chassis, FIs and rack servers: model, serial, firmware, watts, operability |
 | Firmware | every running firmware UCS Manager has: component, kind, model, type, deployment (system, kernel, boot loader), version, package |
 | Service profiles | each service profile and template: organization, type, template, server, association, state |
-| Faults | every fault that is not cleared, of every severity: code, component, description, cause, since, last change, times, acknowledged |
+| Faults | every fault that is not cleared, of every severity, the newest first: code, component, description, cause, since, last change, times, acknowledged |
 
 **Firmware:** the report says what UCS Manager says. It does not know which versions are current: Cisco's *UCS
 Hardware and Software Compatibility* list and the release notes of your UCS Manager release say which BIOS, CIMC and

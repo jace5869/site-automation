@@ -1,0 +1,17 @@
+---
+# AAP - INCIDENT DOCUMENT SURVEYS. Writes the survey questions of the outage AAR job (playbooks/incident_aar.yml) and the
+# SOP job (playbooks/incident_sop.yml) into their job templates, through AAP's API - about twenty questions, in order,
+# the text boxes taking up to incident_docs_survey_max characters. A question already there is left as it is (your own
+# wording stays); incident_docs_survey_state: absent takes them out again. Make the two job templates first.
+# Runs on the AAP side: attach a "Red Hat Ansible Automation Platform" credential (its user: the Admin role on the two
+# templates); no Limit. Run it with Check first: it then only reads and says what it would change. docs/INCIDENT_DOCS.md
+#   ansible-playbook playbooks/incident_docs_survey.yml --check
+- name: AAP - incident document surveys
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The questions in the two templates' surveys
+      ansible.builtin.include_role:
+        name: incident_docs
+        tasks_from: survey.yml
