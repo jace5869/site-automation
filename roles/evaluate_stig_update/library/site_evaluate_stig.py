@@ -105,7 +105,7 @@ def zip_info(path, regex=VERSION_RE):
     """A zip -> {path, version, from, content, prefix (the folder its files are in, stripped), script (where
     Evaluate-STIG.ps1 is under it), files, bytes (unpacked), sha256} or {error}."""
     out = {"path": path, "version": "", "from": "", "content": {}, "prefix": "", "script": "", "files": 0, "bytes": 0,
-           "sha256": "", "error": ""}
+           "sha256": "", "left_out": [], "error": ""}
     try:
         z = zipfile.ZipFile(path)
     except (OSError, zipfile.BadZipfile) as e:
@@ -122,16 +122,22 @@ def zip_info(path, regex=VERSION_RE):
         if not scripts:
             out["error"] = "%s has no %s: not an Evaluate-STIG zip" % (path, SCRIPT)
             return out
-        tops = set(n.split("/", 1)[0] for n in names)
-        out["prefix"] = (tops.pop() + "/") if len(tops) == 1 and all("/" in n for n in names) else ""
-        out["script"] = scripts[0][len(out["prefix"]):]
-        info = infos[names.index(scripts[0])]
+        # what goes in the host's folder: the folder the script is in (or the one above its Src/Evaluate-STIG) - the
+        # zip's other files beside it (a readme, a checksum) are not unpacked, and named
+        sdir = scripts[0].rsplit("/", 1)[0] + "/" if "/" in scripts[0] else ""
+        if sdir.lower().endswith("src/evaluate-stig/"):
+            sdir = sdir[:-len("src/evaluate-stig/")]
+        out["prefix"] = sdir
+        out["script"] = scripts[0][len(sdir):]
+        out["left_out"] = [n for n in names if not n.startswith(sdir)]
+        infos = [i for i, n in zip(infos, names) if n.startswith(sdir)]
+        info = [i for i in z.infolist() if i.filename.replace("\\", "/") == scripts[0]][0]
         out["version"] = version_in(_read_text(z.read(info)), regex)
         out["from"] = SCRIPT if out["version"] else ""
         if not out["version"]:
             m = NAME_RE.search(os.path.basename(path))
             out["version"], out["from"] = (m.group(1), "the file name") if m else ("", "")
-        out["content"] = content_of(names)
+        out["content"] = content_of([n for n in names if n.startswith(sdir)])
         out["files"] = len(infos)
         out["bytes"] = sum(i.file_size for i in infos)
     h = hashlib.sha256()

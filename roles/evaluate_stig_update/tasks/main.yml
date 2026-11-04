@@ -33,7 +33,11 @@
       {{ ['Evaluate-STIG ' ~ _esu_zip.zip.version ~ ' (read from ' ~ _esu_zip.zip.from ~ '): ' ~ (_esu_zip.zip.path | basename)
           ~ ', ' ~ _esu_zip.zip.files ~ ' files, ' ~ ((_esu_zip.zip.bytes / 1048576) | round(0) | int) ~ ' MB unpacked',
           'RHEL STIG content: ' ~ (_esu_zip.zip.content.items() | map('join', ' ') | join(', ') or 'none named U_RHEL_..._VnRn')]
-         + (['Not used (an older version): ' ~ (_esu_zip.others | join(', '))] if _esu_zip.others else []) }}
+         + (['Not used (an older version): ' ~ (_esu_zip.others | join(', '))] if _esu_zip.others else [])
+         + (['Unpacked on the hosts: ' ~ (_esu_zip.zip.prefix or 'the top level of the zip') ~ ' (where ' ~ _esu_zip.zip.script
+             ~ ' is); not unpacked, beside it: ' ~ (_esu_zip.zip.left_out[:8] | join(', '))
+             ~ (' and ' ~ (_esu_zip.zip.left_out | length - 8) ~ ' more' if _esu_zip.zip.left_out | length > 8 else '')]
+            if _esu_zip.zip.left_out | default([]) else []) }}
   run_once: true
 
 - name: Evaluate-STIG | the folder on the hosts

@@ -106,6 +106,22 @@ class Parts(unittest.TestCase):
             zz.writestr("Evaluate-STIG.ps1", "x")
         self.assertIn("outside its folder", m.zip_info(evil)["error"])
 
+    def test_a_zip_with_files_beside_its_folder(self):
+        """The real zip's layout: the Evaluate-STIG folder and files beside it - only the folder goes on the host."""
+        z = make_zip(os.path.join(self.tmp, "Evaluate-STIG_1.2610.1.zip"), "1.2610.1")
+        with zipfile.ZipFile(z, "a") as zz:
+            zz.writestr("Evaluate-STIG_1.2610.1.zip.sha256", "abc")
+            zz.writestr("Docs/Evaluate-STIG User Guide.pdf", "pdf")
+        i = m.zip_info(z)
+        self.assertEqual((i["error"], i["prefix"], i["script"]), ("", "Evaluate-STIG/", "Evaluate-STIG.ps1"))
+        self.assertEqual(i["left_out"], ["Evaluate-STIG_1.2610.1.zip.sha256", "Docs/Evaluate-STIG User Guide.pdf"])
+        root = os.path.join(self.tmp, "software", "scripts", "Evaluate-STIG")
+        r = m.install(params(dest=root, zip=z, want="1.2610.1", install_missing=True))
+        self.assertEqual(r["error"], "")
+        self.assertTrue(os.path.isfile(os.path.join(root, "Evaluate-STIG.ps1")))
+        self.assertFalse(os.path.exists(os.path.join(root, "Docs")))
+        self.assertFalse(os.path.exists(os.path.join(root, "Evaluate-STIG")))
+
     def test_root_of(self):
         self.assertEqual(m.root_of("/opt/Evaluate-STIG/Src/Evaluate-STIG"), "/opt/Evaluate-STIG")
         self.assertEqual(m.root_of("/opt/Evaluate-STIG/Evaluate-STIG_Bash.sh"), "/opt/Evaluate-STIG")
@@ -192,7 +208,9 @@ class Playbook(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.zips = os.path.join(self.tmp, "zips")
         os.makedirs(self.zips)
-        make_zip(os.path.join(self.zips, "Evaluate-STIG_1.2507.0.zip"), "1.2507.0")
+        z = make_zip(os.path.join(self.zips, "Evaluate-STIG_1.2507.0.zip"), "1.2507.0")
+        with zipfile.ZipFile(z, "a") as zz:
+            zz.writestr("Evaluate-STIG_1.2507.0.zip.sha256", "abc")              # beside the folder, as the real zip has
         old = make_zip(os.path.join(self.tmp, "old.zip"), "1.2504.0", rhel8="V2R8")
         self.root = os.path.join(self.tmp, "opt", "Evaluate-STIG")
         os.makedirs(self.root)
@@ -215,6 +233,8 @@ class Playbook(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stdout)
         self.assertIn("Evaluate-STIG 1.2507.0 (read from Evaluate-STIG.ps1): Evaluate-STIG_1.2507.0.zip", out.stdout)
         self.assertIn("RHEL STIG content: RHEL 8 V2R9, RHEL 9 V2R4", out.stdout)
+        self.assertIn("Unpacked on the hosts: Evaluate-STIG/ (where Evaluate-STIG.ps1 is); not unpacked, beside it: "
+                      "Evaluate-STIG_1.2507.0.zip.sha256", out.stdout)
         self.assertIn("localhost: would be updated: 1.2504.0 -> 1.2507.0", out.stdout)
         self.assertEqual(m.inspect(self.root, "", proc="/nonexistent")["version"], "1.2504.0")
         out = self.run_pb()

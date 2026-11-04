@@ -28,6 +28,8 @@ back* drops to about 0 - then `check_stig_recheck_carry_forward` can be off agai
 
 3. **Updated only where it is older:**
    - the zip copied to the host (`evaluate_stig_update_tmp`, root-only) and its SHA-256 checked;
+   - only the zip's folder that holds `Evaluate-STIG.ps1` is unpacked (its other files - beside that folder - are named
+     in the job's first lines, not unpacked);
    - enough free space checked; the zip unpacked **beside** the folder (`<folder>.new-<time>`), owned by root, the
      `.sh` scripts executable; its `Evaluate-STIG.ps1` checked: there, the zip's version, where the STIG jobs look
      (the folder, or `Src/Evaluate-STIG` under it);
@@ -96,7 +98,8 @@ Every setting: [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md#evaluate_stig_upd
 | `Evaluate-STIG is running now` | a scan is running: run the job again later |
 | `NOT UPDATED - the new Evaluate-STIG did not run (...)` | the quick run failed (its last line is shown); the old one is back. Run it by hand on the host: `bash <folder>/Evaluate-STIG_Bash.sh --ListSupportedProducts`; PowerShell 7 (`check_stig_pwsh`)? |
 | `NOT UPDATED - not enough space in /opt` | free space beside the folder: the new one is unpacked next to the old one |
-| `... is in deep/folder - not where the STIG jobs look` | the zip's layout is not the folder or `Src/Evaluate-STIG`: send me `unzip -l` of it |
+| `... not where the STIG jobs look` | the zip's `Evaluate-STIG.ps1` is not in a folder of its own or under `Src/Evaluate-STIG`: send me `unzip -l` of it |
+| `Unpacked on the hosts: Evaluate-STIG/ ...; not unpacked, beside it: ...` | only the folder that holds `Evaluate-STIG.ps1` goes on the hosts, as when installed by hand; the files named are left out - check none of them is needed (e.g. `Evaluate-STIG_Bash.sh` outside that folder) |
 | `Preferences.xml differs from the old one` | your changes to it are in `<folder>.previous-<version>/Preferences.xml`: put them in the new one |
 
 Windows servers are not updated by this job.
