@@ -23,6 +23,9 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # win_check_stig_evaluate: 'C:\Evaluate-STIG'
 ## Only what STIG Manager has Open (default: Open and Not Reviewed)
 # check_stig_recheck: [open]
+## Until Evaluate-STIG has STIG Manager's STIG revision: write the earlier revision's Not a Finding / Not Applicable
+## where the old scan agrees (held back otherwise; each review's comment says it was carried forward)
+# check_stig_recheck_carry_forward: true
 ## Workflow 37's check ("Windows STIG recheck - check") only: what to write to STIG Manager in the report, handed to
 ## the approval and "STIG Manager - update", the job fails on purpose (NEEDS APPROVAL). This job itself never writes.
 # check_stig_update_workflow: true

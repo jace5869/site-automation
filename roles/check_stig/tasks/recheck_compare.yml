@@ -7,7 +7,8 @@
   ansible.builtin.set_fact:
     check_stig_results: >-
       {{ _stig_recheck_sm | stig_recheck(_stig_recheck_scans, inventory_hostname, check_stig_stigman_statuses, check_stig_ignore_rules,
-                                         check_stig_recheck, check_stig_severity, check_stig_stigman_api | length > 0) }}
+                                         check_stig_recheck, check_stig_severity, check_stig_stigman_api | length > 0,
+                                         check_stig_recheck_carry_forward | default(false) | bool) }}
 
 - name: STIG recheck | add them to this host's findings
   ansible.builtin.set_fact:

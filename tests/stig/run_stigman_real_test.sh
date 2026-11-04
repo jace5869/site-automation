@@ -194,12 +194,26 @@ sys.exit(0 if d and d[0]["result"] == "notapplicable" and [(s["revisionStr"], s[
     && ok "  ... its V2R7 review comes with rules=all (projection stigs: V2R7 only, not the default)" || bad "no V2R7 review of SV-257835 with rules=all"
 play stig_recheck.yml -e '{"check_stig_update_workflow": true}'
 html=$(grep -rl "STIG recheck" "$work/site" --include='*.html' | grep -v index | xargs ls -t | head -1)
-[ "$rc" = 0 ] && grep -q "REVISION scanned with V2R9, STIG Manager has V2R8 - 1 answer not written: the rule changed" "$work/out.txt" \
+[ "$rc" = 0 ] && grep -q "REVISION scanned with V2R9, STIG Manager has V2R8 - 1 answer held back: the rule changed since the scan's STIG" "$work/out.txt" \
     && ! grep -q 'V-257835: .* -> ' "$work/out.txt" && ok "the check: SV-257835 not planned - the scan checked the old rule - and said" \
     || { bad "the check with release 8: rc $rc"; grep -n "REVISION\|NEEDS\|V-257835\|fatal" "$work/out.txt" | head -5; }
 grep -q "the rule changed - the scan checked SV-257835r1044874_rule, STIG Manager has SV-257835r1099999_rule" "$html" \
     && grep -q "no review in V2R8 - V2R7: Not Applicable (saved)" "$html" \
     && ok "  ... the report: By hand, why, and the review of V2R7 beside no review" || bad "the report ($html) does not say it"
+
+# ---- 0.69.0: check_stig_recheck_carry_forward - the V2R7 review (now Not a Finding, accepted) and the scan agree -------
+api "$atok" PATCH "/collections/$col/reviews/$asset/SV-257835r1044874_rule" \
+    '{"result": "pass", "detail": "No telnet-server package.", "comment": "checked by hand", "status": "accepted"}' >/dev/null
+play stig_recheck.yml -e '{"check_stig_update_workflow": true, "check_stig_recheck_carry_forward": true}'
+grep -P '^\tRUN: ' "$work/out.txt" | sed 's/^\tRUN: //' | "$py" -c 'import json, sys; json.dump({"stigman_update_plan": json.load(sys.stdin)["stigman_update_plan"]}, open(sys.argv[1], "w"))' "$work/plan3.json"
+[ "$rc" = 2 ] && grep -q "V-257835: no review -> Not a Finding (submitted, carried forward from V2R7)" "$work/out.txt" \
+    && ok "carry forward: the check plans SV-257835 for V2R8 (V2R7 Not a Finding, accepted; the scan passes)" \
+    || { bad "carry forward, the check: rc $rc"; grep -n "NEEDS\|CARRY\|V-257835\|fatal" "$work/out.txt" | head -5; }
+play stigman_update.yml -e "@$work/plan3.json"
+case "$(rv SV-257835r1099999_rule)" in "pass submitted | Carried forward by the STIG recheck (site-automation), approved in AAP: Not a Finding (accepted) in V2R7"*)
+    ok "  ... written to the V2R8 rule (SV-257835r1099999_rule), the comment says carried forward";;
+    *) bad "carried: $(rv SV-257835r1099999_rule)"; grep -n "written\|rejected\|error" "$work/out.txt" | head -3;; esac
+[ "$(rv SV-257835r1044874_rule | cut -d'|' -f1)" = "pass accepted " ] && ok "  ... the V2R7 review left as it was" || bad "V2R7 review: $(rv SV-257835r1044874_rule)"
 
 echo
 if [ $fails -eq 0 ]; then echo "all real STIG Manager scenarios passed"; else echo "$fails real STIG Manager scenario(s) FAILED"; exit 1; fi

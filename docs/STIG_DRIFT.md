@@ -398,7 +398,8 @@ when asked by name (`health_checks: [stig]`).
 | Not Applicable now | Open | Not Applicable | set it to Not Applicable |
 | Answered | Not Reviewed | pass, fail or n/a | set it as the scan says (a fail is Open: fix it or put it on the POA&M) |
 | Still open | Open | fails | nothing: the review is right |
-| Manual review | Open or Not Reviewed | no answer (DISA's manual checks; a rule not in the scan's STIG revision), or **an answer to a rule that changed** (below) | a person reviews it |
+| Manual review | Open or Not Reviewed | no answer (DISA's manual checks; a rule not in the scan's STIG revision) | a person reviews it |
+| Held back | Open or Not Reviewed | an answer to **a rule that changed** since the scan's STIG (below) | update Evaluate-STIG (or carry forward, below) |
 
 **The scan's STIG revision and STIG Manager's** (since 0.67.0). Evaluate-STIG checks with the STIG content of its own
 release; STIG Manager with the revision your collection uses. When they differ - *V2R8 (Evaluate-STIG)* beside
@@ -408,9 +409,10 @@ release; STIG Manager with the revision your collection uses. When they differ -
 - **A rule DISA changed** gets a new rule id (`SV-230223r1017xxx_rule`), and STIG Manager does **not** carry its review
   over to the new revision: it shows *no review* there, though the old revision still has the answer and comment.
   The recheck compares the rule's id in the scan with STIG Manager's: when they differ, the scan answered the old
-  check, so its answer is **never written** - *Manual review*, "the rule changed - the scan checked ..., STIG Manager has
+  check, so its answer is **never written** - **Held back** (since 0.69.0 a tile, a section and an *Every host* column
+  of their own; 0.67.0 counted them under Manual review), "the rule changed - the scan checked ..., STIG Manager has
   ..." (without the ids to compare, a rule of a scan of another revision is held back the same way). The *Every host*
-  row is amber and says how many; the job's output has a *REVISION* line.
+  row is amber and says how many; the job's output has a *REVISION* line. They need a newer scan, not a person.
 - **A rule that did not change** has the same id in both: written as before.
 - *STIG Manager* says the earlier revision's review beside *no review*: *no review in V2R9 - V2R8: Not a Finding
   (accepted)*.
@@ -418,13 +420,24 @@ release; STIG Manager with the revision your collection uses. When they differ -
 The fix is on the host: **update Evaluate-STIG** (`check_stig_evaluate`) to a release with the revision STIG Manager
 uses (and add answers for its new manual rules to your answer files), then run the recheck again.
 
+**Until then: carry forward** (since 0.69.0, off by default). With `check_stig_recheck_carry_forward: true`, a held-back
+rule that STIG Manager has **no review** of in its revision is written after all when the review of the rule's
+earlier revision **counts** (`check_stig_stigman_statuses`) and **says what the scan says** - Not a Finding and the scan
+passes, or Not Applicable and the scan says n/a. It goes through the approval like the rest, in a section of its own
+(*4. Carried forward from an earlier revision*), to the rule of STIG Manager's revision, with the comment *Carried
+forward by the STIG recheck (site-automation), approved in AAP: Not a Finding (accepted) in V2R8, and Evaluate-STIG on
+web01 on ... checked it against V2R8 - not against V2R9*. A fail is never carried, nor an Open rule, nor an earlier
+review that does not count or says something else. Be clear what it means for an audit: the new revision's check was
+not run - the comment says so on every review it writes. Turn it off again once Evaluate-STIG is updated.
+
 It is **report only**: what it finds is no finding, and the job does not fail for it - a host it could not recheck
 (the asset not in STIG Manager, Evaluate-STIG not found) is a warning. Its report never says *no findings* over
 open rules. Its title says what is open and what to update - *STIG recheck: 2 rules open (CAT I: 1), 5 status updates
 in STIG Manager, 1 for manual review*. Its tiles (since 0.67.0): **Open findings** (they fail on the host now: fix
 them, or put them on the POA&M), **Status updates** (only STIG Manager's reviews change - the hosts pass, no longer
 apply, or were answered; nothing to fix for them, except a fail answered, which is an open finding too), **Manual
-review** (no automatic check) and **Not rechecked**. Its status is red when a CAT I rule is open, amber when another rule is open, and
+review** (no automatic check), **Held back: scan's STIG older** (since 0.69.0, when there are any: update Evaluate-STIG) and
+**Not rechecked**. Its status is red when a CAT I rule is open, amber when another rule is open, and
 blue when there is only something to update. The job's output says *REPORT ONLY*, never *HEALTHY*. It **leaves the drift report's history
 alone**: nothing is compared with the earlier scans or kept with them. The checklist it wrote (Evaluate-STIG) or
 oscap's results are kept on the host as `check_stig_dir/recheck/latest-checklist.cklb` (`latest-results.xml`), on
@@ -471,7 +484,8 @@ What it writes (`check_stig_update`):
 | Answered: Not Reviewed, the scan passes it | Not a Finding | what the scan found | the review's own, kept (or the job's line if it has none) |
 | Answered: Not Reviewed, the scan fails it | Open | what the scan found | the job's line: *Set by the STIG recheck (site-automation), approved in AAP: ...* |
 
-- **Never written:** Still open, Manual review (an answer to a rule that changed since the scan's STIG revision too - above),
+- **Never written:** Still open, Manual review, Held back (an answer to a rule that changed since the scan's STIG revision -
+  above; unless carried forward),
   the rules in `check_stig_ignore_rules`, and **a review with attachments** in STIG Manager (below).
 - **Status:** each review is written with the status `check_stig_update_status`. The default is `submitted`, which
   leaves Accept to your reviewers in STIG Manager. `accepted` works only if the collection allows Accept and the

@@ -87,6 +87,7 @@ check_stig_list_max: 200                 # at most this many rows in the report'
 
 # ---- The STIG recheck (playbooks/stig_recheck.yml, win_stig_recheck.yml) ----------------------------------------
 check_stig_recheck: [open, not_reviewed]  # what STIG Manager has for a rule that the recheck checks again: open (a review of Open that counts), not_reviewed (no review that counts, or Not Reviewed); the rest is left to the STIG drift report
+check_stig_recheck_carry_forward: false   # true = a rule DISA changed since the scan's STIG (held back otherwise) gets the earlier revision's Not a Finding / Not Applicable written to STIG Manager's revision when that review counts (check_stig_stigman_statuses) and the scan agrees; the comment says it was carried forward. For until Evaluate-STIG has STIG Manager's revision
 # Workflow 37 - STIG Manager updated, with an approval (docs/STIG_DRIFT.md, "Updating STIG Manager, with an approval"):
 # the recheck's check lists the reviews to write and hands them to the approval step; playbooks/stigman_update.yml
 # writes them after it. This job itself never writes to STIG Manager.

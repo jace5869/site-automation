@@ -695,7 +695,7 @@ class Recheck(unittest.TestCase):
         self.assertEqual((r["asked_open"], r["asked_not_reviewed"]), (3, 2))
         self.assertEqual(r["findings"], [], "report only")
         self.assertEqual(r["row"]["status"], "info")
-        self.assertEqual(r["row"]["cells"][9], "only these rules (-SelectVuln)")
+        self.assertEqual(r["row"]["cells"][10], "only these rules (-SelectVuln)")
         lines = sf.stig_recheck_lines(r)
         self.assertIn("web01: 3 Open, 2 Not Reviewed in STIG Manager - fixed 1, now n/a 1, answered 1, still open 1, by hand 1", lines[0])
         self.assertIn("  ANSWER V-4 (X-4) CAT II Rule SV-4 - set Open", lines)
@@ -880,18 +880,31 @@ class RevisionGuard(unittest.TestCase):
         r = sf.stig_recheck(self.c, [self.scan()], "web01")[0]
         self.assertEqual([x["key"] for x in r["answered"]], ["SV-2"], "SV-2 did not change (r1 in both): written")
         self.assertEqual([x["key"] for x in r["fixed"]], [])
-        self.assertEqual([x["key"] for x in r["by_hand"]], ["SV-1", "SV-3"])
-        self.assertEqual(r["by_hand"][0]["no_answer"], "the rule changed - the scan checked SV-1r1_rule, STIG Manager has SV-1r2_rule - the scan says "
+        self.assertEqual(([x["key"] for x in r["held"]], r["by_hand"], r["carried"]), (["SV-1", "SV-3"], [], []),
+                         "0.69.0: held back - not Manual review")
+        self.assertEqual(r["held"][0]["no_answer"], "the rule changed - the scan checked SV-1r1_rule, STIG Manager has SV-1r2_rule - the scan says "
                                                      "pass, not written (update the scan's STIG to V2R9, or review it)")
         self.assertEqual(r["revision_other"], "scanned with V2R8, STIG Manager has V2R9")
         self.assertEqual(r["findings"], [], "no finding: the check's job fails only to ask for the approval")
         self.assertEqual(r["changed"], 2)
         self.assertEqual(r["row"]["status"], "warning")
-        self.assertIn("2 answers not written: the rule changed since (manual review)", r["row"]["cells"][1])
-        self.assertIn("  REVISION scanned with V2R8, STIG Manager has V2R9 - 2 answers not written: the rule changed (manual review below)", sf.stig_recheck_lines(r))
+        self.assertIn("2 answers held back: the scan's STIG is older", r["row"]["cells"][1])
+        self.assertEqual(r["row"]["cells"][7:9], ["0", "2"], "Manual review 0, Held back 2")
+        lines = sf.stig_recheck_lines(r)
+        self.assertIn("by hand 0, left out 0, held back 2; STIG Manager", lines[0])
+        self.assertIn("  REVISION scanned with V2R8, STIG Manager has V2R9 - 2 answers held back: the rule changed since the scan's STIG - update it", lines)
         p = sf.stig_update_plan([r])
         self.assertEqual([x["v"] for x in p], ["V-2"], "never written: SV-1 (Open, passes the old check), SV-3")
-        self.assertEqual(sf._ask_cell(r["by_hand"][1]), "no review in V2R9 - V2R8: Not a Finding (accepted)")
+        self.assertEqual(sf._ask_cell(r["held"][1]), "no review in V2R9 - V2R8: Not a Finding (accepted)")
+        secs = sf.stig_recheck_sections([r])
+        self.assertEqual([(b["label"], b["value"]) for b in secs[0]["boxes"]], [("Open findings", 0), ("Status updates", 1), ("Manual review", 0),
+                                                                               ("Held back: scan's STIG older", 2), ("Not rechecked", 0)])
+        self.assertIn("(scanned with V2R8, STIG Manager has V2R9): update Evaluate-STIG", secs[0]["boxes"][3]["note"])
+        self.assertEqual(secs[0]["headline"], "0 rules open, 1 status update in STIG Manager, 2 held back (the scan's STIG is older)")
+        held = [x for x in secs if x["title"] == "Held back - the scan's STIG is older than STIG Manager's"][0]
+        self.assertEqual(len(held["rows"]), 2)
+        every = [x for x in secs if x["title"].startswith("Every host")][0]
+        self.assertTrue(all(len(row) == len(every["columns"]) for row in every["rows"]))
         self.assertEqual(sf._ask_cell(r["answered"][0]), "no review")
 
     def test_same_revision_or_no_rule_ids(self):
@@ -899,13 +912,44 @@ class RevisionGuard(unittest.TestCase):
         self.assertEqual(([x["key"] for x in r["fixed"]], [x["key"] for x in r["answered"]], r["by_hand"]), (["SV-1"], ["SV-2", "SV-3"], []),
                          "the same revision, no rule ids: as before")
         r = sf.stig_recheck(self.c, [self.scan("V2R8", ids=False)], "web01")[0]
-        self.assertEqual([x["key"] for x in r["by_hand"]], ["SV-1", "SV-2", "SV-3"], "another revision, no rule ids to tell: none written")
+        self.assertEqual([x["key"] for x in r["held"]], ["SV-1", "SV-2", "SV-3"], "another revision, no rule ids to tell: none written")
         self.assertEqual(sf.stig_update_plan([r]), [])
         r = sf.stig_recheck(self.c, [self.scan("", ids=False)], "web01")[0]
         self.assertEqual(r["by_hand"], [], "the scan's revision unknown, no ids: as before")
         plan = sf.stig_update_plan(sf.stig_recheck(self.c, [self.scan("V2R9", ids=False)], "web01"))
         sec = sf.stig_update_sections(plan)[0]
         self.assertEqual([row[6] for row in sec["rows"]], ["Open (accepted)", "no review", "no review in V2R9 - V2R8: Not a Finding (accepted)"])
+
+    def test_carry_forward(self):
+        """0.69.0 check_stig_recheck_carry_forward: the earlier revision's counted answer that the old scan agrees with is
+        written to the rule of STIG Manager's revision, said so; the rest stays held back."""
+        self.c["earlier"]["SV-1"] = {"result": "pass", "status": "accepted", "revision": "V2R8"}     # Open in V2R9: never carried
+        r = sf.stig_recheck(self.c, [self.scan()], "web01", carry_forward=True)[0]
+        self.assertEqual(([x["key"] for x in r["carried"]], [x["key"] for x in r["held"]]), (["SV-3"], ["SV-1"]))
+        self.assertEqual(r["carried"][0]["carried_from"], "V2R8")
+        p = sf.stig_update_plan([r], day="2026-11-04")
+        self.assertEqual([(x["v"], x["kind"], x["result"], x["ruleId"]) for x in p], [("V-2", "answered", "pass", "SV-2r1_rule"),
+                                                                                     ("V-3", "carried", "pass", "SV-3r2_rule")])
+        self.assertEqual(p[1]["comment"], "Carried forward by the STIG recheck (site-automation), approved in AAP: Not a Finding (accepted) in "
+                                          "V2R8, and Evaluate-STIG on web01 on 2026-11-04 checked it against V2R8 - not against V2R9 "
+                                          "(check_stig_recheck_carry_forward).")
+        self.assertEqual(p[1]["line"], "web01 RHEL_9_STIG V-3: no review -> Not a Finding (submitted, carried forward from V2R8)")
+        self.assertEqual([x["v"] for x in sf.stig_update_plan([r], kinds=["fixed"])], ["V-3"], "carried: switched on by its own setting")
+        self.assertIn("  CARRY  V-3 (X-3) CAT II Rule SV-3 - set Not a Finding, carried forward from V2R8", sf.stig_recheck_lines(r))
+        secs = sf.stig_recheck_sections([r])
+        self.assertEqual(secs[0]["boxes"][1]["value"], 2, "Status updates: answered and carried")
+        self.assertIn("4. Carried forward from an earlier revision (check_stig_recheck_carry_forward)", [x["title"] for x in secs])
+        # not carried: the earlier review does not count, says another result, or the scan says something else
+        for e, scan_says in (({"result": "pass", "status": "rejected", "revision": "V2R8"}, "pass"),
+                             ({"result": "notapplicable", "status": "accepted", "revision": "V2R8"}, "pass"),
+                             ({"result": "pass", "status": "accepted", "revision": "V2R8"}, "fail")):
+            self.c["earlier"]["SV-3"] = e
+            s = self.scan()
+            s["items"] = [dict(it, result=scan_says) if it["key"] == "SV-3" else it for it in s["items"]]
+            r = sf.stig_recheck(self.c, [s], "web01", carry_forward=True)[0]
+            self.assertEqual(r["carried"], [], (e, scan_says))
+        r = sf.stig_recheck(self.c, [self.scan()], "web01")[0]
+        self.assertEqual(r["carried"], [], "off by default")
 
     def test_helpers(self):
         self.assertTrue(sf.other_revision("V2R8", "V2R9"))
