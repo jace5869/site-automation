@@ -40,22 +40,24 @@ def group(sv, v, sid, sev, title, check="Check it as the STIG says."):
             % (v, sv, sev, sid, esc(title), desc, fix, fix, sv.split("r")[0][3:], esc(check)))
 
 
-def write(out, release=7, changed=None):
+def write(out, release=7, changed=None, bench="RHEL_9_STIG", title="Red Hat Enterprise Linux 9 Security Technical Implementation Guide",
+          rule_list=None, version=2):
+    """The benchmark (another one with bench, title, rule_list: [(rule id, V-number, version, severity, title)]: the checklist import's test)."""
     changed = changed or {}
+    rule_list = rule_list or rules()
     body = "".join(group(changed[r[0]], *r[1:], check="Check it as the STIG's release %d says." % release) if r[0] in changed else group(*r)
-                   for r in rules())
+                   for r in rule_list)
     xml = ('<?xml version="1.0" encoding="utf-8"?><Benchmark xmlns:dsig="http://www.w3.org/2000/09/xmldsig#" '
            'xmlns:xhtml="http://www.w3.org/1999/xhtml" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
-           'id="RHEL_9_STIG" '
-           'xml:lang="en" xmlns="%s"><status date="2025-07-24">accepted</status><title>Red Hat Enterprise Linux 9 Security '
-           'Technical Implementation Guide</title><description>A test STIG for site-automation.</description>'
+           'id="%s" '
+           'xml:lang="en" xmlns="%s"><status date="2025-07-24">accepted</status><title>%s</title><description>A test STIG for site-automation.</description>'
            '<notice id="terms-of-use" xml:lang="en"></notice><front-matter xml:lang="en"></front-matter>'
            '<rear-matter xml:lang="en"></rear-matter><plain-text id="release-info">Release: %d Benchmark Date: %s'
            '</plain-text><plain-text id="generator">3.5</plain-text><plain-text id="conventionsVersion">1.10.0</plain-text>'
-           '<version>2</version><Profile id="MAC-1_Classified"><title>I - Mission Critical Classified</title>'
+           '<version>%d</version><Profile id="MAC-1_Classified"><title>I - Mission Critical Classified</title>'
            '<description>&lt;ProfileDescription&gt;&lt;/ProfileDescription&gt;</description>%s</Profile>%s</Benchmark>'
-           % (NS, release, "24 Jul 2025" if release == 7 else "23 Oct 2025",
-              "".join('<select idref="%s" selected="true" />' % r[1] for r in rules()), body))
+           % (bench, NS, esc(title), release, "24 Jul 2025" if release == 7 else "23 Oct 2025", version,
+              "".join('<select idref="%s" selected="true" />' % r[1] for r in rule_list), body))
     with open(out, "w") as f:
         f.write(xml)
 

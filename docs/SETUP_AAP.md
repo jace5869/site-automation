@@ -373,8 +373,8 @@ For workflow 37, make a copy of each, *STIG recheck - check* (and *Windows STIG 
 
 ### STIG Manager - update
 
-Workflow 37's step after the approval: it writes the reviews the STIG recheck's check listed to STIG Manager, each only
-if it is unchanged since the check - and, with `check_stig_update_create_assets`, creates the new assets it listed (its
+Workflow 37's (and 40's) step after the approval: it writes the reviews the STIG recheck's (or the checklist import's)
+check listed to STIG Manager, each only if it is unchanged since the check - and, with `check_stig_update_create_assets`, creates the new assets it listed (its
 client then needs Manage) - and nothing else ([STIG_DRIFT.md](STIG_DRIFT.md#updating-stig-manager-with-an-approval)).
 
 | Field | Value |
@@ -383,6 +383,22 @@ client then needs Manage) - and nothing else ([STIG_DRIFT.md](STIG_DRIFT.md#upda
 | Inventory | any (it runs on the controller) |
 | Credentials | a second `STIG Manager API` credential: the client that may write reviews (scope `stig-manager:collection`, a grant in the collections). The reports keep their read-only one |
 | Variables | `aap/extra_vars/stigman_update.yml`: none needed when `check_stig_stigman_api` is in `all.yml`. Tick **Prompt on launch** for Job type, for a dry run |
+
+### STIG Manager - import checklists
+
+Workflow 40's check: the checklists (CKL, CKLB) on your share - VMware's InSpec ones too - matched to STIG Manager's
+assets (by the host name) and installed STIGs (by their rules); the reviews to write and the new assets, for the
+approval. Reads only ([CKL_IMPORT.md](CKL_IMPORT.md)).
+
+| Field | Value |
+|---|---|
+| Playbook | `playbooks/stigman_ckl_import.yml` |
+| Inventory | any (it runs on the controller) |
+| Credentials | `STIG Manager API` (the read-only one; Full in the collection) and `Windows file share` (Read on the folder) |
+| Variables | `aap/extra_vars/stigman_ckl_import.yml`: `stigman_ckl_import_src`, `stigman_ckl_import_collection` |
+
+For workflow 40, make a copy, *STIG Manager - import checklists - check*, with `stigman_ckl_import_workflow: true` in its
+Variables.
 
 ### Network performance report
 

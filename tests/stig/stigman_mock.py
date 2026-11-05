@@ -11,6 +11,7 @@ DATA.json: {"secret": "...", "collections": [{"collectionId": "1", "name": "..."
             "writers": ["<client>", ...] (optional: the clients that may write reviews - none: read-only),
             "managers": ["<client>", ...] (optional: the clients that may create assets - the Manage grant; none: no one),
             "latest": {"<benchmarkId>": "V2R8"} (optional: the newest revision; else V2R7),
+            "titles": {"<benchmarkId>": "..."} (optional: the STIGs' titles in GET /api/stigs - the installed STIGs are the rules' keys),
             "reject_fail_without_comment": true (optional: a finding without a comment is rejected, as a collection may say)}
 Re-read on every request, so a test can change it between runs. Every request is written to LOG (method, path); a write's
 body to LOG.writes, one JSON line each. Writes (playbooks/stigman_update.yml): GET /api/collections/C/reviews/A/RULE and
@@ -128,6 +129,9 @@ class H(BaseHTTPRequestHandler):
         parts = u.path.split("/")
         if u.path == "/api/collections":
             return self.send(200, d["collections"])
+        if u.path == "/api/stigs":
+            return self.send(200, [{"benchmarkId": b, "title": d.get("titles", {}).get(b, b), "lastRevisionStr": d.get("latest", {}).get(b, "V2R7"),
+                                    "ruleCount": len(rows)} for b, rows in sorted(d.get("rules", {}).items())])
         if u.path == "/api/assets":
             if "collectionId" not in q:
                 return self.send(422, {"error": "collectionId is required"})

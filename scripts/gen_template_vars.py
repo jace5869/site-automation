@@ -272,9 +272,19 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## update's client needs the Manage grant there)
 # check_stig_update_create_assets: true
 """),
+    "stigman_ckl_import.yml": ("STIG Manager - import checklists", "STIG Manager API (read-only is enough), Windows file share", "stigman_ckl_import", """\
+## Workflow 40's check: the checklists (CKL, CKLB) on your share matched to STIG Manager - the reviews to write and the new
+## assets, handed to the approval; playbooks/stigman_update.yml writes them after it. STIG Manager's address:
+## check_stig_stigman_api, as for the reports (usually in all.yml)
+# check_stig_stigman_api: https://STIGMAN-SERVER/api
+## On workflow 40's check template only (a copy of this one): hand the plan on, NEEDS APPROVAL
+# stigman_ckl_import_workflow: true
+stigman_ckl_import_src: '\\\\fileserver.yourdomain.mil\\stig\\ckl'
+stigman_ckl_import_collection: VMware
+"""),
     "stigman_update.yml": ("STIG Manager - update", "STIG Manager API (the client that may write reviews)", "", """\
-## Workflow 37's step after the approval: it writes the reviews the STIG recheck's check listed (stigman_update_plan,
-## handed on by the workflow) - and the new assets it listed (check_stig_update_create_assets: the Manage grant) - and nothing else. STIG Manager's address: check_stig_stigman_api, as for the reports
+## Workflow 37's (and 40's) step after the approval: it writes the reviews the STIG recheck's (or the checklist import's) check listed (stigman_update_plan,
+## handed on by the workflow) - and the new assets it listed (check_stig_update_create_assets, the import: the Manage grant) - and nothing else. STIG Manager's address: check_stig_stigman_api, as for the reports
 ## (usually in all.yml)
 # check_stig_stigman_api: https://STIGMAN-SERVER/api
 """),

@@ -562,6 +562,12 @@ Tested end to end against STIG Manager 1.6.17 with its demo Keycloak (`tests/sti
 collection that requires a detail always and a comment for findings, Accept for Manage, Open reviews with POA&M
 comments.
 
+### Checklists from files (0.75.0)
+
+Checklists you have as files - VMware's InSpec checklists, which STIG Manager's own import rejects (their STIG id is the
+profile's name), Evaluate-STIG's, a person's - go through the same approval and the same update: workflow 40,
+[CKL_IMPORT.md](CKL_IMPORT.md).
+
 ## Settings
 
 Every one is in `roles/check_stig/defaults/main.yml` and docs/VARIABLES_REFERENCE.md. The ones

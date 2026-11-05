@@ -189,7 +189,7 @@ play stigman_update.yml "plan items the check never gives: refused, nothing writ
     "bad - bad one - a result this job never writes: delete" "bad - bad two - not a STIG rule id"
 [ "$(writes)" = "$n" ] && echo "ok   - ... nothing posted" || { echo "FAIL - a bad item was posted"; fails=$((fails + 1)); }
 play stigman_update.yml "no plan (not run from workflow 37): nothing written, said why" fail -e "$writer" -- \
-    "No plan: this job writes only the reviews the STIG recheck's check listed"
+    "No plan: this job writes only the reviews the STIG recheck's or the checklist import's check listed"
 
 # ---- a review with attachments in STIG Manager (evidence a person attached): never written ------------------------------
 cp "$work/sm-first.json" "$work/sm.json"

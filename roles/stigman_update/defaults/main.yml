@@ -1,6 +1,6 @@
 ---
-# STIG MANAGER - UPDATE (playbooks/stigman_update.yml): workflow 37's step after the approval. It writes the reviews the
-# STIG recheck's check listed (stigman_update_plan, handed on by the workflow) - each only if STIG Manager still has it
+# STIG MANAGER - UPDATE (playbooks/stigman_update.yml): workflow 37's (and 40's) step after the approval. It writes the reviews the
+# STIG recheck's (or the checklist import's) check listed (stigman_update_plan, handed on by the workflow) - each only if STIG Manager still has it
 # as the check read it - and the new assets it listed (check_stig_update_create_assets); nothing else. Its own "STIG Manager API" credential: a client that may write reviews
 # (scope stig-manager:collection, a grant in the collections); the reports keep their read-only one. docs/STIG_DRIFT.md.
 # A new asset (check_stig_update_create_assets) needs the Manage grant in its collection.

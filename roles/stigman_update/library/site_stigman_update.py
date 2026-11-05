@@ -4,8 +4,9 @@
 (plugins/filter/stig_filters.py, stig_update_plan) through the workflow's approval step. Each review is read again first
 and written only if it is still as the check read it; then read once more, to say what STIG Manager now holds. Two
 requests to STIG Manager only: GET /collections/{c}/reviews/{asset}/{rule} and POST /collections/{c}/reviews/{asset}
-(the reviews of the plan). A new asset the approval allowed (0.72.0, check_stig_update_create_assets) is created first -
-GET /assets?collectionId= to see it is still not there, then POST /assets with its STIG - and its reviews written. No
+(the reviews of the plan). A new asset the approval allowed (0.72.0, check_stig_update_create_assets; workflow 40's checklist
+import) is created first - GET /assets?collectionId= to see it is still not there, then POST /assets with its STIGs - and
+its reviews written. No
 collection, user, STIG or grant, and no asset that is there, is ever changed. Standard library only."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -38,7 +39,9 @@ options:
   plan:
     description: "[{collectionId, assetId, ruleId, was: {result, status, ts}, result, status, detail, comment, engine, line, ...}]
       - stig_update_plan's items, as the approval step handed them on; a new asset {kind: create, collectionId, asset, fqdn,
-      benchmark, line}, and its reviews with assetId '' and new_asset: its name."
+      benchmark, line}, and its reviews with assetId '' and new_asset: its name. The checklist import's (workflow 40,
+      site_ckl_import): reviews of kind import (engine null: a checklist a person answered), a new asset with benchmarks
+      (every STIG its checklists matched), description, ip, mac."
     type: list
     elements: dict
     required: true
@@ -72,11 +75,15 @@ from ansible.module_utils.six.moves.urllib.request import Request, urlopen
 from ansible.module_utils.six.moves.urllib.error import HTTPError, URLError
 
 ID_RE = re.compile(r"^[0-9]{1,20}$")
-RULE_RE = re.compile(r"^SV-[0-9]+r[0-9]+_rule$")
+# a rule id: any text up to 45 characters (STIG Manager's own rule) - DISA's SV-257985r1069364_rule, and SV-PHTN-50-000003 as STIG
+# content from elsewhere has; no control characters, no / (it is a part of the request's path)
+RULE_RE = re.compile(r"^[^\x00-\x1f\x7f/]{1,45}$")
 RESULTS = ("pass", "fail", "notapplicable")
 STATUSES = ("saved", "submitted", "accepted")
 ENGINES = ("scap", "script", "other")
-BENCH_RE = re.compile(r"^[A-Za-z0-9_.-]{1,255}$")
+# a STIG's benchmark id: any text up to 255 characters (STIG Manager's own rule) - DISA's RHEL_9_STIG, and ones with spaces as
+# STIG content from elsewhere has (VMware Aria Operations 8.x Apache); no control characters
+BENCH_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,255}$")
 
 
 class NotFound(RuntimeError):
@@ -120,7 +127,7 @@ class Client(object):
 
     def review(self, c, a, rule):
         """The review of an asset and rule as STIG Manager holds it now (None: no review)."""
-        req = Request("%s/collections/%s/reviews/%s/%s" % (self.api, quote(c), quote(a), quote(rule)),
+        req = Request("%s/collections/%s/reviews/%s/%s" % (self.api, quote(c, safe=''), quote(a, safe=''), quote(rule, safe='')),
                       headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"})
         return self._open(req)
 
@@ -128,7 +135,7 @@ class Client(object):
         """(how many attachments the review has, their names) - STIG Manager keeps them in the review's metadata, the key
         'artifacts' (a JSON text of their list); 0 without the key, or without a review. -1: the key is there, its value
         not such a list."""
-        base = "%s/collections/%s/reviews/%s/%s/metadata/keys" % (self.api, quote(c), quote(a), quote(rule))
+        base = "%s/collections/%s/reviews/%s/%s/metadata/keys" % (self.api, quote(c, safe=''), quote(a, safe=''), quote(rule, safe=''))
         hdr = {"Authorization": "Bearer " + self.token, "Accept": "application/json"}
         try:
             keys = self._open(Request(base, headers=hdr)) or []
@@ -159,21 +166,22 @@ class Client(object):
                       headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"})
         return self._open(req) or []
 
-    def create(self, c, name, fqdn, bench):
-        """POST /assets: the new asset with its STIG (the collection's revision) -> STIG Manager's record of it."""
+    def create(self, c, name, fqdn, benches, description="", ip="", mac=""):
+        """POST /assets: the new asset with its STIGs (the collection's revision) -> STIG Manager's record of it."""
         return self._send("POST", "/assets?projection=stigs", {
-            "name": name, "fqdn": fqdn or None, "collectionId": c, "description": "Created by the STIG recheck (site-automation), approved in AAP",
-            "ip": "", "mac": "", "noncomputing": False, "metadata": {}, "stigs": [bench]}) or {}
+            "name": name, "fqdn": fqdn or None, "collectionId": c,
+            "description": description or "Created by the STIG recheck (site-automation), approved in AAP",
+            "ip": ip or "", "mac": mac or "", "noncomputing": False, "metadata": {}, "stigs": list(benches)}) or {}
 
     def asset_reviews(self, c, a):
         """Every review of an asset: {ruleId: what STIG Manager holds}."""
-        req = Request("%s/collections/%s/reviews/%s" % (self.api, quote(c), quote(a)),
+        req = Request("%s/collections/%s/reviews/%s" % (self.api, quote(c, safe=''), quote(a, safe='')),
                       headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"})
         return dict((r.get("ruleId"), held(r)) for r in self._open(req) or [])
 
     def write(self, c, a, reviews):
         """POST /collections/{c}/reviews/{a}: the asset's reviews of the plan -> {affected, rejected}."""
-        req = Request("%s/collections/%s/reviews/%s" % (self.api, quote(c), quote(a)), data=json.dumps(reviews).encode("utf-8"),
+        req = Request("%s/collections/%s/reviews/%s" % (self.api, quote(c, safe=''), quote(a, safe='')), data=json.dumps(reviews).encode("utf-8"),
                       headers={"Authorization": "Bearer " + self.token, "Accept": "application/json", "Content-Type": "application/json"})
         req.get_method = lambda: "POST"
         return self._open(req) or {}
@@ -198,9 +206,14 @@ def bad_create(it):
     name = str(it.get("asset") or "")
     if not name.strip() or len(name) > 255:
         return "no asset name"
-    if not BENCH_RE.match(str(it.get("benchmark") or "")):
+    if not all(BENCH_RE.match(str(b or "")) for b in benches_of(it)):
         return "no STIG (benchmark)"
     return ""
+
+
+def benches_of(it):
+    """A new asset's STIGs: benchmarks (the checklist import: every STIG its checklists matched), else its one benchmark."""
+    return list(it.get("benchmarks") or []) or [it.get("benchmark")]
 
 
 def make_assets(p, client, check):
@@ -211,7 +224,7 @@ def make_assets(p, client, check):
             continue
         c, name = str(it.get("collectionId", "")), str(it.get("asset") or "")
         row = {"n": n, "kind": "create", "line": it.get("line", ""), "host": it.get("host", ""), "asset": name, "fqdn": it.get("fqdn") or "",
-               "collection": it.get("collection", ""), "benchmark": it.get("benchmark", ""), "revision": it.get("revision", ""),
+               "collection": it.get("collection", ""), "benchmark": ", ".join(str(x) for x in benches_of(it) if x), "revision": it.get("revision", ""),
                "reviews": it.get("reviews", 0), "assetId": ""}
         rows.append(row)
         key = (c, name.lower())
@@ -238,7 +251,8 @@ def make_assets(p, client, check):
             ids[key] = "check"
             continue
         try:
-            ans = client.create(c, name, it.get("fqdn") or "", it["benchmark"])
+            ans = client.create(c, name, it.get("fqdn") or "", benches_of(it), str(it.get("description") or "")[:255],
+                                str(it.get("ip") or "")[:255], str(it.get("mac") or "")[:255])
         except RuntimeError as e:
             row.update(state="error", why="not created: %s" % e)
             continue
@@ -247,14 +261,18 @@ def make_assets(p, client, check):
             row.update(state="error", why="STIG Manager gave no asset id")
             continue
         row["assetId"] = a
-        got = [x.get("revisionStr") or "" for x in ans.get("stigs") or [] if x.get("benchmarkId") == it["benchmark"]]
-        if not got:
+        got = dict((x.get("benchmarkId"), x.get("revisionStr") or "") for x in ans.get("stigs") or [])
+        missing = [b for b in benches_of(it) if b not in got]
+        if len(missing) == len(benches_of(it)):
             # created, without the STIG: its reviews could not be written - say so, and leave the asset for a person
             row.update(state="error", why="created (asset id %s), but without %s - its reviews not written: assign the STIG in STIG Manager "
-                                          "and run the recheck again" % (a, it["benchmark"]))
+                                          "and run the %s again" % (a, ", ".join(missing), "import" if it.get("benchmarks") else "recheck"))
             continue
-        row.update(state="created", why="" if not it.get("revision") or got[0] == it["revision"] else
-                   "with %s %s (the check read %s)" % (it["benchmark"], got[0], it["revision"]))
+        read = dict(zip(benches_of(it), [x.strip() for x in str(it.get("revision") or "").split(",")]))
+        notes = ["with %s %s (the check read %s)" % (b, got[b], read[b]) for b in benches_of(it) if b in got and read.get(b) and got[b] != read[b]]
+        if missing:     # STIG Manager rejects the reviews of those (said for each)
+            notes.append("without %s - assign it in STIG Manager" % ", ".join(missing))
+        row.update(state="created", why="; ".join(notes))
         ids[key] = a
     return rows, ids
 
@@ -282,8 +300,8 @@ def bad_item(it):
     """Why a plan item cannot be written ('' = it can): only the ids, results and statuses the plan gives."""
     if not ID_RE.match(str(it.get("collectionId", ""))) or not ID_RE.match(str(it.get("assetId", ""))):
         return "no collection or asset id"
-    if not RULE_RE.match(str(it.get("ruleId", ""))):
-        return "not a STIG rule id (SV-...r..._rule): %s" % it.get("ruleId")
+    if not RULE_RE.match(str(it.get("ruleId", ""))) or not str(it.get("ruleId", "")).strip("."):   # "..": a step up the path
+        return "not a STIG rule id: %s" % it.get("ruleId")
     if it.get("result") not in RESULTS:
         return "a result this job never writes: %s" % it.get("result")
     if it.get("status") not in STATUSES:
@@ -292,7 +310,8 @@ def bad_item(it):
         return "no record of the review as it was read"
     if not str(it.get("detail") or "").strip():
         return "no detail"
-    if ((it.get("engine") or {}).get("type")) not in ENGINES:
+    # a checklist a person answered (STIG Viewer) has no result engine: the checklist import's reviews only
+    if ((it.get("engine") or {}).get("type")) not in ENGINES and not (it.get("kind") == "import" and it.get("engine") is None):
         return "no result engine"
     return ""
 
@@ -300,7 +319,7 @@ def bad_item(it):
 def body_of(it):
     eng = dict((k, v) for k, v in (it.get("engine") or {}).items() if k in ("type", "product", "version", "time") and v)
     out = {"ruleId": it["ruleId"], "result": it["result"], "detail": str(it["detail"])[:32767],
-           "comment": None if it.get("comment") is None else str(it["comment"])[:32767], "resultEngine": eng, "status": it["status"]}
+           "comment": None if it.get("comment") is None else str(it["comment"])[:32767], "resultEngine": eng or None, "status": it["status"]}
     return out
 
 

@@ -488,6 +488,36 @@ The STIG recheck's "update the review", written to STIG Manager after a person a
 
 Everything else, including what is written, the client and its grant: [STIG_DRIFT.md](STIG_DRIFT.md#updating-stig-manager-with-an-approval).
 
+### 40. Checklists imported into STIG Manager, with an approval
+
+Checklists (CKL, CKLB) you keep on a share - VMware's InSpec checklists too, which STIG Manager's own import rejects -
+written into STIG Manager after a person approves them.
+
+```workflow
+[STIG Manager - import checklists - check]
+   |  Run on fail
+   v
+[Approval]
+   |  Run on success
+   v
+[STIG Manager - update]
+```
+
+| Step | Template | Link |
+|---|---|---|
+| 1 | STIG Manager - import checklists - check: the *STIG Manager - import checklists* playbook (`playbooks/stigman_ckl_import.yml`) with Variables `stigman_ckl_import_workflow: true` | (start) |
+| 2 | *Approval*: `Write the checklists' reviews (and the new assets) to STIG Manager?`, **Timeout** 8 hours. Description: `Open the check's report: Approve writes these reviews to STIG Manager.` | **Run on fail**, from 1 |
+| 3 | STIG Manager - update (`playbooks/stigman_update.yml`, workflow 37's template: the client that may write reviews, **Manage** to create assets) | **Run on success**, from 2 |
+
+- **The check template:** a copy of *STIG Manager - import checklists*, with the same credentials (the read-only *STIG
+  Manager API* and *Windows file share*) and Variables (`stigman_ckl_import_src`, `stigman_ckl_import_collection`).
+- **What happens:** the check fails on purpose (`NEEDS APPROVAL`) when there is something to write, and hands the list on;
+  with nothing to write it stays green. Approve, and step 3 creates the new assets listed and writes exactly those reviews.
+  Deny, and nothing is written.
+- **Schedule:** on demand, after new checklists are on the share.
+
+Everything else - how a checklist's asset and STIG are found, what is written: [CKL_IMPORT.md](CKL_IMPORT.md).
+
 ### 33. STIG drift (weekly)
 
 Has a server moved away from its STIG checklist since it was reviewed?
@@ -1001,6 +1031,7 @@ as Check).
 | fapolicyd | every day 07:00 | workflow 36 |
 | STIG drift | weekly, e.g. Sunday 02:00, and after patch night | workflow 33 |
 | STIG Manager updated from the recheck | on demand, or after patch night | workflow 37 |
+| Checklists imported into STIG Manager | on demand, after new checklists are on the share | workflow 40 |
 | Network performance | hourly (**Concurrent jobs** off) | workflow 34 |
 | Horizon: broken desktops / reports | hourly in working hours / daily | workflows 30 and 32 |
 | VM outage watch | every 5 to 15 minutes (**Concurrent jobs** off) | workflow 28 |

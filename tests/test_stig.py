@@ -1155,9 +1155,9 @@ class NewAsset(unittest.TestCase):
             def assets(self, c):
                 return self.there
 
-            def create(self, c, name, fqdn, bench):
-                self.made.append((c, name, fqdn, bench))
-                a = {"assetId": "88", "name": name, "fqdn": fqdn, "stigs": [{"benchmarkId": bench, "revisionStr": "V2R7"}]}
+            def create(self, c, name, fqdn, benches, description="", ip="", mac=""):
+                self.made.append((c, name, fqdn, benches))
+                a = {"assetId": "88", "name": name, "fqdn": fqdn, "stigs": [{"benchmarkId": b, "revisionStr": "V2R7"} for b in benches]}
                 self.there.append(a)
                 return a
 
@@ -1175,7 +1175,7 @@ class NewAsset(unittest.TestCase):
         c = C()
         items = smu.update({"plan": p}, c, False)
         self.assertEqual([i["state"] for i in items], ["created", "written", "written", "written"])
-        self.assertEqual((c.made, c.posts[0][:2]), ([("7", "web01", "web01.example.mil", "RHEL_9_STIG")], ("7", "88")))
+        self.assertEqual((c.made, c.posts[0][:2]), ([("7", "web01", "web01.example.mil", ["RHEL_9_STIG"])], ("7", "88")))
         self.assertEqual(items[0]["assetId"], "88")
         self.assertEqual(sf.stig_update_item_lines(items), ["created - " + p[0]["line"] + " - its reviews: written 3"])
         r = sf.stig_update_report(items)

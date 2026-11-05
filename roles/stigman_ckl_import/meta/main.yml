@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: stigman_ckl_import
+  description: "Workflow 40's check: the checklists (CKL, CKLB) on your share matched to STIG Manager's assets and STIGs - the reviews to write once approved."
+  license: MIT
+  min_ansible_version: "2.14"
+dependencies: []

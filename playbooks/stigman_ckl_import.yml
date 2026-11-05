@@ -1,0 +1,26 @@
+---
+# STIG MANAGER - IMPORT CHECKLISTS: workflow 40's check. The checklists (CKL, CKLB) on your share - VMware's InSpec
+# checklists (an HDF profile's, its own STIG id: "VMware Aria Operations 8.x Apache Profile"), Evaluate-STIG's, a person's
+# from STIG Viewer - read, each one's asset found by its host name in stigman_ckl_import_collection (none: planned as a
+# new asset, with every STIG its checklists matched), each STIG of it matched to one installed in STIG Manager by its
+# rules (the benchmark id, else the rule ids, V-numbers, versions), and the reviews to write listed:
+#   - written: Not a Finding, Open, Not Applicable where STIG Manager has no review, Not Reviewed or another result;
+#   - not written, and said: Not Reviewed in the checklist, an Accepted review (stigman_ckl_import_overwrite_accepted),
+#     two checklists that disagree, a rule id of another revision, a checklist with no host name or no STIG matched,
+#     an asset there without the matched STIG (assign it in STIG Manager), a review with attachments.
+# Reads only - the share and STIG Manager (GET). On workflow 40's check (stigman_ckl_import_workflow: true) the plan is
+# handed on (set_stats stigman_update_plan) and the job fails on purpose (NEEDS APPROVAL); after the approval,
+# playbooks/stigman_update.yml writes the reviews and creates the new assets. Credentials: STIG Manager API (read-only is
+# enough), Windows file share. docs/CKL_IMPORT.md; docs/WORKFLOWS_AND_SCHEDULES.md, 40.
+#
+#   ansible-playbook playbooks/stigman_ckl_import.yml -e stigman_ckl_import_src='\\fileserver\stig\ckl' -e stigman_ckl_import_collection='VMware'
+- name: STIG Manager - import checklists
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Read the checklists, match them to STIG Manager, list the reviews to write
+      ansible.builtin.include_role:
+        name: stigman_ckl_import

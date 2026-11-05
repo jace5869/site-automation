@@ -68,6 +68,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | SOP - Word document | `playbooks/incident_sop.yml` | [incident_sop.yml](incident_sop.yml) |
 | STIG drift report | `playbooks/stig_drift_report.yml` | [stig_drift_report.yml](stig_drift_report.yml) |
 | STIG Manager - deploy | `playbooks/stigman_deploy.yml` | [stigman_deploy.yml](stigman_deploy.yml) |
+| STIG Manager - import checklists | `playbooks/stigman_ckl_import.yml` | [stigman_ckl_import.yml](stigman_ckl_import.yml) |
 | STIG Manager - update | `playbooks/stigman_update.yml` | [stigman_update.yml](stigman_update.yml) |
 | STIG recheck | `playbooks/stig_recheck.yml` | [stig_recheck.yml](stig_recheck.yml) |
 | Tenable.sc - scan | `playbooks/tenable_scan.yml` | [tenable_scan.yml](tenable_scan.yml) |

@@ -2,10 +2,11 @@
 # STIG MANAGER - UPDATE: workflow 37's step after the approval. The STIG recheck's check (check_stig_update_workflow:
 # true) lists the reviews to write - Open in STIG Manager and the host passes now (Not a Finding), Not Applicable now,
 # Not Reviewed and the scan answered it - and hands them on (stigman_update_plan); the approval allows them; this job
-# writes them to STIG Manager:
+# writes them to STIG Manager. Workflow 40's too: the checklist import's check (playbooks/stigman_ckl_import.yml) plans
+# the reviews of the checklists (CKL, CKLB) on your share, and the new assets, the same way:
 #   - only the reviews of the plan: GET and POST /collections/{c}/reviews/{asset}[/{rule}] - no collection, user, STIG
 #     or grant is changed, nor an asset that is there;
-#   - a new asset of the plan (check_stig_update_create_assets): created (POST /assets, with its STIG) only if still not
+#   - a new asset of the plan (check_stig_update_create_assets, the import): created (POST /assets, with its STIGs) only if still not
 #     there, then its reviews written - the client needs the Manage grant in that collection;
 #   - each read again first, written only if it is still as the check read it (one changed since is left, and said);
 #   - each read back after; the report says what became of each, and the job fails for one not written.

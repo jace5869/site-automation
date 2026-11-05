@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [aap_health](#aap_health), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [aap_health](#aap_health), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_ckl_import](#stigman_ckl_import), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -1350,6 +1350,35 @@ File: `roles/site_findings/defaults/main.yml`
 | `site_windows_connections` | `[winrm, psrp, ansible.builtin.winrm, ansible.builtin.psrp]` | How a host is recognized as Windows: its connection, or its shell (Windows OpenSSH). |
 | `site_settings_notice` | `true` | A notice in the job output when a project settings file (playbooks/group_vars/*.yml) defines a setting: it wins over AAP's inventory Variables box. false = no notice. |
 
+## stigman_ckl_import
+
+File: `roles/stigman_ckl_import/defaults/main.yml`
+
+| Setting | Default | What it does |
+|---|---|---|
+| `stigman_ckl_import_src` | (empty) | STIG MANAGER - IMPORT CHECKLISTS (playbooks/stigman_ckl_import.yml): workflow 40's check. It reads the checklists (CKL from STIG Viewer 2, CKLB from STIG Viewer 3 - VMware's InSpec checklists, Evaluate-STIG's, a person's) from your share, finds each one's asset by its host name (HOST_NAME) and its STIG among those ins… (all of it: the role file) |
+| `stigman_ckl_import_patterns` | `["*.ckl", "*.cklb"]` | the files taken (any case) |
+| `stigman_ckl_import_recurse` | `true` | read the sub-folders too (one per host, one per month ...) |
+| `stigman_ckl_import_user` | (empty) | the share's account (user@YOURDOMAIN.MIL); empty = the "Windows file share" credential's |
+| `stigman_ckl_import_password` | (empty) | its password (vault it); empty = the credential's |
+| `stigman_ckl_import_auth` | `negotiate` | negotiate (Kerberos - FIPS too: user@YOURDOMAIN.MIL, the server's full name - else NTLM), ntlm, or kerberos (a ticket already in the job) |
+| `stigman_ckl_import_encrypt` | `false` | true = encrypt (SMB 3) even when the share does not require it |
+| `stigman_ckl_import_port` | `445` | the share's port |
+| `stigman_ckl_import_max_files` | `500` | at most this many files (more: nothing read - name a narrower folder) |
+| `stigman_ckl_import_max_mb` | `50` | a file larger than this is left out (and said) |
+| `stigman_ckl_import_collection` | (empty) | the STIG Manager collection (its name) the checklists' assets are in - or are created in |
+| `stigman_ckl_import_create_assets` | `true` | A host name with no asset in the collection: the asset is planned too - created once approved, with every STIG its checklists matched (the update's client needs the Manage grant). false = listed, not written: create it yourself. |
+| `stigman_ckl_import_benchmarks` | `{}` | A checklist's STIG id -> the installed STIG to write to, instead of matching by rules (fnmatch, any case), e.g. {"VMware Aria Operations 8.x Apache Profile": "VMW_Aria_Operations_8-x_Apache_STIG"} |
+| `stigman_ckl_import_min_match` | `0.8` | the share of a checklist STIG's rules the installed STIG must have (0.8 = 80%) |
+| `stigman_ckl_import_candidates` | `25` | at most this many installed STIGs read to match one (the likeliest by name first) |
+| `stigman_ckl_import_search_all` | `false` | true = no match among those: read every installed STIG (slow with hundreds) |
+| `stigman_ckl_import_other_revision` | `false` | true = write a rule the checklist gives another revision's id of (SV-...r123 vs r456); false = listed, held back |
+| `stigman_ckl_import_overwrite_accepted` | `false` | true = write over an Accepted review too; false = listed, left for the reviewers |
+| `stigman_ckl_import_status` | `submitted` | the reviews' status: saved, submitted or accepted |
+| `stigman_ckl_import_detail_max` | `8000` | a longer finding detail is cut |
+| `stigman_ckl_import_list_max` | `200` | at most this many rows in the report's tables |
+| `stigman_ckl_import_workflow` | `false` | true on workflow 40's check only: the plan handed on (set_stats stigman_update_plan), the job fails on purpose (NEEDS APPROVAL) |
+
 ## stigman_stack
 
 File: `roles/stigman_stack/defaults/main.yml`
@@ -1385,7 +1414,7 @@ File: `roles/stigman_update/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `stigman_update_api` | `"{{ check_stig_stigman_api \| default('') }}"` | STIG MANAGER - UPDATE (playbooks/stigman_update.yml): workflow 37's step after the approval. It writes the reviews the STIG recheck's check listed (stigman_update_plan, handed on by the workflow) - each only if STIG Manager still has it as the check read it - and the new assets it listed (check_stig_update_create_asse… (all of it: the role file) |
+| `stigman_update_api` | `"{{ check_stig_stigman_api \| default('') }}"` | STIG MANAGER - UPDATE (playbooks/stigman_update.yml): workflow 37's (and 40's) step after the approval. It writes the reviews the STIG recheck's (or the checklist import's) check listed (stigman_update_plan, handed on by the workflow) - each only if STIG Manager still has it as the check read it - and the new assets i… (all of it: the role file) |
 | `stigman_update_token_url` | `"{{ check_stig_stigman_token_url \| default('') }}"` | empty = the credential's |
 | `stigman_update_client_id` | `"{{ check_stig_stigman_client_id \| default('') }}"` | empty = the credential's |
 | `stigman_update_client_secret` | `"{{ check_stig_stigman_client_secret \| default('') }}"` | empty = the credential's (vault it) |

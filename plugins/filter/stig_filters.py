@@ -1360,8 +1360,9 @@ def stig_update_item_lines(items):
     return out
 
 
-def stig_update_report(items, check=False, error="", planned=0):
-    """playbooks/stigman_update.yml's report: each review of the plan, what became of it in STIG Manager; a new asset in one row."""
+def stig_update_report(items, check=False, error="", planned=0, source=""):
+    """playbooks/stigman_update.yml's report: each review of the plan, what became of it in STIG Manager; a new asset in one row.
+    source: import - the plan is workflow 40's (the checklist import), not the STIG recheck's."""
     items = items or []
     news = [i for i in items if i.get("kind") == "create"]
     revs = [i for i in items if i.get("kind") != "create"]
@@ -1395,7 +1396,11 @@ def stig_update_report(items, check=False, error="", planned=0):
                       "%s %s" % (i.get("benchmark", ""), i.get("revision", "")), i.get("state", ""), _new_states(items, i.get("asset")),
                       i.get("why", "")] for i in news],
             "row_status": [nchip.get(i.get("state"), "") for i in news],
-            "text": "The hosts the check found no asset for: created only if still not there (an asset of the host's made since "
+            "text": ("The checklists' host names the check found no asset for: created only if still not there (one made since "
+                     "the check is left, and nothing written to it), with every STIG their checklists matched, then the "
+                     "checklists' answers written as its reviews and read back. Its reviews are counted here; one not written is "
+                     "also listed below.") if source == "import" else
+                    "The hosts the check found no asset for: created only if still not there (an asset of the host's made since "
                     "the check is left, and nothing written to it), with the host's STIG, then the scan's answers written as "
                     "its reviews and read back. Its reviews are counted here; one not written is also listed below."})
     if rows:
@@ -1409,7 +1414,8 @@ def stig_update_report(items, check=False, error="", planned=0):
                                  "an asset that was there."})
     elif not error and not news:
         sections.append({"title": "Nothing to write", "status": "ok", "lines": ["The check's plan has no review (%d)." % planned]})
-    return {"title": title, "status": status, "subtitle": "The reviews approved in workflow 37 (the STIG recheck)",
+    return {"title": title, "status": status, "subtitle": "The reviews approved in workflow 40 (the checklist import)" if source == "import" else
+                                                     "The reviews approved in workflow 37 (the STIG recheck)",
             "summary": [{"label": "Written" if not check else "Would write", "value": n["would write"] if check else n["written"], "status": "ok"}]
                        + ([{"label": "New assets" if not check else "Would create", "value": made, "status": "ok"}] if news else []) + [
                         {"label": "Already so", "value": n["already so"]},

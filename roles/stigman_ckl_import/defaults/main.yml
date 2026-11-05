@@ -1,0 +1,33 @@
+---
+# STIG MANAGER - IMPORT CHECKLISTS (playbooks/stigman_ckl_import.yml): workflow 40's check. It reads the checklists (CKL from
+# STIG Viewer 2, CKLB from STIG Viewer 3 - VMware's InSpec checklists, Evaluate-STIG's, a person's) from your share, finds
+# each one's asset by its host name (HOST_NAME) and its STIG among those installed in STIG Manager by its rules, and lists
+# the reviews to write; after the approval, playbooks/stigman_update.yml writes them (and creates the new assets). Reads
+# only: nothing on the share or in STIG Manager is changed here. STIG Manager's address and credential: the STIG drift
+# report's (check_stig_stigman_*, the read-only "STIG Manager API" credential). docs/CKL_IMPORT.md.
+stigman_ckl_import_src: ""                  # where the checklists are: a share's folder (\\fileserver\stig\ckl) or a folder on the AAP side
+stigman_ckl_import_patterns: ["*.ckl", "*.cklb"]    # the files taken (any case)
+stigman_ckl_import_recurse: true            # read the sub-folders too (one per host, one per month ...)
+stigman_ckl_import_user: ""                 # the share's account (user@YOURDOMAIN.MIL); empty = the "Windows file share" credential's
+stigman_ckl_import_password: ""             # its password (vault it); empty = the credential's
+stigman_ckl_import_auth: negotiate          # negotiate (Kerberos - FIPS too: user@YOURDOMAIN.MIL, the server's full name - else NTLM), ntlm, or kerberos (a ticket already in the job)
+stigman_ckl_import_encrypt: false           # true = encrypt (SMB 3) even when the share does not require it
+stigman_ckl_import_port: 445                # the share's port
+stigman_ckl_import_max_files: 500           # at most this many files (more: nothing read - name a narrower folder)
+stigman_ckl_import_max_mb: 50               # a file larger than this is left out (and said)
+stigman_ckl_import_collection: ""           # the STIG Manager collection (its name) the checklists' assets are in - or are created in
+# A host name with no asset in the collection: the asset is planned too - created once approved, with every STIG its
+# checklists matched (the update's client needs the Manage grant). false = listed, not written: create it yourself.
+stigman_ckl_import_create_assets: true
+# A checklist's STIG id -> the installed STIG to write to, instead of matching by rules (fnmatch, any case), e.g.
+#   {"VMware Aria Operations 8.x Apache Profile": "VMW_Aria_Operations_8-x_Apache_STIG"}
+stigman_ckl_import_benchmarks: {}
+stigman_ckl_import_min_match: 0.8           # the share of a checklist STIG's rules the installed STIG must have (0.8 = 80%)
+stigman_ckl_import_candidates: 25           # at most this many installed STIGs read to match one (the likeliest by name first)
+stigman_ckl_import_search_all: false        # true = no match among those: read every installed STIG (slow with hundreds)
+stigman_ckl_import_other_revision: false    # true = write a rule the checklist gives another revision's id of (SV-...r123 vs r456); false = listed, held back
+stigman_ckl_import_overwrite_accepted: false   # true = write over an Accepted review too; false = listed, left for the reviewers
+stigman_ckl_import_status: submitted        # the reviews' status: saved, submitted or accepted
+stigman_ckl_import_detail_max: 8000         # a longer finding detail is cut
+stigman_ckl_import_list_max: 200            # at most this many rows in the report's tables
+stigman_ckl_import_workflow: false          # true on workflow 40's check only: the plan handed on (set_stats stigman_update_plan), the job fails on purpose (NEEDS APPROVAL)

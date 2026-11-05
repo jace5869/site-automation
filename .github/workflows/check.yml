@@ -72,6 +72,7 @@ jobs:
           python tests/test_mail_relay.py
           python tests/test_trust.py
           python tests/test_stig.py
+          python tests/test_stig_ckl_import.py
           python tests/test_sso.py
           python tests/test_net_perf.py
           python tests/test_vm_net_drops.py
@@ -218,6 +219,10 @@ jobs:
         run: |
           bash tests/stig/run_stig_update_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_stig_update_test.sh
+      - name: Workflow 40 - checklists (CKL) imported into STIG Manager after an approval (the check's plan, the update; a stand-in STIG Manager)
+        run: |
+          bash tests/stig/run_ckl_import_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/stig/run_ckl_import_test.sh
       - name: The sso check against fake sssd, realm, Kerberos and adcli tools (current ansible-core and 2.16)
         run: |
           bash tests/sso/run_sso_test.sh
