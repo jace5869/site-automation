@@ -1,0 +1,76 @@
+---
+# VMWARE CERTIFICATE REQUEST, on demand (playbooks/vmware_cert_request.yml): for the vCenters and ESXi hosts named in
+# vmware_cert_request_for - only those, by their exact names - a CSR made where the key stays (vCenter, or the host)
+# and ordered from the PKI's catalog item, now, whatever the certificate's expiry: the renewal's own steps
+# (cert_renew.yml) with cert_renew_servicenow catalog, the days raised and VMCA-signed ones included. The request
+# number (RITM) is what VMware - certificate install asks for. A certificate on order already gets no second CSR (it
+# would replace the key that waits for it): its request is said. Check (a dry run) makes and sends nothing.
+- name: VMware certs | request | which vCenters and hosts (vmware_cert_request_for)
+  ansible.builtin.set_fact:
+    _vcr_for: >-
+      {{ ((vmware_cert_request_for | replace(',', ' ')).split() if vmware_cert_request_for is string
+          else vmware_cert_request_for | default([], true)) | map('string') | map('trim') | select | list }}
+
+- name: VMware certs | request | named exactly - one or a few, never all
+  ansible.builtin.assert:
+    that:
+      - _vcr_for | length > 0
+      - _vcr_for | select('search', '[*?\[]') | list | length == 0
+    fail_msg: >-
+      {{ 'Name the vCenter or ESXi host(s) to request a certificate for: vmware_cert_request_for: [esx01.yoursite.mil]
+      (the survey asks it).' if _vcr_for | length == 0 else
+      'vmware_cert_request_for takes exact names, no * or ? (' ~ (_vcr_for | select('search', '[*?\[]') | join(', '))
+      ~ '): each one gets a CSR and a request.' }} Nothing was read or sent.
+    quiet: true
+
+- name: VMware certs | request | the ServiceNow API credential is needed (the request is the CSR's record)
+  ansible.builtin.assert:
+    that: lookup('ansible.builtin.env', 'SN_HOST') | trim | length > 0
+    fail_msg: >-
+      No ServiceNow connection: attach the "ServiceNow API" credential (the account that orders the certificates) to
+      this template - a CSR is made only with the request that keeps it. Nothing was read or sent.
+    quiet: true
+
+# The renewal's own steps, for the names only, every one due; ordered from the catalog (the request is what the
+# install asks for). A template's Variables beat these task vars - cert_renew_servicenow there must say catalog.
+- name: VMware certs | request | ordered from the PKI's catalog item
+  ansible.builtin.assert:
+    that: cert_renew_servicenow == 'catalog'
+    fail_msg: >-
+      cert_renew_servicenow is {{ cert_renew_servicenow }} in this template's Variables: the request job orders from the
+      PKI's catalog item - take it out of the template's Variables (catalog is the job's own). Nothing was read or sent.
+    quiet: true
+  vars:
+    cert_renew_servicenow: catalog
+
+- name: VMware certs | request | the CSR, made where the key stays, and ordered from the PKI's catalog item
+  ansible.builtin.include_tasks: cert_renew.yml
+  vars:
+    _vcert_only_in: "{{ _vcr_for }}"
+    _vcert_warn_in: 36500                 # now, whatever the expiry
+    vmware_cert_make_csr: true
+    vmware_cert_vmca_csr: true            # a VMCA-signed one too: you asked for your PKI's
+    cert_renew_servicenow: catalog        # the request (RITM) is what the install asks for
+
+- name: VMware certs | request | every name was read
+  ansible.builtin.assert:
+    that: _vcr_missing | length == 0
+    fail_msg: >-
+      {{ _vcr_missing | join(', ') }}: not read - none of the job's vCenters has it by that name (the name as vCenter shows
+      it; another vCenter: vmware_vcenters), or it is not connected. The others named were handled above.
+    quiet: true
+  vars:
+    _vcr_missing: >-
+      {%- set got = _vcert.certs | map(attribute='name') | map('lower') | list -%}
+      {%- set out = [] -%}
+      {%- for n in _vcr_for if n | lower not in got and n | lower not in (got | map('regex_replace', '[.].*$', '') | list) -%}
+      {%-   set _ = out.append(n) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: VMware certs | request | next
+  ansible.builtin.debug:
+    msg: >-
+      When the PKI has put the issued certificate (and its chain, .p7b) on the request above (ORDERED RITM...), launch the
+      workflow VMware - certificate install with that number: it checks the certificate is for this CSR's key, and installs
+      it after the approval. docs/VMWARE.md (Request a certificate now).

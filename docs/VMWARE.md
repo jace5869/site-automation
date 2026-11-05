@@ -38,6 +38,8 @@ System Center Orchestrator):
 | ESXi - network check | `playbooks/esxi_network_check.yml` | read-only: every host's VMkernel adapters and MTUs; vmkping between the hosts of each cluster on the vMotion network, full size with don't fragment (jumbo frames proven end to end); pings to targets you name; the storage latency each host sees. No VM is moved ("The ESXi network check") |
 | VMware - certificate report | `playbooks/vmware_cert_report.yml` | read-only: every certificate of vCenter and its ESXi hosts, soonest expiry first, and for each one due what the renewal would do. Never ServiceNow, never a CSR |
 | VMware - certificate renewal | `playbooks/vmware_cert_renew.yml` | the certificates of vCenter and every ESXi host: each one that expires within 30 days gets a ServiceNow incident, and a CSR - made where its key stays, by vCenter or the host - attached to it with what to do next. The days can be raised to try it on certificates years from expiring |
+| VMware - certificate request | `playbooks/vmware_cert_request.yml` | on demand, for the vCenters and hosts you name: a CSR made where the key stays, ordered from the PKI's catalog item now - the job prints the request (RITM) |
+| VMware - certificate install - check / approved | `playbooks/vmware_cert_install_check.yml`, `vmware_cert_install_approved.yml` | the certificate the PKI put on the catalog request (the RITM you name) of a CSR of vCenter or a host, installed there after an approval: the hosts in use (the CA chain in vCenter's trusted roots, the host reconnected, vCenter must show it), then vCenter's Machine SSL certificate (port 443 must serve it) |
 
 They run on the AAP side and talk to vCenter. They never log in to the VMs.
 
@@ -103,6 +105,7 @@ A service account with a vCenter role that has only what the jobs need:
 | ESXi security settings: the vCenter appliance's access (`esxi_security_vcsa_*`, since 0.68.0) | the account in the single sign-on group **SystemConfiguration.Administrators** (Administration > Single Sign On > Users and Groups > Groups > SystemConfiguration.Administrators > Add members); administrator@vsphere.local is in it. Without it vCenter answers 403 and the job says so |
 | certificate renewal: an ESXi host's CSR | Certificates > Manage certificates, on the hosts. If it is missing, the job's error names it |
 | certificate renewal: vCenter's CSR | Certificate Management (`CertificateManagement.Manage` and `CertificateManagement.Administer`), in a role given as a **Global Permission** - or the account in the single sign-on group **CAAdmins** (Administration > Single Sign On > Users and Groups > Groups > CAAdmins > Add members), as the vSphere Client's own CSR needs; administrator@vsphere.local has it |
+| certificate install (since 0.71.0): a host's certificate, the CA chain in vCenter's trusted roots, vCenter's own | Certificates > Manage certificates (and Host > Configuration > Connection, to reconnect a host vCenter lost), on the hosts; Certificate Management (`CertificateManagement.Manage` and `CertificateManagement.Administer`) as a **Global Permission**, or the account in **CAAdmins** - for the trusted roots and the Machine SSL certificate. administrator@vsphere.local has them all |
 | all (to read), and the alarms report | Read-only, which every vCenter role includes |
 
 Give it the role on the folders or clusters of the VMs these jobs may touch, and nowhere else.
@@ -1593,6 +1596,158 @@ The attachment's name and type are the Linux renewal's settings: `cert_renew_att
 2. Attach the issued certificate (Base64 `.cer` / `.crt`) and its chain to the incident.
 3. Install it as the work note says. The next run reads the new certificate and notes the incident
    as cleared.
+
+With the CSRs ordered from the catalog instead (`cert_renew_servicenow: catalog`), the install can be the
+automation's, after an approval: [Installing the issued certificates](#installing-the-issued-certificates-of-vcenter-and-the-esxi-hosts-with-an-approval).
+
+## Installing the issued certificates of vCenter and the ESXi hosts (with an approval)
+
+With the CSRs ordered from your PKI's catalog item (`cert_renew_servicenow: catalog`,
+[CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md)), the PKI puts the issued certificate on the request (RITM), and
+two jobs with an approval between them put it in place - no file to copy, no `rui.crt` / `rui.key` to name, no key to
+handle: the key was made by vCenter or the host with its CSR and never left it.
+
+*VMware - certificate request* (on demand) makes the CSR on the host you name and orders it: `RITM0012345`. The PKI
+puts the issued certificate on that request. Then the workflow, with that number:
+
+```workflow
+[VMware - certificate install - check]  the survey asks the RITM; red ("NEEDS APPROVAL") when it is ready
+   |  Run on fail
+   v
+[Approval]  "Install these?"
+   |  Run on success
+   v
+[VMware - certificate install - approved]  installs exactly the approved ones
+```
+
+**By hand first, more automation when you want it.** You name the request (the workflow's survey asks the RITM); the
+check reads that request alone. Two steps further, each a switch: the weekly renewal orders the CSRs of the
+certificates due by itself (`VMware - certificate renewal` with `cert_renew_servicenow: catalog`), and the check looks
+up the request of every certificate without being told (`vmware_cert_install_search: true`, a schedule on the
+workflow) - then only the approval is left to a person.
+
+### Request a certificate now
+
+*VMware - certificate request* (`playbooks/vmware_cert_request.yml`): the vCenters and ESXi hosts you name
+(`vmware_cert_request_for`, exact names - the template's survey asks them; no `*` or `?`, never all) each get a CSR
+made where the key stays - vCenter's Machine SSL certificate, or the host's - ordered from your PKI's catalog item at
+once, whatever the certificate's expiry (VMCA-signed ones too). The job prints the request:
+
+```
+ORDERED RITM0012345 (REQ0010001) | esx01.yoursite.mil | esx01.yoursite.mil-1a2b3c4d-exp20261130.csr | the CSR is in the request (its question csr_file)
+```
+
+A certificate already on order gets **no second CSR** - it would replace the key that waits for the issued
+certificate: `ORDERED ALREADY RITM0012345 (Work in Progress)`. A request rejected or cancelled (Closed Incomplete,
+Closed Skipped) counts as none: a new CSR, a new order. The catalog item's settings are the renewal's
+(`cert_renew_catalog_item`, `cert_renew_catalog_variables` ...): [CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md).
+Check (a dry run) makes and sends nothing.
+
+### The check (reads only)
+
+1. **The request named** (`vmware_cert_install_ritm`, e.g. `RITM0012345`): the check reads it in ServiceNow, finds the
+   CSR the renewal or the request job attached (`esx01.yoursite.mil-1a2b3c4d-exp20261130.csr` - vCenter's
+   `vc01.yoursite.mil-machine-ssl-...`), and so which vCenter or host it is for; only that one is read in vCenter. A
+   number ServiceNow does not have, a request with no such CSR (a Linux or Windows one: their own jobs install those),
+   or a host none of the job's vCenters has: said, nothing read. **No request named:** refused - unless
+   `vmware_cert_install_search: true`, which reads every certificate of vCenter and its hosts (`vmware_cert_only`,
+   `vmware_cert_esxi`) and looks up each one's request by its CSR's name and the old certificate's expiry date, as
+   the renewal ordered it (a certificate never ordered is counted, nothing more).
+2. **The CSR is read from the request** (the file the renewal attached, `esx01.yoursite.mil-1a2b3c4d-exp20261130.csr`),
+   and the certificate counts only when **its public key is the CSR's** - whatever else is on the request is listed,
+   never used. Where the PKI may put it, and in which form (PEM, DER, .p7b, a zip, pasted into a work note; on the RITM,
+   its REQ or its catalog task): [CERT_INSTALL.md](CERT_INSTALL.md#the-check-on-a-schedule---reads-only) - the same
+   reader, the same settings (`cert_install_min_days`, `cert_install_fewer_names` ...).
+3. **What installing it would do**, read from vCenter:
+   - **An ESXi host:** it must be connected, and **vCenter's `vpxd.certmgmt.mode` must be `custom`** - in the default
+     `vmca` mode vCenter may put its own certificate back on the host. Not custom: `HELD`, saying so; setting it is a
+     vCenter-wide change, left to a person (vCenter > Configure > Settings > Advanced Settings, `vpxd.certmgmt.mode` =
+     `custom`), and the next run plans it. **vCenter must trust the issuer**, or it refuses the host after the
+     replacement: the job reads vCenter's trusted roots and, when the CA chain that came with the certificate is not
+     there, the plan says it adds it (`add the CA chain to vCenter's trusted roots`). No chain on the request: `HELD`
+     (ask the PKI for the .p7b).
+   - **vCenter's own (Machine SSL) certificate:** whether its services restart - **before vCenter 8.0 Update 2 they do,
+     about 10 to 20 minutes without vCenter**; 8.0 Update 2 and later replace it without a restart. The approval is the
+     time to take the snapshot VMware advises (vCenters in linked mode: all of them, together) and to turn vCenter HA off.
+4. **Ready ones go to the approval:** the job lists them and ends red - `NEEDS APPROVAL: ...` - so the workflow takes
+   its *Run on fail* path. Nothing ready: it stays green.
+
+```
+READY | esx01.yoursite.mil | ESXi host | RITM0012345 | add the CA chain to vCenter vc01.yoursite.mil's trusted roots (CN=DOD ID CA-70,...) ; install it on the host (InstallServerCertificate: the key the host made with its CSR) and tell the host's services ; reconnect the host in vCenter vc01.yoursite.mil if it shows disconnected; then vCenter vc01.yoursite.mil must show the new certificate | the new one: serial 4A3F..., expires 2027-12-05 14:02 UTC (from esx01.cer) | the host stays in use: no maintenance mode, its VMs keep running
+READY | vc01.yoursite.mil | vCenter Machine SSL | RITM0012346 | replace vCenter vc01.yoursite.mil's Machine SSL certificate (the key vCenter made with its CSR) and add the CA chain ; then port 443 must serve it | ... | vCenter 7.0.3 (24322831): its services RESTART - about 10 to 20 minutes without vCenter ...
+WAITING | esx02.yoursite.mil | ESXi host | RITM0012347 | RITM0012347 (Work in Progress): no certificate for this key on it yet
+HELD | esx03.yoursite.mil | ESXi host | RITM0012348 | vCenter vc01.yoursite.mil's vpxd.certmgmt.mode is vmca, not custom: ...
+```
+
+### The approved install (after the approval)
+
+Each approved certificate is **planned again first** - still ready (the mode, the connection, the certificate in use
+still the one it was ordered for), or it is `REFUSED` and nothing is done to it. Then:
+
+- **The ESXi hosts, one by one, in use** - no maintenance mode, their VMs keep running: the CA chain added to vCenter's
+  trusted roots when the plan said so; the certificate installed (`InstallServerCertificate` - the host's waiting key);
+  the host's services told to take it; the host reconnected if vCenter lost it; and **vCenter must then show the new
+  certificate** (`vmware_cert_install_host_wait`, 300 seconds).
+- **Then vCenter's own**, last: its Machine SSL certificate replaced with the issued one and the CA chain (vCenter's
+  waiting key), and **port 443 must serve it** (`vmware_cert_install_vcenter_wait`, 1800 seconds - its services may
+  restart).
+- A **work note** on each request: what was installed, where, by which AAP job.
+- **Nothing is put back.** The CSR already replaced the old key on vCenter or the host, so the old certificate cannot
+  return: a failure is said with what to do (a host that does not show it: the vSphere Client > the host > Configure >
+  System > Certificate, Connection > Connect). The job is red when one was not installed.
+- A key mismatch (*did not take the certificate*, *the host refused the certificate*) means a CSR was made on vCenter
+  or the host after the ordered one - its key is gone: close the request; the renewal orders again.
+
+It refuses to run on its own: *Nothing to install: no approved plan* - outside the workflow nothing was approved.
+
+### Set it up
+
+1. **The renewal orders from the catalog** (`cert_renew_servicenow: catalog`): [CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md).
+   The PKI attaches the issued certificate **and its chain** (.p7b) to the request or its catalog task.
+2. **The vCenter account** of the *VMware vCenter* credential: administrator@vsphere.local, or a member of the single
+   sign-on group **CAAdmins** - it replaces certificates, reads and adds trusted roots (the certificate rows in "Before
+   you start", step 2).
+3. **`vpxd.certmgmt.mode` = `custom`** on each vCenter whose hosts get PKI certificates (vCenter > Configure > Settings >
+   Advanced Settings). Until then the hosts' certificates are `HELD` (vCenter's own is not).
+4. **Two job templates** (inventory: any; execution environment: your VMware one; no Limit):
+
+   | Template | Playbook | Credentials | Options |
+   |---|---|---|---|
+   | VMware - certificate install - check | `playbooks/vmware_cert_install_check.yml` | VMware vCenter, ServiceNow API | Job type **Check** allowed |
+   | VMware - certificate install - approved | `playbooks/vmware_cert_install_approved.yml` | VMware vCenter, ServiceNow API | Variables **not** prompted on launch |
+
+   The settings: [aap/extra_vars/vmware_cert_install_check.yml](../aap/extra_vars/vmware_cert_install_check.yml),
+   [aap/extra_vars/vmware_cert_install_approved.yml](../aap/extra_vars/vmware_cert_install_approved.yml).
+5. **The workflow** (workflow 39 in [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#39-vcenter-and-esxi-certificate-install-with-an-approval)),
+   with a **Survey** (the workflow's Survey tab > Create question, then switch the survey on): question `Request
+   (RITM) with the issued certificate`, answer variable name `vmware_cert_install_ritm`, Text, required (not
+   required once the search is on: empty = every request). The answer reaches the check; the approved job ignores it.
+
+   | Step | Node | Link |
+   |---|---|---|
+   | 1 | *VMware - certificate install - check* | (start) |
+   | 2 | *Approval* - name `Install the VMware certificates the check listed?`, **Timeout** e.g. 8 hours. Description: `Open the check job: its READY lines say what each one changes - vCenter's own may restart its services.` | **Run on fail**, from 1 |
+   | 3 | *VMware - certificate install - approved* | **Run on success**, from 2 |
+6. **The request job:** *VMware - certificate request*, playbook `playbooks/vmware_cert_request.yml`, the same
+   credentials and execution environment, any inventory, no Limit; a **Survey** question `vCenter or ESXi host
+   names (exact)`, answer variable name `vmware_cert_request_for`, Text, required. Tick **Prompt on launch** next to
+   **Job type** (to try it as Check).
+7. **Try it:** the request job as **Check** for one host (`would make the CSR, and order it`), then for real - its RITM.
+   When the PKI has put the certificate on it, the workflow with that RITM: its READY line. The approved job launched
+   as **Check** from the workflow says `WOULD INSTALL` and changes nothing.
+8. **More automation, later:** `vmware_cert_install_search: true` on the check template, the survey question not
+   required, and a daily schedule on the workflow (e.g. 07:30); and the weekly *VMware - certificate renewal* with
+   `cert_renew_servicenow: catalog` orders the CSRs of the certificates due by itself.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `vmware_cert_install_ritm` | `""` | the request to install from (the survey) |
+| `vmware_cert_install_search` | `false` | `true` = without a request named, look up every certificate's request (for a schedule) |
+| `vmware_cert_request_for` | `[]` | the request job: the vCenters and hosts to order a certificate for (exact names; required) |
+| `vmware_cert_install_trust_check` | `true` | read vCenter's trusted roots and add the CA chain a host's certificate needs. `false` = neither (you know vCenter trusts the issuer, or its trusted roots cannot be read: the hosts are `HELD` saying so) |
+| `vmware_cert_install_host_wait` | `300` | seconds until vCenter must show a host's new certificate |
+| `vmware_cert_install_vcenter_wait` | `1800` | seconds until vCenter's port must serve its new certificate |
+| `vmware_cert_only` | `[]` (all) | only these vCenters and hosts |
 
 ## Email the report
 

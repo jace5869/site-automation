@@ -6,8 +6,8 @@
   ansible.builtin.set_fact:
     _vcert_doc: >-
       {{ _vcert | vmware_cert_report(_vcert_result, _vcert_read.not_checked,
-                                     _vcert.certs | cert_report_section(vmware_cert_warn_days | int, [vmware_cert_warn_days | int * 2, 60] | max),
-                                     {'warn_days': vmware_cert_warn_days | int, 'check_mode': ansible_check_mode,
+                                     _vcert.certs | cert_report_section((_vcert_warn_in | default(vmware_cert_warn_days)) | int, [(_vcert_warn_in | default(vmware_cert_warn_days)) | int * 2, 60] | max),
+                                     {'warn_days': (_vcert_warn_in | default(vmware_cert_warn_days)) | int, 'check_mode': ansible_check_mode,
                                       'tickets': cert_csr_tickets | default({}), 'report_only': _vcert_report_only | default(false)}) }}
 
 - name: VMware certs | report
@@ -23,7 +23,7 @@
     data:
       # one expression, so dry_run and warn_days stay a boolean and a number on ansible-core 2.16 too
       vmware_certs: >-
-        {{ {'dry_run': ansible_check_mode, 'warn_days': vmware_cert_warn_days | int,
+        {{ {'dry_run': ansible_check_mode, 'warn_days': (_vcert_warn_in | default(vmware_cert_warn_days)) | int,
             'due': _vcert_result.certs | map(attribute='host') | zip(_vcert_result.certs | map(attribute='days'),
                    _vcert_result.certs | map(attribute='status')) | map('join', ' | ') | list,
             'not_checked': _vcert_read.not_checked, 'vcenters': _vcert_read.vcenters} }}

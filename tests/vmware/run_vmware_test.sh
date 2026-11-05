@@ -8,6 +8,7 @@
 # tests/containers/fake_act.py); the ESXi security settings; capacity planning (with and without
 # GenAI's estimate); the health report (a third simulator with 2 datacenters; its network drops); the certificate renewal of vCenter
 # and its hosts (the days raised, one host, incidents and CSRs in a fake ServiceNow, no second CSR, a refused attachment);
+# the certificate install (the "PKI" signs the ordered CSR on its request; held for vpxd.certmgmt.mode, approved, installed on the host);
 # the pick lists (the survey's choices written in a fake AAP, the picked snapshots deleted and VMs restarted, each checked again);
 # the outage watch (hung VMs by heartbeat and ping, protected ones, HA and storage events, a disconnected host, its
 # incidents opened and resolved in a fake ServiceNow);
@@ -2090,6 +2091,151 @@ run "catalog, its request cancelled (Closed Skipped): a new CSR (a new key on th
     -- "ORDERED RITM" "| DC0_H0 | DC0_H0-" "the CSR is in the request"
 [ "$(sent_since csn3 "$n1" POST /api/sn_sc/servicecatalog)" = 1 ] && ! grep -q "ORDERED RITM.*$ritm_v" "$work/out.txt" \
     && echo "ok   -   ...one new order, not the cancelled one" || { echo "FAIL -   ...the new order"; fails=$((fails + 1)); }
+# ---- VMware certificate install (playbooks/vmware_cert_install_check.yml -> approval -> vmware_cert_install_approved.yml):
+# the "PKI" signs the CSR of DC0_H0's request and puts the certificate on it; the check finds it, holds it while
+# vpxd.certmgmt.mode is not custom, hands on the plan; the approved job installs it on the host and notes the request.
+# vcsim has no certificate REST API (vCenter's own certificate, the trusted roots): tests/test_vmware_modules.py.
+vstats() {  # the set_stats the approval hands on, from the last run
+    "$py" - "$work/out.txt" <<'EOPY'
+import json, sys
+lines = [l for l in open(sys.argv[1]) if l.startswith("\tRUN: ")]
+print(json.dumps(json.loads(lines[0][len("\tRUN: "):]) if lines else {}))
+EOPY
+}
+certmode() {  # certmode VALUE - vCenter's vpxd.certmgmt.mode
+    VMWARE_PORT=$port "$py" - "$1" <<'EOPY'
+import ssl, sys
+from pyVim.connect import SmartConnect, Disconnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(__import__("os").environ["VMWARE_PORT"]), user="user", pwd="pass",
+                  sslContext=ssl._create_unverified_context())
+si.RetrieveContent().setting.UpdateOptions(changedValue=[vim.option.OptionValue(key="vpxd.certmgmt.mode", value=sys.argv[1])])
+Disconnect(si)
+EOPY
+}
+hostcert() {  # hostcert HOST - the issuer and expiry vCenter shows for the host's certificate
+    VMWARE_PORT=$port "$py" - "$1" <<'EOPY'
+import os, ssl, sys
+from pyVim.connect import SmartConnect, Disconnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", sslContext=ssl._create_unverified_context())
+c = si.RetrieveContent()
+h = [x for x in c.viewManager.CreateContainerView(c.rootFolder, [vim.HostSystem], True).view if x.name == sys.argv[1]][0]
+i = h.configManager.certificateManager.certificateInfo
+print("%s | %s" % (i.issuer, i.notAfter.strftime("%Y-%m-%d %H:%M")))
+Disconnect(si)
+EOPY
+}
+csearch='{"vmware_cert_only": "DC0_H0", "vmware_cert_install_trust_check": false, "vmware_cert_install_search": true}'
+cinst='{"vmware_cert_install_trust_check": false}'
+run "certificate install, check: no request named and the search off (the default) - refused, nothing read" fail \
+    vmware_cert_install_check.yml -- "Which request? Give its number - vmware_cert_install_ritm"
+run "...a request number that is not one: refused" fail vmware_cert_install_check.yml -e vmware_cert_install_ritm=12345 \
+    -- 'vmware_cert_install_ritm is "12345": a requested item'
+run "...a request ServiceNow does not have: said, nothing read in vCenter" fail vmware_cert_install_check.yml \
+    -e vmware_cert_install_ritm=RITM9999999 -- "No requested item RITM9999999 in ServiceNow"
+run "...the cancelled request (Closed Skipped): said, nothing to install" ok vmware_cert_install_check.yml -e "$cinst" \
+    -e "vmware_cert_install_ritm=$(echo "$ritm_v" | tr 'A-Z' 'a-z')" -- "CLOSED | DC0_H0 | ESXi host | $ritm_v"
+run "...the search switched on (vmware_cert_install_search): DC0_H0's request has no certificate yet - WAITING, nothing handed on" ok \
+    vmware_cert_install_check.yml -e "$csearch" -- "WAITING | DC0_H0 | ESXi host | RITM" "no certificate for this key on it yet"
+[ "$(vstats)" = "{}" ] && echo "ok   -   ...no plan handed on" || { echo "FAIL -   ...a plan: $(vstats | head -c 200)"; fails=$((fails + 1)); }
+# the PKI: the CSR from the live request, signed by a test CA; the certificate and the CA as one PEM file, named
+# like the host (not like the CSR: it must still be read)
+issued="$("$py" - "$SN_HOST" "$work" <<'EOPY'
+import base64, datetime, json, sys, urllib.request
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+base, work = sys.argv[1], sys.argv[2]
+def call(method, path, data=None, ctype="application/json"):
+    r = urllib.request.Request(base + path, data=data, method=method,
+                               headers={"Authorization": "Basic " + base64.b64encode(b"api:goodpw").decode(), "Content-Type": ctype})
+    raw = urllib.request.urlopen(r).read()
+    return raw if path.endswith("/file") else json.loads(raw or b"{}").get("result")
+atts = call("GET", "/api/now/attachment?sysparm_query=" + urllib.request.quote("file_nameSTARTSWITHDC0_H0-^table_nameINsc_req_item,ZZ_YYsc_req_item"))
+live = []
+for a in atts:
+    r = call("GET", "/api/now/table/sc_req_item/%s" % a["table_sys_id"])
+    if r and str(r.get("state")) not in ("4", "7"):
+        live.append((a, r))
+a, ritm = live[-1]
+csr = x509.load_pem_x509_csr(call("GET", "/api/now/attachment/%s/file" % a["sys_id"]))
+now = datetime.datetime.now(datetime.timezone.utc)
+cakey = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test PKI CA")])
+ca = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(cakey.public_key()).serial_number(7)
+      .not_valid_before(now).not_valid_after(now + datetime.timedelta(days=900))
+      .add_extension(x509.BasicConstraints(ca=True, path_length=None), True)
+      .add_extension(x509.KeyUsage(False, False, False, False, False, True, True, False, False), True).sign(cakey, hashes.SHA256()))
+# the names of the certificate in use (vcsim's: example.com, 127.0.0.1, ::1) - fewer would be held for a person
+import ipaddress
+sans = x509.SubjectAlternativeName([x509.DNSName("example.com"), x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
+                                    x509.IPAddress(ipaddress.ip_address("::1"))])
+leaf = (x509.CertificateBuilder().subject_name(csr.subject).issuer_name(name).public_key(csr.public_key()).serial_number(0x5A17)
+        .not_valid_before(now).not_valid_after(now + datetime.timedelta(days=397)).add_extension(sans, False)
+        .sign(cakey, hashes.SHA256()))
+pem = leaf.public_bytes(serialization.Encoding.PEM) + ca.public_bytes(serialization.Encoding.PEM)
+call("POST", "/api/now/attachment/file?table_name=sc_req_item&table_sys_id=%s&file_name=DC0_H0-issued.pem" % ritm["sys_id"], pem, "application/x-pem-file")
+print("%s %s" % (ritm["number"], leaf.not_valid_after_utc.strftime("%Y-%m-%d %H:%M")))
+EOPY
+)"
+iritm="${issued%% *}"; iexp="${issued#* }"
+run "...the PKI put it on the request; the request named: vCenter's vpxd.certmgmt.mode is not custom - HELD, nothing handed on" ok \
+    vmware_cert_install_check.yml -e "$cinst" -e "vmware_cert_install_ritm=$iritm" -- "HELD | DC0_H0 | ESXi host | $iritm | vCenter 127.0.0.1's vpxd.certmgmt.mode is vmca, not custom"
+[ "$(vstats)" = "{}" ] && echo "ok   -   ...no plan handed on" || { echo "FAIL -   ...a plan while held"; fails=$((fails + 1)); }
+certmode custom
+run "...custom, but vCenter's trusted roots cannot be read (no certificate API): HELD, says so" ok vmware_cert_install_check.yml \
+    -e "vmware_cert_install_ritm=$iritm" -- "HELD | DC0_H0 | ESXi host | $iritm | vCenter 127.0.0.1's trusted roots could not be read"
+run "...vmware_cert_install_trust_check: false - READY: NEEDS APPROVAL, the plan handed on" fail vmware_cert_install_check.yml -e "$cinst" \
+    -e "vmware_cert_install_ritm=$iritm" \
+    -- "READY | DC0_H0 | ESXi host | $iritm | install it on the host" "the new one: serial 5A17, expires $iexp UTC (from DC0_H0-issued.pem)" \
+       "no maintenance mode" "NEEDS APPROVAL: 1 certificate(s) to install - DC0_H0 (ESXi host, $iritm)"
+vstats > "$work/vplan.json"
+"$py" -c 'import json,sys; p=json.load(open(sys.argv[1]))["vmware_cert_install_plan"]; sys.exit(0 if len(p) == 1 and p[0]["kind"] == "esxi" and p[0]["cert"]["serial"] == "5A17" and p[0]["chain"][0]["subject"] == "CN=Test PKI CA" else 1)' "$work/vplan.json" \
+    && echo "ok   -   ...the plan: the host, the issued certificate, its CA" || { echo "FAIL -   ...the plan: $(head -c 300 "$work/vplan.json")"; fails=$((fails + 1)); }
+before="$(hostcert DC0_H0)"
+run "the approved job on its own (no plan): refused, nothing changed" fail vmware_cert_install_approved.yml -- "Nothing to install: no approved plan"
+run "...the plan, dry run: what it would do, nothing changed" ok vmware_cert_install_approved.yml --check -e "@$work/vplan.json" -e "$cinst" \
+    -- "WOULD INSTALL | DC0_H0"
+[ "$(hostcert DC0_H0)" = "$before" ] && echo "ok   -   ...the host keeps its certificate" || { echo "FAIL -   ...the dry run changed the host"; fails=$((fails + 1)); }
+certmode vmca
+run "...vpxd.certmgmt.mode back to vmca after the approval: planned again, REFUSED, nothing changed" fail vmware_cert_install_approved.yml \
+    -e "@$work/vplan.json" -e "$cinst" -- "REFUSED | DC0_H0" "no longer ready - held" "1 not installed"
+[ "$(hostcert DC0_H0)" = "$before" ] && echo "ok   -   ...the host keeps its certificate" || { echo "FAIL -   ...refused but changed"; fails=$((fails + 1)); }
+certmode custom
+n1=$(cn csn3)
+run "...approved: installed on the host, vCenter shows it, a work note on the request" ok vmware_cert_install_approved.yml \
+    -e "@$work/vplan.json" -e "$cinst" -- "INSTALLED | DC0_H0" "$iritm" "installed on the host" "the host (vCenter 127.0.0.1 shows it) serves it"
+[ "$(hostcert DC0_H0)" = "CN=Test PKI CA | $iexp" ] && echo "ok   -   ...vCenter shows the new certificate: the test CA's, expiring $iexp" \
+    || { echo "FAIL -   ...the host's certificate: $(hostcert DC0_H0)"; fails=$((fails + 1)); }
+tail -n +"$((n1 + 1))" "$work/csn3.jsonl" | "$py" -c '
+import json, sys
+notes = [json.loads(l)["body"].get("work_notes", "") for l in sys.stdin if json.loads(l)["method"] == "PATCH" and "/sc_req_item/" in json.loads(l)["path"]]
+sys.exit(0 if len(notes) == 1 and notes[0].startswith("Installed on DC0_H0 by AAP job 4711: the certificate serial 5A17") and "kept on the host" not in notes[0] else 1)' \
+    && echo "ok   -   ...one work note: what, where, by which job" || { echo "FAIL -   ...the work note"; fails=$((fails + 1)); }
+run "...the same plan again: INSTALLED ALREADY, nothing done" ok vmware_cert_install_approved.yml -e "@$work/vplan.json" -e "$cinst" \
+    -- "INSTALLED ALREADY | DC0_H0"
+run "...the check, the request named again: INSTALLED ALREADY, nothing handed on" ok vmware_cert_install_check.yml -e "$cinst" \
+    -e "vmware_cert_install_ritm=$iritm" -- "INSTALLED ALREADY | DC0_H0 | ESXi host | $iritm | the host has it already"
+[ "$(vstats)" = "{}" ] && echo "ok   -   ...no plan handed on" || { echo "FAIL -   ...a plan for an installed one"; fails=$((fails + 1)); }
+run "...the search: the host's certificate is the new one - nothing waits" ok vmware_cert_install_check.yml -e "$csearch" \
+    -- "No certificate of vCenter and its hosts waits for its install: 1 read"
+# VMware - certificate request (on demand): a CSR and an order for the hosts named, now
+creq='{"cert_renew_catalog_item": "DoD PKI Certificate Request", "cert_renew_catalog_variables": {"requested_for": "jdoe", "contact_method": "email"}}'
+run "certificate request: no name - refused, nothing read or sent" fail vmware_cert_request.yml -e "$creq" -- "Name the vCenter or ESXi host(s)"
+run "...a wildcard - refused (each name gets a CSR and a request)" fail vmware_cert_request.yml -e "$creq" -e '{"vmware_cert_request_for": ["DC0_C0_*"]}' \
+    -- "takes exact names, no * or ? (DC0_C0_*)"
+n1=$(cn csn3)
+run "...dry run: what it would do, nothing made or sent" ok vmware_cert_request.yml --check -e "$creq" -e '{"vmware_cert_request_for": ["DC0_C0_H1"]}' \
+    -- "DC0_C0_H1 | DC0_C0_H1.csr | would make the CSR, and order it"
+[ "$(sent_since csn3 "$n1" POST /)" = 0 ] && echo "ok   -   ...nothing sent" || { echo "FAIL -   ...the dry run sent"; fails=$((fails + 1)); }
+run "...a host and a name no vCenter has: the host's CSR made and ordered (its expiry years away), the other said" fail \
+    vmware_cert_request.yml -e "$creq" -e '{"vmware_cert_request_for": ["DC0_C0_H1", "nohost.example.mil"]}' \
+    -- "ORDERED RITM" "| DC0_C0_H1 | DC0_C0_H1-" "nohost.example.mil: not read"
+run "...again: on order already - no second CSR (it would replace the waiting key), its request said" ok vmware_cert_request.yml -e "$creq" \
+    -e '{"vmware_cert_request_for": "DC0_C0_H1"}' -- "ORDERED ALREADY" "| DC0_C0_H1 |" "launch the workflow VMware - certificate install with that number"
+certmode vmca
 unset SN_HOST SN_USERNAME SN_PASSWORD
 kill "$csn_pid" "$csn_pid2" "$csn_pid3" 2>/dev/null
 

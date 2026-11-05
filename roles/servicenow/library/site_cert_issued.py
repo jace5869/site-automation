@@ -32,7 +32,10 @@ options:
     description: >-
       The CSRs waiting for their certificate - key (any unique text), host, stem (the CSR's name in the order
       without the date and the extension), expires (the old certificate's expiry), csr (the PEM text), names
-      (the old certificate's subjectAltName, as the renewal wrote them).
+      (the old certificate's subjectAltName, as the renewal wrote them). csr_from_request true and no csr (vCenter,
+      an ESXi host: the key and the CSR never leave it) - the CSR is read from the request itself, the file named
+      stem + 8 hex + -expYYYYMMDD (.csr or .txt) that the renewal attached. ritm (a number, RITM0012345) - that request
+      only, instead of the one found by the CSR's name and expiry.
     type: list
     elements: dict
     required: true
@@ -48,8 +51,8 @@ author: site automation
 RETURN = r'''
 issued:
   description: >-
-    One entry per pending CSR - key, host, stem, status (issued, waiting, not ordered, closed, failed), reason,
-    ritm, ritm_sys_id, ritm_state, request_sys_id, read (where it looked), others (certificates there for
+    One entry per pending CSR - key, host, stem, status (issued, waiting, not ordered, not found (ritm), closed, failed),
+    reason, ritm, ritm_sys_id, ritm_state, request_sys_id, csr_file (csr_from_request), read (where it looked), others (certificates there for
     another key), and when issued - cert (pem, subject, issuer, serial, sha1, sha256, not_before, not_after,
     days, names, key, ca), chain (pem, subject, issuer, sha1, self_signed - in order from the issuer up),
     source (the file or note it came from), problems (why it must wait for a person; empty = it may be installed).
@@ -310,6 +313,14 @@ class Sn(object):
             raise SnError('%s did not answer JSON (a login page? check the instance address)' % path)
 
 
+def csr_spki(text):
+    """A CSR (PEM, text or bytes; the Windows header too) -> its public key, as spki() gives it."""
+    if isinstance(text, bytes):
+        text = text.decode('ascii', 'replace')
+    text = str(text or '').replace('NEW CERTIFICATE REQUEST', 'CERTIFICATE REQUEST')
+    return spki(x509.load_pem_x509_csr(text.encode('ascii', 'replace')))
+
+
 def catalog_query(stem, expires):
     """The same query the renewal uses to find its order (plugins/filter/cert_order_filters.py cert_catalog_query)."""
     m = re.search(r'(\d{4})-(\d{2})-(\d{2})', str(expires or ''))
@@ -322,14 +333,28 @@ def catalog_query(stem, expires):
 def find_one(sn, p, item, now):
     out = {'key': item.get('key', ''), 'host': item.get('host', ''), 'stem': item.get('stem', ''), 'status': '', 'reason': '',
            'ritm': '', 'ritm_sys_id': '', 'ritm_state': '', 'request_sys_id': '', 'read': [], 'others': [], 'problems': []}
-    csr_text = str(item.get('csr') or '').replace('NEW CERTIFICATE REQUEST', 'CERTIFICATE REQUEST')
-    try:
-        want = spki(x509.load_pem_x509_csr(csr_text.encode('ascii', 'replace')))
-    except Exception as e:
-        out.update(status='failed', reason='the CSR on the host cannot be read (%s)' % e)
-        return out
-    found = sn.get('/api/now/attachment', {'sysparm_query': catalog_query(item['stem'], item.get('expires')),
-                                           'sysparm_fields': 'sys_id,file_name,table_name,table_sys_id', 'sysparm_limit': '50'}) or []
+    from_request = bool(item.get('csr_from_request')) and not str(item.get('csr') or '').strip()
+    want = None
+    if not from_request:
+        try:
+            want = csr_spki(item.get('csr'))
+        except Exception as e:
+            out.update(status='failed', reason='the CSR on the host cannot be read (%s)' % e)
+            return out
+    if item.get('ritm'):
+        # the request named (VMware - certificate install from one request): its own attachments, whatever the expiry
+        num = str(item['ritm']).strip().upper()
+        recs = sn.get('/api/now/table/sc_req_item', {'sysparm_query': 'number=%s' % num, 'sysparm_fields': 'sys_id,number',
+                                                     'sysparm_limit': '1'}) or []
+        if not recs:
+            out.update(status='not found', reason='no requested item %s in ServiceNow (the number, or the API account may not read it)' % num)
+            return out
+        found = [a for a in sn.get('/api/now/attachment', {'sysparm_query': 'table_sys_id=%s^table_nameINsc_req_item,ZZ_YYsc_req_item' % recs[0]['sys_id'],
+                                                           'sysparm_fields': 'sys_id,file_name,table_name,table_sys_id', 'sysparm_limit': '100'}) or []
+                 if str(a.get('file_name') or '').lower().startswith(item['stem'].lower())]
+    else:
+        found = sn.get('/api/now/attachment', {'sysparm_query': catalog_query(item['stem'], item.get('expires')),
+                                               'sysparm_fields': 'sys_id,file_name,table_name,table_sys_id', 'sysparm_limit': '50'}) or []
     ids = []
     for a in found:
         if a.get('table_sys_id') and a['table_sys_id'] not in ids:
@@ -355,10 +380,26 @@ def find_one(sn, p, item, now):
                    reason='its request %s was closed %s: the renewal orders it again' % (r.get('number'), RITM_STATES.get(str(r.get('state')), r.get('state'))))
         return out
     stem = item['stem'].lower()
+    csr_named = re.compile(re.escape(stem) + r'[0-9a-f]{8}-exp[0-9]{8}\.(csr|txt)$', re.I)
     exts = set(e.lower().lstrip('.') for e in p['exts'])
     for r in sorted(live, key=lambda x: x.get('number', ''), reverse=True):
         out.update(ritm=r.get('number', ''), ritm_sys_id=r.get('sys_id', ''), request_sys_id=r.get('request', ''),
                    ritm_state=RITM_STATES.get(str(r.get('state')), str(r.get('state'))))
+        if from_request:
+            # the CSR the renewal attached to this request: its key is the one waiting on vCenter or the host
+            mine = [a for a in found if a.get('table_sys_id') == r.get('sys_id') and csr_named.match(str(a.get('file_name') or ''))]
+            if not mine:
+                out.update(status='failed', reason='%s carries no CSR named %s...-expYYYYMMDD.csr: the key it was ordered for '
+                                                   'is unknown' % (out['ritm'], item['stem']))
+                continue
+            try:
+                want = csr_spki(sn.get('/api/now/attachment/%s/file' % quote(mine[0]['sys_id']), raw=True))
+                out['csr_file'] = mine[0].get('file_name', '')
+            except SnError:
+                raise
+            except Exception as e:
+                out.update(status='failed', reason='the CSR on %s (%s) cannot be read (%s)' % (out['ritm'], mine[0].get('file_name'), e))
+                continue
         # the RITM, its REQ, and its catalog tasks (SCTASK: where the PKI team often works the request)
         try:
             tasks = sn.get('/api/now/table/sc_task', {'sysparm_query': 'request_item=%s' % r.get('sys_id'),
@@ -373,7 +414,7 @@ def find_one(sn, p, item, now):
         for a in files:
             name = str(a.get('file_name') or '')
             ext = name.rpartition('.')[2].lower() if '.' in name else ''
-            if name.lower().startswith(stem) or ext == 'csr' or ext not in exts:
+            if (csr_named.match(name) if from_request else name.lower().startswith(stem)) or ext == 'csr' or ext not in exts:
                 continue
             try:
                 size = int(a.get('size_bytes') or 0)
@@ -418,6 +459,8 @@ def find_one(sn, p, item, now):
             now_epoch = int((now - datetime.datetime(1970, 1, 1)).total_seconds())
             out['problems'] = problems_of(desc, item.get('names'), p['min_days'], p['fewer_names'], now_epoch)
             return out
+    if want is None:
+        return out          # failed above: no CSR on the request to match a certificate to
     out.update(status='waiting', reason='%s (%s): no certificate for this key on it yet%s' % (
         out['ritm'], out['ritm_state'], ('; ' + '; '.join(out['others'])) if out['others'] else ''))
     return out

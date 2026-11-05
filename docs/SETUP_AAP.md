@@ -440,6 +440,7 @@ in a workflow with an **Approval** (Run on fail) and *Certificate install - appr
 launch for Variables). *Certificate restore* (`playbooks/cert_restore.yml`) puts an old certificate back. The
 Windows three: `win_cert_install_check.yml`, `win_cert_install_approved.yml`, `win_cert_restore.yml`, with the
 Windows machine credential. The templates, the workflow and the settings: [CERT_INSTALL.md](CERT_INSTALL.md).
+vCenter and the ESXi hosts: *VMware - certificate request* (`playbooks/vmware_cert_request.yml`, on demand) and *VMware - certificate install - check / approved* (`playbooks/vmware_cert_install_check.yml`, `vmware_cert_install_approved.yml`: `VMware vCenter`, `ServiceNow API`), workflow 39: [VMWARE.md](VMWARE.md#installing-the-issued-certificates-of-vcenter-and-the-esxi-hosts-with-an-approval).
 
 ### Network device certificate report / renewal
 

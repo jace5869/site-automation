@@ -865,6 +865,32 @@ CSRs itself. A schedule on it, e.g. every Monday at 07:00 in your time zone - an
 by email without tickets, one on `VMware - certificate report` ([VMWARE.md](VMWARE.md),
 "Certificates of vCenter and the ESXi hosts").
 
+### 39. vCenter and ESXi certificate install, with an approval
+
+```workflow
+[VMware - certificate install - check]
+   |  Run on fail
+   v
+[Approval]
+   |  Run on success
+   v
+[VMware - certificate install - approved]
+```
+
+| Step | Template | Link |
+|---|---|---|
+| 1 | VMware - certificate install - check | (start) |
+| 2 | *Approval*: `Install the VMware certificates the check listed?`, **Timeout** 8 hours. Description: `Open the check job: its READY lines say what each one changes - vCenter's own may restart its services.` | **Run on fail**, from 1 |
+| 3 | VMware - certificate install - approved | **Run on success**, from 2 |
+
+**Survey** on the workflow: `Request (RITM) with the issued certificate` -> `vmware_cert_install_ritm` (Text). Launch it
+with the RITM that *VMware - certificate request* printed, once the PKI has put the certificate on it. **Schedule**
+(later, when you want it automatic): `vmware_cert_install_search: true` on the check template, the question not
+required, every day e.g. 07:30 - with the weekly renewal ordering from the catalog (`cert_renew_servicenow: catalog`).
+The check finds the certificate the PKI put on the request and fails on purpose when one is ready (`NEEDS APPROVAL`); the install puts the hosts' certificates in place (in use, no maintenance mode), then
+vCenter's own - before vCenter 8.0 Update 2 its services restart, so approve that one when vCenter may be away 10 to
+20 minutes. Everything else: [VMWARE.md](VMWARE.md#installing-the-issued-certificates-of-vcenter-and-the-esxi-hosts-with-an-approval).
+
 ### 21. NetApp ONTAP health (daily)
 
 No workflow needed: a schedule on the `NetApp ONTAP health report` template, e.g. every day at
@@ -962,6 +988,7 @@ as Check).
 | VMware daily checks (health, alarms, ACT analysis) | every day 06:00 | workflow 18 |
 | Active Directory health | every day 06:30 | template *Active Directory health report* (24) |
 | vCenter and ESXi certificates | Monday 07:00 | template *VMware - certificate renewal* (25) |
+| vCenter and ESXi certificate install | on demand (its survey: the RITM); daily 07:30 with `vmware_cert_install_search: true` | workflow 39 |
 | Pick lists (the surveys of workflows 26 and 27) | every 30 minutes | template *VM - refresh the pick lists* |
 | Snapshot cleanup | Monday 07:00 | workflow 19 ([VMWARE.md](VMWARE.md), "Snapshots") |
 | ESXi security settings | every day 00:00 | template *ESXi - security settings* (20) |

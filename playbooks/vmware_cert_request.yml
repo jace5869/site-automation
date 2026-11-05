@@ -1,0 +1,21 @@
+---
+# VMWARE CERTIFICATE REQUEST - on demand. For the vCenters and ESXi hosts you name (vmware_cert_request_for, exact
+# names - the survey asks them): a CSR made where the key stays - vCenter (its Machine SSL certificate) or the host -
+# and ordered from the PKI's catalog item now, whatever the certificate's expiry; the job prints the request (RITM).
+# When the PKI has put the issued certificate on it, the workflow VMware - certificate install (with that number)
+# installs it after an approval. A certificate on order already gets no second CSR (it would replace the waiting key).
+#
+# Credentials: "VMware vCenter" (for vCenter's CSR, an account with Certificate Management - CAAdmins; for a host's,
+# Certificates > Manage certificates) and "ServiceNow API" (the account that orders the certificates). The catalog
+# item's settings (cert_renew_catalog_item ...) as for the renewal: docs/CERT_RENEWAL_CATALOG.md. Runs on the AAP side;
+# no Limit. Check (a dry run) makes and sends nothing. docs/VMWARE.md, "Request a certificate now".
+#   ansible-playbook playbooks/vmware_cert_request.yml -e '{"vmware_cert_request_for": ["esx01.yoursite.mil"]}' --check
+- name: VMware certificate request
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: A CSR where the key stays, ordered from the PKI's catalog item
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: cert_request.yml

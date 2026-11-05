@@ -31,13 +31,17 @@
   ansible.builtin.set_fact:
     _vcert: >-
       {{ _vcert_read.certs | vmware_cert_plan({
-           'warn_days': vmware_cert_warn_days | int, 'crit_days': vmware_cert_crit_days | int, 'only': _vcert_only,
+           'warn_days': (_vcert_warn_in | default(vmware_cert_warn_days)) | int, 'crit_days': vmware_cert_crit_days | int, 'only': _vcert_only,
            'vmca_issuers': vmware_cert_vmca_issuers | default([], true), 'vmca_csr': vmware_cert_vmca_csr | bool,
            'job': awx_job_id | default(''), 'time': now(utc=true).strftime('%Y-%m-%dT%H:%M:%SZ')}) }}
     _vcert_sn: "{{ lookup('ansible.builtin.env', 'SN_HOST') | trim | length > 0 }}"
     _vcert_only_list: "{{ _vcert_only }}"
   vars:
-    _vcert_only: "{{ (vmware_cert_only | replace(',', ' ')).split() if vmware_cert_only is string else vmware_cert_only | default([], true) }}"
+    # _vcert_only_in, _vcert_warn_in: the certificate install from one request (cert_install_check.yml) and the request job
+    # (cert_request.yml) - the names, and every certificate due (internal: no template's Variables can override them)
+    _vcert_only: >-
+      {{ _vcert_only_in if _vcert_only_in is defined else
+         ((vmware_cert_only | replace(',', ' ')).split() if vmware_cert_only is string else vmware_cert_only | default([], true)) }}
 
 - name: VMware certs | vmware_cert_only names a vCenter or host that was read
   ansible.builtin.assert:

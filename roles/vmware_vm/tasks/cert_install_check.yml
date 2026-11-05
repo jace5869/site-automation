@@ -1,0 +1,235 @@
+---
+# VMWARE CERTIFICATE INSTALL - THE CHECK (playbooks/vmware_cert_install_check.yml), on the AAP side against vCenter and
+# ServiceNow. Every certificate of vCenter and its ESXi hosts that the renewal ordered from the PKI's catalog item
+# (playbooks/vmware_cert_renew.yml, cert_renew_servicenow: catalog): the certificate the PKI put on that request -
+# the one whose public key is the CSR's, read from the request (the key never left vCenter or the host) - and what
+# installing it would do, or why a person must first do something (roles/vmware_vm/library/site_vmware_cert_install.py).
+# Reads only. Ready ones go to the approval and the install job (set_stats vmware_cert_install_plan) and this job FAILS
+# on purpose - "NEEDS APPROVAL" - so the workflow takes its "Run on fail" path:
+#   [VMware - certificate install - check] --Run on fail--> [Approval] --Run on success--> [VMware - certificate install - approved]
+# vmware_cert_install_ritm (the workflow's survey): that one request only, now - the vCenter or host its CSR was made
+# for (the renewal named it NAME-xxxxxxxx-expYYYYMMDD.csr, vCenter's NAME-machine-ssl-...) is the only one read.
+- name: VMware certs | install | the request named (vmware_cert_install_ritm)
+  ansible.builtin.set_fact:
+    _vci_ritm: "{{ vmware_cert_install_ritm | default('', true) | string | trim | upper }}"
+    _vci_sn: >-
+      {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+
+# Without a request named, every certificate's request is looked up - only when switched on (vmware_cert_install_search)
+- name: VMware certs | install | a request named (vmware_cert_install_ritm), or the search switched on
+  ansible.builtin.assert:
+    that: _vci_ritm | length > 0 or vmware_cert_install_search | bool
+    fail_msg: >-
+      Which request? Give its number - vmware_cert_install_ritm: RITM0012345 (the workflow's survey asks it). Looking
+      up the request of every certificate of vCenter and its hosts is switched off (vmware_cert_install_search: true
+      switches it on, for a schedule). Nothing was read.
+    quiet: true
+
+- name: VMware certs | install | the request named - a requested item's number, and ServiceNow to read it in
+  ansible.builtin.assert:
+    that:
+      - _vci_ritm is match('^RITM[0-9]+$')
+      - _vci_sn | length > 0
+    fail_msg: >-
+      {{ ('vmware_cert_install_ritm is "' ~ vmware_cert_install_ritm ~ '": a requested item\'s number, RITM and digits (e.g.
+      RITM0012345) - or empty for every request.') if _vci_ritm is not match('^RITM[0-9]+$') else
+      ('vmware_cert_install_ritm names ' ~ _vci_ritm ~ ', but the job has no ServiceNow connection: attach the "ServiceNow
+      API" credential to this template.') }} Nothing was read.
+    quiet: true
+  when: _vci_ritm | length > 0
+
+- name: VMware certs | install | the request named - in ServiceNow
+  ansible.builtin.uri:
+    url: "{{ _vci_sn }}/api/now/table/sc_req_item?sysparm_limit=1&sysparm_fields=sys_id,number&sysparm_query={{ ('number=' ~ _vci_ritm) | urlencode }}"
+    method: GET
+    url_username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    # the servicenow role's settings (its defaults are not loaded yet here: the same values)
+    validate_certs: "{{ servicenow_validate_certs | default(true) | bool }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) | int }}"
+  register: _vci_ritm_rec
+  check_mode: false                     # reads only
+  when: _vci_ritm | length > 0
+
+- name: VMware certs | install | the request named - its files
+  ansible.builtin.uri:
+    url: >-
+      {{ _vci_sn }}/api/now/attachment?sysparm_limit=100&sysparm_fields=file_name&sysparm_query={{
+         ('table_sys_id=' ~ _vci_ritm_rec.json.result[0].sys_id ~ '^table_nameINsc_req_item,ZZ_YYsc_req_item') | urlencode }}
+    method: GET
+    url_username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    url_password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    force_basic_auth: true
+    headers: {Accept: application/json}
+    # the servicenow role's settings (its defaults are not loaded yet here: the same values)
+    validate_certs: "{{ servicenow_validate_certs | default(true) | bool }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) | int }}"
+  register: _vci_ritm_files
+  check_mode: false                     # reads only
+  when: _vci_ritm | length > 0 and _vci_ritm_rec.json.result | default([]) | length > 0
+
+- name: VMware certs | install | the request named - the vCenter or host its CSR was made for
+  ansible.builtin.set_fact:
+    _vci_target: >-
+      {%- set out = [] -%}
+      {%- for a in _vci_ritm_files.json.result | default([]) -%}
+      {%-   set m = a.file_name | regex_search('^(.+?)(-machine-ssl)?-[0-9a-f]{8}-exp[0-9]{8}[.](csr|txt)$', '\\1', '\\2', ignorecase=True) -%}
+      {%-   if m and {'name': m[0], 'kind': 'vcenter' if m[1] else 'esxi'} not in out -%}
+      {%-     set _ = out.append({'name': m[0], 'kind': 'vcenter' if m[1] else 'esxi'}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+  when: _vci_ritm | length > 0
+
+- name: VMware certs | install | the request named carries the CSR of a vCenter or an ESXi host
+  ansible.builtin.assert:
+    that: _vci_target | length == 1
+    fail_msg: >-
+      {%- if _vci_ritm_rec.json.result | default([]) | length == 0 -%}
+      No requested item {{ _vci_ritm }} in ServiceNow (the number - or the API account may not read it). Nothing was read in vCenter.
+      {%- elif _vci_target | length == 0 -%}
+      {{ _vci_ritm }} carries no CSR of the VMware certificate renewal (a file named NAME-xxxxxxxx-expYYYYMMDD.csr;
+      its files: {{ _vci_ritm_files.json.result | default([]) | map(attribute='file_name') | join(', ') or 'none' }}) - a
+      Linux, Windows or network device request is installed by its own job. Nothing was read in vCenter.
+      {%- else -%}
+      {{ _vci_ritm }} carries CSRs for several: {{ _vci_target | map(attribute='name') | join(', ') }} - one request per
+      certificate is how the renewal orders them; give the job vmware_cert_only instead. Nothing was read in vCenter.
+      {%- endif -%}
+    quiet: true
+  when: _vci_ritm | length > 0
+
+- name: VMware certs | install | read the certificates of vCenter and its ESXi hosts
+  ansible.builtin.include_tasks: cert_read.yml
+  when: _vci_ritm | length == 0
+
+- name: VMware certs | install | read the certificate of the vCenter or host the request is for
+  ansible.builtin.include_tasks: cert_read.yml
+  vars:
+    _vcert_only_in: ["{{ _vci_target[0].name }}"]
+  when: _vci_ritm | length > 0
+
+- name: VMware certs | install | the request's vCenter or host was read
+  ansible.builtin.assert:
+    that: _vcert.certs | selectattr('name', 'equalto', _vci_target[0].name) | selectattr('kind', 'equalto', _vci_target[0].kind) | list | length > 0
+    fail_msg: >-
+      {{ _vci_ritm }} is for {{ 'vCenter' if _vci_target[0].kind == 'vcenter' else 'the ESXi host' }} {{ _vci_target[0].name }}, whose
+      certificate none of the job's vCenters gave: {{ (_vcert_read.not_checked | selectattr('name', 'equalto', _vci_target[0].name)
+      | map(attribute='why') | first) | default('not one of their hosts - another vCenter? (vmware_vcenters)', true) }}.
+    quiet: true
+  when: _vci_ritm | length > 0
+
+- name: VMware certs | install | each certificate's request, and the certificate the PKI put there
+  ansible.builtin.include_role:
+    name: servicenow
+    tasks_from: cert_issued.yml
+  vars:
+    # every certificate read (vmware_cert_only): one ordered at any warn_days is found by its CSR's name and its expiry;
+    # with vmware_cert_install_ritm the request named, whatever the expiry its CSR was ordered for
+    _ci_pending_in: >-
+      {%- set out = [] -%}
+      {%- for c in _vcert.certs if not _vci_ritm or (c.name == _vci_target[0].name and c.kind == _vci_target[0].kind) -%}
+      {%-   set _ = out.append({'key': c.vcenter ~ '|' ~ c.kind ~ '|' ~ c.name, 'host': c.name,
+                                'stem': c.name ~ ('-machine-ssl' if c.kind == 'vcenter' else '') ~ '-',
+                                'expires': c.not_after, 'csr': '', 'csr_from_request': true, 'names': c.sans | default([]),
+                                'ritm': _vci_ritm}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: VMware certs | install | what installing each issued certificate would do (vCenter is read, nothing changes)
+  site_vmware_cert_install:
+    action: plan
+    items: "{{ _vci_issued }}"
+    trust_check: "{{ vmware_cert_install_trust_check | bool }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _vci_plan
+  check_mode: false                     # reads only
+  when: _vci_issued | length > 0
+  vars:
+    _vci_issued: >-
+      {%- set by = {} -%}
+      {%- for c in _vcert.certs -%}{%- set _ = by.update({c.vcenter ~ '|' ~ c.kind ~ '|' ~ c.name: c}) -%}{%- endfor -%}
+      {%- set out = [] -%}
+      {%- for r in _ci_found.issued | default([]) if r.status == 'issued' and not r.problems -%}
+      {%-   set c = by[r.key] -%}
+      {#-   the certificate the CSR was ordered to replace: its expiry is in the CSR's name (a request named may be older) -#}
+      {%-   set d = r.csr_file | default('') | regex_search('-exp([0-9]{4})([0-9]{2})([0-9]{2})[.]', '\\1', '\\2', '\\3') -%}
+      {%-   set _ = out.append({'key': r.key, 'vcenter': c.vcenter, 'kind': c.kind, 'name': c.name, 'where': c.where,
+                                'subject': c.subject, 'old': {'expires': (d | join('-')) if d else c.expires, 'current': c.expires,
+                                                              'sha256': c.sha256 | default('')},
+                                'cert': r.cert, 'chain': r.chain, 'ritm': r.ritm, 'ritm_sys_id': r.ritm_sys_id,
+                                'source': r.source | default('')}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: VMware certs | install | every certificate ordered, and what became of it
+  ansible.builtin.set_fact:
+    _vci_lines: >-
+      {%- set plan = _vci_plan.plan | default([]) -%}
+      {%- set out = [] -%}
+      {%- for r in _ci_found.issued | default([]) if r.status != 'not ordered' -%}
+      {%-   set head = r.host ~ ' | ' ~ (r.key.split('|')[1] == 'vcenter') | ternary('vCenter Machine SSL', 'ESXi host') ~ ((' | ' ~ r.ritm) if r.ritm else '') -%}
+      {%-   set p = plan | selectattr('key', 'equalto', r.key) | first | default({}) -%}
+      {%-   if r.status != 'issued' -%}
+      {%-     set _ = out.append(r.status | upper ~ ' | ' ~ head ~ ' | ' ~ r.reason) -%}
+      {%-   elif r.problems -%}
+      {%-     set _ = out.append('HELD | ' ~ head ~ ' | ' ~ r.problems | join('; ')) -%}
+      {%-   elif p.status | default('') == 'ready' -%}
+      {%-     set _ = out.append('READY | ' ~ head ~ ' | ' ~ p.steps | join(' ; ') ~ ' | the new one: serial ' ~ r.cert.serial
+                                 ~ ', expires ' ~ r.cert.not_after ~ ' (from ' ~ r.source ~ ')'
+                                 ~ ((' | ' ~ p.notes | join('; ')) if p.notes else '')) -%}
+      {%-   else -%}
+      {%-     set _ = out.append((p.status | default('not planned')) | upper ~ ' | ' ~ head ~ ' | ' ~ p.reason | default('')) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out }}
+    _vci_ready: "{{ _vci_plan.plan | default([]) | selectattr('status', 'equalto', 'ready') | list }}"
+    _vci_unordered: "{{ _ci_found.issued | default([]) | selectattr('status', 'equalto', 'not ordered') | list | length }}"
+
+- name: VMware certs | install | what the PKI issued, and what installing it would do
+  ansible.builtin.debug:
+    msg: >-
+      {%- if _vci_lines -%}
+      {{ _vci_lines + ([(_vci_unordered | string) ~ ' other certificate(s) read: not ordered - nothing to install'] if _vci_unordered | int else []) }}
+      {%- else -%}
+      {{ ['No certificate of vCenter and its hosts waits for its install: ' ~ (_vcert.certs | length | string) ~ ' read, none ordered from the PKI '
+          '(VMware - certificate renewal orders them, with cert_renew_servicenow: catalog).'] }}
+      {%- endif -%}
+
+- name: VMware certs | install | hand the plan to the approval step and the install job (set_stats)
+  ansible.builtin.set_stats:
+    data:
+      vmware_cert_install_plan: "{{ _vci_ready }}"
+    per_host: false
+    aggregate: false
+  when: _vci_ready | length > 0
+
+- name: VMware certs | install | the hosts and vCenters not checked
+  ansible.builtin.debug:
+    msg: "{{ _vcert_read.not_checked | map(attribute='name') | zip(_vcert_read.not_checked | map(attribute='why')) | map('join', ': ') | list }}"
+  when: _vcert_read.not_checked | default([]) | length > 0
+
+- name: VMware certs | install | NEEDS APPROVAL
+  ansible.builtin.fail:
+    msg: >-
+      NEEDS APPROVAL: {{ _vci_ready | length }} certificate(s) to install - {{ _vci_names | join('; ') }}.
+      Approve to install exactly these (each is planned again first; the hosts first, vCenter's own last); deny to
+      leave them for the next run. The lines above say what each one changes.
+  when: _vci_ready | length > 0
+  vars:
+    _vci_names: >-
+      {%- set out = [] -%}
+      {%- for p in _vci_ready -%}
+      {%-   set _ = out.append(p.name ~ ' (' ~ ('vCenter Machine SSL' if p.kind == 'vcenter' else 'ESXi host') ~ ', ' ~ p.ritm
+                               ~ (', its services restart' if p.restart else '') ~ ')') -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: VMware certs | install | every vCenter was read
+  ansible.builtin.include_tasks: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _vcert_read.vcenters }}"

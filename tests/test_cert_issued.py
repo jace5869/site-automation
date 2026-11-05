@@ -295,6 +295,35 @@ class AgainstTheFakeServiceNow(unittest.TestCase):
         r = self.find(self.pending("web01.example.mil-ffff7777"))
         self.assertEqual((r["status"], r["source"]), ("issued", task2["number"] + "'s work notes"), r)
 
+    def test_csr_from_the_request(self):
+        """vCenter and an ESXi host keep their key and CSR: the CSR is read from the request (named stem + 8 hex + -exp...),
+        and a certificate file named like the host is read all the same."""
+        ritm = self.order("esx01.example.mil-1a2b3c4d", read("web.csr"))
+        item = {"key": "vc01|esxi|esx01.example.mil", "host": "esx01.example.mil", "stem": "esx01.example.mil-",
+                "expires": "2026-11-14 10:00 UTC", "csr": "", "csr_from_request": True, "names": []}
+        r = self.find(item)
+        self.assertEqual((r["status"], r["csr_file"]), ("waiting", "esx01.example.mil-1a2b3c4d-exp20261114.csr"), r)
+        self.call("POST", "/api/now/attachment/file?table_name=sc_req_item&table_sys_id=%s&file_name=esx01.example.mil-issued.cer" % ritm["sys_id"],
+                  raw=read("web.der"), ctype="application/pkix-cert")
+        r = self.find(item)
+        self.assertEqual((r["status"], r["source"]), ("issued", "esx01.example.mil-issued.cer"), r)
+        self.assertEqual(r["cert"]["subject"], "CN=web01.example.mil,O=U.S. Government,C=US")
+        # without csr_from_request an empty CSR is an error, as before (a Linux or Windows renewal always has its CSR)
+        self.assertEqual(self.find(dict(item, csr_from_request=False))["status"], "failed")
+
+    def test_one_request_by_its_number(self):
+        """VMware - certificate install from one request: that RITM's own CSR, whatever expiry the item gives; a number
+        ServiceNow does not have: not found."""
+        ritm = self.order("esx02.example.mil-2b3c4d5e", read("web.csr"))
+        self.call("PATCH", "/api/now/table/sc_req_item/%s" % ritm["sys_id"], {"work_notes": "Issued:\n" + read("web.crt").decode()})
+        item = {"key": "vc01|esxi|esx02.example.mil", "host": "esx02.example.mil", "stem": "esx02.example.mil-",
+                "expires": "2031-01-01 00:00 UTC", "csr": "", "csr_from_request": True, "names": [], "ritm": ritm["number"].lower()}
+        r = self.find(item)
+        self.assertEqual((r["status"], r["ritm"], r["csr_file"]), ("issued", ritm["number"], "esx02.example.mil-2b3c4d5e-exp20261114.csr"), r)
+        self.assertEqual(self.find(dict(item, ritm=""))["status"], "not ordered", "by name and expiry: 2031 is not what it was ordered for")
+        r = self.find(dict(item, ritm="RITM9999999"))
+        self.assertEqual(r["status"], "not found", r)
+
     def test_closed_incomplete(self):
         ritm = self.order("web01.example.mil-cccc3333", read("web.csr"))
         self.call("PATCH", "/api/now/table/sc_req_item/%s" % ritm["sys_id"], {"state": "4"})

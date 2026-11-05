@@ -308,6 +308,19 @@ vmware_ask_public_url: https://stigman.example.mil/ask/
     "vmware_cert_renew.yml": ("VMware - certificate renewal", "VMware vCenter, ServiceNow API", "", """\
 servicenow_assignment_group: YOUR GROUP NAME   # who gets the incidents (exactly as in ServiceNow)
 """),
+    "vmware_cert_request.yml": ("VMware - certificate request", "VMware vCenter, ServiceNow API", "", """\
+## The vCenters and ESXi hosts to order a certificate for, by their exact names (the survey asks them):
+# vmware_cert_request_for: [esx01.yoursite.mil]
+"""),
+    "vmware_cert_install_check.yml": ("VMware - certificate install - check", "VMware vCenter, ServiceNow API", "", """\
+## The workflow: this job --Run on fail--> Approval --Run on success--> VMware - certificate install - approved
+## (docs/VMWARE.md, "Installing the issued certificates"). It reads only; it fails on purpose when one is ready.
+## The request comes from the workflow's survey (vmware_cert_install_ritm: RITM0012345).
+"""),
+    "vmware_cert_install_approved.yml": ("VMware - certificate install - approved", "VMware vCenter, ServiceNow API (for the work notes)", "", """\
+## Only in the workflow, after the approval: the check job hands it vmware_cert_install_plan. Do not tick
+## "Prompt on launch" for Variables on this template.
+"""),
     "vm_alarm_act_analysis.yml": ("VM - alarms ACT analysis", "VMware vCenter, ACT model key", "", ""),
     "vm_alarm_report.yml": ("VM - alarms report", "VMware vCenter", "", ""),
     "vm_ask.yml": ("VM - ask a question", "VMware vCenter, ACT model key", "", """\

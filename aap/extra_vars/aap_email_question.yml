@@ -95,6 +95,7 @@
 #   - vm_vlan.yml
 #   - vmware_cert_renew.yml
 #   - vmware_cert_report.yml
+#   - vmware_cert_request.yml
 #   - vmware_trust_report.yml
 #   - win_cert_report.yml
 #   - win_health_check.yml

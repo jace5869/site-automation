@@ -467,6 +467,27 @@ vmware_cert_csr_fields: {}
 # another one). true = make them anyway, and print them in the job output.
 vmware_cert_csr_without_servicenow: false
 
+# ---- VMware certificate install (playbooks/vmware_cert_install_check.yml -> approval -> vmware_cert_install_approved.yml) ----
+
+# The certificate the PKI put on the catalog request of a vCenter's or a host's CSR, installed where its key waits.
+# A host's certificate: vCenter must trust its issuer, or it refuses the host after the replacement - the plan adds
+# the CA chain (from the request) to vCenter's trusted roots when it is not there. false = do not read or add them
+# (you know vCenter trusts the issuer, or its trusted roots cannot be read).
+vmware_cert_install_trust_check: true
+# The request to install from: its number (RITM0012345) - the check reads that request alone, for the vCenter or host
+# its CSR was made for (from the CSR's name), and hands it to the approval. The workflow's survey asks it.
+vmware_cert_install_ritm: ""
+# true = without a request named, look up the request of every certificate of vCenter and its hosts (each by its CSR's
+# name and expiry) - for a schedule on the workflow, once you trust it. false = a request must be named.
+vmware_cert_install_search: false
+# VMware - certificate request (playbooks/vmware_cert_request.yml): the vCenters and ESXi hosts to order a certificate
+# for now - exact names, no * or ? (each one gets a CSR and a request); required. e.g. [esx01.yoursite.mil]
+vmware_cert_request_for: []
+# Seconds a host may take, after the install, until vCenter shows its new certificate (reconnected if vCenter lost it).
+vmware_cert_install_host_wait: 300
+# Seconds vCenter may take to serve its new certificate on its port: before vCenter 8.0 Update 2 its services restart.
+vmware_cert_install_vcenter_wait: 1800
+
 # ---- VMware trust store report (playbooks/vmware_trust_report.yml) ----
 # vCenter's trusted roots and each ESXi host's trusted CAs; false = vCenter only (the ESXi hosts left out)
 vmware_trust_esxi: true

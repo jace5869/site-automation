@@ -1,0 +1,25 @@
+---
+# VMWARE CERTIFICATE INSTALL - THE APPROVED ONES (job 2 of the VMware certificate install workflow, after the
+# approval). AAP hands it the check job's plan (vmware_cert_install_plan); each certificate is planned again first -
+# the same certificate, still ready, or it is refused. Then the ESXi hosts, one by one, in use (no maintenance mode):
+# the CA chain added to vCenter's trusted roots when missing, the certificate installed (the key the host made with its
+# CSR), the host's services told, the host reconnected if vCenter lost it, and vCenter must show the new certificate.
+# Then vCenter's own: its Machine SSL certificate and the CA chain (the key vCenter made with its CSR) - before vCenter
+# 8.0 Update 2 its services restart, about 10 to 20 minutes without vCenter - and port 443 must serve it. A work note on
+# each request. Nothing is put back - the CSR replaced the old key - so a failure says what to do; the job fails then.
+# It refuses to run on its own (outside the workflow nothing was approved). Do not tick "Prompt on launch" for
+# Variables on its template.
+#
+#   [VMware - certificate install - check] --Run on fail--> [Approval] --Run on success--> [VMware - certificate install - approved]
+#
+# Credentials: "VMware vCenter" (administrator@vsphere.local or a member of CAAdmins: it replaces certificates and adds
+# trusted roots) and "ServiceNow API" (the work notes; without it, only the job says what it did).
+- name: VMware certificate install - the approved certificates
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Install what was approved, then check it
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: cert_install_apply.yml

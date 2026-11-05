@@ -1,0 +1,28 @@
+---
+# VMWARE CERTIFICATE INSTALL - THE CHECK (job 1 of the VMware certificate install workflow). The renewal
+# (playbooks/vmware_cert_renew.yml, cert_renew_servicenow: catalog) ordered a CSR for vCenter's Machine SSL certificate
+# or a host's certificate from the PKI's catalog item; the PKI puts the issued certificate on that request. This job,
+# on a schedule: for every certificate of vCenter and its ESXi hosts, its request and the certificate there whose
+# public key is the CSR's (read from the request: the key never left vCenter or the host), and what installing it
+# would do - or why a person must first do something (vpxd.certmgmt.mode, a host not connected, no CA chain). Reads
+# only, in vCenter and ServiceNow.
+#
+# Something to install: the plan goes to the approval and the install job (set_stats vmware_cert_install_plan) and this
+# job FAILS on purpose - "NEEDS APPROVAL" - so the workflow takes its "Run on fail" path:
+#
+#   [VMware - certificate install - check] --Run on fail--> [Approval] --Run on success--> [VMware - certificate install - approved]
+#
+# Credentials: "VMware vCenter" (an account that may manage certificates - administrator@vsphere.local or CAAdmins - for
+# the trusted roots it reads) and "ServiceNow API" (the account that orders the certificates). Runs on the AAP side;
+# no Limit. docs/VMWARE.md, "Installing the issued certificates".
+#   ansible-playbook playbooks/vmware_cert_install_check.yml
+#   ansible-playbook playbooks/vmware_cert_install_check.yml -e vmware_cert_only=esx01
+- name: VMware certificate install - the check
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The issued certificates of vCenter and its ESXi hosts, and what installing each would do
+      ansible.builtin.include_role:
+        name: vmware_vm
+        tasks_from: cert_install_check.yml

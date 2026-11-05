@@ -3,6 +3,8 @@
 # win_cert_install_approved.yml), on the AAP side: what was installed where (hostvars[host].cert_install_result),
 # a work note on each one's request - what was installed, where, by which job (the account may not be allowed to
 # write there: then only the job says it) - and the job fails when one was not installed (rolled back, refused).
+# _ci_results_in (the VMware certificate install: vCenter and its hosts are no inventory hosts) - the results as they
+# are, each with its host, instead of the hosts' cert_install_result.
 - name: Certificate install | connection (from the ServiceNow API credential)
   ansible.builtin.set_fact:
     _sn_url: >-
@@ -10,8 +12,8 @@
       {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
     _sn_user: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
     _ci_results: >-
-      {%- set out = [] -%}
-      {%- for h in groups['all'] | sort if hostvars[h].cert_install_result is defined -%}
+      {%- set out = [] if _ci_results_in is not defined else _ci_results_in -%}
+      {%- for h in groups['all'] | sort if hostvars[h].cert_install_result is defined and _ci_results_in is not defined -%}
       {%-   for r in hostvars[h].cert_install_result['items'] -%}
       {%-     set _ = out.append(r | combine({'host': h})) -%}
       {%-   endfor -%}
@@ -45,7 +47,7 @@
       work_notes: >-
         Installed on {{ item.host }}{{ (' by AAP job ' ~ awx_job_id) if awx_job_id is defined else '' }}:
         the certificate serial {{ item.new.serial | default('?') }}, expires {{ item.new.not_after | default('?') }}
-        - {{ _where }}{{ _reloaded }}{{ _verified }}. The old files are kept on the host ({{ item.backup | default('') }}).
+        - {{ _where }}{{ _reloaded }}{{ _verified }}.{{ (' The old files are kept on the host (' ~ item.backup ~ ').') if item.backup | default('') else '' }}
     validate_certs: "{{ servicenow_validate_certs }}"
     ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
     timeout: "{{ servicenow_timeout }}"

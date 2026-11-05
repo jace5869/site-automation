@@ -22,6 +22,7 @@ import site_vmware_vm_created as vc  # noqa: E402
 import site_vmware_certs as vcert  # noqa: E402
 import site_vmware_watch as wt  # noqa: E402
 import site_vcsa_access as va  # noqa: E402
+import site_vmware_cert_install as vci  # noqa: E402
 
 G = 1024 ** 3
 
@@ -816,6 +817,318 @@ class OutageWatch(unittest.TestCase):
         self.assertEqual(wt.alive_by_traffic({"packets": 412, "minutes": 7.3}),
                          "it sent 412 network packets in the last 7.3 minutes (vCenter's real-time statistics)")
         self.assertEqual(wt.alive_by_traffic({"packets": 5, "minutes": 5.0}, 10), "")
+
+
+class _FakeCertApi(object):
+    """vCenter's certificate-management API over HTTPS in this process - the Machine SSL replacement (tls) and the
+    trusted root chains. mode: api (vCenter 7+), rest (6.7: /api is 404), mismatch (tls 400: the key is not the
+    CSR's), forbidden (403)."""
+
+    def __init__(self, mode="api", roots=()):
+        import http.server
+        import ssl
+        import tempfile
+        import threading
+        self.mode, self.calls, self.roots = mode, [], {"chain-1": list(roots)}
+        key, pem, _ = _self_signed("localhost", 5, ["localhost"])
+        d = tempfile.mkdtemp()
+        for f, data in (("k.pem", key), ("c.pem", pem)):
+            with open(os.path.join(d, f), "wb") as fh:
+                fh.write(data)
+        app = self
+        base = "/rest/vcenter/certificate-management/vcenter/" if mode == "rest" else "/api/vcenter/certificate-management/vcenter/"
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _send(self, code, body=None):
+                if body is not None and app.mode == "rest" and code == 200:
+                    body = {"value": body}
+                raw = json.dumps(body).encode() if body is not None else b""
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def _body(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                return json.loads(self.rfile.read(n)) if n else None
+
+            def do_POST(self):
+                body = self._body()
+                app.calls.append(("POST", self.path, body))
+                if self.path == ("/rest/com/vmware/cis/session" if app.mode == "rest" else "/api/session"):
+                    return self._send(200, "tok1") if app.mode != "rest" else self._send(200, "tok1")
+                if self.path == base + "trusted-root-chains":
+                    if app.mode == "forbidden":
+                        return self._send(403, {"messages": [{"default_message": "Permission denied."}]})
+                    spec = body["spec"] if app.mode == "rest" else body
+                    app.roots["chain-%d" % (len(app.roots) + 1)] = spec["cert_chain"]["cert_chain"]
+                    return self._send(201 if app.mode != "rest" else 200, "chain-%d" % len(app.roots))
+                self._send(404, {})
+
+            def do_GET(self):
+                app.calls.append(("GET", self.path, None))
+                if self.path == base + "trusted-root-chains":
+                    return self._send(200, [{"chain": k} for k in app.roots])
+                if self.path.startswith(base + "trusted-root-chains/"):
+                    k = self.path.rsplit("/", 1)[1]
+                    return self._send(200, {"cert_chain": {"cert_chain": app.roots[k]}}) if k in app.roots else self._send(404, {})
+                self._send(404, {})
+
+            def do_PUT(self):
+                body = self._body()
+                app.calls.append(("PUT", self.path, body))
+                if self.path != base + "tls":
+                    return self._send(404, {})
+                if app.mode == "forbidden":
+                    return self._send(403, {"messages": [{"default_message": "Permission denied."}]})
+                if app.mode == "mismatch":
+                    return self._send(400, {"messages": [{"default_message": "The certificate does not match the private key."}]})
+                self._send(204 if app.mode != "rest" else 200)
+
+            def do_DELETE(self):
+                app.calls.append(("DELETE", self.path, None))
+                self._send(200, {})
+
+        self.httpd = http.server.HTTPServer(("127.0.0.1", 0), H)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(os.path.join(d, "c.pem"), os.path.join(d, "k.pem"))
+        self.httpd.socket = ctx.wrap_socket(self.httpd.socket, server_side=True)
+        self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+class _Obj(object):
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+class _FakeHost(object):
+    """An ESXi host as vCenter shows it: its connection, its certificate (certificateInfo), InstallServerCertificate
+    (refuse: a key mismatch), no NotifyAffectedServices (as an older vCenter), no config (as vcsim)."""
+
+    def __init__(self, not_after, issuer, state="connected", refuse=False, drop=False):
+        import datetime as dt
+        self.runtime = _Obj(connectionState=state)
+        self.info = _Obj(notAfter=dt.datetime.strptime(not_after, "%Y-%m-%d %H:%M UTC").replace(tzinfo=dt.timezone.utc),
+                         issuer=issuer, subject="CN=esx01.example.mil")
+        host = self
+
+        class Cm(object):
+            certificateInfo = property(lambda s: host.info)
+
+            def InstallServerCertificate(s, cert):
+                if refuse:
+                    raise RuntimeError("the certificate does not match the host's key")
+                host.installed = cert
+                host.info = _Obj(notAfter=host.new_after, issuer=host.new_issuer, subject="CN=esx01.example.mil")
+                if drop:
+                    host.runtime = _Obj(connectionState="disconnected")
+
+        self.configManager = _Obj(certificateManager=Cm())
+        self.installed, self.reconnected = None, False
+
+    def ReconnectHost_Task(self):
+        self.reconnected = True
+        self.runtime = _Obj(connectionState="connected")
+        return _Obj(info=_Obj(state="success", error=None))
+
+
+class VmwareCertInstall(unittest.TestCase):
+    """0.71.0 site_vmware_cert_install: the plan (vpxd.certmgmt.mode, the trusted roots, a host not connected, a
+    certificate changed since the order, vCenter's restart) and the install - a host's, and vCenter's own through its
+    certificate API (/api and /rest, a key mismatch, port 443 serving the new one, or not in time)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import datetime as dt
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+        now = dt.datetime.now(dt.timezone.utc).replace(second=0, microsecond=0)
+        cakey = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        caname = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "TEST ID CA-70")])
+        ca = (x509.CertificateBuilder().subject_name(caname).issuer_name(caname).public_key(cakey.public_key()).serial_number(3)
+              .not_valid_before(now).not_valid_after(now + dt.timedelta(days=900))
+              .add_extension(x509.BasicConstraints(ca=True, path_length=None), True).sign(cakey, hashes.SHA256()))
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        leaf = (x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "esx01.example.mil")]))
+                .issuer_name(caname).public_key(key.public_key()).serial_number(0x1234)
+                .not_valid_before(now).not_valid_after(now + dt.timedelta(days=397)).sign(cakey, hashes.SHA256()))
+        der = leaf.public_bytes(serialization.Encoding.DER)
+        cls.new_der = der
+        cls.ca_pem = ca.public_bytes(serialization.Encoding.PEM).decode()
+        cls.ca_sha = __import__("hashlib").sha256(ca.public_bytes(serialization.Encoding.DER)).hexdigest()
+        cls.new_after = now + dt.timedelta(days=397)
+        cls.cert = {"pem": leaf.public_bytes(serialization.Encoding.PEM).decode(), "sha256": __import__("hashlib").sha256(der).hexdigest(),
+                    "serial": "1234", "subject": "CN=esx01.example.mil", "issuer": "CN=TEST ID CA-70",
+                    "not_after": cls.new_after.strftime("%Y-%m-%d %H:%M UTC")}
+        cls.chain = [{"pem": cls.ca_pem, "sha256": cls.ca_sha, "subject": "CN=TEST ID CA-70", "self_signed": True}]
+        _, _, cls.old_der = _self_signed("vc01.example.mil", 20)
+
+    def setUp(self):
+        os.environ.update(VMWARE_USER="user", VMWARE_PASSWORD="pass")
+
+    def host(self, **kw):
+        h = _FakeHost("2026-11-30 12:00 UTC", "CN=OLD CA", **kw)
+        h.new_after, h.new_issuer = self.new_after, "CN=TEST ID CA-70"
+        return h
+
+    def facts(self, host=None, mode="custom", roots=None, roots_error="", name="vc01.example.mil", version="8.0.3"):
+        return _Obj(name=name, error="", mode=mode, version=version, build="24322831", hosts={"esx01.example.mil": host or self.host()},
+                    roots=roots, roots_error=roots_error, validate_certs=False, timeout=5)
+
+    def item(self, kind="esxi", chain=True, **kw):
+        it = {"key": "vc01|%s|esx01.example.mil" % kind, "vcenter": "vc01.example.mil", "kind": kind,
+              "name": "esx01.example.mil" if kind == "esxi" else "vc01.example.mil", "ritm": "RITM0010001",
+              "old": {"expires": "2026-11-30", "sha256": ""}, "cert": dict(self.cert), "chain": list(self.chain) if chain else []}
+        it.update(kw)
+        return it
+
+    def test_plan_host_mode_roots_and_chain(self):
+        p = vci.plan_one(self.item(), self.facts(mode="vmca", roots=set()), True, 5)
+        self.assertEqual(p["status"], "held")
+        self.assertIn("vpxd.certmgmt.mode is vmca, not custom", p["reason"])
+        p = vci.plan_one(self.item(chain=False), self.facts(roots=set()), True, 5)
+        self.assertEqual(p["status"], "held")
+        self.assertIn("no CA chain came with the certificate on RITM0010001", p["reason"])
+        p = vci.plan_one(self.item(), self.facts(roots=None, roots_error="HTTP 404"), True, 5)
+        self.assertEqual(p["status"], "held")
+        self.assertIn("trusted roots could not be read (HTTP 404)", p["reason"])
+        p = vci.plan_one(self.item(), self.facts(roots=set()), True, 5)
+        self.assertEqual((p["status"], p["add_chain"]), ("ready", True))
+        self.assertTrue(p["steps"][0].startswith("add the CA chain to vCenter vc01.example.mil's trusted roots (CN=TEST ID CA-70)"))
+        p = vci.plan_one(self.item(), self.facts(roots={self.ca_sha}), True, 5)
+        self.assertEqual((p["status"], p["add_chain"]), ("ready", False), "trusted already: nothing to add")
+        self.assertIn("no maintenance mode", p["notes"][0])
+        p = vci.plan_one(self.item(chain=False), self.facts(roots=None), False, 5)
+        self.assertEqual(p["status"], "ready", "trust_check false: neither chain nor roots needed")
+
+    def test_plan_host_not_connected_changed_or_done(self):
+        p = vci.plan_one(self.item(), self.facts(host=self.host(state="notResponding"), roots=set()), True, 5)
+        self.assertEqual((p["status"], p["reason"]), ("not connected", "the host is notResponding in vCenter vc01.example.mil - a later run"))
+        p = vci.plan_one(self.item(old={"expires": "2025-01-01"}), self.facts(roots=set()), True, 5)
+        self.assertEqual(p["status"], "held")
+        self.assertIn("changed since it was ordered", p["reason"])
+        h = self.host()
+        h.info = _Obj(notAfter=self.new_after, issuer="CN=TEST ID CA-70", subject="CN=esx01.example.mil")
+        self.assertEqual(vci.plan_one(self.item(), self.facts(host=h, roots=set()), True, 5)["status"], "installed already")
+        p = vci.plan_one(self.item(name="esx99.example.mil"), self.facts(roots=set()), True, 5)
+        self.assertEqual(p["status"], "failed")
+
+    def test_plan_vcenter_restart_and_served(self):
+        old = lambda h, p, t: self.old_der                                    # noqa: E731
+        p = vci.plan_one(self.item("vcenter"), self.facts(version="7.0.3"), True, 5, tls=old)
+        self.assertEqual((p["status"], p["restart"]), ("ready", True))
+        self.assertIn("its services RESTART", p["notes"][0])
+        p = vci.plan_one(self.item("vcenter"), self.facts(version="8.0.2"), True, 5, tls=old)
+        self.assertEqual((p["status"], p["restart"]), ("ready", False))
+        self.assertIn("no restart", p["notes"][0])
+        p = vci.plan_one(self.item("vcenter"), self.facts(), True, 5, tls=lambda h, port, t: self.new_der)
+        self.assertEqual(p["status"], "installed already")
+        p = vci.plan_one(self.item("vcenter", chain=False), self.facts(), True, 5, tls=old)
+        self.assertEqual(p["status"], "held")
+        p = vci.plan_one(self.item("vcenter", old={"sha256": "ab" * 32}), self.facts(), True, 5, tls=old)
+        self.assertEqual(p["status"], "held", "vCenter serves another certificate than the one ordered for")
+        p = vci.plan_one(self.item("vcenter", old={"expires": "2026-11-30", "current": "2027-12-01"}), self.facts(), True, 5, tls=old)
+        self.assertEqual(p["status"], "held", "the request named was for the certificate before the one in use")
+        self.assertIn("changed since it was ordered (it expires 2027-12-01; the ordered one replaces one expiring 2026-11-30)", p["reason"])
+
+    def test_install_host_adds_the_chain_and_reconnects(self):
+        api = _FakeCertApi("api")
+        try:
+            h = self.host(drop=True)
+            f = self.facts(host=h, roots=set(), name="127.0.0.1:%d" % api.port)
+            r = vci.plan_one(self.item(vcenter=f.name), f, True, 5)
+            self.assertEqual(r["status"], "ready")
+            out = vci.install_esxi(r, f, 30, False)
+        finally:
+            api.close()
+        self.assertEqual(out["status"], "installed", out)
+        self.assertEqual(h.installed, self.cert["pem"])
+        self.assertTrue(h.reconnected, "vCenter lost the host after the replacement: reconnected")
+        self.assertEqual([c[2] for c in api.calls if c[0] == "POST" and c[1].endswith("trusted-root-chains")],
+                         [{"cert_chain": {"cert_chain": [self.ca_pem]}}])
+        self.assertIn("the CA chain added to vCenter 127.0.0.1:%d's trusted roots" % api.port, out["done"])
+        self.assertTrue(any("could not be told" in d for d in out["done"]), "no NotifyAffectedServices: said")
+        self.assertEqual(out["verified"], ["the host (vCenter 127.0.0.1:%d shows it)" % api.port])
+
+    def test_install_host_refused_or_not_shown(self):
+        f = self.facts(host=self.host(refuse=True), roots={self.ca_sha})
+        out = vci.install_esxi(vci.plan_one(self.item(), f, True, 5), f, 30, False)
+        self.assertEqual(out["status"], "failed")
+        self.assertIn("the host refused the certificate", out["reason"])
+        h = self.host()
+        h.new_issuer = "CN=SOMETHING ELSE"
+        f = self.facts(host=h, roots={self.ca_sha})
+        out = vci.install_esxi(vci.plan_one(self.item(), f, True, 5), f, 0, False)
+        self.assertEqual(out["status"], "failed")
+        self.assertIn("installed, but after 0 s", out["reason"])
+        f = self.facts(roots={self.ca_sha})
+        self.assertEqual(vci.install_esxi(vci.plan_one(self.item(), f, True, 5), f, 30, True)["status"], "would install")
+        self.assertIsNone(f.hosts["esx01.example.mil"].installed, "check mode changes nothing")
+
+    def install_vc(self, mode, served, wait=60):
+        api = _FakeCertApi(mode)
+        try:
+            f = self.facts(name="127.0.0.1:%d" % api.port)
+            r = vci.plan_one(self.item("vcenter", vcenter=f.name), f, True, 5, tls=lambda h, p, t: self.old_der)
+            seq = list(served)
+            t = [0.0]
+            out = vci.install_vcenter(r, f, wait, False, 5, tls=lambda h, p, to: seq.pop(0) if len(seq) > 1 else seq[0],
+                                      sleep=lambda s: t.__setitem__(0, t[0] + s), clock=lambda: t[0])
+            return out, api
+        finally:
+            api.close()
+
+    def test_install_vcenter(self):
+        out, api = self.install_vc("api", [self.old_der, self.old_der, self.new_der])
+        self.assertEqual(out["status"], "installed", out)
+        self.assertEqual(out["verified"], ["port %d" % api.port])
+        put = [c for c in api.calls if c[0] == "PUT"]
+        self.assertEqual(put[0][1], "/api/vcenter/certificate-management/vcenter/tls")
+        self.assertEqual(sorted(put[0][2]), ["cert", "root_cert"], "no key: vCenter's own, made with its CSR")
+        self.assertEqual(put[0][2]["root_cert"].strip(), self.ca_pem.strip())
+        self.assertEqual(api.calls[-1][:2], ("DELETE", "/api/session"))
+        out, api = self.install_vc("rest", [self.new_der])
+        self.assertEqual(out["status"], "installed", out)
+        self.assertEqual([sorted(c[2]["spec"]) for c in api.calls if c[0] == "PUT"], [["cert", "root_cert"]])
+
+    def test_install_vcenter_refused_or_slow(self):
+        out, _ = self.install_vc("mismatch", [self.old_der])
+        self.assertEqual(out["status"], "failed")
+        self.assertIn("did not take the certificate (HTTP 400: The certificate does not match the private key.) - nothing was changed", out["reason"])
+        out, _ = self.install_vc("forbidden", [self.old_der])
+        self.assertIn("CertificateManagement.Manage", out["reason"])
+        out, api = self.install_vc("api", [self.old_der], wait=60)
+        self.assertEqual(out["status"], "failed")
+        self.assertIn("after 60 s port %d serves the old certificate" % api.port, out["reason"])
+
+    def test_trusted_roots(self):
+        api = _FakeCertApi("rest", roots=[self.ca_pem])
+        try:
+            a = vci.Api("127.0.0.1", api.port, False, 5)
+            a.login("vc01")
+            self.assertEqual(a.trusted_roots("vc01"), {self.ca_sha})
+            a.add_roots("vc01", ["x"])
+            a.logout()
+        finally:
+            api.close()
+        self.assertIn(("POST", "/rest/vcenter/certificate-management/vcenter/trusted-root-chains",
+                       {"spec": {"cert_chain": {"cert_chain": ["x"]}}}), api.calls)
+
+    def test_version(self):
+        self.assertLess(vci.version_tuple("8.0.1"), vci.NO_RESTART)
+        self.assertGreaterEqual(vci.version_tuple("8.0.2"), vci.NO_RESTART)
+        self.assertGreaterEqual(vci.version_tuple("9.0"), vci.NO_RESTART)
 
 
 if __name__ == "__main__":

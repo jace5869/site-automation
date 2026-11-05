@@ -16,6 +16,7 @@ from there and puts it in place of the old one - after a person approved what it
 ```
 
 The same for Windows: *Windows certificate install - check* → approval → *Windows certificate install - approved*.
+vCenter and the ESXi hosts: *VMware - certificate install - check* → approval → *VMware - certificate install - approved*, with this reader and its settings - the key and the CSR stay on vCenter or the host, so the CSR is read from the request: [VMWARE.md](VMWARE.md#installing-the-issued-certificates-of-vcenter-and-the-esxi-hosts-with-an-approval).
 
 ## What it does
 

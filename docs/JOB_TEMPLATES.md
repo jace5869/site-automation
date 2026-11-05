@@ -75,6 +75,9 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | VMware - trust store report | `playbooks/vmware_trust_report.yml` | Report | [TRUST_STORES.md](TRUST_STORES.md#vmware) |
 | VMware - certificate report | `playbooks/vmware_cert_report.yml` | Report | [VMWARE.md](VMWARE.md#set-it-up-2) |
 | VMware - certificate renewal | `playbooks/vmware_cert_renew.yml` | Watch | [VMWARE.md](VMWARE.md#certificates-of-vcenter-and-the-esxi-hosts-incidents-and-csrs-weekly) |
+| VMware - certificate request | `playbooks/vmware_cert_request.yml` | On demand | [VMWARE.md](VMWARE.md#request-a-certificate-now) |
+| VMware - certificate install - check | `playbooks/vmware_cert_install_check.yml` | Workflow step | [VMWARE.md](VMWARE.md#set-it-up-3), workflow 39: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#39-vcenter-and-esxi-certificate-install-with-an-approval) |
+| VMware - certificate install - approved | `playbooks/vmware_cert_install_approved.yml` | After an approval | [VMWARE.md](VMWARE.md#the-approved-install-after-the-approval) |
 | VMware - version report | `playbooks/vmware_version_report.yml` | Report | [VMWARE.md](VMWARE.md#the-vmware-version-report) |
 | VMware - hardware inventory | `playbooks/vmware_hardware_report.yml` | Report | [VMWARE.md](VMWARE.md#the-vmware-hardware-inventory) |
 | Network device certificate report | `playbooks/net_cert_report.yml` | Report | [NETWORK_CERTS.md](NETWORK_CERTS.md#templates) |

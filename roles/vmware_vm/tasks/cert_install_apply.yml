@@ -1,0 +1,49 @@
+---
+# VMWARE CERTIFICATE INSTALL - THE APPROVED ONES (playbooks/vmware_cert_install_approved.yml), after the approval. AAP
+# hands it the check job's plan (vmware_cert_install_plan): each certificate is planned again first - the same
+# certificate, still ready, or it is refused - then the ESXi hosts (the CA chain added to vCenter's trusted roots when
+# missing, the certificate installed, the host reconnected if vCenter lost it, vCenter must show it), then vCenter's own
+# (its Machine SSL certificate replaced, port 443 must serve it). A work note on each request; the job fails when one was
+# not installed. It refuses to run on its own: outside the workflow nothing was approved. Check: what it would do.
+- name: VMware certs | install | the check job's plan reached this job
+  ansible.builtin.assert:
+    that:
+      - vmware_cert_install_plan is defined
+      - vmware_cert_install_plan is sequence
+      - vmware_cert_install_plan is not string
+      - vmware_cert_install_plan | length > 0
+    fail_msg: >-
+      Nothing to install: no approved plan (vmware_cert_install_plan) reached this job. It runs only in the VMware
+      certificate install workflow, after "VMware - certificate install - check" and the approval step: docs/VMWARE.md.
+      Do not tick "Prompt on launch" for Variables on this template.
+    quiet: true
+
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: "VMware certs | install | the approved certificates - planned again, installed, checked{{ ' - DRY RUN, nothing is changed' if ansible_check_mode else '' }}"
+  site_vmware_cert_install:
+    action: install
+    items: "{{ vmware_cert_install_plan }}"
+    trust_check: "{{ vmware_cert_install_trust_check | bool }}"
+    host_wait: "{{ vmware_cert_install_host_wait | int }}"
+    vcenter_wait: "{{ vmware_cert_install_vcenter_wait | int }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _vci_done
+
+- name: VMware certs | install | what was done, and a work note on each request
+  ansible.builtin.include_role:
+    name: servicenow
+    tasks_from: cert_installed.yml
+  vars:
+    _ci_results_in: >-
+      {%- set out = [] -%}
+      {%- for r in _vci_done.installed | default([]) -%}
+      {%-   set _ = out.append({'host': r.name, 'base': r.where | default(r.name), 'subject': r.subject | default(''),
+                                'ritm': r.ritm | default(''), 'ritm_sys_id': r.ritm_sys_id | default(''), 'status': r.status,
+                                'new': {'serial': r.cert.serial | default('?'), 'not_after': r.cert.not_after | default('?')},
+                                'files': [(r.kind == 'vcenter') | ternary("vCenter's Machine SSL certificate", "the host's certificate")]
+                                         + r.done | default([]),
+                                'verified': r.verified | default([]), 'reason': r.reason | default('')}) -%}
+      {%- endfor -%}
+      {{ out }}
