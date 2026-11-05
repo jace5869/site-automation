@@ -1,0 +1,110 @@
+<!doctype html>
+{# AAP health check report: one file, no outside resources (inline CSS and a little script to sort and filter). #}
+{% set counts = _aaph_rows | aap_health_counts %}
+{% set overall = 'FAIL' if counts.FAIL else 'WARN' if counts.WARN else 'PASS' %}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AAP health - {{ inventory_hostname | e }}</title>
+<style>
+:root { --bg: #f6f7f9; --card: #fff; --ink: #1d2330; --muted: #5b6475; --line: #dde1e8;
+        --pass: #1f7a3d; --pass-bg: #e6f4ea; --warn: #8a5a00; --warn-bg: #fff4d6; --fail: #b3261e; --fail-bg: #fde7e6; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #14171c; --card: #1c2027; --ink: #e6e9ef; --muted: #a0a8b8; --line: #2e3440;
+          --pass: #7fd69a; --pass-bg: #18301f; --warn: #f2c66d; --warn-bg: #352a10; --fail: #ff8f86; --fail-bg: #3a1a18; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--ink);
+       font: 14px/1.45 -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+main { max-width: 1280px; margin: 0 auto; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin-bottom: 18px; }
+.tiles { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; }
+.tile { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 18px; min-width: 120px; }
+.tile b { display: block; font-size: 26px; }
+.tile.FAIL b { color: var(--fail); } .tile.WARN b { color: var(--warn); } .tile.PASS b { color: var(--pass); }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; align-items: center; }
+button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px;
+         padding: 5px 12px; cursor: pointer; }
+button[aria-pressed="true"] { border-color: var(--ink); font-weight: 600; }
+details { background: var(--card); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 12px; }
+summary { cursor: pointer; padding: 10px 14px; font-weight: 600; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+summary .n { font-weight: 400; color: var(--muted); }
+.wrap { overflow-x: auto; }
+table { width: 100%; min-width: 760px; border-collapse: collapse; }
+th, td { text-align: left; vertical-align: top; padding: 7px 10px; border-top: 1px solid var(--line); }
+th { cursor: pointer; user-select: none; color: var(--muted); font-weight: 600; white-space: nowrap; }
+th::after { content: " \2195"; opacity: .4; }
+td.detail, td.hint { white-space: pre-wrap; word-break: break-word; }
+td.detail { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; }
+td.hint { color: var(--muted); }
+.badge { display: inline-block; min-width: 46px; text-align: center; border-radius: 4px; padding: 1px 6px; font-weight: 700; font-size: 12px; }
+.badge.PASS { color: var(--pass); background: var(--pass-bg); }
+.badge.WARN { color: var(--warn); background: var(--warn-bg); }
+.badge.FAIL { color: var(--fail); background: var(--fail-bg); }
+tr.hide { display: none; }
+footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+<h1>AAP health check <span class="badge {{ overall }}">{{ overall }}</span></h1>
+<div class="sub">{{ inventory_hostname | e }} &middot; {{ '%Y-%m-%d %H:%M:%S %Z' | strftime((_aaph.now | int) or (now().strftime('%s') | int)) }} &middot; read-only checks; nothing was changed</div>
+<div class="tiles">
+  <div class="tile FAIL"><b>{{ counts.FAIL }}</b>FAIL</div>
+  <div class="tile WARN"><b>{{ counts.WARN }}</b>WARN</div>
+  <div class="tile PASS"><b>{{ counts.PASS }}</b>PASS</div>
+</div>
+<div class="bar">
+  <button type="button" data-show="all" aria-pressed="true">All</button>
+  <button type="button" data-show="bad" aria-pressed="false">FAIL and WARN only</button>
+  <button type="button" data-open="1">Open all</button>
+  <button type="button" data-open="0">Close all</button>
+</div>
+{% for area, rows in _aaph_rows | aap_health_by_area(_aaph_areas) %}
+{% set c = rows | aap_health_counts %}
+<details {{ 'open' if c.FAIL or c.WARN else '' }}>
+  <summary><span class="badge {{ 'FAIL' if c.FAIL else 'WARN' if c.WARN else 'PASS' }}">{{ 'FAIL' if c.FAIL else 'WARN' if c.WARN else 'PASS' }}</span>
+    {{ area | e }} <span class="n">{{ c.FAIL }} fail, {{ c.WARN }} warn, {{ c.PASS }} pass</span></summary>
+  <div class="wrap"><table>
+    <thead><tr><th>Status</th><th>Check</th><th>Detail</th><th>Hint</th></tr></thead>
+    <tbody>
+{% for r in rows %}
+      <tr class="{{ r.status }}"><td data-k="{{ {'FAIL': 0, 'WARN': 1, 'PASS': 2}[r.status] | default(1) }}"><span class="badge {{ r.status }}">{{ r.status }}</span></td>
+        <td>{{ r.check | e }}</td><td class="detail">{{ r.detail | e }}</td><td class="hint">{{ r.hint | e }}</td></tr>
+{% endfor %}
+    </tbody>
+  </table></div>
+</details>
+{% endfor %}
+<footer>site-automation &middot; playbooks/aap_health_check.yml &middot; the same results as JSON beside this file</footer>
+</main>
+<script>
+(function () {
+  document.querySelectorAll("th").forEach(function (th, i) {
+    th.addEventListener("click", function () {
+      var tb = th.closest("table").tBodies[0], col = th.cellIndex, up = th.dataset.dir !== "up";
+      th.dataset.dir = up ? "up" : "down";
+      var key = function (tr) { var td = tr.cells[col]; return td.dataset.k !== undefined ? td.dataset.k : td.textContent.toLowerCase(); };
+      Array.prototype.slice.call(tb.rows).sort(function (a, b) {
+        var x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * (up ? 1 : -1);
+      }).forEach(function (tr) { tb.appendChild(tr); });
+    });
+  });
+  document.querySelectorAll("button[data-show]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var bad = b.dataset.show === "bad";
+      document.querySelectorAll("button[data-show]").forEach(function (o) { o.setAttribute("aria-pressed", o === b ? "true" : "false"); });
+      document.querySelectorAll("tbody tr.PASS").forEach(function (tr) { tr.classList.toggle("hide", bad); });
+    });
+  });
+  document.querySelectorAll("button[data-open]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("details").forEach(function (d) { d.open = b.dataset.open === "1"; });
+    });
+  });
+})();
+</script>
+</body>
+</html>

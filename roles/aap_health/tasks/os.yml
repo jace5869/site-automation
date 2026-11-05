@@ -1,0 +1,90 @@
+---
+# Memory, swap, load, OOM kills, disks and inodes, time, DNS, the rootless prerequisites, SELinux and fapolicyd
+# denials, dnf history. Read-only.
+- name: AAP health | OS
+  vars:
+    _aaph_disk: "{{ (aap_health_disk_paths + [_aaph.graphroot, _aaph.pg_data]) | select | unique | list }}"
+  block:
+    - name: AAP health | OS - memory, load, disks, time, DNS, rootless settings
+      ansible.builtin.shell:
+        cmd: |
+          T={{ aap_health_cmd_timeout | int }}
+          echo "@@@ meminfo"; cat /proc/meminfo
+          echo "@@@ loadavg"; cat /proc/loadavg
+          echo "@@@ nproc"; nproc
+          echo "@@@ df"
+          for p in {{ _aaph_disk | map('quote') | join(' ') }}; do echo "### $p"; timeout "$T" df -P -k "$p" 2>&1 | tail -n 1; done
+          echo "@@@ dfi"
+          for p in {{ _aaph_disk | map('quote') | join(' ') }}; do echo "### $p"; timeout "$T" df -P -i "$p" 2>&1 | tail -n 1; done
+          echo "@@@ chrony"; timeout "$T" chronyc -n tracking 2>&1; echo "@@@rc $?"
+          echo "@@@ timedatectl"; timedatectl show -p NTPSynchronized -p NTP 2>&1
+          echo "@@@ fqdn"; echo {{ (aap_health_fqdn or _aaph.fqdn) | quote }}
+          echo "@@@ dns"; timeout "$T" getent ahosts {{ (aap_health_fqdn or _aaph.fqdn) | quote }} 2>&1; echo "@@@rc $?"
+          echo "@@@ linger"; loginctl show-user {{ aap_health_user | quote }} -p Linger 2>&1
+          echo "@@@ userns"; cat /proc/sys/user/max_user_namespaces 2>&1
+          echo "@@@ subuid"; grep -E "^({{ aap_health_user }}|{{ _aaph.uid or 'x' }}):" /etc/subuid 2>&1
+          echo "@@@ subgid"; grep -E "^({{ aap_health_user }}|{{ _aaph.uid or 'x' }}):" /etc/subgid 2>&1
+          echo "@@@ getenforce"; getenforce 2>&1
+          exit 0
+      changed_when: false
+      check_mode: false
+      become: "{{ _aaph_become }}"            # as the AAP account: its podman storage (a home root may not read)
+      become_user: "{{ aap_health_user }}"
+      environment: "{{ _aaph_env }}"
+      register: _aaph_os_user
+
+    - name: AAP health | OS - root-only reads (no sudo = reported, the rest goes on)
+      block:
+        - name: AAP health | OS - as root (OOM kills, SELinux mapping and denials, fapolicyd denials, dnf history)
+          ansible.builtin.shell:
+            cmd: |
+              T={{ aap_health_cmd_timeout | int }}
+              echo "@@@ oom"
+              timeout "$T" journalctl -k --since=-24h --no-pager -q 2>&1 | grep -Ei 'out of memory|oom-kill|killed process' | tail -n 200
+              # as root: a STIG chrony.conf has cmdport 0, so only root reaches chronyd (its socket)
+              echo "@@@ chrony"; timeout "$T" chronyc -n tracking 2>&1; echo "@@@rc $?"
+              echo "@@@ selogin"; timeout "$T" semanage login -l 2>&1; echo "@@@rc $?"
+              echo "@@@ avc"; timeout "$T" ausearch -m AVC -ts today -i 2>&1 | tail -n 20000; echo "@@@rc ${PIPESTATUS[0]}"
+              echo "@@@ fanotify"; timeout "$T" ausearch -m FANOTIFY -ts today -i 2>&1 | tail -n 20000; echo "@@@rc ${PIPESTATUS[0]}"
+              echo "@@@ fapolicyd"; systemctl is-active fapolicyd 2>&1
+              echo "@@@ dnf"; timeout "$T" dnf -q history list 2>&1 | head -n 12
+              exit 0
+            executable: /bin/bash
+          changed_when: false
+          check_mode: false
+          become: true
+          register: _aaph_os_root
+          failed_when: false
+      rescue:
+        - name: AAP health | OS - no root
+          ansible.builtin.set_fact:
+            _aaph_os_root: {rc: 1, stdout: ""}
+
+    - name: AAP health | OS - results
+      ansible.builtin.set_fact:
+        _aaph_rows: "{{ _aaph_rows + (_aaph_os_user.stdout | aap_health_os(_aaph_os_root.stdout | default('')
+                        if _aaph_os_root.rc | default(1) == 0 else '', _aaph_cfg)) }}"
+      vars:
+        _aaph_cfg:
+          user: "{{ aap_health_user }}"
+          now: "{{ _aaph.now }}"
+          fqdn: "{{ aap_health_fqdn or _aaph.fqdn }}"
+          top: "{{ aap_health_top | int }}"
+          mem_warn_mb: "{{ aap_health_mem_warn_mb | float }}"
+          mem_fail_mb: "{{ aap_health_mem_fail_mb | float }}"
+          swap_warn_pct: "{{ aap_health_swap_warn_pct | float }}"
+          swap_fail_pct: "{{ aap_health_swap_fail_pct | float }}"
+          load_warn: "{{ aap_health_load_warn | float }}"
+          load_fail: "{{ aap_health_load_fail | float }}"
+          disk_warn_pct: "{{ aap_health_disk_warn_pct | int }}"
+          disk_fail_pct: "{{ aap_health_disk_fail_pct | int }}"
+          disk_labels: "{{ {_aaph.graphroot: 'podman storage', _aaph.pg_data: 'postgres data'} | dict2items | selectattr('key') | items2dict }}"
+          time_warn_s: "{{ aap_health_time_warn_s | float }}"
+          time_fail_s: "{{ aap_health_time_fail_s | float }}"
+          selinux_users_ok: "{{ aap_health_selinux_users_ok }}"
+          dnf_recent_days: "{{ aap_health_dnf_recent_days | float }}"
+  rescue:
+    - name: AAP health | OS - the check could not run
+      ansible.builtin.set_fact:
+        _aaph_rows: "{{ _aaph_rows + [{'area': 'os', 'check': 'OS checks', 'status': 'FAIL',
+                        'detail': ansible_failed_result.msg | default('failed') | string | truncate(400), 'hint': 'Run with -vvv'}] }}"

@@ -1,0 +1,65 @@
+---
+# The gateway proxy's 5xx and slow requests, controller web and task errors, the gateway, hub and EDA errors, over
+# aap_health_log_since. Read-only (podman logs).
+- name: AAP health | logs
+  vars:
+    _aaph_web_grep: "{{ aap_health_log_web_patterns.values() | join('|') }}"
+    _aaph_task_grep: "{{ aap_health_log_task_patterns.values() | join('|') }}"
+    _aaph_other_grep: "{{ aap_health_log_other_patterns.values() | join('|') }}"
+  block:
+    - name: AAP health | logs - podman logs --since {{ aap_health_log_since }} (as {{ aap_health_user }})
+      ansible.builtin.shell:
+        cmd: |
+          T={{ aap_health_cmd_timeout | int }}
+          W={{ aap_health_log_since | quote }}
+          # the last M lines (matching pat; "" = all), after "@@@count N" = how many matched
+          # (the pattern through the environment: awk -v would turn its \[ into [)
+          grab() { PAT="$2" awk -v m="$1" 'BEGIN { pat = ENVIRON["PAT"] } (pat == "" || $0 ~ pat) { n++; a[n % m] = $0 }
+            END { print "@@@count " n + 0; s = (n > m) ? n - m + 1 : 1; for (i = s; i <= n; i++) print a[i % m] }'; }
+          {% if _aaph.proxy_container %}
+          echo "@@@ proxy"; timeout "$T" podman logs --since "$W" {{ _aaph.proxy_container | quote }} 2>&1 | grab {{ aap_health_log_proxy_max_lines | int }} ""; echo "@@@rc ${PIPESTATUS[0]}"
+          {% endif %}
+          {% if _aaph.web_container %}
+          echo "@@@ web"; timeout "$T" podman logs --since "$W" {{ _aaph.web_container | quote }} 2>&1 | grab {{ aap_health_log_match_max | int }} {{ _aaph_web_grep | quote }}; echo "@@@rc ${PIPESTATUS[0]}"
+          {% endif %}
+          {% if _aaph.task_container %}
+          echo "@@@ task"; timeout "$T" podman logs --since "$W" {{ _aaph.task_container | quote }} 2>&1 | grab {{ aap_health_log_match_max | int }} {{ _aaph_task_grep | quote }}; echo "@@@rc ${PIPESTATUS[0]}"
+          {% endif %}
+          {% for c in _aaph.other_log_containers %}
+          echo "@@@ other:{{ c }}"; timeout "$T" podman logs --since "$W" {{ c | quote }} 2>&1 | grab {{ aap_health_log_match_max | int }} {{ _aaph_other_grep | quote }}; echo "@@@rc ${PIPESTATUS[0]}"
+          {% endfor %}
+          exit 0
+        executable: /bin/bash
+      changed_when: false
+      check_mode: false
+      become: "{{ _aaph_become }}"
+      become_user: "{{ aap_health_user }}"
+      environment: "{{ _aaph_env }}"
+      no_log: true                     # thousands of log lines: kept out of the job's events (the results below show them)
+      register: _aaph_logs
+
+    - name: AAP health | logs - results
+      ansible.builtin.set_fact:
+        _aaph_rows: "{{ _aaph_rows + (_aaph_logs.stdout | aap_health_logs(_aaph_cfg)) }}"
+      vars:
+        _aaph_cfg:
+          user: "{{ aap_health_user }}"
+          since: "{{ aap_health_log_since }}"
+          timeout: "{{ aap_health_cmd_timeout | int }}"
+          top: "{{ aap_health_top | int }}"
+          proxy: "{{ _aaph.proxy_container }}"
+          web: "{{ _aaph.web_container }}"
+          task: "{{ _aaph.task_container }}"
+          envoy_regex: "{{ aap_health_envoy_regex }}"
+          slow_ms: "{{ aap_health_slow_ms | int }}"
+          slow_max: "{{ aap_health_slow_max | int }}"
+          fivexx_fail: "{{ aap_health_5xx_fail | int }}"
+          web_patterns: "{{ aap_health_log_web_patterns }}"
+          web_fail: "{{ aap_health_log_web_fail }}"
+          task_patterns: "{{ aap_health_log_task_patterns }}"
+          other_patterns: "{{ aap_health_log_other_patterns }}"
+  rescue:
+    - name: AAP health | logs - the check could not run
+      ansible.builtin.set_fact:
+        _aaph_rows: "{{ _aaph_rows + [{'area': 'logs', 'check': 'log checks', 'status': 'FAIL',
+                        'detail': ansible_failed_result.msg | default('failed') | string | truncate(400), 'hint': 'Run with -vvv'}] }}"

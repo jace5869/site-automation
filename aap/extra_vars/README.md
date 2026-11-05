@@ -12,6 +12,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 
 | Job template | Playbook | File |
 |---|---|---|
+| AAP - health check | `playbooks/aap_health_check.yml` | [aap_health_check.yml](aap_health_check.yml) |
 | AAP - incident document surveys | `playbooks/incident_docs_survey.yml` | [incident_docs_survey.yml](incident_docs_survey.yml) |
 | AAP - report email question | `playbooks/aap_email_question.yml` | [aap_email_question.yml](aap_email_question.yml) |
 | AAP - set execution environment | `playbooks/aap_ee.yml` | [aap_ee.yml](aap_ee.yml) |

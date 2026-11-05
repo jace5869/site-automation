@@ -27,6 +27,7 @@ own `playbooks/group_vars/all.yml` keeps its old settings until you comment them
 |---|---|---|
 | Health check | `playbooks/health_check.yml` | read-only checks, picked per run: disk (with days-until-full), mounts, services, performance, time, network, logging, SELinux, fapolicyd, auditd, accounts, certificates, trust stores (`trust`: a compromised or dropped CA still trusted), patching, MariaDB / MySQL (`mariadb`, `mysql` or `database`), podman containers (`containers`: root's and every user's, found by themselves). Findings in plain words, each with a command to look further; fails hosts with findings so a workflow can react |
 | **Database health - MariaDB / MySQL** | `playbooks/database_health.yml` | **the database check on its own, for MariaDB and MySQL (5.7, 8.0, 8.4), installed on the host or in podman containers** (one, several, found automatically, rootless): running, connections, long queries, replication, Galera and Group Replication, log errors, disk. Read-only; fails hosts with findings ([docs/MARIADB.md](docs/MARIADB.md)) |
+| **AAP - health check** | `playbooks/aap_health_check.yml` | **read-only, for a containerized AAP 2.5+ host** (rootless podman, all components on one host), from AAP or from the command line on the host when AAP is down: OS, every AAP container and unit, the logs (the gateway proxy's 5xx and slow requests, HARAKIRI), the database (host variables per inventory), the API (instances, stuck jobs, cleanup jobs, each inventory's hosts page timed), receptor, certificates; PASS / WARN / FAIL with a hint, an HTML and a JSON report ([docs/AAP_HEALTH_CHECK.md](docs/AAP_HEALTH_CHECK.md)) |
 | Troubleshoot | `playbooks/troubleshoot.yml` | on demand: the first commands an admin runs for a kind of problem (disk, performance, service, network, SELinux, fapolicyd, login, time, logs, MariaDB / MySQL), each explained, plus the matching checks |
 | **Log analysis** | `playbooks/log_analysis.yml`, `vm_log_analysis.yml` | point it at a group of servers (Linux, Windows, a vCenter appliance), or at vCenter and its ESXi hosts through the API (no SSH): their warning and error log lines grouped into patterns across hosts, and ACT's likely cause, fix and confidence for the top ones; profiles switch on a product's logs with one word (`mid_server`, `iis`, `sql_server`, `nginx`, `vcsa` ...); a report, emailed ([docs/LOG_ANALYSIS.md](docs/LOG_ANALYSIS.md)) |
 | Certificate report | `playbooks/cert_report.yml` | every certificate on every host (files, keystores, TLS endpoints) in one table, soonest expiry first; Satellite left out (`cert_skip_hosts`, `cert_skip_groups`) |
@@ -77,6 +78,45 @@ own `playbooks/group_vars/all.yml` keeps its old settings until you comment them
 | AAP - report email question | `playbooks/aap_email_question.yml` | adds an optional **Also email the report to** box to every report template's survey (and their workflows) through AAP's API: whoever launches a report can send that run to more people, on top of the template's usual recipients ([docs/EMAIL_REPORTS.md](docs/EMAIL_REPORTS.md), "Also email the report to") |
 | ACT for Windows - install | `playbooks/win_act_install.yml` | ACT on the Windows servers in `C:\ProgramData\act`: locked down to Administrators and SYSTEM, unblocked, SHA256-checked every run |
 
+## AAP health check
+
+*AAP - health check* (`playbooks/aap_health_check.yml`) is a read-only look at a containerized AAP host. Every check
+gives PASS, WARN or FAIL with a detail and a hint. The HTML and JSON reports go to `/home/ansible/aap-health/` on the
+host. It restarts, changes and installs nothing, and no check fails the job. The full guide is
+[docs/AAP_HEALTH_CHECK.md](docs/AAP_HEALTH_CHECK.md).
+
+**On the AAP host** (works when AAP is down), as the AAP account, from a copy of this repository:
+
+```bash
+cd ~/site-automation
+ansible-playbook -i localhost, -c local -e target=localhost playbooks/aap_health_check.yml \
+  -K -e @~/aap-health.vault.yml --ask-vault-pass                # add --tags db,api for some areas only
+```
+
+- `-K` is the sudo password, for the root-only reads (OOM kills, AVC and fapolicyd denials, dnf history).
+- `~/aap-health.vault.yml` (made with `ansible-vault create`) holds `aap_username` and `aap_password`, for the API checks.
+- The tags are `os`, `containers`, `logs`, `db`, `api`, `receptor` and `certs`.
+
+**Settings you may set:**
+
+- `aap_health_focus_inventories: [8]`: inventories always reported.
+- `aap_url`: when the gateway refuses `https://localhost`.
+- `aap_health_inventory_file`: when the installer inventory is not `inventory-growth` in the AAP account's home.
+- `aap_health_log_since: 2h`.
+- `aap_health_email: false`: no email (by default it is emailed to `report_email_to`, like the other reports).
+- `aap_health_web: false`: keeps it off the report website (it is a page there like the other reports when `report_web_dest` is set).
+
+Every setting is in [docs/VARIABLES_REFERENCE.md](docs/VARIABLES_REFERENCE.md#aap_health).
+
+**As an AAP job template:**
+
+- the playbook `playbooks/aap_health_check.yml`;
+- the inventory with your AAP host (the group `aap_hosts`, or `target` / a Limit);
+- a Machine credential that logs in as `ansible`, with sudo;
+- a Red Hat Ansible Automation Platform credential (or the vaulted `aap_username` / `aap_password`).
+
+The copy-ready Variables are in `aap/extra_vars/aap_health_check.yml`.
+
 ## Documentation
 
 | Doc | For |
@@ -93,6 +133,7 @@ own `playbooks/group_vars/all.yml` keeps its old settings until you comment them
 | [docs/NETAPP.md](docs/NETAPP.md) | the NetApp ONTAP health report: the read-only ONTAP account, the credential, the template, every section, settings and troubleshooting |
 | [docs/UCS.md](docs/UCS.md) | the Cisco UCS inventory: the read-only UCS Manager account, the credential, the template, every section and sheet, settings and troubleshooting |
 | [docs/INCIDENT_DOCS.md](docs/INCIDENT_DOCS.md) | the outage AAR and SOP Word documents: the two templates and the survey job, what the documents hold, ACT's tidy and suggestions, who gets them, settings and troubleshooting |
+| [docs/AAP_HEALTH_CHECK.md](docs/AAP_HEALTH_CHECK.md) | the read-only AAP health check: what it checks, why an inventory's Hosts tab can return 503, running it on the AAP host or as a job template, settings, what to do when something is wrong |
 | [docs/EVALUATE_STIG_UPDATE.md](docs/EVALUATE_STIG_UPDATE.md) | Evaluate-STIG on the RHEL hosts updated from the zip in your own repository: what it checks, the answer files carried over, the quick run and the way back, setting it up |
 | [docs/HORIZON.md](docs/HORIZON.md) | the Horizon 8 (VDI) jobs: the service account and its Horizon role, the credential, the templates and surveys, the broken desktops and image push workflows step by step, what is not yet tried on a real Horizon |
 | [docs/MAIL_RELAY.md](docs/MAIL_RELAY.md) | the mail relay whitelist: the format job (one address per line, named), the add and remove workflows with their surveys, starting them from Orchestrator, what is refused |

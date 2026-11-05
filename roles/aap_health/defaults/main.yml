@@ -1,0 +1,135 @@
+---
+# AAP HEALTH CHECK (playbooks/aap_health_check.yml): a read-only look at a containerized AAP 2.5+ host - the OS, the
+# rootless containers and their systemd user units, the logs, the controller's database, the controller and gateway
+# API, receptor and the certificates. Every check gives PASS, WARN or FAIL with a detail and a hint; an HTML and a JSON
+# report are written on the host. Nothing is restarted, changed or installed. docs/AAP_HEALTH_CHECK.md
+
+# The account the AAP containers run as (rootless podman, systemd --user units).
+aap_health_user: ansible
+# The installer's inventory file (DB name and user, certificate paths are read from it). Empty = found by name
+# (aap_health_inventory_name) in that account's home, at most aap_health_inventory_depth folders down.
+aap_health_inventory_file: ""
+aap_health_inventory_name: inventory-growth # the installer inventory file name looked for
+aap_health_inventory_depth: 2            # how many folders down from the home it is looked for
+# The systemd user units that make up AAP (each runs the container of its name, or the --name in the unit).
+aap_health_unit_regex: '^(automation-.*|postgresql.*|redis.*|receptor.*)\.service$'
+aap_health_cmd_timeout: 60               # seconds any one command may take (podman, psql, ausearch...) before it is given up
+
+# Controller and gateway API. aap_username / aap_password: vault them, or attach a "Red Hat Ansible Automation
+# Platform" credential (its CONTROLLER_USERNAME / CONTROLLER_PASSWORD are read). The calls are made from the AAP host.
+aap_url: https://localhost
+aap_username: "{{ lookup('ansible.builtin.env', 'CONTROLLER_USERNAME') or lookup('ansible.builtin.env', 'AAP_USERNAME') }}" # the API login (an AAP administrator or auditor); vault it
+aap_password: "{{ lookup('ansible.builtin.env', 'CONTROLLER_PASSWORD') or lookup('ansible.builtin.env', 'AAP_PASSWORD') }}" # its password; vault it
+aap_token: "{{ lookup('ansible.builtin.env', 'CONTROLLER_OAUTH_TOKEN') or lookup('ansible.builtin.env', 'AAP_TOKEN') }}"   # an API token instead of the username and password (sent as a Bearer token)
+# Check the gateway's HTTPS certificate. Its own setting, not aap_validate_certs: an AAP credential on the template sets
+# that one (its "Verify SSL"), and a certificate never names localhost - with aap_url https://localhost it can only fail.
+aap_health_validate_certs: false
+aap_health_api_timeout: 60               # seconds for one API call
+aap_health_api_slow_s: 5                 # an inventory's hosts/?page_size=100 slower than this (or not 200): FAIL
+aap_health_api_time_inventories: []      # inventory IDs whose hosts page is timed; [] = every inventory (up to aap_health_api_time_max)
+aap_health_api_time_max: 50              # inventories timed at most
+aap_health_focus_inventories: []         # inventory IDs always reported (db and api), even when fine, e.g. [8]
+aap_health_api_light_warn_s: 1.0        # the smallest requests (ping, me, config) slower than this: WARN
+aap_health_api_light_fail_s: 5.0        # slower than this (or not 200): FAIL
+aap_health_stuck_minutes: 15             # pending or waiting longer: FAIL
+aap_health_running_hours: 4              # running longer: WARN
+aap_health_cleanup_max_days: 8           # a cleanup system job (activity stream, job details) not run for longer: WARN
+aap_health_capacity_warn_pct: 10         # an instance with less capacity left: WARN
+aap_health_last_seen_minutes: 10         # an instance not seen for longer: WARN
+
+# OS
+aap_health_mem_warn_mb: 2048             # MemAvailable below: WARN
+aap_health_mem_fail_mb: 1024             # below: FAIL
+aap_health_swap_warn_pct: 25             # swap used at or above: WARN
+aap_health_swap_fail_pct: 75             # at or above: FAIL
+aap_health_load_warn: 1.0                # 5-minute load per CPU
+aap_health_load_fail: 2.0                # at or above: FAIL
+aap_health_disk_warn_pct: 80             # space and inodes
+aap_health_disk_fail_pct: 90             # at or above: FAIL
+aap_health_disk_paths: [/, /home, /var, /tmp]   # also the podman storage and the postgres data folder, found on the host
+aap_health_time_warn_s: 1.0              # clock offset (chronyc tracking)
+aap_health_time_fail_s: 5.0              # at or above (or not synchronised): FAIL
+aap_health_selinux_users_ok: [unconfined_u, staff_u, sysadm_u]   # SELinux users rootless podman works as
+aap_health_dnf_recent_days: 7            # a dnf transaction this recent, and fapolicyd denials today: WARN
+aap_health_fqdn: ""                      # the host's name to resolve; empty = hostname -f
+
+# Containers
+aap_health_container_mem_warn_mb: 4096   # one container using more: WARN
+aap_health_container_mem_fail_mb: 8192   # one container using more: FAIL
+aap_health_min_uptime_minutes: 10        # a container up for less: WARN (restarted?)
+aap_health_restart_warn: 3               # restarts (podman or systemd) at or above: WARN
+aap_health_dangling_warn: 10             # dangling images or volumes at or above: WARN
+
+# Logs
+aap_health_log_since: 2h                 # podman logs --since (2h, 30m, 1d)
+aap_health_log_proxy_max_lines: 50000    # gateway proxy lines read at most (the last ones)
+aap_health_log_match_max: 2000           # matching lines kept per container at most
+aap_health_envoy_regex: ""               # the proxy's access-log line, if not Envoy's default or JSON: named groups path, code, dur, up
+aap_health_slow_ms: 5000                 # a proxied request slower than this (upstream time): listed
+aap_health_slow_max: 15                  # slowest requests listed
+aap_health_5xx_fail: 20                  # 5xx responses in the window at or above: FAIL (any: WARN)
+aap_health_log_web_patterns:             # controller-web: name -> regex (case counts; awk-compatible)
+  HARAKIRI: HARAKIRI
+  worker killed: worker [0-9]+ killed|killed.*worker|SIGKILL
+  Traceback: Traceback
+  OperationalError: OperationalError
+  timeout: "[Tt]imeout|timed out"
+aap_health_log_web_fail: [HARAKIRI, worker killed]   # any of these: FAIL (others: WARN)
+aap_health_log_task_patterns:            # controller-task: name -> regex (all: WARN)
+  dispatcher error: "(ERROR|Exception).*dispatch|dispatch.*(ERROR|Exception)"
+  callback receiver error: "(ERROR|Exception).*callback|callback.*(ERROR|Exception|[Ff]ailed)"
+  Traceback: Traceback
+aap_health_log_other_patterns:           # the gateway, hub and EDA containers: lines logged at level ERROR, Tracebacks
+  Traceback: Traceback
+  ERROR: '\[ERROR\]| ERROR |^ERROR|level=error'
+aap_health_proxy_match: gateway-proxy    # container names (regex) of the gateway proxy, controller web and task
+aap_health_web_match: controller-web     # the controller web container
+aap_health_task_match: controller-task   # the controller task container
+aap_health_other_log_match: '^automation-(gateway|hub|eda)' # the containers whose Tracebacks and ERRORs are counted
+
+# Database (podman exec into the postgres container; peer login, else the installer inventory's controller_pg_password)
+aap_health_pg_container: ""              # empty = the container whose name matches aap_health_pg_match
+aap_health_pg_match: postgres            # the postgres container's name (regex)
+aap_health_pg_data_dest: /var/lib/pgsql/data   # the data folder inside the container (its host folder is found from the mount)
+aap_health_db_statement_timeout: 120     # seconds per query
+aap_health_db_vars_avg_warn_kb: 10       # host variables per inventory: average / largest host
+aap_health_db_vars_avg_fail_kb: 50       # average above: FAIL
+aap_health_db_vars_max_warn_kb: 100      # the largest host above: WARN
+aap_health_db_vars_max_fail_kb: 500      # above: FAIL
+aap_health_db_host_jobs_warn: 5000       # job host summaries of one host above (the Hosts list reads each host's recent jobs): WARN
+aap_health_db_host_groups_warn: 100      # groups one host is in, above: WARN (an inventory source's keyed groups can put a host in hundreds)
+aap_health_db_dead_min: 10000            # a table with more dead rows than this (and 20% of its live ones): WARN (autovacuum behind)
+aap_health_db_facts_avg_warn_kb: 100     # ansible_facts per host, average
+aap_health_db_size_warn_gb: 50           # the database larger: WARN
+aap_health_db_conn_warn_pct: 80          # of max_connections
+aap_health_db_conn_fail_pct: 95          # at or above: FAIL
+aap_health_db_long_s: 30                 # a query running longer: WARN (aap_health_db_long_fail_s: FAIL)
+aap_health_db_long_fail_s: 300           # a query running longer: FAIL
+aap_health_db_idle_tx_s: 60              # idle in transaction longer: WARN
+aap_health_db_jobevent_warn: 20000000    # job event rows (estimate) above: WARN
+aap_health_db_job_keep_days: 130         # the oldest job older than this: WARN (Cleanup Job Details keeps 120 days by default)
+
+# Receptor
+aap_health_receptor_container: ""        # empty = the container whose name matches aap_health_receptor_match
+aap_health_receptor_match: receptor      # the receptor container's name (regex)
+aap_health_receptorctl_containers: []    # where receptorctl is run (the first that has it); [] = the receptor container, then controller task and web
+aap_health_receptor_socket: ""           # empty = read from the container's receptor.conf (control-service filename)
+
+# Certificates: the installer inventory's *_tls_cert files, the .cert/.crt/.pem files the containers mount, and
+# these folders (in the AAP account's home) searched, plus aap_health_cert_files
+aap_health_cert_dirs: [aap]
+aap_health_cert_files: []                # more certificate files on the AAP host (full paths)
+aap_health_cert_warn_days: 30            # expires in fewer days: WARN
+aap_health_cert_fail_days: 7             # in fewer days (or expired): FAIL
+aap_health_trust_cas: [DoD Root CA 3, DoD Root CA 4, DoD Root CA 5, DoD Root CA 6]   # labels that must be in the system trust store; [] = not checked
+
+# Output
+aap_health_report_dir: ""                # on the AAP host; empty = <the AAP account's home>/aap-health
+aap_health_top: 10                       # top offenders listed per check
+# Email the report like the other reports: to report_email_to, through the mail relay in all.yml (report_email_from,
+# report_email_smtp_host ...; docs/EMAIL_REPORTS.md) - FAIL and WARN first, then every area, the sortable HTML attached.
+# Nothing is sent while report_email_to is empty. false = never emailed (the launch box "Also email the report to" still is).
+aap_health_email: true
+# Put the report on the report website as well (report_web_dest in all.yml, like the other reports; docs/WEB_REPORTS.md):
+# FAIL and WARN first, then every area. Nothing happens while report_web_dest is empty. false = never on the website.
+aap_health_web: true

@@ -1,0 +1,6 @@
+---
+# The AAP account's podman and systemctl --user: become that account unless this already runs as it.
+_aaph_become: "{{ _aaph.me | default('') != aap_health_user }}"
+_aaph_env:
+  XDG_RUNTIME_DIR: "/run/user/{{ _aaph.uid | default('') }}"
+_aaph_areas: [setup, os, containers, logs, db, api, receptor, certs]

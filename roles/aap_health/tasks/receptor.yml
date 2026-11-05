@@ -1,0 +1,70 @@
+---
+# receptorctl status inside the receptor container: nodes, routes, work types. The socket is read from the
+# container's receptor.conf (control-service filename) unless aap_health_receptor_socket names it. Read-only.
+- name: AAP health | receptor
+  when: _aaph.receptor_container | length > 0
+  vars:
+    _aaph_rctl: "{{ aap_health_receptorctl_containers or ([_aaph.receptor_container, _aaph.task_container, _aaph.web_container] | select | list) }}"
+    # where each container has receptor's socket (a controller container mounts it at its own path)
+    _aaph_rsock: >-
+      {%- set out = {} -%}
+      {%- for c, ms in _aaph.mounts.items() -%}
+      {%-   for m in ms if m[1] is search('receptor') and m[1] is search('\.sock$') -%}{%- set _ = out.update({c: m[1]}) -%}{%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+  block:
+    - name: AAP health | receptor - receptorctl status (as {{ aap_health_user }})
+      ansible.builtin.shell:
+        cmd: |
+          T={{ aap_health_cmd_timeout | int }}
+          R={{ _aaph.receptor_container | quote }}
+          S={{ aap_health_receptor_socket | quote }}
+          if [ -z "$S" ]; then
+            {% raw %}conf=$(timeout "$T" podman inspect "$R" --format '{{join .Config.Cmd " "}}' 2>/dev/null | grep -oE -- '--config[= ][^ ]+' | sed -E 's/--config[= ]//'){% endraw %} || true
+            conf=${conf:-/etc/receptor/receptor.conf}
+            S=$(timeout "$T" podman exec "$R" cat "$conf" 2>/dev/null | awk '/control-service/ {c = 1} c && /filename:/ {print $2; exit}' | tr -d "'\"")
+            S=${S:-/run/receptor/receptor.sock}
+          fi
+          echo "@@@ socket"; echo "$S"
+          # receptorctl: in the receptor container, else in the controller's (which reach receptor's socket)
+          W=""
+          for C in {{ _aaph_rctl | map('quote') | join(' ') }}; do
+            if timeout "$T" podman exec "$C" sh -c 'command -v receptorctl' >/dev/null 2>&1; then W="$C"; break; fi
+          done
+          case "$W" in
+          {% for c, p in _aaph_rsock.items() if c != _aaph.receptor_container %}
+            {{ c | quote }}) [ -z {{ aap_health_receptor_socket | quote }} ] && S={{ p | quote }} ;;
+          {% endfor %}
+            *) ;;
+          esac
+          echo "@@@ where"; echo "$W"; echo "@@@ socket2"; echo "$S"
+          echo "@@@ status"
+          if [ -z "$W" ]; then echo "receptorctl is in none of: {{ _aaph_rctl | join(', ') }}"; echo "@@@rc 127"; else
+            out=$(timeout "$T" podman exec "$W" receptorctl --socket "$S" status --json 2>&1); rc=$?
+            # an older receptorctl without --json: its text
+            if [ "$rc" -ne 0 ]; then out=$(timeout "$T" podman exec "$W" receptorctl --socket "$S" status 2>&1); rc=$?; fi
+            echo "$out"; echo "@@@rc $rc"
+          fi
+          exit 0
+      changed_when: false
+      check_mode: false
+      become: "{{ _aaph_become }}"
+      become_user: "{{ aap_health_user }}"
+      environment: "{{ _aaph_env }}"
+      register: _aaph_rcp
+
+    - name: AAP health | receptor - results
+      ansible.builtin.set_fact:
+        _aaph_rows: "{{ _aaph_rows + (_aaph_rcp.stdout | aap_health_receptor({'user': aap_health_user, 'container': _aaph.receptor_container})) }}"
+  rescue:
+    - name: AAP health | receptor - the check could not run
+      ansible.builtin.set_fact:
+        _aaph_rows: "{{ _aaph_rows + [{'area': 'receptor', 'check': 'mesh status', 'status': 'FAIL',
+                        'detail': ansible_failed_result.msg | default('failed') | string | truncate(400), 'hint': 'Run with -vvv'}] }}"
+
+- name: AAP health | receptor - no receptor container found
+  ansible.builtin.set_fact:
+    _aaph_rows: "{{ _aaph_rows + [{'area': 'receptor', 'check': 'mesh status', 'status': 'FAIL',
+                    'detail': 'no container matches ' ~ aap_health_receptor_match,
+                    'hint': 'Set aap_health_receptor_container (podman ps -a as ' ~ aap_health_user ~ ').'}] }}"
+  when: _aaph.receptor_container | length == 0

@@ -1,0 +1,40 @@
+---
+# AAP HEALTH CHECK. Read-only: every command only reads, and none can fail the play - a check that cannot run is
+# itself a FAIL result. Tags: os, containers, logs, db, api (controller and gateway), receptor, certs; finding the
+# install and writing the report always run.
+
+- name: AAP health | find the install
+  ansible.builtin.import_tasks: discover.yml
+  tags: [always]
+
+- name: AAP health | OS
+  ansible.builtin.import_tasks: os.yml
+  tags: [os]
+
+- name: AAP health | containers
+  ansible.builtin.import_tasks: containers.yml
+  tags: [containers]
+
+- name: AAP health | logs
+  ansible.builtin.import_tasks: logs.yml
+  tags: [logs]
+
+- name: AAP health | database
+  ansible.builtin.import_tasks: db.yml
+  tags: [db]
+
+- name: AAP health | controller and gateway API
+  ansible.builtin.import_tasks: api.yml
+  tags: [api]
+
+- name: AAP health | receptor
+  ansible.builtin.import_tasks: receptor.yml
+  tags: [receptor]
+
+- name: AAP health | certificates
+  ansible.builtin.import_tasks: certs.yml
+  tags: [certs]
+
+- name: AAP health | report
+  ansible.builtin.import_tasks: report.yml
+  tags: [always]

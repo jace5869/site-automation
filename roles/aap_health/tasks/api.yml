@@ -1,0 +1,134 @@
+---
+# The controller's and gateway's API, called from the AAP host: ping, instances, stuck and long jobs, failed syncs
+# and project updates, the cleanup jobs, the gateway's status - and how long each inventory's hosts page takes, full
+# and with only id,name. Read-only (GET).
+- name: AAP health | API
+  vars:
+    _aaph_basic: "{{ aap_username | default('') | length > 0 and aap_password | default('') | length > 0 }}"
+    _aaph_auth: "{{ _aaph_basic | bool or aap_token | default('') | length > 0 }}"
+    _aaph_base: "{{ aap_url | regex_replace('/+$', '') }}"
+    _aaph_calls:
+      - {key: ping, path: "/api/controller/v2/ping/", auth: false}
+      - {key: gateway_ping, path: "/api/gateway/v1/ping/", auth: false}
+      - {key: instances, path: "/api/controller/v2/instances/?page_size=200", auth: true}
+      - {key: jobs, path: "/api/controller/v2/unified_jobs/?status__in=pending,waiting,running&page_size=200&order_by=created", auth: true}
+      - {key: inventory_sources, path: "/api/controller/v2/inventory_sources/?last_job_failed=true&page_size=200", auth: true}
+      - {key: projects, path: "/api/controller/v2/projects/?last_job_failed=true&page_size=200", auth: true}
+      - {key: system_job_templates, path: "/api/controller/v2/system_job_templates/?page_size=50", auth: true}
+      - {key: inventories, path: "/api/controller/v2/inventories/?page_size=200&order_by=id", auth: true}
+      - {key: gateway_status, path: "/api/gateway/v1/status/", auth: true}
+  block:
+    - name: AAP health | API - read
+      ansible.builtin.uri:
+        url: "{{ _aaph_base }}{{ item.path }}"
+        method: GET
+        url_username: "{{ aap_username if item.auth and _aaph_basic | bool else omit }}"
+        url_password: "{{ aap_password if item.auth and _aaph_basic | bool else omit }}"
+        force_basic_auth: "{{ item.auth and _aaph_basic | bool }}"
+        headers: "{{ {'Authorization': 'Bearer ' ~ aap_token} if item.auth and not _aaph_basic | bool else {} }}"
+        validate_certs: "{{ aap_health_validate_certs | bool }}"
+        timeout: "{{ aap_health_api_timeout | int }}"
+        status_code: "{{ range(100, 600) | list }}"
+        return_content: false
+      loop: "{{ _aaph_calls | selectattr('auth', 'equalto', false) | list + (_aaph_calls | selectattr('auth') | list if _aaph_auth else []) }}"
+      loop_control:
+        label: "{{ item.key }}"
+      check_mode: false
+      no_log: true                     # the password
+      failed_when: false
+      register: _aaph_api
+
+    - name: AAP health | API - the inventories to time
+      ansible.builtin.set_fact:
+        _aaph_time_invs: >-
+          {%- set r = _aaph_api.results | selectattr('item.key', 'equalto', 'inventories') | first | default({}) -%}
+          {%- set want = aap_health_api_time_inventories | map('string') | list -%}
+          {%- set out = [] -%}
+          {%- for i in (r.json | default({})).results | default([]) if not want or (i.id | string) in want -%}
+          {%-   if out | length < aap_health_api_time_max | int -%}
+          {%-     set _ = out.append({'id': i.id, 'name': i.name, 'hosts': i.total_hosts | default('?')}) -%}
+          {%-   endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    # curl, not uri: it gives the time to the millisecond and the answer's size. The login goes in on stdin (curl -K -),
+    # never on its command line.
+    - name: AAP health | API - time each inventory's hosts page (100 hosts, then 1), one at a time
+      ansible.builtin.command:
+        cmd: >-
+          curl -sS -K - -o /dev/null --max-time {{ aap_health_api_timeout | int }} -w '%{http_code} %{time_total} %{size_download}'
+          {{ (_aaph_base ~ '/api/controller/v2/inventories/' ~ item.0.id ~ '/hosts/?page_size=' ~ ('100' if item.1 == 'full' else '1')) | quote }}
+        stdin: |-
+          {% if _aaph_basic | bool %}user = "{{ (aap_username ~ ':' ~ aap_password) | replace('\\', '\\\\') | replace('"', '\\"') }}"
+          {% else %}header = "Authorization: Bearer {{ aap_token | replace('"', '') }}"
+          {% endif %}
+          {{ '' if aap_health_validate_certs | bool else 'insecure' }}
+      loop: "{{ _aaph_time_invs | product(['full', 'slim']) | list }}"
+      loop_control:
+        label: "inventory {{ item.0.id }} {{ item.1 }}"
+      changed_when: false
+      check_mode: false
+      failed_when: false
+      no_log: true
+      register: _aaph_timed
+      when: _aaph_auth | bool
+
+    - name: AAP health | API - the smallest requests timed (ping, me, config)
+      ansible.builtin.command:
+        cmd: >-
+          curl -sS -K - -o /dev/null --max-time {{ aap_health_api_timeout | int }} -w '%{http_code} %{time_total}'
+          {{ (_aaph_base ~ '/api/controller/v2/' ~ item ~ '/') | quote }}
+        stdin: |-
+          {% if _aaph_basic | bool %}user = "{{ (aap_username ~ ':' ~ aap_password) | replace('\\', '\\\\') | replace('"', '\\"') }}"
+          {% else %}header = "Authorization: Bearer {{ aap_token | replace('"', '') }}"
+          {% endif %}
+          {{ '' if aap_health_validate_certs | bool else 'insecure' }}
+      loop: [ping, me, config]
+      changed_when: false
+      check_mode: false
+      failed_when: false
+      no_log: true
+      register: _aaph_light
+      when: _aaph_auth | bool
+
+    - name: AAP health | API - results
+      ansible.builtin.set_fact:
+        _aaph_rows: "{{ _aaph_rows + (_aaph_resp | aap_health_api(_aaph_timings, _aaph_cfg)) }}"
+      vars:
+        _aaph_resp: >-
+          {%- set out = {} -%}
+          {%- for r in _aaph_api.results | default([]) -%}
+          {%-   set _ = out.update({r.item.key: {'status': r.status | default(-1), 'json': r.json | default(none), 'msg': r.msg | default('')}}) -%}
+          {%- endfor -%}
+          {{ out }}
+        _aaph_timings: >-
+          {%- set out = {} -%}
+          {%- for r in _aaph_timed.results | default([]) if r.stdout is defined -%}
+          {%-   set k = r.item.0.id | string -%}
+          {%-   set _ = out.update({k: (out[k] | default(r.item.0)) | combine({r.item.1: r.stdout or ('000 0 0 ' ~ r.stderr | default(''))})}) -%}
+          {%- endfor -%}
+          {{ out.values() | list }}
+        _aaph_cfg:
+          now: "{{ _aaph.now }}"
+          url: "{{ _aaph_base }}"
+          auth: "{{ _aaph_auth | bool }}"
+          focus: "{{ aap_health_focus_inventories | map('string') | list }}"
+          api_slow_s: "{{ aap_health_api_slow_s | float }}"
+          light: >-
+            {{ _aaph_light.results | default([]) | selectattr('stdout', 'defined') | map(attribute='item')
+               | zip(_aaph_light.results | default([]) | selectattr('stdout', 'defined') | map(attribute='stdout')) | list }}
+          light_warn_s: "{{ aap_health_api_light_warn_s | float }}"
+          light_fail_s: "{{ aap_health_api_light_fail_s | float }}"
+          stuck_s: "{{ aap_health_stuck_minutes | int * 60 }}"
+          running_s: "{{ aap_health_running_hours | float * 3600 }}"
+          cleanup_max_days: "{{ aap_health_cleanup_max_days | float }}"
+          capacity_warn_pct: "{{ aap_health_capacity_warn_pct | float }}"
+          last_seen_s: "{{ aap_health_last_seen_minutes | int * 60 }}"
+          cleanup_types: {cleanup_activitystream: activity stream, cleanup_jobs: job details}
+          gw_good: [good, ok, healthy, up, online, ready]
+  rescue:
+    - name: AAP health | API - the check could not run
+      ansible.builtin.set_fact:
+        _aaph_rows: "{{ _aaph_rows + [{'area': 'api', 'check': 'API checks', 'status': 'FAIL',
+                        'detail': 'the API check failed (its calls are hidden: they carry the password)',
+                        'hint': 'curl -k ' ~ aap_url ~ '/api/gateway/v1/ping/'}] }}"

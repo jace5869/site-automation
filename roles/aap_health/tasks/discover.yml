@@ -1,0 +1,100 @@
+---
+# Who runs this, the AAP account, its installer inventory, the AAP units and containers, the mounts. Read-only.
+- name: AAP health | find the install
+  block:
+    - name: AAP health | this login, the clock, the host's name, the AAP account
+      ansible.builtin.shell:
+        cmd: |
+          echo "@@@ me"; id -un
+          echo "@@@ now"; date +%s
+          echo "@@@ fqdn"; hostname -f 2>/dev/null || hostname
+          echo "@@@ passwd"; getent passwd {{ aap_health_user | quote }}
+          exit 0
+      changed_when: false
+      check_mode: false
+      register: _aaph_who
+
+    - name: AAP health | the AAP account's units, containers and installer inventory (as {{ aap_health_user }})
+      ansible.builtin.shell:
+        cmd: |
+          T={{ aap_health_cmd_timeout | int }}
+          h=$(getent passwd "$(id -un)" | cut -d: -f6)
+          echo "@@@ invfiles"
+          f={{ aap_health_inventory_file | quote }}
+          if [ -n "$f" ]; then list="$f"; else
+            list=$(find "$h" -maxdepth {{ aap_health_inventory_depth | int }} -type f -name {{ aap_health_inventory_name | quote }} 2>/dev/null | sort)
+          fi
+          echo "$list"
+          first=$(echo "$list" | head -n 1)
+          echo "@@@ inventory"
+          if [ -n "$first" ]; then cat "$first" 2>&1; echo "@@@rc $?"; fi
+          echo "@@@ units"
+          systemctl --user list-unit-files --type=service --no-legend --no-pager 2>&1
+          echo "@@@ unitnames"
+          for u in $(systemctl --user list-unit-files --type=service --no-legend --no-pager 2>/dev/null | awk '{print $1}' | grep -E {{ aap_health_unit_regex | quote }}); do
+            echo "### $u"
+            systemctl --user cat "$u" 2>/dev/null | grep -E -- '--name[= ]|ContainerName=' | head -n 2
+          done
+          echo "@@@ graphroot"
+          {% raw %}timeout "$T" podman info --format '{{.Store.GraphRoot}}' 2>&1{% endraw %}; echo "@@@rc $?"
+          echo "@@@ mounts"
+          ids=$(timeout "$T" podman ps -aq 2>/dev/null)
+          {% raw %}[ -n "$ids" ] && timeout "$T" podman inspect --format '{{.Name}}{{range .Mounts}} {{.Source}}={{.Destination}}{{end}}' $ids 2>/dev/null{% endraw %} || true
+          exit 0
+      changed_when: false
+      check_mode: false
+      become: "{{ (_aaph_who.stdout | aap_health_sections).me.out | trim != aap_health_user }}"
+      become_user: "{{ aap_health_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ (_aaph_who.stdout | aap_health_sections).passwd.out.split(':')[2] | default('') }}"
+      no_log: true                     # the inventory file holds passwords
+      register: _aaph_inv
+
+    - name: AAP health | what was found
+      ansible.builtin.set_fact:
+        _aaph: "{{ _aaph_who.stdout | aap_health_discover(_aaph_inv.stdout, _aaph_cfg) }}"
+        _aaph_pg_pw: "{{ (_aaph_inv.stdout | aap_health_sections).inventory.out | default('')
+                         | aap_health_inventory_value(['controller_pg_password', 'postgresql_admin_password']) }}"
+      no_log: true
+      vars:
+        _aaph_cfg:
+          user: "{{ aap_health_user }}"
+          inventory_file: "{{ aap_health_inventory_file }}"
+          inventory_name: "{{ aap_health_inventory_name }}"
+          unit_regex: "{{ aap_health_unit_regex }}"
+          fqdn: "{{ aap_health_fqdn }}"
+          pg_container: "{{ aap_health_pg_container }}"
+          pg_match: "{{ aap_health_pg_match }}"
+          pg_data_dest: "{{ aap_health_pg_data_dest }}"
+          receptor_container: "{{ aap_health_receptor_container }}"
+          receptor_match: "{{ aap_health_receptor_match }}"
+          proxy_match: "{{ aap_health_proxy_match }}"
+          web_match: "{{ aap_health_web_match }}"
+          task_match: "{{ aap_health_task_match }}"
+          other_log_match: "{{ aap_health_other_log_match }}"
+
+    - name: AAP health | start the results
+      ansible.builtin.set_fact:
+        _aaph_rows: "{{ _aaph.rows }}"
+
+    - name: AAP health | what was found
+      ansible.builtin.debug:
+        msg:
+          - "running as {{ _aaph.me }}; AAP account {{ aap_health_user }} (uid {{ _aaph.uid or '?' }}, home {{ _aaph.home or '?' }})"
+          - "installer inventory: {{ _aaph.inventory_files | join(', ') or 'not found' }}; database {{ _aaph.db.name }} (user {{ _aaph.db.user }})"
+          - "units: {{ _aaph.units | map(attribute='unit') | join(', ') or 'none' }}"
+          - "postgres {{ _aaph.pg_container or '?' }} (data {{ _aaph.pg_data or '?' }}); receptor {{ _aaph.receptor_container or '?' }};
+             podman storage {{ _aaph.graphroot or '?' }}"
+  rescue:
+    - name: AAP health | finding the install failed
+      ansible.builtin.set_fact:
+        _aaph: "{{ _aaph | default({}) | combine({'me': '', 'uid': '', 'home': '', 'now': 0, 'units': [], 'containers': [], 'mounts': {},
+                   'inventory': {}, 'inventory_files': [], 'graphroot': '', 'pg_container': '', 'pg_data': '', 'receptor_container': '',
+                   'proxy_container': '', 'web_container': '', 'task_container': '', 'other_log_containers': [], 'fqdn': '',
+                   'db': {'name': 'awx', 'user': 'awx', 'port': '5432'}}, recursive=true) }}"
+        _aaph_rows:
+          - area: setup
+            check: find the install
+            status: FAIL
+            detail: "{{ ansible_failed_result.msg | default('failed') | string | truncate(400) }}"
+            hint: "Run with -vvv; the account in aap_health_user must exist and its podman must answer."

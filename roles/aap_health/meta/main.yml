@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: site automation
+  role_name: aap_health
+  description: "Read-only health check of a containerized AAP host (rootless podman): OS, containers, logs, database, API, receptor, certificates; HTML and JSON report."
+  license: MIT
+  min_ansible_version: "2.16"
+dependencies: []

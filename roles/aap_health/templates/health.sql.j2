@@ -1,0 +1,46 @@
+-- AAP health check: read-only queries (the session is read-only and every query has a time limit).
+SET statement_timeout = '{{ aap_health_db_statement_timeout | int }}s';
+SET default_transaction_read_only = on;
+\echo @@@ inventories
+SELECT i.id, replace(i.name, '|', '/'), count(h.id),
+       coalesce(sum(length(h.variables)), 0), coalesce(round(avg(length(h.variables))), 0), coalesce(max(length(h.variables)), 0),
+       coalesce(sum(length(h.ansible_facts::text)), 0), coalesce(max(length(h.ansible_facts::text)), 0)
+  FROM main_inventory i LEFT JOIN main_host h ON h.inventory_id = i.id
+ GROUP BY i.id, i.name ORDER BY 5 DESC;
+\echo @@@ hostjobs
+SELECT h.inventory_id, coalesce(sum(p.n), 0), coalesce(max(p.n), 0)
+  FROM main_host h LEFT JOIN (SELECT host_id, count(*) AS n FROM main_jobhostsummary GROUP BY host_id) p ON p.host_id = h.id
+ GROUP BY h.inventory_id;
+\echo @@@ hostgroups
+SELECT i.id, (SELECT count(*) FROM main_group g WHERE g.inventory_id = i.id), coalesce(max(p.n), 0), coalesce(round(avg(p.n)), 0)
+  FROM main_inventory i LEFT JOIN main_host h ON h.inventory_id = i.id
+  LEFT JOIN (SELECT host_id, count(*) AS n FROM main_group_hosts GROUP BY host_id) p ON p.host_id = h.id
+ GROUP BY i.id;
+\echo @@@ dead
+SELECT relname, n_live_tup, n_dead_tup, coalesce(greatest(last_autoanalyze, last_analyze)::text, ''),
+       coalesce(greatest(last_autovacuum, last_vacuum)::text, '')
+  FROM pg_stat_user_tables
+ WHERE n_dead_tup > {{ aap_health_db_dead_min | int }} AND n_dead_tup > n_live_tup * 0.2 ORDER BY n_dead_tup DESC LIMIT 10;
+\echo @@@ dbsize
+SELECT pg_database_size(current_database());
+\echo @@@ tables
+SELECT relname, pg_total_relation_size(relid), n_live_tup FROM pg_stat_user_tables ORDER BY 2 DESC LIMIT {{ aap_health_top | int }};
+\echo @@@ conns
+SELECT count(*), current_setting('max_connections') FROM pg_stat_activity;
+\echo @@@ long
+SELECT pid, usename, coalesce(datname, ''), state, extract(epoch FROM now() - query_start)::int,
+       left(regexp_replace(replace(query, '|', '/'), '\s+', ' ', 'g'), 300)
+  FROM pg_stat_activity
+ WHERE state NOT IN ('idle') AND state NOT LIKE 'idle in transaction%' AND backend_type = 'client backend'
+   AND query_start < now() - interval '{{ aap_health_db_long_s | int }} seconds' AND pid <> pg_backend_pid()
+ ORDER BY 5 DESC LIMIT 20;
+\echo @@@ idle_tx
+SELECT pid, usename, coalesce(datname, ''), extract(epoch FROM now() - state_change)::int,
+       left(regexp_replace(replace(query, '|', '/'), '\s+', ' ', 'g'), 300)
+  FROM pg_stat_activity WHERE state LIKE 'idle in transaction%' ORDER BY 4 DESC LIMIT 20;
+\echo @@@ jobevents
+SELECT coalesce(sum(c.reltuples) FILTER (WHERE c.reltuples > 0), 0)::bigint, count(c.oid), coalesce(min(c.relname), ''), ''
+  FROM pg_class p LEFT JOIN pg_inherits i ON i.inhparent = p.oid LEFT JOIN pg_class c ON c.oid = i.inhrelid
+ WHERE p.relname = 'main_jobevent';
+\echo @@@ unifiedjobs
+SELECT count(*), coalesce(min(created)::text, '') FROM main_unifiedjob;

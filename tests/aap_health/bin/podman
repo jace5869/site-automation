@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""A stand-in for the AAP host's rootless podman (tests/test_aap_health.py): canned answers, read-only like the real
+checks expect. AAPH_FAKE = the test's folder (certificate files); AAPH_PEER_REFUSE=1 = psql's peer login refused."""
+import json
+import os
+import sys
+
+FAKE = os.environ.get("AAPH_FAKE", "/nonexistent")
+NOW = int(os.environ.get("AAPH_NOW", "1762300000"))
+C = [  # name, state, status, started (s ago), restarts, mounts
+    ("automation-gateway-proxy", "running", "Up 3 hours", 10800, 0, [(FAKE + "/gateway.cert", "/etc/ansible-automation-platform/gateway/gateway.cert")]),
+    ("automation-gateway", "running", "Up 3 hours", 10800, 0, [(FAKE + "/gateway.cert", "/etc/gw/gateway.cert"), (FAKE + "/gateway.key", "/etc/gw/gateway.key")]),
+    ("automation-controller-web", "running", "Up 3 hours", 10800, 0, [(FAKE + "/tower.cert", "/etc/tower/tower.cert")]),
+    ("automation-controller-task", "running", "Up 3 minutes", 180, 0, [(FAKE + "/receptor.sock", "/run/awx-receptor/receptor.sock")]),
+    ("automation-controller-rsyslog", "exited", "Exited (1) 5 minutes ago", 0, 0, []),
+    ("automation-hub-api", "running", "Up 2 hours", 7200, 5, []),
+    ("automation-eda-api", "running", "Up 3 hours", 10800, 0, []),
+    ("postgresql", "running", "Up 3 hours", 10800, 0, [(FAKE + "/pgdata", "/var/lib/pgsql/data")]),
+    ("receptor", "running", "Up 3 hours", 10800, 0, []),
+    ("redis-unix", "running", "Up 3 hours", 10800, 0, []),
+    ("someone-elses", "running", "Up 1 day", 90000, 0, []),
+]
+PROXY = """[2026-11-05T10:00:00.000Z] "GET /api/controller/v2/ping/ HTTP/1.1" 200 - 0 512 12 11 "-" "curl/8" "id1" "aap" "127.0.0.1:8052"
+[2026-11-05T10:00:01.000Z] "GET /api/controller/v2/inventories/8/hosts/?page_size=100 HTTP/1.1" 503 - 0 95 13012 13010 "-" "Mozilla/5.0" "id2" "aap" "127.0.0.1:8052"
+[2026-11-05T10:00:02.000Z] "GET /api/controller/v2/inventories/8/hosts/?page_size=100 HTTP/1.1" 503 - 0 95 13230 13228 "-" "Mozilla/5.0" "id3" "aap" "127.0.0.1:8052"
+[2026-11-05T10:00:03.000Z] "GET /api/controller/v2/jobs/ HTTP/1.1" 200 - 0 9000 6100 6098 "-" "Mozilla/5.0" "id4" "aap" "127.0.0.1:8052"
+{"start_time":"2026-11-05T10:00:04.000Z","method":"GET","path":"/api/gateway/v1/me/","response_code":502,"duration":40,"upstream_service_time":"-"}
+[2026-11-05 10:00:05.000][1][info][main] starting main dispatch loop"""
+WEB = """2026-11-05 10:00:14,000 WARNING [-] awx.api.generics request took too long
+*** HARAKIRI ON WORKER 3 (pid: 812, try: 1) ***
+HARAKIRI: --- uWSGI worker 3 (pid: 812) WAS managing request /api/v2/inventories/8/hosts/?page_size=100 since Thu Nov  5 10:00:01 2026
+worker 3 killed successfully (pid: 812)
+Thu Nov  5 10:00:30 2026 - HARAKIRI [core 0] 192.0.2.9 - GET /api/controller/v2/inventories/8/hosts/?page_size=100 since 1793871560
+Traceback (most recent call last):
+django.db.utils.OperationalError: server closed the connection unexpectedly"""
+TASK = """2026-11-05 10:00:59,000 INFO [-] awx.main.dispatch task 1 ok, errors: 0
+2026-11-05 10:01:00,000 ERROR [-] awx.main.dispatch worker pid 99 is gone - reaping it
+2026-11-05 10:01:01,000 ERROR [-] awx.main.commands.run_callback_receiver callback receiver failed to save event"""
+GW = """2026-11-05 10:02:00,000 ERROR django.request Internal Server Error: /api/gateway/v1/status/
+2026-11-05 10:02:01,000 INFO aap.gateway.authentication.basic_auth User x performed a GET to /api/x/?errors=1
+2026-11-05 10:02:02,000 ALWAYS aap.dispatcherd ANSIBLE_RULEBOOK_LOG_LEVEL: error"""
+SECTIONS = {
+    "inventories": "1|Demo Inventory|2|200|100|120|0|0\n8|AD hosts|1500|92160000|61440|240000|3000000|4000",
+    "hostjobs": "1|10|5\n8|1320000|7500",
+    "hostgroups": "1|2|1|1\n8|900|450|300",
+    "dead": "main_host|176|90000|2026-10-01 00:00:00+00|",
+    "dbsize": "4294967296",
+    "tables": "main_jobevent|2147483648|9000000\nmain_host|80000000|1502",
+    "conns": "45|100",
+    "long": "4242|awx|awx|active|95|SELECT main_host.variables FROM main_host WHERE inventory_id = 8",
+    "idle_tx": "4300|awx|awx|400|UPDATE main_unifiedjob SET status='running'",
+    "jobevents": "25000000|400|main_jobevent_20250101_00|",
+    "unifiedjobs": "8000|2025-01-01 00:00:00.123+00",
+}
+
+
+def out(s):
+    sys.stdout.write(s + ("\n" if s and not s.endswith("\n") else ""))
+
+
+def psql():
+    sql = sys.stdin.read()
+    if "default_transaction_read_only = on" not in sql:
+        sys.exit("psql: the session must be read-only")
+    for line in sql.splitlines():
+        if line.startswith("\\echo "):
+            name = line[6:].strip()
+            out(name)
+            out(SECTIONS.get(name.replace("@@@ ", ""), ""))
+
+
+def main(a):
+    if not a:
+        return 1
+    cmd = a[0]
+    if cmd == "info":
+        out(FAKE + "/storage")
+    elif cmd == "ps":
+        if "-q" in a or "-aq" in a:
+            out("\n".join("id%d" % i for i in range(len(C))))
+        else:
+            out(json.dumps([{"Names": [n], "State": st, "Status": stat, "StartedAt": (NOW - up) if up else 0, "Restarts": r,
+                             "ExitCode": 1 if st == "exited" else 0} for n, st, stat, up, r, _ in C]))
+    elif cmd == "inspect":
+        if "Config.Cmd" in " ".join(a):
+            out("receptor --config /etc/receptor/receptor.conf")
+        else:
+            for n, _, _, _, _, m in C:
+                out("/" + n + "".join(" %s=%s" % x for x in m))
+    elif cmd == "stats":
+        out(json.dumps([{"name": n, "mem_usage": "5.1GB / 16.5GB" if n == "automation-controller-web" else "300.5MB / 16.5GB",
+                         "cpu_percent": "2.0%"} for n, st, *_ in C if st == "running"]))
+    elif cmd == "images":
+        out("a\nb")
+    elif cmd == "volume":
+        out("")
+    elif cmd == "system":
+        out(json.dumps([{"Type": "Images", "Total": 12, "Active": 10, "Size": "9.8GB", "RawSize": 9800000000}]))
+    elif cmd == "logs":
+        name = a[-1]
+        out({"automation-gateway-proxy": PROXY, "automation-controller-web": WEB, "automation-controller-task": TASK,
+             "automation-gateway": GW,
+             "automation-eda-api": "2026-11-05 10:03:00,000 INFO dispatcherd.service.main Control action alive [x] ROE"}.get(name, "all quiet"))
+    elif cmd == "exec":
+        rest = [x for x in a[1:] if x != "-i"]
+        name, prog = rest[0], rest[1:]
+        if name == "postgresql" and prog[0] == "psql":
+            if os.environ.get("AAPH_PEER_REFUSE"):
+                sys.stderr.write('psql: error: FATAL:  Peer authentication failed for user "postgres"\n')
+                return 2
+            psql()
+        elif name == "postgresql" and prog[0] == "bash":
+            if sys.stdin.readline().rstrip("\n") != "pw-from-inventory":
+                sys.stderr.write("psql: error: FATAL:  password authentication failed\n")
+                return 2
+            psql()
+        elif name == "receptor" and prog[0] == "cat":
+            out("---\n- node:\n    id: aap01\n- control-service:\n    service: control\n    filename: /run/receptor/receptor.sock\n")
+        elif prog[0] == "sh" and "command -v receptorctl" in " ".join(prog):
+            if name != "automation-controller-task":
+                return 1
+            out("/usr/bin/receptorctl")
+        elif name == "automation-controller-task" and prog[0] == "receptorctl":
+            if "/run/awx-receptor/receptor.sock" not in prog:
+                sys.stderr.write("socket not found\n")
+                return 1
+            out(json.dumps({"NodeID": "aap01", "RoutingTable": {"exec01": "exec01"},
+                            "Advertisements": [{"NodeID": "aap01", "WorkCommands": [{"WorkType": "local"}, {"WorkType": "kubernetes-runtime-auth"}]},
+                                               {"NodeID": "exec01", "WorkCommands": [{"WorkType": "ansible-runner"}]},
+                                               {"NodeID": "exec02", "WorkCommands": []}]}))
+        else:
+            return 125
+    return 0
+
+
+sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,26 @@
+---
+# AAP - HEALTH CHECK. Read-only: a containerized AAP 2.5+ host (rootless podman, systemd --user units, all components
+# on one host) - the OS, every AAP container and unit, the logs, the controller's database (host variables per
+# inventory), the controller and gateway API (instances, stuck jobs, failed syncs, cleanup jobs, how long each
+# inventory's hosts page takes), receptor and the certificates. Each check: PASS, WARN or FAIL, a detail and a hint.
+# Writes an HTML and a JSON report on the AAP host (aap_health_report_dir, default ~ansible/aap-health); nothing is
+# restarted, changed or installed, and no check fails the job. docs/AAP_HEALTH_CHECK.md
+#
+# On the AAP host itself (works when AAP's own UI does not), as the AAP account, from a copy of this repo:
+#   ansible-playbook -i localhost, -c local -e target=localhost playbooks/aap_health_check.yml -K -e @~/aap-health.vault.yml --ask-vault-pass
+#   ... --tags db,api          # only some areas: os, containers, logs, db, api, receptor, certs
+# As an AAP job template: the AAP host's inventory, Limit = the AAP host (the group aap_hosts by default), a Machine
+# credential with sudo; aap_username / aap_password from a vault or a "Red Hat Ansible Automation Platform" credential.
+- name: AAP health check
+  hosts: "{{ target | default('aap_hosts') }}"
+  gather_facts: false
+  become: false
+  vars:
+    # The AAP account is reached with sudo from another login, and fapolicyd may refuse Python files written to a temp
+    # folder: pipelining sends the module on stdin.
+    ansible_pipelining: true
+  tasks:
+    # The role by its path, so the playbook also works imported (import_playbook) from a playbook outside this repository.
+    - name: AAP health check
+      ansible.builtin.import_role:
+        name: ../roles/aap_health  # noqa: role-name[path]

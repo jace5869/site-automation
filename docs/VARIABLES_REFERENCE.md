@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [aap_health](#aap_health), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -38,7 +38,7 @@ File: `roles/aap_email_question/defaults/main.yml`
 | Setting | Default | What it does |
 |---|---|---|
 | `aap_email_question_state` | `present` | present = add the question; absent = take it out again |
-| `aap_email_question_playbooks` | `- tenable_scan.yml - act_fix_approved.yml - ad_health_report.yml - ad_lockout.yml - cert_…` | Which templates: the job templates whose playbook is one of these (the file name - your template names do not matter). Every playbook that can email a report is here; a test keeps the list complete. |
+| `aap_email_question_playbooks` | `- aap_health_check.yml - tenable_scan.yml - act_fix_approved.yml - ad_health_report.yml -…` | Which templates: the job templates whose playbook is one of these (the file name - your template names do not matter). Every playbook that can email a report is here; a test keeps the list complete. |
 | `aap_email_question_templates` | `[]` | more job templates or workflows, by name or ID |
 | `aap_email_question_exclude` | `[]` | templates left out, by name or ID |
 | `aap_email_question_workflows` | `true` | also the workflows that run them (a job in a workflow is never asked its own survey) |
@@ -46,6 +46,105 @@ File: `roles/aap_email_question/defaults/main.yml`
 | `aap_email_question_ca_path` | (empty) | a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts) |
 | `aap_email_question_text` | `Also email the report to` | The question, as whoever launches a template sees it. A text box of several lines (a pasted list keeps its line breaks), not required, empty by default. |
 | `aap_email_question_description` | (worked out by the role; see its file) | The help text under the question. |
+
+## aap_health
+
+File: `roles/aap_health/defaults/main.yml`
+
+> AAP HEALTH CHECK (playbooks/aap_health_check.yml): a read-only look at a containerized AAP 2.5+ host - the OS, the rootless containers and their systemd user units, the logs, the controller's database, the controller and gateway API, receptor and the certificates. Every check gives PASS, WARN or FAIL with a detail and a hint; an HTML and a JSON report are written on the host. Nothing is restarted, changed or installed. docs/AAP_HEALTH_CHECK.md
+
+| Setting | Default | What it does |
+|---|---|---|
+| `aap_health_user` | `ansible` | The account the AAP containers run as (rootless podman, systemd --user units). |
+| `aap_health_inventory_file` | (empty) | The installer's inventory file (DB name and user, certificate paths are read from it). Empty = found by name (aap_health_inventory_name) in that account's home, at most aap_health_inventory_depth folders down. |
+| `aap_health_inventory_name` | `inventory-growth` | the installer inventory file name looked for |
+| `aap_health_inventory_depth` | `2` | how many folders down from the home it is looked for |
+| `aap_health_unit_regex` | `'^(automation-.*\|postgresql.*\|redis.*\|receptor.*)\.service$'` | The systemd user units that make up AAP (each runs the container of its name, or the --name in the unit). |
+| `aap_health_cmd_timeout` | `60` | seconds any one command may take (podman, psql, ausearch...) before it is given up |
+| `aap_url` | `https://localhost` | Controller and gateway API. aap_username / aap_password: vault them, or attach a "Red Hat Ansible Automation Platform" credential (its CONTROLLER_USERNAME / CONTROLLER_PASSWORD are read). The calls are made from the AAP host. |
+| `aap_username` | `"{{ lookup('ansible.builtin.env', 'CONTROLLER_USERNAME') or lookup('ansible.builtin.env',…` | the API login (an AAP administrator or auditor); vault it |
+| `aap_password` | `"{{ lookup('ansible.builtin.env', 'CONTROLLER_PASSWORD') or lookup('ansible.builtin.env',…` | its password; vault it |
+| `aap_token` | `"{{ lookup('ansible.builtin.env', 'CONTROLLER_OAUTH_TOKEN') or lookup('ansible.builtin.en…` | an API token instead of the username and password (sent as a Bearer token) |
+| `aap_health_validate_certs` | `false` | Check the gateway's HTTPS certificate. Its own setting, not aap_validate_certs: an AAP credential on the template sets that one (its "Verify SSL"), and a certificate never names localhost - with aap_url https://localhost it can only fail. |
+| `aap_health_api_timeout` | `60` | seconds for one API call |
+| `aap_health_api_slow_s` | `5` | an inventory's hosts/?page_size=100 slower than this (or not 200): FAIL |
+| `aap_health_api_time_inventories` | `[]` | inventory IDs whose hosts page is timed; [] = every inventory (up to aap_health_api_time_max) |
+| `aap_health_api_time_max` | `50` | inventories timed at most |
+| `aap_health_focus_inventories` | `[]` | inventory IDs always reported (db and api), even when fine, e.g. [8] |
+| `aap_health_api_light_warn_s` | `1.0` | the smallest requests (ping, me, config) slower than this: WARN |
+| `aap_health_api_light_fail_s` | `5.0` | slower than this (or not 200): FAIL |
+| `aap_health_stuck_minutes` | `15` | pending or waiting longer: FAIL |
+| `aap_health_running_hours` | `4` | running longer: WARN |
+| `aap_health_cleanup_max_days` | `8` | a cleanup system job (activity stream, job details) not run for longer: WARN |
+| `aap_health_capacity_warn_pct` | `10` | an instance with less capacity left: WARN |
+| `aap_health_last_seen_minutes` | `10` | an instance not seen for longer: WARN |
+| `aap_health_mem_warn_mb` | `2048` | OS MemAvailable below: WARN |
+| `aap_health_mem_fail_mb` | `1024` | below: FAIL |
+| `aap_health_swap_warn_pct` | `25` | swap used at or above: WARN |
+| `aap_health_swap_fail_pct` | `75` | at or above: FAIL |
+| `aap_health_load_warn` | `1.0` | 5-minute load per CPU |
+| `aap_health_load_fail` | `2.0` | at or above: FAIL |
+| `aap_health_disk_warn_pct` | `80` | space and inodes |
+| `aap_health_disk_fail_pct` | `90` | at or above: FAIL |
+| `aap_health_disk_paths` | `[/, /home, /var, /tmp]` | also the podman storage and the postgres data folder, found on the host |
+| `aap_health_time_warn_s` | `1.0` | clock offset (chronyc tracking) |
+| `aap_health_time_fail_s` | `5.0` | at or above (or not synchronised): FAIL |
+| `aap_health_selinux_users_ok` | `[unconfined_u, staff_u, sysadm_u]` | SELinux users rootless podman works as |
+| `aap_health_dnf_recent_days` | `7` | a dnf transaction this recent, and fapolicyd denials today: WARN |
+| `aap_health_fqdn` | (empty) | the host's name to resolve; empty = hostname -f |
+| `aap_health_container_mem_warn_mb` | `4096` | Containers one container using more: WARN |
+| `aap_health_container_mem_fail_mb` | `8192` | one container using more: FAIL |
+| `aap_health_min_uptime_minutes` | `10` | a container up for less: WARN (restarted?) |
+| `aap_health_restart_warn` | `3` | restarts (podman or systemd) at or above: WARN |
+| `aap_health_dangling_warn` | `10` | dangling images or volumes at or above: WARN |
+| `aap_health_log_since` | `2h` | Logs podman logs --since (2h, 30m, 1d) |
+| `aap_health_log_proxy_max_lines` | `50000` | gateway proxy lines read at most (the last ones) |
+| `aap_health_log_match_max` | `2000` | matching lines kept per container at most |
+| `aap_health_envoy_regex` | (empty) | the proxy's access-log line, if not Envoy's default or JSON: named groups path, code, dur, up |
+| `aap_health_slow_ms` | `5000` | a proxied request slower than this (upstream time): listed |
+| `aap_health_slow_max` | `15` | slowest requests listed |
+| `aap_health_5xx_fail` | `20` | 5xx responses in the window at or above: FAIL (any: WARN) |
+| `aap_health_log_web_patterns` | `HARAKIRI: HARAKIRI worker killed: worker [0-9]+ killed\|killed.*worker\|SIGKILL Traceback:…` | controller-web: name -> regex (case counts; awk-compatible) |
+| `aap_health_log_web_fail` | `[HARAKIRI, worker killed]` | any of these: FAIL (others: WARN) |
+| `aap_health_log_task_patterns` | `dispatcher error: "(ERROR\|Exception).*dispatch\|dispatch.*(ERROR\|Exception)" callback rece…` | controller-task: name -> regex (all: WARN) |
+| `aap_health_log_other_patterns` | `Traceback: Traceback ERROR: '\[ERROR\]\| ERROR \|^ERROR\|level=error'` | the gateway, hub and EDA containers: lines logged at level ERROR, Tracebacks |
+| `aap_health_proxy_match` | `gateway-proxy` | container names (regex) of the gateway proxy, controller web and task |
+| `aap_health_web_match` | `controller-web` | the controller web container |
+| `aap_health_task_match` | `controller-task` | the controller task container |
+| `aap_health_other_log_match` | `'^automation-(gateway\|hub\|eda)'` | the containers whose Tracebacks and ERRORs are counted |
+| `aap_health_pg_container` | (empty) | Database (podman exec into the postgres container; peer login, else the installer inventory's controller_pg_password) empty = the container whose name matches aap_health_pg_match |
+| `aap_health_pg_match` | `postgres` | the postgres container's name (regex) |
+| `aap_health_pg_data_dest` | `/var/lib/pgsql/data` | the data folder inside the container (its host folder is found from the mount) |
+| `aap_health_db_statement_timeout` | `120` | seconds per query |
+| `aap_health_db_vars_avg_warn_kb` | `10` | host variables per inventory: average / largest host |
+| `aap_health_db_vars_avg_fail_kb` | `50` | average above: FAIL |
+| `aap_health_db_vars_max_warn_kb` | `100` | the largest host above: WARN |
+| `aap_health_db_vars_max_fail_kb` | `500` | above: FAIL |
+| `aap_health_db_host_jobs_warn` | `5000` | job host summaries of one host above (the Hosts list reads each host's recent jobs): WARN |
+| `aap_health_db_host_groups_warn` | `100` | groups one host is in, above: WARN (an inventory source's keyed groups can put a host in hundreds) |
+| `aap_health_db_dead_min` | `10000` | a table with more dead rows than this (and 20% of its live ones): WARN (autovacuum behind) |
+| `aap_health_db_facts_avg_warn_kb` | `100` | ansible_facts per host, average |
+| `aap_health_db_size_warn_gb` | `50` | the database larger: WARN |
+| `aap_health_db_conn_warn_pct` | `80` | of max_connections |
+| `aap_health_db_conn_fail_pct` | `95` | at or above: FAIL |
+| `aap_health_db_long_s` | `30` | a query running longer: WARN (aap_health_db_long_fail_s: FAIL) |
+| `aap_health_db_long_fail_s` | `300` | a query running longer: FAIL |
+| `aap_health_db_idle_tx_s` | `60` | idle in transaction longer: WARN |
+| `aap_health_db_jobevent_warn` | `20000000` | job event rows (estimate) above: WARN |
+| `aap_health_db_job_keep_days` | `130` | the oldest job older than this: WARN (Cleanup Job Details keeps 120 days by default) |
+| `aap_health_receptor_container` | (empty) | Receptor empty = the container whose name matches aap_health_receptor_match |
+| `aap_health_receptor_match` | `receptor` | the receptor container's name (regex) |
+| `aap_health_receptorctl_containers` | `[]` | where receptorctl is run (the first that has it); [] = the receptor container, then controller task and web |
+| `aap_health_receptor_socket` | (empty) | empty = read from the container's receptor.conf (control-service filename) |
+| `aap_health_cert_dirs` | `[aap]` | Certificates: the installer inventory's *_tls_cert files, the .cert/.crt/.pem files the containers mount, and these folders (in the AAP account's home) searched, plus aap_health_cert_files |
+| `aap_health_cert_files` | `[]` | more certificate files on the AAP host (full paths) |
+| `aap_health_cert_warn_days` | `30` | expires in fewer days: WARN |
+| `aap_health_cert_fail_days` | `7` | in fewer days (or expired): FAIL |
+| `aap_health_trust_cas` | `[DoD Root CA 3, DoD Root CA 4, DoD Root CA 5, DoD Root CA 6]` | labels that must be in the system trust store; [] = not checked |
+| `aap_health_report_dir` | (empty) | Output on the AAP host; empty = <the AAP account's home>/aap-health |
+| `aap_health_top` | `10` | top offenders listed per check |
+| `aap_health_email` | `true` | Email the report like the other reports: to report_email_to, through the mail relay in all.yml (report_email_from, report_email_smtp_host ...; docs/EMAIL_REPORTS.md) - FAIL and WARN first, then every area, the sortable HTML attached. Nothing is sent while report_email_to is empty. false = never emailed (the launch box… (all of it: the role file) |
+| `aap_health_web` | `true` | Put the report on the report website as well (report_web_dest in all.yml, like the other reports; docs/WEB_REPORTS.md): FAIL and WARN first, then every area. Nothing happens while report_web_dest is empty. false = never on the website. |
 
 ## ad_lockout
 

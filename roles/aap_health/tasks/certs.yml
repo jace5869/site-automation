@@ -1,0 +1,66 @@
+---
+# The expiry of AAP's TLS certificates: the installer inventory's *_tls_cert files, the .cert/.crt/.pem files the
+# containers mount, the files under aap_health_cert_dirs (in the AAP account's home) and aap_health_cert_files; and
+# the DoD root CAs in the system trust store. Read-only (openssl x509, trust list).
+- name: AAP health | certificates
+  vars:
+    _aaph_cert_vars: "{{ _aaph.inventory | dict2items | selectattr('key', 'search', '_tls_cert$|^ca_tls_cert$') | list }}"
+    _aaph_mounted: >-
+      {%- set out = {} -%}
+      {%- for c, ms in _aaph.mounts.items() -%}
+      {%-   for m in ms if m[0] is search('\.(cert|crt|pem)$') -%}
+      {%-     set _ = out.update({m[0]: (out[m[0]] | default([])) + [c]}) -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    _aaph_labels: >-
+      {%- set out = {} -%}
+      {%- for p, cs in _aaph_mounted.items() -%}{%- set _ = out.update({p: cs | unique | join(', ')}) -%}{%- endfor -%}
+      {%- for v in _aaph_cert_vars -%}{%- set _ = out.update({v.value: v.key}) -%}{%- endfor -%}
+      {{ out }}
+    _aaph_cert_list: "{{ (_aaph_cert_vars | map(attribute='value') | list + _aaph_mounted.keys() | list + aap_health_cert_files) | unique | list }}"
+  block:
+    - name: AAP health | certificates - read their dates (as {{ aap_health_user }})
+      ansible.builtin.shell:
+        cmd: |
+          h=$(getent passwd "$(id -un)" | cut -d: -f6)
+          echo "@@@ certs"
+          {
+            {% for f in _aaph_cert_list %}echo {{ f | quote }}
+            {% endfor %}
+            for d in {{ aap_health_cert_dirs | map('quote') | join(' ') }}; do
+              case "$d" in /*) ;; *) d="$h/$d" ;; esac
+              [ -d "$d" ] && find "$d" -maxdepth 5 -type f \( -name '*.cert' -o -name '*.crt' -o -name '*.pem' \) -size -200k \
+                -not -path '*/data/*' -not -path '*/extracted/*' 2>/dev/null
+            done
+          } | sort -u | while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            echo "### $f"
+            openssl x509 -noout -enddate -subject -serial -in "$f" 2>&1 | head -n 4
+          done
+          echo "@@@ trust"
+          trust list --filter=ca-anchors 2>&1 | grep -E '^\s*label:'
+          exit 0
+      changed_when: false
+      check_mode: false
+      become: "{{ _aaph_become }}"
+      become_user: "{{ aap_health_user }}"
+      environment: "{{ _aaph_env }}"
+      register: _aaph_crt
+
+    - name: AAP health | certificates - results
+      ansible.builtin.set_fact:
+        _aaph_rows: "{{ _aaph_rows + (_aaph_crt.stdout | aap_health_certs(_aaph_labels, _aaph_cfg)) }}"
+      vars:
+        _aaph_cfg:
+          now: "{{ _aaph.now }}"
+          warn_days: "{{ aap_health_cert_warn_days | float }}"
+          fail_days: "{{ aap_health_cert_fail_days | float }}"
+          cas: "{{ aap_health_trust_cas }}"
+          named: "{{ _aaph_cert_vars | map(attribute='value') | list + aap_health_cert_files }}"
+          dirs: "{{ aap_health_cert_dirs }}"
+  rescue:
+    - name: AAP health | certificates - the check could not run
+      ansible.builtin.set_fact:
+        _aaph_rows: "{{ _aaph_rows + [{'area': 'certs', 'check': 'certificates', 'status': 'FAIL',
+                        'detail': ansible_failed_result.msg | default('failed') | string | truncate(400), 'hint': 'Run with -vvv'}] }}"

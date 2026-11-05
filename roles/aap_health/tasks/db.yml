@@ -1,0 +1,86 @@
+---
+# The controller's database, through podman exec into the postgres container: host variables and facts per
+# inventory, size, connections, long queries, idle transactions, job history. Read-only: the session is set
+# read-only and every query has a time limit. The login: the container's own (peer, no password); if refused, the
+# installer inventory's controller_pg_password, given to psql on stdin (never on a command line, which the audit
+# rules record).
+- name: AAP health | database
+  vars:
+    _aaph_sql: "{{ lookup('ansible.builtin.template', 'health.sql.j2') }}"
+    _aaph_exec: >-
+      timeout {{ aap_health_cmd_timeout | int * 3 }} podman exec -i {{ _aaph.pg_container | quote }}
+  when: _aaph.pg_container | length > 0
+  block:
+    - name: AAP health | database - queries (as {{ aap_health_user }}, the container's own login)
+      ansible.builtin.command:
+        cmd: >-
+          {{ _aaph_exec }} psql -X -q -At -F '|' -d {{ _aaph.db.name | quote }}
+        stdin: "{{ _aaph_sql }}"
+      changed_when: false
+      check_mode: false
+      failed_when: false
+      become: "{{ _aaph_become }}"
+      become_user: "{{ aap_health_user }}"
+      environment: "{{ _aaph_env }}"
+      register: _aaph_db_peer
+
+    - name: AAP health | database - queries with the installer's password (the container's own login was refused)
+      ansible.builtin.command:
+        cmd: >-
+          {{ _aaph_exec }} bash -c 'IFS= read -r PGPASSWORD; export PGPASSWORD; exec psql -X -q -At -F "|"
+          -h 127.0.0.1 -p {{ _aaph.db.port | int }} -U {{ _aaph.db.user | quote }} -d {{ _aaph.db.name | quote }}'
+        stdin: "{{ _aaph_pg_pw }}\n{{ _aaph_sql }}"
+      changed_when: false
+      check_mode: false
+      failed_when: false
+      become: "{{ _aaph_become }}"
+      become_user: "{{ aap_health_user }}"
+      environment: "{{ _aaph_env }}"
+      no_log: true
+      register: _aaph_db_pw
+      when:
+        - "'@@@ inventories' not in _aaph_db_peer.stdout | default('') or _aaph_db_peer.rc | default(1) != 0"
+        - _aaph_pg_pw | length > 0
+
+    - name: AAP health | database - results
+      ansible.builtin.set_fact:
+        _aaph_rows: "{{ _aaph_rows + (_aaph_db.stdout | default('') | aap_health_db(_aaph_db.stderr | default(''), _aaph_db.rc | default(1), _aaph_cfg)) }}"
+      vars:
+        _aaph_db: "{{ _aaph_db_pw if _aaph_db_pw is not skipped and _aaph_db_pw.stdout is defined else _aaph_db_peer }}"
+        _aaph_cfg:
+          user: "{{ aap_health_user }}"
+          now: "{{ _aaph.now }}"
+          top: "{{ aap_health_top | int }}"
+          container: "{{ _aaph.pg_container }}"
+          db: "{{ _aaph.db.name }}"
+          pw_tried: "{{ _aaph_db_pw is not skipped }}"
+          focus: "{{ aap_health_focus_inventories | map('string') | list }}"
+          vars_avg_warn_kb: "{{ aap_health_db_vars_avg_warn_kb | float }}"
+          vars_avg_fail_kb: "{{ aap_health_db_vars_avg_fail_kb | float }}"
+          vars_max_warn_kb: "{{ aap_health_db_vars_max_warn_kb | float }}"
+          vars_max_fail_kb: "{{ aap_health_db_vars_max_fail_kb | float }}"
+          facts_avg_warn_kb: "{{ aap_health_db_facts_avg_warn_kb | float }}"
+          host_jobs_warn: "{{ aap_health_db_host_jobs_warn | int }}"
+          host_groups_warn: "{{ aap_health_db_host_groups_warn | int }}"
+          dead_min: "{{ aap_health_db_dead_min | int }}"
+          size_warn_gb: "{{ aap_health_db_size_warn_gb | float }}"
+          conn_warn_pct: "{{ aap_health_db_conn_warn_pct | float }}"
+          conn_fail_pct: "{{ aap_health_db_conn_fail_pct | float }}"
+          long_s: "{{ aap_health_db_long_s | int }}"
+          long_fail_s: "{{ aap_health_db_long_fail_s | int }}"
+          idle_tx_s: "{{ aap_health_db_idle_tx_s | int }}"
+          jobevent_warn: "{{ aap_health_db_jobevent_warn | int }}"
+          job_keep_days: "{{ aap_health_db_job_keep_days | float }}"
+  rescue:
+    - name: AAP health | database - the check could not run
+      ansible.builtin.set_fact:
+        _aaph_rows: "{{ _aaph_rows + [{'area': 'db', 'check': 'database checks', 'status': 'FAIL',
+                        'detail': ansible_failed_result.msg | default('failed') | string | truncate(400),
+                        'hint': 'As ' ~ aap_health_user ~ ': podman exec -it ' ~ _aaph.pg_container ~ ' psql -d ' ~ _aaph.db.name}] }}"
+
+- name: AAP health | database - no postgres container found
+  ansible.builtin.set_fact:
+    _aaph_rows: "{{ _aaph_rows + [{'area': 'db', 'check': 'postgres container', 'status': 'FAIL',
+                    'detail': 'no container matches ' ~ aap_health_pg_match ~ ' (an external database is not checked)',
+                    'hint': 'Set aap_health_pg_container to its name (podman ps -a as ' ~ aap_health_user ~ ').'}] }}"
+  when: _aaph.pg_container | length == 0

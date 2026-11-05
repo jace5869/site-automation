@@ -1,0 +1,42 @@
+---
+# Every AAP unit and its container: up, restarts, uptime; memory per container; podman storage. Read-only.
+- name: AAP health | containers
+  block:
+    - name: AAP health | containers - units, podman ps, stats, storage (as {{ aap_health_user }})
+      ansible.builtin.shell:
+        cmd: |
+          T={{ aap_health_cmd_timeout | int }}
+          echo "@@@ show"
+          {% if _aaph.units %}systemctl --user show -p Id,ActiveState,SubState,NRestarts,Result,LoadState {{ _aaph.units | map(attribute='unit') | map('quote') | join(' ') }} 2>&1{% endif %}
+
+          echo "@@@ ps"; timeout "$T" podman ps -a --format json 2>&1
+          echo "@@@ stats"; timeout "$T" podman stats --no-stream --format json 2>&1
+          echo "@@@ dangling_images"; timeout "$T" podman images -q -f dangling=true 2>/dev/null | wc -l
+          echo "@@@ dangling_volumes"; timeout "$T" podman volume ls -q -f dangling=true 2>/dev/null | wc -l
+          echo "@@@ systemdf"; timeout "$T" podman system df --format json 2>&1
+          exit 0
+      changed_when: false
+      check_mode: false
+      become: "{{ _aaph_become }}"
+      become_user: "{{ aap_health_user }}"
+      environment: "{{ _aaph_env }}"
+      register: _aaph_ctr
+
+    - name: AAP health | containers - results
+      ansible.builtin.set_fact:
+        _aaph_rows: "{{ _aaph_rows + (_aaph_ctr.stdout | aap_health_containers(_aaph.units, _aaph_cfg)) }}"
+      vars:
+        _aaph_cfg:
+          user: "{{ aap_health_user }}"
+          now: "{{ _aaph.now }}"
+          min_uptime_s: "{{ aap_health_min_uptime_minutes | int * 60 }}"
+          restart_warn: "{{ aap_health_restart_warn | int }}"
+          mem_warn_mb: "{{ aap_health_container_mem_warn_mb | float }}"
+          mem_fail_mb: "{{ aap_health_container_mem_fail_mb | float }}"
+          dangling_warn: "{{ aap_health_dangling_warn | int }}"
+  rescue:
+    - name: AAP health | containers - the check could not run
+      ansible.builtin.set_fact:
+        _aaph_rows: "{{ _aaph_rows + [{'area': 'containers', 'check': 'container checks', 'status': 'FAIL',
+                        'detail': ansible_failed_result.msg | default('failed') | string | truncate(400),
+                        'hint': 'As ' ~ aap_health_user ~ ': XDG_RUNTIME_DIR=/run/user/$(id -u) podman ps -a'}] }}"

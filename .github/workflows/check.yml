@@ -94,6 +94,8 @@ jobs:
           python tests/test_evaluate_stig_update.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_evaluate_stig_update.py
           python tests/test_limit_localhost.py
+          python tests/test_aap_health.py
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_aap_health.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_limit_localhost.py
           python tests/test_yaml_regex.py
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook python tests/test_yaml_regex.py
