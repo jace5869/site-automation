@@ -124,6 +124,13 @@ report_email_to: approvers@yoursite.mil           # the approver reads the plan 
 ## VM folders a ticket may use (paths below the datacenter's VM folder, e.g. Linux/*)
 # vm_deploy_folders: []
 
+## The folders the templates are taken from (paths below the datacenter's VM folder; * and ?), e.g.
+## [Staging]: a template named in a ticket is used only from there - a copy of the same name
+## elsewhere is not (only elsewhere: refused, nothing built). With vm_deploy_folders: [Staging] and
+## no folder in vm_deploy_defaults, the VMs are built in the template's folder - the staging folder.
+## [] = a template from any folder.
+# vm_deploy_template_folders: []
+
 ## the most vCPUs a ticket may ask for
 # vm_deploy_max_cpu: 16
 

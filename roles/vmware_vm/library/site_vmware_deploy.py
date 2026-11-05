@@ -47,6 +47,7 @@ options:
   ticket: {description: "The ticket's number: written in the new VM's notes (the mark a run of the same ticket finds again); with existing_ok, the existing VM's notes must name it.", type: str, default: ''}
   resume: {description: "A VM with the name whose notes carry this ticket's mark: built - reported as it is; started by an earlier run and not finished (building) - finished where it is; its customization failed (failed) - refused. false = only existing_ok (the ticket's note) leaves one as it is.", type: bool, default: true}
   folders_allowed: {description: "The folders a VM may go in (vm_deploy_folders; * and ?): the folder found is checked against them - a path below the VM folder, or a name for a pattern without /.", type: list, elements: str, default: []}
+  template_folders: {description: "The folders a template may be taken from (vm_deploy_template_folders; * and ?, as folders_allowed): a template of that name elsewhere is not used - only elsewhere, refused. Empty = anywhere.", type: list, elements: str, default: []}
   datastore_exclude: {description: "Datastores never chosen for this VM (names; * and ?) - e.g. the ones kept for SQL servers.", type: list, elements: str, default: []}
   datastore_planned: {description: "GB already planned on datastores by the VMs before this one in the same run ({name: GB}): counted as used, so the VMs of one ticket spread out.", type: dict, default: {}}
   hostname: {description: The guest's host name; empty = name., type: str, default: ''}
@@ -404,6 +405,7 @@ def main():
                            annotation=dict(type="str", default=""), hostname=dict(type="str", default=""),
                            existing_ok=dict(type="bool", default=False), ticket=dict(type="str", default=""),
                            resume=dict(type="bool", default=True), folders_allowed=dict(type="list", elements="str", default=[]),
+                           template_folders=dict(type="list", elements="str", default=[]),
                            datastore_exclude=dict(type="list", elements="str", default=[]),
                            datastore_planned=dict(type="dict", default={}),
                            domain=dict(type="str", default="localdomain"), customization_spec=dict(type="str", default=""),
@@ -439,7 +441,7 @@ def main():
     again, again_vc = None, ""                  # a VM an earlier run of this ticket started and did not finish
     try:
         # 1. the name is free in every vCenter - or it is this ticket's VM (its mark); the template is in exactly one
-        templates, loose = [], []
+        templates, loose, outside = [], [], []
         for n in names:
             try:
                 si = connect(n, p["validate_certs"])
@@ -472,14 +474,25 @@ def main():
                                          % (p["name"], n, "a template" if is_t else _folder_path(v.parent)), vm=vm, notes=notes)
                 if is_t and _tnorm(vname) == _tnorm(p["template"]) and (not want_vc or n.lower() == want_vc.lower()):
                     if not p["datacenter"] or _datacenter(v).name == p["datacenter"]:
+                        # only from vm_deploy_template_folders (e.g. the staging folder): a copy elsewhere is not used
+                        rel = _folder_path(v.parent)[len("/%s/vm" % getattr(_datacenter(v), "name", "")):].strip("/")
+                        if not folder_ok(rel, getattr(v.parent, "name", ""), p["template_folders"]):
+                            outside.append("%s / %s" % (n, _folder_path(v.parent)))
+                            continue
                         (templates if vname == p["template"] else loose).append((n, v))
         # the exact name first; else the one written in other case or spacing (when only one is)
         if not templates and len({t.name for _, t in loose}) == 1:
             templates = loose
             notes.append("template %s is written %r in vCenter" % (p["template"], loose[0][1].name))
+        if not templates and outside:
+            module.fail_json(msg="template %s is not in vm_deploy_template_folders (%s) - only there: %s. Nothing was built: move the "
+                                 "template into one of those folders (or add its folder to vm_deploy_template_folders)"
+                                 % (p["template"], ", ".join(p["template_folders"]), "; ".join(outside)), vm=vm, notes=notes)
         if not templates:
             module.fail_json(msg="no template named %s%s in %s" % (p["template"], (" in datacenter %s" % p["datacenter"]) if p["datacenter"] else "",
                                                                     want_vc or ", ".join(names)), vm=vm, notes=notes)
+        if outside:
+            notes.append("template %s also in %s: not used (not in vm_deploy_template_folders)" % (p["template"], "; ".join(outside)))
         if len(templates) > 1:
             module.fail_json(msg="template %s is in %s: name the vCenter (vcenter: ...) or the datacenter in the ticket"
                                  % (p["template"], ", ".join("%s / %s" % (n, _datacenter(t).name) for n, t in templates)), vm=vm, notes=notes)

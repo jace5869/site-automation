@@ -1657,6 +1657,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_deploy_clusters` | `[]` | clusters (and standalone hosts) a ticket may use; also the candidates of automatic placement |
 | `vm_deploy_datastores` | `[]` | datastores (or datastore clusters) a ticket may use; also the candidates of automatic placement |
 | `vm_deploy_folders` | `[]` | VM folders a ticket may use (paths below the datacenter's VM folder, e.g. Linux/*) |
+| `vm_deploy_template_folders` | `[]` | The folders the templates are taken from (paths below the datacenter's VM folder; * and ?), e.g. [Staging]: a template named in a ticket is used only from there - a copy of the same name elsewhere is not (only elsewhere: refused, nothing built). With vm_deploy_folders: [Staging] and no folder in vm_deploy_defaults, th… (all of it: the role file) |
 | `vm_deploy_max_cpu` | `16` | the most vCPUs a ticket may ask for |
 | `vm_deploy_max_memory_gb` | `128` | the most memory a ticket may ask for, in GB |
 | `vm_deploy_max_vms` | `10` | A ticket may ask for several VMs ("2 VMs named web01 and web02", "vm_name: web01, web02", or "Hostnames:" and one name per line): one VM each, the same size - or each its own, from a line of its own - built one after the other, the ticket closed when all are built. More names than this: refused, nothing built (the lim… (all of it: the role file) |

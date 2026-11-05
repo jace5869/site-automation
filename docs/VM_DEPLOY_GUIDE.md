@@ -1220,6 +1220,30 @@ vm_deploy_defaults:
   (automatic placement) - and without those, uses the template's own cluster, datastore and folder (with
   `vm_deploy_datastore_balance: true`, the least used datastore of that cluster).
 
+## Templates from the staging folder, VMs built there
+
+Keep the templates the deploy may use in one folder (say `Staging`) and build the new VMs there:
+
+```yaml
+vm_deploy_templates: [rhel9-gold, win2022-gold]   # which templates (as always)
+vm_deploy_template_folders: [Staging]             # ...and only from this folder (since 0.73.0)
+vm_deploy_folders: [Staging]                      # the VMs only in this folder
+# no folder in vm_deploy_defaults: a VM goes in its template's folder - Staging
+```
+
+- **The template is used only from `vm_deploy_template_folders`.** A template of the same name elsewhere (an old
+  copy, another team's) is not used - the job says so in a note (`template rhel9-gold also in ...: not used`).
+  Only elsewhere: refused, nothing built - *template rhel9-gold is not in vm_deploy_template_folders (Staging) -
+  only there: vc01 / /DC1/vm/Linux*. Move the template into the folder, or add its folder to the list.
+- **The VM goes in the template's folder** when nothing names one (the ticket's `folder:`, its site, a name
+  rule, `vm_deploy_defaults`), and that folder must be in `vm_deploy_folders`: with both lists `[Staging]`, every
+  VM is built in Staging, and a ticket asking for another folder is refused before anything is read in vCenter
+  (*Not deployed: folder 'Other' is not in vm_deploy_folders (Staging)*).
+- **The path** is below the datacenter's VM folder, as the settings finder lists it (`Staging`, or
+  `Templates/Staging` for a folder inside another); `*` and `?` allowed; a name without `/` also matches a folder
+  of that name anywhere. **Several datacenters or vCenters:** a Staging folder in each, under the same name.
+- **Try it:** a dry run (Job type **Check**) shows `Placed: ..., folder /DC1/vm/Staging` and the template it took.
+
 ## Sites: site A goes to this cluster, site B to that one
 
 ```yaml
@@ -1596,6 +1620,7 @@ each step with `VMware |`; the line that failed names the step.
 | `no datastore among ... has room` | every candidate datastore would go over 85 % with the VM | another datastore list, smaller disks |
 | `goes on a datastore *SQL* ...: A-DS01 is not one` / `is kept for other VMs` | `vm_deploy_datastore_rules`: the ticket names a datastore the VM's rule does not allow, or one kept for other VMs | drop the `datastore:` line (the job picks the least used of the allowed ones) |
 | `no VM folder Test/App in datacenter DC1 (a path is looked up as it is ...)` / `is not one of vm_deploy_folders` | a folder path is that path exactly (never another folder of the same name); the folder found must be allowed | write the path as in vCenter, below the VM folder (the settings finder lists them) |
+| `template rhel9-gold is not in vm_deploy_template_folders (Staging) - only there: ...` | the template is in another folder; only the ones in `vm_deploy_template_folders` are used | move the template into that folder in vCenter, or add its folder to the list ([Templates from the staging folder](#templates-from-the-staging-folder-vms-built-there)) |
 
 ### Building it in vCenter
 

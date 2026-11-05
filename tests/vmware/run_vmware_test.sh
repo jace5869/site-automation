@@ -866,6 +866,47 @@ run "a cluster that is the vCenter's name: refused, saying so and naming the clu
 incc="$(newticket $'vm_name: app92\ntemplate: rhel9-gold\ncluster: dc0_c0')"
 run "a cluster written in other case: found, with a note" ok vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$incc" -e "$rules" \
     -- "cluster dc0_c0 is written 'DC0_C0' in vCenter" "ready to build in DC0_C0 - dry run"
+# vm_deploy_template_folders (0.73.0): templates only from the staging folder - rhel9-gold is in the VM folder itself
+run "templates only from Staging (vm_deploy_template_folders): rhel9-gold is not there - refused, nothing built" fail \
+    vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$incc" -e "$rules" -e '{"vm_deploy_template_folders": ["Staging"]}' \
+    -- "template rhel9-gold is not in vm_deploy_template_folders (Staging) - only there: 127.0.0.1 / /DC0/vm"
+stagetpl() {  # stagetpl add|remove - a copy of rhel9-gold in a folder Staging, and an empty folder Other
+    VMWARE_PORT=$port "$py" - "$1" <<'EOPY'
+import os, sys, time
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+dc = [d for d in c.rootFolder.childEntity if d.name == "DC0"][0]
+def wait(t):
+    while t.info.state not in ("success", "error"):
+        time.sleep(0.1)
+    assert t.info.state == "success", t.info.error
+st = [f for f in dc.vmFolder.childEntity if isinstance(f, vim.Folder) and f.name in ("Staging", "Other")]
+if sys.argv[1] == "add":
+    dc.vmFolder.CreateFolder("Other")
+    f = dc.vmFolder.CreateFolder("Staging")
+    src = [v for v in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if v.name == "DC0_C0_RP0_VM0"][0]
+    wait(src.CloneVM_Task(folder=f, name="rhel9-gold", spec=vim.vm.CloneSpec(location=vim.vm.RelocateSpec(), powerOn=False, template=True)))
+else:
+    for f in st:
+        for v in f.childEntity:
+            wait(v.Destroy_Task())
+        wait(f.Destroy_Task())
+EOPY
+}
+stagetpl add || { echo "ABORT - the staging template"; exit 1; }
+run "...a copy in Staging: that one is used, the other said - and with vm_deploy_folders [Staging] the VM goes in the template's folder" ok \
+    vm_deploy_from_ticket.yml --check -e vm_deploy_ticket="$incc" -e "$rules" \
+    -e '{"vm_deploy_template_folders": ["Staging"], "vm_deploy_folders": ["Staging"]}' \
+    -- "template rhel9-gold also in 127.0.0.1 / /DC0/vm: not used (not in vm_deploy_template_folders)" "folder /DC0/vm/Staging" \
+       "ready to build in DC0_C0 - dry run"
+run "...the same, the ticket asking for another folder: refused (vm_deploy_folders)" fail vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$(newticket $'vm_name: app88\ntemplate: rhel9-gold\nfolder: Other')" -e "$rules" \
+    -e '{"vm_deploy_template_folders": ["Staging"], "vm_deploy_folders": ["Staging"]}' -- "Not deployed: folder 'Other' is not in vm_deploy_folders (Staging)"
+run "...without vm_deploy_template_folders: two templates of that name - refused, as before" fail vm_deploy_from_ticket.yml --check \
+    -e vm_deploy_ticket="$incc" -e "$rules" -- "template rhel9-gold is in 127.0.0.1 / DC0, 127.0.0.1 / DC0"
+stagetpl remove || { echo "ABORT - removing the staging template"; exit 1; }
 run "deploy from a ticket: built - 4 vCPU and 8 GB (the comment wins), host name by customization, the result on the ticket" ok \
     vm_deploy_from_ticket.yml -e vm_deploy_ticket="$inc" -e "$rules" -e "$mail" \
     -- "VM deploy $inc: app01 deployed, no IP yet" "Customization" "succeeded" "no IPv4 address within 3 s" "emailed"

@@ -82,6 +82,10 @@ vm_deploy_folders:
   level: rarely
   example: ["Servers/*"]
   when: limit the VM folders a ticket may name
+vm_deploy_template_folders:
+  level: often
+  example: [Staging]
+  when: take the templates only from these folders (e.g. your staging folder) - a copy elsewhere is not used
 vm_deploy_max_cpu:
   level: often
   example: 8

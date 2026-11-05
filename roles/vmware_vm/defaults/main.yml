@@ -588,6 +588,11 @@ vm_deploy_templates: []                  # e.g. [rhel9-gold, win2022-gold]
 vm_deploy_clusters: []                   # clusters (and standalone hosts) a ticket may use; also the candidates of automatic placement
 vm_deploy_datastores: []                 # datastores (or datastore clusters) a ticket may use; also the candidates of automatic placement
 vm_deploy_folders: []                    # VM folders a ticket may use (paths below the datacenter's VM folder, e.g. Linux/*)
+# The folders the templates are taken from (paths below the datacenter's VM folder; * and ?), e.g. [Staging]: a template
+# named in a ticket is used only from there - a copy of the same name elsewhere is not (only elsewhere: refused, nothing
+# built). With vm_deploy_folders: [Staging] and no folder in vm_deploy_defaults, the VMs are built in the template's
+# folder - the staging folder. [] = a template from any folder.
+vm_deploy_template_folders: []
 vm_deploy_max_cpu: 16                    # the most vCPUs a ticket may ask for
 vm_deploy_max_memory_gb: 128             # the most memory a ticket may ask for, in GB
 # A ticket may ask for several VMs ("2 VMs named web01 and web02", "vm_name: web01, web02", or
