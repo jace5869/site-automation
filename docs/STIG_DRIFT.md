@@ -473,7 +473,8 @@ the recheck's "update the review" for you, once a person approves it:
    list on to the next steps and fails on purpose (`NEEDS APPROVAL`). With nothing to write it stays green, and no
    approval is asked for.
 2. **The approval**: open the check's report, then Approve or Deny.
-3. **STIG Manager - update** (`playbooks/stigman_update.yml`) writes those reviews and nothing else.
+3. **STIG Manager - update** (`playbooks/stigman_update.yml`) writes those reviews - and creates the new assets listed,
+   with `check_stig_update_create_assets` (below) - and nothing else.
 
 What it writes (`check_stig_update`):
 
@@ -496,7 +497,9 @@ What it writes (`check_stig_update`):
 **How the update keeps your STIG Manager safe:**
 
 - **Only the approved reviews.** Its only requests to STIG Manager are a GET of each review and one POST of an
-  asset's reviews (`/collections/{id}/reviews/{asset}`). It never changes a collection, asset, user, grant or STIG.
+  asset's reviews (`/collections/{id}/reviews/{asset}`) - and, for an approved new asset (below), a GET of the
+  collection's assets and one `POST /assets`. It never changes a collection, user, grant or STIG, nor an asset that is
+  there.
 - **Only if nothing changed since.** Each review is read again first. If a person changed it after the check read it,
   it is left as it is, and the report says so (*changed since*).
 - **Never a review with attachments.** When a person attached evidence to a review in STIG Manager (the paper clip in
@@ -517,15 +520,45 @@ What it writes (`check_stig_update`):
   write.
 - **Run twice**, it writes nothing the second time (*already so*).
 
+### A host with no asset in STIG Manager (0.72.0)
+
+Off by default. With `check_stig_update_create_assets: true` on workflow 37's check, and the host's collection set
+(`check_stig_stigman_collection` - one setting in `all.yml` when every host is in one collection, or per group or
+host), a Linux host that has no asset in its collection gets one, behind the same approval:
+
+1. **The check** looks for the host's asset as always (by `check_stig_stigman_asset`, else the inventory name and its
+   short name, by name or FQDN). Not in its collection:
+   - an asset of the host's **in another collection** the client can read: **not created** - the host is listed as not
+     rechecked (*... but web01 is in Lab: not created*); set its collection;
+   - **nowhere**: the host is scanned **in full** (every rule of the STIG, at the collection's revision of it - or the
+     newest STIG Manager has), and its report has **New in STIG Manager**: one row per host - the asset's name, FQDN,
+     collection and STIG, and how many rules pass, fail, do not apply or need a person - and the rules it fails.
+     **Approve** lists *NEW ASSET web01 (web01.example.mil) in RHEL Servers with RHEL_9_STIG V2R8 - then 312 review(s)
+     ...*.
+2. **STIG Manager - update**, after the approval: the collection's assets are read again - an asset of the host's
+   made since the check is **left** (*there since the check*), and nothing is written to it; run the recheck again.
+   Else the asset is created (`POST /assets`: the name, the FQDN, the STIG) and the scan's answers written as its
+   reviews (Not a Finding, Open - with the job's comment - and Not Applicable; the status `check_stig_update_status`),
+   then read back. Manual checks, held back and left out stay Not Reviewed.
+
+**Its name:** `check_stig_stigman_asset` when set, else the short name (`web01`); the FQDN is the inventory name when it
+has a dot. Look at the name in the report before you approve - the next recheck finds the asset by it.
+
+**The grant:** creating an asset needs **Manage** in the collection - *Full* is refused (`HTTP 403`, proven on STIG
+Manager 1.6.17). Give the update's client Manage in the collection where the assets go. The reports' read-only client
+needs **Full** there (not Restricted): with Restricted it does not see the assets that are not assigned to it, and
+would plan them again - the update then finds them and leaves them.
+
 **The client that writes.** The update gets its own *STIG Manager API* credential:
 
 - The reports keep their read-only client.
 - Ask your Keycloak realm owner for a client with the client-credentials grant and the scope `stig-manager:collection`.
 - In STIG Manager, give its service account a grant in each collection: **Restricted** with the assets it may write,
-  or **Full**. **Manage** is needed only for `accepted`.
+  or **Full**. **Manage** is needed for `accepted`, and to create assets (`check_stig_update_create_assets`).
 - In AAP, create a *STIG Manager API* credential with that client, and attach it to *STIG Manager - update* only.
 
-Tested end to end against STIG Manager 1.6.17 with its demo Keycloak (`tests/stig/run_stigman_real_test.sh`): a
+Tested end to end against STIG Manager 1.6.17 with its demo Keycloak (`tests/stig/run_stigman_real_test.sh`; since
+0.72.0 also a new asset - not created when it is in another collection, created once, Full refused): a
 collection that requires a detail always and a comment for findings, Accept for Manage, Open reviews with POA&M
 comments.
 
@@ -555,6 +588,7 @@ you are most likely to set:
 | `check_stig_recheck` | `[open, not_reviewed]` | the STIG recheck: what STIG Manager has for a rule it checks again |
 | `check_stig_update_workflow` | `false` | `true` on workflow 37's check: what to write, handed on, `NEEDS APPROVAL` |
 | `check_stig_update`, `check_stig_update_status` | `[fixed, now_na, answered]`, `submitted` | workflow 37: what is written, and with which status |
+| `check_stig_update_create_assets` | `false` | workflow 37: a host with no asset gets one in `check_stig_stigman_collection`, once approved (the client needs Manage) |
 
 ## Updating Evaluate-STIG
 
@@ -566,8 +600,10 @@ Manager's revision and *Held back* drop to about 0; `check_stig_recheck_carry_fo
 ## Not in this version
 
 - The drift report and the recheck never write to STIG Manager. Workflow 37 writes the recheck's reviews after an
-  approval. Drift (a rule that passed and fails now) is not written yet. To import a whole scan, the results file is
-  on the host.
+  approval (and creates a Linux host's missing asset, with `check_stig_update_create_assets`). Drift (a rule that passed
+  and fails now) is not written yet. To import a whole scan, the results file is on the host.
+- A Windows server with no asset is not created yet (its web site and database assets would be too): it is listed as
+  not rechecked. Nor is a STIG assigned to an asset that is there without it (*does not have RHEL_9_STIG assigned*).
 - Linux scans one STIG per host (its RHEL STIG); Windows every STIG Evaluate-STIG finds. The other STIGs
   Evaluate-STIG writes on Linux (Firefox, ...) are not compared yet.
 - No remediation. A drifted rule's fix is in the HTML report; fixing it automatically, behind an

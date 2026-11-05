@@ -2,7 +2,8 @@
 # Workflow 37's last step: the reviews the approval allowed (stigman_update_plan, from the STIG recheck's check through
 # the approval step), written to STIG Manager - each read again first and written only if unchanged since the check,
 # then read back (library/site_stigman_update.py); a review with attachments is left as it is
-# (stigman_update_skip_attachments). A Check run reads and writes nothing. The report says what became of
+# (stigman_update_skip_attachments). A new asset of the plan (0.72.0) is created first, if still not there, and its
+# reviews written to it. A Check run reads and writes nothing. The report says what became of
 # each; a review not written (rejected, an error) fails the job.
 - name: STIG Manager update | the plan from the workflow's check (stigman_update_plan)
   ansible.builtin.assert:
@@ -30,7 +31,7 @@
       the client that may write reviews. Nothing written.
     quiet: true
 
-- name: STIG Manager update | write the approved reviews - each only if unchanged since the check read it
+- name: STIG Manager update | create the approved new assets, write the approved reviews - each only if unchanged since the check read it
   site_stigman_update:
     api: "{{ _su_login.api }}"
     token_url: "{{ _su_login.token_url }}"
@@ -49,9 +50,7 @@
   ansible.builtin.debug:
     msg: >-
       {{ [_su.error] if _su.error | default('') else
-         (_su['items'] | default([]) | map(attribute='state') | zip(_su['items'] | default([]) | map(attribute='line'),
-                                                                     _su['items'] | default([]) | map(attribute='why'))
-          | map('join', ' - ') | list) or ['nothing to write: the plan is empty'] }}
+         (_su['items'] | default([]) | stig_update_item_lines) or ['nothing to write: the plan is empty'] }}
 
 - name: STIG Manager update | the report
   ansible.builtin.include_role:

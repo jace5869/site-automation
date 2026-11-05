@@ -63,7 +63,7 @@
         answers_error: "{{ _stig_af.error | default('') if _stig_af_on | bool else '' }}"
         answers_source: "{{ check_stig_evaluate_answers }}"
         answers_count: "{{ _stig_af.files | default([]) | length }}"
-        vulns: "{{ _stig_recheck_vulns }}"
+        vulns: "{{ [] if _stig_recheck_new | default(false) else _stig_recheck_vulns }}"   # a new asset: every rule
         history: false
       register: _stig_scan
       check_mode: false             # only reads; in a dry run (save: false) nothing is kept on the host

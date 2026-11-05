@@ -1077,11 +1077,128 @@ class Update(unittest.TestCase):
         an asset's reviews."""
         with open(os.path.join(ROOT, "roles", "stigman_update", "library", "site_stigman_update.py")) as f:
             src = f.read()
-        self.assertEqual(sorted(set(re.findall(r'"%s(/[^"]*)"', src))), ["/collections/%s/reviews/%s", "/collections/%s/reviews/%s/%s",
+        self.assertEqual(sorted(set(re.findall(r'"%s(/[^"]*)"', src))), ["/assets?%s", "/collections/%s/reviews/%s", "/collections/%s/reviews/%s/%s",
                                                                         "/collections/%s/reviews/%s/%s/metadata/keys"])
-        self.assertEqual(re.findall(r'get_method = lambda: "(\w+)"', src), ["POST"])
-        for word in ("DELETE", "PATCH", "PUT", "/assets", "/users", "/grants", "/stigs"):
+        self.assertEqual(re.findall(r'get_method = lambda: "?(\w+)"?', src), ["method", "POST"])
+        self.assertEqual(re.findall(r'_send\("(\w+)", "([^"]+)"', src), [("POST", "/assets?projection=stigs")], "0.72.0: a new asset only")
+        for word in ("DELETE", "PATCH", "PUT", "/users", "/grants", "/stigs"):
             self.assertNotIn(word, src)
+
+
+class NewAsset(unittest.TestCase):
+    """0.72.0, check_stig_update_create_assets: a host with no asset - every rule, the asset planned, created once approved."""
+
+    def sm(self):
+        rules = sm_list()["rules"]
+        return {"status": "not_found", "why": "no asset in RHEL Servers: one to create once approved", "rules": rules,
+                "create": {"name": "web01", "fqdn": "web01.example.mil", "collection": "RHEL Servers", "collectionId": "7",
+                           "benchmark": "RHEL_9_STIG", "revision": "V2R7"}}
+
+    def scan(self):
+        return dict(recheck_scan(SV_1="pass", SV_2="fail", SV_3="notapplicable", SV_4="notchecked"), selected=False, vulns_asked=0)
+
+    def test_every_rule_and_the_report(self):
+        self.assertEqual(sf.stig_recheck_vulns(self.sm(), which=["open"]), ["V-1", "V-2", "V-3", "V-4", "V-5"], "every rule, whatever is asked")
+        self.assertEqual(sf.stig_recheck_vulns({"status": "not_found", "why": "x"}), [])
+        out = sf.stig_recheck(self.sm(), [self.scan()], "web01.example.mil", which=["open"])
+        self.assertEqual(len(out), 1)
+        c = out[0]
+        self.assertEqual((c["create"]["name"], c["stigman"]["status"], c["assetId"], c["how"]), ("web01", "new", "", "in full - a new asset"))
+        self.assertEqual(([r["v"] for r in c["answered"]], [r["v"] for r in c["by_hand"]]), (["V-1", "V-2", "V-3"], ["V-4", "V-5"]))
+        self.assertTrue(c["row"]["cells"][2].startswith("NEW, created once approved: RHEL Servers / web01 (V2R7)"))
+        lines = sf.stig_recheck_lines(c)
+        self.assertIn("NO ASSET in STIG Manager - web01 (web01.example.mil) in RHEL Servers, with RHEL_9_STIG V2R7 - created once approved", lines[0])
+        self.assertIn("Not a Finding 1, Open 1, Not Applicable 1, manual review 2", lines[0])
+        self.assertEqual([x for x in lines if x.startswith("  OPEN")], ["  OPEN   V-2 (X-2) CAT II Rule SV-2"])
+        head = sf.recheck_headline(out)
+        self.assertEqual((head["text"], head["status"], head["open"]), ("1 rule open, 0 status updates in STIG Manager, 1 new asset for STIG Manager", "warning", 1))
+        secs = sf.stig_recheck_sections(out)
+        t = [x["title"] for x in secs]
+        self.assertEqual(t[:2], ["New in STIG Manager - no asset for these hosts", "New assets - what fails (Open once written)"])
+        self.assertNotIn("2. Not Reviewed in STIG Manager - the scan has an answer", t)
+        self.assertNotIn("Manual review - the scan gave no answer", t)
+        self.assertEqual(secs[0]["rows"][0][:8], ["web01.example.mil", "web01", "web01.example.mil", "RHEL Servers", "RHEL_9_STIG V2R7", "1", "1", "1"])
+        self.assertIn("New assets", [b["label"] for b in secs[0]["boxes"]])
+        # a scan that failed: nothing to create
+        bad = sf.stig_recheck(self.sm(), [{"scanned": False, "why": "oscap is not installed"}], "web01")
+        self.assertEqual(sf.stig_update_plan(bad), [])
+
+    def test_plan_create_first(self):
+        out = sf.stig_recheck(self.sm(), [self.scan()], "web01.example.mil")
+        p = sf.stig_update_plan(out, day="2026-11-05")
+        self.assertEqual(p[0]["kind"], "create")
+        self.assertEqual((p[0]["asset"], p[0]["fqdn"], p[0]["collectionId"], p[0]["benchmark"], p[0]["reviews"]), ("web01", "web01.example.mil", "7", "RHEL_9_STIG", 3))
+        self.assertEqual(p[0]["line"], "NEW ASSET web01 (web01.example.mil) in RHEL Servers with RHEL_9_STIG V2R7 - then 3 review(s): "
+                                       "Not a Finding 1, Open 1, Not Applicable 1")
+        self.assertEqual([(x["v"], x["result"], x["assetId"], x["new_asset"]) for x in p[1:]],
+                         [("V-1", "pass", "", "web01"), ("V-2", "fail", "", "web01"), ("V-3", "notapplicable", "", "web01")])
+        self.assertIn("checked it with the new asset on web01.example.mil on 2026-11-05", p[2]["comment"])
+        self.assertEqual(sf.stig_update_lines(p), [p[0]["line"]])
+        self.assertEqual(sf.stig_update_plan(out, kinds=["fixed"])[0]["reviews"], 0, "answered not asked: the asset, no reviews")
+        sec = sf.stig_update_sections(p)[0]
+        self.assertEqual((sec["title"], len(sec["rows"]), sec["rows"][0][7]), ("Approve writes these reviews to STIG Manager and creates 1 asset", 1, "created"))
+        # two hosts that would get one name (web01.a, web01.b): neither planned, the report says why
+        two = sf.stig_recheck(self.sm(), [self.scan()], "web01.a.example.mil") + sf.stig_recheck(self.sm(), [self.scan()], "web01.b.example.mil")
+        self.assertEqual(sf.stig_update_plan(two), [])
+        rows = sf.stig_recheck_sections(two)[0]["rows"]
+        self.assertEqual(rows[0][1], "web01 - NOT CREATED: also the name of web01.b.example.mil - set check_stig_stigman_asset for each")
+        att = sf.stig_update_attachments(p, [])
+        self.assertEqual((len(att["plan"]), att["left"]), (4, []), "a new asset has no attachments to look for")
+
+    def test_update_creates_once(self):
+        p = sf.stig_update_plan(sf.stig_recheck(self.sm(), [self.scan()], "web01.example.mil"), day="2026-11-05")
+
+        class C(object):
+            def __init__(self, there=()):
+                self.there, self.made, self.posts, self.db = list(there), [], [], {}
+
+            def assets(self, c):
+                return self.there
+
+            def create(self, c, name, fqdn, bench):
+                self.made.append((c, name, fqdn, bench))
+                a = {"assetId": "88", "name": name, "fqdn": fqdn, "stigs": [{"benchmarkId": bench, "revisionStr": "V2R7"}]}
+                self.there.append(a)
+                return a
+
+            def write(self, c, a, reviews):
+                self.posts.append((c, a, [r["ruleId"] for r in reviews]))
+                for r in reviews:
+                    self.db[r["ruleId"]] = {"result": r["result"], "status": r["status"], "ts": "now"}
+                return {"affected": {"inserted": len(reviews)}, "rejected": []}
+
+            def asset_reviews(self, c, a):
+                return dict(self.db)
+
+            def review(self, c, a, rule):
+                raise AssertionError("a new asset's reviews are not read one by one")
+        c = C()
+        items = smu.update({"plan": p}, c, False)
+        self.assertEqual([i["state"] for i in items], ["created", "written", "written", "written"])
+        self.assertEqual((c.made, c.posts[0][:2]), ([("7", "web01", "web01.example.mil", "RHEL_9_STIG")], ("7", "88")))
+        self.assertEqual(items[0]["assetId"], "88")
+        self.assertEqual(sf.stig_update_item_lines(items), ["created - " + p[0]["line"] + " - its reviews: written 3"])
+        r = sf.stig_update_report(items)
+        self.assertEqual((r["title"], r["sections"][0]["title"], r["status"]), ("STIG Manager update: 3 review(s) written, 1 asset(s) created", "New assets", "ok"))
+        # run again: it is there now - not created twice, nothing written
+        items = smu.update({"plan": p}, c, False)
+        self.assertEqual([i["state"] for i in items], ["there since the check"] + ["asset not created"] * 3)
+        self.assertEqual((len(c.made), len(c.posts)), (1, 1))
+        # an asset of the host's name made by a person since the check (its short name): left
+        c = C(there=[{"assetId": "5", "name": "WEB01"}])
+        self.assertEqual(smu.update({"plan": p}, c, False)[0]["state"], "there since the check")
+        self.assertEqual(c.made, [])
+        # check mode: nothing created or written, said
+        c = C()
+        self.assertEqual([i["state"] for i in smu.update({"plan": p}, c, True)], ["would create"] + ["would write"] * 3)
+        self.assertEqual((c.made, c.posts), ([], []))
+        # the same asset twice in a plan: once only
+        c = C()
+        self.assertEqual([i["state"] for i in smu.update({"plan": p + [dict(p[0])]}, c, False)], ["created", "bad", "written", "written", "written"])
+        self.assertEqual(len(c.made), 1)
+        # not a plan item the check gives
+        bad = [dict(p[0], collectionId="7/../users")] + p[1:]
+        self.assertEqual([i["state"] for i in smu.update({"plan": bad}, C(), False)], ["bad"] + ["asset not created"] * 3)
 
 
 class Attachments(unittest.TestCase):

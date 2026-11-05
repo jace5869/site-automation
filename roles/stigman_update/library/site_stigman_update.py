@@ -1,10 +1,12 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-"""Write the reviews an approval allowed to STIG Manager - and nothing else. The plan comes from the STIG recheck's check
+"""Write the reviews an approval allowed to STIG Manager (and create the new assets it allowed) - nothing else. The plan comes from the STIG recheck's check
 (plugins/filter/stig_filters.py, stig_update_plan) through the workflow's approval step. Each review is read again first
 and written only if it is still as the check read it; then read once more, to say what STIG Manager now holds. Two
 requests to STIG Manager only: GET /collections/{c}/reviews/{asset}/{rule} and POST /collections/{c}/reviews/{asset}
-(the reviews of the plan). No collection, asset, user, STIG or grant is ever changed. Standard library only."""
+(the reviews of the plan). A new asset the approval allowed (0.72.0, check_stig_update_create_assets) is created first -
+GET /assets?collectionId= to see it is still not there, then POST /assets with its STIG - and its reviews written. No
+collection, user, STIG or grant, and no asset that is there, is ever changed. Standard library only."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -21,7 +23,12 @@ description:
   - A review with attachments in STIG Manager (its metadata key C(artifacts): the files a person attached as evidence)
     is left as it is (state C(has attachments)) - unless C(skip_attachments) is false. Read again just before the
     write, so one attached after the check is left too.
-  - In check mode reads, and writes nothing (state C(would write)).
+  - A plan item C(kind=create) (a host with no asset) - its collection's assets read again: one of the host's names (the
+    asset's name or FQDN, or their short names) there by now - created by a person since the check - is left, and
+    its reviews are not written (state C(there since the check)); else POST /assets (name, FQDN, the STIG; the Manage
+    grant) and the reviews of the plan with C(new_asset) its name are written to it (none to read again: it is new),
+    then read back in one GET.
+  - In check mode reads, and writes nothing (state C(would write), C(would create)).
 options:
   api: {description: "STIG Manager's API (https://stigman.example.mil/api).", type: str, required: true}
   token_url: {description: The Keycloak token endpoint., type: str, required: true}
@@ -30,7 +37,8 @@ options:
   scope: {description: "Scopes to ask for ('' = the client's default scopes).", type: str, default: ''}
   plan:
     description: "[{collectionId, assetId, ruleId, was: {result, status, ts}, result, status, detail, comment, engine, line, ...}]
-      - stig_update_plan's items, as the approval step handed them on."
+      - stig_update_plan's items, as the approval step handed them on; a new asset {kind: create, collectionId, asset, fqdn,
+      benchmark, line}, and its reviews with assetId '' and new_asset: its name."
     type: list
     elements: dict
     required: true
@@ -44,7 +52,8 @@ author: site automation
 RETURN = r'''
 items:
   description: "Each review of the plan with its state - written, would write, changed since, has attachments, rejected (STIG Manager's reason),
-                not as written (read back otherwise), bad (not a plan item), error - and why, and what STIG Manager holds now."
+                not as written (read back otherwise), bad (not a plan item), error, asset not created - and why, and what STIG Manager
+                holds now; each new asset (kind create): created, would create, there since the check, bad, error - and its assetId."
   type: list
   returned: always
 error:
@@ -67,6 +76,7 @@ RULE_RE = re.compile(r"^SV-[0-9]+r[0-9]+_rule$")
 RESULTS = ("pass", "fail", "notapplicable")
 STATUSES = ("saved", "submitted", "accepted")
 ENGINES = ("scap", "script", "other")
+BENCH_RE = re.compile(r"^[A-Za-z0-9_.-]{1,255}$")
 
 
 class NotFound(RuntimeError):
@@ -137,12 +147,116 @@ class Client(object):
             return len(v), [str((x or {}).get("name") or "") for x in v if isinstance(x, dict)]
         return (0, []) if v in (None, "", {}) else (-1, [])
 
+    def _send(self, method, path, body):
+        req = Request(self.api + path, data=json.dumps(body).encode("utf-8"),
+                      headers={"Authorization": "Bearer " + self.token, "Accept": "application/json", "Content-Type": "application/json"})
+        req.get_method = lambda: method
+        return self._open(req)
+
+    def assets(self, c):
+        """The collection's assets (name, FQDN, STIGs)."""
+        req = Request("%s/assets?%s" % (self.api, urlencode([("collectionId", c), ("projection", "stigs")])),
+                      headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"})
+        return self._open(req) or []
+
+    def create(self, c, name, fqdn, bench):
+        """POST /assets: the new asset with its STIG (the collection's revision) -> STIG Manager's record of it."""
+        return self._send("POST", "/assets?projection=stigs", {
+            "name": name, "fqdn": fqdn or None, "collectionId": c, "description": "Created by the STIG recheck (site-automation), approved in AAP",
+            "ip": "", "mac": "", "noncomputing": False, "metadata": {}, "stigs": [bench]}) or {}
+
+    def asset_reviews(self, c, a):
+        """Every review of an asset: {ruleId: what STIG Manager holds}."""
+        req = Request("%s/collections/%s/reviews/%s" % (self.api, quote(c), quote(a)),
+                      headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"})
+        return dict((r.get("ruleId"), held(r)) for r in self._open(req) or [])
+
     def write(self, c, a, reviews):
         """POST /collections/{c}/reviews/{a}: the asset's reviews of the plan -> {affected, rejected}."""
         req = Request("%s/collections/%s/reviews/%s" % (self.api, quote(c), quote(a)), data=json.dumps(reviews).encode("utf-8"),
                       headers={"Authorization": "Bearer " + self.token, "Accept": "application/json", "Content-Type": "application/json"})
         req.get_method = lambda: "POST"
         return self._open(req) or {}
+
+
+def short(name):
+    return (name or "").lower().split(".")[0]
+
+
+def matching(names, assets):
+    """The assets whose name or FQDN is one of names, or has its short name (as the check's read looks them up)."""
+    want = set(n.lower() for n in names if n)
+    shorts = set(short(n) for n in want)
+    return [a for a in assets if (a.get("name") or "").lower() in want or (a.get("fqdn") or "").lower() in want
+            or short(a.get("name")) in shorts or (a.get("fqdn") and short(a.get("fqdn")) in shorts)]
+
+
+def bad_create(it):
+    """Why a new asset of the plan cannot be created ('' = it can)."""
+    if not ID_RE.match(str(it.get("collectionId", ""))):
+        return "no collection id"
+    name = str(it.get("asset") or "")
+    if not name.strip() or len(name) > 255:
+        return "no asset name"
+    if not BENCH_RE.match(str(it.get("benchmark") or "")):
+        return "no STIG (benchmark)"
+    return ""
+
+
+def make_assets(p, client, check):
+    """The plan's new assets -> (their rows, {(collectionId, name lower): assetId, 'check', or None - not created})."""
+    rows, ids = [], {}
+    for n, it in enumerate(p["plan"]):
+        if it.get("kind") != "create":
+            continue
+        c, name = str(it.get("collectionId", "")), str(it.get("asset") or "")
+        row = {"n": n, "kind": "create", "line": it.get("line", ""), "host": it.get("host", ""), "asset": name, "fqdn": it.get("fqdn") or "",
+               "collection": it.get("collection", ""), "benchmark": it.get("benchmark", ""), "revision": it.get("revision", ""),
+               "reviews": it.get("reviews", 0), "assetId": ""}
+        rows.append(row)
+        key = (c, name.lower())
+        if key in ids:              # the plan has it twice (two hosts, one name): the check never plans that
+            row.update(state="bad", why="the plan has this asset twice - not created again")
+            continue
+        ids[key] = None
+        why = bad_create(it)
+        if why:
+            row.update(state="bad", why=why)
+            continue
+        try:
+            there = matching([name, it.get("fqdn") or ""], client.assets(c))
+        except RuntimeError as e:
+            row.update(state="error", why="the collection's assets could not be read - not created: %s" % e)
+            continue
+        if there:
+            row.update(state="there since the check", assetId=str(there[0].get("assetId") or ""),
+                       why="%s is in %s now (made since the check) - not created, and its reviews not written: run the recheck again" % (
+                           there[0].get("name"), it.get("collection") or "the collection"))
+            continue
+        if check:
+            row.update(state="would create", why="")
+            ids[key] = "check"
+            continue
+        try:
+            ans = client.create(c, name, it.get("fqdn") or "", it["benchmark"])
+        except RuntimeError as e:
+            row.update(state="error", why="not created: %s" % e)
+            continue
+        a = str(ans.get("assetId") or "")
+        if not ID_RE.match(a):
+            row.update(state="error", why="STIG Manager gave no asset id")
+            continue
+        row["assetId"] = a
+        got = [x.get("revisionStr") or "" for x in ans.get("stigs") or [] if x.get("benchmarkId") == it["benchmark"]]
+        if not got:
+            # created, without the STIG: its reviews could not be written - say so, and leave the asset for a person
+            row.update(state="error", why="created (asset id %s), but without %s - its reviews not written: assign the STIG in STIG Manager "
+                                          "and run the recheck again" % (a, it["benchmark"]))
+            continue
+        row.update(state="created", why="" if not it.get("revision") or got[0] == it["revision"] else
+                   "with %s %s (the check read %s)" % (it["benchmark"], got[0], it["revision"]))
+        ids[key] = a
+    return rows, ids
 
 
 def label_of(review):
@@ -191,18 +305,38 @@ def body_of(it):
 
 
 def update(p, client, check):
-    items = []
-    groups = {}
+    items, ids = make_assets(p, client, check)
+    groups, fresh = {}, {}
     for n, it in enumerate(p["plan"]):
+        if it.get("kind") == "create":
+            continue
         row = {"n": n, "line": it.get("line", ""), "host": it.get("host", ""), "asset": it.get("asset", ""), "ruleId": it.get("ruleId", ""),
                "v": it.get("v", ""), "result": it.get("result", ""), "status": it.get("status", ""), "was": it.get("was") or {}}
+        if it.get("new_asset"):
+            row["new_asset"] = it["new_asset"]
+            a = ids.get((str(it.get("collectionId", "")), str(it["new_asset"]).lower()))
+            if not a:
+                row.update(state="asset not created", why="")
+                items.append(row)
+                continue
+            if a == "check":
+                why = bad_item(dict(it, assetId="0"))
+                row.update(state="bad" if why else "would write", why=why)
+                items.append(row)
+                continue
+            it = dict(it, assetId=a)
         why = bad_item(it)
         if why:
             row.update(state="bad", why=why)
             items.append(row)
             continue
         items.append(row)
-        groups.setdefault((str(it["collectionId"]), str(it["assetId"])), []).append((row, it))
+        if it.get("new_asset"):
+            fresh.setdefault((str(it["collectionId"]), str(it["assetId"])), []).append((row, it))
+        else:
+            groups.setdefault((str(it["collectionId"]), str(it["assetId"])), []).append((row, it))
+    for (c, a), rows in sorted(fresh.items()):
+        write_new(client, c, a, rows)
     for (c, a), rows in sorted(groups.items()):
         go = []
         for row, it in rows:
@@ -260,6 +394,34 @@ def update(p, client, check):
     return items
 
 
+def write_new(client, c, a, rows):
+    """A new asset's reviews: nothing to read first (it was created just now, with none), one POST, read back in one GET."""
+    try:
+        ans = client.write(c, a, [body_of(it) for _, it in rows])
+    except RuntimeError as e:
+        for row, it in rows:
+            row.update(state="error", why=str(e))
+        return
+    refused = dict((r.get("ruleId"), r.get("reason") or "rejected") for r in ans.get("rejected") or [])
+    try:
+        now = client.asset_reviews(c, a)
+    except RuntimeError as e:
+        now, err = None, str(e)
+    for row, it in rows:
+        row["before"] = {"result": "", "status": "", "ts": ""}
+        if it["ruleId"] in refused:
+            row.update(state="rejected", why="STIG Manager: " + refused[it["ruleId"]])
+        elif now is None:
+            row.update(state="error", why="written, but not read back: %s" % err)
+        else:
+            after = now.get(it["ruleId"]) or held(None)
+            row["after"] = after
+            if after["result"] == it["result"] and after["status"] == it["status"]:
+                row.update(state="written", why="")
+            else:
+                row.update(state="not as written", why="STIG Manager holds %s (%s)" % (after["result"] or "no review", after["status"] or "-"))
+
+
 def main():
     module = AnsibleModule(argument_spec=dict(
         api=dict(type="str", required=True),
@@ -280,7 +442,7 @@ def main():
     except RuntimeError as e:
         module.exit_json(changed=False, items=[], error="no token for the client %s: %s" % (p["client_id"], e))
     items = update(p, client, module.check_mode)
-    module.exit_json(changed=any(i.get("state") == "written" for i in items), items=items, error="")
+    module.exit_json(changed=any(i.get("state") in ("written", "created") for i in items), items=items, error="")
 
 
 if __name__ == "__main__":

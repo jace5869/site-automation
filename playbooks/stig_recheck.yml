@@ -8,6 +8,8 @@
 #   answered     Not Reviewed in STIG Manager, the scan answered it  -> set it (a fail is Open)
 #   still open   Open, and the host still fails it                   -> nothing to update
 #   by hand      the scan gave no answer (a manual check)            -> a person reviews it
+# With check_stig_update_create_assets (workflow 37's check): a host with no asset in its collection is scanned in full,
+# and its asset (with its STIG) and the scan's answers are planned - created once approved.
 # Report only: no finding for what was found; a host that could not be rechecked is a warning. Nothing is kept with
 # the STIG drift report's scans (playbooks/stig_drift_report.yml checks every rule and keeps the history); the
 # checklist is kept on the host (check_stig_dir/recheck), STIG Manager can import it. The scanner and STIG Manager
@@ -97,7 +99,7 @@
 
     - name: STIG Manager - the reviews to write
       ansible.builtin.debug:
-        msg: "{{ _stig_update_plan | map(attribute='line') | list or 'nothing to write to STIG Manager' }}"
+        msg: "{{ _stig_update_plan | stig_update_lines or 'nothing to write to STIG Manager' }}"
       run_once: true
       when: check_stig_update_workflow | default(false) | bool
 
@@ -119,8 +121,12 @@
     - name: STIG Manager - NEEDS APPROVAL
       ansible.builtin.fail:
         msg: >-
-          NEEDS APPROVAL - {{ _stig_update_plan | length }} review(s) of {{ _stig_update_plan | map(attribute='assetId') | unique | list | length }}
-          asset(s) to write to STIG Manager, in the report ("Approve writes these reviews to STIG Manager"). Approve the workflow's
-          step to write them; deny it to write none. {{ _stig_update_plan | map(attribute='line') | join(' || ') }}
+          NEEDS APPROVAL - {{ _reviews | length }} review(s) of {{ _reviews | map(attribute='asset') | unique | list | length }}
+          asset(s) to write to STIG Manager{{ (', and ' ~ _new | length ~ ' new asset(s) to create') if _new else '' }}, in the
+          report ("Approve writes these reviews to STIG Manager"). Approve the workflow's step to write them; deny it to write
+          none. {{ _stig_update_plan | stig_update_lines | join(' || ') }}
       run_once: true
       when: check_stig_update_workflow | default(false) | bool and _stig_update_plan | length > 0
+      vars:
+        _new: "{{ _stig_update_plan | selectattr('kind', 'eq', 'create') | list }}"
+        _reviews: "{{ _stig_update_plan | rejectattr('kind', 'eq', 'create') | list }}"

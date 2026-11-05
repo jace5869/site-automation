@@ -502,6 +502,7 @@ File: `roles/check_stig/defaults/main.yml`
 | `check_stig_update_status` | `submitted` | the reviews' status as written: saved, submitted, or accepted (the collection must allow it, and the client's grant) |
 | `check_stig_update_skip_attachments` | `true` | a review with attachments in STIG Manager (evidence a person attached) is left out of the plan and never written; false = written like the others |
 | `check_stig_update_detail_max` | `8000` | at most this many characters of what the scan found, as each review's detail |
+| `check_stig_update_create_assets` | `false` | A Linux host with no asset in STIG Manager (0.72.0): with check_stig_stigman_collection set, workflow 37's check scans it in full and plans its asset (named check_stig_stigman_asset, else the short name; the FQDN the inventory name) with its RHEL STIG, and the scan's answers as its reviews; created only after the appr… (all of it: the role file) |
 
 ## check_time
 
@@ -1285,7 +1286,7 @@ File: `roles/stigman_update/defaults/main.yml`
 
 | Setting | Default | What it does |
 |---|---|---|
-| `stigman_update_api` | `"{{ check_stig_stigman_api \| default('') }}"` | STIG MANAGER - UPDATE (playbooks/stigman_update.yml): workflow 37's step after the approval. It writes the reviews the STIG recheck's check listed (stigman_update_plan, handed on by the workflow) - each only if STIG Manager still has it as the check read it - and nothing else. Its own "STIG Manager API" credential: a… (all of it: the role file) |
+| `stigman_update_api` | `"{{ check_stig_stigman_api \| default('') }}"` | STIG MANAGER - UPDATE (playbooks/stigman_update.yml): workflow 37's step after the approval. It writes the reviews the STIG recheck's check listed (stigman_update_plan, handed on by the workflow) - each only if STIG Manager still has it as the check read it - and the new assets it listed (check_stig_update_create_asse… (all of it: the role file) |
 | `stigman_update_token_url` | `"{{ check_stig_stigman_token_url \| default('') }}"` | empty = the credential's |
 | `stigman_update_client_id` | `"{{ check_stig_stigman_client_id \| default('') }}"` | empty = the credential's |
 | `stigman_update_client_secret` | `"{{ check_stig_stigman_client_secret \| default('') }}"` | empty = the credential's (vault it) |

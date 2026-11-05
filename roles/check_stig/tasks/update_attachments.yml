@@ -2,7 +2,8 @@
 # Workflow 37's check (playbooks/stig_recheck.yml, win_stig_recheck.yml), after the plan is made: the reviews of the plan
 # that have attachments in STIG Manager (library/site_stigman_attachments.py, GET only) are left out of it - evidence a
 # person attached stays with the result they gave - and listed in the report. check_stig_update_skip_attachments: false =
-# no such check. Input and output: _stig_update_plan; site_report_sections gets the list at the top.
+# no such check. A new asset's reviews (0.72.0) are not looked at: it has none yet. Input and output: _stig_update_plan;
+# site_report_sections gets the list at the top.
 - name: STIG Manager - which reviews of the plan have attachments (read-only)
   site_stigman_attachments:
     api: "{{ check_stig_stigman_api }}"
@@ -13,7 +14,7 @@
     validate_certs: "{{ check_stig_stigman_validate_certs | bool }}"
     ca_path: "{{ check_stig_stigman_ca_path }}"
     timeout: "{{ check_stig_stigman_timeout | int }}"
-    items: "{{ _stig_update_plan | map('dict2items') | map('selectattr', 'key', 'in', ['collectionId', 'assetId', 'ruleId'])
+    items: "{{ _stig_update_plan | rejectattr('new_asset', 'defined') | rejectattr('kind', 'eq', 'create') | map('dict2items') | map('selectattr', 'key', 'in', ['collectionId', 'assetId', 'ruleId'])
                | map('items2dict') | list }}"
   register: _stig_att
   delegate_to: localhost

@@ -9,10 +9,13 @@ DATA.json: {"secret": "...", "collections": [{"collectionId": "1", "name": "..."
                                        the default), as STIG Manager does}]},
             "rules": {"<benchmarkId>": [{"ruleId": ..., "groupId": ..., "version": ..., "severity": ..., "title": ...}]} (every revision),
             "writers": ["<client>", ...] (optional: the clients that may write reviews - none: read-only),
+            "managers": ["<client>", ...] (optional: the clients that may create assets - the Manage grant; none: no one),
+            "latest": {"<benchmarkId>": "V2R8"} (optional: the newest revision; else V2R7),
             "reject_fail_without_comment": true (optional: a finding without a comment is rejected, as a collection may say)}
 Re-read on every request, so a test can change it between runs. Every request is written to LOG (method, path); a write's
 body to LOG.writes, one JSON line each. Writes (playbooks/stigman_update.yml): GET /api/collections/C/reviews/A/RULE and
-POST /api/collections/C/reviews/A only - DATA.json is updated as STIG Manager would."""
+POST /api/collections/C/reviews/A only - DATA.json is updated as STIG Manager would; POST /api/assets (a new asset, with its
+STIGs at the collection's revision; a name there already: 422)."""
 import json
 import sys
 import time
@@ -50,12 +53,40 @@ class H(BaseHTTPRequestHandler):
         parts = urlparse(self.path).path.split("/")
         if len(parts) == 6 and parts[1:3] == ["api", "collections"] and parts[4] == "reviews":
             return self.write(d, parts[3], parts[5], raw)
+        if parts[1:] == ["api", "assets"]:
+            return self.create(d, raw)
         form = parse_qs(raw)
         if self.path != "/token":
             return self.send(405, {"error": "this test API is read-only"})
         if form.get("grant_type") != ["client_credentials"] or form.get("client_secret") != [d.get("secret")]:
             return self.send(401, {"error": "unauthorized_client"})
         self.send(200, {"access_token": "tok-" + form["client_id"][0], "token_type": "Bearer"})
+
+    def revision(self, d, cid, bench):
+        """The collection's revision of a STIG (its assets'), else the newest."""
+        for a in d["assets"].get(cid, []):
+            for st in a.get("stigs", []):
+                if st["benchmarkId"] == bench:
+                    return st["revisionStr"]
+        return d.get("latest", {}).get(bench, "V2R7")
+
+    def create(self, d, raw):
+        """POST /api/assets: only for a client with the Manage grant (managers); description required, a name unique."""
+        if self.client(d) not in d.get("managers", []):
+            return self.send(403, {"error": "User has insufficient privilege to complete this request."})
+        b = json.loads(raw)
+        if "description" not in b or not b.get("name") or not b.get("collectionId"):
+            return self.send(400, {"error": "request/body must have required property 'description'"})
+        mine = d["assets"].setdefault(b["collectionId"], [])
+        if any(a["name"].lower() == b["name"].lower() for a in mine):
+            return self.send(422, {"error": "Unprocessable Entity.", "detail": [{"failure": "name exists"}]})
+        with open(LOG + ".writes", "a") as f:
+            f.write(json.dumps({"asset": b}) + "\n")
+        new = {"assetId": str(100 + sum(len(v) for v in d["assets"].values())), "name": b["name"], "fqdn": b.get("fqdn"),
+               "stigs": [{"benchmarkId": x, "revisionStr": self.revision(d, b["collectionId"], x)} for x in b.get("stigs") or []]}
+        mine.append(new)
+        json.dump(d, open(DATA, "w"))
+        self.send(201, new)
 
     def write(self, d, cid, aid, raw):
         """POST /api/collections/C/reviews/A: each review merged as STIG Manager does (null detail or comment keeps it)."""
@@ -130,6 +161,13 @@ class H(BaseHTTPRequestHandler):
                 rows = [dict(r, stigs=[{"benchmarkId": r.get("benchmarkId") or (q.get("benchmarkId") or [""])[0],
                                         "revisionStr": r.get("revision") or "", "isDefault": not r.get("revision")}]) for r in rows]
             return self.send(200, [dict((k, v) for k, v in r.items() if k != "revision") for r in rows])
+        if len(parts) == 5 and parts[1:3] == ["api", "collections"] and parts[4] == "stigs":
+            benches = sorted(set(st["benchmarkId"] for a in d["assets"].get(parts[3], []) for st in a.get("stigs", [])))
+            return self.send(200, [{"benchmarkId": b, "revisionStr": self.revision(d, parts[3], b)} for b in benches])
+        if len(parts) == 6 and parts[1:3] == ["api", "stigs"] and parts[4:] == ["revisions", "latest"]:
+            if parts[3] not in d.get("rules", {}):
+                return self.send(404, {"error": "no STIG " + parts[3]})
+            return self.send(200, {"benchmarkId": parts[3], "revisionStr": d.get("latest", {}).get(parts[3], "V2R7")})
         if len(parts) == 7 and parts[1:3] == ["api", "stigs"] and parts[4] == "revisions" and parts[6] == "rules":
             if parts[3] not in d.get("rules", {}):
                 return self.send(404, {"error": "no STIG " + parts[3]})

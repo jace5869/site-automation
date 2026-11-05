@@ -9,7 +9,8 @@
 # a review changed in STIG Manager since the check is left; a review STIG Manager rejects fails the job; a plan item
 # that is not one the check gives is refused; no plan: nothing written; a review with attachments in STIG Manager is
 # left out of the check's plan, and left as it is by the update. Only GET, the token POSTs and the reviews' POST
-# reach STIG Manager.
+# reach STIG Manager. 0.72.0, a host with no asset (check_stig_update_create_assets): off - not rechecked; on - planned
+# (every rule), Check creates nothing, a client without Manage is refused, then created once with its reviews.
 #   bash tests/stig/run_stig_update_test.sh        (ANSIBLE_PLAYBOOK=... to pick one; STIG_KEEP=FILE keeps the last output)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -227,6 +228,48 @@ play stigman_update.yml "the update: a review given attachments after the check 
 if grep -qvE '^(GET /api/|POST /token$|POST /api/collections/1/reviews/11$)' "$work/sm.log"; then
     echo "FAIL - a request other than a read, the token or the asset's reviews reached STIG Manager"; grep -vE '^(GET /api/|POST /token$|POST /api/collections/1/reviews/11$)' "$work/sm.log" | head -3; fails=$((fails + 1))
 else echo "ok   - only GET, the token POSTs and POST /api/collections/1/reviews/11 reached STIG Manager"; fi
+
+# ---- 0.72.0: a host with no asset (check_stig_update_create_assets) - created once approved, by a client with Manage ----
+cp "$work/sm-first.json" "$work/sm.json"
+: > "$work/sm.log"; rm -f "$work/sm.log.writes"
+newvars='{"check_stig_update_workflow": true, "check_stig_update_create_assets": true, "check_stig_stigman_asset": "newbox", "check_stig_stigman_collection": "RHEL Servers"}'
+play stig_recheck.yml "create off (the default): a host with no asset is not rechecked, nothing planned" 2 \
+    -e '{"check_stig_update_workflow": true, "check_stig_stigman_asset": "newbox", "check_stig_stigman_collection": "RHEL Servers"}' -- \
+    "NOT RECHECKED - nothing to recheck: no asset named newbox with RHEL_9_STIG in the collection RHEL Servers" "!NEW ASSET" "!NEEDS APPROVAL"
+play stig_recheck.yml "the check: no asset - every rule checked, the asset and its reviews planned, NEEDS APPROVAL" 2 -e "$newvars" -- \
+    "no asset in STIG Manager - newbox to create in RHEL Servers once approved, with RHEL_9_STIG V2R7: every rule checked (a full scan)" \
+    "NEEDS APPROVAL - 8 review(s) of 1 asset(s) to write to STIG Manager, and 1 new asset(s) to create" \
+    "NEW ASSET newbox in RHEL Servers with RHEL_9_STIG V2R7 - then 8 review(s): Not a Finding 6, Open 2, Not Applicable 0"
+grep -P '^\tRUN: ' "$work/out.txt" | sed 's/^\tRUN: //' | "$py" -c 'import json, sys; json.dump({"stigman_update_plan": json.load(sys.stdin)["stigman_update_plan"]}, open(sys.argv[1], "w"))' "$work/plan-new.json"
+[ "$(writes)" = 0 ] && echo "ok   - ... nothing written by the check" || { echo "FAIL - the check wrote"; fails=$((fails + 1)); }
+play stigman_update.yml "the update in Check mode: would create, nothing written" ok -e "@$work/plan-new.json" -e "$writer" --check -- \
+    "would create - NEW ASSET newbox in RHEL Servers" "its reviews: would write 8"
+play stigman_update.yml "a client without the Manage grant: not created (HTTP 403), its reviews not written, the job fails" fail \
+    -e "@$work/plan-new.json" -e "$writer" -- "error - NEW ASSET newbox" "not created: HTTP 403" "its reviews: asset not created 8"
+[ "$(writes)" = 0 ] && echo "ok   - ... nothing written" || { echo "FAIL - written without Manage"; fails=$((fails + 1)); }
+"$py" -c 'import json, sys; d = json.load(open(sys.argv[1])); d["managers"] = ["stigwrite"]; json.dump(d, open(sys.argv[1], "w"))' "$work/sm.json"
+play stigman_update.yml "with Manage: newbox created with RHEL_9_STIG, its 8 reviews written and read back" ok -e "@$work/plan-new.json" -e "$writer" -- \
+    "created - NEW ASSET newbox in RHEL Servers" "its reviews: written 8"
+"$py" -c 'import glob, json, sys
+r = json.load(open(sorted(glob.glob(sys.argv[1] + "/*/latest.json"))[-1])); r = r.get("report", r)
+assert r["title"] == "STIG Manager update: 8 review(s) written, 1 asset(s) created", r["title"]
+assert r["sections"][0]["title"] == "New assets" and r["sections"][0]["rows"][0][5:7] == ["created", "written 8"], r["sections"][0]
+assert not any(s.get("title") == "Each review of the plan" for s in r["sections"])' "$work/site" \
+    && echo "ok   - ... the report: 8 written, 1 created - the new asset in one row, its reviews counted" || { echo "FAIL - the update report"; fails=$((fails + 1)); }
+"$py" -c 'import json, sys; d = json.load(open(sys.argv[1])); a = [x for x in d["assets"]["1"] if x["name"] == "newbox"]
+assert a and a[0]["stigs"] == [{"benchmarkId": "RHEL_9_STIG", "revisionStr": "V2R7"}] and a[0]["fqdn"] is None, a
+r = d["reviews"][a[0]["assetId"]]
+assert len(r) == 8 and all(x["status"]["label"] == "submitted" for x in r), r
+assert all("checked it with the new asset" in x["comment"] for x in r), [x["comment"] for x in r]' "$work/sm.json" \
+    && echo "ok   - ... in STIG Manager: the asset (no FQDN: the inventory name has no dot), 8 reviews submitted, each with the job's comment" \
+    || { echo "FAIL - the new asset in STIG Manager"; fails=$((fails + 1)); }
+n=$(writes)
+play stigman_update.yml "the same plan again: the asset is there - not created twice, nothing written" ok -e "@$work/plan-new.json" -e "$writer" -- \
+    "there since the check - NEW ASSET newbox" "its reviews: asset not created 8"
+[ "$(writes)" = "$n" ] && echo "ok   - ... nothing posted" || { echo "FAIL - posted again"; fails=$((fails + 1)); }
+if grep -qvE '^(GET /api/|POST /token$|POST /api/assets\?projection=stigs$|POST /api/collections/1/reviews/1[0-9][0-9]$)' "$work/sm.log"; then
+    echo "FAIL - a request other than a read, the token, the new asset or its reviews"; fails=$((fails + 1))
+else echo "ok   - only GET, the token, POST /api/assets and the new asset's reviews reached STIG Manager"; fi
 
 echo
 if [ $fails -eq 0 ]; then echo "all STIG Manager update scenarios passed"; else echo "$fails STIG Manager update scenario(s) FAILED"; exit 1; fi

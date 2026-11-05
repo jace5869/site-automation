@@ -8,7 +8,9 @@
 # comment); the client granted Manage. Then, as AAP would: the STIG recheck's check (check_stig_update_workflow: true,
 # the fake oscap of the other STIG tests), its plan from the custom stats, the update in Check mode (nothing written),
 # then for real - each review as planned in STIG Manager (result, status, comment kept or set, the result engine, the
-# history), run again (already so), a review a person changed since (left).
+# history), run again (already so), a review a person changed since (left). 0.72.0: a host with no asset
+# (check_stig_update_create_assets) - in another collection: not created; nowhere: planned, created once approved with
+# the collection's revision and its reviews, not twice; a client with Full instead of Manage: refused (HTTP 403).
 #   bash tests/stig/run_stigman_real_test.sh     (CONTAINER_ENGINE=... ; STIGMAN_TEST_KEEP=1 keeps the pod and work folder)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -214,6 +216,57 @@ case "$(rv SV-257835r1099999_rule)" in "pass submitted | Carried forward by the 
     ok "  ... written to the V2R8 rule (SV-257835r1099999_rule), the comment says carried forward";;
     *) bad "carried: $(rv SV-257835r1099999_rule)"; grep -n "written\|rejected\|error" "$work/out.txt" | head -3;; esac
 [ "$(rv SV-257835r1044874_rule | cut -d'|' -f1)" = "pass accepted " ] && ok "  ... the V2R7 review left as it was" || bad "V2R7 review: $(rv SV-257835r1044874_rule)"
+
+# ---- 0.72.0: a host with no asset - check_stig_update_create_assets ---------------------------------------------------
+# the host is "newbox" here (check_stig_stigman_asset): first it is in another collection the client reads (not created),
+# then nowhere (planned; created once approved, with the collection's revision, and the scan's answers as its reviews)
+lab=$(api "$atok" POST /collections "{\"name\": \"Lab\", \"grants\": [{\"userId\": \"$aid\", \"roleId\": 4}, {\"userId\": \"$wid\", \"roleId\": 2}],
+  \"settings\": {}, \"metadata\": {}}" | j 'd["collectionId"]')
+labasset=$(api "$atok" POST /assets "{\"name\": \"newbox\", \"collectionId\": \"$lab\", \"description\": \"\", \"ip\": \"\", \"noncomputing\": false,
+  \"metadata\": {}, \"stigs\": []}" | j 'd["assetId"]')
+newvars='{"check_stig_update_workflow": true, "check_stig_update_create_assets": true, "check_stig_stigman_asset": "newbox"}'
+play stig_recheck.yml -e "$newvars"
+[ "$rc" = 2 ] && grep -q "NOT RECHECKED - nothing to recheck: no asset in RHEL Servers - but newbox is in Lab: not created" "$work/out.txt" \
+    && ! grep -q "NEEDS APPROVAL" "$work/out.txt" \
+    && ok "no asset in the collection, but one in another (Lab): not created, nothing to approve - a warning, as any host not found" \
+    || { bad "in another collection: rc $rc"; grep -n "newbox\|NEEDS\|fatal" "$work/out.txt" | head -5; }
+api "$atok" DELETE "/assets/$labasset" >/dev/null
+play stig_recheck.yml -e "$newvars"
+grep -P '^\tRUN: ' "$work/out.txt" | sed 's/^\tRUN: //' | "$py" -c 'import json, sys; json.dump({"stigman_update_plan": json.load(sys.stdin)["stigman_update_plan"]}, open(sys.argv[1], "w"))' "$work/plan4.json"
+nrev=$("$py" -c 'import json, sys; p = json.load(open(sys.argv[1]))["stigman_update_plan"]; print(len([x for x in p if x.get("new_asset") == "newbox"]))' "$work/plan4.json")
+[ "$rc" = 2 ] && grep -q "NEEDS APPROVAL - $nrev review(s) of 1 asset(s) to write to STIG Manager, and 1 new asset(s) to create" "$work/out.txt" \
+    && grep -q "NEW ASSET newbox in RHEL Servers with RHEL_9_STIG V2R8 - then $nrev review(s)" "$work/out.txt" && [ "$nrev" -gt 0 ] \
+    && ok "nowhere: every rule checked, the asset newbox and its $nrev reviews planned - NEEDS APPROVAL" \
+    || { bad "the check of a new asset: rc $rc, $nrev reviews"; grep -n "NEEDS\|NEW ASSET\|newbox\|fatal" "$work/out.txt" | head -8; }
+html=$(grep -rl "STIG recheck" "$work/site" --include='*.html' | grep -v index | xargs ls -t | head -1)
+grep -q "New in STIG Manager - no asset for these hosts" "$html" && grep -q "creates 1 asset" "$html" \
+    && ok "  ... the report: the new asset in one row, and Approve creates 1 asset" || bad "the report ($html) does not show the new asset"
+newid() { api "$wtok" GET "/assets?collectionId=$col&projection=stigs" | "$py" -c 'import json, sys
+a = [x for x in json.load(sys.stdin) if x["name"] == "newbox"]
+print("%s %s" % (a[0]["assetId"], ",".join(s["benchmarkId"] + " " + s["revisionStr"] for s in a[0]["stigs"])) if a else "none")'; }
+play stigman_update.yml -e "@$work/plan4.json" --check
+[ "$rc" = 0 ] && grep -q '"would create - NEW ASSET newbox' "$work/out.txt" && [ "$(newid)" = none ] \
+    && ok "the update in Check mode: would create it, nothing created" || { bad "Check, new asset: rc $rc, $(newid)"; grep -n "create\|fatal" "$work/out.txt" | head -5; }
+play stigman_update.yml -e "@$work/plan4.json"
+nid=$(newid)
+[ "$rc" = 0 ] && grep -q "\"created - NEW ASSET newbox .* - its reviews: written $nrev\"" "$work/out.txt" && [ "${nid#* }" = "RHEL_9_STIG V2R8" ] \
+    && ok "the update: newbox created in RHEL Servers with RHEL_9_STIG V2R8, its $nrev reviews written and read back" \
+    || { bad "the update, new asset: rc $rc, $nid"; grep -n "create\|written\|rejected\|error\|fatal" "$work/out.txt" | cut -c1-300 | head -8; }
+got=$(api "$atok" GET "/collections/$col/reviews/${nid%% *}" | "$py" -c 'import json, sys
+d = json.load(sys.stdin); print("%d %s" % (len(d), sorted(set(r["status"]["label"] for r in d))))')
+[ "$got" = "$nrev ['submitted']" ] && ok "  ... STIG Manager has $nrev reviews of newbox, submitted" || bad "newbox's reviews: $got"
+play stigman_update.yml -e "@$work/plan4.json"
+[ "$rc" = 0 ] && grep -q '"there since the check - NEW ASSET newbox' "$work/out.txt" && [ "$(api "$wtok" GET "/assets?collectionId=$col" | grep -o '"newbox"' | wc -l)" = 1 ] \
+    && ok "the same plan again: newbox is there - not created twice, nothing written" || { bad "again, new asset: rc $rc"; grep -n "newbox\|fatal" "$work/out.txt" | head -5; }
+play stig_recheck.yml -e "$newvars"
+grep -q "NO ASSET" "$work/out.txt" && bad "the recheck after: still no asset" || ok "the recheck after: newbox found, rechecked as any asset"
+api "$atok" DELETE "/assets/${nid%% *}" >/dev/null
+gid=$(api "$atok" GET "/collections/$col/grants" | "$py" -c 'import json, sys; print([g["grantId"] for g in json.load(sys.stdin) if g["user"]["userId"] == sys.argv[1]][0])' "$wid")
+api "$atok" PUT "/collections/$col/grants/$gid" "{\"userId\": \"$wid\", \"roleId\": 2}" >/dev/null
+play stigman_update.yml -e "@$work/plan4.json"
+[ "$rc" = 2 ] && grep -q '"error - NEW ASSET newbox .* - not created: HTTP 403' "$work/out.txt" && [ "$(newid)" = none ] \
+    && ok "a client with Full (not Manage): not created (HTTP 403), the job fails - and says why" || { bad "Full grant: rc $rc, $(newid)"; grep -n "newbox\|fatal" "$work/out.txt" | head -5; }
+api "$atok" PUT "/collections/$col/grants/$gid" "{\"userId\": \"$wid\", \"roleId\": 3}" >/dev/null
 
 echo
 if [ $fails -eq 0 ]; then echo "all real STIG Manager scenarios passed"; else echo "$fails real STIG Manager scenario(s) FAILED"; exit 1; fi

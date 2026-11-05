@@ -374,7 +374,8 @@ For workflow 37, make a copy of each, *STIG recheck - check* (and *Windows STIG 
 ### STIG Manager - update
 
 Workflow 37's step after the approval: it writes the reviews the STIG recheck's check listed to STIG Manager, each only
-if it is unchanged since the check, and nothing else ([STIG_DRIFT.md](STIG_DRIFT.md#updating-stig-manager-with-an-approval)).
+if it is unchanged since the check - and, with `check_stig_update_create_assets`, creates the new assets it listed (its
+client then needs Manage) - and nothing else ([STIG_DRIFT.md](STIG_DRIFT.md#updating-stig-manager-with-an-approval)).
 
 | Field | Value |
 |---|---|

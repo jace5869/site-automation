@@ -26,7 +26,9 @@ options:
     description: "[{host, names: [asset names to try], collection: '' or a name, benchmark: RHEL_9_STIG, id: the key of its answer
       ('' = host; a host with several STIGs has one entry per STIG, each with its own id), rules: true - the STIG revision's
       rules too (the STIG recheck: the rules with no review), every: true - no benchmark: every STIG assigned to the host's
-      asset and to its web site and database assets (<asset>-<site>-<instance>), each a checklist}]"
+      asset and to its web site and database assets (<asset>-<site>-<instance>), each a checklist, create: {name, fqdn} - the
+      asset to create when none is found (workflow 37, check_stig_update_create_assets; with collection and rules): looked
+      for in every collection the client can read, then the collection's revision of the STIG and its rules read}]"
     type: list
     elements: dict
     required: true
@@ -44,7 +46,8 @@ hosts:
                 status, ts, rule, comment (true: it has one), version, severity, title}}, earlier: {SV-257985: the same, and
                 revision} (with rules: true - a review of the rule in an earlier revision of the STIG, whose check changed since:
                 STIG Manager does not carry it to the revision in use), rules (with rules: true): {SV-257985: {v, rule, version,
-                severity, title}}}; with every: true {status, why, collection, collectionId, asset, checklists: [{asset, assetId,
+                severity, title}}, create (with create, not found anywhere: {name, fqdn, collection, collectionId, benchmark,
+                revision} - and rules)}; with every: true {status, why, collection, collectionId, asset, checklists: [{asset, assetId,
                 benchmark, revision, site, instance, reviews, earlier, rules}]}"
   type: dict
   returned: always
@@ -271,6 +274,8 @@ def read(p, client):
             out[hid] = {"status": "not_found", "why": "no asset named %s with %s in %s" % (
                 " or ".join(names), bench, ("the collection " + search[0]["name"]) if h.get("collection") else
                 "any collection the client can read (%d)" % len(search))}
+            if h.get("create") and h.get("collection"):
+                out[hid].update(to_create(h, names, bench, search[0], cols, assets, rules, client))
             continue
         if len(found) > 1:
             out[hid] = {"status": "several", "why": "%d assets match: %s - set check_stig_stigman_collection (or the asset name) for this host" % (
@@ -294,6 +299,39 @@ def read(p, client):
             out[hid]["rules"] = rl
             out[hid]["earlier"] = earlier(a, bench, rev, rv)
     return out
+
+
+def to_create(h, names, bench, col, cols, assets, rules, client):
+    """A host with no asset in its collection, to create behind the approval (workflow 37): {create: {name, fqdn, collection,
+    collectionId, benchmark, revision}, rules} - or {why} when it is not to be created: an asset of the host's in another
+    collection the client can read, or STIG Manager without the STIG. Reads only."""
+    try:
+        elsewhere = []
+        for c in cols:
+            if c["collectionId"] != col["collectionId"]:
+                elsewhere += match_assets(names, assets(c, ""))
+        if elsewhere:
+            return {"why": "no asset in %s - but %s: not created (set check_stig_stigman_collection to that collection)" % (
+                col["name"], ", ".join("%s is in %s" % (a.get("name"), a["_col"].get("name")) for a in elsewhere))}
+        # the revision the asset will get: the collection's (it may be pinned), else the newest STIG Manager has
+        rev = ""
+        for s in client.get("/collections/%s/stigs" % quote(str(col["collectionId"]))) or []:
+            if s.get("benchmarkId") == bench:
+                rev = s.get("revisionStr") or ""
+        if not rev:
+            rev = (client.get("/stigs/%s/revisions/latest" % quote(bench)) or {}).get("revisionStr") or ""
+        rl = rules(bench, rev)
+    except RuntimeError as e:
+        why = str(e)
+        if "HTTP 404" in why:
+            why = "STIG Manager has no %s - import the STIG first" % bench
+        return {"why": "no asset in %s, and none created: %s" % (col["name"], why)}
+    if not rl:
+        return {"why": "no asset in %s, and none created: %s %s has no rules in STIG Manager" % (col["name"], bench, rev or "")}
+    c = h["create"] or {}
+    return {"why": "no asset in %s: one to create once approved" % col["name"], "rules": rl,
+            "create": {"name": c.get("name") or names[0], "fqdn": c.get("fqdn") or "", "collection": col.get("name", ""),
+                       "collectionId": str(col["collectionId"]), "benchmark": bench, "revision": rev}}
 
 
 def every(h, names, by_name, cols, assets, rules, reviews, earlier):

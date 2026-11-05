@@ -478,6 +478,9 @@ The STIG recheck's "update the review", written to STIG Manager after a person a
 - **What happens:** the check fails on purpose (`NEEDS APPROVAL`) when there is something to write, and hands the list
   on. With nothing to write it stays green, and the approval never comes. Approve, and step 3 writes exactly those
   reviews, each only if STIG Manager still has it as the check read it. Deny, and nothing is written.
+- **A host with no asset** (0.72.0, Linux): add `check_stig_update_create_assets: true` to the check's Variables (and
+  have `check_stig_stigman_collection` set): the check scans it in full and lists *NEW ASSET ...*; Approve creates it,
+  with its STIG and the scan's answers. The update's client then needs **Manage** in that collection.
 - **Schedule:** on demand after fixing hosts, or after patch night. Approve the same day, so few reviews change in
   between.
 - **A dry run:** deny at step 2, or give a copy of the workflow a step 3 with **Job type Check** (tick **Prompt on

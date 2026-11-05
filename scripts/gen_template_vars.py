@@ -262,10 +262,13 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## Workflow 37's check ("STIG recheck - check") only: what to write to STIG Manager in the report, handed to the
 ## approval and "STIG Manager - update", the job fails on purpose (NEEDS APPROVAL). This job itself never writes.
 # check_stig_update_workflow: true
+## With it: a host with no asset in STIG Manager gets one in check_stig_stigman_collection, once approved (the
+## update's client needs the Manage grant there)
+# check_stig_update_create_assets: true
 """),
     "stigman_update.yml": ("STIG Manager - update", "STIG Manager API (the client that may write reviews)", "", """\
 ## Workflow 37's step after the approval: it writes the reviews the STIG recheck's check listed (stigman_update_plan,
-## handed on by the workflow) and nothing else. STIG Manager's address: check_stig_stigman_api, as for the reports
+## handed on by the workflow) - and the new assets it listed (check_stig_update_create_assets: the Manage grant) - and nothing else. STIG Manager's address: check_stig_stigman_api, as for the reports
 ## (usually in all.yml)
 # check_stig_stigman_api: https://STIGMAN-SERVER/api
 """),
