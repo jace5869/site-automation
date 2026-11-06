@@ -93,6 +93,8 @@ authentication and JSON. These are the only calls the playbooks make:
 | `GET /api/now/table/sys_user_group?sysparm_query=nameIN...`, `/sys_user?sysparm_query=user_nameIN...` | the assignment group's and the people's sys_ids | weekly activity report |
 | `GET /api/now/table/<incident, sc_task, change_request, change_task, problem_task ...>?sysparm_query=assignment_groupIN...^opened_at<=...` | the group's tasks of the week ([SERVICENOW_WAR.md](SERVICENOW_WAR.md#what-it-reads)) | weekly activity report |
 | `GET /api/now/table/task_sla?sysparm_query=taskIN...^stage!=cancelled` | those tasks' SLAs: breached, or close to breaching | weekly activity report |
+| `GET /api/now/table/<incident, sc_req_item, sc_task, change_request, problem>?sysparm_query=opened_at>=...^ORclosed_at>=...^ORactive=true...` | months of tickets, page by page ([SERVICENOW_INSIGHTS.md](SERVICENOW_INSIGHTS.md#step-1-the-account)) | ticket insights |
+| `GET /api/now/table/sys_audit?sysparm_query=tablename=incident^fieldname=assignment_group^documentkeyIN...` | the groups an incident passed through | ticket insights |
 
 With `cert_renew_servicenow: catalog` the certificate renewals order the PKI's catalog item instead of opening
 incidents ([CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md)). Those jobs, and the catalog test, make these calls:

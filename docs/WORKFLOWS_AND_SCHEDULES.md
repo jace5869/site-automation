@@ -572,7 +572,7 @@ STIG Manager is only read. Click by click: [STIG_DRIFT.md](STIG_DRIFT.md), "Sett
 usual - needs a few runs before it says anything. When users say "the network is slow", launch the template
 on its own with the group they use: the report shows where. [NETWORK_PERF.md](NETWORK_PERF.md).
 
-### 38. Add or remove a mail relay whitelist address, with an approval
+### 38. Add or remove an SMTP relay whitelist address, with an approval
 
 ```workflow
 [Mail relay - whitelist plan]
@@ -1026,6 +1026,7 @@ as Check).
 | Database watch | hourly | workflow 8 |
 | ServiceNow health | hourly | template *ServiceNow health*, with an email **notification on failure** |
 | ServiceNow - weekly activity report | weekly: Friday 15:00 (the last 7 days), or Monday 07:00 with `servicenow_war_period: last-week` | template *ServiceNow - weekly activity report* ([SERVICENOW_WAR.md](SERVICENOW_WAR.md)) |
+| ServiceNow - ticket insights | monthly: the 1st, 02:00 (the last 6 months), or quarterly with `servicenow_insights_months: 3` | template *ServiceNow - ticket insights* ([SERVICENOW_INSIGHTS.md](SERVICENOW_INSIGHTS.md)) |
 | Weekly compliance | Monday 07:00 | workflow 2 |
 | Security posture | Wednesday 07:00 | workflow 6 |
 | Patch preview | the Monday before patch night | template *Patch hosts*, **Prompts → Job type `Check`** |

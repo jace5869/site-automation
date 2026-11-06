@@ -27,6 +27,8 @@
 # ("Report: https://...") and kept as the job artifact site_report_url. _report_email_skip: true = only the website.
 # _report_to_only: [addresses] = only these get it (no report_email_to, no report_email_cc).
 # _report_web_skip: true = never on the website, whatever report_web_dest says (the outage AAR's documents).
+# _report_html: the website's page as the report made it (the ticket insights' own page) instead of report_web_theme's look; the
+# logo goes where it has <!--site-report-logo-->. The email and the index still use _report.
 # report_web_copy: true = the page is not written here - the report is kept as the job artifact site_report_page for the
 # job "Report website - copy" (tasks/copy.yml), which writes it at the same address; nothing here reaches report_web_host.
 - name: Email | who gets the report
@@ -221,8 +223,11 @@
     url: "{{ report_web_url | default('') | trim }}"
     files: "{{ _web_files }}"
     # report_web_copy: no page made here - the copy job makes it from what is kept
+    # _report_html: a page the report made itself (the ticket insights) - its logo in place of <!--site-report-logo-->
     html: >-
       {{ '' if _web_copy | bool else
+         (_report_html | replace('<!--site-report-logo-->', '<img class="logoimg" src="cid:site-report-logo" alt="">' if _web_logo_cid | bool else ''))
+         if _report_html | default('') | length > 0 else
          lookup('ansible.builtin.template', 'report_' ~ _web_theme ~ '.html.j2' if _web_theme in _strip_looks else 'report.html.j2') }}
     keep: "{{ _web_copy | bool }}"
     max_kb: "{{ report_web_copy_max_kb | int }}"

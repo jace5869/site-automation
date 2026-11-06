@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [aap_health](#aap_health), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [pki_bundle](#pki_bundle), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_ckl_import](#stigman_ckl_import), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [aap_health](#aap_health), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [pki_bundle](#pki_bundle), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_insights](#servicenow_insights), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_ckl_import](#stigman_ckl_import), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -1234,6 +1234,56 @@ File: `roles/servicenow/defaults/main.yml`
 | `cert_install_min_days` | `30` | the issued certificate must be valid at least this many more days (else held for a person) |
 | `cert_install_fewer_names` | `false` | true = install a certificate that lacks names (subjectAltName) the old one had; false = held for a person |
 | `cert_install_ca_bundle` | (empty) | A CA bundle in YOUR repository that completes the chain when the PKI sends back only the .cer - e.g. the DoD PKI's PKCS7 bundle from cyber.mil: files/dod_pki_bundle.p7b (playbooks/files/; the .p7b, DER or PEM, a .pem, or the zip as downloaded). Only the CAs that signed the certificate are taken from it - its issuing C… (all of it: the role file) |
+
+## servicenow_insights
+
+File: `roles/servicenow_insights/defaults/main.yml`
+
+> TICKET INSIGHTS (playbooks/servicenow_insights.yml, docs/SERVICENOW_INSIGHTS.md): months of ServiceNow tickets in one report for management - the most common incident issues and their fix, the most requested services, keeping up (opened, resolved, the backlog and its age), P1/P2s, problem candidates, tickets passed between groups, changes that failed and what followed, close notes that say nothing, the All-stars of each team, knowledge article drafts. A web page for the whole site and one per team (report_web_dest), an email (report_email_to) with the workbook. ACT (GenAI) groups the incidents into issues and writes the fixes; names, phone numbers, email addresses, host names and IP addresses are replaced before anything reaches the model and put back after. From the AAP side with the "ServiceNow API" credential (the account needs read on the tables: itil). Read-only, in Check too.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `servicenow_insights_months` | `6` | THE WINDOW. The last servicenow_insights_months months up to now (servicenow_insights_until), compared with the same length before it. servicenow_insights_days > 0 wins over the months (e.g. 30, 60). Dates and weeks follow report_time_zone (the email settings; "" = UTC). |
+| `servicenow_insights_days` | `0` | > 0: the last N days instead of the months |
+| `servicenow_insights_until` | (empty) | the last day (through its end, 2026-10-31), "" = now |
+| `servicenow_insights_compare` | `true` | read the window before as well: the changes against it (the tiles, rank ▲▼) |
+| `servicenow_insights_groups` | `[]` | The assignment groups reported on, exactly as ServiceNow names them: empty = every group (the whole site). A list, or text with one name per line or separated by ; or ,. |
+| `servicenow_insights_team_pages` | `true` | Each team's own page (every section of the report for that team) on the report website, and the Teams side by side table on the site's page. The teams are the groups named above, else the groups with at least servicenow_insights_team_min tickets in the window, the busiest first, at most servicenow_insights_teams_max. |
+| `servicenow_insights_teams_max` | `20` | at most this many teams with their own page |
+| `servicenow_insights_team_min` | `25` | a group with at least this many tickets in the window is a team (no groups named) |
+| `servicenow_insights_team_email_to` | `{}` | Also email a team's own report to these people (the team's page, the same look): {"Ops - Windows": [lead@yoursite.mil]}. |
+| `servicenow_insights_tables` | `[incident, sc_req_item, sc_task, change_request, problem]` | The tables read: incident, sc_req_item (requested items: the most requested services), sc_task (catalog tasks: the All-stars count their closures), change_request, problem. Take one out to leave its sections out. A table the account cannot read is said in the report. |
+| `servicenow_insights_max_records` | `20000` | at most this many records per table (the rest are said: shorten the window) |
+| `servicenow_insights_audit` | `true` | The assignment history of incidents passed around (sys_audit): the paths of Passed between groups. The account needs read on sys_audit; without it the counts are still there and the report says so. false: not read. |
+| `servicenow_insights_top_issues` | `10` | WHAT THE REPORT SHOWS incident issues listed (the workbook has every one) |
+| `servicenow_insights_top_requests` | `10` | catalog items listed |
+| `servicenow_insights_old_days` | `30` | open longer than this: flagged (Over 30 days) |
+| `servicenow_insights_handoff_min` | `3` | an incident reassigned this many times or more is "passed between groups" |
+| `servicenow_insights_problem_min` | `3` | a problem candidate: this many incidents of one issue on one CI ... |
+| `servicenow_insights_problem_days` | `30` | ... within this many days |
+| `servicenow_insights_repeat_days` | `14` | reopened, or came back (a new incident of the same caller and issue), within this many days |
+| `servicenow_insights_reopen_min_percent` | `0.2` | Reopen is "not used" when fewer than this share (%) of the incidents were ever reopened: the report then counts the incidents that came back instead (the same person, the same issue, a new ticket). |
+| `servicenow_insights_change_follow_hours` | `72` | Changes: an incident on the change's CI within this many hours of its end is shown as following it ("Same CI"; a Caused by link is always shown). A failed change: its close code is one of these (any case). |
+| `servicenow_insights_change_failed_codes` | `[unsuccessful]` | a change closed with one of these codes failed |
+| `servicenow_insights_change_backout_words` | `[back out, backed out, backout, rolled back, rollback, roll back]` | in its close code or notes: backed out |
+| `servicenow_insights_bare_chars` | `20` | CLOSE NOTES. Bare: shorter than servicenow_insights_bare_chars, or only one of servicenow_insights_bare_phrases (any case, the punctuation ignored). Thin: longer, but no action word. Good: says what was done. |
+| `servicenow_insights_bare_phrases` | `[fixed, done, resolved, closed, complete, completed, resolved per user, closed per user,…` | The close notes that say nothing, whole (any case, the punctuation ignored). |
+| `servicenow_insights_bare_weight` | `0.5` | ALL-STARS (each team): a ticket with a bare close note counts this much (0.5 = half); awards need this many resolved. |
+| `servicenow_insights_star_min` | `25` | awards need this many tickets resolved |
+| `servicenow_insights_act` | `true` | ACT (GenAI): groups the incidents into issues (a list carried from batch to batch), writes each top issue's fix from its close notes (or suggests one, marked, where the notes say too little), drafts knowledge articles and writes the summaries. Attach an "ACT model key" credential (site_act_provider, site_act_models);… (all of it: the role file) |
+| `servicenow_insights_act_batch` | `100` | incident descriptions per question |
+| `servicenow_insights_act_max_descriptions` | `2000` | the most frequent descriptions grouped; the rest go by their category |
+| `servicenow_insights_act_max_issues` | `40` | at most this many issues |
+| `servicenow_insights_act_fix_issues` | `15` | the top issues ACT writes a fix for ... |
+| `servicenow_insights_act_fix_batch` | `3` | ... this many per question |
+| `servicenow_insights_act_notes` | `40` | close notes per issue it reads |
+| `servicenow_insights_kb_min` | `50` | a knowledge article draft for an issue with this many incidents and a fix that agrees |
+| `servicenow_insights_act_model_timeout` | `600` | seconds the model may take for an answer |
+| `servicenow_insights_act_check_url` | `true` | first check that this AAP node reaches the model's URL |
+| `servicenow_insights_mask_names` | `[]` | more words to replace before ACT (a project name, a building) |
+| `servicenow_insights_mask_keep` | `[]` | words that look like host names but are not (e.g. [win11, rhel9]): sent as they are |
+| `servicenow_insights_xlsx` | `true` | The workbook on the email: every incident with its issue and close-note grade, the issues, requests, changes, people. |
+| `servicenow_insights_fail` | `true` | The job fails when ServiceNow could not be read at all, or a group named is not there. false = a report only. |
 
 ## servicenow_war
 

@@ -1,0 +1,231 @@
+---
+# TICKET INSIGHTS (playbooks/servicenow_insights.yml): months of tickets read from ServiceNow (site_servicenow_insights),
+# ACT's answers asked in batches with the names replaced first (act_classify.yml, act_fix.yml), the model of the report
+# (servicenow_insights_filters), a web page for the site and one per team (servicenow_insights_page), the email with the
+# workbook, the job artifact servicenow_insights.
+
+- name: Insights | connection
+  ansible.builtin.set_fact:
+    _sni_url: >-
+      {%- set h = lookup('ansible.builtin.env', 'SN_HOST') | trim -%}
+      {{ ((h if h.startswith('http') else 'https://' ~ h) | regex_replace('/+$', '')) if h else '' }}
+    _sni_groups: "{{ servicenow_insights_groups | servicenow_insights_name_list }}"
+    _sni_tables: >-
+      {{ (servicenow_insights_tables | replace(',', ' ')).split() if servicenow_insights_tables is string else servicenow_insights_tables }}
+
+- name: Insights | the ServiceNow API credential is attached
+  ansible.builtin.assert:
+    that: _sni_url | length > 0
+    fail_msg: Attach the "ServiceNow API" credential (it sets SN_HOST, SN_USERNAME, SN_PASSWORD).
+    quiet: true
+
+- name: Insights | read the window ({{ servicenow_insights_days ~ " days" if servicenow_insights_days | float > 0 else servicenow_insights_months ~ " months" }}) of {{ _sni_tables | join(", ") }} from ServiceNow
+  site_servicenow_insights:
+    url: "{{ _sni_url }}"
+    username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+    password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+    validate_certs: "{{ servicenow_validate_certs | default(true) | bool }}"
+    ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+    timeout: "{{ servicenow_timeout | default(30) | int }}"
+    groups: "{{ _sni_groups }}"
+    tables: "{{ _sni_tables }}"
+    months: "{{ servicenow_insights_months | int }}"
+    days: "{{ servicenow_insights_days | float }}"
+    until: "{{ servicenow_insights_until | default('', true) | string }}"
+    compare: "{{ servicenow_insights_compare | bool }}"
+    time_zone: "{{ report_time_zone | default('', true) | string }}"
+    max_records: "{{ servicenow_insights_max_records | int }}"
+    audit: "{{ servicenow_insights_audit | bool }}"
+    handoff_min: "{{ servicenow_insights_handoff_min | int }}"
+    now: "{{ servicenow_insights_now | default(omit, true) }}"
+  register: _sni
+  check_mode: false             # only reads
+
+- name: Insights | the settings the report uses
+  ansible.builtin.set_fact:
+    _sni_opts:
+      groups: "{{ _sni_groups }}"
+      team_min: "{{ servicenow_insights_team_min | int }}"
+      teams_max: "{{ servicenow_insights_teams_max | int if servicenow_insights_team_pages | bool else 0 }}"
+      top_issues: "{{ servicenow_insights_top_issues | int }}"
+      top_requests: "{{ servicenow_insights_top_requests | int }}"
+      old_days: "{{ servicenow_insights_old_days | int }}"
+      handoff_min: "{{ servicenow_insights_handoff_min | int }}"
+      problem_min: "{{ servicenow_insights_problem_min | int }}"
+      problem_days: "{{ servicenow_insights_problem_days | int }}"
+      repeat_days: "{{ servicenow_insights_repeat_days | int }}"
+      reopen_min_percent: "{{ servicenow_insights_reopen_min_percent | float }}"
+      change_follow_hours: "{{ servicenow_insights_change_follow_hours | int }}"
+      change_failed_codes: "{{ servicenow_insights_change_failed_codes | servicenow_insights_name_list }}"
+      change_backout_words: "{{ servicenow_insights_change_backout_words | servicenow_insights_name_list }}"
+      bare_chars: "{{ servicenow_insights_bare_chars | int }}"
+      bare_phrases: "{{ servicenow_insights_bare_phrases | servicenow_insights_name_list }}"
+      bare_weight: "{{ servicenow_insights_bare_weight | float }}"
+      star_min: "{{ servicenow_insights_star_min | int }}"
+      act: "{{ servicenow_insights_act | bool }}"
+      act_max_descriptions: "{{ servicenow_insights_act_max_descriptions | int }}"
+      act_max_issues: "{{ servicenow_insights_act_max_issues | int }}"
+      act_fix_issues: "{{ servicenow_insights_act_fix_issues | int }}"
+      act_fix_batch: "{{ servicenow_insights_act_fix_batch | int }}"
+      act_notes: "{{ servicenow_insights_act_notes | int }}"
+      kb_min: "{{ servicenow_insights_kb_min | int }}"
+      mask_names: "{{ servicenow_insights_mask_names | servicenow_insights_name_list }}"
+      mask_keep: "{{ servicenow_insights_mask_keep | servicenow_insights_name_list }}"
+      extra: "{{ site_act_extra_instructions | default('') }}"
+      provider: "{{ site_act_provider | default('') }}"
+    _sni_state: "{{ {} | servicenow_insights_state }}"
+    _sni_act_stop: ""
+
+- name: Insights | what is replaced before ACT reads anything (names, phone numbers, email and IP addresses, host names, IDs)
+  ansible.builtin.set_fact:
+    _sni_mask: "{{ _sni | servicenow_insights_mask(_sni_opts) if _sni.ok | default(false) | bool else {'pairs': [], 'counts': {}} }}"
+
+- name: Insights | ACT groups the incidents into issues, writes the fixes - evidence mode, ACT runs no command
+  when: servicenow_insights_act | bool and _sni.ok | default(false) | bool and not ansible_check_mode
+  block:
+    - name: Insights | the incidents' descriptions, in batches of {{ servicenow_insights_act_batch }}
+      ansible.builtin.set_fact:
+        _sni_desc_batches: >-
+          {{ _sni | servicenow_insights_descriptions(_sni_mask, _sni_opts) | servicenow_insights_batches(servicenow_insights_act_batch | int) }}
+
+    - name: Insights | ACT groups each batch, the issues carried from one batch to the next
+      ansible.builtin.include_tasks: act_classify.yml
+      loop: "{{ _sni_desc_batches }}"
+      loop_control:
+        loop_var: _sni_batch
+        index_var: _sni_batch_index
+        label: "{{ _sni_batch[0].id }}-{{ _sni_batch[-1].id }}"
+
+    - name: Insights | the top issues ACT writes a fix for, {{ servicenow_insights_act_fix_batch }} per question
+      ansible.builtin.set_fact:
+        _sni_fix_batches: "{{ _sni | servicenow_insights_fix_batches(_sni_state, _sni_mask, _sni_opts) if _sni_act_stop | length == 0 else [] }}"
+
+    - name: Insights | ACT writes each top issue's fix from its close notes (and a knowledge article draft where they agree)
+      ansible.builtin.include_tasks: act_fix.yml
+      loop: "{{ _sni_fix_batches }}"
+      loop_control:
+        loop_var: _sni_batch
+        index_var: _sni_batch_index
+        label: "{{ _sni_batch.issues | map(attribute='name') | join(', ') }}"
+
+- name: Insights | the report, worked out (the site and each team)
+  ansible.builtin.set_fact:
+    _sni_model: >-
+      {{ _sni | servicenow_insights_model(_sni_state, _sni_mask, _sni_opts | combine({'act_reason':
+           ('a dry run (Check): ACT was not asked' if ansible_check_mode else _sni_act_stop)})) }}
+  when: _sni.ok | default(false) | bool
+
+- name: Insights | ACT writes what the period says, for the site and each team
+  when: >-
+    servicenow_insights_act | bool and _sni.ok | default(false) | bool and not ansible_check_mode
+    and _sni_act_stop | length == 0 and _sni_state.answered | default(0) | int > 0
+  block:
+    - name: Insights | ACT reads each scope's numbers - evidence mode, ACT runs no command
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: evidence_analysis.yml
+      vars:
+        _ea_items: [{id: summaries}]
+        _ea_evidence: "{{ _sni_model | servicenow_insights_summary_evidence(_sni_mask) }}"
+        _ea_task: "{{ _sni_model | servicenow_insights_summary_task(_sni_opts) }}"
+        _ea_check_url: false
+        _ea_names: []
+        _ea_model_timeout: "{{ servicenow_insights_act_model_timeout }}"
+
+    - name: Insights | ACT's summaries in the report
+      ansible.builtin.set_fact:
+        _sni_model: >-
+          {{ _sni_model | servicenow_insights_summary_merge(_ea_raw | default(''), _sni_mask, _ea_ran | default(false) | bool,
+                                                            _ea_reason | default(''), _ea_model | default('')) }}
+
+- name: Insights | ACT's words with the replaced names put back
+  ansible.builtin.set_fact:
+    _sni_model: "{{ _sni_model | servicenow_insights_finish(_sni_mask) }}"
+    _sni_doc: "{{ _sni_model | servicenow_insights_doc('all', _sni_opts) }}"
+  when: _sni.ok | default(false) | bool
+
+- name: Insights | {{ _sni_doc.title | default('nothing read') }}
+  ansible.builtin.debug:
+    msg: "{{ (_sni_doc | report_text).splitlines() if _sni_doc is defined else _sni.error | default('ServiceNow was not read') }}"
+
+- name: Insights | the numbers as job artifacts (servicenow_insights)
+  ansible.builtin.set_stats:
+    data:
+      servicenow_insights: "{{ _sni_model | servicenow_insights_artifact }}"
+  when: _sni.ok | default(false) | bool
+
+- name: Insights | the website's file names, the same for the site's page and each team's ({template}/{team}/...)
+  ansible.builtin.set_fact:
+    _sni_web: >-
+      {%- set t = now(utc=true) -%}
+      {%- set page = report_web_page | default('{template}/{date}_{time}_job-{job}.html') -%}
+      {%- set latest = report_web_latest | default('{template}/latest.html') -%}
+      {%- set names = (report_web_names | default({})) | combine({'date': t.strftime('%Y-%m-%d'), 'time': t.strftime('%H%M')}) -%}
+      {%- set base = {'template': awx_job_template_name | default(tower_job_template_name | default(ansible_play_name | default('report'))),
+                      'template_id': awx_job_template_id | default(tower_job_template_id | default('local')),
+                      'job': awx_job_id | default(tower_job_id | default('local')), 'status': 'info',
+                      'year': t.strftime('%Y'), 'month': t.strftime('%m'), 'day': t.strftime('%d')} -%}
+      {%- set out = {'names': names, 'page': page, 'latest': latest,
+                     'team_page': page | replace('{template}', '{template}/{team}'), 'team_latest': latest | replace('{template}', '{template}/{team}'),
+                     'all': {'page': page, 'latest': latest, 'index': ''} | report_web_files(base | combine(names) | combine({'team': 'all'}))} -%}
+      {%- set teams = {} -%}
+      {%- for team in (_sni_model.teams | default([]) if servicenow_insights_team_pages | bool else []) -%}
+      {%-   set _ = teams.update({team: {'page': out.team_page, 'latest': out.team_latest, 'index': ''}
+                                         | report_web_files(base | combine(names) | combine({'team': team | servicenow_insights_slug}))}) -%}
+      {%- endfor -%}
+      {{ out | combine({'teams': teams, 'on': (report_web_dest | default('', true) | string | trim | length > 0) and _sni.ok | default(false) | bool}) }}
+
+- name: Insights | each team's own page on the report website (and the email to its lead, servicenow_insights_team_email_to)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _sni_model | servicenow_insights_doc(_sni_team, _sni_opts) }}"
+    _report_html: "{{ _sni_model | servicenow_insights_page(_sni_team, _sni_page_opts) }}"
+    _report_xlsx: []
+    _report_email_skip: "{{ (servicenow_insights_team_email_to[_sni_team] | default([])) | length == 0 }}"
+    report_email_to: "{{ servicenow_insights_team_email_to[_sni_team] | default([]) }}"
+    report_email_also: []
+    report_web_names: "{{ _sni_web.names | combine({'team': _sni_team | servicenow_insights_slug}) }}"
+    report_web_page: "{{ _sni_web.team_page }}"
+    report_web_latest: "{{ _sni_web.team_latest }}"
+    _sni_page_opts: >-
+      {{ _sni_opts | combine({'links': _sni_web | servicenow_insights_links(_sni_web.teams[_sni_team].page),
+                              'generated': now(fmt='%Y-%m-%d %H:%M %Z') | trim, 'job': awx_job_id | default(tower_job_id | default('local')),
+                              'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
+                              'header_text': report_email_header_text | default('Site automation report'),
+                              'not_read': _sni_model | servicenow_insights_not_read}) }}
+  loop: "{{ _sni_web.teams | list if _sni_web.on | bool or servicenow_insights_team_email_to | length > 0 else [] }}"
+  loop_control:
+    loop_var: _sni_team
+
+- name: Insights | the site's page on the report website (report_web_dest), the email with the workbook (report_email_to)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _sni_doc }}"
+    _report_html: "{{ _sni_model | servicenow_insights_page('all', _sni_page_opts) }}"
+    _report_xlsx: "{{ _sni_model | servicenow_insights_xlsx(_sni, _sni_state, _sni_mask, _sni_opts) if servicenow_insights_xlsx | bool else [] }}"
+    _report_xlsx_name: "{{ awx_job_template_name | default(tower_job_template_name | default('ticket-insights')) }}"
+    report_web_names: "{{ _sni_web.names | combine({'team': 'all'}) }}"
+    _sni_page_opts: >-
+      {{ _sni_opts | combine({'links': _sni_web | servicenow_insights_links(_sni_web.all.page),
+                              'generated': now(fmt='%Y-%m-%d %H:%M %Z') | trim, 'job': awx_job_id | default(tower_job_id | default('local')),
+                              'footer': 'AAP job ' ~ awx_job_id | default(tower_job_id | default('(command line)')) ~ ' - ServiceNow ' ~ _sni_url,
+                              'header_text': report_email_header_text | default('Site automation report'),
+                              'not_read': _sni_model | servicenow_insights_not_read}) }}
+  when: >-
+    _sni.ok | default(false) | bool and (report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0
+    or _sni_web.on | bool)
+
+- name: Insights | ServiceNow read, every group there (servicenow_insights_fail)
+  ansible.builtin.assert:
+    that:
+      - _sni.ok | default(false) | bool
+      - _sni.groups | default([]) | selectattr('found', 'equalto', false) | list | length == 0
+    fail_msg: >-
+      {{ _sni.error | default('') or ('assignment group(s) not in ServiceNow: '
+          ~ (_sni.groups | default([]) | selectattr('found', 'equalto', false) | map(attribute='name') | join(', '))
+          ~ ' - the exact name, as the group list shows it') }}
+      - servicenow_insights_fail: false makes this a report only.
+    quiet: true
+  when: servicenow_insights_fail | bool

@@ -1,0 +1,18 @@
+---
+# TICKET INSIGHTS from ServiceNow - monthly (or quarterly). Months of tickets in one report for management: the most common
+# incident issues and their fix, the most requested services, keeping up (opened, resolved, the backlog and its age), P1/P2s,
+# problem candidates, tickets passed between groups, changes that failed and what followed, bare close notes, each team's
+# All-stars, knowledge article drafts. A web page for the site and one per team (report_web_dest), the email with the
+# workbook (report_email_to), the job artifact servicenow_insights. ACT (an "ACT model key" credential) groups the incidents
+# into issues and writes the fixes; names, phone numbers, email and IP addresses and host names are replaced before
+# anything reaches the model. Runs on the AAP side with the "ServiceNow API" credential; read-only, in Check too.
+# docs/SERVICENOW_INSIGHTS.md
+#   ansible-playbook playbooks/servicenow_insights.yml -e servicenow_insights_months=6
+- name: ServiceNow ticket insights
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Ticket insights
+      ansible.builtin.include_role:
+        name: servicenow_insights

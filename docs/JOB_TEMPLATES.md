@@ -149,9 +149,9 @@ read only or acting ([HORIZON.md](HORIZON.md#step-3-the-job-templates)).
 |---|---|---|---|
 | Network config backup | `playbooks/net_config_backup.yml` | Watch | [NETWORK_CONFIG.md](NETWORK_CONFIG.md#templates) |
 | Network config load | `playbooks/net_config_load.yml` | Workflow step | [NETWORK_CONFIG.md](NETWORK_CONFIG.md#a-load-with-an-approval) |
-| Mail relay - whitelist plan | `playbooks/mail_relay_plan.yml` | Workflow step | [MAIL_RELAY.md](MAIL_RELAY.md#set-it-up-once), workflow 38: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#38-add-or-remove-a-mail-relay-whitelist-address-with-an-approval) |
+| Mail relay - whitelist plan | `playbooks/mail_relay_plan.yml` | Workflow step | [MAIL_RELAY.md](MAIL_RELAY.md#set-it-up-once), workflow 38: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#38-add-or-remove-an-smtp-relay-whitelist-address-with-an-approval) |
 | Mail relay - apply the approved whitelist change | `playbooks/mail_relay_approved.yml` | After an approval | [MAIL_RELAY.md](MAIL_RELAY.md#set-it-up-once) |
-| Mail relay - unused addresses plan | `playbooks/mail_relay_unused.yml` | Workflow step | [MAIL_RELAY.md](MAIL_RELAY.md#remove-the-addresses-that-sent-no-mail), workflow 38: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#38-add-or-remove-a-mail-relay-whitelist-address-with-an-approval) |
+| Mail relay - unused addresses plan | `playbooks/mail_relay_unused.yml` | Workflow step | [MAIL_RELAY.md](MAIL_RELAY.md#remove-the-addresses-that-sent-no-mail), workflow 38: [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#38-add-or-remove-an-smtp-relay-whitelist-address-with-an-approval) |
 | Mail relay - format the whitelist | `playbooks/mail_relay_format.yml` | On demand (Check first) | [MAIL_RELAY.md](MAIL_RELAY.md#format-the-list-one-address-per-line) |
 | NetApp ONTAP health report | `playbooks/ontap_health_report.yml` | Report | [NETAPP.md](NETAPP.md#set-it-up) |
 | NetApp ONTAP hardware inventory | `playbooks/ontap_hardware_report.yml` | Report | [NETAPP.md](NETAPP.md#the-hardware-inventory) |
@@ -175,6 +175,7 @@ credential ([TENABLE.md](TENABLE.md#step-3-the-job-template)).
 | ServiceNow tickets | `playbooks/servicenow_tickets.yml` | Workflow step | [SETUP_AAP.md](SETUP_AAP.md#servicenow-tickets), [RUNBOOKS.md](RUNBOOKS.md#servicenow-tickets-playbooksservicenow_ticketsyml) |
 | ServiceNow health | `playbooks/servicenow_health.yml` | Watch | [SETUP_AAP.md](SETUP_AAP.md#servicenow-health) |
 | ServiceNow - weekly activity report | `playbooks/servicenow_war.yml` | Report | [SERVICENOW_WAR.md](SERVICENOW_WAR.md#step-2-the-job-template) |
+| ServiceNow - ticket insights | `playbooks/servicenow_insights.yml` | Report | [SERVICENOW_INSIGHTS.md](SERVICENOW_INSIGHTS.md#step-2-the-job-template) |
 | AAP - report email question | `playbooks/aap_email_question.yml` | Setup or test | [EMAIL_REPORTS.md](EMAIL_REPORTS.md#also-email-the-report-to-asked-at-launch) |
 | AAP - set execution environment | `playbooks/aap_ee.yml` | Setup or test | [SETUP_AAP.md](SETUP_AAP.md#aap---set-execution-environment), [EXECUTION_ENVIRONMENT.md](EXECUTION_ENVIRONMENT.md#step-3-use-it) |
 | AAP - health check | `playbooks/aap_health_check.yml` | Report | [AAP_HEALTH_CHECK.md](AAP_HEALTH_CHECK.md#set-it-up-in-aap) |

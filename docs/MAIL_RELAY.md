@@ -243,7 +243,7 @@ this: it is inside 198.51.100.0/24`), and which listed addresses sit inside a su
    approved at the same moment then run one after the other instead of overwriting each other.
 
 5. **Two workflows** (Create template > Create workflow job template), see
-   [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#38-add-or-remove-a-mail-relay-whitelist-address-with-an-approval)
+   [WORKFLOWS_AND_SCHEDULES.md](WORKFLOWS_AND_SCHEDULES.md#38-add-or-remove-an-smtp-relay-whitelist-address-with-an-approval)
    for the editor:
 
    - **Mail relay - add an IP.** Variables:

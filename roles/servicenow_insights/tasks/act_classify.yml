@@ -1,0 +1,25 @@
+---
+# One batch of incident descriptions grouped by ACT (main.yml's loop): the issues so far go with it, its answer is merged
+# into _sni_state (new issues, each description's issue). When ACT cannot run at all (no key, the model not reached) the
+# first batch says why (_sni_act_stop) and the rest are not asked.
+- name: Insights | ACT groups {{ _sni_batch | length }} description(s), {{ _sni_batch[0].id }}-{{ _sni_batch[-1].id }}
+  when: _sni_act_stop | length == 0
+  block:
+    - name: Insights | ask ACT - evidence mode, ACT runs no command
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: evidence_analysis.yml
+      vars:
+        _ea_items: "{{ _sni_batch | servicenow_insights_ids }}"
+        _ea_evidence: "{{ _sni_batch | servicenow_insights_classify_evidence(_sni_state, _sni_opts) }}"
+        _ea_task: "{{ _sni_opts | servicenow_insights_classify_task }}"
+        _ea_check_url: "{{ servicenow_insights_act_check_url | bool and _sni_batch_index == 0 }}"
+        _ea_names: []
+        _ea_model_timeout: "{{ servicenow_insights_act_model_timeout }}"
+
+    - name: Insights | ACT's grouping of {{ _sni_batch[0].id }}-{{ _sni_batch[-1].id }}
+      ansible.builtin.set_fact:
+        _sni_state: >-
+          {{ _sni_state | servicenow_insights_classify_merge(_ea_raw | default(''), _sni_batch, _sni_opts, _ea_ran | default(false) | bool,
+                                                             _ea_reason | default(''), _ea_model | default('')) }}
+        _sni_act_stop: "{{ _ea_why_not | default('') | trim if not _ea_ran | default(false) | bool else '' }}"

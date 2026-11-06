@@ -45,6 +45,8 @@ ISEMPTY, ISNOTEMPTY, !=, aINb,c on a reference (by name or sys_id) and ^OR (join
 nameINa,b and sys_user user_nameINa,b^ORnameINa,b; SNMOCK_NO_GROUPS=1: sys_user_group answers 403; SNMOCK_NO_TABLES=a,b:
 reading those tables answers 403. task_sla: the seed's records with _table task_sla (task = the task's sys_id, sla = its name,
 stage, has_breached, business_percentage, planned_end_time ...), read with taskINa,b and stage!=cancelled; not part of task.
+The ticket insights: the seed may hold sc_req_item, problem and sys_audit records (tablename, fieldname, documentkey =
+the incident's sys_id, oldvalue, newvalue, sys_created_on), read with documentkeyINa,b like any table.
 Usage: snmock.py PORT   (requests appended to $SNMOCK_LOG as JSON lines)
 """
 import base64
@@ -68,6 +70,8 @@ def mid_data():
 
 GROUPS = [{"sys_id": "g1", "name": "Linux Operations", "active": "true"}, {"sys_id": "g2", "name": "Windows Operations", "active": "true"},
           {"sys_id": "g3", "name": "ABC - Ops - IT - Linux", "active": "true"}]     # a name with " - " in it, as real ones have
+GROUPS += [{"sys_id": "g%d" % (4 + i), "name": n, "active": "true"}                 # the ticket insights' teams
+           for i, n in enumerate(["Ops - Service Desk", "Ops - Windows", "Ops - VDI", "Ops - Linux", "Ops - Network"])]
 SYSUSERS = [{"sys_id": "u1", "user_name": "svc_aap", "name": "AAP Service", "active": "true"},
             {"sys_id": "u2", "user_name": "jdoe", "name": "Jane Doe", "active": "true"},
             {"sys_id": "u3", "user_name": "bsmith", "name": "Bob Smith", "active": "true"}]
@@ -96,7 +100,7 @@ STATE_LABEL = {"1": "New", "2": "In Progress", "6": "Resolved", "7": "Closed", "
 TASK_LABEL = {"1": "Open", "2": "Work in Progress", "3": "Closed Complete", "4": "Closed Incomplete", "7": "Closed Skipped",
               "-5": "New", "-4": "Assess", "-3": "Authorize", "-2": "Scheduled", "-1": "Implement", "0": "Review"}
 PREFIX = {"incident": "INC", "sc_task": "SCTASK", "change_request": "CHG", "change_task": "CTASK", "sc_request": "REQ",
-          "sc_req_item": "RITM", "problem_task": "PTASK", "problem": "PRB"}
+          "sc_req_item": "RITM", "problem_task": "PTASK", "problem": "PRB", "sys_audit": "AUD"}
 
 
 def seed():

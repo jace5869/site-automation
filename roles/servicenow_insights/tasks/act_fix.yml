@@ -1,0 +1,24 @@
+---
+# One question of the top issues' fixes (main.yml's loop): each issue's close notes, masked; the answer (steps, where they
+# come from, a knowledge article draft) merged into _sni_state.fixes.
+- name: Insights | ACT writes the fix of {{ _sni_batch.issues | map(attribute='name') | join(', ') }}
+  when: _sni_act_stop | length == 0
+  block:
+    - name: Insights | ask ACT - evidence mode, ACT runs no command
+      ansible.builtin.include_role:
+        name: site_act
+        tasks_from: evidence_analysis.yml
+      vars:
+        _ea_items: "{{ _sni_batch['items'] }}"
+        _ea_evidence: "{{ _sni_batch | servicenow_insights_fix_evidence(_sni_mask, _sni_opts) }}"
+        _ea_task: "{{ _sni_opts | servicenow_insights_fix_task }}"
+        _ea_check_url: false
+        _ea_names: []
+        _ea_model_timeout: "{{ servicenow_insights_act_model_timeout }}"
+
+    - name: Insights | ACT's fixes
+      ansible.builtin.set_fact:
+        _sni_state: >-
+          {{ _sni_state | servicenow_insights_fix_merge(_ea_raw | default(''), _sni_batch, _sni_opts, _ea_ran | default(false) | bool,
+                                                        _ea_reason | default(''), _ea_model | default('')) }}
+        _sni_act_stop: "{{ _ea_why_not | default('') | trim if not _ea_ran | default(false) | bool else '' }}"
