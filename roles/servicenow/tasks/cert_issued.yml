@@ -1,8 +1,8 @@
 ---
 # CERTIFICATE INSTALL, the check (playbooks/cert_install_check.yml, win_cert_install_check.yml), on the AAP side:
 # for each renewal waiting on a host (hostvars[host].cert_install_pending), the catalog request carrying its CSR
-# and what the PKI put there - the certificate whose public key is the CSR's, and its chain
-# (library/site_cert_issued.py). The hosts never get the ServiceNow credential. Reads only, in a dry run too.
+# and what the PKI put there - the certificate whose public key is the CSR's, and its chain (completed from
+# cert_install_ca_bundle when the PKI sent only the .cer; library/site_cert_issued.py). The hosts never get the ServiceNow credential. Reads only, in a dry run too.
 # Output: cert_install_issued {host: [{base, status, reason, ritm, cert, chain, problems ...}]}.
 # _ci_pending_in (the VMware certificate install: vCenter and its hosts are no inventory hosts) - the CSRs to look up
 # instead of the hosts' cert_install_pending; the output is then the module's list as it is (_ci_found.issued).
@@ -45,6 +45,9 @@
     journal: "{{ cert_install_journal | bool }}"
     min_days: "{{ cert_install_min_days | int }}"
     fewer_names: "{{ cert_install_fewer_names | bool }}"
+    ca_bundle: >-
+      {%- set f = cert_install_ca_bundle | default('') | string | trim -%}
+      {{ '' if not f else (f if f.startswith('/') else playbook_dir ~ '/' ~ (f[10:] if f.startswith('playbooks/') else f)) }}
   register: _ci_found
   check_mode: false                     # only reads
   when: _ci_pending_all | length > 0

@@ -63,6 +63,7 @@ jobs:
           python tests/test_cert_csr.py
           python tests/test_cert_order.py
           python tests/test_cert_issued.py
+          python tests/test_pki_bundle.py
           python tests/test_cert_install.py
           python tests/test_horizon.py
           python tests/test_tenable_scan.py

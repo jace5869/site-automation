@@ -1664,8 +1664,10 @@ Check (a dry run) makes and sends nothing.
      vCenter-wide change, left to a person (vCenter > Configure > Settings > Advanced Settings, `vpxd.certmgmt.mode` =
      `custom`), and the next run plans it. **vCenter must trust the issuer**, or it refuses the host after the
      replacement: the job reads vCenter's trusted roots and, when the CA chain that came with the certificate is not
-     there, the plan says it adds it (`add the CA chain to vCenter's trusted roots`). No chain on the request: `HELD`
-     (ask the PKI for the .p7b).
+     there, the plan says it adds it (`add the CA chain to vCenter's trusted roots`). The PKI sent only the .cer: the
+     chain comes from your CA bundle (`cert_install_ca_bundle`, the DoD PKI's -
+     [CERT_INSTALL.md](CERT_INSTALL.md#when-the-pki-sends-only-the-cer-a-ca-bundle)); neither: `HELD` (ask the PKI for
+     the .p7b).
    - **vCenter's own (Machine SSL) certificate:** whether its services restart - **before vCenter 8.0 Update 2 they do,
      about 10 to 20 minutes without vCenter**; 8.0 Update 2 and later replace it without a restart. The approval is the
      time to take the snapshot VMware advises (vCenters in linked mode: all of them, together) and to turn vCenter HA off.
@@ -1703,7 +1705,9 @@ It refuses to run on its own: *Nothing to install: no approved plan* - outside t
 ### Set it up
 
 1. **The renewal orders from the catalog** (`cert_renew_servicenow: catalog`): [CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md).
-   The PKI attaches the issued certificate **and its chain** (.p7b) to the request or its catalog task.
+   The PKI attaches the issued certificate to the request or its catalog task - with its chain (.p7b), or only the
+   .cer when you keep the DoD PKI's CA bundle in your repository (`cert_install_ca_bundle`:
+   [CERT_INSTALL.md](CERT_INSTALL.md#when-the-pki-sends-only-the-cer-a-ca-bundle)).
 2. **The vCenter account** of the *VMware vCenter* credential: administrator@vsphere.local, or a member of the single
    sign-on group **CAAdmins** - it replaces certificates, reads and adds trusted roots (the certificate rows in "Before
    you start", step 2).

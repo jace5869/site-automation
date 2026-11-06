@@ -55,6 +55,7 @@
 #   - net_config_load.yml
 #   - ontap_health_report.yml
 #   - ontap_hardware_report.yml
+#   - pki_bundle_check.yml
 #   - ucs_inventory_report.yml
 #   - poam_status.yml
 #   - servicenow_health.yml

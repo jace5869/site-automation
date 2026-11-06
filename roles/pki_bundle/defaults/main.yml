@@ -1,0 +1,18 @@
+---
+# PKI - DOD BUNDLE CHECK (playbooks/pki_bundle_check.yml; docs/CERT_INSTALL.md, "Keeping the CA bundle current"). On a
+# schedule: the DoD PKI's PKCS7 bundle is downloaded, checked (DISA's signed list of its files, and every CA up to a
+# root of yours by its signature) and compared with your copy (cert_install_ca_bundle). A newer one is emailed with the
+# checked .p7b attached - you put it in your repository; the job writes nothing there. Reads only.
+# The zip DISA publishes; or a copy on a file share the execution environment mounts (a path, or file:///...).
+pki_bundle_url: https://dl.dod.cyber.mil/wp-content/uploads/pki-pke/zip/unclass-certificates_pkcs7_DoD.zip
+pki_bundle_proxy: ""                 # http://proxy.yoursite.mil:8080 when the execution environment reaches the internet through one
+pki_bundle_validate_certs: true      # check the download site's certificate
+pki_bundle_ca_path: ""               # a CA bundle for that check (the EE's own trust store when empty)
+pki_bundle_timeout: 120              # seconds for the download
+pki_bundle_warn_days: 90             # a CA in the bundle expiring within this many days is listed
+pki_bundle_fail_when_newer: false    # true = the job ends red when a newer bundle is there (an AAP notification on failure tells you)
+# Email the result like the other reports: to report_email_to, through the mail relay in all.yml (docs/EMAIL_REPORTS.md),
+# the checked .p7b attached when it differs from yours. false = never emailed (the launch box "Also email the report to" still is).
+pki_bundle_email: true
+pki_bundle_email_when: newer         # newer = only when it differs from yours (or fails); always = every run
+pki_bundle_web: false                # true = also on the report website (report_web_dest)

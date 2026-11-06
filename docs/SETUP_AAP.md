@@ -464,6 +464,11 @@ Windows three: `win_cert_install_check.yml`, `win_cert_install_approved.yml`, `w
 Windows machine credential. The templates, the workflow and the settings: [CERT_INSTALL.md](CERT_INSTALL.md).
 vCenter and the ESXi hosts: *VMware - certificate request* (`playbooks/vmware_cert_request.yml`, on demand) and *VMware - certificate install - check / approved* (`playbooks/vmware_cert_install_check.yml`, `vmware_cert_install_approved.yml`: `VMware vCenter`, `ServiceNow API`), workflow 39: [VMWARE.md](VMWARE.md#installing-the-issued-certificates-of-vcenter-and-the-esxi-hosts-with-an-approval).
 
+**The PKI sends only the .cer?** Keep the DoD PKI's CA bundle in your repository (`playbooks/files/dod_pki_bundle.p7b`)
+and set `cert_install_ca_bundle: files/dod_pki_bundle.p7b` in `all.yml`: the three checks (Linux, Windows, VMware)
+complete the chain from it. *PKI - DoD bundle check* (`playbooks/pki_bundle_check.yml`, no credential, weekly) emails
+you a newer bundle when DISA publishes one: [CERT_INSTALL.md](CERT_INSTALL.md#when-the-pki-sends-only-the-cer-a-ca-bundle).
+
 ### Network device certificate report / renewal
 
 The certificates of switches, firewalls, printers, iLO / iDRAC ... read from the controller: no login to the

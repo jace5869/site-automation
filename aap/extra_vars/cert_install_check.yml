@@ -132,6 +132,14 @@
 ## a person
 # cert_install_fewer_names: false
 
+## A CA bundle in YOUR repository that completes the chain when the PKI sends back only the .cer -
+## e.g. the DoD PKI's PKCS7 bundle from cyber.mil: files/dod_pki_bundle.p7b (playbooks/files/; the
+## .p7b, DER or PEM, a .pem, or the zip as downloaded). Only the CAs that signed the certificate are
+## taken from it - its issuing CA and that CA's root, each checked by its signature, none expired; a
+## chain on the request comes first. Linux, Windows and VMware installs. Empty = the chain only from
+## the request. Keeping it current: the job "PKI - DoD bundle check" (docs/CERT_INSTALL.md).
+# cert_install_ca_bundle: ""
+
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
 ## A host that cannot be reached (switched off, no network, ssh or WinRM refused, its login refused)
 ## in the health checks, the certificate report and renewal, database health, the service watch and

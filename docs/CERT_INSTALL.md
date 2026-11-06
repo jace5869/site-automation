@@ -32,7 +32,8 @@ vCenter and the ESXi hosts: *VMware - certificate install - check* → approval 
    - each one PEM (.cer, .crt, .pem), DER, PKCS7 (.p7b, text or binary) or a zip of them.
 
    **The certificate counts only when its public key is the CSR's.** Anything else there - someone else's
-   certificate, a form - is listed and never used. The CA certificates with it are its chain.
+   certificate, a form - is listed and never used. The CA certificates with it are its chain; when the PKI sent only
+   the .cer, the chain comes from your CA bundle ([below](#when-the-pki-sends-only-the-cer-a-ca-bundle)).
 3. **The plan**, on the host: what installing it would do - or why a person does it (below).
 4. **Ready ones go to the approval:** the job lists them, hands the plan on, and ends red - `NEEDS APPROVAL: ...` -
    so the workflow takes its *Run on fail* path. Nothing ready: it stays green.
@@ -109,12 +110,80 @@ Something to look at first; the next run checks again.
 - the certificate is not for the key on the host, not valid yet, expired, or valid fewer than
   `cert_install_min_days` (30) more days;
 - it lacks names (subjectAltName) the old one had (`cert_install_fewer_names: true` installs it anyway);
-- its chain does not build up to a root - attach the chain (.p7b) to the request (or `cert_install_trust_check: false`);
+- its chain does not build up to a root - keep a CA bundle that has its issuer ([below](#when-the-pki-sends-only-the-cer-a-ca-bundle)),
+  or attach the chain (.p7b) to the request (or `cert_install_trust_check: false`);
 - the file no longer holds the certificate the CSR was made for (replaced since);
 - the old key not found, or found in several files - name it: `cert_install_key_files`;
 - the old key is also another certificate's key (replacing it would break that one);
 - no service found that uses the file - name it: `cert_install_services`;
 - Windows: the pending request (the new key) is gone from the server - the next renewal makes a new CSR.
+
+## When the PKI sends only the .cer: a CA bundle
+
+The PKI usually puts only the issued certificate (.cer) on the request. vCenter must trust its issuer before an ESXi
+host gets it, and a Linux or Windows server needs the chain to build, so without the chain the check says `HELD`. Keep
+the DoD PKI's CA bundle in **your** repository once, and every certificate install check - Linux, Windows, VMware -
+completes the chain from it:
+
+1. Download the bundle: cyber.mil's PKI/PKE pages, *PKI CA Certificate Bundles: PKCS#7 for DoD PKI Only* - the zip
+   `unclass-certificates_pkcs7_DoD.zip`. (The job *PKI - DoD bundle check*, below, downloads and checks it for you and
+   emails the checked file.)
+2. Put the bundle's `Certificates_PKCS7_v5_xx_DoD.der.p7b` in your repository as `playbooks/files/dod_pki_bundle.p7b`
+   (the zip as downloaded works too). Commit and push it; sync the project in AAP.
+3. In `all.yml`: `cert_install_ca_bundle: files/dod_pki_bundle.p7b`.
+
+Your copy is yours: the release zips never carry a file the public repository does not have, so pasting an update
+never touches it. (If you use `scripts/update-from-release` instead of pasting, add the line
+`playbooks/files/dod_pki_bundle.p7b` to `.site-local` - that script deletes files it does not know, except the ones
+listed there.)
+
+**What is taken from it:** only the CAs that signed the certificate - its issuing CA and that CA's root - each found
+by its name **and checked by its signature**, none expired. A CA of the same name with another key is never taken. A
+chain on the request comes first; the bundle fills only what it lacks. vCenter gets only those (`add the CA chain to
+vCenter's trusted roots` - nothing when it already trusts them), never the whole bundle. The job output lists what was
+read: `cert_install_ca_bundle (48 CA certificate(s)): the chain's CN=DOD ID CA-70,...; CN=DoD Root CA 6,...`.
+
+A bundle set but not there or not a bundle: the check stops and says so, rather than holding everything for a
+reason that would mislead.
+
+### Keeping the CA bundle current
+
+DISA adds issuing CAs now and then (a new ID CA-xx); a certificate from one your copy lacks is `HELD` again. The job
+**PKI - DoD bundle check** (`playbooks/pki_bundle_check.yml`), on a schedule (weekly), downloads the bundle, checks it,
+compares it with your copy, and emails you when it differs - the checked `.p7b` attached:
+
+```
+NEWER - it differs from yours: put it in your repository (below) | Certificates_PKCS7_v5_15_DoD.der.p7b | version 5.15 | 50 CA certificates; yours 48 (version 5.14)
+DISA signature on its list of files: verified | the files' SHA-256: match
+ADDS CN=DOD ID CA-82,OU=PKI,OU=DoD,O=U.S. Government,C=US (until 2032-03-01)
+The checked bundle: Certificates_PKCS7_v5_15_DoD.der.p7b - attached to the email; save it as playbooks/files/dod_pki_bundle.p7b in your repository
+```
+
+You save the attachment over your copy, commit and push - the job writes nothing in your repository.
+
+**How it is checked**, before it is offered:
+- **DISA's signature.** The zip carries a list of its files' SHA-256, signed by the DoD PKE code signing certificate.
+  The job checks that signature against the roots of **your** copy, and each file's SHA-256 against the list. DISA
+  signs it with SHA-1, which a FIPS-mode system refuses: then the job says `not checked: this system refuses SHA-1
+  signatures` and relies on the next check alone. (The signature check needs the `openssl` command in the execution
+  environment; without it, also `not checked`.)
+- **Every CA, by its signature, up to a root of yours.** A root that is not in your copy (DISA adds one) is listed
+  with its SHA-1 - compare it with DISA's before you use the bundle; with DISA's signature verified it counts, without
+  it the CAs under it are refused and the job fails.
+- **No copy of yours yet** (`cert_install_ca_bundle` empty): its roots are taken on trust and listed with their SHA-1
+  - compare them with the ones DISA publishes (the bundle's README.txt says where) the first time.
+
+| Setting | Default | |
+|---|---|---|
+| `pki_bundle_url` | DISA's zip (`https://dl.dod.cyber.mil/.../unclass-certificates_pkcs7_DoD.zip`) | or a copy on a file share the execution environment mounts (a path) when AAP has no way out |
+| `pki_bundle_proxy` | `""` | `http://proxy.yoursite.mil:8080` when the way out is through a proxy |
+| `pki_bundle_validate_certs` / `pki_bundle_ca_path` | `true` / `""` | the download site's certificate |
+| `pki_bundle_email` / `pki_bundle_email_when` | `true` / `newer` | email it (to `report_email_to`) only when it differs or the check fails; `always` = every run |
+| `pki_bundle_fail_when_newer` | `false` | `true` = the job ends red on a newer bundle (an AAP notification on failure tells you) |
+| `pki_bundle_warn_days` | `90` | CAs of the bundle expiring within these days are listed |
+
+The template: **PKI - DoD bundle check**, playbook `playbooks/pki_bundle_check.yml`, the execution environment of the
+other jobs, no credential (the email goes through the relay in `all.yml`), no Limit; a weekly schedule.
 
 ## Which service, which key (Linux)
 
@@ -141,7 +210,8 @@ cert_install_never_reload: ['slapd*']     # services the job never reloads: thei
 
 1. **The renewal orders from the catalog** (`cert_renew_servicenow: catalog`) - [CERT_RENEWAL_CATALOG.md](CERT_RENEWAL_CATALOG.md).
 2. **The PKI puts the certificate on the request.** Ask them to attach DISA's files to the RITM or to its catalog
-   task (or paste the certificate into a work note there) - the .cer and the chain (.p7b) as DISA sends them. The API account must be able to
+   task (or paste the certificate into a work note there) - the .cer, and the chain (.p7b) if they have it; only the
+   .cer is fine with a CA bundle ([above](#when-the-pki-sends-only-the-cer-a-ca-bundle)). The API account must be able to
    read the request's and its tasks' attachments and journal (and, for the note after the install, write a work
    note on the RITM).
 3. **The job templates** (project: this repository, the same inventory as the renewal):
@@ -194,7 +264,10 @@ and renew again.
 | `WAITING ... no certificate for this key on it yet` | the PKI has not put it there, or put another one | look at the request: `others` lists certificates there for another key |
 | `NOT ORDERED ... no catalog request carries this CSR` | the CSR went another way (by hand, an incident) | install it by hand, or order with the catalog |
 | `CLOSED ... its request was closed Closed Incomplete` | the PKI rejected it | the renewal orders it again |
-| `HELD ... its chain does not build up to a root` | the chain did not come with it, or its root is not trusted on the host | attach the chain (.p7b) to the request; or `cert_install_trust_check: false` |
+| `HELD ... its chain does not build up to a root` | the chain did not come with it, or its root is not trusted on the host | a CA bundle with its issuer (`cert_install_ca_bundle`; a newer one from *PKI - DoD bundle check*), or attach the chain (.p7b) to the request; or `cert_install_trust_check: false` |
+| `cert_install_ca_bundle ... cannot be read` / `holds no CA certificate` | the file is not in the project (not pushed, not synced) or not a bundle | push it, sync the project; the .p7b, a .pem or the zip |
+| *PKI - DoD bundle check*: `could not be downloaded` | no way out from the execution environment | `pki_bundle_proxy`, or a copy on a share in `pki_bundle_url` |
+| *PKI - DoD bundle check*: `FAILED` | a file not as DISA signed it, or CAs under a root that nothing vouches for | do not use it; download it again by hand and compare |
 | `HELD ... no service found that uses ...` | no known configuration names the file, no port known | `cert_install_services` |
 | `ROLLED BACK ... the configuration test of httpd.service failed` | the new files do not fit the configuration | the job output has the test's message; the old files are back |
 | `ROLLED BACK ... after the reload, 127.0.0.1:443 serves ...` | the service still serves something else after the reload | the configuration may name another file - the old files are back |
@@ -214,7 +287,10 @@ and renew again.
   Constrained Language (`tests/windows/test_win_checks.ps1`), and for real on a Windows Server runner: the renewal's
   CSR, `certreq -accept`, an HTTP.sys binding moved and served, the restore (`.github/workflows/check.yml`,
   *Windows certificate install, for real*).
-- **Not automatic:** vCenter, ESXi and Cisco certificates (install them as [VMWARE.md](VMWARE.md) and
-  [NETWORK_CERTS.md](NETWORK_CERTS.md) say); a service that needs a restart.
+- **Not automatic:** Cisco certificates (install them as [NETWORK_CERTS.md](NETWORK_CERTS.md) says); a service that
+  needs a restart. vCenter and ESXi have their own install with an approval ([VMWARE.md](VMWARE.md)).
+- **The CA bundle:** one certificate of the DoD bundle (DoD Root CA 4, an EC root) is written in a way the Python
+  library of the execution environment (cryptography 50) no longer reads; it is left out - a certificate under that root
+  still needs its chain on the request. The others (48 of 49 in version 5.14) are read.
 - **One host at a time per certificate:** a certificate found on several hosts (a wildcard) has a CSR - and a key - per
   host, so each host installs its own.

@@ -347,6 +347,13 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets the incidents (exactly
 ## Only in the workflow, after the approval: the check job hands it vmware_cert_install_plan. Do not tick
 ## "Prompt on launch" for Variables on this template.
 """),
+    "pki_bundle_check.yml": ("PKI - DoD bundle check", "none (the email goes through the relay in all.yml)", "", """\
+## Weekly: the DoD PKI's CA bundle downloaded, checked and compared with yours (cert_install_ca_bundle, in all.yml);
+## a newer one is emailed with the checked .p7b attached - you put it in your repository (docs/CERT_INSTALL.md).
+## No way out to the internet from AAP: a proxy, or a copy on a share the execution environment mounts.
+# pki_bundle_proxy: http://proxy.yoursite.mil:8080
+# pki_bundle_url: /mnt/pki/unclass-certificates_pkcs7_DoD.zip
+"""),
     "vm_alarm_act_analysis.yml": ("VM - alarms ACT analysis", "VMware vCenter, ACT model key", "", ""),
     "vm_alarm_report.yml": ("VM - alarms report", "VMware vCenter", "", ""),
     "vm_ask.yml": ("VM - ask a question", "VMware vCenter, ACT model key", "", """\

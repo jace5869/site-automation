@@ -65,6 +65,32 @@ def setUpModule():
     ossl("x509", "-in", "web.crt", "-outform", "DER", "-out", "web.der")
     ossl("crl2pkcs7", "-nocrl", "-certfile", "web.crt", "-certfile", "int.crt", "-certfile", "root.crt", "-out", "web.p7b")
     ossl("crl2pkcs7", "-nocrl", "-certfile", "web.crt", "-certfile", "int.crt", "-outform", "DER", "-out", "web-der.p7b")
+    # a CA bundle (as the DoD PKI's): the intermediate and the root, DER PKCS7; a CA of the intermediate's name but
+    # another key (never taken: its signature is not on the leaf); one of the name, expired
+    ossl("crl2pkcs7", "-nocrl", "-certfile", "int.crt", "-certfile", "root.crt", "-outform", "DER", "-out", "bundle.p7b")
+    ossl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "fake.key", "-out", "fake.crt", "-days", "300",
+         "-subj", "/C=US/O=U.S. Government/OU=DoD/OU=PKI/CN=TEST ID CA-70",
+         "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign")
+    ossl("crl2pkcs7", "-nocrl", "-certfile", "fake.crt", "-certfile", "root.crt", "-outform", "DER", "-out", "fake-bundle.p7b")
+    old_int()
+
+
+def old_int():
+    """The intermediate's name and key, signed by the root, expired yesterday (old.crt) - cryptography, as openssl
+    before 3.4 cannot back-date one."""
+    import datetime
+    from cryptography.hazmat.primitives import hashes, serialization
+    key = serialization.load_pem_private_key(read("int.key"), None)
+    root_key = serialization.load_pem_private_key(read("root.key"), None)
+    root = x509.load_pem_x509_certificate(read("root.crt"))
+    now = datetime.datetime.now(datetime.timezone.utc)
+    c = (x509.CertificateBuilder().subject_name(x509.load_pem_x509_certificate(read("int.crt")).subject)
+         .issuer_name(root.subject).public_key(key.public_key()).serial_number(x509.random_serial_number())
+         .not_valid_before(now - datetime.timedelta(days=400)).not_valid_after(now - datetime.timedelta(days=1))
+         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+         .sign(root_key, hashes.SHA256()))
+    with open(os.path.join(W, "old.crt"), "wb") as fh:
+        fh.write(c.public_bytes(serialization.Encoding.PEM))
 
 
 def tearDownModule():
@@ -143,6 +169,55 @@ class Chain(unittest.TestCase):
     def test_no_chain(self):
         leaf = m.certs_in(read("web.crt"))[0]
         self.assertEqual(m.chain_for(leaf, []), [])
+
+
+class Bundle(unittest.TestCase):
+    """cert_install_ca_bundle: the chain the request lacks, from a CA bundle in the repository."""
+    def leaf(self):
+        return m.certs_in(read("web.crt"))[0]
+
+    def subjects(self, links):
+        return [(c.subject.rfc4514_string().split(",")[0], b) for c, b in links]
+
+    def test_only_the_cer_sent(self):
+        bundle = m.load_bundle(os.path.join(W, "bundle.p7b"))
+        self.assertEqual(len(bundle), 2)
+        self.assertEqual(self.subjects(m.chain_for(self.leaf(), [], bundle)),
+                         [("CN=TEST ID CA-70", True), ("CN=TEST ROOT CA 3", True)])
+
+    def test_the_request_first_the_bundle_after(self):
+        bundle = m.load_bundle(os.path.join(W, "bundle.p7b"))
+        self.assertEqual(self.subjects(m.chain_for(self.leaf(), m.certs_in(read("int.crt")), bundle)),
+                         [("CN=TEST ID CA-70", False), ("CN=TEST ROOT CA 3", True)])
+
+    def test_a_ca_of_the_name_with_another_key_is_not_taken(self):
+        bundle = m.load_bundle(os.path.join(W, "fake-bundle.p7b"))
+        self.assertEqual(m.chain_for(self.leaf(), [], bundle), [])
+
+    def test_an_expired_ca_is_not_taken(self):
+        self.assertEqual(m.chain_for(self.leaf(), [], m.certs_in(read("old.crt"))), [])
+        # the expired one first in the bundle, the good one after it: the good one
+        both = m.certs_in(read("old.crt")) + m.load_bundle(os.path.join(W, "bundle.p7b"))
+        self.assertEqual(self.subjects(m.chain_for(self.leaf(), [], both)), [("CN=TEST ID CA-70", True), ("CN=TEST ROOT CA 3", True)])
+
+    def test_forms(self):
+        """The .p7b in PEM, a .pem of certificates, the zip as downloaded; a leaf in it is not a CA: left out."""
+        z = io.BytesIO()
+        with zipfile.ZipFile(z, "w") as f:
+            f.writestr("Certificates_PKCS7_v5_14_TEST/Certificates_PKCS7_v5_14_TEST.der.p7b", read("bundle.p7b"))
+            f.writestr("Certificates_PKCS7_v5_14_TEST/README.txt", "not a certificate")
+        for name, data in (("b.pem.p7b", ossl("pkcs7", "-inform", "DER", "-in", "bundle.p7b")),
+                           ("b.pem", read("int.crt") + read("root.crt") + read("web.crt")), ("b.zip", z.getvalue())):
+            with open(os.path.join(W, name), "wb") as fh:
+                fh.write(data)
+            self.assertEqual(len(m.load_bundle(os.path.join(W, name))), 2, name)
+
+    def test_p7_split(self):
+        """Each certificate of a PKCS7 read on its own (the DoD bundle has one the library's PKCS7 reader refuses)."""
+        got = m.p7_split(read("bundle.p7b"))
+        self.assertEqual([c.subject.rfc4514_string().split(",")[0] for c in got], ["CN=TEST ID CA-70", "CN=TEST ROOT CA 3"])
+        with self.assertRaises(ValueError):
+            m.p7_split(read("web.der"))
 
 
 class Names(unittest.TestCase):
@@ -349,6 +424,18 @@ class AgainstTheFakeServiceNow(unittest.TestCase):
         self.assertEqual(r["status"], "waiting", r)
         self.assertTrue(any("over cert_install_max_bytes" in x for x in r["read"]), r["read"])
         self.assertFalse(any("form.pdf" in x for x in r["read"]), r["read"])
+
+    def test_chain_from_the_ca_bundle(self):
+        """Only the .cer on the request: the chain from cert_install_ca_bundle, said in what was read."""
+        ritm = self.order("web01.example.mil-ffff6666", read("web.csr"))
+        self.call("POST", "/api/now/attachment/file?table_name=sc_req_item&table_sys_id=%s&file_name=web01.cer" % ritm["sys_id"],
+                  raw=read("web.der"), ctype="application/pkix-cert")
+        r = self.find(self.pending("web01.example.mil-ffff6666"))
+        self.assertEqual((r["status"], r["chain"]), ("issued", []), r)
+        r = self.find(self.pending("web01.example.mil-ffff6666"), _bundle=m.load_bundle(os.path.join(W, "bundle.p7b")))
+        self.assertEqual([(c["subject"].split(",")[0], c["from_bundle"], c["self_signed"]) for c in r["chain"]],
+                         [("CN=TEST ID CA-70", True, False), ("CN=TEST ROOT CA 3", True, True)])
+        self.assertTrue(any(x.startswith("cert_install_ca_bundle (2 CA certificate(s))") for x in r["read"]), r["read"])
 
     def test_bad_password(self):
         mod = FakeModule(self.port, password="wrong")

@@ -2183,8 +2183,8 @@ run "...the cancelled request (Closed Skipped): said, nothing to install" ok vmw
 run "...the search switched on (vmware_cert_install_search): DC0_H0's request has no certificate yet - WAITING, nothing handed on" ok \
     vmware_cert_install_check.yml -e "$csearch" -- "WAITING | DC0_H0 | ESXi host | RITM" "no certificate for this key on it yet"
 [ "$(vstats)" = "{}" ] && echo "ok   -   ...no plan handed on" || { echo "FAIL -   ...a plan: $(vstats | head -c 200)"; fails=$((fails + 1)); }
-# the PKI: the CSR from the live request, signed by a test CA; the certificate and the CA as one PEM file, named
-# like the host (not like the CSR: it must still be read)
+# the PKI: the CSR from the live request, signed by a test CA; only the certificate (.cer, DER), named like the host
+# (not like the CSR: it must still be read) - its CA in a CA bundle (cert_install_ca_bundle), as the DoD PKI's
 issued="$("$py" - "$SN_HOST" "$work" <<'EOPY'
 import base64, datetime, json, sys, urllib.request
 from cryptography import x509
@@ -2219,8 +2219,11 @@ sans = x509.SubjectAlternativeName([x509.DNSName("example.com"), x509.IPAddress(
 leaf = (x509.CertificateBuilder().subject_name(csr.subject).issuer_name(name).public_key(csr.public_key()).serial_number(0x5A17)
         .not_valid_before(now).not_valid_after(now + datetime.timedelta(days=397)).add_extension(sans, False)
         .sign(cakey, hashes.SHA256()))
-pem = leaf.public_bytes(serialization.Encoding.PEM) + ca.public_bytes(serialization.Encoding.PEM)
-call("POST", "/api/now/attachment/file?table_name=sc_req_item&table_sys_id=%s&file_name=DC0_H0-issued.pem" % ritm["sys_id"], pem, "application/x-pem-file")
+from cryptography.hazmat.primitives.serialization import pkcs7
+with open(work + "/pki-bundle.p7b", "wb") as fh:
+    fh.write(pkcs7.serialize_certificates([ca], serialization.Encoding.DER))
+call("POST", "/api/now/attachment/file?table_name=sc_req_item&table_sys_id=%s&file_name=DC0_H0-issued.cer" % ritm["sys_id"],
+     leaf.public_bytes(serialization.Encoding.DER), "application/pkix-cert")
 print("%s %s" % (ritm["number"], leaf.not_valid_after_utc.strftime("%Y-%m-%d %H:%M")))
 EOPY
 )"
@@ -2229,15 +2232,25 @@ run "...the PKI put it on the request; the request named: vCenter's vpxd.certmgm
     vmware_cert_install_check.yml -e "$cinst" -e "vmware_cert_install_ritm=$iritm" -- "HELD | DC0_H0 | ESXi host | $iritm | vCenter 127.0.0.1's vpxd.certmgmt.mode is vmca, not custom"
 [ "$(vstats)" = "{}" ] && echo "ok   -   ...no plan handed on" || { echo "FAIL -   ...a plan while held"; fails=$((fails + 1)); }
 certmode custom
-run "...custom, but vCenter's trusted roots cannot be read (no certificate API): HELD, says so" ok vmware_cert_install_check.yml \
-    -e "vmware_cert_install_ritm=$iritm" -- "HELD | DC0_H0 | ESXi host | $iritm | vCenter 127.0.0.1's trusted roots could not be read"
+run "...custom, only the .cer and no CA bundle: HELD - no CA chain, the bundle named" ok vmware_cert_install_check.yml \
+    -e "vmware_cert_install_ritm=$iritm" -- "HELD | DC0_H0 | ESXi host | $iritm | no CA chain came with the certificate" "cert_install_ca_bundle"
+run "...with the CA bundle, but vCenter's trusted roots cannot be read (no certificate API): HELD, says so" ok vmware_cert_install_check.yml \
+    -e "vmware_cert_install_ritm=$iritm" -e "cert_install_ca_bundle=$work/pki-bundle.p7b" \
+    -- "HELD | DC0_H0 | ESXi host | $iritm | vCenter 127.0.0.1's trusted roots could not be read"
 run "...vmware_cert_install_trust_check: false - READY: NEEDS APPROVAL, the plan handed on" fail vmware_cert_install_check.yml -e "$cinst" \
     -e "vmware_cert_install_ritm=$iritm" \
-    -- "READY | DC0_H0 | ESXi host | $iritm | install it on the host" "the new one: serial 5A17, expires $iexp UTC (from DC0_H0-issued.pem)" \
+    -- "READY | DC0_H0 | ESXi host | $iritm | install it on the host" "the new one: serial 5A17, expires $iexp UTC (from DC0_H0-issued.cer)" \
        "no maintenance mode" "NEEDS APPROVAL: 1 certificate(s) to install - DC0_H0 (ESXi host, $iritm)"
+"$py" -c 'import json,sys; p=json.load(sys.stdin)["vmware_cert_install_plan"]; sys.exit(0 if len(p) == 1 and p[0]["chain"] == [] else 1)' <<< "$(vstats)" \
+    && echo "ok   -   ...only the .cer on the request: no chain" || { echo "FAIL -   ...a chain without a bundle: $(vstats | head -c 300)"; fails=$((fails + 1)); }
+run "...with a CA bundle (cert_install_ca_bundle): its chain from the bundle" fail vmware_cert_install_check.yml -e "$cinst" \
+    -e "vmware_cert_install_ritm=$iritm" -e "cert_install_ca_bundle=$work/pki-bundle.p7b" \
+    -- "READY | DC0_H0 | ESXi host | $iritm | install it on the host" "NEEDS APPROVAL: 1 certificate(s) to install"
 vstats > "$work/vplan.json"
-"$py" -c 'import json,sys; p=json.load(open(sys.argv[1]))["vmware_cert_install_plan"]; sys.exit(0 if len(p) == 1 and p[0]["kind"] == "esxi" and p[0]["cert"]["serial"] == "5A17" and p[0]["chain"][0]["subject"] == "CN=Test PKI CA" else 1)' "$work/vplan.json" \
-    && echo "ok   -   ...the plan: the host, the issued certificate, its CA" || { echo "FAIL -   ...the plan: $(head -c 300 "$work/vplan.json")"; fails=$((fails + 1)); }
+"$py" -c 'import json,sys; p=json.load(open(sys.argv[1]))["vmware_cert_install_plan"]; sys.exit(0 if len(p) == 1 and p[0]["kind"] == "esxi" and p[0]["cert"]["serial"] == "5A17" and p[0]["chain"][0]["subject"] == "CN=Test PKI CA" and p[0]["chain"][0]["from_bundle"] else 1)' "$work/vplan.json" \
+    && echo "ok   -   ...the plan: the host, the issued certificate, its CA from the bundle" || { echo "FAIL -   ...the plan: $(head -c 300 "$work/vplan.json")"; fails=$((fails + 1)); }
+run "...a CA bundle that is not there: the check stops, says which" fail vmware_cert_install_check.yml -e "$cinst" \
+    -e "vmware_cert_install_ritm=$iritm" -e "cert_install_ca_bundle=$work/nothere.p7b" -- "cert_install_ca_bundle $work/nothere.p7b cannot be read"
 before="$(hostcert DC0_H0)"
 run "the approved job on its own (no plan): refused, nothing changed" fail vmware_cert_install_approved.yml -- "Nothing to install: no approved plan"
 run "...the plan, dry run: what it would do, nothing changed" ok vmware_cert_install_approved.yml --check -e "@$work/vplan.json" -e "$cinst" \

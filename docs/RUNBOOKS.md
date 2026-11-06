@@ -763,7 +763,8 @@ The three use the same window: the report flags, the CSR is made and the inciden
 Change it on the workflow (`check_certs_warn_days`) and all three follow. The PKI person submits the CSR and attaches
 the issued certificate to the same ticket. This job changes nothing a service uses. With the catalog item, the
 issued certificate is then installed from its request after an approval - *Certificate install*, Linux and
-Windows ([CERT_INSTALL.md](CERT_INSTALL.md)); with incidents, a person installs it.
+Windows ([CERT_INSTALL.md](CERT_INSTALL.md)), vCenter and ESXi ([VMWARE.md](VMWARE.md)); the PKI may send only the
+.cer when you keep the DoD PKI's CA bundle (`cert_install_ca_bundle`). With incidents, a person installs it.
 
 **Per certificate:**
 

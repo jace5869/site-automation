@@ -183,7 +183,7 @@ in the order the tabs are shown:
 
 ```yaml
 report_web_tabs:
-  - {tab: Certificates, match: ["*certificate*", "*trust store*"]}
+  - {tab: Certificates, match: ["*certificate*", "*trust store*", "PKI *"]}
   - {tab: VMware, match: ["VM *", "VMware*", "ESXi*", "AB01 VM*"]}
   - {tab: Patching, match: ["*patch*"]}
 ```

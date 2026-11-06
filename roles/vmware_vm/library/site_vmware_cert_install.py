@@ -382,7 +382,8 @@ def plan_one(it, f, trust_check, timeout, tls=tls_der):
             if not chain:
                 return dict(r, status="held", reason="no CA chain came with the certificate on %s: vCenter must trust the issuer, or it "
                                                      "refuses the host after the replacement - ask the PKI for the chain (.p7b) on the "
-                                                     "request (or vmware_cert_install_trust_check: false when %s trusts it)" % (it.get("ritm", "its request"), vc))
+                                                     "request, or keep a CA bundle that has its issuer (cert_install_ca_bundle; or "
+                                                     "vmware_cert_install_trust_check: false when %s trusts it)" % (it.get("ritm", "its request"), vc))
             if f.roots is None:
                 return dict(r, status="held", reason="%s's trusted roots could not be read (%s): without them the job cannot tell whether "
                                                      "vCenter trusts the issuer (vmware_cert_install_trust_check: false when you know it does)"
@@ -411,7 +412,8 @@ def plan_one(it, f, trust_check, timeout, tls=tls_der):
             return dict(r, status="held", reason="%s's certificate changed since it was ordered: look at it - its request is out of date" % vc)
         if trust_check and not chain:
             return dict(r, status="held", reason="no CA chain came with the certificate on %s: vCenter needs it with its certificate - ask "
-                                                 "the PKI for the chain (.p7b) on the request" % it.get("ritm", "its request"))
+                                                 "the PKI for the chain (.p7b) on the request, or keep a CA bundle that has its issuer (cert_install_ca_bundle)"
+                                                 % it.get("ritm", "its request"))
         r["restart"] = version_tuple(f.version) < NO_RESTART
         r["steps"].append("replace %s's Machine SSL certificate (the key vCenter made with its CSR)%s" % (vc, " and add the CA chain" if chain else ""))
         r["steps"].append("then port %d must serve it" % port)

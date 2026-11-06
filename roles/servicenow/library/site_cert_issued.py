@@ -18,6 +18,9 @@ description:
   - A file may hold one certificate or several, as text (PEM) or binary (DER), a PKCS7 bundle (.p7b) or a
     zip of them. The certificate whose public key is the CSR's is the issued one; the CA certificates with
     it are its chain. A certificate for another key is listed, never used.
+  - A chain that is not all there (the PKI sent only the .cer) is completed from C(ca_bundle) - a CA bundle in your
+    repository, e.g. the DoD PKI's PKCS7 bundle: only the CAs that signed it, up to the root, not expired, each checked
+    by its signature. The CAs on the request come first.
   - Says what still stands in the way of installing it (C(problems)) - not valid yet, expired or valid
     for too few days, names the old certificate had and this one lacks. The hosts check the rest.
   - Only reads ServiceNow: also in check mode.
@@ -45,6 +48,7 @@ options:
   journal: {description: Also look for certificates pasted into the request's work notes and comments., type: bool, default: true}
   min_days: {description: The issued certificate must be valid at least this many more days., type: int, default: 30}
   fewer_names: {description: "Install a certificate that lacks names the old one had (false: held for a person).", type: bool, default: false}
+  ca_bundle: {description: "A CA bundle file (.p7b DER or PEM, .pem, .cer, or a zip of them) that completes a chain the request lacks; empty = none.", type: str, default: ''}
 author: site automation
 '''
 
@@ -54,7 +58,7 @@ issued:
     One entry per pending CSR - key, host, stem, status (issued, waiting, not ordered, not found (ritm), closed, failed),
     reason, ritm, ritm_sys_id, ritm_state, request_sys_id, csr_file (csr_from_request), read (where it looked), others (certificates there for
     another key), and when issued - cert (pem, subject, issuer, serial, sha1, sha256, not_before, not_after,
-    days, names, key, ca), chain (pem, subject, issuer, sha1, self_signed - in order from the issuer up),
+    days, names, key, ca), chain (pem, subject, issuer, sha1, self_signed, from_bundle - in order from the issuer up),
     source (the file or note it came from), problems (why it must wait for a person; empty = it may be installed).
   type: list
   returned: always
@@ -229,9 +233,55 @@ def _b64(body):
         return None
 
 
+def _tlv(data, i):
+    """One DER element at i -> (tag, start of its value, end of it); definite lengths only."""
+    tag, n = data[i], data[i + 1]
+    i += 2
+    if n & 0x80:
+        k = n & 0x7f
+        if not k or k > 4:
+            raise ValueError('indefinite or too long a length')
+        n = int.from_bytes(data[i:i + k], 'big')
+        i += k
+    if i + n > len(data):
+        raise ValueError('cut short')
+    return tag, i, i + n
+
+
+def p7_split(der):
+    """The certificates of a PKCS7 SignedData, each read on its own: one the library cannot read (the DoD bundle has
+    an old one with a NULL in its algorithm) does not lose the others, as the library's PKCS7 reader would."""
+    out = []
+    try:
+        _, i, _ = _tlv(der, 0)                     # ContentInfo
+        _, _, i = _tlv(der, i)                     # contentType (the OID); i: after it
+        _, i, _ = _tlv(der, i)                     # [0] content
+        _, i, end = _tlv(der, i)                   # SignedData
+        while i < end:
+            tag, v, e = _tlv(der, i)
+            if tag == 0xA0:                        # [0] certificates
+                while v < e:
+                    _, cv, ce = _tlv(der, v)
+                    try:
+                        with warnings.catch_warnings():
+                            warnings.simplefilter('ignore')
+                            out.append(x509.load_der_x509_certificate(der[v:ce]))
+                    except Exception:
+                        pass
+                    v = ce
+                break
+            i = e
+    except (ValueError, IndexError):
+        raise ValueError('not a PKCS7 bundle')
+    if not out:
+        raise ValueError('no certificate in the PKCS7 bundle')
+    return out
+
+
 def _der_certs(der, p7_first=False):
-    loaders = [lambda b: [x509.load_der_x509_certificate(b)], pkcs7.load_der_pkcs7_certificates]
-    for load in (reversed(loaders) if p7_first else loaders):
+    one = lambda b: [x509.load_der_x509_certificate(b)]     # noqa: E731
+    loaders = [pkcs7.load_der_pkcs7_certificates, p7_split, one] if p7_first else [one, pkcs7.load_der_pkcs7_certificates, p7_split]
+    for load in loaders:
         try:
             with warnings.catch_warnings():       # a .p7b in BER, as openssl and many PKIs write it: read all the same
                 warnings.simplefilter('ignore')
@@ -241,16 +291,52 @@ def _der_certs(der, p7_first=False):
     return []
 
 
-def chain_for(leaf, others):
-    """The CA certificates that make the leaf's chain, from its issuer up (by subject and issuer names)."""
+def signed_by(cert, ca):
+    """True when ca's key signed cert (its name is cert's issuer too)."""
+    try:
+        cert.verify_directly_issued_by(ca)
+        return True
+    except AttributeError:          # cryptography before 40: the key identifiers, when both are there
+        try:
+            aki = cert.extensions.get_extension_for_class(x509.AuthorityKeyIdentifier).value.key_identifier
+            ski = ca.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value.digest
+            return aki is None or aki == ski
+        except x509.ExtensionNotFound:
+            return True
+    except Exception:               # another key, another name, an algorithm this system refuses
+        return False
+
+
+def chain_for(leaf, others, bundle=(), now=None):
+    """The CA certificates that make the leaf's chain, from its issuer up (by subject and issuer names) - those that
+    came with it first; then, where they end before a root, the CA bundle's (by name and signature, not expired).
+    -> [(certificate, from the bundle)] when a bundle is given, else [certificate]."""
+    now = now or utcnow()
     out, cur, seen = [], leaf, set()
     while cur.subject != cur.issuer:
         nxt = next((c for c in others if c.subject == cur.issuer and is_ca(c) and spki(c) not in seen), None)
+        from_bundle = nxt is None
+        if from_bundle:
+            nxt = next((c for c in bundle if c.subject == cur.issuer and is_ca(c) and spki(c) not in seen
+                        and _utc(c, 'not_valid_after') > now and signed_by(cur, c)), None)
         if nxt is None:
             break
         seen.add(spki(nxt))
-        out.append(nxt)
+        out.append((nxt, from_bundle))
         cur = nxt
+    return out if bundle else [c for c, _ in out]
+
+
+def load_bundle(path):
+    """The CA certificates of the CA bundle file (any form certs_in reads), each once."""
+    with open(path, 'rb') as fh:
+        data = fh.read()
+    out, seen = [], set()
+    for c in certs_in(data):
+        der = c.public_bytes(Encoding.DER)
+        if is_ca(c) and der not in seen:
+            seen.add(der)
+            out.append(c)
     return out
 
 
@@ -454,8 +540,14 @@ def find_one(sn, p, item, now):
                         out['others'].append(note)
         if leaf is not None:
             desc = describe(leaf, now)
+            bundle = p.get('_bundle') or []
+            links = chain_for(leaf, [c for c in every if is_ca(c)], bundle, now) if bundle else \
+                [(c, False) for c in chain_for(leaf, [c for c in every if is_ca(c)])]
             out.update(status='issued', cert=desc, source=source,
-                       chain=[describe(c, now) for c in chain_for(leaf, [c for c in every if is_ca(c)])])
+                       chain=[dict(describe(c, now), from_bundle=b) for c, b in links])
+            took = [c.subject.rfc4514_string() for c, b in links if b]
+            if took:
+                out['read'].append('cert_install_ca_bundle (%d CA certificate(s)): the chain\'s %s' % (len(bundle), '; '.join(took)))
             now_epoch = int((now - datetime.datetime(1970, 1, 1)).total_seconds())
             out['problems'] = problems_of(desc, item.get('names'), p['min_days'], p['fewer_names'], now_epoch)
             return out
@@ -475,16 +567,28 @@ def main():
         reorder_states=dict(type='list', elements='str', default=['4', '7']),
         exts=dict(type='list', elements='str', default=['cer', 'crt', 'pem', 'der', 'p7b', 'p7c', 'p7', 'cert', 'zip', 'txt']),
         max_bytes=dict(type='int', default=1048576), journal=dict(type='bool', default=True),
-        min_days=dict(type='int', default=30), fewer_names=dict(type='bool', default=False)),
+        min_days=dict(type='int', default=30), fewer_names=dict(type='bool', default=False),
+        ca_bundle=dict(type='str', default='')),
         supports_check_mode=True)
     if not HAS_CRYPTO:
         m.fail_json(msg='the Python library cryptography is not in this execution environment (ansible-core needs it: use an EE built on ansible-core)')
+    params = dict(m.params)         # the bundle's certificates beside the options (never in m.params: it is echoed back)
+    path = (m.params['ca_bundle'] or '').strip()
+    if path:
+        try:
+            params['_bundle'] = load_bundle(path)
+        except (IOError, OSError) as e:
+            m.fail_json(msg='cert_install_ca_bundle %s cannot be read (%s): the file in your repository (playbooks/files/...), '
+                            'or empty for none - docs/CERT_INSTALL.md' % (path, getattr(e, 'strerror', None) or e))
+        if not params['_bundle']:
+            m.fail_json(msg='cert_install_ca_bundle %s holds no CA certificate: the PKCS7 bundle (.p7b), PEM, or the zip as '
+                            'downloaded - docs/CERT_INSTALL.md' % path)
     sn = Sn(m)
     now = utcnow()
     out = []
     for item in m.params['pending']:
         try:
-            out.append(find_one(sn, m.params, item, now))
+            out.append(find_one(sn, params, item, now))
         except SnError as e:
             out.append({'key': item.get('key', ''), 'host': item.get('host', ''), 'stem': item.get('stem', ''),
                         'status': 'failed', 'reason': 'ServiceNow: %s' % e, 'read': [], 'others': [], 'problems': []})

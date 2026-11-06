@@ -222,7 +222,7 @@ vm_deploy_assignment_group: YOUR GROUP NAME       # REQUIRED: only this group's 
 ## Backup); else on Other. A tab with no report is not shown. Set it in all.yml, for every template
 ## alike: the index is one page.
 # report_web_tabs:
-#   - {tab: Certificates, match: ["*certificate*", "*trust store*"]}
+#   - {tab: Certificates, match: ["*certificate*", "*trust store*", "PKI *"]}
 #   - {tab: VMware, match: ["VM *", "VMs *", "VMware*", "ESXi*", "vCenter*"]}
 #   - {tab: Horizon, match: ["Horizon*"]}
 #   - {tab: Tenable.sc, match: ["Tenable*"]}

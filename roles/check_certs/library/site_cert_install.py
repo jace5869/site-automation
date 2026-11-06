@@ -259,7 +259,7 @@ class Installer(object):
         inter = [c for c in item['chain_pem'] if c not in roots]
         ok, why = self.verify_chain(leaf, inter, roots)
         if not ok:
-            raise Held('its chain does not build up to a root: %s (the PKI\'s chain with it, or cert_install_trust_check: false)' % why)
+            raise Held('its chain does not build up to a root: %s (the PKI\'s chain with it, a CA bundle that has its issuer - cert_install_ca_bundle -, or cert_install_trust_check: false)' % why)
         if roots:
             alone, _ = self.verify_chain(leaf, inter, [])
             if not alone:
@@ -428,7 +428,7 @@ class Installer(object):
             item['notes'].append('%s: the same issuer - its chain is kept' % f['path'])
             return
         raise Held('%s holds a chain, the new certificate has another issuer (%s), and no chain came with it: '
-                   'attach the chain (.p7b) to the request' % (f['path'], self.names(item['cert_pem'])[1]))
+                   'attach the chain (.p7b) to the request, or keep a CA bundle that has its issuer (cert_install_ca_bundle)' % (f['path'], self.names(item['cert_pem'])[1]))
 
     def key_plan(self, cert_path, old_pub):
         """The old key's file: named in the settings (key_files), else in the configuration that names the

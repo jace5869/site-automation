@@ -1043,6 +1043,7 @@ as Check).
 | NetApp ONTAP health | every day 06:00 | template *NetApp ONTAP health report* (21) |
 | vSphere capacity planning / VMs created | Monday 07:00 / Friday 12:00 | templates (22, 23) |
 | Certificate install | every day 07:00 | workflow 29 |
+| DoD PKI bundle check (the CA bundle the certificate installs complete a chain from) | Monday 06:00 | template *PKI - DoD bundle check* ([CERT_INSTALL.md](CERT_INSTALL.md#keeping-the-ca-bundle-current)) |
 | fapolicyd | every day 07:00 | workflow 36 |
 | STIG drift | weekly, e.g. Sunday 02:00, and after patch night | workflow 33 |
 | STIG Manager updated from the recheck | on demand, or after patch night | workflow 37 |

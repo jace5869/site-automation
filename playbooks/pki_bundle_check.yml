@@ -1,0 +1,17 @@
+---
+# PKI - DOD BUNDLE CHECK. On a schedule (weekly): the DoD PKI's PKCS7 CA bundle downloaded, checked - DISA's signed list
+# of the zip's files (when the system allows its SHA-1 signature) and every CA certificate by its signature up to a root
+# of your copy - and compared with your copy (cert_install_ca_bundle, the bundle the certificate install checks complete
+# a chain from). A newer one: emailed, the checked .p7b attached - you put it in your repository; this job writes
+# nothing there and changes nothing anywhere. Runs in the execution environment; no Limit, no credential (the email
+# goes through the relay in all.yml). docs/CERT_INSTALL.md, "Keeping the CA bundle current".
+#   ansible-playbook playbooks/pki_bundle_check.yml
+#   ansible-playbook playbooks/pki_bundle_check.yml -e pki_bundle_url=/mnt/share/unclass-certificates_pkcs7_DoD.zip
+- name: PKI - DoD bundle check
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The DoD PKI bundle against yours
+      ansible.builtin.include_role:
+        name: pki_bundle

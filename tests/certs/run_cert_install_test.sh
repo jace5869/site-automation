@@ -2,7 +2,8 @@
 # Certificate install (playbooks/cert_install_check.yml -> approval -> cert_install_approved.yml, and
 # cert_restore.yml) against a fake ServiceNow (tests/servicenow/snmock.py) and a test CA. The real renewal
 # (cert_renew_csr.yml, cert_renew_servicenow: catalog) makes the CSRs and orders them; the "PKI" then signs them
-# and puts the certificates on the requests - binary (DER) with the chain as a .p7b, a PEM PKCS7, someone else's
+# and puts the certificates on the requests - binary (DER) alone first (held; then its chain from a CA bundle,
+# cert_install_ca_bundle), then with the chain as a .p7b, a PEM PKCS7, someone else's
 # certificate beside it. The web server is a stand-in: openssl s_server on a port, serving the certificate in
 # its configuration's files; "systemctl reload httpd" starts it again on the files as they are then (bin/ here
 # also has stand-ins for ss, ps and apachectl). Then: nothing issued yet - waiting, green; issued - the plan
@@ -198,6 +199,15 @@ q crl2pkcs7 -nocrl -certfile issued/app01.crt -certfile int.crt -certfile root.c
 new_fp="$(fp issued/web01.crt)"
 sn POST "/api/now/attachment/file?table_name=sc_req_item&table_sys_id=$web_ritm&file_name=other.cer" pki/app01.crt application/pkix-cert >/dev/null
 sn POST "/api/now/attachment/file?table_name=sc_req_item&table_sys_id=$web_ritm&file_name=web01.example.mil.cer" issued/web01.cer application/pkix-cert >/dev/null
+# only the .cer so far: no chain - held; with a CA bundle (cert_install_ca_bundle, as the DoD PKI's) the chain from it
+run onlycer.txt playbooks/cert_install_check.yml
+has "only the .cer on the request: web01 HELD - its chain does not build, the CA bundle named" onlycer.txt \
+    "HELD | web01.example.mil | CN=web01.example.mil" "its chain does not build up to a root" "cert_install_ca_bundle"
+run bundle.txt playbooks/cert_install_check.yml -e "cert_install_ca_bundle=$work/issued/chain.p7b"; rc=$?
+[ $rc -ne 0 ] && has "...with a CA bundle (cert_install_ca_bundle): READY, its chain from the bundle" bundle.txt \
+    "READY | web01.example.mil | CN=web01.example.mil" "NEEDS APPROVAL: 1 certificate(s) to install" || { bad "bundle: exit $rc"; tail -20 bundle.txt; }
+"$py" -c 'import json,sys; i=json.load(sys.stdin)["cert_install_plan"]["web01.example.mil"][0]; sys.exit(0 if len(i["chain_pem"]) == 2 else 1)' <<< "$(stats bundle.txt)" \
+    && ok "...the plan carries the bundle's intermediate and root" || bad "...the plan's chain: $(stats bundle.txt | head -c 300)"
 sn POST "/api/now/attachment/file?table_name=sc_req_item&table_sys_id=$web_ritm&file_name=DoD_chain.p7b" issued/chain.p7b application/x-pkcs7-certificates >/dev/null
 sn POST "/api/now/attachment/file?table_name=sc_req_item&table_sys_id=$app_ritm&file_name=app01.p7b" issued/app01.p7b text/plain >/dev/null
 sn POST "/api/now/attachment/file?table_name=sc_req_item&table_sys_id=$tls_ritm&file_name=tlsonly.pem" issued/tlsonly.crt text/plain >/dev/null

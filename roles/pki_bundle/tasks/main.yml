@@ -1,0 +1,135 @@
+---
+# The DoD PKI's bundle, downloaded and checked, against your copy (cert_install_ca_bundle). In the execution environment.
+- name: PKI bundle | your copy (cert_install_ca_bundle) and a folder for the checked one
+  ansible.builtin.set_fact:
+    _pkib_current: >-
+      {%- set f = cert_install_ca_bundle | default('') | string | trim -%}
+      {{ '' if not f else (f if f.startswith('/') else playbook_dir ~ '/' ~ (f[10:] if f.startswith('playbooks/') else f)) }}
+    # where you put a newer one: in your repository
+    _pkib_save_as: >-
+      {%- set f = cert_install_ca_bundle | default('') | string | trim -%}
+      {{ 'playbooks/files/dod_pki_bundle.p7b' if not f else (f if f.startswith(('/', 'playbooks/')) else 'playbooks/' ~ f) }}
+
+- name: PKI bundle | a folder for the checked bundle
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: pki-bundle-
+  register: _pkib_dir
+  check_mode: false
+
+- name: PKI bundle | download it, check it, compare it with yours
+  site_pki_bundle:
+    url: "{{ pki_bundle_url }}"
+    current: "{{ _pkib_current }}"
+    dest_dir: "{{ _pkib_dir.path }}"
+    validate_certs: "{{ pki_bundle_validate_certs | bool }}"
+    ca_path: "{{ pki_bundle_ca_path | default(omit, true) }}"
+    timeout: "{{ pki_bundle_timeout | int }}"
+    warn_days: "{{ pki_bundle_warn_days | int }}"
+  environment: "{{ {'https_proxy': pki_bundle_proxy, 'http_proxy': pki_bundle_proxy} if pki_bundle_proxy | default('') else {} }}"
+  register: _pkib
+  check_mode: false                   # only reads
+
+- name: PKI bundle | the result
+  ansible.builtin.debug:
+    msg: "{{ _pkib_lines }}"
+  vars:
+    _pkib_lines: >-
+      {%- set b = _pkib.bundle -%}
+      {%- set out = [] -%}
+      {%- set word = {'current': 'CURRENT - yours has the same certificates',
+                      'newer': 'NEWER - it differs from yours: put it in your repository (below)',
+                      'first': 'FOUND - no bundle of yours yet (cert_install_ca_bundle): its roots are taken on trust - check them (below)',
+                      'failed': 'FAILED - do not use it'} -%}
+      {%- set _ = out.append(word[b.status] ~ ' | ' ~ (b.name or pki_bundle_url) ~ (' | version ' ~ b.version if b.version else '')
+                             ~ ' | ' ~ b.cas ~ ' CA certificates' ~ ('; yours ' ~ b.current_count ~ ((' (version ' ~ b.current_version ~ ')') if b.current_version else '') if _pkib_current else '')) -%}
+      {%- set _ = out.append('DISA signature on its list of files: ' ~ b.signature ~ ((' | the files\' SHA-256: ' ~ b.hashes) if b.hashes else '')) -%}
+      {%- for p in b.problems -%}{%- set _ = out.append('PROBLEM: ' ~ p) -%}{%- endfor -%}
+      {%- for c in b.added -%}{%- set _ = out.append('ADDS ' ~ c.subject ~ ' (until ' ~ c.not_after ~ ')') -%}{%- endfor -%}
+      {%- for c in b.removed -%}{%- set _ = out.append('NO LONGER HAS ' ~ c.subject ~ ' (until ' ~ c.not_after ~ ')') -%}{%- endfor -%}
+      {%- for c in b.new_roots -%}{%- set _ = out.append('A ROOT NOT IN YOURS: ' ~ c.subject ~ ' SHA-1 ' ~ c.sha1 ~ ' - compare it with DISA\'s before you use the bundle') -%}{%- endfor -%}
+      {%- for c in b.untrusted -%}{%- set _ = out.append('NOT UNDER YOUR ROOTS: ' ~ c) -%}{%- endfor -%}
+      {%- for c in b.broken -%}{%- set _ = out.append('ITS CHAIN DOES NOT BUILD IN THE BUNDLE (not used for a chain): ' ~ c) -%}{%- endfor -%}
+      {%- if b.status == 'first' -%}
+      {%-   for c in b.roots -%}{%- set _ = out.append('ROOT ' ~ c.subject ~ ' SHA-1 ' ~ c.sha1 ~ ' - compare it with DISA\'s') -%}{%- endfor -%}
+      {%- endif -%}
+      {%- for c in b.expiring -%}{%- set _ = out.append('EXPIRES SOON ' ~ c.subject ~ ' on ' ~ c.not_after) -%}{%- endfor -%}
+      {%- if b.unreadable -%}{%- set _ = out.append(b.unreadable ~ ' certificate(s) in it cannot be read by this execution environment\'s Python library (left out)') -%}{%- endif -%}
+      {%- if b.file -%}
+      {%-   set _ = out.append('The checked bundle: ' ~ (b.file | basename) ~ ' - attached to the email; save it as '
+                               ~ _pkib_save_as ~ ' in your repository') -%}
+      {%- endif -%}
+      {{ out }}
+
+- name: PKI bundle | the email (site_email)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _pkib_b: "{{ _pkib.bundle }}"
+    _report_web_skip: "{{ not pki_bundle_web | bool }}"
+    _report_email_skip: >-
+      {{ (not pki_bundle_email | bool or (pki_bundle_email_when != 'always' and _pkib_b.status == 'current'))
+         and report_email_also | default([]) | length == 0 }}
+    _report_attachments: "{{ [{'path': _pkib_b.file, 'filename': _pkib_b.file | basename}] if _pkib_b.file else [] }}"
+    _report:
+      title: >-
+        {{ {'current': 'DoD PKI bundle: yours is current',
+            'newer': 'DoD PKI bundle: a newer one' ~ ((' (' ~ _pkib_b.version ~ ')') if _pkib_b.version else '') ~ ' - '
+                     ~ _pkib_b.added | length ~ ' CA(s) added, ' ~ _pkib_b.removed | length ~ ' removed',
+            'first': 'DoD PKI bundle' ~ ((' ' ~ _pkib_b.version) if _pkib_b.version else '') ~ ': no copy of yours yet',
+            'failed': 'DoD PKI bundle: the check FAILED'}[_pkib_b.status] }}
+      subtitle: "{{ pki_bundle_url }} against {{ cert_install_ca_bundle | default('', true) or 'no cert_install_ca_bundle' }}"
+      status: "{{ {'current': 'ok', 'newer': 'warning', 'first': 'warning', 'failed': 'critical'}[_pkib_b.status] }}"
+      summary:
+        - {label: Its CA certificates, value: "{{ _pkib_b.cas }}"}
+        - {label: Yours, value: "{{ _pkib_b.current_count }}"}
+        - {label: Added, value: "{{ _pkib_b.added | length }}", status: "{{ 'warning' if _pkib_b.added else 'ok' }}"}
+        - {label: Removed, value: "{{ _pkib_b.removed | length }}", status: "{{ 'warning' if _pkib_b.removed else 'ok' }}"}
+      sections: >-
+        {%- set out = [] -%}
+        {%- set b = _pkib_b -%}
+        {%- if b.problems -%}
+        {%-   set _ = out.append({'title': 'Do not use it', 'status': 'critical', 'lines': b.problems}) -%}
+        {%- endif -%}
+        {%- set _ = out.append({'title': 'Checked', 'lines': ['DISA signature on its list of files: ' ~ b.signature]
+                                + (['The files\' SHA-256: ' ~ b.hashes] if b.hashes else [])
+                                + ['Every CA certificate checked by its signature up to: ' ~ (b.roots | map(attribute='subject') | join('; '))]
+                                + ([b.unreadable ~ ' certificate(s) in it cannot be read by this execution environment\'s Python library (left out)'] if b.unreadable else [])}) -%}
+        {%- if b.file and not b.problems -%}
+        {%-   set _ = out.append({'title': 'What to do', 'status': 'warning', 'lines': [
+                'Save the attached ' ~ (b.file | basename) ~ ' in your repository as ' ~ _pkib_save_as
+                ~ ' (replace the old file), commit and push it, and sync the project in AAP.',
+                ('Set cert_install_ca_bundle: files/dod_pki_bundle.p7b in all.yml (docs/CERT_INSTALL.md).'
+                 if not cert_install_ca_bundle | default('', true) else 'The certificate install checks use it from their next run.')]}) -%}
+        {%- endif -%}
+        {%- set rows = [] -%}
+        {%- for c in b.added -%}{%- set _ = rows.append(['added', c.subject, c.not_after, c.sha1]) -%}{%- endfor -%}
+        {%- for c in b.removed -%}{%- set _ = rows.append(['no longer in it', c.subject, c.not_after, c.sha1]) -%}{%- endfor -%}
+        {%- for c in (b.roots if b.status == 'first' else []) -%}
+        {%-   set _ = rows.append(['a root, taken on trust (no bundle of yours to check it against): compare its SHA-1 with DISA\'s', c.subject, c.not_after, c.sha1]) -%}
+        {%- endfor -%}
+        {%- for c in b.new_roots -%}{%- set _ = rows.append(['a root not in yours (DISA\'s signature vouches for it when verified): compare its SHA-1 with DISA\'s', c.subject, c.not_after, c.sha1]) -%}{%- endfor -%}
+        {%- for c in b.expiring -%}{%- set _ = rows.append(['expires soon', c.subject, c.not_after, c.sha1]) -%}{%- endfor -%}
+        {%- if rows -%}
+        {%-   set _ = out.append({'title': 'Certificates', 'columns': ['What', 'CA', 'Until', 'SHA-1'], 'rows': rows}) -%}
+        {%- endif -%}
+        {%- if b.untrusted -%}
+        {%-   set _ = out.append({'title': 'Not under your roots', 'status': 'critical', 'lines': b.untrusted}) -%}
+        {%- endif -%}
+        {{ out }}
+
+- name: PKI bundle | the checked folder removed
+  ansible.builtin.file:
+    path: "{{ _pkib_dir.path }}"
+    state: absent
+  check_mode: false
+
+- name: PKI bundle | the check failed - do not use this bundle
+  ansible.builtin.fail:
+    msg: "{{ _pkib.bundle.problems | join('; ') }}"
+  when: _pkib.bundle.status == 'failed'
+
+- name: PKI bundle | a newer one is there (pki_bundle_fail_when_newer)
+  ansible.builtin.fail:
+    msg: "A newer DoD PKI bundle{{ (' (' ~ _pkib.bundle.version ~ ')') if _pkib.bundle.version else '' }} than yours: put it in your repository (the email has it)."
+  when: pki_bundle_fail_when_newer | bool and _pkib.bundle.status in ['newer', 'first']

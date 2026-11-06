@@ -11,7 +11,7 @@ never out of date. Where to put a setting, and which place wins when it is in tw
 A setting that is a list (`[a, b]`) **replaces** the default list when you set it; it does not add
 to it. Repeat the entries you want to keep.
 
-**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [aap_health](#aap_health), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_ckl_import](#stigman_ckl_import), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
+**Contents:** [aap_ee](#aap_ee), [aap_email_question](#aap_email_question), [aap_health](#aap_health), [ad_lockout](#ad_lockout), [ad_report](#ad_report), [cert_inventory](#cert_inventory), [check_accounts](#check_accounts), [check_auditd](#check_auditd), [check_certs](#check_certs), [check_containers](#check_containers), [check_disk](#check_disk), [check_fapolicyd](#check_fapolicyd), [check_logging](#check_logging), [check_mariadb](#check_mariadb), [check_mounts](#check_mounts), [check_network](#check_network), [check_patching](#check_patching), [check_performance](#check_performance), [check_selinux](#check_selinux), [check_services](#check_services), [check_sso](#check_sso), [check_stig](#check_stig), [check_time](#check_time), [check_trust](#check_trust), [evaluate_stig_update](#evaluate_stig_update), [fapolicyd](#fapolicyd), [fapolicyd_fix](#fapolicyd_fix), [fapolicyd_rules](#fapolicyd_rules), [horizon](#horizon), [incident_docs](#incident_docs), [log_analysis](#log_analysis), [mail_relay](#mail_relay), [net_certs](#net_certs), [net_config](#net_config), [net_perf](#net_perf), [ontap_report](#ontap_report), [patch](#patch), [pki_bundle](#pki_bundle), [poam](#poam), [podman_discover](#podman_discover), [service_watch](#service_watch), [servicenow](#servicenow), [servicenow_war](#servicenow_war), [site_act](#site_act), [site_email](#site_email), [site_findings](#site_findings), [stigman_ckl_import](#stigman_ckl_import), [stigman_stack](#stigman_stack), [stigman_update](#stigman_update), [tenable_scan](#tenable_scan), [troubleshoot](#troubleshoot), [ucs_report](#ucs_report), [vmware_ask_stack](#vmware_ask_stack), [vmware_vm](#vmware_vm), [win_act](#win_act), [win_check_accounts](#win_check_accounts), [win_check_audit](#win_check_audit), [win_check_certs](#win_check_certs), [win_check_disk](#win_check_disk), [win_check_eventlog](#win_check_eventlog), [win_check_network](#win_check_network), [win_check_patching](#win_check_patching), [win_check_performance](#win_check_performance), [win_check_security](#win_check_security), [win_check_services](#win_check_services), [win_check_stig](#win_check_stig), [win_check_time](#win_check_time), [win_check_trust](#win_check_trust), [win_patch](#win_patch), [win_troubleshoot](#win_troubleshoot), [settings of one host](#settings-of-one-host)
 
 ## aap_ee
 
@@ -1099,6 +1099,23 @@ File: `roles/patch/defaults/main.yml`
 | `patch_service_wait` | `120` | seconds to wait for services to come back after a reboot |
 | `patch_ignore_services` | `'^(user@\|user-runtime-dir@\|session-\|dnf-makecache\|packagekit\|fwupd\|run-\|systemd-(hostname…` | Services that come and go on their own and are not compared before/after (regular expression) |
 
+## pki_bundle
+
+File: `roles/pki_bundle/defaults/main.yml`
+
+| Setting | Default | What it does |
+|---|---|---|
+| `pki_bundle_url` | `https://dl.dod.cyber.mil/wp-content/uploads/pki-pke/zip/unclass-certificates_pkcs7_DoD.zip` | PKI - DOD BUNDLE CHECK (playbooks/pki_bundle_check.yml; docs/CERT_INSTALL.md, "Keeping the CA bundle current"). On a schedule: the DoD PKI's PKCS7 bundle is downloaded, checked (DISA's signed list of its files, and every CA up to a root of yours by its signature) and compared with your copy (cert_install_ca_bundle). A… (all of it: the role file) |
+| `pki_bundle_proxy` | (empty) | http://proxy.yoursite.mil:8080 when the execution environment reaches the internet through one |
+| `pki_bundle_validate_certs` | `true` | check the download site's certificate |
+| `pki_bundle_ca_path` | (empty) | a CA bundle for that check (the EE's own trust store when empty) |
+| `pki_bundle_timeout` | `120` | seconds for the download |
+| `pki_bundle_warn_days` | `90` | a CA in the bundle expiring within this many days is listed |
+| `pki_bundle_fail_when_newer` | `false` | true = the job ends red when a newer bundle is there (an AAP notification on failure tells you) |
+| `pki_bundle_email` | `true` | Email the result like the other reports: to report_email_to, through the mail relay in all.yml (docs/EMAIL_REPORTS.md), the checked .p7b attached when it differs from yours. false = never emailed (the launch box "Also email the report to" still is). |
+| `pki_bundle_email_when` | `newer` | newer = only when it differs from yours (or fails); always = every run |
+| `pki_bundle_web` | `false` | true = also on the report website (report_web_dest) |
+
 ## poam
 
 File: `roles/poam/defaults/main.yml`
@@ -1216,6 +1233,7 @@ File: `roles/servicenow/defaults/main.yml`
 | `cert_install_journal` | `true` | also look for a certificate pasted into the request's work notes and comments |
 | `cert_install_min_days` | `30` | the issued certificate must be valid at least this many more days (else held for a person) |
 | `cert_install_fewer_names` | `false` | true = install a certificate that lacks names (subjectAltName) the old one had; false = held for a person |
+| `cert_install_ca_bundle` | (empty) | A CA bundle in YOUR repository that completes the chain when the PKI sends back only the .cer - e.g. the DoD PKI's PKCS7 bundle from cyber.mil: files/dod_pki_bundle.p7b (playbooks/files/; the .p7b, DER or PEM, a .pem, or the zip as downloaded). Only the CAs that signed the certificate are taken from it - its issuing C… (all of it: the role file) |
 
 ## servicenow_war
 
@@ -1313,7 +1331,7 @@ File: `roles/site_email/defaults/main.yml`
 | `report_web_index` | `index.html` | every report's last runs, a tab per area ("" = none) |
 | `report_web_history` | `5` | the runs each report keeps: listed under its line of the index, the pages of older runs deleted |
 | `report_web_delete_old` | `true` | false = the older runs' pages stay in the folder (only the index forgets them) |
-| `report_web_tabs` | `- {tab: Certificates, match: ["*certificate*", "*trust store*"]} - {tab: VMware, match: […` | The index page's tabs: a report is on the first tab one of whose names its AAP template's name matches (any case, * = anything); else on the tab of its name up to " - " (Backup - nightly: Backup); else on Other. A tab with no report is not shown. Set it in all.yml, for every template alike: the index is one page. |
+| `report_web_tabs` | `- {tab: Certificates, match: ["*certificate*", "*trust store*", "PKI *"]} - {tab: VMware,…` | The index page's tabs: a report is on the first tab one of whose names its AAP template's name matches (any case, * = anything); else on the tab of its name up to " - " (Backup - nightly: Backup); else on Other. A tab with no report is not shown. Set it in all.yml, for every template alike: the index is one page. |
 | `report_web_names` | `{}` | your own {names}, e.g. {site: "{{ site_code }}"} for "{site}/{template}/..." |
 | `report_web_json` | `true` | the report's data as .json beside each page and index.json beside the index |
 | `report_web_smb_auth` | `negotiate` | A share (report_web_dest \\server\share\folder): how the job logs in, and the connection. negotiate (Kerberos - FIPS too: user@YOURDOMAIN.MIL, the server's full name - else NTLM), ntlm, or kerberos (a ticket already in the job) |

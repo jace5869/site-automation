@@ -83,6 +83,7 @@ you change ([SETUP_AAP.md](SETUP_AAP.md#step-9-the-other-job-templates)).
 | VMware - hardware inventory | `playbooks/vmware_hardware_report.yml` | Report | [VMWARE.md](VMWARE.md#the-vmware-hardware-inventory) |
 | Network device certificate report | `playbooks/net_cert_report.yml` | Report | [NETWORK_CERTS.md](NETWORK_CERTS.md#templates) |
 | Network device certificate renewal | `playbooks/net_cert_renew.yml` | Watch | [NETWORK_CERTS.md](NETWORK_CERTS.md#the-renewal) |
+| PKI - DoD bundle check | `playbooks/pki_bundle_check.yml` | Watch | [CERT_INSTALL.md](CERT_INSTALL.md#keeping-the-ca-bundle-current) |
 
 The certificate inventory for a dashboard (CSV, JSON, SQL Server) is a setting of the certificate
 reports, not a template of its own: [CERT_INVENTORY.md](CERT_INVENTORY.md).

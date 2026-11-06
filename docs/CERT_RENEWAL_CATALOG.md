@@ -179,9 +179,12 @@ The request shows **Closed Complete** (each run says `the PKI issued it: install
 **Installed by the job, after an approval:** *Certificate install - check* (on a schedule) finds the certificate on
 the request - whatever the PKI attached or pasted, as long as its public key is the CSR's - and says what installing
 it would do; after the approval, *Certificate install - approved* puts it in place, reloads the service, checks the
-port, and puts the old one back if anything is wrong. Linux and Windows: [CERT_INSTALL.md](CERT_INSTALL.md).
+port, and puts the old one back if anything is wrong. Linux and Windows: [CERT_INSTALL.md](CERT_INSTALL.md); vCenter
+and ESXi: [VMWARE.md](VMWARE.md#installing-the-issued-certificates-of-vcenter-and-the-esxi-hosts-with-an-approval). The
+PKI may attach only the .cer when you keep the DoD PKI's CA bundle (`cert_install_ca_bundle`): the chain comes from it
+([CERT_INSTALL.md](CERT_INSTALL.md#when-the-pki-sends-only-the-cer-a-ca-bundle)).
 
-**By hand** - a keystore, a service that needs a restart, vCenter, ESXi, Cisco - where the key is:
+**By hand** - a keystore, a service that needs a restart, Cisco, or vCenter and ESXi without the install workflow - where the key is:
 
 | Where | How |
 |---|---|

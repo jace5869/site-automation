@@ -56,6 +56,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Network performance report | `playbooks/net_perf_report.yml` | [net_perf_report.yml](net_perf_report.yml) |
 | Outage AAR - Word document | `playbooks/incident_aar.yml` | [incident_aar.yml](incident_aar.yml) |
 | Patch hosts | `playbooks/patch_hosts.yml` | [patch_hosts.yml](patch_hosts.yml) |
+| PKI - DoD bundle check | `playbooks/pki_bundle_check.yml` | [pki_bundle_check.yml](pki_bundle_check.yml) |
 | POA&M status | `playbooks/poam_status.yml` | [poam_status.yml](poam_status.yml) |
 | Report website - copy | `playbooks/report_web_copy.yml` | [report_web_copy.yml](report_web_copy.yml) |
 | Service watch - apply approved fix | `playbooks/service_fix_approved.yml` | [service_fix_approved.yml](service_fix_approved.yml) |
