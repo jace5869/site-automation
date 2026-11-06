@@ -1,0 +1,43 @@
+---
+# The write itself (library/site_stigman_update.py): stigman_update_plan's new assets created and reviews written, each
+# only if unchanged since the check read it, then read back; _su is what became of each. main.yml (workflows 37 and 40,
+# after the approval) and the checklist import's auto (roles/stigman_ckl_import, stigman_ckl_import_auto: existing or
+# all - no approval) both run it.
+- name: STIG Manager update | where and as whom
+  ansible.builtin.set_fact:
+    _su_login:
+      api: "{{ stigman_update_api }}"
+      token_url: "{{ stigman_update_token_url or lookup('ansible.builtin.env', 'STIGMAN_TOKEN_URL') }}"
+      client_id: "{{ stigman_update_client_id or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_ID') }}"
+
+- name: STIG Manager update | STIG Manager and its credential are set
+  ansible.builtin.assert:
+    that:
+      - _su_login.api | length > 0
+      - _su_login.token_url | length > 0
+      - _su_login.client_id | length > 0
+    fail_msg: >-
+      Set check_stig_stigman_api (all.yml, as for the STIG drift report) and attach the "STIG Manager API" credential of
+      the client that may write reviews. Nothing written.
+    quiet: true
+
+- name: STIG Manager update | create the new assets of the plan, write its reviews - each only if unchanged since the check read it
+  site_stigman_update:
+    api: "{{ _su_login.api }}"
+    token_url: "{{ _su_login.token_url }}"
+    client_id: "{{ _su_login.client_id }}"
+    client_secret: "{{ stigman_update_client_secret or lookup('ansible.builtin.env', 'STIGMAN_CLIENT_SECRET') }}"
+    scope: "{{ stigman_update_scope }}"
+    plan: "{{ stigman_update_plan }}"
+    validate_certs: "{{ stigman_update_validate_certs | bool }}"
+    ca_path: "{{ stigman_update_ca_path }}"
+    timeout: "{{ stigman_update_timeout | int }}"
+    skip_attachments: "{{ stigman_update_skip_attachments | bool }}"
+  register: _su
+  when: stigman_update_plan | length > 0
+
+- name: STIG Manager update | each review
+  ansible.builtin.debug:
+    msg: >-
+      {{ [_su.error] if _su.error | default('') else
+         (_su['items'] | default([]) | stig_update_item_lines) or ['nothing to write: the plan is empty'] }}

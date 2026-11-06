@@ -2,10 +2,13 @@
 """Unit tests for workflow 40, the checklist import: reading checklists (CKL, CKLB - VMware's InSpec ones with their own
 STIG id and no rule revisions), matching them to STIG Manager's assets and installed STIGs, the plan
 (roles/stigman_ckl_import/library/site_ckl_import.py), its report (plugins/filter/stig_ckl_filters.py), and what the
-update (roles/stigman_update/library/site_stigman_update.py) does with the plan's new parts.
+update (roles/stigman_update/library/site_stigman_update.py) does with the plan's new parts; 0.76.0, as a STIG Manager
+Watcher's job: the asset looked for in several collections (a staging one for the new), written at once (auto), the files
+done with moved.
     python tests/test_stig_ckl_import.py
 """
 import copy
+import hashlib
 import json
 import os
 import sys
@@ -64,6 +67,8 @@ class Fake(ci.Client):
             return self.d["collection_stigs"].get(path.split("/")[2], [])
         if path == "/stigs":
             return self.d["stigs"]
+        if path == "/user":
+            return self.d.get("user", {"userId": "1"})
         raise AssertionError("not asked for: " + path)
 
     def rules(self, bench, rev):
@@ -77,7 +82,7 @@ class Fake(ci.Client):
 
 
 def params(**kw):
-    p = {"collection": "VMware", "create_assets": True, "benchmarks": {}, "min_match": 0.8, "candidates": 25, "search_all": False,
+    p = {"collection": "VMware", "collections": [], "auto": "none", "create_assets": True, "benchmarks": {}, "min_match": 0.8, "candidates": 25, "search_all": False,
          "other_revision": False, "overwrite_accepted": False, "status": "submitted", "detail_max": 8000, "day": "2026-11-05"}
     p.update(kw)
     return p
@@ -90,7 +95,7 @@ def fixture():
 
 def run(d, files=None, **kw):
     files = files if files is not None else [{"name": "vrops01/apache.ckl", "data": fixture(), "modified": "2026-11-05 10:00 UTC"}]
-    return ci.plan_all(params(**kw), Fake(d), copy.deepcopy(files))
+    return ci.plan_all(params(**kw), Fake(d), copy.deepcopy(files))[:4]
 
 
 class Parse(unittest.TestCase):
@@ -234,7 +239,7 @@ class Plan(unittest.TestCase):
         d["stigs"][0]["title"] = "Something else"
         f = Fake(d)
         cks, plan, left, _ = ci.plan_all(params(benchmarks={"vmware aria operations 8.x apache*": ARIA}), f,
-                                         [{"name": "a.ckl", "data": fixture(), "modified": ""}])
+                                         [{"name": "a.ckl", "data": fixture(), "modified": ""}])[:4]
         self.assertEqual((cks[0]["by"], cks[0]["benchmark"]), ("setting", ARIA))
         self.assertEqual([c for c in f.calls if c.startswith("rules")], ["rules %s V1R1" % ARIA])
 
@@ -336,6 +341,282 @@ class Update(unittest.TestCase):
         for dots in (".", "..", "..."):            # a proxy in front of STIG Manager takes ".." as a step up the path
             self.assertEqual(smu.bad_item(dict(it, ruleId=dots)), "not a STIG rule id: " + dots)
         self.assertEqual(smu.bad_item(dict(it, ruleId="SV-1.2")), "")
+
+
+# ---- 0.76.0: several collections, auto, the files moved --------------------------------------------------------------
+def multi():
+    """Watcher (the staging collection), Ops, Lab, RHEL - no assets yet; the Aria STIG at V1R1 and V1R2."""
+    d = data()
+    d["collections"] = [{"collectionId": "5", "name": "Watcher"}, {"collectionId": "7", "name": "Ops"},
+                        {"collectionId": "8", "name": "Lab"}, {"collectionId": "9", "name": "RHEL"}]
+    d["assets"] = {"5": [], "7": [], "8": [], "9": []}
+    d["collection_stigs"] = {"5": [], "7": [], "8": [], "9": []}
+    d["rules"][(ARIA, "V1R2")] = aria_rules("r2")
+    return d
+
+
+def asset(aid, name, *stigs):
+    return {"assetId": aid, "name": name, "fqdn": "", "stigs": [{"benchmarkId": b, "revisionStr": r} for b, r in stigs]}
+
+
+def host(name):
+    """The fixture, for another host."""
+    return fixture().replace(b"vrops01", name.encode())
+
+
+def run_many(d, collections=("*",), files=None, **kw):
+    files = files if files is not None else [{"name": "vrops01/apache.ckl", "data": fixture(), "modified": "2026-11-05 10:00 UTC"}]
+    f = Fake(d)
+    out = ci.plan_all(params(collection="Watcher", collections=list(collections), **kw), f, copy.deepcopy(files))
+    return out + (f,)
+
+
+class Collections(unittest.TestCase):
+    def test_pick(self):
+        cols = multi()["collections"]
+        st, s = ci.pick_collections(cols, ["*"], "watcher")
+        self.assertEqual(st, {"collectionId": "5", "name": "Watcher"})
+        self.assertEqual([c["name"] for c in s], ["Lab", "Ops", "RHEL", "Watcher"], "the staging one last")
+        self.assertEqual([c["name"] for c in ci.pick_collections(cols, ["ops", "L*", "Nothing*", "7"], "Watcher")[1]], ["Ops", "Lab", "Watcher"])
+        self.assertEqual([c["name"] for c in ci.pick_collections(cols, [], "Watcher")[1]], ["Watcher"], "[]: as 0.75.0")
+        with self.assertRaises(ci.Fail) as e:
+            ci.pick_collections(cols, ["Nope"], "Watcher")
+        self.assertIn("no collection Nope (stigman_ckl_import_collections)", str(e.exception))
+        with self.assertRaises(ci.Fail):
+            ci.pick_collections(cols, ["*"], "Nope")
+        # the client's grants: Restricted anywhere searched - refused (it may not see the host's asset there)
+        full = {"5": 3, "7": 2, "8": 2, "9": 2}
+        self.assertEqual(len(ci.pick_collections(cols, ["*"], "Watcher", full)[1]), 4)
+        with self.assertRaises(ci.Fail) as e:
+            ci.pick_collections(cols, ["*"], "Watcher", dict(full, **{"8": 1}))
+        self.assertIn("the client has only Restricted in Lab - it may not see every asset there", str(e.exception))
+        self.assertIn("created again in Watcher", str(e.exception))
+        self.assertEqual(len(ci.pick_collections(cols, ["Ops"], "Watcher", dict(full, **{"8": 1}))[1]), 2, "Lab not searched: fine")
+        d = multi()
+        d["user"] = {"userId": "1", "collectionGrants": [{"roleId": r, "collection": {"collectionId": c}} for c, r in dict(full, **{"9": 1}).items()]}
+        with self.assertRaises(ci.Fail):
+            run_many(d)
+        self.assertEqual(ci.my_grants(Fake(d)), dict(full, **{"9": 1}))
+        self.assertIsNone(ci.my_grants(Fake(multi())), "no grants in the answer: not known, not refused")
+
+    def test_written_where_it_is_not_in_staging(self):
+        d = multi()
+        d["assets"]["7"] = [asset("71", "vrops01", (ARIA, "V1R1"))]
+        d["assets"]["5"] = [asset("51", "vrops01", (ARIA, "V1R1"))]
+        cks, plan, left, st, searched, f = run_many(d)
+        self.assertEqual(searched, ["Lab", "Ops", "RHEL", "Watcher"])
+        self.assertEqual(sorted(set((p["collectionId"], p["assetId"], p["collection"]) for p in plan)), [("7", "71", "Ops")])
+        self.assertEqual(len(plan), 3)
+        self.assertEqual([(c["collection"], c["state"]) for c in cks], [("Ops", "planned"), ("Watcher", "in staging too")])
+        self.assertIn("delete it from Watcher", cks[1]["why"])
+        self.assertTrue(plan[0]["line"].startswith("Ops/vrops01 %s VRPE-8X-000001" % ARIA), plan[0]["line"])
+        self.assertEqual(cf.stig_ckl_lines(cks, True)[0].split(" -> ")[1][:12], "Ops/vrops01 ")
+        # the staging collection alone has it: written there
+        d["assets"]["7"] = []
+        cks, plan, left, st, searched, f = run_many(d)
+        self.assertEqual(sorted(set(p["collectionId"] for p in plan)), ["5"])
+
+    def test_each_collection_that_has_the_stig_at_its_revision(self):
+        d = multi()
+        d["assets"]["7"] = [asset("71", "vrops01", (ARIA, "V1R1"))]
+        d["assets"]["8"] = [asset("81", "vrops01.example.mil", (ARIA, "V1R2"))]
+        d["assets"]["9"] = [asset("91", "VROPS01", ("RHEL_9_STIG", "V2R9"))]
+        cks, plan, left, st, searched, f = run_many(d)
+        got = sorted((p["collection"], p["revision"], p["ruleId"]) for p in plan)
+        self.assertEqual(got, [("Lab", "V1R2", "SV-260001r2_rule"), ("Lab", "V1R2", "SV-260002r2_rule"), ("Lab", "V1R2", "SV-260005r2_rule"),
+                               ("Ops", "V1R1", "SV-260001r1_rule"), ("Ops", "V1R1", "SV-260002r1_rule"), ("Ops", "V1R1", "SV-260005r1_rule")])
+        self.assertEqual(dict((c["collection"], c["state"]) for c in cks), {"Lab": "planned", "Ops": "planned", "RHEL": "STIG not on this asset"})
+        self.assertIn("written where it has it (Lab, Ops)", [c for c in cks if c["collection"] == "RHEL"][0]["why"])
+        self.assertEqual(cf.STATE_CHIP["STIG not on this asset"], "info", "not a problem: its reviews went elsewhere")
+        self.assertEqual(sorted(c for c in f.calls if c.startswith("rules " + ARIA)), ["rules %s V1R1" % ARIA, "rules %s V1R2" % ARIA])
+        # none has the STIG: as 0.75.0 - assign it
+        d["assets"]["7"], d["assets"]["8"] = [], []
+        cks, plan, left, st, searched, f = run_many(d)
+        self.assertEqual(([c["state"] for c in cks], plan), (["no STIG on the asset"], []))
+
+    def test_several_assets_fit_in_one_collection(self):
+        d = multi()
+        d["assets"]["7"] = [asset("71", "vrops01", (ARIA, "V1R1")), dict(asset("72", "vrops01-old", (ARIA, "V1R1")), fqdn="vrops01.example.mil")]
+        d["assets"]["8"] = [asset("81", "vrops01", (ARIA, "V1R1"))]
+        cks, plan, left, st, searched, f = run_many(d)
+        self.assertEqual(sorted(set(p["collection"] for p in plan)), ["Lab"])
+        self.assertEqual([(c["collection"], c["state"]) for c in cks if c["state"] == "no asset"], [("Ops", "no asset")])
+        self.assertIn("several assets in Ops fit vrops01", [c for c in cks if c["collection"] == "Ops"][0]["why"])
+
+    def test_new_in_the_staging_collection(self):
+        cks, plan, left, st, searched, f = run_many(multi())
+        self.assertEqual((plan[0]["kind"], plan[0]["collection"], plan[0]["collectionId"], plan[0]["import"]), ("create", "Watcher", "5", True))
+        self.assertEqual(set(p["collectionId"] for p in plan), {"5"})
+        self.assertEqual((cks[0]["collection"], cks[0]["new"]), ("Watcher", True))
+        cks, plan, left, st, searched, f = run_many(multi(), create_assets=False)
+        self.assertIn("no asset vrops01 in Lab, Ops, RHEL, Watcher", cks[0]["why"])
+
+    def test_auto(self):
+        d = multi()
+        d["assets"]["7"] = [asset("71", "vrops01", (ARIA, "V1R1"))]
+        files = [{"name": "vrops01.ckl", "data": fixture(), "modified": "1"}, {"name": "vrops03.ckl", "data": host("vrops03"), "modified": "1"}]
+        plan = run_many(d, files=files)[1]
+        self.assertEqual(set(p["auto"] for p in plan), {False}, "none: everything waits for the approval")
+        self.assertIn("approved in AAP", plan[-1]["comment"])
+        plan = run_many(d, files=files, auto="existing")[1]
+        self.assertEqual([(p.get("kind"), p.get("new_asset", ""), p["auto"]) for p in plan],
+                         [("create", "", False)] + [("import", "vrops03", False)] * 3 + [("import", "", True)] * 3)
+        self.assertIn("no approval (stigman_ckl_import_auto)", [p for p in plan if p["auto"]][0]["comment"])
+        self.assertIn("approved in AAP", plan[1]["comment"])
+        plan = run_many(d, files=files, auto="all")[1]
+        self.assertEqual(set(p["auto"] for p in plan), {True})
+        self.assertNotIn("approved", plan[0]["description"])
+
+    def test_same_answer_twice_names_both_files(self):
+        d = multi()
+        d["assets"]["7"] = [asset("71", "vrops01", (ARIA, "V1R1"))]
+        files = [{"name": "a.ckl", "data": fixture(), "modified": "1"}, {"name": "b.ckl", "data": fixture(), "modified": "2"}]
+        plan = run_many(d, files=files)[1]
+        self.assertEqual(set((p["file"], tuple(p["files"])) for p in plan), {("b.ckl", ("a.ckl", "b.ckl"))})
+
+
+class Settled(unittest.TestCase):
+    """Which files are done with, to be moved (stig_ckl_settled)."""
+    def ci(self):
+        return {"files": [{"name": n, "sha256": n, "checklists": 1} for n in ("a.ckl", "b.ckl", "e.ckl", "f.ckl", "g.ckl")]
+                + [{"name": "c.ckl", "sha256": "c", "checklists": 0}, {"name": "d.ckl", "error": "not a checklist"}],
+                "checklists": [{"file": "e.ckl", "state": "not matched", "why": "no STIG"}, {"file": "a.ckl", "state": "nothing to write"},
+                               {"file": "g.ckl", "state": "STIG not on this asset"}],
+                "left": [{"file": "a.ckl", "kind": "same"}, {"file": "a.ckl", "kind": "unmatched"}, {"file": "a.ckl", "kind": "accepted"},
+                         {"file": "f.ckl", "kind": "conflict", "why": "the checklists disagree"}]}
+
+    def moves(self, *a, **kw):
+        return dict((x["name"], x["move"]) for x in cf.stig_ckl_settled(self.ci(), *a, **kw))
+
+    def test_held_and_moved(self):
+        got = cf.stig_ckl_settled(self.ci(), [{"kind": "import", "file": "b.ckl", "files": ["b.ckl"], "line": "L"}])
+        self.assertEqual(dict((x["name"], x["move"]) for x in got),
+                         {"a.ckl": True, "b.ckl": False, "c.ckl": False, "d.ckl": False, "e.ckl": False, "f.ckl": False, "g.ckl": True})
+        why = dict((x["name"], x["why"]) for x in got)
+        self.assertEqual((why["b.ckl"], why["c.ckl"], why["d.ckl"]), ("waits for the approval (L)", "no STIG in it", "not a checklist"))
+        self.assertTrue(why["f.ckl"].startswith("Checklists disagree"))
+        self.assertEqual(got[0]["sha256"], "a.ckl")
+
+    def test_written_at_once(self):
+        auto = [{"kind": "import", "file": "a.ckl", "files": ["a.ckl", "g.ckl"]}]
+        self.assertFalse(self.moves([], auto, {"items": [{"n": 0, "state": "rejected", "line": "x", "why": "y"}]})["g.ckl"])
+        self.assertTrue(self.moves([], auto, {"items": [{"n": 0, "state": "written"}]})["g.ckl"])
+        self.assertTrue(self.moves([], auto, {"items": [{"n": 0, "state": "already so"}]})["a.ckl"])
+        self.assertFalse(self.moves([], auto, {"items": [{"n": 0, "state": "would write"}]})["a.ckl"], "check mode: not written")
+        self.assertFalse(self.moves([], auto, {"items": [], "error": ""})["a.ckl"], "the write did not run")
+        self.assertEqual(set(self.moves([], auto, {"items": [], "error": "no token"}).values()), {False})
+        self.assertEqual(set(self.moves([], [], None, {}, "HTTP 500").values()), {False}, "attachments not read: nothing moved")
+        self.assertFalse(self.moves([], [], None, {"left": [{"file": "a.ckl", "attachments": -1}]})["a.ckl"])
+        self.assertTrue(self.moves([], [], None, {"left": [{"file": "a.ckl", "attachments": 2}]})["a.ckl"])
+        bad = dict(self.ci(), error="no token")
+        self.assertEqual(set(x["move"] for x in cf.stig_ckl_settled(bad)), {False})
+
+
+class Move(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.d, "sub"))
+        os.makedirs(os.path.join(self.d, "Imported", "2026-11-01"))
+        for n in ("sub/a.ckl", "b.ckl", "Imported/2026-11-01/old.ckl"):
+            with open(os.path.join(self.d, n), "wb") as f:
+                f.write(fixture())
+        self.sha = hashlib.sha256(fixture()).hexdigest()
+        self.p = {"src": self.d, "base": "", "patterns": ["*.ckl"], "recurse": True, "max_files": 10, "max_mb": 1, "move_to": "imported",
+                  "day": "2026-11-06", "port": 445, "username": "", "password": "", "auth": "negotiate", "encrypt": False,
+                  "move": [{"name": "sub/a.ckl", "sha256": self.sha}, {"name": "b.ckl", "sha256": "0" * 64}, {"name": "../x.ckl", "sha256": ""}]}
+
+    def test_the_folder_is_never_read(self):
+        self.assertEqual([g["name"] for g in ci.read_files(self.p)], ["b.ckl", "sub/a.ckl"])
+        self.assertEqual(len(ci.read_files(dict(self.p, move_to=""))), 3)
+
+    def test_move(self):
+        got = ci.move_files(self.p, True)
+        self.assertEqual([g["state"] for g in got], ["would move", "changed since", "error"])
+        self.assertTrue(os.path.exists(os.path.join(self.d, "sub", "a.ckl")), "check mode: nothing moved")
+        got = ci.move_files(self.p, False)
+        self.assertEqual([(g["state"], g["to"]) for g in got], [("moved", "imported/2026-11-06/sub/a.ckl"), ("changed since", ""), ("error", "")])
+        self.assertTrue(os.path.exists(os.path.join(self.d, "imported", "2026-11-06", "sub", "a.ckl")))
+        self.assertFalse(os.path.exists(os.path.join(self.d, "sub", "a.ckl")))
+        self.assertTrue(os.path.exists(os.path.join(self.d, "b.ckl")), "written again since it was read: left")
+        with open(os.path.join(self.d, "sub", "a.ckl"), "wb") as f:      # the same file again, the same day: a second name
+            f.write(fixture())
+        self.assertEqual(ci.move_files(self.p, False)[0]["to"], "imported/2026-11-06/sub/a-2.ckl")
+        self.assertEqual(ci.move_files(dict(self.p, move_to="../up"), False)[0]["state"], "error")
+
+    def test_safe_name(self):
+        self.assertEqual([ci.safe_name(x) for x in ("a.ckl", "s/a.ckl", "../a", "/a", "s/../a", "", "C:/a", "s//a")],
+                         [True, True, False, False, False, False, False, False])
+
+
+class Grants(unittest.TestCase):
+    """The update with the import's items: written only where the client has Full or more, created where Manage."""
+    def item(self, c, name):
+        return {"kind": "import", "collectionId": c, "collection": name, "assetId": "4" + c, "ruleId": "SV-260001r1_rule", "result": "pass",
+                "status": "submitted", "was": {"result": "", "status": "", "ts": ""}, "detail": "x", "engine": None, "line": name}
+
+    def test_no_grant(self):
+        it = self.item("7", "Ops")
+        self.assertEqual(smu.no_grant(None, it, 2), "", "not read: STIG Manager decides")
+        self.assertIn("Restricted in Ops - the import writes only where it needs Full or more (a Restricted grant", smu.no_grant({"7": 1}, it, 2))
+        self.assertEqual(smu.no_grant({"7": 2}, it, 2), "")
+        self.assertIn("no grant in Ops", smu.no_grant({}, it, 2))
+        new = {"kind": "create", "import": True, "collectionId": "5", "collection": "Watcher"}
+        self.assertIn("Full in Watcher - creating an asset needs Manage", smu.no_grant({"5": 2}, new, 3))
+        self.assertEqual(smu.no_grant({"5": 3}, new, 3), "")
+        self.assertEqual(smu.no_grant({"7": 1}, {"collectionId": "7"}, 2), "", "workflow 37's items: as before")
+
+    def test_update(self):
+        class C(object):
+            def __init__(self):
+                self.posts, self.db = [], {}
+
+            def grants(self):
+                return {"7": 1, "8": 2}
+
+            def review(self, c, a, rule):
+                return self.db.get((c, rule))
+
+            def write(self, c, a, reviews):
+                self.posts.append(c)
+                for r in reviews:
+                    self.db[(c, r["ruleId"])] = {"result": r["result"], "status": {"label": r["status"]}}
+                return {"rejected": []}
+        c = C()
+        items = smu.update({"plan": [self.item("7", "Ops"), self.item("8", "Lab")], "skip_attachments": False}, c, False)
+        self.assertEqual([(i["line"], i["state"]) for i in items], [("Ops", "no grant"), ("Lab", "written")])
+        self.assertEqual(c.posts, ["8"])
+        r = __import__("stig_filters").stig_update_report(items)
+        self.assertEqual(r["title"], "STIG Manager update: 1 review(s) written, 1 not")
+
+
+class Report(unittest.TestCase):
+    def test_auto_and_moved(self):
+        d = multi()
+        d["assets"]["7"] = [asset("71", "vrops01", (ARIA, "V1R1"))]
+        files = [{"name": "vrops01.ckl", "data": fixture(), "modified": "1"}, {"name": "vrops03.ckl", "data": host("vrops03"), "modified": "1"}]
+        cks, plan, left, st, searched, f = run_many(d, files=files, auto="existing")
+        res = {"files": [{"name": x["name"], "sha256": "s", "checklists": 1} for x in files], "checklists": cks, "plan": plan, "left": left,
+               "collection": st, "collections": searched, "source": "/ckl", "error": ""}
+        auto = [p for p in plan if p["auto"]]
+        wait = [p for p in plan if not p["auto"]]
+        su = {"items": [{"n": n, "state": "written", "line": p["line"], "result": p["result"]} for n, p in enumerate(auto)], "error": ""}
+        settled = cf.stig_ckl_settled(res, wait, auto, su)
+        self.assertEqual([(x["name"], x["move"]) for x in settled], [("vrops01.ckl", True), ("vrops03.ckl", False)])
+        moved = [{"name": "vrops01.ckl", "to": "imported/2026-11-06/vrops01.ckl", "state": "moved", "why": ""}]
+        r = cf.stig_ckl_report(res, wait, [], True, 200, "existing", auto, su, False, moved, settled, "imported")
+        self.assertEqual(r["title"], "Checklist import: 3 review(s) written, 3 to approve with 1 new asset(s)")
+        t = [s["title"] for s in r["sections"]]
+        self.assertEqual(t[:2], ["Written at once, no approval: 3 review(s)", "Approve writes these reviews to STIG Manager and creates 1 asset"])
+        self.assertIn("Files: 1 moved to imported, 1 left", t)
+        each = [s for s in r["sections"] if s["title"] == "Each checklist"][0]
+        self.assertEqual([(x[3], x[9]) for x in each["rows"]], [("Ops / vrops01", "written"), ("Watcher / vrops03 (new)", "planned")])
+        self.assertEqual(dict((x["label"], x["value"]) for x in r["summary"])["Written"], 3)
+        # all of it written at once: nothing waits
+        r = cf.stig_ckl_report(res, [], [], True, 200, "all", plan, {"items": [{"n": n, "state": "written"} for n in range(len(plan))]})
+        self.assertEqual([s["title"] for s in r["sections"]][1], "Nothing waits for an approval")
+        # the write failed: said first
+        r = cf.stig_ckl_report(res, wait, [], True, 200, "existing", auto, {"items": [], "error": "no token for the client x"})
+        self.assertEqual((r["status"], r["sections"][0]["title"]), ("critical", "Nothing written at once"))
 
 
 if __name__ == "__main__":

@@ -4,6 +4,10 @@ Checklists you have as files - **CKL** (STIG Viewer 2) or **CKLB** (STIG Viewer 
 reviews, after a person approves them. Made for VMware's InSpec checklists, which STIG Manager's own import does not
 take, and it works for any checklist: Evaluate-STIG's, one a person filled in STIG Viewer, SCC's.
 
+It can also stand in for **STIG Manager Watcher** (0.76.0): on a schedule, the checklists your scanners drop on the
+share written at once, each host's asset found in whichever collection has it, a host in none created in a staging
+collection, and each file moved to `imported/<date>/` once it is in STIG Manager - [As STIG Manager Watcher](#as-stig-manager-watcher-0760).
+
 **Why VMware's checklists need it.** VMware's (Broadcom's) STIG profiles are InSpec profiles. Their results become a CKL
 through MITRE's SAF CLI (HDF to CKL), and that CKL carries the profile's own name as its STIG id (*VMware Aria
 Operations 8.x Apache Profile*), rule ids with no revision (`SV-VRPE-8X-000001`), and often no host name. STIG Manager
@@ -34,7 +38,9 @@ the **rules** instead: the rule's version (`VRPE-8X-000001`) is the same in the 
 **Its asset** is the checklist's host name - `HOST_NAME` in a CKL, `target_data.host_name` in a CKLB (STIG Viewer:
 *Asset* - *Host Name*) - in the collection `stigman_ckl_import_collection`, found by name, FQDN or short name as the
 other STIG jobs do. A web site or database checklist (*Website or database* ticked) is STIG Manager's
-`<host>-<site>-<instance>` asset (`NA` for one not given), as STIG Manager's own import names it.
+`<host>-<site>-<instance>` asset (`NA` for one not given), as STIG Manager's own import names it. With
+`stigman_ckl_import_collections` (0.76.0) it is looked for in those collections too - and written to each of them
+whose asset has the STIG: [Several collections](#several-collections).
 
 - **No host name:** nothing written; the report says so. Fill it in STIG Viewer (or in the file) and run it again.
 - **No asset of that name:** a **new asset** is planned (`stigman_ckl_import_create_assets`, on by default): the
@@ -88,6 +94,102 @@ hundreds). The reviews are written to the STIG's revision the asset has - else t
 assets; each review read again first and left when a person changed it since; read back after; Check mode writes
 nothing; run twice, nothing the second time. [STIG_DRIFT.md](STIG_DRIFT.md#updating-stig-manager-with-an-approval).
 
+## As STIG Manager Watcher (0.76.0)
+
+STIG Manager Watcher watches a folder and imports what lands in it. This job does the same on a schedule, with what it
+does on top: VMware's InSpec checklists matched by their rules, an asset looked for in every collection, a review
+written only if STIG Manager still has it as read, never over Accepted, and a report of each run.
+
+```workflow
+[Scanners: Evaluate-STIG, InSpec + SAF CLI, STIG Viewer]  write CKL / CKLB files to the share (any sub-folders)
+   |  every 30 minutes
+   v
+[STIG Manager - import checklists]  each host's asset wherever it is (Ops, Lab ...); none: created in Watcher
+   |  once all of a file is in STIG Manager
+   v
+[imported/2026-11-06/ on the share]  never read again
+```
+
+Its Variables:
+
+```yaml
+stigman_ckl_import_src: '\\fileserver.yourdomain.mil\stig\ckl'
+stigman_ckl_import_collection: Watcher          # the staging collection: a host found nowhere is created here
+stigman_ckl_import_collections: ['*']           # where a host's asset is looked for: every collection the client reads
+stigman_ckl_import_auto: existing               # existing: written at once where the asset is there; all: new assets too
+stigman_ckl_import_move: true                   # the files done with moved to imported/<date>/
+```
+
+### Written at once - `stigman_ckl_import_auto`
+
+| `stigman_ckl_import_auto` | Assets that are there | A host with no asset (a new asset) |
+|---|---|---|
+| `none` (default) | wait for workflow 40's approval | wait for the approval |
+| `existing` | **written by this job** | wait for the approval (workflow 40), or listed (a plain template) |
+| `all` | **written by this job** | **created and written by this job** |
+
+Written at once means the same write as workflow 40's after the approval (`STIG Manager - update`'s, run inside this
+job): each review read again just before, and left if a person changed it since; read back after; never over Accepted,
+never one with attachments, never Not Reviewed. The comment says *... by site-automation, no approval
+(stigman_ckl_import_auto)* instead of *approved in AAP*. The report starts with *Written at once, no approval*, then what
+waits for the approval. A review not written (rejected, an error, no grant) fails the job - so a schedule shows it red.
+
+With `auto` the template's **STIG Manager API** credential is the client that **writes**: **Full** (or more) in every
+collection searched, **Manage** in the staging collection for `all` (it creates the assets).
+
+Two ways to run it:
+
+- **`existing` in workflow 40, on a schedule** (recommended): the workflow's check template gets `stigman_ckl_import_auto:
+  existing` (and `stigman_ckl_import_workflow: true`). Each run writes what is for assets that are there, and goes to the
+  approval only when there is a new host - one approval per new asset, not per scan.
+- **`all` as a plain job template, on a schedule**: no workflow, no approval at all - as Watcher does. A new host is
+  created in the staging collection; move it to its real collection in STIG Manager (*Collection* > *Assets* >
+  *Transfer*), and the next file of it goes there.
+
+### Several collections
+
+`stigman_ckl_import_collections` names where a host's asset is looked for: collection names or ids, `*` and `?` (`['*']`
+= every collection the client can read; `['Ops*', 'Lab']`). `stigman_ckl_import_collection` - the **staging**
+collection - is always searched, last.
+
+- **The asset is in one collection** (not the staging one): written there.
+- **In several** (Ops and Lab both have `web01`): written to **each** whose asset has the checklist's STIG, at that
+  collection's revision of it. One without the STIG is said (*STIG not on this asset*), not a problem.
+- **In a real collection and in the staging one** (it was created there, then copied): written to the real one; the
+  staging copy is said (*in staging too* - delete it there).
+- **In the staging collection only:** written there.
+- **Nowhere:** a new asset in the staging collection (`stigman_ckl_import_create_assets`), with the STIGs its checklists
+  matched.
+- **Two assets of the name in one collection:** nothing written there, said - a person picks.
+
+**Refused - the run stops:** a collection searched where the client has only **Restricted**. A Restricted grant sees
+only the assets given to it, so a host there would look new and be created again in the staging collection. Give the
+client **Full** there, or name the collections without it. A collection the client has **no grant** in it cannot see at
+all: a host only there is created in the staging collection - give the client a grant in every collection your hosts
+are in. The update checks again before it writes (`GET /user`): a review in a collection where its client has less
+than Full, or a new asset where it has less than Manage, is refused (*no grant*) and the job fails.
+
+### The files - `stigman_ckl_import_move`
+
+With `stigman_ckl_import_move: true`, a file is moved to `imported/<date>/` under the folder (its sub-folder kept:
+`ops/web01.ckl` goes to `imported/2026-11-06/ops/web01.ckl`; the same name twice a day: `web01-2.ckl`) once **all of it
+is in STIG Manager**: written by this run, the same already, or left for good - Accepted, a rule not in the STIG, another
+revision of a rule, a review with attachments. It **stays** - and the next run takes it again - when it waits for the
+approval, when a review of it was not written, when it could not be read or matched (no host name, no STIG), when two
+checklists disagree, in a Check run, and when it was written again since it was read (its SHA-256 is compared just
+before the move: a new scan that landed meanwhile is not lost). The report's *Files* section lists each, moved or left,
+and why. `imported` (`stigman_ckl_import_move_to`) is never read.
+
+The share's account then needs **Modify** on the folder (not only Read); without it the job says *the account may read
+but not move files here*. Without `move` (the default) the share is only read: every run reads every file again and
+writes nothing for those already in STIG Manager - fine for tens of files, slow for thousands (`stigman_ckl_import_max_files`,
+500).
+
+### Schedule
+
+Every 15 to 60 minutes (the scanners' pace), **Concurrent jobs** off on the template or workflow. Each run is a
+report on the website and an email; with nothing new it stays green.
+
 ## Setting it up
 
 1. **The share.** A folder for the checklists, e.g. `\\fileserver.yourdomain.mil\stig\ckl` - one sub-folder per
@@ -119,7 +221,11 @@ STIG Manager's address, login and certificates are the STIG drift report's (`che
 | Setting | Default | |
 |---|---|---|
 | `stigman_ckl_import_src` | | the share's folder, or a folder on the AAP side |
-| `stigman_ckl_import_collection` | | the collection the assets are in, or are created in |
+| `stigman_ckl_import_collection` | | the collection the assets are in, or are created in (the staging collection) |
+| `stigman_ckl_import_collections` | `[]` | where else a host's asset is looked for (names, `*`, `?`); written to each with the STIG |
+| `stigman_ckl_import_auto` | `none` | `existing`: reviews of assets that are there written at once; `all`: new assets too |
+| `stigman_ckl_import_move` | `false` | move each file done with to `imported/<date>/` (the account needs Modify) |
+| `stigman_ckl_import_move_to` | `imported` | that folder (never read) |
 | `stigman_ckl_import_patterns` | `["*.ckl", "*.cklb"]` | the files taken |
 | `stigman_ckl_import_recurse` | `true` | the sub-folders too |
 | `stigman_ckl_import_create_assets` | `true` | a host name with no asset: created once approved |
@@ -132,8 +238,12 @@ STIG Manager's address, login and certificates are the STIG drift report's (`che
 
 ## Tested
 
-`tests/test_stig_ckl_import.py` (reading CKL and CKLB, matching, the plan, the report), `tests/stig/run_ckl_import_test.sh`
-(the check and the update against a stand-in STIG Manager, current ansible-core and 2.16), and against STIG Manager
-1.6.17 with its demo Keycloak (`tests/stig/run_stigman_real_test.sh`): two installed STIGs with DISA's rule ids, an InSpec
-checklist and a person's, matched by the rules' versions; a new asset created with both STIGs; the InSpec answers
-written with InSpec as their result engine, the person's with none; an Accepted review left.
+`tests/test_stig_ckl_import.py` (reading CKL and CKLB, matching, the plan, the report; several collections, auto, which
+files are done with, the moves, the grants), `tests/stig/run_ckl_import_test.sh` (the check and the update against a
+stand-in STIG Manager, current ansible-core and 2.16; as Watcher: written at once, a new asset in the staging
+collection, the files moved, a Restricted collection refused), `tests/stig/run_ckl_import_smb_test.sh` (the files moved on
+a real Samba share; an account that may only read: nothing moved, said), and against STIG Manager 1.6.17 with its demo
+Keycloak (`tests/stig/run_stigman_real_test.sh`): two installed STIGs with DISA's rule ids, an InSpec checklist and a
+person's, matched by the rules' versions; a new asset created with both STIGs; the InSpec answers written with InSpec as
+their result engine, the person's with none; an Accepted review left; as Watcher - Watcher, Ops and a Restricted
+collection (refused, from `GET /user`), written at once, created in Watcher, every file moved.

@@ -1074,11 +1074,11 @@ class Update(unittest.TestCase):
 
     def test_writes_only_reviews(self):
         """The module's only requests: the token, GET of one review (and of its metadata keys, for its attachments), POST of
-        an asset's reviews."""
+        an asset's reviews; GET /user - the client's own grants (0.76.0, the checklist import's items)."""
         with open(os.path.join(ROOT, "roles", "stigman_update", "library", "site_stigman_update.py")) as f:
             src = f.read()
         self.assertEqual(sorted(set(re.findall(r'"%s(/[^"]*)"', src))), ["/assets?%s", "/collections/%s/reviews/%s", "/collections/%s/reviews/%s/%s",
-                                                                        "/collections/%s/reviews/%s/%s/metadata/keys"])
+                                                                        "/collections/%s/reviews/%s/%s/metadata/keys", "/user"])
         self.assertEqual(re.findall(r'get_method = lambda: "?(\w+)"?', src), ["method", "POST"])
         self.assertEqual(re.findall(r'_send\("(\w+)", "([^"]+)"', src), [("POST", "/assets?projection=stigs")], "0.72.0: a new asset only")
         for word in ("DELETE", "PATCH", "PUT", "/users", "/grants", "/stigs"):

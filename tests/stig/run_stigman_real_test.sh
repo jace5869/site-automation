@@ -12,7 +12,9 @@
 # (check_stig_update_create_assets) - in another collection: not created; nowhere: planned, created once approved with
 # the collection's revision and its reviews, not twice; a client with Full instead of Manage: refused (HTTP 403).
 # 0.75.0 (workflow 40): checklists imported - matched to two installed STIGs by their rules' versions, a new asset
-# created with both, the InSpec answers and a person's (no result engine) written, an Accepted review left.
+# created with both, the InSpec answers and a person's (no result engine) written, an Accepted review left. 0.76.0 (as
+# STIG Manager Watcher): several collections, a staging one, written at once, a Restricted grant refused (GET /user), the
+# files moved.
 #   bash tests/stig/run_stigman_real_test.sh     (CONTAINER_ENGINE=... ; STIGMAN_TEST_KEEP=1 keeps the pod and work folder)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -335,6 +337,69 @@ print(" ".join("%s:%s:%s" % (k[3:9], d[k]["result"], d[k]["status"]["label"]) fo
 play stigman_ckl_import.yml -e '{"stigman_ckl_import_workflow": true}'
 [ "$rc" = 0 ] && grep -q "nothing to write to STIG Manager" "$work/out.txt" && ! grep -q "NEEDS APPROVAL -" "$work/out.txt" \
     && ok "the import's check again: nothing to write, no approval" || { bad "the import again: rc $rc"; grep -n "NEEDS\|->\|fatal" "$work/out.txt" | head -5; }
+
+# ---- 0.76.0: as STIG Manager Watcher - several collections, a staging one, written at once, the files moved -----------
+# Watcher (the staging collection: the client has Manage), Ops (vrops04, Full), Lab (vrops05, Restricted - its grant read
+# from GET /user, refused before any write); vrops06 is nowhere: created in Watcher. Auto existing, then all.
+mkcol() {  # mkcol NAME ROLE -> its id
+    api "$atok" POST /collections "{\"name\": \"$1\", \"grants\": [{\"userId\": \"$aid\", \"roleId\": 4}, {\"userId\": \"$wid\", \"roleId\": $2}],
+      \"settings\": {\"fields\": {\"detail\": {\"enabled\": \"always\", \"required\": \"always\"}, \"comment\": {\"enabled\": \"findings\", \"required\": \"findings\"}},
+                     \"status\": {\"canAccept\": true, \"minAcceptGrant\": 3, \"resetCriteria\": \"result\"}}, \"metadata\": {}}" | j 'd["collectionId"]'
+}
+mkasset() {  # mkasset COLLECTION NAME -> its id (the Apache STIG)
+    api "$atok" POST /assets "{\"name\": \"$2\", \"collectionId\": \"$1\", \"description\": \"\", \"ip\": \"\", \"noncomputing\": false,
+      \"metadata\": {}, \"stigs\": [\"VMW_Aria_Operations_8-x_Apache_STIG\"]}" | j 'd["assetId"]'
+}
+wat=$(mkcol Watcher 3); ops=$(mkcol Ops 2); lab2=$(mkcol "Lab VMware" 1)
+v4=$(mkasset "$ops" vrops04); v5=$(mkasset "$lab2" vrops05)
+[ -n "$wat" ] && [ -n "$v4" ] && [ -n "$v5" ] && ok "0.76.0: the collections Watcher (Manage), Ops (vrops04, Full), Lab VMware (vrops05, Restricted)" || bad "0.76.0 set up"
+day=$(date -u +%F)
+mkdir -p "$work/watch/imported/2026-01-01"
+for h in vrops04 vrops05 vrops06; do
+    sed -e "s#<HOST_NAME>vrops01</HOST_NAME>#<HOST_NAME>$h</HOST_NAME>#" -e "s#vrops01.example.mil#$h.example.mil#" "$here/ckl/inspec_apache.ckl" > "$work/watch/$h.ckl"
+done
+cp "$work/watch/vrops04.ckl" "$work/watch/imported/2026-01-01/vrops01.ckl"
+watch="{\"stigman_ckl_import_src\": \"$work/watch\", \"stigman_ckl_import_collection\": \"Watcher\", \"stigman_ckl_import_collections\": [\"*\"],
+        \"stigman_ckl_import_move\": true, \"stigman_ckl_import_workflow\": true}"
+play stigman_ckl_import.yml -e "$watch" -e '{"stigman_ckl_import_auto": "existing"}'
+n4=$(api "$atok" GET "/collections/$ops/reviews/$v4" | j 'len(d)')
+[ "$rc" = 2 ] && [ "$n4" = 0 ] && grep -q "Nothing planned: the client has only Restricted in Lab VMware - it may not see every asset there" "$work/out.txt" \
+    && [ -e "$work/watch/vrops04.ckl" ] \
+    && ok "Restricted in Lab VMware (GET /user): nothing planned - vrops05 there would look new and be created again -, nothing written or moved" \
+    || { bad "Restricted, the check: rc $rc, Ops $n4"; grep -n "Nothing planned\|written - \|moved\|fatal" "$work/out.txt" | cut -c1-250 | head -8; }
+gid=$(api "$atok" GET "/collections/$lab2/grants" | "$py" -c 'import json, sys; print([g["grantId"] for g in json.load(sys.stdin) if g["user"]["userId"] == sys.argv[1]][0])' "$wid")
+api "$atok" PUT "/collections/$lab2/grants/$gid" "{\"userId\": \"$wid\", \"roleId\": 2}" >/dev/null
+play stigman_ckl_import.yml -e "$watch" -e '{"stigman_ckl_import_auto": "existing"}'
+n4=$(api "$atok" GET "/collections/$ops/reviews/$v4" | j 'len(d)')
+n5=$(api "$atok" GET "/collections/$lab2/reviews/$v5" | j 'len(d)')
+[ "$rc" = 2 ] && [ "$n4" = 3 ] && [ "$n5" = 3 ] && grep -q "NEEDS APPROVAL - 3 review(s) of 1 asset(s) to write to STIG Manager, and 1 new asset(s) to create" "$work/out.txt" \
+    && grep -q "moved - vrops04.ckl - imported/$day/vrops04.ckl" "$work/out.txt" && grep -q "vrops06.ckl - LEFT: waits for the approval" "$work/out.txt" \
+    && [ -e "$work/watch/imported/$day/vrops05.ckl" ] && [ -e "$work/watch/vrops06.ckl" ] && ! grep -q "imported/2026-01-01" "$work/out.txt" \
+    && ok "auto existing (Full now): vrops04 in Ops and vrops05 in Lab VMware written at once, their files moved; vrops06 (new) waits - NEEDS APPROVAL" \
+    || { bad "auto existing: rc $rc, Ops $n4, Lab $n5"; grep -n "written - \|NEEDS\|moved\|LEFT\|fatal" "$work/out.txt" | cut -c1-250 | head -12; }
+play stigman_ckl_import.yml -e "$watch" -e '{"stigman_ckl_import_auto": "all"}'
+v6=$(api "$wtok" GET "/assets?collectionId=$wat&projection=stigs" | "$py" -c 'import json, sys
+a = [x for x in json.load(sys.stdin) if x["name"] == "vrops06"]
+print(a[0]["assetId"] if a else "none")')
+n6=$([ "$v6" != none ] && api "$atok" GET "/collections/$wat/reviews/$v6" | j 'len(d)')
+left=$(cd "$work/watch" && ls *.ckl 2>/dev/null | wc -l)
+[ "$rc" = 0 ] && [ "${n6:-0}" = 3 ] && [ "$left" = 0 ] && ! grep -q "NEEDS APPROVAL -" "$work/out.txt" \
+    && ok "auto all: vrops06 created in Watcher with its 3 reviews, its file moved - every file in imported/$day/, no approval" \
+    || { bad "auto all: rc $rc, vrops06 $v6/$n6, $left file(s) left"; grep -n "written - \|created\|moved\|LEFT\|fatal" "$work/out.txt" | cut -c1-250 | head -12; }
+play stigman_ckl_import.yml -e "$watch" -e '{"stigman_ckl_import_auto": "all"}'
+[ "$rc" = 2 ] && grep -q "no checklist (\*.ckl, \*.cklb) in $work/watch" "$work/out.txt" \
+    && ok "again: nothing on the share but imported/ (never read) - nothing to do, said" || bad "again, empty share: rc $rc"
+# the update's own look at its grants (GET /user): an approved plan for Lab VMware, the client Restricted there by now
+api "$atok" PUT "/collections/$lab2/grants/$gid" "{\"userId\": \"$wid\", \"roleId\": 1}" >/dev/null
+"$py" -c 'import json, sys
+json.dump({"stigman_update_plan": [{"kind": "import", "collectionId": sys.argv[2], "collection": "Lab VMware", "assetId": sys.argv[3], "asset": "vrops05",
+           "ruleId": "SV-260009r1_rule", "result": "pass", "status": "submitted", "was": {"result": "", "status": "", "ts": ""}, "detail": "x",
+           "comment": "x", "engine": None, "line": "Lab VMware/vrops05 SV-260009r1_rule"}]}, open(sys.argv[1], "w"))' "$work/plan7.json" "$lab2" "$v5"
+play stigman_update.yml -e "@$work/plan7.json"
+n5=$(api "$atok" GET "/collections/$lab2/reviews/$v5" | j 'len(d)')
+[ "$rc" = 2 ] && [ "$n5" = 3 ] && grep -q "no grant - Lab VMware/vrops05 SV-260009r1_rule - the client has Restricted in Lab VMware" "$work/out.txt" \
+    && ok "the update, its client Restricted in Lab VMware (GET /user): the approved review refused, not written - the job fails" \
+    || { bad "the update, Restricted: rc $rc, Lab $n5"; grep -n "no grant\|written\|fatal" "$work/out.txt" | cut -c1-250 | head -6; }
 
 echo
 if [ $fails -eq 0 ]; then echo "all real STIG Manager scenarios passed"; else echo "$fails real STIG Manager scenario(s) FAILED"; exit 1; fi

@@ -1287,7 +1287,7 @@ def stig_update_sections(plan, list_max=200):
                      + (" The first %d of %d (check_stig_list_max)." % (list_max, len(rows)) if len(rows) > list_max else "")}]
 
 
-UPDATE_BAD = ("rejected", "error", "bad", "not as written")
+UPDATE_BAD = ("rejected", "error", "bad", "not as written", "no grant")
 
 
 def _is_new(p):
@@ -1367,8 +1367,8 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
     news = [i for i in items if i.get("kind") == "create"]
     revs = [i for i in items if i.get("kind") != "create"]
     n = dict((k, len([i for i in revs if i.get("state") == k])) for k in (
-        "written", "would write", "already so", "changed since", "has attachments", "rejected", "error", "bad", "not as written"))
-    nbad = len([i for i in news if i.get("state") in ("bad", "error")])
+        "written", "would write", "already so", "changed since", "has attachments", "rejected", "error", "bad", "not as written", "no grant"))
+    nbad = len([i for i in news if i.get("state") in ("bad", "error", "no grant")])
     bad = sum(n[k] for k in UPDATE_BAD) + nbad
     status = "critical" if (error or bad) else "warning" if n["changed since"] else "ok"
     chip = {"written": "ok", "would write": "info", "already so": "ok", "changed since": "warning", "has attachments": "info"}
@@ -1388,7 +1388,8 @@ def stig_update_report(items, check=False, error="", planned=0, source=""):
     if error:
         sections.append({"title": "Nothing written", "status": "critical", "lines": [error]})
     if news:
-        nchip = {"created": "ok", "would create": "info", "there since the check": "warning", "bad": "critical", "error": "critical"}
+        nchip = {"created": "ok", "would create": "info", "there since the check": "warning", "bad": "critical", "error": "critical",
+                 "no grant": "critical"}
         sections.append({"title": "New assets", "status": "critical" if nbad else "warning" if any(
             i.get("state") == "there since the check" for i in news) else "ok",
             "columns": ["Host", "Asset", "FQDN", "Collection", "STIG", "Result", "Its reviews", "Why"],

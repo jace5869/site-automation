@@ -400,6 +400,11 @@ approval. Reads only ([CKL_IMPORT.md](CKL_IMPORT.md)).
 For workflow 40, make a copy, *STIG Manager - import checklists - check*, with `stigman_ckl_import_workflow: true` in its
 Variables.
 
+As STIG Manager Watcher (0.76.0: on a schedule, written at once, several collections, the files moved - `stigman_ckl_import_auto`,
+`stigman_ckl_import_collections`, `stigman_ckl_import_move`): the *STIG Manager API* credential is the client that writes
+(Full in every collection searched, Manage in the staging one), the *Windows file share* account needs **Modify** on the
+folder. [CKL_IMPORT.md](CKL_IMPORT.md#as-stig-manager-watcher-0760).
+
 ### Network performance report
 
 Hourly or daily, and when users say "the network is slow": latency, loss and jitter from each Linux host to

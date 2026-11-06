@@ -1,7 +1,7 @@
 # ==================================================================================================
 # Variables for the job template "STIG Manager - import checklists"
 #   playbook:    playbooks/stigman_ckl_import.yml
-#   credentials: STIG Manager API (read-only is enough), Windows file share
+#   credentials: STIG Manager API (read-only is enough; with stigman_ckl_import_auto the client that writes), Windows file share
 #
 # HOW TO USE: copy this file into the template's Variables box (YAML selected).
 #   - A setting starting with "# " is switched off. To use it, delete the "# " in front of its
@@ -22,6 +22,13 @@
 # stigman_ckl_import_workflow: true
 stigman_ckl_import_src: '\\fileserver.yourdomain.mil\stig\ckl'
 stigman_ckl_import_collection: VMware
+## As STIG Manager Watcher (0.76.0), on a schedule: a host's asset looked for in these collections too (written to each
+## that has the STIG; the collection above is then the staging one, for hosts found nowhere), the reviews of assets that
+## are there written at once (all: new assets too - the credential is then the client that writes), and the files done
+## with moved to imported/<date>/ (the share's account needs Modify)
+# stigman_ckl_import_collections: ['*']
+# stigman_ckl_import_auto: existing
+# stigman_ckl_import_move: true
 
 # ---- stigman_ckl_import --------------------------------------------------------------------------
 ## the files taken (any case)
@@ -87,6 +94,9 @@ stigman_ckl_import_collection: VMware
 ## at most this many rows in the report's tables
 # stigman_ckl_import_list_max: 200
 
+## the folder under stigman_ckl_import_src (never read)
+# stigman_ckl_import_move_to: imported
+
 # ---- check_stig ----------------------------------------------------------------------------------
 ## Keycloak's token endpoint (https://keycloak.example.mil/realms/stigman/protocol/openid-
 ## connect/token); empty = the credential's
@@ -114,6 +124,43 @@ stigman_ckl_import_collection: VMware
 ## a review with attachments in STIG Manager (evidence a person attached) is left out of the plan
 ## and never written; false = written like the others
 # check_stig_update_skip_attachments: true
+
+# ---- stigman_update ------------------------------------------------------------------------------
+## STIG MANAGER - UPDATE (playbooks/stigman_update.yml): workflow 37's (and 40's) step after the
+## approval. It writes the reviews the STIG recheck's (or the checklist import's) check listed
+## (stigman_update_plan, handed on by the workflow) - each only if STIG Manager still has it as the
+## check read it - and the new assets it listed (check_stig_update_create_assets); nothing else. Its
+## own "STIG Manager API" credential: a client that may write reviews (scope stig-
+## manager:collection, a grant in the collections); the reports keep their read-only one.
+## docs/STIG_DRIFT.md. A new asset (check_stig_update_create_assets) needs the Manage grant in its
+## collection. STIG Manager's address and certificates: the drift report's settings (all.yml),
+## unless set here. STIG Manager's API
+# stigman_update_api: "{{ check_stig_stigman_api | default('') }}"
+
+## empty = the credential's
+# stigman_update_token_url: "{{ check_stig_stigman_token_url | default('') }}"
+
+## empty = the credential's
+# stigman_update_client_id: "{{ check_stig_stigman_client_id | default('') }}"
+
+## empty = the credential's (vault it)
+# stigman_update_client_secret: "{{ check_stig_stigman_client_secret | default('') }}"
+
+## scopes to ask for, e.g. "stig-manager:collection"; empty = the client's default scopes
+# stigman_update_scope: ""
+
+## check the HTTPS certificates
+# stigman_update_validate_certs: "{{ check_stig_stigman_validate_certs | default(true) }}"
+
+## a CA bundle on the AAP side to check them with
+# stigman_update_ca_path: "{{ check_stig_stigman_ca_path | default('') }}"
+
+## seconds per request
+# stigman_update_timeout: "{{ check_stig_stigman_timeout | default(60) }}"
+
+## a review with attachments in STIG Manager (evidence a person attached) is never written; false =
+## write it like the others
+# stigman_update_skip_attachments: "{{ check_stig_update_skip_attachments | default(true) }}"
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no

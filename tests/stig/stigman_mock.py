@@ -10,6 +10,8 @@ DATA.json: {"secret": "...", "collections": [{"collectionId": "1", "name": "..."
             "rules": {"<benchmarkId>": [{"ruleId": ..., "groupId": ..., "version": ..., "severity": ..., "title": ...}]} (every revision),
             "writers": ["<client>", ...] (optional: the clients that may write reviews - none: read-only),
             "managers": ["<client>", ...] (optional: the clients that may create assets - the Manage grant; none: no one),
+            "grants": {"<client>": {"<collectionId>": roleId}} (optional: GET /api/user's collectionGrants - 1 Restricted, 2 Full,
+                      3 Manage, 4 Owner - and what writes are allowed; else managers 3, others 2 in every collection),
             "latest": {"<benchmarkId>": "V2R8"} (optional: the newest revision; else V2R7),
             "titles": {"<benchmarkId>": "..."} (optional: the STIGs' titles in GET /api/stigs - the installed STIGs are the rules' keys),
             "reject_fail_without_comment": true (optional: a finding without a comment is rejected, as a collection may say)}
@@ -47,6 +49,14 @@ class H(BaseHTTPRequestHandler):
         tok = (self.headers.get("Authorization") or "")[len("Bearer tok-"):]
         return tok if tok and (tok == d.get("client", "autostig") or tok in d.get("writers", [])) else None
 
+    def role(self, d, cid):
+        """The client's grant in a collection (roleId)."""
+        c = self.client(d)
+        g = d.get("grants", {}).get(c)
+        if g is not None:
+            return int(g.get(cid, 0))
+        return 3 if c in d.get("managers", []) else 2
+
     def do_POST(self):
         self.note()
         d = json.load(open(DATA))
@@ -73,9 +83,9 @@ class H(BaseHTTPRequestHandler):
 
     def create(self, d, raw):
         """POST /api/assets: only for a client with the Manage grant (managers); description required, a name unique."""
-        if self.client(d) not in d.get("managers", []):
-            return self.send(403, {"error": "User has insufficient privilege to complete this request."})
         b = json.loads(raw)
+        if self.client(d) not in d.get("managers", []) or self.role(d, str(b.get("collectionId"))) < 3:
+            return self.send(403, {"error": "User has insufficient privilege to complete this request."})
         if "description" not in b or not b.get("name") or not b.get("collectionId"):
             return self.send(400, {"error": "request/body must have required property 'description'"})
         mine = d["assets"].setdefault(b["collectionId"], [])
@@ -91,7 +101,7 @@ class H(BaseHTTPRequestHandler):
 
     def write(self, d, cid, aid, raw):
         """POST /api/collections/C/reviews/A: each review merged as STIG Manager does (null detail or comment keeps it)."""
-        if self.client(d) not in d.get("writers", []):
+        if self.client(d) not in d.get("writers", []) or self.role(d, cid) < 1:
             return self.send(403, {"error": "Forbidden", "detail": "the token's scope or grant does not allow writing reviews"})
         if not any(a["assetId"] == aid for a in d["assets"].get(cid, [])):
             return self.send(403, {"error": "Forbidden", "detail": "asset %s is not in collection %s" % (aid, cid)})
@@ -129,6 +139,10 @@ class H(BaseHTTPRequestHandler):
         parts = u.path.split("/")
         if u.path == "/api/collections":
             return self.send(200, d["collections"])
+        if u.path == "/api/user":
+            return self.send(200, {"userId": "1", "username": self.client(d), "collectionGrants": [
+                {"roleId": self.role(d, c["collectionId"]), "collection": {"collectionId": c["collectionId"], "name": c["name"]}}
+                for c in d["collections"] if self.role(d, c["collectionId"]) > 0]})
         if u.path == "/api/stigs":
             return self.send(200, [{"benchmarkId": b, "title": d.get("titles", {}).get(b, b), "lastRevisionStr": d.get("latest", {}).get(b, "V2R7"),
                                     "ruleCount": len(rows)} for b, rows in sorted(d.get("rules", {}).items())])

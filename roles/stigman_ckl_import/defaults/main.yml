@@ -3,8 +3,10 @@
 # STIG Viewer 2, CKLB from STIG Viewer 3 - VMware's InSpec checklists, Evaluate-STIG's, a person's) from your share, finds
 # each one's asset by its host name (HOST_NAME) and its STIG among those installed in STIG Manager by its rules, and lists
 # the reviews to write; after the approval, playbooks/stigman_update.yml writes them (and creates the new assets). Reads
-# only: nothing on the share or in STIG Manager is changed here. STIG Manager's address and credential: the STIG drift
-# report's (check_stig_stigman_*, the read-only "STIG Manager API" credential). docs/CKL_IMPORT.md.
+# only: nothing on the share or in STIG Manager is changed here - unless stigman_ckl_import_auto writes at once, or
+# stigman_ckl_import_move moves the files done with (0.76.0: a STIG Manager Watcher's job, on a schedule). STIG Manager's
+# address and credential: the STIG drift report's (check_stig_stigman_*, the "STIG Manager API" credential - read-only
+# is enough, unless auto: then the client that writes). docs/CKL_IMPORT.md.
 stigman_ckl_import_src: ""                  # where the checklists are: a share's folder (\\fileserver\stig\ckl) or a folder on the AAP side
 stigman_ckl_import_patterns: ["*.ckl", "*.cklb"]    # the files taken (any case)
 stigman_ckl_import_recurse: true            # read the sub-folders too (one per host, one per month ...)
@@ -15,7 +17,12 @@ stigman_ckl_import_encrypt: false           # true = encrypt (SMB 3) even when t
 stigman_ckl_import_port: 445                # the share's port
 stigman_ckl_import_max_files: 500           # at most this many files (more: nothing read - name a narrower folder)
 stigman_ckl_import_max_mb: 50               # a file larger than this is left out (and said)
-stigman_ckl_import_collection: ""           # the STIG Manager collection (its name) the checklists' assets are in - or are created in
+stigman_ckl_import_collection: ""           # the STIG Manager collection (its name) the checklists' assets are in - or are created in (the staging collection)
+# Where else a host's asset is looked for (0.76.0): collection names or ids, * and ? ('*' = every collection the client
+# reads). Its reviews go to each of them whose asset has the STIG matched; the staging collection above is searched
+# last, and written to only when none of these has the asset; a host in none of them is created there. [] = the
+# collection above only (as 0.75.0).
+stigman_ckl_import_collections: []
 # A host name with no asset in the collection: the asset is planned too - created once approved, with every STIG its
 # checklists matched (the update's client needs the Manage grant). false = listed, not written: create it yourself.
 stigman_ckl_import_create_assets: true
@@ -31,3 +38,15 @@ stigman_ckl_import_status: submitted        # the reviews' status: saved, submit
 stigman_ckl_import_detail_max: 8000         # a longer finding detail is cut
 stigman_ckl_import_list_max: 200            # at most this many rows in the report's tables
 stigman_ckl_import_workflow: false          # true on workflow 40's check only: the plan handed on (set_stats stigman_update_plan), the job fails on purpose (NEEDS APPROVAL)
+# Written at once, no approval (0.76.0): none (everything waits for workflow 40's approval), existing (the reviews of
+# assets that are there are written by this job; a new asset and its reviews wait for the approval) or all (the new
+# assets too). The same rules as the approval's write: never over Accepted, never with attachments, each read again
+# first. The template's "STIG Manager API" credential is then the client that writes (Full in the collections; Manage in
+# the staging one for all) - a collection where it has only Restricted is refused.
+stigman_ckl_import_auto: none
+# Move each file done with - all of it in STIG Manager: written, the same already, or left for good (Accepted, not in the
+# STIG, another revision) - to <stigman_ckl_import_move_to>/<date>/ under stigman_ckl_import_src, if not written again
+# since it was read (the share's account then needs Modify). One that waits for the approval or was not written stays,
+# and the next run takes it again. false = the share is only read.
+stigman_ckl_import_move: false
+stigman_ckl_import_move_to: imported        # the folder under stigman_ckl_import_src (never read)

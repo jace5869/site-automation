@@ -29,6 +29,9 @@ description:
     its reviews are not written (state C(there since the check)); else POST /assets (name, FQDN, the STIG; the Manage
     grant) and the reviews of the plan with C(new_asset) its name are written to it (none to read again: it is new),
     then read back in one GET.
+  - The checklist import's items (0.76.0: it may look in several collections) - the client's grants read (GET /user): a
+    review is written only where it has Full or more (state C(no grant) where it has Restricted or none), a new asset
+    created only where it has Manage or more.
   - In check mode reads, and writes nothing (state C(would write), C(would create)).
 options:
   api: {description: "STIG Manager's API (https://stigman.example.mil/api).", type: str, required: true}
@@ -55,8 +58,9 @@ author: site automation
 RETURN = r'''
 items:
   description: "Each review of the plan with its state - written, would write, changed since, has attachments, rejected (STIG Manager's reason),
-                not as written (read back otherwise), bad (not a plan item), error, asset not created - and why, and what STIG Manager
-                holds now; each new asset (kind create): created, would create, there since the check, bad, error - and its assetId."
+                not as written (read back otherwise), bad (not a plan item), error, asset not created, no grant (the import's: the
+                client has less than Full there) - and why, and what STIG Manager holds now; each new asset (kind create): created,
+                would create, there since the check, bad, error, no grant - and its assetId."
   type: list
   returned: always
 error:
@@ -84,6 +88,8 @@ ENGINES = ("scap", "script", "other")
 # a STIG's benchmark id: any text up to 255 characters (STIG Manager's own rule) - DISA's RHEL_9_STIG, and ones with spaces as
 # STIG content from elsewhere has (VMware Aria Operations 8.x Apache); no control characters
 BENCH_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,255}$")
+# a collection grant's role (GET /user, collectionGrants[].roleId)
+ROLES = {1: "Restricted", 2: "Full", 3: "Manage", 4: "Owner"}
 
 
 class NotFound(RuntimeError):
@@ -160,6 +166,12 @@ class Client(object):
         req.get_method = lambda: method
         return self._open(req)
 
+    def grants(self):
+        """{collectionId: roleId} of this client's grants (GET /user)."""
+        req = Request("%s/user" % self.api, headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"})
+        u = self._open(req) or {}
+        return dict((str((g.get("collection") or {}).get("collectionId")), int(g.get("roleId") or 0)) for g in u.get("collectionGrants") or [])
+
     def assets(self, c):
         """The collection's assets (name, FQDN, STIGs)."""
         req = Request("%s/assets?%s" % (self.api, urlencode([("collectionId", c), ("projection", "stigs")])),
@@ -216,7 +228,21 @@ def benches_of(it):
     return list(it.get("benchmarks") or []) or [it.get("benchmark")]
 
 
-def make_assets(p, client, check):
+def no_grant(grants, it, need):
+    """Why the client may not do this in the item's collection ('' = it may): the checklist import's items only, and only
+    when the grants were read."""
+    if grants is None or not (it.get("kind") == "import" or it.get("import")):
+        return ""
+    has = grants.get(str(it.get("collectionId", "")), 0)
+    if has >= need:
+        return ""
+    return "the client has %s in %s - %s needs %s or more%s" % (
+        ROLES.get(has, "no grant"), it.get("collection") or "the collection " + str(it.get("collectionId", "")),
+        "creating an asset" if need >= 3 else "the import writes only where it", ROLES[need],
+        " (a Restricted grant reaches only the assets given to it)" if has == 1 else "")
+
+
+def make_assets(p, client, check, grants=None):
     """The plan's new assets -> (their rows, {(collectionId, name lower): assetId, 'check', or None - not created})."""
     rows, ids = [], {}
     for n, it in enumerate(p["plan"]):
@@ -235,6 +261,10 @@ def make_assets(p, client, check):
         why = bad_create(it)
         if why:
             row.update(state="bad", why=why)
+            continue
+        why = no_grant(grants, it, 3)
+        if why:
+            row.update(state="no grant", why=why + " - not created")
             continue
         try:
             there = matching([name, it.get("fqdn") or ""], client.assets(c))
@@ -324,7 +354,13 @@ def body_of(it):
 
 
 def update(p, client, check):
-    items, ids = make_assets(p, client, check)
+    grants = None
+    if any(it.get("kind") == "import" or it.get("import") for it in p["plan"]):
+        try:
+            grants = client.grants()
+        except RuntimeError:
+            grants = None               # not read: STIG Manager itself refuses what the grant does not allow
+    items, ids = make_assets(p, client, check, grants)
     groups, fresh = {}, {}
     for n, it in enumerate(p["plan"]):
         if it.get("kind") == "create":
@@ -347,6 +383,11 @@ def update(p, client, check):
         why = bad_item(it)
         if why:
             row.update(state="bad", why=why)
+            items.append(row)
+            continue
+        why = no_grant(grants, it, 2)
+        if why:
+            row.update(state="no grant", why=why)
             items.append(row)
             continue
         items.append(row)

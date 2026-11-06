@@ -1366,7 +1366,8 @@ File: `roles/stigman_ckl_import/defaults/main.yml`
 | `stigman_ckl_import_port` | `445` | the share's port |
 | `stigman_ckl_import_max_files` | `500` | at most this many files (more: nothing read - name a narrower folder) |
 | `stigman_ckl_import_max_mb` | `50` | a file larger than this is left out (and said) |
-| `stigman_ckl_import_collection` | (empty) | the STIG Manager collection (its name) the checklists' assets are in - or are created in |
+| `stigman_ckl_import_collection` | (empty) | the STIG Manager collection (its name) the checklists' assets are in - or are created in (the staging collection) |
+| `stigman_ckl_import_collections` | `[]` | Where else a host's asset is looked for (0.76.0): collection names or ids, * and ? ('*' = every collection the client reads). Its reviews go to each of them whose asset has the STIG matched; the staging collection above is searched last, and written to only when none of these has the asset; a host in none of them is c… (all of it: the role file) |
 | `stigman_ckl_import_create_assets` | `true` | A host name with no asset in the collection: the asset is planned too - created once approved, with every STIG its checklists matched (the update's client needs the Manage grant). false = listed, not written: create it yourself. |
 | `stigman_ckl_import_benchmarks` | `{}` | A checklist's STIG id -> the installed STIG to write to, instead of matching by rules (fnmatch, any case), e.g. {"VMware Aria Operations 8.x Apache Profile": "VMW_Aria_Operations_8-x_Apache_STIG"} |
 | `stigman_ckl_import_min_match` | `0.8` | the share of a checklist STIG's rules the installed STIG must have (0.8 = 80%) |
@@ -1378,6 +1379,9 @@ File: `roles/stigman_ckl_import/defaults/main.yml`
 | `stigman_ckl_import_detail_max` | `8000` | a longer finding detail is cut |
 | `stigman_ckl_import_list_max` | `200` | at most this many rows in the report's tables |
 | `stigman_ckl_import_workflow` | `false` | true on workflow 40's check only: the plan handed on (set_stats stigman_update_plan), the job fails on purpose (NEEDS APPROVAL) |
+| `stigman_ckl_import_auto` | `none` | Written at once, no approval (0.76.0): none (everything waits for workflow 40's approval), existing (the reviews of assets that are there are written by this job; a new asset and its reviews wait for the approval) or all (the new assets too). The same rules as the approval's write: never over Accepted, never with atta… (all of it: the role file) |
+| `stigman_ckl_import_move` | `false` | Move each file done with - all of it in STIG Manager: written, the same already, or left for good (Accepted, not in the STIG, another revision) - to <stigman_ckl_import_move_to>/<date>/ under stigman_ckl_import_src, if not written again since it was read (the share's account then needs Modify). One that waits for the… (all of it: the role file) |
+| `stigman_ckl_import_move_to` | `imported` | the folder under stigman_ckl_import_src (never read) |
 
 ## stigman_stack
 

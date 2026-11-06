@@ -516,6 +516,21 @@ written into STIG Manager after a person approves them.
   Deny, and nothing is written.
 - **Schedule:** on demand, after new checklists are on the share.
 
+**As STIG Manager Watcher (0.76.0)** - the same workflow on a schedule, every 15 to 60 minutes, **Concurrent jobs** off.
+On the check template's Variables, besides `stigman_ckl_import_workflow: true`:
+
+```yaml
+stigman_ckl_import_collection: Watcher      # the staging collection: a host found nowhere is created here
+stigman_ckl_import_collections: ['*']       # a host's asset looked for in every collection - written to each that has the STIG
+stigman_ckl_import_auto: existing           # reviews of assets that are there written by the check at once
+stigman_ckl_import_move: true               # files done with moved to imported/<date>/ (the share's account: Modify)
+```
+
+The check then writes what is for assets that are there itself, and fails on purpose (`NEEDS APPROVAL`) only when a
+new host waits to be created - the approval and step 3 as above. Its *STIG Manager API* credential is then the client
+that writes (Full in the collections, as step 3's). With `stigman_ckl_import_auto: all` no approval is ever asked: run
+the plain template on the schedule, no workflow. [CKL_IMPORT.md](CKL_IMPORT.md#as-stig-manager-watcher-0760).
+
 Everything else - how a checklist's asset and STIG are found, what is written: [CKL_IMPORT.md](CKL_IMPORT.md).
 
 ### 33. STIG drift (weekly)

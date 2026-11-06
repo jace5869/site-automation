@@ -5,8 +5,10 @@ file share (\\\\server\\share\\folder, over SMB with smbprotocol: no mount) or a
 asset in the collection by the checklist's host name (HOST_NAME; a web site or database checklist: <host>-<site>-<instance>,
 as STIG Manager names it), matches each STIG of the checklist to a STIG installed in STIG Manager by its rules (the
 benchmark id, else the rules' ids, V-numbers and versions - an InSpec checklist's own STIG id is not one STIG Manager
-knows), and plans the reviews to write: workflow 40's approval, then playbooks/stigman_update.yml writes them. Reads only:
-nothing on the share or in STIG Manager is written. Standard library only, but for a share: smbprotocol."""
+knows), and plans the reviews to write: workflow 40's approval, then playbooks/stigman_update.yml writes them (or, with
+auto, the role writes them at once - 0.76.0). Reads only: nothing on the share or in STIG Manager is written - but with
+action move, which moves the files imported into move_to/<day>/ on the share. Standard library only, but for a share:
+smbprotocol."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -16,9 +18,11 @@ short_description: Plan the reviews of checklists (CKL, CKLB) for STIG Manager, 
 description:
   - Reads the files of C(src) whose names match C(patterns) - a share's folder (C(\\server\share\folder),
     C(smb://server/share/folder), C(//server/share/folder)) or a folder on this side - and its sub-folders with C(recurse).
-  - Each checklist's asset is its host name (HOST_NAME, CKLB target_data.host_name) in C(collection) - by name, FQDN or
-    short name; a web site or database checklist's is <host>-<site>-<instance> (NA for none), as STIG Manager's own import
-    names it. No asset there - planned as a new one (C(create_assets)), with every STIG its checklists matched.
+  - Each checklist's asset is its host name (HOST_NAME, CKLB target_data.host_name) - by name, FQDN or short name; a web
+    site or database checklist's is <host>-<site>-<instance> (NA for none), as STIG Manager's own import names it - in each
+    collection of C(collections) that has it (its reviews written to each one whose asset has the STIG), else in
+    C(collection) (the staging collection). No asset in any - planned as a new one in C(collection) (C(create_assets)),
+    with every STIG its checklists matched.
   - Each STIG of a checklist is matched to an installed STIG (GET /stigs) by its rules - a rule matches by its rule id
     (SV-257985), its V-number (the group) or its version (VRPE-8X-000001) - at the revision the asset (else the collection)
     has, else the newest; C(benchmarks) names one for a checklist's STIG id; at least C(min_match) of its rules must match.
@@ -26,11 +30,13 @@ description:
     Not Reviewed or another result - not an Accepted one (C(overwrite_accepted)), not a rule two checklists answer
     differently, not one whose rule id names another revision of the rule (C(other_revision)).
   - GET requests only, to STIG Manager; the share is only read.
+  - C(action=move) moves the files of C(move) - each only if still as it was read (its SHA-256) - to
+    C(move_to)/<day>/<its path> under C(src); nothing is read from STIG Manager. C(move_to) is never read.
 options:
-  api: {description: "STIG Manager's API (https://stigman.example.mil/api).", type: str, required: true}
-  token_url: {description: The Keycloak token endpoint., type: str, required: true}
-  client_id: {description: The client (read access is enough)., type: str, required: true}
-  client_secret: {description: Its secret., type: str, required: true, no_log: true}
+  api: {description: "STIG Manager's API (https://stigman.example.mil/api) - action plan.", type: str, default: ''}
+  token_url: {description: The Keycloak token endpoint - action plan., type: str, default: ''}
+  client_id: {description: "The client (read access is enough, unless auto) - action plan.", type: str, default: ''}
+  client_secret: {description: Its secret - action plan., type: str, default: '', no_log: true}
   scope: {description: "Scopes to ask for ('' = the client's default scopes).", type: str, default: ''}
   validate_certs: {description: Check the HTTPS certificates., type: bool, default: true}
   ca_path: {description: "A CA bundle to check them with ('' = the system's).", type: str, default: ''}
@@ -46,7 +52,12 @@ options:
   port: {description: The share's port., type: int, default: 445}
   max_files: {description: At most this many files., type: int, default: 500}
   max_mb: {description: A file larger than this many MB is left out (and said)., type: int, default: 50}
-  collection: {description: The collection's name (or id)., type: str, required: true}
+  collection: {description: "The collection a new asset is created in (the staging collection), its name (or id); searched last.", type: str, default: ''}
+  collections: {description: "The collections a host's asset is looked for in, names or ids (* and ?; '*' = every one the client reads) - [] = collection only.", type: list, elements: str, default: []}
+  auto: {description: "none, existing (the reviews of assets that are there: no approval), all (the new assets too) - marks the plan's items (auto).", type: str, default: none}
+  action: {description: "plan (read and plan), or move (the files of move to move_to).", type: str, default: plan}
+  move: {description: "action=move: [{name (its path under src), sha256 (as read)}].", type: list, elements: dict, default: []}
+  move_to: {description: "The folder under src the imported files go to (never read).", type: str, default: imported}
   create_assets: {description: "Plan a new asset for a host name with none (the update needs the Manage grant).", type: bool, default: true}
   benchmarks: {description: "{a checklist's STIG id (fnmatch, any case): the installed STIG's benchmark id} - used instead of matching.", type: dict, default: {}}
   min_match: {description: "The share of a checklist STIG's rules that must match the installed STIG (0.8 = 80%).", type: float, default: 0.8}
@@ -84,9 +95,17 @@ left:
   type: list
   returned: always
 collection:
-  description: "{collectionId, name} as found ('' = not found)."
+  description: "The staging collection {collectionId, name} as found ('' = not found)."
   type: dict
   returned: always
+collections:
+  description: "The collections searched, by name (the staging one last)."
+  type: list
+  returned: always
+moved:
+  description: "action=move: each file {name, to, state (moved, would move, changed since, error), why}."
+  type: list
+  returned: action=move
 source:
   description: Where they were read from, as given (the report says it).
   type: str
@@ -197,6 +216,11 @@ def read_file(path):
         return f.read()
 
 
+def skipped(name, p):
+    """The folder the imported checklists are moved to (move_to, at the top of src): never read."""
+    return bool(p.get("move_to")) and name.lower() == p["move_to"].strip("/\\").split("/")[0].split("\\")[0].lower()
+
+
 def from_folder(p):
     """A folder on this side -> [(path under it, size, modified, read)]."""
     src = p["src"] if os.path.isabs(p["src"]) or not p["base"] else os.path.join(p["base"], p["src"])
@@ -204,7 +228,7 @@ def from_folder(p):
         raise Fail("no folder %s on the AAP side" % src)
     out = []
     for top, dirs, names in os.walk(src):
-        dirs[:] = sorted(dirs) if p["recurse"] else []
+        dirs[:] = sorted(d for d in dirs if not (top == src and skipped(d, p))) if p["recurse"] else []
         for n in sorted(names):
             full = os.path.join(top, n)
             if os.path.isfile(full) and wanted(n, p["patterns"]):
@@ -238,7 +262,7 @@ def from_share(p, server, unc):
         for x in entries:
             path = folder + "\\" + x.name
             if x.is_dir():
-                if p["recurse"] and x.name not in (".", ".."):
+                if p["recurse"] and x.name not in (".", "..") and not (rel == "" and skipped(x.name, p)):
                     walk(path, rel + x.name + "/")
                 continue
             if not wanted(x.name, p["patterns"]):
@@ -557,18 +581,69 @@ def word(r):
     return SM_WORD.get(r, r or "no review")
 
 
+def as_col(c):
+    return {"collectionId": str(c.get("collectionId")), "name": c.get("name") or ""}
+
+
+def pick_collections(cols, want, staging, grants=None):
+    """-> (the staging collection - where a new asset is created -, the collections a host's asset is looked for in): those
+    of want (names or ids, * and ?, any case; '*' = every one the client reads), the staging one last. want empty: the
+    staging one only (as 0.75.0). grants ({collectionId: roleId}, GET /user): one where the client has less than Full is
+    refused - Restricted sees only the assets given to it, so a host there would look new and be created again."""
+    names = ", ".join(sorted(c.get("name") or "" for c in cols)) or "none"
+    st = [c for c in cols if (c.get("name") or "").lower() == staging.strip().lower() or str(c.get("collectionId")) == staging.strip()]
+    if not st:
+        raise Fail("no collection %s that the client can read (it reads: %s)" % (staging.strip(), names))
+    st = as_col(st[0])
+    out = []
+    for w in want or []:
+        w = str(w).strip()
+        got = [c for c in cols if fnmatch.fnmatchcase((c.get("name") or "").lower(), w.lower()) or str(c.get("collectionId")) == w]
+        if not got and not any(ch in w for ch in "*?["):
+            raise Fail("no collection %s (stigman_ckl_import_collections) that the client can read (it reads: %s)" % (w, names))
+        for c in sorted(got, key=lambda c: (c.get("name") or "").lower()):
+            c = as_col(c)
+            if c["collectionId"] != st["collectionId"] and c not in out:
+                out.append(c)
+    low = [c["name"] for c in out + [st] if grants is not None and grants.get(c["collectionId"], 0) < 2]
+    if low:
+        raise Fail("the client has only Restricted in %s - it may not see every asset there, and a host whose asset is there would "
+                   "look new (created again in %s): give it Full there, or leave %s out of stigman_ckl_import_collections" % (
+                       ", ".join(low), st["name"], "it" if len(low) == 1 else "them"))
+    return st, out + [st]
+
+
+def my_grants(client):
+    """{collectionId: roleId} of the client's grants (GET /user); None when not read."""
+    try:
+        u = client.get("/user") or {}
+    except RuntimeError:
+        return None
+    if not isinstance(u, dict) or "collectionGrants" not in u:
+        return None
+    return dict((str((g.get("collection") or {}).get("collectionId")), int(g.get("roleId") or 0)) for g in u.get("collectionGrants") or [])
+
+
+def assets_of(client, col):
+    return client.get("/assets", [("collectionId", col["collectionId"]), ("projection", "stigs")]) or []
+
+
+def revisions_of(client, col):
+    """The collection's revision of each of its STIGs."""
+    return dict((s.get("benchmarkId"), s.get("revisionStr") or "")
+                for s in client.get("/collections/%s/stigs" % quote(col["collectionId"], safe='')) or [])
+
+
+def benches(asset):
+    return [s.get("benchmarkId") for s in (asset or {}).get("stigs") or []]
+
+
 def plan_all(p, client, files):
-    """The files read -> (checklists, plan, left, collection)."""
-    cols = client.get("/collections") or []
-    want = p["collection"].strip()
-    col = [c for c in cols if (c.get("name") or "").lower() == want.lower() or str(c.get("collectionId")) == want]
-    if not col:
-        raise Fail("no collection %s that the client can read (it reads: %s)" % (want, ", ".join(sorted(c.get("name") or "" for c in cols)) or "none"))
-    col = {"collectionId": str(col[0]["collectionId"]), "name": col[0].get("name") or ""}
-    cid = col["collectionId"]
-    assets = client.get("/assets", [("collectionId", cid), ("projection", "stigs")]) or []
-    col_stigs = dict((s.get("benchmarkId"), s.get("revisionStr") or "") for s in client.get("/collections/%s/stigs" % quote(cid, safe='')) or [])
+    """The files read -> (checklists, plan, left, the staging collection, the collections searched)."""
+    staging, searched = pick_collections(client.get("/collections") or [], p["collections"], p["collection"], my_grants(client))
+    many = len(searched) > 1
     stigs = client.get("/stigs") or []
+    stigs_by_id = dict((s.get("benchmarkId"), s) for s in stigs)
     checklists, left, picks = [], [], {}
     new_assets = {}
     for f in files:
@@ -581,112 +656,152 @@ def plan_all(p, client, files):
             continue
         f["checklists"] = len(ckl["stigs"])
         name = asset_name(ckl["target"])
+        fqdn = "" if ckl["target"]["web"] else ckl["target"]["fqdn"]
+        # the host's asset in each collection searched: in the staging collection only when no other has it
+        hits, ambiguous = [], []
+        for col in searched if name else []:
+            found = matching([name, fqdn], assets_of(client, col))
+            if len(found) > 1:
+                ambiguous.append((col, found))
+            elif found:
+                hits.append((col, found[0]))
+        real = [h for h in hits if h[0]["collectionId"] != staging["collectionId"]]
+        also = [h for h in hits if h[0]["collectionId"] == staging["collectionId"]] if real else []
+        targets = real or hits
         for ck in ckl["stigs"]:
             counts = dict((k, 0) for k in ("pass", "fail", "notapplicable", "notchecked"))
             for r in ck["rules"]:
                 r["result"] = CKL_RESULT.get((r.get("status") or "").lower().replace(" ", "_"), "notchecked")
                 counts[r["result"]] += 1
-            row = {"file": f["name"], "modified": f.get("modified", ""), "stig": ck["stig"], "title": ck["title"], "release": ck["revision"],
-                   "host": ckl["target"]["host"], "asset": name, "assetId": "", "new": False, "benchmark": "", "revision": "",
-                   "match": "", "by": "", "counts": counts, "planned": 0, "state": "", "why": ""}
-            checklists.append(row)
+            base = {"file": f["name"], "modified": f.get("modified", ""), "stig": ck["stig"], "title": ck["title"], "release": ck["revision"],
+                    "host": ckl["target"]["host"], "asset": name, "assetId": "", "collection": staging["name"],
+                    "collectionId": staging["collectionId"], "new": False, "benchmark": "", "revision": "", "match": "", "by": "",
+                    "counts": counts, "planned": 0, "state": "", "why": ""}
             answered = [r for r in ck["rules"] if r["result"] != "notchecked"]
 
-            def leave(kind, why, rules=answered, row=row):
+            def add(**kw):
+                row = dict(base, **kw)
+                checklists.append(row)
+                return row
+
+            def leave(kind, why, row, rules=answered):
                 for r in rules:
-                    left.append({"file": row["file"], "asset": row["asset"], "benchmark": row["benchmark"] or ck["stig"], "v": r.get("v", ""),
-                                 "version": r.get("version", ""), "title": r.get("title", ""), "result": r["result"], "why": why, "kind": kind})
+                    left.append({"file": row["file"], "collection": row["collection"], "asset": row["asset"],
+                                 "benchmark": row["benchmark"] or ck["stig"], "v": r.get("v", ""), "version": r.get("version", ""),
+                                 "title": r.get("title", ""), "result": r["result"], "why": why, "kind": kind})
             if not name:
-                row.update(state="no asset", why="the checklist has no host name (HOST_NAME) - fill it in STIG Viewer, or in the file")
-                leave("no_asset", row["why"])
+                row = add(state="no asset", why="the checklist has no host name (HOST_NAME) - fill it in STIG Viewer, or in the file")
+                leave("no_asset", row["why"], row)
                 continue
-            found = matching([name, "" if ckl["target"]["web"] else ckl["target"]["fqdn"]], assets)
-            if len(found) > 1:
-                row.update(state="no asset", why="several assets in %s fit %s: %s - not written" % (
-                    col["name"], name, ", ".join(sorted(a.get("name") or "" for a in found))))
-                leave("no_asset", row["why"])
+            for col, found in ambiguous:
+                row = add(collection=col["name"], collectionId=col["collectionId"], state="no asset",
+                          why="several assets in %s fit %s: %s - not written there" % (col["name"], name, ", ".join(sorted(a.get("name") or "" for a in found))))
+                leave("no_asset", row["why"], row)
+            if not targets and ambiguous:
                 continue
-            asset = found[0] if found else None
-            if asset:
-                row.update(asset=asset.get("name") or name, assetId=str(asset.get("assetId") or ""))
-            elif not p["create_assets"]:
-                row.update(state="no asset", why="no asset %s in %s - create it (with its STIG) in STIG Manager, or "
-                                                 "stigman_ckl_import_create_assets: true" % (name, col["name"]))
-                leave("no_asset", row["why"])
+            if not targets and not p["create_assets"]:
+                row = add(state="no asset", why="no asset %s in %s - create it (with its STIG) in STIG Manager, or "
+                                                "stigman_ckl_import_create_assets: true" % (name, ", ".join(c["name"] for c in searched)))
+                leave("no_asset", row["why"], row)
                 continue
-            else:
-                row["new"] = True
-            m = match_stig(client, ck, stigs, p, asset, col_stigs)
-            if m.get("bench"):
-                row.update(benchmark=m["bench"], revision=m["revision"], match="%d of %d" % (m["matched"], len(ck["rules"])), by=m["by"])
+            tries = targets or [(staging, None)]
+            m = match_stig(client, ck, stigs, p, tries[0][1], revisions_of(client, tries[0][0]))
+            found = dict(benchmark=m.get("bench", ""), revision=m.get("revision", ""), by=m.get("by", ""),
+                         match="%d of %d" % (m["matched"], len(ck["rules"])) if m.get("bench") else "")
             if m.get("why"):
-                row.update(state="not matched", why=m["why"])
-                leave("unmatched", m["why"])
+                col, asset = tries[0]
+                row = add(collection=col["name"], collectionId=col["collectionId"], asset=(asset or {}).get("name") or name,
+                          new=asset is None, state="not matched", why=m["why"], **found)
+                leave("unmatched", m["why"], row)
                 continue
-            if asset and m["bench"] not in [s.get("benchmarkId") for s in asset.get("stigs") or []]:
-                row.update(state="no STIG on the asset", why="%s has no %s in STIG Manager - assign it to the asset (Collection > "
-                                                             "Assets), then run this again" % (row["asset"], m["bench"]))
-                leave("no_stig", row["why"])
-                continue
-            now = {}
-            if asset:
-                try:
-                    for rv in client.reviews(cid, row["assetId"], m["bench"]):
-                        for rid in [rv.get("ruleId")] + list(rv.get("ruleIds") or []):
-                            if rid:
-                                now.setdefault(rid, rv)
-                except RuntimeError as e:
-                    row.update(state="error", why="its reviews could not be read: %s" % e)
-                    leave("error", row["why"])
+            have = [t for t in tries if t[1] is None or m["bench"] in benches(t[1])]
+            for col, asset in tries:
+                row = add(collection=col["name"], collectionId=col["collectionId"], asset=(asset or {}).get("name") or name,
+                          assetId=str((asset or {}).get("assetId") or ""), new=asset is None, **found)
+                if asset is not None and m["bench"] not in benches(asset):
+                    if have:
+                        row.update(state="STIG not on this asset", why="%s in %s has no %s - written where it has it (%s); assign it "
+                                                                       "here too to have them here" % (row["asset"], col["name"], m["bench"],
+                                                                                                        ", ".join(c["name"] for c, _a in have)))
+                    else:
+                        row.update(state="no STIG on the asset", why="%s has no %s in STIG Manager - assign it to the asset (Collection > "
+                                                                     "Assets), then run this again" % (row["asset"], m["bench"]))
+                        leave("no_stig", row["why"], row)
                     continue
-            else:
-                new_assets.setdefault(name.lower(), {"name": name, "fqdn": "" if ckl["target"]["web"] else ckl["target"]["fqdn"],
-                                                     "ip": ckl["target"]["ip"], "mac": ckl["target"]["mac"], "benchmarks": [],
-                                                     "revisions": {}, "files": []})
-                na = new_assets[name.lower()]
-                if m["bench"] not in na["benchmarks"]:
-                    na["benchmarks"].append(m["bench"])
-                    na["revisions"][m["bench"]] = m["revision"]
-                if f["name"] not in na["files"]:
-                    na["files"].append(f["name"])
-            for r, (smr, by) in zip(ck["rules"], m["rules"]):
-                if r["result"] == "notchecked":
-                    continue
-                if not smr:
-                    leave("unmatched", "not in %s %s" % (m["bench"], m["revision"]), [r])
-                    continue
-                rid = smr.get("ruleId") or ""
-                mine = SV_RE.match(r.get("rule_id") or "")
-                if mine and mine.group(2) and rid and rid.lower() != r["rule_id"].lower() and not p["other_revision"]:
-                    leave("revision", "the checklist answered %s, STIG Manager's %s has %s - another revision of the rule "
-                                      "(stigman_ckl_import_other_revision)" % (r["rule_id"], m["revision"], rid), [r])
-                    continue
-                cur = now.get(rid) or {}
-                st = cur.get("status") or {}
-                was = {"result": cur.get("result") or "", "status": (st.get("label", "") if isinstance(st, dict) else str(st)),
-                       "ts": cur.get("ts") or cur.get("touchTs") or ""}
-                if was["result"] == r["result"]:
-                    leave("same", "STIG Manager has it so: %s (%s)" % (word(was["result"]), was["status"] or "-"), [r])
-                    continue
-                if was["status"] == "accepted" and was["result"] not in ("", "notchecked") and not p["overwrite_accepted"]:
-                    leave("accepted", "Accepted in STIG Manager as %s - left for the reviewers (stigman_ckl_import_overwrite_accepted)"
-                          % word(was["result"]), [r])
-                    continue
-                key = (name.lower() if not asset else row["assetId"], rid)
-                picks.setdefault(key, []).append((row, r, smr, m, was, ck))
-    plan, conflicts = [], 0
-    for key in sorted(picks, key=lambda k: (str(k[0]), k[1])):
+                mm = m
+                rev = revision_for(m["bench"], asset, revisions_of(client, col), stigs_by_id) if asset is not None else m["revision"]
+                if rev != m["revision"]:        # another collection, another revision of the STIG: its rules
+                    try:
+                        mm = dict(m, revision=rev, rules=match_rules(ck["rules"], client.rules(m["bench"], rev)))
+                    except RuntimeError as e:
+                        row.update(state="error", why="the rules of %s %s could not be read: %s" % (m["bench"], rev, e))
+                        leave("error", row["why"], row)
+                        continue
+                    row.update(revision=rev, match="%d of %d" % (len([h for h in mm["rules"] if h[0]]), len(ck["rules"])))
+                now = {}
+                if asset is not None:
+                    try:
+                        for rv in client.reviews(col["collectionId"], row["assetId"], m["bench"]):
+                            for rid in [rv.get("ruleId")] + list(rv.get("ruleIds") or []):
+                                if rid:
+                                    now.setdefault(rid, rv)
+                    except RuntimeError as e:
+                        row.update(state="error", why="its reviews could not be read: %s" % e)
+                        leave("error", row["why"], row)
+                        continue
+                else:
+                    new_assets.setdefault(name.lower(), {"name": name, "fqdn": fqdn, "ip": ckl["target"]["ip"], "mac": ckl["target"]["mac"],
+                                                         "benchmarks": [], "revisions": {}, "files": []})
+                    na = new_assets[name.lower()]
+                    if m["bench"] not in na["benchmarks"]:
+                        na["benchmarks"].append(m["bench"])
+                        na["revisions"][m["bench"]] = m["revision"]
+                    if f["name"] not in na["files"]:
+                        na["files"].append(f["name"])
+                for r, (smr, by) in zip(ck["rules"], mm["rules"]):
+                    if r["result"] == "notchecked":
+                        continue
+                    if not smr:
+                        leave("unmatched", "not in %s %s" % (mm["bench"], mm["revision"]), row, [r])
+                        continue
+                    rid = smr.get("ruleId") or ""
+                    mine = SV_RE.match(r.get("rule_id") or "")
+                    if mine and mine.group(2) and rid and rid.lower() != r["rule_id"].lower() and not p["other_revision"]:
+                        leave("revision", "the checklist answered %s, STIG Manager's %s has %s - another revision of the rule "
+                                          "(stigman_ckl_import_other_revision)" % (r["rule_id"], mm["revision"], rid), row, [r])
+                        continue
+                    cur = now.get(rid) or {}
+                    st = cur.get("status") or {}
+                    was = {"result": cur.get("result") or "", "status": (st.get("label", "") if isinstance(st, dict) else str(st)),
+                           "ts": cur.get("ts") or cur.get("touchTs") or ""}
+                    if was["result"] == r["result"]:
+                        leave("same", "STIG Manager has it so: %s (%s)" % (word(was["result"]), was["status"] or "-"), row, [r])
+                        continue
+                    if was["status"] == "accepted" and was["result"] not in ("", "notchecked") and not p["overwrite_accepted"]:
+                        leave("accepted", "Accepted in STIG Manager as %s - left for the reviewers (stigman_ckl_import_overwrite_accepted)"
+                              % word(was["result"]), row, [r])
+                        continue
+                    key = (col["collectionId"], row["assetId"] or "new:" + name.lower(), rid)
+                    picks.setdefault(key, []).append((row, r, smr, mm, was, ck))
+            for col, asset in also:     # a copy in the staging collection too: the real collection's is written
+                add(collection=col["name"], collectionId=col["collectionId"], asset=asset.get("name") or name, assetId=str(asset.get("assetId") or ""),
+                    state="in staging too", why="%s is in %s too - written there, not here: delete it from %s once it is moved" % (
+                        asset.get("name") or name, ", ".join(c["name"] for c, _a in real), col["name"]), **found)
+    plan = []
+    for key in sorted(picks):
         got = picks[key]
         if len(set(g[1]["result"] for g in got)) > 1:
-            conflicts += 1
             for row, r, smr, m, was, ck in got:
-                left.append({"file": row["file"], "asset": row["asset"], "benchmark": m["bench"], "v": smr.get("groupId") or r.get("v", ""),
-                             "version": smr.get("version") or r.get("version", ""), "title": r.get("title", ""), "result": r["result"],
+                left.append({"file": row["file"], "collection": row["collection"], "asset": row["asset"], "benchmark": m["bench"],
+                             "v": smr.get("groupId") or r.get("v", ""), "version": smr.get("version") or r.get("version", ""),
+                             "title": r.get("title", ""), "result": r["result"],
                              "why": "the checklists disagree: %s" % ", ".join("%s says %s" % (g[0]["file"], word(g[1]["result"])) for g in got),
                              "kind": "conflict"})
             continue
         row, r, smr, m, was, ck = sorted(got, key=lambda g: g[0]["modified"])[-1]     # the same answer twice: the newest file's
-        plan.append(review_item(p, col, row, r, smr, m, was, ck))
+        item = review_item(p, row, r, smr, m, was, ck, many)
+        item["files"] = sorted(set(g[0]["file"] for g in got))
+        plan.append(item)
         row["planned"] += 1
     for row in checklists:
         if not row["state"]:
@@ -698,33 +813,37 @@ def plan_all(p, client, files):
         if not mine:
             continue                    # nothing to write to it: not created
         n = dict((x, len([i for i in mine if i["result"] == x])) for x in ("pass", "fail", "notapplicable"))
-        creates.append({"kind": "create", "host": na["name"], "label": na["name"], "collection": col["name"], "collectionId": cid,
+        creates.append({"kind": "create", "import": True, "auto": p["auto"] == "all", "host": na["name"], "label": na["name"],
+                        "collection": staging["name"], "collectionId": staging["collectionId"],
                         "asset": na["name"], "fqdn": na["fqdn"], "ip": na["ip"], "mac": na["mac"], "assetId": "",
-                        "benchmark": na["benchmarks"][0], "benchmarks": na["benchmarks"],
+                        "benchmark": na["benchmarks"][0], "benchmarks": na["benchmarks"], "files": na["files"],
                         "revision": ", ".join(na["revisions"][b] for b in na["benchmarks"]), "reviews": len(mine), "counts": n,
-                        "description": "Created by the checklist import (site-automation), approved in AAP: %s" % ", ".join(na["files"])[:200],
+                        "description": ("Created by the checklist import (site-automation)%s: %s" % (
+                            "" if p["auto"] == "all" else ", approved in AAP", ", ".join(na["files"])))[:200],
                         "line": "NEW ASSET %s%s in %s with %s - then %d review(s): Not a Finding %d, Open %d, Not Applicable %d" % (
-                            na["name"], (" (" + na["fqdn"] + ")") if na["fqdn"] else "", col["name"],
+                            na["name"], (" (" + na["fqdn"] + ")") if na["fqdn"] else "", staging["name"],
                             ", ".join("%s %s" % (b, na["revisions"][b]) for b in na["benchmarks"]), len(mine), n["pass"], n["fail"],
                             n["notapplicable"])})
-    return checklists, creates + plan, left, col
+    return checklists, creates + plan, left, staging, [c["name"] for c in searched]
 
 
-def review_item(p, col, row, r, smr, m, was, ck):
+def review_item(p, row, r, smr, m, was, ck, many=False):
+    auto = p["auto"] == "all" or (p["auto"] == "existing" and not row["new"])
     detail = (r.get("details") or "").strip() or "%s: %s (the checklist gives no finding details)" % (row["file"], word(r["result"]))
     if len(detail) > p["detail_max"]:
         detail = detail[:p["detail_max"] - 40].rstrip() + "\n[... cut at %d characters]" % p["detail_max"]
-    note = "Imported from the checklist %s (%s%s) by site-automation, approved in AAP%s." % (
+    note = "Imported from the checklist %s (%s%s) by site-automation, %s%s." % (
         row["file"], ck.get("stig") or ck.get("title") or "its STIG", (" " + ck["revision"]) if ck.get("revision") else "",
-        (" on " + p["day"]) if p["day"] else "")
+        "no approval (stigman_ckl_import_auto)" if auto else "approved in AAP", (" on " + p["day"]) if p["day"] else "")
     comment = ((r.get("comments") or "").strip() + "\n\n" + note).strip() if r.get("comments") else note
-    item = {"kind": "import", "host": row["host"], "label": row["asset"], "file": row["file"], "collection": col["name"],
-            "collectionId": col["collectionId"], "asset": row["asset"], "assetId": row["assetId"], "benchmark": m["bench"],
+    label = ("%s/%s" % (row["collection"], row["asset"])) if many else row["asset"]
+    item = {"kind": "import", "auto": auto, "host": row["host"], "label": row["asset"], "file": row["file"], "collection": row["collection"],
+            "collectionId": row["collectionId"], "asset": row["asset"], "assetId": row["assetId"], "benchmark": m["bench"],
             "revision": m["revision"], "ruleId": smr.get("ruleId") or "", "v": smr.get("groupId") or r.get("v", ""),
             "version": smr.get("version") or r.get("version", ""), "title": smr.get("title") or r.get("title", ""),
             "severity": (smr.get("severity") or r.get("severity") or "").lower(), "was": was, "earlier": {}, "result": r["result"],
             "status": p["status"], "detail": detail, "comment": comment[:32767], "engine": r.get("engine"),
-            "line": "%s %s %s: %s -> %s (%s) from %s" % (row["asset"], m["bench"], smr.get("version") or smr.get("groupId") or "",
+            "line": "%s %s %s: %s -> %s (%s) from %s" % (label, m["bench"], smr.get("version") or smr.get("groupId") or "",
                                                        word(was["result"]) if was["result"] else "no review", word(r["result"]),
                                                        p["status"], row["file"])}
     if row["new"]:
@@ -732,12 +851,96 @@ def review_item(p, col, row, r, smr, m, was, ck):
     return item
 
 
+# ---- after the import: the files moved -------------------------------------------------------------------------------
+def safe_name(name):
+    """A file's path under src, as the read listed it: no step up, not absolute."""
+    n = str(name or "").replace("\\", "/")
+    return bool(n) and not n.startswith("/") and ":" not in n.split("/")[0] and all(x not in ("", ".", "..") for x in n.split("/"))
+
+
+def free_name(exists, path):
+    """path, or path with -2, -3 ... before its extension when one is there."""
+    if not exists(path):
+        return path
+    stem, ext = os.path.splitext(path)
+    for n in range(2, 1000):
+        if not exists("%s-%d%s" % (stem, n, ext)):
+            return "%s-%d%s" % (stem, n, ext)
+    raise Fail("no free name for %s" % path)
+
+
+def move_files(p, check):
+    """p['move']: [{name, sha256}] -> each {name, to, state (moved, would move, changed since, error), why}: moved to
+    <move_to>/<day>/<its path> under src - only if it is still as it was read (its SHA-256)."""
+    share = smb_path(p["src"])
+    out = []
+    if share:
+        try:
+            import smbclient
+        except ImportError:
+            raise Fail("this execution environment has no smbprotocol")
+        kw = {"port": p["port"]}
+        try:
+            smbclient.register_session(share[0], username=p["username"] or None, password=p["password"] or None, port=p["port"],
+                                       encrypt=p["encrypt"] or None, auth_protocol=p["auth"], connection_timeout=30)
+        except Exception as e:                          # noqa: BLE001
+            raise Fail(why_share("logging in to %s as %s" % (share[0], p["username"] or "the Kerberos ticket"), e, p))
+        top = share[1]
+        join = lambda *x: "\\".join([top] + [y.replace("/", "\\") for y in x])
+        exists = lambda x: smbclient.path.exists(x, **kw)
+
+        def read(x):
+            with smbclient.open_file(x, mode="rb", **kw) as f:
+                return f.read()
+        makedirs = lambda x: smbclient.makedirs(x, exist_ok=True, **kw)
+        rename = lambda a, b: smbclient.rename(a, b, **kw)
+        parent = lambda x: x.rsplit("\\", 1)[0]
+    else:
+        top = p["src"] if os.path.isabs(p["src"]) or not p["base"] else os.path.join(p["base"], p["src"])
+        join = lambda *x: os.path.join(top, *[y.replace("/", os.sep) for y in x])
+        exists = os.path.exists
+        read = read_file
+        makedirs = lambda x: os.makedirs(x, exist_ok=True)
+        rename = os.rename
+        parent = os.path.dirname
+    dest = "%s/%s" % (p["move_to"].strip("/\\"), p["day"] or datetime.date.today().isoformat())
+    for it in p["move"]:
+        name = str(it.get("name") or "")
+        rec = {"name": name, "to": "", "state": "", "why": ""}
+        out.append(rec)
+        if not safe_name(name) or not safe_name(dest):
+            rec.update(state="error", why="not a path under the folder read")
+            continue
+        try:
+            src = join(name)
+            if hashlib.sha256(read(src)).hexdigest() != it.get("sha256"):
+                rec.update(state="changed since", why="written again since it was read - left for the next run")
+                continue
+            rel = dest + "/" + name
+            to = free_name(exists, join(rel))
+            rec["to"] = rel.rsplit("/", 1)[0] + "/" + re.split(r"[\\/]", to)[-1]
+            if check:
+                rec["state"] = "would move"
+                continue
+            makedirs(parent(to))
+            rename(src, to)
+            rec["state"] = "moved"
+        except Exception as e:                          # noqa: BLE001 - every way a move fails, said in words
+            low = str(e).lower()
+            if "access_denied" in low or "access is denied" in low or "permission denied" in low:
+                rec.update(state="error", why="moving it: %s: the account may read but not move files here - give it Modify on the folder "
+                                              "(stigman_ckl_import_move)" % (str(e).splitlines()[0][:200] if str(e) else type(e).__name__))
+            else:
+                rec.update(state="error", why=why_share("moving it", e, p) if share else "moving it: %s" % e)
+    return out
+
+
 def main():
     module = AnsibleModule(argument_spec=dict(
-        api=dict(type="str", required=True),
-        token_url=dict(type="str", required=True),
-        client_id=dict(type="str", required=True),
-        client_secret=dict(type="str", required=True, no_log=True),
+        api=dict(type="str", default=""),
+        token_url=dict(type="str", default=""),
+        client_id=dict(type="str", default=""),
+        client_secret=dict(type="str", default="", no_log=True),
         scope=dict(type="str", default=""),
         validate_certs=dict(type="bool", default=True),
         ca_path=dict(type="str", default=""),
@@ -753,7 +956,12 @@ def main():
         port=dict(type="int", default=445),
         max_files=dict(type="int", default=500),
         max_mb=dict(type="int", default=50),
-        collection=dict(type="str", required=True),
+        collection=dict(type="str", default=""),
+        collections=dict(type="list", elements="str", default=[]),
+        auto=dict(type="str", default="none", choices=["none", "existing", "all"]),
+        action=dict(type="str", default="plan", choices=["plan", "move"]),
+        move=dict(type="list", elements="dict", default=[]),
+        move_to=dict(type="str", default="imported"),
         create_assets=dict(type="bool", default=True),
         benchmarks=dict(type="dict", default={}),
         min_match=dict(type="float", default=0.8),
@@ -770,9 +978,19 @@ def main():
         account = (p["username"] or ("the Kerberos ticket" if p["auth"] == "kerberos" else "")) if smb_path(p["src"]) else ""
     except Fail:
         account = ""
-    out = {"changed": False, "files": [], "checklists": [], "plan": [], "left": [], "collection": {}, "account": account,
+    if p["action"] == "move":
+        try:
+            moved = move_files(p, module.check_mode)
+        except Fail as e:
+            module.exit_json(changed=False, moved=[], error=str(e))
+        module.exit_json(changed=any(m["state"] == "moved" for m in moved), moved=moved, error="")
+    out = {"changed": False, "files": [], "checklists": [], "plan": [], "left": [], "collection": {}, "collections": [], "account": account,
            "source": p["src"], "error": ""}
     try:
+        if not p["collection"].strip():
+            raise Fail("no collection (stigman_ckl_import_collection)")
+        if not (p["api"] and p["token_url"] and p["client_id"] and p["client_secret"]):
+            raise Fail("no STIG Manager or no login for it (check_stig_stigman_api, the \"STIG Manager API\" credential)")
         files = read_files(p)
         out["files"] = files
         client = Client(p)
@@ -781,7 +999,7 @@ def main():
         except RuntimeError as e:
             raise Fail("no token for the client %s: %s" % (p["client_id"], e))
         try:
-            out["checklists"], out["plan"], out["left"], out["collection"] = plan_all(p, client, files)
+            out["checklists"], out["plan"], out["left"], out["collection"], out["collections"] = plan_all(p, client, files)
         except RuntimeError as e:
             raise Fail("STIG Manager could not be read: %s" % e)
     except Fail as e:

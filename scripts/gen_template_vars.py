@@ -272,7 +272,7 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 ## update's client needs the Manage grant there)
 # check_stig_update_create_assets: true
 """),
-    "stigman_ckl_import.yml": ("STIG Manager - import checklists", "STIG Manager API (read-only is enough), Windows file share", "stigman_ckl_import", """\
+    "stigman_ckl_import.yml": ("STIG Manager - import checklists", "STIG Manager API (read-only is enough; with stigman_ckl_import_auto the client that writes), Windows file share", "stigman_ckl_import", """\
 ## Workflow 40's check: the checklists (CKL, CKLB) on your share matched to STIG Manager - the reviews to write and the new
 ## assets, handed to the approval; playbooks/stigman_update.yml writes them after it. STIG Manager's address:
 ## check_stig_stigman_api, as for the reports (usually in all.yml)
@@ -281,6 +281,13 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # stigman_ckl_import_workflow: true
 stigman_ckl_import_src: '\\\\fileserver.yourdomain.mil\\stig\\ckl'
 stigman_ckl_import_collection: VMware
+## As STIG Manager Watcher (0.76.0), on a schedule: a host's asset looked for in these collections too (written to each
+## that has the STIG; the collection above is then the staging one, for hosts found nowhere), the reviews of assets that
+## are there written at once (all: new assets too - the credential is then the client that writes), and the files done
+## with moved to imported/<date>/ (the share's account needs Modify)
+# stigman_ckl_import_collections: ['*']
+# stigman_ckl_import_auto: existing
+# stigman_ckl_import_move: true
 """),
     "stigman_update.yml": ("STIG Manager - update", "STIG Manager API (the client that may write reviews)", "", """\
 ## Workflow 37's (and 40's) step after the approval: it writes the reviews the STIG recheck's (or the checklist import's) check listed (stigman_update_plan,

@@ -147,6 +147,10 @@ jobs:
         run: |
           bash tests/stig/run_stig_answers_smb_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14462 bash tests/stig/run_stig_answers_smb_test.sh
+      - name: Workflow 40 as STIG Manager Watcher - checklists read and moved on a Windows file share over SMB, against Samba in a container (current ansible-core and 2.16)
+        run: |
+          bash tests/stig/run_ckl_import_smb_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14464 STIG_CKL_SM_PORT=12600 bash tests/stig/run_ckl_import_smb_test.sh
       - name: Active Directory health report, the Ansible side with made-up DCs (current ansible-core and 2.16)
         run: |
           bash tests/ad/run_ad_test.sh
