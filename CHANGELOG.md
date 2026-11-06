@@ -40,6 +40,10 @@ same issue, within 14 days) instead, and says so.
 with the site's logo where it has `<!--site-report-logo-->`; the email and the website's index still use `_report`. The
 other reports are unchanged. The PDFs at 0.79.0.
 
+**The IdM inventory's test passes with ansible-core 2.16.** 2.16 wraps its warnings, after a hyphen too (`aap-
+hosts`), so two of `tests/test_idm_inventory.py`'s checks missed the message on GitHub's longer folder path and the
+CI steps after it did not run since 0.77.0. The test now puts those words back together; the inventory was right.
+
 **To do, if you have not yet: what 0.20.0 to 0.79.0 ask you to set up (0.43.0 changes step 5: `report_web_theme: atlas`; 0.44.0 to 0.79.0 add nothing to it; 0.64.0 adds step 48, 0.65.0 step 49, 0.66.0 and 0.67.0, 0.68.0, 0.69.0 nothing, 0.70.0 step 50, 0.70.1 nothing, 0.71.0 step 51, 0.72.0 step 52, 0.73.0 step 53, 0.74.0 step 54, 0.75.0 step 55, 0.75.1 nothing, 0.76.0 step 56, 0.76.1 nothing, 0.77.0 step 57, 0.78.0 step 58, 0.78.1 nothing, 0.79.0 step 59).** In order; each step works without
 the ones after it.
 

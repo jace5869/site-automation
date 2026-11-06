@@ -6,6 +6,7 @@ a redirect, an error). The answers are shaped as a real IdM's (tests/idm/run_idm
     python3 tests/test_idm_inventory.py      (ANSIBLE_INVENTORY=/path/to/ansible-inventory for another ansible-core)"""
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -270,7 +271,9 @@ class Inventory(unittest.TestCase):
         e.update(env)
         p = subprocess.run([self.exe, "--list", "-i", os.path.join(REPO, "inventories", "idm", "idm.yml")] + list(args),
                            cwd=REPO, env=e, capture_output=True, text=True, timeout=120)
-        return p.returncode, (json.loads(p.stdout) if p.returncode == 0 else {}), " ".join(p.stderr.split())
+        # ansible-core 2.16 wraps its warnings, after a hyphen too ("aap-\nhosts"): put those words back together
+        err = re.sub(r"(?<=[^\s-])-\s+(?=[^\s-])", "-", p.stderr)
+        return p.returncode, (json.loads(p.stdout) if p.returncode == 0 else {}), " ".join(err.split())
 
     def test_listed(self):
         rc, inv, err = self.run_inv(IDM_GROUP_MAP=str({"aap-servers": ["aap_hosts", "no_patch"], "ipaservers": "idm"}),
