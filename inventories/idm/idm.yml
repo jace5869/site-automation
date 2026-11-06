@@ -1,0 +1,8 @@
+# The hosts enrolled in Red Hat IdM and its host groups (plugins/inventory/site_idm.py; docs/IDM_INVENTORY.md).
+# In AAP: an inventory source "Sourced from a Project", this file, the "IdM inventory" credential (server, user,
+# password, CA). Everything else goes in the source's Source variables box, so this file stays as shipped:
+#   IDM_GROUP_MAP: {rhel9-servers: rhel9_all, aap-servers: [aap_hosts, no_patch]}
+#   IDM_REQUIRE_GROUPS: [aap_hosts]
+#   IDM_EXCLUDE_HOSTGROUPS: [lab-*]
+# Nothing here is needed; a line written here wins over the same setting in Source variables.
+plugin: site_idm

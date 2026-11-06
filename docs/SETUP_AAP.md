@@ -84,6 +84,7 @@ For each file in `aap/credential_types/` that you need now:
 | `stigman_api.yml` | STIG Manager API | optional: POA&M cross-check with STIG Manager; the STIG drift report's checklist comparison |
 | `act_model_key.yml` | ACT model key | later, for ACT ([ADDING_ACT.md](ADDING_ACT.md)): GenAI.mil and Ask Sage keys |
 | `act_genai_beta_key.yml` | ACT GenAI beta key | only for ACT with the GenAI.mil beta provider |
+| `idm_inventory.yml` | IdM inventory | optional: the Linux inventory filled from IdM ([IDM_INVENTORY.md](IDM_INVENTORY.md)) |
 
 **You should see** each new type in the Credential Types list.
 

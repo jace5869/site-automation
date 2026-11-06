@@ -68,7 +68,7 @@ next:
 | AAP object | What it is | Here |
 |---|---|---|
 | **Project** | A copy of a Git repository that AAP keeps in sync | `site-automation` (this repository) |
-| **Inventory** | The hosts and groups, and their settings | `Linux servers`, filled from `inventories/site/` in this repository, or the inventory you already have in AAP ([USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md)) |
+| **Inventory** | The hosts and groups, and their settings | `Linux servers`, filled from `inventories/site/` in this repository, or the inventory you already have in AAP ([USING_YOUR_AAP_INVENTORY.md](USING_YOUR_AAP_INVENTORY.md)), or filled from IdM ([IDM_INVENTORY.md](IDM_INVENTORY.md)) |
 | **Credential type** | A form for a kind of secret, and how to hand it to the job | `ServiceNow API`, `MariaDB monitor`, `ACT model key`... (`aap/credential_types/`) |
 | **Credential** | One filled-in form: the actual secret. Nobody can read it back | `Linux ssh (sudo)`, `ServiceNow API`... |
 | **Execution environment** | The container a job runs in (Ansible, Python, tools) | The **Minimal** execution environment is enough. This repository needs no extra collections |

@@ -1,0 +1,30 @@
+# Credential type: "IdM inventory"
+# For the inventory source that reads the hosts and host groups from Red Hat IdM (inventories/idm/idm.yml,
+# docs/IDM_INVENTORY.md): attach it to the inventory source, not to job templates. A plain IdM user is enough (every IdM
+# user may read hosts and host groups); it only reads. The CA: /etc/ipa/ca.crt from any IdM client.
+inputs:
+  fields:
+    - id: server
+      type: string
+      label: IdM server
+      help_text: The IdM server's own FQDN (idm1.example.mil) - not an alias or an address
+    - id: user
+      type: string
+      label: IdM user
+    - id: password
+      type: string
+      label: Password
+      secret: true
+    - id: ca
+      type: string
+      label: IdM CA certificate (PEM, /etc/ipa/ca.crt)
+      multiline: true
+  required: [server, user, password]
+injectors:
+  file:
+    template.ca: "{{ ca }}"
+  env:
+    IDM_SERVER: "{{ server }}"
+    IDM_USER: "{{ user }}"
+    IDM_PASSWORD: "{{ password }}"
+    IDM_CA_PATH: "{{ tower.filename.ca }}"

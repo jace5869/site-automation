@@ -147,6 +147,7 @@ The copy-ready Variables are in `aap/extra_vars/aap_health_check.yml`.
 | [docs/CERT_RENEWAL_CATALOG.md](docs/CERT_RENEWAL_CATALOG.md) | the certificate renewals without incidents: each CSR ordered from your PKI's catalog item - finding the item's questions, the settings, the catalog test, what a run does |
 | [docs/CERT_INSTALL.md](docs/CERT_INSTALL.md) | the issued certificate installed from its request, Linux and Windows: the check, the approval, the install and its rollback, what stays for a person, the restore; the CA bundle when the PKI sends only the .cer, and the job that keeps it current |
 | [docs/USING_YOUR_AAP_INVENTORY.md](docs/USING_YOUR_AAP_INVENTORY.md) | your inventory is already in AAP: the groups to add and which variables go on which group |
+| [docs/IDM_INVENTORY.md](docs/IDM_INVENTORY.md) | the Linux inventory filled from IdM and kept in sync by AAP: your host groups mapped to the runbooks' groups |
 | [docs/VARIABLES.md](docs/VARIABLES.md) | settings (variables): what you can set, where to put it (settings file, AAP Variables box, extra variables), and which place wins; with [docs/VARIABLES_REFERENCE.md](docs/VARIABLES_REFERENCE.md), every setting and its default (generated) |
 | [docs/APPROVED_COMMANDS.md](docs/APPROVED_COMMANDS.md) | how to pre-approve the commands ACT may run by itself, what can never be approved, and how to verify it |
 | [docs/MARIADB.md](docs/MARIADB.md) | the MariaDB and MySQL database checks, step by step: host installs and podman containers (rootless too), the monitor account per engine, verifying it, what was tested |
@@ -194,7 +195,8 @@ and the credentials; a project on the repository; an inventory sourced from
 `inventories/site/hosts.yml`; one job template per playbook; then the workflows and schedules in
 [docs/WORKFLOWS_AND_SCHEDULES.md](docs/WORKFLOWS_AND_SCHEDULES.md). Your inventory is already in
 AAP? Keep it, and follow [docs/USING_YOUR_AAP_INVENTORY.md](docs/USING_YOUR_AAP_INVENTORY.md)
-instead of the inventory steps.
+instead of the inventory steps. Your RHEL hosts are enrolled in IdM? Let AAP fill the Linux inventory from it:
+[docs/IDM_INVENTORY.md](docs/IDM_INVENTORY.md).
 
 Job template **STIG Manager - deploy**: playbook `playbooks/stigman_deploy.yml`; credentials:
 Machine, *STIG Manager database*, *TLS certificate* (and *Container registry login (hosts)* if

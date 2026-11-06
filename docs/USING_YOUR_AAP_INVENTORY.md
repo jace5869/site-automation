@@ -1,5 +1,8 @@
 # Using the inventory you already have in AAP
 
+> **Your RHEL hosts are enrolled in IdM?** AAP can fill the Linux inventory from IdM and keep it in sync, its groups
+> from your IdM host groups: [IDM_INVENTORY.md](IDM_INVENTORY.md). The groups and settings below apply to it the same.
+
 You imported your inventory into AAP. You do not need `inventories/site/` in Git, and you can
 skip the Git inventory parts of [SETUP_AAP.md](SETUP_AAP.md) (the `cp inventories/example ...` in
 step 1, and all of step 5). Your hosts and groups stay in AAP. Your **settings** can go in either
