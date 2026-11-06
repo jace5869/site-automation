@@ -889,8 +889,11 @@ if sys.argv[1] == "add":
     src = [v for v in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if v.name == "DC0_C0_RP0_VM0"][0]
     wait(src.CloneVM_Task(folder=f, name="rhel9-gold", spec=vim.vm.CloneSpec(location=vim.vm.RelocateSpec(), powerOn=False, template=True)))
 else:
+    pool = [v for v in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if v.name == "DC0_C0_RP0_VM0"][0]
     for f in st:
         for v in f.childEntity:
+            if v.config.template:   # vcsim keeps a destroyed template in its views (ManagedObjectNotFound later): a VM first
+                v.MarkAsVirtualMachine(pool=pool.resourcePool, host=pool.runtime.host)
             wait(v.Destroy_Task())
         wait(f.Destroy_Task())
 EOPY
