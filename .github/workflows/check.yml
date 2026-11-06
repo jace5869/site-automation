@@ -181,6 +181,15 @@ jobs:
         run: |
           bash tests/vmware/run_vmware_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/vmware/run_vmware_test.sh
+      - name: Patch hosts with the VMware snapshot before patching - UBI 9 containers patched with dnf, their VMs in vcsim (current ansible-core and 2.16)
+        env:
+          VMWARE_COLLECTIONS: /home/runner/.ansible/collections
+          PATCH_TEST_COLLECTIONS: /home/runner/.ansible/collections
+        run: |
+          bash tests/galaxy_install.sh -r tests/patch/requirements.yml
+          /tmp/ac216/bin/pip -q install pyvmomi requests
+          bash tests/patch/run_patch_snapshot_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/patch/run_patch_snapshot_test.sh
       - name: VMware ask, the service's vCenter read against vcsim (current ansible-core and 2.16)
         run: |
           bash tests/vmware_ask/run_vmware_ask_test.sh

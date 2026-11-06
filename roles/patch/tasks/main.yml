@@ -1,7 +1,7 @@
 ---
-# PATCH one host: guards -> remember running services -> dnf update -> reboot if needed and
-# allowed -> the same services must be running again. Check mode (a dry run) shows what would
-# be updated and changes nothing.
+# PATCH one host: guards -> the VMware snapshot of its VM (patch_snapshot) -> remember running services ->
+# dnf update -> reboot if needed and allowed -> the same services must be running again. Check mode (a dry run)
+# shows what would be updated and changes nothing.
 
 - name: Patch | which groups are protected (yours, plus AAP - built in)
   ansible.builtin.set_fact:
@@ -40,6 +40,18 @@
       Only {{ _patch_df.stdout_lines[-1].split()[3] }} MB free in /var (need {{ patch_min_free_mb }} MB):
       not patching. Free space first (see the health check's disk findings).
     quiet: true
+
+- name: Patch | VMware snapshot "{{ patch_snapshot_name }}" of its VM, right before the update (patch_snapshot)
+  ansible.builtin.include_role:
+    name: vmware_vm
+    tasks_from: patch_snapshot.yml
+    apply:
+      delegate_to: localhost
+      become: false
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  when: patch_snapshot | bool
 
 - name: Patch | services running before the update
   ansible.builtin.shell: >-
@@ -128,6 +140,7 @@
       rebooted: "{{ _patch_reboot_needed | bool and _patch_reboot_allowed | bool and not ansible_check_mode }}"
       reboot_still_needed: "{{ _patch_reboot_needed | bool and not (_patch_reboot_allowed | bool) }}"
       services_not_back: "{{ _patch_before.stdout_lines | difference(_patch_after.stdout_lines) }}"
+      snapshot: "{{ _patch_snapshot | default('none (patch_snapshot is false)') }}"
 
 - name: Patch | FAIL - services that ran before the update are not running now
   ansible.builtin.fail:

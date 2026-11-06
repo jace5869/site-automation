@@ -743,6 +743,60 @@ class NameLists(unittest.TestCase):
         self.assertEqual((r["old"], [x["reason"] for x in r["held"]]), ([], ["the VM is on the exclusion list"]))
 
 
+class PatchVmMatch(unittest.TestCase):
+    VC = "vc01.example.mil"
+    V = [{"name": "web01", "moid": "vm-1", "vcenter": VC, "hostname": "web01.example.mil", "ip": "192.0.2.11", "ips": ["192.0.2.11"]},
+         {"name": "DB01.example.mil", "moid": "vm-2", "vcenter": VC, "hostname": "", "ip": "", "ips": []},
+         {"name": "LNX-APP-7", "moid": "vm-3", "vcenter": VC, "hostname": "app07.example.mil", "ip": "192.0.2.17", "ips": ["192.0.2.17"]},
+         {"name": "old-lnx", "moid": "vm-4", "vcenter": VC, "hostname": "", "ip": "", "ips": ["192.0.2.44", "fe80::1"]},
+         {"name": "rhel9-gold", "moid": "vm-5", "vcenter": VC, "hostname": "", "template": True, "ips": []},
+         {"name": "mail01", "moid": "vm-6", "vcenter": VC, "hostname": "", "ips": []},
+         {"name": "mail01", "moid": "vm-6", "vcenter": "vc02.example.mil", "hostname": "", "ips": []},
+         {"name": "srv-x", "moid": "vm-8", "vcenter": VC, "hostname": "dup.example.mil", "ips": []},
+         {"name": "srv-y", "moid": "vm-9", "vcenter": VC, "hostname": "dup.example.mil", "ips": []}]
+
+    def m(self, hosts, hv=None, snaps=None, name="patching"):
+        return f.patch_vm_match(hosts, hv or {}, self.V, snaps, name)
+
+    def test_by_name_short_name_guest_and_address(self):
+        r = self.m(["web01.example.mil", "db01", "app07.example.mil", "lnx44"], {"lnx44": {"ansible_host": "192.0.2.44"}})
+        self.assertEqual({h: (v["moid"], v["how"]) for h, v in r["vms"].items()},
+                         {"web01.example.mil": ("vm-1", "VM name"), "db01": ("vm-2", "VM name"),
+                          "app07.example.mil": ("vm-3", "guest host name"), "lnx44": ("vm-4", "IP address")})
+        self.assertEqual(r["missing"], {})
+
+    def test_the_host_variable_decides_alone(self):
+        r = self.m(["web01", "x"], {"web01": {"vmware_vm_name": "lnx-app-7"}, "x": {"vmware_vm_name": "nope", "ansible_host": "192.0.2.11"}})
+        self.assertEqual(r["vms"]["web01"]["moid"], "vm-3")
+        self.assertEqual(r["vms"]["web01"]["how"], "vmware_vm_name")
+        self.assertEqual(r["missing"], {"x": "no VM is named nope"})
+
+    def test_missing_twice_and_never_a_template(self):
+        r = self.m(["phys01", "rhel9-gold", "mail01", "dup"])
+        self.assertEqual(sorted(r["missing"]), ["phys01", "rhel9-gold"])
+        self.assertIn("vmware_vm_name", r["missing"]["phys01"])
+        self.assertEqual(r["twice"], {"mail01": ["mail01 (vc01)", "mail01 (vc02)"], "dup": ["srv-x (vc01)", "srv-y (vc01)"]})
+
+    def test_a_better_rule_wins_over_a_vague_one(self):
+        # a VM named exactly like the host wins over another whose guest host name matches
+        vms = self.V + [{"name": "web01-clone", "moid": "vm-10", "vcenter": self.VC, "hostname": "web01", "ips": []}]
+        r = f.patch_vm_match(["web01"], {}, vms)
+        self.assertEqual(r["vms"]["web01"]["moid"], "vm-1")
+
+    def test_old_snapshots_of_that_name_on_that_vm(self):
+        snaps = [{"vm": "web01", "moid": "vm-1", "vcenter": self.VC, "id": 4, "name": "patching"},
+                 {"vm": "web01", "moid": "vm-1", "vcenter": self.VC, "id": 5, "name": "Patching-old"},
+                 {"vm": "web01", "moid": "vm-1", "vcenter": "vc02.example.mil", "id": 6, "name": "patching"},
+                 {"vm": "DB01", "moid": "vm-2", "vcenter": self.VC, "id": 1, "name": "baseline"}]
+        r = self.m(["web01", "db01"], snaps=snaps)
+        self.assertEqual({h: [s["id"] for s in x] for h, x in r["old"].items()}, {"web01": [4]})
+        self.assertEqual(self.m(["web01"], snaps=snaps, name="Patching-old")["old"]["web01"][0]["id"], 5)
+
+    def test_nothing(self):
+        self.assertEqual(f.patch_vm_match([], {}, None), {"vms": {}, "missing": {}, "twice": {}, "old": {}})
+        self.assertEqual(f.patch_vm_match(["a"], None, None)["missing"].keys(), {"a"})
+
+
 class PickLists(unittest.TestCase):
     """The pick lists: survey choices that end with the ID token, read back from the survey's answer, and
     each pick found again live (plugins/filter/site_filters.py, vm_pick_*)."""

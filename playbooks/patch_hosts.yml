@@ -12,10 +12,13 @@
 #   rebooted by a job. Add more groups with patch_never_patch_groups / patch_never_reboot_groups.
 # - Refuses to patch the machine the job runs from.
 # - Check mode (a dry run) lists what would be updated and changes nothing: run it that way first.
+# - patch_snapshot: true = a VMware snapshot of each VM (named patching) right before it is patched; every host's
+#   VM is found first, before any host is patched. Attach a "VMware vCenter" credential too. docs/RUNBOOKS.md
 #
 #   ansible-playbook playbooks/patch_hosts.yml --check -l web01.example.mil
 #   ansible-playbook playbooks/patch_hosts.yml -l web01.example.mil -e patch_security_only=true
 #   ansible-playbook playbooks/patch_hosts.yml -l web01.example.mil -e automatic_restarts=true
+#   ansible-playbook playbooks/patch_hosts.yml -l rhel9_all -e patch_serial=10 -e patch_snapshot=true
 - name: Target check (stops with a clear message when target matches no host)
   hosts: all
   gather_facts: false
@@ -26,6 +29,31 @@
         tasks_from: target_check.yml
       vars:
         _target_pattern: "{{ target | default('patch_hosts') }}"
+
+- name: Patch hosts - each host's VM, for the snapshot before patching (patch_snapshot)
+  # once, before any host is patched: a host whose VM is not found stops the job here (on the AAP side: run_once,
+  # delegated to localhost; a Limit of hosts needs no localhost)
+  hosts: "{{ target | default('patch_hosts') }}"
+  gather_facts: false
+  tasks:
+    - name: Linux hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+      when: patch_snapshot | default(false) | bool
+
+    - name: Each host's VM in vCenter, and the old snapshots in the way
+      ansible.builtin.include_role:
+        name: patch
+        tasks_from: snapshot_vms.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+      when: patch_snapshot | default(false) | bool
 
 - name: Patch hosts
   hosts: "{{ target | default('patch_hosts') }}"

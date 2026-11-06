@@ -1,0 +1,6 @@
+---
+# For the TESTS (and CI) only: the podman connection tests/patch/run_patch_snapshot_test.sh patches its UBI containers
+# over. Not at the repository root on purpose (see tests/vmware/requirements.yml).
+collections:
+  - name: containers.podman
+    version: ">=1.10.0"

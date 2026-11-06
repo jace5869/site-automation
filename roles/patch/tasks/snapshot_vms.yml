@@ -1,0 +1,72 @@
+---
+# SNAPSHOT BEFORE PATCHING (patch_snapshot), step 1 - once, before any host is patched, on the AAP side
+# (playbooks/patch_hosts.yml includes it run_once, delegated to localhost): each host to patch and its VM in vCenter,
+# and the snapshots named patch_snapshot_name those VMs still have. The job stops here - nothing patched yet - when a
+# host's VM is not found (patch_snapshot_required), a host matches two VMs, or an old snapshot is still there
+# (patch_snapshot_replace false). Output: _patch_snap on localhost, read by vmware_vm patch_snapshot.yml in each batch.
+- name: Patch | the hosts to patch (the protected ones are never patched, so get no snapshot either)
+  ansible.builtin.set_fact:
+    _patch_snap_hosts: >-
+      {%- set prot = (patch_never_patch_groups + _site_always_protected + ['aap', 'aap_hosts']) | unique -%}
+      {%- set out = [] -%}
+      {%- for h in ansible_play_hosts if hostvars[h].group_names | intersect(prot) | length == 0 -%}
+      {%-   set _ = out.append(h) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Patch | each host's VM in vCenter
+  ansible.builtin.include_role:
+    name: vmware_vm
+    tasks_from: patch_vms.yml
+
+- name: Patch | the snapshot before patching, for each host
+  ansible.builtin.debug:
+    msg: >-
+      {%- set out = [] -%}
+      {%- for h in _patch_snap_hosts -%}
+      {%-   if h in _patch_snap.vms -%}
+      {%-     set v = _patch_snap.vms[h] -%}
+      {%-     set _ = out.append(h ~ ': VM ' ~ v.name ~ ' (by ' ~ v.how ~ (', ' ~ v.vcenter | vc_short if _patch_snap.multi else '') ~ ')'
+                               ~ (' - its old snapshot "' ~ patch_snapshot_name ~ '" is deleted first' if h in _patch_snap.old and patch_snapshot_replace | bool else '')) -%}
+      {%-   elif h in _patch_snap.twice -%}
+      {%-     set _ = out.append(h ~ ': TWO VMs or more - ' ~ _patch_snap.twice[h] | join(', ')) -%}
+      {%-   else -%}
+      {%-     set _ = out.append(h ~ ': NO VM - ' ~ _patch_snap.missing[h] ~ ('' if patch_snapshot_required | bool else ' (patched without a snapshot: patch_snapshot_required is false)')) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ out or ['No host to patch.'] }}
+
+- name: Patch | every host has its VM, and no old snapshot "{{ patch_snapshot_name }}" is in the way
+  ansible.builtin.assert:
+    that: _patch_snap_problems | length == 0
+    fail_msg: >-
+      Nothing was patched: {{ _patch_snap_problems | join(' ') }}
+    quiet: true
+  vars:
+    _patch_snap_problems: >-
+      {%- set out = [] -%}
+      {%- for h, names in _patch_snap.twice.items() -%}
+      {%-   set _ = out.append(h ~ ' matches more than one VM (' ~ names | join(', ') ~ '): set vmware_vm_name for it (a host variable: the name of its VM in vCenter).') -%}
+      {%- endfor -%}
+      {%- if patch_snapshot_required | bool and _patch_snap.missing -%}
+      {%-   for h, why in _patch_snap.missing.items() -%}{%- set _ = out.append(h ~ ': ' ~ why ~ '.') -%}{%- endfor -%}
+      {%-   if _patch_snap.unread -%}{%- set _ = out.append('Not read: ' ~ _patch_snap.unread | join('; ') ~ '.') -%}{%- endif -%}
+      {%-   set _ = out.append('A physical server, or a VM in a vCenter not read (vmware_vcenters)? Leave it out of this run (Limit), or set patch_snapshot_required: false to patch it without a snapshot.') -%}
+      {%- endif -%}
+      {%- if not patch_snapshot_replace | bool -%}
+      {%-   for h, snaps in _patch_snap.old.items() -%}
+      {%-     for s in snaps -%}
+      {%-       set _ = out.append(_patch_snap.vms[h].name ~ ' (' ~ h ~ ') still has the snapshot "' ~ s.name ~ '" from '
+                                 ~ s.created | default('?') | replace('T', ' ') | replace('Z', ' UTC') ~ ' (' ~ s.age_days | default('?')
+                                 ~ ' days): delete it once that patching is proven (VM - snapshot delete, or VM - snapshot cleanup),'
+                                 ~ ' or run with patch_snapshot_replace: true to replace it.') -%}
+      {%-     endfor -%}
+      {%-   endfor -%}
+      {%- endif -%}
+      {{ out }}
+
+- name: Patch | keep it for the batches
+  ansible.builtin.set_fact:
+    _patch_snap: "{{ _patch_snap }}"
+  delegate_to: localhost
+  delegate_facts: true

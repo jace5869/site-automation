@@ -1,0 +1,76 @@
+---
+# SNAPSHOT BEFORE PATCHING, step 2 - one host, right before it is patched (roles/patch/tasks/main.yml, delegated to
+# localhost): vCenter takes the snapshot patch_snapshot_name of its VM, without memory; with patch_snapshot_replace
+# its old one is deleted first. Its VM was found before any host was patched (patch_vms.yml: localhost's
+# _patch_snap). Output: _patch_snapshot (what was done, for the patch result).
+- name: VMware | this host's VM was looked for before patching
+  ansible.builtin.assert:
+    that: hostvars['localhost']._patch_snap is defined
+    fail_msg: >-
+      Not patched: the VMs were not looked for before patching (the play "Patch hosts - each host's VM" of
+      playbooks/patch_hosts.yml did not run). Run playbooks/patch_hosts.yml itself, with patch_snapshot set in the
+      template's Variables or all.yml - not only on a host or a group.
+    quiet: true
+
+- name: VMware | this host's VM
+  ansible.builtin.set_fact:
+    _patch_vm: "{{ hostvars['localhost']._patch_snap.vms[inventory_hostname] | default({}) }}"
+    _patch_vm_old: "{{ hostvars['localhost']._patch_snap.old[inventory_hostname] | default([]) if patch_snapshot_replace | bool else [] }}"
+
+- name: VMware | no VM for this host - patched without a snapshot (patch_snapshot_required is false)
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: {{ hostvars['localhost']._patch_snap.missing[inventory_hostname] | default('its VM was not found') }}.
+      Patched without a snapshot.
+  when: _patch_vm | length == 0
+
+- name: VMware | delete the old snapshot "{{ patch_snapshot_name }}" of {{ _patch_vm.name | default('-') }} (patch_snapshot_replace)
+  vmware.vmware.vm_snapshot:
+    # the VM's own vCenter: its ID (moid) means another VM, or none, in any other vCenter
+    hostname: "{{ item.vcenter.split(':')[0] if item.vcenter.count(':') == 1 else item.vcenter }}"
+    port: "{{ (item.vcenter.split(':')[1] | int) if item.vcenter.count(':') == 1 else omit }}"
+    moid: "{{ item.moid }}"
+    datacenter: "{{ _patch_vm.datacenter }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    state: absent
+    snapshot_id: "{{ item.id | int }}"
+    timeout: "{{ vm_snapshot_delete_timeout | int }}"
+  loop: "{{ _patch_vm_old }}"
+  loop_control:
+    label: "{{ item.vm }}: {{ item.name }} ({{ item.age_days | default('?') }} days)"
+  when: _patch_vm | length > 0
+
+- name: VMware | snapshot "{{ patch_snapshot_name }}" of {{ _patch_vm.name | default('-') }} (no memory)
+  vmware.vmware.vm_snapshot:
+    hostname: "{{ _patch_vm.vcenter.split(':')[0] if _patch_vm.vcenter.count(':') == 1 else _patch_vm.vcenter }}"
+    port: "{{ (_patch_vm.vcenter.split(':')[1] | int) if _patch_vm.vcenter.count(':') == 1 else omit }}"
+    moid: "{{ _patch_vm.moid }}"
+    datacenter: "{{ _patch_vm.datacenter }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    state: present
+    snapshot_name: "{{ patch_snapshot_name }}"
+    description: >-
+      Before patching {{ inventory_hostname }} [AAP job {{ awx_job_id | default(tower_job_id | default('local')) }},
+      {{ awx_user_name | default(tower_user_name | default(lookup('ansible.builtin.env', 'USER') or 'unknown')) }},
+      {{ now(fmt='%Y-%m-%d %H:%M') }}]. Delete it once the patching is proven.
+    memory_dump: false
+    quiesce: "{{ patch_snapshot_quiesce | bool }}"
+  register: _patch_vm_snap
+  when: _patch_vm | length > 0
+
+# vm_snapshot leaves a snapshot of that name alone (unchanged): an old one would then pass for the new one
+- name: VMware | a new snapshot was taken
+  ansible.builtin.assert:
+    that: _patch_vm_snap is skipped or _patch_vm_snap is changed or (ansible_check_mode and _patch_vm_old | length > 0)
+    fail_msg: >-
+      Not patched: {{ _patch_vm.name | default('-') }} already has a snapshot named "{{ patch_snapshot_name }}" (taken
+      after this job looked), so no new one was taken. Delete it, or run with patch_snapshot_replace: true.
+    quiet: true
+
+- name: VMware | what was done
+  ansible.builtin.set_fact:
+    _patch_snapshot: >-
+      {{ ('none: ' ~ hostvars['localhost']._patch_snap.missing[inventory_hostname] | default('its VM was not found'))
+         if _patch_vm | length == 0 else
+         (('would take' if ansible_check_mode else 'took') ~ ' "' ~ patch_snapshot_name ~ '" of VM ' ~ _patch_vm.name
+          ~ (' (the old one ' ~ ('would be' if ansible_check_mode else 'was') ~ ' deleted first)' if _patch_vm_old | length > 0 else '')) }}

@@ -601,7 +601,9 @@ is left alone and listed as held back, with the reason `its name has none of: Pa
 
    Any case matches, anywhere in the name: `Pre-Patching 10/14`, `PATCHES oct`, `patch-web01`. The
    name only, not the description. `Patch` alone already matches the other two; keep all three if you
-   like the list to say what you mean. A phrase works too: `[Patch Tuesday]`.
+   like the list to say what you mean. A phrase works too: `[Patch Tuesday]`. The snapshots *Patch
+   hosts* takes right before patching (`patch_snapshot`, [RUNBOOKS.md](RUNBOOKS.md#snapshot-before-patching))
+   are named `patching`: these words match them.
 2. Make a separate template (not the one in the workflow): `VM - snapshot cleanup (patching)`,
    playbook `playbooks/vm_snapshot_cleanup.yml`, credential `VMware vCenter`, **Variables**:
 

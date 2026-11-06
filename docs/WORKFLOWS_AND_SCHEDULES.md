@@ -201,7 +201,7 @@ own report, *VMware - trust store report*, which does not feed tickets ([TRUST_S
 |---|---|---|---|
 | 1 | Health check | `health_checks` = `disk`, `mounts`, `services` | (start) |
 | 2 | *Approval* | Name `Patch these hosts now?`, **Timeout** 8 hours | **Run on success**, from 1 |
-| 3 | Patch hosts | `patch_security_only` as you like; `automatic_restarts` (see below) | **Run on success**, from 2 |
+| 3 | Patch hosts | `patch_security_only` as you like; `automatic_restarts` (see below); `patch_serial` (hosts at a time) and `patch_snapshot` (a VMware snapshot before each host: [RUNBOOKS.md](RUNBOOKS.md#snapshot-before-patching)) as you like | **Run on success**, from 2 |
 | 4 | Health check | `health_checks` = `daily` | **Run always**, from 3 |
 | 5 | ServiceNow tickets | | **Run always**, from 4 |
 | 6 | ServiceNow tickets | | **Run on fail**, from 1 (tickets for what the pre-check found) |
@@ -225,6 +225,10 @@ needs a reboot is **not** rebooted, and the job says so. The post-check's `patch
 need it, give step 3 `automatic_restarts` = `yes`. Add a survey question for it on the Patch
 hosts template (*Multiple Choice*, `no` / `yes`, default `no`), or put `automatic_restarts: true`
 in the step's variables. Hosts in `patch_never_reboot_groups` are never rebooted either way.
+
+**Snapshots before patching:** with `patch_snapshot: true` on step 3, each VM gets a snapshot
+named `patching` right before it is patched. Delete them a few days later, once the patching is
+proven: workflow 19 (snapshot cleanup) with `vm_snapshot_cleanup_name_words: [patching]`.
 
 **Launch** with **Limit** `patch_hosts`, or one group at a time (`stigman` this week,
 another group next week). **Schedule:** monthly, in your maintenance window, for

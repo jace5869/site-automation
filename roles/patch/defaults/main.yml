@@ -32,3 +32,22 @@ patch_min_free_mb: 1024                  # free space needed in /var before star
 patch_service_wait: 120                  # seconds to wait for services to come back after a reboot
 # Services that come and go on their own and are not compared before/after (regular expression)
 patch_ignore_services: '^(user@|user-runtime-dir@|session-|dnf-makecache|packagekit|fwupd|run-|systemd-(hostnamed|timedated|localed|coredump))'
+
+# ---- A VMware snapshot of each VM right before it is patched ----
+
+# true = just before a host is patched (in its batch: patch_serial), vCenter takes a snapshot of its VM, without
+# memory, named patch_snapshot_name. Attach a "VMware vCenter" credential to the template as well as the Machine
+# one. Every host's VM is found once, before any host is patched: the host variable vmware_vm_name (the VM's name in
+# vCenter) when set; else a VM named like the host (web01.yoursite.mil or web01); else the VM whose guest host name
+# (VMware Tools) is the host's; else the VM with its ansible_host address. A host whose VM is not found, or that
+# matches two VMs, stops the job before anything is patched. A snapshot that fails: that host is not patched, and
+# the rollout stops. Delete the snapshots once the patching is proven: "VM - snapshot cleanup"
+# (vm_snapshot_cleanup_name_words: [patching]). docs/RUNBOOKS.md, "Snapshot before patching".
+patch_snapshot: false
+patch_snapshot_name: patching            # the snapshot's name (the AAP job, user and date go in its description)
+patch_snapshot_quiesce: false            # true = VMware Tools freezes the file systems first (slower; fails without Tools)
+# false = a host without a VM in vCenter (a physical server) is patched without a snapshot, and the job says so
+patch_snapshot_required: true
+# A VM that still has a snapshot named patch_snapshot_name (the last patching's, not deleted yet) stops the job before
+# anything is patched, and the job names them. true = delete that old snapshot, then take the new one.
+patch_snapshot_replace: false

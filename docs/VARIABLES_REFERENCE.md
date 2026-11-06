@@ -1098,6 +1098,11 @@ File: `roles/patch/defaults/main.yml`
 | `patch_min_free_mb` | `1024` | BUILT IN, whatever you set above (roles/patch/vars/main.yml): the AAP hosts (groups aap and aap_hosts) are never patched and never rebooted by a job, and neither is the machine the job runs from (a local connection). A package script can restart services under the running job. Set the two lists above only to ADD group… (all of it: the role file) |
 | `patch_service_wait` | `120` | seconds to wait for services to come back after a reboot |
 | `patch_ignore_services` | `'^(user@\|user-runtime-dir@\|session-\|dnf-makecache\|packagekit\|fwupd\|run-\|systemd-(hostname…` | Services that come and go on their own and are not compared before/after (regular expression) |
+| `patch_snapshot` | `false` | true = just before a host is patched (in its batch: patch_serial), vCenter takes a snapshot of its VM, without memory, named patch_snapshot_name. Attach a "VMware vCenter" credential to the template as well as the Machine one. Every host's VM is found once, before any host is patched: the host variable vmware_vm_name… (all of it: the role file) |
+| `patch_snapshot_name` | `patching` | the snapshot's name (the AAP job, user and date go in its description) |
+| `patch_snapshot_quiesce` | `false` | true = VMware Tools freezes the file systems first (slower; fails without Tools) |
+| `patch_snapshot_required` | `true` | false = a host without a VM in vCenter (a physical server) is patched without a snapshot, and the job says so |
+| `patch_snapshot_replace` | `false` | A VM that still has a snapshot named patch_snapshot_name (the last patching's, not deleted yet) stops the job before anything is patched, and the job names them. true = delete that old snapshot, then take the new one. |
 
 ## pki_bundle
 

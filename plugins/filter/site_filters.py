@@ -1339,6 +1339,60 @@ def site_correlation_id(finding_id, host, check, prefix="site-health"):
     return "%s:%s:%s:%s" % (prefix, sha1(host)[:8], check, sha1(finding_id)[:12])
 
 
+def _is_ip(s):
+    return bool(re.fullmatch(r"[0-9.]+", s) or (":" in s and re.fullmatch(r"[0-9a-fA-F:.]+", s)))
+
+
+def patch_vm_match(hosts, hostvars=None, vms=None, snapshots=None, snapshot_name="patching"):
+    """Each host to patch -> its VM in vCenter (site_vmware_vms), for the snapshot before patching
+    (playbooks/patch_hosts.yml, patch_snapshot). The first of these that finds a VM decides: the host
+    variable vmware_vm_name (the VM's name, any case - nothing else is tried); a VM named like the host or
+    its ansible_host (web01.example.mil); ... like its short name (web01); a VM whose guest host name
+    (VMware Tools) is the host's; ... its short name; a VM with the host's ansible_host address.
+    Templates never. -> {'vms': {host: VM + 'how'}, 'missing': {host: why}, 'twice': {host: [VM names]},
+    'old': {host: [the snapshots named snapshot_name its VM has now]}}."""
+    vms = [v for v in vms or [] if not v.get("template")]
+    out = {"vms": {}, "missing": {}, "twice": {}, "old": {}}
+    for h in hosts or []:
+        try:
+            hv = (hostvars or {})[h]
+            given = str(hv.get("vmware_vm_name") or "").strip()
+            ah = str(hv.get("ansible_host") or "").strip().lower()
+        except (KeyError, TypeError, AttributeError):
+            given, ah = "", ""
+        if given:
+            rules = [("vmware_vm_name", lambda v: str(v.get("name", "")).lower() == given.lower())]
+        else:
+            full = set(x for x in [str(h).lower(), ah] if x and not _is_ip(x))
+            short = set(x.split(".")[0] for x in full)
+            ips = set(x for x in [str(h).lower(), ah] if x and _is_ip(x))
+
+            def guest(v):
+                return str(v.get("hostname") or "").strip().lower()
+            rules = [("VM name", lambda v: str(v.get("name", "")).lower() in full),
+                     ("VM name", lambda v: str(v.get("name", "")).lower().split(".")[0] in short),
+                     ("guest host name", lambda v: guest(v) in full),
+                     ("guest host name", lambda v: guest(v) and guest(v).split(".")[0] in short),
+                     ("IP address", lambda v: bool(ips & set(str(i).lower() for i in (v.get("ips") or []) + [v.get("ip") or ""])))]
+        found, how = [], ""
+        for how, rule in rules:
+            found = list({vm_snap_vm_key(v): v for v in vms if rule(v)}.values())
+            if found:
+                break
+        if len(found) == 1:
+            vm = dict(found[0], how=how)
+            out["vms"][h] = vm
+            old = [s for s in snapshots or [] if vm_snap_vm_key(s) == vm_snap_vm_key(vm) and s.get("name") == snapshot_name]
+            if old:
+                out["old"][h] = old
+        elif found:
+            out["twice"][h] = sorted("%s (%s)" % (v.get("name", ""), vc_short(v.get("vcenter", ""))) for v in found)
+        else:
+            out["missing"][h] = ("no VM is named %s" % given) if given else \
+                "no VM by its name, guest host name (VMware Tools) or address - set vmware_vm_name for it"
+    return out
+
+
 def vm_snap_vm_key(x):
     """A snapshot's VM, unique across vCenters: 'vc01.example.mil/vm-42' (a moid repeats in every vCenter)."""
     x = x or {}
@@ -1868,7 +1922,7 @@ class FilterModule(object):
                 "vc_short": vc_short, "act_is_chat_reply": act_is_chat_reply, "vm_dc_label": vm_dc_label, "vm_vcenters_read": vm_vcenters_read, "vm_vcenter_report": vm_vcenter_report,
                 "vm_snapshot_split": vm_snapshot_split, "snapshot_name_words": snapshot_name_words, "vm_snapshot_plan": vm_snapshot_plan, "vm_pick_snapshot_choices": vm_pick_snapshot_choices, "vm_pick_vms": vm_pick_vms, "vm_pick_ids": vm_pick_ids,
                 "vm_pick_reasons": vm_pick_reasons, "vm_pick_parse": vm_pick_parse, "vm_pick_snapshot_plan": vm_pick_snapshot_plan,
-                "vm_pick_reboot_plan": vm_pick_reboot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "cert_report_section": cert_report_section,
+                "vm_pick_reboot_plan": vm_pick_reboot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "patch_vm_match": patch_vm_match, "cert_report_section": cert_report_section,
                 "site_correlation_id": site_correlation_id,
                 "human_size": human_size, "name_matches": name_matches, "name_list": name_list,
                 "report_text": report_text, "report_cards_html": report_cards_html, "findings_report": findings_report,

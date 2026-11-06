@@ -950,8 +950,9 @@ an AAP **notification** (email) on failure when the API is down: a broken Servic
 Installs updates with dnf (`patch_security_only` for security fixes only; `patch_exclude` for
 packages never updated here). Then:
 
-1. **One host at a time** (`patch_serial`, in the template's Variables - in `all.yml` it does
-   nothing). The rollout **stops at the first host that fails**.
+1. **One host at a time** by default. For batches, set `patch_serial` in the template's Variables
+   or the survey (`patch_serial: 10`; in `all.yml` it does nothing). The rollout **stops at the
+   first host that fails**: with batches, the rest of that batch finishes and no later batch starts.
 2. Refuses with less than `patch_min_free_mb` free in `/var`.
 3. **No automatic restarts** unless `automatic_restarts: true` (the survey or the template's
    Variables). Without it, a host that needs a reboot is listed ("reboot it by hand, or run again
@@ -970,6 +971,48 @@ packages never updated here). Then:
 
 Run it as **Job type: Check** first: it lists what would be updated and changes nothing
 ([DRY_RUNS.md](DRY_RUNS.md)).
+
+### Snapshot before patching
+
+With `patch_snapshot: true`, vCenter takes a snapshot named **`patching`** of each host's VM
+**right before that host is patched**: in each batch, the batch's snapshots, then the batch's
+updates. The snapshot is taken without memory (the VM keeps running), and its description records
+the host, the AAP job, the user and the time. Attach a **VMware vCenter** credential to the
+template as well as the Machine one ([VMWARE.md](VMWARE.md)).
+
+```yaml
+patch_serial: 10        # 10 hosts at a time
+patch_snapshot: true    # a snapshot "patching" of each VM before it is patched
+```
+
+**Each host's VM is found first, before any host is patched.** The first of these that finds a
+VM decides:
+
+1. The host variable `vmware_vm_name`: the VM's name in vCenter (when the names differ). Nothing
+   else is tried.
+2. A VM named like the host: `web01.yoursite.mil`, or `web01`.
+3. The VM whose guest host name (reported by VMware Tools) is the host's.
+4. The VM with the host's `ansible_host` address.
+
+The job then **stops before any host is patched** when:
+
+| The job says | What to do |
+|---|---|
+| `web01...: no VM by its name, guest host name (VMware Tools) or address` | set `vmware_vm_name` for it (in the inventory, on the host). A physical server: leave it out of the run, or `patch_snapshot_required: false` - then such a host is patched without a snapshot, and the job says so |
+| `web01 matches more than one VM (...)` | set `vmware_vm_name` for it |
+| `... still has the snapshot "patching" from ...` | the last patching's snapshot is still there. Delete it once that patching is proven, or run with `patch_snapshot_replace: true` (the old one is deleted, a new one taken) |
+| `attach a credential of type "VMware vCenter"` | the template has no vCenter credential |
+
+A snapshot that fails stops that host: it is **not** patched, and the rollout stops after its
+batch. The AAP hosts and the other protected groups are never patched, so they get no snapshot
+either. A dry run (*Check*) finds the VMs and says which snapshots it would take, but takes none.
+The job result shows each host's `snapshot:` line (`took "patching" of VM web01`).
+
+**Delete the snapshots** once the patching is proven, typically a few days later. A snapshot
+left in place keeps growing and slows the VM. Use the snapshot cleanup with
+`vm_snapshot_cleanup_name_words: [patching]`: it deletes the `patching` snapshots 5 days or older
+(`vm_snapshot_max_age_days`), after an approval ([VMWARE.md](VMWARE.md), "Snapshots"). A VM that
+still has one when the next patching starts stops that run, as above.
 
 **All settings** of this job, with their defaults: [patch](VARIABLES_REFERENCE.md#patch).
 

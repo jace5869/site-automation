@@ -1,0 +1,30 @@
+---
+# SNAPSHOT BEFORE PATCHING (roles/patch/tasks/snapshot_vms.yml, once before any host is patched): every VM and every
+# snapshot, read once; each host to patch (_patch_snap_hosts) matched to its VM (filter patch_vm_match). Output:
+# _patch_snap {vms, missing, twice, old, unread (the vCenters not read, with why), multi (several vCenters)}.
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | read every VM
+  site_vmware_vms:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _vm_read
+  check_mode: false
+
+- name: VMware | read the snapshots they have
+  site_vmware_snapshots:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    taken_by: false
+  register: _vm_snap_read
+  check_mode: false
+
+- name: VMware | each host's VM
+  ansible.builtin.set_fact:
+    _patch_snap: >-
+      {{ _patch_snap_hosts | patch_vm_match(hostvars, _vm_read.vms, _vm_snap_read.snapshots, patch_snapshot_name)
+         | combine({'unread': (_vm_read.vcenters + _vm_snap_read.vcenters) | selectattr('error') | map(attribute='error') | unique | list,
+                    'multi': _vm_read.vcenters | length > 1}) }}
