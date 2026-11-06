@@ -12,9 +12,10 @@ short_description: Check the DoD PKI's PKCS7 CA bundle against the copy in your 
 description:
   - Downloads the bundle (C(url) - the zip DISA publishes, a .p7b, or a file on the execution environment) and reads
     its CA certificates.
-  - "The zip's signed list of its files' SHA-256 (the .sha256 file, CMS signed by the DoD PKE code signing certificate)
-    is checked with the openssl command against the roots of C(current): DISA still signs it with SHA-1, which this
-    system's crypto policy may refuse (FIPS mode always does) - then it is said that the signature was not checked."
+  - "The zip's signed list of its files' SHA-256 (the .sha256 file, CMS signed by the DoD PKE code signing certificate):
+    its signature checked with the openssl command, its signer's certificate up to a root of C(current) by signature. DISA
+    still signs it with SHA-1, which this system's crypto policy may refuse (FIPS mode always does) - then it is said
+    that the signature was not checked."
   - Every CA certificate is checked by its signature up to a root of C(current) (no C(current) - the bundle's own roots,
     taken on trust). A root that is not in C(current) is listed; the CAs under it count only when DISA's signature on
     the list of files verified - else the check fails (compare that root's fingerprint with DISA's).
@@ -197,35 +198,60 @@ def root_of(c, pool, limit=8):
     return None
 
 
-def check_signature(files, sig_name, anchors_pem, work):
-    """DISA's signed list of SHA-256 -> (signature text, {file: sha256} or None)."""
+def signer_chain(signer, pool, anchor_der, limit=8):
+    """Up from the signer's certificate, by signature, through pool -> True when it reaches one of the anchors."""
+    cur = signer
+    for _ in range(limit):
+        if cur.public_bytes(Encoding.DER) in anchor_der:
+            return True
+        if cur.subject == cur.issuer:
+            return False                    # a root, not one of yours
+        nxt = next((x for x in pool if x.subject == cur.issuer and signed_by(cur, x)), None)
+        if nxt is None:
+            return False
+        cur = nxt
+    return False
+
+
+def check_signature(files, sig_name, anchors, work):
+    """DISA's signed list of SHA-256 -> (signature text, {file: sha256} or None). openssl checks the signature itself
+    (-noverify: openssl 3.0 does not use -certfile to build the signer's chain, 3.2 and later do); the signer's
+    certificate is then checked here, by signature, up to one of your roots through the zip's DoD_PKE_CA_chain.pem."""
     chain = next((n for n in files if os.path.basename(n).lower() == 'dod_pke_ca_chain.pem'), None)
     exe = shutil.which('openssl')
     if not exe:
         return 'not checked: no openssl command in this execution environment', None
-    for name, data in (('sig.der', files[sig_name]), ('anchors.pem', anchors_pem.encode()), ('sha1.cnf', SHA1_CNF.encode())):
+    for name, data in (('sig.der', files[sig_name]), ('sha1.cnf', SHA1_CNF.encode())):
         with open(os.path.join(work, name), 'wb') as fh:
             fh.write(data)
-    args = [exe, 'cms', '-verify', '-inform', 'DER', '-in', os.path.join(work, 'sig.der'), '-CAfile', os.path.join(work, 'anchors.pem'),
-            '-purpose', 'any', '-out', os.path.join(work, 'hashes.txt')]
-    if chain:
-        with open(os.path.join(work, 'chain.pem'), 'wb') as fh:
-            fh.write(files[chain])
-        args += ['-certfile', os.path.join(work, 'chain.pem')]
+    args = [exe, 'cms', '-verify', '-noverify', '-inform', 'DER', '-in', os.path.join(work, 'sig.der'),
+            '-signer', os.path.join(work, 'signer.pem'), '-out', os.path.join(work, 'hashes.txt')]
     r = subprocess.run(args, capture_output=True, text=True, env=dict(os.environ, OPENSSL_CONF=os.path.join(work, 'sha1.cnf')))
     err = (r.stderr or '').strip()
-    if r.returncode == 0:
-        hashes = {}
-        with open(os.path.join(work, 'hashes.txt'), errors='replace') as fh:
-            for line in fh:
-                m = re.match(r'([0-9a-fA-F]{64})\s+\*?(.+?)\s*$', line)
-                if m:
-                    hashes[m.group(2)] = m.group(1).lower()
-        return 'verified', hashes
-    if re.search(r'invalid digest|unsupported|disabled for FIPS|not allowed|ca md too weak|sha1', err, re.I):
-        return 'not checked: this system refuses SHA-1 signatures (FIPS mode or its crypto policy), and DISA signs the list with SHA-1', None
-    last = [ln for ln in err.splitlines() if ln.strip()]
-    return 'FAILED: %s' % (last[-1][:300] if last else 'openssl cms -verify rc %d' % r.returncode), None
+    if r.returncode != 0:
+        if re.search(r'invalid digest|unsupported|disabled for FIPS|not allowed|ca md too weak|sha1', err, re.I):
+            return 'not checked: this system refuses SHA-1 signatures (FIPS mode or its crypto policy), and DISA signs the list with SHA-1', None
+        last = [ln for ln in err.splitlines() if ln.strip()]
+        return 'FAILED: %s' % (last[-1][:300] if last else 'openssl cms -verify rc %d' % r.returncode), None
+    try:
+        with open(os.path.join(work, 'signer.pem'), 'rb') as fh:
+            signers, _ = certs_of(fh.read())
+    except (IOError, OSError):
+        signers = []
+    if not signers:
+        return 'FAILED: the list carries no signer certificate', None
+    pool = (certs_of(files[chain])[0] if chain else []) + list(anchors)
+    anchor_der = set(c.public_bytes(Encoding.DER) for c in anchors)
+    for c in signers:
+        if not signer_chain(c, pool, anchor_der):
+            return 'FAILED: signed by %s, which does not chain up to a root of yours' % c.subject.rfc4514_string(), None
+    hashes = {}
+    with open(os.path.join(work, 'hashes.txt'), errors='replace') as fh:
+        for line in fh:
+            m = re.match(r'([0-9a-fA-F]{64})\s+\*?(.+?)\s*$', line)
+            if m:
+                hashes[m.group(2)] = m.group(1).lower()
+    return 'verified', hashes
 
 
 def run(m):
@@ -303,7 +329,7 @@ def run(m):
         sig = next((n for n in files if n.lower().endswith('.sha256')), None)
         hashes = None
         if sig:
-            res['signature'], hashes = check_signature(files, sig, ''.join(c.public_bytes(Encoding.PEM).decode() for c in anchors), work)
+            res['signature'], hashes = check_signature(files, sig, anchors, work)
         else:
             res['signature'] = 'not checked: no signed .sha256 list with it (only the zip DISA publishes has one)'
         if hashes is not None:
