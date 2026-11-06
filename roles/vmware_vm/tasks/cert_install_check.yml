@@ -32,8 +32,8 @@
       - _vci_ritm is match('^RITM[0-9]+$')
       - _vci_sn | length > 0
     fail_msg: >-
-      {{ ('vmware_cert_install_ritm is "' ~ vmware_cert_install_ritm ~ '": a requested item\'s number, RITM and digits (e.g.
-      RITM0012345) - or empty for every request.') if _vci_ritm is not match('^RITM[0-9]+$') else
+      {{ ('vmware_cert_install_ritm is "' ~ vmware_cert_install_ritm ~ '": a requested item' ~ "'s number, RITM and digits (e.g.
+      RITM0012345) - or empty for every request.") if _vci_ritm is not match('^RITM[0-9]+$') else
       ('vmware_cert_install_ritm names ' ~ _vci_ritm ~ ', but the job has no ServiceNow connection: attach the "ServiceNow
       API" credential to this template.') }} Nothing was read.
     quiet: true

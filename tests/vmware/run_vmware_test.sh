@@ -2175,7 +2175,7 @@ cinst='{"vmware_cert_install_trust_check": false}'
 run "certificate install, check: no request named and the search off (the default) - refused, nothing read" fail \
     vmware_cert_install_check.yml -- "Which request? Give its number - vmware_cert_install_ritm"
 run "...a request number that is not one: refused" fail vmware_cert_install_check.yml -e vmware_cert_install_ritm=12345 \
-    -- 'vmware_cert_install_ritm is "12345": a requested item'
+    -- 'vmware_cert_install_ritm is ' '12345' ": a requested item's number"   # 2.16 prints the quotes as \"
 run "...a request ServiceNow does not have: said, nothing read in vCenter" fail vmware_cert_install_check.yml \
     -e vmware_cert_install_ritm=RITM9999999 -- "No requested item RITM9999999 in ServiceNow"
 run "...the cancelled request (Closed Skipped): said, nothing to install" ok vmware_cert_install_check.yml -e "$cinst" \
