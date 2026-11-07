@@ -46,7 +46,8 @@
       become: "{{ (_aaph_who.stdout | aap_health_sections).me.out | trim != aap_health_user }}"
       become_user: "{{ aap_health_user }}"
       environment:
-        XDG_RUNTIME_DIR: "/run/user/{{ (_aaph_who.stdout | aap_health_sections).passwd.out.split(':')[2] | default('') }}"
+        # no passwd line (the account is missing): '' - not an IndexError in the rescue
+        XDG_RUNTIME_DIR: "/run/user/{{ ((_aaph_who.stdout | aap_health_sections).passwd.out.split(':') + ['', '', ''])[2] }}"
       no_log: true                     # the inventory file holds passwords
       register: _aaph_inv
 

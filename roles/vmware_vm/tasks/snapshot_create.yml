@@ -12,6 +12,28 @@
       {{ awx_job_id | default(tower_job_id | default('local')) }}, {{ awx_user_name | default(tower_user_name | default(lookup('ansible.builtin.env', 'USER') or 'unknown')) }},
       {{ now(fmt='%Y-%m-%d %H:%M') }}]
 
+# vm_snapshot takes no second snapshot of a name a VM already has: it rewrites the old one's description (and
+# says "changed"). Read first: a VM that has one named so keeps it as it is, and the report says so.
+- name: VMware | the snapshots the VMs have now
+  site_vmware_snapshots:
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+    taken_by: false
+  register: _vm_snap_have
+  check_mode: false
+
+- name: VMware | every vCenter answered
+  ansible.builtin.assert:
+    that: _vm_snap_have.vcenters | selectattr('error') | list | length == 0
+    fail_msg: "No snapshot taken: {{ _vm_snap_have.vcenters | selectattr('error') | map(attribute='error') | join('; ') }}"
+    quiet: true
+
+- name: VMware | the VMs that already have a snapshot named {{ _vm_snap_name }}
+  ansible.builtin.set_fact:
+    _vm_snap_had: >-
+      {{ _vm_snap_have.snapshots | selectattr('name', 'equalto', _vm_snap_name) | map(attribute='moid') | unique | list }}
+
 - name: VMware | snapshot {{ _vm_snap_name }} (no memory)
   vmware.vmware.vm_snapshot:
     moid: "{{ item.moid }}"
@@ -26,6 +48,7 @@
   loop_control:
     label: "{{ item.name }}"
   register: _vm_snap
+  when: item.moid not in _vm_snap_had
 
 - name: VMware | done
   ansible.builtin.include_tasks: report.yml
@@ -35,6 +58,6 @@
       - >-
         {{ 'Would take' if ansible_check_mode else 'Took' }} snapshot "{{ _vm_snap_name }}" (no memory) of:
         {{ _vm_snap.results | selectattr('changed') | map(attribute='item.name') | join(', ') or 'none' }}.
-        {{ ('Already had a snapshot with that name (unchanged): ' ~ _vm_snap.results | rejectattr('changed') | map(attribute='item.name') | join(', '))
+        {{ ('Already had a snapshot with that name - kept as it is: ' ~ _vm_snap.results | rejectattr('changed') | map(attribute='item.name') | join(', '))
            if _vm_snap.results | rejectattr('changed') | list else '' }}
       - "Description: {{ _vm_snap_desc }}"

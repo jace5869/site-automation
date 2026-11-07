@@ -14,7 +14,8 @@
     backup_dir: "{{ check_trust_remove_backup_dir }}"
     blocklist_dir: "{{ check_trust_remove_blocklist_dir | default('', true) }}"
     update_cmd: "{{ check_trust_remove_update_cmd | default('', true) }}"
-    keystore_password: "{{ check_trust_keystore_password }}"
+    # the "Keystore password" credential (KEYSTORE_PASSWORD) when attached, else the setting (keytool's default)
+    keystore_password: "{{ lookup('ansible.builtin.env', 'KEYSTORE_PASSWORD') or check_trust_keystore_password }}"
     timeout: "{{ check_trust_timeout | int * 2 }}"
   register: _trust_removed
 

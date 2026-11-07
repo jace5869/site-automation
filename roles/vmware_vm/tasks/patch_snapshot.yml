@@ -21,7 +21,8 @@
   ansible.builtin.debug:
     msg: >-
       {{ inventory_hostname }}: {{ hostvars['localhost']._patch_snap.missing[inventory_hostname] | default('its VM was not found') }}.
-      Patched without a snapshot.
+      {{ ('vCenter(s) not read: ' ~ hostvars['localhost']._patch_snap.unread | join('; ') ~ ' - its VM may be there. ')
+         if hostvars['localhost']._patch_snap.unread | default([]) | length > 0 else '' }}Patched without a snapshot.
   when: _patch_vm | length == 0
 
 - name: VMware | delete the old snapshot "{{ patch_snapshot_name }}" of {{ _patch_vm.name | default('-') }} (patch_snapshot_replace)
@@ -58,12 +59,13 @@
   register: _patch_vm_snap
   when: _patch_vm | length > 0
 
-# vm_snapshot leaves a snapshot of that name alone (unchanged): an old one would then pass for the new one
+# vm_snapshot takes no second snapshot of that name: it rewrites the old one's description and says "changed" all
+# the same. Only a vCenter task (result) means a snapshot was taken - an old one must not pass for the new one.
 - name: VMware | a new snapshot was taken
   ansible.builtin.assert:
-    that: _patch_vm_snap is skipped or _patch_vm_snap is changed or (ansible_check_mode and _patch_vm_old | length > 0)
+    that: _patch_vm_snap is skipped or ansible_check_mode or _patch_vm_snap.result is defined
     fail_msg: >-
-      Not patched: {{ _patch_vm.name | default('-') }} already has a snapshot named "{{ patch_snapshot_name }}" (taken
+      Not patched: {{ _patch_vm.name | default('-') }} already had a snapshot named "{{ patch_snapshot_name }}" (taken
       after this job looked), so no new one was taken. Delete it, or run with patch_snapshot_replace: true.
     quiet: true
 

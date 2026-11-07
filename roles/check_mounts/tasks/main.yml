@@ -22,7 +22,7 @@
       fi
     done
     # local filesystems that are read-only although nothing in fstab asks for it
-    findmnt -n -r -o TARGET,FSTYPE,OPTIONS -t {{ check_mounts_local_types | join(',') }} 2>/dev/null |
+    findmnt -n -r -o TARGET,FSTYPE,OPTIONS -t {{ check_mounts_local_types | join(',') | quote }} 2>/dev/null |
     while read -r tgt fs opts; do
       case "$opts" in ro|ro,*) ;; *) continue;; esac
       t=$(printf '%b' "$tgt")
@@ -31,7 +31,7 @@
       fi
     done
     # network mounts: does each answer? how full is it?
-    findmnt -n -r -o TARGET,SOURCE -t {{ check_mounts_network_types | join(',') }} 2>/dev/null |
+    findmnt -n -r -o TARGET,SOURCE -t {{ check_mounts_network_types | join(',') | quote }} 2>/dev/null |
     while read -r tgt src; do
       t=$(printf '%b' "$tgt")
       if ! timeout -k 2 {{ check_mounts_timeout | int }} stat -f -c %T "$t" >/dev/null 2>&1; then

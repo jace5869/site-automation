@@ -254,6 +254,28 @@ class PanosModule(unittest.TestCase):
         self.assertNotIn("Half", m.run(self.p(action="export"), scheme="http")["config"])
         m.run(self.p(action="set", entries=entries[:1]), check_mode=True, scheme="http")   # a later load is not refused
 
+    def test_commit_outcome_unknown_is_never_reverted(self):
+        # the commit was handed to the firewall and its job could not be read: the running configuration may hold it -
+        # no revert (it would undo nothing there), and never "nothing committed"
+        import site_panos_api as m
+        xp = "/config/devices/entry[@name='localhost.localdomain']/deviceconfig/system"
+        before = m.run(self.p(action="export"), scheme="http")["config"]          # put back at the end: the fake is shared
+        orig = m.Pan.job
+
+        def lost(self_, root, what, job_timeout):
+            if what == "commit":
+                raise m.PanError("the commit job 7 did not finish within %d seconds" % job_timeout)
+            return orig(self_, root, what, job_timeout)
+        m.Pan.job = lost
+        try:
+            with self.assertRaisesRegex(m.PanError, "outcome could not be read.*running configuration may hold the change.*candidate was left"):
+                m.run(self.p(action="set", entries=[{"xpath": xp, "element": "<login-banner>Lost</login-banner>"}]), scheme="http")
+        finally:
+            m.Pan.job = orig
+        self.assertIn("Lost", m.run(self.p(action="export"), scheme="http")["config"])    # committed by the firewall, not undone
+        m.run(self.p(action="restore", config=before), scheme="http")
+        self.assertNotIn("Lost", m.run(self.p(action="export"), scheme="http")["config"])
+
     def test_check_mode_compares(self):
         import site_panos_api as m
         xp = "/config/devices/entry[@name='localhost.localdomain']/deviceconfig/system"

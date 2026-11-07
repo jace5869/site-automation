@@ -32,4 +32,4 @@
                                                                       | map('join', ': ') | join('; ')) }}
   vars:
     _su_bad: "{{ _su['items'] | default([]) | selectattr('state', 'in', ['rejected', 'error', 'bad', 'not as written', 'no grant']) | list }}"
-  when: _su.error | default('') or _su_bad | length > 0
+  when: (_su.error | default('') | length > 0) or _su_bad | length > 0

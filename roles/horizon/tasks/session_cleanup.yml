@@ -30,11 +30,12 @@
       {{ out }}
 
 # a session carries the user's SID only (older API versions): one look-up per user, for the report and
-# horizon_session_cleanup_exclude_users
+# horizon_session_cleanup_exclude_users. A name not read (unnamed) is left alone when that setting names users.
 - name: Horizon | the users' names
   ansible.builtin.include_tasks: read.yml
   vars:
     _hz_what: the names of {{ _hz_sids | length }} user(s)
+    _hz_optional: ['user:']
     _hz_resources: >-
       {%- set out = [] -%}
       {%- for sid in _hz_sids[:300] -%}{%- set _ = out.append({'name': 'ad_users', 'key': 'user:' ~ sid, 'id': sid}) -%}{%- endfor -%}
@@ -43,7 +44,10 @@
 
 - name: Horizon | the disconnected sessions to log off
   ansible.builtin.set_fact:
-    _hz_so: "{{ _hz_main | hz_sessions_old(_hz_session_opts | combine({'names': _hz.user_names if _hz_sids | length > 0 else {}})) }}"
+    _hz_so: >-
+      {{ _hz_main | hz_sessions_old(_hz_session_opts | combine({'names': _hz.user_names if _hz_sids | length > 0 else {},
+                                                                 'unnamed': (_hz.errors | dict2items | map(attribute='key') | select('match', '^user:')
+                                                                             | map('regex_replace', '^user:', '') | list) if _hz_sids | length > 0 else []})) }}
     _hz: "{{ _hz_main }}"
     _hz_all_results: []
 

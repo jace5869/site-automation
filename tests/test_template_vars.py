@@ -8,6 +8,7 @@ import glob
 import os
 import subprocess
 import sys
+import unittest
 
 import yaml
 
@@ -52,6 +53,12 @@ def main():
         return 1
     print("ok: aap/extra_vars up to date, %d files valid as they are and with every setting switched on" % len(files))
     return 0
+
+
+class TemplateVars(unittest.TestCase):
+    """unittest discover runs the same checks as one test (python3 tests/test_template_vars.py prints them)."""
+    def test_extra_vars_up_to_date_and_valid(self):
+        self.assertEqual(main(), 0)
 
 
 if __name__ == "__main__":

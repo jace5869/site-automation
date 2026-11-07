@@ -178,6 +178,26 @@ def _protected(pool, opts):
     return bool(pool) and (_match(pool["name"], opts.get("protected_pools")) or _match(pool["display"], opts.get("protected_pools")))
 
 
+def _pool_hold(pool, pool_id, opts):
+    """Why a desktop or session is left alone for its pool -> the reason, or "": the pool is protected, or it is
+    not among the pools Horizon gave (then horizon_protected_pools cannot be checked - never act on it)."""
+    if pool:
+        return ("pool %s is protected (horizon_protected_pools)" % pool["name"]) if _protected(pool, opts) else ""
+    if pool_id:
+        return "its pool %s is not among the pools Horizon gave: whether it is protected is not known" % pool_id
+    return ""
+
+
+def _same_domain(a, b):
+    """CORP, corp.example.mil and CORP.EXAMPLE.MIL name the same domain."""
+    a, b = str(a or "").lower(), str(b or "").lower()
+    return a == b or a.split(".")[0] == b.split(".")[0]
+
+
+def _is_sid(text):
+    return bool(re.match(r"^S-1-\d+(-\d+)+$", str(text or "").strip(), re.I))
+
+
 def hz_desktops(data, opts=None):
     """The broken desktops -> {fix: [...], held: [...], by_state, total, report}. A desktop is held back (never
     fixed automatically) when: its pool is protected, it is excluded, a user's session is on it (connected or
@@ -199,10 +219,11 @@ def hz_desktops(data, opts=None):
         item = {"id": m["id"], "name": m["name"], "pool": pool["name"] if pool else m["pool_id"], "pool_id": m["pool_id"],
                 "state": m["state"], "action": action, "reason": ""}
         on = _sessions_on(data, m["id"])
+        hold = _pool_hold(pool, m["pool_id"], o)
         if action not in MACHINE_ACTIONS:
             item["reason"] = "its action %s is not one of %s (horizon_fix_actions)" % (action, ", ".join(MACHINE_ACTIONS))
-        elif _protected(pool, o):
-            item["reason"] = "pool %s is protected (horizon_protected_pools)" % item["pool"]
+        elif hold:
+            item["reason"] = hold
         elif _match(m["name"], o.get("exclude_machines")):
             item["reason"] = "the desktop is excluded (horizon_fix_exclude_machines)"
         elif on or m["session_id"]:
@@ -238,8 +259,9 @@ def hz_desktops(data, opts=None):
 
 def hz_desktops_recheck(approved, data, opts=None):
     """After the approval: each approved desktop again, as Horizon has it now -> {act: [...], skipped: [...]}.
-    Fixed only when it is still broken, no session is on it, its pool is not protected, and the action is the
-    approved one."""
+    Every check of hz_desktops again, on what Horizon says now (the desktop may have moved, been assigned or
+    taken since): still broken, no session on it, the pool it is in now not protected, not excluded, recover
+    only on instant clones, remove only while no user is assigned - and the action is the approved one."""
     o = opts or {}
     broken = [str(s).upper() for s in (_list(o.get("broken_states")) or BROKEN_STATES)]
     cap = _int(o.get("max"), 20)
@@ -249,29 +271,40 @@ def hz_desktops_recheck(approved, data, opts=None):
     for a in (approved or {}).get("desktops") or []:
         item = dict(a)
         m = now.get(str(a.get("id")))
-        pool = pools.get(str(a.get("pool_id")))
+        pool = pools.get(m["pool_id"]) if m else None          # the pool it is in now, not the approved record's
+        action = str(item.get("action") or "").lower()
+        hold = _pool_hold(pool, m["pool_id"], o) if m else ""
         if not m:
             item["reason"] = "no longer in Horizon"
         elif m["state"] not in broken:
             item["reason"] = "it is %s now: it recovered by itself" % m["state"]
         elif _sessions_on(data, m["id"]) or m["session_id"]:
             item["reason"] = "a user's session is on it now"
-        elif _protected(pool, o):
-            item["reason"] = "pool %s is protected (horizon_protected_pools)" % item.get("pool")
-        elif item.get("action") not in MACHINE_ACTIONS:
+        elif hold:
+            item["reason"] = hold
+        elif _match(m["name"], o.get("exclude_machines")):
+            item["reason"] = "the desktop is excluded (horizon_fix_exclude_machines)"
+        elif action not in MACHINE_ACTIONS:
             item["reason"] = "its action %s is not one the job runs" % item.get("action")
+        elif action == "recover" and not (pool and pool["source"] in INSTANT):
+            item["reason"] = "recover is for instant clones, and pool %s is not" % (pool["name"] if pool else item.get("pool"))
+        elif action == "remove" and m["users"]:
+            item["reason"] = "it is assigned to a user now - remove would take their desktop away"
         elif len(act) >= cap:
             item["reason"] = "over horizon_fix_max (%d per run)" % cap
         else:
             item["state"] = m["state"]
+            if pool:
+                item["pool"], item["pool_id"] = pool["name"], m["pool_id"]
         (skipped if item.get("reason") else act).append(item)
     return {"act": act, "skipped": skipped}
 
 
 def hz_sessions_old(data, opts=None):
     """The disconnected sessions to log off -> {logoff: [...], held: [...], recent, report}: disconnected for at
-    least `hours`; held back: a protected or excluded pool, an excluded user, the time it was disconnected
-    unknown, over the cap."""
+    least `hours`; held back: a protected or excluded pool, a pool not among those read, an excluded user, a
+    user whose name could not be read while `exclude_users` names users (opts `unnamed`: their SIDs), the time
+    it was disconnected unknown, over the cap."""
     o = opts or {}
     hours = float(o.get("hours") or 8)
     cap = _int(o.get("max"), 100)
@@ -280,6 +313,8 @@ def hz_sessions_old(data, opts=None):
     names.update(o.get("names") or {})
     pools = dict((p["id"], p) for p in data.get("pools") or [])
     machines = data.get("machine_names") or {}
+    excl_user = [str(x).lower() for x in _list(o.get("exclude_users"))]
+    unnamed = set(str(x) for x in _list(o.get("unnamed"))) if any(not _is_sid(x) for x in excl_user) else set()
     out, held, recent = [], [], 0
     disc = [s for s in data.get("sessions") or [] if s["state"] == "DISCONNECTED"]
     for s in sorted(disc, key=lambda x: x["disconnected_ms"] or 0):
@@ -295,14 +330,18 @@ def hz_sessions_old(data, opts=None):
         if h is not None and h < hours:
             recent += 1
             continue
-        excl_user = [str(x).lower() for x in _list(o.get("exclude_users"))]
         short = user.split("\\")[-1].lower()
+        hold = _pool_hold(pool, s["pool_id"], o)
         if h is None:
             item["reason"] = "when it was disconnected is not known"
-        elif _protected(pool, o) or (pool and _match(pool["name"], o.get("exclude_pools"))):
+        elif hold and not pool:
+            item["reason"] = hold
+        elif hold or (pool and _match(pool["name"], o.get("exclude_pools"))):
             item["reason"] = "pool %s is excluded (horizon_protected_pools, horizon_session_cleanup_exclude_pools)" % item["pool"]
         elif s["user_id"].lower() in excl_user or user.lower() in excl_user or short in excl_user:
             item["reason"] = "the user is excluded (horizon_session_cleanup_exclude_users)"
+        elif s["user_id"] in unnamed:
+            item["reason"] = "the user's name could not be read, and horizon_session_cleanup_exclude_users names users"
         elif len(out) >= cap:
             item["reason"] = "over horizon_session_cleanup_max (%d per run): the next run takes it" % cap
         (held if item["reason"] else out).append(item)
@@ -331,11 +370,15 @@ def _norm_user(text):
 
 def hz_user(data, who):
     """One user's sessions and desktops -> {sid, login, name, sessions, machines, problems}. who: a login name,
-    DOMAIN\\user, user@domain, or a SID."""
+    DOMAIN\\user, user@domain, or a SID. A domain given counts: LAB\\jdoe is never CORP\\jdoe. When Horizon's
+    AD user search did not answer at all (data errors), the user is a problem, not a guess by a session's name."""
     who = str(who or "").strip()
     login, dom = _norm_user(who)
     problems, sid, rec = [], "", {}
-    if re.match(r"^S-1-\d+(-\d+)+$", who, re.I):
+    errors = data.get("errors") or {}
+    ad_keys = [k for k in data.get("raw") or {} if k == "ad_users" or k.startswith("ad_users:") or k.startswith("user:")]
+    ad_down = bool(ad_keys) and all(k in errors for k in ad_keys)
+    if _is_sid(who):
         sid = who
         rec = next((u for u in data.get("users") or [] if u["id"].lower() == sid.lower()), {})
     elif not login:
@@ -344,9 +387,11 @@ def hz_user(data, who):
         rows = [u for u in data.get("users") or [] if not u["group"] and login.lower() in
                 (u["login"].lower(), u["upn"].split("@")[0].lower(), u["upn"].lower(), u["email"].lower())]
         if dom:
-            d = dom.lower()
-            rows = [u for u in rows if not u["domain"] or u["domain"].lower() in (d, d.split(".")[0])
-                    or u["domain"].lower().split(".")[0] == d.split(".")[0]] or rows
+            known = sorted(set("%s\\%s" % (u["domain"], u["login"]) for u in rows if u["domain"]))
+            rows = [u for u in rows if not u["domain"] or _same_domain(u["domain"], dom)]
+            if not rows and known:
+                problems.append("No user %s in domain %s - Horizon knows %s: write the domain as Horizon has it"
+                                % (login, dom, ", ".join(known)))
         uniq = dict((u["id"], u) for u in rows if u["id"])
         if len(uniq) == 1:
             rec = list(uniq.values())[0]
@@ -358,9 +403,14 @@ def hz_user(data, who):
     mach = dict((m["id"], m) for m in data.get("machines") or [])
     if sid:
         sess = [s for s in data.get("sessions") or [] if s["user_id"].lower() == sid.lower()]
+    elif login and not problems and ad_down:
+        sess = []
+        problems.append("Horizon's AD user search did not answer (%s): nothing is done on the name alone"
+                        % "; ".join(str(errors[k]) for k in ad_keys))
     elif login and not problems:
-        # no AD record: a session that carries the user name (newer API versions) still finds it
-        sess = [s for s in data.get("sessions") or [] if s["user"] and _norm_user(s["user"])[0].lower() == login.lower()]
+        # no AD record: a session that carries the user name (newer API versions) still finds it - in that domain
+        sess = [s for s in data.get("sessions") or [] if s["user"] and _norm_user(s["user"])[0].lower() == login.lower()
+                and (not dom or not _norm_user(s["user"])[1] or _same_domain(_norm_user(s["user"])[1], dom))]
         if not sess:
             problems.append("Horizon knows no user %s (the AD users it can see), and no session carries that name" % who)
     else:
@@ -389,15 +439,21 @@ def hz_user(data, who):
 def hz_user_targets(user, action, data, opts=None):
     """What the user-help action acts on -> {target, verb, ids, targets, held}: logoff - all their sessions;
     disconnect - their connected ones; reset / restart / recover - their desktops, never one where another user
-    has a session, nor one in a protected pool; recover only on instant clones."""
+    has a session; recover only on instant clones. Never a session or desktop in a protected pool, nor in a
+    pool not among those read."""
     o = opts or {}
     a = str(action or "look").lower()
     out = {"target": "", "verb": "", "ids": [], "targets": [], "held": []}
     if a in ("look", "", "none"):
         return out
+    pools = dict((p["id"], p) for p in data.get("pools") or [])
     if a in ("logoff", "disconnect"):
         out.update(target="sessions", verb=a)
         for s in user.get("sessions") or []:
+            hold = _pool_hold(pools.get(s["pool_id"]), s["pool_id"], o)
+            if hold:
+                out["held"].append({"name": "%s session on %s" % (s["state"].lower(), s["machine"]), "reason": hold})
+                continue
             if a == "disconnect" and s["state"] != "CONNECTED":
                 out["held"].append({"name": s["machine"], "reason": "it is %s, not connected" % s["state"].lower()})
                 continue
@@ -405,13 +461,13 @@ def hz_user_targets(user, action, data, opts=None):
             out["targets"].append({"id": s["id"], "name": "%s session on %s" % (s["state"].lower(), s["machine"])})
         return out
     out.update(target="machines", verb=a)
-    pools = dict((p["id"], p) for p in data.get("pools") or [])
     for m in user.get("machines") or []:
         pool = pools.get(m["pool_id"])
+        hold = _pool_hold(pool, m["pool_id"], o)
         if m["others"]:
             why = "another user has a session on it"
-        elif _protected(pool, o):
-            why = "pool %s is protected (horizon_protected_pools)" % m["pool"]
+        elif hold:
+            why = hold
         elif a == "recover" and not (pool and pool["source"] in INSTANT):
             why = "recover is for instant clones; pool %s is not" % m["pool"]
         else:

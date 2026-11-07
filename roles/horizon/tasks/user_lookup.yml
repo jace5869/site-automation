@@ -13,7 +13,9 @@
   ansible.builtin.include_tasks: read.yml
   vars:
     _hz_what: "{{ _hz_who }}, the pools, desktops and sessions"
-    # Horizon's AD user search, by login name (and by name, which older API versions take instead)
+    # Horizon's AD user search, by login name (and by name, which older API versions take instead): hz_user
+    # says when neither answered - the pools, desktops and sessions must be complete
+    _hz_optional: ['ad_users:', 'user:']
     _hz_resources: >-
       {{ [{'name': 'desktop_pools'}, {'name': 'machines'}, {'name': 'sessions'}, {'name': 'farms'}]
          + ([{'name': 'ad_users', 'key': 'user:' ~ _hz_who | trim, 'id': _hz_who | trim}] if _hz_is_sid | bool else

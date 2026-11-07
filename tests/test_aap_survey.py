@@ -74,6 +74,35 @@ class SetChoices(unittest.TestCase):
                       m.set_choices(spec, "nope", ["a"])[1])
 
 
+class Redirects(unittest.TestCase):
+    """A redirect from AAP's address is an answer, not a path: the login must never travel on to where it points."""
+    def test_not_followed(self):
+        from http.server import BaseHTTPRequestHandler
+        got = []
+
+        class Bounce(BaseHTTPRequestHandler):
+            def do_GET(self):
+                got.append(dict(self.headers))
+                self.send_response(302)
+                self.send_header("Location", "http://127.0.0.1:1/sso/login")
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), Bounce)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            env = {"CONTROLLER_HOST": "http://127.0.0.1:%d" % srv.server_port, "CONTROLLER_OAUTH_TOKEN": "t0ken"}
+            code, data = _aap.Api(_aap.connection(env)).call("GET", "ping/")
+        finally:
+            srv.shutdown()
+            srv.server_close()
+        self.assertEqual(code, 302)
+        self.assertIn("redirect to http://127.0.0.1:1/sso/login, not followed", data["detail"])
+        self.assertEqual(len(got), 1)                        # one request, to AAP's address only
+
+
 class AgainstFakeAap(unittest.TestCase):
     def setUp(self):
         os.environ.pop("AAPMOCK_SURVEY_FAIL", None)

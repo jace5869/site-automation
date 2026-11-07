@@ -21,7 +21,7 @@
   register: _cat_search
   failed_when: false
   check_mode: false             # only reads
-  when: cert_renew_catalog_item | default('', true) and cert_renew_catalog_item is not match('^[0-9a-f]{32}$')
+  when: (cert_renew_catalog_item | default('', true) | string | trim | length > 0) and cert_renew_catalog_item is not match('^[0-9a-f]{32}$')
 
 - name: Catalog | the item's sys_id
   ansible.builtin.set_fact:

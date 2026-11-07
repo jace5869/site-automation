@@ -34,6 +34,9 @@
       {%-     set _ = out.append(h ~ ': NO VM - ' ~ _patch_snap.missing[h] ~ ('' if patch_snapshot_required | bool else ' (patched without a snapshot: patch_snapshot_required is false)')) -%}
       {%-   endif -%}
       {%- endfor -%}
+      {%- if _patch_snap.unread -%}
+      {%-   set _ = out.append('vCenter(s) NOT read - a VM there is not found: ' ~ _patch_snap.unread | join('; ')) -%}
+      {%- endif -%}
       {{ out or ['No host to patch.'] }}
 
 - name: Patch | every host has its VM, and no old snapshot "{{ patch_snapshot_name }}" is in the way

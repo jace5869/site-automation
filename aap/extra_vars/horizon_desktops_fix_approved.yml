@@ -53,6 +53,9 @@
 ## fix at most this many desktops per run: the rest are listed, the next run takes them
 # horizon_fix_max: 20
 
+## desktops never fixed automatically: names, * and ? allowed (e.g. [W11-TEST-*])
+# horizon_fix_exclude_machines: []
+
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no
 ## email. Set it on each TEMPLATE (its Variables, or a survey): in all.yml every report job emails.

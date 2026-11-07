@@ -25,6 +25,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import ast
+import calendar
 import fnmatch
 import json
 import re
@@ -843,7 +844,7 @@ def _pct(used, total):
 
 def _age_hours(iso, now):
     try:
-        t = time.mktime(time.strptime(str(iso)[:19], "%Y-%m-%dT%H:%M:%S")) - time.timezone
+        t = calendar.timegm(time.strptime(str(iso)[:19], "%Y-%m-%dT%H:%M:%S"))      # UTC in, UTC out (mktime would add the controller's DST)
         return round(max(now - t, 0) / 3600.0, 1)
     except (TypeError, ValueError, OverflowError):
         return None

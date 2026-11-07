@@ -416,6 +416,8 @@ certificate install - check / approved*. **A request opened by hand:** a workflo
 renewal's own; the schedule leaves it empty. Everything else - what stays for a person, the restore:
 [CERT_INSTALL.md](CERT_INSTALL.md).
 
+(There is no workflow 35: the number was skipped, and the ones after it keep their numbers.)
+
 ### 36. fapolicyd, with an approval (daily)
 
 ```workflow

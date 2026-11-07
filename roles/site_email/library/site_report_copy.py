@@ -100,15 +100,16 @@ def last_copy(api, template_id, job_id):
 
 
 def kept(api, j, out, warnings):
-    """The reports job j kept (its artifact site_report_page), each checked: appended to out."""
+    """The reports job j kept (its artifact site_report_page), each checked: appended to out. False when the job could
+    not be read (AAP did not answer 200 for it): the next run must look at it again."""
     c, d = api.call("GET", "jobs/%d/" % j["id"])
     if c != 200:
-        warnings.append("job %s: AAP answered HTTP %d for it: %s" % (j["id"], c, error_text(d)))
-        return
+        warnings.append("job %s: AAP answered HTTP %d for it: %s - the next run looks at it again" % (j["id"], c, error_text(d)))
+        return False
     art = d.get("artifacts") if isinstance(d.get("artifacts"), dict) else {}
     packed = art.get("site_report_page")
     if packed is None:
-        return
+        return True
     for text in packed if isinstance(packed, list) else [packed]:
         name = str(d.get("name") or (d.get("summary_fields") or {}).get("job_template", {}).get("name") or "")
         try:
@@ -119,6 +120,7 @@ def kept(api, j, out, warnings):
         out.append({"job": j["id"], "template": str(doc["data"].get("template") or name), "finished": str(d.get("finished") or ""),
                     "status": str(d.get("status") or ""), "when": str(doc["data"].get("when") or ""), "packed": text,
                     "url": str(doc.get("url") or ""), "page": str(doc["files"].get("page") or "")})
+    return True
 
 
 def find(api, p, now):
@@ -144,7 +146,7 @@ def find(api, p, now):
         start = now - datetime.timedelta(hours=max(1, p["hours"]))
     seen = set(seen)
     path = "jobs/?finished__gt=%s&status__in=%s&job_type=run&order_by=finished,id&page_size=200" % (iso(start), DONE)
-    looked, last, looked_at, more = 0, None, [], False
+    looked, last, looked_at, more, unread = 0, None, [], False, []
     for _ in range(200):
         code, data = api.call("GET", path)
         if code != 200:
@@ -164,15 +166,21 @@ def find(api, p, now):
             if j["id"] in seen or (p["template_id"] and j.get("job_template") == p["template_id"]):
                 continue
             looked += 1
-            kept(api, j, out, warnings)
+            if not kept(api, j, out, warnings):
+                unread.append((j["id"], fin))
         if more or not data.get("next"):
             break
         path = _path_after(api, data["next"])
     if last is None:                                     # nothing finished since: the next run starts at the same place
         last = parse_time(until) if until else start
+    # a job AAP did not answer for is not passed over: the next run starts no later than it, and it is not "seen"
+    bad = set(i for i, _ in unread)
+    fins = [fin for _, fin in unread if fin is not None]
+    if fins and last > min(fins):
+        last = min(fins)
     edge = last - datetime.timedelta(minutes=max(0, p["overlap_minutes"]))
     # nothing listed: the same place as before, so the same jobs seen
-    near = sorted(i for i, fin in looked_at if fin is not None and fin >= edge) if looked_at else sorted(seen)
+    near = sorted(i for i, fin in looked_at if fin is not None and fin >= edge and i not in bad) if looked_at else sorted(seen)
     out.sort(key=lambda r: (r["when"], r["job"]))
     return {"reports": out, "warnings_text": warnings, "since": iso(start), "until": iso(last), "seen": near, "more": more,
             "looked": looked}

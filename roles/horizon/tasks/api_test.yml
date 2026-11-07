@@ -40,6 +40,7 @@
   vars:
     _hz_what: the pools and desktops
     _hz_resources: [desktop_pools, machines]
+    _hz_tolerate: true           # the test itself says what each path answers
 
 - name: Horizon API test | the settings
   ansible.builtin.set_fact:

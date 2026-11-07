@@ -357,7 +357,8 @@ function Read-Java([string] $f) {
         # PKCS12 (JDK 18 and later): keytool lists it, matched by the fingerprints it prints
         $kt = Get-Keytool $f
         if (-not $kt) { Skip 'java' $f 'not a JKS keystore, and no keytool next to it to read it'; return }
-        $r = Invoke-Native $kt @('-list', '-keystore', $f, '-storepass', $keystorePassword)
+        $env:SITE_KS_PW = $keystorePassword     # keytool reads it from its environment: never on the command line
+        $r = Invoke-Native $kt @('-list', '-keystore', $f, '-storepass:env', 'SITE_KS_PW')
         if ($r.Code -ne 0) { Skip 'java' $f ('keytool could not list it: ' + (($r.Out | Select-Object -First 2) -join ' ')); return }
         $hits = @(); $n = 0; $seen = @{}; $alias = ''; $aliases = @{}
         foreach ($l in @($r.Out)) {
@@ -470,7 +471,8 @@ function Remove-FromJava($rec) {
     }
     $errors = @()
     foreach ($a in $aliases) {
-        $r = Invoke-Native $kt @('-delete', '-alias', $a, '-keystore', [string]$rec.where, '-storepass', $keystorePassword)
+        $env:SITE_KS_PW = $keystorePassword
+        $r = Invoke-Native $kt @('-delete', '-alias', $a, '-keystore', [string]$rec.where, '-storepass:env', 'SITE_KS_PW')
         if ($r.Code -ne 0) { $errors += @($a + ': ' + (($r.Out | Select-Object -First 1) -join ' ')) }
     }
     Add-Action $rec $action $names ($errors.Count -eq 0) $file ($errors -join '; ')

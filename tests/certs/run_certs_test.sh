@@ -16,10 +16,12 @@ set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 if [ "${1:-}" != "--inside" ]; then
+    # a skip is a pass only on a developer's machine: in CI (CI=true) the test must run, or the step fails
+    skip() { if [ "${CI:-}" = true ]; then echo "FAIL - cannot run in CI: $1"; exit 1; fi; echo "ok   - SKIPPED: $1"; exit 0; }
     if ! unshare -rnp --fork --mount-proc true 2>/dev/null; then
-        echo "ok   - SKIPPED: unprivileged namespaces are not allowed here (unshare -rnp)"; exit 0
+        skip "unprivileged namespaces are not allowed here (unshare -rnp)"
     fi
-    command -v keytool >/dev/null || { echo "ok   - SKIPPED: no keytool (a Java JDK) here"; exit 0; }
+    command -v keytool >/dev/null || skip "no keytool (a Java JDK) here"
     exec unshare -rnp --fork --mount-proc bash "$0" --inside
 fi
 ap="${ANSIBLE_PLAYBOOK:-ansible-playbook}"

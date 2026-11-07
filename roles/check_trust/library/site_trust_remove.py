@@ -70,9 +70,11 @@ NOT_REMOVABLE = {
 SYSTEM_JAVA = ("/etc/pki/ca-trust/", "/etc/pki/java/", "/etc/ssl/certs/java/", "/var/lib/ca-certificates/")
 
 
-def run(args, timeout, cwd=None):
+def run(args, timeout, cwd=None, env=None):
+    """env: variables added to the child's environment only (a password keytool reads with -storepass:env)."""
     try:
-        p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
+        p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd,
+                             env=dict(os.environ, **env) if env else None)
     except OSError as e:
         return 127, b"", str(e).encode("utf-8")
     try:
@@ -347,8 +349,11 @@ class Remover(object):
         kt = self.m.get_bin_path("keytool")
         if not kt:
             return self.leave(store, "not a JKS keystore and no keytool on this host: keytool -delete by hand")
-        pw = self.p["keystore_password"]
-        rc, out, err = run([kt, "-list", "-keystore", path, "-storepass", pw], self.timeout)
+        # the password reaches keytool in its own environment only (-storepass:env): never on the command line,
+        # which ps and the execve audit records show
+        env = {"SITE_KS_PW": self.p["keystore_password"]}
+        store = ["-keystore", path, "-storepass:env", "SITE_KS_PW"]
+        rc, out, err = run([kt, "-list"] + store, self.timeout, env=env)
         if rc != 0:
             return self.leave(store, "keytool could not open it: %s" % err.decode("utf-8", "replace").strip()[:150])
         gone, names = [], set()
@@ -371,7 +376,7 @@ class Remover(object):
         for a in gone:
             if self.check:
                 continue
-            rc, _, err = run([kt, "-delete", "-alias", a, "-keystore", path, "-storepass", pw], self.timeout)
+            rc, _, err = run([kt, "-delete", "-alias", a] + store, self.timeout, env=env)
             if rc != 0:
                 errors.append("%s: %s" % (a, err.decode("utf-8", "replace").strip()[:120]))
         self.act(store, "deleted the entries %s with keytool - restart the Java services that use it (a running JVM keeps the old trust until it restarts)" % ", ".join(gone), sorted(names), done=not errors, backup=backup,

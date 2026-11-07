@@ -72,6 +72,12 @@ class PanError(Exception):
         self.details = details      # said after "... nothing committed, the candidate reverted: "
 
 
+class CommitUnknown(PanError):
+    """The commit was handed to the firewall and its outcome could not be read (the job poll timed out or the answer
+    was lost): the running configuration may hold it. Never reverted - a revert undoes nothing on the running
+    configuration and would lose the candidate - and never said to be "nothing committed"."""
+
+
 
 class Pan(object):
     def __init__(self, host, port=443, api_key=None, username=None, password=None, validate_certs=True,
@@ -167,9 +173,21 @@ class Pan(object):
     def validate(self, job_timeout):
         return self.job(self.op("<validate><full></full></validate>"), "validate", job_timeout)
 
-    def commit(self, description, job_timeout):
+    def commit_start(self, description):
+        """Hand the commit to the firewall -> its answer (the job). An error here: nothing was committed."""
         cmd = "<commit>%s</commit>" % (("<description>%s</description>" % xml_escape(description)) if description else "")
-        return self.job(self.call({"type": "commit", "cmd": cmd}), "commit", job_timeout)
+        return self.call({"type": "commit", "cmd": cmd})
+
+    def commit_wait(self, root, job_timeout):
+        """Wait for the commit job. An error here: the outcome is not known (CommitUnknown)."""
+        job = root.findtext("./result/job") or ""
+        try:
+            return self.job(root, "commit", job_timeout)
+        except PanError as e:
+            raise CommitUnknown("the commit was handed to the firewall (job %s) but its outcome could not be read: %s" % (job.strip() or "?", e))
+
+    def commit(self, description, job_timeout):
+        return self.commit_wait(self.commit_start(description), job_timeout)
 
     def revert(self):
         try:
@@ -288,6 +306,9 @@ def run(p, check_mode=False, scheme="https"):
             out["commit"] = pan.commit(p.get("description") or "", jt)
             if out["commit"]["result"] != "OK":
                 raise PanError("the commit failed", "; ".join(out["commit"]["details"]))
+    except CommitUnknown as err:
+        raise PanError("%s. The running configuration may hold the change: look at the firewall's commit jobs (Tasks) and its "
+                       "running configuration before loading again; the candidate was left as it is" % err)
     except PanError as err:
         reverted = pan.revert()
         raise PanError("%s - nothing committed%s%s" % (err, ", the candidate reverted" if reverted else

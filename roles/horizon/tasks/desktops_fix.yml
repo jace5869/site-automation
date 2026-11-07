@@ -1,9 +1,10 @@
 ---
 # Job 2 of the broken desktops workflow (playbooks/horizon_desktops_fix_approved.yml), after the approval.
 # AAP hands it the check job's list (horizon_desktops_fix, set_stats in desktops_check.yml). Each desktop is
-# read again first and fixed only when it is still broken, no session is on it and its pool is not
-# protected - with exactly the approved action. It refuses to run on its own (outside the workflow nothing
-# was approved). A dry run (Check) says what it would do.
+# read again first, and every check of the check job is made again on what Horizon says now: still broken,
+# no session on it, the pool it is in now not protected, not excluded, recover only on instant clones,
+# remove only while no user is assigned - with exactly the approved action. It refuses to run on its own
+# (outside the workflow nothing was approved). A dry run (Check) says what it would do.
 - name: Horizon | the approved list came from the check job
   ansible.builtin.assert:
     that:
@@ -25,7 +26,8 @@
 - name: Horizon | each approved desktop, as it is now
   ansible.builtin.set_fact:
     _hz_rc: "{{ horizon_desktops_fix | hz_desktops_recheck(_hz, {'protected_pools': horizon_protected_pools,
-                                                                         'broken_states': horizon_broken_states, 'max': horizon_fix_max | int}) }}"
+                                                                         'broken_states': horizon_broken_states, 'max': horizon_fix_max | int,
+                                                                         'exclude_machines': horizon_fix_exclude_machines}) }}"
     _hz_all_results: []
 
 - name: Horizon | fix them, one action at a time

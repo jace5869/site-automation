@@ -123,6 +123,12 @@ Create one template per row: **Inventory** any (the jobs run on the AAP side, ag
 The protected pools, `horizon_protected_pools` (e.g. `[VIP-*]`), belong in
 `playbooks/group_vars/all.yml`. No job fixes, logs off or pushes an image to those pools.
 
+Every acting job reads first and stops, before any action, when Horizon did not give a part in
+full (a refused or failed page, for example): with half the pools or sessions, the protected pools
+cannot be checked. The job says `Nothing was changed: Horizon did not give ...`; run it again. A
+desktop or session whose pool is not among the pools read is left alone, with that reason. The
+health report and the API test go on and say what is missing.
+
 ## Workflow: fix broken desktops, with an approval
 
 ```workflow
@@ -151,9 +157,11 @@ What happens:
   `NEEDS APPROVAL: 3 broken desktop(s) to fix - w11-004 (AGENT_UNREACHABLE: recover), ...`
   and hands the list to the next steps (`set_stats horizon_desktops_fix`). The approver reads it
   and approves or denies.
-- **After the approval**, the fix job reads each desktop again. It fixes a desktop only when it is
-  still broken, no session is on it and its pool is not protected, with exactly the approved action.
-  A desktop that recovered meanwhile is left alone, and the report says so.
+- **After the approval**, the fix job reads each desktop again and makes every check of the check
+  job again on what Horizon says now: still broken, no session on it, the pool it is in now not
+  protected, not excluded, recover only on instant clones, remove only while no user is assigned -
+  with exactly the approved action. A desktop that recovered, moved or was assigned meanwhile is
+  left alone, and the report says so.
 
 A check that fails for another reason, a refused login for example, also takes the "Run on fail"
 path. Its approval then shows no NEEDS APPROVAL line, and the fix job refuses with
@@ -238,8 +246,11 @@ Then, with `horizon_user_action`:
 - **restart**: their desktops; the OS shuts down first
 - **recover**: their instant-clone desktops, made again from the image
 
-It never acts on a desktop another user has a session on, nor on one in a protected pool. A user
-with no session and no desktop is usually not entitled to a pool: the job says where to look.
+It never acts on a desktop another user has a session on, nor on a desktop or session in a
+protected pool. The domain counts: `LAB\jdoe` is never `CORP\jdoe` - when Horizon knows no such
+user in that domain, the job says which domains have one. When Horizon's AD user search does not
+answer, the job stops rather than guess by the name a session carries. A user with no session and
+no desktop is usually not entitled to a pool: the job says where to look.
 
 ## Session cleanup
 

@@ -23,6 +23,16 @@
   check_mode: false
   when: (check_services_required + check_services_required_extra) | length > 0
 
+# systemctl that could not answer (its bus down, a broken systemd) is not "no failed unit": the check fails,
+# site_findings reports that (services:check-error) and the ServiceNow job clears none of its earlier tickets
+- name: Services | systemctl answered
+  ansible.builtin.fail:
+    msg: >-
+      systemctl could not list the units (rc {{ _svc_failed.rc if _svc_failed.rc != 0 else _svc_show.rc }}):
+      {{ (_svc_failed.stderr if _svc_failed.rc != 0 else _svc_show.stderr) | default('') | trim | truncate(200) or 'no output' }}
+      - whether the services run is not known
+  when: _svc_failed.rc != 0 or (_svc_show is not skipped and _svc_show.rc != 0 and _svc_show.stdout | trim | length == 0)
+
 - name: Services | findings
   ansible.builtin.set_fact:
     _svc_findings: >-

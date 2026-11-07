@@ -166,7 +166,7 @@
       {{- (' - and ' ~ _ci_wait | length ~ ' item(s) wait for the approval (in the report)') if _ci_wait and stigman_ckl_import_workflow | bool else '' }}
   vars:
     _bad: "{{ _su['items'] | default([]) | selectattr('state', 'in', ['rejected', 'error', 'bad', 'not as written', 'no grant']) | list }}"
-  when: _su.error | default('') or _bad | length > 0
+  when: (_su.error | default('') | length > 0) or _bad | length > 0
 
 - name: Import checklists | NEEDS APPROVAL
   ansible.builtin.fail:

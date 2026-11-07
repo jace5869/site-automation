@@ -10,6 +10,7 @@
     _hz_what: the Connection Servers, gateways, vCenters, AD domains, event database, license, pools, desktops and sessions
     _hz_resources: [connection_servers, gateways, virtual_centers, ad_domains, event_database, saml_authenticators, true_sso,
                     license, desktop_pools, machines, sessions]
+    _hz_tolerate: true           # read-only: the report says what Horizon did not give
 
 - name: Horizon | the health report
   ansible.builtin.set_fact:

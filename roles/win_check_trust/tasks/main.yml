@@ -21,7 +21,8 @@
           'remove': check_trust_remove | default(false) | bool, 'dry_run': ansible_check_mode,
           'severities': check_trust_remove_severities | default(['critical', 'warning']),
           'severity_overrides': check_trust_severity | default({}, true),
-          'backup_dir': win_check_trust_backup_dir, 'keystore_password': check_trust_keystore_password | default('changeit'),
+          'backup_dir': win_check_trust_backup_dir,
+          'keystore_password': lookup('ansible.builtin.env', 'KEYSTORE_PASSWORD') or check_trust_keystore_password | default('changeit'),
           'timeout': win_check_trust_timeout | int} | to_json }}
   register: _win_check_out
   changed_when: false

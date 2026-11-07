@@ -317,7 +317,7 @@
 # check_mariadb_enabled: >-
 #   {{ (group_names | intersect(['mariadb_hosts', 'mysql_hosts', 'database_hosts', 'mariadb', 'mysql']) | length > 0)
 #      or (check_mariadb_container | length > 0) or (check_mariadb_containers | length > 0)
-#      or (check_mariadb_container_discover | bool) }}
+#      or ((check_mariadb_container_discover | string | lower) in ['true', 'yes', '1', 'on']) }}
 
 ## MariaDB or MySQL in podman containers (e.g. the ServiceNow database). The client inside each
 ## container is used (podman exec). Name them in one of these ways; all are checked, each as its own

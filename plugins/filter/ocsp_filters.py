@@ -113,7 +113,10 @@ def ocsp_target(entry, timeout=15):
     if issuer_pem.strip():
         return e
     for p in pems[1:]:                                   # a cert file with its chain: the next one may be the issuer
-        c = x509.load_pem_x509_certificate(p.encode("ascii"))
+        try:
+            c = x509.load_pem_x509_certificate(p.encode("ascii"))
+        except (ValueError, TypeError, UnicodeEncodeError):   # a damaged block in the chain: not the issuer, no exception
+            continue
         if c.subject == cert.issuer:
             e["issuer"] = p
             e["from_cert"].append("issuer")

@@ -320,8 +320,23 @@ jobs:
           for f in glob.glob('aap/credential_types/*.yml') + glob.glob('inventories/example/**/*.yml', recursive=True) + glob.glob('inventories/example-windows/*.yml'):
               yaml.safe_load(open(f)); print('ok', f)
           PY
-      - name: Shell scripts parse
-        run: for f in scripts/*.sh ee/*.sh ee/*/check-ee.sh; do bash -n "$f"; done
+      - name: Shell scripts parse (scripts, the execution environments, the roles' shipped scripts, the tests)
+        run: |
+          find scripts ee roles tests -name '*.sh' -print0 | while IFS= read -r -d '' f; do bash -n "$f" || { echo "does not parse: $f"; exit 1; }; done
+      - name: Python is Python 3.9 (the execution environment's) - plugins, modules, scripts
+        run: |
+          python3 - <<'PY'
+          import ast, glob, sys
+          files = [f for pat in ('plugins/**/*.py', 'roles/*/library/*.py', 'roles/*/module_utils/*.py', 'scripts/*.py',
+                                 'inventories/idm/inventory_plugins/*.py') for f in glob.glob(pat, recursive=True)]
+          bad = 0
+          for f in sorted(files):
+              try:
+                  ast.parse(open(f, encoding='utf-8').read(), f, feature_version=(3, 9))
+              except SyntaxError as e:
+                  print('not Python 3.9: %s:%s %s' % (f, e.lineno, e.msg)); bad += 1
+          print('%d files parsed as Python 3.9' % len(files)); sys.exit(1 if bad else 0)
+          PY
       - name: PowerShell scripts parse
         shell: pwsh
         run: |
@@ -346,7 +361,8 @@ jobs:
         run: bash tests/windows/patch_sim/run_patch_sim.sh
       - name: No private keys or obvious secrets committed
         run: |
-          if git grep -nE -e '-----BEGIN [A-Z ]*PRIVATE KEY-----[A-Za-z0-9+/=]' -e 'AKIA[0-9A-Z]{16}' -- . ':!vendor'; then
+          # the header alone: a real key has its base64 on the NEXT line (git grep looks at one line at a time)
+          if git grep -nE -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' -e 'AKIA[0-9A-Z]{16}' -- . ':!vendor'; then
             echo "secret-looking content found"; exit 1; fi
 
   windows-update-script:
@@ -437,7 +453,7 @@ jobs:
           "SATEST_PW=$pw" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - uses: Vampire/setup-wsl@v3
         with:
-          distribution: Ubuntu-22.04
+          distribution: Ubuntu-24.04        # Python 3.12: pip gets a current ansible-core (22.04 = 3.10 = at most 2.17)
           additional-packages: python3-venv python3-pip
       - name: Ansible (in WSL) runs the Windows playbooks against this runner
         shell: wsl-bash {0}
@@ -565,7 +581,7 @@ jobs:
           "SATEST_PW=$pw" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - uses: Vampire/setup-wsl@v3
         with:
-          distribution: Ubuntu-22.04
+          distribution: Ubuntu-24.04        # Python 3.12: pip gets a current ansible-core (22.04 = 3.10 = at most 2.17)
           additional-packages: python3-venv python3-pip openssl
       - name: A test CA, and the certificate in use - about to expire, bound to a port in HTTP.sys (made in WSL)
         shell: wsl-bash {0}

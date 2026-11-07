@@ -82,7 +82,8 @@
 
 - name: Patch | services check result
   ansible.builtin.set_fact:
-    _wp_missing: "{{ (_wp_svc_raw.stdout_lines | default([]) | site_result({'missing': []})).missing if _wp_svc_raw is not skipped else [] }}"
+    # no result line from the script (it threw every time): '?' - not known is not the same as all running
+    _wp_missing: "{{ (_wp_svc_raw.stdout_lines | default([]) | site_result({'missing': ['?']})).missing if _wp_svc_raw is not skipped else [] }}"
 
 - name: Patch | result
   ansible.builtin.debug:
@@ -93,13 +94,18 @@
              ~ ('automatic restarts are off (automatic_restarts is false). Restart it by hand in a maintenance window, or run again with automatic_restarts: true.'
                 if not automatic_restarts | bool else 'the server is in ' ~ (group_names | intersect(win_patch_never_reboot_groups) | join(', ')) ~ ' (win_patch_never_reboot_groups). Restart it by hand.')]
             if _wp_restart_withheld else [])
-         + (['Services that ran before and are NOT running now: ' ~ (_wp_missing | join(', '))] if _wp_missing else [])
+         + ((['The services check could NOT run: whether the services that ran before run now is not known.'] if _wp_missing == ['?'] else
+             ['Services that ran before and are NOT running now: ' ~ (_wp_missing | join(', '))]) if _wp_missing else [])
          + (['Nothing to install.'] if not _wp_log else []) }}
 
 - name: Patch | FAIL - services that ran before the update are not running now
   ansible.builtin.fail:
     msg: >-
-      {{ inventory_hostname }}: {{ _wp_missing | join(', ') }} ran before patching and do not run now
-      ({{ win_patch_services_grace_min }} minutes after the restart). The rollout stops here.
-      Look: Get-Service {{ _wp_missing | first }}; the System log (Service Control Manager).
+      {{ inventory_hostname }}: {{ ('the services check could not run (win_patch.ps1 gave no result, ' ~ win_patch_services_grace_min
+                                   ~ ' minutes after the restart): whether the services that ran before run now is NOT known. The rollout stops here. Look: '
+                                   ~ (_wp_svc_raw.stderr | default('') | trim | truncate(300) or 'Get-Service on the host; the script output above'))
+                                  if _wp_missing == ['?'] else
+                                  (_wp_missing | join(', ') ~ ' ran before patching and do not run now (' ~ win_patch_services_grace_min
+                                   ~ ' minutes after the restart). The rollout stops here. Look: Get-Service ' ~ _wp_missing | first
+                                   ~ '; the System log (Service Control Manager).') }}
   when: _wp_missing | length > 0

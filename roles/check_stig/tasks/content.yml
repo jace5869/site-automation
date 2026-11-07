@@ -12,6 +12,7 @@
     path: "{{ check_stig_dir }}/content"
     state: directory
     mode: "0700"
+  check_mode: false             # the scan reads in a dry run too: without the content it would say "no STIG content"
   when: check_stig_datastream_src | length > 0 or check_stig_tailoring_src | length > 0
 
 - name: STIG | the datastream and tailoring file from the AAP side (check_stig_datastream_src, check_stig_tailoring_src)
@@ -19,6 +20,7 @@
     src: "{{ item.src }}"
     dest: "{{ check_stig_dir }}/content/{{ item.src | basename }}"
     mode: "0600"
+  check_mode: false             # as above: the staged content, not a change to the host's configuration
   loop: >-
     {{ ([{'src': check_stig_datastream_src}] if check_stig_datastream_src else [])
        + ([{'src': check_stig_tailoring_src}] if check_stig_tailoring_src else []) }}

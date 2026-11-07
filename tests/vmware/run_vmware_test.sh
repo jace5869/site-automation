@@ -160,6 +160,11 @@ run "snapshot with a name and description: job and user recorded" ok vm_snapshot
     -e vm_snapshot_name=before-patch -e vm_snapshot_description=CHG123 -- 'Took snapshot \"before-patch\" (no memory) of: DC0_H0_VM1'
 check "  ...description" DC0_H0_VM1 "[s['description'] for s in v['snapshots'] if s['name'] == 'before-patch'][0].split(' 20')[0]" \
     "CHG123 [AAP job 4711, operator1,"
+run "snapshot with a name the VM already has: kept as it is, no second one" ok vm_snapshot.yml -e vm_names=DC0_H0_VM1 \
+    -e vm_snapshot_name=before-patch -e vm_snapshot_description=CHG999 -- 'Took snapshot \"before-patch\" (no memory) of: none' \
+    'Already had a snapshot with that name - kept as it is: DC0_H0_VM1'
+check "  ...one before-patch, its description untouched" DC0_H0_VM1 \
+    "[s['description'].split(' [')[0] for s in v['snapshots'] if s['name'] == 'before-patch']" "['CHG123']"
 run "snapshot, default name aap-<date>-<time>" ok vm_snapshot.yml -e vm_names=DC0_H0_VM1 -- 'Took snapshot \"aap-20'
 run "delete: neither a name nor delete-all is refused" fail vm_snapshot_delete.yml -e vm_names=DC0_H0_VM1 -- "not both, not neither"
 run "delete: a name AND delete-all is refused" fail vm_snapshot_delete.yml -e vm_names=DC0_H0_VM1 -e vm_snapshot_name=x \

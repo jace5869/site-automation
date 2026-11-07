@@ -29,6 +29,11 @@
 ## the newest API version to try (v9 down to v1): the first that answers is used
 # horizon_api_newest: 9
 
+## ---- Pools no job changes -----------------------------------------------------------------------
+## Desktop pools no job fixes, logs off or pushes an image to: names as Horizon Console shows them,
+## * and ? allowed, any case (e.g. [VIP-*, Kiosk]). The reports still show them.
+# horizon_protected_pools: []
+
 ## ---- Health report (playbooks/horizon_health_report.yml) ----------------------------------------
 ## a Connection Server's, gateway's or vCenter's certificate expires within this many days -> amber
 # horizon_cert_warn_days: 30

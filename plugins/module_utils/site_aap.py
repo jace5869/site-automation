@@ -13,7 +13,7 @@ import os
 import socket
 import ssl
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 # the credential's variables, by their NAMES: CONTROLLER_* (AAP 2.4 and later), AAP_* (2.5 and later), TOWER_* (older)
 VARS = {"host": ("CONTROLLER_HOST", "AAP_HOSTNAME", "TOWER_HOST"),
@@ -22,6 +22,12 @@ VARS = {"host": ("CONTROLLER_HOST", "AAP_HOSTNAME", "TOWER_HOST"),
         "password": ("CONTROLLER_PASSWORD", "AAP_PASSWORD", "TOWER_PASSWORD"),
         "verify": ("CONTROLLER_VERIFY_SSL", "AAP_VALIDATE_CERTS", "TOWER_VERIFY_SSL")}
 NO_CREDENTIAL = 'No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template'
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    """Follows no redirect: the 3xx answer comes back as an HTTPError (urllib would send the Authorization header on)."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def connection(env=None):
@@ -80,8 +86,12 @@ class Api(object):
         else:
             pair = ("%s:%s" % (self.conn["user"], self.conn["password"])).encode()
             req.add_header("Authorization", "Basic " + base64.b64encode(pair).decode())
+        # a redirect is an answer, never a path to follow: followed, the Authorization header would go wherever it
+        # points (a proxy's login page, another host, plain http)
+        opener = build_opener(_NoRedirect(), HTTPSHandler(context=self.ctx)) if self.conn["host"].startswith("https") \
+            else build_opener(_NoRedirect())
         try:
-            r = urlopen(req, timeout=self.timeout, context=self.ctx if self.conn["host"].startswith("https") else None)
+            r = opener.open(req, timeout=self.timeout)
             raw = r.read()
             try:
                 data = json.loads(raw) if raw else {}
@@ -91,6 +101,9 @@ class Api(object):
             return r.getcode(), data if isinstance(data, dict) else {"results": data}
         except HTTPError as e:
             try:
+                if 300 <= e.code < 400:
+                    return e.code, {"detail": "HTTP %d: AAP's address answered a redirect to %s, not followed (the login would go there). "
+                                              "The credential's URL must be AAP's own address" % (e.code, e.headers.get("Location", "?"))}
                 return e.code, json.loads(e.read() or b"{}")
             except ValueError:
                 return e.code, {"detail": "HTTP %d" % e.code}

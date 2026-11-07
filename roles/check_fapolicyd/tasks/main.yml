@@ -23,9 +23,9 @@
       echo "trustdb_msg $(echo "$out" | tail -1)"
     fi
     {% endif %}
-    n=$(ausearch -m FANOTIFY -ts {{ check_fapolicyd_denials_since }} 2>/dev/null | grep -c '^type=FANOTIFY')
+    n=$(ausearch -m FANOTIFY -ts {{ check_fapolicyd_denials_since | quote }} 2>/dev/null | grep -c '^type=FANOTIFY')
     echo "denials ${n:-0}"
-    ausearch -m FANOTIFY -ts {{ check_fapolicyd_denials_since }} -i 2>/dev/null |
+    ausearch -m FANOTIFY -ts {{ check_fapolicyd_denials_since | quote }} -i 2>/dev/null |
       awk '/^----/ {if (e != "") print e " -> " p; e = ""; p = ""}
            /type=SYSCALL/ {if (match($0, /exe=[^ ]+/)) e = substr($0, RSTART + 4, RLENGTH - 4)}
            /type=PATH/ && p == "" {if (match($0, / name=[^ ]+/)) p = substr($0, RSTART + 6, RLENGTH - 6)}

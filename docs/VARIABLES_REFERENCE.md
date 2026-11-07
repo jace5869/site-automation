@@ -655,7 +655,7 @@ File: `roles/check_trust/defaults/main.yml`
 | `check_trust_remove_backup_dir` | `/var/backups/site-automation/trust` | every file changed is copied here first (a folder per run) |
 | `check_trust_remove_blocklist_dir` | (empty) | the system blocklist folder; empty = the distribution's (/etc/pki/ca-trust/source/blocklist, SUSE /etc/pki/trust/blacklist) |
 | `check_trust_remove_update_cmd` | (empty) | the command that rebuilds the system trust after blocklisting; empty = the distribution's (update-ca-trust, update-ca-certificates) |
-| `check_trust_keystore_password` | `changeit` | the Java keystores' password (keytool's default) |
+| `check_trust_keystore_password` | `changeit` | The Java keystores' password (keytool's default). A real one belongs in the "Keystore password" credential (KEYSTORE_PASSWORD), attached to the template: it wins over this setting, and stays out of all.yml and the job's variables. keytool gets it in its own environment, never on the command line. |
 
 ## evaluate_stig_update
 

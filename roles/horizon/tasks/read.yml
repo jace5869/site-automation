@@ -2,7 +2,11 @@
 # Read Horizon: site_horizon (every page of each resource, the newest API version that answers) ->
 # _hz_read (as it answered) and _hz (plugins/filter/horizon_filters.py hz_data: pools, machines, sessions,
 # users as plain records, name maps, raw, api, errors). Read-only, in a dry run too.
-# Input: _hz_resources - names, or {name, key, query, id} (site_horizon's documentation).
+# Input: _hz_resources - names, or {name, key, query, id} (site_horizon's documentation). A part Horizon did
+# not give in full (a refused or failed page, a resource this release lacks) stops the job here, before any
+# action: decided on half the pools or sessions, an action could hit a protected pool or a user's desktop.
+# _hz_tolerate: true - a report that says itself what is missing goes on; _hz_optional: [key prefixes] - the
+# parts the caller handles itself (e.g. ['user:'], the users' names).
 - name: Horizon | read {{ _hz_what | default('') }}
   site_horizon:
     action: read
@@ -17,3 +21,22 @@
 - name: Horizon | what was read
   ansible.builtin.set_fact:
     _hz: "{{ _hz_read | hz_data }}"
+
+- name: Horizon | Horizon gave every part
+  ansible.builtin.assert:
+    that: _hz_missing | length == 0
+    fail_msg: >-
+      Nothing was changed: Horizon did not give {{ _hz_missing | join('; ') }}. An action decided on part of the
+      pools, desktops or sessions is not safe (horizon_protected_pools cannot be checked). Run it again; the API
+      test (playbooks/horizon_api_test.yml) shows what each path answers.
+    quiet: true
+  vars:
+    _hz_missing: >-
+      {%- set out = [] -%}
+      {%- for k, why in _hz.errors.items() -%}
+      {%-   set ns = namespace(opt=false) -%}
+      {%-   for p in _hz_optional | default([]) if k.startswith(p) -%}{%- set ns.opt = true -%}{%- endfor -%}
+      {%-   if not ns.opt -%}{%- set _ = out.append(k ~ ' (' ~ why ~ ')') -%}{%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  when: not _hz_tolerate | default(false) | bool

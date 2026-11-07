@@ -53,12 +53,14 @@ class Desktops(unittest.TestCase):
         d = data([IC, FC, PROT],
                  [mach("1", "p1", "AGENT_UNREACHABLE"), mach("2", "p1", "AGENT_ERR_NEED_REBOOT"), mach("3", "p1", "AVAILABLE"),
                   mach("4", "p1", "ERROR", session_id="s9"), mach("5", "p2", "ERROR"), mach("6", "p3", "ALREADY_USED"),
-                  mach("7", "p1", "PROVISIONING_ERROR", user_ids=["S-1-5-21-1"]), mach("8", "p1", "PROVISIONING")],
+                  mach("7", "p1", "PROVISIONING_ERROR", user_ids=["S-1-5-21-1"]), mach("8", "p1", "PROVISIONING"),
+                  mach("9", "px", "ALREADY_USED")],
                  [{"id": "s1", "machine_id": "1", "session_state": "PENDING"}])
         r = f.hz_desktops(d, {"protected_pools": ["vip-*"], "actions": {"agent_err_need_reboot": "restart", "PROVISIONING_ERROR": "remove"}})
         fix = dict((x["id"], x["action"]) for x in r["fix"])
         held = dict((x["id"], x["reason"]) for x in r["held"])
         self.assertEqual(fix, {"2": "restart"})
+        self.assertIn("pool px is not among the pools Horizon gave", held["9"])      # never act on a pool not read
         self.assertIn("a user's session is on it (pending)", held["1"])
         self.assertIn("a user's session is on it (open)", held["4"])
         self.assertIn("pool FC-Old is full clone", held["5"])
@@ -94,6 +96,23 @@ class Desktops(unittest.TestCase):
         self.assertIn("not one the job runs", why["4"])
         self.assertEqual(why["9"], "no longer in Horizon")
         self.assertEqual(f.hz_desktops_recheck({}, d, {}), {"act": [], "skipped": []})
+        # every check of the check job again, on what Horizon says NOW - not on the approved record
+        ok = {"desktops": [{"id": "5", "name": "d-5", "pool_id": "p1", "pool": "IC-Win11", "action": "remove"},      # assigned since
+                           {"id": "6", "name": "d-6", "pool_id": "p1", "pool": "IC-Win11", "action": "recover"},     # moved to full clones
+                           {"id": "7", "name": "d-7", "pool_id": "p1", "pool": "IC-Win11", "action": "recover"},     # excluded since
+                           {"id": "8", "name": "d-8", "pool_id": "p1", "pool": "IC-Win11", "action": "recover"},     # moved to a protected pool
+                           {"id": "10", "name": "d-10", "pool_id": "p1", "pool": "IC-Win11", "action": "recover"},   # its pool was not read
+                           {"id": "11", "name": "d-11", "pool_id": "p1", "pool": "IC-Win11", "action": "remove"}]}   # still fine
+        d = data([IC, FC, PROT], [mach("5", "p1", "ERROR", user_ids=["S-1-5-21-1"]), mach("6", "p2", "ERROR"), mach("7", "p1", "ERROR"),
+                                  mach("8", "p3", "ERROR"), mach("10", "px", "ERROR"), mach("11", "p1", "ERROR")])
+        r = f.hz_desktops_recheck(ok, d, {"protected_pools": ["VIP-*"], "exclude_machines": ["d-7"]})
+        self.assertEqual([x["id"] for x in r["act"]], ["11"])
+        why = dict((x["id"], x["reason"]) for x in r["skipped"])
+        self.assertIn("assigned to a user now", why["5"])
+        self.assertIn("recover is for instant clones, and pool FC-Old is not", why["6"])
+        self.assertIn("excluded (horizon_fix_exclude_machines)", why["7"])
+        self.assertIn("pool VIP-Desk is protected", why["8"])
+        self.assertIn("pool px is not among the pools Horizon gave", why["10"])
 
 
 class Sessions(unittest.TestCase):
@@ -103,7 +122,8 @@ class Sessions(unittest.TestCase):
               {"id": "c", "user_id": "S-3", "machine_id": "", "farm_id": "f1", "session_state": "DISCONNECTED", "disconnected_time": NOW - 30 * H},
               {"id": "d", "user_id": "S-4", "desktop_pool_id": "p3", "session_state": "DISCONNECTED", "disconnected_time": NOW - 30 * H},
               {"id": "e", "user_id": "S-5", "desktop_pool_id": "p1", "session_state": "DISCONNECTED"},
-              {"id": "g", "user_id": "S-6", "desktop_pool_id": "p1", "session_state": "CONNECTED"}]
+              {"id": "g", "user_id": "S-6", "desktop_pool_id": "p1", "session_state": "CONNECTED"},
+              {"id": "h", "user_id": "S-10", "desktop_pool_id": "px", "session_state": "DISCONNECTED", "disconnected_time": NOW - 30 * H}]
         d = data([IC, PROT], [mach("1", "p1", "DISCONNECTED")], ss, farms=[{"id": "f1", "name": "Farm A"}])
         r = f.hz_sessions_old(d, {"now": NOW, "hours": 8, "protected_pools": ["VIP-*"], "names": {"S-1-5-21-1": "CORP\\jdoe"},
                                   "exclude_users": []})
@@ -113,7 +133,12 @@ class Sessions(unittest.TestCase):
         held = dict((x["id"], x["reason"]) for x in r["held"])
         self.assertIn("pool VIP-Desk is excluded", held["d"])
         self.assertEqual(held["e"], "when it was disconnected is not known")
+        self.assertIn("pool px is not among the pools Horizon gave", held["h"])
         self.assertEqual(r["recent"], 1)
+        # a user whose name could not be read is left alone only while exclude_users names users (not SIDs only)
+        r = f.hz_sessions_old(d, {"now": NOW, "hours": 8, "exclude_users": ["jdoe"], "unnamed": ["S-3"]})
+        self.assertIn("name could not be read", dict((x["id"], x["reason"]) for x in r["held"])["c"])
+        self.assertEqual(f.hz_sessions_old(d, {"now": NOW, "hours": 8, "exclude_users": ["S-1-5-21-9"], "unnamed": ["S-3"]})["logoff"][0]["id"], "c")
         r = f.hz_sessions_old(d, {"now": NOW, "hours": 8, "names": {"S-1-5-21-1": "CORP\\jdoe"}, "exclude_users": "jdoe, S-3", "max": 5})
         self.assertEqual(r["logoff"][0]["id"], "d")
         self.assertIn("the user is excluded", dict((x["id"], x["reason"]) for x in r["held"])["a"])
@@ -147,9 +172,22 @@ class Users(unittest.TestCase):
                          [("d-1", False, 0), ("d-2", True, 0), ("d-3", False, 1)])
         self.assertIn("2 users are sam (CORP\\sam, LAB\\sam)", f.hz_user(self.d, "sam")["problems"][0])
         self.assertEqual(f.hz_user(self.d, "LAB\\sam")["sid"], "S-3")
+        self.assertEqual(f.hz_user(self.d, "sam@lab.example.mil")["sid"], "S-3")
+        u = f.hz_user(self.d, "LAB\\jdoe")                    # the domain counts: never CORP's jdoe
+        self.assertEqual((u["sid"], u["sessions"], u["machines"]), ("", [], []))
+        self.assertIn("No user jdoe in domain LAB - Horizon knows CORP\\jdoe", u["problems"][0])
         u = f.hz_user(self.d, "nora")                         # no AD record: the name a session carries
         self.assertEqual(([s["id"] for s in u["sessions"]], u["problems"]), (["s4"], []))
+        self.assertIn("Horizon knows no user LAB\\nora", f.hz_user(self.d, "LAB\\nora")["problems"][0])
         self.assertIn("Horizon knows no user ghost", f.hz_user(self.d, "ghost")["problems"][0])
+        raw = dict((k, v) for k, v in self.d["raw"].items() if k != "ad_users")   # as user_lookup.yml reads: two AD searches
+        down = dict(self.d, raw=dict(raw, **{"ad_users:login": [], "ad_users:name": []}),
+                    errors={"ad_users:login": "HTTP 500", "ad_users:name": "HTTP 500"})
+        u = f.hz_user(down, "nora")                           # the AD search failed: no guess by a session's name
+        self.assertEqual(u["sessions"], [])
+        self.assertIn("AD user search did not answer (HTTP 500; HTTP 500)", u["problems"][0])
+        down["errors"] = {"ad_users:login": "HTTP 400"}       # one of the two answered: as before
+        self.assertEqual(f.hz_user(down, "nora")["problems"], [])
         self.assertIn("No user given", f.hz_user(self.d, " ")["problems"][0])
         self.assertIn("BROKEN", f.hz_user_machine_line(u and f.hz_user(self.d, "jdoe")["machines"][1]))
 
@@ -166,6 +204,15 @@ class Users(unittest.TestCase):
         self.assertIn("recover is for instant clones; pool FC-Old is not", why["d-2"])
         self.assertEqual(sorted(f.hz_user_targets(u, "reset", self.d)["ids"]), ["1", "2"])
         self.assertIn("pool IC-Win11 is protected", f.hz_user_targets(u, "reset", self.d, {"protected_pools": ["ic-*"]})["held"][0]["reason"])
+        t = f.hz_user_targets(u, "logoff", self.d, {"protected_pools": ["ic-*"]})      # sessions in a protected pool: left alone too
+        self.assertEqual(t["ids"], [])
+        self.assertEqual(sorted(x["name"] for x in t["held"]), ["connected session on d-1", "disconnected session on d-3"])
+        self.assertIn("pool IC-Win11 is protected", t["held"][0]["reason"])
+        self.assertEqual(f.hz_user_targets(u, "disconnect", self.d, {"protected_pools": ["ic-*"]})["ids"], [])
+        unread = data([FC], self.d["raw"]["machines"], self.d["raw"]["sessions"], ad_users=USERS)   # p1 was not read
+        t = f.hz_user_targets(f.hz_user(unread, "jdoe"), "logoff", unread)
+        self.assertEqual((t["ids"], len(t["held"])), ([], 2))
+        self.assertIn("pool p1 is not among the pools Horizon gave", t["held"][0]["reason"])
         self.assertEqual(f.hz_user_targets(u, "look", self.d)["ids"], [])
         rds = f.hz_user_targets(f.hz_user(self.d, "nora"), "reset", self.d)
         self.assertIn("RDS hosts: log them off instead", rds["held"][0]["reason"])

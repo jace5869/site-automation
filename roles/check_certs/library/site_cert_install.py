@@ -360,11 +360,14 @@ class Installer(object):
     def file_plan(self, path, pend, item):
         """One certificate file: [its plan, and its key's when that is another file] - None when it holds the new
         certificate already."""
+        # a symbolic link: the file behind it is replaced and backed up, the link stays (written over, the link would
+        # become a plain file, the old target would stay as it was, and the rollback could not make the link again)
+        given, path = path, os.path.realpath(path)
         try:
             with open(path, 'rb') as fh:
                 raw = fh.read()
         except (IOError, OSError) as e:
-            raise Held('%s cannot be read now (%s)' % (path, e))
+            raise Held('%s cannot be read now (%s)' % (given, e))
         text = raw.decode('utf-8', 'replace')
         blocks = blocks_of(text)
         fmt = 'pem'

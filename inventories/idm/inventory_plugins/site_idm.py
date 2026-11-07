@@ -297,6 +297,8 @@ class Idm:
             raise IdmError("IdM's %s: HTTP %s %s" % (method, e.code, e.reason))
         except (urllib.error.URLError, OSError, ValueError) as e:
             raise IdmError("IdM's %s: %s" % (method, to_native(getattr(e, "reason", e))))
+        if not isinstance(data, dict):                  # a proxy's or WAF's page, not IdM's JSON-RPC answer
+            raise IdmError("IdM's %s: the answer is not IdM's (not a JSON object) - is the URL IdM's own address?" % method)
         err = data.get("error")
         if err:
             raise IdmError("IdM's %s: %s" % (method, err.get("message") if isinstance(err, dict) else err))
@@ -384,7 +386,8 @@ def build(hosts, hostgroups, o):
                 if c in out["groups"]:
                     for p in ps:
                         pg = safe_group(p, o["group_prefix"])
-                        if c not in group(pg)["children"]:
+                        # two IdM names that become one Ansible name (web-servers, web_servers): never a group inside itself
+                        if c != pg and c not in group(pg)["children"]:
                             group(pg)["children"].add(c)
                             grown = True
     known = [first(g, "cn", "") for g in hostgroups]

@@ -434,7 +434,10 @@
 ## unless named here
 # check_trust_remove_severities: [critical, warning]
 
-## the Java keystores' password (keytool's default)
+## The Java keystores' password (keytool's default). A real one belongs in the "Keystore password"
+## credential (KEYSTORE_PASSWORD), attached to the template: it wins over this setting, and stays
+## out of all.yml and the job's variables. keytool gets it in its own environment, never on the
+## command line.
 # check_trust_keystore_password: changeit
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------

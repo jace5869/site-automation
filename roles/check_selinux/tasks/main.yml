@@ -10,9 +10,9 @@
     if command -v semanage >/dev/null 2>&1; then
       semanage permissive -l 2>/dev/null | awk '/^Customized Permissive Types/ {c=1; next} /^Builtin Permissive Types/ {c=0; next} c && NF {print "permissive " $1}'
     fi
-    n=$(ausearch -m AVC,USER_AVC,SELINUX_ERR -ts {{ check_selinux_avc_since }} 2>/dev/null | grep -c '^type=\(AVC\|USER_AVC\|SELINUX_ERR\)')
+    n=$(ausearch -m AVC,USER_AVC,SELINUX_ERR -ts {{ check_selinux_avc_since | quote }} 2>/dev/null | grep -c '^type=\(AVC\|USER_AVC\|SELINUX_ERR\)')
     echo "avc ${n:-0}"
-    ausearch -m AVC,USER_AVC -ts {{ check_selinux_avc_since }} -i 2>/dev/null |
+    ausearch -m AVC,USER_AVC -ts {{ check_selinux_avc_since | quote }} -i 2>/dev/null |
       sed -nE 's/.*denied +\{ ([^}]*) \} for .* comm=([^ ]+).* scontext=[^:]*:[^:]*:([^: ]+)[^ ]* tcontext=[^:]*:[^:]*:([^: ]+)[^ ]* tclass=([^ ]+).*/\2 (\3) denied \1 on a \5 labeled \4/p' |
       sort | uniq -c | sort -rn | head -5 | sed -E 's/^ *([0-9]+) (.*)/avctop \2 x\1/'
     {% for b in check_selinux_booleans %}

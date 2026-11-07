@@ -145,11 +145,16 @@
       ignore_errors: true
       when: net_config_save | bool and _ncl_got.status == 'changed' and not ansible_check_mode
 
+    # a change that was not saved is lost at the next reload: the device counts as failed (the job stops red), the
+    # running configuration says what it got
     - name: Network config | {{ inventory_hostname }} - saved
       ansible.builtin.set_fact:
         _ncl_got: >-
-          {{ _ncl_got | combine({'what': _ncl_got.what ~ (', saved (write memory)' if not _ncl_save.failed | default(false) and '[OK]' in (_ncl_save.stdout | default(['']))[0]
-                                                          else ' - NOT saved: ' ~ (_ncl_save.msg | default((_ncl_save.stdout | default(['?']))[0]) | string | truncate(200)))}) }}
+          {%- set ok = not _ncl_save.failed | default(false) and '[OK]' in (_ncl_save.stdout | default(['']))[0] -%}
+          {%- set why = (_ncl_save.msg | default((_ncl_save.stdout | default(['?']))[0]) | string | truncate(200)) -%}
+          {{ _ncl_got | combine({'what': _ncl_got.what ~ (', saved (write memory)' if ok else ' - NOT saved: ' ~ why)} if ok else
+                               {'status': 'failed', 'what': _ncl_got.what ~ ' - NOT saved',
+                                'error': 'the running configuration changed but write memory failed (' ~ why ~ '): the change is lost at the next reload - save it by hand (write memory) or load again'}) }}
       when: _ncl_save is not skipped
 
 - name: Network config | {{ inventory_hostname }} - PAN-OS

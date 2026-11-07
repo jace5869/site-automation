@@ -1310,7 +1310,9 @@ def cert_report_section(certs, warn_days=30, notice_days=60):
     rows, rs, cs = [], [], []
     for c in sorted(certs or [], key=lambda x: x.get("days", 0)):
         d = int(c.get("days", 0))
-        if d < 0:
+        if d <= -99999:                                  # check_certs' mark for "the expiry date could not be read"
+            st, text, d = "warning", "expiry date could not be read", "?"
+        elif d < 0:
             st, text = "critical", "EXPIRED"
         elif d <= warn:
             st, text = "warning", "expires within %d days" % warn
@@ -1583,7 +1585,9 @@ def report_runs(past, report, runs=14, height=36, now=None):
     runs = max(1, int(runs))
     bars = []
     for j in (past or [])[-(runs - 1):] if runs > 1 else []:
-        rep = (j or {}).get("report") or {}
+        if not isinstance(j, dict):                      # a null entry in the artifact: no bar
+            continue
+        rep = j.get("report") or {}
         job = str(j.get("status") or "")
         st = rep.get("status") if rep.get("status") in _REPORT_STATUSES else _RUN_STATUS.get(job, "unknown")
         if job in ("failed", "error") and st in ("ok", "info"):
