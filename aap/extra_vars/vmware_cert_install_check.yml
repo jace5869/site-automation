@@ -125,6 +125,15 @@
 ## a person
 # cert_install_fewer_names: false
 
+## Linux and Windows: the request(s) to install from, named (the check templates' survey) -
+## "RITM0012345", several with commas, or a list. Empty (the default) = each renewal's own catalog
+## request, found by its CSR (cert_renew_servicenow: catalog). Named: only these requests are read,
+## however they were opened - by hand, with the renewal's CSR pasted into the PKI's form, or after
+## an incident - and the certificate there whose public key is a renewal's CSR (its key waits on the
+## host since the renewal) is installed after the approval, as always. A renewal it has no
+## certificate for is left waiting, counted in one line. (VMware: vmware_cert_install_ritm.)
+# cert_install_ritm: ""
+
 ## A CA bundle in YOUR repository that completes the chain when the PKI sends back only the .cer -
 ## e.g. the DoD PKI's PKCS7 bundle from cyber.mil: files/dod_pki_bundle.p7b (playbooks/files/; the
 ## .p7b, DER or PEM, a .pem, or the zip as downloaded). Only the CAs that signed the certificate are

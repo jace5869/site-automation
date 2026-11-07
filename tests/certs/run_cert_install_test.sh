@@ -213,6 +213,33 @@ sn POST "/api/now/attachment/file?table_name=sc_req_item&table_sys_id=$app_ritm&
 sn POST "/api/now/attachment/file?table_name=sc_req_item&table_sys_id=$tls_ritm&file_name=tlsonly.pem" issued/tlsonly.crt text/plain >/dev/null
 echo '{"state": "3"}' > closed.json
 sn PATCH "/api/now/table/sc_req_item/$web_ritm" closed.json >/dev/null      # the PKI closes it: Closed Complete
+
+# ---- 3b. a request named (cert_install_ritm): opened by hand, no CSR of the renewal on it ----
+echo '{"short_description": "Certificate for web01, opened by hand"}' > byhand.json
+hreq="$(sn POST /api/now/table/sc_request byhand.json | "$py" -c 'import json,sys; print(json.load(sys.stdin)["sys_id"])')"
+echo "{\"request\": \"$hreq\", \"short_description\": \"Certificate for web01\"}" > byhand.json
+read -r hritm hritm_num < <(sn POST /api/now/table/sc_req_item byhand.json | "$py" -c 'import json,sys; r=json.load(sys.stdin); print(r["sys_id"], r["number"])')
+echo "{\"request_item\": \"$hritm\", \"short_description\": \"Issue it\"}" > byhand.json
+htask="$(sn POST /api/now/table/sc_task byhand.json | "$py" -c 'import json,sys; print(json.load(sys.stdin)["sys_id"])')"
+: > requests.jsonl
+run named0.txt playbooks/cert_install_check.yml -e "cert_install_ritm=$hritm_num"; rc=$?
+[ $rc -eq 0 ] && has "a request named with nothing on it yet: green, said once, the renewals not listed one by one" named0.txt \
+    "NOTHING TO INSTALL | $hritm_num: no certificate there fits a key waiting on these hosts (3 renewal(s) looked at)" "no certificate on it yet" \
+    && ! grep -q "WAITING | " named0.txt || { bad "named, empty: exit $rc"; tail -20 named0.txt; }
+sn POST "/api/now/attachment/file?table_name=sc_task&table_sys_id=$htask&file_name=web01.cer" issued/web01.cer application/pkix-cert >/dev/null
+sn POST "/api/now/attachment/file?table_name=sc_task&table_sys_id=$htask&file_name=DoD_chain.p7b" issued/chain.p7b application/x-pkcs7-certificates >/dev/null
+: > requests.jsonl
+run named.txt playbooks/cert_install_check.yml -e "cert_install_ritm=${hritm_num,,}"; rc=$?
+[ $rc -ne 0 ] && has "...the PKI put web01's certificate on its task: READY from that request, NEEDS APPROVAL; the others counted" named.txt \
+    "READY | web01.example.mil | CN=web01.example.mil,OU=PKI,OU=DoD,O=U.S. Government,C=US | $hritm_num | install in" \
+    "NEEDS APPROVAL: 1 certificate(s) to install" "NOT ON IT | 2 renewal(s) waiting on these hosts have no certificate on $hritm_num - they wait for their own request" \
+    || { bad "named: exit $rc"; tail -20 named.txt; }
+"$py" -c 'import json,sys; p=json.load(sys.stdin)["cert_install_plan"]; i=p["web01.example.mil"][0]; sys.exit(0 if list(p) == ["web01.example.mil"] and i["ritm"] == sys.argv[1] and len(i["chain_pem"]) == 2 else 1)' \
+    "$hritm_num" <<< "$(stats named.txt)" && ok "...the plan: web01 from $hritm_num, its chain" || bad "...the named plan: $(stats named.txt | head -c 300)"
+grep -qE '"method": "(POST|PATCH)"' requests.jsonl && bad "the check (named) wrote to ServiceNow" || ok "...the check only reads ServiceNow"
+run named9.txt playbooks/cert_install_check.yml -e "cert_install_ritm=RITM9999999"; rc=$?
+[ $rc -eq 0 ] && has "a request named that ServiceNow does not have: said, green" named9.txt "NOT FOUND | " "no requested item RITM9999999 in ServiceNow" \
+    || { bad "named, not there: exit $rc"; tail -20 named9.txt; }
 : > requests.jsonl
 
 # ---- 4. the check: the plan, NEEDS APPROVAL ----

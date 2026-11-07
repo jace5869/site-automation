@@ -411,7 +411,9 @@ click: [NETWORK_CONFIG.md](NETWORK_CONFIG.md), "A load, with an approval".
 certificate the PKI put there and fails on purpose when one is ready (`NEEDS APPROVAL`); nothing ready, it stays
 green and the approval never comes. The install plans each one again, copies the old files aside, reloads the
 service, checks the port, and puts the old files back if anything is wrong. Windows: the same with *Windows
-certificate install - check / approved*. Everything else - what stays for a person, the restore:
+certificate install - check / approved*. **A request opened by hand:** a workflow survey question
+`cert_install_ritm` (not required) - launched with a RITM number, the check reads that request instead of each
+renewal's own; the schedule leaves it empty. Everything else - what stays for a person, the restore:
 [CERT_INSTALL.md](CERT_INSTALL.md).
 
 ### 36. fapolicyd, with an approval (daily)

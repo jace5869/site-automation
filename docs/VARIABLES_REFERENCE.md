@@ -1238,6 +1238,7 @@ File: `roles/servicenow/defaults/main.yml`
 | `cert_install_journal` | `true` | also look for a certificate pasted into the request's work notes and comments |
 | `cert_install_min_days` | `30` | the issued certificate must be valid at least this many more days (else held for a person) |
 | `cert_install_fewer_names` | `false` | true = install a certificate that lacks names (subjectAltName) the old one had; false = held for a person |
+| `cert_install_ritm` | (empty) | Linux and Windows: the request(s) to install from, named (the check templates' survey) - "RITM0012345", several with commas, or a list. Empty (the default) = each renewal's own catalog request, found by its CSR (cert_renew_servicenow: catalog). Named: only these requests are read, however they were opened - by hand, w… (all of it: the role file) |
 | `cert_install_ca_bundle` | (empty) | A CA bundle in YOUR repository that completes the chain when the PKI sends back only the .cer - e.g. the DoD PKI's PKCS7 bundle from cyber.mil: files/dod_pki_bundle.p7b (playbooks/files/; the .p7b, DER or PEM, a .pem, or the zip as downloaded). Only the CAs that signed the certificate are taken from it - its issuing C… (all of it: the role file) |
 
 ## servicenow_insights

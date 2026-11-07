@@ -89,6 +89,36 @@ was installed where.
 Anything fails: the bindings go back to the old certificate. **The old certificate stays in Personal**, so
 putting it back is only a rebinding.
 
+## A request you name (opened by hand, or after an incident)
+
+The check finds each renewal's request by itself: the renewal ordered it, and the request carries its CSR. When the
+certificate came another way - someone opened the PKI's request by hand and pasted the renewal's CSR into the form,
+the CSR went on an incident (`cert_renew_servicenow: incident`) and a person ordered it, or the PKI opened a new
+request - **name the request** and the check reads that one instead:
+
+```yaml
+cert_install_ritm: RITM0012345            # or several: "RITM0012345, RITM0012346"
+```
+
+- **What it reads:** the requests named - the RITM, its REQ, its catalog tasks (SCTASK), their attachments and
+  pasted certificates, as always - however they were opened. The renewal's CSR need not be on them.
+- **What it takes:** the certificate whose public key is the public key of a renewal waiting on a host - the key and
+  CSR the renewal left in `cert_renew_dir` (Linux) or the pending request (Windows). The CSR saved on the host is
+  what the certificate is compared with; nothing else on the request is ever used.
+- **Then as always:** the plan, `NEEDS APPROVAL`, the approval, the install, the work note on the request named.
+- **The other renewals** (no certificate for them there) are counted in one line, not listed:
+  `NOT ON IT | 2 renewal(s) waiting on these hosts have no certificate on RITM0012345 - they wait for their own request`.
+  Nothing on the request fits any of them: `NOTHING TO INSTALL | RITM0012345: no certificate there fits a key waiting
+  on these hosts`, with the certificates found there - the PKI signed some other CSR.
+- **The CSR must be the renewal's.** A CSR made by hand on the server has a key the job does not know (where it is,
+  which service uses it): install that certificate by hand. The renewal's CSR is on its incident, or on the host -
+  `/etc/pki/tls/renew/<name>.csr` (Linux), `C:\ProgramData\site-automation\renew\<name>.csr` (Windows).
+
+**In AAP:** a **Survey** on the workflow (its Survey tab > Create question, then switch the survey on): question
+`Request (RITM) with the issued certificate - empty: every renewal's own request`, answer variable name
+`cert_install_ritm`, Text, **not required**. The daily schedule leaves it empty (automatic); launch the workflow by hand
+with a number for the one-off. The approved job needs nothing: it installs the approved plan.
+
 ## Never automatic - a person installs it (BY HAND)
 
 The job lists these with the steps, and never touches them:
@@ -236,9 +266,11 @@ cert_install_never_reload: ['slapd*']     # services the job never reloads: thei
 
    The approved job **must have the check job's inventory and no Limit**: a host of the plan it does not run on
    makes it stop before anything is installed.
-5. **The schedule:** the workflow daily (e.g. 07:00, after the certificate watch), or a few times a day during
+5. **The survey** (optional, for a request opened by hand): on the workflow, a question with the answer variable
+   `cert_install_ritm`, not required ([above](#a-request-you-name-opened-by-hand-or-after-an-incident)).
+6. **The schedule:** the workflow daily (e.g. 07:00, after the certificate watch), or a few times a day during
    working hours.
-6. **Try it first:** the check with Job type **Check** and a Limit of one host - the same READY lines, nothing sent.
+7. **Try it first:** the check with Job type **Check** and a Limit of one host - the same READY lines, nothing sent.
    The approved job launched as **Check** from the workflow says `WOULD INSTALL` and changes nothing.
 
 ## Put the old certificate back
@@ -262,7 +294,8 @@ and renew again.
 | The job says | Means | Do |
 |---|---|---|
 | `WAITING ... no certificate for this key on it yet` | the PKI has not put it there, or put another one | look at the request: `others` lists certificates there for another key |
-| `NOT ORDERED ... no catalog request carries this CSR` | the CSR went another way (by hand, an incident) | install it by hand, or order with the catalog |
+| `NOT ORDERED ... no catalog request carries this CSR` | the CSR went another way (by hand, an incident) | name its request: `cert_install_ritm` (the survey); or order with the catalog |
+| `NOTHING TO INSTALL` - `RITM...: no certificate there fits a key waiting on these hosts` | the request named has no certificate yet, or one for another CSR (made by hand, or a renewal on a host the job did not run on) | the certificates found there are listed; check the Limit, or install it by hand |
 | `CLOSED ... its request was closed Closed Incomplete` | the PKI rejected it | the renewal orders it again |
 | `HELD ... its chain does not build up to a root` | the chain did not come with it, or its root is not trusted on the host | a CA bundle with its issuer (`cert_install_ca_bundle`; a newer one from *PKI - DoD bundle check*), or attach the chain (.p7b) to the request; or `cert_install_trust_check: false` |
 | `cert_install_ca_bundle ... cannot be read` / `holds no CA certificate` | the file is not in the project (not pushed, not synced) or not a bundle | push it, sync the project; the .p7b, a .pem or the zip |

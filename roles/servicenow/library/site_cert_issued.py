@@ -37,8 +37,10 @@ options:
       without the date and the extension), expires (the old certificate's expiry), csr (the PEM text), names
       (the old certificate's subjectAltName, as the renewal wrote them). csr_from_request true and no csr (vCenter,
       an ESXi host: the key and the CSR never leave it) - the CSR is read from the request itself, the file named
-      stem + 8 hex + -expYYYYMMDD (.csr or .txt) that the renewal attached. ritm (a number, RITM0012345) - that request
-      only, instead of the one found by the CSR's name and expiry.
+      stem + 8 hex + -expYYYYMMDD (.csr or .txt) that the renewal attached. ritm (a number, RITM0012345, or a list of
+      them) - those requests only, instead of the one found by the CSR's name and expiry; with a CSR on the host (Linux,
+      Windows) the request need not carry it - opened by hand, ordered any way: the certificate there whose public key is
+      this CSR's is the one.
     type: list
     elements: dict
     required: true
@@ -55,7 +57,7 @@ author: site automation
 RETURN = r'''
 issued:
   description: >-
-    One entry per pending CSR - key, host, stem, status (issued, waiting, not ordered, not found (ritm), closed, failed),
+    One entry per pending CSR - key, host, stem, status (issued, waiting, not ordered, not found (ritm), not on it (ritm: no certificate there for this key), closed, failed),
     reason, ritm, ritm_sys_id, ritm_state, request_sys_id, csr_file (csr_from_request), read (where it looked), others (certificates there for
     another key), and when issued - cert (pem, subject, issuer, serial, sha1, sha256, not_before, not_after,
     days, names, key, ca), chain (pem, subject, issuer, sha1, self_signed, from_bundle - in order from the issuer up),
@@ -375,9 +377,16 @@ class Sn(object):
                          validate_certs=p['validate_certs'], timeout=p['timeout'])
         if p['ca_path']:
             self.opts['ca_path'] = p['ca_path']
+        self.seen = {}
 
     def get(self, path, query=None, raw=False):
         url = self.base + path + (('?' + urlencode(query)) if query else '')
+        if (url, raw) in self.seen:         # only reads: a request named for every renewal is read once
+            return self.seen[(url, raw)]
+        self.seen[(url, raw)] = got = self._get(url, path, raw)
+        return got
+
+    def _get(self, url, path, raw):
         try:
             r = open_url(url, method='GET', headers={'Accept': '*/*' if raw else 'application/json'}, **self.opts)
             body = r.read()
@@ -427,9 +436,29 @@ def find_one(sn, p, item, now):
         except Exception as e:
             out.update(status='failed', reason='the CSR on the host cannot be read (%s)' % e)
             return out
-    if item.get('ritm'):
+    named = ritm_numbers(item.get('ritm'))
+    if named and not from_request:
+        # the requests named (Linux, Windows): read as they are - opened by hand, ordered any way, with or without the
+        # renewal's CSR on them. The CSR is on the host: the certificate there with its public key is the one.
+        ritms, missing = [], []
+        for num in named:
+            recs = sn.get('/api/now/table/sc_req_item', {'sysparm_query': 'number=%s' % num,
+                                                         'sysparm_fields': 'sys_id,number,state,request', 'sysparm_limit': '1'}) or []
+            if not recs:
+                missing.append(num)
+                continue
+            r = dict(recs[0])
+            req = r.get('request')
+            r['request'] = (req.get('value') if isinstance(req, dict) else req) or ''
+            ritms.append(r)
+        if not ritms:
+            out.update(status='not found', reason='no requested item %s in ServiceNow (the number, or the API account may not read it)'
+                       % ', '.join(missing))
+            return out
+        found, live = [], ritms
+    elif named:
         # the request named (VMware - certificate install from one request): its own attachments, whatever the expiry
-        num = str(item['ritm']).strip().upper()
+        num = named[0]
         recs = sn.get('/api/now/table/sc_req_item', {'sysparm_query': 'number=%s' % num, 'sysparm_fields': 'sys_id,number',
                                                      'sysparm_limit': '1'}) or []
         if not recs:
@@ -441,6 +470,26 @@ def find_one(sn, p, item, now):
     else:
         found = sn.get('/api/now/attachment', {'sysparm_query': catalog_query(item['stem'], item.get('expires')),
                                                'sysparm_fields': 'sys_id,file_name,table_name,table_sys_id', 'sysparm_limit': '50'}) or []
+    if not (named and not from_request):
+        live = by_csr(sn, p, found, item, out)
+        if not live:
+            return out
+    return read_requests(sn, p, item, out, live, found, from_request, want, now)
+
+
+def ritm_numbers(value):
+    """The requests named: RITM0012345, 'ritm0012345, RITM0012346' or a list -> ['RITM0012345', 'RITM0012346']."""
+    vals = value if isinstance(value, (list, tuple)) else re.split(r'[\s,;]+', str(value or ''))
+    out = []
+    for v in vals:
+        v = str(v or '').strip().upper()
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
+def by_csr(sn, p, found, item, out):
+    """The requests that carry the CSR (found: its attachments) - those still open or done; [] when none (out says why)."""
     ids = []
     for a in found:
         if a.get('table_sys_id') and a['table_sys_id'] not in ids:
@@ -456,15 +505,22 @@ def find_one(sn, p, item, now):
             r['request'] = (req.get('value') if isinstance(req, dict) else req) or ''
             ritms.append(r)
     if not ritms:
-        out.update(status='not ordered', reason='no catalog request carries this CSR (%s): ordered by hand, or with an incident?' % item['stem'])
-        return out
+        out.update(status='not ordered', reason='no catalog request carries this CSR (%s): ordered by hand, or with an incident? '
+                                                'Name its request: cert_install_ritm' % item['stem'])
+        return []
     live = [r for r in ritms if str(r.get('state')) not in p['reorder_states']]
     if not live:
         r = sorted(ritms, key=lambda x: x.get('number', ''))[-1]
         out.update(status='closed', ritm=r.get('number', ''), ritm_sys_id=r.get('sys_id', ''),
                    ritm_state=RITM_STATES.get(str(r.get('state')), str(r.get('state'))),
                    reason='its request %s was closed %s: the renewal orders it again' % (r.get('number'), RITM_STATES.get(str(r.get('state')), r.get('state'))))
-        return out
+        return []
+    return live
+
+
+def read_requests(sn, p, item, out, live, found, from_request, want, now):
+    """What the PKI put on each request (newest first): the certificate whose public key is want, and its chain."""
+    named = bool(ritm_numbers(item.get('ritm'))) and not from_request
     stem = item['stem'].lower()
     csr_named = re.compile(re.escape(stem) + r'[0-9a-f]{8}-exp[0-9]{8}\.(csr|txt)$', re.I)
     exts = set(e.lower().lstrip('.') for e in p['exts'])
@@ -553,6 +609,11 @@ def find_one(sn, p, item, now):
             return out
     if want is None:
         return out          # failed above: no CSR on the request to match a certificate to
+    if named:
+        nums = ', '.join(r.get('number', '') for r in live)
+        out.update(status='not on it', ritm=nums, reason='%s: no certificate there for this renewal\'s key%s' % (
+            nums, ('; ' + '; '.join(out['others'])) if out['others'] else ''))
+        return out
     out.update(status='waiting', reason='%s (%s): no certificate for this key on it yet%s' % (
         out['ritm'], out['ritm_state'], ('; ' + '; '.join(out['others'])) if out['others'] else ''))
     return out

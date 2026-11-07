@@ -4,6 +4,7 @@
 # and what the PKI put there - the certificate whose public key is the CSR's, and its chain (completed from
 # cert_install_ca_bundle when the PKI sent only the .cer; library/site_cert_issued.py). The hosts never get the ServiceNow credential. Reads only, in a dry run too.
 # Output: cert_install_issued {host: [{base, status, reason, ritm, cert, chain, problems ...}]}.
+# cert_install_ritm (named in the survey): only those requests, however they were opened - matched by the CSR's public key.
 # _ci_pending_in (the VMware certificate install: vCenter and its hosts are no inventory hosts) - the CSRs to look up
 # instead of the hosts' cert_install_pending; the output is then the module's list as it is (_ci_found.issued).
 - name: Certificate install | connection (from the ServiceNow API credential)
@@ -17,7 +18,7 @@
       {%- for h in groups['all'] | sort if hostvars[h].cert_install_pending is defined and _ci_pending_in is not defined -%}
       {%-   for i in hostvars[h].cert_install_pending['items'] -%}
       {%-     set _ = out.append({'key': h ~ '|' ~ i.base, 'host': h, 'stem': i.stem, 'expires': i.expires, 'csr': i.csr,
-                                  'names': i.names}) -%}
+                                  'names': i.names, 'ritm': cert_install_ritm | default('')}) -%}
       {%-   endfor -%}
       {%- endfor -%}
       {{ out }}

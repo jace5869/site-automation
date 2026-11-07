@@ -15,7 +15,9 @@
       {%-     set r = issued.get(h, []) | selectattr('base', 'equalto', i.base) | first | default({'status': 'failed', 'reason': 'not looked up'}) -%}
       {%-     set p = plan | selectattr('base', 'equalto', i.base) | first | default({}) -%}
       {%-     set head = h ~ ' | ' ~ (i.subject or i.base) ~ ((' | ' ~ r.ritm) if r.ritm | default('') else '') -%}
-      {%-     if r.status != 'issued' -%}
+      {%-     if r.status == 'not on it' -%}
+      {#-       a request named (cert_install_ritm): the renewals it has nothing for are counted below, not listed -#}
+      {%-     elif r.status != 'issued' -%}
       {%-       set _ = out.append(r.status | upper ~ ' | ' ~ head ~ ' | ' ~ r.reason) -%}
       {%-     elif p.status | default('') == 'ready' -%}
       {%-       set files = p.files | default([]) -%}
@@ -35,6 +37,22 @@
       {%-     endif -%}
       {%-   endfor -%}
       {%- endfor -%}
+      {%- set notfor = [] -%}
+      {%- for h, rs in issued.items() -%}
+      {%-   set _ = notfor.extend(rs | selectattr('status', 'equalto', 'not on it') | list) -%}
+      {%- endfor -%}
+      {%- set _ritm = cert_install_ritm | default('') -%}
+      {%- set _ritm = ((_ritm | join(', ')) if _ritm is not string and _ritm is iterable else _ritm | string | trim) | upper -%}
+      {%- if _ritm and notfor -%}
+      {%-   set others = notfor | map(attribute='others') | flatten | unique | list -%}
+      {%-   set hit = issued.values() | flatten | selectattr('status', 'equalto', 'issued') | list | length -%}
+      {%-   set _ = out.append(('NOT ON IT | ' ~ notfor | length ~ ' renewal(s) waiting on these hosts have no certificate on ' ~ _ritm
+                                ~ ' - they wait for their own request') if hit else
+                               ('NOTHING TO INSTALL | ' ~ _ritm ~ ': no certificate there fits a key waiting on these hosts ('
+                                ~ notfor | length ~ ' renewal(s) looked at) - the PKI must sign a CSR the renewal made (its key '
+                                ~ 'waits on the host)'
+                                ~ ((' | there: ' ~ others | join('; ')) if others else ' | no certificate on it yet'))) -%}
+      {%- endif -%}
       {%- for h in groups['all'] | sort if hostvars[h].site_host_unreached | default('') -%}
       {%-   set _ = out.append('NOT REACHED | ' ~ h ~ ' | ' ~ hostvars[h].site_host_unreached ~ ' - its certificates on a later run') -%}
       {%- endfor -%}

@@ -399,6 +399,60 @@ class AgainstTheFakeServiceNow(unittest.TestCase):
         r = self.find(dict(item, ritm="RITM9999999"))
         self.assertEqual(r["status"], "not found", r)
 
+    def by_hand(self):
+        """A request a person opened by hand: no CSR of the renewal on it, any name."""
+        req = self.call("POST", "/api/now/table/sc_request", {"short_description": "Certificate"})
+        return self.call("POST", "/api/now/table/sc_req_item", {"request": req["sys_id"], "short_description": "Certificate for web01"})
+
+    def test_a_request_named_opened_by_hand(self):
+        """cert_install_ritm (Linux, Windows): the request named is read as it is - no CSR of the renewal on it, any
+        expiry - and the certificate there whose public key is the host's CSR's is the one; on its catalog task too."""
+        ritm = self.by_hand()
+        item = self.pending("web01.example.mil-abab1212")
+        self.assertEqual(self.find(item)["status"], "not ordered", "by the CSR's name: nothing carries it")
+        r = self.find(dict(item, ritm=ritm["number"]))
+        self.assertEqual((r["status"], r["ritm"]), ("not on it", ritm["number"]), r)
+        task = self.call("POST", "/api/now/table/sc_task", {"request_item": ritm["sys_id"], "short_description": "Issue it"})
+        self.call("POST", "/api/now/attachment/file?table_name=sc_task&table_sys_id=%s&file_name=other.cer" % task["sys_id"],
+                  raw=read("other.crt"), ctype="application/octet-stream")
+        r = self.find(dict(item, ritm=ritm["number"]))
+        self.assertEqual(r["status"], "not on it", r)
+        self.assertIn("not for this key", r["reason"], r)
+        self.call("POST", "/api/now/attachment/file?table_name=sc_task&table_sys_id=%s&file_name=issued.cer" % task["sys_id"],
+                  raw=read("web.der"), ctype="application/octet-stream")
+        r = self.find(dict(item, ritm=" %s , RITM9999999" % ritm["number"].lower()))
+        self.assertEqual((r["status"], r["ritm"], r["source"]), ("issued", ritm["number"], "issued.cer"), r)
+        self.assertEqual(r["problems"], [], r)
+
+    def test_a_request_named_that_is_not_there(self):
+        r = self.find(dict(self.pending("web01.example.mil-cdcd3434"), ritm="RITM9999998, RITM9999999"))
+        self.assertEqual(r["status"], "not found", r)
+        self.assertIn("RITM9999998, RITM9999999", r["reason"])
+
+    def test_a_request_named_is_read_once(self):
+        """Every renewal of every host looks at the same request: one read of each record."""
+        ritm = self.by_hand()
+        self.call("PATCH", "/api/now/table/sc_req_item/%s" % ritm["sys_id"], {"work_notes": "Issued:\n" + read("web.crt").decode()})
+        mod = FakeModule(self.port)
+        sn = m.Sn(mod)
+        before = self.logged()
+        got = [m.find_one(sn, mod.params, dict(self.pending("web01.example.mil-efef%04d" % n), ritm=ritm["number"]), m.utcnow())
+               for n in range(5)]
+        self.assertEqual([g["status"] for g in got], ["issued"] * 5, got)
+        reads = self.logged() - before
+        self.assertTrue(0 < reads < 10, "%d reads for 5 renewals of one request" % reads)
+
+    def logged(self):
+        if not os.path.exists(self.log):
+            return 0
+        with open(self.log) as f:
+            return sum(1 for _ in f)
+
+    def test_ritm_numbers(self):
+        self.assertEqual(m.ritm_numbers(" ritm0012345, RITM0012346;RITM0012345 "), ["RITM0012345", "RITM0012346"])
+        self.assertEqual(m.ritm_numbers(["ritm1", "", None]), ["RITM1"])
+        self.assertEqual(m.ritm_numbers(""), [])
+
     def test_closed_incomplete(self):
         ritm = self.order("web01.example.mil-cccc3333", read("web.csr"))
         self.call("PATCH", "/api/now/table/sc_req_item/%s" % ritm["sys_id"], {"state": "4"})
