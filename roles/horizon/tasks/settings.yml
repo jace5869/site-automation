@@ -1,0 +1,33 @@
+---
+# SETTINGS REPORT (playbooks/horizon_settings_report.yml). Read-only: Horizon's global settings (general, security,
+# pre-logon) and each Connection Server's settings against horizon_settings_baseline - {area.setting: expected},
+# area general, security, pre_logon or connection_server - and every setting read, to build a baseline from.
+# Red when a setting differs from the baseline; green unless horizon_health_fail.
+- name: Horizon | read the settings
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the global and the Connection Servers' settings
+    _hz_resources: [settings_general, settings_security, pre_logon, cs_config]
+    _hz_tolerate: true
+
+- name: Horizon | the settings report
+  ansible.builtin.set_fact:
+    _hz_set: "{{ _hz | hz_settings(horizon_settings_baseline | default({}, true)) }}"
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: "{{ _hz_set.report }}"
+    _hz_footer: "Read-only: the Horizon REST API of {{ _hz_read.url }}. The baseline: horizon_settings_baseline."
+
+- name: Horizon | the drift as job artifacts (horizon_settings)
+  ansible.builtin.set_stats:
+    data:
+      horizon_settings: "{{ {'differ': _hz_set.drift, 'warning': _hz_set.warning} }}"
+
+- name: Horizon | every setting as the baseline
+  ansible.builtin.assert:
+    that: _hz_set.critical | int == 0
+    fail_msg: "{{ _hz_set.critical }} setting(s) differ from the baseline (the report is above). horizon_health_fail: false makes this a report only."
+    quiet: true
+  when: horizon_health_fail | bool

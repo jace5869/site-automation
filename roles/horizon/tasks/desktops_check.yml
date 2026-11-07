@@ -14,17 +14,24 @@
     fail_msg: "horizon_desktops_mode is '{{ horizon_desktops_mode }}': report (a list) or approval (the workflow's check)."
     quiet: true
 
-- name: Horizon | read the pools, desktops and sessions
+- name: Horizon | read the pools, desktops, sessions and AD as the Connection Servers see it
   ansible.builtin.include_tasks: read.yml
   vars:
-    _hz_what: the pools, desktops and sessions
-    _hz_resources: [desktop_pools, machines, sessions]
+    _hz_what: the pools, desktops, sessions and AD domains
+    _hz_resources: [desktop_pools, machines, sessions, ad_domains]
+    _hz_optional: [ad_domains]   # only the AD gate needs it: without it the report says so
+
+- name: Horizon | the settings each desktop is checked against
+  ansible.builtin.include_tasks: desktop_opts.yml
 
 - name: Horizon | the broken desktops
   ansible.builtin.set_fact:
-    _hz_dk: "{{ _hz | hz_desktops({'protected_pools': horizon_protected_pools, 'broken_states': horizon_broken_states,
-                                        'actions': horizon_fix_actions | default({}, true), 'default_action': horizon_fix_default_action,
-                                        'max': horizon_fix_max | int, 'exclude_machines': horizon_fix_exclude_machines}) }}"
+    _hz_dk: "{{ _hz | hz_desktops(_hz_desktop_opts) }}"
+
+- name: Horizon | the AD gate could not look
+  ansible.builtin.debug:
+    msg: "Horizon did not give the AD domains ({{ _hz.errors.ad_domains }}): fixes that make a new clone were not held for AD."
+  when: "'ad_domains' in _hz.errors and horizon_fix_ad_gate | bool"
 
 - name: Horizon | report
   ansible.builtin.include_tasks: report.yml

@@ -5,11 +5,16 @@
 # Horizon sees them in each pool's vCenter, when it starts, and what happens to the users. A plan with a
 # problem stops here (the job fails, nothing goes to the approval); a good plan goes on to the approval step
 # (set_stats horizon_push_plan), then horizon_image_push_approved.yml schedules exactly that.
-- name: Horizon | read the pools
+- name: Horizon | read the pools and the vCenters' datastores
   ansible.builtin.include_tasks: read.yml
   vars:
-    _hz_what: the pools
-    _hz_resources: [desktop_pools]
+    _hz_what: the pools and the datastores
+    _hz_resources: [desktop_pools, virtual_centers]
+    _hz_optional: [virtual_centers]   # only the free space warning needs it
+
+- name: Horizon | the datastores' free space
+  ansible.builtin.set_fact:
+    _hz_ds: "{{ _hz | hz_datastores }}"
 
 - name: Horizon | the pools to push to
   ansible.builtin.set_fact:
@@ -55,7 +60,8 @@
       {%-   set _ = snaps.update({vc: (_hz.raw['snapshots:' ~ vc] | default([])) | hz_pick(horizon_push_snapshot, 'snapshot')}) -%}
       {%- endfor -%}
       {{ _hz_pp | hz_push_plan(_hz_vm_picks, snaps, horizon_push_start | hz_push_start(horizon_now | default('')),
-                            {'logoff_policy': horizon_push_logoff_policy, 'stop_on_first_error': horizon_push_stop_on_first_error | bool}) }}
+                            {'logoff_policy': horizon_push_logoff_policy, 'stop_on_first_error': horizon_push_stop_on_first_error | bool,
+                             'datastores': _hz_ds}) }}
 
 - name: Horizon | report
   ansible.builtin.include_tasks: report.yml

@@ -230,7 +230,7 @@ class Push(unittest.TestCase):
             self.assertIn(want, e)
         vms = [{"id": "v1", "name": "Gold", "path": "/dc/Gold"}, {"id": "v2", "name": "gold", "path": "/dc2/gold", "incompatible_reasons": ["X"]}]
         self.assertEqual(f.hz_pick(vms, "Gold")["id"], "v1")              # the exact name first
-        self.assertIn("Horizon flags golden image VM gold: X", f.hz_pick(vms, "/dc2/gold")["warnings"][0])
+        self.assertIn("Horizon will not push golden image VM gold: X", f.hz_pick(vms, "/dc2/gold")["problem"])
         self.assertIn("2 golden image VMs are named GOLD", f.hz_pick(vms, "GOLD")["problem"])
         self.assertIn("no snapshot named s (Horizon lists none)", f.hz_pick([], "s", "snapshot")["problem"])
         start = f.hz_push_start("", NOW)
@@ -306,6 +306,153 @@ class Reports(unittest.TestCase):
         self.assertEqual(len(sc["errors"]), 2)
         self.assertIn("horizon_protected_pools: IC-* matches IC-Win11", sc["lines"])
         self.assertIn("ERORR is not a desktop state", " ".join(sc["warnings"]))
+
+
+class Gaps(unittest.TestCase):
+    """0.83.0: what the desktops check holds back now, the health report's new findings, the events and settings reports."""
+
+    def mmd(self, i, state, **mdd):
+        return mach(i, "p1", state, managed_machine_data=mdd)
+
+    def test_clone_error_kinds(self):
+        for msg, kind in (("The domain join failed", "domain"), ("Trust relationship failed", "domain"),
+                          ("No IP address: DHCP", "network"), ("got 169.254.3.4", "network"),
+                          ("Insufficient disk space on datastore DS2", "datastore"), ("Windows activation failed (KMS)", "activation"),
+                          ("Customization operation timed out", "timeout"), ("something else", "other"), ("", "")):
+            self.assertEqual(f._classify(msg), kind, msg)
+        self.assertEqual(f._classify("Carbon Black removed it", {"security_agent": "carbon black"}), "security_agent")
+        self.assertEqual(f._classify("x", {"bad": "("}), "other")            # a broken pattern is skipped, never an error
+
+    def test_holds(self):
+        d = data([IC], [self.mmd("1", "PROVISIONING_ERROR", clone_error_message="Domain join failed"),
+                        self.mmd("2", "PROVISIONING_ERROR", clone_error_message="Customization operation timed out"),
+                        self.mmd("3", "ERROR", missing_in_vcenter=True),
+                        self.mmd("4", "ERROR", missing_in_vcenter=True, host_name="esx9"),
+                        self.mmd("5", "CUSTOMIZING", create_time=NOW - 9 * H), self.mmd("6", "CUSTOMIZING", create_time=NOW - 1 * H),
+                        self.mmd("7", "DELETING", last_maintenance_time=NOW - 30 * H, create_time=NOW - 99 * H),
+                        self.mmd("8", "PROVISIONING")]
+                 + [self.mmd("h%d" % n, "AGENT_UNREACHABLE", host_name="esx9") for n in range(3)])
+        r = f.hz_desktops(d, {"now": NOW, "host_threshold": 3})
+        fix = dict((x["id"], x["action"]) for x in r["fix"])
+        why = dict((x["id"], x["reason"]) for x in r["held"])
+        self.assertEqual(fix, {"2": "recover", "3": "remove", "4": "remove"})        # a ghost on a failed host is still removed
+        self.assertIn("domain problem", why["1"])
+        self.assertIn("stuck customizing since", why["5"])
+        self.assertIn("stuck deleting", why["7"])
+        self.assertNotIn("6", why)                                                 # 1 hour: still being made
+        self.assertNotIn("8", why)                                                 # no time given: not counted
+        self.assertIn("4 desktops on ESXi host esx9 are broken at once", why["h0"])   # the ghost there too
+        self.assertEqual(r["gates"]["hosts"], {"esx9": 4})
+        r = f.hz_desktops(d, {"now": NOW, "host_threshold": 0, "hold_error_kinds": [], "ghost_action": "",
+                              "stuck_actions": {"customizing": "recover"}})
+        fix = dict((x["id"], x["action"]) for x in r["fix"])
+        why = dict((x["id"], x["reason"]) for x in r["held"])
+        self.assertEqual(fix.get("1"), "recover")                                 # [] = recover every kind
+        self.assertEqual(fix.get("5"), "recover")
+        self.assertEqual(fix.get("h0"), "recover")                                # 0 = no host check
+        self.assertIn("vCenter has no such VM any more", why["3"])                # "" = left for a person
+
+    def test_ad_gate(self):
+        ad = [{"dns_name": "corp.example.mil", "connection_servers": [{"name": "cs1", "status": "FULLY_ACCESSIBLE"},
+                                                                       {"name": "cs2", "status": "CANNOT_BIND"}]}]
+        d = data([IC], [mach("1", "p1", "AGENT_UNREACHABLE"), mach("2", "p1", "AGENT_ERR_NEED_REBOOT")], ad_domains=ad)
+        r = f.hz_desktops(d, {"actions": {"AGENT_ERR_NEED_REBOOT": "restart"}})
+        self.assertEqual([x["id"] for x in r["fix"]], ["2"])                      # a restart makes no new clone
+        self.assertIn("cs2: CANNOT_BIND: a new clone could not join its domain", r["held"][0]["reason"])
+        self.assertEqual([x["id"] for x in f.hz_desktops(d, {"ad_gate": False})["fix"]], ["2", "1"])
+        # after the approval: AD down NOW holds the approved recover
+        ok = {"desktops": [{"id": "1", "action": "recover"}, {"id": "2", "action": "restart"}]}
+        rc = f.hz_desktops_recheck(ok, d, {})
+        self.assertEqual([x["id"] for x in rc["act"]], ["2"])
+        self.assertIn("CANNOT_BIND", rc["skipped"][0]["reason"])
+
+    def test_recheck_kinds(self):
+        d = data([IC], [self.mmd("3", "ERROR", missing_in_vcenter=True), self.mmd("4", "ERROR"),
+                        self.mmd("5", "CUSTOMIZING", create_time=NOW - 9 * H), self.mmd("6", "AVAILABLE", create_time=NOW - 9 * H)])
+        ok = {"desktops": [{"id": "3", "action": "remove", "ghost": True}, {"id": "4", "action": "remove", "ghost": True},
+                           {"id": "5", "action": "recover", "stuck": True, "state": "CUSTOMIZING"},
+                           {"id": "6", "action": "recover", "stuck": True, "state": "CUSTOMIZING"}]}
+        rc = f.hz_desktops_recheck(ok, d, {"now": NOW})
+        self.assertEqual([x["id"] for x in rc["act"]], ["3", "5"])
+        why = dict((x["id"], x["reason"]) for x in rc["skipped"])
+        self.assertEqual(why["4"], "vCenter has it again")
+        self.assertIn("AVAILABLE now", why["6"])
+
+    def test_health_additions(self):
+        raw = {"connection_servers": [{"name": "cs1", "status": "OK", "default_certificate": True}],
+               "virtual_centers": [{"name": "vc", "datastores": [{"id": "d1", "details": {"name": "DS1", "capacity_mb": 100000}, "free_space_mb": 3000},
+                                                                  {"id": "d2", "details": {"name": "DS2", "capacity_mb": 100000}, "free_space_mb": 10000}],
+                                    "hosts": [{"details": {"name": "esx1"}, "status": "NOT_RESPONDING"}]}],
+               "cs_config": [{"id": "1", "name": "cs1"}],
+               "cs_config:1": [{"id": "1", "name": "cs1", "ldap_backup_info": {"last_ldap_backup_time": NOW - 40 * H, "last_ldap_backup_status": "OK"}}]}
+        pools = [dict(IC, provisioning_settings={"base_snapshot_id": "s2"}, provisioning_status_data={"instant_clone_pending_image_state": "READY_HELD"}),
+                 dict(IC, id="p9", name="IC-Two", provisioning_settings={"base_snapshot_id": "s2"})]
+        ms = [mach("1", "p9", "AVAILABLE", agent_version="8.12", agent_ipv4_address="169.254.1.1", managed_machine_data={"base_vm_snapshot_id": "s1"}),
+              mach("2", "p9", "AVAILABLE", agent_version="8.11", agent_ipv4_address="192.0.2.5"),
+              mach("3", "p9", "CONNECTED", agent_version="8.12", agent_ipv4_address="192.0.2.5"),
+              mach("4", "p9", "BLOCKED_AGENT_VERSION")]
+        h = f.hz_health(data(pools, ms, **raw), {"now": NOW})
+        t = " | ".join("%s %s" % (p["severity"], p["text"]) for p in h["problems"])
+        for want in ("warning it serves its own self-signed certificate", "critical 3 GB free of 98 GB (3%)", "warning 10 GB free of 98 GB (10%)",
+                     "warning NOT_RESPONDING (vCenter vc)", "warning its last configuration backup was 40 hours ago",
+                     "warning a new image is ready but held", "warning Horizon Agent of 2 versions: 8.12 (2), 8.11 (1)",
+                     "blocked for their agent version: d-4", "not in use still on an older image after the push: d-1",
+                     "1 with a 169.254 address", "the same IP address on two or more desktops: 192.0.2.5 (d-2, d-3)"):
+            self.assertIn(want, t)
+        self.assertEqual(h["report"]["sections"][-1]["title"], "Datastores")
+        # the push plan: vGPU and space
+        pp = f.hz_push_pools(data([dict(IC, storage_settings={"datastores": [{"datastore_id": "d1"}]})]), "IC-Win11")
+        plan = f.hz_push_plan(pp, {"vc1": {"id": "v", "name": "G", "warnings": []}},
+                              {"vc1": {"id": "s", "name": "s", "path": "/s", "warnings": [], "disk_mb": 40960, "vgpu": "grid_a40-2q"}},
+                              f.hz_push_start("", NOW), {"datastores": f.hz_datastores(data(**raw))})
+        w = " | ".join(plan["warnings"])
+        self.assertIn("vGPU profile (grid_a40-2q) is not the pool's (none)", w)
+        self.assertIn("datastore DS1 has 3 GB free; the new image's replica needs about 40 GB", w)
+
+    def test_events(self):
+        ev = [{"type": "BROKER_USER_AUTHFAILED_BAD_USER_PASSWORD", "severity": "AUDIT_FAIL", "time": NOW - n * H,
+               "message": "User CORP\\jdoe has failed to authenticate to Horizon from 198.51.100.23"} for n in range(1, 6)]
+        ev += [{"type": "BROKER_USER_NOT_ENTITLED", "severity": "AUDIT_FAIL", "time": NOW - H, "user_id": "S-1-5-21-7", "message": "no user here"},
+               {"type": "BROKER_POOL_EMPTY", "severity": "ERROR", "time": NOW - H, "desktop_pool_id": "p1", "message": "Pool IC-Win11 is empty"},
+               {"type": "VLSI_X", "severity": "AUDIT_SUCCESS", "module": "Vlsi", "time": NOW - H, "message": "User CORP\\adm changed it"},
+               {"type": "BROKER_POOL_EMPTY", "severity": "ERROR", "time": NOW - 30 * H, "message": "old"}]
+        r = f.hz_events(data([IC], audit_events=ev), {"now": NOW, "hours": 24})
+        self.assertEqual((r["failed"], r["errors"], r["admin"]), (6, 1, 1))
+        self.assertEqual(r["users"], {"CORP\\jdoe": 5, "S-1-5-21-7": 1})
+        self.assertEqual(r["warning"], 2)
+        rows = r["report"]["sections"][1]["rows"]
+        self.assertEqual(rows[0][:4], ["CORP\\jdoe", 5, "bad user password (5)", "198.51.100.23"])
+        self.assertEqual(r["report"]["sections"][2]["rows"][0][:3], ["BROKER_POOL_EMPTY", 1, "IC-Win11"])
+        q = __import__("json").loads(f.hz_events_filter(24, NOW))
+        self.assertEqual((q["name"], q["toValue"] - q["fromValue"]), ("time", 24 * H))
+        r = f.hz_events({"raw": {}, "errors": {"audit_events": "HTTP 500"}}, {"now": NOW})
+        self.assertEqual(r["critical"], 1)
+
+    def test_settings(self):
+        raw = {"settings_general": [{"client_idle_session_timeout_policy": "NEVER", "client_max_session_timeout_minutes": 600,
+                                     "pre_login_message": "You are accessing a U.S. Government (USG) system", "nested": {"a": True}}],
+               "cs_config": [{"name": "cs1", "fips_mode_enabled": True, "smart_card_support": "OPTIONAL", "ldap_backup_info": {"x": 1}},
+                             {"name": "cs2", "fips_mode_enabled": False, "smart_card_support": "REQUIRED"}]}
+        base = {"general.client_idle_session_timeout_policy": "timeout_after", "general.client_max_session_timeout_minutes": {"max": 720},
+                "general.pre_login_message": {"contains": "u.s. government"}, "general.nested.a": True,
+                "connection_server.fips_mode_enabled": True, "connection_server.smart_card_support": {"one_of": ["REQUIRED"]},
+                "security.x": 1}
+        r = f.hz_settings(data(**raw), base)
+        res = dict(("%s@%s" % (x[0], x[1]), x[4]) for x in r["report"]["sections"][0]["rows"])
+        self.assertEqual(res["general.client_idle_session_timeout_policy@global"], "DRIFT")
+        self.assertEqual(res["general.client_max_session_timeout_minutes@global"], "OK")
+        self.assertEqual(res["general.pre_login_message@global"], "OK")
+        self.assertEqual(res["general.nested.a@global"], "OK")
+        self.assertEqual((res["connection_server.fips_mode_enabled@cs1"], res["connection_server.fips_mode_enabled@cs2"]), ("OK", "DRIFT"))
+        self.assertEqual(res["connection_server.smart_card_support@cs1"], "DRIFT")
+        self.assertEqual(res["security.x@global"], "NOT READ")
+        self.assertEqual(r["drift"], 3)
+        every = [x[0] for x in r["report"]["sections"][-1]["rows"]]
+        self.assertNotIn("connection_server.ldap_backup_info.x", every)
+        self.assertEqual(f.hz_settings(data(**raw), {})["report"]["title"], "Horizon settings: no baseline set")
+        self.assertEqual(f._expect("5", {"min": 1, "max": 10}), (True, ">= 1 and <= 10"))
+        self.assertEqual(f._expect("abc", {"not": "ABC"})[0], False)
+        self.assertEqual(f._expect(None, {"max": 5})[0], False)
 
 
 class Module(unittest.TestCase):

@@ -1,0 +1,38 @@
+---
+# EVENTS REPORT (playbooks/horizon_events_report.yml). Read-only: Horizon's event database, through the REST API
+# (external/audit-events), over the last horizon_events_hours - failed logons by user (bad password, locked
+# account, not entitled...), the errors by event type (launch failures, pools empty, provisioning errors...), and
+# what administrators changed in Horizon Console or its API. Green unless horizon_health_fail.
+- name: Horizon | read the events and the pools
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the events of the last {{ horizon_events_hours }} hours
+    _hz_resources:
+      - {name: audit_events, query: {filter: "{{ horizon_events_hours | hz_events_filter(horizon_now | default('')) }}"}}
+      - desktop_pools
+    _hz_tolerate: true           # read-only: the report says what Horizon did not give
+
+- name: Horizon | the events report
+  ansible.builtin.set_fact:
+    _hz_ev: "{{ _hz | hz_events({'hours': horizon_events_hours | float, 'failed_warn': horizon_events_failed_warn | int,
+                                  'failed_types': horizon_events_failed_types, 'error_severities': horizon_events_error_severities,
+                                  'admin_modules': horizon_events_admin_modules, 'max_rows': horizon_report_max_rows | int,
+                                  'now': horizon_now | default('')}) }}"
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: "{{ _hz_ev.report }}"
+    _hz_footer: "Read-only: Horizon's event database, through the REST API of {{ _hz_read.url }}."
+
+- name: Horizon | the counts as job artifacts (horizon_events)
+  ansible.builtin.set_stats:
+    data:
+      horizon_events: "{{ {'failed_logons': _hz_ev.failed, 'errors': _hz_ev.errors, 'admin_changes': _hz_ev.admin, 'users': _hz_ev.users} }}"
+
+- name: Horizon | the event database was read
+  ansible.builtin.assert:
+    that: _hz_ev.critical | int == 0
+    fail_msg: "{{ _hz_ev.critical }} critical finding(s) (the report is above). horizon_health_fail: false makes this a report only."
+    quiet: true
+  when: horizon_health_fail | bool

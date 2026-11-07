@@ -8,6 +8,7 @@ from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import fnmatch
+import json
 import re
 import time
 from datetime import datetime, timezone
@@ -17,10 +18,22 @@ BROKEN_STATES = ["AGENT_UNREACHABLE", "AGENT_ERR_DISABLED", "AGENT_ERR_INVALID_I
                  "AGENT_ERR_PROTOCOL_FAILURE", "AGENT_ERR_DOMAIN_FAILURE", "AGENT_CONFIG_ERROR", "ALREADY_USED", "ERROR",
                  "PROVISIONING_ERROR", "UNKNOWN"]
 IN_USE = ("CONNECTED", "DISCONNECTED", "UNASSIGNED_USER_CONNECTED", "UNASSIGNED_USER_DISCONNECTED")
-OK_STATUS = ("OK", "UP", "RUNNING", "CONNECTED", "FULLY_ACCESSIBLE", "AVAILABLE", "GREEN", "VALID", "ACTIVE")
+OK_STATUS = ("OK", "UP", "RUNNING", "CONNECTED", "FULLY_ACCESSIBLE", "AVAILABLE", "GREEN", "VALID", "ACTIVE", "ACCESSIBLE")
 MACHINE_ACTIONS = ("recover", "reset", "restart", "remove", "rebuild")
 INSTANT = ("INSTANT_CLONE", "INSTANT_CLONE_ENGINE")
 SEV = {"critical": 0, "warning": 1, "info": 2, "ok": 3}
+# states a desktop passes through by itself - a problem only when it stays in one (horizon_stuck_hours)
+STUCK_STATES = ["PROVISIONING", "CUSTOMIZING", "DELETING", "MAINTENANCE", "WAITING_FOR_AGENT", "VALIDATING", "IN_PROGRESS",
+                "AGENT_ERR_STARTUP_IN_PROGRESS", "AGENT_ERROR_STARTUP_IN_PROGRESS", "DISABLE_IN_PROGRESS"]
+# what a clone error says its cause is: (kind, pattern), the first that matches
+ERROR_KINDS = [("domain", r"domain|trust relationship|\bjoin|netlogon|computer account|kerberos"),
+               ("network", r"\bip\b|ip address|dhcp|apipa|169\.254\.|network|\bnic\b"),
+               ("datastore", r"disk space|datastore|insufficient (?:disk|space|storage)|no space|out of space"),
+               ("activation", r"activat|\bkms\b|licens"),
+               ("timeout", r"timed? ?out|timeout")]
+# kinds a recover or rebuild would only repeat: the cause is outside the desktop
+HOLD_KINDS = ["domain", "network", "datastore"]
+NEW_CLONE = ("recover", "rebuild")       # actions that make the desktop again (it joins the domain again)
 
 
 def _g(d, *paths, **kw):
@@ -121,8 +134,13 @@ def _pool(p):
             "pending_state": str(psd.get("instant_clone_pending_image_state") or "").upper(),
             "operation": str(psd.get("instant_clone_operation") or "").upper(),
             "pending_error": str(psd.get("instant_clone_pending_image_error") or psd.get("instant_clone_operation_error") or ""),
+            "pending_progress": _int(psd.get("instant_clone_pending_image_progress"), -1),
             "last_error": str(psd.get("last_provisioning_error") or ""),
-            "last_error_ms": _ms(psd.get("last_provisioning_error_time"))}
+            "last_error_ms": _ms(psd.get("last_provisioning_error_time")),
+            "vgpu": str(_g(p, "display_protocol_settings.vgpu_grid_profile", "display_protocol_settings.grid_vgpu_profile",
+                           "vgpu_grid_profile", default="")),
+            "datastores": [str(_g(d, "datastore_id", "id", default="")) for d in
+                           _g(p, "storage_settings.datastores", "provisioning_settings.datastores", default=[]) or [] if isinstance(d, dict)]}
 
 
 def _machine(m):
@@ -131,7 +149,16 @@ def _machine(m):
             "dns": str(_g(m, "dns_name", default="")), "pool_id": str(_g(m, "desktop_pool_id", "pool_id", default="")),
             "state": str(_g(m, "state", default="UNKNOWN")).upper(), "users": [str(u) for u in users],
             "session_id": str(_g(m, "session_id", default="")), "os": str(_g(m, "operating_system", default="")),
-            "agent": str(_g(m, "agent_version", default=""))}
+            "agent": str(_g(m, "agent_version", default="")),
+            "host": str(_g(m, "managed_machine_data.host_name", "host_name", default="")),
+            "ip": str(_g(m, "agent_ipv4_address", "ipv4_address", "ip_address", "managed_machine_data.ip_address", default="")),
+            "clone_error": str(_g(m, "managed_machine_data.clone_error_message", "clone_error_message", default="")),
+            "clone_error_ms": _ms(_g(m, "managed_machine_data.clone_error_time", "clone_error_time")),
+            "missing_vc": _g(m, "managed_machine_data.missing_in_vcenter", "missing_in_vcenter", default=False) is True,
+            "created_ms": _ms(_g(m, "managed_machine_data.create_time", "create_time")),
+            "maint_ms": _ms(_g(m, "managed_machine_data.last_maintenance_time", "last_maintenance_time")),
+            "snapshot_id": str(_g(m, "managed_machine_data.base_vm_snapshot_id", "base_vm_snapshot_id", default="")),
+            "pending_snapshot_id": str(_g(m, "managed_machine_data.pending_base_vm_snapshot_id", default=""))}
 
 
 def _session(s):
@@ -198,13 +225,138 @@ def _is_sid(text):
     return bool(re.match(r"^S-1-\d+(-\d+)+$", str(text or "").strip(), re.I))
 
 
-def hz_desktops(data, opts=None):
-    """The broken desktops -> {fix: [...], held: [...], by_state, total, report}. A desktop is held back (never
-    fixed automatically) when: its pool is protected, it is excluded, a user's session is on it (connected or
-    disconnected), its action needs instant clones and its pool is not, it would be removed while assigned to a
-    user, or it is over the cap per run."""
-    o = opts or {}
+def _classify(message, kinds=None):
+    """What a clone error says its cause is -> domain, network, datastore, activation, timeout, other ('' = no error).
+    kinds: more {kind: pattern} (horizon_clone_error_kinds), tried before the built-in ones."""
+    msg = str(message or "").strip()
+    if not msg:
+        return ""
+    for kind, pat in list((kinds or {}).items()) + ERROR_KINDS:
+        try:
+            if re.search(str(pat), msg, re.I):
+                return str(kind).lower()
+        except re.error:
+            continue
+    return "other"
+
+
+def _ad_problem(data):
+    """'' or why a new clone could not join its domain now: a Connection Server that cannot reach or bind to an AD
+    domain (monitor/ad-domains, as the health report reads it)."""
+    bad = []
+    for a in (data.get("raw") or {}).get("ad_domains") or []:
+        if not isinstance(a, dict):
+            continue
+        name = str(_g(a, "dns_name", "netbios_name", "name", default="?"))
+        for c in _g(a, "connection_servers", default=[]) or []:
+            if isinstance(c, dict) and c.get("status") not in (None, "") and not _ok(c.get("status")):
+                bad.append("AD domain %s from Connection Server %s: %s" % (name, c.get("name") or c.get("id") or "?", c.get("status")))
+    return "; ".join(bad)
+
+
+def _failed_hosts(data, broken, threshold):
+    """{ESXi host: broken desktops on it} for the hosts with at least `threshold` broken desktops (0 = off)."""
+    by = {}
+    for m in data.get("machines") or []:
+        if m["state"] in broken and m["host"]:
+            by[m["host"]] = by.get(m["host"], 0) + 1
+    return dict((h, n) for h, n in by.items() if threshold and n >= threshold)
+
+
+def _stuck_hours(m, now):
+    """Hours a desktop has been in its passing state: since its last maintenance (deleting, maintenance) or since it was
+    made; None when Horizon gives neither time."""
+    since = (m["maint_ms"] or m["created_ms"]) if m["state"] in ("DELETING", "MAINTENANCE") else (m["created_ms"] or m["maint_ms"])
+    return round((now - since) / 3600000.0, 1) if since else None
+
+
+def _desktop_opts(data, o):
+    """What every desktop is checked against: the states, the gates (AD, failed hosts) and the settings."""
     broken = [str(s).upper() for s in (_list(o.get("broken_states")) or BROKEN_STATES)]
+    return {"broken": broken, "stuck_states": [str(s).upper() for s in (_list(o.get("stuck_states")) or STUCK_STATES)],
+            "stuck_hours": float(o.get("stuck_hours") if o.get("stuck_hours") not in (None, "") else 4),
+            "stuck_actions": dict((str(k).upper(), str(v or "").lower()) for k, v in (o.get("stuck_actions") or {}).items()),
+            "ghost_action": str(o.get("ghost_action") if o.get("ghost_action") is not None else "remove").lower(),
+            "hold_kinds": [str(k).lower() for k in (_list(o.get("hold_error_kinds")) if o.get("hold_error_kinds") is not None else HOLD_KINDS)],
+            "kinds": o.get("error_kinds") or {},
+            "ad": _ad_problem(data) if o.get("ad_gate", True) not in (False, "false", "False", 0) else "",
+            "hosts": _failed_hosts(data, broken, _int(o.get("host_threshold"), 5)),
+            "now": _now_ms(o.get("now"))}
+
+
+def _candidate(m, g, approved=None):
+    """Is this desktop one to fix -> (kind of candidate, its action) or None: broken (its state), a ghost (Horizon has it,
+    vCenter has not), or stuck in a passing state for horizon_stuck_hours. approved: the record the approval handed on -
+    the same kind must still hold."""
+    hours = _stuck_hours(m, g["now"]) if m["state"] in g["stuck_states"] else None
+    if approved is not None and approved.get("ghost"):
+        return ("ghost", hours) if m["missing_vc"] else None        # its VM is back: not removed
+    if m["missing_vc"]:
+        return "ghost", hours
+    if approved is not None and approved.get("stuck"):
+        return ("stuck", hours) if m["state"] == str(approved.get("state")) and hours is not None and hours >= g["stuck_hours"] else None
+    if m["state"] in g["broken"]:
+        return "broken", hours
+    if approved is None and hours is not None and hours >= g["stuck_hours"]:
+        return "stuck", hours
+    return None
+
+
+def _hold(m, pool, action, kind, data, o, g, after=False):
+    """Why this desktop is left for a person ('' = it may be fixed), the same before and after the approval (after:
+    worded for the fix job - what changed since the check)."""
+    if kind == "stuck" and not action:
+        return ("stuck %s since %s: look at it in vCenter and in Horizon's events (horizon_fix_stuck_actions can fix it)"
+                % (m["state"].lower(), _when(m["maint_ms"] or m["created_ms"])))
+    if kind == "ghost" and not action:
+        return "vCenter has no such VM any more: remove it in Horizon Console (horizon_fix_ghost_action)"
+    if action not in MACHINE_ACTIONS:
+        return "its action %s is not one of %s (horizon_fix_actions)" % (action, ", ".join(MACHINE_ACTIONS))
+    hold = _pool_hold(pool, m["pool_id"], o)
+    if hold:
+        return hold
+    if _match(m["name"], o.get("exclude_machines")):
+        return "the desktop is excluded (horizon_fix_exclude_machines)"
+    on = _sessions_on(data, m["id"])
+    if on or m["session_id"]:
+        if after:
+            return "a user's session is on it now"
+        return "a user's session is on it (%s): fix it by hand, or log the session off first" % (on[0]["state"].lower() if on else "open")
+    if kind != "ghost" and m["host"] in g["hosts"]:
+        return ("%d desktops on ESXi host %s are broken at once: look at the host first, not the desktops (Broadcom KB 431732)"
+                % (g["hosts"][m["host"]], m["host"]))
+    if action in NEW_CLONE and g["ad"]:
+        return "%s: a new clone could not join its domain - the fix waits until AD answers" % g["ad"]
+    ek = _classify(m["clone_error"], g["kinds"])
+    if action in NEW_CLONE and ek in g["hold_kinds"]:
+        return ("its clone error is a %s problem (%s): a %s would fail the same way - fix the cause first (horizon_fix_hold_error_kinds)"
+                % (ek, m["clone_error"][:160], action))
+    if action == "recover" and not (pool and pool["source"] in INSTANT) and after:
+        return "recover is for instant clones, and pool %s is not" % (pool["name"] if pool else m["pool_id"])
+    if action == "recover" and not (pool and pool["source"] in INSTANT):
+        return ("recover is for instant clones, and pool %s is %s: fix it by hand"
+                % (pool["name"] if pool else m["pool_id"], ((pool or {}).get("source") or "not instant clones").lower().replace("_", " ")))
+    if action == "remove" and m["users"] and after:
+        return "it is assigned to a user now - remove would take their desktop away"
+    if action == "remove" and m["users"]:
+        return "it is assigned to a user - remove would take their desktop away: recover it instead (horizon_fix_actions)"
+    return ""
+
+
+def _state_text(x):
+    return x["state"] + (" - not in vCenter" if x.get("ghost") else "") + ((" for %.0f h" % x["hours"]) if x.get("stuck") and x.get("hours") else "")
+
+
+def hz_desktops(data, opts=None):
+    """The desktops to fix -> {fix: [...], held: [...], by_state, total, gates, report}: broken ones (horizon_broken_states),
+    ghosts (Horizon has the desktop, vCenter has not: removed) and desktops stuck in a passing state for
+    horizon_stuck_hours (left for a person unless horizon_fix_stuck_actions names an action). A desktop is held back
+    (never fixed automatically) when: its pool is protected, it is excluded, a user's session is on it, it is on an
+    ESXi host where many desktops broke at once (the host is the problem), a new clone could not join AD now, its clone
+    error is one a recover would repeat (domain, network, datastore), recover on a pool that is not instant clones,
+    remove of an assigned desktop, or it is over the cap per run."""
+    o = opts or {}
+    g = _desktop_opts(data, o)
     actions = dict((str(k).upper(), str(v).lower()) for k, v in (o.get("actions") or {}).items())
     default = str(o.get("default_action") or "recover").lower()
     cap = _int(o.get("max"), 20)
@@ -212,58 +364,56 @@ def hz_desktops(data, opts=None):
     by_state, fix, held = {}, [], []
     for m in sorted(data.get("machines") or [], key=lambda x: (x["state"], x["name"].lower())):
         by_state[m["state"]] = by_state.get(m["state"], 0) + 1
-        if m["state"] not in broken:
+        c = _candidate(m, g)
+        if not c:
             continue
+        kind, hours = c
         pool = pools.get(m["pool_id"])
-        action = actions.get(m["state"], default)
+        action = g["ghost_action"] if kind == "ghost" else (g["stuck_actions"].get(m["state"], "") if kind == "stuck"
+                                                            else actions.get(m["state"], default))
         item = {"id": m["id"], "name": m["name"], "pool": pool["name"] if pool else m["pool_id"], "pool_id": m["pool_id"],
-                "state": m["state"], "action": action, "reason": ""}
-        on = _sessions_on(data, m["id"])
-        hold = _pool_hold(pool, m["pool_id"], o)
-        if action not in MACHINE_ACTIONS:
-            item["reason"] = "its action %s is not one of %s (horizon_fix_actions)" % (action, ", ".join(MACHINE_ACTIONS))
-        elif hold:
-            item["reason"] = hold
-        elif _match(m["name"], o.get("exclude_machines")):
-            item["reason"] = "the desktop is excluded (horizon_fix_exclude_machines)"
-        elif on or m["session_id"]:
-            st = on[0]["state"].lower() if on else "open"
-            item["reason"] = "a user's session is on it (%s): fix it by hand, or log the session off first" % st
-        elif action == "recover" and not (pool and pool["source"] in INSTANT):
-            item["reason"] = ("recover is for instant clones, and pool %s is %s: fix it by hand"
-                              % (item["pool"], (pool["source"] or "not instant clones").lower().replace("_", " ")))
-        elif action == "remove" and m["users"]:
-            item["reason"] = "it is assigned to a user - remove would take their desktop away: recover it instead (horizon_fix_actions)"
-        elif len(fix) >= cap:
+                "state": m["state"], "action": action, "reason": "", "ghost": kind == "ghost", "stuck": kind == "stuck",
+                "hours": hours, "host": m["host"], "error": m["clone_error"], "error_kind": _classify(m["clone_error"], g["kinds"])}
+        item["reason"] = _hold(m, pool, action, kind, data, o, g)
+        if not item["reason"] and len(fix) >= cap:
             item["reason"] = "over horizon_fix_max (%d per run): the next run takes it" % cap
         (held if item["reason"] else fix).append(item)
     total = len(data.get("machines") or [])
     nb = len(fix) + len(held)
     status = "critical" if fix else ("warning" if held else "ok")
-    rows_fix = [[x["name"], x["pool"], x["state"], x["action"]] for x in fix]
-    rows_held = [[x["name"], x["pool"], x["state"], x["reason"]] for x in held]
+    first = (["%s: fixes that make a new clone (recover, rebuild) wait." % g["ad"]] if g["ad"] else []) + [
+        "ESXi host %s: %d desktops broken at once - look at the host (vCenter, its datastores and network) before the desktops; "
+        "Broadcom KB 431732 has the recovery steps." % (h, n) for h, n in sorted(g["hosts"].items())]
+    errs = [[x["name"], x["error_kind"], x["error"][:200]] for x in fix + held if x["error"]]
     report = {"title": "Horizon desktops: %s" % (("%d broken, %d to fix" % (nb, len(fix))) if nb else "none broken"),
               "subtitle": "%d desktops in %d pools" % (total, len(pools)), "status": status,
               "summary": [{"label": "Desktops", "value": total}, {"label": "Broken", "value": nb, "status": "critical" if nb else "ok"},
                           {"label": "To fix", "value": len(fix), "status": "warning" if fix else "ok"},
-                          {"label": "Held back", "value": len(held), "status": "warning" if held else "ok"}],
-              "sections": [{"title": "To fix", "columns": ["Desktop", "Pool", "State", "Action"], "rows": rows_fix,
-                            "status": "critical" if fix else "ok",
-                            "text": "Fixed only after approval (the workflow), each one checked again first." if fix else ""},
-                           {"title": "Held back - fix by hand", "columns": ["Desktop", "Pool", "State", "Why not automatically"],
-                            "rows": rows_held, "status": "warning" if held else "ok"},
-                           {"title": "Desktops by state", "columns": ["State", "Desktops"],
-                            "rows": [[k, v] for k, v in sorted(by_state.items(), key=lambda kv: (-kv[1], kv[0]))]}]}
-    return {"fix": fix, "held": held, "by_state": by_state, "total": total, "report": report}
+                          {"label": "Held back", "value": len(held), "status": "warning" if held else "ok"},
+                          {"label": "Stuck", "value": len([x for x in fix + held if x["stuck"]])},
+                          {"label": "Not in vCenter", "value": len([x for x in fix + held if x["ghost"]])}],
+              "sections": ([{"title": "Look at these first", "lines": first, "status": "critical"}] if first else []) + [
+                  {"title": "To fix", "columns": ["Desktop", "Pool", "State", "Action"],
+                   "rows": [[x["name"], x["pool"], _state_text(x), x["action"]] for x in fix],
+                   "status": "critical" if fix else "ok",
+                   "text": "Fixed only after approval (the workflow), each one checked again first." if fix else ""},
+                  {"title": "Held back - fix by hand", "columns": ["Desktop", "Pool", "State", "Why not automatically"],
+                   "rows": [[x["name"], x["pool"], _state_text(x), x["reason"]] for x in held], "status": "warning" if held else "ok"}]
+              + ([{"title": "Clone errors", "columns": ["Desktop", "Kind", "Horizon's message"], "rows": errs}] if errs else [])
+              + [{"title": "Desktops by state", "columns": ["State", "Desktops"],
+                  "rows": [[k, v] for k, v in sorted(by_state.items(), key=lambda kv: (-kv[1], kv[0]))]}]}
+    return {"fix": fix, "held": held, "by_state": by_state, "total": total, "gates": {"ad": g["ad"], "hosts": g["hosts"]},
+            "report": report}
 
 
 def hz_desktops_recheck(approved, data, opts=None):
     """After the approval: each approved desktop again, as Horizon has it now -> {act: [...], skipped: [...]}.
     Every check of hz_desktops again, on what Horizon says now (the desktop may have moved, been assigned or
-    taken since): still broken, no session on it, the pool it is in now not protected, not excluded, recover
-    only on instant clones, remove only while no user is assigned - and the action is the approved one."""
+    taken since, AD or its host may be down now): still a desktop to fix of the same kind (broken, a ghost, stuck),
+    no session on it, the pool it is in now not protected, not excluded, recover only on instant clones, remove
+    only while no user is assigned - and the action is the approved one."""
     o = opts or {}
-    broken = [str(s).upper() for s in (_list(o.get("broken_states")) or BROKEN_STATES)]
+    g = _desktop_opts(data, o)
     cap = _int(o.get("max"), 20)
     now = dict((m["id"], m) for m in data.get("machines") or [])
     pools = dict((p["id"], p) for p in data.get("pools") or [])
@@ -273,26 +423,18 @@ def hz_desktops_recheck(approved, data, opts=None):
         m = now.get(str(a.get("id")))
         pool = pools.get(m["pool_id"]) if m else None          # the pool it is in now, not the approved record's
         action = str(item.get("action") or "").lower()
-        hold = _pool_hold(pool, m["pool_id"], o) if m else ""
+        c = _candidate(m, g, a) if m else None
         if not m:
             item["reason"] = "no longer in Horizon"
-        elif m["state"] not in broken:
-            item["reason"] = "it is %s now: it recovered by itself" % m["state"]
-        elif _sessions_on(data, m["id"]) or m["session_id"]:
-            item["reason"] = "a user's session is on it now"
-        elif hold:
-            item["reason"] = hold
-        elif _match(m["name"], o.get("exclude_machines")):
-            item["reason"] = "the desktop is excluded (horizon_fix_exclude_machines)"
+        elif not c:
+            item["reason"] = ("it is %s now: it recovered by itself" % m["state"]) if not a.get("ghost") else "vCenter has it again"
         elif action not in MACHINE_ACTIONS:
             item["reason"] = "its action %s is not one the job runs" % item.get("action")
-        elif action == "recover" and not (pool and pool["source"] in INSTANT):
-            item["reason"] = "recover is for instant clones, and pool %s is not" % (pool["name"] if pool else item.get("pool"))
-        elif action == "remove" and m["users"]:
-            item["reason"] = "it is assigned to a user now - remove would take their desktop away"
-        elif len(act) >= cap:
-            item["reason"] = "over horizon_fix_max (%d per run)" % cap
         else:
+            item["reason"] = _hold(m, pool, action, c[0], data, o, g, after=True)
+            if not item["reason"] and len(act) >= cap:
+                item["reason"] = "over horizon_fix_max (%d per run)" % cap
+        if not item.get("reason"):
             item["state"] = m["state"]
             if pool:
                 item["pool"], item["pool_id"] = pool["name"], m["pool_id"]
@@ -511,7 +653,7 @@ def hz_push_pools(data, names, opts=None):
             problems.append("pool %s: Horizon did not say which vCenter it is in" % p["name"])
         elif p["id"] not in [x["id"] for x in out]:
             out.append({"id": p["id"], "name": p["name"], "vcenter_id": p["vcenter_id"], "parent_vm_id": p["parent_vm_id"],
-                        "snapshot_id": p["snapshot_id"]})
+                        "snapshot_id": p["snapshot_id"], "vgpu": p["vgpu"], "datastores": p["datastores"]})
     return {"pools": out, "problems": problems}
 
 
@@ -537,10 +679,25 @@ def hz_pick(rows, name, kind="golden image VM"):
             len(found), kind, n, ", ".join(str(r.get("path") or r.get("id")) for r in found))
     else:
         r = found[0]
-        out.update(id=str(r.get("id") or ""), name=str(r.get("name") or ""), path=str(r.get("path") or ""))
+        out.update(id=str(r.get("id") or ""), name=str(r.get("name") or ""), path=str(r.get("path") or ""),
+                   disk_mb=_int(_g(r, "disk_size_mb", default=0)), vgpu=str(_g(r, "vgpu_type", "vgpu_profile", default="")),
+                   hardware=str(_g(r, "hardware_version", default="")))
         reasons = r.get("incompatible_reasons") or []
         if reasons:
-            out["warnings"].append("Horizon flags %s %s: %s" % (kind, out["name"], ", ".join(str(x) for x in reasons)))
+            # Horizon itself would refuse the push (powered on, no snapshot, an OS or hardware version it does not take)
+            out["problem"] = "Horizon will not push %s %s: %s" % (kind, out["name"], ", ".join(str(x) for x in reasons))
+    return out
+
+
+def hz_datastores(data):
+    """{datastore ID: {name, free_mb, capacity_mb}} from the vCenters as Horizon monitors them (monitor/virtual-centers)."""
+    out = {}
+    for v in (data.get("raw") or {}).get("virtual_centers") or []:
+        for d in _g(v, "datastores", default=[]) or []:
+            if isinstance(d, dict) and d.get("id"):
+                out[str(d["id"])] = {"name": str(_g(d, "details.name", "name", default=d["id"])),
+                                     "free_mb": _int(_g(d, "free_space_mb", "details.free_space_mb", default=0)),
+                                     "capacity_mb": _int(_g(d, "details.capacity_mb", "capacity_mb", default=0))}
     return out
 
 
@@ -575,6 +732,14 @@ def hz_push_plan(pools, vm_picks, snap_picks, start, opts=None):
             continue
         if vm["id"] == p.get("parent_vm_id") and sn["id"] == p.get("snapshot_id"):
             warnings.append("pool %s already uses %s / %s: the push makes new desktops from the same image" % (p["name"], vm["name"], sn["name"]))
+        if (sn.get("vgpu") or p.get("vgpu")) and str(sn.get("vgpu") or "").lower() != str(p.get("vgpu") or "").lower():
+            warnings.append("pool %s: the snapshot's vGPU profile (%s) is not the pool's (%s) - the new desktops may not start" % (
+                p["name"], sn.get("vgpu") or "none", p.get("vgpu") or "none"))
+        for ds in p.get("datastores") or []:
+            d = (o.get("datastores") or {}).get(ds)
+            if d and sn.get("disk_mb") and _int(d.get("free_mb")) < sn["disk_mb"]:
+                warnings.append("pool %s: datastore %s has %.0f GB free; the new image's replica needs about %.0f GB there" % (
+                    p["name"], d.get("name") or ds, _int(d.get("free_mb")) / 1024.0, sn["disk_mb"] / 1024.0))
         warnings += [w for w in vm.get("warnings", []) + sn.get("warnings", []) if w not in warnings]
         out.append({"id": p["id"], "name": p["name"], "vcenter_id": p["vcenter_id"], "parent_vm_id": vm["id"], "parent_vm": vm["name"],
                     "snapshot_id": sn["id"], "snapshot": sn["path"] or sn["name"]})
@@ -635,6 +800,20 @@ def _cert(rec, now, warn, crit):
     return None
 
 
+def _backups(raw):
+    """[(Connection Server, its ldap_backup_info)] from the config list (config/connection-servers) and each server
+    read by its ID (cs_config:<id>) when the list leaves the backup out."""
+    out, seen = [], set()
+    rows = [r for k, v in sorted(raw.items()) if k == "cs_config" or k.startswith("cs_config:") for r in v or [] if isinstance(r, dict)]
+    for r in sorted(rows, key=lambda x: 0 if x.get("ldap_backup_info") else 1):
+        name = str(_g(r, "name", "server_name", "id", default="?"))
+        if name in seen or not isinstance(r.get("ldap_backup_info"), dict):
+            continue
+        seen.add(name)
+        out.append((name, r["ldap_backup_info"]))
+    return out
+
+
 def hz_health(data, opts=None):
     """The Horizon health report -> {report, critical, warning, problems}: Connection Servers (status, services,
     certificate, replication), gateways, vCenter and AD from each Connection Server, the event database, SAML
@@ -661,6 +840,9 @@ def hz_health(data, opts=None):
         cert = _cert(c, now, warn, crit)
         if cert:
             add(cert[0], "Connection Server", name, cert[1])
+        if _g(c, "default_certificate", "certificate.default_certificate", default=False) is True:
+            add("warning", "Connection Server", name, "it serves its own self-signed certificate: no CA certificate has the "
+                "friendly name vdm (after a renewal, the new certificate's friendly name must be vdm and the old one's not)")
         for r in _g(c, "cs_replications", "replications", default=[]) or []:
             if isinstance(r, dict) and not _ok(r.get("status")):
                 add("warning", "Connection Server", name, "replication with %s: %s %s" % (
@@ -669,6 +851,20 @@ def hz_health(data, opts=None):
                         _when(_ms(_g(c, "certificate.valid_to")))])
     if not raw.get("connection_servers") and "connection_servers" not in (data.get("errors") or {}):
         add("critical", "Connection Server", "-", "Horizon listed no Connection Server")
+    for name, b in _backups(raw):
+        last, st = _ms(b.get("last_ldap_backup_time")), str(b.get("last_ldap_backup_status") or "")
+        freq = str(b.get("frequency_time") or b.get("frequency") or "").upper()
+        if freq == "NEVER":
+            add("warning", "Connection Server", name, "its configuration is never backed up (Horizon Console > Settings > Servers > "
+                "Connection Servers > Backup: the frequency is Never)")
+        elif st and not _ok(st) and st.upper() not in ("SUCCESS", "SUCCEEDED", "COMPLETED"):
+            add("warning", "Connection Server", name, "its last configuration backup %s%s" % (
+                st.lower(), (" (%s)" % _when(last)) if last else ""))
+        elif last and (now - last) / 3600000.0 > float(o.get("backup_max_hours") or 26):
+            add("warning", "Connection Server", name, "its last configuration backup was %d hours ago (%s)" % (
+                (now - last) / 3600000, _when(last)))
+        elif not last and not b.get("backup_in_progress"):
+            add("info", "Connection Server", name, "Horizon gave no time of its last configuration backup")
     gw_rows = []
     for g in raw.get("gateways") or []:
         name = str(_g(g, "name", "details.address", default="?"))
@@ -680,7 +876,7 @@ def hz_health(data, opts=None):
             add(cert[0], "Gateway", name, cert[1])
         gw_rows.append([name, st, str(_g(g, "details.type", "type", default="")), str(_g(g, "details.version", "version", default="")),
                         _int(_g(g, "active_connection_count", default=0))])
-    vc_rows = []
+    vc_rows, ds_rows = [], []
     for v in raw.get("virtual_centers") or []:
         name = str(_g(v, "name", "details.name", default="?"))
         bad = []
@@ -691,6 +887,27 @@ def hz_health(data, opts=None):
         cert = _cert(v, now, warn, crit)
         if cert:
             add(cert[0], "vCenter", name, cert[1])
+        for d in _g(v, "datastores", default=[]) or []:
+            if not isinstance(d, dict):
+                continue
+            dn = str(_g(d, "details.name", "name", "datastore_name", default="?"))
+            cap = _int(_g(d, "details.capacity_mb", "capacity_mb", default=0))
+            free = _int(_g(d, "free_space_mb", "details.free_space_mb", default=0))
+            dst = str(_g(d, "status", default=""))
+            pct = round(100.0 * free / cap, 1) if cap else None
+            if dst and not _ok(dst):
+                add("critical", "Datastore", dn, "status %s (vCenter %s)" % (dst, name))
+            elif pct is not None and pct < float(o.get("ds_crit_pct") or 5):
+                add("critical", "Datastore", dn, "%.0f GB free of %.0f GB (%.0f%%): instant clones and new replicas need room" % (free / 1024.0, cap / 1024.0, pct))
+            elif pct is not None and pct < float(o.get("ds_warn_pct") or 15):
+                add("warning", "Datastore", dn, "%.0f GB free of %.0f GB (%.0f%%)" % (free / 1024.0, cap / 1024.0, pct))
+            ds_rows.append([name, dn, "%.0f" % (free / 1024.0) if cap else "", "%.0f" % (cap / 1024.0) if cap else "",
+                            ("%.0f%%" % pct) if pct is not None else "", dst])
+        for h in _g(v, "hosts", default=[]) or []:
+            hst = str(_g(h, "status", default="")) if isinstance(h, dict) else ""
+            if hst and not _ok(hst):
+                add("warning", "ESXi host", str(_g(h, "details.name", "name", default="?")), "%s (vCenter %s): its desktops "
+                    "cannot run - a recover will not help them" % (hst, name))
         vc_rows.append([name, str(_g(v, "details.version", "version", default="")), "; ".join(bad) or "OK"])
     ad_rows = []
     for a in raw.get("ad_domains") or []:
@@ -725,6 +942,27 @@ def hz_health(data, opts=None):
                 add("warning", "License", "-", "the license expires in %d days (%s)" % (days, _when(exp)))
         lic_rows.append([str(_g(li, "license_edition", "edition", default="")), str(_g(li, "usage_model", default="")),
                          _when(exp) or "no expiry given"])
+    def add_pool_desktops(p):
+        ms = [m for m in data.get("machines") or [] if m["pool_id"] == p["id"]]
+        vers = {}
+        for m in ms:
+            if m["agent"]:
+                vers[m["agent"]] = vers.get(m["agent"], 0) + 1
+        if len(vers) > 1:
+            add("warning", "Pool", p["name"], "Horizon Agent of %d versions: %s" % (len(vers), ", ".join(
+                "%s (%d)" % kv for kv in sorted(vers.items(), key=lambda kv: -kv[1]))))
+        blocked = [m["name"] for m in ms if m["state"] == "BLOCKED_AGENT_VERSION"]
+        if blocked:
+            add("warning", "Pool", p["name"], "%d desktop(s) blocked for their agent version: %s" % (len(blocked), ", ".join(blocked[:10])))
+        if p["source"] in INSTANT and p["snapshot_id"] and not _pending(p):
+            old = [m for m in ms if m["snapshot_id"] and m["snapshot_id"] != p["snapshot_id"]]
+            idle = [m["name"] for m in old if m["state"] not in IN_USE]
+            if idle:
+                add("warning", "Pool", p["name"], "%d desktop(s) not in use still on an older image after the push: %s (recover them)"
+                    % (len(idle), ", ".join(sorted(idle)[:10])))
+            elif old:
+                add("info", "Pool", p["name"], "%d desktop(s) on an older image wait for their users to log off" % len(old))
+
     for p in data.get("pools") or []:
         if p["image_state"] in ("FAILED", "ERROR"):
             add("critical", "Pool", p["name"], "its current image is %s" % p["image_state"].lower())
@@ -736,6 +974,23 @@ def hz_health(data, opts=None):
                                            (" (%s)" % _when(p["last_error_ms"])) if p["last_error_ms"] else ""))
         if not p["enabled"]:
             add("info", "Pool", p["name"], "the pool is disabled")
+        if p["pending_state"] == "READY_HELD":
+            add("warning", "Pool", p["name"], "a new image is ready but held: promote it or cancel it (Horizon Console, the pool's Summary)")
+        elif p["pending_state"] in ("PUBLISHING", "PENDING") and p["pending_progress"] >= 0:
+            add("info", "Pool", p["name"], "image push %s: %d%%" % (p["pending_state"].lower(), p["pending_progress"]))
+        if not p["provisioning"] and not p["last_error"] and p["type"] == "AUTOMATED":
+            add("info", "Pool", p["name"], "provisioning is off (left off after a maintenance?)")
+        add_pool_desktops(p)
+    ips = {}
+    for m in data.get("machines") or []:
+        if m["ip"]:
+            ips.setdefault(m["ip"], []).append(m["name"])
+    apipa = sorted(n for ip, ns in ips.items() if ip.startswith("169.254.") for n in ns)
+    if apipa:
+        add("warning", "Desktops", "-", "%d with a 169.254 address - no DHCP lease (a full DHCP scope?): %s" % (len(apipa), ", ".join(apipa[:10])))
+    dups = sorted("%s (%s)" % (ip, ", ".join(sorted(ns)[:4])) for ip, ns in ips.items() if len(ns) > 1 and not ip.startswith("169.254."))
+    if dups:
+        add("warning", "Desktops", "-", "the same IP address on two or more desktops: %s" % "; ".join(dups[:5]))
     broken = {}
     for m in data.get("machines") or []:
         if m["state"] in BROKEN_STATES:
@@ -768,6 +1023,8 @@ def hz_health(data, opts=None):
                            {"title": "Gateways", "columns": ["Name", "Status", "Type", "Version", "Connections"], "rows": gw_rows},
                            {"title": "vCenters", "columns": ["Name", "Version", "From the Connection Servers"], "rows": vc_rows},
                            {"title": "AD domains", "columns": ["Domain", "From the Connection Servers"], "rows": ad_rows}]
+              + ([{"title": "Datastores", "columns": ["vCenter", "Datastore", "Free GB", "Size GB", "Free", "Status"], "rows": ds_rows}]
+                 if ds_rows else [])
               + ([{"title": "License", "columns": ["Edition", "Usage model", "Expires"], "rows": lic_rows}] if lic_rows else [])}
     return {"report": report, "critical": nc, "warning": nw, "problems": probs}
 
@@ -819,6 +1076,217 @@ def hz_capacity(data, opts=None):
                             "text": "Full = desktops in use (connected or disconnected) against the pool's maximum; amber at %g%%, red at %g%%. "
                                     "Other = being made, customized, deleted or in maintenance." % (warn, crit)}]}
     return {"report": report, "pools": out, "critical": nc, "warning": nw}
+
+
+# the events of a failed logon (Horizon's event types; * = anything)
+FAILED_LOGON = ["BROKER_USER_AUTHFAILED*", "BROKER_USER_NOT_ENTITLED*", "BROKER_USER_NOT_AUTHORIZED*", "BROKER_USER_LOCKED*"]
+_USER_RE = re.compile(r"\b(?:user|User|USER)\s+([^\s,;:()]+\\[^\s,;:()]+|[^\s,;:()]+@[^\s,;:()]+)")
+_IP_RE = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b")
+
+
+def _event(e):
+    msg = str(_g(e, "message", "msg", default=""))
+    who = _USER_RE.search(msg)
+    ip = _IP_RE.search(msg)
+    return {"id": str(_g(e, "id", default="")), "type": str(_g(e, "type", "event_type", default="")).upper(),
+            "severity": str(_g(e, "severity", default="")).upper(), "module": str(_g(e, "module", default="")),
+            "ms": _ms(_g(e, "time", "timestamp", "event_time")), "message": msg,
+            "user": who.group(1) if who else str(_g(e, "user_name", "user_id", "user_sid", default="")),
+            "client": ip.group(1) if ip else str(_g(e, "client_ip", "client_address", default="")),
+            "pool": str(_g(e, "desktop_pool_id", "desktop_id", "pool_id", default="")),
+            "machine": str(_g(e, "machine_id", "machine_dns_name", default=""))}
+
+
+def hz_events_filter(hours, now=None):
+    """The audit-events query for the last `hours`: Horizon's filter (time Between, milliseconds) as JSON text."""
+    to = _now_ms(now)
+    frm = to - int(float(hours or 24) * 3600000)
+    return json.dumps({"type": "Between", "name": "time", "fromValue": frm, "toValue": to}, separators=(",", ":"))
+
+
+def hz_events(data, opts=None):
+    """The events report -> {report, critical, warning, failed, errors, admin}: from Horizon's event database (the
+    audit-events API) over the last `hours` - failed logons by user (bad password, locked, not entitled...), the
+    errors by type (launch failures, pools empty, provisioning errors...), and what administrators changed."""
+    o = opts or {}
+    now = _now_ms(o.get("now"))
+    hours = float(o.get("hours") or 24)
+    since = now - hours * 3600000
+    mx = _int(o.get("max_rows"), 50)
+    names = data.get("pool_names") or {}
+    errors = data.get("errors") or {}
+    evs = [_event(e) for e in (data.get("raw") or {}).get("audit_events") or [] if isinstance(e, dict)]
+    evs = [e for e in evs if not e["ms"] or e["ms"] >= since]          # an API that ignored the filter
+    failed_types = _list(o.get("failed_types")) or FAILED_LOGON
+    sev = [str(x).upper() for x in (_list(o.get("error_severities")) or ["ERROR", "AUDIT_FAIL"])]
+    admin_mods = [str(x).lower() for x in (_list(o.get("admin_modules")) or ["Vlsi"])]
+    warn_n = _int(o.get("failed_warn"), 5)
+    failed = [e for e in evs if _match(e["type"], failed_types)]
+    by_user = {}
+    for e in failed:
+        u = by_user.setdefault(e["user"] or "(not named)", {"n": 0, "types": {}, "last": 0, "clients": set()})
+        u["n"] += 1
+        short = re.sub(r"^BROKER_USER_(?:AUTHFAILED_)?", "", e["type"]).lower().replace("_", " ")
+        u["types"][short] = u["types"].get(short, 0) + 1
+        u["last"] = max(u["last"], e["ms"])
+        if e["client"]:
+            u["clients"].add(e["client"])
+    fail_rows, fail_st = [], []
+    for user, u in sorted(by_user.items(), key=lambda kv: (-kv[1]["n"], kv[0].lower())):
+        fail_rows.append([user, u["n"], ", ".join("%s (%d)" % kv for kv in sorted(u["types"].items(), key=lambda kv: -kv[1])),
+                          ", ".join(sorted(u["clients"])[:3]), _when(u["last"])])
+        fail_st.append("warning" if u["n"] >= warn_n else "")
+    errs = [e for e in evs if e["severity"] in sev and e not in failed]
+    by_type = {}
+    for e in errs:
+        t = by_type.setdefault(e["type"] or "(no type)", {"n": 0, "last": 0, "msg": "", "pools": set()})
+        t["n"] += 1
+        if e["ms"] >= t["last"]:
+            t["last"], t["msg"] = e["ms"], e["message"]
+        if e["pool"]:
+            t["pools"].add(names.get(e["pool"], e["pool"]))
+    err_rows = [[k, v["n"], ", ".join(sorted(v["pools"])[:4]), _when(v["last"]), v["msg"][:180]]
+                for k, v in sorted(by_type.items(), key=lambda kv: (-kv[1]["n"], kv[0]))]
+    admin = sorted([e for e in evs if e["module"].lower() in admin_mods], key=lambda e: -e["ms"])
+    admin_rows = [[_when(e["ms"]), e["user"], e["type"], e["message"][:200]] for e in admin]
+    probs = []
+    if "audit_events" in errors:
+        probs.append(("critical", "the event database could not be read: %s" % errors["audit_events"]))
+    many = [r[0] for r, st in zip(fail_rows, fail_st) if st]
+    if many:
+        probs.append(("warning", "%d user(s) failed to log on %d or more times: %s" % (len(many), warn_n, ", ".join(many[:10]))))
+    if errs:
+        probs.append(("warning", "%d error event(s) of %d kind(s)" % (len(errs), len(by_type))))
+    nc = len([p for p in probs if p[0] == "critical"])
+    nw = len([p for p in probs if p[0] == "warning"])
+    report = {"title": "Horizon events, last %g h: %s" % (hours, "%d failed logon(s), %d error(s), %d change(s)" % (len(failed), len(errs), len(admin))),
+              "subtitle": "%d event(s) read from the event database" % len(evs),
+              "status": "critical" if nc else ("warning" if nw else "ok"),
+              "summary": [{"label": "Events", "value": len(evs)},
+                          {"label": "Failed logons", "value": len(failed), "status": "warning" if many else "ok"},
+                          {"label": "Users", "value": len(by_user)},
+                          {"label": "Errors", "value": len(errs), "status": "warning" if errs else "ok"},
+                          {"label": "Admin changes", "value": len(admin)}],
+              "sections": ([{"title": "Problems", "lines": [p[1] for p in probs], "status": "critical" if nc else "warning"}] if probs else []) + [
+                  {"title": "Failed logons by user", "columns": ["User", "Failed", "Why", "From", "Last"], "rows": fail_rows[:mx],
+                   "row_status": fail_st[:mx],
+                   "text": "Amber: %d or more in the window. Why = Horizon's event type (bad password, locked account, not entitled...)." % warn_n},
+                  {"title": "Errors by type", "columns": ["Event type", "Count", "Pools", "Last", "Last message"], "rows": err_rows[:mx]},
+                  {"title": "What administrators changed", "columns": ["When", "Who", "Event type", "Message"], "rows": admin_rows[:mx],
+                   "text": "Horizon's own audit of its console and API (event module %s)." % ", ".join(o.get("admin_modules") or ["Vlsi"])}]}
+    return {"report": report, "critical": nc, "warning": nw, "failed": len(failed), "errors": len(errs), "admin": len(admin),
+            "users": dict((k, v["n"]) for k, v in by_user.items())}
+
+
+def _flat(obj, prefix=""):
+    """{dotted.name: value} of every value in a settings record (a list of plain values joined)."""
+    out = {}
+    for k, v in (obj or {}).items():
+        key = prefix + str(k)
+        if isinstance(v, dict):
+            out.update(_flat(v, key + "."))
+        elif isinstance(v, list):
+            if all(not isinstance(x, (dict, list)) for x in v):
+                out[key] = ", ".join(str(x) for x in v)
+        else:
+            out[key] = v
+    return out
+
+
+def _same(found, want):
+    if isinstance(want, bool) or isinstance(found, bool):
+        return str(found).lower() == str(want).lower()
+    try:
+        return float(found) == float(want)
+    except (TypeError, ValueError):
+        return str(found if found is not None else "").strip().lower() == str(want).strip().lower()
+
+
+def _expect(found, want):
+    """Does a setting's value meet the baseline -> (ok, what the baseline says). want: a value, or {min}, {max},
+    {contains}, {one_of: [...]}, {not: value}."""
+    if isinstance(want, dict):
+        ok, says = True, []
+        if "min" in want:
+            ok = ok and _int(found, None) is not None and _int(found) >= _int(want["min"])
+            says.append(">= %s" % want["min"])
+        if "max" in want:
+            ok = ok and _int(found, None) is not None and _int(found) <= _int(want["max"])
+            says.append("<= %s" % want["max"])
+        if "contains" in want:
+            ok = ok and str(want["contains"]).lower() in str(found or "").lower()
+            says.append("contains \"%s\"" % want["contains"])
+        if "one_of" in want:
+            ok = ok and any(_same(found, x) for x in _list(want["one_of"]))
+            says.append("one of %s" % ", ".join(str(x) for x in _list(want["one_of"])))
+        if "not" in want:
+            ok = ok and not _same(found, want["not"])
+            says.append("not %s" % want["not"])
+        return ok, " and ".join(says) or "?"
+    return _same(found, want), str(want)
+
+
+def hz_settings(data, baseline=None, opts=None):
+    """The settings report -> {report, critical, warning, drift}: Horizon's global settings (config/settings/general and
+    security, pre-logon) and each Connection Server's (config/connection-servers) against horizon_settings_baseline -
+    {area.setting: expected} with area general, security, pre_logon or connection_server (each server) - and every
+    setting read, to build a baseline from."""
+    o = opts or {}
+    raw = data.get("raw") or {}
+    errors = data.get("errors") or {}
+    areas = {}
+    for key, area in (("settings_general", "general"), ("settings_security", "security"), ("pre_logon", "pre_logon")):
+        rec = next((r for r in raw.get(key) or [] if isinstance(r, dict)), None)
+        if rec is not None:
+            areas[area] = _flat(rec)
+    servers = {}
+    for r in raw.get("cs_config") or []:
+        if isinstance(r, dict):
+            servers[str(_g(r, "name", "server_name", "id", default="?"))] = _flat(dict((k, v) for k, v in r.items() if k != "ldap_backup_info"))
+    rows, st, drift, missing = [], [], 0, []
+    for k, want in sorted((baseline or {}).items()):
+        area, _, name = str(k).partition(".")
+        if area == "connection_server":
+            if not servers:
+                missing.append(k)
+            for srv, vals in sorted(servers.items()):
+                if name not in vals:
+                    rows.append([k, srv, _expect(None, want)[1], "(not in Horizon's answer)", "NOT READ"])
+                    st.append("warning")
+                    continue
+                ok, says = _expect(vals[name], want)
+                rows.append([k, srv, says, str(vals[name]), "OK" if ok else "DRIFT"])
+                st.append("" if ok else "critical")
+                drift += 0 if ok else 1
+            continue
+        vals = areas.get(area)
+        if vals is None or name not in vals:
+            rows.append([k, "global", _expect(None, want)[1], "(not in Horizon's answer)", "NOT READ"])
+            st.append("warning")
+            missing.append(k)
+            continue
+        ok, says = _expect(vals[name], want)
+        rows.append([k, "global", says, str(vals[name]), "OK" if ok else "DRIFT"])
+        st.append("" if ok else "critical")
+        drift += 0 if ok else 1
+    allrows = [["%s.%s" % (a, n), "global", str(v)] for a, vals in sorted(areas.items()) for n, v in sorted(vals.items())]
+    allrows += [["connection_server.%s" % n, srv, str(v)] for srv, vals in sorted(servers.items()) for n, v in sorted(vals.items())]
+    notread = sorted(k for k in ("settings_general", "settings_security", "pre_logon", "cs_config") if k in errors)
+    nc = drift
+    nw = len([x for x in st if x == "warning"]) + len([k for k in notread if not errors[k].startswith("not in this Horizon")])
+    title = ("%d setting(s) differ from the baseline" % drift) if drift else ("as the baseline" if baseline else "no baseline set")
+    report = {"title": "Horizon settings: %s" % title,
+              "subtitle": "%d baseline setting(s), %d setting(s) read" % (len(baseline or {}), len(allrows)),
+              "status": "critical" if nc else ("warning" if nw else ("ok" if baseline else "info")),
+              "summary": [{"label": "Baseline", "value": len(baseline or {})}, {"label": "Differ", "value": drift, "status": "critical" if drift else "ok"},
+                          {"label": "Not read", "value": len([x for x in st if x == "warning"]), "status": "warning" if nw else "ok"}],
+              "sections": ([{"title": "Not read", "lines": ["%s: %s" % (k, errors[k]) for k in notread], "status": "warning"}] if notread else [])
+              + [{"title": "Against the baseline", "columns": ["Setting", "Where", "Baseline", "Horizon has", "Result"], "rows": rows,
+                  "cell_status": [["", "", "", "", s] for s in st],
+                  "text": "" if baseline else "No baseline: set horizon_settings_baseline (docs/HORIZON.md has a starting point for a DoD site)."},
+                 {"title": "Every setting read", "columns": ["Setting", "Where", "Value"], "rows": allrows,
+                  "text": "Copy a line into horizon_settings_baseline as  setting: value  to watch it."}]}
+    return {"report": report, "critical": nc, "warning": nw, "drift": drift}
 
 
 def hz_test_lines(tests):
@@ -915,8 +1383,8 @@ class FilterModule(object):
         return {"hz_data": hz_data, "hz_desktops": hz_desktops, "hz_desktops_recheck": hz_desktops_recheck,
                 "hz_sessions_old": hz_sessions_old, "hz_user": hz_user, "hz_user_targets": hz_user_targets,
                 "hz_push_pools": hz_push_pools, "hz_pick": hz_pick, "hz_push_start": hz_push_start, "hz_push_plan": hz_push_plan,
-                "hz_push_recheck": hz_push_recheck, "hz_push_body": hz_push_body, "hz_health": hz_health,
-                "hz_capacity": hz_capacity, "hz_test_lines": hz_test_lines, "hz_act_lines": hz_act_lines, "hz_ago": hz_ago,
+                "hz_push_recheck": hz_push_recheck, "hz_datastores": hz_datastores, "hz_push_body": hz_push_body, "hz_health": hz_health,
+                "hz_capacity": hz_capacity, "hz_events": hz_events, "hz_events_filter": hz_events_filter, "hz_settings": hz_settings, "hz_test_lines": hz_test_lines, "hz_act_lines": hz_act_lines, "hz_ago": hz_ago,
                 "hz_when": _when,
                 "hz_user_session_line": hz_user_session_line, "hz_user_machine_line": hz_user_machine_line,
                 "hz_settings_check": hz_settings_check, "hz_user_label": hz_user_label}

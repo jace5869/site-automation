@@ -1,0 +1,16 @@
+---
+# HORIZON SETTINGS REPORT. Read-only: Horizon's global settings (session timeouts, the pre-login message, SSO,
+# security) and each Connection Server's (FIPS, smart cards, gateways) against horizon_settings_baseline, and every
+# setting read - to build the baseline from. Printed, published as job artifacts (horizon_report,
+# horizon_settings), emailed only when report_email_to is set. Stays green unless horizon_health_fail: true.
+# Runs on the AAP side: attach the "Horizon API" credential; no inventory needed. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_settings_report.yml
+- name: Horizon settings report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon settings report
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: settings.yml

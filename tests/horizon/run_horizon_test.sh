@@ -77,6 +77,7 @@ mock
 run "API test: every path at the newest version the pod has (v2), one user found" ok horizon_api_test.yml '{"horizon_test_user": "jdoe"}' \
     'PASS 1 login: CORP\\svc-horizon at http://127.0.0.1:' 'PASS connection_servers: rest/monitor/v2/connection-servers - 2 record(s)' \
     'PASS machines: rest/inventory/v2/machines - 19 record(s)' 'PASS license: rest/config/v2/licenses' \
+    'PASS audit_events: rest/external/v2/audit-events' 'PASS settings_general: rest/config/v2/settings/general' 'PASS cs_config: rest/config/v2/connection-servers' \
     'horizon_protected_pools: IC-Prot* matches IC-Protected' 'PASS 4 user: CORP\\jdoe (Jane Doe), S-1-5-21-1-2-3-1001' \
     'Session: desktop on w11-002 (pool IC-Win11), connected' 'Session: application on (an RDS host)' '"logout": true'
 mock HZMOCK_NEWEST=4 HZMOCK_VERSIONS=machines=1,license=0
@@ -109,7 +110,9 @@ mock HZMOCK_BAD=1 HZMOCK_EXPIRE=1 HZMOCK_VERSIONS=license=0
 run "health: an unhealthy pod, an expired token refreshed, horizon_health_fail" fail horizon_health_report.yml '{"horizon_health_fail": true}' \
     'status ERROR' 'service VMware Horizon Security Gateway Component is DOWN' 'its certificate expires in 4 days' \
     'replication with cs02: ERROR RPC server unavailable' 'status PROBLEM' 'from Connection Server cs02: CANNOT_LOGIN' \
-    'status CONNECTION_ERROR' 'not in this Horizon (HTTP 404 at every API version, v9 to v1)' '"refresh": true' 'critical finding(s) (the report is above)'
+    'status CONNECTION_ERROR' 'not in this Horizon (HTTP 404 at every API version, v9 to v1)' '"refresh": true' 'critical finding(s) (the report is above)' \
+    'it serves its own self-signed certificate' '20 GB free of 1000 GB (2%)' 'DISCONNECTED (vCenter vcsa01.example.mil)' \
+    'its last configuration backup was 80 hours ago'
 mkdir -p "$work/mail"
 "$py" "$repo/tests/email/fake_smtp.py" "$smtp" "$work/mail" --no-starttls 2>"$work/relay.err" &
 spid=$!
@@ -149,6 +152,46 @@ run "desktops check: horizon_fix_max, a desktop excluded, an action by state" ok
     '{"horizon_fix_max": 2, "horizon_fix_exclude_machines": ["w11-00[5]"], "horizon_fix_actions": {"PROVISIONING_ERROR": "remove"}}' \
     'over horizon_fix_max (2 per run): the next run takes it' 'the desktop is excluded (horizon_fix_exclude_machines)' \
     'Horizon desktops: 7 broken, 2 to fix'
+mock HZMOCK_GAPS=1
+run "desktops check: stuck, a domain clone error, a ghost, five broken on one host, a timeout recovered" ok horizon_desktops_check.yml '{}' \
+    'Horizon desktops: 15 broken, 5 to fix' 'w11-011' 'stuck customizing since' \
+    'its clone error is a domain problem (The domain join failed' 'ERROR - not in vCenter' \
+    '5 desktops on ESXi host esx07.example.mil are broken at once' 'Look at these first' \
+    'w11-007  timeout  Customization operation timed out'
+run "desktops check: a stuck state with an action" ok horizon_desktops_check.yml '{"horizon_fix_stuck_actions": {"CUSTOMIZING": "recover"}}' \
+    'Horizon desktops: 15 broken, 6 to fix' 'w11-011  IC-Win11  CUSTOMIZING for 9 h'
+run "desktops check (approval): the ghost goes to the approval as a remove" fail horizon_desktops_check.yml '{"horizon_desktops_mode": "approval"}' \
+    'w11-013 (ERROR: remove)' 'w11-007 (PROVISIONING_ERROR: recover)' '!w11-012 ('
+gfix="$(stats horizon_desktops_fix)"
+run "fix: the ghost removed, the others recovered" ok horizon_desktops_fix_approved.yml "$gfix" \
+    'Horizon desktops fixed: 5 of 5' '"method": "DELETE", "path": "inventory/machines"' '"m-g03"'
+run "health: agents of two versions, a 169.254 address, one address twice, a desktop left on the older image" ok horizon_health_report.yml '{}' \
+    'Horizon Agent of 2 versions: 8.12.0' '1 with a 169.254 address' 'the same IP address on two or more desktops: 192.0.2.50' \
+    'not in use still on an older image after the push: w11-204'
+mock
+run "desktops check: approval list while AD answers" fail horizon_desktops_check.yml '{"horizon_desktops_mode": "approval"}' 'NEEDS APPROVAL: 4'
+afix="$(stats horizon_desktops_fix)"
+mock HZMOCK_AD_DOWN=1
+run "desktops check: AD down - every recover waits, the restart goes on" ok horizon_desktops_check.yml '{}' \
+    'Horizon desktops: 7 broken, 1 to fix' 'AD domain corp.example.mil from Connection Server cs02: CANNOT_BIND: a new clone could not join its domain'
+run "fix: AD went down after the approval - only the restart" ok horizon_desktops_fix_approved.yml "$afix" \
+    'Horizon desktops fixed: 1 of 1' 'CANNOT_BIND' '"path": "inventory/machines/action/restart"' '!machines/action/recover'
+mock HZMOCK_AD_DOWN=1
+run "desktops check: the AD gate off" ok horizon_desktops_check.yml '{"horizon_fix_ad_gate": false}' 'Horizon desktops: 7 broken, 4 to fix'
+
+# ---- events and settings -------------------------------------------------------------------------
+mock
+run "events: failed logons by user, errors by type, admin changes, the last 24 h only" ok horizon_events_report.yml '{}' \
+    'Horizon events, last 24 h: 7 failed logon(s), 3 error(s), 1 change(s)' '1 user(s) failed to log on 5 or more times: CORP\\jdoe' \
+    'bad user password (6)' 'not entitled (1)' 'BROKER_DESKTOP_LAUNCH_FAILURE' 'CORP\\admin1' '!CORP\\old' '198.51.100.23'
+run "events: a shorter window" ok horizon_events_report.yml '{"horizon_events_hours": 3}' 'Horizon events, last 3 h: 3 failed logon(s), 0 error(s), 0 change(s)'
+run "settings: no baseline - every setting listed" ok horizon_settings_report.yml '{}' \
+    'Horizon settings: no baseline set' 'general.client_idle_session_timeout_policy' 'connection_server.smart_card_support'
+run "settings: against a baseline - drift on each server, a setting this Horizon lacks" fail horizon_settings_report.yml \
+    '{"horizon_health_fail": true, "horizon_settings_baseline": {"general.client_idle_session_timeout_policy": "TIMEOUT_AFTER",
+      "general.client_max_session_timeout_minutes": {"max": 720}, "connection_server.fips_mode_enabled": true,
+      "connection_server.smart_card_support": "REQUIRED", "general.nope": 1}}' \
+    'Horizon settings: 3 setting(s) differ from the baseline' 'DRIFT' "(not in Horizon's answer)" '3 setting(s) differ from the baseline (the report is above)'
 
 # ---- user help -----------------------------------------------------------------------------------
 mock
@@ -188,7 +231,8 @@ mock
 run "push plan: two pools, the golden image and its snapshot found, handed on" ok horizon_image_push_plan.yml \
     '{"horizon_push_pools": "IC-Win11, IC-Finance", "horizon_push_base_vm": "W11-Gold", "horizon_push_snapshot": "v2026-11"}' \
     'READY FOR APPROVAL: Push W11-Gold / /v2026-10/v2026-11 to IC-Win11, IC-Finance, starting as soon as the approved push job runs' \
-    'each desktop is replaced when its user logs off' '"horizon_push_plan": {'
+    'each desktop is replaced when its user logs off' '"horizon_push_plan": {' \
+    "the snapshot's vGPU profile (grid_a40-2q) is not the pool's (none)" 'datastore DS2 has 500 GB free; the new image'"'"'s replica needs about 586 GB'
 plan="$(stats horizon_push_plan)"
 run "push (approved): scheduled on each pool, exactly the plan" ok horizon_image_push_approved.yml "$plan" \
     'Horizon image push: 2 of 2 pool(s) scheduled' 'IC-Win11: push the image requested - Horizon took it' \
@@ -208,6 +252,9 @@ run "push plan: what stops it - not instant clones, a push pending, a protected 
 run "push plan: a golden image VM that is not there" fail horizon_image_push_plan.yml \
     '{"horizon_push_pools": ["IC-Win11"], "horizon_push_base_vm": "W10-Gold", "horizon_push_snapshot": "x", "horizon_push_logoff_policy": "FORCE_LOGOFF"}' \
     'no golden image VM named W10-Gold (there are: Server-2022, W11-Gold, W11-Gold-Old)'
+run "push plan: a golden image Horizon flags as incompatible stops it" fail horizon_image_push_plan.yml \
+    '{"horizon_push_pools": ["IC-Win11"], "horizon_push_base_vm": "Server-2022", "horizon_push_snapshot": "x"}' \
+    'Horizon will not push golden image VM Server-2022: UNSUPPORTED_OS'
 
 echo
 if [ "$fails" -eq 0 ]; then echo "All Horizon tests passed."; else echo "$fails Horizon test(s) FAILED."; fi

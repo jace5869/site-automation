@@ -86,10 +86,18 @@ RESOURCES = {
     "base_vms": [("external", "base-vms")],
     "base_snapshots": [("external", "base-snapshots")],
     "ad_users": [("external", "ad-users-or-groups")],
+    "audit_events": [("external", "audit-events")],
+    "cs_config": [("config", "connection-servers")],
+    "settings_general": [("config", "settings/general")],
+    "settings_security": [("config", "settings/security")],
+    "pre_logon": [("config", "pre-logon-settings")],
 }
+# resources that are one record, not a list
+SINGLE = ("event_database", "license", "settings_general", "settings_security", "pre_logon")
 # asked one page each by `test` (the external ones need IDs: the jobs read them)
 TESTED = ["connection_servers", "gateways", "virtual_centers", "ad_domains", "event_database", "saml_authenticators", "true_sso",
-          "license", "desktop_pools", "machines", "sessions", "farms", "vcenters"]
+          "license", "desktop_pools", "machines", "sessions", "farms", "vcenters", "audit_events", "cs_config", "settings_general",
+          "settings_security", "pre_logon"]
 MACHINE_VERBS = ("reset", "restart", "recover", "rebuild", "remove", "enter-maintenance-mode", "exit-maintenance-mode")
 SESSION_VERBS = ("logoff", "disconnect", "reset", "restart", "send-message")
 NOT_HERE = (404, 405)
@@ -302,7 +310,9 @@ def read(api, resources):
         if name not in RESOURCES:
             errors[key] = "unknown resource %s (known: %s)" % (name, ", ".join(sorted(RESOURCES)))
             continue
-        query = dict((k, v) for k, v in (r.get("query") or {}).items() if v not in (None, ""))
+        # a filter given as a mapping (ansible-core 2.16 turns JSON text back into one) goes as Horizon's JSON text
+        query = dict((k, json.dumps(v, separators=(",", ":")) if isinstance(v, (dict, list)) else v)
+                     for k, v in (r.get("query") or {}).items() if v not in (None, ""))
         probe = ("?" + urlencode(query)) if query else ""
         if r.get("id"):
             probe = ""
@@ -311,7 +321,7 @@ def read(api, resources):
             errors[key] = why
             data[key] = []
             continue
-        one = bool(r.get("id")) or name in ("event_database", "license")
+        one = bool(r.get("id")) or name in SINGLE
         rows, why = api.get_all(path + (("/" + quote(str(r["id"]), safe="")) if r.get("id") else ""), query, one=one)
         data[key], paths[key] = rows, path
         if why:
@@ -326,7 +336,7 @@ def test(api):
         t = {"name": name, "path": path, "status": "missing" if why.startswith("not in this") else ("error" if why else "ok"),
              "count": 0, "more": False, "error": why}
         if path:
-            one = name in ("event_database", "license")
+            one = name in SINGLE
             code, data, headers = api.call("GET", path + ("" if one else "?" + urlencode({"page": 1, "size": api.size})))
             if 200 <= code < 300:
                 rows = data.get("results") if isinstance(data, dict) and isinstance(data.get("results"), list) else data

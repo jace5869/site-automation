@@ -36,11 +36,13 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Horizon - API test | `playbooks/horizon_api_test.yml` | [horizon_api_test.yml](horizon_api_test.yml) |
 | Horizon - capacity report | `playbooks/horizon_capacity_report.yml` | [horizon_capacity_report.yml](horizon_capacity_report.yml) |
 | Horizon - desktops check | `playbooks/horizon_desktops_check.yml` | [horizon_desktops_check.yml](horizon_desktops_check.yml) |
+| Horizon - events report | `playbooks/horizon_events_report.yml` | [horizon_events_report.yml](horizon_events_report.yml) |
 | Horizon - fix the approved desktops | `playbooks/horizon_desktops_fix_approved.yml` | [horizon_desktops_fix_approved.yml](horizon_desktops_fix_approved.yml) |
 | Horizon - health report | `playbooks/horizon_health_report.yml` | [horizon_health_report.yml](horizon_health_report.yml) |
 | Horizon - image push plan | `playbooks/horizon_image_push_plan.yml` | [horizon_image_push_plan.yml](horizon_image_push_plan.yml) |
 | Horizon - push the approved image | `playbooks/horizon_image_push_approved.yml` | [horizon_image_push_approved.yml](horizon_image_push_approved.yml) |
 | Horizon - session cleanup | `playbooks/horizon_session_cleanup.yml` | [horizon_session_cleanup.yml](horizon_session_cleanup.yml) |
+| Horizon - settings report | `playbooks/horizon_settings_report.yml` | [horizon_settings_report.yml](horizon_settings_report.yml) |
 | Horizon - user help | `playbooks/horizon_user_help.yml` | [horizon_user_help.yml](horizon_user_help.yml) |
 | Log analysis | `playbooks/log_analysis.yml` | [log_analysis.yml](log_analysis.yml) |
 | Mail relay - apply the approved whitelist change | `playbooks/mail_relay_approved.yml` | [mail_relay_approved.yml](mail_relay_approved.yml) |

@@ -47,6 +47,15 @@
 ## rows in the problems table (the job's artifacts have all)
 # horizon_report_max_rows: 50
 
+## a Connection Server's last configuration backup older than this -> amber
+# horizon_backup_max_hours: 26
+
+## a datastore with less free than this, % -> amber (instant clones and new replicas need room)
+# horizon_datastore_warn_pct: 15
+
+## less free than this, % -> red
+# horizon_datastore_crit_pct: 5
+
 ## The health and capacity reports stay green when they find problems: the report says what. true =
 ## mark the job FAILED on a critical finding, for workflows and alerts.
 # horizon_health_fail: false

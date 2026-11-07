@@ -136,6 +136,8 @@ read only or acting ([HORIZON.md](HORIZON.md#step-3-the-job-templates)).
 | Horizon - API test | `playbooks/horizon_api_test.yml` | Setup or test | [HORIZON.md](HORIZON.md#step-3-the-job-templates) |
 | Horizon - health report | `playbooks/horizon_health_report.yml` | Report | [HORIZON.md](HORIZON.md#reports-and-schedules) |
 | Horizon - capacity report | `playbooks/horizon_capacity_report.yml` | Report | [HORIZON.md](HORIZON.md#reports-and-schedules) |
+| Horizon - events report | `playbooks/horizon_events_report.yml` | Report | [HORIZON.md](HORIZON.md#events-report) |
+| Horizon - settings report | `playbooks/horizon_settings_report.yml` | Report | [HORIZON.md](HORIZON.md#settings-report) |
 | Horizon - desktops check | `playbooks/horizon_desktops_check.yml` | Workflow step | [HORIZON.md](HORIZON.md#workflow-fix-broken-desktops-with-an-approval) |
 | Horizon - fix the approved desktops | `playbooks/horizon_desktops_fix_approved.yml` | After an approval | [HORIZON.md](HORIZON.md#workflow-fix-broken-desktops-with-an-approval) |
 | Horizon - image push plan | `playbooks/horizon_image_push_plan.yml` | Workflow step | [HORIZON.md](HORIZON.md#workflow-push-a-new-golden-image-with-an-approval) |

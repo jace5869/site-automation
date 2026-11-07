@@ -1,0 +1,20 @@
+---
+# What the broken desktops check (desktops_check.yml) and the fix job after the approval (desktops_fix.yml) both
+# check each desktop against - the same settings in both, so the fix job decides as the check did.
+- name: Horizon | the settings each desktop is checked against
+  ansible.builtin.set_fact:
+    _hz_desktop_opts:
+      protected_pools: "{{ horizon_protected_pools }}"
+      broken_states: "{{ horizon_broken_states }}"
+      actions: "{{ horizon_fix_actions | default({}, true) }}"
+      default_action: "{{ horizon_fix_default_action }}"
+      max: "{{ horizon_fix_max | int }}"
+      exclude_machines: "{{ horizon_fix_exclude_machines }}"
+      stuck_hours: "{{ horizon_stuck_hours | float }}"
+      stuck_actions: "{{ horizon_fix_stuck_actions | default({}, true) }}"
+      ghost_action: "{{ horizon_fix_ghost_action | default('', true) }}"
+      host_threshold: "{{ horizon_fix_host_threshold | int }}"
+      ad_gate: "{{ horizon_fix_ad_gate | bool }}"
+      hold_error_kinds: "{{ horizon_fix_hold_error_kinds }}"
+      error_kinds: "{{ horizon_clone_error_kinds | default({}, true) }}"
+      now: "{{ horizon_now | default('') }}"

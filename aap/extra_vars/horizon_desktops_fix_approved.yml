@@ -50,11 +50,52 @@
 ## path to the approval step and then the fix job. Set approval on the workflow's check node.
 # horizon_desktops_mode: report
 
+## what fixes a broken desktop: recover (instant clones: deleted and made again from the image),
+## reset, restart, remove, rebuild
+# horizon_fix_default_action: recover
+
+## By state, when another action fits better (e.g. {AGENT_ERR_NEED_REBOOT: restart,
+## PROVISIONING_ERROR: remove}).
+# horizon_fix_actions: {AGENT_ERR_NEED_REBOOT: restart}
+
 ## fix at most this many desktops per run: the rest are listed, the next run takes them
 # horizon_fix_max: 20
 
 ## desktops never fixed automatically: names, * and ? allowed (e.g. [W11-TEST-*])
 # horizon_fix_exclude_machines: []
+
+## A desktop left in a passing state (being made, customized, deleted, maintenance, waiting for its
+## agent) for this many hours is stuck: the check lists it. Counted from when it was made (or its
+## last maintenance); a desktop whose time Horizon does not give is not counted.
+# horizon_stuck_hours: 4
+
+## What fixes a stuck desktop, by state (e.g. {CUSTOMIZING: recover, WAITING_FOR_AGENT: recover}).
+## Not named = left for a person (the default: a stuck desktop often means vCenter, a datastore or
+## the image).
+# horizon_fix_stuck_actions: {}
+
+## A desktop Horizon lists but vCenter no longer has (missing in vCenter): remove its record. "" =
+## left for a person.
+# horizon_fix_ghost_action: remove
+
+## This many broken desktops on one ESXi host at once = the host is the problem: all of them are
+## held back, and the check says to look at the host (Broadcom KB 431732). 0 = off.
+# horizon_fix_host_threshold: 5
+
+## A Connection Server that cannot reach or bind to an AD domain holds back every recover and
+## rebuild (a new clone could not join the domain): they wait until AD answers. false = off.
+# horizon_fix_ad_gate: true
+
+## A desktop whose clone error is one of these kinds is not recovered or rebuilt - the cause is
+## outside the desktop, and a new clone would fail the same way: domain (join, trust), network (IP,
+## DHCP), datastore (space). The others - timeout, activation, other - are recovered. [] = recover
+## every kind.
+# horizon_fix_hold_error_kinds: [domain, network, datastore]
+
+## More kinds of clone error, tried before the built-in ones: {kind: a regular expression on
+## Horizon's message}, e.g. {security_agent: "carbon black|tanium"}. A kind named in
+## horizon_fix_hold_error_kinds is held back.
+# horizon_clone_error_kinds: {}
 
 # ---- site_email - usually in all.yml -------------------------------------------------------------
 ## Who gets it: a list, or text with commas / spaces / one per line (a survey answer). Empty = no

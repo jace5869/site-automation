@@ -10,6 +10,10 @@ HZMOCK_BAD=1: an unhealthy pod (a Connection Server down, a service down, a cert
 event database). HZMOCK_EXPIRE=1: the first token stops working after 3 calls (the job must refresh it).
 HZMOCK_FORBID=sessions: 403 for that resource. HZMOCK_NO_LOGIN_FILTER=1: the AD user search refuses a filter on
 login_name (400) - older API versions search by name. HZMOCK_REFUSE=<machine id>: an action on it is refused.
+HZMOCK_GAPS=1: more desktops - stuck customizing, a domain clone error, one vCenter no longer has, five broken on one
+ESXi host, a 169.254 address, two with the same address, an older agent and an older image. HZMOCK_AD_DOWN=1: cs02
+cannot bind to AD. The event database (external/audit-events, filtered by time) and the settings (config/settings/
+general and security, pre-logon-settings, config/connection-servers - the backup only per server) are there too.
 Each action is appended to $HZMOCK_LOG as a JSON line. State is kept while the fake runs.
 Usage: hzmock.py PORT
 """
@@ -29,6 +33,8 @@ VERS = dict((kv.split("=")[0], int(kv.split("=")[1])) for kv in os.environ.get("
 BAD = os.environ.get("HZMOCK_BAD") == "1"
 FORBID = set(x for x in os.environ.get("HZMOCK_FORBID", "").split(",") if x)
 REFUSE = os.environ.get("HZMOCK_REFUSE", "")
+GAPS = os.environ.get("HZMOCK_GAPS") == "1"
+AD_DOWN = os.environ.get("HZMOCK_AD_DOWN") == "1"
 TOKENS = {"n": 0, "calls": {}, "expired": set()}   # every token: how many calls it made
 
 
@@ -64,6 +70,7 @@ POOLS = [pool("pool-ic1", "IC-Win11", "INSTANT_CLONE", 10, 2), pool("pool-ic2", 
               last_provisioning_error_time=NOW - 2 * H),
          {"id": "pool-rds", "name": "RDS-Apps", "display_name": "RDS-Apps", "type": "RDS", "source": "RDS", "enabled": True}]
 POOLS[4]["enable_provisioning"] = False
+POOLS[0]["storage_settings"] = {"datastores": [{"datastore_id": "ds2"}]}
 
 
 def m(i, name, p, state, users=None, sess=""):
@@ -82,6 +89,45 @@ MACHINES = [m("m-w01", "w11-001", "pool-ic1", "AVAILABLE"), m("m-w02", "w11-002"
             m("m-l02", "leg-002", "pool-fc1", "DISCONNECTED", users=[sid(1006)], sess="s10"),
             m("m-p01", "prot-001", "pool-ic3", "AGENT_UNREACHABLE"), m("m-p02", "prot-002", "pool-ic3", "DISCONNECTED", sess="s9"),
             m("m-b01", "lab-001", "pool-ic4", "AVAILABLE")]
+MACHINES[6]["managed_machine_data"] = {"clone_error_message": "Customization operation timed out", "clone_error_time": NOW - 3 * H,
+                                       "create_time": NOW - 3 * H, "host_name": "esx01.example.mil"}
+MACHINES[9]["managed_machine_data"] = {"create_time": NOW - 1 * H, "host_name": "esx01.example.mil"}
+if GAPS:
+    def mm(i, name, state, **mdd):
+        r = m(i, name, "pool-ic1", state)
+        r["managed_machine_data"] = dict({"create_time": NOW - 1 * H, "host_name": "esx01.example.mil", "base_vm_snapshot_id": "snap-0"}, **mdd)
+        return r
+    MACHINES += [mm("m-g01", "w11-011", "CUSTOMIZING", create_time=NOW - 9 * H),
+                 mm("m-g02", "w11-012", "PROVISIONING_ERROR", clone_error_message="The domain join failed: the trust relationship "
+                    "between this workstation and the primary domain failed"),
+                 mm("m-g03", "w11-013", "ERROR", missing_in_vcenter=True)]
+    MACHINES += [mm("m-h%02d" % n, "w11-1%02d" % n, "AGENT_UNREACHABLE", host_name="esx07.example.mil") for n in range(1, 6)]
+    MACHINES += [mm("m-i01", "w11-201", "AVAILABLE"), mm("m-i02", "w11-202", "AVAILABLE"), mm("m-i03", "w11-203", "AVAILABLE"),
+                 mm("m-i04", "w11-204", "AVAILABLE", base_vm_snapshot_id="snap-old")]
+    MACHINES[-4]["agent_ipv4_address"] = "169.254.10.10"
+    MACHINES[-3]["agent_ipv4_address"] = MACHINES[-2]["agent_ipv4_address"] = "192.0.2.50"
+    MACHINES[-2]["agent_version"] = "8.11.0"
+EVENTS = [{"id": "e%d" % n, "type": "BROKER_USER_AUTHFAILED_BAD_USER_PASSWORD", "severity": "AUDIT_FAIL", "module": "Broker",
+           "time": NOW - n * H, "message": "User CORP\\jdoe has failed to authenticate to Horizon from 198.51.100.23"} for n in range(1, 7)]
+EVENTS += [{"id": "e10", "type": "BROKER_USER_NOT_ENTITLED", "severity": "AUDIT_FAIL", "module": "Broker", "time": NOW - 2 * H,
+            "message": "User CORP\\asmith requested Pool IC-Finance, but is not entitled to it"},
+           {"id": "e11", "type": "BROKER_DESKTOP_LAUNCH_FAILURE", "severity": "ERROR", "module": "Broker", "time": NOW - 3 * H,
+            "desktop_pool_id": "pool-ic1", "message": "Unable to launch from Pool IC-Win11 for user CORP\\bwayne: the desktop did not answer"},
+           {"id": "e12", "type": "BROKER_DESKTOP_LAUNCH_FAILURE", "severity": "ERROR", "module": "Broker", "time": NOW - 4 * H,
+            "desktop_pool_id": "pool-ic1", "message": "Unable to launch from Pool IC-Win11 for user CORP\\cclark: the desktop did not answer"},
+           {"id": "e13", "type": "BROKER_PROVISIONING_ERROR_DISK_FULL_SET", "severity": "ERROR", "module": "Broker", "time": NOW - 5 * H,
+            "desktop_pool_id": "pool-ic4", "message": "Provisioning error occurred on Pool IC-Lab: insufficient disk space on DS2"},
+           {"id": "e14", "type": "VLSI_DESKTOP_UPDATED", "severity": "AUDIT_SUCCESS", "module": "Vlsi", "time": NOW - 6 * H,
+            "message": "User CORP\\admin1 has updated Pool IC-Win11"},
+           {"id": "e15", "type": "BROKER_USER_AUTHFAILED_ACCOUNT_LOCKED", "severity": "AUDIT_FAIL", "module": "Broker", "time": NOW - 48 * H,
+            "message": "User CORP\\old has failed to authenticate: locked"}]
+CS_CONFIG = [{"id": "cs1", "name": "cs01", "fips_mode_enabled": True, "smart_card_support": "OPTIONAL", "logoff_when_remove_smart_card": False},
+             {"id": "cs2", "name": "cs02", "fips_mode_enabled": True, "smart_card_support": "OPTIONAL", "logoff_when_remove_smart_card": False}]
+SETTINGS = {"settings/general": {"client_idle_session_timeout_policy": "NEVER", "client_max_session_timeout_policy": "TIMEOUT_AFTER",
+                                 "client_max_session_timeout_minutes": 600, "display_pre_login_message": False, "pre_login_message": "",
+                                 "enable_multi_factor_re_authentication": False},
+            "settings/security": {"reauthenticate_secure_tunnel_after_interruption": True, "message_security_mode": "ENHANCED"},
+            "pre-logon-settings": {"display_pre_login_admin_banner": False, "api_session_timeout_minutes": 10}}
 
 
 def s(i, user, mach, p, state, start_h, disc_h=None, farm=""):
@@ -101,7 +147,8 @@ SESSIONS = [s("s1", 1001, "m-w02", "pool-ic1", "CONNECTED", 3), s("s2", 1002, "m
 BASE_VMS = {"vc1": [{"id": "bvm-1", "name": "W11-Gold", "path": "/DC1/vm/Gold/W11-Gold", "incompatible_reasons": []},
                     {"id": "bvm-2", "name": "W11-Gold-Old", "path": "/DC1/vm/Gold/W11-Gold-Old", "incompatible_reasons": []},
                     {"id": "bvm-3", "name": "Server-2022", "path": "/DC1/vm/Gold/Server-2022", "incompatible_reasons": ["UNSUPPORTED_OS"]}]}
-SNAPS = {"bvm-1": [{"id": "snap-1", "name": "v2026-10", "path": "/v2026-10"}, {"id": "snap-2", "name": "v2026-11", "path": "/v2026-10/v2026-11"},
+SNAPS = {"bvm-1": [{"id": "snap-1", "name": "v2026-10", "path": "/v2026-10"},
+                   {"id": "snap-2", "name": "v2026-11", "path": "/v2026-10/v2026-11", "disk_size_mb": 600000, "vgpu_type": "grid_a40-2q"},
                    {"id": "snap-3", "name": "dup", "path": "/dup"}, {"id": "snap-4", "name": "dup", "path": "/v2026-10/dup"}]}
 
 
@@ -115,7 +162,11 @@ def monitor():
            "connection_count": 2, "cs_replications": [{"server_name": "cs01", "status": "OK"}]}]
     gw = [{"id": "gw1", "name": "uag01", "status": "OK", "details": {"type": "UAG", "version": "2312"}, "active_connection_count": 3}]
     vc = [{"id": "vc1", "name": "vcsa01.example.mil", "details": {"version": "8.0.2"},
-           "connection_servers": [{"id": "cs1", "name": "cs01", "status": "OK"}, {"id": "cs2", "name": "cs02", "status": "OK"}]}]
+           "connection_servers": [{"id": "cs1", "name": "cs01", "status": "OK"}, {"id": "cs2", "name": "cs02", "status": "OK"}],
+           "datastores": [{"id": "ds1", "details": {"name": "DS1", "capacity_mb": 2048000}, "free_space_mb": 1024000, "status": "ACCESSIBLE"},
+                          {"id": "ds2", "details": {"name": "DS2", "capacity_mb": 1024000}, "free_space_mb": 512000, "status": "ACCESSIBLE"}],
+           "hosts": [{"details": {"name": "esx01.example.mil", "version": "8.0.2"}, "status": "CONNECTED"},
+                     {"details": {"name": "esx02.example.mil", "version": "8.0.2"}, "status": "CONNECTED"}]}]
     ad = [{"dns_name": "corp.example.mil", "netbios_name": "CORP",
            "connection_servers": [{"name": "cs01", "status": "FULLY_ACCESSIBLE"}, {"name": "cs02", "status": "FULLY_ACCESSIBLE"}]}]
     ev = {"status": "CONNECTED", "details": {"server_name": "sql01.example.mil", "database_name": "HorizonEvents"}}
@@ -127,6 +178,11 @@ def monitor():
         gw[0]["status"] = "PROBLEM"
         vc[0]["connection_servers"][1]["status"] = "CANNOT_LOGIN"
         ev = {"status": "CONNECTION_ERROR", "details": {"server_name": "sql01.example.mil"}}
+        cs[0]["default_certificate"] = True
+        vc[0]["datastores"][1]["free_space_mb"] = 20000
+        vc[0]["hosts"][1]["status"] = "DISCONNECTED"
+    if AD_DOWN:
+        ad[0]["connection_servers"][1]["status"] = "CANNOT_BIND"
     return {"connection-servers": cs, "gateways": gw, "virtual-centers": vc, "ad-domains": ad, "event-database": ev,
             "saml-authenticators": [], "true-sso": []}
 
@@ -137,7 +193,9 @@ NAMES = {"monitor/connection-servers": "connection_servers", "monitor/gateways":
          "monitor/saml-authenticators": "saml_authenticators", "monitor/true-sso": "true_sso", "config/licenses": "license",
          "inventory/desktop-pools": "desktop_pools", "inventory/machines": "machines", "inventory/sessions": "sessions",
          "inventory/farms": "farms", "config/virtual-centers": "vcenters", "external/base-vms": "base_vms",
-         "external/base-snapshots": "base_snapshots", "external/ad-users-or-groups": "ad_users"}
+         "external/base-snapshots": "base_snapshots", "external/ad-users-or-groups": "ad_users", "external/audit-events": "audit_events",
+         "config/connection-servers": "cs_config", "config/settings/general": "settings_general",
+         "config/settings/security": "settings_security", "config/pre-logon-settings": "pre_logon"}
 
 
 def log(rec):
@@ -206,7 +264,7 @@ class H_(BaseHTTPRequestHandler):
             return self.send(404, {"error_message": "not found"})
         area, ver, rest = parts[1], int(parts[2][1:] or 0), parts[3:]
         res = "%s/%s" % (area, rest[0])
-        name = NAMES.get(res)
+        name = NAMES.get("%s/%s" % (area, "/".join(rest[:2]))) or NAMES.get(res)
         if not name or ver < 1 or ver > VERS.get(name, NEWEST):
             return self.send(404, {"error_message": "not found"})
         if name in FORBID:
@@ -227,6 +285,22 @@ class H_(BaseHTTPRequestHandler):
             return self.page(monitor()[rest[0]], q) if rest[0] != "event-database" else self.send(200, monitor()["event-database"])
         if rest == ["licenses"]:
             return self.send(200, {"licensed": True, "expiration_time": NOW + 300 * D, "usage_model": "NAMED_USER", "license_edition": "ENTERPRISE"})
+        if rest[0] == "connection-servers":
+            if len(rest) == 2:
+                c = [dict(x) for x in CS_CONFIG if x["id"] == rest[1]]
+                if not c:
+                    return self.send(404, {"error_message": "no such server"})
+                old = BAD and c[0]["id"] == "cs2"
+                c[0]["ldap_backup_info"] = {"last_ldap_backup_time": NOW - (80 if old else 5) * H, "last_ldap_backup_status": "OK",
+                                            "frequency_time": "EVERY_DAY", "max_number": 10, "backup_in_progress": False}
+                return self.send(200, c[0])
+            return self.page(CS_CONFIG, q)
+        if "/".join(rest[:2]) in SETTINGS:
+            return self.send(200, SETTINGS["/".join(rest[:2])])
+        if rest == ["audit-events"]:
+            f = json.loads(q.get("filter") or "{}")
+            rows = [e for e in EVENTS if not f or f.get("fromValue", 0) <= e["time"] <= f.get("toValue", NOW * 2)]
+            return self.page(sorted(rows, key=lambda e: -e["time"]), q)
         if rest == ["virtual-centers"]:
             return self.page([{"id": "vc1", "server_name": "vcsa01.example.mil"}], q)
         if rest == ["desktop-pools"]:

@@ -1,21 +1,47 @@
 ---
 # HEALTH REPORT (playbooks/horizon_health_report.yml). Read-only: what Horizon says about itself - each
-# Connection Server (status, services, certificate, replication), the gateways (Unified Access Gateways),
-# vCenter and AD as each Connection Server sees them, the event database, SAML and True SSO, the license,
-# pools that cannot provision or whose image failed, and the broken desktops by state. A part this Horizon
+# Connection Server (status, services, certificate - a self-signed one too -, replication, its configuration
+# backup), the gateways (Unified Access Gateways), vCenter, its ESXi hosts and datastores and AD as each Connection
+# Server sees them, the event database, SAML and True SSO, the license, pools that cannot provision, whose image
+# failed or is held, agents of several versions in a pool, desktops left on an older image, 169.254 and duplicate
+# IP addresses, and the broken desktops by state. A part this Horizon
 # release does not have is said once (blue), never a failure. Green unless horizon_health_fail.
 - name: Horizon | read the pod
   ansible.builtin.include_tasks: read.yml
   vars:
     _hz_what: the Connection Servers, gateways, vCenters, AD domains, event database, license, pools, desktops and sessions
     _hz_resources: [connection_servers, gateways, virtual_centers, ad_domains, event_database, saml_authenticators, true_sso,
-                    license, desktop_pools, machines, sessions]
+                    license, desktop_pools, machines, sessions, cs_config]
     _hz_tolerate: true           # read-only: the report says what Horizon did not give
+
+- name: Horizon | each Connection Server's configuration backup (when the list leaves it out)
+  ansible.builtin.set_fact:
+    _hz_first: "{{ _hz }}"
+    _hz_cs_ids: "{{ _hz.raw.cs_config | default([]) | rejectattr('ldap_backup_info', 'defined') | selectattr('id', 'defined') | map(attribute='id') | list }}"
+
+- name: Horizon | read each Connection Server's configuration
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the configuration backup of {{ _hz_cs_ids | length }} Connection Server(s)
+    _hz_resources: >-
+      {%- set out = [] -%}
+      {%- for i in _hz_cs_ids -%}{%- set _ = out.append({'name': 'cs_config', 'key': 'cs_config:' ~ i, 'id': i}) -%}{%- endfor -%}
+      {{ out }}
+    _hz_tolerate: true
+  when: _hz_cs_ids | length > 0
+
+- name: Horizon | everything read, together
+  ansible.builtin.set_fact:
+    _hz: >-
+      {{ _hz_first | combine({'raw': _hz_first.raw | combine(_hz.raw), 'errors': _hz_first.errors | combine(_hz.errors),
+                              'api': _hz_first.api | combine(_hz.api)}) if _hz_cs_ids | length > 0 else _hz_first }}
 
 - name: Horizon | the health report
   ansible.builtin.set_fact:
     _hz_health: "{{ _hz | hz_health({'cert_warn_days': horizon_cert_warn_days | int, 'cert_crit_days': horizon_cert_crit_days | int,
                                       'license_warn_days': horizon_license_warn_days | int, 'max_rows': horizon_report_max_rows | int,
+                                      'backup_max_hours': horizon_backup_max_hours | float,
+                                      'ds_warn_pct': horizon_datastore_warn_pct | float, 'ds_crit_pct': horizon_datastore_crit_pct | float,
                                       'now': horizon_now | default('')}) }}"
 
 - name: Horizon | report

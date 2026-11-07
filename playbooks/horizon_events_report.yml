@@ -1,0 +1,16 @@
+---
+# HORIZON EVENTS REPORT. Read-only: Horizon's event database over the last horizon_events_hours (24) - failed logons
+# by user (bad password, locked account, not entitled), the errors by event type (launch failures, pools empty,
+# provisioning errors), and what administrators changed. Printed, published as job artifacts (horizon_report,
+# horizon_events), emailed only when report_email_to is set. Stays green unless horizon_health_fail: true.
+# Runs on the AAP side: attach the "Horizon API" credential; no inventory needed. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_events_report.yml
+- name: Horizon events report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon events report
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: events.yml

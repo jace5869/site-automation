@@ -1,15 +1,17 @@
 # VMware Horizon 8 (VDI)
 
-Nine job templates for Horizon 8 with instant clones. They talk to a Connection Server's REST API
+Eleven job templates for Horizon 8 with instant clones. They talk to a Connection Server's REST API
 (`https://<connection-server>/rest/`) from the AAP side: no inventory, no login to the desktops, no
 collection to add to the execution environment.
 
 | Job template | Playbook | What it does | Changes anything? |
 |---|---|---|---|
 | Horizon - API test | `horizon_api_test.yml` | the first job to run: login, each API path and version that answers, the settings against the pools, one user | no |
-| Horizon - health report | `horizon_health_report.yml` | Connection Servers (status, services, certificate, replication), gateways, vCenter and AD from each Connection Server, the event database, SAML and True SSO, the license, pools that cannot provision, broken desktops | no |
+| Horizon - health report | `horizon_health_report.yml` | Connection Servers (status, services, certificate, replication, configuration backup), gateways, vCenter, its ESXi hosts and datastores and AD from each Connection Server, the event database, SAML and True SSO, the license, pools that cannot provision or whose new image is held, agent versions, desktops left on an older image, 169.254 and duplicate addresses, broken desktops | no |
 | Horizon - capacity report | `horizon_capacity_report.yml` | per pool: maximum, free, in use, broken, sessions, how full | no |
-| Horizon - desktops check | `horizon_desktops_check.yml` | the broken desktops, what fixes each, and why some are held back (job 1 of the broken desktops workflow) | no |
+| Horizon - events report | `horizon_events_report.yml` | the last 24 hours of Horizon's event database: failed logons by user, errors by type, what administrators changed | no |
+| Horizon - settings report | `horizon_settings_report.yml` | Horizon's global and Connection Server settings against your baseline (session timeouts, the pre-login message, FIPS, smart cards) | no |
+| Horizon - desktops check | `horizon_desktops_check.yml` | the broken desktops, desktops vCenter no longer has, desktops stuck in a passing state, what fixes each, and why some are held back (job 1 of the broken desktops workflow) | no |
 | Horizon - fix the approved desktops | `horizon_desktops_fix_approved.yml` | after the approval: fixes exactly the approved desktops (job 2) | yes |
 | Horizon - user help | `horizon_user_help.yml` | for the service desk: a user's sessions and desktops; log off, disconnect, reset, restart or recover them | only when asked |
 | Horizon - session cleanup | `horizon_session_cleanup.yml` | logs off sessions disconnected for 8 hours or more | yes |
@@ -44,8 +46,11 @@ Check these on yours. Your Connection Server documents its own API at
 `https://<connection-server>/rest/swagger-ui.html`.
 
 - **Paths.** The jobs use:
-  - `monitor/connection-servers`, `gateways`, `virtual-centers`, `ad-domains`, `event-database`,
-    `saml-authenticators`, `true-sso`
+  - `monitor/connection-servers`, `gateways`, `virtual-centers` (with its `datastores` and `hosts`),
+    `ad-domains`, `event-database`, `saml-authenticators`, `true-sso`
+  - `config/connection-servers` (and each by its ID, for `ldap_backup_info`), `config/settings/general`,
+    `config/settings/security`, `config/pre-logon-settings`
+  - `external/audit-events`, filtered by `time` (Between, milliseconds)
   - `config/licenses` (also tried: `config/license`, `monitor/licenses`)
   - `inventory/desktop-pools`, `machines`, `sessions`, `farms`
   - `external/base-vms`, `base-snapshots`, `ad-users-or-groups`
@@ -54,8 +59,10 @@ Check these on yours. Your Connection Server documents its own API at
     `inventory/v1/desktop-pools/{id}/action/schedule-push-image`
 - **Field names.** Each value is looked for under the names the API versions use, for example
   `pattern_naming_settings.max_number_of_machines`, `provisioning_status_data.instant_clone_pending_image_state`,
-  `session_state` and `disconnected_time`. A missing value is never an error, but a report column
-  can stay empty. If one does, tell us the field name your swagger page shows.
+  `session_state` and `disconnected_time`; the desktops check also reads each desktop's
+  `managed_machine_data` (`host_name`, `clone_error_message`, `missing_in_vcenter`, `create_time`,
+  `last_maintenance_time`, `base_vm_snapshot_id`) and `agent_ipv4_address`. A missing value is never
+  an error, but a report column can stay empty and a check can find nothing. If one does, tell us the field name your swagger page shows.
 - **The user search.** `external/ad-users-or-groups` is searched with a filter on `login_name`, and
   also on `name` for versions that take that instead. *API test* with `horizon_test_user: <someone>`
   shows whether your release finds users that way.
@@ -167,6 +174,17 @@ A check that fails for another reason, a refused login for example, also takes t
 path. Its approval then shows no NEEDS APPROVAL line, and the fix job refuses with
 `Nothing to fix: no approved list`. Deny it, and fix the login.
 
+**Which desktops.**
+- **Broken**: a state of `horizon_broken_states` (agent unreachable, already used, error,
+  provisioning error...).
+- **Not in vCenter**: Horizon lists the desktop, vCenter has no such VM any more
+  (`missing_in_vcenter`). Its record is removed (`horizon_fix_ghost_action`; `""` leaves it for a
+  person).
+- **Stuck**: in a passing state (being made, customized, deleted, maintenance, waiting for the agent)
+  for `horizon_stuck_hours` (4) or more, counted from when it was made or its last maintenance.
+  Listed for a person unless `horizon_fix_stuck_actions` names an action for that state, e.g.
+  `{CUSTOMIZING: recover}`.
+
 **What fixes a desktop.**
 - **Recover** (`horizon_fix_default_action`): the instant clone is deleted and made again from the
   pool's image.
@@ -175,9 +193,23 @@ path. Its approval then shows no NEEDS APPROVAL line, and the fix job refuses wi
 - **Held back for a person**:
   - a desktop with a session on it
   - one in a protected pool
+  - **many broken on one ESXi host**: `horizon_fix_host_threshold` (5) or more broken desktops on the
+    same host are all held, and the report says to look at the host first (Broadcom KB 431732). A
+    recover would only make new clones on the same host.
+  - **AD down**: while a Connection Server cannot reach or bind to an AD domain, every recover and
+    rebuild waits (a new clone could not join the domain). Restarts still go.
+    `horizon_fix_ad_gate: false` turns it off.
+  - **a clone error a recover would repeat**: Horizon's clone error is sorted into domain, network,
+    datastore, activation, timeout or other (the report has a *Clone errors* table). Domain, network
+    and datastore errors are not recovered (`horizon_fix_hold_error_kinds`); add your own kinds with
+    `horizon_clone_error_kinds`, e.g. `{security_agent: "carbon black|tanium"}`.
   - one in a pool that is not instant clones (recover is for instant clones)
   - `remove` of a desktop assigned to a user
   - anything over `horizon_fix_max` (20 per run)
+
+The fix job after the approval makes every one of these checks again on what Horizon says then: if
+AD went down or the host failed since the approval, those desktops are left alone, and the report
+says why.
 
 **Schedule** the workflow e.g. every hour in working hours. For a list without the approval, make a
 second template, *Horizon - desktops check (report)*: the same playbook, without
@@ -216,8 +248,12 @@ prints `w11-004: would recover (a dry run)` and changes nothing.
 
 The plan job checks everything in Horizon:
 - each pool is an instant-clone pool, not protected, with no push already scheduled or running
-- the VM and the snapshot are found in each pool's vCenter
+- the VM and the snapshot are found in each pool's vCenter, and Horizon does not flag either as one
+  it cannot push (powered on, no snapshot, an OS or hardware version it does not take)
 - the start is not in the past
+
+It warns the approver when the snapshot's vGPU profile is not the pool's, and when a pool's datastore
+has less free space than the new image's replica needs.
 
 A plan with a problem **fails**, and nothing reaches the approval. A good plan prints
 `READY FOR APPROVAL: Push W11-Gold / /2026-10/2026-11 to IC-Win11, IC-Finance, starting ...; users: each desktop is replaced when its user logs off.`
@@ -270,14 +306,57 @@ message in a disconnected session.
 Run it as Check first. Then schedule it, e.g. every night at 02:00. For a list only, set
 `horizon_session_cleanup_report_only: true`.
 
+## Events report
+
+*Horizon - events report* reads Horizon's event database through the REST API
+(`external/audit-events`) for the last `horizon_events_hours` (24):
+
+- **Failed logons by user**: how many, why (bad password, locked account, not entitled, not
+  authorized), from which client address, the last one. Amber for a user with
+  `horizon_events_failed_warn` (5) or more.
+- **Errors by type**: events of `horizon_events_error_severities` (ERROR, AUDIT_FAIL) - launch
+  failures, pools empty or overloaded, desktops that cannot connect, provisioning errors - with the
+  pools and the last message.
+- **What administrators changed**: Horizon's own audit of its console and API (event module `Vlsi`),
+  for the audit review.
+
+It needs an event database (the health report says when there is none). The read-only account reads it.
+
+## Settings report
+
+*Horizon - settings report* compares Horizon's settings with `horizon_settings_baseline`: each line
+`area.setting: value`, with area `general`, `security` or `pre_logon` (Horizon's global settings) or
+`connection_server` (checked on every Connection Server). A value is the value, or `{min: N}`,
+`{max: N}`, `{contains: text}`, `{one_of: [...]}` or `{not: value}`.
+
+Run it first without a baseline: the report lists **every setting read**, with Horizon's own names,
+which differ a little between releases. Copy the ones to watch into the baseline. A starting point
+for a DoD site (check each name against that list, and the values against your STIG and policy):
+
+```yaml
+horizon_settings_baseline:
+  general.client_idle_session_timeout_policy: TIMEOUT_AFTER
+  general.client_idle_session_timeout_minutes: {max: 15}
+  general.display_pre_login_message: true
+  general.pre_login_message: {contains: "You are accessing a U.S. Government"}
+  pre_logon.display_pre_login_admin_banner: true
+  connection_server.fips_mode_enabled: true
+  connection_server.smart_card_support: REQUIRED
+  connection_server.logoff_when_remove_smart_card: true
+```
+
+A setting that differs is red (`DRIFT`); one Horizon did not give is amber (`NOT READ`).
+
 ## Reports and schedules
 
 | Template | Schedule (suggested) | Red when |
 |---|---|---|
-| Horizon - health report | every day 06:00 | a Connection Server, service, gateway or vCenter link down; a certificate within `horizon_cert_crit_days` (7) or not valid; the event database not connected; the license expired; a pool that stopped provisioning or whose image failed |
+| Horizon - health report | every day 06:00 | a Connection Server, service, gateway or vCenter link down; a certificate within `horizon_cert_crit_days` (7) or not valid; the event database not connected; the license expired; a pool that stopped provisioning or whose image failed; a datastore under `horizon_datastore_crit_pct` (5 %) free. Amber: a self-signed Connection Server certificate, a configuration backup older than `horizon_backup_max_hours` (26), an ESXi host not connected, a datastore under 15 % free, a new image held, agents of two versions in a pool, desktops left on an older image, 169.254 or duplicate addresses |
+| Horizon - events report | every day 06:10 | the event database could not be read. Amber: a user with 5 or more failed logons, error events |
 | Horizon - capacity report | every Monday 07:00 | a pool at `horizon_capacity_crit_pct` (95 %) in use, or with no free desktop (amber at 80 %, or fewer free desktops than its spares) |
+| Horizon - settings report | every Monday 07:10 | a setting that differs from `horizon_settings_baseline` |
 
-Both stay green when they find problems: the report says what. With `horizon_health_fail: true` the job turns **red** when it finds a problem: put a notification on the template (its **Notifications** tab: on failure) to hear about it. The *ServiceNow tickets* job does not take this report's results - it only works after the checks that hand it findings ([JOB_TEMPLATES.md](JOB_TEMPLATES.md), "What one job hands to the next"). To email them, set `report_email_to`
+They stay green when they find problems: the report says what. With `horizon_health_fail: true` the job turns **red** when it finds a problem: put a notification on the template (its **Notifications** tab: on failure) to hear about it. The *ServiceNow tickets* job does not take this report's results - it only works after the checks that hand it findings ([JOB_TEMPLATES.md](JOB_TEMPLATES.md), "What one job hands to the next"). To email them, set `report_email_to`
 on the template ([EMAIL_REPORTS.md](EMAIL_REPORTS.md)).
 
 ## Messages and what to do

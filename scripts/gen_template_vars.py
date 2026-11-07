@@ -90,6 +90,7 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 # horizon_desktops_mode: approval
 """),
     "horizon_desktops_fix_approved.yml": ("Horizon - fix the approved desktops", "Horizon API", "", ""),
+    "horizon_events_report.yml": ("Horizon - events report", "Horizon API", "", ""),
     "horizon_health_report.yml": ("Horizon - health report", "Horizon API", "", ""),
     "horizon_image_push_approved.yml": ("Horizon - push the approved image", "Horizon API", "", ""),
     "horizon_image_push_plan.yml": ("Horizon - image push plan", "Horizon API", "", """\
@@ -99,6 +100,12 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 # horizon_push_snapshot: SNAPSHOT-NAME
 """),
     "horizon_session_cleanup.yml": ("Horizon - session cleanup", "Horizon API", "", ""),
+    "horizon_settings_report.yml": ("Horizon - settings report", "Horizon API", "", """\
+## What the settings should be: {area.setting: value} - the first run without it lists every setting to copy from
+# horizon_settings_baseline:
+#   general.client_idle_session_timeout_policy: TIMEOUT_AFTER
+#   connection_server.fips_mode_enabled: true
+"""),
     "horizon_user_help.yml": ("Horizon - user help", "Horizon API", "", """\
 ## A survey: horizon_user (text, required) and horizon_user_action (look, logoff, disconnect, reset, restart, recover)
 """),

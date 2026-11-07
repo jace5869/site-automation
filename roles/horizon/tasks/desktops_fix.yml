@@ -20,14 +20,16 @@
 - name: Horizon | read the desktops again
   ansible.builtin.include_tasks: read.yml
   vars:
-    _hz_what: the pools, desktops and sessions, as they are now
-    _hz_resources: [desktop_pools, machines, sessions]
+    _hz_what: the pools, desktops, sessions and AD domains, as they are now
+    _hz_resources: [desktop_pools, machines, sessions, ad_domains]
+    _hz_optional: [ad_domains]
+
+- name: Horizon | the settings each desktop is checked against
+  ansible.builtin.include_tasks: desktop_opts.yml
 
 - name: Horizon | each approved desktop, as it is now
   ansible.builtin.set_fact:
-    _hz_rc: "{{ horizon_desktops_fix | hz_desktops_recheck(_hz, {'protected_pools': horizon_protected_pools,
-                                                                         'broken_states': horizon_broken_states, 'max': horizon_fix_max | int,
-                                                                         'exclude_machines': horizon_fix_exclude_machines}) }}"
+    _hz_rc: "{{ horizon_desktops_fix | hz_desktops_recheck(_hz, _hz_desktop_opts) }}"
     _hz_all_results: []
 
 - name: Horizon | fix them, one action at a time

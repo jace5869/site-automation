@@ -1009,9 +1009,10 @@ policy). A plan with a problem fails and never reaches the approval ([HORIZON.md
 
 ### 32. Horizon reports and the session cleanup
 
-No workflow needed: schedules on `Horizon - health report` (every day 06:00), `Horizon - capacity
-report` (every Monday 07:00) and `Horizon - session cleanup` (every night 02:00, after a first run
-as Check).
+No workflow needed: schedules on `Horizon - health report` (every day 06:00), `Horizon - events
+report` (every day 06:10), `Horizon - capacity report` (every Monday 07:00), `Horizon - settings
+report` (every Monday 07:10, once its baseline is set) and `Horizon - session cleanup` (every night
+02:00, after a first run as Check).
 
 ## Schedules
 

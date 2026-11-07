@@ -751,6 +751,9 @@ File: `roles/horizon/defaults/main.yml`
 | `horizon_cert_crit_days` | `7` | within this many days (or expired, or not valid) -> red |
 | `horizon_license_warn_days` | `60` | the license expires within this many days -> amber |
 | `horizon_report_max_rows` | `50` | rows in the problems table (the job's artifacts have all) |
+| `horizon_backup_max_hours` | `26` | a Connection Server's last configuration backup older than this -> amber |
+| `horizon_datastore_warn_pct` | `15` | a datastore with less free than this, % -> amber (instant clones and new replicas need room) |
+| `horizon_datastore_crit_pct` | `5` | less free than this, % -> red |
 | `horizon_health_fail` | `false` | The health and capacity reports stay green when they find problems: the report says what. true = mark the job FAILED on a critical finding, for workflows and alerts. |
 | `horizon_capacity_warn_pct` | `80` | ---- Capacity report (playbooks/horizon_capacity_report.yml) ------------------------------------ a pool's desktops in use (connected or disconnected) against its maximum, % -> amber |
 | `horizon_capacity_crit_pct` | `95` | in use, % -> red (also red: no free desktop left) |
@@ -760,6 +763,19 @@ File: `roles/horizon/defaults/main.yml`
 | `horizon_fix_actions` | `{AGENT_ERR_NEED_REBOOT: restart}` | By state, when another action fits better (e.g. {AGENT_ERR_NEED_REBOOT: restart, PROVISIONING_ERROR: remove}). |
 | `horizon_fix_max` | `20` | fix at most this many desktops per run: the rest are listed, the next run takes them |
 | `horizon_fix_exclude_machines` | `[]` | desktops never fixed automatically: names, * and ? allowed (e.g. [W11-TEST-*]) |
+| `horizon_stuck_hours` | `4` | A desktop left in a passing state (being made, customized, deleted, maintenance, waiting for its agent) for this many hours is stuck: the check lists it. Counted from when it was made (or its last maintenance); a desktop whose time Horizon does not give is not counted. |
+| `horizon_fix_stuck_actions` | `{}` | What fixes a stuck desktop, by state (e.g. {CUSTOMIZING: recover, WAITING_FOR_AGENT: recover}). Not named = left for a person (the default: a stuck desktop often means vCenter, a datastore or the image). |
+| `horizon_fix_ghost_action` | `remove` | A desktop Horizon lists but vCenter no longer has (missing in vCenter): remove its record. "" = left for a person. |
+| `horizon_fix_host_threshold` | `5` | This many broken desktops on one ESXi host at once = the host is the problem: all of them are held back, and the check says to look at the host (Broadcom KB 431732). 0 = off. |
+| `horizon_fix_ad_gate` | `true` | A Connection Server that cannot reach or bind to an AD domain holds back every recover and rebuild (a new clone could not join the domain): they wait until AD answers. false = off. |
+| `horizon_fix_hold_error_kinds` | `[domain, network, datastore]` | A desktop whose clone error is one of these kinds is not recovered or rebuilt - the cause is outside the desktop, and a new clone would fail the same way: domain (join, trust), network (IP, DHCP), datastore (space). The others - timeout, activation, other - are recovered. [] = recover every kind. |
+| `horizon_clone_error_kinds` | `{}` | More kinds of clone error, tried before the built-in ones: {kind: a regular expression on Horizon's message}, e.g. {security_agent: "carbon black\|tanium"}. A kind named in horizon_fix_hold_error_kinds is held back. |
+| `horizon_events_hours` | `24` | ---- Events report (playbooks/horizon_events_report.yml) ---------------------------------------- the events of the last this many hours |
+| `horizon_events_failed_warn` | `5` | a user with this many failed logons or more in the window -> amber |
+| `horizon_events_failed_types` | `["BROKER_USER_AUTHFAILED*", "BROKER_USER_NOT_ENTITLED*", "BROKER_USER_NOT_AUTHORIZED*", "…` | The event types of a failed logon (* = anything): bad password, locked or disabled account, not entitled... |
+| `horizon_events_error_severities` | `[ERROR, AUDIT_FAIL]` | the events listed under Errors |
+| `horizon_events_admin_modules` | `[Vlsi]` | the event modules of what administrators changed (Horizon Console and its API) |
+| `horizon_settings_baseline` | `{}` | ---- Settings report (playbooks/horizon_settings_report.yml) ------------------------------------ What Horizon's settings should be: {area.setting: value}. area: general, security, pre_logon (Horizon's global settings) or connection_server (checked on each Connection Server). value: the value, or {min: N}, {max: N}, {… (all of it: the role file) |
 | `horizon_session_max_disconnected_hours` | `8` | ---- Disconnected sessions (playbooks/horizon_session_cleanup.yml) ------------------------------ log off a session disconnected for this many hours or more |
 | `horizon_session_cleanup_max` | `100` | log off at most this many sessions per run |
 | `horizon_session_cleanup_exclude_pools` | `[]` | pools whose sessions are never logged off: names, * and ? allowed |
