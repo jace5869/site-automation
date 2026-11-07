@@ -2,10 +2,11 @@
 # Patch hosts with the VMware snapshot before patching (playbooks/patch_hosts.yml, patch_snapshot): real hosts - UBI 9
 # containers running systemd, patched with dnf over the podman connection - and their VMs in vcsim, VMware's vCenter
 # simulator. Each host's VM found once before anything is patched (by its guest host name, its VM name, vmware_vm_name);
-# a host without a VM, or matching two, stops the job before any host is patched; the snapshot "patching" (no memory, the
+# a host matching two VMs stops the job before any host is patched, and so does a host without a VM when a vCenter was
+# not read or patch_snapshot_required is true; the snapshot "patching" (no memory, the
 # job and user in its description) taken in each batch right before that batch's update; the AAP host never; a dry run
-# takes none; an old "patching" stops the next run, patch_snapshot_replace replaces it; patch_snapshot_required false
-# patches a host without a VM; no vCenter credential; patch_snapshot false needs no vCenter; a host on the VMware
+# takes none; an old "patching" stops the next run, patch_snapshot_replace replaces it; a host in no vCenter is a
+# physical server, patched without a snapshot; no vCenter credential; patch_snapshot false needs no vCenter; a host on the VMware
 # protected lists is not patched, unless patch_protected_with_snapshot names it (then after its own snapshot).
 #   bash tests/patch/run_patch_snapshot_test.sh
 # Needs: podman; registry.access.redhat.com/ubi9/ubi-init (pulled when missing) and its UBI repositories (internet);
@@ -123,9 +124,15 @@ run "dry run: each host's VM found, a snapshot would be taken, none is" ok --che
        'web02.example.mil: VM DC0_C0_RP0_VM0 (by vmware_vm_name)' 'would take \"patching\" of VM DC0_H0_VM1' '!aap01.example.mil: VM'
 check "  ...nothing taken" "$(snaps DC0_H0_VM1)/$(snaps DC0_C0_RP0_VM1)/$(snaps DC0_C0_RP0_VM0)" "baseline/baseline/baseline"
 
-run "a host without a VM, and one that matches two VMs: stopped before any host is patched" fail -e "$good:phys01.example.mil:dup" \
-    -e patch_snapshot=true -- 'phys01.example.mil: no VM by its name' 'dup matches more than one VM (dup (127.0.0.1), dup (127.0.0.1))' \
+run "patch_snapshot_required true: a host without a VM, and one that matches two VMs: stopped before any host is patched" fail \
+    -e "$good:phys01.example.mil:dup" -e patch_snapshot=true -e patch_snapshot_required=true -- 'phys01.example.mil: no VM by its name' \
+    'No vCenter has them (physical servers?)' 'dup matches more than one VM (dup (127.0.0.1), dup (127.0.0.1))' \
     'set vmware_vm_name for it' 'Nothing was patched' "!$installs"
+check "  ...no snapshot taken" "$(snaps DC0_H0_VM1)/$(snaps DC0_C0_RP0_VM0)" "baseline/baseline"
+
+run "a host without a VM while a vCenter was not read: stopped before any host is patched" fail \
+    -e "$good:phys01.example.mil" -e patch_snapshot=true -e "{\"vmware_vcenters\": [\"127.0.0.1:$port\", \"127.0.0.1:1\"]}" \
+    -- 'phys01.example.mil: no VM by its name' 'A vCenter was not read, so these may be VMs there' 'Nothing was patched' "!$installs"
 check "  ...no snapshot taken" "$(snaps DC0_H0_VM1)/$(snaps DC0_C0_RP0_VM0)" "baseline/baseline"
 
 NOVC=1 run "no vCenter credential: stopped before any host is patched" fail -e "$good" -e patch_snapshot=true \
@@ -152,8 +159,8 @@ run "patch_snapshot_replace: the old one deleted, a new one taken" ok -e "$good"
 after="$(ID=1 snaps DC0_H0_VM1)"
 check "  ...still one \"patching\", a new one" "$(snaps DC0_H0_VM1) $([ "$before" != "$after" ] && echo new)" "baseline,patching new"
 
-run "patch_snapshot_required false: a host without a VM is patched without one" ok -e target=phys01.example.mil \
-    -e patch_snapshot=true -e patch_snapshot_required=false -- 'patched without a snapshot' 'none: no VM by its name' "$installs"
+run "a host in no vCenter (the default): a physical server, patched without a snapshot" ok -e target=phys01.example.mil \
+    -e patch_snapshot=true -- 'a physical server: patched without a snapshot' 'In no vCenter, so a physical server' "$installs"
 
 NOVC=1 run "patch_snapshot false (the default): no vCenter needed, no snapshot" ok -e target=web01.example.mil \
     -- 'none (patch_snapshot is false)' "$installs" '!VMware | read every VM'

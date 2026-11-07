@@ -1000,11 +1000,17 @@ VM decides:
 3. The VM whose guest host name (reported by VMware Tools) is the host's.
 4. The VM with the host's `ansible_host` address.
 
+**A host whose VM is in no vCenter is a physical server**: it is patched without a snapshot, and
+the plan says `NO VM - ... (a physical server: patched without a snapshot)`. Only when every
+vCenter was read: a vCenter that could not be read may hold its VM, so then the job stops (below).
+`patch_snapshot_required: true` stops the job for such a host too (every host must be a VM).
+
 The job then **stops before any host is patched** when:
 
 | The job says | What to do |
 |---|---|
-| `web01...: no VM by its name, guest host name (VMware Tools) or address` | set `vmware_vm_name` for it (in the inventory, on the host). A physical server: leave it out of the run, or `patch_snapshot_required: false` - then such a host is patched without a snapshot, and the job says so |
+| `web01...: no VM by its name, ...` and `A vCenter was not read, so these may be VMs there` | fix that vCenter or its credential (`vmware_vcenters`), or leave the host out of the run (Limit) |
+| `web01...: no VM by its name, ...` and `No vCenter has them (physical servers?)` | only with `patch_snapshot_required: true`. A VM: set `vmware_vm_name` for it (in the inventory, on the host). A physical server: leave it out of the run, or set `patch_snapshot_required: false` |
 | `web01 matches more than one VM (...)` | set `vmware_vm_name` for it |
 | `... still has the snapshot "patching" from ...` | the last patching's snapshot is still there. Delete it once that patching is proven, or run with `patch_snapshot_replace: true` (the old one is deleted, a new one taken) |
 | `attach a credential of type "VMware vCenter"` | the template has no vCenter credential |
@@ -1025,7 +1031,7 @@ patch_protected_with_snapshot: true            # every protected VM
 ```
 
 Such a host is patched only when its VM was found and its own snapshot was taken right before
-(`patch_snapshot_required: false` never lets a protected host through without one). The AAP hosts
+(a protected host in no vCenter is never patched, physical server or not). The AAP hosts
 are never patched, whatever this says.
 
 **Delete the snapshots** once the patching is proven, typically a few days later. A snapshot

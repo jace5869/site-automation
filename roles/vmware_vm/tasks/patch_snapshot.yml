@@ -17,12 +17,11 @@
     _patch_vm: "{{ hostvars['localhost']._patch_snap.vms[inventory_hostname] | default({}) }}"
     _patch_vm_old: "{{ hostvars['localhost']._patch_snap.old[inventory_hostname] | default([]) if patch_snapshot_replace | bool else [] }}"
 
-- name: VMware | no VM for this host - patched without a snapshot (patch_snapshot_required is false)
+- name: VMware | no VM for this host (a physical server) - patched without a snapshot
   ansible.builtin.debug:
     msg: >-
       {{ inventory_hostname }}: {{ hostvars['localhost']._patch_snap.missing[inventory_hostname] | default('its VM was not found') }}.
-      {{ ('vCenter(s) not read: ' ~ hostvars['localhost']._patch_snap.unread | join('; ') ~ ' - its VM may be there. ')
-         if hostvars['localhost']._patch_snap.unread | default([]) | length > 0 else '' }}Patched without a snapshot.
+      In no vCenter, so a physical server: patched without a snapshot.
   when: _patch_vm | length == 0
 
 - name: VMware | delete the old snapshot "{{ patch_snapshot_name }}" of {{ _patch_vm.name | default('-') }} (patch_snapshot_replace)

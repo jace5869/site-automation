@@ -63,9 +63,11 @@
 ## true = VMware Tools freezes the file systems first (slower; fails without Tools)
 # patch_snapshot_quiesce: false
 
-## false = a host without a VM in vCenter (a physical server) is patched without a snapshot, and the
-## job says so
-# patch_snapshot_required: true
+## false = a host whose VM is in no vCenter is a physical server: patched without a snapshot, and
+## the job says so. When a vCenter could not be read, such a host may be a VM there, and the job
+## stops before anything is patched. true = a host without a VM stops the job too (every host must
+## be a VM, each patched only after its snapshot).
+# patch_snapshot_required: false
 
 ## A VM that still has a snapshot named patch_snapshot_name (the last patching's, not deleted yet)
 ## stops the job before anything is patched, and the job names them. true = delete that old

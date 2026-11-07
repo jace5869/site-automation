@@ -39,15 +39,18 @@ patch_ignore_services: '^(user@|user-runtime-dir@|session-|dnf-makecache|package
 # memory, named patch_snapshot_name. Attach a "VMware vCenter" credential to the template as well as the Machine
 # one. Every host's VM is found once, before any host is patched: the host variable vmware_vm_name (the VM's name in
 # vCenter) when set; else a VM named like the host (web01.yoursite.mil or web01); else the VM whose guest host name
-# (VMware Tools) is the host's; else the VM with its ansible_host address. A host whose VM is not found, or that
-# matches two VMs, stops the job before anything is patched. A snapshot that fails: that host is not patched, and
+# (VMware Tools) is the host's; else the VM with its ansible_host address. A host whose VM is in no vCenter is a
+# physical server: patched without a snapshot, and the job says so (patch_snapshot_required). A host that matches two
+# VMs stops the job before anything is patched. A snapshot that fails: that host is not patched, and
 # the rollout stops. Delete the snapshots once the patching is proven: "VM - snapshot cleanup"
 # (vm_snapshot_cleanup_name_words: [patching]). docs/RUNBOOKS.md, "Snapshot before patching".
 patch_snapshot: false
 patch_snapshot_name: patching            # the snapshot's name (the AAP job, user and date go in its description)
 patch_snapshot_quiesce: false            # true = VMware Tools freezes the file systems first (slower; fails without Tools)
-# false = a host without a VM in vCenter (a physical server) is patched without a snapshot, and the job says so
-patch_snapshot_required: true
+# false = a host whose VM is in no vCenter is a physical server: patched without a snapshot, and the job says so. When a
+# vCenter could not be read, such a host may be a VM there, and the job stops before anything is patched.
+# true = a host without a VM stops the job too (every host must be a VM, each patched only after its snapshot).
+patch_snapshot_required: false
 # A VM that still has a snapshot named patch_snapshot_name (the last patching's, not deleted yet) stops the job before
 # anything is patched, and the job names them. true = delete that old snapshot, then take the new one.
 patch_snapshot_replace: false
