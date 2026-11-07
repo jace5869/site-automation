@@ -1,0 +1,56 @@
+---
+# HORIZON - GOLDEN IMAGE CHECK. Read-only: before you shut down, snapshot and push a Horizon 8 instant-clone golden
+# image (a Windows 10/11 VM), is it ready? One report, each check PASS / WARN / FAIL with a one-line fix, and READY or
+# NOT READY. Printed, published as job artifacts (horizon_report, horizon_image_check), emailed only when
+# report_email_to is set. Stays green unless horizon_image_check_fail: true.
+# - vCenter side ("VMware vCenter" credential): the VM horizon_image_vm in every vCenter of the job - VMXNET3 adapters,
+#   no CD/DVD on an ISO or host drive, no floppy, serial or parallel port, no vTPM, hardware version, snapshots and
+#   the depth of the current one's chain, power state, VMware Tools, CPU, memory, disks.
+# - Windows side (over WinRM, the Windows Machine credential): the host the template's Limit names - Horizon Agent and
+#   its version, the Instant Clone Agent, VMware Tools installed before the agent, domain joined, Windows activation
+#   (KMS, AD-based, MAK), DHCP, a restart pending, Windows Update at work, FSLogix.
+# No Limit, or WinRM not answering: the vCenter side still reports, and the report says why the Windows side was not run.
+# docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_image_check.yml -i <windows inventory> -l w11-gold.corp.example.mil -e horizon_image_vm=W11-Gold
+- name: Horizon golden image check - the VM in vCenter
+  # once, on the AAP side; the Limit (the golden VM) leaves localhost out, so the play runs on that host, delegated
+  # to localhost - and on localhost when there is no Limit
+  hosts: localhost,all
+  gather_facts: false
+  tasks:
+    - name: The golden image VM in vCenter (read-only)
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: image_check_vcenter.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
+
+- name: Horizon golden image check - Windows on the golden VM
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: What Windows says (read-only, over WinRM)
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: image_check_guest.yml
+
+- name: Horizon golden image check - the report
+  hosts: localhost,all
+  gather_facts: false
+  tasks:
+    - name: Horizon golden image check
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: image_check.yml
+        apply:
+          delegate_to: localhost
+          run_once: true
+          become: false
+      vars:
+        ansible_connection: local
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"

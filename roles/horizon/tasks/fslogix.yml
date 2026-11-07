@@ -1,0 +1,69 @@
+---
+# FSLOGIX PROFILES REPORT (playbooks/horizon_fslogix_report.yml). Read-only: the shares of horizon_fslogix_shares listed
+# over SMB from the AAP side (library/site_fslogix_scan.py - directory listings only, no container opened, nothing
+# written or locked), each container judged (plugins/filter/horizon_fslogix_filters.py): its user and SID from the
+# folder's name, profile or ODFC, its size against the cap (horizon_fslogix_size_mb), last written, in use, and the
+# flags - near or over the cap, stale, two for one user, a folder with no container, a name FSLogix would not find -
+# and each share's free space. Green unless horizon_health_fail.
+- name: Horizon | FSLogix - the shares to read
+  ansible.builtin.assert:
+    that:
+      - horizon_fslogix_shares | hz_fslogix_shares | length > 0
+      - horizon_fslogix_size_mb | int > 0
+      - horizon_fslogix_warn_pct | float <= horizon_fslogix_crit_pct | float
+    fail_msg: >-
+      Set horizon_fslogix_shares (the folders that hold the users' FSLogix folders: \\fileserver\profiles, one per line)
+      and attach the "Windows file share" credential; horizon_fslogix_size_mb above 0 (FSLogix's SizeInMBs);
+      horizon_fslogix_warn_pct at most horizon_fslogix_crit_pct. docs/HORIZON.md. Nothing read.
+    quiet: true
+
+- name: Horizon | FSLogix - list the shares (folders and file sizes only)
+  site_fslogix_scan:
+    shares: "{{ horizon_fslogix_shares | hz_fslogix_shares }}"
+    base: "{{ playbook_dir }}"
+    username: "{{ horizon_fslogix_user or lookup('ansible.builtin.env', 'SMB_SHARE_USERNAME') }}"
+    password: "{{ horizon_fslogix_password or lookup('ansible.builtin.env', 'SMB_SHARE_PASSWORD') }}"
+    auth: "{{ horizon_fslogix_auth }}"
+    encrypt: "{{ horizon_fslogix_encrypt | bool }}"
+    port: "{{ horizon_fslogix_port | int }}"
+    max_folders: "{{ horizon_fslogix_max_folders | int }}"
+  register: _hz_fx_scan
+  check_mode: false             # only lists
+
+- name: Horizon | FSLogix - what was read
+  ansible.builtin.debug:
+    msg: "{{ _hz_fx_scan | hz_fslogix_read_lines }}"
+
+- name: Horizon | FSLogix - the report
+  ansible.builtin.set_fact:
+    _hz_fx: >-
+      {{ _hz_fx_scan | hz_fslogix({'size_mb': horizon_fslogix_size_mb | float, 'odfc_size_mb': horizon_fslogix_odfc_size_mb | float,
+                                   'warn_pct': horizon_fslogix_warn_pct | float, 'crit_pct': horizon_fslogix_crit_pct | float,
+                                   'stale_days': horizon_fslogix_stale_days | float,
+                                   'share_warn_pct': horizon_fslogix_share_warn_pct | float,
+                                   'share_crit_pct': horizon_fslogix_share_crit_pct | float,
+                                   'in_use_minutes': horizon_fslogix_in_use_minutes | float,
+                                   'diff_left_hours': horizon_fslogix_diff_left_hours | float,
+                                   'folder_pattern': horizon_fslogix_folder_pattern, 'profile_name': horizon_fslogix_profile_name,
+                                   'odfc_name': horizon_fslogix_odfc_name, 'ignore': horizon_fslogix_ignore,
+                                   'max_rows': horizon_report_max_rows | int, 'now': horizon_now | default('')}) }}
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: "{{ _hz_fx.report }}"
+    _hz_footer: >-
+      Read-only: directory listings of {{ horizon_fslogix_shares | hz_fslogix_shares | join(', ') }} over SMB
+      {{- (' as ' ~ _hz_fx_scan.account) if _hz_fx_scan.account else '' }} - no container was opened.
+
+- name: Horizon | the containers as job artifacts (horizon_fslogix)
+  ansible.builtin.set_stats:
+    data:
+      horizon_fslogix: "{{ {'counts': _hz_fx.counts, 'flagged': _hz_fx.flagged[:1000]} }}"
+
+- name: Horizon | no container full, every share read
+  ansible.builtin.assert:
+    that: _hz_fx.critical | int == 0
+    fail_msg: "{{ _hz_fx.critical }} critical finding(s) (the report is above). horizon_health_fail: false makes this a report only."
+    quiet: true
+  when: horizon_health_fail | bool

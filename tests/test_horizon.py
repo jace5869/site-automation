@@ -455,6 +455,91 @@ class Gaps(unittest.TestCase):
         self.assertEqual(f._expect(None, {"max": 5})[0], False)
 
 
+class Batch2(unittest.TestCase):
+    """0.85.0: the sessions and logon times reports, messages, host maintenance."""
+
+    def sess(self, i, user, mach, state="CONNECTED", start_h=1, **kw):
+        d = {"id": i, "user_id": user, "machine_id": mach, "desktop_pool_id": "p1", "session_state": state, "start_time": NOW - start_h * H,
+             "session_protocol": "BLAST", "client_data": {"type": "WINDOWS", "version": "8.12.0"}}
+        d.update(kw)
+        return d
+
+    def test_versions(self):
+        self.assertLess(f._version("8.9.0"), f._version("8.10"))
+        self.assertLess(f._version("2306"), f._version("2312"))
+        self.assertEqual(f._version("5.5.0 build-123"), (5, 5, 0))
+        self.assertEqual(f._version(""), ())
+
+    def test_sessions_report(self):
+        ms = [mach("1", "p1", "CONNECTED"), mach("2", "p1", "AGENT_UNREACHABLE"), mach("3", "p1", "CONNECTED")]
+        ss = [self.sess("a", "S-1", "1", client_data={"type": "WINDOWS", "version": "8.9.0"}),
+              self.sess("b", "S-2", "2", "DISCONNECTED", 2),
+              self.sess("c", "S-1", "3", "PENDING", 0.5, session_protocol="PCOIP"),
+              self.sess("d", "S-3", "", "CONNECTED", 80, session_type="APPLICATION", client_data={"type": "MAC", "version": "8.1"})]
+        r = f.hz_sessions_report(data([IC], ms, ss), {"now": NOW, "client_min": {"WINDOWS": "8.10", "*": "8.0"}, "pending_minutes": 10,
+                                                      "long_hours": 72, "protocols": ["blast"]})
+        self.assertEqual((r["old_clients"], r["pending"], r["on_broken"], r["long"], r["duplicates"]), (1, 1, 1, 1, 1))
+        self.assertEqual(r["unnamed"], ["S-1", "S-2", "S-3"])
+        self.assertEqual(r["warning"], 4)
+        r = f.hz_sessions_report(data([IC], ms, ss, ad_users=[{"id": "S-1", "login_name": "jdoe", "domain": "CORP"}]), {"now": NOW})
+        self.assertNotIn("S-1", r["unnamed"])
+        self.assertEqual(r["old_clients"], 0)                                     # no baseline
+        self.assertEqual(r["pending"], 1)                                         # 10 minutes by default
+
+    def test_logon(self):
+        tree = {"n": "brokerLaunch", "d": 90, "c": [{"n": "machineSelection", "d": 5},
+                                                    {"n": "clientLogon", "d": 80, "c": [{"n": "userProfile", "d": 60}, {"n": "userGpo", "d": 15}]}]}
+        self.assertEqual(f._phases(tree)[0], ("brokerLaunch", 90.0, 0))
+        self.assertEqual(f._phases({"logon": {"duration_ms": 45000}}), [("logon", 45.0, 0)])
+        raw = {"logon:a": [{"logon_segment_data": __import__("json").dumps(tree)}], "logon:b": [{}],
+               "logon:c": [{"logon_segment_data": [{"n": "x", "d": 20}, {"n": "y", "d": 30}]}]}
+        ss = [self.sess("a", "S-1", "1"), self.sess("b", "S-2", "2"), self.sess("c", "S-3", "3")]
+        r = f.hz_logon(data([IC], [mach("1", "p1", "CONNECTED")], ss, **raw), {"warn_s": 60, "crit_s": 120})
+        self.assertEqual((r["timed"], r["missing"], r["warning"], r["critical"]), (2, 1, 1, 0))
+        slow = r["report"]["sections"][1]["rows"][0]
+        self.assertEqual((slow[4], slow[5]), ("90", "userProfile 60 s"))          # the innermost phase, not clientLogon
+        self.assertEqual(r["report"]["sections"][1]["rows"][1][4], "50")          # no root: the phases summed
+        r = f.hz_logon(data([IC], [], ss, **{"logon:b": [{}]}), {})
+        self.assertIn("turn on the timing profiler", r["report"]["sections"][0]["text"])
+        self.assertEqual(f.hz_recent_sessions(data([IC], [], ss + [self.sess("o", "S-9", "", start_h=30)]), 24, NOW, 2), ["a", "b"])
+
+    def test_messages(self):
+        ms = [mach("1", "p1", "CONNECTED", managed_machine_data={"host_name": "esx1.example.mil"}), mach("2", "p3", "CONNECTED")]
+        ss = [self.sess("a", "S-1", "1"), self.sess("b", "S-2", "2", desktop_pool_id="p3")]
+        d = data([IC, PROT], ms, ss, ad_users=[{"id": "S-2", "login_name": "asmith", "domain": "CORP"}])
+        t = lambda **o: [x["id"] for x in f.hz_msg_targets(d, dict(o, message="hi"))["sessions"]]   # noqa: E731
+        self.assertEqual(t(pools=["IC-*"]), ["a"])
+        self.assertEqual(t(host="esx1"), ["a"])
+        self.assertEqual(t(users=["CORP\\asmith"]), ["b"])
+        self.assertEqual(t(users=["asmith"]), ["b"])
+        self.assertEqual(t(all=True), ["a", "b"])
+        self.assertIn("Nobody to message", f.hz_msg_targets(d, {"message": "hi"})["problems"][0])
+        self.assertIn("No message", f.hz_msg_targets(d, {"all": True})["problems"][0])
+
+    def test_host_maintenance(self):
+        on = {"host_name": "esx2.example.mil"}
+        ms = [mach("1", "p1", "AVAILABLE", managed_machine_data=on), mach("2", "p1", "CONNECTED", managed_machine_data=on),
+              mach("3", "p3", "AVAILABLE", managed_machine_data=on), mach("4", "p1", "MAINTENANCE", managed_machine_data=on),
+              mach("5", "p1", "AVAILABLE", managed_machine_data={"host_name": "esx3.example.mil"})]
+        d = data([IC, PROT], ms, [self.sess("s", "S-1", "2")])
+        p = f.hz_host_plan(d, "ESX2", {"protected_pools": ["VIP-*"]})
+        self.assertEqual([x["id"] for x in p["desktops"]], ["1"])
+        self.assertEqual(sorted(x["id"] for x in p["held"]), ["2", "3", "4"])
+        self.assertEqual([x["id"] for x in p["sessions"]], ["s"])
+        self.assertEqual(p["unnamed"], ["S-1"])
+        self.assertIn("Horizon has no desktop on host esx9 (hosts it knows: esx2.example.mil, esx3.example.mil)",
+                      f.hz_host_plan(d, "esx9")["problems"][0])
+        # after the approval: moved, taken
+        ms2 = [mach("1", "p1", "AVAILABLE", managed_machine_data={"host_name": "esx3.example.mil"})]
+        rc = f.hz_host_recheck({"host": "esx2", "desktops": p["desktops"]}, data([IC], ms2), {})
+        self.assertEqual(rc["skipped"][0]["reason"], "it is on host esx3.example.mil now")
+        rc = f.hz_host_recheck({"host": "esx2", "desktops": p["desktops"]}, d, {"protected_pools": ["VIP-*"]})
+        self.assertEqual(([x["id"] for x in rc["act"]], [x["id"] for x in rc["sessions"]]), (["1"], ["s"]))
+        back = f.hz_host_in_maintenance(data([IC, PROT], ms + [mach("6", "p3", "MAINTENANCE", managed_machine_data=on)]), "esx2",
+                                        {"protected_pools": ["VIP-*"]})
+        self.assertEqual(([x["id"] for x in back["act"]], [x["id"] for x in back["held"]]), (["4"], ["6"]))
+
+
 class Module(unittest.TestCase):
     def setUp(self):
         try:

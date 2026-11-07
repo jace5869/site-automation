@@ -1,0 +1,17 @@
+---
+# The names of the users a report shows by their SID only (a session carries the SID on older API versions): one
+# look-up per user, at most 300, merged into what was read (_hz). Input: _hz_sids. A name Horizon does not give stays
+# the SID. Set _hz_main (a fact, not an include variable: _hz changes under it) to what was read first.
+- name: Horizon | the users' names
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the names of {{ _hz_sids | length }} user(s)
+    _hz_tolerate: true
+    _hz_resources: >-
+      {%- set out = [] -%}
+      {%- for sid in _hz_sids[:300] -%}{%- set _ = out.append({'name': 'ad_users', 'key': 'user:' ~ sid, 'id': sid}) -%}{%- endfor -%}
+      {{ out }}
+
+- name: Horizon | everything read, with the names
+  ansible.builtin.set_fact:
+    _hz: "{{ _hz_main | combine({'user_names': _hz_main.user_names | combine(_hz.user_names)}) }}"

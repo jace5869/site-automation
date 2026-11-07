@@ -1,0 +1,14 @@
+---
+# HORIZON - MESSAGE USERS. A message to the sessions of some pools, an ESXi host's desktops, some users or
+# everyone (horizon_message, horizon_message_pools / _host / _users / _all). A dry run (Check) sends nothing.
+# Runs on the AAP side: attach the "Horizon API" credential; no inventory needed. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_message_users.yml
+- name: Horizon message users
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon message users
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: message.yml

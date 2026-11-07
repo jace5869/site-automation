@@ -1,0 +1,15 @@
+---
+# HORIZON INTERNAL VMs (playbooks/horizon_internal_vms_report.yml; included from roles/horizon/tasks/internal_vms.yml):
+# the internal VMs of Horizon's instant clones (cp-template, cp-replica, cp-parent) and their golden image VMs, from
+# every vCenter of the job (vmware_vcenters). Read-only. Input: _hzi_golden_ids (the golden image VM IDs Horizon gives
+# for its pools). Output: _hzi_vc (site_vmware_horizon_internal's internal, golden, vcenters).
+- name: VMware | a vCenter credential is attached
+  ansible.builtin.include_tasks: credential.yml
+
+- name: VMware | read the internal VMs of Horizon's instant clones
+  site_vmware_horizon_internal:
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    golden_ids: "{{ _hzi_golden_ids | default([]) }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _hzi_vc
+  check_mode: false

@@ -1,0 +1,16 @@
+---
+# HORIZON INTERNAL VMs REPORT. Read-only: the internal VMs Horizon's instant clones leave in vCenter (cp-template,
+# cp-replica, cp-parent) - inaccessible or orphaned ones (red), ones no current pool, farm or desktop uses (probably
+# left over, amber, with the reason), and how much disk they hold. The cleanup stays by hand: iccleanup.cmd on a
+# Connection Server. Emailed only when report_email_to is set.
+# Runs on the AAP side: attach the "VMware vCenter" and "Horizon API" credentials; no inventory needed. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_internal_vms_report.yml
+- name: Horizon internal VMs report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon internal VMs report
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: internal_vms.yml

@@ -1,0 +1,63 @@
+---
+# LOGON TIMES REPORT (playbooks/horizon_logon_report.yml). Read-only: the logon timing Horizon's Help Desk keeps for
+# each desktop session started in the last horizon_logon_hours (at most horizon_logon_max sessions, the newest) -
+# the whole logon and each phase (brokering, power-on, tunnel, protocol, profile, GPO, shell) - per pool the median
+# and the 95th percentile and the slowest phase, and the slowest logons. It needs the timing profiler on in each
+# Connection Server (vdmadmin -I -timingProfiler -enable). Green unless horizon_health_fail.
+- name: Horizon | read the pools, desktops and sessions
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the pools, desktops and sessions
+    _hz_resources: [desktop_pools, machines, sessions]
+    _hz_tolerate: true
+
+- name: Horizon | the sessions to time
+  ansible.builtin.set_fact:
+    _hz_main: "{{ _hz }}"
+    _hz_logon_ids: "{{ _hz | hz_recent_sessions(horizon_logon_hours | float, horizon_now | default(''), horizon_logon_max | int) }}"
+
+- name: Horizon | read each session's logon timing
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the logon timing of {{ _hz_logon_ids | length }} session(s)
+    _hz_tolerate: true
+    _hz_resources: >-
+      {%- set out = [] -%}
+      {%- for i in _hz_logon_ids -%}{%- set _ = out.append({'name': 'logon_segment', 'key': 'logon:' ~ i, 'query': {'session_id': i}}) -%}{%- endfor -%}
+      {{ out }}
+  when: _hz_logon_ids | length > 0
+
+- name: Horizon | everything read together
+  ansible.builtin.set_fact:
+    _hz_main: >-
+      {{ _hz_main | combine({'raw': _hz_main.raw | combine(_hz.raw)}) if _hz_logon_ids | length > 0 else _hz_main }}
+    _hz_logon_opts: >-
+      {{ {'warn_s': horizon_logon_warn_s | float, 'crit_s': horizon_logon_crit_s | float, 'max_rows': horizon_report_max_rows | int} }}
+
+- name: Horizon | the users the report names
+  ansible.builtin.include_tasks: names.yml
+  vars:
+    _hz_sids: "{{ (_hz_main | hz_logon(_hz_logon_opts)).unnamed[: horizon_report_max_rows | int] }}"
+  when: (_hz_main | hz_logon(_hz_logon_opts)).unnamed | length > 0
+
+- name: Horizon | the logon times report
+  ansible.builtin.set_fact:
+    _hz_lr: "{{ (_hz if (_hz_main | hz_logon(_hz_logon_opts)).unnamed | length > 0 else _hz_main) | hz_logon(_hz_logon_opts) }}"
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: "{{ _hz_lr.report }}"
+    _hz_footer: "Read-only: Horizon's Help Desk logon timing, through the REST API of {{ _hz_read.url }}."
+
+- name: Horizon | the counts as job artifacts (horizon_logon)
+  ansible.builtin.set_stats:
+    data:
+      horizon_logon: "{{ {'timed': _hz_lr.timed, 'without_timing': _hz_lr.missing, 'slow_pools': _hz_lr.critical + _hz_lr.warning} }}"
+
+- name: Horizon | no pool slow
+  ansible.builtin.assert:
+    that: _hz_lr.critical | int == 0
+    fail_msg: "{{ _hz_lr.critical }} pool(s) with slow logons (the report is above). horizon_health_fail: false makes this a report only."
+    quiet: true
+  when: horizon_health_fail | bool

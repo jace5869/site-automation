@@ -1,0 +1,49 @@
+---
+# SESSIONS REPORT (playbooks/horizon_sessions_report.yml). Read-only: every session Horizon has - Horizon Clients older
+# than horizon_client_min_versions, sessions pending for horizon_session_pending_minutes (a launch that never finished),
+# sessions on a broken desktop, sessions longer than horizon_session_long_hours, users with two or more desktop
+# sessions, the protocols against horizon_session_protocols, and the client versions in use. Green unless
+# horizon_health_fail.
+- name: Horizon | read the pools, desktops and sessions
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the pools, desktops and sessions
+    _hz_resources: [desktop_pools, machines, sessions, farms]
+    _hz_tolerate: true
+
+- name: Horizon | the sessions, first look
+  ansible.builtin.set_fact:
+    # one dict expression: on ansible-core 2.16 the values of a YAML dict would arrive as strings
+    _hz_sess_opts: >-
+      {{ {'client_min': horizon_client_min_versions | default({}, true), 'pending_minutes': horizon_session_pending_minutes | float,
+          'long_hours': horizon_session_long_hours | float, 'protocols': horizon_session_protocols,
+          'max_rows': horizon_report_max_rows | int, 'now': horizon_now | default('')} }}
+    _hz_main: "{{ _hz }}"
+
+- name: Horizon | the users the report names
+  ansible.builtin.include_tasks: names.yml
+  vars:
+    _hz_sids: "{{ (_hz_main | hz_sessions_report(_hz_sess_opts)).unnamed }}"
+  when: (_hz_main | hz_sessions_report(_hz_sess_opts)).unnamed | length > 0
+
+- name: Horizon | the sessions report
+  ansible.builtin.set_fact:
+    _hz_sr: "{{ _hz | hz_sessions_report(_hz_sess_opts) }}"
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: "{{ _hz_sr.report }}"
+    _hz_footer: "Read-only: the Horizon REST API of {{ _hz_read.url }}."
+
+- name: Horizon | the counts as job artifacts (horizon_sessions)
+  ansible.builtin.set_stats:
+    data:
+      horizon_sessions: "{{ _hz_sr | dict2items | rejectattr('key', 'in', ['report', 'unnamed']) | items2dict }}"
+
+- name: Horizon | nothing to look at
+  ansible.builtin.assert:
+    that: _hz_sr.warning | int == 0
+    fail_msg: "{{ _hz_sr.warning }} finding(s) (the report is above). horizon_health_fail: false makes this a report only."
+    quiet: true
+  when: horizon_health_fail | bool

@@ -1,0 +1,40 @@
+---
+# HOST MAINTENANCE END (playbooks/horizon_host_maintenance_end.yml): after the ESXi host horizon_maint_host is back,
+# its desktops in Horizon maintenance mode leave it (never one in a protected pool). A dry run (Check) changes nothing.
+- name: Horizon | read the pools and desktops
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the pools and desktops
+    _hz_resources: [desktop_pools, machines]
+
+- name: Horizon | the host's desktops in maintenance mode
+  ansible.builtin.set_fact:
+    _hz_me: "{{ _hz | hz_host_in_maintenance(horizon_maint_host, {'protected_pools': horizon_protected_pools}) }}"
+    _hz_all_results: []
+
+- name: Horizon | out of maintenance mode
+  ansible.builtin.include_tasks: act.yml
+  vars:
+    _hz_target: machines
+    _hz_verb: exit-maintenance-mode
+    _hz_ids: "{{ _hz_me.act | map(attribute='id') | list }}"
+  when: _hz_me.act | length > 0
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: >-
+      {{ {'title': 'Horizon host maintenance end: ' ~ horizon_maint_host ~ ' - ' ~ _hz_me.act | length ~ ' desktop(s) back'
+                   ~ (' (a dry run)' if ansible_check_mode else ''),
+          'status': 'critical' if _hz_all_results | rejectattr('ok') | list else 'ok',
+          'sections': [{'title': 'Desktops', 'lines': (_hz_all_results | hz_act_lines(_hz_me.act, 'out of maintenance mode', ansible_check_mode))
+                                                      or ['None in maintenance mode on this host.']},
+                       {'title': 'Held back', 'columns': ['Desktop', 'Why'],
+                        'rows': _hz_me.held | map(attribute='name') | zip(_hz_me.held | map(attribute='reason')) | map('list') | list}]} }}
+    _hz_footer: "The Horizon REST API of {{ _hz_read.url }}."
+
+- name: Horizon | Horizon took every action
+  ansible.builtin.assert:
+    that: _hz_all_results | rejectattr('ok') | list | length == 0
+    fail_msg: "Horizon refused {{ _hz_all_results | rejectattr('ok') | list | length }} action(s): the report above says why."
+    quiet: true

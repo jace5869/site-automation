@@ -1,0 +1,62 @@
+---
+# GOLDEN IMAGE CHECK, part 2 (playbooks/horizon_image_check.yml, second play): on the golden VM itself, the host the
+# template's Limit names, over WinRM with the Machine credential. Read-only: files/horizon_image.ps1, run with the
+# built-in script module (no collection needed), prints what Windows says; the decisions are made in the report.
+# Never fails the job: no Limit, more than one host, not Windows, WinRM not answering - the report says the guest part
+# was not run and why. Output: _hzi_guest on localhost (hzi_guest_result: {ran, host, why, data}).
+- name: Horizon image | can the guest part run on this host
+  ansible.builtin.set_fact:
+    _hzi_skip: >-
+      {{ 'horizon_image_guest is false: the vCenter side only' if not horizon_image_guest | bool
+         else "no Limit: the template's Limit names the golden VM as the Windows inventory knows it" if not ansible_limit | default('')
+         else ('the Limit names ' ~ ansible_play_hosts_all | length ~ ' hosts (' ~ ansible_play_hosts_all | join(', ') | truncate(200)
+               ~ '): name only the golden VM') if ansible_play_hosts_all | length > 1
+         else (inventory_hostname ~ ' is not a Windows host of the inventory (its connection is ' ~ ansible_connection | default('ssh')
+               ~ '; the guest part needs WinRM)')
+              if not ((ansible_connection | default('ssh')) in ['winrm', 'psrp', 'ansible.builtin.winrm', 'ansible.builtin.psrp']
+                      or (ansible_shell_type | default('sh')) in ['powershell', 'cmd'])
+         else '' }}
+
+- name: Horizon image | the guest part is not run (the report says why)
+  ansible.builtin.set_fact:
+    _hzi_guest: "{{ {'ran': false, 'host': inventory_hostname if ansible_play_hosts_all | length == 1 else '', 'why': _hzi_skip, 'data': {}} }}"
+  delegate_to: localhost
+  delegate_facts: true
+  run_once: true
+  when: _hzi_skip | length > 0
+
+- name: Horizon image | stop here
+  ansible.builtin.debug:
+    msg: "Guest part not run: {{ _hzi_skip }}"
+  run_once: true
+  when: _hzi_skip | length > 0
+
+- name: Horizon image | leave this host out
+  ansible.builtin.meta: end_host
+  when: _hzi_skip | length > 0
+
+# a connection that cannot even start (no pywinrm in the execution environment) fails the task before failed_when is
+# looked at: the rescue keeps the host in the job, so the report still comes
+- name: Horizon image | what Windows says
+  block:
+    - name: Horizon image | what Windows says (read-only)
+      ansible.builtin.script: horizon_image.ps1
+      register: _hzi_guest_out
+      changed_when: false
+      failed_when: false
+      ignore_unreachable: true
+      check_mode: false                 # it only reads: a dry run (Check) shows the real report
+  rescue:
+    - name: Horizon image | the script could not be run
+      ansible.builtin.debug:
+        msg: "Not run: {{ ansible_failed_result.msg | default('') }}"
+
+- name: Horizon image | keep it for the report
+  ansible.builtin.set_fact:
+    _hzi_guest: "{{ _hzi_guest_out | hzi_guest_result(inventory_hostname) }}"
+  delegate_to: localhost
+  delegate_facts: true
+
+- name: Horizon image | the guest
+  ansible.builtin.debug:
+    msg: "{{ 'Read ' ~ inventory_hostname if hostvars['localhost']._hzi_guest.ran else 'Not read: ' ~ hostvars['localhost']._hzi_guest.why }}"

@@ -91,7 +91,24 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 """),
     "horizon_desktops_fix_approved.yml": ("Horizon - fix the approved desktops", "Horizon API", "", ""),
     "horizon_events_report.yml": ("Horizon - events report", "Horizon API", "", ""),
+    "horizon_fslogix_report.yml": ("Horizon - FSLogix profiles report", "Windows file share", "", """\
+## The folders that hold the users' FSLogix folders (VHDLocations), and SizeInMBs
+# horizon_fslogix_shares: ['\\\\fileserver.example.mil\\profiles']
+# horizon_fslogix_size_mb: 30000
+"""),
     "horizon_health_report.yml": ("Horizon - health report", "Horizon API", "", ""),
+    "horizon_host_maintenance_end.yml": ("Horizon - host maintenance end", "Horizon API", "", """\
+## A survey: horizon_maint_host (text, required) - the ESXi host whose desktops leave maintenance mode
+"""),
+    "horizon_host_maintenance_plan.yml": ("Horizon - host maintenance plan", "Horizon API", "", """\
+## Usually a survey on the host maintenance workflow: the ESXi host, the message
+# horizon_maint_host: esx01.example.mil
+"""),
+    "horizon_host_maintenance_start.yml": ("Horizon - host maintenance start", "Horizon API", "", ""),
+    "horizon_image_check.yml": ("Horizon - golden image check", "VMware vCenter, Machine (Windows)", "", """\
+## The Limit: the golden VM as the Windows inventory names it. Its vCenter name, when it differs:
+# horizon_image_vm: W11-Gold
+"""),
     "horizon_image_push_approved.yml": ("Horizon - push the approved image", "Horizon API", "", ""),
     "horizon_image_push_plan.yml": ("Horizon - image push plan", "Horizon API", "", """\
 ## Usually a survey on the image push workflow: the pools, the golden image VM, its snapshot, the start
@@ -99,7 +116,16 @@ servicenow_assignment_group: YOUR GROUP NAME   # who gets a ticket this job open
 # horizon_push_base_vm: GOLDEN-IMAGE-VM
 # horizon_push_snapshot: SNAPSHOT-NAME
 """),
+    "horizon_internal_vms_report.yml": ("Horizon - internal VMs report", "VMware vCenter, Horizon API", "", ""),
+    "horizon_logon_report.yml": ("Horizon - logon times report", "Horizon API", "", ""),
+    "horizon_message_users.yml": ("Horizon - message users", "Horizon API", "", """\
+## A survey: horizon_message (text, required), horizon_message_type, and who: horizon_message_pools or _users
+"""),
     "horizon_session_cleanup.yml": ("Horizon - session cleanup", "Horizon API", "", ""),
+    "horizon_sessions_report.yml": ("Horizon - sessions report", "Horizon API", "", """\
+## The oldest Horizon Client to accept, per client type
+# horizon_client_min_versions: {WINDOWS: '8.13', '*': '8.12'}
+"""),
     "horizon_settings_report.yml": ("Horizon - settings report", "Horizon API", "", """\
 ## What the settings should be: {area.setting: value} - the first run without it lists every setting to copy from
 # horizon_settings_baseline:

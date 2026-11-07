@@ -1,0 +1,14 @@
+---
+# Job 1 of the host maintenance workflow. Read-only: for ESXi host horizon_maint_host, the desktops that go
+# into Horizon maintenance mode and the sessions that get horizon_maint_message - handed to the approval step.
+# Runs on the AAP side: attach the "Horizon API" credential; no inventory needed. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_host_maintenance_plan.yml
+- name: Horizon host maintenance plan
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon host maintenance plan
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: maint_plan.yml

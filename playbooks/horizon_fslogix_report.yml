@@ -1,0 +1,21 @@
+---
+# HORIZON FSLOGIX PROFILES REPORT. Read-only: the shares that hold the desktops' FSLogix profile containers
+# (horizon_fslogix_shares) listed over SMB from the AAP side - directory listings only, no container opened. Each
+# container: its user and SID, profile or ODFC, its size against the cap (horizon_fslogix_size_mb, FSLogix's
+# SizeInMBs), last written, in use; flagged: near or over the cap, stale (space to reclaim), two for one user, a
+# folder with no container, a name FSLogix would not find; and each share's free space. Printed, published as job
+# artifacts (horizon_report, horizon_fslogix), emailed only when report_email_to is set. Stays green unless
+# horizon_health_fail: true. Runs on the AAP side: attach the "Windows file share" credential (an account that may
+# list the shares); no inventory needed. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_fslogix_report.yml -e '{"horizon_fslogix_shares": ["\\\\fileserver.example.mil\\profiles"]}'
+- name: Horizon FSLogix profiles report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Horizon FSLogix profiles report
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: fslogix.yml

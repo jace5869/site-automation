@@ -138,8 +138,17 @@ read only or acting ([HORIZON.md](HORIZON.md#step-3-the-job-templates)).
 | Horizon - capacity report | `playbooks/horizon_capacity_report.yml` | Report | [HORIZON.md](HORIZON.md#reports-and-schedules) |
 | Horizon - events report | `playbooks/horizon_events_report.yml` | Report | [HORIZON.md](HORIZON.md#events-report) |
 | Horizon - settings report | `playbooks/horizon_settings_report.yml` | Report | [HORIZON.md](HORIZON.md#settings-report) |
+| Horizon - sessions report | `playbooks/horizon_sessions_report.yml` | Report | [HORIZON.md](HORIZON.md#sessions-report) |
+| Horizon - logon times report | `playbooks/horizon_logon_report.yml` | Report | [HORIZON.md](HORIZON.md#logon-times-report) |
+| Horizon - FSLogix profiles report | `playbooks/horizon_fslogix_report.yml` | Report | [HORIZON.md](HORIZON.md#fslogix-profiles-report) |
+| Horizon - internal VMs report | `playbooks/horizon_internal_vms_report.yml` | Report | [HORIZON.md](HORIZON.md#internal-vms-report) |
+| Horizon - message users | `playbooks/horizon_message_users.yml` | On demand | [HORIZON.md](HORIZON.md#message-users) |
+| Horizon - host maintenance plan | `playbooks/horizon_host_maintenance_plan.yml` | Workflow step | [HORIZON.md](HORIZON.md#workflow-esxi-host-maintenance) |
+| Horizon - host maintenance start | `playbooks/horizon_host_maintenance_start.yml` | After an approval | [HORIZON.md](HORIZON.md#workflow-esxi-host-maintenance) |
+| Horizon - host maintenance end | `playbooks/horizon_host_maintenance_end.yml` | On demand | [HORIZON.md](HORIZON.md#workflow-esxi-host-maintenance) |
 | Horizon - desktops check | `playbooks/horizon_desktops_check.yml` | Workflow step | [HORIZON.md](HORIZON.md#workflow-fix-broken-desktops-with-an-approval) |
 | Horizon - fix the approved desktops | `playbooks/horizon_desktops_fix_approved.yml` | After an approval | [HORIZON.md](HORIZON.md#workflow-fix-broken-desktops-with-an-approval) |
+| Horizon - golden image check | `playbooks/horizon_image_check.yml` | Report | [HORIZON.md](HORIZON.md#golden-image-check) |
 | Horizon - image push plan | `playbooks/horizon_image_push_plan.yml` | Workflow step | [HORIZON.md](HORIZON.md#workflow-push-a-new-golden-image-with-an-approval) |
 | Horizon - push the approved image | `playbooks/horizon_image_push_approved.yml` | After an approval | [HORIZON.md](HORIZON.md#workflow-push-a-new-golden-image-with-an-approval) |
 | Horizon - user help | `playbooks/horizon_user_help.yml` | On demand | [HORIZON.md](HORIZON.md#user-help-the-service-desk) |

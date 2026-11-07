@@ -1,0 +1,14 @@
+---
+# Job 2 of the host maintenance workflow, after the approval: the planned desktops (read again first)
+# into Horizon maintenance mode, the message to the sessions on the host. A dry run (Check) changes nothing.
+# Runs on the AAP side: attach the "Horizon API" credential; no inventory needed. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_host_maintenance_start.yml
+- name: Horizon host maintenance start
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon host maintenance start
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: maint_start.yml

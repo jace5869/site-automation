@@ -38,10 +38,19 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | Horizon - desktops check | `playbooks/horizon_desktops_check.yml` | [horizon_desktops_check.yml](horizon_desktops_check.yml) |
 | Horizon - events report | `playbooks/horizon_events_report.yml` | [horizon_events_report.yml](horizon_events_report.yml) |
 | Horizon - fix the approved desktops | `playbooks/horizon_desktops_fix_approved.yml` | [horizon_desktops_fix_approved.yml](horizon_desktops_fix_approved.yml) |
+| Horizon - FSLogix profiles report | `playbooks/horizon_fslogix_report.yml` | [horizon_fslogix_report.yml](horizon_fslogix_report.yml) |
+| Horizon - golden image check | `playbooks/horizon_image_check.yml` | [horizon_image_check.yml](horizon_image_check.yml) |
 | Horizon - health report | `playbooks/horizon_health_report.yml` | [horizon_health_report.yml](horizon_health_report.yml) |
+| Horizon - host maintenance end | `playbooks/horizon_host_maintenance_end.yml` | [horizon_host_maintenance_end.yml](horizon_host_maintenance_end.yml) |
+| Horizon - host maintenance plan | `playbooks/horizon_host_maintenance_plan.yml` | [horizon_host_maintenance_plan.yml](horizon_host_maintenance_plan.yml) |
+| Horizon - host maintenance start | `playbooks/horizon_host_maintenance_start.yml` | [horizon_host_maintenance_start.yml](horizon_host_maintenance_start.yml) |
 | Horizon - image push plan | `playbooks/horizon_image_push_plan.yml` | [horizon_image_push_plan.yml](horizon_image_push_plan.yml) |
+| Horizon - internal VMs report | `playbooks/horizon_internal_vms_report.yml` | [horizon_internal_vms_report.yml](horizon_internal_vms_report.yml) |
+| Horizon - logon times report | `playbooks/horizon_logon_report.yml` | [horizon_logon_report.yml](horizon_logon_report.yml) |
+| Horizon - message users | `playbooks/horizon_message_users.yml` | [horizon_message_users.yml](horizon_message_users.yml) |
 | Horizon - push the approved image | `playbooks/horizon_image_push_approved.yml` | [horizon_image_push_approved.yml](horizon_image_push_approved.yml) |
 | Horizon - session cleanup | `playbooks/horizon_session_cleanup.yml` | [horizon_session_cleanup.yml](horizon_session_cleanup.yml) |
+| Horizon - sessions report | `playbooks/horizon_sessions_report.yml` | [horizon_sessions_report.yml](horizon_sessions_report.yml) |
 | Horizon - settings report | `playbooks/horizon_settings_report.yml` | [horizon_settings_report.yml](horizon_settings_report.yml) |
 | Horizon - user help | `playbooks/horizon_user_help.yml` | [horizon_user_help.yml](horizon_user_help.yml) |
 | Log analysis | `playbooks/log_analysis.yml` | [log_analysis.yml](log_analysis.yml) |

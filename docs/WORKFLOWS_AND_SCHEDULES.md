@@ -1007,12 +1007,28 @@ click, and a rehearsal as Check: [HORIZON.md](HORIZON.md). **Schedule:** e.g. ev
 A survey on the workflow (the pools, the golden image VM, its snapshot, the start, the log-off
 policy). A plan with a problem fails and never reaches the approval ([HORIZON.md](HORIZON.md)).
 
+### 41. ESXi host maintenance, with an approval
+
+```workflow
+[Horizon - host maintenance plan]
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[Horizon - host maintenance start]
+```
+
+A survey on the workflow (the host, the message). Then the host into maintenance in vCenter; after
+it, *Horizon - host maintenance end* with the host ([HORIZON.md](HORIZON.md#workflow-esxi-host-maintenance)).
+
 ### 32. Horizon reports and the session cleanup
 
 No workflow needed: schedules on `Horizon - health report` (every day 06:00), `Horizon - events
 report` (every day 06:10), `Horizon - capacity report` (every Monday 07:00), `Horizon - settings
-report` (every Monday 07:10, once its baseline is set) and `Horizon - session cleanup` (every night
-02:00, after a first run as Check).
+report` (every Monday 07:10, once its baseline is set), `Horizon - sessions report` (every day
+07:30), `Horizon - logon times report` (every day 10:00), `Horizon - FSLogix profiles report` (every Monday 07:20), `Horizon - internal VMs report` (every Monday 07:30) and `Horizon - session cleanup` (every
+night 02:00, after a first run as Check).
 
 ## Schedules
 

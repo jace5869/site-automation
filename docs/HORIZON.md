@@ -11,10 +11,19 @@ collection to add to the execution environment.
 | Horizon - capacity report | `horizon_capacity_report.yml` | per pool: maximum, free, in use, broken, sessions, how full | no |
 | Horizon - events report | `horizon_events_report.yml` | the last 24 hours of Horizon's event database: failed logons by user, errors by type, what administrators changed | no |
 | Horizon - settings report | `horizon_settings_report.yml` | Horizon's global and Connection Server settings against your baseline (session timeouts, the pre-login message, FIPS, smart cards) | no |
+| Horizon - sessions report | `horizon_sessions_report.yml` | old Horizon Clients, pending launches, sessions on broken desktops, long sessions, users with two desktop sessions, protocols and client versions | no |
+| Horizon - internal VMs report | `horizon_internal_vms_report.yml` | instant clones' internal VMs in vCenter (cp-template, cp-replica, cp-parent): in use, probably left over (with the reason), inaccessible | no |
+| Horizon - FSLogix profiles report | `horizon_fslogix_report.yml` | the FSLogix profile shares over SMB: each container's size against its cap, stale and duplicate containers, each share's free space | no |
+| Horizon - logon times report | `horizon_logon_report.yml` | how long logons take, per pool (median, 95th percentile) and which phase is slow (profile, GPO, shell...) | no |
+| Horizon - message users | `horizon_message_users.yml` | a message to the sessions of some pools, an ESXi host's desktops, some users or everyone | sends a message |
+| Horizon - host maintenance plan | `horizon_host_maintenance_plan.yml` | before an ESXi host's maintenance: its desktops, the sessions on them (job 1 of the host maintenance workflow) | no |
+| Horizon - host maintenance start | `horizon_host_maintenance_start.yml` | after the approval: the message, then the host's free desktops into Horizon maintenance mode (job 2) | yes |
+| Horizon - host maintenance end | `horizon_host_maintenance_end.yml` | after the host's maintenance: its desktops out of Horizon maintenance mode | yes |
 | Horizon - desktops check | `horizon_desktops_check.yml` | the broken desktops, desktops vCenter no longer has, desktops stuck in a passing state, what fixes each, and why some are held back (job 1 of the broken desktops workflow) | no |
 | Horizon - fix the approved desktops | `horizon_desktops_fix_approved.yml` | after the approval: fixes exactly the approved desktops (job 2) | yes |
 | Horizon - user help | `horizon_user_help.yml` | for the service desk: a user's sessions and desktops; log off, disconnect, reset, restart or recover them | only when asked |
 | Horizon - session cleanup | `horizon_session_cleanup.yml` | logs off sessions disconnected for 8 hours or more | yes |
+| Horizon - golden image check | `horizon_image_check.yml` | before a golden image is snapshotted and pushed: the VM's hardware in vCenter and Windows inside it (agent, Tools, domain, activation, DHCP, restart pending, FSLogix) - READY or NOT READY | no |
 | Horizon - image push plan | `horizon_image_push_plan.yml` | the plan for a new golden image: pools, VM, snapshot, start (job 1 of the image push workflow) | no |
 | Horizon - push the approved image | `horizon_image_push_approved.yml` | after the approval: schedules exactly the approved push (job 2) | yes |
 
@@ -84,6 +93,8 @@ your rotation. Then, in Horizon Console, **Settings → Administrators**:
   - **Manage Machine** and **Manage Reboot Operation** (reset, restart, recover, remove)
   - **Manage Sessions** (log off, disconnect)
   - **Manage Desktop Pool** (schedule an image push)
+  - **Manage Sessions** also sends messages (*Horizon - message users*, the host maintenance start), and
+    **Manage Machine** puts desktops into and out of maintenance mode
 
   Give it on the access group of the pools the jobs may change, or on `/` for all of them.
   Privilege names differ a little between releases: pick the closest ones your Console lists.
@@ -120,10 +131,21 @@ Create one template per row: **Inventory** any (the jobs run on the AAP side, ag
 | Horizon - API test | read only | `horizon_test_user` (text, optional) | run it after any change to the account or the Connection Server |
 | Horizon - health report | read only | none | |
 | Horizon - capacity report | read only | none | |
+| Horizon - events report | read only | none | |
+| Horizon - settings report | read only | none | `horizon_settings_baseline` on its Variables (Settings report below) |
+| Horizon - sessions report | read only | none | `horizon_client_min_versions` on its Variables |
+| Horizon - logon times report | read only | none | the account needs Help Desk read rights (Logon times report below) |
+| Horizon - internal VMs report | read only, and a *VMware vCenter* credential (read-only) | none | |
+| Horizon - FSLogix profiles report | the *Windows file share* credential, not Horizon API | none | `horizon_fslogix_shares` on its Variables; the account needs Read on each share |
+| Horizon - message users | acting | `horizon_message` (text, **required**), `horizon_message_type` (multiple choice: `INFO`, `WARNING`, `ERROR`), `horizon_message_pools` (text: pool names, commas), `horizon_message_users` (text, optional) | |
+| Horizon - host maintenance plan | read only | none: the survey is on the workflow | |
+| Horizon - host maintenance start | acting | none | **Prompt on launch** unticked for Variables |
+| Horizon - host maintenance end | acting | `horizon_maint_host` (text, **required**) | |
 | Horizon - desktops check | read only | none | `horizon_desktops_mode: approval` when it is the workflow's first node |
 | Horizon - fix the approved desktops | acting | none | **Prompt on launch** unticked for Variables; Job type: tick Prompt on launch to rehearse with Check |
 | Horizon - user help | acting | `horizon_user` (text, **required**), `horizon_user_action` (multiple choice: `look`, `logoff`, `disconnect`, `reset`, `restart`, `recover`; default `look`) | give the service desk Execute on this template only |
 | Horizon - session cleanup | acting | none | first run it as Check |
+| Horizon - golden image check | *VMware vCenter* and *Machine* (Windows) credentials, not Horizon API | none | the **Limit**: the golden VM as the Windows inventory names it |
 | Horizon - image push plan | read only | none: the survey is on the workflow | |
 | Horizon - push the approved image | acting | none | **Prompt on launch** unticked for Variables |
 
@@ -219,6 +241,33 @@ template keeps `approval`.
 **Rehearse it.** Tick **Prompt on launch** for Job type on *Horizon - fix the approved desktops*.
 In the visualizer, set its node's Job type to **Check**. Run the workflow and approve: the fix job
 prints `w11-004: would recover (a dry run)` and changes nothing.
+
+## Golden image check
+
+*Horizon - golden image check* says whether a golden image is ready before you shut it down, snapshot
+it and push it. It changes nothing. Attach the **VMware vCenter** and **Machine** (Windows)
+credentials. Put the golden VM in the **Limit**, as the Windows inventory names it;
+`horizon_image_vm` is its vCenter name (empty: the Limit's short name).
+
+| Check | FAIL | WARN |
+|---|---|---|
+| VM found | not found, or found twice | a vCenter not read |
+| Network adapters | none | not VMXNET3; not connected at power on |
+| CD/DVD | on an ISO or host drive, connected | |
+| Floppy, serial, parallel | on a host device | present |
+| vTPM | on the golden image (add it at the pool) | |
+| Hardware version, snapshots | | older than `horizon_image_hw_min` (14); a chain deeper than `horizon_image_snapshot_warn` (5) |
+| VMware Tools | not installed or not running | old |
+| Horizon Agent, Instant Clone Agent | missing or disabled | |
+| Tools before the agent | | Tools installed after the agent |
+| Domain, activation | | workgroup; MAK before Horizon 2212; retail or OEM |
+| DHCP, restart pending | a fixed address; a restart pending | file renames only |
+| Windows Update busy, FSLogix | | busy; FSLogix missing |
+
+The Windows side runs one read-only PowerShell script over WinRM (Constrained Language Mode too).
+With no Limit, or WinRM down, the vCenter part still reports and the report says why (NOT READY,
+unless `horizon_image_guest: false`). The job stays green; `horizon_image_check_fail: true` fails it
+on a FAIL. Run it before the image push workflow.
 
 ## Workflow: push a new golden image, with an approval
 
@@ -347,6 +396,124 @@ horizon_settings_baseline:
 
 A setting that differs is red (`DRIFT`); one Horizon did not give is amber (`NOT READ`).
 
+## Sessions report
+
+*Horizon - sessions report* looks at every session Horizon has:
+
+- **Old Horizon Clients**: older than `horizon_client_min_versions`, per client type as Horizon names it
+  (`WINDOWS`, `MAC`, `LINUX`, `IOS`, `ANDROID`, `HTML_ACCESS`...) and `'*'` for the rest, in the
+  numbers Horizon shows for the client: `{WINDOWS: '8.13', '*': '8.12'}`. Without it the report lists
+  the versions in use.
+- **Pending sessions**: pending for `horizon_session_pending_minutes` (10): a launch that never
+  finished. Log it off with *Horizon - user help*.
+- **Sessions on a broken desktop**: the user may be stuck; log off, and the desktops check fixes the
+  desktop.
+- **Long sessions** (started `horizon_session_long_hours`, 72, ago or more), **users with two or more
+  desktop sessions**, and sessions on a protocol other than `horizon_session_protocols` (`[BLAST]`).
+
+## Logon times report
+
+*Horizon - logon times report* reads the logon timing Horizon's Help Desk keeps for each desktop
+session started in the last `horizon_logon_hours` (24), at most `horizon_logon_max` (200, the
+newest): the whole logon and each phase - brokering, power-on, tunnel, protocol, profile load, GPO,
+shell. Per pool: the median, the 95th percentile and the slowest phase on average; then the slowest
+logons. A pool's 95th percentile at `horizon_logon_warn_s` (60 s) is amber, at `horizon_logon_crit_s`
+(120 s) red.
+
+Two things to set up once:
+- **The timing profiler**, on each Connection Server (an administrator's command prompt):
+  `vdmadmin -I -timingProfiler -enable`. Without it the report says no session has timing.
+- **Help Desk read rights**: if the report says HTTP 403 for `helpdesk/.../logon-segment`, give the
+  read-only account the built-in **Help Desk Administrator (Read only)** role as well.
+
+Horizon says the timing's format may change between releases: the job reads any names and durations
+it finds. If the phases look wrong, tell us what your Connection Server returns.
+
+## Internal VMs report
+
+Instant clones leave internal VMs in vCenter: cp-template, cp-replica and cp-parent (newer releases
+may name them by UUID only, in ClonePrep folders). After a pool is deleted, a host fails, or a delete
+runs while vCenter is down, some stay behind and use datastore space. *Horizon - internal VMs report*
+lists them; it changes nothing. It needs both credentials: *VMware vCenter* and *Horizon API*.
+
+For each VM: the host, datastores, space on disk, power and connection state, when it was made, its
+golden image VM and snapshot, and the pool, farm or desktops that still use it.
+
+- **Red**: inaccessible, orphaned or disconnected.
+- **Amber**: probably left over - always with the reason (no pool, pending image, farm or desktop uses
+  its golden image and snapshot).
+- **Not decided**: Horizon could not be read, a pool's golden image was not found in vCenter, or the
+  VM is newer than `horizon_internal_min_age_hours` (24).
+
+Another Horizon pod on the same vCenters: put its pod ID in `horizon_internal_other_pods` (each VM's
+pod is in the job's artifacts); its VMs are listed, never called left over.
+
+To clean up, on a Connection Server (`C:\Program Files\Omnissa\Horizon\Server\tools\bin`, or VMware's
+on older releases): `iccleanup.cmd -vc <vcenter> -uid <user>`, then `list`, `unprotect -I <index>`,
+`delete -I <index>`.
+
+## FSLogix profiles report
+
+*Horizon - FSLogix profiles report* lists the shares that hold the desktops' FSLogix profile containers
+(`horizon_fslogix_shares`, one `\\server\share\folder` per line). It reads them over SMB from the AAP
+side, with the *Windows file share* credential. It only lists folders: no container is opened, nothing
+is written or locked.
+
+For each container it gives the user and SID (from the folder name), profile or ODFC, its size against
+the cap (`horizon_fslogix_size_mb`, FSLogix's SizeInMBs, 30000), when it was last written, and whether
+it is in use. It flags containers near the cap (85 %) or over it (95 %), stale ones
+(`horizon_fslogix_stale_days`, 90: space to reclaim, once you know the user left), two containers for
+one user, folders with no container, a differencing disk left behind, and names FSLogix would not find.
+It gives each share's free space (amber under 15 %, red under 5 %).
+
+With FlipFlopProfileDirectoryName set: `horizon_fslogix_folder_pattern: "%username%_%sid%"`. The size
+is the file's size: a dynamic disk shrinks only when FSLogix compacts it; a fixed disk always reads
+100 %. "In use: likely" is a guess from the last write time.
+
+## Message users
+
+*Horizon - message users* sends `horizon_message` (`horizon_message_type`: INFO, WARNING or ERROR) to
+the sessions of `horizon_message_pools`, the desktops on ESXi host `horizon_message_host`,
+`horizon_message_users` (login names or SIDs), or everyone (`horizon_message_all: true`).
+Disconnected sessions get it too: the user sees it when back. Run it as **Check** to see who would
+get it.
+
+## Workflow: ESXi host maintenance
+
+```workflow
+[Horizon - host maintenance plan]
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[Horizon - host maintenance start]
+```
+
+Before you put an ESXi host into maintenance mode in vCenter:
+
+1. Create a workflow job template, `Horizon - host maintenance (workflow)`, with this **survey**:
+   - `horizon_maint_host`: text, required. The ESXi host as vCenter names it (its short name works).
+   - `horizon_maint_message`: textarea, optional. What the users on its desktops read; empty = no
+     message. The default asks them to save their work and log off in 15 minutes.
+2. Nodes: *Horizon - host maintenance plan* → **Run on success** → **Approval** (`Start the host
+   maintenance?`) → **Run on success** → *Horizon - host maintenance start*.
+
+The plan lists the host's desktops (as Horizon has them: each desktop's ESXi host), the free ones that
+go into **Horizon maintenance mode** (no new user is given them), the sessions that get the message,
+and what is held back: a desktop in a protected pool, a desktop with a session on it (it gets the
+message; run the start job again later to put it in maintenance once free). A host Horizon has no
+desktop on stops the plan.
+
+After the approval the start job reads the desktops again, sends the message to the sessions on the
+host's desktops now, and puts the planned desktops still free into maintenance mode. Then put the
+host into maintenance in vCenter (DRS moves the running desktops). Afterwards, run *Horizon - host
+maintenance end* with the host: its desktops leave maintenance mode.
+
+On Horizon before 2306, or a pool that still uses parent VMs (`cp-parent-*`), the parent VMs block
+the host's maintenance mode: run `IcMaint.cmd -vc <vcenter> -uid <user> -hostName <host>
+-maintenance ON` on a Connection Server first, and `OFF` afterwards (Broadcom KB 322191).
+
 ## Reports and schedules
 
 | Template | Schedule (suggested) | Red when |
@@ -355,6 +522,10 @@ A setting that differs is red (`DRIFT`); one Horizon did not give is amber (`NOT
 | Horizon - events report | every day 06:10 | the event database could not be read. Amber: a user with 5 or more failed logons, error events |
 | Horizon - capacity report | every Monday 07:00 | a pool at `horizon_capacity_crit_pct` (95 %) in use, or with no free desktop (amber at 80 %, or fewer free desktops than its spares) |
 | Horizon - settings report | every Monday 07:10 | a setting that differs from `horizon_settings_baseline` |
+| Horizon - sessions report | every day 07:30 | never red. Amber: old clients, pending sessions, sessions on broken desktops, other protocols |
+| Horizon - internal VMs report | every Monday 07:30 | an internal VM inaccessible, orphaned or disconnected. Amber: probably left over |
+| Horizon - FSLogix profiles report | every Monday 07:20 | a container at `horizon_fslogix_crit_pct` (95 %) of its cap, a share under 5 % free or not readable. Amber: 85 %, two containers for one user, odd names, a differencing disk left behind |
+| Horizon - logon times report | every day 10:00 (after the morning logons) | a pool's 95th percentile logon at `horizon_logon_crit_s` (120 s); amber at 60 s |
 
 They stay green when they find problems: the report says what. With `horizon_health_fail: true` the job turns **red** when it finds a problem: put a notification on the template (its **Notifications** tab: on failure) to hear about it. The *ServiceNow tickets* job does not take this report's results - it only works after the checks that hand it findings ([JOB_TEMPLATES.md](JOB_TEMPLATES.md), "What one job hands to the next"). To email them, set `report_email_to`
 on the template ([EMAIL_REPORTS.md](EMAIL_REPORTS.md)).

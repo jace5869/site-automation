@@ -1,0 +1,14 @@
+---
+# HORIZON GOLDEN IMAGE, the vCenter side (playbooks/horizon_image_check.yml; roles/horizon/tasks/image_check_vcenter.yml
+# includes it on the AAP side). Read-only: the VM named _hzi_vm in every vCenter of the job (vmware_vcenters; or of
+# vmware_datacenter) - its devices, hardware version, snapshots, power state and VMware Tools. Output: _hzi_vc_read, the
+# module's answer. A vCenter that cannot be read never fails the job here: the report says it.
+- name: VMware | read the golden image VM {{ _hzi_vm }}
+  site_vmware_horizon_image:
+    name: "{{ _hzi_vm }}"
+    datacenter: "{{ vmware_datacenter | default(omit, true) }}"
+    vcenters: "{{ (vmware_vcenters | replace(',', ' ')).split() if vmware_vcenters is string else vmware_vcenters }}"
+    validate_certs: "{{ vmware_validate_certs | bool }}"
+  register: _hzi_vc_read
+  failed_when: false
+  check_mode: false

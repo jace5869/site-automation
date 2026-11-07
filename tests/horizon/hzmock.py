@@ -14,6 +14,8 @@ HZMOCK_GAPS=1: more desktops - stuck customizing, a domain clone error, one vCen
 ESXi host, a 169.254 address, two with the same address, an older agent and an older image. HZMOCK_AD_DOWN=1: cs02
 cannot bind to AD. The event database (external/audit-events, filtered by time) and the settings (config/settings/
 general and security, pre-logon-settings, config/connection-servers - the backup only per server) are there too.
+HZMOCK_IC_IMAGE=<vm id>:<snapshot id>: every instant-clone pool's golden image VM and snapshot (vCenter's IDs - the
+internal VMs report against vcsim, tests/vmware/run_vmware_test.sh); HZMOCK_VC_NAME: the vCenter's name as Horizon has it.
 Each action is appended to $HZMOCK_LOG as a JSON line. State is kept while the fake runs.
 Usage: hzmock.py PORT
 """
@@ -71,6 +73,12 @@ POOLS = [pool("pool-ic1", "IC-Win11", "INSTANT_CLONE", 10, 2), pool("pool-ic2", 
          {"id": "pool-rds", "name": "RDS-Apps", "display_name": "RDS-Apps", "type": "RDS", "source": "RDS", "enabled": True}]
 POOLS[4]["enable_provisioning"] = False
 POOLS[0]["storage_settings"] = {"datastores": [{"datastore_id": "ds2"}]}
+if os.environ.get("HZMOCK_IC_IMAGE"):
+    _vm, _snap = os.environ["HZMOCK_IC_IMAGE"].split(":", 1)
+    for _p in POOLS:
+        if _p["source"] == "INSTANT_CLONE":
+            _p["provisioning_settings"] = {"parent_vm_id": _vm, "base_snapshot_id": _snap}
+VC_NAME = os.environ.get("HZMOCK_VC_NAME") or "vcsa01.example.mil"
 
 
 def m(i, name, p, state, users=None, sess=""):
@@ -89,6 +97,8 @@ MACHINES = [m("m-w01", "w11-001", "pool-ic1", "AVAILABLE"), m("m-w02", "w11-002"
             m("m-l02", "leg-002", "pool-fc1", "DISCONNECTED", users=[sid(1006)], sess="s10"),
             m("m-p01", "prot-001", "pool-ic3", "AGENT_UNREACHABLE"), m("m-p02", "prot-002", "pool-ic3", "DISCONNECTED", sess="s9"),
             m("m-b01", "lab-001", "pool-ic4", "AVAILABLE")]
+for _i, _m in enumerate(MACHINES):                  # three ESXi hosts, the desktops spread over them
+    _m["managed_machine_data"] = {"host_name": "esx0%d.example.mil" % (1 + _i % 3)}
 MACHINES[6]["managed_machine_data"] = {"clone_error_message": "Customization operation timed out", "clone_error_time": NOW - 3 * H,
                                        "create_time": NOW - 3 * H, "host_name": "esx01.example.mil"}
 MACHINES[9]["managed_machine_data"] = {"create_time": NOW - 1 * H, "host_name": "esx01.example.mil"}
@@ -144,6 +154,22 @@ SESSIONS = [s("s1", 1001, "m-w02", "pool-ic1", "CONNECTED", 3), s("s2", 1002, "m
             s("s5", 1003, "m-f02", "pool-ic2", "CONNECTED", 2), s("s6", 1002, "m-f04", "pool-ic2", "DISCONNECTED", 12, 10),
             s("s7", 1004, "m-f03", "pool-ic2", "CONNECTED", 4), s("s8", 1001, "", "", "DISCONNECTED", 40, 30, farm="farm-1"),
             s("s9", 1005, "m-p02", "pool-ic3", "DISCONNECTED", 14, 12), s("s10", 1006, "m-l02", "pool-fc1", "DISCONNECTED", 50)]
+for _s in SESSIONS:
+    _s["client_data"]["version"] = "8.12.0"
+SESSIONS[4]["client_data"]["version"] = "8.9.0"           # s5: an old client
+SESSIONS[3]["session_protocol"] = "PCOIP"                 # s4
+SESSIONS[6]["session_state"] = "PENDING"                  # s7: a launch that never finished
+
+
+def timing(total, **phases):
+    """A Help Desk logon timing tree as Horizon gives it: a JSON text, seconds in d."""
+    return json.dumps({"n": "brokerLaunch", "d": total, "s": 0, "e": total,
+                       "c": [{"n": k, "d": v} for k, v in phases.items()]})
+
+
+LOGON = {"s1": timing(30, machineSelection=2, userProfile=12, userGpo=8, shellLoad=8),
+         "s4": timing(95, machineSelection=3, userProfile=70, userGpo=12, shellLoad=10),
+         "s5": timing(130, machineSelection=3, userProfile=15, userGpo=100, shellLoad=12)}
 BASE_VMS = {"vc1": [{"id": "bvm-1", "name": "W11-Gold", "path": "/DC1/vm/Gold/W11-Gold", "incompatible_reasons": []},
                     {"id": "bvm-2", "name": "W11-Gold-Old", "path": "/DC1/vm/Gold/W11-Gold-Old", "incompatible_reasons": []},
                     {"id": "bvm-3", "name": "Server-2022", "path": "/DC1/vm/Gold/Server-2022", "incompatible_reasons": ["UNSUPPORTED_OS"]}]}
@@ -195,7 +221,8 @@ NAMES = {"monitor/connection-servers": "connection_servers", "monitor/gateways":
          "inventory/farms": "farms", "config/virtual-centers": "vcenters", "external/base-vms": "base_vms",
          "external/base-snapshots": "base_snapshots", "external/ad-users-or-groups": "ad_users", "external/audit-events": "audit_events",
          "config/connection-servers": "cs_config", "config/settings/general": "settings_general",
-         "config/settings/security": "settings_security", "config/pre-logon-settings": "pre_logon"}
+         "config/settings/security": "settings_security", "config/pre-logon-settings": "pre_logon",
+         "helpdesk/logon-timing/logon-segment": "logon_segment"}
 
 
 def log(rec):
@@ -297,12 +324,16 @@ class H_(BaseHTTPRequestHandler):
             return self.page(CS_CONFIG, q)
         if "/".join(rest[:2]) in SETTINGS:
             return self.send(200, SETTINGS["/".join(rest[:2])])
+        if rest == ["logon-timing", "logon-segment"]:
+            if q.get("session_id") in LOGON:
+                return self.send(200, {"session_id": q["session_id"], "logon_segment_data": LOGON[q["session_id"]]})
+            return self.send(200, {})
         if rest == ["audit-events"]:
             f = json.loads(q.get("filter") or "{}")
             rows = [e for e in EVENTS if not f or f.get("fromValue", 0) <= e["time"] <= f.get("toValue", NOW * 2)]
             return self.page(sorted(rows, key=lambda e: -e["time"]), q)
         if rest == ["virtual-centers"]:
-            return self.page([{"id": "vc1", "server_name": "vcsa01.example.mil"}], q)
+            return self.page([{"id": "vc1", "server_name": VC_NAME}], q)
         if rest == ["desktop-pools"]:
             return self.page(POOLS, q)
         if rest == ["machines"]:
@@ -344,7 +375,7 @@ class H_(BaseHTTPRequestHandler):
                 if verb == "remove":
                     MACHINES.remove(mm[0])
                 else:
-                    mm[0]["state"] = "PROVISIONING" if verb == "recover" else "AVAILABLE"
+                    mm[0]["state"] = {"recover": "PROVISIONING", "enter-maintenance-mode": "MAINTENANCE"}.get(verb, "AVAILABLE")
                 out.append({"id": i, "status_code": 200})
             return self.send(200, out)
         if rest[0] == "sessions":

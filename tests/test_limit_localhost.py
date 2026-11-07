@@ -32,7 +32,7 @@ GUARDED = {"mail_relay_approved.yml", "mail_relay_format.yml", "mail_relay_plan.
            "net_config_load.yml", "servicenow_health.yml"}
 # their report part runs on the hosts, once, on the AAP side (0.32.0): a Limit of hosts needs no localhost
 AAP_SIDE = {"ad_health_report.yml", "ad_lockout.yml", "cert_install_approved.yml", "cert_install_check.yml",
-            "cert_renew_csr.yml", "fapolicyd.yml", "fapolicyd_denials.yml", "log_analysis.yml", "win_cert_install_approved.yml", "win_cert_install_check.yml",
+            "cert_renew_csr.yml", "fapolicyd.yml", "fapolicyd_denials.yml", "horizon_image_check.yml", "log_analysis.yml", "win_cert_install_approved.yml", "win_cert_install_check.yml",
             "win_cert_renew_csr.yml"}
 # groups filled while the job runs (add_host): empty when the hosts are listed
 RUNTIME_GROUPS = {"adl_sources"}

@@ -1,0 +1,53 @@
+---
+# Job 1 of the host maintenance workflow (playbooks/horizon_host_maintenance_plan.yml). Read-only: the plan the
+# approver reads for ESXi host horizon_maint_host - the desktops Horizon has on it (each desktop's host_name), the
+# ones without a session that go into Horizon maintenance mode (no new user is given them), the sessions that get
+# horizon_maint_message, and what is held back (a protected pool, a session on it). A plan with a problem stops here;
+# a good one goes to the approval step (set_stats horizon_maint_plan), then horizon_host_maintenance_start.yml.
+- name: Horizon | read the pools, desktops and sessions
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the pools, desktops and sessions
+    _hz_resources: [desktop_pools, machines, sessions]
+
+- name: Horizon | the plan, first look
+  ansible.builtin.set_fact:
+    _hz_main: "{{ _hz }}"
+    _hz_mp: "{{ _hz | hz_host_plan(horizon_maint_host, {'protected_pools': horizon_protected_pools}) }}"
+
+- name: Horizon | the users the plan names
+  ansible.builtin.include_tasks: names.yml
+  vars:
+    _hz_sids: "{{ _hz_mp.unnamed }}"
+  when: _hz_mp.unnamed | length > 0
+
+- name: Horizon | the plan
+  ansible.builtin.set_fact:
+    _hz_mp: "{{ _hz | hz_host_plan(horizon_maint_host, {'protected_pools': horizon_protected_pools}) }}"
+  when: _hz_mp.unnamed | length > 0
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: "{{ _hz_mp.report }}"
+    _hz_footer: "Read-only: nothing was changed. The start waits for approval (the host maintenance workflow)."
+
+- name: Horizon | the plan is ready
+  ansible.builtin.assert:
+    that: _hz_mp.problems | length == 0
+    fail_msg: "Nothing goes to the approval: {{ _hz_mp.problems | join('; ') }}."
+    quiet: true
+
+- name: Horizon | hand the plan to the approval step and the start job (set_stats)
+  ansible.builtin.set_stats:
+    data:
+      horizon_maint_plan: >-
+        {{ {'host': _hz_mp.host, 'desktops': _hz_mp.desktops, 'message': horizon_maint_message, 'message_type': horizon_maint_message_type,
+            'planned': now(utc=true).strftime('%Y-%m-%d %H:%M UTC'), 'job': awx_job_id | default(''), 'url': _hz_read.url} }}
+    per_host: false
+
+- name: Horizon | waiting for approval
+  ansible.builtin.debug:
+    msg: >-
+      READY FOR APPROVAL: ESXi host {{ _hz_mp.host }} - {{ _hz_mp.desktops | length }} desktop(s) into Horizon maintenance mode,
+      {{ _hz_mp.sessions | length }} session(s) {{ 'get the message' if horizon_maint_message else 'get no message (horizon_maint_message is empty)' }}.

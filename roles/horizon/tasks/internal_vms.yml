@@ -1,0 +1,85 @@
+---
+# INTERNAL VMs REPORT (playbooks/horizon_internal_vms_report.yml). Read-only: the internal VMs Horizon's instant clones
+# leave in vCenter (cp-template, cp-replica, cp-parent) - each with its host, datastores, space, state, golden image VM
+# and snapshot, and the pool, farm or desktops that still use it. Red: inaccessible, orphaned or disconnected. Amber:
+# probably left over (no current pool, farm or desktop uses its image; the reason is shown). Not decided: Horizon could
+# not be read, did not give a part, or the VM is newer than horizon_internal_min_age_hours. The cleanup stays by hand
+# (iccleanup.cmd on a Connection Server). Green unless horizon_health_fail. Rules: plugins/filter/horizon_internal_filters.py
+- name: Horizon | read the pools, farms and desktops
+  block:
+    - name: Horizon | read the pools, farms, desktops and vCenters
+      ansible.builtin.include_tasks: read.yml
+      vars:
+        _hz_what: the pools, farms, desktops and vCenters
+        _hz_resources: [desktop_pools, farms, machines, vcenters]
+        _hz_tolerate: true
+
+    - name: Horizon | keep what was read
+      ansible.builtin.set_fact:
+        _hzi_hz: "{{ _hz }}"
+
+    - name: Horizon | the golden image VMs and snapshots as Horizon names them
+      ansible.builtin.include_tasks: read.yml
+      vars:
+        _hz_what: the golden image VMs and their snapshots
+        _hz_resources: "{{ _hzi_hz | hzi_base_reads }}"
+        _hz_tolerate: true
+      when: _hzi_hz | hzi_base_reads | length > 0
+
+    - name: Horizon | one record of everything read
+      ansible.builtin.set_fact:
+        _hzi_hz: "{{ _hzi_hz | combine({'raw': _hzi_hz.raw | combine(_hz.raw)}) }}"
+        _hz: "{{ _hzi_hz | combine({'raw': _hzi_hz.raw | combine(_hz.raw)}) }}"
+  rescue:
+    - name: Horizon | Horizon could not be read - the internal VMs are still listed, in use not decided
+      ansible.builtin.set_fact:
+        _hzi_hz_error: "{{ ansible_failed_result.msg | default('the read failed') }}"
+
+- name: Horizon | what Horizon gave
+  ansible.builtin.set_fact:
+    _hzi_horizon:
+      ok: "{{ _hzi_hz_error is not defined and _hzi_hz is defined }}"
+      error: "{{ _hzi_hz_error | default('') }}"
+      data: "{{ _hzi_hz | default({}) if _hzi_hz_error is not defined else {} }}"
+
+- name: Horizon | read the internal VMs and the golden image VMs from vCenter
+  ansible.builtin.include_role:
+    name: vmware_vm
+    tasks_from: horizon_internal_read.yml
+  vars:
+    _hzi_golden_ids: "{{ _hzi_horizon.data | hzi_golden_ids }}"
+
+- name: Horizon | the internal VMs report
+  ansible.builtin.set_fact:
+    _hzi: >-
+      {{ _hzi_vc | hzint_report(_hzi_horizon, {'min_age_hours': horizon_internal_min_age_hours | float,
+                                             'other_pods': horizon_internal_other_pods, 'max_rows': horizon_internal_max_rows | int}) }}
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: "{{ _hzi.report | vm_vcenter_report(_hzi_vc.vcenters) }}"
+    _hz_footer: >-
+      Read-only: vCenter {{ _hzi_vc.vcenters | vm_vcenters_read | join(', ') }}{{ (' and the Horizon REST API of ' ~ _hz_read.url)
+      if _hzi_horizon.ok | bool and _hz_read.url | default('') | length > 0 else ' (Horizon not read)' }}. Nothing was changed.
+
+- name: Horizon | each internal VM as job artifacts (horizon_internal_vms)
+  ansible.builtin.set_stats:
+    data:
+      horizon_internal_vms: "{{ _hzi.vms }}"
+
+- name: Horizon | every vCenter was read
+  ansible.builtin.include_role:
+    name: vmware_vm
+    tasks_from: vcenters_read.yml
+  vars:
+    _vm_vcenters: "{{ _hzi_vc.vcenters }}"
+
+- name: Horizon | no internal VM inaccessible or orphaned
+  ansible.builtin.assert:
+    that: _hzi.critical | int == 0
+    fail_msg: >-
+      {{ _hzi.critical }} internal VM(s) inaccessible, orphaned or disconnected (the report is above). horizon_health_fail:
+      false makes this a report only.
+    quiet: true
+  when: horizon_health_fail | bool

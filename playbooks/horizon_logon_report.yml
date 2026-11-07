@@ -1,0 +1,14 @@
+---
+# HORIZON LOGON TIMES REPORT. Read-only: Horizon's Help Desk logon timing of the desktop sessions of the last
+# horizon_logon_hours - per pool the median, the 95th percentile and the slowest phase; the slowest logons.
+# Runs on the AAP side: attach the "Horizon API" credential; no inventory needed. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_logon_report.yml
+- name: Horizon logon report
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon logon report
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: logon.yml

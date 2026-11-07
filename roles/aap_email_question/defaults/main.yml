@@ -23,10 +23,19 @@ aap_email_question_playbooks:
   - horizon_desktops_check.yml
   - horizon_desktops_fix_approved.yml
   - horizon_events_report.yml
+  - horizon_fslogix_report.yml
+  - horizon_host_maintenance_end.yml
+  - horizon_host_maintenance_plan.yml
+  - horizon_host_maintenance_start.yml
   - horizon_health_report.yml
+  - horizon_image_check.yml
   - horizon_image_push_approved.yml
   - horizon_image_push_plan.yml
+  - horizon_internal_vms_report.yml
+  - horizon_logon_report.yml
+  - horizon_message_users.yml
   - horizon_session_cleanup.yml
+  - horizon_sessions_report.yml
   - horizon_settings_report.yml
   - log_analysis.yml
   - mail_relay_approved.yml

@@ -1,0 +1,71 @@
+---
+# Job 2 of the host maintenance workflow (playbooks/horizon_host_maintenance_start.yml), after the approval. AAP hands
+# it the plan (horizon_maint_plan). The desktops are read again: each planned desktop still on the host, still without a
+# session, not protected, goes into Horizon maintenance mode; the sessions on the host's desktops now get the plan's
+# message. Then put the host itself into maintenance in vCenter. A dry run (Check) changes nothing.
+- name: Horizon | the approved plan came from the plan job
+  ansible.builtin.assert:
+    that:
+      - horizon_maint_plan is defined
+      - horizon_maint_plan is mapping
+      - horizon_maint_plan.host | default('') | length > 0
+    fail_msg: >-
+      Nothing to do: no approved plan (horizon_maint_plan) reached this job. It runs only in the host maintenance
+      workflow, after "Horizon - host maintenance plan" and the approval step: docs/HORIZON.md. Do not tick
+      "Prompt on launch" for Variables on this template.
+    quiet: true
+
+- name: Horizon | read the desktops again
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the pools, desktops and sessions, as they are now
+    _hz_resources: [desktop_pools, machines, sessions]
+
+- name: Horizon | each planned desktop, as it is now
+  ansible.builtin.set_fact:
+    _hz_mr: "{{ horizon_maint_plan | hz_host_recheck(_hz, {'protected_pools': horizon_protected_pools}) }}"
+    _hz_all_results: []
+
+- name: Horizon | the message to the sessions on the host
+  ansible.builtin.include_tasks: act.yml
+  vars:
+    _hz_target: sessions
+    _hz_verb: send-message
+    _hz_ids: "{{ _hz_mr.sessions | map(attribute='id') | list }}"
+    _hz_body: "{{ {'message': horizon_maint_plan.message, 'message_type': horizon_maint_plan.message_type | default('WARNING') | upper} }}"
+  when: horizon_maint_plan.message | default('') | length > 0 and _hz_mr.sessions | length > 0
+
+- name: Horizon | the message results
+  ansible.builtin.set_fact:
+    _hz_msg_results: "{{ _hz_all_results }}"
+    _hz_all_results: []
+
+- name: Horizon | the desktops into maintenance mode
+  ansible.builtin.include_tasks: act.yml
+  vars:
+    _hz_target: machines
+    _hz_verb: enter-maintenance-mode
+    _hz_ids: "{{ _hz_mr.act | map(attribute='id') | list }}"
+  when: _hz_mr.act | length > 0
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: >-
+      {%- set bad = (_hz_all_results + _hz_msg_results) | rejectattr('ok') | list | length -%}
+      {{ {'title': 'Horizon host maintenance: ' ~ horizon_maint_plan.host ~ ' - ' ~ _hz_mr.act | length ~ ' desktop(s) into maintenance'
+                   ~ (' (a dry run)' if ansible_check_mode else ''),
+          'status': 'critical' if bad else 'ok',
+          'subtitle': 'Next: put the host into maintenance mode in vCenter; then "Horizon - host maintenance end" brings the desktops back.',
+          'sections': [{'title': 'Desktops', 'lines': (_hz_all_results | hz_act_lines(_hz_mr.act, 'maintenance mode', ansible_check_mode)) or ['None.']},
+                       {'title': 'Messages', 'lines': (_hz_msg_results | hz_act_lines(_hz_mr.sessions, 'message', ansible_check_mode)) or ['None sent.']},
+                       {'title': 'Left alone since the approval', 'columns': ['Desktop', 'Pool', 'Why'],
+                        'rows': _hz_mr.skipped | map(attribute='name') | zip(_hz_mr.skipped | map(attribute='pool'),
+                                                                             _hz_mr.skipped | map(attribute='reason')) | map('list') | list}]} }}
+    _hz_footer: "The approved plan of the plan job {{ horizon_maint_plan.job | default('') }}; each desktop was read again first."
+
+- name: Horizon | Horizon took every action
+  ansible.builtin.assert:
+    that: (_hz_all_results + _hz_msg_results) | rejectattr('ok') | list | length == 0
+    fail_msg: "Horizon refused {{ (_hz_all_results + _hz_msg_results) | rejectattr('ok') | list | length }} action(s): the report above says why."
+    quiet: true

@@ -1,0 +1,14 @@
+---
+# After the ESXi host's maintenance: its desktops in Horizon maintenance mode leave it
+# (horizon_maint_host). A dry run (Check) changes nothing.
+# Runs on the AAP side: attach the "Horizon API" credential; no inventory needed. docs/HORIZON.md
+#   ansible-playbook playbooks/horizon_host_maintenance_end.yml
+- name: Horizon host maintenance end
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Horizon host maintenance end
+      ansible.builtin.include_role:
+        name: horizon
+        tasks_from: maint_end.yml

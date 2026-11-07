@@ -226,6 +226,41 @@ mock
 run "session cleanup: report only" ok horizon_session_cleanup.yml '{"horizon_session_cleanup_report_only": true, "horizon_session_max_disconnected_hours": 24}' \
     'Horizon disconnected sessions: 1 to log off' 'Nothing logged off: horizon_session_cleanup_report_only is true.' '!sessions/action'
 
+# ---- sessions, logon times, messages ---------------------------------------------------------------
+mock
+run "sessions: an old client, a pending launch, a session on a broken desktop, long ones, PCoIP, users named" ok horizon_sessions_report.yml \
+    '{"horizon_client_min_versions": {"WINDOWS": "8.10"}, "horizon_session_long_hours": 24}' \
+    'Horizon sessions: 10 session(s), 4 to look at' 'CORP\\bwayne  WINDOWS  8.9.0    8.10' 'CORP\\cclark  fin-003  IC-Finance' \
+    'w11-006  IC-Win11  AGENT_UNREACHABLE  disconnected' 'Long sessions (2)' '1 session(s) on a protocol other than BLAST' \
+    'Users with two or more desktop sessions (3)' 'WINDOWS 8.12.0'
+run "sessions: no baseline - the versions in use, still green" ok horizon_sessions_report.yml '{"horizon_session_protocols": []}' \
+    'No baseline: set horizon_client_min_versions' '!on a protocol other than'
+run "logon times: per pool, the slowest phase, a slow pool red with horizon_health_fail" fail horizon_logon_report.yml '{"horizon_health_fail": true}' \
+    'Horizon logon times: 1 pool(s) slow' 'IC-Finance  2       95      130   130      userGpo (56 s on average)' \
+    'CORP\\bwayne  fin-002  IC-Finance' 'userProfile 70 s' '5 session(s) without timing' 'pool(s) with slow logons'
+CHECK=1 run "message (dry run): who would get it, nothing sent" ok horizon_message_users.yml \
+    '{"horizon_message": "Back at 17:00", "horizon_message_pools": ["IC-Fin*"]}' \
+    'Horizon message: 4 of 4 session(s) (a dry run)' 'on fin-001: would message (a dry run)' '!"path": "inventory/sessions/action/send-message"'
+run "message: to one user's sessions" ok horizon_message_users.yml '{"horizon_message": "Call the help desk", "horizon_message_users": ["CORP\\jdoe"], "horizon_message_type": "info"}' \
+    '"path": "inventory/sessions/action/send-message"' '"message": "Call the help desk", "message_type": "INFO", "session_ids": ["s1", "s4", "s8"]'
+run "message: nobody named" fail horizon_message_users.yml '{"horizon_message": "x"}' 'Nobody to message: set horizon_message_pools'
+
+# ---- host maintenance: plan -> approval -> start, end ------------------------------------------------
+mock
+run "host maintenance plan: the free desktops into maintenance, the sessions messaged, the protected pool held" ok horizon_host_maintenance_plan.yml \
+    '{"horizon_maint_host": "esx02"}' \
+    'READY FOR APPROVAL: ESXi host esx02 - 2 desktop(s) into Horizon maintenance mode, 3 session(s) get the message' \
+    'CORP\\jdoe    fin-001  IC-Finance' 'pool IC-Protected is protected' '"horizon_maint_plan": {'
+mplan="$(stats horizon_maint_plan)"
+run "host maintenance start: the message, then the desktops into maintenance" ok horizon_host_maintenance_start.yml "$mplan" \
+    'Horizon host maintenance: esx02 - 2 desktop(s) into maintenance' '"path": "inventory/machines/action/enter-maintenance-mode", "query": {}, "body": ["m-w05", "m-w08"]' \
+    '"path": "inventory/sessions/action/send-message"'
+run "host maintenance end: the host's desktops out of maintenance" ok horizon_host_maintenance_end.yml '{"horizon_maint_host": "esx02.example.mil"}' \
+    'Horizon host maintenance end: esx02.example.mil - 2 desktop(s) back' '"path": "inventory/machines/action/exit-maintenance-mode", "query": {}, "body": ["m-w05", "m-w08"]'
+run "host maintenance plan: a host Horizon has no desktop on" fail horizon_host_maintenance_plan.yml '{"horizon_maint_host": "esx99"}' \
+    'Horizon has no desktop on host esx99 (hosts it knows: esx01.example.mil' '!horizon_maint_plan": {'
+run "host maintenance start on its own: refused" fail horizon_host_maintenance_start.yml '{}' 'Nothing to do: no approved plan (horizon_maint_plan)'
+
 # ---- image push: plan -> approval -> push ---------------------------------------------------------
 mock
 run "push plan: two pools, the golden image and its snapshot found, handed on" ok horizon_image_push_plan.yml \

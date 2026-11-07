@@ -66,6 +66,10 @@ jobs:
           python tests/test_pki_bundle.py
           python tests/test_cert_install.py
           python tests/test_horizon.py
+          python tests/test_horizon_fslogix.py
+          python tests/test_horizon_internal.py
+          python tests/test_horizon_image.py
+          python tests/test_filter_names.py
           python tests/test_tenable_scan.py
           python tests/test_servicenow_war.py
           python tests/test_servicenow_insights.py
@@ -155,6 +159,10 @@ jobs:
         run: |
           bash tests/stig/run_ckl_import_smb_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14464 STIG_CKL_SM_PORT=12600 bash tests/stig/run_ckl_import_smb_test.sh
+      - name: Horizon - FSLogix profiles report, a Windows file share over SMB against Samba in a container (current ansible-core and 2.16)
+        run: |
+          bash tests/horizon/run_fslogix_smb_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook SMB_TEST_PORT=14466 bash tests/horizon/run_fslogix_smb_test.sh
       - name: Active Directory health report, the Ansible side with made-up DCs (current ansible-core and 2.16)
         run: |
           bash tests/ad/run_ad_test.sh
@@ -282,8 +290,10 @@ jobs:
         run: |
           bash tests/servicenow/run_insights_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/servicenow/run_insights_test.sh
-      - name: Certificate report finding TLS ports and keystores by itself (in a private namespace; skips where unshare is not allowed)
+      - name: Certificate report finding TLS ports and keystores by itself (in a private namespace)
         run: |
+          # Ubuntu 24.04's AppArmor stops unprivileged user namespaces (unshare -rnp); allow them on this runner
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
           bash tests/certs/run_certs_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/certs/run_certs_test.sh
       - name: Certificate renewal - CSRs on the ServiceNow tickets (test CA, fake ServiceNow; current ansible-core and 2.16)

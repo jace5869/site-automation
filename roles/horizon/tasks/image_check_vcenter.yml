@@ -1,0 +1,39 @@
+---
+# GOLDEN IMAGE CHECK, part 1 (playbooks/horizon_image_check.yml, first play; on the AAP side, once). Read-only: the
+# golden image VM in vCenter (roles/vmware_vm/tasks/horizon_image.yml). Never fails the job: what could not be read is
+# kept for the report. Output: _hzi_vc on localhost (hzi_vcenter_result: {ran, why, name, vms, vcenters}).
+- name: Horizon image | the VM to read
+  ansible.builtin.set_fact:
+    # horizon_image_vm, else the short name of the one host the Limit names (an IP address is no VM name)
+    _hzi_vm: >-
+      {{ horizon_image_vm | string | trim if horizon_image_vm | default('', true) | string | trim
+         else (_hzi_hosts[0].split('.')[0] if ansible_limit | default('') and _hzi_hosts | length == 1 and _hzi_hosts[0] is not match('^[0-9.]+$')
+               else '') }}
+    _hzi_vc_why: >-
+      {{ 'no "VMware vCenter" credential is attached to the template' if not lookup('ansible.builtin.env', 'VMWARE_HOST')
+         else '' }}
+  vars:
+    _hzi_hosts: "{{ ansible_play_hosts_all | reject('equalto', 'localhost') | list }}"
+
+- name: Horizon image | no VM name
+  ansible.builtin.set_fact:
+    _hzi_vc_why: horizon_image_vm is not set, and the Limit names no single host to take the name from
+  when: not _hzi_vc_why and not _hzi_vm
+
+- name: Horizon image | read the VM in vCenter
+  ansible.builtin.include_role:
+    name: vmware_vm
+    tasks_from: horizon_image.yml
+  when: not _hzi_vc_why
+
+- name: Horizon image | keep what vCenter said, for the report
+  ansible.builtin.set_fact:
+    _hzi_vc: "{{ _hzi_vc_read | default({}) | hzi_vcenter_result(_hzi_vm, _hzi_vc_why) }}"
+  delegate_to: localhost
+  delegate_facts: true
+
+- name: Horizon image | vCenter
+  ansible.builtin.debug:
+    msg: >-
+      {{ hostvars['localhost']._hzi_vc.why if not hostvars['localhost']._hzi_vc.ran
+         else (hostvars['localhost']._hzi_vc.vms | length) ~ ' VM(s) named ' ~ _hzi_vm ~ ' found' }}

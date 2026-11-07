@@ -776,6 +776,23 @@ File: `roles/horizon/defaults/main.yml`
 | `horizon_events_error_severities` | `[ERROR, AUDIT_FAIL]` | the events listed under Errors |
 | `horizon_events_admin_modules` | `[Vlsi]` | the event modules of what administrators changed (Horizon Console and its API) |
 | `horizon_settings_baseline` | `{}` | ---- Settings report (playbooks/horizon_settings_report.yml) ------------------------------------ What Horizon's settings should be: {area.setting: value}. area: general, security, pre_logon (Horizon's global settings) or connection_server (checked on each Connection Server). value: the value, or {min: N}, {max: N}, {… (all of it: the role file) |
+| `horizon_client_min_versions` | `{}` | ---- Sessions report (playbooks/horizon_sessions_report.yml) ------------------------------------ The oldest Horizon Client to accept, per client type as Horizon names it (WINDOWS, MAC, LINUX, IOS, ANDROID, HTML_ACCESS...) and '*' for any other, in the numbers Horizon shows for the client (e.g. 8.12.0, or 2312). Older… (all of it: the role file) |
+| `horizon_session_pending_minutes` | `10` | a session pending this long: a launch that never finished |
+| `horizon_session_long_hours` | `72` | a session started this many hours ago or more is listed (0 = off) |
+| `horizon_session_protocols` | `[BLAST]` | the protocols you expect; a session on another is listed ([] = any) |
+| `horizon_logon_hours` | `24` | ---- Logon times report (playbooks/horizon_logon_report.yml) ------------------------------------ the desktop sessions started in the last this many hours are timed |
+| `horizon_logon_max` | `200` | at most this many (the newest): one request each |
+| `horizon_logon_warn_s` | `60` | a pool whose 95th percentile logon takes this many seconds or more -> amber |
+| `horizon_logon_crit_s` | `120` | -> red |
+| `horizon_message` | (empty) | ---- Message users (playbooks/horizon_message_users.yml) ---------------------------------------- the message (a survey question) |
+| `horizon_message_type` | `WARNING` | INFO, WARNING or ERROR: how Horizon Client shows it |
+| `horizon_message_pools` | `[]` | to the sessions of these pools: names, * and ? allowed |
+| `horizon_message_host` | (empty) | to the sessions on this ESXi host's desktops |
+| `horizon_message_users` | `[]` | to these users' sessions: login names (jdoe or CORP\jdoe) or SIDs |
+| `horizon_message_all` | `false` | true = to every session |
+| `horizon_maint_host` | (empty) | ---- Host maintenance (playbooks/horizon_host_maintenance_*.yml) -------------------------------- the ESXi host, as vCenter names it (a survey question on the workflow) |
+| `horizon_maint_message` | `"Your desktop's server goes into maintenance in 15 minutes. Please save your work and log…` | What the users on its desktops read (empty = no message). A survey question on the workflow. |
+| `horizon_maint_message_type` | `WARNING` | INFO, WARNING or ERROR |
 | `horizon_session_max_disconnected_hours` | `8` | ---- Disconnected sessions (playbooks/horizon_session_cleanup.yml) ------------------------------ log off a session disconnected for this many hours or more |
 | `horizon_session_cleanup_max` | `100` | log off at most this many sessions per run |
 | `horizon_session_cleanup_exclude_pools` | `[]` | pools whose sessions are never logged off: names, * and ? allowed |
@@ -791,6 +808,35 @@ File: `roles/horizon/defaults/main.yml`
 | `horizon_push_logoff_policy` | `WAIT_FOR_LOGOFF` | WAIT_FOR_LOGOFF (each desktop is replaced when its user logs off) or FORCE_LOGOFF (users are logged off) |
 | `horizon_push_stop_on_first_error` | `true` | stop the push at the first desktop that fails |
 | `horizon_test_user` | (empty) | ---- API test (playbooks/horizon_api_test.yml) -------------------------------------------------- also look up this user (e.g. jdoe), as the user-help job does |
+| `horizon_fslogix_shares` | `[]` | ---- FSLogix profiles report (playbooks/horizon_fslogix_report.yml) ----------------------------- The folders that hold the users' FSLogix folders - VHDLocations (and CCDLocations, or an ODFC share), one \\server\share\folder each (a survey: one per line). Read over SMB from the AAP side with the "Windows file share"… (all of it: the role file) |
+| `horizon_fslogix_size_mb` | `30000` | the containers' cap: FSLogix's SizeInMBs (its default 30000) |
+| `horizon_fslogix_odfc_size_mb` | `0` | the ODFC containers' SizeInMBs; 0 = the same as horizon_fslogix_size_mb |
+| `horizon_fslogix_warn_pct` | `85` | a container this full against its cap, % -> amber |
+| `horizon_fslogix_crit_pct` | `95` | this full, % -> red (the user gets errors when it fills) |
+| `horizon_fslogix_stale_days` | `90` | a container not written for this many days -> stale (space to reclaim, once the user has left) |
+| `horizon_fslogix_share_warn_pct` | `15` | a share with less free than this, % -> amber |
+| `horizon_fslogix_share_crit_pct` | `5` | less free than this, % -> red |
+| `horizon_fslogix_in_use_minutes` | `30` | a container (or its lock file) written this recently -> "likely in use" (a guess from the time) |
+| `horizon_fslogix_diff_left_hours` | `24` | a differencing disk (RW.VHDX) not written for this many hours -> left behind, amber |
+| `horizon_fslogix_folder_pattern` | `"%sid%_%username%"` | the users' folders: FSLogix's SIDDirNamePattern; "%username%_%sid%" with FlipFlopProfileDirectoryName |
+| `horizon_fslogix_profile_name` | `"Profile_%username%"` | the profile container's name, no extension: FSLogix's VHDNamePattern |
+| `horizon_fslogix_odfc_name` | `"ODFC_%username%"` | the ODFC container's name, no extension: its VHDNamePattern |
+| `horizon_fslogix_ignore` | `[]` | file names to pass over (* and ?, any case), e.g. ["desktop.ini"] |
+| `horizon_fslogix_max_folders` | `20000` | at most this many user folders per share (more: said in the report) |
+| `horizon_fslogix_user` | (empty) | the shares' account (user@YOURDOMAIN.MIL); empty = the "Windows file share" credential's |
+| `horizon_fslogix_password` | (empty) | its password (vault it); empty = the credential's |
+| `horizon_fslogix_auth` | `negotiate` | negotiate (Kerberos - FIPS too: user@YOURDOMAIN.MIL, the server's full name - else NTLM), ntlm, or kerberos (a ticket already in the job) |
+| `horizon_fslogix_encrypt` | `false` | true = encrypt (SMB 3) even when the share does not require it |
+| `horizon_fslogix_port` | `445` | the shares' port |
+| `horizon_internal_min_age_hours` | `24` | ---- Internal VMs report (playbooks/horizon_internal_vms_report.yml) ---------------------------- An internal VM (cp-template, cp-replica, cp-parent) made less than this many hours ago is never called left over: a new pool or an image push makes them before Horizon shows the new image. |
+| `horizon_internal_other_pods` | `[]` | Other Horizon pods that share these vCenters: their cloneprep.client.uuid (each VM's pod is in the job's artifacts). Their internal VMs are listed, never called left over. |
+| `horizon_internal_max_rows` | `100` | rows per table in the report (the job's artifacts have all) |
+| `horizon_image_vm` | (empty) | ---- Golden image check (playbooks/horizon_image_check.yml) ------------------------------------- Before you snapshot and push a golden image: is the VM ready? Read-only. The vCenter side with the "VMware vCenter" credential; the Windows side over WinRM with the Machine credential, on the host the template's Limit nam… (all of it: the role file) |
+| `horizon_image_snapshot_warn` | `5` | the current snapshot more than this many deep in its chain -> WARN |
+| `horizon_image_hw_min` | `14` | a hardware version (VM compatibility) older than this -> WARN (a vTPM at the pool needs 14 or later); 0 = not checked |
+| `horizon_image_fslogix` | `true` | FSLogix Apps should be in the image: missing -> WARN; false = not checked |
+| `horizon_image_guest` | `true` | false = the vCenter side only (no WinRM to the golden VM): the report says the guest was not checked |
+| `horizon_image_check_fail` | `false` | The check stays green and says READY or NOT READY. true = mark the job FAILED on any FAIL, for workflows. |
 
 ## incident_docs
 

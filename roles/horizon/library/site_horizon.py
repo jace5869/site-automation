@@ -91,9 +91,10 @@ RESOURCES = {
     "settings_general": [("config", "settings/general")],
     "settings_security": [("config", "settings/security")],
     "pre_logon": [("config", "pre-logon-settings")],
+    "logon_segment": [("helpdesk", "logon-timing/logon-segment")],
 }
 # resources that are one record, not a list
-SINGLE = ("event_database", "license", "settings_general", "settings_security", "pre_logon")
+SINGLE = ("event_database", "license", "settings_general", "settings_security", "pre_logon", "logon_segment")
 # asked one page each by `test` (the external ones need IDs: the jobs read them)
 TESTED = ["connection_servers", "gateways", "virtual_centers", "ad_domains", "event_database", "saml_authenticators", "true_sso",
           "license", "desktop_pools", "machines", "sessions", "farms", "vcenters", "audit_events", "cs_config", "settings_general",

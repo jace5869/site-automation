@@ -16,7 +16,10 @@
 # the VMware Tools inventory;
 # the ESXi network check (esxcli through vCenter - vcsim has no network diag ping: its answer is said); the VM right-sizing
 # report (a VM made too big, thresholds, its workbook by email, ACT's review); the VMware version report; VM - ask a question
-# (GenAI's query run with joins, questions that ask for a change refused, the whitelist, the job's own reader without a key).
+# (GenAI's query run with joins, questions that ask for a change refused, the whitelist, the job's own reader without a key);
+# the Horizon internal VMs report (cp-* VMs with cloneprep settings in vcsim, the pools in tests/horizon/hzmock.py).
+# Horizon - golden image check, its vCenter side (an ISO, floppy, serial and parallel port, E1000, a deep snapshot chain,
+# a name twice or not at all, no credential, the Limit's host with WinRM not answering).
 #   bash tests/vmware/run_vmware_test.sh
 # Needs: podman or docker; a python with pyVmomi and the vSphere Automation SDK (pip install pyvmomi
 # vmware-vcenter; VMWARE_TEST_PYTHON=... to pick it); the vmware.vmware collection (installed into a
@@ -40,7 +43,7 @@ smtp_pid=""
 http_pid=""
 pick_pid=""
 cleanup() { "$engine" rm -f "$name" "$name2" "$name3" >/dev/null 2>&1; [ -n "$smtp_pid" ] && kill "$smtp_pid" 2>/dev/null; [ -n "$http_pid" ] && kill "$http_pid" 2>/dev/null
-            [ -n "$pick_pid" ] && kill "$pick_pid" 2>/dev/null; rm -rf "$work"; }
+            [ -n "$pick_pid" ] && kill "$pick_pid" 2>/dev/null; [ -n "${hz_pid:-}" ] && kill "$hz_pid" 2>/dev/null; rm -rf "$work"; }
 trap cleanup EXIT
 fails=0
 
@@ -2504,5 +2507,106 @@ INV="$work/inv-relay.yml" run "mail relay format: names from DNS, the VM and its
 printf 'myhostname = relay1.example.mil\nmynetworks =\n    192.0.2.0/28\n\n    # localhost [AAP]\n    127.0.0.1\n\n    # DC0_H0_VM1 [AAP]\n    192.0.2.20\n\n    # DC0_C0_RP0_VM1  Finance [AAP]\n    192.0.2.40\n' \
     | cmp -s - "$work/relay/main.cf" \
     && echo "ok   -   ...main.cf one address per line, each named" || { echo "FAIL -   ...main.cf:"; cat "$work/relay/main.cf"; fails=$((fails + 1)); }
+
+# ---- Horizon internal VMs report: cp-* VMs made in vcsim (tests/vmware/hzinternal.py), the pools in the fake Horizon ---------
+# (tests/horizon/hzmock.py, its instant-clone pools pointed at vcsim's golden VM and snapshot). Last: it puts DC0_C0_H1 in
+# maintenance mode.
+hz_port=$((port + 61))
+hz_pid=""
+hz_ids="$(VMWARE_PORT=$port "$py" "$here/hzinternal.py")" || { echo "FAIL - Horizon internal VMs: setup in vcsim"; fails=$((fails + 1)); }
+hz_vm="$("$py" -c 'import json,sys; print(json.loads(sys.argv[1])["vm"])' "$hz_ids")"
+hz_snap="$("$py" -c 'import json,sys; print(json.loads(sys.argv[1])["snapshot"])' "$hz_ids")"
+hzmock() {  # hzmock [VAR=value ...]: (re)start the fake Horizon
+    [ -n "$hz_pid" ] && kill "$hz_pid" 2>/dev/null && wait "$hz_pid" 2>/dev/null
+    env HZMOCK_LOG="$work/hz.jsonl" "$@" "$py" "$repo/tests/horizon/hzmock.py" "$hz_port" >/dev/null 2>&1 &
+    hz_pid=$!
+    for _ in $(seq 1 50); do (exec 3<>"/dev/tcp/127.0.0.1/$hz_port") 2>/dev/null && break; sleep 0.1; done
+    # another program on the port (a fake Horizon an earlier run left) would answer with its own IDs
+    kill -0 "$hz_pid" 2>/dev/null || { echo "FAIL - the fake Horizon could not start: port $hz_port in use"; fails=$((fails + 1)); }
+}
+export HORIZON_URL="http://127.0.0.1:$hz_port" HORIZON_DOMAIN=CORP HORIZON_USERNAME=svc-horizon HORIZON_PASSWORD=goodpw
+hzmock HZMOCK_IC_IMAGE="$hz_vm:$hz_snap" HZMOCK_VC_NAME=127.0.0.1
+run "Horizon internal VMs: in use, probably left over (and why), orphaned" ok horizon_internal_vms_report.yml \
+    -e horizon_internal_min_age_hours=0 -- "Horizon internal VMs: 2 probably left over" "1 inaccessible or orphaned" \
+    "no pool, farm or desktop uses golden image VM HZ-Gold, snapshot /v1" "(instance UUID 42a1b2c3-0000-4000-8000-00000000dead) is no longer in vCenter" \
+    "orphaned: its host no longer knows it" "cp-parent-orphan is on host DC0_C0_H1, which is in maintenance mode" \
+    "in use (matched by ID)" "used by pool IC-Finance, pool IC-Lab, pool IC-Protected, pool IC-Win11" \
+    "Golden image read from the replica or template that names them: 4a1c0000-0000-4000-8000-0000000000a1" \
+    "iccleanup.cmd -vc <vcenter> -uid <user>"
+grep -q "W11-Desktop-001" "$work/out.txt" && { echo "FAIL -   ...a desktop clone (cloneprep settings) listed as an internal VM"; fails=$((fails + 1)); } \
+    || echo "ok   -   ...a desktop clone (cloneprep settings, no cp- name or ClonePrep folder) is not listed"
+run "Horizon internal VMs: newer than horizon_internal_min_age_hours - not called left over" ok horizon_internal_vms_report.yml \
+    -- "made 0.0 hour(s) ago, less than horizon_internal_min_age_hours (24)" "Horizon internal VMs: 1 inaccessible or orphaned"
+run "Horizon internal VMs: horizon_health_fail fails the job on the orphaned one (a dry run)" fail horizon_internal_vms_report.yml --check \
+    -e horizon_health_fail=true -- "1 internal VM(s) inaccessible, orphaned or disconnected"
+hzmock
+run "Horizon internal VMs: Horizon's golden VM IDs not found in vCenter - nothing called left over" ok horizon_internal_vms_report.yml \
+    -e horizon_internal_min_age_hours=0 -- "pool IC-Win11: its golden image VM (Horizon's ID bvm-2) is not a VM found in the vCenters read" \
+    "Probably left over: 0"
+HORIZON_PASSWORD=bad run "Horizon internal VMs: Horizon not read - still listed from vCenter, in use not decided" ok \
+    horizon_internal_vms_report.yml -e horizon_internal_min_age_hours=0 -- "Horizon could not be read (Horizon refused the login" \
+    "Horizon could not be read: whether a pool uses it is not known" "orphaned: its host no longer knows it"
+kill "$hz_pid" 2>/dev/null
+unset HORIZON_URL HORIZON_DOMAIN HORIZON_USERNAME HORIZON_PASSWORD
+
+# ---- Horizon - golden image check (playbooks/horizon_image_check.yml), the vCenter side: a new simulator; DC0_C0_RP0_VM0
+# gets its CD/DVD drive on an ISO (connected), a floppy drive, a serial and a parallel port on files, and a chain of 6
+# snapshots (vcsim keeps no vTPM - it hands it back as a plain device: tests/test_horizon_image.py covers it); its adapter
+# is vcsim's E1000, its hardware vmx-13, no VMware Tools. The Windows side needs a real Windows: the unit test reads
+# recorded answers. -e ansible_python_interpreter: the AAP side runs with ansible_playbook_python, here the one with pyVmomi.
+fresh
+VMWARE_PORT=$port "$py" - <<'PY' || { echo "FAIL - golden image devices in vcsim"; fails=$((fails + 1)); }
+import os, time
+from pyVim.connect import SmartConnect
+from pyVmomi import vim
+si = SmartConnect(host="127.0.0.1", port=int(os.environ["VMWARE_PORT"]), user="user", pwd="pass", disableSslCertValidation=True)
+c = si.RetrieveContent()
+v = [x for x in c.viewManager.CreateContainerView(c.rootFolder, [vim.VirtualMachine], True).view if x.name == "DC0_C0_RP0_VM0"][0]
+D = vim.vm.device
+on = lambda: D.VirtualDevice.ConnectInfo(connected=True, startConnected=True, allowGuestControl=True)
+cd = [d for d in v.config.hardware.device if isinstance(d, D.VirtualCdrom)][0]
+cd.backing, cd.connectable = D.VirtualCdrom.IsoBackingInfo(fileName="[LocalDS_0] win11.iso"), on()
+for dev in ([D.VirtualDeviceSpec(operation="edit", device=cd)]
+            + [D.VirtualDeviceSpec(operation="add", device=x) for x in (
+                D.VirtualFloppy(key=-1, backing=D.VirtualFloppy.RemoteDeviceBackingInfo(deviceName="")),
+                D.VirtualSerialPort(key=-2, yieldOnPoll=True, connectable=on(), backing=D.VirtualSerialPort.FileBackingInfo(fileName="[LocalDS_0] com1.log")),
+                D.VirtualParallelPort(key=-3, backing=D.VirtualParallelPort.FileBackingInfo(fileName="[LocalDS_0] lpt1.log")))]):
+    t = v.ReconfigVM_Task(vim.vm.ConfigSpec(deviceChange=[dev]))
+    while t.info.state not in ("success", "error"):
+        time.sleep(0.05)
+    assert t.info.state == "success", t.info.error
+PY
+for i in 1 2 3 4 5 6; do VMWARE_PORT=$port "$py" "$here/vcsim.py" snap DC0_C0_RP0_VM0 "hzi$i" || { echo "FAIL - vcsim snap"; fails=$((fails + 1)); }; done
+run "golden image check: a VM not ready - ISO connected, floppy, serial, parallel, E1000, vmx-13, 6 snapshots deep, no Tools" ok \
+    horizon_image_check.yml -e horizon_image_vm=DC0_C0_RP0_VM0 -e ansible_python_interpreter="$py" \
+    -- "Horizon golden image DC0_C0_RP0_VM0: NOT READY" "connected to an ISO [LocalDS_0] win11.iso" "vCenter - VMware Tools: not installed" \
+       "vCenter - Network adapters: not VMXNET3: " "(E1000)" "vCenter - Floppy drive: " "vCenter - Serial port: " "(file, connected)" \
+       "vCenter - Parallel port: " "vCenter - Hardware version: vmx-13" "horizon_image_hw_min is 14" \
+       "vCenter - Snapshots: 6 snapshot(s); the current one, hzi6, is 6 deep (hzi1 > hzi2 > hzi3 > hzi4 > hzi5 > hzi6)" \
+       "Guest - Guest checks: not run: no Limit" '"horizon_image_check"' '"ready": false'
+run "golden image check with horizon_image_check_fail: the job fails, for workflows" fail horizon_image_check.yml \
+    -e horizon_image_vm=DC0_C0_RP0_VM0 -e horizon_image_check_fail=true -e ansible_python_interpreter="$py" \
+    -- "NOT READY: " "horizon_image_check_fail: false makes this a report only"
+run "golden image check: a fine VM's hardware - the snapshot chain under horizon_image_snapshot_warn, no ports" ok horizon_image_check.yml \
+    -e horizon_image_vm=DC0_H0_VM1 -e horizon_image_snapshot_warn=10 -e ansible_python_interpreter="$py" \
+    -- "Horizon golden image DC0_H0_VM1: NOT READY" "1 snapshot(s); the current one, baseline, is 1 deep (baseline)" \
+       "Floppy drive      none" "Serial port       none" "Parallel port     none" "VMware Tools      no version, status not known, running" \
+       "connected to the ESXi host's drive"
+run "golden image check: a name two VMs have" ok horizon_image_check.yml -e horizon_image_vm=dup -e ansible_python_interpreter="$py" \
+    -- "2 VMs are named dup: dup (/DC0/vm), dup (/DC0/vm/other)" "Give horizon_image_vm the VM's path"
+run "golden image check: ...its path picks one" ok horizon_image_check.yml -e horizon_image_vm=/DC0/vm/other/dup -e ansible_python_interpreter="$py" \
+    -- "Horizon golden image dup: NOT READY" "dup (/DC0/vm/other), host "
+run "golden image check: a name no VM has" ok horizon_image_check.yml -e horizon_image_vm=nope -e ansible_python_interpreter="$py" \
+    -- "vCenter - VM found: no VM named nope in vCenter" "Horizon golden image nope: NOT READY"
+(cd "$repo" && ANSIBLE_COLLECTIONS_PATH="$cols" ANSIBLE_NOCOLOR=1 ANSIBLE_LOCALHOST_WARNING=False \
+    env -u VMWARE_HOST "$ap" -i "$work/inv.yml" playbooks/horizon_image_check.yml -e horizon_image_vm=DC0_H0_VM1 > "$work/out.txt" 2>&1) \
+    && grep -q 'vCenter read: not run: no \\"VMware vCenter\\" credential is attached to the template' "$work/out.txt" \
+    && echo "ok   - golden image check without a vCenter credential: says so, the job still green" \
+    || { echo "FAIL - golden image check: no credential message"; grep -m2 -E 'ERROR|msg' "$work/out.txt"; fails=$((fails + 1)); }
+printf 'all:\n  hosts:\n    localhost: {ansible_connection: local, ansible_python_interpreter: %s}\n  children:\n    win:\n      hosts:\n        DC0_H0_VM1: {ansible_connection: winrm, ansible_host: 127.0.0.1, ansible_port: 1, ansible_user: u, ansible_password: p, ansible_winrm_transport: ntlm}\n' \
+    "$py" > "$work/inv-win.yml"
+INV="$work/inv-win.yml" run "golden image check: the Limit names the golden VM (its name from it), WinRM does not answer - the vCenter side still reports" ok \
+    horizon_image_check.yml -l DC0_H0_VM1 -e ansible_python_interpreter="$py" \
+    -- "Horizon golden image DC0_H0_VM1: NOT READY" "vCenter - Network adapters: not VMXNET3: " "Guest - Guest checks: not run: "
 
 if [ "$fails" -eq 0 ]; then echo "ok   - all VMware scenarios passed"; else echo "$fails FAILED"; exit 1; fi

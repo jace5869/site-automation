@@ -168,7 +168,11 @@ def _session(s):
             "farm_id": str(_g(s, "farm_id", default="")), "state": str(_g(s, "session_state", "state", default="")).upper(),
             "type": str(_g(s, "session_type", default="")).upper(), "protocol": str(_g(s, "session_protocol", default="")),
             "start_ms": _ms(_g(s, "start_time")), "disconnected_ms": _ms(_g(s, "disconnected_time")),
-            "client": str(_g(s, "client_data.name", "client_name", default=""))}
+            "client": str(_g(s, "client_data.name", "client_name", default="")),
+            "client_type": str(_g(s, "client_data.type", "client_type", default="")).upper(),
+            "client_version": str(_g(s, "client_data.version", "client_version", default="")),
+            "client_address": str(_g(s, "client_data.address", "client_address", default="")),
+            "agent": str(_g(s, "agent_version", default=""))}
 
 
 def _user(u):
@@ -1289,6 +1293,339 @@ def hz_settings(data, baseline=None, opts=None):
     return {"report": report, "critical": nc, "warning": nw, "drift": drift}
 
 
+def _version(text):
+    """'8.12.0', '2312', '5.5.0 build-123' -> a tuple to compare ((), when there are no numbers)."""
+    return tuple(int(x) for x in re.findall(r"\d+", str(text or "").split("build")[0])[:4])
+
+
+def hz_sessions_report(data, opts=None):
+    """The sessions report -> {report, warning, ...}: Horizon Clients older than horizon_client_min_versions (per client
+    type, '*' for any), sessions pending for horizon_session_pending_minutes (a launch that never finished), sessions on a
+    broken desktop, sessions longer than horizon_session_long_hours, users with two or more desktop sessions, and the
+    protocols in use against horizon_session_protocols."""
+    o = opts or {}
+    now = _now_ms(o.get("now"))
+    names = dict(data.get("user_names") or {})
+    machines = dict((m["id"], m) for m in data.get("machines") or [])
+    pools = data.get("pool_names") or {}
+    mins = dict((str(k).upper(), str(v)) for k, v in (o.get("client_min") or {}).items() if str(v).strip())
+    pend_min = float(o.get("pending_minutes") or 10)
+    long_h = float(o.get("long_hours") or 0)
+    protos = [str(x).upper() for x in _list(o.get("protocols"))]
+    mx = _int(o.get("max_rows"), 50)
+    sess = data.get("sessions") or []
+
+    unnamed = set()
+
+    def who(s):
+        n = names.get(s["user_id"]) or s["user"]
+        if not n and s["user_id"]:
+            unnamed.add(s["user_id"])
+        return n or s["user_id"] or "?"
+
+    def where(s):
+        m = machines.get(s["machine_id"])
+        return (m["name"] if m else ("(an RDS host)" if not s["machine_id"] else s["machine_id"]),
+                pools.get(s["pool_id"], s["pool_id"] or ("farm " + (data.get("farm_names") or {}).get(s["farm_id"], s["farm_id"]))))
+
+    old, versions = [], {}
+    for s in sess:
+        key = "%s %s" % (s["client_type"] or "?", s["client_version"] or "?")
+        versions[key] = versions.get(key, 0) + 1
+        want = mins.get(s["client_type"]) or mins.get("*")
+        if want and s["client_version"] and _version(s["client_version"]) < _version(want):
+            old.append([who(s), s["client_type"] or "?", s["client_version"], want, s["client"] or s["client_address"]])
+    pending = []
+    for s in sess:
+        if s["state"] == "PENDING" and s["start_ms"] and (now - s["start_ms"]) / 60000.0 >= pend_min:
+            d, p = where(s)
+            pending.append([who(s), d, p, _when(s["start_ms"]), "%.0f" % ((now - s["start_ms"]) / 60000.0)])
+    on_broken = []
+    for s in sess:
+        m = machines.get(s["machine_id"])
+        if m and m["state"] in BROKEN_STATES:
+            on_broken.append([who(s), m["name"], pools.get(s["pool_id"], s["pool_id"]), m["state"], s["state"].lower()])
+    long_rows = []
+    if long_h:
+        for s in sorted(sess, key=lambda x: x["start_ms"] or now):
+            if s["start_ms"] and (now - s["start_ms"]) / 3600000.0 >= long_h:
+                d, p = where(s)
+                long_rows.append([who(s), d, p, s["state"].lower(), _when(s["start_ms"]), "%.0f" % ((now - s["start_ms"]) / 3600000.0)])
+    by_user = {}
+    for s in sess:
+        if s["type"] in ("", "DESKTOP"):
+            by_user.setdefault(s["user_id"] or s["user"], []).append(s)
+    dups = sorted([who(ss[0]), len(ss), ", ".join(sorted(where(x)[0] for x in ss)[:5])] for ss in by_user.values() if len(ss) > 1)
+    proto = {}
+    for s in sess:
+        proto[s["protocol"].upper() or "?"] = proto.get(s["protocol"].upper() or "?", 0) + 1
+    other = [[who(s), where(s)[0], s["protocol"] or "?"] for s in sess if protos and s["protocol"] and s["protocol"].upper() not in protos]
+    probs = []
+    if old:
+        probs.append("%d session(s) from a Horizon Client older than the baseline (horizon_client_min_versions)" % len(old))
+    if pending:
+        probs.append("%d session(s) pending for %g minutes or more: a launch that never finished - log it off (Horizon - user help)" % (len(pending), pend_min))
+    if on_broken:
+        probs.append("%d session(s) on a broken desktop: the user may be stuck - log off, then the desktops check fixes the desktop" % len(on_broken))
+    if other:
+        probs.append("%d session(s) on a protocol other than %s" % (len(other), ", ".join(protos)))
+    nw = len(probs)
+    report = {"title": "Horizon sessions: %d session(s)%s" % (len(sess), (", %d to look at" % nw) if nw else ""),
+              "subtitle": ", ".join("%s %d" % kv for kv in sorted(proto.items(), key=lambda kv: -kv[1])) or "no session",
+              "status": "warning" if nw else "ok",
+              "summary": [{"label": "Sessions", "value": len(sess)},
+                          {"label": "Old clients", "value": len(old), "status": "warning" if old else "ok"},
+                          {"label": "Pending", "value": len(pending), "status": "warning" if pending else "ok"},
+                          {"label": "On broken desktops", "value": len(on_broken), "status": "warning" if on_broken else "ok"},
+                          {"label": "Two or more desktops", "value": len(dups)}],
+              "sections": ([{"title": "Problems", "lines": probs, "status": "warning"}] if probs else []) + [
+                  {"title": "Old Horizon Clients", "columns": ["User", "Client", "Version", "Baseline", "Client machine"], "rows": old[:mx],
+                   "text": "" if mins else "No baseline: set horizon_client_min_versions, e.g. {WINDOWS: '8.13', '*': '8.12'}."},
+                  {"title": "Pending sessions", "columns": ["User", "Desktop", "Pool", "Started", "Minutes"], "rows": pending[:mx]},
+                  {"title": "Sessions on broken desktops", "columns": ["User", "Desktop", "Pool", "Desktop state", "Session"], "rows": on_broken[:mx]},
+                  {"title": "Long sessions", "columns": ["User", "Desktop", "Pool", "Session", "Started", "Hours"], "rows": long_rows[:mx],
+                   "text": ("Started %g hours ago or more." % long_h) if long_h else "Off: horizon_session_long_hours is 0."},
+                  {"title": "Users with two or more desktop sessions", "columns": ["User", "Sessions", "Desktops"], "rows": dups[:mx]},
+                  {"title": "Client versions", "columns": ["Client", "Sessions"],
+                   "rows": [[k, v] for k, v in sorted(versions.items(), key=lambda kv: (-kv[1], kv[0]))]},
+                  {"title": "Other protocols", "columns": ["User", "Desktop", "Protocol"], "rows": other[:mx]}]}
+    return {"report": report, "warning": nw, "critical": 0, "old_clients": len(old), "pending": len(pending),
+            "on_broken": len(on_broken), "long": len(long_rows), "duplicates": len(dups), "unnamed": sorted(unnamed)}
+
+
+def _phases(node, name="logon", out=None, depth=0):
+    """Every phase of a logon timing tree -> [(name, seconds, depth)]: a node is a dict with a duration (d, duration,
+    duration_ms) and its sub-phases as dicts or lists; Horizon says the format may change between releases, so any
+    shape that carries names and durations is read."""
+    out = [] if out is None else out
+    if isinstance(node, list):
+        for x in node:
+            _phases(x, name, out, depth)
+        return out
+    if not isinstance(node, dict):
+        return out
+    nm = str(node.get("n") or node.get("name") or node.get("phase") or name)
+    dur = None
+    for k in ("d", "duration", "duration_ms", "durationMs"):
+        if isinstance(node.get(k), (int, float)) or (isinstance(node.get(k), str) and re.match(r"^\d+(\.\d+)?$", node[k])):
+            dur = float(node[k])
+            if k in ("duration_ms", "durationMs") or dur > 3600:     # milliseconds
+                dur /= 1000.0
+            break
+    if dur is not None:
+        out.append((nm, round(dur, 1), depth))
+    for k, v in node.items():
+        if isinstance(v, (dict, list)) and k not in ("s", "e"):
+            _phases(v, k, out, depth + (1 if dur is not None else 0))
+    return out
+
+
+def _pct(values, p):
+    v = sorted(values)
+    if not v:
+        return 0.0
+    i = min(len(v) - 1, max(0, int(round(p / 100.0 * (len(v) - 1)))))
+    return v[i]
+
+
+def hz_logon(data, opts=None):
+    """The logon times report -> {report, warning, critical, sessions}: per session, Horizon's logon timing (the Help
+    Desk's logon segments: the total and each phase - brokering, power-on, tunnel, protocol, profile, GPO, shell); per
+    pool the median and the 95th percentile, and the slowest phase. Amber/red at horizon_logon_warn_s / crit_s (95th)."""
+    o = opts or {}
+    warn, crit = float(o.get("warn_s") or 60), float(o.get("crit_s") or 120)
+    mx = _int(o.get("max_rows"), 50)
+    raw = data.get("raw") or {}
+    names = dict(data.get("user_names") or {})
+    machines = dict((m["id"], m) for m in data.get("machines") or [])
+    pools = data.get("pool_names") or {}
+    sessions = dict((s["id"], s) for s in data.get("sessions") or [])
+    rows, per_pool, missing, unnamed = [], {}, 0, set()
+    for k, recs in sorted(raw.items()):
+        if not k.startswith("logon:"):
+            continue
+        sid = k[6:]
+        s = sessions.get(sid) or {}
+        rec = next((r for r in recs or [] if isinstance(r, dict)), None)
+        tree = (rec or {}).get("logon_segment_data")
+        if isinstance(tree, str):
+            try:
+                tree = json.loads(tree)
+            except ValueError:
+                tree = None
+        ph = _phases(tree) if tree else []
+        if not ph:
+            missing += 1
+            continue
+        rooted = len([x for x in ph if x[2] == 0]) == 1 and len(ph) > 1     # the whole logon, its phases under it
+        total = ph[0][1] if rooted else sum(x[1] for x in ph if x[2] == 0)
+        subs = [x for x in ph if x[2] >= 1] if rooted else ph
+        # the phases with nothing under them: "profile load 25 s" says more than "client logon 40 s"
+        subs = [x for i, x in enumerate(subs) if i + 1 == len(subs) or subs[i + 1][2] <= x[2]] or subs
+        slow = max(subs, key=lambda x: x[1])
+        pool = pools.get(s.get("pool_id"), s.get("pool_id") or "?")
+        per_pool.setdefault(pool, {"totals": [], "phases": {}})
+        per_pool[pool]["totals"].append(total)
+        for n, d, _dep in subs:
+            per_pool[pool]["phases"].setdefault(n, []).append(d)
+        m = machines.get(s.get("machine_id")) or {}
+        if not (names.get(s.get("user_id")) or s.get("user")) and s.get("user_id"):
+            unnamed.add(s["user_id"])
+        rows.append([names.get(s.get("user_id")) or s.get("user") or s.get("user_id") or "?", m.get("name") or "?", pool,
+                     _when(s.get("start_ms") or 0), total, "%s %.0f s" % (slow[0], slow[1])])
+    pool_rows, st, nc, nw = [], [], 0, 0
+    for pool, v in sorted(per_pool.items()):
+        p50, p95 = _pct(v["totals"], 50), _pct(v["totals"], 95)
+        avg = sorted(((sum(d) / len(d), n) for n, d in v["phases"].items()), reverse=True)
+        s_ = "critical" if p95 >= crit else ("warning" if p95 >= warn else "")
+        nc += s_ == "critical"
+        nw += s_ == "warning"
+        pool_rows.append([pool, len(v["totals"]), "%.0f" % p50, "%.0f" % p95, "%.0f" % max(v["totals"]),
+                          ("%s (%.0f s on average)" % (avg[0][1], avg[0][0])) if avg else ""])
+        st.append(s_)
+    rows.sort(key=lambda r: -r[4])
+    if not rows and missing:
+        text = ("Horizon gave no logon timing for %d session(s): turn on the timing profiler on each Connection Server "
+                "(vdmadmin -I -timingProfiler -enable) and keep it (the event database's timing_profiler_data_longevity_days)." % missing)
+    else:
+        text = "%d session(s) without timing (started before the profiler, or an older agent)." % missing if missing else ""
+    report = {"title": "Horizon logon times: %s" % (("%d pool(s) slow" % (nc + nw)) if nc or nw else ("%d logon(s)" % len(rows))),
+              "subtitle": "%d logon(s) timed; red when a pool's 95th percentile is %g s or more, amber at %g s" % (len(rows), crit, warn),
+              "status": "critical" if nc else ("warning" if nw or (missing and not rows) else "ok"),
+              "summary": [{"label": "Logons timed", "value": len(rows)}, {"label": "Without timing", "value": missing},
+                          {"label": "Slow pools", "value": nc + nw, "status": "critical" if nc else ("warning" if nw else "ok")}],
+              "sections": [{"title": "By pool (seconds)", "columns": ["Pool", "Logons", "Median", "95th", "Slowest", "Slowest phase"],
+                            "rows": pool_rows, "row_status": st, "text": text},
+                           {"title": "The slowest logons", "columns": ["User", "Desktop", "Pool", "Started", "Seconds", "Slowest phase"],
+                            "rows": [r[:4] + ["%.0f" % r[4], r[5]] for r in rows[:mx]]}]}
+    return {"report": report, "critical": nc, "warning": nw, "timed": len(rows), "missing": missing, "unnamed": sorted(unnamed)}
+
+
+def _on_host(m, host):
+    h, want = str(m.get("host") or "").lower(), str(host or "").strip().lower()
+    return bool(h) and bool(want) and (h == want or h.split(".")[0] == want.split(".")[0])
+
+
+def hz_host_plan(data, host, opts=None):
+    """An ESXi host's maintenance, for the approver -> {host, desktops, sessions, held, problems, report}: the desktops
+    Horizon has on the host (managed_machine_data.host_name) - those without a session go into Horizon maintenance mode
+    (no new user is given them) -, the sessions on the host's desktops (they get the message), and what is held back:
+    a protected pool, a pool not read."""
+    o = opts or {}
+    pools = dict((p["id"], p) for p in data.get("pools") or [])
+    problems = [] if str(host or "").strip() else ["No host given: set horizon_maint_host (the ESXi host as vCenter names it)"]
+    ms = [m for m in data.get("machines") or [] if _on_host(m, host)]
+    if host and not ms:
+        known = sorted(set(m["host"] for m in data.get("machines") or [] if m["host"]))
+        problems.append("Horizon has no desktop on host %s%s" % (host, (" (hosts it knows: %s)" % ", ".join(known[:15])) if known else
+                                                                  " - Horizon gave no host for any desktop (managed_machine_data.host_name)"))
+    desktops, held, sessions, unnamed = [], [], [], []
+    for m in sorted(ms, key=lambda x: x["name"].lower()):
+        pool = pools.get(m["pool_id"])
+        on = _sessions_on(data, m["id"])
+        hold = _pool_hold(pool, m["pool_id"], o)
+        item = {"id": m["id"], "name": m["name"], "pool": pool["name"] if pool else m["pool_id"], "state": m["state"], "host": m["host"]}
+        for s in on:
+            n = (data.get("user_names") or {}).get(s["user_id"]) or s["user"]
+            if not n and s["user_id"]:
+                unnamed.append(s["user_id"])
+            sessions.append({"id": s["id"], "user": n or s["user_id"], "machine": m["name"], "state": s["state"], "pool": item["pool"]})
+        if hold:
+            held.append(dict(item, reason=hold))
+        elif on or m["session_id"]:
+            held.append(dict(item, reason="a user's session is on it: it gets the message, and goes into maintenance once free (run the start job again)"))
+        elif m["state"] == "MAINTENANCE":
+            held.append(dict(item, reason="already in maintenance mode"))
+        else:
+            desktops.append(item)
+    report = {"title": "Horizon host maintenance plan: %s" % (host or "?"),
+              "subtitle": "%d desktop(s) on it, %d into maintenance mode, %d session(s) to message" % (len(ms), len(desktops), len(sessions)),
+              "status": "critical" if problems else "info",
+              "summary": [{"label": "Desktops", "value": len(ms)}, {"label": "Into maintenance", "value": len(desktops)},
+                          {"label": "Sessions", "value": len(sessions)}, {"label": "Held back", "value": len(held)}],
+              "sections": ([{"title": "Problems - nothing goes to the approval", "lines": problems, "status": "critical"}] if problems else []) + [
+                  {"title": "Into Horizon maintenance mode", "columns": ["Desktop", "Pool", "State"],
+                   "rows": [[x["name"], x["pool"], x["state"]] for x in desktops]},
+                  {"title": "Sessions that get the message", "columns": ["User", "Desktop", "Pool", "Session"],
+                   "rows": [[x["user"], x["machine"], x["pool"], x["state"].lower()] for x in sessions]},
+                  {"title": "Held back", "columns": ["Desktop", "Pool", "Why"], "rows": [[x["name"], x["pool"], x["reason"]] for x in held]}]}
+    return {"host": str(host or "").strip(), "desktops": desktops, "sessions": sessions, "held": held, "problems": problems, "report": report,
+            "unnamed": sorted(set(unnamed))}
+
+
+def hz_host_recheck(plan, data, opts=None):
+    """After the approval: the planned desktops again -> {act: [...], skipped: [...]}: still on the host, still without a
+    session, not in maintenance already, the pool not protected; and the sessions on the host's desktops now (to message)."""
+    o = opts or {}
+    now = dict((m["id"], m) for m in data.get("machines") or [])
+    pools = dict((p["id"], p) for p in data.get("pools") or [])
+    host = (plan or {}).get("host")
+    act, skipped = [], []
+    for x in (plan or {}).get("desktops") or []:
+        m = now.get(str(x.get("id")))
+        item = dict(x)
+        if not m:
+            item["reason"] = "no longer in Horizon"
+        elif not _on_host(m, host):
+            item["reason"] = "it is on host %s now" % (m["host"] or "?")
+        elif _sessions_on(data, m["id"]) or m["session_id"]:
+            item["reason"] = "a user's session is on it now"
+        elif m["state"] == "MAINTENANCE":
+            item["reason"] = "already in maintenance mode"
+        else:
+            item["reason"] = _pool_hold(pools.get(m["pool_id"]), m["pool_id"], o)
+        (skipped if item.get("reason") else act).append(item)
+    sessions = [s for m in now.values() if _on_host(m, host) and not _pool_hold(pools.get(m["pool_id"]), m["pool_id"], o)
+                for s in _sessions_on(data, m["id"])]
+    return {"act": act, "skipped": skipped, "sessions": [{"id": s["id"], "user": s["user"] or s["user_id"]} for s in sessions]}
+
+
+def hz_host_in_maintenance(data, host, opts=None):
+    """The desktops on a host in maintenance mode, to bring back -> {act, held}: never one in a protected pool."""
+    o = opts or {}
+    pools = dict((p["id"], p) for p in data.get("pools") or [])
+    act, held = [], []
+    for m in data.get("machines") or []:
+        if _on_host(m, host) and m["state"] == "MAINTENANCE":
+            hold = _pool_hold(pools.get(m["pool_id"]), m["pool_id"], o)
+            (held if hold else act).append({"id": m["id"], "name": m["name"], "reason": hold})
+    return {"act": act, "held": held}
+
+
+def hz_recent_sessions(data, hours, now=None, most=200):
+    """The IDs of the desktop sessions started in the last `hours` (newest first, at most `most`): the logons to time."""
+    since = _now_ms(now) - float(hours or 24) * 3600000
+    ss = [s for s in data.get("sessions") or [] if s["start_ms"] >= since and s["type"] in ("", "DESKTOP")]
+    return [s["id"] for s in sorted(ss, key=lambda x: -x["start_ms"])][:_int(most, 200)]
+
+
+def hz_msg_targets(data, opts=None):
+    """The sessions a message goes to -> {sessions: [{id, label}], problems}: by pool (names, * and ?), ESXi host, users
+    (login names or SIDs) or all; connected and disconnected alike (a disconnected user sees it when back)."""
+    o = opts or {}
+    pools = dict((p["id"], p) for p in data.get("pools") or [])
+    machines = dict((m["id"], m) for m in data.get("machines") or [])
+    names = dict(data.get("user_names") or {})
+    want_pools, host = _list(o.get("pools")), str(o.get("host") or "").strip()
+    users = [str(u).lower() for u in _list(o.get("users"))]
+    everyone = bool(o.get("all"))
+    problems = []
+    if not (want_pools or host or users or everyone):
+        problems.append("Nobody to message: set horizon_message_pools, horizon_message_host, horizon_message_users or horizon_message_all")
+    if not str(o.get("message") or "").strip():
+        problems.append("No message: set horizon_message")
+    out = []
+    for s in data.get("sessions") or []:
+        pool = pools.get(s["pool_id"])
+        m = machines.get(s["machine_id"]) or {}
+        u = names.get(s["user_id"]) or s["user"] or s["user_id"]
+        hit = everyone or (pool and _match(pool["name"], want_pools)) or (host and _on_host(m, host)) or \
+            (users and (s["user_id"].lower() in users or u.lower() in users or u.split("\\")[-1].lower() in users))
+        if hit:
+            out.append({"id": s["id"], "label": "%s on %s" % (u, m.get("name") or "(an RDS host)")})
+    return {"sessions": out, "problems": problems}
+
+
 def hz_test_lines(tests):
     """The API test's answer, one line per resource."""
     out = []
@@ -1384,7 +1721,9 @@ class FilterModule(object):
                 "hz_sessions_old": hz_sessions_old, "hz_user": hz_user, "hz_user_targets": hz_user_targets,
                 "hz_push_pools": hz_push_pools, "hz_pick": hz_pick, "hz_push_start": hz_push_start, "hz_push_plan": hz_push_plan,
                 "hz_push_recheck": hz_push_recheck, "hz_datastores": hz_datastores, "hz_push_body": hz_push_body, "hz_health": hz_health,
-                "hz_capacity": hz_capacity, "hz_events": hz_events, "hz_events_filter": hz_events_filter, "hz_settings": hz_settings, "hz_test_lines": hz_test_lines, "hz_act_lines": hz_act_lines, "hz_ago": hz_ago,
+                "hz_capacity": hz_capacity, "hz_events": hz_events, "hz_events_filter": hz_events_filter, "hz_settings": hz_settings, "hz_sessions_report": hz_sessions_report, "hz_logon": hz_logon,
+                "hz_host_plan": hz_host_plan, "hz_host_recheck": hz_host_recheck, "hz_host_in_maintenance": hz_host_in_maintenance,
+                "hz_msg_targets": hz_msg_targets, "hz_recent_sessions": hz_recent_sessions, "hz_test_lines": hz_test_lines, "hz_act_lines": hz_act_lines, "hz_ago": hz_ago,
                 "hz_when": _when,
                 "hz_user_session_line": hz_user_session_line, "hz_user_machine_line": hz_user_machine_line,
                 "hz_settings_check": hz_settings_check, "hz_user_label": hz_user_label}

@@ -1,0 +1,60 @@
+---
+# MESSAGE USERS (playbooks/horizon_message_users.yml): a message to the sessions of some pools
+# (horizon_message_pools), an ESXi host's desktops (horizon_message_host), some users (horizon_message_users) or
+# everyone (horizon_message_all) - before maintenance, for example. Connected and disconnected sessions alike (a
+# disconnected user sees it when back). A dry run (Check) lists who would get it and sends nothing.
+- name: Horizon | read the pools, desktops and sessions
+  ansible.builtin.include_tasks: read.yml
+  vars:
+    _hz_what: the pools, desktops and sessions
+    _hz_resources: [desktop_pools, machines, sessions]
+
+- name: Horizon | what was read
+  ansible.builtin.set_fact:
+    _hz_main: "{{ _hz }}"
+
+- name: Horizon | the users named by login name (a session carries their SID only on older API versions)
+  ansible.builtin.include_tasks: names.yml
+  vars:
+    _hz_sids: >-
+      {{ _hz.sessions | rejectattr('user', 'truthy') | map(attribute='user_id') | select | unique | list }}
+  when: horizon_message_users | length > 0 and _hz.sessions | rejectattr('user', 'truthy') | list | length > 0
+
+- name: Horizon | who gets the message
+  ansible.builtin.set_fact:
+    _hz_mt: >-
+      {{ _hz | hz_msg_targets({'pools': horizon_message_pools, 'host': horizon_message_host, 'users': horizon_message_users,
+                               'all': horizon_message_all | bool, 'message': horizon_message}) }}
+    _hz_all_results: []
+
+- name: Horizon | a message and someone to send it to
+  ansible.builtin.assert:
+    that: _hz_mt.problems | length == 0
+    fail_msg: "Nothing was sent: {{ _hz_mt.problems | join('; ') }}."
+    quiet: true
+
+- name: Horizon | send it
+  ansible.builtin.include_tasks: act.yml
+  vars:
+    _hz_target: sessions
+    _hz_verb: send-message
+    _hz_ids: "{{ _hz_mt.sessions | map(attribute='id') | list }}"
+    _hz_body: "{{ {'message': horizon_message, 'message_type': horizon_message_type | upper} }}"
+  when: _hz_mt.sessions | length > 0
+
+- name: Horizon | report
+  ansible.builtin.include_tasks: report.yml
+  vars:
+    _hz_doc: >-
+      {%- set bad = _hz_all_results | rejectattr('ok') | list | length -%}
+      {{ {'title': 'Horizon message: ' ~ ((_hz_mt.sessions | length - bad) ~ ' of ' ~ _hz_mt.sessions | length ~ ' session(s)'
+                                         ~ (' (a dry run)' if ansible_check_mode else '') if _hz_mt.sessions else 'nobody to send it to'),
+          'status': 'critical' if bad else ('ok' if _hz_mt.sessions else 'info'), 'subtitle': horizon_message,
+          'sections': [{'title': 'Sent to', 'lines': (_hz_all_results | hz_act_lines(_hz_mt.sessions, 'message', ansible_check_mode)) or ['Nobody.']}]} }}
+    _hz_footer: "{{ horizon_message_type | upper }} message through the Horizon REST API of {{ _hz_read.url }}."
+
+- name: Horizon | Horizon took every message
+  ansible.builtin.assert:
+    that: _hz_all_results | rejectattr('ok') | list | length == 0
+    fail_msg: "Horizon refused {{ _hz_all_results | rejectattr('ok') | list | length }} message(s): the report above says why."
+    quiet: true
