@@ -1395,6 +1395,44 @@ def patch_vm_match(hosts, hostvars=None, vms=None, snapshots=None, snapshot_name
     return out
 
 
+def patch_protected(host, hostvars=None, vm_name="", protected_groups=None, protected_vms=None, keep_vms=None,
+                    allow=False):
+    """Is a host to patch on the VMware protected lists, and may it be patched after its snapshot
+    (playbooks/patch_hosts.yml)? Protected: one of its groups is in protected_groups (vmware_protected_groups; aap and
+    aap_hosts are refused before this), or its name, short name, vmware_vm_name or VM in vCenter (vm_name) matches
+    protected_vms (vmware_protected_vms) or keep_vms (vm_snapshot_cleanup_exclude_vms) - any case, * and ?. allow
+    (patch_protected_with_snapshot): true = every protected host, a list of names (* and ?) = the ones it matches,
+    false = none. -> {'reason': '' (not protected) or why, 'allowed': true/false}."""
+    try:
+        hv = (hostvars or {})[host]
+    except (KeyError, TypeError):
+        hv = {}
+    hv = hv or {}
+    names = [str(host)]
+    for n in [str(host).split(".")[0], str(hv.get("vmware_vm_name") or "").strip(), str(vm_name or "").strip()]:
+        if n and n.lower() not in [x.lower() for x in names]:
+            names.append(n)
+    why = []
+    builtin = ["aap", "aap_hosts"]
+    grp = [g for g in name_list(protected_groups) if g not in builtin and g in (hv.get("group_names") or [])]
+    if grp:
+        why.append("in vmware_protected_groups (%s)" % ", ".join(grp))
+    for setting, pats in (("vmware_protected_vms", protected_vms), ("vm_snapshot_cleanup_exclude_vms", keep_vms)):
+        hit = [n for n in names if name_matches(n, pats)]
+        if hit:
+            pat = [p for p in name_list(pats) if any(fnmatch.fnmatchcase(n.lower(), p.lower()) for n in hit)]
+            why.append("%s matches %s (%s)" % (hit[0], setting, ", ".join(pat)))
+    if not why:
+        return {"reason": "", "allowed": False}
+    if isinstance(allow, bool):
+        ok = allow
+    elif isinstance(allow, str) and allow.strip().lower() in ("true", "yes", "on", "false", "no", "off", ""):
+        ok = allow.strip().lower() in ("true", "yes", "on")
+    else:
+        ok = any(name_matches(n, allow) for n in names)
+    return {"reason": "; ".join(why), "allowed": ok}
+
+
 def vm_snap_vm_key(x):
     """A snapshot's VM, unique across vCenters: 'vc01.example.mil/vm-42' (a moid repeats in every vCenter)."""
     x = x or {}
@@ -1926,7 +1964,7 @@ class FilterModule(object):
                 "vc_short": vc_short, "act_is_chat_reply": act_is_chat_reply, "vm_dc_label": vm_dc_label, "vm_vcenters_read": vm_vcenters_read, "vm_vcenter_report": vm_vcenter_report,
                 "vm_snapshot_split": vm_snapshot_split, "snapshot_name_words": snapshot_name_words, "vm_snapshot_plan": vm_snapshot_plan, "vm_pick_snapshot_choices": vm_pick_snapshot_choices, "vm_pick_vms": vm_pick_vms, "vm_pick_ids": vm_pick_ids,
                 "vm_pick_reasons": vm_pick_reasons, "vm_pick_parse": vm_pick_parse, "vm_pick_snapshot_plan": vm_pick_snapshot_plan,
-                "vm_pick_reboot_plan": vm_pick_reboot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "patch_vm_match": patch_vm_match, "cert_report_section": cert_report_section,
+                "vm_pick_reboot_plan": vm_pick_reboot_plan, "vm_snap_row": vm_snap_row, "vm_snap_vm_key": vm_snap_vm_key, "patch_vm_match": patch_vm_match, "patch_protected": patch_protected, "cert_report_section": cert_report_section,
                 "site_correlation_id": site_correlation_id,
                 "human_size": human_size, "name_matches": name_matches, "name_list": name_list,
                 "report_text": report_text, "report_cards_html": report_cards_html, "findings_report": findings_report,

@@ -968,6 +968,12 @@ packages never updated here). Then:
    the machine running the job, but only when the connection is `local` or the name is
    `localhost`; a normal SSH host that happens to be the controller is stopped by the group rule
    above, not by this one.
+6. Never patches a host on the **VMware protected lists** - the VMs the snapshot cleanup never
+   touches: one of its groups is in `vmware_protected_groups`, or its name, short name,
+   `vmware_vm_name` or VM in vCenter matches `vmware_protected_vms` or
+   `vm_snapshot_cleanup_exclude_vms` (`*` and `?` allowed, any case). Set those lists in `all.yml`
+   (not only in the snapshot cleanup template's Variables), so this job sees them too. To patch
+   them anyway, each one after its own snapshot: "Protected VMs" below.
 
 Run it as **Job type: Check** first: it lists what would be updated and changes nothing
 ([DRY_RUNS.md](DRY_RUNS.md)).
@@ -1007,6 +1013,20 @@ A snapshot that fails stops that host: it is **not** patched, and the rollout st
 batch. The AAP hosts and the other protected groups are never patched, so they get no snapshot
 either. A dry run (*Check*) finds the VMs and says which snapshots it would take, but takes none.
 The job result shows each host's `snapshot:` line (`took "patching" of VM web01`).
+
+**Protected VMs.** A host on the VMware protected lists (rule 6 above) is skipped - with
+`patch_snapshot: true` it shows as `PROTECTED - not patched (...)` in the list of VMs, and its VM
+stops nothing (no VM, two VMs, an old snapshot). To patch them **after a snapshot**:
+
+```yaml
+patch_snapshot: true
+patch_protected_with_snapshot: true            # every protected VM
+# patch_protected_with_snapshot: [DB*, app07]  # or only these (host or VM names, * and ?)
+```
+
+Such a host is patched only when its VM was found and its own snapshot was taken right before
+(`patch_snapshot_required: false` never lets a protected host through without one). The AAP hosts
+are never patched, whatever this says.
 
 **Delete the snapshots** once the patching is proven, typically a few days later. A snapshot
 left in place keeps growing and slows the VM. Use the snapshot cleanup with

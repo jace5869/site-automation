@@ -37,7 +37,8 @@ vm_pick_reboot_templates: ["VM - restart picked VMs (workflow)"]          # whos
 ## The AAP server is ALWAYS refused (hosts in the groups aap / aap_hosts, matched by VM name, guest
 ## host name and IP address), and so are the hosts of these groups and these VM names (* and ?
 ## allowed: DC*). List the AAP VM's name here when it differs from its host name, and vCenter's own
-## VM. The snapshot cleanup never deletes their snapshots either.
+## VM. The snapshot cleanup never deletes their snapshots either, and Patch hosts does not patch
+## them (docs/RUNBOOKS.md).
 # vmware_protected_groups: [aap, aap_hosts]
 
 ## e.g. [AAP01, VCSA01, DC*] (* and ? allowed)
@@ -51,7 +52,8 @@ vm_pick_reboot_templates: ["VM - restart picked VMs (workflow)"]          # whos
 # vm_snapshot_keep_regex: '(?i)keep|do.?not.?delete'
 
 ## - a snapshot of these VMs: names, * and ? allowed (e.g. [DC*, VCSA01, AAP01]). The VMs in
-## vmware_protected_vms and the AAP server are never cleaned up either.
+## vmware_protected_vms and the AAP server are never cleaned up either. Patch hosts does not patch
+## these VMs. (docs/RUNBOOKS.md, Patch hosts)
 # vm_snapshot_cleanup_exclude_vms: []
 
 ## - a snapshot of a VM in these vCenter datacenters: names, * and ? allowed, any case (e.g.

@@ -19,12 +19,32 @@
     name: vmware_vm
     tasks_from: patch_vms.yml
 
+# A host on the VMware protected lists that patch_protected_with_snapshot does not name is not patched: it stops
+# nothing here (no VM, two VMs, an old snapshot), and it gets no snapshot.
+- name: Patch | the protected VMs that are not patched
+  ansible.builtin.set_fact:
+    _patch_snap: >-
+      {%- set skip = {} -%}
+      {%- for h in _patch_snap_hosts -%}
+      {%-   set p = h | patch_protected(hostvars, _patch_snap.vms[h].name if h in _patch_snap.vms else '',
+                                        vmware_protected_groups | default([]), vmware_protected_vms | default([]),
+                                        vm_snapshot_cleanup_exclude_vms | default([]), patch_protected_with_snapshot) -%}
+      {%-   if p.reason and not p.allowed -%}{%- set _ = skip.update({h: p.reason}) -%}{%- endif -%}
+      {%- endfor -%}
+      {%- set keep = {} -%}
+      {%- for k in ['missing', 'twice', 'old'] -%}
+      {%-   set _ = keep.update({k: _patch_snap[k] | dict2items | rejectattr('key', 'in', skip) | items2dict}) -%}
+      {%- endfor -%}
+      {{ _patch_snap | combine(keep, {'protected': skip}) }}
+
 - name: Patch | the snapshot before patching, for each host
   ansible.builtin.debug:
     msg: >-
       {%- set out = [] -%}
       {%- for h in _patch_snap_hosts -%}
-      {%-   if h in _patch_snap.vms -%}
+      {%-   if h in _patch_snap.protected -%}
+      {%-     set _ = out.append(h ~ ': PROTECTED - not patched (' ~ _patch_snap.protected[h] ~ ')') -%}
+      {%-   elif h in _patch_snap.vms -%}
       {%-     set v = _patch_snap.vms[h] -%}
       {%-     set _ = out.append(h ~ ': VM ' ~ v.name ~ ' (by ' ~ v.how ~ (', ' ~ v.vcenter | vc_short if _patch_snap.multi else '') ~ ')'
                                ~ (' - its old snapshot "' ~ patch_snapshot_name ~ '" is deleted first' if h in _patch_snap.old and patch_snapshot_replace | bool else '')) -%}

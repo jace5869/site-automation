@@ -1119,6 +1119,7 @@ File: `roles/patch/defaults/main.yml`
 | `patch_snapshot_quiesce` | `false` | true = VMware Tools freezes the file systems first (slower; fails without Tools) |
 | `patch_snapshot_required` | `true` | false = a host without a VM in vCenter (a physical server) is patched without a snapshot, and the job says so |
 | `patch_snapshot_replace` | `false` | A VM that still has a snapshot named patch_snapshot_name (the last patching's, not deleted yet) stops the job before anything is patched, and the job names them. true = delete that old snapshot, then take the new one. |
+| `patch_protected_with_snapshot` | `false` | ---- Protected VMs ---- A host on the VMware protected lists is not patched: one of its groups is in vmware_protected_groups, or its name, short name, vmware_vm_name or VM in vCenter matches vmware_protected_vms or vm_snapshot_cleanup_exclude_vms (* and ? allowed, any case) - the VMs the snapshot cleanup never touches… (all of it: the role file) |
 
 ## pki_bundle
 
@@ -1720,7 +1721,7 @@ File: `roles/vmware_vm/defaults/main.yml`
 | `vm_rightsize_act_check_url` | `true` | first check that the AAP node can reach the model's URL |
 | `vm_snapshot_max_age_days` | `5` | Snapshots at least this many days old: listed apart by the report, deleted by the cleanup. |
 | `vm_snapshot_keep_regex` | `'(?i)keep\|do.?not.?delete'` | Never deleted by the cleanup (the report lists them, with the reason): - a snapshot whose name or description matches this |
-| `vm_snapshot_cleanup_exclude_vms` | `[]` | - a snapshot of these VMs: names, * and ? allowed (e.g. [DC*, VCSA01, AAP01]). The VMs in vmware_protected_vms and the AAP server are never cleaned up either. |
+| `vm_snapshot_cleanup_exclude_vms` | `[]` | - a snapshot of these VMs: names, * and ? allowed (e.g. [DC*, VCSA01, AAP01]). The VMs in vmware_protected_vms and the AAP server are never cleaned up either. Patch hosts does not patch these VMs. (docs/RUNBOOKS.md, Patch hosts) |
 | `vm_snapshot_cleanup_exclude_datacenters` | `[]` | - a snapshot of a VM in these vCenter datacenters: names, * and ? allowed, any case (e.g. [DRSITE]) |
 | `vm_snapshot_cleanup_exclude_clusters` | `[]` | - a snapshot of a VM running in these clusters: names, * and ? allowed, any case (e.g. [SQL*, MGMT*]). A VM on a host that is in no cluster is not matched. |
 | `vm_snapshot_cleanup_name_words` | `[]` | - with words here, a snapshot whose name contains none of them: only a name with one is deleted (any case; Patch also matches Patching and Patches - and dispatch). E.g. [Patching, Patches, Patch]: only the patching snapshots. [] = any name. Set it in all.yml, so the report lists the same. |

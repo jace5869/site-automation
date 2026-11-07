@@ -19,6 +19,42 @@
   ansible.builtin.meta: end_host
   when: group_names | intersect(_patch_no_patch + ['aap', 'aap_hosts']) | length > 0
 
+# The VMware protected lists (vmware_protected_groups, vmware_protected_vms, vm_snapshot_cleanup_exclude_vms): such a
+# host is patched only with patch_protected_with_snapshot naming it and its own snapshot taken first (patch_snapshot).
+- name: Patch | is it on the VMware protected lists
+  ansible.builtin.set_fact:
+    _patch_prot: >-
+      {{ inventory_hostname | patch_protected(hostvars,
+           (hostvars['localhost']._patch_snap.vms[inventory_hostname].name | default(''))
+             if hostvars['localhost']._patch_snap is defined else '',
+           vmware_protected_groups | default([]), vmware_protected_vms | default([]),
+           vm_snapshot_cleanup_exclude_vms | default([]), patch_protected_with_snapshot)
+         if inventory_hostname not in (hostvars['localhost']._patch_snap.protected | default({})) else
+         {'reason': hostvars['localhost']._patch_snap.protected[inventory_hostname], 'allowed': false} }}
+    _patch_prot_vm: >-
+      {{ patch_snapshot | bool and hostvars['localhost']._patch_snap is defined
+         and inventory_hostname in hostvars['localhost']._patch_snap.vms }}
+
+- name: Patch | say why a protected VM is skipped
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }} is protected ({{ _patch_prot.reason }}): not patched.
+      {{ ('patch_protected_with_snapshot does not name it.' if patch_snapshot | bool else
+          'To patch it after a snapshot of its VM: patch_snapshot: true and patch_protected_with_snapshot (true, or a list naming it).')
+         if not _patch_prot.allowed else
+         ('Its VM was not found in vCenter, and a protected host is patched only after its own snapshot.' if patch_snapshot | bool else
+          'To patch it after a snapshot of its VM: patch_snapshot: true (patch_protected_with_snapshot names it already).') }}
+  when: _patch_prot.reason | length > 0 and not (_patch_prot.allowed and _patch_prot_vm)
+
+- name: Patch | skip a protected VM (no patch_protected_with_snapshot for it, or no snapshot)
+  ansible.builtin.meta: end_host
+  when: _patch_prot.reason | length > 0 and not (_patch_prot.allowed and _patch_prot_vm)
+
+- name: Patch | a protected VM, patched after its snapshot (patch_protected_with_snapshot)
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }} is protected ({{ _patch_prot.reason }}): patched after a snapshot of its VM, as patch_protected_with_snapshot says."
+  when: _patch_prot.reason | length > 0
+
 - name: Patch | never patch the machine AAP is running this job from
   ansible.builtin.assert:
     that:

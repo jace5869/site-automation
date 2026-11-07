@@ -34,7 +34,8 @@
 ## The AAP server is ALWAYS refused (hosts in the groups aap / aap_hosts, matched by VM name, guest
 ## host name and IP address), and so are the hosts of these groups and these VM names (* and ?
 ## allowed: DC*). List the AAP VM's name here when it differs from its host name, and vCenter's own
-## VM. The snapshot cleanup never deletes their snapshots either.
+## VM. The snapshot cleanup never deletes their snapshots either, and Patch hosts does not patch
+## them (docs/RUNBOOKS.md).
 # vmware_protected_groups: [aap, aap_hosts]
 
 ## e.g. [AAP01, VCSA01, DC*] (* and ? allowed)

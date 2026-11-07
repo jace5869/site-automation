@@ -11,6 +11,8 @@
 # - Hosts in no_patch, and always the AAP hosts (aap, aap_hosts), are skipped: never patched, never
 #   rebooted by a job. Add more groups with patch_never_patch_groups / patch_never_reboot_groups.
 # - Refuses to patch the machine the job runs from.
+# - Hosts on the VMware protected lists (vmware_protected_groups, vmware_protected_vms, vm_snapshot_cleanup_exclude_vms)
+#   are skipped too; patch_protected_with_snapshot patches them, each right after its own snapshot.
 # - Check mode (a dry run) lists what would be updated and changes nothing: run it that way first.
 # - patch_snapshot: true = a VMware snapshot of each VM (named patching) right before it is patched; every host's
 #   VM is found first, before any host is patched. Attach a "VMware vCenter" credential too. docs/RUNBOOKS.md

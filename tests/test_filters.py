@@ -797,6 +797,41 @@ class PatchVmMatch(unittest.TestCase):
         self.assertEqual(f.patch_vm_match(["a"], None, None)["missing"].keys(), {"a"})
 
 
+
+class PatchProtected(unittest.TestCase):
+    HV = {"web01.example.mil": {"group_names": ["linux", "web"]},
+          "db01.example.mil": {"group_names": ["linux"], "vmware_vm_name": "SQL-DB01"},
+          "aap01.example.mil": {"group_names": ["aap"]}}
+
+    def p(self, host, vm="", groups=None, vms=None, keep=None, allow=False):
+        return f.patch_protected(host, self.HV, vm, groups or [], vms or [], keep or [], allow)
+
+    def test_not_protected(self):
+        self.assertEqual(self.p("web01.example.mil", "LNX-WEB01", ["aap", "aap_hosts"], ["DC*"], "SQL*"),
+                         {"reason": "", "allowed": False})
+
+    def test_by_group_name_vm_name_and_vmware_vm_name(self):
+        self.assertEqual(self.p("web01.example.mil", groups=["aap", "web"])["reason"], "in vmware_protected_groups (web)")
+        self.assertEqual(self.p("web01.example.mil", vms="WEB01")["reason"], "web01 matches vmware_protected_vms (WEB01)")
+        self.assertEqual(self.p("db01.example.mil", keep="SQL*, DC*")["reason"],
+                         "SQL-DB01 matches vm_snapshot_cleanup_exclude_vms (SQL*)")
+        r = self.p("web01.example.mil", "lnx-web01", vms=["LNX-*"], keep=["lnx-web01"])
+        self.assertEqual(r["reason"], "lnx-web01 matches vmware_protected_vms (LNX-*); "
+                                      "lnx-web01 matches vm_snapshot_cleanup_exclude_vms (lnx-web01)")
+
+    def test_aap_is_not_this_filters_business(self):
+        # aap / aap_hosts are refused before (never patched, whatever the switch says)
+        self.assertEqual(self.p("aap01.example.mil", groups=["aap"])["reason"], "")
+
+    def test_the_switch(self):
+        for allow, want in ((False, False), (True, True), ("true", True), ("false", False), ("", False),
+                            (["db01*"], True), ("SQL-*", True), (["web*"], False), ([], False)):
+            self.assertEqual(self.p("db01.example.mil", keep="SQL*", allow=allow), {
+                "reason": "SQL-DB01 matches vm_snapshot_cleanup_exclude_vms (SQL*)", "allowed": want}, allow)
+
+    def test_unknown_host(self):
+        self.assertEqual(f.patch_protected("x", None, "", [], ["x"], []), {"reason": "x matches vmware_protected_vms (x)", "allowed": False})
+
 class PickLists(unittest.TestCase):
     """The pick lists: survey choices that end with the ID token, read back from the survey's answer, and
     each pick found again live (plugins/filter/site_filters.py, vm_pick_*)."""

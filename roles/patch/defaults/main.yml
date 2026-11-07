@@ -51,3 +51,10 @@ patch_snapshot_required: true
 # A VM that still has a snapshot named patch_snapshot_name (the last patching's, not deleted yet) stops the job before
 # anything is patched, and the job names them. true = delete that old snapshot, then take the new one.
 patch_snapshot_replace: false
+# ---- Protected VMs ----
+# A host on the VMware protected lists is not patched: one of its groups is in vmware_protected_groups, or its name, short
+# name, vmware_vm_name or VM in vCenter matches vmware_protected_vms or vm_snapshot_cleanup_exclude_vms (* and ? allowed,
+# any case) - the VMs the snapshot cleanup never touches. Set those lists in all.yml, so this job sees them too.
+# To patch them anyway, each one only after its own snapshot (patch_snapshot: true; its VM must be found, whatever
+# patch_snapshot_required says): true = all of them, or a list of names (* and ? allowed) = only those. AAP never.
+patch_protected_with_snapshot: false

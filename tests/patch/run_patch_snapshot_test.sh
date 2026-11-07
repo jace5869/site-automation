@@ -5,7 +5,8 @@
 # a host without a VM, or matching two, stops the job before any host is patched; the snapshot "patching" (no memory, the
 # job and user in its description) taken in each batch right before that batch's update; the AAP host never; a dry run
 # takes none; an old "patching" stops the next run, patch_snapshot_replace replaces it; patch_snapshot_required false
-# patches a host without a VM; no vCenter credential; patch_snapshot false needs no vCenter.
+# patches a host without a VM; no vCenter credential; patch_snapshot false needs no vCenter; a host on the VMware
+# protected lists is not patched, unless patch_protected_with_snapshot names it (then after its own snapshot).
 #   bash tests/patch/run_patch_snapshot_test.sh
 # Needs: podman; registry.access.redhat.com/ubi9/ubi-init (pulled when missing) and its UBI repositories (internet);
 # a python with pyVmomi for the vcsim helpers (VMWARE_TEST_PYTHON); pyVmomi and requests in ansible-playbook's own
@@ -157,5 +158,33 @@ run "patch_snapshot_required false: a host without a VM is patched without one" 
 NOVC=1 run "patch_snapshot false (the default): no vCenter needed, no snapshot" ok -e target=web01.example.mil \
     -- 'none (patch_snapshot is false)' "$installs" '!VMware | read every VM'
 check "  ...no new snapshot" "$(ID=1 snaps DC0_H0_VM1)" "$after"
+
+# The VMware protected lists: a host whose name, vmware_vm_name or VM matches vmware_protected_vms or
+# vm_snapshot_cleanup_exclude_vms is not patched, unless patch_protected_with_snapshot names it - then after its snapshot.
+NOVC=1 run "protected (vmware_protected_vms, by vmware_vm_name), no snapshot: not patched" ok -e target=web02.example.mil \
+    -e '{"vmware_protected_vms": ["DC0_C0_RP0_VM0"]}' -e patch_protected_with_snapshot=true \
+    -- 'web02.example.mil is protected (dc0_c0_rp0_vm0 matches vmware_protected_vms (DC0_C0_RP0_VM0))' \
+       'To patch it after a snapshot of its VM' "!$installs"
+
+before="$(ID=1 snaps DC0_H0_VM1)"
+run "protected by its VM in vCenter (vm_snapshot_cleanup_exclude_vms): skipped, its old snapshot stops nothing" ok \
+    -e target=web01.example.mil -e patch_snapshot=true -e '{"vm_snapshot_cleanup_exclude_vms": "SQL*, DC0_H0_*"}' \
+    -- 'web01.example.mil: PROTECTED - not patched (DC0_H0_VM1 matches vm_snapshot_cleanup_exclude_vms (DC0_H0_*))' \
+       'patch_protected_with_snapshot does not name it' "!$installs" '!still has the snapshot'
+check "  ...no snapshot taken" "$(ID=1 snaps DC0_H0_VM1)" "$before"
+
+run "patch_protected_with_snapshot names it: patched right after its own snapshot" ok \
+    -e target=web01.example.mil:DC0_C0_RP0_VM1 -e patch_snapshot=true -e patch_snapshot_replace=true \
+    -e '{"vm_snapshot_cleanup_exclude_vms": ["DC0_*"], "patch_protected_with_snapshot": ["web01*"]}' \
+    -- 'web01.example.mil is protected (DC0_H0_VM1 matches vm_snapshot_cleanup_exclude_vms (DC0_*)): patched after a snapshot' \
+       'DC0_C0_RP0_VM1: PROTECTED - not patched' 'took \"patching\" of VM DC0_H0_VM1' "$installs" '!took \"patching\" of VM DC0_C0_RP0_VM1'
+after="$(ID=1 snaps DC0_H0_VM1)"
+check "  ...a new snapshot of the protected VM" "$(snaps DC0_H0_VM1) $([ "$before" != "$after" ] && echo new)" "baseline,patching new"
+
+run "protected, named by patch_protected_with_snapshot, but no VM: never patched (patch_snapshot_required false or not)" ok \
+    -e target=phys01.example.mil -e patch_snapshot=true -e patch_snapshot_required=false \
+    -e '{"vmware_protected_vms": "phys*", "patch_protected_with_snapshot": true}' \
+    -- 'phys01.example.mil is protected (phys01.example.mil matches vmware_protected_vms (phys*)): not patched' \
+       'Its VM was not found in vCenter' "!$installs" '!Patched without a snapshot'
 
 if [ "$fails" -eq 0 ]; then echo "all patch snapshot tests passed"; else echo "$fails patch snapshot test(s) FAILED"; exit 1; fi
