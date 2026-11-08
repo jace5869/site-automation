@@ -64,6 +64,7 @@ all:
         web02.example.mil: {ansible_host: ${hosts[2]}, $c, vmware_vm_name: dc0_c0_rp0_vm0}
         phys01.example.mil: {ansible_host: ${hosts[0]}, $c}
         dup: {ansible_host: ${hosts[1]}, $c}
+        down01.example.mil: {ansible_host: 127.0.0.1, ansible_port: 1, ansible_connection: ssh, ansible_python_interpreter: /usr/bin/python3}
 EOI
 good='target=web01.example.mil:DC0_C0_RP0_VM1:web02.example.mil:aap01.example.mil'
 
@@ -165,6 +166,18 @@ run "a host in no vCenter (the default): a physical server, patched without a sn
 NOVC=1 run "patch_snapshot false (the default): no vCenter needed, no snapshot" ok -e target=web01.example.mil \
     -- 'none (patch_snapshot is false)' "$installs" '!VMware | read every VM'
 check "  ...no new snapshot" "$(ID=1 snaps DC0_H0_VM1)" "$after"
+
+# A host that cannot be reached (down01: nothing listens on its port): left out, the others patched, the job green.
+NOVC=1 run "a host not reached: listed, left out, the others patched - the job not failed" ok \
+    -e target=web01.example.mil:down01.example.mil \
+    -- 'down01.example.mil: NOT REACHED' '1 host(s) not reached, not patched: down01.example.mil' "$installs"
+NOVC=1 run "patch_skip_unreachable false: a host not reached fails the job" fail \
+    -e target=web01.example.mil:down01.example.mil -e patch_skip_unreachable=false -- 'down01.example.mil'
+NOVC=1 run "no host reached at all: the job fails (the machine credential?)" fail -e target=down01.example.mil \
+    -- 'No host could be reached' "!$installs"
+run "a host not reached, with patch_snapshot: no VM looked for it, no snapshot" ok -e "$good:down01.example.mil" \
+    -e patch_snapshot=true -e patch_snapshot_replace=true -- 'down01.example.mil: NOT REACHED' '!down01.example.mil: NO VM' \
+    'took \"patching\" of VM DC0_H0_VM1'
 
 # The VMware protected lists: a host whose name, vmware_vm_name or VM matches vmware_protected_vms or
 # vm_snapshot_cleanup_exclude_vms is not patched, unless patch_protected_with_snapshot names it - then after its snapshot.

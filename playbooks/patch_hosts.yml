@@ -7,6 +7,8 @@
 #   [Health check: pre] -> [Approval] -> [THIS] -> [Health check: post] -> [ServiceNow tickets]
 #
 # - One host at a time (patch_serial), and the rollout STOPS at the first host that fails.
+# - A host that cannot be reached at the start is listed (NOT REACHED) and left out, and the job goes on with the
+#   others (patch_skip_unreachable; false = it fails and stops the rollout). A host lost later still fails it.
 # - Every service that was running before the update must be running after it.
 # - Hosts in no_patch, and always the AAP hosts (aap, aap_hosts), are skipped: never patched, never
 #   rebooted by a job. Add more groups with patch_never_patch_groups / patch_never_reboot_groups.
@@ -32,10 +34,40 @@
       vars:
         _target_pattern: "{{ target | default('patch_hosts') }}"
 
+- name: Patch hosts - which hosts answer (patch_skip_unreachable)
+  # once, before any host is patched: a host that cannot be reached (switched off, a firewall, ssh refused) is listed
+  # as NOT REACHED and left out of the run - not patched, no snapshot, the job not failed for it. The hosts never
+  # patched here (patch_never_patch_groups, AAP) are not contacted. No host reached at all fails the job (the machine
+  # credential?). patch_skip_unreachable: false = every host goes on, and one not reached fails and stops the rollout.
+  hosts: "{{ target | default('patch_hosts') }}"
+  gather_facts: false
+  tasks:
+    - name: Linux hosts only
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: Not contacted yet
+      ansible.builtin.set_fact:
+        site_host_unreached: ""
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+      when:
+        - patch_skip_unreachable | default(true) | bool
+        - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['aap', 'aap_hosts']) | length == 0
+
+    - name: The hosts that go on
+      ansible.builtin.group_by:
+        key: patch_reached
+      changed_when: false
+
 - name: Patch hosts - each host's VM, for the snapshot before patching (patch_snapshot)
   # once, before any host is patched: a host whose VM is not found stops the job here (on the AAP side: run_once,
   # delegated to localhost; a Limit of hosts needs no localhost)
-  hosts: "{{ target | default('patch_hosts') }}"
+  hosts: "{{ target | default('patch_hosts') }}:&patch_reached"
   gather_facts: false
   tasks:
     - name: Linux hosts only
@@ -58,7 +90,7 @@
       when: patch_snapshot | default(false) | bool
 
 - name: Patch hosts
-  hosts: "{{ target | default('patch_hosts') }}"
+  hosts: "{{ target | default('patch_hosts') }}:&patch_reached"
   become: true
   gather_facts: false
   serial: "{{ patch_serial | default(1) }}"
@@ -75,3 +107,20 @@
         tasks_from: settings_notice.yml
   roles:
     - role: patch
+
+- name: Patch hosts - not reached, so not patched
+  hosts: "{{ target | default('patch_hosts') }}"
+  gather_facts: false
+  tasks:
+    - name: Patch hosts | NOT REACHED - not patched (fix the network or firewall, then run again for these)
+      ansible.builtin.debug:
+        msg: >-
+          {{ _unreached | length }} host(s) not reached, not patched:
+          {% for h in _unreached %}{{ h }} ({{ hostvars[h].site_host_unreached }}){{ '; ' if not loop.last else '' }}{% endfor %}
+      vars:
+        _unreached: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('site_host_unreached', 'defined')
+             | rejectattr('site_host_unreached', 'equalto', '')
+             | map(attribute='inventory_hostname') | list }}
+      run_once: true
+      when: _unreached | length > 0

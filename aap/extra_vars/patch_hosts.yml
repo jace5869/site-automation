@@ -47,8 +47,16 @@
 ## BUILT IN, whatever you set above (roles/patch/vars/main.yml): the AAP hosts (groups aap and
 ## aap_hosts) are never patched and never rebooted by a job, and neither is the machine the job runs
 ## from (a local connection). A package script can restart services under the running job. Set the
-## two lists above only to ADD groups; you cannot remove AAP from the protection. free space needed
-## in /var before starting
+## two lists above only to ADD groups; you cannot remove AAP from the protection. A host that cannot
+## be reached when the job starts (switched off, a firewall, ssh or its login refused): true = it is
+## listed as NOT REACHED and left out - not patched, no snapshot - and the other hosts are patched;
+## the job is not failed for it, and its last lines list every host not reached. false = it fails,
+## and the rollout stops. No host reached at all always fails the job (the machine credential?), and
+## a host lost later (it went down halfway, did not come back from its reboot) always fails it and
+## stops the rollout.
+# patch_skip_unreachable: true
+
+## free space needed in /var before starting
 # patch_min_free_mb: 1024
 
 ## seconds to wait for services to come back after a reboot
@@ -122,6 +130,15 @@
 # automatic_restarts: false
 
 # ---- site_findings - usually in all.yml ----------------------------------------------------------
+## A host that cannot be reached (switched off, no network, ssh or WinRM refused, its login refused)
+## in the health checks, the certificate report and renewal, database health, the service watch and
+## troubleshoot: listed as NOT REACHED and left out, and the job is not failed for it. It still
+## counts as checked-for, so the ServiceNow step opens its "no result" ticket. When NO host is
+## reached (a wrong or expired machine credential looks like this) the job fails. true = a host not
+## reached fails the job, as before. Patching, fixes, deploys and the Windows connection test always
+## fail for it.
+# site_unreachable_fails: false
+
 ## ---- Linux or Windows (set by the playbook; do not set) -----------------------------------------
 ## Linux playbooks run the roles check_<name>, the Windows ones (win_*.yml) the roles
 ## win_check_<name>.

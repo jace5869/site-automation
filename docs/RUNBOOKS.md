@@ -30,8 +30,9 @@ troubleshoot, Linux and Windows. Two cases still fail the job:
 - **no host at all is reached**: that is what a wrong or expired machine credential looks like;
 - `site_unreachable_fails: true`: a host not reached fails the job, as before.
 
-Patching, the ACT and service fixes, the STIG Manager deploy and the Windows connection test always
-fail for a host they cannot reach: a workflow must not go on as if it had been patched or fixed.
+The ACT and service fixes, the STIG Manager deploy and the Windows connection test always fail for a
+host they cannot reach: a workflow must not go on as if it had been fixed. *Patch hosts* leaves a host
+it cannot reach **when it starts** out and patches the others (`patch_skip_unreachable`, below).
 A host lost later in a job (it went down halfway) still fails it.
 
 **All settings** of this job, with their defaults: [site_findings](VARIABLES_REFERENCE.md#site_findings).
@@ -953,22 +954,30 @@ packages never updated here). Then:
 1. **One host at a time** by default. For batches, set `patch_serial` in the template's Variables
    or the survey (`patch_serial: 10`; in `all.yml` it does nothing). The rollout **stops at the
    first host that fails**: with batches, the rest of that batch finishes and no later batch starts.
-2. Refuses with less than `patch_min_free_mb` free in `/var`.
-3. **No automatic restarts** unless `automatic_restarts: true` (the survey or the template's
+2. **A host that cannot be reached when the job starts** (switched off, a firewall, ssh or its login
+   refused) is listed as `NOT REACHED - <why>` and left out - not patched, no snapshot - and the
+   other hosts are patched; the job is not failed for it. Its last lines list them all:
+   `2 host(s) not reached, not patched: web07... (...); web09... (...)` - fix the network, then run
+   it again for those (Limit). No host reached at all fails the job (look at the machine
+   credential). A host lost **later** (it went down halfway, or did not come back from its reboot)
+   still fails and stops the rollout. `patch_skip_unreachable: false`: a host not reached fails the
+   job, as before 0.87.0.
+3. Refuses with less than `patch_min_free_mb` free in `/var`.
+4. **No automatic restarts** unless `automatic_restarts: true` (the survey or the template's
    Variables). Without it, a host that needs a reboot is listed ("reboot it by hand, or run again
    with automatic_restarts: true"). With it, the job reboots only when `needs-restarting -r` says
    so (`patch_reboot: when_needed`), and **never** hosts in `patch_never_reboot_groups`
    (`aap_hosts`). A host without `needs-restarting` (install `dnf-utils`), or where it fails, counts
    as needing a reboot after updates were installed - the job says so.
-4. After the update (and reboot), **every service that was running before must be running
+5. After the update (and reboot), **every service that was running before must be running
    again**. If one is not, the host fails and the rollout stops.
-5. Never patches hosts in `no_patch` (vendor appliances), `aap`, `aap_hosts`, `sat`, `netapp` or
+6. Never patches hosts in `no_patch` (vendor appliances), `aap`, `aap_hosts`, `sat`, `netapp` or
    `netapp_console_hosts`. The AAP host is **always** protected: even a list you write yourself
    (`patch_never_patch_groups`) cannot remove `aap` or `aap_hosts`. It also refuses a host that is
    the machine running the job, but only when the connection is `local` or the name is
    `localhost`; a normal SSH host that happens to be the controller is stopped by the group rule
    above, not by this one.
-6. Never patches a host on the **VMware protected lists** - the VMs the snapshot cleanup never
+7. Never patches a host on the **VMware protected lists** - the VMs the snapshot cleanup never
    touches: one of its groups is in `vmware_protected_groups`, or its name, short name,
    `vmware_vm_name` or VM in vCenter matches `vmware_protected_vms` or
    `vm_snapshot_cleanup_exclude_vms` (`*` and `?` allowed, any case). Set those lists in `all.yml`
@@ -1020,7 +1029,7 @@ batch. The AAP hosts and the other protected groups are never patched, so they g
 either. A dry run (*Check*) finds the VMs and says which snapshots it would take, but takes none.
 The job result shows each host's `snapshot:` line (`took "patching" of VM web01`).
 
-**Protected VMs.** A host on the VMware protected lists (rule 6 above) is skipped - with
+**Protected VMs.** A host on the VMware protected lists (rule 7 above) is skipped - with
 `patch_snapshot: true` it shows as `PROTECTED - not patched (...)` in the list of VMs, and its VM
 stops nothing (no VM, two VMs, an old snapshot). To patch them **after a snapshot**:
 

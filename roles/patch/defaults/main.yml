@@ -28,6 +28,12 @@ patch_never_patch_groups: [no_patch, aap, aap_hosts, sat, netapp, netapp_console
 # aap_hosts) are never patched and never rebooted by a job, and neither is the machine the job
 # runs from (a local connection). A package script can restart services under the running job.
 # Set the two lists above only to ADD groups; you cannot remove AAP from the protection.
+# A host that cannot be reached when the job starts (switched off, a firewall, ssh or its login refused): true = it is
+# listed as NOT REACHED and left out - not patched, no snapshot - and the other hosts are patched; the job is not
+# failed for it, and its last lines list every host not reached. false = it fails, and the rollout stops. No host
+# reached at all always fails the job (the machine credential?), and a host lost later (it went down halfway, did
+# not come back from its reboot) always fails it and stops the rollout.
+patch_skip_unreachable: true
 patch_min_free_mb: 1024                  # free space needed in /var before starting
 patch_service_wait: 120                  # seconds to wait for services to come back after a reboot
 # Services that come and go on their own and are not compared before/after (regular expression)
