@@ -1319,12 +1319,15 @@ File: `roles/servicenow_insights/defaults/main.yml`
 | `servicenow_insights_compare` | `true` | read the window before as well: the changes against it (the tiles, rank ▲▼) |
 | `servicenow_insights_groups` | `[]` | The assignment groups reported on, exactly as ServiceNow names them: empty = every group (the whole site). A list, or text with one name per line or separated by ; or ,. |
 | `servicenow_insights_team_pages` | `true` | Each team's own page (every section of the report for that team) on the report website, and the Teams side by side table on the site's page. The teams are the groups named above, else the groups with at least servicenow_insights_team_min tickets in the window, the busiest first, at most servicenow_insights_teams_max. |
-| `servicenow_insights_teams_max` | `20` | at most this many teams with their own page |
-| `servicenow_insights_team_min` | `25` | a group with at least this many tickets in the window is a team (no groups named) |
+| `servicenow_insights_teams_max` | `60` | at most this many teams with their own page |
+| `servicenow_insights_team_min` | `10` | a group with at least this many tickets in the window is a team (no groups named) |
+| `servicenow_insights_sla_targets` | `incident: {"1": 8, "2": 16, "3": 144, "4": 240, "5": 480} # P1 8 h, P2 16 h, P3 6 days, P…` | SLA TARGETS, in calendar hours from when a ticket was opened to when it was resolved (incidents) or closed (requested items): a ticket met its SLA when it was done within its target. By table, then by priority ("1" to "5", or "P1"; "*" = every other priority). Only tickets done in the window count. These are twice com… (all of it: the role file) |
+| `servicenow_insights_sla_items` | `{}` | A catalog item's own target in hours, beating its priority's: {"New account / onboarding": 48, "Software install": 120} |
 | `servicenow_insights_team_email_to` | `{}` | Also email a team's own report to these people (the team's page, the same look): {"Ops - Windows": [lead@yoursite.mil]}. |
 | `servicenow_insights_tables` | `[incident, sc_req_item, sc_task, change_request, problem]` | The tables read: incident, sc_req_item (requested items: the most requested services), sc_task (catalog tasks: the All-stars count their closures), change_request, problem. Take one out to leave its sections out. A table the account cannot read is said in the report. |
 | `servicenow_insights_max_records` | `20000` | at most this many records per table (the rest are said: shorten the window) |
 | `servicenow_insights_audit` | `true` | The assignment history of incidents passed around (sys_audit): the paths of Passed between groups. The account needs read on sys_audit; without it the counts are still there and the report says so. false: not read. |
+| `servicenow_insights_members` | `true` | The groups' members (sys_user_grmember): each team's leaderboard lists its members, and a ticket resolved by someone outside the team counts for the member it was assigned to. The account needs read on sys_user_grmember (itil has it on most instances); without it the leaderboard lists everyone the team's tickets were… (all of it: the role file) |
 | `servicenow_insights_top_issues` | `10` | WHAT THE REPORT SHOWS incident issues listed (the workbook has every one) |
 | `servicenow_insights_top_requests` | `10` | catalog items listed |
 | `servicenow_insights_old_days` | `30` | open longer than this: flagged (Over 30 days) |
@@ -1451,6 +1454,7 @@ File: `roles/site_email/defaults/main.yml`
 | `report_web_index` | `index.html` | every report's last runs, a tab per area ("" = none) |
 | `report_web_history` | `5` | the runs each report keeps: listed under its line of the index, the pages of older runs deleted |
 | `report_web_delete_old` | `true` | false = the older runs' pages stay in the folder (only the index forgets them) |
+| `report_web_index_prune` | `true` | A line of the index whose latest page is no longer there (its folder deleted by hand) is taken off the index by the next report that writes it. false = lines stay until a report writes them again. Not with report_web_host (that server's folder is not read from the AAP side): there, delete the line from index.json by h… (all of it: the role file) |
 | `report_web_tabs` | `- {tab: Certificates, match: ["*certificate*", "*trust store*", "PKI *"]} - {tab: VMware,…` | The index page's tabs: a report is on the first tab one of whose names its AAP template's name matches (any case, * = anything); else on the tab of its name up to " - " (Backup - nightly: Backup); else on Other. A tab with no report is not shown. Set it in all.yml, for every template alike: the index is one page. |
 | `report_web_names` | `{}` | your own {names}, e.g. {site: "{{ site_code }}"} for "{site}/{template}/..." |
 | `report_web_json` | `true` | the report's data as .json beside each page and index.json beside the index |

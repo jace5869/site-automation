@@ -14,7 +14,9 @@ description:
     the one before it (compare), and those still open - of the groups named, or every group.
   - Each record is kept with the fields the report uses (people and states as ServiceNow shows them, dates as UTC text).
   - With audit, reads sys_audit for the assignment group history of the incidents reassigned handoff_min times or more.
-  - A table (or sys_audit) the account cannot read is returned with its error; the others are still read.
+  - With members, reads sys_user_grmember for the members of every assignment group the records name (the teams'
+    leaderboards list the members; a ticket resolved by someone outside the team counts for the member it was assigned to).
+  - A table (or sys_audit, sys_user_grmember) the account cannot read is returned with its error; the others are still read.
 options:
   url: {description: The instance's address (SN_HOST)., type: str, required: true}
   username: {description: The API account., type: str, required: true}
@@ -32,6 +34,7 @@ options:
   max_records: {description: At most this many records per table., type: int, default: 20000}
   audit: {description: Read the assignment history (sys_audit) of the incidents passed around., type: bool, default: true}
   handoff_min: {description: The reassignments that make an incident passed around., type: int, default: 3}
+  members: {description: Read the groups' members (sys_user_grmember) for the leaderboards., type: bool, default: true}
   now: {description: "The clock (tests): YYYY-MM-DDTHH:MM:SS UTC.", type: str, default: ''}
 author: site automation
 '''
@@ -45,6 +48,8 @@ tables: {description: "[{table, read, kept, more, error}]", type: list}
 items: {description: "The records: table, number, sys_id, short_description, state, priority, people, group, dates, close notes ...", type: list}
 audit: {description: "{incident sys_id: [[when, old group, new group], ...]} (group names), oldest first.", type: dict}
 audit_error: {description: "Why sys_audit was not read ('' = read, or not needed).", type: str}
+members: {description: "{group name: [the members' names]} for every group the records name (sys_user_grmember).", type: dict}
+members_error: {description: "Why sys_user_grmember was not read ('' = read, or not asked).", type: str}
 url: {description: The instance's address., type: str}
 '''
 
@@ -323,6 +328,36 @@ def read_audit(api, ids, names, chunk=100):
     return out, ""
 
 
+def read_members(api, groups, chunk=50):
+    """The members of these groups (sys_user_grmember; groups: {sys_id: name}, or {name: name} when the ids are not
+    known) -> ({group name: [names]}, error). Read with display values: a member is the name the records show."""
+    out = dict((name, []) for name in groups.values())
+    by_id = dict(groups)
+    # by sys_id where it is known (group IN), by name where it is not (group.name IN)
+    parts = [("group", sorted(k for k in groups if k != groups[k])), ("group.name", sorted(k for k in groups if k == groups[k]))]
+    for field, keys in parts:
+        for i in range(0, len(keys), chunk):
+            part = keys[i:i + chunk]
+            try:
+                r = api.get("api/now/table/sys_user_grmember", {"sysparm_query": field + "IN" + ",".join(part), "sysparm_fields": "user,group",
+                                                                 "sysparm_display_value": "all", "sysparm_exclude_reference_link": "true",
+                                                                 "sysparm_limit": 10000})
+            except SnError as e:
+                return {}, str(e)
+            rows = r.get("result") if isinstance(r, dict) else None
+            if not isinstance(rows, list):
+                return {}, "GET api/now/table/sys_user_grmember: no result list in the answer"
+            for x in rows:
+                gv, gd = _vd(x, "group")
+                name = by_id.get(gv) or by_id.get(gd) or gd
+                user = " ".join(_vd(x, "user")[1].split())
+                if name in out and user and user not in out[name]:
+                    out[name].append(user)
+    for name in out:
+        out[name].sort()
+    return out, ""
+
+
 def sn_time(text):
     t = str(text or "").strip()
     if not t:
@@ -341,10 +376,10 @@ def keep(it, since, until):
     return d is None or d >= since
 
 
-def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_min=3):
+def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_min=3, members=True):
     since, until = sn_time(win["prev_since"]), sn_time(win["until"])
     res = {"ok": False, "error": "", "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
-           "lookup_note": "", "url": api.url}
+           "members": {}, "members_error": "", "lookup_note": "", "url": api.url}
     g, gerr = lookup_groups(api, groups)
     res["groups"] = g
     gids = [x["sys_id"] for x in g if x.get("sys_id")]
@@ -379,14 +414,16 @@ def read_all(api, groups, tables, win, max_records=20000, audit=True, handoff_mi
         res["error"] = ("no table could be read: " + "; ".join("%s - %s" % (x["table"], x["error"]) for x in res["tables"])) if res["tables"] \
             else "no table to read: set servicenow_insights_tables"
         return res
+    names = {}
+    for it in items:
+        if it.get("group"):
+            names[it.get("group_id") or it["group"]] = it["group"]
     if audit:
-        names = {}
-        for it in items:
-            if it.get("group_id") and it.get("group"):
-                names[it["group_id"]] = it["group"]
         ids = [it["sys_id"] for it in items if it["table"] == "incident" and it.get("reassignment_count", 0) >= int(handoff_min)]
         if ids:
             res["audit"], res["audit_error"] = read_audit(api, ids, names)
+    if members and names:
+        res["members"], res["members_error"] = read_members(api, names)
     return res
 
 
@@ -400,7 +437,7 @@ def main():
             months=dict(type="int", default=6), days=dict(type="float", default=0), until=dict(type="str", default=""),
             compare=dict(type="bool", default=True), time_zone=dict(type="str", default=""),
             max_records=dict(type="int", default=20000), audit=dict(type="bool", default=True), handoff_min=dict(type="int", default=3),
-            now=dict(type="str", default=""),
+            members=dict(type="bool", default=True), now=dict(type="str", default=""),
         ),
         supports_check_mode=True)
     p = module.params
@@ -419,10 +456,10 @@ def main():
         url = "https://" + url
     api = Api(url, p["username"], p["password"], p["validate_certs"], p["ca_path"], p["timeout"])
     try:
-        res = read_all(api, p["groups"], p["tables"], win, p["max_records"], p["audit"], p["handoff_min"])
+        res = read_all(api, p["groups"], p["tables"], win, p["max_records"], p["audit"], p["handoff_min"], p["members"])
     except SnError as e:
         res = {"ok": False, "error": str(e), "window": win, "groups": [], "tables": [], "items": [], "audit": {}, "audit_error": "",
-               "lookup_note": "", "url": url}
+               "members": {}, "members_error": "", "lookup_note": "", "url": url}
     module.exit_json(changed=False, **res)
 
 

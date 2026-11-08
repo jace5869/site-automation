@@ -240,6 +240,9 @@
     history: "{{ report_web_history | int }}"
     delete_old: "{{ report_web_delete_old | bool }}"
     tabs: "{{ report_web_tabs }}"
+    prune: "{{ report_web_index_prune | bool }}"
+    # a report's own lines to leave out of the index (the ticket insights: its team pages, listed there before 0.88.0)
+    drop: "{{ _web_index_drop | default([]) }}"
     data:
       report: "{{ _web_report }}"
       job: "{{ awx_job_id | default(tower_job_id | default('local')) }}"
@@ -319,13 +322,16 @@
       {%- if ansible_check_mode or (_web_copy | bool and not _web_out.packed | default('')) -%}
       {{ _web_out.msg }}
       {%- elif _web_out.url -%}
-      Report: {{ _web_out.url }}{{ (' - ' ~ _web_out.note) if _web_copy | bool else '' }}{{ _web_old }}
+      Report: {{ _web_out.url }}{{ (' - ' ~ _web_out.note) if _web_copy | bool else '' }}{{ _web_old }}{{ _web_unlisted }}
       {%- elif _web_win | bool -%}
-      Published: {{ _web_out.place }}{{ _web_old }}
+      Published: {{ _web_out.place }}{{ _web_old }}{{ _web_unlisted }}
       {%- else -%}
-      {{ _web_out.msg }}
+      {{ _web_out.msg }}{{ _web_unlisted }}
       {%- endif -%}
   vars:
+    _web_unlisted: >-
+      {{ (' (taken off the index: ' ~ (_web_out.unlisted | join(', ')) ~ ')')
+         if _web_out.unlisted | default([]) | length > 0 else '' }}
     _web_old: >-
       {{ (' (older runs deleted: ' ~ (_web_out.deleted | select('match', '.*[.]html$') | join(', ')) ~ ')')
          if _web_out.deleted | default([]) | select('match', '.*[.]html$') | list | length > 0 else '' }}

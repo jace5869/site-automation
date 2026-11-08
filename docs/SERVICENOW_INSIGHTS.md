@@ -21,23 +21,42 @@ and simpler: the tiles and the main tables, a link to the page, and an Excel wor
 | **Severity** | incidents per priority (count, median to resolve, SLA met), then every P1 and P2: when, what, the group, the change that caused it, its problem record |
 | **Top incident issues** | the issues ranked, with their rank against the window before (▲ ▼ New), their share and the cumulative share, a weekly trend, the median time to fix; open one for its **fix action** (with a Copy button), where the fix comes from - **From the tickets**, **Partly from tickets** or **Suggested by ACT** (not verified) -, the CIs it was seen on, example tickets (links into ServiceNow), its close-note quality, and the flags *KB candidate*, *Self-service candidate*, *Problem candidate*; a fix the close notes disagree on is said |
 | **Problem candidates** | 3 or more incidents of one issue on one CI within 30 days: the counts, the group, the problem record - or *No problem record*, or *Resolved, incidents continue* |
-| **Passed between groups** | incidents reassigned 3 or more times, the paths they took (a group the ticket came back to in amber), the most common issue on each path and the time it added |
+| **Passed between groups** | incidents reassigned 3 or more times, the paths they took (a group the ticket came back to in amber), the most common issue on each path and the time it added. The groups are shown by their short names - the name without the parts every group shares, such as a site prefix or a contract suffix; rest on one for the full name |
 | **Most requested services** | the catalog items ranked (▲ ▼ against the window before), the median time to fulfil, SLA met, the trend; and **requests opened as incidents** (an install, an account, access - things the catalog offers), when ACT ran |
 | **Changes** | success rate, failed or backed out, followed by an incident, emergency share; each failed or backed-out change with the incidents that followed it - **Caused by** (linked in ServiceNow) or **Same CI** (on its CI within 72 hours, not linked) - and the emergency changes by group |
-| **Close note quality** | Good / Thin / Bare per group, and the most common bare notes word for word |
-| **All-stars** | each team: the awards (Most resolved, Best close notes, Fastest to resolve, Fixed for good), the leaderboard (resolved, median to resolve, close notes, reopened or came back), the team's total, and who opens the most tickets |
+| **All-stars** | each team: the awards (Most resolved, Best close notes, Fastest to resolve, Fixed for good), the leaderboard - the team's members (ServiceNow's group membership), each with resolved, median to resolve, close notes, reopened or came back; a member with nothing resolved is listed too -, the team's total, and **who sends this team its tickets**: Opened by on the tickets assigned to it, with the group each opener works tickets in (or *end user*) |
+| **Close notes** (after the All-stars) | one line: how many close notes say what was done, are vague, or are a stock phrase or empty; open it for Good / Thin / Bare per group and the most common bare notes word for word |
 | **Knowledge article drafts** | for the issues with enough incidents and a fix the close notes agree on: symptoms, cause, resolution, with a Copy button - drafts to review, never written to ServiceNow |
 | **How this was made** | what was read, the window, what was replaced before GenAI, how ACT did |
 
 **Each team's page** has every section for that team alone (its incidents, requests, changes, problem candidates, the
 paths that went through it, its All-stars, its drafts). A team is a group named in `servicenow_insights_groups`, else
-each group with at least `servicenow_insights_team_min` tickets in the window (the busiest first, at most
-`servicenow_insights_teams_max`).
+each group with at least `servicenow_insights_team_min` (10) tickets in the window (the busiest first, at most
+`servicenow_insights_teams_max`, 60). A group you expect and do not see: it had fewer tickets than that in the window,
+or was past the busiest 60 - lower the one or raise the other, or name your groups (the report is then about them
+only). Each team's page is one file, written over each run (`<template>/<team>/latest.html`): the menu at the top and
+the *Teams side by side* table open it. The website's index has one line for the report, the site's page - not one per
+team (since 0.88.0; the team lines an older run put there are taken off it).
 
-**The leaderboard is fair on purpose.** People are compared only within their team. A ticket counts for the person who
-resolved it, not for everyone it passed through. A ticket with a bare close note counts half
-(`servicenow_insights_bare_weight`), so closing with "fixed" does not win. Awards need at least
-`servicenow_insights_star_min` tickets resolved. There is no "worst" list.
+**Someone in several groups** is counted in each group for the tickets they resolved there - each team's numbers are
+that team's tickets, as they were assigned and resolved.
+
+**The leaderboard is fair on purpose.** People are compared only within their team, and the team is its members in
+ServiceNow (`sys_user_grmember`, read with the tickets; `servicenow_insights_members`). A ticket counts for the member
+who resolved it, not for everyone it passed through; one resolved by someone outside the team (the service desk closing
+it on the user's word) counts for the member it was assigned to, and when it was assigned to nobody of the team it is in
+the team total, not ranked, and the page says who resolved those. A member with nothing resolved in the period is on the
+list with 0. A ticket with a bare close note counts half (`servicenow_insights_bare_weight`), so closing with "fixed"
+does not win. Awards need at least `servicenow_insights_star_min` tickets resolved. There is no "worst" list. When the
+account cannot read `sys_user_grmember`, each leaderboard lists everyone the team's tickets were assigned to or
+resolved by, and the report says so under *Not read*.
+
+**Without the page's script.** The page carries a little script (search, sorting, Copy, the tooltips on the charts, the
+team menu). A report web server whose Content-Security-Policy blocks inline scripts does not run it; since 0.88.0 the
+job writes the script beside the website's index as `site-insights.js` too, and every page loads it from there (as the
+other reports do with `site-report.js`: [WEB_REPORTS.md](WEB_REPORTS.md)). Where no script runs at all, the page still
+works: the teams are links in the side bar and under the header, resting on a chart shows its values, and the issues
+open and close.
 
 **Reopened, or came back.** When almost no incident in the window was ever reopened (fewer than
 `servicenow_insights_reopen_min_percent` %), the site does not reopen tickets - people open a new one. The report then
@@ -94,6 +113,7 @@ The **ServiceNow API** credential you already have works ([SERVICENOW_SETUP.md](
 | `incident`, `sc_req_item`, `sc_task`, `change_request`, `problem` | the tickets | `itil` |
 | `sys_user_group` | the groups named in `servicenow_insights_groups` | `itil` |
 | `sys_audit` | the assignment history of incidents passed between groups (the paths) | `itil` on most instances; else the report says so and shows the counts without the paths (or `servicenow_insights_audit: false`) |
+| `sys_user_grmember` | the members of the groups the tickets name (the teams' leaderboards) | `itil` on most instances; else the report says so and each leaderboard lists everyone the team's tickets were assigned to or resolved by (or `servicenow_insights_members: false`) |
 
 A table the account cannot read is listed under *Not read* and the rest is reported; take a table out of
 `servicenow_insights_tables` to leave its sections out.
@@ -118,6 +138,25 @@ A table the account cannot read is listed under *Not read* and the rest is repor
    or quarterly with `servicenow_insights_months: 3`.
 
 To email a team lead their team's page as well: `servicenow_insights_team_email_to: {"Ops - Windows": [lead@yoursite.mil]}`.
+
+## SLA targets
+
+*SLA met* (the tiles, each team, each priority, each catalog item) counts the incidents and requested items **done in
+the window** that were done within their target: resolved (incidents) or closed (requested items) within the target's
+hours from when they were opened - calendar hours, not business hours. The targets, by table and priority:
+
+```yaml
+servicenow_insights_sla_targets:                                    # the defaults - twice common ITIL starting points
+  incident: {"1": 8, "2": 16, "3": 144, "4": 240, "5": 480}         # P1 8 h, P2 16 h, P3 6 days, P4 10 days, P5 20 days
+  sc_req_item: {"1": 48, "2": 144, "3": 240, "4": 480, "5": 960}    # P1 2 days ... P5 40 days
+servicenow_insights_sla_items: {"New account / onboarding": 48}     # a catalog item's own target, beating its priority's
+```
+
+Put your management's numbers in `all.yml` (or the template's Variables) - **both tables**: the setting is replaced
+whole, so a table you leave out falls back to ServiceNow's own *Made SLA* flag (whatever SLA definitions your instance
+has; often every ticket "made" it). `"*"` is every priority not listed. `servicenow_insights_sla_targets: {}` uses
+ServiceNow's flag everywhere. The *Severity* table shows each priority's target beside its SLA met; the workbook has each
+incident's target, and the tile says which way it was counted.
 
 ## The window
 

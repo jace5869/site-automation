@@ -52,6 +52,8 @@ options:
   images: {description: "Pictures in the page: [{cid: name, path: file}].", type: list, elements: dict, default: []}
   data: {description: The report and its run (written as JSON beside the page)., type: dict, default: {}}
   entry: {description: "This template's line of the index: key (one per template), name, title, status, when, job.", type: dict, required: true}
+  prune: {description: "Leave out of the index the lines whose latest page is no longer there (deleted by hand). Not with windows_host (the server's folder is not read here).", type: bool, default: true}
+  drop: {description: "Leave out of the index the lines whose key matches one of these patterns (* and ?) - e.g. pages a report once listed there.", type: list, elements: str, default: []}
   json: {description: Write the JSON files., type: bool, default: true}
   history: {description: "The runs each template's line of the index keeps (report_web_history), at least 1.", type: int, default: 5}
   delete_old: {description: "Delete the pages of the runs older than those (report_web_delete_old).", type: bool, default: true}
@@ -81,6 +83,7 @@ not_deleted: {description: "Older runs' files that could not be deleted: [[file,
 place: {description: "Where the page is, without an address (/mnt/reports/..., web01:D:\\reports\\...).", type: str}
 script: {description: "With windows_host - the PowerShell script that writes them there (a temporary file; delete it).", type: str}
 index_text: {description: The index (index.json) as written - for the next page of the same run (the copy job)., type: str}
+unlisted: {description: "The keys of the index lines left out this run (drop, or their latest page gone).", type: list}
 newest: {description: This run is at least as new as the template's line in the index (its latest page was written)., type: bool}
 packed: {description: "With keep - the report packed for the copy job ('' = too big, see msg)", type: str}
 note: {description: "With keep - what was kept, its size (and the tables cut to fit).", type: str}
@@ -120,7 +123,9 @@ RUN_KEYS = ('page', 'status', 'when', 'job', 'title')
 WAIT = (0.5, 1, 2, 3, 4)                                 # a file in use: written again after these seconds
 SCRIPT = 'site-report.js'                                # the atlas pages' script, at the folder's top
 SCRIPT_TAG = '<script src="site-report.js"></script>'    # the atlas page's link to it, made relative to each page
-INLINE_RE = re.compile(r'<script id="site-report-js">\s*(.*?)\s*</script>', re.S)
+# a page's own script: <script id="site-report-js">...</script> (site-report.js), or with data-file="name.js" a file
+# of its own at the folder's top (the ticket insights' site-insights.js), linked by <script src="name.js"></script>
+INLINE_RE = re.compile(r'<script id="site-report-js"(?: data-file="([A-Za-z0-9_.-]+\.js)")?>\s*(.*?)\s*</script>', re.S)
 
 
 def again(what, retry):
@@ -184,6 +189,18 @@ class Target(object):
             raise Fail('reading %s/%s: HTTP %s %s%s' % (self.dest, rel, e.code, e.reason, _login_hint(e.code)))
         except URLError as e:
             raise Fail('reading %s/%s: %s' % (self.dest, rel, e.reason))
+
+    def exists(self, rel):
+        """Is the file there? An answer that is not a clear no (an error) counts as yes: a line is never dropped by mistake."""
+        if not self.http:
+            return os.path.exists(os.path.join(self.dest, *rel.split('/')))
+        try:
+            self._call('HEAD', rel).close()
+            return True
+        except HTTPError as e:
+            return e.code not in (404, 410)
+        except Exception:                               # noqa: BLE001
+            return True
 
     def write(self, rel, text, ctype):
         body = text.encode('utf-8')
@@ -350,6 +367,12 @@ class SmbTarget(object):
         except Exception as e:                          # noqa: BLE001
             raise Fail(self._why('reading ' + self._path(rel), e))
 
+    def exists(self, rel):
+        try:
+            return bool(self.smb.path.exists(self._path(rel), **self.kw))
+        except Exception:                               # noqa: BLE001 - not a clear no: the line stays
+            return True
+
     def write(self, rel, text, ctype):
         path = self._path(rel)
         folder = path.rsplit('\\', 1)[0]
@@ -403,6 +426,9 @@ class Staged(object):
             return None
         # Ansible may have read the text as JSON already
         return self.index_text if isinstance(self.index_text, str) else json.dumps(self.index_text)
+
+    def exists(self, rel):
+        return True                                      # the server's folder is not read here: every line stays
 
     def write(self, rel, text, ctype):
         # ASCII only: the script writes it in any PowerShell, in Constrained Language Mode too - every other
@@ -528,15 +554,22 @@ def web_page(page, images, theme='portal'):
 
 
 def page_script(html):
-    """The script an atlas page carries (roles/site_email/templates/site_report.js, inline in it); '' for a page without."""
+    """The script a page carries (an atlas page: roles/site_email/templates/site_report.js, inline in it; a page with a
+    script file of its own: data-file); '' for a page without."""
     m = INLINE_RE.search(html or '')
-    return (m.group(1) + '\n') if m else ''
+    return (m.group(2) + '\n') if m else ''
 
 
-def script_tag(rel, js):
-    """The <script> that loads site-report.js into the file rel (a page or the index), its version in the address - a
-    browser that keeps a copy takes the new one."""
-    return '<script src="%s?v=%s"></script>' % (_href(rel, SCRIPT), hashlib.sha1(js.encode('utf-8')).hexdigest()[:10])
+def page_script_name(html):
+    """The file the page's script is written as at the folder's top: site-report.js, or the page's own (data-file)."""
+    m = INLINE_RE.search(html or '')
+    return (m.group(1) or SCRIPT) if m else SCRIPT
+
+
+def script_tag(rel, js, name=SCRIPT):
+    """The <script> that loads the script file (site-report.js, or the page's own) into the file rel (a page or the
+    index), its version in the address - a browser that keeps a copy takes the new one."""
+    return '<script src="%s?v=%s"></script>' % (_href(rel, name), hashlib.sha1(js.encode('utf-8')).hexdigest()[:10])
 
 
 def _href(src, dst):
@@ -988,6 +1021,8 @@ def main():
             smb_auth=dict(type='str', default='negotiate'),
             smb_encrypt=dict(type='bool', default=False),
             smb_port=dict(type='int', default=445),
+            prune=dict(type='bool', default=True),
+            drop=dict(type='list', elements='str', default=[]),
         ),
         supports_check_mode=True,
     )
@@ -1023,6 +1058,8 @@ def main():
             target = Target(dest, p['ca_path'], p['timeout'])
         html = web_page(p['html'], p['images'], p['theme'])
         js = page_script(html)
+        js_name = page_script_name(html)                 # site-report.js, or the page's own file (data-file)
+        js_tag = '<script src="%s"></script>' % js_name
         written = []
         entry = dict(p['entry'], page=page, latest=latest)
         reports = _reports(target.read(_json_name(index))) if index else []
@@ -1041,23 +1078,38 @@ def main():
         for rel in (page, latest if is_newest else ''):
             if not rel:
                 continue
-            put(rel, html.replace(SCRIPT_TAG, script_tag(rel, js), 1) if js else html, 'text/html; charset=utf-8', rel == latest)
+            put(rel, html.replace(js_tag, script_tag(rel, js, js_name), 1) if js else html, 'text/html; charset=utf-8', rel == latest)
             if p['json']:
                 doc = dict(p['data'], page=page, url=urls['url'], latest=latest, index=index)
                 put(_json_name(rel), json.dumps(doc, indent=2, sort_keys=True, default=str) + '\n',
                     'application/json; charset=utf-8', rel == latest)
         if js:                                           # the pages' script, where they load it from - when it changed
             try:
-                there = target.read(SCRIPT)
+                there = target.read(js_name)
             except Fail:
                 there = None
             if there != js:
-                put(SCRIPT, js, 'text/javascript; charset=utf-8', True)
+                put(js_name, js, 'text/javascript; charset=utf-8', True)
+        index_js = js if js_name == SCRIPT else ''      # the index loads the atlas pages' script, never a page's own
+        if js and js_name != SCRIPT:
+            try:
+                index_js = target.read(SCRIPT) or ''
+            except Fail:
+                index_js = ''
         index_text = ''
-        deleted, not_deleted = [], []
+        deleted, not_deleted, gone = [], [], []
         if index:
             line, dropped = history(old, entry, p['history'])
-            reports = [r for r in reports if r.get('key') != entry.get('key')] + [line]
+            reports = [r for r in reports if r.get('key') != entry.get('key')]
+            # lines a report asks to leave out (drop: its key patterns), and lines whose latest page is gone (prune:
+            # its folder deleted by hand) - only the line goes, never a file
+            gone = [r for r in reports if any(fnmatch.fnmatchcase(str(r.get('key') or ''), d) for d in p['drop'])]
+            reports = [r for r in reports if r not in gone]
+            if p['prune']:
+                lost = [r for r in reports if r.get('latest') and not target.exists(r['latest'])]
+                gone += lost
+                reports = [r for r in reports if r not in lost]
+            reports.append(line)
             reports.sort(key=lambda r: (RANK.get(r.get('status'), 2), str(r.get('name') or r.get('key') or '').lower()))
             generated = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
             logo = None
@@ -1066,7 +1118,7 @@ def main():
                 logo = (uri, p['logo_size'][0], p['logo_size'][1]) if uri.startswith('data:') else None
             index_text = json.dumps({'generated': generated, 'reports': reports}, indent=2, sort_keys=True, default=str) + '\n'
             put(_json_name(index), index_text, 'application/json; charset=utf-8')
-            put(index, index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], js),
+            put(index, index_html(reports, index, p['header_text'], logo, generated, p['tabs'], p['theme'], index_js),
                 'text/html; charset=utf-8', True)
             # the pages of the runs that fell off this template's line - after the index, which no longer lists them
             kept = set([index, _json_name(index)])
@@ -1099,10 +1151,12 @@ def main():
     if win:
         fd, script = tempfile.mkstemp(prefix='site_report_web_', suffix='.ps1')
         with os.fdopen(fd, 'wb') as f:
-            f.write(windows_script(dest, target.files, target.removed, [latest, _json_name(latest) if latest else '', index, SCRIPT]).encode('utf-8-sig'))   # PowerShell 5.1 reads it as UTF-8
+            f.write(windows_script(dest, target.files, target.removed, [latest, _json_name(latest) if latest else '', index, SCRIPT, js_name]).encode('utf-8-sig'))   # PowerShell 5.1 reads it as UTF-8
         module.exit_json(changed=False, written=written, script=script, place=_place(where, page, bs), index_text=index_text,
+                         unlisted=[r.get('key') for r in gone],
                          newest=is_newest, deleted=deleted, not_deleted=not_deleted, not_written=busy, msg='Made, for %s: %s' % (win, ', '.join(written)), **urls)
     module.exit_json(changed=True, written=written, place=_place(where, page, bs), index_text=index_text, newest=is_newest,
+                     unlisted=[r.get('key') for r in gone],
                      deleted=deleted, not_deleted=not_deleted, not_written=busy, msg='Published: %s%s' % (
                          urls['url'] or _place(where, page, bs),
                          ' (older runs deleted: %s)' % ', '.join(d for d in deleted if d.endswith('.html')) if deleted else ''), **urls)

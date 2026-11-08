@@ -79,7 +79,16 @@ check() {
 
 mock
 # ---- without ACT: the site's page and the teams' ----------------------------------------------------------------
-mkdir -p "$work/site"
+mkdir -p "$work/site/kept"
+# the index before: a team line an older run put there (dropped), a report whose folder was deleted by hand (pruned), one
+# that is still there (kept)
+echo '<html>kept</html>' > "$work/site/kept/latest.html"
+cat > "$work/site/index.json" <<'EOJ'
+{"generated": "2026-10-01 05:00 UTC", "reports": [
+ {"key": "servicenow-ticket-insights/ops-windows/latest.html", "latest": "servicenow-ticket-insights/ops-windows/latest.html", "name": "ServiceNow - ticket insights", "status": "warning", "when": "2026-10-01 05:00 UTC"},
+ {"key": "gone/latest.html", "latest": "gone/latest.html", "name": "Gone - report", "status": "ok", "when": "2026-10-01 05:00 UTC"},
+ {"key": "kept/latest.html", "latest": "kept/latest.html", "name": "Kept - report", "status": "ok", "when": "2026-10-01 05:00 UTC"}]}
+EOJ
 run "six months against the six before, without ACT: by category, the most common close notes, every team its page" ok \
     "{$NOW, $NOACT, \"report_web_dest\": \"$work/site\"}" \
     'Ticket insights for All assignment groups:' 'Window: 2026-05-01 to 2026-10-31, compared with 2025-11-01 to 2026-04-30 (UTC)' \
@@ -90,14 +99,34 @@ check "the site's page: every section, links to the teams, ticket links into Ser
     'ServiceNow ticket insights' 'id="teams"' 'id="keepingup"' 'id="severity"' 'id="issues"' 'id="problems"' 'id="handoffs"' \
     'id="requests"' 'id="changes"' 'id="notes"' 'id="allstars"' 'id="kb"' 'id="method"' 'href="ops-windows/latest.html"' \
     "http://127.0.0.1:$port/incident.do?sysparm_query=number=INC" 'grouped by their category' 'From the numbers' \
-    'Reopen not used here' 'Came back' 'data-tab="p1"' 'No drafts: ACT (GenAI) writes them' '!cid:' '!<!--site-report-logo-->'
+    'Reopen not used here' 'Came back' 'SLA target' 'your targets' 'data-tab="p1"' 'No drafts: ACT (GenAI) writes them' '!cid:' '!<!--site-report-logo-->'
 check "a team's page: that team, linked back to the site's" "$top/ops-windows/latest.html" \
     'Ops - Windows ·' '!id="teams"' 'href="../latest.html"' 'All-stars' 'Most resolved' 2>/dev/null || \
 check "a team's page: that team, linked back to the site's" "$top/ops-windows/latest.html" 'href="../latest.html"' 'Most resolved' '!id="teams"'
+# 0.88.0: the page's script as a file beside the index (a web server that blocks inline scripts runs it), the teams as plain links,
+# the leaderboard = the group's members (a quiet member on it, the desk's closer not), who sends the team its tickets, short group names
+check "the script loaded from site-insights.js, relative to each page; the teams as links without it" "$top/ops-windows/latest.html" \
+    '<script src="../../site-insights.js?v=' 'data-file="site-insights.js"' '<nav class="teamnav"' '<a class="team" href="../ops-linux/latest.html">Ops - Linux</a>' \
+    'Riley Chen' '!Dana Whitfield</td><td><b>' 'Who sends this team its tickets' "members, from ServiceNow's group membership" \
+    '<span class="hop" title="Ops - Service Desk">Service Desk</span>' '<title>Week of '
+[ -s "$work/site/site-insights.js" ] && grep -q 'window.siteInsights' "$work/site/site-insights.js" && ! grep -q 'site-insights.js' "$work/site/index.html" \
+    && echo "ok   -   ... site-insights.js at the top of the website, the index does not load it" \
+    || { echo "FAIL - site-insights.js not written at the top (or the index loads it)"; fails=$((fails + 1)); }
 n=$(find "$top" -name latest.html | wc -l)
 [ "$n" = 6 ] && echo "ok   -   ... six latest pages (the site and five teams)" || { echo "FAIL - $n latest pages"; fails=$((fails + 1)); }
 grep -q 'servicenow-ticket-insights/latest.html' "$work/site/index.json" && echo "ok   -   ... on the website's index" \
     || { echo "FAIL - not on the index"; fails=$((fails + 1)); }
+check "the page loads its script from the website (a CSP that blocks inline script runs it); hover text without it" "$top/latest.html" \
+    'src="../site-insights.js?v=' 'id="site-report-js" data-file="site-insights.js"' '<title>Week of' 'Busiest week: week of'
+check "  ... a team's page too" "$top/ops-windows/latest.html" 'src="../../site-insights.js?v='
+[ -s "$work/site/site-insights.js" ] && grep -q 'siteInsights' "$work/site/site-insights.js" && ! LC_ALL=C grep -qP '[^\x00-\x7f]' "$work/site/site-insights.js" \
+    && echo "ok   -   ... site-insights.js beside the index (ASCII)" || { echo "FAIL - site-insights.js"; fails=$((fails + 1)); }
+keys=$("$py" -c "import json,sys; print(' '.join(sorted(r['key'] for r in json.load(open(sys.argv[1]))['reports'])))" "$work/site/index.json")
+[ "$keys" = "kept/latest.html servicenow-ticket-insights/latest.html" ] \
+    && echo "ok   -   ... one line on the index (no team lines; the old team line and the deleted report's line taken off)" \
+    || { echo "FAIL - the index has: $keys"; fails=$((fails + 1)); }
+grep -qF 'taken off the index: ' "$work/out.txt" && echo "ok   -   ... the job says what it took off" \
+    || { echo "FAIL - the job does not say what it took off the index"; fails=$((fails + 1)); }
 
 # ---- with ACT (a scripted model) ---------------------------------------------------------------------------------
 : > "$work/model.log"
@@ -131,9 +160,10 @@ run "a group that is not there: said, the job fails" fail "{$NOW, $NOACT, \"serv
     'none of the assignment groups is in ServiceNow: Linux Ops'
 run "  ... servicenow_insights_fail false: a report only" ok "{$NOW, $NOACT, \"servicenow_insights_groups\": [\"Linux Ops\"], \"servicenow_insights_fail\": false}" \
     'none of the assignment groups is in ServiceNow: Linux Ops'
-mock SNMOCK_NO_TABLES=sys_audit,problem
-run "sys_audit and problem unreadable: said under Not read, the rest reported, green" ok "{$NOW, $NOACT}" \
-    'sys_audit (the hand-off paths): GET api/now/table/sys_audit: HTTP 403' 'problem: GET api/now/table/problem: HTTP 403' 'Top incident issues'
+mock SNMOCK_NO_TABLES=sys_audit,problem,sys_user_grmember
+run "sys_audit, problem and sys_user_grmember unreadable: said under Not read, the rest reported, green" ok "{$NOW, $NOACT}" \
+    'sys_audit (the hand-off paths): GET api/now/table/sys_audit: HTTP 403' 'problem: GET api/now/table/problem: HTTP 403' 'Top incident issues' \
+    "sys_user_grmember (the teams' members): GET api/now/table/sys_user_grmember: HTTP 403" 'each leaderboard lists everyone the team'
 mock
 CHECK=1 run "Check: read and printed, nothing written" ok "{$NOW, $NOACT, \"report_web_dest\": \"$work/site3\"}" 'Ticket insights for All assignment groups'
 [ ! -e "$work/site3" ] && echo "ok   -   ... nothing written in Check" || { echo "FAIL - Check wrote $work/site3"; fails=$((fails + 1)); }

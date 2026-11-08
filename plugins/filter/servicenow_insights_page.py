@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 """Ticket insights: the web page (roles/servicenow_insights, docs/SERVICENOW_INSIGHTS.md) - one scope of the model
 (servicenow_insights_filters.py) as a page that stands alone: every section drawn here, the charts as SVG, no outside
-file, font or script. A little script of its own adds search, sorting, copy buttons, tabs, tooltips and the team menu;
-without it the page still reads whole (the sections open and close, every team's All-stars shown one under the other)."""
+font or style. A little script of its own adds search, sorting, copy buttons, tabs, tooltips and the team menu; the page
+carries it, and on the report website it is written beside the index as site-insights.js too (site_report_web, the
+same way as the atlas pages' site-report.js) and loaded from there - a web server whose Content-Security-Policy allows
+no inline script runs that one. Without any script the page still reads whole: the teams are links in the side bar
+and under the header, the charts' values show as the browser's own tooltips, the sections open and close, every team's
+All-stars shown one under the other."""
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
 import html
-import json
 import math
 import re
 
@@ -54,7 +57,7 @@ CSS = r"""/* Layout: sticky report bar with the group filter; section index on t
 html,body{margin:0}
 body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:14px;line-height:1.5}
 .gut{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
-.wrap{max-width:1320px;margin:0 auto}
+.wrap{max-width:1760px;margin:0 auto}
 .num,td.n,th.n{font-variant-numeric:tabular-nums}
 .mono{font-family:var(--mono);font-size:12.5px}
 a{color:var(--accent)}
@@ -266,10 +269,29 @@ html.js-on .tabs~.panel .ptitle{display:none}
 html:not(.js-on) .js{display:none!important}
 .foot{color:var(--muted);font-size:12px;padding-block:0 30px}
 .verdict .chip{vertical-align:1px}
-@media print{.bar{position:static}.toc,.tools{display:none}.layout{grid-template-columns:1fr}section.card{box-shadow:none;break-inside:avoid-page}}"""
+/* the teams without the script: links in the side bar (wide screens) and a row of chips under the header (narrow) */
+.teamnav{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding-block:10px 0;font-size:12.5px}
+.teamnav .lbl{color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:1px;font-size:11px;margin-right:4px}
+.teamnav a{text-decoration:none;color:var(--fg-2);border:1px solid var(--line);border-radius:999px;padding:3px 10px;background:var(--surface)}
+.teamnav a.on{background:var(--accent-soft);color:var(--accent);border-color:var(--accent);font-weight:700}
+@media (min-width:1100px){.teamnav{display:none}}
+.toc a.team{font-size:12.5px}
+/* the rows that open: say so */
+.hint{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--accent);border:1px solid var(--accent);border-radius:999px;padding:2px 8px;white-space:nowrap}
+details[open]>summary .hint .caret{transform:rotate(90deg)}
+.hop[title]{cursor:help}
+details.notes>summary{cursor:pointer;color:var(--fg-2);font-weight:600;font-size:13px;list-style:none}
+details.notes>summary::-webkit-details-marker{display:none}
+details.notes>summary .caret{margin-right:6px}
+details.notes[open]>summary{margin-bottom:12px}
+@media print{.bar{position:static}.toc,.tools,.teamnav{display:none}.layout{grid-template-columns:1fr}section.card{box-shadow:none;break-inside:avoid-page}}"""
 
+SCRIPT_FILE = "site-insights.js"           # written beside the website's index by site_report_web; the page loads it from there
 SCRIPT = r"""(function(){"use strict";
+if(window.siteInsights)return;window.siteInsights=1;   /* the page's copy and site-insights.js: whichever runs first */
+function init(){
 var D=document;D.documentElement.classList.add("js-on");
+D.querySelectorAll("[data-t]>title").forEach(function(t){t.remove()});
 var tip=D.getElementById("tip");
 function showTip(ev,h){tip.innerHTML=h;tip.hidden=false;var x=ev.clientX+14,y=ev.clientY+14,w=tip.offsetWidth,hh=tip.offsetHeight;if(x+w>innerWidth-8)x=ev.clientX-w-14;if(y+hh>innerHeight-8)y=ev.clientY-hh-14;tip.style.left=x+"px";tip.style.top=y+"px"}
 D.querySelectorAll("[data-t]").forEach(function(r){r.addEventListener("mousemove",function(ev){showTip(ev,r.getAttribute("data-t"))});r.addEventListener("mouseleave",function(){tip.hidden=true})});
@@ -282,7 +304,7 @@ D.querySelectorAll("[data-copy]").forEach(function(b){b.addEventListener("click"
  function fb(){var t=D.createElement("textarea");t.value=text;D.body.appendChild(t);t.select();try{D.execCommand("copy");ok()}catch(e){}t.remove()}
  try{navigator.clipboard.writeText(text).then(ok,fb)}catch(e){fb()}})});
 D.querySelectorAll("th[data-sort]").forEach(function(th){th.style.cursor="pointer";th.addEventListener("click",function(){var tb=th.closest("table").tBodies[0],i=Array.prototype.indexOf.call(th.parentNode.children,th),dir=th.getAttribute("data-dir")==="desc"?"asc":"desc";
- th.parentNode.querySelectorAll("th").forEach(function(h){h.removeAttribute("data-dir");var a=h.querySelector(".ar");if(a)a.remove()});th.setAttribute("data-dir",dir);th.insertAdjacentHTML("beforeend",' <span class="ar">'+(dir==="asc"?"▲":"▼")+"</span>");
+ th.parentNode.querySelectorAll("th").forEach(function(h){h.removeAttribute("data-dir");var a=h.querySelector(".ar");if(a)a.remove()});th.setAttribute("data-dir",dir);th.insertAdjacentHTML("beforeend",' <span class="ar">'+(dir==="asc"?"\u25b2":"\u25bc")+"</span>");
  var rows=Array.prototype.slice.call(tb.rows);function val(r){var c=r.cells[i];if(!c)return"";var v=c.getAttribute("data-v");if(v===null)v=c.textContent.trim();var f=parseFloat(String(v).replace(/,/g,""));return isNaN(f)?String(v).toLowerCase():f}
  rows.sort(function(a,b){var x=val(a),y=val(b);var r=(typeof x==="number"&&typeof y==="number")?x-y:String(x).localeCompare(String(y));return dir==="asc"?r:-r});rows.forEach(function(r){tb.appendChild(r)})})});
 D.querySelectorAll(".tab").forEach(function(b){b.addEventListener("click",function(){var id=b.getAttribute("data-tab");D.querySelectorAll(".tab").forEach(function(x){x.setAttribute("aria-selected",x===b?"true":"false")});
@@ -291,6 +313,8 @@ var sel=D.getElementById("grp");if(sel)sel.addEventListener("change",function(){
 var links=[].slice.call(D.querySelectorAll(".toc a[href^='#']"));
 if("IntersectionObserver" in window){var io=new IntersectionObserver(function(es){es.forEach(function(en){if(en.isIntersecting)links.forEach(function(a){a.classList.toggle("on",a.getAttribute("href")==="#"+en.target.id)})})},{rootMargin:"-30% 0px -60% 0px"});D.querySelectorAll("main section").forEach(function(s){io.observe(s)})}
 window.addEventListener("beforeprint",function(){D.querySelectorAll("main details").forEach(function(d){d.open=true})});
+}
+if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",init);else init();
 })();"""
 
 
@@ -344,6 +368,13 @@ def qbar(q, width=None):
     return ('<span class="qbar"%s title="Good %d%% · Thin %d%% · Bare %d%%"><span class="qg" style="width:%d%%"></span>'
             '<span class="qt" style="width:%d%%"></span><span class="qb" style="width:%d%%"></span></span>') % (
         (' style="width:%s"' % width) if width else "", q[0], q[1], q[2], q[0], q[1], q[2])
+
+
+def tip(h):
+    """One hit area's tooltip, both ways: data-t for the page's script, and a <title> the browser shows by itself where
+    no script runs. h is the tooltip as HTML (its text escaped already; <br> between the lines)."""
+    plain = re.sub(r"<[^>]+>", "", h.replace("<br>", " · "))
+    return ' data-t="%s"' % e(h), "<title>%s</title>" % plain
 
 
 def spark(vals, color="var(--s1)", w=90, h=26):
@@ -403,7 +434,8 @@ def line_chart(series, colors, labels, weeks, label, zoom=False, annot=None):
     every = max(1, int(math.ceil(len(weeks) / 7.0)))
     for i, wk in enumerate(weeks):
         if i % every == 0:
-            out.append('<text x="%.1f" y="%d" text-anchor="middle">%s</text>' % (x(i), H - 8, e(short_date(wk))))
+            out.append('<text x="%.1f" y="%d" text-anchor="%s">%s</text>' % (
+                x(i), H - 8, "end" if x(i) > W - R - 24 else "middle", e(short_date(wk))))
     for k, s in enumerate(series):
         if not s:
             continue
@@ -414,12 +446,17 @@ def line_chart(series, colors, labels, weeks, label, zoom=False, annot=None):
         out.append('<path d="%s" fill="none" stroke="%s" stroke-width="2" stroke-linejoin="round"/>' % (p, colors[k]))
     if annot:
         i, v, t = annot
-        out.append('<circle cx="%.1f" cy="%.1f" r="4.5" fill="%s" stroke="var(--surface)" stroke-width="2"/><text x="%.1f" y="%.1f" class="lbl">%s</text>' % (
-            x(i), y(v), colors[0], x(i) + (8 if i < len(weeks) * .75 else -8), y(v) - 7, e(t)))
+        right = i < len(weeks) * .75
+        out.append('<line class="grid" x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f" stroke-dasharray="3 3"/>' % (x(i), x(i), y(v), y(lo)))
+        out.append('<circle cx="%.1f" cy="%.1f" r="4.5" fill="%s" stroke="var(--surface)" stroke-width="2"/>'
+                   '<text x="%.1f" y="%.1f" class="lbl" text-anchor="%s">%s: week of %s (%s opened)</text>' % (
+                       x(i), y(v), colors[0], x(i) + (8 if right else -8), max(T + 10, y(v) - 7), "start" if right else "end",
+                       e(t), e(short_date(weeks[i])), n(v)))
     cw = (W - L - R) / float(nw)
     for i, wk in enumerate(weeks):
-        tip = "Week of %s<br>" % e(short_date(wk)) + "<br>".join("%s <b>%s</b>" % (e(labels[k]), n(s[i])) for k, s in enumerate(series) if i < len(s))
-        out.append('<rect class="hit" x="%.1f" y="0" width="%.1f" height="%d" fill="transparent" data-t="%s"/>' % (max(L, x(i) - cw / 2), cw, H, e(tip)))
+        t = "Week of %s<br>" % e(short_date(wk)) + "<br>".join("%s <b>%s</b>" % (e(labels[k]), n(s[i])) for k, s in enumerate(series) if i < len(s))
+        attr, title = tip(t)
+        out.append('<rect class="hit" x="%.1f" y="0" width="%.1f" height="%d" fill="transparent"%s>%s</rect>' % (max(L, x(i) - cw / 2), cw, H, attr, title))
     out.append("</svg>")
     return "".join(out)
 
@@ -442,8 +479,9 @@ def hbars(rows, label, W=640, lw=120, color="var(--s1)", fmt=None, colors=None, 
         y = i * rh + 4
         c = colors[i] if colors else color
         op = ' fill-opacity=".3"' if dim and dim[i] else ""
-        out.append('<text x="%d" y="%d" text-anchor="end" class="lbl">%s</text>' % (lw - 8, y + 15, e(r[0][:28] + ("…" if len(r[0]) > 28 else ""))))
-        out.append('<rect x="%d" y="%d" width="%.1f" height="16" rx="4" fill="%s"%s data-t="%s"/>' % (lw, y + 4, w, c, op, e(r[2])))
+        attr, title = tip(r[2])
+        out.append('<text x="%d" y="%d" text-anchor="end" class="lbl">%s%s</text>' % (lw - 8, y + 15, title, e(r[0][:28] + ("…" if len(r[0]) > 28 else ""))))
+        out.append('<rect x="%d" y="%d" width="%.1f" height="16" rx="4" fill="%s"%s%s>%s</rect>' % (lw, y + 4, w, c, op, attr, title))
         out.append('<text x="%.1f" y="%d" class="val">%s</text>' % (lw + w + 6, y + 16, e(fmt(r[1]))))
     out.append("</svg>")
     return "".join(out)
@@ -463,9 +501,9 @@ def heatmap(heat):
         out.append('<text x="%d" y="%d" text-anchor="end">%s</text>' % (L - 6, 6 + d * ch + ch // 2 + 4, DAYS[d]))
         for i, h in enumerate(hrs):
             v = heat[d][h]
-            out.append('<rect x="%.1f" y="%d" width="%.1f" height="%d" rx="3" fill="var(--heat)" fill-opacity="%.2f" data-t="%s"/>' % (
-                L + i * cw + 1, 6 + d * ch + 1, max(1.0, cw - 2), ch - 2, 0.06 + 0.94 * v / mx,
-                e("%s %02d:00–%02d:00<br><b>%s</b> incidents" % (DAYS[d], h, (h + 1) % 24, n(v)))))
+            attr, title = tip("%s %02d:00–%02d:00<br><b>%s</b> incidents" % (DAYS[d], h, (h + 1) % 24, n(v)))
+            out.append('<rect x="%.1f" y="%d" width="%.1f" height="%d" rx="3" fill="var(--heat)" fill-opacity="%.2f"%s>%s</rect>' % (
+                L + i * cw + 1, 6 + d * ch + 1, max(1.0, cw - 2), ch - 2, 0.06 + 0.94 * v / mx, attr, title))
     step = 1 if len(hrs) <= 14 else 2
     for i, h in enumerate(hrs):
         if i % step == 0:
@@ -539,6 +577,14 @@ def servicenow_insights_page(model, key="all", opts=None):
     months = win.get("months") or 0
     span = ("%d months" % months) if months else ("%s days" % int(win.get("days") or 0))
     c = s["counts"]
+    short = m.get("short") or {}
+
+    def sh(g):
+        """A group's short name (the paths, the bars): without the parts every group shares."""
+        return short.get(g) or _short(g)
+
+    def hop(g, back=False):
+        return '<span class="hop%s" title="%s">%s</span>' % (" back" if back else "", e(g), e(sh(g)))
 
     head = ['<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
             '<meta name="generator" content="site-automation ticket insights"><title>%s</title><style>%s</style></head><body>' % (
@@ -549,7 +595,13 @@ def servicenow_insights_page(model, key="all", opts=None):
     opts_html = ['<option value="%s"%s>All assignment groups</option>' % (e(links.get("all", "")), " selected" if is_all else "")]
     for t in teams:
         opts_html.append('<option value="%s"%s>%s</option>' % (e(links.get(t, "")), " selected" if t == s["team"] else "", e(t)))
-    menu = ('<select class="sel" id="grp" aria-label="Team">%s</select>' % "".join(opts_html)) if teams and links else ""
+    menu = ('<select class="sel js" id="grp" aria-label="Team">%s</select>' % "".join(opts_html)) if teams and links else ""
+    # the teams as plain links too: in the side bar (wide screens) and as a row under the header (narrow) - no script needed
+    team_links = ([("All assignment groups", links.get("all", ""), is_all)] if links.get("all") else []) + \
+        [(t, links.get(t, ""), t == s["team"]) for t in teams if links.get(t)]
+    show_teams = len(team_links) > 1 or (team_links and not is_all)       # a team's page always links back to the site's
+    teamnav = ('<nav class="teamnav" aria-label="Teams"><span class="lbl">Teams</span>%s</nav>' % "".join(
+        '<a href="%s"%s>%s</a>' % (e(href), ' class="on"' if on else "", e(label)) for label, href, on in team_links)) if show_teams else ""
     head.append(
         '<header class="bar gut"><div class="wrap"><div class="brand">%s<div style="min-width:0"><h1>ServiceNow ticket insights</h1>'
         '<div class="sub">%s · %s (%s) · generated %s%s</div></div></div>'
@@ -566,12 +618,13 @@ def servicenow_insights_page(model, key="all", opts=None):
     toc += [("keepingup", "Keeping up", ""), ("severity", "Severity", len(s["majors"]) or ""), ("issues", "Top issues", min(len(s["issues"]), int(o.get("top_issues") or 10))),
             ("problems", "Problem candidates", len(s["problems"]) or ""), ("handoffs", "Passed between groups", s["handoffs"]["count"] or ""),
             ("requests", "Most requested", min(len(s["requests"]), int(o.get("top_requests") or 10))), ("changes", "Changes", len(s["changes"]["rows"]) or ""),
-            ("notes", "Close note quality", ""), ("allstars", "All-stars", ""), ("kb", "KB drafts", len(s.get("kb") or []) or ""), ("method", "How this was made", "")]
+            ("allstars", "All-stars", ""), ("notes", "Close notes", ""), ("kb", "KB drafts", len(s.get("kb") or []) or ""), ("method", "How this was made", "")]
     nav = ['<nav class="toc" aria-label="Sections"><div class="lbl">On this page</div>']
     for sid, label, cnt in toc:
         nav.append('<a href="#%s">%s <span class="c">%s</span></a>' % (sid, e(label), e(cnt)))
-    if not is_all and links.get("all"):
-        nav.append('<div class="lbl">The whole site</div><a href="%s">All assignment groups</a>' % e(links["all"]))
+    if show_teams:
+        nav.append('<div class="lbl">Teams</div>' + "".join('<a class="team%s" href="%s">%s</a>' % (" on" if on else "", e(href), e(label))
+                                                              for label, href, on in team_links))
     nav.append("</nav>")
 
     body = []
@@ -587,16 +640,18 @@ def servicenow_insights_page(model, key="all", opts=None):
            "flag": behind},
           {"label": "Median time to resolve an incident", "value": fh(s["median_h"][0]), "delta": delta(s["median_h"][0], s["median_h"][1]),
            "note": "was %s" % fh(s["median_h"][1]) if win.get("compare") else ""},
-          {"label": "SLAs met", "value": pct(s["sla"][0]), "delta": delta(s["sla"][0], s["sla"][1], False, True), "note": "incidents and requests"},
+          {"label": "SLAs met", "value": pct(s["sla"][0]), "delta": delta(s["sla"][0], s["sla"][1], False, True),
+           "note": "incidents and requests · " + ("your targets" if o.get("sla_targets") or o.get("sla_items") else "ServiceNow's Made SLA")},
           {"label": "Incidents reopened" if reopen_used else "Came back within %d days" % int(o.get("repeat_days") or 14),
            "value": pct(rep[0]), "delta": delta(rep[0], rep[1], True, True),
            "note": ("reopened within %d days · %s came back as a new ticket" % (int(o.get("repeat_days") or 14), pct(s["came_back"][0]))) if reopen_used else
            'a new incident from the same person on the same issue <span class="chip">Reopen not used here</span>'},
-          {"label": "Bare close notes", "value": "%d%%" % q[2], "delta": delta(q[2], s["quality_prev"][2], True, True) if win.get("compare") and s.get("notes_graded") else "",
-           "note": "“fixed”, “done”, “resolved” and nothing else", "flag": q[2] >= 20},
           {"label": "Changes successful", "value": pct(_p(ch["successful"], ch["count"])) if ch["count"] else "—",
            "note": ("%d failed · %d backed out · %d followed by an incident" % (ch["failed"], ch["backed_out"], ch["followed"])) if ch["count"] else "no changes closed"},
-          {"label": "Reassigned %d+ times" % int(o.get("handoff_min") or 3), "value": n(s["handoffs"]["count"]), "note": "%s of incidents" % pct(s["handoffs"]["pct"])}]
+          {"label": "Reassigned %d+ times" % int(o.get("handoff_min") or 3), "value": n(s["handoffs"]["count"]), "note": "%s of incidents" % pct(s["handoffs"]["pct"])},
+          {"label": "Close notes that say what was done", "value": "%d%%" % q[0],
+           "delta": delta(q[0], s["quality_prev"][0], False, True) if win.get("compare") and s.get("notes_graded") else "",
+           "note": "%d%% vague · %d%% a stock phrase or empty" % (q[1], q[2])}]
     by = s.get("summary_by") == "act"
     summ = ('<div class="act"><div class="acth"><span class="eyebrow">What the period says</span><span class="src %s">%s</span></div><ul>%s</ul></div>' % (
         "ai" if by else "none", "Written by ACT from the tables" if by else "From the numbers", "".join("<li>%s</li>" % e(x) for x in s["summary"])))
@@ -614,7 +669,7 @@ def servicenow_insights_page(model, key="all", opts=None):
                                                                                          "warn" if up else "good", "Falling behind" if up else "Keeping up")),
                 td("<b>%s</b> %s" % (n(t["backlog"][0]), delta(t["backlog"][0], t["backlog"][1])), "n nw", t["backlog"][0]),
                 td(n(t["old"]), "n" + (" c-warn b" if t["old"] >= 20 else ""), t["old"]), td(fh(t["median_h"]), "n", t["median_h"] or 0),
-                sla_cell(t["sla"]), td('<span class="score">%s<span class="sm %s">%d%%</span></span>' % (qbar(t["quality"]), "c-crit" if t["quality"][2] >= 30 else "mut", t["quality"][2])),
+                sla_cell(t["sla"]), td('<span class="score">%s<span class="sm mut">%d%% good</span></span>' % (qbar(t["quality"]), t["quality"][0])),
                 td('%s <span class="mut num">%s</span>' % (e(t["top"][0]), n(t["top"][1])), "wide")]))
         body.append(section("teams", "Teams side by side", "each team has its own page with every section of this report",
                             table([("Team", "", "name"), ("Backlog over the period", "", ""), ("Open now", "n", "open"), ("Over %d days" % old_days, "n", "old"),
@@ -627,7 +682,7 @@ def servicenow_insights_page(model, key="all", opts=None):
     op, rs, bl = [w["opened"] for w in wk], [w["resolved"] for w in wk], [w["backlog"] for w in wk]
     so, sr = sum(op), sum(rs)
     peak = max(range(len(op)), key=lambda i: op[i]) if op else 0
-    annot = (peak, op[peak], "busiest week") if op and len(op) > 2 and op[peak] > 1.25 * (sum(op) / float(len(op))) else None
+    annot = (peak, op[peak], "Busiest week") if op and len(op) > 2 and op[peak] > 1.25 * (sum(op) / float(len(op))) else None
     verdict = ('<div class="verdict">%s Resolved <b>%s</b> of <b>%s</b> opened (%s). The backlog went from <b>%s</b> to <b>%s</b>.</div>' % (
         '<span class="chip warn">Falling behind</span>' if behind else '<span class="chip good">Keeping up</span>', n(sr), n(so),
         pct(_p(sr, so)), n(b[1]), n(b[0])))
@@ -652,18 +707,21 @@ def servicenow_insights_page(model, key="all", opts=None):
 
     # ---- severity
     mxp = max([p["count"] for p in s["prio"]] + [1])
+    targets = any(p.get("target_h") is not None for p in s["prio"])     # your own SLA targets (servicenow_insights_sla_targets)
     prow = []
     for p in s["prio"]:
         cls = "crit" if p["value"] == "1" else ("warn" if p["value"] == "2" else "")
         prow.append(("", [td('<span class="chip %s">%s</span>' % (cls, e(p["label"]))), td("<b>%s</b>" % n(p["count"]), "n"),
-                          td('<span class="ib b" style="width:%.1f%%"></span>' % (100.0 * p["count"] / mxp), "barc"), td(fh(p["median_h"]), "n"), sla_cell(p["sla"])]))
+                          td('<span class="ib b" style="width:%.1f%%"></span>' % (100.0 * p["count"] / mxp), "barc"), td(fh(p["median_h"]), "n")] +
+                         ([td(fh(p["target_h"]) if p.get("target_h") is not None else "Made SLA", "n")] if targets else []) + [sla_cell(p["sla"])]))
     mrow = []
     for x in s["majors"]:
         mrow.append((search_attr(x["number"], x["what"], x["change"], x["problem"], x["group"]), [
             td(tk(x["number"], url)), td(e(x["opened"]), "num nw"), td('<span class="chip %s">%s</span>' % ("crit" if x["priority"] == "P1" else "warn", e(x["priority"]))),
             td(e(x["what"]), "wide"), td(e(x["group"]), "nw"), td(fh(x["hours"]), "n"), td(tk(x["change"], url)), td(tk(x["problem"], url))]))
     body.append(section("severity", "Severity", "incidents by priority · P1 and P2 listed one by one",
-                        table([("Priority", "", ""), ("Incidents", "n", ""), ("", "", ""), ("Median to resolve", "n", ""), ("SLA met", "n", "")], prow, empty="No incidents in the period.") +
+                        table([("Priority", "", ""), ("Incidents", "n", ""), ("", "", ""), ("Median to resolve", "n", "")] +
+                              ([("SLA target", "n", "")] if targets else []) + [("SLA met", "n", "")], prow, empty="No incidents in the period.") +
                         '<div class="fig"><h3>P1 and P2 incidents in the period</h3>%s</div>' % table(
                             [("Incident", "", ""), ("Opened", "", ""), ("Priority", "", ""), ("What happened", "", ""), ("Group", "", ""), ("To resolve", "n", ""),
                              ("Caused by change", "", ""), ("Problem", "", "")], mrow, empty="No P1 or P2 incidents in the period.")))
@@ -672,7 +730,8 @@ def servicenow_insights_page(model, key="all", opts=None):
     top_n = int(o.get("top_issues") or 10)
     iss = s["issues"][:top_n]
     mx = iss[0]["count"] if iss else 1
-    rows = ['<div class="legend"><span><span class="src tix">From the tickets</span> fix taken from close notes</span>'
+    rows = ['<div class="verdict">Click an issue to open its fix action, the CIs it was seen on, example tickets and its trend.</div>'
+            '<div class="legend"><span><span class="src tix">From the tickets</span> fix taken from close notes</span>'
             '<span><span class="src mix">Partly from tickets</span> notes thin, ACT filled gaps</span>'
             '<span><span class="src ai">Suggested by ACT</span> not verified, review first</span>'
             '<span><span class="mv up">▲ 2</span> rank against the window before</span></div><div class="rows">']
@@ -690,7 +749,7 @@ def servicenow_insights_page(model, key="all", opts=None):
             '<details class="row"%s><summary><span class="rk">%d</span><span class="rname"><span class="t">%s</span><span class="m">%s<span class="src %s">%s</span>%s'
             '<span>%s%% of incidents · %d%% cumulative%s</span></span><span class="hbar"><span style="width:%.1f%%"></span></span></span>'
             '<span class="rstat"><span class="spark">%s</span><span><span class="big">%s</span><span class="lab">%s</span></span>'
-            '<span><span class="big sm2">%s</span><span class="lab">median fix</span></span><span class="caret">›</span></span></summary>'
+            '<span><span class="big sm2">%s</span><span class="lab">median fix</span></span><span class="hint">Fix <span class="caret">›</span></span></span></summary>'
             '<div class="detail"><div class="dgrid"><div class="fix"><div class="fh"><span><b>Fix action</b> <span class="src %s">%s</span></span>'
             '<button class="btn copy js" type="button" data-copy="%s">Copy</button></div><ol>%s</ol><div class="why">%s</div>%s</div>'
             '<dl class="kv"><dt>Seen on</dt><dd>%s</dd><dt>Examples</dt><dd>%s</dd><dt>Close notes</dt><dd>%s <span class="sm mut">%d%% bare</span></dd>'
@@ -734,12 +793,12 @@ def servicenow_insights_page(model, key="all", opts=None):
           {"label": "Median reassignments", "value": e("%g" % (h["median"] or 0)), "note": "per incident"}]
     if top_path:
         ht.append({"label": "Most passed-around issue", "value": '<span class="sm3">%s</span>' % e(top_path["issue"]),
-                   "note": "%d tickets went %s" % (top_path["count"], e(" → ".join(_short(g) for g in top_path["path"])))})
+                   "note": "%d tickets went %s" % (top_path["count"], e(" → ".join(sh(g) for g in top_path["path"])))})
     hrow = []
     for pth in h["paths"]:
         seen, hops = set(), []
         for k, g in enumerate(pth["path"]):
-            hops.append(('<span class="ar">→</span>' if k else "") + '<span class="hop%s">%s</span>' % (" back" if g in seen else "", e(_short(g))))
+            hops.append(('<span class="ar">→</span>' if k else "") + hop(g, g in seen))
             seen.add(g)
         hrow.append((search_attr(" ".join(pth["path"]), pth["issue"]), [td('<div class="path">%s</div>' % "".join(hops)), td("<b>%s</b>" % n(pth["count"]), "n"),
                                                                         td(e(pth["issue"]), "wide"),
@@ -750,7 +809,8 @@ def servicenow_insights_page(model, key="all", opts=None):
                         tiles(ht, "tiles mini") + paths_note +
                         table([("Path", "", ""), ("Incidents", "n", ""), ("Most common issue", "", ""), ("Time added", "n", "")], hrow, empty="No paths to show.") +
                         '<div class="fair">Time added = the median time to resolve these incidents, less the median for the same issue when it went straight to the group '
-                        'that fixed it. A group in amber is one the ticket came back to. Incidents only: change tasks and catalog tasks that go to different teams by '
+                        'that fixed it. A group in amber is one the ticket came back to. The groups are shown without the parts of the name they all share; '
+                        'the full name shows when you rest on one. Incidents only: change tasks and catalog tasks that go to different teams by '
                         'design are separate records, not hand-offs.</div>'))
 
     # ---- requests
@@ -787,7 +847,7 @@ def servicenow_insights_page(model, key="all", opts=None):
             td(tk(x["number"], url)), td(e(x["closed"]), "num nw"), td(e(x["what"]), "wide"), td(e(x["group"]), "nw"),
             td('<span class="chip %s">%s</span>' % ("crit" if x["outcome"] == "Failed" else "warn", e(x["outcome"]))), td(fol or '<span class="mut">none</span>', "nw lh")]))
     em = ch["by_group"]
-    emerg = hbars([(_short(g["group"]), g["pct"] or 0, "%s<br><b>%d</b> of %d changes" % (e(g["group"]), g["emergency"], g["changes"])) for g in em],
+    emerg = hbars([(sh(g["group"]), g["pct"] or 0, "%s<br><b>%d</b> of %d changes" % (e(g["group"]), g["emergency"], g["changes"])) for g in em],
                   "Emergency change share by group", W=420, lw=110, fmt=lambda v: "%.1f%%" % v,
                   dim=[(not is_all and g["group"] != s["team"]) for g in em]) if em else '<div class="empty">No changes in the period.</div>'
     body.append(section("changes", "Changes", "closed in the period · the outcome from the change's close code",
@@ -798,18 +858,23 @@ def servicenow_insights_page(model, key="all", opts=None):
                             table([("Change", "", ""), ("Closed", "", ""), ("What", "", ""), ("Group", "", ""), ("Outcome", "", ""), ("Incidents that followed", "", "")],
                                   crow, empty="No change failed or was backed out."), int(o.get("change_follow_hours") or 72), emerg)))
 
-    # ---- close notes
-    qrows = "".join('<div class="qrow%s"><span>%s</span>%s<span class="p %s">%d%% bare</span></div>' % (
-        " selq" if g["group"] == s["team"] else "", e(g["group"]), qbar(g["quality"]), "c-crit" if g["quality"][2] >= 30 else "", g["quality"][2])
+    # ---- close notes (after the All-stars; the breakdown folded: one line says it, the rest opens)
+    qrows = "".join('<div class="qrow%s"><span>%s</span>%s<span class="p mut">%d%% good</span></div>' % (
+        " selq" if g["group"] == s["team"] else "", e(g["group"]), qbar(g["quality"]), g["quality"][0])
         for g in s["notes_by_group"]) or '<div class="empty">No close notes in the period.</div>'
     brow = [(search_attr(x["note"]), [td('<span class="quote">%s</span>' % e(x["note"])), td("<b>%s</b>" % n(x["count"]), "n"), td(e(x["group"]))]) for x in s["bare"]]
-    body.append(section("notes", "Close note quality", "every resolved incident and closed catalog task, graded on what its close note says was done",
-                        '<div class="two"><div class="fig"><h3>By assignment group</h3><div class="legend"><span><i class="sq qg"></i>Good: says what was done</span>'
-                        '<span><i class="sq qt"></i>Thin: vague, no action</span><span><i class="sq qb"></i>Bare: a stock phrase only</span></div>%s</div>'
-                        '<div class="fig"><h3>The most common bare notes</h3><div class="cap">The whole close note, word for word, and how often it was used.</div>%s</div></div>'
-                        '<div class="fair">Bare = shorter than %d characters, or only a stock phrase (“fixed”, “done”, “resolved per user”, '
-                        '“see work notes” …). Thin = longer, but names no action. Good = says what was changed or done.</div>' % (
-                            qrows, table([("Close note", "", ""), ("Times", "n", ""), ("Mostly in", "", "")], brow, empty="No bare close notes."), int(o.get("bare_chars") or 20))))
+    notes_line = ('<div class="verdict">Of <b>%s</b> close notes, <b>%d%%</b> say what was done, <b>%d%%</b> are vague and <b>%d%%</b> are a stock phrase or empty. '
+                  'A note that says what was done is what makes the fix actions above and the knowledge drafts below possible.</div>' % (
+                      n(s.get("notes_graded") or 0), q[0], q[1], q[2])) if s.get("notes_graded") else '<div class="empty">No close notes in the period.</div>'
+    notes_section = section("notes", "Close notes", "every resolved incident and closed catalog task, graded on what its close note says was done",
+                            notes_line + '<details class="notes"><summary><span class="caret">›</span>By assignment group, and the most common notes that say nothing</summary>'
+                            '<div class="two"><div class="fig"><h3>By assignment group</h3><div class="legend"><span><i class="sq qg"></i>Good: says what was done</span>'
+                            '<span><i class="sq qt"></i>Thin: vague, no action</span><span><i class="sq qb"></i>Bare: a stock phrase, or empty</span></div>%s</div>'
+                            '<div class="fig"><h3>The most common bare notes</h3><div class="cap">The whole close note, word for word, and how often it was used.</div>%s</div></div>'
+                            '<div class="fair">Bare = shorter than %d characters, or only a stock phrase (“fixed”, “done”, “resolved per user”, '
+                            '“see work notes” …), or no note at all. Thin = longer, but names no action. Good = says what was changed or done.</div></details>' % (
+                                qrows, table([("Close note", "", ""), ("Times", "n", ""), ("Mostly in", "", "")], brow, empty="No bare close notes."),
+                                int(o.get("bare_chars") or 20)))
 
     # ---- all-stars
     star_teams = teams if is_all else [s["team"]]
@@ -824,12 +889,17 @@ def servicenow_insights_page(model, key="all", opts=None):
             for k, t in enumerate(star_teams))
     w = o.get("bare_weight")
     fair = ('<div class="fair">Ranks are by tickets resolved, with a close-note factor: a ticket with a bare close note counts %s. A ticket counts '
-            'for the person who resolved it, not for everyone it passed through. Awards need at least %d tickets resolved. %s</div>' % (
-                ("%g of one" % float(w)) if w is not None and float(w) != 0.5 else "half", int(o.get("star_min") or 25),
+            'for the team member who resolved it, not for everyone it passed through; one resolved by someone outside the team counts for the member '
+            'it was assigned to. %s Awards need at least %d tickets resolved. %s</div>' % (
+                ("%g of one" % float(w)) if w is not None and float(w) != 0.5 else "half",
+                "The members are ServiceNow's group membership." if m.get("members_read") else
+                "The group membership could not be read: each leaderboard lists everyone the team's tickets were assigned to or resolved by.",
+                int(o.get("star_min") or 25),
                 ("Reopened = reopened within %d days." % int(o.get("repeat_days") or 14)) if reopen_used else
                 ("Came back = a new incident from the same person on the same issue within %d days (this site does not reopen tickets)." % int(o.get("repeat_days") or 14))))
     body.append(section("allstars", "All-stars", "per team · resolved and closed work in the period",
                         ((tabs + "".join(panels)) if star_teams else '<div class="empty">No team to show.</div>') + fair))
+    body.append(notes_section)
 
     # ---- kb drafts
     kbs = s.get("kb") or []
@@ -872,9 +942,12 @@ def servicenow_insights_page(model, key="all", opts=None):
                             e("by ACT" if s.get("summary_by") == "act" else "from the numbers"),
                             ('<div class="callout"><b>Not read.</b> %s</div>' % e("; ".join(nr))) if nr else "")))
 
-    out = head + ['<div class="gut"><div class="wrap layout">'] + nav + ["<main>"] + body + [
-        '</main></div></div><footer class="gut foot"><div class="wrap">%s</div></footer><div class="tip" id="tip" hidden></div><script>%s</script></body></html>' % (
-            e(o.get("footer") or ""), SCRIPT)]
+    # the script: loaded from the website (site-insights.js beside the index, written by site_report_web, the address made relative to
+    # this page there) and carried in the page too; whichever runs first does the work
+    out = head + ['<div class="gut"><div class="wrap layout">'] + nav + ["<main>", teamnav] + body + [
+        '</main></div></div><footer class="gut foot"><div class="wrap">%s</div></footer><div class="tip" id="tip" hidden></div>'
+        '<script src="%s"></script><script id="site-report-js" data-file="%s">\n%s\n</script></body></html>' % (
+            e(o.get("footer") or ""), SCRIPT_FILE, SCRIPT_FILE, SCRIPT)]
     return "".join(out)
 
 
@@ -897,23 +970,40 @@ def stars_panel(team, st, reopen_used, idx, titled):
     rows = []
     for k, p in enumerate(people):
         ini = "".join(w[0] for w in p["name"].replace(",", " ").split()[:2]).upper()
-        rows.append(("" if k else ' class="top1"', [td(str(k + 1), "n pos"), td('<span class="av">%s</span>%s' % (e(ini), e(p["name"])), "nw"), td("<b>%s</b>" % n(p["resolved"]), "n"),
-                                                     td(fh(p["median_h"]), "n"), td('<span class="score">%s<span class="sm %s">%d%% bare</span></span>' % (
-                                                         qbar(p["quality"]), "c-crit" if p["quality"][2] >= 25 else "mut", p["quality"][2])),
-                                                     td(pct(p["repeat"]), "n")]))
+        rows.append(("" if k or not p["resolved"] else ' class="top1"', [
+            td(str(k + 1) if p["resolved"] else "", "n pos"), td('<span class="av">%s</span>%s' % (e(ini), e(p["name"])), "nw"),
+            td(("<b>%s</b>" % n(p["resolved"])) if p["resolved"] else '<span class="mut">0</span>', "n"), td(fh(p["median_h"]) if p["resolved"] else "", "n"),
+            td(('<span class="score">%s<span class="sm mut">%d%% good</span></span>' % (qbar(p["quality"]), p["quality"][0])) if p["resolved"] else ""),
+            td(pct(p["repeat"]), "n")]))
     tot = st.get("total") or {}
     if people:
-        rows.append((' class="team"', [td(""), td("Team total"), td(n(tot.get("resolved")), "n"), td(""), td('<span class="score">%s<span class="sm mut">%d%% bare</span></span>' % (
-            qbar(tot.get("quality")), (tot.get("quality") or [0, 0, 0])[2])), td(pct(tot.get("repeat")), "n")]))
+        rows.append((' class="team"', [td(""), td("Team total"), td(n(tot.get("resolved")), "n"), td(""), td('<span class="score">%s<span class="sm mut">%d%% good</span></span>' % (
+            qbar(tot.get("quality")), (tot.get("quality") or [0, 0, 0])[0])), td(pct(tot.get("repeat")), "n")]))
     if st.get("more"):
         rows.append(("", [td(""), td('<span class="mut">and %d more (the workbook has them)</span>' % st["more"]), td(""), td(""), td(""), td("")]))
+    out_ = st.get("outside") or {}
+    who_note = ('<div class="cap">The team\'s %d members, from ServiceNow\'s group membership.%s</div>' % (
+        st.get("members") or 0, (" <b>%s</b> tickets of this team were resolved by people outside it (%s) and not assigned to a member: "
+                                 "in the team total, not ranked." % (n(out_["count"]), e(", ".join(out_.get("names") or [])))) if out_.get("count") else "")
+        if st.get("members_known") else
+        '<div class="cap">Everyone the team\'s tickets were assigned to or resolved by in the period (the group membership was not read).</div>')
     op = st.get("openers") or []
-    opener = hbars([(p["name"], p["opened"], "%s<br><b>%s</b> tickets opened" % (e(p["name"]), n(p["opened"]))) for p in op], "Tickets opened per person",
-                   W=420, lw=120) if op else '<div class="empty">Nobody in this team opened a ticket in the period.</div>'
-    return ('<div class="panel%s" id="p%d" data-team="%s">%s<div class="awards">%s</div><div class="two"><div class="fig"><h3>Leaderboard</h3>%s</div>'
-            '<div class="fig"><h3>Who opens the most tickets</h3><div class="cap">Tickets these people opened (Opened by), in any group\'s queue.</div>%s</div></div></div>') % (
-        " on" if idx == 0 else "", idx, e(team), ('<h3 class="ptitle">%s</h3>' % e(team)) if titled else "", aw, table([("#", "n", ""), ("Person", "", ""), ("Resolved", "n", ""), ("Median to resolve", "n", ""), ("Close notes", "", ""),
-                                         ("Reopened" if reopen_used else "Came back", "n", "")], rows, empty="Nobody resolved a ticket in this team's queue in the period."), opener)
+    mx = max([p["opened"] for p in op] + [1])
+    orow = []
+    for p in op:
+        frm = ('<span class="chip good">this team</span>' if p.get("member") else
+               ('<span class="chip">end user</span>' if p.get("end_user") else (e(p["from"]) if p.get("from") else '<span class="mut">—</span>')))
+        orow.append(("", [td(e(p["name"]), "nw"), td(frm), td("<b>%s</b>" % n(p["opened"]), "n"),
+                          td('<span class="ib b" style="width:%.1f%%"></span>' % (100.0 * p["opened"] / mx), "barc")]))
+    opener = table([("Opened by", "", ""), ("From", "", ""), ("Tickets", "n", ""), ("", "", "")], orow,
+                   empty="No ticket was opened for this team in the period.")
+    return ('<div class="panel%s" id="p%d" data-team="%s">%s<div class="awards">%s</div><div class="two"><div class="fig"><h3>Leaderboard</h3>%s%s</div>'
+            '<div class="fig"><h3>Who sends this team its tickets</h3><div class="cap">Opened by, on the tickets assigned to this team in the period. '
+            'From = the group that person works tickets in; an end user opens their own.</div>%s</div></div></div>') % (
+        " on" if idx == 0 else "", idx, e(team), ('<h3 class="ptitle">%s</h3>' % e(team)) if titled else "", aw,
+        table([("#", "n", ""), ("Person", "", ""), ("Resolved", "n", ""), ("Median to resolve", "n", ""), ("Close notes", "", ""),
+               ("Reopened" if reopen_used else "Came back", "n", "")], rows, empty="Nobody resolved a ticket in this team's queue in the period."),
+        who_note, opener)
 
 
 class FilterModule(object):

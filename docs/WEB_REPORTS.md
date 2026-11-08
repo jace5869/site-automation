@@ -98,7 +98,9 @@ Since 0.63.0:
   only when it changed - by the same login, the same way as the pages) and each page loads it from there. A web
   server whose Content-Security-Policy allows no inline script but scripts from the site itself (`script-src 'self'`,
   the usual hardening) runs it, so sorting, filtering, the search, CSV, Copy and Print work there now. The page
-  still carries the script too, for a page saved or copied by itself; it runs once.
+  still carries the script too, for a page saved or copied by itself; it runs once. The ticket insights pages have a
+  script of their own: written the same way as **`site-insights.js`** (0.88.0), loaded by those pages only; the index
+  never loads it.
 
 **Where the page's script is blocked.**
 
@@ -207,6 +209,10 @@ without scripts, opened from a share or from a web server.
 - **Deleting needs** the right to delete: Modify on the folder (a share, or `report_web_host`), `DELETE` on an
   upload address (nginx: `dav_methods PUT DELETE MKCOL;`). A page that cannot be deleted is a warning in the job's
   output, never a failure, and stays in the folder.
+- **A report's folder deleted by hand**: the next report that writes the index takes that report's line off it
+  (its `latest.html` is not there any more) and says so in its output (`taken off the index: ...`).
+  `report_web_index_prune: false` keeps every line. Not with `report_web_host` (that server's folder is not read
+  from the AAP side): there, delete the line from `index.json` by hand.
 - **Pages from before 0.34.0** are not in the index's lists (it knew only each report's last run then): their
   pages stay. Delete them on the server once if you like - every run before your upgrade.
 - **The page open in a browser** while a job writes it (Edge, from a share - `STATUS_ACCESS_DENIED`): the job
@@ -226,6 +232,7 @@ Every name is a setting, with `{names}` filled in (`roles/site_email/defaults/ma
 | `report_web_page` | `{template}/{date}_{time}_job-{job}.html` - each run's page |
 | `report_web_latest` | `{template}/latest.html` - `""` for none |
 | `report_web_index` | `index.html` - `""` for none |
+| `report_web_index_prune` | `true` - a line whose `latest.html` is gone (its folder deleted) is taken off the index |
 | `report_web_names` | `{}` - your own names, e.g. `{site: hq}` for `{site}/{template}/...` |
 
 The names: `{template}`, `{template_id}`, `{job}` (`local` outside AAP), `{status}` (`ok`, `warning`, `critical`,

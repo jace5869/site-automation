@@ -633,6 +633,20 @@ class SiteScript(unittest.TestCase):
         self.assertNotIn("<script src=", rw.index_html([], "index.html", "x", None, "now", (), "atlas"))
         self.assertNotIn("<script src=", rw.index_html([], "index.html", "x", None, "now", (), "portal", "var a;\n"))
 
+    def test_a_page_with_a_script_file_of_its_own(self):
+        """0.88.0: a page whose script is not the atlas one names its file (data-file; the ticket insights' site-insights.js):
+        written at the folder's top under that name, loaded by the page from there; the index never loads it."""
+        page = ('<html><body><script src="site-insights.js"></script><script id="site-report-js" data-file="site-insights.js">\n'
+                '(function(){if(window.siteInsights)return;window.siteInsights=1;})();\n</script></body></html>')
+        js = rw.page_script(page)
+        self.assertEqual(js, "(function(){if(window.siteInsights)return;window.siteInsights=1;})();\n")
+        self.assertEqual(rw.page_script_name(page), "site-insights.js")
+        self.assertEqual(rw.page_script_name(self.PAGE), "site-report.js")
+        v = hashlib.sha1(js.encode("utf-8")).hexdigest()[:10]
+        self.assertEqual(rw.script_tag("ticket-insights/ops-linux/latest.html", js, "site-insights.js"),
+                         '<script src="../../site-insights.js?v=%s"></script>' % v)
+        self.assertEqual(rw.page_script_name('<script id="site-report-js" data-file="../evil">x</script>'), "site-report.js")   # not a plain name: ignored
+
     def test_the_real_script_parses_and_is_ascii(self):
         with open(os.path.join(REPO, "roles", "site_email", "templates", "site_report.js")) as f:
             js = f.read()

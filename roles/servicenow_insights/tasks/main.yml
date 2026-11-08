@@ -37,6 +37,7 @@
     max_records: "{{ servicenow_insights_max_records | int }}"
     audit: "{{ servicenow_insights_audit | bool }}"
     handoff_min: "{{ servicenow_insights_handoff_min | int }}"
+    members: "{{ servicenow_insights_members | default(true) | bool }}"
     now: "{{ servicenow_insights_now | default(omit, true) }}"
   register: _sni
   check_mode: false             # only reads
@@ -62,6 +63,8 @@
       bare_phrases: "{{ servicenow_insights_bare_phrases | servicenow_insights_name_list }}"
       bare_weight: "{{ servicenow_insights_bare_weight | float }}"
       star_min: "{{ servicenow_insights_star_min | int }}"
+      sla_targets: "{{ servicenow_insights_sla_targets | default({}, true) }}"
+      sla_items: "{{ servicenow_insights_sla_items | default({}, true) }}"
       act: "{{ servicenow_insights_act | bool }}"
       act_max_descriptions: "{{ servicenow_insights_act_max_descriptions | int }}"
       act_max_issues: "{{ servicenow_insights_act_max_issues | int }}"
@@ -154,6 +157,9 @@
       servicenow_insights: "{{ _sni_model | servicenow_insights_artifact }}"
   when: _sni.ok | default(false) | bool
 
+# Each team's page is one file, written over each run ({template}/{team}/latest.html), linked from the site's page and
+# kept off the website's index: the index has one line, the site's page. The team lines an older run put there are
+# taken off it (_web_index_drop).
 - name: Insights | the website's file names, the same for the site's page and each team's ({template}/{team}/...)
   ansible.builtin.set_fact:
     _sni_web: >-
@@ -166,11 +172,11 @@
                       'job': awx_job_id | default(tower_job_id | default('local')), 'status': 'info',
                       'year': t.strftime('%Y'), 'month': t.strftime('%m'), 'day': t.strftime('%d')} -%}
       {%- set out = {'names': names, 'page': page, 'latest': latest,
-                     'team_page': page | replace('{template}', '{template}/{team}'), 'team_latest': latest | replace('{template}', '{template}/{team}'),
+                     'team_page': (latest or page) | replace('{template}', '{template}/{team}'),
                      'all': {'page': page, 'latest': latest, 'index': ''} | report_web_files(base | combine(names) | combine({'team': 'all'}))} -%}
       {%- set teams = {} -%}
       {%- for team in (_sni_model.teams | default([]) if servicenow_insights_team_pages | bool else []) -%}
-      {%-   set _ = teams.update({team: {'page': out.team_page, 'latest': out.team_latest, 'index': ''}
+      {%-   set _ = teams.update({team: {'page': out.team_page, 'latest': '', 'index': ''}
                                          | report_web_files(base | combine(names) | combine({'team': team | servicenow_insights_slug}))}) -%}
       {%- endfor -%}
       {{ out | combine({'teams': teams, 'on': (report_web_dest | default('', true) | string | trim | length > 0) and _sni.ok | default(false) | bool}) }}
@@ -187,7 +193,8 @@
     report_email_also: []
     report_web_names: "{{ _sni_web.names | combine({'team': _sni_team | servicenow_insights_slug}) }}"
     report_web_page: "{{ _sni_web.team_page }}"
-    report_web_latest: "{{ _sni_web.team_latest }}"
+    report_web_latest: ""
+    report_web_index: ""
     _sni_page_opts: >-
       {{ _sni_opts | combine({'links': _sni_web | servicenow_insights_links(_sni_web.teams[_sni_team].page),
                               'generated': now(fmt='%Y-%m-%d %H:%M %Z') | trim, 'job': awx_job_id | default(tower_job_id | default('local')),
@@ -207,6 +214,9 @@
     _report_xlsx: "{{ _sni_model | servicenow_insights_xlsx(_sni, _sni_state, _sni_mask, _sni_opts) if servicenow_insights_xlsx | bool else [] }}"
     _report_xlsx_name: "{{ awx_job_template_name | default(tower_job_template_name | default('ticket-insights')) }}"
     report_web_names: "{{ _sni_web.names | combine({'team': 'all'}) }}"
+    _web_index_drop: >-
+      {{ [(_sni_web.all.latest | dirname) ~ '/*/' ~ (_sni_web.all.latest | basename)]
+         if _sni_web.all.latest and '/' in _sni_web.all.latest else [] }}
     _sni_page_opts: >-
       {{ _sni_opts | combine({'links': _sni_web | servicenow_insights_links(_sni_web.all.page),
                               'generated': now(fmt='%Y-%m-%d %H:%M %Z') | trim, 'job': awx_job_id | default(tower_job_id | default('local')),

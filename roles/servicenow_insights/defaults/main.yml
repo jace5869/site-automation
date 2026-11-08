@@ -23,8 +23,18 @@ servicenow_insights_groups: []
 # table on the site's page. The teams are the groups named above, else the groups with at least
 # servicenow_insights_team_min tickets in the window, the busiest first, at most servicenow_insights_teams_max.
 servicenow_insights_team_pages: true
-servicenow_insights_teams_max: 20       # at most this many teams with their own page
-servicenow_insights_team_min: 25        # a group with at least this many tickets in the window is a team (no groups named)
+servicenow_insights_teams_max: 60       # at most this many teams with their own page
+servicenow_insights_team_min: 10        # a group with at least this many tickets in the window is a team (no groups named)
+# SLA TARGETS, in calendar hours from when a ticket was opened to when it was resolved (incidents) or closed
+# (requested items): a ticket met its SLA when it was done within its target. By table, then by priority ("1" to "5",
+# or "P1"; "*" = every other priority). Only tickets done in the window count. These are twice common ITIL starting points -
+# put your management's numbers here (in all.yml, or the template's Variables). A table left out (or {} for all of
+# them) uses ServiceNow's own Made SLA flag instead - whatever SLA definitions your instance has.
+servicenow_insights_sla_targets:
+  incident: {"1": 8, "2": 16, "3": 144, "4": 240, "5": 480}     # P1 8 h, P2 16 h, P3 6 days, P4 10 days, P5 20 days
+  sc_req_item: {"1": 48, "2": 144, "3": 240, "4": 480, "5": 960}  # P1 2 days, P2 6 days, P3 10 days, P4 20 days, P5 40 days
+# A catalog item's own target in hours, beating its priority's: {"New account / onboarding": 48, "Software install": 120}
+servicenow_insights_sla_items: {}
 # Also email a team's own report to these people (the team's page, the same look): {"Ops - Windows": [lead@yoursite.mil]}.
 servicenow_insights_team_email_to: {}
 
@@ -36,6 +46,11 @@ servicenow_insights_max_records: 20000  # at most this many records per table (t
 # The assignment history of incidents passed around (sys_audit): the paths of Passed between groups. The account needs
 # read on sys_audit; without it the counts are still there and the report says so. false: not read.
 servicenow_insights_audit: true
+# The groups' members (sys_user_grmember): each team's leaderboard lists its members, and a ticket resolved by someone
+# outside the team counts for the member it was assigned to. The account needs read on sys_user_grmember (itil has it
+# on most instances); without it the leaderboard lists everyone the team's tickets were assigned to or resolved by, and
+# the report says so. false: not read.
+servicenow_insights_members: true
 
 # WHAT THE REPORT SHOWS
 servicenow_insights_top_issues: 10      # incident issues listed (the workbook has every one)

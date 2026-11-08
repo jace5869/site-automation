@@ -238,6 +238,10 @@ servicenow_war_groups: [YOUR GROUP NAME]
 servicenow_insights_months: 6
 # servicenow_insights_groups: [YOUR GROUP NAME]  # empty = every group (the whole site)
 # report_email_to: [YOUR LEADS]                  # optional: the page on the report website is the report
+## SLA targets in hours by priority (the defaults shown; better in all.yml) - set both tables, the setting is replaced whole
+# servicenow_insights_sla_targets:
+#   incident: {"1": 8, "2": 16, "3": 144, "4": 240, "5": 480}
+#   sc_req_item: {"1": 48, "2": 144, "3": 240, "4": 480, "5": 960}
 """),
     "servicenow_test_ticket.yml": ("ServiceNow - test ticket", "ServiceNow API", "", """\
 servicenow_assignment_group: YOUR GROUP NAME   # exactly as in ServiceNow

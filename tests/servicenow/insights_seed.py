@@ -15,6 +15,8 @@ START = END - datetime.timedelta(days=368)              # the window and the one
 SD, WIN, VDI, LNX, NET = "Ops - Service Desk", "Ops - Windows", "Ops - VDI", "Ops - Linux", "Ops - Network"
 PEOPLE = {SD: ["Dana Whitfield", "Marcus Lee", "Priya Raman", "Tom Okafor", "Elena Ruiz"], WIN: ["Sam Patel", "Jordan Kim", "Alex Morgan"],
           VDI: ["Casey Brooks", "Morgan Diaz"], LNX: ["Avery Stone", "Quinn Harper"], NET: ["Taylor Grant", "Robin Shah"]}
+# members of the groups in ServiceNow (sys_user_grmember) who hold no ticket: on the leaderboard with nothing resolved
+QUIET = {WIN: ["Riley Chen"], NET: ["Noor Haddad"]}
 CALLERS = ["%s %s" % (f, l) for f in ("Lee", "Maria", "Kevin", "Nina", "Omar", "Ruth", "Victor", "Wendy", "Brian", "Carla", "Derek",
                                       "Fiona", "Greg", "Hana", "Ivan", "Julia", "Keith", "Laura", "Mason", "Olga")
            for l in ("Anders", "Gomez", "Shaw", "Haddad", "Klein", "Ortiz", "Fields", "Nunez", "Walsh", "Turner", "Mori", "Petrov",
@@ -130,8 +132,10 @@ def main():
             rec.update({"state": "2", "resolved_at": "", "closed_at": "", "close_notes": ""})
         else:
             closed = resolved + datetime.timedelta(days=3)
+            # some Windows tickets are closed by the service desk on the user's word: resolved by someone outside the team
+            closer = R.choice(PEOPLE[SD]) if group == WIN and R.random() < .08 else who
             rec.update({"state": "7" if closed < END else "6", "resolved_at": t(resolved), "closed_at": t(closed) if closed < END else "",
-                        "resolved_by": who, "close_code": "Solution provided", "close_notes": note, "sys_updated_on": t(min(closed, END))})
+                        "resolved_by": closer, "close_code": "Solution provided", "close_notes": note, "sys_updated_on": t(min(closed, END))})
         rec["_issue"] = name
         incs.append(rec)
     # P1/P2s, caused by failed changes
@@ -216,6 +220,10 @@ def main():
                                                   "Installed the software and confirmed with the user."]) if done else ""})
     for rec in incs:
         rec.pop("_issue", None)
+    # the groups' members (sys_user_grmember): the people, and the quiet members
+    for grp in (SD, WIN, VDI, LNX, NET):
+        for who in PEOPLE[grp] + QUIET.get(grp, []):
+            recs.append({"_table": "sys_user_grmember", "user": who, "group": grp, "sys_created_on": t(START)})
     recs = incs + recs
     for x in recs:
         if x.get("_table") == "sys_audit":
