@@ -1,0 +1,136 @@
+---
+# TMP CLEANUP - Linux. Deletes the old files of the tmp folders (tmp_cleanup_dirs: /tmp older than 10 days, /var/tmp
+# older than 30 - accessed, changed and modified that long ago), never sockets or what systemd, X, ssh or Kerberos keep
+# there (tmp_cleanup_keep), only on the folder's own filesystem; then the folders left empty. Reports what it deleted
+# and the free space before and after.
+#   - in workflow 42, after the approval: only the hosts and folders the disk space report planned (disk_cleanup_plan,
+#     from its artifacts - and only its own workflow's)
+#   - on its own: only with tmp_cleanup_confirm: true (else it lists what it would delete); the Limit picks the hosts
+# As Check (a dry run) it deletes nothing. docs/DISK_SPACE.md
+#
+#   ansible-playbook playbooks/tmp_cleanup.yml -l web01.example.mil                              # what it would delete
+#   ansible-playbook playbooks/tmp_cleanup.yml -l web01.example.mil -e tmp_cleanup_confirm=true  # delete
+- name: Tmp cleanup
+  hosts: "{{ target | default('all') }}"
+  become: true
+  gather_facts: false
+  vars:
+    site_fail_on: []
+    site_report_title: Tmp cleanup
+    site_report_no_findings: DONE
+  pre_tasks:
+    - name: Linux hosts only (Windows servers have their own templates, playbooks/win_*.yml)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: The plan is this workflow's own (a plan from elsewhere is refused)
+      ansible.builtin.assert:
+        that:
+          - awx_workflow_job_id is defined
+          - (disk_cleanup_plan_workflow | default('') | string) == (awx_workflow_job_id | string)
+        fail_msg: >-
+          Refused: disk_cleanup_plan did not come from this workflow's own disk space report (it is from
+          {{ ('workflow job ' ~ disk_cleanup_plan_workflow) if disk_cleanup_plan_workflow | default('') | string else 'no workflow' }}, this is
+          {{ ('workflow job ' ~ awx_workflow_job_id) if awx_workflow_job_id is defined else 'no workflow' }}). Nothing was deleted.
+          Launch workflow 42, and do not tick "Prompt on launch" for Variables on this template.
+        quiet: true
+      run_once: true
+      when: disk_cleanup_plan is defined
+
+    - name: Not in the plan, so left alone
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: not in the disk space report's plan (no full filesystem with old tmp files) - left alone."
+      when: disk_cleanup_plan is defined and inventory_hostname not in disk_cleanup_plan
+
+    - name: Leave it
+      ansible.builtin.meta: end_host
+      when: disk_cleanup_plan is defined and inventory_hostname not in disk_cleanup_plan
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  tasks:
+    - name: Start
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: start.yml
+
+    # the plan names the folders of each host; on its own every folder of tmp_cleanup_dirs (_tmp_dirs: what roles/tmp_cleanup
+    # loops over - a set_fact of tmp_cleanup_dirs itself would lose to an extra variable)
+    - name: The folders to clean on this host
+      ansible.builtin.set_fact:
+        _tmp_dirs: >-
+          {{ tmp_cleanup_dirs | default([{'path': '/tmp', 'days': 10}, {'path': '/var/tmp', 'days': 30}])
+             | selectattr('path', 'in', disk_cleanup_plan[inventory_hostname]) | list
+             if disk_cleanup_plan is defined else tmp_cleanup_dirs | default([{'path': '/tmp', 'days': 10}, {'path': '/var/tmp', 'days': 30}]) }}
+        _tmp_delete: "{{ (disk_cleanup_plan is defined or tmp_cleanup_confirm | default(false) | bool) and not ansible_check_mode }}"
+
+    - name: What would be deleted (a dry run, or tmp_cleanup_confirm is not true)
+      ansible.builtin.include_role:
+        name: tmp_cleanup
+        tasks_from: scan.yml
+      when: not _tmp_delete | bool
+
+    - name: Delete the old files
+      ansible.builtin.include_role:
+        name: tmp_cleanup
+        tasks_from: clean.yml
+      when: _tmp_delete | bool
+
+    - name: What happened on this host
+      ansible.builtin.debug:
+        msg: >-
+          {%- set out = [] -%}
+          {%- if _tmp_delete | bool -%}
+          {%-   for c in _tmp_clean -%}
+          {%-     set f = _tmp_free[c.mount] | default({}) -%}
+          {%-     set _ = out.append(c.path ~ ': deleted ' ~ (c.files - c.files_after) ~ ' file(s), '
+                                     ~ ((c.bytes - c.bytes_after) | filesizeformat(true)) ~ ' older than ' ~ c.days ~ ' days; '
+                                     ~ c.mount ~ ' free ' ~ (f.before | default(0) | filesizeformat(true)) ~ ' -> '
+                                     ~ (f.after | default(0) | filesizeformat(true))) -%}
+          {%-   endfor -%}
+          {%- else -%}
+          {%-   for c in _tmp_scan -%}
+          {%-     set _ = out.append(c.path ~ ': would delete ' ~ c.files ~ ' file(s), ' ~ (c.bytes | filesizeformat(true))
+                                     ~ ' older than ' ~ c.days ~ ' days'
+                                     ~ (' (dry run)' if ansible_check_mode else ' (tmp_cleanup_confirm is not true: nothing deleted)')) -%}
+          {%-   endfor -%}
+          {%- endif -%}
+          {{ out }}
+
+    - name: The report's table
+      ansible.builtin.set_fact:
+        site_report_sections:
+          - title: "{{ 'Deleted' if _deleted else 'Would be deleted (nothing was)' }}"
+            columns: "{{ ['Host', 'Folder', 'Older than', 'Files', 'Size'] + (['Free before', 'Free after'] if _deleted else []) }}"
+            rows: >-
+              {%- set rows = [] -%}
+              {%- for h in ansible_play_hosts -%}
+              {%-   set hv = hostvars[h] -%}
+              {%-   if _deleted -%}
+              {%-     for c in hv._tmp_clean | default([]) -%}
+              {%-       set f = hv._tmp_free[c.mount] | default({}) -%}
+              {%-       set _ = rows.append([h, c.path, c.days ~ ' days', c.files - c.files_after, (c.bytes - c.bytes_after) | filesizeformat(true),
+                                             f.before | default(0) | filesizeformat(true), f.after | default(0) | filesizeformat(true)]) -%}
+              {%-     endfor -%}
+              {%-   else -%}
+              {%-     for c in hv._tmp_scan | default([]) -%}
+              {%-       set _ = rows.append([h, c.path, c.days ~ ' days', c.files, c.bytes | filesizeformat(true)]) -%}
+              {%-     endfor -%}
+              {%-   endif -%}
+              {%- endfor -%}
+              {{ rows }}
+            text: >-
+              Files accessed, changed and modified longer ago than that; never sockets or systemd's, X's, ssh's or
+              Kerberos's own (tmp_cleanup_keep); only on the folder's own filesystem.
+      vars:
+        _deleted: "{{ _tmp_delete | bool }}"
+      run_once: true
+
+  post_tasks:
+    - name: Report (the email and the web page)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml

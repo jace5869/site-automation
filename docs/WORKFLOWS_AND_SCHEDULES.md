@@ -686,6 +686,27 @@ If you schedule it every 15 minutes, turn **off** "Enable concurrent jobs" on th
 workflow), because its approval waits up to 30 minutes: without that, a new run starts every 15
 minutes while the last one still waits for a person.
 
+### 42. Disk space and the tmp cleanup, with an approval
+
+```workflow
+[Linux - disk space report]
+   |  Run on success
+   v
+[Approval]
+   |  Run on success
+   v
+[Linux - tmp cleanup]
+   |  Run on success
+   v
+[Linux - disk space report]
+```
+
+The report never fails (it is a report: filesystems and LVM thin pools at 85% amber, 90% red); its
+email's last table is what the cleanup deletes after the approval - the old files of `/tmp` and
+`/var/tmp` on a full filesystem, nothing else. The last step shows the space after it. **Schedule:**
+every day 06:30, the workflow (or only the report, without the cleanup). Click by click:
+[DISK_SPACE.md](DISK_SPACE.md#set-it-up).
+
 ## Windows workflows
 
 Build them the same way, with the Windows templates ([WINDOWS.md](WINDOWS.md)). The ServiceNow
@@ -1056,6 +1077,7 @@ night 02:00, after a first run as Check).
 | Security posture | Wednesday 07:00 | workflow 6 |
 | Patch preview | the Monday before patch night | template *Patch hosts*, **Prompts → Job type `Check`** |
 | Patch with checks | monthly, in your window | workflow 3 or 4 |
+| Disk space (and the tmp cleanup) | 06:30 daily | workflow 42 |
 | Service watch | every 15 minutes (with **Enable concurrent jobs** switched off on the workflow) | workflow *Service watch - approve or self-heal* |
 | Windows daily health / weekly compliance | 06:15 daily / Monday 07:15 | workflows 12 and 13 |
 | Windows patch | monthly, in the ConfigMgr maintenance window | workflow 14 |

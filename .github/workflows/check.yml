@@ -73,6 +73,7 @@ jobs:
           python tests/test_tenable_scan.py
           python tests/test_servicenow_war.py
           python tests/test_servicenow_insights.py
+          python tests/test_disk_report.py
           python tests/test_aap_survey.py
           python tests/test_net_config.py
           python tests/test_mail_relay.py
@@ -198,6 +199,13 @@ jobs:
           /tmp/ac216/bin/pip -q install pyvmomi requests
           bash tests/patch/run_patch_snapshot_test.sh
           ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/patch/run_patch_snapshot_test.sh
+      - name: Disk space report and the tmp cleanup - UBI 9 containers, web01's /tmp on a real filesystem (current ansible-core and 2.16)
+        env:
+          DISK_TEST_COLLECTIONS: /home/runner/.ansible/collections
+        run: |
+          bash tests/disk/test_tmp_clean.sh
+          bash tests/disk/run_disk_report_test.sh
+          ANSIBLE_PLAYBOOK=/tmp/ac216/bin/ansible-playbook bash tests/disk/run_disk_report_test.sh
       - name: VMware ask, the service's vCenter read against vcsim (current ansible-core and 2.16)
         run: |
           bash tests/vmware_ask/run_vmware_ask_test.sh

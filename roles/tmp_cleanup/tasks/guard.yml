@@ -1,0 +1,18 @@
+---
+# Every folder in tmp_cleanup_dirs must be a tmp folder: an absolute path whose last part has tmp in its name (/tmp,
+# /var/tmp, /opt/app/tmp), never a system folder, and at least a day old to count as old - so no setting can turn the
+# cleanup on / or /var.
+- name: Tmp | only tmp folders, never a system folder
+  ansible.builtin.assert:
+    that:
+      - item.path is string
+      - item.path is match('^/([^/]+/)*[^/]*tmp[^/]*/?$')
+      - item.path | regex_replace('/+$', '') not in ['', '/usr', '/var', '/etc', '/home', '/root', '/opt', '/boot', '/srv']
+      - item.days | int >= 1
+    fail_msg: >-
+      tmp_cleanup_dirs: {{ item.path }} ({{ item.days }} days) is refused - only a tmp folder (a path whose last part
+      has tmp in its name, like /tmp or /var/tmp) and at least 1 day. Nothing was read or deleted.
+    quiet: true
+  loop: "{{ _tmp_dirs | default(tmp_cleanup_dirs) }}"
+  loop_control:
+    label: "{{ item.path }}"

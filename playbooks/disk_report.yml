@@ -1,0 +1,113 @@
+---
+# DISK SPACE REPORT - Linux. Every mounted local filesystem (logical volumes included) and every LVM thin pool and
+# snapshot on every host: warning at disk_report_warn_pct (85%), critical at disk_report_crit_pct (90%); the volume
+# groups' free space listed. On a host with a full filesystem that holds /tmp or /var/tmp, how much of them is old
+# (roles/tmp_cleanup: older than 10 and 30 days) - the plan workflow 42 cleans after its approval. Read-only; the job
+# is not failed for what it finds (it is a report), nor for a host it cannot reach (listed). An email and a web page
+# like the other reports. docs/DISK_SPACE.md
+#
+#   ansible-playbook playbooks/disk_report.yml
+#   ansible-playbook playbooks/disk_report.yml -e disk_report_warn_pct=80 -e disk_report_crit_pct=90
+- name: Disk space report
+  hosts: "{{ target | default('all') }}"
+  become: true
+  gather_facts: false
+  vars:
+    check_disk_warn_pct: "{{ disk_report_warn_pct | default(85) }}"
+    check_disk_crit_pct: "{{ disk_report_crit_pct | default(90) }}"
+    check_disk_inode_warn_pct: "{{ disk_report_warn_pct | default(85) }}"
+    check_disk_inode_crit_pct: "{{ disk_report_crit_pct | default(90) }}"
+    site_fail_on: []                     # a report: what it finds is in the email, the job stays green
+    site_report_title: Disk space report
+  pre_tasks:
+    - name: Linux hosts only (Windows servers have their own templates, playbooks/win_*.yml)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: os_guard.yml
+
+    - name: A host that cannot be reached is listed and left out - the job is not failed for it (site_unreachable_fails)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: reach.yml
+  tasks:
+    - name: Start
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: start.yml
+
+    - name: Filesystems and LVM
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: run_check.yml
+      vars:
+        _site_check: disk
+
+    # only where it helps: a warning or critical filesystem that holds a tmp folder
+    - name: The full filesystems that hold a tmp folder
+      ansible.builtin.set_fact:
+        _disk_full_mounts: >-
+          {{ site_findings | selectattr('id', 'match', '^disk:/') | map(attribute='id')
+             | map('regex_replace', '^disk:', '') | list }}
+
+    - name: Where the tmp folders are
+      ansible.builtin.command:
+        argv: "{{ ['df', '--output=target'] + (tmp_cleanup_dirs | default([{'path': '/tmp'}, {'path': '/var/tmp'}]) | map(attribute='path') | list) }}"
+      register: _disk_tmp_mounts
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: _disk_full_mounts | length > 0
+
+    - name: How much of them is old (roles/tmp_cleanup)
+      ansible.builtin.include_role:
+        name: tmp_cleanup
+        tasks_from: scan.yml
+      when:
+        - _disk_full_mounts | length > 0
+        - _disk_tmp_mounts.stdout_lines[1:] | default([]) | map('trim') | intersect(_disk_full_mounts) | length > 0
+
+    - name: The tmp cleanup this host would get (only folders on a full filesystem, only when something is old)
+      ansible.builtin.set_fact:
+        disk_tmp_plan: >-
+          {{ _tmp_scan | default([]) | selectattr('mount', 'in', _disk_full_mounts) | selectattr('files', 'gt', 0) | list }}
+
+    - name: The report's tables
+      ansible.builtin.set_fact:
+        site_report_sections: >-
+          {{ ansible_play_hosts | map('extract', hostvars) | list
+             | disk_report_sections(disk_report_warn_pct | default(85) | int, disk_report_crit_pct | default(90) | int,
+                                    disk_report_all | default(false) | bool) }}
+      run_once: true
+
+    - name: Full filesystems and thin pools, fullest first (the same as the email)
+      ansible.builtin.debug:
+        msg: >-
+          {%- set out = [] -%}
+          {%- for sec in site_report_sections -%}
+          {%-   set _ = out.append('== ' ~ sec.title ~ ((' (' ~ sec.rows | length ~ ')') if sec.rows else '')) -%}
+          {%-   for r in sec.rows -%}{%- set _ = out.append(r | join('  |  ')) -%}{%- endfor -%}
+          {%-   if not sec.rows -%}{%- set _ = out.append(sec.text) -%}{%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+      run_once: true
+
+    # workflow 42: the cleanup after the approval takes this plan, and only from its own workflow
+    - name: The tmp cleanup plan, for the next steps of the workflow
+      ansible.builtin.set_stats:
+        data:
+          disk_cleanup_plan: >-
+            {%- set plan = {} -%}
+            {%- for h in ansible_play_hosts if hostvars[h].disk_tmp_plan | default([]) | length > 0 -%}
+            {%-   set _ = plan.update({h: hostvars[h].disk_tmp_plan | map(attribute='path') | list}) -%}
+            {%- endfor -%}
+            {{ plan }}
+          disk_cleanup_plan_workflow: "{{ awx_workflow_job_id | default('') | string }}"
+        per_host: false
+        aggregate: false
+      run_once: true
+
+  post_tasks:
+    - name: Report (the email and the web page; the job is not failed for what it found)
+      ansible.builtin.include_role:
+        name: site_findings
+        tasks_from: report.yml

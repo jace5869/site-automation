@@ -1,0 +1,39 @@
+---
+# The old files of each tmp folder (tmp_cleanup_dirs) on this host: _tmp_scan, a list of {path, mount, days, files,
+# bytes, big: [[bytes, path]]}. Read-only (find).
+- name: Tmp | the tmp folders are tmp folders
+  ansible.builtin.include_tasks: guard.yml
+
+- name: Tmp | the old files in each tmp folder
+  ansible.builtin.script:
+    cmd: >-
+      tmp_clean.sh scan {{ item.path | quote }} {{ item.days | int }}
+      {{ tmp_cleanup_keep | map('quote') | join(' ') }}
+    executable: /bin/bash
+  # the tests age in minutes (tests/disk/run_disk_report_test.sh): a file's change time cannot be made old
+  environment: "{{ {'TMP_CLEAN_TEST_MINUTES': _tmp_cleanup_test_minutes | string} if _tmp_cleanup_test_minutes is defined else {} }}"
+  loop: "{{ _tmp_dirs | default(tmp_cleanup_dirs) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: _tmp_scan_raw
+  changed_when: false
+  check_mode: false
+  timeout: "{{ tmp_cleanup_timeout | int }}"
+
+- name: Tmp | what they hold
+  ansible.builtin.set_fact:
+    _tmp_scan: >-
+      {%- set out = [] -%}
+      {%- for r in _tmp_scan_raw.results -%}
+      {%-   set lines = r.stdout_lines | default([]) -%}
+      {%-   set c = (lines | reject('match', '^big ') | first | default('')).split() -%}
+      {%-   set big = [] -%}
+      {%-   for b in lines | select('match', '^big ') -%}
+      {%-     set p = b[4:].split('\t', 1) -%}
+      {%-     if p | length == 2 -%}{%- set _ = big.append([p[0] | int, p[1]]) -%}{%- endif -%}
+      {%-   endfor -%}
+      {%-   set _ = out.append({'path': r.item.path, 'days': r.item.days | int, 'mount': c[1] | default('-'),
+                                'files': c[2] | default(0) | int, 'bytes': c[3] | default(0) | int, 'big': big,
+                                'error': '' if r.rc | default(0) == 0 and c | length >= 4 else (r.stderr | default(r.msg | default('')) | truncate(200))}) -%}
+      {%- endfor -%}
+      {{ out }}

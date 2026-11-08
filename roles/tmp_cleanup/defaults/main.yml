@@ -1,0 +1,27 @@
+---
+# TMP CLEANUP: the old files in the tmp folders - measured by the disk space report on a host whose filesystem is full,
+# deleted by "Linux - tmp cleanup" after the approval (workflow 42). Old = accessed, changed and modified more than
+# days ago (as systemd-tmpfiles ages them; 10 days for /tmp and 30 for /var/tmp are its own defaults). Only regular
+# files, only on the folder's own filesystem, never under a name in tmp_cleanup_keep; then the folders left empty.
+tmp_cleanup_dirs:
+  - {path: /tmp, days: 10}
+  - {path: /var/tmp, days: 30}
+# Never touched (names, * and ? allowed), wherever they are under a tmp folder: what systemd, X, ssh, Kerberos and
+# the databases keep there while they run.
+tmp_cleanup_keep:
+  - 'systemd-private-*'
+  - '.X11-unix'
+  - '.ICE-unix'
+  - '.XIM-unix'
+  - '.font-unix'
+  - '.Test-unix'
+  - 'krb5cc*'
+  - 'ssh-*'
+  - 'tmux-*'
+  - '.s.PGSQL*'
+  - 'mysql.sock*'
+  - 'tmp_clean.sh'
+# On its own (not in workflow 42): it deletes only with tmp_cleanup_confirm: true; without it, it lists what it would
+# delete. In the workflow it cleans the hosts the disk space report planned, after the approval.
+tmp_cleanup_confirm: false
+tmp_cleanup_timeout: 600                 # seconds per folder

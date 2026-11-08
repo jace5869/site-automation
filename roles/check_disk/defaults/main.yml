@@ -30,3 +30,14 @@ check_disk_history_file: /var/lib/site-health/disk-history.json  # where the for
 check_disk_history_keep_days: 30         # samples older than this are dropped (the forecast uses what is left)
 
 check_disk_timeout: 20                  # seconds for df
+
+# LVM: thin pools (data and metadata) and old-style snapshots, with the limits above (check_disk_warn_pct,
+# check_disk_crit_pct); a snapshot that filled up (no longer valid) is critical. Volume groups' free space is listed in
+# the disk space report, never a finding (a volume group with no free space is normal). Needs root (lvs, vgs).
+check_disk_lvm: true
+
+# The disk space report (playbooks/disk_report.yml) - not the health check: warning and critical at (% used, space or
+# inodes; LVM thin pools and snapshots too). The report sets check_disk_warn_pct / check_disk_crit_pct from them.
+disk_report_warn_pct: 85                 # % used -> warning, in the disk space report
+disk_report_crit_pct: 90                 # % used -> critical, in the disk space report
+disk_report_all: false                   # true = every filesystem and thin pool in the tables, not only the full ones

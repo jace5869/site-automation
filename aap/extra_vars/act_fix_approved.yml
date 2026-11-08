@@ -267,6 +267,12 @@
 ## seconds for df
 # check_disk_timeout: 20
 
+## LVM: thin pools (data and metadata) and old-style snapshots, with the limits above
+## (check_disk_warn_pct, check_disk_crit_pct); a snapshot that filled up (no longer valid) is
+## critical. Volume groups' free space is listed in the disk space report, never a finding (a volume
+## group with no free space is normal). Needs root (lvs, vgs).
+# check_disk_lvm: true
+
 # ---- check_fapolicyd -----------------------------------------------------------------------------
 ## true = every host in the play must have fapolicyd. false = only check hosts that have it.
 # check_fapolicyd_required: false

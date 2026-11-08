@@ -198,6 +198,10 @@ net_perf_targets: [{name: Gateway, host: GATEWAY-ADDRESS}, {name: DC01, host: DC
 ## Run it with Check first: it then only reads, and lists the questions it would add to the two templates
 # incident_docs_survey_project: "Site automation"   # only the templates of your project (its name in AAP)
 """),
+    "disk_report.yml": ("Linux - disk space report", "Machine", "check_disk", """\
+## Read-only; the job stays green. Its limits are disk_report_warn_pct / disk_report_crit_pct (85, 90; in the
+## check_disk part below), not check_disk_warn_pct / check_disk_crit_pct (the health check's)
+"""),
     "ontap_health_report.yml": ("NetApp ONTAP health report", "NetApp ONTAP", "", ""),
     "ontap_hardware_report.yml": ("NetApp ONTAP hardware inventory", "NetApp ONTAP", "", ""),
     "ucs_inventory_report.yml": ("Cisco UCS inventory", "Cisco UCS Manager", "", """\
@@ -516,12 +520,18 @@ check_stig_stigman_api: https://STIGMAN-SERVER/api
 # check_trust_remove: false
 # check_trust_remove_severities: [critical, warning]
 """),
+    "tmp_cleanup.yml": ("Linux - tmp cleanup", "Machine", "", """\
+## In workflow 42 it cleans what the disk space report planned, after the approval (nothing to set). On its own: Limit
+## the hosts, run it as Check first, then with tmp_cleanup_confirm: true
+# tmp_cleanup_confirm: false
+"""),
     "win_patch.yml": ("Windows patch", "Machine (Windows)", "", ""),
     "win_troubleshoot.yml": ("Windows troubleshoot", "Machine (Windows)", "", ""),
 }
 
 # a setting named in a file every VMware job shares, but read by one playbook only
 ONLY = {"vm_snapshot_cleanup_email_only_if_deleted": ("vm_snapshot_cleanup.yml",),
+        "disk_report_warn_pct": ("disk_report.yml",), "disk_report_crit_pct": ("disk_report.yml",), "disk_report_all": ("disk_report.yml",),
         # the pick lists: the refresh names the answers' variables (its questions), the pick jobs read them
         "vm_snapshot_picks": ("vm_snapshot_delete_picked.yml",), "vm_reboot_picks": ("vm_reboot_picked.yml",),
         "vm_pick_max_choices": ("vm_pick_refresh.yml",),

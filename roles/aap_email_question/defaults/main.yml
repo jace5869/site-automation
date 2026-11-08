@@ -14,6 +14,8 @@ aap_email_question_playbooks:
   - ad_health_report.yml
   - ad_lockout.yml
   - cert_report.yml
+  - disk_report.yml
+  - tmp_cleanup.yml
   - database_health.yml
   - esxi_security.yml
   - fapolicyd.yml

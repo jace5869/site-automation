@@ -45,8 +45,11 @@ A host lost later in a job (it went down halfway) still fails it.
 | `... has used 97% of its inodes` | too many small files (space may still be free) | usually a directory with millions of small files (session/cache/spool); `look:` finds it |
 | `/var will be full in about 3.2 days` | growth-rate forecast from earlier runs (needs a day of history) | same as above, before it becomes an outage |
 | `could not read filesystem usage` | `df` failed or timed out | a hung mount; see the mounts check |
+| `LVM thin pool rhel/pool data is 92% full` | a thin pool's data (or metadata) is filling: full, every volume in it stops (`check_disk_lvm`) | `lvextend -L +10G rhel/pool` from the volume group's free space (`vgs`); metadata: `lvextend --poolmetadatasize +1G rhel/pool` |
+| `LVM snapshot rhel/snap ... is 88% full` / `filled up and is no longer valid` | an old-style snapshot is filling / has filled up and is lost | grow it (`lvextend -L +5G rhel/snap`) or remove it once it is not needed (`lvremove rhel/snap`) |
 
-Per-mount limits: `check_disk_overrides: {/var/log/audit: {warn: 70, crit: 85}}`. The forecast
+Per-mount limits: `check_disk_overrides: {/var/log/audit: {warn: 70, crit: 85}}`. A report of every
+full filesystem across the hosts that never fails, and the tmp cleanup: [DISK_SPACE.md](DISK_SPACE.md). The forecast
 keeps a small history in `/var/lib/site-health/disk-history.json` (the only file the checks write;
 a Check-mode run does not write it).
 

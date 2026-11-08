@@ -1,0 +1,59 @@
+---
+# Delete the old files of each tmp folder on this host (the caller decided it may): _tmp_clean, a list of
+# {path, mount, files, bytes, files_after, bytes_after}. As Check (a dry run) nothing is deleted: what would be is
+# listed (scan.yml).
+- name: Tmp | the tmp folders are tmp folders
+  ansible.builtin.include_tasks: guard.yml
+
+- name: Tmp | free space before
+  ansible.builtin.command: df -P -B1 {{ _tmp_dirs | default(tmp_cleanup_dirs) | map(attribute='path') | map('quote') | join(' ') }}
+  register: _tmp_df_before
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Tmp | delete the old files
+  ansible.builtin.script:
+    cmd: >-
+      tmp_clean.sh clean {{ item.path | quote }} {{ item.days | int }}
+      {{ tmp_cleanup_keep | map('quote') | join(' ') }}
+    executable: /bin/bash
+  # the tests age in minutes (tests/disk/run_disk_report_test.sh): a file's change time cannot be made old
+  environment: "{{ {'TMP_CLEAN_TEST_MINUTES': _tmp_cleanup_test_minutes | string} if _tmp_cleanup_test_minutes is defined else {} }}"
+  loop: "{{ _tmp_dirs | default(tmp_cleanup_dirs) }}"
+  loop_control:
+    label: "{{ item.path }}"
+  register: _tmp_clean_raw
+  changed_when: (_tmp_clean_raw_line.split()[2] | default(0) | int) > 0
+  timeout: "{{ tmp_cleanup_timeout | int }}"
+  vars:
+    _tmp_clean_raw_line: "{{ _tmp_clean_raw.stdout_lines | default([]) | first | default('') }}"
+  when: not ansible_check_mode
+
+- name: Tmp | free space after
+  ansible.builtin.command: df -P -B1 {{ _tmp_dirs | default(tmp_cleanup_dirs) | map(attribute='path') | map('quote') | join(' ') }}
+  register: _tmp_df_after
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Tmp | what was deleted
+  ansible.builtin.set_fact:
+    _tmp_clean: >-
+      {%- set out = [] -%}
+      {%- for r in _tmp_clean_raw.results | default([]) if r.stdout_lines is defined -%}
+      {%-   set c = (r.stdout_lines | first | default('')).split() -%}
+      {%-   set _ = out.append({'path': r.item.path, 'days': r.item.days | int, 'mount': c[1] | default('-'),
+                                'files': c[2] | default(0) | int, 'bytes': c[3] | default(0) | int,
+                                'files_after': c[4] | default(0) | int, 'bytes_after': c[5] | default(0) | int}) -%}
+      {%- endfor -%}
+      {{ out }}
+    _tmp_free: >-
+      {%- set out = {} -%}
+      {%- for when, res in [['before', _tmp_df_before], ['after', _tmp_df_after]] -%}
+      {%-   for line in res.stdout_lines[1:] | default([]) -%}
+      {%-     set c = line.split() -%}
+      {%-     if c | length >= 6 -%}{%- set _ = out.setdefault(c[5], {}).update({when: c[3] | int, 'size': c[1] | int}) -%}{%- endif -%}
+      {%-   endfor -%}
+      {%- endfor -%}
+      {{ out }}

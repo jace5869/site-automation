@@ -9,6 +9,7 @@
     echo "now $(date +%s)"
     timeout {{ check_disk_timeout | int }} df -l -B1 --output=fstype,size,used,avail,pcent,target {{ _x }} | tail -n +2 | sed 's/^/S /'
     timeout {{ check_disk_timeout | int }} df -l --output=fstype,itotal,iused,iavail,ipcent,target {{ _x }} | tail -n +2 | sed 's/^/I /'
+    timeout {{ check_disk_timeout | int }} df -l --output=source,target {{ _x }} | tail -n +2 | sed 's/^/D /'
   args:
     executable: /bin/bash
   vars:
@@ -40,7 +41,47 @@
       {%-     endif -%}
       {%-   endif -%}
       {%- endfor -%}
+      {%- for line in _disk.stdout_lines if line.startswith('D ') -%}
+      {%-   set d = line[2:].split(None, 1) -%}
+      {%-   if d | length == 2 and d[1] in rows -%}{%- set _ = rows[d[1]].update({'source': d[0]}) -%}{%- endif -%}
+      {%- endfor -%}
       {{ rows.values() | list | sort(attribute='mount') }}
+
+# LVM (check_disk_lvm): thin pools fill on their own - their data or metadata full stops every volume in them - and an
+# old-style snapshot that fills up is lost. Read with lvs and vgs (root); a host without LVM has nothing to say.
+- name: Disk | LVM thin pools, snapshots and volume groups
+  ansible.builtin.shell: |
+    command -v lvs >/dev/null 2>&1 || exit 0
+    timeout {{ check_disk_timeout | int }} lvs --noheadings --nosuffix --units b --separator '|' \
+      -o vg_name,lv_name,lv_attr,lv_size,data_percent,metadata_percent,origin 2>/dev/null | sed 's/^ */L|/'
+    timeout {{ check_disk_timeout | int }} vgs --noheadings --nosuffix --units b --separator '|' \
+      -o vg_name,vg_size,vg_free 2>/dev/null | sed 's/^ */G|/'
+  args:
+    executable: /bin/bash
+  register: _disk_lvm_raw
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: check_disk_lvm | bool
+
+# lv_attr's first letter: t = thin pool, s = snapshot, S = snapshot no longer valid (it filled up; or I as its fifth)
+- name: Disk | what LVM reported
+  ansible.builtin.set_fact:
+    _disk_lvm: >-
+      {%- set pools = [] -%}{%- set vgs = [] -%}
+      {%- for line in _disk_lvm_raw.stdout_lines | default([]) -%}
+      {%-   set c = line.split('|') | map('trim') | list -%}
+      {%-   if c[0] == 'L' and c | length >= 8 and c[3][:1] in ['t', 's', 'S'] -%}
+      {%-     set _ = pools.append({'vg': c[1], 'lv': c[2], 'kind': 'thin pool' if c[3][:1] == 't' else 'snapshot',
+                                    'invalid': c[3][:1] == 'S' or c[3][4:5] == 'I', 'size': c[4] | int,
+                                    'data': (c[5] | float) if c[5] is match('^[0-9.]+$') else -1,
+                                    'meta': (c[6] | float) if c[6] is match('^[0-9.]+$') else -1, 'origin': c[7]}) -%}
+      {%-   elif c[0] == 'G' and c | length >= 4 and c[2] is match('^[0-9]+$') -%}
+      {%-     set _ = vgs.append({'vg': c[1], 'size': c[2] | int, 'free': c[3] | int,
+                                  'free_pct': ((c[3] | int) * 100 / (c[2] | int)) | round(1) if c[2] | int > 0 else 0}) -%}
+      {%-   endif -%}
+      {%- endfor -%}
+      {{ {'pools': pools, 'vgs': vgs} }}
 
 - name: Disk | earlier samples (for the forecast)
   ansible.builtin.slurp:
@@ -65,6 +106,25 @@
                                          ~ (_disk.stderr | default('') | truncate(200)),
                               'hint': 'df -hl'}) -%}
       {%- endif -%}
+      {%- for p in _disk_lvm.pools -%}
+      {%-   set name = p.vg ~ '/' ~ p.lv -%}
+      {%-   set look = 'lvs -a -o lv_name,lv_size,data_percent,metadata_percent,origin ' ~ p.vg -%}
+      {%-   if p.invalid -%}
+      {%-     set _ = f.append({'check': 'disk', 'id': 'disk-lvm:' ~ name, 'severity': 'critical',
+                                'summary': 'LVM snapshot ' ~ name ~ ' (of ' ~ p.origin ~ ') filled up and is no longer valid', 'hint': look}) -%}
+      {%-   else -%}
+      {%-     for what, pct in [['data', p.data], ['metadata', p.meta]] if pct >= 0 -%}
+      {%-       set label = 'LVM ' ~ p.kind ~ ' ' ~ name ~ ((' ' ~ what) if p.kind == 'thin pool' else '') ~ ' is ' ~ (pct | round(1)) ~ '% full' -%}
+      {%-       if pct >= check_disk_crit_pct | float -%}
+      {%-         set _ = f.append({'check': 'disk', 'id': 'disk-lvm:' ~ name ~ ':' ~ what, 'severity': 'critical',
+                                    'summary': label ~ ' (critical at ' ~ check_disk_crit_pct ~ '%)', 'hint': look}) -%}
+      {%-       elif pct >= check_disk_warn_pct | float -%}
+      {%-         set _ = f.append({'check': 'disk', 'id': 'disk-lvm:' ~ name ~ ':' ~ what, 'severity': 'warning',
+                                    'summary': label ~ ' (warning at ' ~ check_disk_warn_pct ~ '%)', 'hint': look}) -%}
+      {%-       endif -%}
+      {%-     endfor -%}
+      {%-   endif -%}
+      {%- endfor -%}
       {%- for r in _disk_rows -%}
       {%-   set lim = check_disk_overrides[r.mount] | default({}) -%}
       {%-   set warn = lim.warn | default(check_disk_warn_pct) | int -%}
@@ -115,6 +175,10 @@
 - name: Disk | add them to this host's findings
   ansible.builtin.set_fact:
     site_findings: "{{ site_findings | default([]) + _disk_findings }}"
+    # every filesystem and LVM thin pool with its numbers, for a report (playbooks/disk_report.yml)
+    check_disk_inventory:
+      filesystems: "{{ _disk_rows }}"
+      lvm: "{{ _disk_lvm }}"
 
 - name: Disk | usage now
   ansible.builtin.debug:
