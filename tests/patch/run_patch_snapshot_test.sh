@@ -7,7 +7,8 @@
 # job and user in its description) taken in each batch right before that batch's update; the AAP host never; a dry run
 # takes none; an old "patching" stops the next run, patch_snapshot_replace replaces it; a host in no vCenter is a
 # physical server, patched without a snapshot; no vCenter credential; patch_snapshot false needs no vCenter; a host on the VMware
-# protected lists is not patched, unless patch_protected_with_snapshot names it (then after its own snapshot).
+# protected lists is not patched, unless patch_protected_with_snapshot names it (then after its own snapshot); RHEL 7 is
+# patched with yum, and a host with neither dnf nor yum is left out.
 #   bash tests/patch/run_patch_snapshot_test.sh
 # Needs: podman; registry.access.redhat.com/ubi9/ubi-init (pulled when missing) and its UBI repositories (internet);
 # a python with pyVmomi for the vcsim helpers (VMWARE_TEST_PYTHON); pyVmomi and requests in ansible-playbook's own
@@ -25,7 +26,7 @@ port="${VCSIM_PORT:-18999}"
 image="docker.io/vmware/vcsim:v0.52.0"
 host_image="${PATCH_TEST_IMAGE:-registry.access.redhat.com/ubi9/ubi-init:latest}"
 name="vcsim-patch-test-$$"
-hosts=("sa-patch-a-$$" "sa-patch-b-$$" "sa-patch-c-$$")
+hosts=("sa-patch-a-$$" "sa-patch-b-$$" "sa-patch-c-$$" "sa-patch-d-$$" "sa-patch-e-$$")
 work="$(mktemp -d)"
 cleanup() { "$engine" rm -f -t 0 "$name" "${hosts[@]}" >/dev/null 2>&1; rm -rf "$work"; }
 trap cleanup EXIT
@@ -46,6 +47,12 @@ for h in "${hosts[@]}"; do  # systemd up (the patch compares the running service
     for _ in $(seq 60); do "$engine" exec "$h" systemctl is-system-running 2>/dev/null | grep -qE 'running|degraded' && break; sleep 1; done
 done
 
+# old01: RHEL 7 - its dnf taken away and 7.9 written in its release files, so yum only (UBI's yum is dnf underneath).
+# other01: neither dnf nor yum.
+"$engine" exec "${hosts[3]}" sh -c 'rm -f /usr/bin/dnf /usr/bin/microdnf; sed -i "s/^VERSION_ID=.*/VERSION_ID=\"7.9\"/" /etc/os-release;
+    echo "Red Hat Enterprise Linux Server release 7.9 (Maipo)" > /etc/redhat-release' || { echo "ABORT - old01"; exit 1; }
+"$engine" exec "${hosts[4]}" rm -f /usr/bin/dnf /usr/bin/microdnf /usr/bin/yum || { echo "ABORT - other01"; exit 1; }
+
 # web01: its VM DC0_H0_VM1 by the guest host name (vcsim.py); DC0_C0_RP0_VM1: by its VM name; web02: vmware_vm_name.
 # phys01: no VM. dup: two VMs of that name. aap01: the AAP host - never patched, so never a snapshot.
 c="ansible_connection: containers.podman.podman, ansible_python_interpreter: /usr/bin/python3, ansible_become: false"
@@ -64,6 +71,8 @@ all:
         web02.example.mil: {ansible_host: ${hosts[2]}, $c, vmware_vm_name: dc0_c0_rp0_vm0}
         phys01.example.mil: {ansible_host: ${hosts[0]}, $c}
         dup: {ansible_host: ${hosts[1]}, $c}
+        old01.example.mil: {ansible_host: ${hosts[3]}, $c}
+        other01.example.mil: {ansible_host: ${hosts[4]}, $c}
         down01.example.mil: {ansible_host: 127.0.0.1, ansible_port: 1, ansible_connection: ssh, ansible_python_interpreter: /usr/bin/python3}
 EOI
 good='target=web01.example.mil:DC0_C0_RP0_VM1:web02.example.mil:aap01.example.mil'
@@ -144,7 +153,7 @@ run "patched in batches of 2: each batch's snapshots right before its update; th
     'aap01.example.mil is in aap: never patched' 'PLAY RECAP'
 check "  ...each VM has its snapshot" "$(snaps DC0_H0_VM1)/$(snaps DC0_C0_RP0_VM1)/$(snaps DC0_C0_RP0_VM0)" \
     "baseline,patching/baseline,patching/baseline,patching"
-order="$(grep -oE 'TASK \[(patch : Patch \| install the updates|vmware_vm : VMware \| snapshot "patching")' "$work/out.txt" | sed 's/.*| //' | tr '\n' ';')"
+order="$(grep -oE 'TASK \[(patch : Patch \| install the updates( \(security only\))?\]|vmware_vm : VMware \| snapshot "patching")' "$work/out.txt" | sed 's/.*| //; s/\]$//' | tr '\n' ';')"
 check "  ...the order: batch 1 snapshot, update; batch 2 snapshot, update" "$order" \
     'snapshot "patching";install the updates;snapshot "patching";install the updates;'
 desc="$(VMWARE_PORT=$port "$py" "$vmw/vcsim.py" state | "$py" -c "import json,sys; v=json.load(sys.stdin)['DC0_H0_VM1'][0]
@@ -178,6 +187,17 @@ NOVC=1 run "no host reached at all: the job fails (the machine credential?)" fai
 run "a host not reached, with patch_snapshot: no VM looked for it, no snapshot" ok -e "$good:down01.example.mil" \
     -e patch_snapshot=true -e patch_snapshot_replace=true -- 'down01.example.mil: NOT REACHED' '!down01.example.mil: NO VM' \
     'took \"patching\" of VM DC0_H0_VM1'
+
+# RHEL 7 (yum only): patched with yum. A host with neither dnf nor yum: left out and listed, the job green.
+NOVC=1 run "RHEL 7: patched with yum" ok -e target=old01.example.mil \
+    -- 'TASK [patch : Patch | install the updates with yum' '!old01.example.mil: NO DNF OR YUM' '!Could not detect'
+NOVC=1 run "RHEL 7, a dry run: what yum would update, nothing installed" ok --check -e target=old01.example.mil \
+    -- 'TASK [patch : Patch | the updates yum has' 'TASK [patch : Patch | what yum updated' '!changed: [old01.example.mil]'
+NOVC=1 run "neither dnf nor yum: listed, left out, the others patched - the job not failed" ok \
+    -e target=web01.example.mil:other01.example.mil \
+    -- 'other01.example.mil: NO DNF OR YUM' '1 host(s) with neither dnf nor yum, not patched: other01.example.mil' "$installs"
+NOVC=1 run "patch_skip_unsupported false: a host with neither fails at the update" fail \
+    -e target=other01.example.mil -e patch_skip_unsupported=false -- 'other01.example.mil' '!other01.example.mil: NO DNF OR YUM'
 
 # The VMware protected lists: a host whose name, vmware_vm_name or VM matches vmware_protected_vms or
 # vm_snapshot_cleanup_exclude_vms is not patched, unless patch_protected_with_snapshot names it - then after its snapshot.

@@ -34,10 +34,24 @@ patch_never_patch_groups: [no_patch, aap, aap_hosts, sat, netapp, netapp_console
 # reached at all always fails the job (the machine credential?), and a host lost later (it went down halfway, did
 # not come back from its reboot) always fails it and stops the rollout.
 patch_skip_unreachable: true
+# RHEL 8 and later are patched with dnf, RHEL 7 and its clones with yum. A host with neither (not a RHEL-like Linux):
+# true = it is listed as NO DNF OR YUM and left out - not patched, no snapshot - and the job is not failed for it; its
+# last lines list every such host. false = it fails at the update.
+patch_skip_unsupported: true
+# A host that answers but where the job cannot become root (sudo refused, its password wrong or missing), or with less
+# than patch_min_free_mb free in /var: true = it is listed as NOT READY and left out - nothing changed on it, nothing
+# cleaned up - and the job is not failed for it; its last lines list every such host. false = it fails, and the rollout
+# stops.
+patch_skip_not_ready: true
 patch_min_free_mb: 1024                  # free space needed in /var before starting
 patch_service_wait: 120                  # seconds to wait for services to come back after a reboot
-# Services that come and go on their own and are not compared before/after (regular expression)
-patch_ignore_services: '^(user@|user-runtime-dir@|session-|dnf-makecache|packagekit|fwupd|run-|systemd-(hostnamed|timedated|localed|coredump))'
+# Services that come and go on their own and are not compared before/after (regular expression). dbus-: = the helpers
+# D-Bus starts on demand and that end on their own (dbus-:1.1-org.fedoraproject.SetroubleshootPrivileged@83.service)
+patch_ignore_services: '^(user@|user-runtime-dir@|session-|dnf-makecache|packagekit|fwupd|run-|dbus-:|setroubleshootd|systemd-(hostnamed|timedated|localed|coredump))'
+# Which services must run again after the update: enabled = the ones that start at boot (systemctl is-enabled: enabled,
+# generated - an init script on RHEL 7); a service started on demand (static, indirect, transient: D-Bus, a socket,
+# another unit) that ended on its own is listed, never failed. all = every service that was running (before 0.89.0).
+patch_compare_services: enabled
 
 # ---- A VMware snapshot of each VM right before it is patched ----
 

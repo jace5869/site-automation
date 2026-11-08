@@ -1,6 +1,6 @@
 ---
 # PATCH one host: guards -> the VMware snapshot of its VM (patch_snapshot) -> remember running services ->
-# dnf update -> reboot if needed and allowed -> the same services must be running again. Check mode (a dry run)
+# dnf update (yum on RHEL 7) -> reboot if needed and allowed -> the same services must be running again. Check mode (a dry run)
 # shows what would be updated and changes nothing.
 
 - name: Patch | which groups are protected (yours, plus AAP - built in)
@@ -89,14 +89,42 @@
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
   when: patch_snapshot | bool
 
+# each with how it starts (systemctl is-enabled): enabled ones start at boot and must run again after the update;
+# static, indirect or transient ones are started on demand (D-Bus, a socket, another unit) and end on their own
 - name: Patch | services running before the update
   ansible.builtin.shell: >-
     set -o pipefail;
     systemctl list-units --type=service --state=running --no-legend --plain --no-pager
     | awk '{print $1}' | { grep -vE {{ patch_ignore_services | quote }} || true; } | sort
-  register: _patch_before
+    | while read -r u; do printf '%s %s\n' "$u" "$(systemctl is-enabled "$u" 2>/dev/null || true)"; done
+  register: _patch_before_raw
   changed_when: false
   check_mode: false
+
+- name: Patch | the ones that must run again (patch_compare_services)
+  ansible.builtin.set_fact:
+    _patch_before:
+      stdout_lines: >-
+        {{ _patch_before_raw.stdout_lines | map('split') | selectattr('1', 'defined')
+           | selectattr('1', 'in', ['enabled', 'enabled-runtime', 'generated', 'alias']) | map('first') | list
+           if patch_compare_services == 'enabled' else _patch_before_raw.stdout_lines | map('split') | map('first') | list }}
+    _patch_on_demand: >-
+      {{ _patch_before_raw.stdout_lines | map('split') | map('first') | list
+         | difference(_patch_before_raw.stdout_lines | map('split') | selectattr('1', 'defined')
+                      | selectattr('1', 'in', ['enabled', 'enabled-runtime', 'generated', 'alias']) | map('first') | list)
+         if patch_compare_services == 'enabled' else [] }}
+
+- name: Patch | dnf or yum (RHEL 7 and its clones have only yum)
+  ansible.builtin.setup:
+    gather_subset: ['!all', '!min', 'pkg_mgr', 'distribution']
+  check_mode: false
+
+# ansible-core 2.16 says yum on RHEL 7; later ones (no yum module) say unknown there
+- name: Patch | which one
+  ansible.builtin.set_fact:
+    _patch_yum: >-
+      {{ ansible_facts.pkg_mgr == 'yum' or (ansible_facts.pkg_mgr not in ['dnf', 'dnf5']
+         and ansible_facts.os_family | default('') == 'RedHat' and ansible_facts.distribution_major_version | default('0') | int < 8) }}
 
 - name: Patch | install the updates{{ ' (security only)' if patch_security_only | bool else '' }}
   ansible.builtin.dnf:
@@ -106,6 +134,33 @@
     security: "{{ patch_security_only | bool }}"
     exclude: "{{ patch_exclude }}"
   register: _patch_dnf
+  when: not _patch_yum | bool
+
+# yum itself, not a module: ansible-core 2.17 and later have no yum module. check-update: 100 = updates, 0 = none.
+- name: Patch | the updates yum has{{ ' (security only)' if patch_security_only | bool else '' }}
+  ansible.builtin.command:
+    argv: "{{ ['yum', '-q', 'check-update'] + _patch_yum_args }}"
+  register: _patch_yum_list
+  changed_when: false
+  failed_when: _patch_yum_list.rc not in [0, 100]
+  check_mode: false
+  when: _patch_yum | bool
+
+- name: Patch | install the updates with yum{{ ' (security only)' if patch_security_only | bool else '' }}
+  ansible.builtin.command:
+    argv: "{{ ['yum', '-y', 'update'] + _patch_yum_args }}"
+  register: _patch_yum_run
+  changed_when: true
+  when: _patch_yum | bool and _patch_yum_list.rc == 100 and not ansible_check_mode
+
+- name: Patch | what yum updated, in the form the tasks below read
+  ansible.builtin.set_fact:
+    _patch_dnf:
+      changed: "{{ _patch_yum_list.rc == 100 }}"
+      results: >-
+        {{ _patch_yum_list.stdout_lines | map('trim') | select('match', '^\S+\.\S+\s+\S+\s+\S+$')
+           | map('split') | map('first') | map('regex_replace', '^', 'Updated: ') | list }}
+  when: _patch_yum | bool
 
 - name: "Patch | what was updated{{ ' (dry run - what WOULD be updated)' if ansible_check_mode else '' }}"
   ansible.builtin.debug:
@@ -176,6 +231,7 @@
       rebooted: "{{ _patch_reboot_needed | bool and _patch_reboot_allowed | bool and not ansible_check_mode }}"
       reboot_still_needed: "{{ _patch_reboot_needed | bool and not (_patch_reboot_allowed | bool) }}"
       services_not_back: "{{ _patch_before.stdout_lines | difference(_patch_after.stdout_lines) }}"
+      on_demand_not_running_now: "{{ _patch_on_demand | difference(_patch_after.stdout_lines) }}"
       snapshot: "{{ _patch_snapshot | default('none (patch_snapshot is false)') }}"
 
 - name: Patch | FAIL - services that ran before the update are not running now

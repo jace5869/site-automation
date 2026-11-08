@@ -4,3 +4,9 @@
 # inventory (aap_hosts) and the settings files (aap). Keep in step with
 # roles/site_act/vars/main.yml and playbooks/act_fix_approved.yml.
 _site_always_protected: [aap, aap_hosts]
+
+# yum's own arguments for a RHEL 7 host (tasks/main.yml): the settings dnf takes, as yum options
+_patch_yum_args: >-
+  {{ (['--security'] if patch_security_only | bool else [])
+     + (patch_exclude | map('regex_replace', '^', '--exclude=') | list)
+     + ([] if patch_packages | list == ['*'] else patch_packages | list) }}

@@ -9,6 +9,8 @@
 # - One host at a time (patch_serial), and the rollout STOPS at the first host that fails.
 # - A host that cannot be reached at the start is listed (NOT REACHED) and left out, and the job goes on with the
 #   others (patch_skip_unreachable; false = it fails and stops the rollout). A host lost later still fails it.
+# - RHEL 8 and later are patched with dnf, RHEL 7 and its clones with yum; a host with neither is listed (NO DNF OR YUM)
+#   and left out (patch_skip_unsupported).
 # - Every service that was running before the update must be running after it.
 # - Hosts in no_patch, and always the AAP hosts (aap, aap_hosts), are skipped: never patched, never
 #   rebooted by a job. Add more groups with patch_never_patch_groups / patch_never_reboot_groups.
@@ -58,6 +60,92 @@
       when:
         - patch_skip_unreachable | default(true) | bool
         - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['aap', 'aap_hosts']) | length == 0
+
+    # a host with neither dnf nor yum (not a RHEL-like Linux) is not one this job patches: listed as NO DNF OR YUM and
+    # left out, the job not failed for it (patch_skip_unsupported; false = it fails at the update). RHEL 7 and its clones
+    # are patched with yum. A host the facts cannot be read from goes on and fails where it always did.
+    - name: Its package manager (patch_skip_unsupported)
+      ansible.builtin.setup:
+        gather_subset: ['!all', '!min', 'pkg_mgr', 'distribution']
+      ignore_unreachable: true
+      failed_when: false
+      check_mode: false
+      register: _patch_pkg
+      when:
+        - patch_skip_unsupported | default(true) | bool
+        - site_host_unreached | length == 0
+        - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['aap', 'aap_hosts']) | length == 0
+
+    # ansible-core 2.16 says yum on RHEL 7; later ones say unknown there (as roles/patch decides)
+    - name: A host with neither dnf nor yum is listed and left out - the job is not failed for it
+      ansible.builtin.set_fact:
+        patch_unsupported: >-
+          {{ _f.ansible_distribution | default('?') }} {{ _f.ansible_distribution_version | default('') }}, {{ _f.ansible_pkg_mgr }}
+      vars:
+        _f: "{{ _patch_pkg.ansible_facts | default({}) }}"
+      when:
+        - _f.ansible_pkg_mgr | default('dnf') not in ['dnf', 'dnf5', 'yum']
+        - not (_f.ansible_os_family | default('') == 'RedHat' and _f.ansible_distribution_major_version | default('0') | int < 8)
+
+    - name: Neither dnf nor yum - the job goes on without it
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: NO DNF OR YUM - {{ patch_unsupported }}. This job patches RHEL and its clones (dnf,
+          or yum on 7); left out of this run, the job is not failed for it. Patch it another way, or put it in no_patch.
+      when: patch_unsupported is defined
+
+    - name: Leave it out
+      ansible.builtin.meta: end_host
+      when: patch_unsupported is defined
+
+    # a host that answers but where the job cannot become root (sudo refused, its password wrong or missing), or with too
+    # little room in /var: listed as NOT READY and left out, the job not failed for it - nothing was changed on it.
+    # Nothing is cleaned up; free the space or fix the account, then run again for it. patch_skip_not_ready: false =
+    # it fails in the patch play, as before 0.89.0.
+    - name: Root on it, and room in /var (patch_skip_not_ready)
+      ansible.builtin.command: df -P -m /var
+      become: true
+      ignore_unreachable: true
+      failed_when: false
+      changed_when: false
+      check_mode: false
+      register: _patch_ready
+      when:
+        - patch_skip_not_ready | default(true) | bool
+        - site_host_unreached | length == 0
+        - group_names | intersect((patch_never_patch_groups | default(['no_patch', 'aap', 'aap_hosts', 'sat', 'netapp', 'netapp_console_hosts'])) + ['aap', 'aap_hosts']) | length == 0
+
+    # the reason without the login banner: Ansible's own message, else the last line of the output that is not ssh's
+    - name: Not ready - root refused, or /var too full
+      ansible.builtin.set_fact:
+        patch_not_ready: >-
+          {%- if _patch_ready.unreachable | default(false) or _patch_ready.rc | default(0) != 0 -%}
+          {%-   set lines = ((_patch_ready.module_stderr | default('')) ~ '\n' ~ (_patch_ready.stderr | default(''))
+                            ~ '\n' ~ (_patch_ready.module_stdout | default(''))).splitlines() | map('trim')
+                            | reject('equalto', '') | reject('match', '(?i)^shared connection to ') | list -%}
+          {%-   set m = lines[-1] if lines else _patch_ready.msg | default('') | string -%}
+          cannot become root: {{ (m or 'unknown') | truncate(200) }}
+          {%- else -%}
+          {%-   set free = _patch_ready.stdout_lines[-1].split()[3] | int -%}
+          {%-   if free < patch_min_free_mb | default(1024) | int -%}only {{ free }} MB free in /var (need {{ patch_min_free_mb | default(1024) }} MB){%- endif -%}
+          {%- endif -%}
+      when:
+        - _patch_ready is not skipped
+        - _patch_ready.unreachable | default(false) or _patch_ready.rc | default(0) != 0
+          or (_patch_ready.stdout_lines[-1].split()[3] | int) < patch_min_free_mb | default(1024) | int
+        # with patch_skip_unreachable: false a host not reached goes on, and fails the job in the patch play
+        - not _patch_ready.unreachable | default(false) or patch_skip_unreachable | default(true) | bool
+
+    - name: Not ready - the job goes on without it
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: NOT READY - {{ patch_not_ready }}. Nothing was changed on it; left out of this run,
+          the job is not failed for it. Fix that, then run again for it.
+      when: patch_not_ready is defined
+
+    - name: Leave it out (not ready)
+      ansible.builtin.meta: end_host
+      when: patch_not_ready is defined
 
     - name: The hosts that go on
       ansible.builtin.group_by:
@@ -124,3 +212,27 @@
              | map(attribute='inventory_hostname') | list }}
       run_once: true
       when: _unreached | length > 0
+
+    - name: Patch hosts | NOT READY - not patched (root refused or /var too full - fix that, then run again for these)
+      ansible.builtin.debug:
+        msg: >-
+          {{ _not_ready | length }} host(s) not ready, not patched:
+          {% for h in _not_ready %}{{ h }} ({{ hostvars[h].patch_not_ready }}){{ '; ' if not loop.last else '' }}{% endfor %}
+      vars:
+        _not_ready: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('patch_not_ready', 'defined')
+             | map(attribute='inventory_hostname') | list }}
+      run_once: true
+      when: _not_ready | length > 0
+
+    - name: Patch hosts | NO DNF OR YUM - not patched (not a RHEL-like Linux - patch them another way, or put them in no_patch)
+      ansible.builtin.debug:
+        msg: >-
+          {{ _unsupported | length }} host(s) with neither dnf nor yum, not patched:
+          {% for h in _unsupported %}{{ h }} ({{ hostvars[h].patch_unsupported }}){{ '; ' if not loop.last else '' }}{% endfor %}
+      vars:
+        _unsupported: >-
+          {{ ansible_play_hosts_all | map('extract', hostvars) | selectattr('patch_unsupported', 'defined')
+             | map(attribute='inventory_hostname') | list }}
+      run_once: true
+      when: _unsupported | length > 0

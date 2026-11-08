@@ -948,8 +948,9 @@ an AAP **notification** (email) on failure when the API is down: a broken Servic
 
 ## Patch hosts (`playbooks/patch_hosts.yml`)
 
-Installs updates with dnf (`patch_security_only` for security fixes only; `patch_exclude` for
-packages never updated here). Then:
+Installs updates with dnf - on RHEL 7 and its clones with yum (0.89.0: `yum check-update`, then
+`yum -y update`; any ansible-core) - (`patch_security_only` for security fixes only, `--security` on
+yum; `patch_exclude` for packages never updated here). Then:
 
 1. **One host at a time** by default. For batches, set `patch_serial` in the template's Variables
    or the survey (`patch_serial: 10`; in `all.yml` it does nothing). The rollout **stops at the
@@ -962,15 +963,29 @@ packages never updated here). Then:
    credential). A host lost **later** (it went down halfway, or did not come back from its reboot)
    still fails and stops the rollout. `patch_skip_unreachable: false`: a host not reached fails the
    job, as before 0.87.0.
-3. Refuses with less than `patch_min_free_mb` free in `/var`.
+   **A host with neither dnf nor yum** (not a RHEL-like Linux) is listed as `NO DNF OR YUM - <its OS>`
+   and left out the same way, the job not failed for it, and the last lines list them:
+   `1 host(s) with neither dnf nor yum, not patched: ...`. `patch_skip_unsupported: false`: such a
+   host fails at the update.
+3. **A host that is not ready** - it answers, but the job cannot become root on it (sudo refused,
+   its password wrong or missing: the template's Machine credential needs *Privilege Escalation
+   Method* `sudo` and, when sudo asks for one, the *Privilege Escalation Password*), or it has less
+   than `patch_min_free_mb` free in `/var` - is listed as `NOT READY - <why>` (the login banner left
+   out) and left out, the job not failed for it; nothing is changed or cleaned up on it. The last
+   lines list them: `1 host(s) not ready, not patched: ...`. Fix it, then run again for those.
+   `patch_skip_not_ready: false`: such a host fails the job and stops the rollout, as before 0.89.0.
 4. **No automatic restarts** unless `automatic_restarts: true` (the survey or the template's
    Variables). Without it, a host that needs a reboot is listed ("reboot it by hand, or run again
    with automatic_restarts: true"). With it, the job reboots only when `needs-restarting -r` says
    so (`patch_reboot: when_needed`), and **never** hosts in `patch_never_reboot_groups`
    (`aap_hosts`). A host without `needs-restarting` (install `dnf-utils`), or where it fails, counts
    as needing a reboot after updates were installed - the job says so.
-5. After the update (and reboot), **every service that was running before must be running
-   again**. If one is not, the host fails and the rollout stops.
+5. After the update (and reboot), **every service that was running before and starts at boot
+   (`systemctl is-enabled`: enabled) must be running again**. If one is not, the host fails and the
+   rollout stops. A service started on demand (static, indirect, transient - by D-Bus, a socket or
+   another unit, like SELinux troubleshooting's `dbus-:1.1-org.fedoraproject.SetroubleshootPrivileged@83.service`)
+   that ended on its own is listed (`on_demand_not_running_now`), never failed (0.89.0;
+   `patch_compare_services: all` compares every one, as before).
 6. Never patches hosts in `no_patch` (vendor appliances), `aap`, `aap_hosts`, `sat`, `netapp` or
    `netapp_console_hosts`. The AAP host is **always** protected: even a list you write yourself
    (`patch_never_patch_groups`) cannot remove `aap` or `aap_hosts`. It also refuses a host that is
