@@ -41,7 +41,10 @@ def answer(text):
         for iid, name, count in re.findall(r"^ISSUE (I\d+): (.+?) - (\d+) incidents", text, re.M):
             ph = re.search(r"\b(HOST|PERSON)-\d+\b", text)
             sug = "Printer" in name
+            block = text.split("ISSUE %s:" % iid, 1)[1].split("\nISSUE ", 1)[0]
+            wn = "WORK NOTES" in block and "restarted the spooler" in block.lower()
             out.append({"id": iid, "steps": ["Check the %s first." % name.split(" /")[0].lower(), "Apply the usual fix and confirm with the user."],
+                        "tickets": 23 if wn else 0, "workaround": "Restarting the Print Spooler, again and again (the work notes)." if wn else None,
                         "support": [0, 0] if sug else [9, 4], "source": "suggested" if sug else "tickets",
                         "why": "From the close notes; most were on %s." % (ph.group(0) if ph else "one host"), "disagree": "VPN" in name,
                         "kb": None if sug or int(count) < 50 else {"title": "Fix: %s" % name, "symptoms": "The user sees %s." % name.lower(),

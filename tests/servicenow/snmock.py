@@ -46,7 +46,8 @@ nameINa,b and sys_user user_nameINa,b^ORnameINa,b; SNMOCK_NO_GROUPS=1: sys_user_
 reading those tables answers 403. task_sla: the seed's records with _table task_sla (task = the task's sys_id, sla = its name,
 stage, has_breached, business_percentage, planned_end_time ...), read with taskINa,b and stage!=cancelled; not part of task.
 The ticket insights: the seed may hold sc_req_item, problem, sys_user_grmember (user, group: names) and sys_audit records (tablename, fieldname, documentkey =
-the incident's sys_id, oldvalue, newvalue, sys_created_on), read with documentkeyINa,b like any table.
+the incident's sys_id, oldvalue, newvalue, sys_created_on), read with documentkeyINa,b like any table; and sys_journal_field
+(element work_notes, name incident, element_id, value, sys_created_on) for the work notes, read with element_idINa,b.
 Usage: snmock.py PORT   (requests appended to $SNMOCK_LOG as JSON lines)
 """
 import base64
@@ -100,7 +101,8 @@ STATE_LABEL = {"1": "New", "2": "In Progress", "6": "Resolved", "7": "Closed", "
 TASK_LABEL = {"1": "Open", "2": "Work in Progress", "3": "Closed Complete", "4": "Closed Incomplete", "7": "Closed Skipped",
               "-5": "New", "-4": "Assess", "-3": "Authorize", "-2": "Scheduled", "-1": "Implement", "0": "Review"}
 PREFIX = {"incident": "INC", "sc_task": "SCTASK", "change_request": "CHG", "change_task": "CTASK", "sc_request": "REQ",
-          "sc_req_item": "RITM", "problem_task": "PTASK", "problem": "PRB", "sys_audit": "AUD", "sys_user_grmember": "GRM"}
+          "sc_req_item": "RITM", "problem_task": "PTASK", "problem": "PRB", "sys_audit": "AUD", "sys_user_grmember": "GRM",
+          "sys_journal_field": "JRN"}
 
 
 def seed():

@@ -5,7 +5,9 @@
 # issues grouped, the fixes, a knowledge draft, the summaries - and no real name, phone number or address in what it was
 # sent; the real ones back in the page); no ACT key (said, the report whole); the site's page and each team's page on the
 # report website, linked to each other; one group named; a group not there; sys_audit or a table unreadable (said, green);
-# Check; no credential; emailed with the workbook.
+# Check; no credential; emailed with the workbook. 0.96.0: the team picker and the side bar's filter; ACT reads the top issues'
+# work notes (sys_journal_field, GET only, masked - what only they hold too), the page says what each fix was read from; the
+# work notes refused (403): said, the fixes from the close notes; off: not read.
 #   bash tests/servicenow/run_insights_test.sh            (ANSIBLE_PLAYBOOK=... to pick one)
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -106,9 +108,11 @@ check "a team's page: that team, linked back to the site's" "$top/ops-windows/la
 # 0.88.0: the page's script as a file beside the index (a web server that blocks inline scripts runs it), the teams as plain links,
 # the leaderboard = the group's members (a quiet member on it, the desk's closer not), who sends the team its tickets, short group names
 check "the script loaded from site-insights.js, relative to each page; the teams as links without it" "$top/ops-windows/latest.html" \
-    '<script src="../../site-insights.js?v=' 'data-file="site-insights.js"' '<nav class="teamnav"' '<a class="team" href="../ops-linux/latest.html">Ops - Linux</a>' \
+    '<script src="../../site-insights.js?v=' 'data-file="site-insights.js"' '<details class="picker" id="picker">' \
+    '<a class="team" href="../ops-linux/latest.html" data-n="ops - linux linux" data-g="" title="Ops - Linux">Linux</a>' '<input class="tf js" id="teamq"' \
+    '<span class="pk-v">Windows</span>' '!class="teamnav"' \
     'Riley Chen' '!Dana Whitfield</td><td><b>' 'Who sends this team its tickets' "members, from ServiceNow's group membership" \
-    '<span class="hop" title="Ops - Service Desk">Service Desk</span>' '<title>Week of '
+    '<a class="hop glink" href="../ops-service-desk/latest.html" title="Ops - Service Desk">Service Desk</a>' '<title>Week of '
 [ -s "$work/site/site-insights.js" ] && grep -q 'window.siteInsights' "$work/site/site-insights.js" && ! grep -q 'site-insights.js' "$work/site/index.html" \
     && echo "ok   -   ... site-insights.js at the top of the website, the index does not load it" \
     || { echo "FAIL - site-insights.js not written at the top (or the index loads it)"; fails=$((fails + 1)); }
@@ -149,6 +153,33 @@ leak=$(grep -oE 'Dana Whitfield|Whitfield|\(703\) 555-[0-9]{4}|198\.51\.100\.[0-
 [ -z "$leak" ] && [ -s "$work/model.log" ] && echo "ok   -   ... the model was sent no real name, phone number, address or host" \
     || { echo "FAIL - the model was sent: $leak"; fails=$((fails + 1)); }
 grep -q 'PHONE-[0-9]' "$work/model.log" && echo "ok   -   ... it was sent the placeholders instead" || { echo "FAIL - no placeholder sent"; fails=$((fails + 1)); }
+# 0.96.0: the work notes - read (GET only), sent masked (what only they hold too), each fix says what it was read from
+grep -q 'WORK NOTES - what was tried' "$work/model.log" && echo "ok   -   ... the top issues' work notes sent to ACT" \
+    || { echo "FAIL - no work notes in what ACT was sent"; fails=$((fails + 1)); }
+leak=$(grep -oE 'vpn-help\.wn@example\.mil|wn-gw-07|\(571\) 555-[0-9]{4}' "$work/model.log" | sort -u | head -3)
+[ -z "$leak" ] && echo "ok   -   ... the work notes masked (an address, a gateway, a phone number only they hold)" \
+    || { echo "FAIL - the work notes sent as they are: $leak"; fails=$((fails + 1)); }
+"$py" - "$work/log.jsonl" <<'PYJ' && echo "ok   -   ... sys_journal_field read with GET only, element=work_notes" || { echo "FAIL - the work notes' requests"; fails=$((fails + 1)); }
+import json, sys
+rows = [json.loads(x) for x in open(sys.argv[1]) if x.strip()]
+j = [r for r in rows if "sys_journal_field" in json.dumps(r)]
+assert j and all((r.get("method") or "GET") == "GET" for r in j), j[:2]
+assert all("element=work_notes" in json.dumps(r) for r in j)
+assert all((r.get("method") or "GET") == "GET" for r in rows), [r for r in rows if r.get("method") != "GET"][:2]
+PYJ
+check "  ... the page: what each fix was read from, the printers' repeated workaround (a KB candidate)" "$p2" \
+    ' work notes of ' '<b>Repeated workaround:</b> Restarting the Print Spooler, again and again (the work notes).' '!Work notes were not read'
+mock SNMOCK_NO_TABLES=sys_journal_field
+mkdir -p "$work/site4"
+INS_ENV="GENAI_KEY=test-key" run "  ... the work notes refused (403): said, the fixes from the close notes, green" ok \
+    "{$NOW, $ACT, \"report_web_dest\": \"$work/site4\", \"servicenow_insights_act_batch\": 15}" \
+    "sys_journal_field (the incidents' work notes, for ACT's fixes): GET api/now/table/sys_journal_field: HTTP 403" 'the account needs read on sys_journal_field'
+check "  ... said on the page" "$work/site4/servicenow-ticket-insights/latest.html" 'Work notes were not read (GET api/now/table/sys_journal_field: HTTP 403' \
+    'the fixes come from the close notes only' '!Repeated workaround'
+mock
+INS_ENV="GENAI_KEY=test-key" run "  ... servicenow_insights_act_work_notes false: not read" ok \
+    "{$NOW, $ACT, \"report_web_dest\": \"\", \"servicenow_insights_act_batch\": 15, \"servicenow_insights_act_work_notes\": false}" 'questions answered'
+grep -q 'sys_journal_field' "$work/log.jsonl" && { echo "FAIL - the work notes read though off"; fails=$((fails + 1)); } || echo "ok   -   ... sys_journal_field not asked"
 
 run "ACT on, no model key: said, the report by category" ok "{$NOW, \"report_web_dest\": \"\"}" \
     'ACT: did not run (This job has no API key for provider genai' 'Account / Password'

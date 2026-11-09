@@ -203,6 +203,30 @@ def _people(items):
     return out
 
 
+def _scan(text, found, keep):
+    """What a text holds that is masked: email and IP addresses, phone numbers, 10-digit IDs, host names -> found."""
+    if not text:
+        return
+    for m in EMAIL.findall(text):
+        found.setdefault(m, "EMAIL")
+    for m in IPV4.findall(text):
+        found.setdefault(m, "IP")
+    for m in PHONE.findall(text):
+        found.setdefault(m.strip(), "PHONE")
+    for m in ID10.findall(text):
+        found.setdefault(m, "ID")
+    stripped = EMAIL.sub(" ", text)
+    for m in FQDN.findall(stripped):
+        if not IPV4.fullmatch(m):
+            found.setdefault(m, "HOST")
+    for m in HOSTLIKE.findall(stripped):
+        if TICKET.match(m) or m.lower() in keep or IPV4.fullmatch(m) or re.fullmatch(r"[\d-]+", m):
+            continue
+        if re.fullmatch(r"[A-Za-z]+\d{1,2}", m) and len(m) <= 4:      # v2, p1, l3 ...
+            continue
+        found.setdefault(m, "HOST")
+
+
 def servicenow_insights_mask(r, opts=None):
     """The replacements made before ACT reads anything: the people the records name (full name, "Last, First", the last
     name), host-like configuration items, and what the texts hold - email addresses, IP addresses, phone numbers, 10-digit
@@ -233,27 +257,7 @@ def servicenow_insights_mask(r, opts=None):
         if it.get("table") not in ("incident", "sc_task", "sc_req_item"):
             continue
         for field in ("short_description", "close_notes"):
-            text = str(it.get(field) or "")
-            if not text:
-                continue
-            for m in EMAIL.findall(text):
-                found.setdefault(m, "EMAIL")
-            for m in IPV4.findall(text):
-                found.setdefault(m, "IP")
-            for m in PHONE.findall(text):
-                found.setdefault(m.strip(), "PHONE")
-            for m in ID10.findall(text):
-                found.setdefault(m, "ID")
-            stripped = EMAIL.sub(" ", text)
-            for m in FQDN.findall(stripped):
-                if not IPV4.fullmatch(m):
-                    found.setdefault(m, "HOST")
-            for m in HOSTLIKE.findall(stripped):
-                if TICKET.match(m) or m.lower() in keep or IPV4.fullmatch(m) or re.fullmatch(r"[\d-]+", m):
-                    continue
-                if re.fullmatch(r"[A-Za-z]+\d{1,2}", m) and len(m) <= 4:      # v2, p1, l3 ...
-                    continue
-                found.setdefault(m, "HOST")
+            _scan(str(it.get(field) or ""), found, keep)
     counters, pairs, counts = {}, [], {}
     for real in sorted(found, key=lambda s: (found[s], s.lower())):
         kind = found[real]
@@ -265,6 +269,32 @@ def servicenow_insights_mask(r, opts=None):
 
 
 _MASK_CACHE = []
+
+
+def servicenow_insights_mask_more(mask, work_notes, opts=None):
+    """The mask with what the work notes hold besides (0.96.0): their email and IP addresses, phone numbers, IDs and host
+    names get placeholders too, numbered on from the mask's own (the earlier ones stay as they were). work_notes: the
+    module's answer ({work_notes: {sys_id: [[when, text]]}}) or that dict. Kept apart from the mask the issues are grouped
+    with: the words of what only the work notes hold would change the descriptions' keys (desc_key)."""
+    o = opts or {}
+    wn = (work_notes or {}).get("work_notes", work_notes) if isinstance(work_notes, dict) else {}
+    keep = KEEP_WORDS | set(str(w).strip().lower() for w in (o.get("mask_keep") or []) if str(w).strip())
+    have = set(p[0].lower() for p in (mask or {}).get("pairs") or [])
+    found = {}
+    for notes in (wn or {}).values():
+        for x in notes or []:
+            _scan(str(x[1] if isinstance(x, (list, tuple)) and len(x) > 1 else x or ""), found, keep)
+    counts = dict((mask or {}).get("counts") or {})
+    pairs = [list(p) for p in (mask or {}).get("pairs") or []]
+    for real in sorted(found, key=lambda v: (found[v], v.lower())):
+        if real.lower() in have:
+            continue
+        have.add(real.lower())
+        kind = found[real]
+        counts[kind] = counts.get(kind, 0) + 1
+        pairs.append([real, "%s-%d" % (kind, counts[kind])])
+    pairs.sort(key=lambda p: -len(p[0]))
+    return {"pairs": pairs, "counts": counts}
 
 
 def _mask_parts(mask):
@@ -510,15 +540,17 @@ def _assign(r, state, mask, opts=None):
 # ---- fixes: what each top issue's tickets say was done --------------------------------------------------------
 
 def _issue_notes(r, issues_of, name, opts=None):
-    """An issue's incidents done in the window or the one before: their close notes graded and counted."""
+    """An issue's incidents done in the window or the one before: their close notes graded and counted (and their sys_ids,
+    newest first, for the work notes)."""
     since, until, prev = _window(r)
-    good, bare, total = {}, 0, 0
-    for it in (r or {}).get("items") or []:
+    good, bare, total, ids = {}, 0, 0, []
+    for it in sorted((r or {}).get("items") or [], key=lambda x: str(x.get("done_at") or ""), reverse=True):
         if it.get("table") != "incident" or issues_of.get(it["sys_id"]) != name:
             continue
         if not _in(_t(it.get("done_at")), prev or since, until):
             continue
         total += 1
+        ids.append(it["sys_id"])
         g = grade(it.get("close_notes"), opts)
         if g == "bare":
             bare += 1
@@ -527,12 +559,13 @@ def _issue_notes(r, issues_of, name, opts=None):
         e = good.setdefault(k, {"text": " ".join(str(it.get("close_notes") or "").split()), "count": 0, "grade": g})
         e["count"] += 1
     rows = sorted(good.values(), key=lambda e: (e["grade"] != "good", -e["count"]))
-    return rows, bare, total
+    return rows, bare, total, ids
 
 
 def servicenow_insights_fix_batches(r, state, mask, opts=None):
     """The top issues ACT writes a fix for (act_fix_issues), act_fix_batch per question: [{items: [{id}], issues: [{id, name,
-    count, notes: [[count, text (masked)]], bare, total}]}]."""
+    count, notes: [[count, text (masked)]], bare, total, close_n (the close notes given), ids (its incidents done, newest
+    first, at most 200 - for the work notes), work_notes: [], work_tickets: 0}]}]."""
     o = opts or {}
     since, until, _ = _window(r)
     issues_of = _assign(r, state, mask, o)
@@ -544,11 +577,55 @@ def servicenow_insights_fix_batches(r, state, mask, opts=None):
     top = [n for n, _ in sorted(counts.items(), key=lambda kv: -kv[1]) if n != "Other / unclear"][:int(_o(o, "act_fix_issues", 15))]
     rows = []
     for i, n in enumerate(top):
-        notes, bare, total = _issue_notes(r, issues_of, n, o)
+        notes, bare, total, ids = _issue_notes(r, issues_of, n, o)
+        given = notes[:int(_o(o, "act_notes", 40))]
         rows.append({"id": "I%d" % (i + 1), "name": n, "count": counts[n], "bare": bare, "total": total,
-                     "notes": [[e["count"], apply_mask(e["text"], mask)[:400]] for e in notes[:int(_o(o, "act_notes", 40))]]})
+                     "notes": [[e["count"], apply_mask(e["text"], mask)[:400]] for e in given], "close_n": sum(e["count"] for e in given),
+                     "ids": ids[:200], "work_notes": [], "work_tickets": 0})
     size = max(1, int(_o(o, "act_fix_batch", 3)))
     return [{"items": [{"id": x["id"]} for x in rows[j:j + size]], "issues": rows[j:j + size]} for j in range(0, len(rows), size)]
+
+
+def servicenow_insights_fix_ids(batches):
+    """The incidents whose work notes are read (0.96.0): every top issue's, once."""
+    out, seen = [], set()
+    for b in batches or []:
+        for x in b.get("issues") or []:
+            for k in x.get("ids") or []:
+                if k not in seen:
+                    seen.add(k)
+                    out.append(k)
+    return out
+
+
+def servicenow_insights_fix_work_notes(batches, work_notes, mask=None, opts=None):
+    """The batches with each issue's work notes (0.96.0): the newest act_work_notes_max of its incidents' (one of each
+    text), masked, each cut to act_work_note_chars; work_tickets = how many incidents they come from. work_notes: the
+    module's answer ({work_notes: {sys_id: [[when, text]]}})."""
+    o = opts or {}
+    wn = (work_notes or {}).get("work_notes", work_notes) if isinstance(work_notes, dict) else {}
+    most, chars = int(_o(o, "act_work_notes_max", 20)), int(_o(o, "act_work_note_chars", 1500))
+    out = json.loads(json.dumps(batches or []))
+    for b in out:
+        for x in b.get("issues") or []:
+            got = []
+            for k in x.get("ids") or []:
+                for n in (wn or {}).get(k) or []:
+                    if isinstance(n, (list, tuple)) and len(n) > 1 and str(n[1]).strip():
+                        got.append((str(n[0]), k, " ".join(str(n[1]).split())))
+            got.sort(key=lambda g: g[0], reverse=True)
+            seen, keep, tickets = set(), [], set()
+            for _, k, text in got:
+                key = _norm(text)[:200]
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                keep.append(apply_mask(text, mask)[:chars])
+                tickets.add(k)
+                if len(keep) >= most:
+                    break
+            x["work_notes"], x["work_tickets"] = keep, len(tickets)
+    return out
 
 
 def servicenow_insights_fix_evidence(batch, mask=None, opts=None):
@@ -558,6 +635,10 @@ def servicenow_insights_fix_evidence(batch, mask=None, opts=None):
             x["id"], apply_mask(x["name"], mask), x["count"], x["total"], x["bare"]),
             "CLOSE NOTES THAT SAY SOMETHING (times used | note):"]
         lines += ["%d | %s" % (c, t) for c, t in x["notes"]] or ["(none)"]
+        if x.get("work_notes"):
+            lines += ["WORK NOTES - what was tried while the tickets were open, newest first (%d notes from %d tickets):" % (
+                len(x["work_notes"]), x.get("work_tickets") or 0)]
+            lines += ["- %s" % t for t in x["work_notes"]]
         lines.append("")
     return "\n".join(lines)
 
@@ -568,6 +649,11 @@ def servicenow_insights_fix_task(opts=None):
         "For each IT incident issue in the evidence piped to you, write the fix action a technician should follow, from the "
         "close notes of its tickets. You cannot run any commands in this task, and none are needed.",
         "",
+        "Some issues also carry WORK NOTES: what technicians tried while the tickets were open. Read them for what was actually "
+        "tried and what finally worked: prefer the steps that resolved tickets (the last thing tried before the ticket was "
+        "resolved, or what its close note confirms), and leave out what was tried and did not help. Count a step's support "
+        "from the close notes and the work notes together.",
+        "",
         "For each issue give:",
         "- steps: 2 to 6 short imperative steps, in order (\"Restart the Print Spooler on the print server.\"). Take them from the "
         "close notes whenever they show what was done; generic, never a ticket number, a person or one machine's name;",
@@ -576,18 +662,38 @@ def servicenow_insights_fix_task(opts=None):
         "too little and the steps are your likely fix (they will be marked: not verified);",
         "- why: one sentence on where the steps come from and how much the notes agree;",
         "- disagree: true when the notes show clearly different fixes for the same issue (the fix is not known);",
+        "- tickets: how many tickets the steps worked on, as the close notes and work notes show (0 when they do not say);",
+        "- workaround: when the notes show the same workaround applied again and again while the cause stays (a restart, a "
+        "re-image, a manual reset), one sentence naming it and how many tickets used it; else null. A repeated workaround makes "
+        "the issue a knowledge article candidate;",
         "- kb: a knowledge article draft {title, symptoms, cause, steps} - ONLY when the issue has at least %s incidents and the "
-        "notes agree on the fix (source tickets or mixed); else null. Symptoms: what the user sees; cause: the usual cause; steps "
-        "as above." % _o(o, "kb_min", 50),
+        "notes agree on the fix (source tickets or mixed), or the notes show a repeated workaround on 5 or more tickets; else "
+        "null. Symptoms: what the user sees; cause: the usual cause; steps as above; tickets: how many tickets these steps worked "
+        "on (the draft says it)." % _o(o, "kb_min", 50),
         "Placeholders such as PERSON-3, HOST-12 stand for masked values: keep them out of the steps. Never suggest deleting data, "
         "reimaging or anything destructive without saying so in the step. No markdown.",
         "",
         "End your answer with exactly one JSON object between a line %s and a line %s, nothing else between them:" % (MARK_BEGIN, MARK_END),
         MARK_BEGIN,
         '{"items": [{"id": "I1", "steps": ["...", "..."], "support": [12, 3], "source": "tickets", "why": "...", "disagree": false, '
-        '"kb": {"title": "...", "symptoms": "...", "cause": "...", "steps": ["..."]}}]}',
+        '"tickets": 14, "workaround": null, "kb": {"title": "...", "symptoms": "...", "cause": "...", "steps": ["..."], "tickets": 14}}]}',
         MARK_END,
     ] + (["", str(o["extra"])] if o.get("extra") else []))
+
+
+def _int(v):
+    s_ = str(v if v is not None else "").strip()
+    return int(s_) if s_.isdigit() else 0
+
+
+def servicenow_insights_work_notes_state(state, answer, wanted=0, on=True):
+    """What was read of the work notes (0.96.0), kept in the state for the page: {on, asked (incidents), read (incidents
+    with notes), error}."""
+    st = json.loads(json.dumps(state or servicenow_insights_state()))
+    a = answer if isinstance(answer, dict) else {}
+    st["work_notes"] = {"on": bool(on), "asked": int(wanted or 0), "read": len(a.get("work_notes") or {}),
+                        "error": str(a.get("work_notes_error") or a.get("msg") or "") if (a.get("failed") or a.get("work_notes_error")) else ""}
+    return st
 
 
 def servicenow_insights_fix_merge(state, raw, batch, opts=None, ran=True, reason="", model=""):
@@ -597,6 +703,8 @@ def servicenow_insights_fix_merge(state, raw, batch, opts=None, ran=True, reason
         st["model"] = model
     note = _answer_note(raw, ran, reason)
     names = dict((x["id"], x["name"]) for x in batch.get("issues") or [])
+    read = dict((x["id"], {"close": int(x.get("close_n") or 0), "work": len(x.get("work_notes") or []),
+                           "work_tickets": int(x.get("work_tickets") or 0)}) for x in batch.get("issues") or [])
     if note:
         st["errors"].append("fixes for %s: %s" % (", ".join(names.values()), note))
         return st
@@ -613,12 +721,15 @@ def servicenow_insights_fix_merge(state, raw, batch, opts=None, ran=True, reason
         kb = x.get("kb") if isinstance(x.get("kb"), dict) else None
         if kb:
             kb = {"title": _clean(kb.get("title"), 120), "symptoms": _clean(kb.get("symptoms"), 600), "cause": _clean(kb.get("cause"), 600),
-                  "steps": [_clean(s, 300) for s in (kb.get("steps") or []) if _clean(s, 300)][:10]}
+                  "steps": [_clean(s, 300) for s in (kb.get("steps") or []) if _clean(s, 300)][:10], "tickets": _int(kb.get("tickets"))}
             if not kb["title"] or not kb["steps"]:
                 kb = None
         support = [int(s) if str(s).strip().lstrip("-").isdigit() else 0 for s in (x.get("support") or [])]
+        wa = x.get("workaround")
+        wa = _clean(wa, 300) if wa and str(wa).strip().lower() not in ("null", "none", "false") else ""
         st["fixes"][names[str(x["id"])]] = {"steps": steps, "support": support, "source": src, "why": _clean(x.get("why"), 400),
-                                            "disagree": str(x.get("disagree")).strip().lower() in ("true", "1", "yes"), "kb": kb}
+                                            "disagree": str(x.get("disagree")).strip().lower() in ("true", "1", "yes"), "kb": kb,
+                                            "tickets": _int(x.get("tickets")), "workaround": wa, "read": read[str(x["id"])]}
     return st
 
 
@@ -964,8 +1075,8 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
                               "No close note of these tickets says what was done."), "disagree": False, "kb": None, "notes": True}
             d = issue_def.get(n) or {}
             tags = []
-            if x["cur"] >= int(_o(o, "kb_min", 50)) and fx.get("source") in ("tix", "mix") and not fx.get("disagree"):
-                tags.append("kb")
+            if (x["cur"] >= int(_o(o, "kb_min", 50)) and fx.get("source") in ("tix", "mix") and not fx.get("disagree")) or fx.get("workaround"):
+                tags.append("kb")                                          # a repeated workaround is a candidate too (0.96.0)
             if d.get("self_service"):
                 tags.append("ss")
             if n in cand_issues:
@@ -1076,7 +1187,8 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
         if team is not None:
             sc["stars"] = stars(team)
         sc["kb"] = [dict(fx_kb, issue=ir["name"], count=ir["count"], source=ir["fix"]["source"]) for ir in issue_rows
-                    for fx_kb in [ir["fix"].get("kb")] if fx_kb and ir["count"] >= int(_o(o, "kb_min", 50)) * (1 if team is None else 0.2)]
+                    for fx_kb in [ir["fix"].get("kb")] if fx_kb and (ir["count"] >= int(_o(o, "kb_min", 50)) * (1 if team is None else 0.2)
+                                                                     or ir["fix"].get("workaround"))]
         return sc
 
     def roster_of(team):
@@ -1191,7 +1303,8 @@ def servicenow_insights_model(r, state=None, mask=None, opts=None):
              "audit_read": bool(audit) or not r.get("audit_error"), "lookup_note": r.get("lookup_note") or "",
              "act": {"on": bool(o.get("act")), "ran": act_ran, "asked": int(state.get("asked") or 0), "answered": int(state.get("answered") or 0),
                      "errors": list(state.get("errors") or [])[:20], "model": state.get("model") or "", "provider": state.get("provider") or "",
-                     "issues": len(state.get("issues") or []), "fixes": len(state.get("fixes") or {}), "reason": str(o.get("act_reason") or "")},
+                     "issues": len(state.get("issues") or []), "fixes": len(state.get("fixes") or {}), "reason": str(o.get("act_reason") or ""),
+                     "work_notes": dict(state.get("work_notes") or {})},
              "mask": dict(mask.get("counts") or {}), "summaries_by": "rules"}
     for k, s in scopes.items():
         s["summary"] = rule_summary(s, model, o)
@@ -1419,6 +1532,9 @@ def not_read_lines(model):
     if model.get("members_error"):
         out.append("sys_user_grmember (the teams' members): %s - each leaderboard lists everyone the team's tickets were assigned to or "
                    "resolved by instead" % model["members_error"])
+    if ((model.get("act") or {}).get("work_notes") or {}).get("error"):
+        out.append("sys_journal_field (the incidents' work notes, for ACT's fixes): %s - the fixes were written from the close notes "
+                   "only" % model["act"]["work_notes"]["error"])
     if model.get("lookup_note"):
         out.append(model["lookup_note"])
     if (model.get("window") or {}).get("note"):
@@ -1523,7 +1639,11 @@ class FilterModule(object):
                 "servicenow_insights_classify_evidence": servicenow_insights_classify_evidence,
                 "servicenow_insights_classify_task": servicenow_insights_classify_task,
                 "servicenow_insights_classify_merge": servicenow_insights_classify_merge,
-                "servicenow_insights_fix_batches": servicenow_insights_fix_batches, "servicenow_insights_fix_evidence": servicenow_insights_fix_evidence,
+                "servicenow_insights_fix_batches": servicenow_insights_fix_batches,
+            "servicenow_insights_fix_ids": servicenow_insights_fix_ids,
+            "servicenow_insights_fix_work_notes": servicenow_insights_fix_work_notes,
+            "servicenow_insights_work_notes_state": servicenow_insights_work_notes_state,
+            "servicenow_insights_mask_more": servicenow_insights_mask_more, "servicenow_insights_fix_evidence": servicenow_insights_fix_evidence,
                 "servicenow_insights_fix_task": servicenow_insights_fix_task, "servicenow_insights_fix_merge": servicenow_insights_fix_merge,
                 "servicenow_insights_teams": servicenow_insights_teams, "servicenow_insights_model": servicenow_insights_model,
                 "servicenow_insights_summary_evidence": servicenow_insights_summary_evidence,

@@ -55,8 +55,20 @@ resolved by, and the report says so under *Not read*.
 team menu). A report web server whose Content-Security-Policy blocks inline scripts does not run it; since 0.88.0 the
 job writes the script beside the website's index as `site-insights.js` too, and every page loads it from there (as the
 other reports do with `site-report.js`: [WEB_REPORTS.md](WEB_REPORTS.md)). Where no script runs at all, the page still
-works: the teams are links in the side bar and under the header, resting on a chart shows its values, and the issues
+works: the teams are links in the side bar and in the Team menu, resting on a chart shows its values, and the issues
 open and close.
+
+**Moving between teams (0.96.0).** The bar at the top has a **Team** menu on every page, a phone's too (full width):
+*All assignment groups* first, then every team A to Z - case and spaces ignored, numbers as numbers (*Edge 2* before
+*Edge 10*) - the current one checked. Type to narrow it, ↑ ↓ and Enter to go, Esc to close; **t** opens it from anywhere
+on the page and **/** goes to the search. The side bar's team list (wide screens) has a filter box above it, one line per
+team (the whole name on hover) and the current team marked. Where the teams' names share prefixes (*Apps - ...*,
+*Net - ...*: every name has one, 2 to 8 of them, one with two teams or more) both lists show them as small headings
+with the rest of the name under them, without a last part most names end with (*... - CORE*); the whole name is the
+hover text, and the menu's button says which heading the current team is under (*HQY · Ops - Mobility*). *Teams side by side* is A to Z too; click a column's name to sort by it. On the
+site's page a group's name in a chart or a table (*Emergency changes by group*, the hand-off paths, an issue's *mostly*
+group, the close notes by group) opens that team's page. The menu and the lists are plain links: without the script
+they still work, the filters and the keys are what the script adds.
 
 **In the website's brief look** (`report_web_theme: brief`, 0.92.0 - [WEB_REPORTS.md](WEB_REPORTS.md), "The brief
 look"): the same page in the brief colours and type (translucent sections, soft greys in dark since 0.94.0), its
@@ -88,9 +100,14 @@ batches - nothing large goes in one question:
    carries the issues defined so far, so the same issue keeps its name from batch to batch (at most
    `servicenow_insights_act_max_issues`).
 2. **The fixes.** The top `servicenow_insights_act_fix_issues` issues, `servicenow_insights_act_fix_batch` per question,
-   each with its close notes that say something: the steps, how many notes show each step, where they come from, whether
-   the notes disagree, and a knowledge article draft where the notes agree and the issue has `servicenow_insights_kb_min`
-   incidents or more.
+   each with its close notes that say something (`servicenow_insights_act_notes`) and, since 0.96.0, its **work notes** -
+   what was tried while the tickets were open (below): the steps (those that resolved tickets first, not what was tried
+   and did not help), how many notes show each step, where they come from, whether the notes disagree, how many tickets
+   the steps worked on, a **repeated workaround** where the notes show one (a restart again and again: the issue becomes a
+   *KB candidate*), and a knowledge article draft where the notes agree and the issue has `servicenow_insights_kb_min`
+   incidents or more, or a repeated workaround on 5 tickets or more - the draft says how many tickets its steps worked
+   on. Under each top issue's fix the page says what it was read from: *From 40 close notes and 18 work notes of 9
+   tickets*.
 3. **The summaries.** One question with each scope's numbers (the site and each team).
 
 **Before anything goes to the model**, the job replaces with placeholders (PERSON-1, PHONE-2, EMAIL-3, HOST-4, IP-5, ID-6):
@@ -100,6 +117,17 @@ numbers, 10-digit numbers (EDIPIs), and host names. The answers come back with t
 values back before the page is written. ACT also masks host names, addresses and accounts itself. The count of each kind
 is under *How this was made*. Add your own words to replace with `servicenow_insights_mask_names` (a project, a building);
 a word that looks like a host name but is not (a product, `rhel9`) goes in `servicenow_insights_mask_keep`.
+
+**The work notes (0.96.0).** Only for the top issues ACT writes a fix for, only their incidents resolved in the window
+or the one before (200 per issue at most), read-only: GET `sys_journal_field` with `element=work_notes`,
+`name=incident`, `element_id` one of those incidents, newest first - the note's text and time, never who wrote it, and
+nothing is written anywhere. Per issue the newest `servicenow_insights_act_work_notes_max` (20), one of each text, each
+cut to `servicenow_insights_act_work_note_chars` (1500) characters. They are masked like everything else before ACT
+reads them (the people the records name, `servicenow_insights_mask_names`, and the email and IP addresses, phone
+numbers, IDs and host names in them - those only the work notes hold too) and the real values are put back in the
+answer. `servicenow_insights_act_work_notes: false` leaves them out. An account that may not read `sys_journal_field`
+(403): the page says so above the top issues and under *Not read*, the fixes come from the close notes, and the job is
+green.
 
 **Without ACT** (no key, `servicenow_insights_act: false`, or a dry run) the report is still whole: the issues are the
 incidents' category / subcategory, each issue's fix is its most common close notes that say what was done, the summary is
@@ -120,6 +148,7 @@ The **ServiceNow API** credential you already have works ([SERVICENOW_SETUP.md](
 | `sys_user_group` | the groups named in `servicenow_insights_groups` | `itil` |
 | `sys_audit` | the assignment history of incidents passed between groups (the paths) | `itil` on most instances; else the report says so and shows the counts without the paths (or `servicenow_insights_audit: false`) |
 | `sys_user_grmember` | the members of the groups the tickets name (the teams' leaderboards) | `itil` on most instances; else the report says so and each leaderboard lists everyone the team's tickets were assigned to or resolved by (or `servicenow_insights_members: false`) |
+| `sys_journal_field` | the work notes of the top issues' incidents, for ACT's fixes (0.96.0; only with ACT) | read on `sys_journal_field` - `itil` reads the work notes of the incidents it can read on most instances; where an ACL on `sys_journal_field` refuses it (403), ask the ServiceNow admin for a read ACL on `sys_journal_field` for the account's role (the work notes of incidents only is enough), or set `servicenow_insights_act_work_notes: false`; refused, the report says so and the fixes come from the close notes |
 
 A table the account cannot read is listed under *Not read* and the rest is reported; take a table out of
 `servicenow_insights_tables` to leave its sections out.

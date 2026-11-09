@@ -37,9 +37,12 @@ def site():
                 seed = json.load(fh)
         win = rd.window(6, 0, "2026-10-31", True, "", NOW)
         since, until = rd.sn_time(win["prev_since"]), rd.sn_time(win["until"])
-        items, audit, members = [], {}, {}
+        items, audit, members, notes = [], {}, {}, {}
         for r in seed:
             t = r.get("_table")
+            if t == "sys_journal_field":
+                notes.setdefault(r["element_id"], []).append([r["sys_created_on"], r["value"]])
+                continue
             if t == "sys_audit":
                 audit.setdefault(r["documentkey"], []).append([r["sys_created_on"], r["oldvalue"], r["newvalue"]])
                 continue
@@ -53,6 +56,7 @@ def site():
         _SITE["r"] = {"ok": True, "window": win, "items": items, "audit": audit, "members": members, "groups": [], "url": "https://sn.example.mil",
                       "tables": [{"table": "incident", "read": 10, "kept": 10, "more": False, "error": ""}]}
         _SITE["mask"] = F.servicenow_insights_mask(_SITE["r"], OPTS)
+        _SITE["work_notes"] = {"work_notes": dict((k, sorted(v, reverse=True)) for k, v in notes.items()), "work_notes_error": ""}
         _SITE["model"] = F.servicenow_insights_model(_SITE["r"], None, _SITE["mask"], OPTS)
     return _SITE
 
@@ -181,6 +185,108 @@ class ActAnswers(unittest.TestCase):
             self.assertIn("PERSON-3", t)
 
 
+class WorkNotes(unittest.TestCase):
+    """0.96.0: ACT reads the top issues' work notes too - read-only from sys_journal_field, masked like everything else."""
+
+    def test_read_get_only_and_refused(self):
+        class Api(object):
+            url = "https://sn.example.mil"
+
+            def __init__(self, fail=None):
+                self.calls, self.fail = [], fail
+
+            def get(self, path, params):
+                self.calls.append((path, params))
+                if self.fail:
+                    raise rd.SnError("GET %s: HTTP 403: Operation Failed: ACL Exception" % path)
+                return {"result": [{"element_id": "a", "value": "new " + "x" * 50, "sys_created_on": "2026-10-02 10:00:00"},
+                                   {"element_id": "a", "value": "old", "sys_created_on": "2026-10-01 10:00:00"},
+                                   {"element_id": "b", "value": "  ", "sys_created_on": "2026-10-01 10:00:00"}]}
+        api = Api()
+        notes, err = rd.read_work_notes(api, ["a", "b"], per_id=5, chars=10)
+        self.assertEqual((notes, err), ({"a": [["2026-10-02 10:00:00", "new xxxxxx"], ["2026-10-01 10:00:00", "old"]]}, ""))
+        path, q = api.calls[0]
+        self.assertEqual(path, "api/now/table/sys_journal_field")
+        self.assertEqual(q["sysparm_query"], "element=work_notes^name=incident^element_idINa,b^ORDERBYDESCsys_created_on")
+        self.assertEqual(q["sysparm_fields"], "element_id,value,sys_created_on")             # never who wrote it
+        self.assertEqual(rd.read_work_notes(api, ["a"], per_id=1)[0]["a"], [["2026-10-02 10:00:00", "new " + "x" * 50]])
+        notes, err = rd.read_work_notes(Api(fail=True), ["a"])
+        self.assertEqual(notes, {})
+        self.assertIn("HTTP 403", err)
+        self.assertIn("the account needs read on sys_journal_field", err)
+        src = open(os.path.join(HERE, "..", "roles", "servicenow_insights", "library", "site_servicenow_insights.py")).read()
+        self.assertNotRegex(src, r'method="(POST|PUT|PATCH|DELETE)"')                         # a GET-only job
+
+    def test_into_the_fixes_masked(self):
+        x = site()
+        batches = F.servicenow_insights_fix_batches(x["r"], None, x["mask"], OPTS)
+        ids = F.servicenow_insights_fix_ids(batches)
+        self.assertTrue(ids and len(ids) == len(set(ids)))
+        printer = [i for b in batches for i in b["issues"] if i["name"] == "Hardware / Printer"][0]
+        self.assertEqual(printer["close_n"], sum(c for c, _ in printer["notes"]))
+        mask = F.servicenow_insights_mask_more(x["mask"], x["work_notes"], OPTS)
+        self.assertEqual(mask["pairs"][:0], [])
+        old = dict((p[0], p[1]) for p in x["mask"]["pairs"])
+        self.assertTrue(all(dict((p[0], p[1]) for p in mask["pairs"]).get(k) == v for k, v in old.items()))   # the earlier ones kept
+        o = dict(OPTS, act_work_notes_max=4, act_work_note_chars=60)
+        got = F.servicenow_insights_fix_work_notes(batches, x["work_notes"], mask, o)
+        pr = [i for b in got for i in b["issues"] if i["name"] == "Hardware / Printer"][0]
+        self.assertEqual(len(pr["work_notes"]), 4)
+        self.assertTrue(all(len(t) <= 60 for t in pr["work_notes"]))
+        self.assertEqual(len(set(pr["work_notes"])), 4)                                     # one of each text
+        self.assertGreater(pr["work_tickets"], 0)
+        self.assertEqual(batches[0]["issues"][0]["work_notes"], [])                          # the batches given are not changed
+        ev = "\n".join(F.servicenow_insights_fix_evidence(b, mask, o) for b in F.servicenow_insights_fix_work_notes(batches, x["work_notes"], mask, OPTS))
+        self.assertIn("WORK NOTES - what was tried while the tickets were open, newest first", ev)
+        self.assertIn("restarted the spooler on HOST-", ev)
+        for real in ("vpn-help.wn@example.mil", "wn-gw-07", "(571) 555-", "prn01-fl"):
+            self.assertNotIn(real, ev)                                                       # what only the work notes hold: masked too
+        self.assertRegex(ev, r"EMAIL-\d+")
+        self.assertEqual(F.servicenow_insights_fix_work_notes(batches, {"work_notes": {}, "work_notes_error": "HTTP 403"}, mask, OPTS)[0]["issues"][0]["work_notes"], [])
+        # the work notes' mask is kept apart: its words would change how descriptions group into issues (desc_key)
+        tasks = open(os.path.join(HERE, "..", "roles", "servicenow_insights", "tasks", "main.yml")).read()
+        self.assertIn("_sni_mask_wn: \"{{ _sni_mask | servicenow_insights_mask_more(_sni_wn, _sni_opts) }}\"", tasks)
+        self.assertIn("servicenow_insights_model(_sni_state, _sni_mask, ", tasks)
+        self.assertIn("servicenow_insights_finish(_sni_mask_wn | default(_sni_mask))", tasks)
+
+    def test_the_task_the_answer_and_the_page(self):
+        t = F.servicenow_insights_fix_task(OPTS)
+        self.assertIn("WORK NOTES", t)
+        self.assertIn("prefer the steps that resolved tickets", t)
+        self.assertIn("workaround", t)
+        self.assertIn('"tickets": 14', t)
+        batch = {"items": [{"id": "I1"}], "issues": [{"id": "I1", "name": "Printer offline", "count": 30, "bare": 5, "total": 9,
+                                                      "notes": [[3, "Restarted spooler"]], "close_n": 3, "work_notes": ["a", "b"], "work_tickets": 2}]}
+        raw = {"items": [{"id": "I1", "steps": ["Update the driver."], "source": "tickets", "why": "w", "tickets": "23",
+                          "workaround": "Restarting the spooler, again and again.", "kb": {"title": "Print queue jams", "symptoms": "s", "cause": "c",
+                                                                                          "steps": ["a"], "tickets": 23}}]}
+        fx = F.servicenow_insights_fix_merge(F.servicenow_insights_state(), raw, batch, OPTS)["fixes"]["Printer offline"]
+        self.assertEqual((fx["tickets"], fx["workaround"], fx["kb"]["tickets"], fx["read"]),
+                         (23, "Restarting the spooler, again and again.", 23, {"close": 3, "work": 2, "work_tickets": 2}))
+        nul = dict(raw["items"][0], workaround="null")
+        self.assertEqual(F.servicenow_insights_fix_merge(F.servicenow_insights_state(), {"items": [nul]}, batch, OPTS)["fixes"]["Printer offline"]["workaround"], "")
+        x = site()
+        st = F.servicenow_insights_state()
+        st["fixes"]["Hardware / Printer"] = fx
+        st = F.servicenow_insights_work_notes_state(st, {"work_notes": {"a": []}, "work_notes_error": ""}, 40)
+        m = F.servicenow_insights_model(x["r"], st, x["mask"], OPTS)
+        pr = [i for i in m["scopes"]["all"]["issues"] if i["name"] == "Hardware / Printer"][0]
+        self.assertIn("kb", pr["tags"])                                                    # a repeated workaround: a KB candidate
+        self.assertIn("Print queue jams", [k["title"] for k in m["scopes"]["all"]["kb"]])     # ... its draft though under kb_min
+        h = P.servicenow_insights_page(m, "all", {})
+        self.assertIn('<div class="from">From 3 close notes and 2 work notes of 2 tickets · worked on 23 tickets</div>', h)
+        self.assertIn("<b>Repeated workaround:</b> Restarting the spooler, again and again.", h)
+        self.assertIn('<p class="worked">Worked on 23 tickets.</p>', h)
+        self.assertNotIn("Work notes were not read", h)
+        # refused: said on the page (under the issues and under Not read), the fixes from the close notes
+        st2 = F.servicenow_insights_work_notes_state(st, {"failed": False, "work_notes": {}, "work_notes_error": "GET x: HTTP 403 - the account needs read"}, 40)
+        m2 = F.servicenow_insights_model(x["r"], dict(st2, asked=1, answered=1), x["mask"], OPTS)
+        m2["act"]["ran"] = True
+        h2 = P.servicenow_insights_page(m2, "all", {"not_read": F.not_read_lines(m2)})
+        self.assertIn('<div class="callout">Work notes were not read (GET x: HTTP 403 - the account needs read): the fixes come from the close notes only.</div>', h2)
+        self.assertIn("sys_journal_field (the incidents&#x27; work notes, for ACT&#x27;s fixes): GET x: HTTP 403", h2)
+
+
 class Model(unittest.TestCase):
     def test_the_site(self):
         m = site()["model"]
@@ -293,10 +399,23 @@ class Page(unittest.TestCase):
         # the script: loaded from the website's site-insights.js and carried in the page (site_report_web writes the file)
         self.assertIn('<script src="site-insights.js"></script><script id="site-report-js" data-file="site-insights.js">', h)
         self.assertIn("if(window.siteInsights)return;", h)
-        # without any script: the teams are links in the side bar and under the header, the charts' values are <title>s
-        self.assertIn('<nav class="teamnav" aria-label="Teams">', h)
-        self.assertIn('<a class="team" href="ops-windows/latest.html">Ops - Windows</a>', h)
-        self.assertIn('<select class="sel js" id="grp"', h)
+        # without any script: the teams are links - the picker in the bar (a details menu) and the side bar - short names,
+        # the whole one as the title; the charts' values are <title>s
+        self.assertIn('<details class="picker" id="picker"><summary title="Switch team (t)"', h)
+        self.assertIn('<span class="pk-l">Team</span><span class="pk-v">All assignment groups</span>', h)
+        self.assertIn('<li class="all"><a href="latest.html" data-n="all assignment groups all assignment groups" data-g="" title="All assignment groups" '
+                      'aria-current="page"><span>All assignment groups</span></a></li>', h)
+        self.assertIn('<li><a href="ops-windows/latest.html" data-n="ops - windows windows" data-g="" title="Ops - Windows"><span>Windows</span></a></li>', h)
+        self.assertIn('<a class="team" href="ops-windows/latest.html" data-n="ops - windows windows" data-g="" title="Ops - Windows">Windows</a>', h)
+        # A to Z everywhere (0.96.0): the picker, the side bar, Teams side by side - not the busiest first
+        for where in (h.split('id="picklist"')[1].split("</ul>")[0], h.split('<nav class="toc"')[1].split("</nav>")[0],
+                      h.split('id="teams"')[1].split("</table>")[0]):
+            got = re.findall(r'href="(ops-[a-z-]+)/latest.html"', where)
+            self.assertEqual(got, sorted(got), where[:200])
+            self.assertEqual(len(got), 5)
+        self.assertIn('<input class="tf js" id="teamq" type="search"', h)
+        self.assertNotIn('class="teamnav"', h)
+        self.assertNotIn('id="grp"', h)
         self.assertRegex(h, r'<rect class="hit"[^>]*data-t="[^"]*"><title>Week of ')
         self.assertRegex(h, r'<rect [^>]*fill="var\(--heat\)"[^>]*><title>Mon ')
         # the close notes after the All-stars, folded; the issues say they open; the paths show short group names with the full one as a title
@@ -304,7 +423,9 @@ class Page(unittest.TestCase):
         self.assertIn('<details class="notes"><summary>', h)
         self.assertIn("Click an issue to open its fix action", h)
         self.assertIn('<span class="hint">Fix <span class="caret">›</span></span>', h)
-        self.assertIn('<span class="hop" title="Ops - Service Desk">Service Desk</span>', h)
+        self.assertIn('<a class="hop glink" href="ops-service-desk/latest.html" title="Ops - Service Desk">Service Desk</a>', h)   # a group: its page
+        self.assertRegex(h, r'<a class="glink" href="ops-[a-z-]+/latest.html"><text [^>]*class="lbl">')         # ... in a chart's bars too
+        self.assertIn('mostly <a class="glink" href="ops-', h)                                                  # ... and an issue's main group
         self.assertIn("Who sends this team its tickets", h)
         self.assertIn('<span class="chip">end user</span>', h)
 
@@ -318,7 +439,9 @@ class Page(unittest.TestCase):
         self.assertNotIn('id="teams"', h)
         self.assertIn('href="../latest.html"', h)
         self.assertEqual(h.count("<script"), 2)                  # the file's tag and the page's own copy, nothing else
-        self.assertIn('<a class="team" href="../latest.html">All assignment groups</a>', h)     # the site's page, from a team's: a plain link
+        self.assertIn('<a class="team" href="../latest.html" data-n="all assignment groups all assignment groups" data-g="" title="All assignment groups">'
+                      'All assignment groups</a>', h)                     # the site's page, from a team's: a plain link
+        self.assertIn('<span class="pk-v">VDI</span>', h)                                    # the picker says which team
 
     def test_empty_site(self):
         win = rd.window(1, 0, "2026-10-31", True, "", NOW)
@@ -333,6 +456,62 @@ class Page(unittest.TestCase):
         self.assertIn("mono", P.tk("XYZ1", "https://sn"))
         self.assertTrue(re.search("—", P.tk("", "https://sn")))
 
+
+
+class TeamOrder(unittest.TestCase):
+    """0.96.0: the teams A to Z (the user: "not in alphabetical order") - case and spaces ignored, numbers as numbers -
+    under their prefix only where that is clean; All assignment groups first."""
+
+    def test_natural_and_case(self):
+        names = ["ops - Windows", " Net - Edge 10", "Net - Edge 2", "net - core", "Ops - linux"]
+        self.assertEqual(sorted(names, key=P.natural_key), ["net - core", "Net - Edge 2", " Net - Edge 10", "Ops - linux", "ops - Windows"])
+        self.assertEqual(sorted(["Team 10", "team 2", "Team 1"], key=P.natural_key), ["Team 1", "team 2", "Team 10"])
+
+    def test_groups_only_when_clean(self):
+        self.assertEqual(P.team_groups(["Ops - Windows", "ops - Linux", "Net - Core", "Net - Edge"]),
+                         [("Net", ["Net - Core", "Net - Edge"]), ("ops", ["ops - Linux", "Ops - Windows"])])
+        self.assertEqual(P.team_groups(["Ops - Windows", "Ops - Linux", "Service Desk"]), [("", ["Ops - Linux", "Ops - Windows", "Service Desk"])])
+        self.assertEqual(P.team_groups(["Ops - Windows", "Ops - Linux"]), [("", ["Ops - Linux", "Ops - Windows"])])      # one prefix: none
+        self.assertEqual(P.team_groups(["A - x", "B - y"]), [("", ["A - x", "B - y"])])                                  # none holds two
+
+    def test_grouped_page(self):
+        m = json.loads(json.dumps(site()["model"]))
+        m["teams"] = ["Net - Core", "Ops - Windows", "Net - Edge", "Ops - Linux"]
+        links = dict((t, F._slug(t) + "/latest.html") for t in m["teams"])
+        links["all"] = "latest.html"
+        h = P.servicenow_insights_page(m, "all", {"links": links})
+        pick = h.split('id="picklist"')[1].split("</ul>")[0]
+        self.assertTrue(pick.split('>', 1)[1].startswith('<li class="all">'))                               # All assignment groups first
+        self.assertEqual(re.findall(r'<li class="tg" aria-hidden="true">([^<]+)</li>', pick), ["Net", "Ops"])
+        self.assertEqual(re.findall(r'title="([^"]+)"><span>', pick), ["Net - Core", "Net - Edge", "Ops - Linux", "Ops - Windows"])
+        self.assertIn('data-g="Net" title="Net - Core"><span>Core</span>', pick)              # under its prefix: the rest of the name
+        self.assertIn('<div class="tg" aria-hidden="true">Ops</div><a class="team" href="ops-linux/latest.html"', h)
+
+
+    def test_site_dept_team_suffix_shape(self):
+        """Names shaped "<SITE> - <Dept> - <Team> - <SUFFIX>" (made up): grouped by the site, the shared suffix dropped from
+        what is shown, the same team name under two sites told apart by its heading (and the picker's label)."""
+        names = ["HQX - Ops - Mobility - CORE", "HQX - Ops - ASD - CORE", "HQY - Service Desk - CORE", "HQY - RITM Staging",
+                 "HQX - RITM Staging", "HQY - Ops - Mobility - CORE", "HQX - Network - CORE"]
+        self.assertEqual([g for g, _ in P.team_groups(names)], ["HQX", "HQY"])
+        self.assertEqual(P.shared_suffix(names), "core")
+        self.assertEqual(P.shared_suffix(["A - x - CORE", "A - y", "B - z"]), "")                    # one name: not shared
+        m = json.loads(json.dumps(site()["model"]))
+        m["teams"] = names
+        team = "HQY - Ops - Mobility - CORE"
+        m["scopes"][team] = dict(m["scopes"]["Ops - VDI"], team=team, name=team)
+        links = dict((t, F._slug(t) + "/latest.html") for t in names)
+        links["all"] = "../latest.html"
+        h = P.servicenow_insights_page(m, team, {"links": links})
+        pick = h.split('id="picklist"')[1].split("</ul>")[0]
+        got = re.findall(r'<li class="tg" aria-hidden="true">([^<]+)</li>|title="([^"]+)"(?: aria-current="page")?><span>([^<]+)</span>', pick)
+        self.assertEqual([x[0] or "%s=%s" % (x[1], x[2]) for x in got], [
+            "All assignment groups=All assignment groups", "HQX", "HQX - Network - CORE=Network", "HQX - Ops - ASD - CORE=Ops - ASD",
+            "HQX - Ops - Mobility - CORE=Ops - Mobility", "HQX - RITM Staging=RITM Staging", "HQY", "HQY - Ops - Mobility - CORE=Ops - Mobility",
+            "HQY - RITM Staging=RITM Staging", "HQY - Service Desk - CORE=Service Desk"])
+        self.assertIn('<span class="pk-v">HQY · Ops - Mobility</span>', h)                          # which site's, in the bar
+        self.assertIn('data-n="hqy - ops - mobility - core ops - mobility" data-g="HQY"', h)          # the filter finds it by either
+        self.assertNotIn(">CORE<", h)
 
 
 class BriefPage(unittest.TestCase):

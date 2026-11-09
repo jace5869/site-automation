@@ -17,6 +17,8 @@ description:
   - With members, reads sys_user_grmember for the members of every assignment group the records name (the teams'
     leaderboards list the members; a ticket resolved by someone outside the team counts for the member it was assigned to).
   - A table (or sys_audit, sys_user_grmember) the account cannot read is returned with its error; the others are still read.
+  - With work_notes_for (0.96.0), reads only the work notes of those incidents (sys_journal_field, element work_notes,
+    newest first, GET only) for ACT's fixes - nothing else; refused (403) is returned as work_notes_error.
 options:
   url: {description: The instance's address (SN_HOST)., type: str, required: true}
   username: {description: The API account., type: str, required: true}
@@ -36,6 +38,9 @@ options:
   handoff_min: {description: The reassignments that make an incident passed around., type: int, default: 3}
   members: {description: Read the groups' members (sys_user_grmember) for the leaderboards., type: bool, default: true}
   now: {description: "The clock (tests): YYYY-MM-DDTHH:MM:SS UTC.", type: str, default: ''}
+  work_notes_for: {description: "Incident sys_ids: read only their work notes (sys_journal_field), nothing else.", type: list, elements: str, default: []}
+  work_notes_max: {description: The newest work notes kept per incident., type: int, default: 20}
+  work_note_chars: {description: Each work note cut to this many characters., type: int, default: 1500}
 author: site automation
 '''
 
@@ -51,6 +56,8 @@ audit_error: {description: "Why sys_audit was not read ('' = read, or not needed
 members: {description: "{group name: [the members' names]} for every group the records name (sys_user_grmember).", type: dict}
 members_error: {description: "Why sys_user_grmember was not read ('' = read, or not asked).", type: str}
 url: {description: The instance's address., type: str}
+work_notes: {description: "With work_notes_for: {incident sys_id: [[when (UTC text), text], ...]}, newest first.", type: dict}
+work_notes_error: {description: "Why sys_journal_field was not read ('' = read).", type: str}
 '''
 
 import calendar
@@ -358,6 +365,36 @@ def read_members(api, groups, chunk=50):
     return out, ""
 
 
+def read_work_notes(api, ids, per_id=20, chars=1500, chunk=100):
+    """The work notes of these incidents (sys_journal_field, element work_notes; GET only) -> ({sys_id: [[when, text]]}
+    newest first, at most per_id each, each cut to chars; error). Who wrote a note is not read."""
+    out = {}
+    ids = [str(x) for x in ids if str(x or "").strip()]
+    for i in range(0, len(ids), chunk):
+        part = ids[i:i + chunk]
+        try:
+            r = api.get("api/now/table/sys_journal_field", {"sysparm_query": "element=work_notes^name=incident^element_idIN" + ",".join(part)
+                                                            + "^ORDERBYDESCsys_created_on",
+                                                            "sysparm_fields": "element_id,value,sys_created_on",
+                                                            "sysparm_limit": min(10000, max(1, int(per_id)) * len(part))})
+        except SnError as e:
+            text = str(e)
+            if "HTTP 403" in text or "HTTP 401" in text:
+                text += " - the account needs read on sys_journal_field (the work notes of incidents)"
+            return out, text
+        rows = r.get("result") if isinstance(r, dict) else None
+        if not isinstance(rows, list):
+            return out, "GET api/now/table/sys_journal_field: no result list in the answer"
+        for x in rows:
+            k, text = str(x.get("element_id") or ""), str(x.get("value") or "").strip()
+            if not k or not text or len(out.get(k, [])) >= int(per_id):
+                continue
+            out.setdefault(k, []).append([str(x.get("sys_created_on") or ""), text[:int(chars)]])
+    for k in out:
+        out[k].sort(key=lambda e: e[0], reverse=True)
+    return out, ""
+
+
 def sn_time(text):
     t = str(text or "").strip()
     if not t:
@@ -438,9 +475,18 @@ def main():
             compare=dict(type="bool", default=True), time_zone=dict(type="str", default=""),
             max_records=dict(type="int", default=20000), audit=dict(type="bool", default=True), handoff_min=dict(type="int", default=3),
             members=dict(type="bool", default=True), now=dict(type="str", default=""),
+            work_notes_for=dict(type="list", elements="str", default=[]), work_notes_max=dict(type="int", default=20),
+            work_note_chars=dict(type="int", default=1500),
         ),
         supports_check_mode=True)
     p = module.params
+    if p["work_notes_for"]:          # only the work notes of these incidents (ACT's fixes, 0.96.0)
+        url = p["url"].strip()
+        if url and not url.startswith("http"):
+            url = "https://" + url
+        api = Api(url, p["username"], p["password"], p["validate_certs"], p["ca_path"], p["timeout"])
+        notes, err = read_work_notes(api, p["work_notes_for"], p["work_notes_max"], p["work_note_chars"])
+        module.exit_json(changed=False, ok=not err, work_notes=notes, work_notes_error=err, url=url)
     now = None
     if p["now"]:
         try:

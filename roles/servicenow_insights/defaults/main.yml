@@ -92,6 +92,12 @@ servicenow_insights_act_max_issues: 40          # at most this many issues
 servicenow_insights_act_fix_issues: 15          # the top issues ACT writes a fix for ...
 servicenow_insights_act_fix_batch: 3            # ... this many per question
 servicenow_insights_act_notes: 40               # close notes per issue it reads
+# ... and the work notes of those issues' incidents (0.96.0): what was tried while they were open, read from
+# sys_journal_field (GET only; the account needs read on it - refused, the page says so and the fixes come from the close
+# notes), masked like everything else before ACT reads them. The newest ..._max per issue, each cut to ..._chars.
+servicenow_insights_act_work_notes: true
+servicenow_insights_act_work_notes_max: 20    # the newest work notes per issue ACT reads
+servicenow_insights_act_work_note_chars: 1500  # each cut to this many characters
 servicenow_insights_kb_min: 50                  # a knowledge article draft for an issue with this many incidents and a fix that agrees
 servicenow_insights_act_model_timeout: 600      # seconds the model may take for an answer
 servicenow_insights_act_check_url: true         # first check that this AAP node reaches the model's URL

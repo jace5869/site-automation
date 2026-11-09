@@ -2,7 +2,9 @@
 """Records for the ticket insights test (tests/servicenow/run_insights_test.sh, tests/test_servicenow_insights.py): a year of a
 made-up site's ServiceNow - incidents of a dozen issues across five teams (names, phone numbers, host names and IP addresses
 in their text, close notes good, thin and bare), requested items, catalog tasks, changes (some failed, followed by
-incidents), problems, and the assignment history (sys_audit) of incidents passed between groups. Deterministic.
+incidents), problems, the assignment history (sys_audit) of incidents passed between groups, and work notes (sys_journal_field,
+0.96.0: what was tried - the printers' restart a workaround used again and again; an address, a host and a phone number in
+them that appear nowhere else). Deterministic.
     insights_seed.py OUT.json [SCALE]      (SCALE 1 = about 1,500 incidents in the 6-month window)"""
 import datetime
 import json
@@ -218,6 +220,24 @@ def main():
                          "closed_at": t(closed) if done else "", "closed_by": who if done else "",
                          "close_notes": R.choice(["Completed", "Done", "Created the account and sent the welcome email.",
                                                   "Installed the software and confirmed with the user."]) if done else ""})
+    # work notes (0.96.0): their own random numbers (R2), so every record above stays as it was
+    R2 = random.Random(11)
+    tried = {"printer": ["Restarted the Print Spooler on {printer}; the queue cleared but jammed again the next day.",
+                         "Workaround again: restarted the spooler on {printer}, same as last week. Driver looks old.",
+                         "Updated the print driver on {printer} to the vendor's current version; no jams since."],
+             "lockout": ["Called {caller} at {phone}; the old password is on the phone's mail profile.",
+                         "Removed the stale credential from the phone, asked the user to watch for lockouts."],
+             "vpn": ["Client log shows the certificate expired; renewed it, emailed vpn-help.wn@example.mil for the new profile.",
+                     "VPN gateway wn-gw-07 dropped the session at the hour; asked the user to update the client."]}
+    for rec in incs:
+        lines = tried.get(rec.get("_issue"))
+        if not lines or not rec.get("resolved_at") or R2.random() < .4:
+            continue
+        o = datetime.datetime.strptime(rec["opened_at"], "%Y-%m-%d %H:%M:%S")
+        ctx = {"printer": "prn01-fl%d" % R2.randint(1, 4), "caller": rec["caller_id"], "phone": "(571) 555-%04d" % R2.randint(100, 9999)}
+        for k, line in enumerate(lines[:R2.randint(1, len(lines))]):
+            recs.append({"_table": "sys_journal_field", "element": "work_notes", "name": "incident", "_doc": rec["number"],
+                         "value": line.format(**ctx), "sys_created_on": t(o + datetime.timedelta(minutes=20 * (k + 1)))})
     for rec in incs:
         rec.pop("_issue", None)
     # the groups' members (sys_user_grmember): the people, and the quiet members
@@ -228,6 +248,8 @@ def main():
     for x in recs:
         if x.get("_table") == "sys_audit":
             x["documentkey"] = "s-" + x.pop("_doc")
+        if x.get("_table") == "sys_journal_field":
+            x["element_id"] = "s-" + x.pop("_doc")
     for x in recs:
         if x.get("_table") != "sys_audit" and x.get("number"):
             x["sys_id"] = "s-" + x["number"]

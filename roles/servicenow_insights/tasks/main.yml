@@ -73,6 +73,8 @@
       act_fix_issues: "{{ servicenow_insights_act_fix_issues | int }}"
       act_fix_batch: "{{ servicenow_insights_act_fix_batch | int }}"
       act_notes: "{{ servicenow_insights_act_notes | int }}"
+      act_work_notes_max: "{{ servicenow_insights_act_work_notes_max | int }}"
+      act_work_note_chars: "{{ servicenow_insights_act_work_note_chars | int }}"
       kb_min: "{{ servicenow_insights_kb_min | int }}"
       mask_names: "{{ servicenow_insights_mask_names | servicenow_insights_name_list }}"
       mask_keep: "{{ servicenow_insights_mask_keep | servicenow_insights_name_list }}"
@@ -105,7 +107,36 @@
       ansible.builtin.set_fact:
         _sni_fix_batches: "{{ _sni | servicenow_insights_fix_batches(_sni_state, _sni_mask, _sni_opts) if _sni_act_stop | length == 0 else [] }}"
 
-    - name: Insights | ACT writes each top issue's fix from its close notes (and a knowledge article draft where they agree)
+    - name: Insights | the work notes of the top issues' incidents (sys_journal_field, read-only), for ACT's fixes
+      when: servicenow_insights_act_work_notes | bool and _sni_fix_batches | length > 0
+      block:
+        - name: Insights | read the work notes of {{ _sni_fix_batches | servicenow_insights_fix_ids | length }} incidents
+          site_servicenow_insights:
+            url: "{{ _sni_url }}"
+            username: "{{ lookup('ansible.builtin.env', 'SN_USERNAME') }}"
+            password: "{{ lookup('ansible.builtin.env', 'SN_PASSWORD') }}"
+            validate_certs: "{{ servicenow_validate_certs | default(true) | bool }}"
+            ca_path: "{{ servicenow_ca_path | default(omit, true) }}"
+            timeout: "{{ servicenow_timeout | default(30) | int }}"
+            work_notes_for: "{{ _sni_fix_batches | servicenow_insights_fix_ids }}"
+            work_notes_max: "{{ servicenow_insights_act_work_notes_max | int }}"
+            work_note_chars: "{{ servicenow_insights_act_work_note_chars | int }}"
+          register: _sni_wn
+          check_mode: false     # only reads
+          failed_when: false    # not read (403 ...): said on the page, the fixes from the close notes
+
+        # a mask of its own: the words of what only the work notes hold must not change how descriptions group into issues
+        - name: Insights | the work notes masked (their addresses, phone numbers, IDs and host names too) and added to each issue
+          ansible.builtin.set_fact:
+            _sni_mask_wn: "{{ _sni_mask | servicenow_insights_mask_more(_sni_wn, _sni_opts) }}"
+            _sni_state: >-
+              {{ _sni_state | servicenow_insights_work_notes_state(_sni_wn, _sni_fix_batches | servicenow_insights_fix_ids | length) }}
+
+        - name: Insights | each issue's work notes, the newest {{ servicenow_insights_act_work_notes_max }}
+          ansible.builtin.set_fact:
+            _sni_fix_batches: "{{ _sni_fix_batches | servicenow_insights_fix_work_notes(_sni_wn, _sni_mask_wn, _sni_opts) }}"
+
+    - name: Insights | ACT writes each top issue's fix from its close notes and work notes (and a knowledge article draft where they agree)
       ansible.builtin.include_tasks: act_fix.yml
       loop: "{{ _sni_fix_batches }}"
       loop_control:
@@ -145,7 +176,7 @@
 
 - name: Insights | ACT's words with the replaced names put back
   ansible.builtin.set_fact:
-    _sni_model: "{{ _sni_model | servicenow_insights_finish(_sni_mask) }}"
+    _sni_model: "{{ _sni_model | servicenow_insights_finish(_sni_mask_wn | default(_sni_mask)) }}"
     _sni_doc: "{{ _sni_model | servicenow_insights_doc('all', _sni_opts) }}"
   when: _sni.ok | default(false) | bool
 
