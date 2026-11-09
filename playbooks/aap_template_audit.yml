@@ -1,0 +1,22 @@
+---
+# AAP - TEMPLATE VARIABLES AUDIT. Read-only. Reads every job template and workflow template through AAP's API and
+# says which settings in their Variables box belong somewhere else, and where:
+#   - connection settings (ansible_*): the inventory's group variables, the windows group, the Machine credential
+#   - addresses (host names, URLs, IP addresses): the enclave file (playbooks/group_vars/<enclave>.yml)
+#   - site-wide settings (those "usually in all.yml" in aap/extra_vars): all.yml
+#   - a setting set the same way in many templates (aap_template_audit_repeat_min): all.yml - one place to change
+#   - secrets, by their name or a long random value: a credential. Only the name is shown, never the value.
+# Templates that ask for their Variables on launch, or whose survey asks for a flagged setting, are named too.
+# One report (email and website), a table per template. It changes nothing in AAP.
+# Runs on the AAP side: attach a "Red Hat Ansible Automation Platform" credential (its user: Organization Auditor is
+# enough); no Limit. docs/TEMPLATE_AUDIT.md
+#   ansible-playbook playbooks/aap_template_audit.yml
+#   ansible-playbook playbooks/aap_template_audit.yml -e aap_template_audit_project="Site automation"
+- name: AAP - template variables audit
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: The templates' Variables
+      ansible.builtin.include_role:
+        name: aap_template_audit

@@ -1,0 +1,90 @@
+# AAP - template variables audit
+
+*AAP - template variables audit* (`playbooks/aap_template_audit.yml`, role `roles/aap_template_audit`) reads every
+job template and workflow template in AAP, and the **Variables** box of each, and says which settings there belong
+somewhere else - and where. A template's Variables beat every other place a setting can be (`all.yml`, the group
+files, the inventory), so a setting left there by mistake quietly wins: a mail relay changed in `all.yml` that one
+template still sends through, a vCenter address that is right in one enclave and wrong in the other.
+
+It is **read-only**: it reads through AAP's API (GET) and changes nothing in AAP. A secret it finds is named, **never
+shown**: not its value, not part of it, not in the email, the website, the job's output or its artifacts.
+
+## What it flags
+
+| Why | What | Move it to |
+|---|---|---|
+| **connection** | any `ansible_*` setting: `ansible_winrm_*`, `ansible_port`, `ansible_user`, `ansible_connection`, `ansible_become*` | the Windows ones: the windows group (`playbooks/group_vars/windows.yml`); the login (`ansible_user`, `ansible_password`, `ansible_become_password`): the template's **Machine** credential; the rest: the inventory's group or host variables |
+| **an address** | a value that is a host name, a URL or an IP address (`vcsa01.yoursite.mil`, `https://stigman.yoursite.mil/api`, `192.0.2.10`) | the enclave file, `playbooks/group_vars/<enclave>.yml` (below) |
+| **site-wide** | a setting the job templates' variable files mark *usually in all.yml* (`aap/extra_vars`: the settings of the email, ACT and findings roles - the mail relay, the report website, the logo) | `playbooks/group_vars/all.yml` |
+| **repeated** | the same setting with the same value in 3 templates or more (`aap_template_audit_repeat_min`): one change would have to be made in each. The note names the other templates | `all.yml` - one place to change it |
+| **a secret** | a setting named like one (`*_password`, `*_token`, `*_secret`, `api_key`, ...) with a text value, or any value that is a long random string or vault-encrypted | a credential (a custom credential type, [SECRETS.md](SECRETS.md)) - never plain in Variables |
+| **set at launch** | a template with **Prompt on launch** on for its Variables (a launch can set any of the flagged settings again), or whose survey asks for a flagged setting - or for a password in a *Text* question instead of a *Password* one | ask on launch only for what a launch must choose |
+
+**The enclave file** is one settings file per enclave, `playbooks/group_vars/<enclave>.yml`, for an
+inventory group named for the enclave: what differs between enclaves - the addresses - goes there. The guide to
+setting it up comes in a later version; until then `aap_template_audit_per_enclave` is empty and the addresses
+are what point to it.
+
+Not flagged: settings that belong to one template - who gets its report (`report_email_to`, `report_email_cc`,
+`report_email_also`), when it fails (`site_fail_on`), what it runs on (`target`); see
+`aap_template_audit_per_template`. They are still flagged when they are a secret, or the same in many templates.
+A setting named like a password whose value is a number or true / false (`check_accounts_pw_max_days: 60`), or that
+names a file (`vcenter_password_file`), is no secret. A file name (`report.html.j2`, `logo.png`) is no address.
+
+## The report
+
+One report, on the report website and by email like the others (`report_email_to`, `report_web_dest`;
+[EMAIL_REPORTS.md](EMAIL_REPORTS.md), [WEB_REPORTS.md](WEB_REPORTS.md)):
+
+- **the counts**: job templates and workflows read, how many have something to move, and each kind of flag;
+- **By setting**: each flagged setting once - why, how many templates have it, in how many it is the same, the value
+  (cut; *not shown* for a secret) and where to move it;
+- **a table per template** (the ones with a secret first, then the most flags): setting, why, where to move it, a
+  note (the other templates with the same value; what its survey asks);
+- **Nothing to move**: the templates with nothing flagged, by name.
+
+The colour: red when a secret is in a template's Variables, amber for anything else, green when nothing is flagged.
+The job's artifact `aap_template_audit` has the counts and the flagged settings' names (no values). The job does not
+fail on what it finds unless `aap_template_audit_fail: true` (for a workflow's ticket step); it fails when AAP cannot
+be read.
+
+## Set it up in AAP
+
+1. **The job template** *AAP - template variables audit*:
+   - playbook `playbooks/aap_template_audit.yml`; any inventory (it runs on localhost, the execution environment);
+     no Limit;
+   - a **Red Hat Ansible Automation Platform** credential. Its user only reads: **Organization Auditor** is enough
+     (System Auditor sees every organization);
+   - Variables, if you like, from `aap/extra_vars/aap_template_audit.yml`.
+2. **Launch it.** The output prints the report; the website and the email have the same.
+3. **Schedule it**, if you like - weekly, say - and move what it finds as you go.
+
+A template the AAP user cannot see is not read: give it Auditor on the organization (or each template's Read role).
+
+## Settings
+
+The main ones; every setting with its default: [VARIABLES_REFERENCE.md](VARIABLES_REFERENCE.md#aap_template_audit).
+
+| Setting | Default | What it does |
+|---|---|---|
+| `aap_template_audit_project` | `""` | only the job templates of this project (its name in AAP); workflows are all read |
+| `aap_template_audit_workflows` | `true` | read the workflow templates too |
+| `aap_template_audit_exclude` | `[]` | templates left out, by name or ID |
+| `aap_template_audit_repeat_min` | `3` | a setting with the same value in this many templates is flagged; `0` = never |
+| `aap_template_audit_site_wide_roles` | `[site_email, site_act, site_findings]` | the roles whose settings are site-wide (read from their defaults when the job runs) |
+| `aap_template_audit_site_wide` | `[]` | more site-wide settings |
+| `aap_template_audit_per_enclave` | `[]` | settings that differ by enclave: the enclave file |
+| `aap_template_audit_per_template` | `report_email_to`, `report_email_cc`, `report_email_also`, `site_fail_on`, `target` | settings that belong in a template: never site-wide or an address |
+| `aap_template_audit_ignore` | `[]` | settings never flagged |
+| `aap_template_audit_ca_path` | `""` | a CA file for AAP's HTTPS certificate |
+| `aap_template_audit_fail` | `false` | `true` = the job fails when something is flagged |
+
+## When something goes wrong
+
+| What you see | Why, and what to do |
+|---|---|
+| `No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform"` | the template has no AAP credential: add one (an auditor is enough) |
+| `AAP refused the login (HTTP 401)` | the credential's user name and password, or its token, are wrong or expired |
+| `the survey of job template X (ID n) could not be read (HTTP 403)` | the AAP user may not read that template's survey: give it Auditor on the organization |
+| a template's section says *Its Variables could not be read: not YAML or JSON* | the template's Variables box does not parse: open it in AAP and fix it (AAP keeps a box it cannot use as it is) |
+| a setting flagged that belongs where it is | add it to `aap_template_audit_per_template` (still checked for secrets) or `aap_template_audit_ignore` |

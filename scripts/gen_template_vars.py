@@ -39,6 +39,11 @@ TEMPLATES = {
 # aap_health_focus_inventories: [8]                # these inventories always reported (db and api)
 # aap_url: https://aap01.yoursite.mil              # when the gateway refuses https://localhost
 """),
+    "aap_template_audit.yml": ("AAP - template variables audit", "Red Hat Ansible Automation Platform (Organization Auditor is enough)", "", """\
+## Read-only: which settings in the templates' Variables belong somewhere else; a secret is named, never shown
+# aap_template_audit_project: "Site automation"   # only your project's job templates (workflows are all read)
+# report_email_to: [ops@yoursite.mil]
+"""),
     "aap_ee.yml": ("AAP - set execution environment", "Red Hat Ansible Automation Platform", "", """\
 ## The execution environment, and which templates: run it with Check first - it lists every template it would
 ## change, from which EE to which; jobs that need another EE go in aap_ee_exclude

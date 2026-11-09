@@ -16,6 +16,7 @@ the checks' common settings) apply to every job: set them once in `all.yml`.
 | AAP - incident document surveys | `playbooks/incident_docs_survey.yml` | [incident_docs_survey.yml](incident_docs_survey.yml) |
 | AAP - report email question | `playbooks/aap_email_question.yml` | [aap_email_question.yml](aap_email_question.yml) |
 | AAP - set execution environment | `playbooks/aap_ee.yml` | [aap_ee.yml](aap_ee.yml) |
+| AAP - template variables audit | `playbooks/aap_template_audit.yml` | [aap_template_audit.yml](aap_template_audit.yml) |
 | ACT for Windows - install | `playbooks/win_act_install.yml` | [win_act_install.yml](win_act_install.yml) |
 | Active Directory - account lockout | `playbooks/ad_lockout.yml` | [ad_lockout.yml](ad_lockout.yml) |
 | Active Directory health report | `playbooks/ad_health_report.yml` | [ad_health_report.yml](ad_health_report.yml) |

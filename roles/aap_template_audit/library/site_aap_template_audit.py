@@ -1,0 +1,387 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+"""Read every job template and workflow template through AAP's own API and say which settings in their Variables
+box should not be there (playbooks/aap_template_audit.yml): connection and infrastructure settings, site-wide ones,
+one set the same way in many templates, and secrets. Read-only (GET). The address and login come from the "Red Hat
+Ansible Automation Platform" credential's variables (plugins/module_utils/site_aap.py). Standard library and PyYAML
+(which ansible-core brings) only. The values never leave this module: a secret comes back as its name, a repeated
+setting's value only when it is not a secret."""
+from __future__ import absolute_import, division, print_function
+__metaclass__ = type
+
+DOCUMENTATION = r'''
+module: site_aap_template_audit
+short_description: Which settings in AAP's job and workflow templates' Variables should be somewhere else
+description:
+  - Reads every job template and workflow template the AAP user can see (O(project) and O(exclude) narrow it), each
+    one's Variables (extra_vars, YAML or JSON) and, where its survey is on, the survey's questions. GET only.
+  - "Flags each setting that is: connection (an C(ansible_*) setting); an address (a host name, a URL or an IP address
+    in its value); site-wide (in O(site_wide): the settings usually in all.yml); repeated (the same value in at least
+    O(repeat_min) templates); a secret (its name - password, secret, token, key - or its value, a long random string)."
+  - A secret is never returned: only its name. A repeated setting's value is returned (cut) only when it is no secret.
+  - "A template that asks for its Variables on launch, or whose survey asks for a flagged setting: a launch can set
+    these settings again."
+  - AAP's address and login come from the environment, as the "Red Hat Ansible Automation Platform" credential sets
+    it. Its user needs read access to the templates (Organization Auditor is enough).
+options:
+  site_wide: {description: The settings usually in all.yml (every job reads them)., type: list, elements: str, default: []}
+  per_enclave: {description: The settings that differ by enclave (the enclave file)., type: list, elements: str, default: []}
+  per_template: {description: Settings that belong in a template (who gets its email, its target) - never flagged as site-wide or as an address., type: list, elements: str, default: []}
+  ignore: {description: Settings never flagged., type: list, elements: str, default: []}
+  repeat_min: {description: A setting with the same value in this many templates or more is flagged (0 = never)., type: int, default: 3}
+  project: {description: Only the job templates of this AAP project (its name); workflows are all read. Empty = every one., type: str, default: ''}
+  exclude: {description: Templates left out, by name or ID., type: list, elements: str, default: []}
+  workflows: {description: Read the workflow templates too., type: bool, default: true}
+  ca_path: {description: A CA file for AAP's HTTPS certificate ("" = what the execution environment trusts)., type: str, default: ''}
+  timeout: {description: Seconds per request., type: int, default: 30}
+author: site automation
+'''
+
+RETURN = r'''
+api: {description: The API path that answered., type: str, sample: api/controller/v2/}
+problems: {description: What could not be read (AAP, a list, a survey)., type: list}
+templates:
+  description: "Each template read: kind (job or workflow), id, name, project, settings (how many), ask_variables (asks
+    for its Variables on launch), survey (the variables its survey asks for), error (its Variables could not be read),
+    flags: [{setting, why: [connection, address, site_wide, per_enclave, repeated, secret, launch], repeats, suggestion, note}]."
+  type: list
+settings:
+  description: "Each flagged setting once: setting, why, templates (how many have it), same (how many with the same value),
+    value (cut; '' for a secret, or when the values differ), suggestion."
+  type: list
+'''
+
+import hashlib
+import json
+import math
+import re
+
+from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.site_aap import Api, connection, error_text
+
+try:
+    import yaml
+except ImportError:                                  # pragma: no cover - ansible-core brings PyYAML
+    yaml = None
+
+NO_CREDENTIAL = ('No AAP connection: attach a credential of type "Red Hat Ansible Automation Platform" to this job template '
+                 '(its AAP URL, and the user name and password - or a token - of an AAP user that can read the job and '
+                 'workflow templates: Organization Auditor is enough)')
+
+# a setting named like a secret (db_password, aap_token, client_secret, api_key)
+SECRET_NAME = re.compile(r"(^|_)(password|passwd|pass|pw|secret|token|api_?key|apikey|private_?key|secret_?key|access_?key|"
+                         r"passphrase)($|_)", re.I)
+# a name like these is about a secret, not one: where it is, what it is called, a rule for it
+NOT_SECRET_NAME = re.compile(r"_(file|path|dir|name|names|id|ids|url|host|user|username|type|length|len|days|age|"
+                             r"expires?|expiry|policy|rotation|field|header|check|checks|warn|crit|min|max)$", re.I)
+URL = re.compile(r"^[a-z][a-z0-9+.-]*://[^\s/]+", re.I)
+IPV4 = re.compile(r"^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:/\d{1,2})?(?::\d+)?$")
+IPV6 = re.compile(r"^\[?(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\]?(?:/\d{1,3})?$", re.I)
+# a host name: two labels or more, the last letters only (aap01.yoursite.mil); a file name (report.html.j2) is not one
+FQDN = re.compile(r"^(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}\.?(?::\d+)?$", re.I)
+FILE_EXT = re.compile(r"\.(ya?ml|j2|json|html?|txt|csv|xlsx?|docx?|pem|crt|cer|der|key|pfx|p12|log|py|ps1|psm1|sh|conf|cfg|ini|xml|zip|gz|tgz|tar|md|pdf|png|jpe?g|gif|svg|ico|css|js|repo|rpm|iso|ova|ovf|vmdk)$", re.I)
+
+WHY = ("connection", "address", "secret", "site_wide", "per_enclave", "repeated", "launch")
+CUT = 40
+
+
+def parse_vars(text):
+    """A template's Variables box: (dict, why not). YAML or JSON; empty = {}."""
+    if isinstance(text, dict):
+        return text, ""
+    t = str(text or "").strip()
+    if not t or t in ("---", "{}"):
+        return {}, ""
+    try:
+        d = json.loads(t)
+    except ValueError:
+        if yaml is None:
+            return {}, "not JSON, and PyYAML is not here to read YAML"
+        try:
+            d = yaml.safe_load(t)
+        except yaml.YAMLError as e:
+            mark = getattr(e, "problem_mark", None)
+            return {}, "not YAML or JSON%s" % (" (line %d)" % (mark.line + 1) if mark is not None else "")
+    if d is None:
+        return {}, ""
+    if not isinstance(d, dict):
+        return {}, "not a list of settings (name: value) but a %s" % type(d).__name__
+    return d, ""
+
+
+def _strings(v, depth=0):
+    """Every text inside a value (lists and dicts, a few levels down)."""
+    if depth > 6:
+        return
+    if isinstance(v, str):
+        yield v
+    elif isinstance(v, dict):
+        for k, x in v.items():
+            for s in _strings(x, depth + 1):
+                yield s
+    elif isinstance(v, (list, tuple)):
+        for x in v:
+            for s in _strings(x, depth + 1):
+                yield s
+
+
+def is_address(s):
+    """A host name, a URL or an IP address (with a port or a prefix length). Pure."""
+    s = str(s or "").strip()
+    if not s or " " in s or "{{" in s:
+        return False
+    if URL.match(s):
+        return True
+    if "@" in s:                                     # an email address names a person, not a host
+        return False
+    if IPV4.match(s) or (s.count(":") >= 2 and IPV6.match(s)):
+        return True
+    return bool(FQDN.match(s)) and not FILE_EXT.search(s.split(":")[0])
+
+
+def _entropy(s):
+    n = float(len(s))
+    return -sum(c / n * math.log(c / n, 2) for c in (s.count(ch) for ch in set(s)))
+
+
+def looks_random(s):
+    """A long random string - a password, a token, a key - not a path, an address or a sentence. Pure."""
+    s = str(s or "").strip()
+    if len(s) < 20 or re.search(r"\s", s) or "{{" in s or s.startswith("$ANSIBLE_VAULT"):
+        return False
+    if s.startswith(("/", "./", "~", "\\\\")) or re.match(r"^[A-Za-z]:\\", s) or is_address(s) or "@" in s:
+        return False
+    if re.match(r"^[a-z0-9_.-]+$", s) and ("_" in s or "-" in s) and not re.search(r"\d", s):
+        return False                                 # a long name (some_setting_name, my-long-hostname-group)
+    classes = sum(bool(re.search(p, s)) for p in (r"[a-z]", r"[A-Z]", r"\d", r"[^A-Za-z0-9]"))
+    return classes >= 3 and _entropy(s) >= 3.5
+
+
+def secret_name(name):
+    """A setting named like a secret (db_password, api_token, client_secret) - not one that names where it is. Pure."""
+    n = str(name or "")
+    return bool(SECRET_NAME.search(n)) and not NOT_SECRET_NAME.search(n)
+
+
+def is_secret(name, value):
+    """A secret: named like one (with a value - an empty one is no secret), or a value that is a long random string.
+    A vault-encrypted value is a secret too: it is fine in a vars file, not in a template's Variables. Pure."""
+    if secret_name(name) and any(str(s).strip() for s in _strings(value)):
+        return True                                  # a text value: a number or true/false is a rule, not a secret
+    return any(looks_random(s) or str(s).lstrip().startswith("$ANSIBLE_VAULT") for s in _strings(value))
+
+
+def connection_suggestion(name):
+    """Where an ansible_* setting goes. Pure."""
+    n = str(name).lower()
+    if n.startswith(("ansible_winrm_", "ansible_psrp_")) or n in ("ansible_shell_type", "ansible_shell_executable"):
+        return "the windows group (group_vars/windows.yml)"
+    if n in ("ansible_user", "ansible_ssh_user", "ansible_password", "ansible_ssh_pass", "ansible_become_user",
+             "ansible_become_password", "ansible_become_pass", "ansible_become_method", "ansible_ssh_private_key_file"):
+        return "the Machine credential"
+    return "the group's or host's variables"
+
+
+ENCLAVE = "the enclave file (group_vars/<enclave>.yml)"
+ALL_YML = "all.yml"
+SECRET = "a credential (docs/SECRETS.md)"
+
+
+def classify(name, value, site_wide=(), per_enclave=(), per_template=()):
+    """(why codes, suggestion) for one setting, before repeats and launch are known. Pure."""
+    why, n = [], str(name)
+    if n.startswith("ansible_"):
+        why.append("connection")
+    elif n not in per_template and any(is_address(s) for s in _strings(value)):
+        why.append("address")
+    if is_secret(n, value):
+        why.append("secret")
+    if n in site_wide and n not in per_template:
+        why.append("site_wide")
+    if n in per_enclave and "address" not in why:
+        why.append("per_enclave")
+    return why, suggest(n, why)
+
+
+def suggest(name, why):
+    """The place a flagged setting belongs. Pure."""
+    if "secret" in why:
+        machine = connection_suggestion(name)
+        return machine if name.startswith("ansible_") and "Machine" in machine else SECRET
+    if "connection" in why:
+        return connection_suggestion(name)
+    if "address" in why or "per_enclave" in why:
+        return ENCLAVE
+    if "site_wide" in why or "repeated" in why:
+        return ALL_YML
+    if "launch" in why:
+        return "ask at launch only what a launch must choose"
+    return ""
+
+
+def fingerprint(value):
+    """Compares two values without keeping them."""
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def shown(value):
+    """A value as the report shows it, cut. Never called for a secret."""
+    s = value if isinstance(value, str) else json.dumps(value, sort_keys=True, default=str)
+    s = " ".join(s.split())
+    return s if len(s) <= CUT else s[:CUT - 3] + "..."
+
+
+def audit(records, opts):
+    """records: [{kind, id, name, project, extra_vars, ask_variables, survey: [{variable, type}]}] ->
+    (templates, settings). Pure: the whole judgement, testable without AAP."""
+    sw, pe = set(opts.get("site_wide") or ()), set(opts.get("per_enclave") or ())
+    pt, ign = set(opts.get("per_template") or ()), set(opts.get("ignore") or ())
+    repeat_min = int(opts.get("repeat_min") or 0)
+    templates, seen = [], {}                       # seen: setting -> {fingerprint: [template index]}
+    secrets = set()
+    for rec in records:
+        d, err = parse_vars(rec.get("extra_vars"))
+        t = {"kind": rec.get("kind", "job"), "id": rec.get("id"), "name": rec.get("name") or "", "project": rec.get("project") or "",
+             "settings": len(d), "ask_variables": bool(rec.get("ask_variables")),
+             "survey": {str(q.get("variable")): str(q.get("type") or "") for q in rec.get("survey") or [] if q.get("variable")},
+             "error": err, "flags": []}
+        for name in sorted(d, key=str):
+            n, v = str(name), d[name]
+            if n in ign:
+                continue
+            why, sug = classify(n, v, sw, pe, pt)
+            if "secret" in why:
+                secrets.add(n)
+            else:
+                seen.setdefault(n, {}).setdefault(fingerprint(v), []).append((len(templates), shown(v)))
+            if why:
+                t["flags"].append({"setting": n, "why": why, "suggestion": sug, "note": ""})
+        templates.append(t)
+    # repeats: the same value in repeat_min templates or more (a secret's are not compared: it is flagged already)
+    repeats = {}
+    for n, by_value in seen.items():
+        for fp, where in by_value.items():
+            if repeat_min and len(where) >= repeat_min:
+                repeats[(n, fp)] = where
+                for i, _ in where:
+                    t = templates[i]
+                    f = next((x for x in t["flags"] if x["setting"] == n), None)
+                    if f is None:
+                        f = {"setting": n, "why": [], "suggestion": "", "note": ""}
+                        t["flags"].append(f)
+                    f["why"].append("repeated")
+                    f["repeats"] = len(where)
+                    others = [templates[j]["name"] for j, _ in where if j != i]
+                    f["note"] = "also in " + ", ".join(others[:4]) + (" and %d more" % (len(others) - 4) if len(others) > 4 else "")
+                    f["suggestion"] = suggest(n, f["why"])
+    # a launch can set them again: Variables asked on launch (any setting), or a survey question for a flagged one
+    for t in templates:
+        flagged = {f["setting"] for f in t["flags"]}
+        for q, qtype in sorted(t["survey"].items()):
+            if q in ign or q in pt:
+                continue
+            why, _ = classify(q, None, sw, pe, pt)
+            # a Password question is AAP's own way to ask for a secret (kept encrypted); a text one shows it
+            plain = secret_name(q) and qtype != "password"
+            if q in flagged or why or plain:
+                f = next((x for x in t["flags"] if x["setting"] == q), None)
+                if f is None:
+                    f = {"setting": q, "why": list(why), "suggestion": "", "note": ""}
+                    t["flags"].append(f)
+                f["why"] += ["launch"] + (["secret"] if plain else [])
+                f["note"] = "; ".join(x for x in (f["note"], "its survey asks for it as plain text (%s, not Password)" % (qtype or "text")
+                                                  if plain else "its survey asks for it on every launch") if x)
+                f["suggestion"] = "make the survey question a Password question" if plain else suggest(q, f["why"])
+        t["survey"] = sorted(t["survey"])
+        if t["ask_variables"] and t["flags"]:
+            t["flags"].append({"setting": "(Variables on launch)", "why": ["launch"], "suggestion": suggest("", ["launch"]),
+                               "note": "Prompt on launch is on for Variables: a launch can set any of the settings above, and any other"})
+        for f in t["flags"]:
+            f["why"] = [w for w in WHY if w in f["why"]]
+        t["flags"].sort(key=lambda f: (f["setting"].startswith("("), min(WHY.index(w) for w in f["why"]) if f["why"] else 9, f["setting"]))
+    # each flagged setting once
+    settings = {}
+    for t in templates:
+        for f in t["flags"]:
+            if f["setting"].startswith("("):
+                continue
+            s = settings.setdefault(f["setting"], {"setting": f["setting"], "why": [], "templates": 0, "same": 0, "value": "",
+                                                   "suggestion": ""})
+            s["templates"] += 1
+            s["why"] = [w for w in WHY if w in set(s["why"]) | set(f["why"])]
+    for n, s in settings.items():
+        by_value = seen.get(n) or {}
+        if n not in secrets and by_value:
+            fp, where = max(by_value.items(), key=lambda kv: len(kv[1]))
+            s["same"] = len(where)
+            s["value"] = where[0][1] if len(by_value) == 1 or (n, fp) in repeats else ""
+        s["suggestion"] = suggest(n, s["why"])
+    out = sorted(settings.values(), key=lambda s: (-s["templates"], min(WHY.index(w) for w in s["why"]) if s["why"] else 9, s["setting"]))
+    return templates, out
+
+
+def _all(api, path):
+    """Every page of a list: (records, why not)."""
+    out, nxt = [], path + ("&" if "?" in path else "?") + "page_size=200"
+    for _ in range(500):
+        code, d = api.call("GET", nxt)
+        if code != 200:
+            return out, "%s could not be read (HTTP %d): %s" % (path.split("?")[0], code, error_text(d))
+        out += d.get("results") or []
+        n = d.get("next")
+        if not n:
+            return out, ""
+        nxt = n.split(api.base, 1)[1] if api.base in n else n.lstrip("/")
+    return out, ""
+
+
+def read(api, p):
+    """(records, problems): the templates as audit() takes them, read from AAP."""
+    problems, records = [], []
+    skip = {str(x).strip() for x in p.get("exclude") or [] if str(x).strip()}
+    lists = [("job", "job_templates/")] + ([("workflow", "workflow_job_templates/")] if p.get("workflows", True) else [])
+    for kind, path in lists:
+        got, why = _all(api, path)
+        if why:
+            problems.append("the %s templates: %s" % (kind, why))
+        for r in got:
+            sf = r.get("summary_fields") or {}
+            project = (sf.get("project") or {}).get("name") or ""
+            if str(r.get("id")) in skip or r.get("name") in skip:
+                continue
+            if kind == "job" and p.get("project") and project != p["project"]:
+                continue
+            rec = {"kind": kind, "id": r.get("id"), "name": r.get("name") or "", "project": project,
+                   "extra_vars": r.get("extra_vars"), "ask_variables": bool(r.get("ask_variables_on_launch")), "survey": []}
+            if r.get("survey_enabled"):
+                code, d = api.call("GET", "%s%s/survey_spec/" % (path, r.get("id")))
+                if code == 200:
+                    rec["survey"] = [{"variable": q.get("variable"), "type": q.get("type")} for q in d.get("spec") or []]
+                else:
+                    problems.append("the survey of %s template %s (ID %s) could not be read (HTTP %d): %s"
+                                    % (kind, rec["name"], rec["id"], code, error_text(d)))
+            records.append(rec)
+    if p.get("project") and not any(r["kind"] == "job" for r in records) and not problems:
+        problems.append("aap_template_audit_project: no job template of a project named %s that the AAP user can see" % p["project"])
+    return records, problems
+
+
+def main():
+    module = AnsibleModule(argument_spec={
+        "site_wide": dict(type="list", elements="str", default=[]), "per_enclave": dict(type="list", elements="str", default=[]),
+        "per_template": dict(type="list", elements="str", default=[]), "ignore": dict(type="list", elements="str", default=[]),
+        "repeat_min": dict(type="int", default=3), "project": dict(type="str", default=""),
+        "exclude": dict(type="list", elements="str", default=[]), "workflows": dict(type="bool", default=True),
+        "ca_path": dict(type="str", default=""), "timeout": dict(type="int", default=30)}, supports_check_mode=True)
+    p = module.params
+    api = Api(connection(), p["ca_path"], p["timeout"], ca_setting="aap_template_audit_ca_path", no_credential=NO_CREDENTIAL)
+    why = api.probe()
+    if why:
+        module.exit_json(changed=False, api=api.base, problems=[why], templates=[], settings=[])
+    records, problems = read(api, p)
+    templates, settings = audit(records, p)
+    module.exit_json(changed=False, api=api.base, problems=problems, templates=templates, settings=settings)
+
+
+if __name__ == "__main__":
+    main()

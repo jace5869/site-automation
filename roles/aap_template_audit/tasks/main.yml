@@ -1,0 +1,63 @@
+---
+# Reads every job template and workflow template (library/site_aap_template_audit.py) and reports which settings in
+# their Variables belong somewhere else. Runs on localhost, with the "Red Hat Ansible Automation Platform" credential's
+# variables. Read-only: a Check run (dry run) does the same.
+- name: Template audit | the site-wide settings (aap_template_audit_site_wide_roles' defaults, and aap_template_audit_site_wide)
+  ansible.builtin.set_fact:
+    _tva_site_wide: >-
+      {%- set out = aap_template_audit_site_wide | map('string') | list -%}
+      {%- for r in aap_template_audit_site_wide_roles -%}
+      {%-   set d = lookup('ansible.builtin.file', role_path ~ '/../' ~ r ~ '/defaults/main.yml', errors='ignore') | default('', true) | from_yaml -%}
+      {%-   set _ = out.extend((d if d is mapping else {}) | list) -%}
+      {%- endfor -%}
+      {{ out | unique | list }}
+
+- name: Template audit | the job and workflow templates, in AAP
+  site_aap_template_audit:
+    site_wide: "{{ _tva_site_wide }}"
+    per_enclave: "{{ aap_template_audit_per_enclave | map('string') | list }}"
+    per_template: "{{ aap_template_audit_per_template | map('string') | list }}"
+    ignore: "{{ aap_template_audit_ignore | map('string') | list }}"
+    repeat_min: "{{ aap_template_audit_repeat_min | int }}"
+    project: "{{ aap_template_audit_project | string }}"
+    # names have spaces: text (a survey's) is split at commas and line breaks only
+    exclude: >-
+      {{ (aap_template_audit_exclude | regex_replace('[\r\n]+', ',')).split(',') | map('trim') | select | list
+         if aap_template_audit_exclude is string else aap_template_audit_exclude | map('string') | list }}
+    workflows: "{{ aap_template_audit_workflows | bool }}"
+    ca_path: "{{ aap_template_audit_ca_path }}"
+  register: _tva
+  check_mode: false                     # read-only: a dry run reads too
+
+- name: Template audit | the report
+  ansible.builtin.set_fact:
+    _tva_report: >-
+      {{ _tva | template_audit_report({'repeat_min': aap_template_audit_repeat_min,
+                                       'aap': query('ansible.builtin.env', 'CONTROLLER_HOST', 'AAP_HOSTNAME', 'TOWER_HOST')
+                                              | select | first | default('') | regex_replace('^https?://', '') | regex_replace('/.*$', '')}) }}
+
+- name: Template audit | {{ _tva_report.title }}
+  ansible.builtin.debug:
+    msg: "{{ (_tva_report | report_text).splitlines() }}"
+
+- name: Template audit | the flagged settings as job artifacts (aap_template_audit; names only, no values)
+  ansible.builtin.set_stats:
+    data:
+      aap_template_audit: "{{ _tva | template_audit_stats }}"
+
+- name: Template audit | email it, publish it (report_email_to, report_web_dest)
+  ansible.builtin.include_role:
+    name: site_email
+  vars:
+    _report: "{{ _tva_report }}"
+  when: report_email_to | default([]) | length > 0 or report_email_also | default([]) | length > 0 or report_web_dest | default('') | length > 0
+
+- name: Template audit | AAP could not be read
+  ansible.builtin.fail:
+    msg: "{{ _tva.problems }}"
+  when: _tva.problems | length > 0 and _tva.templates | length == 0
+
+- name: Template audit | settings to move (aap_template_audit_fail)
+  ansible.builtin.fail:
+    msg: "{{ _tva_report.title }}: see the report above"
+  when: aap_template_audit_fail | bool and (_tva.settings | length > 0 or _tva.templates | selectattr('error') | list | length > 0)

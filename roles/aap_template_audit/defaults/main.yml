@@ -1,0 +1,26 @@
+---
+# AAP - TEMPLATE VARIABLES AUDIT (playbooks/aap_template_audit.yml): reads every job template and workflow template
+# through AAP's API and says which settings in their Variables box belong somewhere else - connection settings,
+# addresses, site-wide settings, one set the same way in many templates, secrets (their names only, never their
+# values) - and where. Read-only. docs/TEMPLATE_AUDIT.md
+
+# Which templates: every job template and workflow the AAP user can see, or these narrowed
+aap_template_audit_project: ""           # only the job templates of this AAP project (its name); workflows are all read
+aap_template_audit_workflows: true       # read the workflow templates too (false = the job templates only)
+aap_template_audit_exclude: []           # templates left out, by name or ID
+# A setting with the same value in this many templates or more is flagged: one change would have to be made in each
+# (0 = never)
+aap_template_audit_repeat_min: 3
+# Site-wide: the settings of these roles are the ones "usually in all.yml" (as aap/extra_vars marks them), read from
+# their defaults when the job runs - and these more
+aap_template_audit_site_wide_roles: [site_email, site_act, site_findings]
+aap_template_audit_site_wide: []          # more site-wide settings, by name
+# Settings that differ by enclave: the enclave file (playbooks/group_vars/<enclave>.yml; the enclave guide comes
+# in a later version)
+aap_template_audit_per_enclave: []
+# Settings that belong in a template (who gets its report, what it runs on): never flagged as site-wide or as an
+# address - still flagged when they are a secret, or the same in many templates
+aap_template_audit_per_template: [report_email_to, report_email_cc, report_email_also, site_fail_on, target]
+aap_template_audit_ignore: []            # settings never flagged
+aap_template_audit_ca_path: ""           # a CA file for AAP's HTTPS certificate ("" = what the execution environment trusts)
+aap_template_audit_fail: false           # true = the job fails when something is flagged (for a workflow's ticket step)

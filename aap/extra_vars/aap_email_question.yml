@@ -26,6 +26,7 @@
 ## complete.
 # aap_email_question_playbooks:
 #   - aap_health_check.yml
+#   - aap_template_audit.yml
 #   - tenable_scan.yml
 #   - act_fix_approved.yml
 #   - ad_health_report.yml
